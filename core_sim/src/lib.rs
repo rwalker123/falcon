@@ -21,6 +21,7 @@ pub mod combat;
 mod combat_config;
 mod components;
 mod config_load;
+pub mod config_override;
 mod creatures_config;
 mod crisis;
 mod crisis_config;
@@ -97,13 +98,18 @@ pub use combat_config::{
 };
 pub use components::{
     available_workers, floor_is_valid, floor_overdraws, raid_is_recurring, BandId, BandTravel,
-    ElementKind, Expedition, ExpeditionMission, ExpeditionPhase, Improvement, KnowledgeFragment,
-    LaborAllocation, LaborAssignment, LaborTarget, LocalStore, LogisticsLink, MoraleCause,
-    PendingMigration, PopulationCohort, PowerNode, ResidentBand, Settlement, SourceYield,
-    StartingUnit, Tile, TownCenter, TradeLink, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD,
-    NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE, TRADE_GOODS,
+    DeathCause, DemographicFlowAccumulator, ElementKind, Expedition, ExpeditionMission,
+    ExpeditionPhase, Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget,
+    LocalStore, LogisticsLink, MoraleCause, PendingMigration, PopulationCohort, PowerNode,
+    ResidentBand, Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink,
+    DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE,
+    TRADE_GOODS,
 };
 pub use config_load::ConfigLoadError;
+pub use config_override::{
+    clear_config_overrides, install_config_override, spec_for as config_override_spec_for,
+    ConfigKindSpec, ConfigOverrideError, InstalledOverride,
+};
 pub use creatures_config::{
     load_creatures_config_from_env, CreatureDef, CreaturesConfig, CreaturesConfigHandle,
     CreaturesConfigMetadata, BUILTIN_CREATURES_CONFIG, PERSON_ID,
@@ -284,13 +290,13 @@ pub use power::{
 };
 pub use provinces::{ProvinceId, ProvinceMap};
 pub use resources::{
-    apply_port_base, apply_port_base_override, port_base_override, BandIdAllocator,
-    CapabilityFlags, CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionLedgers,
-    CorruptionTelemetry, DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory,
-    FoodSiteEntry, FoodSiteRegistry, HydrologyOverrides, MapTopology, MoistureRaster,
-    PendingCrisisSeeds, PendingCrisisSpawns, SentimentAxisBias, SimulationConfig,
-    SimulationConfigMetadata, SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord,
-    TradeTelemetry, WorldEpoch,
+    apply_port_base, apply_port_base_override, load_simulation_config_for_new_world,
+    port_base_override, BandIdAllocator, CapabilityFlags, CommandEventEntry, CommandEventKind,
+    CommandEventLog, CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage,
+    DiscoveryProgressLedger, FactionInventory, FoodSiteEntry, FoodSiteRegistry,
+    FoodSiteWaterBiasReport, HydrologyOverrides, MapTopology, MoistureRaster, PendingCrisisSeeds,
+    PendingCrisisSpawns, SentimentAxisBias, SimulationConfig, SimulationConfigMetadata,
+    SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord, TradeTelemetry, WorldEpoch,
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
 pub use snapshot::{
@@ -305,8 +311,8 @@ pub use systems::{
     TradeDiffusionEvent,
 };
 pub use systems::{
-    apply_biome_palette_clamp, apply_tag_budget_solver, reconcile_coastal_shelf,
-    reconcile_food_modules,
+    apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,
+    reconcile_coastal_shelf, reconcile_food_modules,
 };
 pub use telling::{
     load_beat_catalog_from_env, load_beat_config_from_env, telling_tick, BeatCatalog,
@@ -496,6 +502,11 @@ pub fn build_headless_app() -> App {
         espionage::SecurityPolicy::Standard,
     );
 
+    // Read before `config` is moved into the world: the log's turn window is a config lever, and
+    // `CommandEventLog::default()` only knows the builtin default.
+    let command_event_log =
+        CommandEventLog::with_retention_turns(config.command_events_retention_turns);
+
     app.insert_resource(config)
         .insert_resource(config_metadata)
         .insert_resource(MapPresetsHandle::new(map_presets.clone()))
@@ -587,8 +598,9 @@ pub fn build_headless_app() -> App {
         .insert_resource(HerdDensityMap::default())
         .insert_resource(ForageRegistry::default())
         .insert_resource(GrazeRegistry::default())
-        .insert_resource(CommandEventLog::default())
+        .insert_resource(command_event_log)
         .insert_resource(FoodSiteRegistry::default())
+        .init_resource::<FoodSiteWaterBiasReport>()
         .insert_resource(snapshot_history)
         .insert_resource(snapshot::SnapshotCaptureMode::default())
         .insert_resource(generation_registry)
@@ -696,6 +708,7 @@ pub fn build_headless_app() -> App {
                 systems::apply_biome_palette_clamp,
                 systems::reconcile_coastal_shelf,
                 systems::reconcile_food_modules,
+                systems::bias_food_sites_toward_fresh_water,
                 sites::place_wondrous_sites,
                 spawn_initial_herds,
                 spawn_initial_forage,

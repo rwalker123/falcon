@@ -1,0 +1,308 @@
+{
+  "version": 1,
+  "kinds": [
+    {
+      "kind": "simulation",
+      "label": "World & Climate",
+      "env_var": "SIM_CONFIG_PATH",
+      "params": [
+        {
+          "pointer": "/climate/equator_temp",
+          "label": "Equator temperature",
+          "type": "float",
+          "min": 0.0,
+          "max": 50.0,
+          "step": 0.5,
+          "default": 30.0,
+          "unit": "°C",
+          "hint": "Hottest band of the temperature field worldgen paints the biomes from."
+        },
+        {
+          "pointer": "/climate/polar_temp",
+          "label": "Polar temperature",
+          "type": "float",
+          "min": -40.0,
+          "max": 20.0,
+          "step": 0.5,
+          "default": -5.0,
+          "unit": "°C",
+          "hint": "Coldest band. Widen the span against the equator for sharper biome belts."
+        },
+        {
+          "pointer": "/climate/temperate_max_temp",
+          "label": "Temperate cut point",
+          "type": "float",
+          "min": 0.0,
+          "max": 40.0,
+          "step": 0.5,
+          "default": 18.0,
+          "unit": "°C",
+          "hint": "Above this a tile leaves the temperate band. The sim owns the cut points."
+        },
+        {
+          "pointer": "/hydrology/river_density",
+          "label": "River density",
+          "type": "float",
+          "min": 0.0,
+          "max": 4.0,
+          "step": 0.05,
+          "default": 1.0,
+          "hint": "Scales how many drainage channels survive into rivers."
+        },
+        {
+          "pointer": "/population_growth_rate",
+          "label": "Population growth rate",
+          "type": "float",
+          "min": 0.0,
+          "max": 0.2,
+          "step": 0.001,
+          "default": 0.01,
+          "unit": "/turn",
+          "hint": "Baseline per-turn growth before food and morale modifiers."
+        },
+        {
+          "pointer": "/temperature_morale_penalty",
+          "label": "Temperature morale penalty",
+          "type": "float",
+          "min": 0.0,
+          "max": 0.05,
+          "step": 0.001,
+          "default": 0.004,
+          "hint": "Morale lost per degree outside the tolerance band."
+        }
+      ]
+    },
+    {
+      "kind": "labor",
+      "label": "Labor & Foraging",
+      "env_var": "LABOR_CONFIG_PATH",
+      "params": [
+        {
+          "pointer": "/band_work_range",
+          "label": "Band work range",
+          "type": "int",
+          "min": 1,
+          "max": 8,
+          "step": 1,
+          "default": 2,
+          "unit": "hexes",
+          "hint": "How far from camp a crew may work a source."
+        },
+        {
+          "pointer": "/band_move_tiles_per_turn",
+          "label": "Band move rate",
+          "type": "int",
+          "min": 1,
+          "max": 6,
+          "step": 1,
+          "default": 1,
+          "unit": "hexes/turn",
+          "hint": "Tiles a band covers per turn when relocating."
+        },
+        {
+          "pointer": "/forage/per_worker_biomass_capacity",
+          "label": "Forage throughput",
+          "type": "float",
+          "min": 0.5,
+          "max": 40.0,
+          "step": 0.5,
+          "default": 8.0,
+          "unit": "biomass/worker",
+          "hint": "Biomass one forager can take per turn before the patch ceiling binds."
+        },
+        {
+          "pointer": "/forage/provisions_per_biomass",
+          "label": "Forage conversion",
+          "type": "float",
+          "min": 0.005,
+          "max": 0.5,
+          "step": 0.005,
+          "default": 0.05,
+          "unit": "prov/biomass",
+          "hint": "Wild baseline. A committed patch uses its own basket's rate instead."
+        },
+        {
+          "pointer": "/forage/ecology/regrowth_rate",
+          "label": "Patch regrowth",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.01,
+          "default": 0.25,
+          "unit": "/turn",
+          "hint": "How fast a drawn-down patch climbs back toward its capacity."
+        },
+        {
+          "pointer": "/forage/ecology/collapse_fraction",
+          "label": "Collapse threshold",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.01,
+          "default": 0.15,
+          "hint": "Share of capacity below which a patch starts collapsing."
+        },
+        {
+          "pointer": "/hunt/per_worker_biomass_capacity",
+          "label": "Hunt throughput",
+          "type": "float",
+          "min": 1.0,
+          "max": 200.0,
+          "step": 1.0,
+          "default": 40.0,
+          "unit": "biomass/worker",
+          "hint": "Biomass one hunter can take per turn against a herd."
+        },
+        {
+          "pointer": "/arrivals_horizon_turns",
+          "label": "Arrivals horizon",
+          "type": "int",
+          "min": 1,
+          "max": 120,
+          "step": 1,
+          "default": 20,
+          "unit": "turns",
+          "hint": "How far the forward food projection looks ahead."
+        }
+      ]
+    },
+    {
+      "kind": "demographics",
+      "label": "Population",
+      "env_var": "DEMOGRAPHICS_CONFIG_PATH",
+      "params": [
+        {
+          "pointer": "/consumption/per_capita_draw",
+          "label": "Per-capita food draw",
+          "type": "float",
+          "min": 0.01,
+          "max": 1.0,
+          "step": 0.01,
+          "default": 0.16,
+          "unit": "prov/head",
+          "hint": "Baseline eaten per head per turn, before the cohort factors."
+        },
+        {
+          "pointer": "/births/birth_rate",
+          "label": "Birth rate",
+          "type": "float",
+          "min": 0.0,
+          "max": 0.2,
+          "step": 0.005,
+          "default": 0.03,
+          "unit": "/turn",
+          "hint": "Baseline births before reserve and food-trend modifiers."
+        },
+        {
+          "pointer": "/births/trend/deficit_penalty",
+          "label": "Deficit birth penalty",
+          "type": "float",
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.05,
+          "default": 0.75,
+          "hint": "How hard a falling food trend suppresses births."
+        },
+        {
+          "pointer": "/startup/food_reserve_days",
+          "label": "Starting food reserve",
+          "type": "float",
+          "min": 0.0,
+          "max": 120.0,
+          "step": 1.0,
+          "default": 20.0,
+          "unit": "turns",
+          "hint": "Turns of larder a new band opens with. The early-game difficulty dial."
+        }
+      ]
+    },
+    {
+      "kind": "expedition",
+      "label": "Expeditions",
+      "env_var": "EXPEDITION_CONFIG_PATH",
+      "params": [
+        {
+          "pointer": "/max_party_size",
+          "label": "Max party size",
+          "type": "int",
+          "min": 1,
+          "max": 40,
+          "step": 1,
+          "default": 8,
+          "unit": "workers",
+          "hint": "Ceiling on workers detached to one expedition."
+        },
+        {
+          "pointer": "/observe_sight_range",
+          "label": "Scout sight range",
+          "type": "int",
+          "min": 1,
+          "max": 16,
+          "step": 1,
+          "default": 6,
+          "unit": "hexes",
+          "hint": "Per-turn LOS radius a scouting party reveals."
+        },
+        {
+          "pointer": "/provision_upkeep_per_worker",
+          "label": "Party upkeep",
+          "type": "float",
+          "min": 0.0,
+          "max": 5.0,
+          "step": 0.05,
+          "default": 0.5,
+          "unit": "prov/worker",
+          "hint": "Per-turn drain while a scouting party is in the field."
+        },
+        {
+          "pointer": "/hunt/per_worker_carry",
+          "label": "Raid carry capacity",
+          "type": "float",
+          "min": 0.1,
+          "max": 10.0,
+          "step": 0.1,
+          "default": 0.8,
+          "unit": "prov/worker",
+          "hint": "Pack capacity per worker. Party size times this is one trip's haul."
+        }
+      ]
+    },
+    {
+      "kind": "combat",
+      "label": "Combat",
+      "env_var": "COMBAT_CONFIG_PATH",
+      "params": [
+        {
+          "pointer": "/lethality",
+          "label": "Lethality",
+          "type": "float",
+          "min": 0.05,
+          "max": 5.0,
+          "step": 0.05,
+          "default": 1.0,
+          "hint": "Scales every side's losses in a resolved fight."
+        },
+        {
+          "pointer": "/disengage_fraction",
+          "label": "Disengage threshold",
+          "type": "float",
+          "min": 0.05,
+          "max": 1.0,
+          "step": 0.05,
+          "default": 0.5,
+          "hint": "A loser past this loss share is driven off rather than annihilated."
+        },
+        {
+          "pointer": "/expedition_danger_multiplier",
+          "label": "Expedition danger",
+          "type": "float",
+          "min": 0.5,
+          "max": 5.0,
+          "step": 0.1,
+          "default": 1.5,
+          "hint": "Extra lethality for a detached party. Never applied to a resident band."
+        }
+      ]
+    }
+  ]
+}

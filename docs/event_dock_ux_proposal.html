@@ -1,0 +1,1453 @@
+<title>The Event Dock — notification proposal</title>
+
+<style>
+  /* ============================================================
+     Tokens. Shared with docs/band_panel_ux_proposal.html on purpose:
+     these are one series of proposals about one HUD. The DOCUMENT
+     shell is theme-aware; the PROTOTYPE stage keeps the game's own
+     dark console palette in both themes (the HUD is dark and stays
+     dark — clients/godot_thin_client/CLAUDE.md).
+     ============================================================ */
+  :root {
+    color-scheme: light dark;
+
+    --ground:      #eef2f1;
+    --panel:       #ffffff;
+    --panel-2:     #e6ecea;
+    --line:        #ccd8d6;
+    --line-soft:   #dee6e4;
+    --ink:         #0d1719;
+    --dim:         #47595a;
+    --faint:       #6d807e;
+    --signal:      #0c766c;
+    --signal-wash: rgba(12, 118, 108, 0.10);
+    --warn:        #9a6708;
+    --healthy:     #2f7a3c;
+    --danger:      #b03c33;
+
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+    --measure: 66ch;
+    --r: 3px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground:      #080e10;
+      --panel:       #111a1e;
+      --panel-2:     #0e161a;
+      --line:        #26363c;
+      --line-soft:   #1b282d;
+      --ink:         #e9efe9;
+      --dim:         #9db0ad;
+      --faint:       #6f8380;
+      --signal:      #4fe0cf;
+      --signal-wash: rgba(79, 224, 207, 0.12);
+      --warn:        #f2b13f;
+      --healthy:     #76cd80;
+      --danger:      #e8746a;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:      #080e10;
+    --panel:       #111a1e;
+    --panel-2:     #0e161a;
+    --line:        #26363c;
+    --line-soft:   #1b282d;
+    --ink:         #e9efe9;
+    --dim:         #9db0ad;
+    --faint:       #6f8380;
+    --signal:      #4fe0cf;
+    --signal-wash: rgba(79, 224, 207, 0.12);
+    --warn:        #f2b13f;
+    --healthy:     #76cd80;
+    --danger:      #e8746a;
+  }
+
+  :root[data-theme="light"] {
+    --ground:      #eef2f1;
+    --panel:       #ffffff;
+    --panel-2:     #e6ecea;
+    --line:        #ccd8d6;
+    --line-soft:   #dee6e4;
+    --ink:         #0d1719;
+    --dim:         #47595a;
+    --faint:       #6d807e;
+    --signal:      #0c766c;
+    --signal-wash: rgba(12, 118, 108, 0.10);
+    --warn:        #9a6708;
+    --healthy:     #2f7a3c;
+    --danger:      #b03c33;
+  }
+
+  * { box-sizing: border-box; }
+
+  /* `hidden` must beat the component `display` rules below, or a flex/grid
+     component ignores it entirely. */
+  [hidden] { display: none !important; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 56px 28px 120px; }
+
+  /* ---------- masthead ---------- */
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--signal);
+    margin: 0 0 20px;
+  }
+  h1 {
+    font-size: clamp(34px, 5.2vw, 54px);
+    line-height: 1.04;
+    letter-spacing: -0.025em;
+    font-weight: 700;
+    margin: 0 0 20px;
+    text-wrap: balance;
+    max-width: 19ch;
+  }
+  .standfirst { font-size: 19px; line-height: 1.55; color: var(--dim); max-width: var(--measure); margin: 0 0 28px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px 28px; font-family: var(--mono); font-size: 12px; color: var(--faint); }
+  .meta b { color: var(--dim); font-weight: 500; }
+
+  /* ---------- sections ---------- */
+  section { padding: 56px 0 0; }
+  .sec-head { display: flex; align-items: baseline; gap: 16px; margin-bottom: 8px; }
+  .sec-num { font-family: var(--mono); font-size: 12px; color: var(--faint); letter-spacing: 0.1em; padding-top: 6px; }
+  h2 { font-size: 27px; letter-spacing: -0.018em; font-weight: 650; margin: 0; text-wrap: balance; }
+  h3 { font-size: 17px; font-weight: 650; letter-spacing: -0.008em; margin: 32px 0 8px; }
+  p { max-width: var(--measure); margin: 0 0 16px; }
+  .lede { color: var(--dim); max-width: var(--measure); margin: 0 0 28px; }
+  ul.body { max-width: var(--measure); color: var(--dim); margin: 0 0 16px; padding-left: 20px; }
+  ul.body li { margin: 0 0 8px; }
+  ul.body li::marker { color: var(--faint); }
+  ul.body b { color: var(--ink); font-weight: 600; }
+  code {
+    font-family: var(--mono);
+    font-size: 0.86em;
+    background: var(--panel-2);
+    border: 1px solid var(--line-soft);
+    border-radius: var(--r);
+    padding: 1px 5px;
+  }
+
+  /* ---------- findings ---------- */
+  .findings { display: grid; gap: 14px; margin: 8px 0 0; }
+  .finding {
+    display: grid;
+    grid-template-columns: 40px 1fr;
+    gap: 4px 16px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--warn);
+    border-radius: var(--r);
+    padding: 18px 20px;
+  }
+  .finding .n { font-family: var(--mono); font-size: 13px; color: var(--warn); padding-top: 2px; }
+  .finding h4 { margin: 0; font-size: 16px; font-weight: 650; letter-spacing: -0.01em; }
+  .finding p { margin: 6px 0 0; grid-column: 2; color: var(--dim); font-size: 15px; max-width: none; }
+  .finding.is-note { border-left-color: var(--signal); }
+  .finding.is-note .n { color: var(--signal); }
+
+  /* ---------- the three-tier ladder ---------- */
+  .ladder { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; margin: 24px 0 8px; }
+  .rung { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 18px 20px 20px; border-top: 3px solid var(--line); }
+  .rung.alert { border-top-color: var(--danger); }
+  .rung.notable { border-top-color: var(--signal); }
+  .rung.routine { border-top-color: var(--faint); }
+  .rung h4 {
+    margin: 0 0 6px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  .rung.alert h4 { color: var(--danger); }
+  .rung.notable h4 { color: var(--signal); }
+  .rung.routine h4 { color: var(--faint); }
+  .rung .says { font-size: 15px; font-weight: 600; margin: 0 0 8px; }
+  .rung p { font-size: 14px; color: var(--dim); margin: 0 0 10px; max-width: none; }
+  .rung .kinds { font-family: var(--mono); font-size: 11.5px; color: var(--faint); line-height: 1.8; margin: 0; max-width: none; }
+
+  /* ---------- table ---------- */
+  .tbl-scroll { overflow-x: auto; margin: 20px 0 8px; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 620px; }
+  th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  th {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--faint);
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.k { font-family: var(--mono); font-size: 12.5px; color: var(--ink); white-space: nowrap; }
+  td.d { color: var(--dim); }
+  td.num { font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 12.5px; color: var(--dim); white-space: nowrap; }
+  .pill {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 1px 6px;
+    border-radius: 2px;
+    white-space: nowrap;
+  }
+  .pill.alert   { background: rgba(232,116,106,0.16); color: var(--danger); }
+  .pill.notable { background: rgba(79,224,207,0.16);  color: var(--signal); }
+  .pill.routine { background: rgba(157,176,173,0.14); color: var(--faint); }
+  .pill.new     { background: rgba(242,177,63,0.16);  color: var(--warn); }
+
+  /* ============================================================
+     THE PROTOTYPE
+     ============================================================ */
+  .stage { margin: 28px 0 0; }
+
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 20px;
+    padding: 14px 16px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-bottom: none;
+    border-radius: var(--r) var(--r) 0 0;
+  }
+  .ctl { display: inline-flex; align-items: center; gap: 8px; }
+  .ctl-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+  .seg button {
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 5px 11px;
+    background: transparent;
+    color: var(--dim);
+    border: none;
+    cursor: pointer;
+    line-height: 1.5;
+  }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button[aria-pressed="true"] { background: var(--signal-wash); color: var(--signal); }
+  .seg button:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
+
+  /* the game viewport mock */
+  .screen {
+    --g-panel:    #111a1e;
+    --g-panel-2:  #0e161a;
+    --g-line:     #26363c;
+    --g-line-soft:#1b282d;
+    --g-ink:      #e9efe9;
+    --g-dim:      #9db0ad;
+    --g-faint:    #6f8380;
+    --g-signal:   #4fe0cf;
+    --g-warn:     #f2b13f;
+    --g-healthy:  #76cd80;
+    --g-danger:   #e8746a;
+
+    position: relative;
+    background: linear-gradient(155deg, #0d1a1d 0%, #0a1316 45%, #0c171a 100%);
+    border: 1px solid var(--line);
+    border-radius: 0 0 var(--r) var(--r);
+    padding: 0;
+    overflow: hidden;
+    font-family: var(--sans);
+    color: var(--g-ink);
+    height: 560px;
+    display: flex;
+    flex-direction: column;
+  }
+  .screen::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(79,224,207,0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(79,224,207,0.045) 1px, transparent 1px);
+    background-size: 46px 46px;
+    pointer-events: none;
+  }
+  /* DOM order is map → reserved. A TOP dock therefore has to reverse the screen
+     column so the reserved strip lands above the map; a BOTTOM dock is the
+     natural order. (The `.reserved` stack inverts the opposite way, so the bar
+     hugs the screen edge on both.) */
+  .screen[data-edge="top"] { flex-direction: column-reverse; }
+  .screen[data-edge="bottom"] { flex-direction: column; }
+
+  /* The map area the reservations shrink — but never to nothing. The real
+     MapView keeps a usable rect no matter what reserves an edge, so the strip
+     shrinks (and the log scrolls) rather than the viewport vanishing. */
+  .map {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 150px;
+    overflow: hidden;
+    display: grid;
+    place-items: center;
+  }
+  .map-note {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: rgba(111,131,128,0.55);
+    text-align: center;
+    line-height: 2;
+  }
+  .map-note .dim { color: rgba(111,131,128,0.35); letter-spacing: 0.08em; text-transform: none; font-size: 10.5px; }
+
+  /* the reserved strip stack on the chosen edge */
+  .reserved { position: relative; flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  .screen[data-edge="bottom"] .reserved { flex-direction: column-reverse; }
+
+  /* ---- mock band panel (context only — this proposal does not change it) ---- */
+  .bandmock {
+    flex: none;
+    height: 132px;
+    background: var(--g-panel);
+    border-top: 1px solid var(--g-line);
+    border-bottom: 1px solid var(--g-line);
+    display: flex;
+    align-items: stretch;
+    gap: 1px;
+    opacity: 0.72;
+  }
+  .bandmock .zone {
+    flex: 1 1 0;
+    padding: 8px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+  .bandmock .zone + .zone { border-left: 1px solid var(--g-line-soft); }
+  .bandmock .zh {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--g-faint);
+  }
+  .bandmock .bar { height: 7px; border-radius: 2px; background: rgba(157,176,173,0.16); }
+  .bandmock .bar.a { background: rgba(79,224,207,0.28); width: 62%; }
+  .bandmock .bar.b { background: rgba(118,205,128,0.26); width: 44%; }
+  .bandmock .bar.c { background: rgba(242,177,63,0.24); width: 30%; }
+  .bandmock .rail { flex: none; width: 132px; display: grid; place-items: center; border-left: 1px solid var(--g-line-soft); }
+  .bandmock .orb {
+    width: 52px; height: 52px; border-radius: 50%;
+    border: 1px solid rgba(79,224,207,0.4);
+    background: radial-gradient(circle at 40% 34%, rgba(79,224,207,0.18), rgba(10,19,22,0.9));
+    display: grid; place-items: center;
+    font-family: var(--mono); font-size: 10px; color: var(--g-signal);
+  }
+
+  /* ---- THE EVENT DOCK ---- */
+  .dock {
+    flex: 0 1 auto;
+    background: #0c1417;
+    border-top: 1px solid var(--g-line);
+    border-bottom: 1px solid var(--g-line);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .screen[data-edge="top"] .dock { border-top: none; }
+  /* On a bottom dock the BAR sits against the screen edge and the log opens
+     inward (upward), so the dock's own stack reverses too. */
+  .screen[data-edge="bottom"] .dock { flex-direction: column-reverse; border-bottom: none; }
+
+  /* the always-visible strip */
+  .dock-bar {
+    flex: none;
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    min-height: 0;
+  }
+  /* ROWS READ NEWEST-FIRST, TOP TO BOTTOM, ON BOTH EDGES. An earlier draft flipped
+     them on a bottom dock so the newest sat against the screen edge; that gives the
+     leading slot two different positions depending on where the bar is docked, and
+     the pinned alert is defined by holding the LEADING slot. One rule, both edges. */
+  .dock-rows { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+
+  .ev {
+    display: flex;
+    align-items: baseline;
+    gap: 9px;
+    padding: 5px 12px;
+    min-width: 0;
+    border-left: 2px solid transparent;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+  .ev + .ev { border-top: 1px solid rgba(27,40,45,0.75); }
+  .ev .glyph { flex: none; width: 14px; text-align: center; font-size: 12px; line-height: 1.4; }
+  .ev .turn {
+    flex: none;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-variant-numeric: tabular-nums;
+    color: rgba(143,212,255,0.85);
+    letter-spacing: 0.02em;
+  }
+  .ev .label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--g-ink); }
+  .ev .detail { flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--g-faint); }
+  .ev.alert   { border-left-color: var(--g-danger); }
+  .ev.alert .glyph { color: var(--g-danger); }
+  .ev.alert .label { color: #f6cdc8; }
+  .ev.warnish { border-left-color: var(--g-warn); }
+  .ev.warnish .glyph { color: var(--g-warn); }
+  .ev.warnish .label { color: #f7dcae; }
+  .ev.notable { border-left-color: rgba(79,224,207,0.55); }
+  .ev.notable .glyph { color: var(--g-signal); }
+  .ev.routine { border-left-color: transparent; }
+  .ev.routine .glyph { color: var(--g-faint); }
+  .ev.routine .label { color: var(--g-dim); }
+  .ev.pinned { background: rgba(232,116,106,0.07); }
+  .ev.is-empty { color: var(--g-faint); font-style: italic; padding: 9px 12px; }
+
+  /* the expander on the trailing end */
+  .dock-more {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px;
+    background: transparent;
+    border: none;
+    border-left: 1px solid var(--g-line-soft);
+    color: var(--g-dim);
+    font-family: var(--mono);
+    font-size: 11px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .dock-more:hover { color: var(--g-signal); background: rgba(79,224,207,0.06); }
+  .dock-more:focus-visible { outline: 2px solid var(--g-signal); outline-offset: -2px; }
+  .dock-more .count {
+    display: inline-block;
+    min-width: 20px;
+    text-align: center;
+    padding: 1px 5px;
+    border-radius: 9px;
+    background: rgba(157,176,173,0.16);
+    color: var(--g-dim);
+    font-variant-numeric: tabular-nums;
+  }
+  .dock-more .count.hot { background: rgba(232,116,106,0.22); color: #f6cdc8; }
+  .dock-more .caret { font-size: 10px; }
+
+  /* the expanded log */
+  /* The log is capped rather than free-growing: it shares the reserved strip
+     with the map, and a log that can eat the viewport is the failure the real
+     dock's DockScrollFit cap exists to prevent. */
+  .dock-log { flex: 1 1 auto; min-height: 0; max-height: 260px; display: flex; flex-direction: column; border-top: 1px solid var(--g-line-soft); }
+  .screen[data-edge="bottom"] .dock-log { border-top: none; border-bottom: 1px solid var(--g-line-soft); }
+  .log-head {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px 14px;
+    flex-wrap: wrap;
+    padding: 7px 12px;
+    border-bottom: 1px solid var(--g-line-soft);
+    background: #0a1215;
+  }
+  .log-head .ctl-label { color: var(--g-faint); }
+  .chip {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    border: 1px solid var(--g-line);
+    background: transparent;
+    color: var(--g-faint);
+    cursor: pointer;
+  }
+  .chip[aria-pressed="true"] { border-color: rgba(79,224,207,0.5); background: rgba(79,224,207,0.1); color: var(--g-signal); }
+  .chip:focus-visible { outline: 2px solid var(--g-signal); outline-offset: 1px; }
+  .log-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  .turn-group { border-bottom: 1px solid rgba(27,40,45,0.6); }
+  .turn-head {
+    position: sticky;
+    top: 0;
+    background: #0a1215;
+    padding: 4px 12px;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--g-faint);
+    border-bottom: 1px solid rgba(27,40,45,0.7);
+  }
+  .log-foot { flex: none; padding: 7px 12px; border-top: 1px solid var(--g-line-soft); background: #0a1215; display: flex; align-items: center; gap: 12px; }
+  .btn {
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 11px;
+    border-radius: var(--r);
+    border: 1px solid var(--g-line);
+    background: #13211f;
+    color: var(--g-dim);
+    cursor: pointer;
+  }
+  .btn:hover { border-color: var(--g-signal); color: var(--g-signal); }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn:disabled:hover { border-color: var(--g-line); color: var(--g-dim); }
+  .btn:focus-visible { outline: 2px solid var(--g-signal); outline-offset: 1px; }
+  .log-foot .note { font-family: var(--mono); font-size: 10.5px; color: var(--g-faint); }
+
+  .caption {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--faint);
+    margin: 10px 0 0;
+    max-width: var(--measure);
+    line-height: 1.7;
+  }
+
+  /* ---------- decisions ---------- */
+  .decisions { display: grid; gap: 14px; margin: 8px 0 0; counter-reset: dq; }
+  .dq {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--signal);
+    border-radius: var(--r);
+    padding: 18px 20px 20px;
+  }
+  .dq h4 { margin: 0 0 6px; font-size: 16px; font-weight: 650; letter-spacing: -0.01em; }
+  .dq p { margin: 0 0 10px; color: var(--dim); font-size: 15px; max-width: none; }
+  .dq .rec {
+    font-size: 14px;
+    color: var(--ink);
+    background: var(--signal-wash);
+    border-radius: var(--r);
+    padding: 8px 12px;
+    margin: 0;
+    max-width: none;
+  }
+  .dq .rec b { color: var(--signal); font-weight: 650; }
+
+  hr.rule { border: none; border-top: 1px solid var(--line); margin: 56px 0 0; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+  @media (max-width: 720px) {
+    .wrap { padding: 40px 18px 80px; }
+    .screen { height: 640px; }
+    .bandmock .rail { display: none; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <p class="eyebrow">Shadow-Scale · UX proposal · issue #272</p>
+    <h1>Nothing in this game tells you a child was born.</h1>
+    <p class="standfirst">
+      The sim computes births, deaths and coming-of-age every single turn, and then throws all
+      three away before anything can say so. This proposes the surface that would say so — a thin
+      notification bar on the top or bottom edge, showing the few events that earned the space,
+      opening to the whole log.
+    </p>
+    <div class="meta">
+      <span><b>Replaces</b> the hidden command feed (<code>R</code>) + the Inspector command stream</span>
+      <span><b>Prototype</b> interactive below</span>
+    </div>
+  </header>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h2>What exists, and why none of it is a notification system</h2></div>
+    <p class="lede">
+      The pipe is already built. What is missing is the data at one end and the surface at the other.
+    </p>
+
+    <div class="findings">
+      <div class="finding is-note">
+        <span class="n">✓</span>
+        <div>
+          <h4>The transport works and needs no schema change</h4>
+        </div>
+        <p>
+          <code>CommandEventLog</code> → <code>CampaignSection.commandEvents</code> →
+          <code>CommandFeedController.ingest_events</code>, carrying
+          <code>{tick, kind, faction, label, detail}</code>. <code>kind</code> is a schema
+          <code>string</code> deliberately, so every new event kind below is a Rust enum variant
+          and nothing more.
+        </p>
+      </div>
+
+      <div class="finding">
+        <span class="n">01</span>
+        <div>
+          <h4>The demographic flows are computed, then discarded</h4>
+        </div>
+        <p>
+          <code>systems/population.rs</code> resolves <code>births</code>, <code>maturation</code>,
+          <code>aging</code> and three separate death terms — and every one of them is a local
+          binding that dies with the function. Only the post-turn bracket totals reach the cohort.
+          There is no <code>last_births</code>, no <code>last_deaths</code>, nothing on the wire.
+        </p>
+      </div>
+
+      <div class="finding">
+        <span class="n">02</span>
+        <div>
+          <h4>The one existing "population" signal is a diff, and diffs lie</h4>
+        </div>
+        <p>
+          The turn orb's losing-population alert compares two consecutive snapshots. It cannot tell
+          a death from an emigration, cannot name a cause, and reports nothing at all when four
+          births and four deaths cancel out in the same turn.
+        </p>
+      </div>
+
+      <div class="finding">
+        <span class="n">03</span>
+        <div>
+          <h4>Two surfaces already read the feed, and neither is for the player</h4>
+        </div>
+        <p>
+          The HUD's left-dock command feed ships hidden behind <code>R</code>, six entries, capped
+          at 40% of a dock column it shares with the selection card. The Inspector's Commands tab
+          prefixes the same events with <code>[SIM]</code> inside a debug console that ships hidden
+          too. Both are logs you go and find. A notification is the opposite: it finds you.
+        </p>
+      </div>
+
+      <div class="finding">
+        <span class="n">04</span>
+        <div>
+          <h4>Every event is equally loud</h4>
+        </div>
+        <p>
+          Exactly two kinds — <code>predator_raid</code> and <code>hunt_danger</code> — render as
+          alerts. A wolf raid, a barley sowing and an order acknowledgement otherwise arrive in the
+          same weight, in the same place, at the same size.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>Three questions, and the bar answers all three</h2></div>
+    <p class="lede">
+      Every notification system has to decide what a thing is, how loudly it says it, and how much
+      the player wants to hear. Keeping those three separate is what stops the design collapsing
+      into one undifferentiated stream.
+    </p>
+
+    <h3>What it is — the channel</h3>
+    <p>
+      <b>World</b> events come from the sim: a birth, a raid, a discovery, an expedition home.
+      <b>System</b> events come from the client's own plumbing: the command socket dropped, a
+      command was rejected, the server rolled back. Those live in an Inspector console the
+      player never opens — but a lost connection is exactly the kind of thing a player must be told
+      about, so it becomes a channel here rather than being deleted.
+    </p>
+    <p>
+      The client mints <em>two</em> kinds of its own, and the split is what makes the System channel
+      worth reading. <b><code>system</code></b> is a fault or a state change: a refused command, a
+      lost or restored socket, a resync forced by a frame that could not be applied, and the HUD's
+      own refusals (<code>Quick-hunt · No idle workers to assign</code>).
+      <b><code>command_echo</code></b> is an acknowledgement — <code>Advance 1 turn.</code>,
+      <code>Answered the question.</code>, <code>Stop improving (12, 8).</code> — which restates an
+      action the player took through the UI a second ago. The boundary is exact: <b>a command
+      accepted for sending is an echo; everything else is a fault.</b>
+    </p>
+    <p>
+      <b>The bar ignores <code>command_echo</code> entirely</b>, through
+      <code>HudEventVocab.IGNORED_KINDS</code>, and it does so at <em>ingest</em> — such an event is
+      never stored, so it cannot appear at any detail level (<em>Everything</em> included), on
+      either channel, in the bar or in the expanded log. It is not a rung and not a floor: a receipt
+      for a button pressed a moment ago is not news, and it was crowding the very first turns of a
+      new game. Ignoring is a <em>display filter on this one surface</em> — the event still exists,
+      the Inspector's debug console still prints every one of them, and a mod may still read them.
+    </p>
+
+    <h3>How loudly — the importance rung</h3>
+    <p>
+      Three rungs, and a kind sits on exactly one. The rung decides the accent, the glyph, and
+      which events win a slot when the bar is showing fewer than it has.
+    </p>
+
+    <div class="ladder">
+      <div class="rung alert">
+        <h4>Alert</h4>
+        <p class="says">Something was lost, or needs you.</p>
+        <p>Crimson or amber, glyph-led, and it holds its slot until you have seen it.</p>
+        <p class="kinds">
+          predator_raid · hunt_danger<br>
+          status=feral · status=lapsed<br>
+          system: socket lost · command rejected
+        </p>
+      </div>
+      <div class="rung notable">
+        <h4>Notable</h4>
+        <p class="says">The world changed in a way worth knowing.</p>
+        <p>Signal cyan. The default floor. The demographic kinds here are the ones that change how many people the band <em>has</em>.</p>
+        <p class="kinds">
+          born · died · migrated<br>
+          site_discovered · found_settlement<br>
+          campaign_milestone · campaign_victory<br>
+          expedition_arrived · expedition_returned · tame
+        </p>
+      </div>
+      <div class="rung routine">
+        <h4>Routine</h4>
+        <p class="says">A receipt, or a birthday.</p>
+        <p>Dim ink, no accent rail. Off by default. A bracket transition lives here: it moves one person between brackets and leaves the total untouched.</p>
+        <p class="kinds">
+          came_of_age · aged<br>
+          forage · hunt · sow<br>
+          cultivate · corral · scout<br>
+          cancel_order · expedition_sent
+        </p>
+      </div>
+    </div>
+
+    <h3>How much — the detail level</h3>
+    <p>
+      The player's preference is a <em>floor on the rung ladder</em>, not a separate taxonomy —
+      which is what keeps it to three legible options instead of a checklist of twenty-seven kinds.
+      Channel toggles sit alongside it in the expanded view, so a player who wants world events but
+      not socket chatter can say so without touching the floor.
+    </p>
+
+    <div class="tbl-scroll">
+      <table>
+        <thead>
+          <tr><th>Setting</th><th>Shows</th><th>Who it is for</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="k">Alerts only</td><td class="d"><span class="pill alert">Alert</span></td><td class="d">A player who wants the map, not the paperwork.</td></tr>
+          <tr><td class="k">Notable <span class="pill notable">default</span></td><td class="d"><span class="pill alert">Alert</span> <span class="pill notable">Notable</span></td><td class="d">Everyone, on turn one.</td></tr>
+          <tr><td class="k">Everything</td><td class="d"><span class="pill alert">Alert</span> <span class="pill notable">Notable</span> <span class="pill routine">Routine</span></td><td class="d">Debugging, tuning, and the players who want the ledger.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>The prototype</h2></div>
+    <p class="lede">
+      Real events, real vocabulary. Change the dock edge, the number of recent rows, and the detail
+      floor — then open the log. The band panel behind it is context only; this proposal does not
+      change it.
+    </p>
+
+    <div class="stage">
+      <div class="controls">
+        <div class="ctl">
+          <span class="ctl-label">Dock</span>
+          <div class="seg" id="seg-edge" role="group" aria-label="Dock edge">
+            <button type="button" data-edge="top">Top</button>
+            <button type="button" data-edge="bottom" aria-pressed="true">Bottom</button>
+          </div>
+        </div>
+
+        <div class="ctl">
+          <span class="ctl-label">Recent</span>
+          <div class="seg" id="seg-count" role="group" aria-label="Rows shown in the bar">
+            <button type="button" data-count="1">1</button>
+            <button type="button" data-count="2" aria-pressed="true">2</button>
+            <button type="button" data-count="3">3</button>
+            <button type="button" data-count="4">4</button>
+          </div>
+        </div>
+
+        <div class="ctl">
+          <span class="ctl-label">Detail</span>
+          <div class="seg" id="seg-detail" role="group" aria-label="Detail level">
+            <button type="button" data-detail="alert">Alerts only</button>
+            <button type="button" data-detail="notable" aria-pressed="true">Notable</button>
+            <button type="button" data-detail="routine">Everything</button>
+          </div>
+        </div>
+
+        <div class="ctl">
+          <span class="ctl-label">Order</span>
+          <div class="seg" id="seg-order" role="group" aria-label="Row order">
+            <button type="button" data-order="recent" aria-pressed="true">Newest first</button>
+            <button type="button" data-order="important">Most important</button>
+          </div>
+        </div>
+
+        <div class="ctl">
+          <span class="ctl-label">Band panel</span>
+          <div class="seg" id="seg-band" role="group" aria-label="Band panel dock">
+            <button type="button" data-band="same" aria-pressed="true">Same edge</button>
+            <button type="button" data-band="away">Elsewhere</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="screen" id="screen" data-edge="bottom">
+        <div class="map">
+          <p class="map-note">
+            map viewport<br>
+            <span class="dim">shrunk by the reserved edge, exactly as the Inspector and the band panel already shrink it</span>
+          </p>
+        </div>
+
+        <div class="reserved">
+          <div class="dock" id="dock">
+            <div class="dock-bar">
+              <div class="dock-rows" id="dock-rows"></div>
+              <button type="button" class="dock-more" id="dock-more" aria-expanded="false">
+                <span class="count" id="more-count">0</span>
+                <span id="more-word">more</span>
+                <span class="caret" id="more-caret">▴</span>
+              </button>
+            </div>
+            <div class="dock-log" id="dock-log" hidden>
+              <div class="log-head">
+                <span class="ctl-label">Channels</span>
+                <button type="button" class="chip" data-channel="world" aria-pressed="true">World</button>
+                <button type="button" class="chip" data-channel="system" aria-pressed="true">System</button>
+              </div>
+              <div class="log-scroll" id="log-scroll"></div>
+              <div class="log-foot">
+                <button type="button" class="btn" id="earlier">Earlier turns</button>
+                <span class="note" id="retention-note"></span>
+              </div>
+            </div>
+          </div>
+
+          <div class="bandmock" id="bandmock">
+            <div class="zone">
+              <span class="zh">Band · Ashfoot</span>
+              <div class="bar a"></div>
+              <div class="bar b"></div>
+            </div>
+            <div class="zone">
+              <span class="zh">Work</span>
+              <div class="bar b"></div>
+              <div class="bar"></div>
+              <div class="bar c"></div>
+            </div>
+            <div class="zone">
+              <span class="zh">Parties</span>
+              <div class="bar c"></div>
+              <div class="bar"></div>
+            </div>
+            <div class="rail"><div class="orb">T 47</div></div>
+          </div>
+        </div>
+      </div>
+
+      <p class="caption" id="stage-caption"></p>
+
+      <h3>What building it changed</h3>
+      <p>
+        At four rows with the log open, the bar printed the log's own first turn-group a second
+        time, directly beneath it — the same four events twice, six inches apart. So the bar is now
+        strictly the <em>collapsed</em> state: opening the log replaces the rows with a one-line
+        title, and the log's newest turn-group is the recent list. Set Recent to 4 and open it to
+        see the version that survived.
+      </p>
+      <p>
+        The other thing only a running prototype shows: at "Everything" the reserved strip tries to
+        eat the map. The real client already has the answer — the same cap
+        <code>DockScrollFit</code> applies to the command feed today — so the strip yields and the
+        log scrolls internally rather than the viewport shrinking toward nothing.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h2>Retention is measured in turns, not entries</h2></div>
+    <p>
+      <code>CommandEventLog</code> holds 32 entries and drops the oldest. Add a birth, a death and a
+      coming-of-age per band per turn and the ring evicts a wolf raid inside two turns — the cap
+      would quietly eat exactly the events it exists to preserve.
+    </p>
+    <p>
+      So the bound becomes a <b>turn window</b>: the log keeps every event from the last
+      <code>retention_turns</code> turns and drops whole turns off the back. A turn is the unit the
+      player thinks in, the log groups by it, and the "Earlier turns" button walks backwards through
+      it a few turns at a time.
+    </p>
+
+    <div class="tbl-scroll">
+      <table>
+        <thead>
+          <tr><th>Lever</th><th>Where</th><th>Default</th><th>Why that number</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="k">retention_turns</td>
+            <td class="d">sim config</td>
+            <td class="num">20</td>
+            <td class="d">Long enough to answer "what happened while I was away", short enough to bound the wire.</td>
+          </tr>
+          <tr>
+            <td class="k">recent_count</td>
+            <td class="d">client pref</td>
+            <td class="num">2</td>
+            <td class="d">Two rows is ~44px of reserved edge. Three is defensible; four starts to read as a panel.</td>
+          </tr>
+          <tr>
+            <td class="k">detail_level</td>
+            <td class="d">client pref</td>
+            <td class="num">notable</td>
+            <td class="d">Alerts alone are too quiet to feel like a living world; everything is the current feed.</td>
+          </tr>
+          <tr>
+            <td class="k">log_window_turns</td>
+            <td class="d">client pref</td>
+            <td class="num">5</td>
+            <td class="d">How many turns the expanded log shows before "Earlier turns" extends it.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="findings" style="margin-top:24px">
+      <div class="finding is-note">
+        <span class="n">→</span>
+        <div>
+          <h4>So the log stops shipping whole, in this same change</h4>
+        </div>
+        <p>
+          The delta path ships <code>command_events</code> via <code>diff_whole</code> — the entire
+          log re-serialises whenever any part of it changes, which is every turn. At 32 entries that
+          was free. At 20 turns × ~10 events it is ~200 entries every turn, and the number grows
+          with exactly the feature being added.
+        </p>
+        <p>
+          <b>An append-only delta is therefore in scope here, not deferred.</b> Each entry carries a
+          monotonic <code>seq</code>; a delta ships only the entries appended since the baseline,
+          plus the current base sequence so the client can drop what the sim has evicted. Widening
+          the retention window and leaving it shipping whole would be the worst of both — a longer
+          log costing more every turn to say the same thing.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">05</span><h2>What the sim has to start recording</h2></div>
+    <p class="lede">
+      Four new event kinds, three new accumulators, and one rule that makes the whole thing honest.
+    </p>
+
+    <div class="tbl-scroll">
+      <table>
+        <thead>
+          <tr><th>Kind</th><th>Rung</th><th>Fires when</th><th>Detail tokens <span class="pill routine">wire</span></th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="k">born <span class="pill new">new</span></td>
+            <td class="d"><span class="pill notable">Notable</span></td>
+            <td class="d">
+              The birth accumulator crosses a whole person. <b>Notable, not Routine</b> — it shipped
+              Routine, i.e. below the default floor, so a birth never appeared at all unless the
+              player chose &ldquo;Everything&rdquo;, where it arrived buried among forage receipts.
+              A population counter ticking up while the bar says nothing is the failure this whole
+              proposal exists to remove. The rung is not a measure of how much a turn&rsquo;s labour
+              changed; it is whether the world changed in a way worth knowing, and the settlement
+              gaining a person is the plainest such change there is.
+            </td>
+            <td class="k">band= count=</td>
+          </tr>
+          <tr>
+            <td class="k">died <span class="pill new">new</span></td>
+            <td class="d"><span class="pill notable">Notable</span></td>
+            <td class="d">
+              A bracket's death accumulator crosses a whole person. <b>Notable, not Alert</b> —
+              bands routinely lose elders to cold, and a rung that interrupts for every one of them
+              teaches the player to stop reading the bar.
+            </td>
+            <td class="k">band= count= bracket= cause=</td>
+          </tr>
+          <tr>
+            <td class="k">migrated <span class="pill new">new</span></td>
+            <td class="d"><span class="pill notable">Notable</span></td>
+            <td class="d">
+              <code>lastEmigrated</code> / <code>lastImmigrated</code> is non-zero. Whole counts
+              already, so no accumulator.
+            </td>
+            <td class="k">band= count= direction=</td>
+          </tr>
+          <tr>
+            <td class="k">came_of_age <span class="pill new">new</span></td>
+            <td class="d"><span class="pill routine">Routine</span></td>
+            <td class="d">The maturation accumulator crosses a whole person. <b>Routine, not Notable</b> — it fires constantly while the head-count never moves, and at the default floor it drowned the events that did.</td>
+            <td class="k">band= count=</td>
+          </tr>
+          <tr>
+            <td class="k">system <span class="pill new">new</span></td>
+            <td class="d"><span class="pill alert">Alert</span></td>
+            <td class="d">Client-side only: socket state, rejected command, rollback.</td>
+            <td class="k">reason=</td>
+          </tr>
+          <tr>
+            <td class="k">site_discovered</td>
+            <td class="d"><span class="pill notable">Notable</span></td>
+            <td class="d">Already emitted. This is the scout success the issue asks for.</td>
+            <td class="k">category= at=</td>
+          </tr>
+          <tr>
+            <td class="k">expedition_arrived</td>
+            <td class="d"><span class="pill notable">Notable</span></td>
+            <td class="d">Already emitted. The other half of scout success.</td>
+            <td class="k">status= expedition=</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>The tokens are a contract, not a caption</h3>
+    <p>
+      The <code>Detail tokens</code> column above is what the sim <em>sends</em>: space-delimited
+      <code>key=value</code> fragments, sized for a parser. They exist so the client can do work with
+      them — join <code>band=</code> to whatever it calls that band, promote a <code>status=feral</code>
+      row to the Alert rung — and they are <b>never</b> a string to display. The first build printed
+      them verbatim and a row read <code>category=settle_site at (64,36)</code>.
+    </p>
+    <p>
+      So the client renders them (<code>EventDockPanel.detail_phrase</code>): keys the label already
+      carries are dropped (<code>band</code>, <code>count</code>, <code>expedition</code>), enumerated
+      values get English (<code>settle_site</code> → <b>Settle site</b>, <code>out</code> →
+      <b>departed</b>), coordinates keep their numbers and gain a space, and a numeric value keeps its
+      key because <code>Warriors 3</code> needs one where <code>Category Settle site</code> does not.
+      <b>Numbers are trimmed, never rounded</b>: the sim writes casualties with <code>{:.3}</code>, so
+      <code>2.000</code> renders as <code>2</code> while a genuinely fractional <code>1.750</code>
+      stays <code>1.75</code> — rounding would state a precision the sim did not, and a casualty count
+      reading <code>2</code> when the sim said <code>1.5</code> is a lie the player cannot detect.
+      <b>Anything with no table entry still comes out as English</b> — underscores to spaces, first
+      letter capitalised — which is the load-bearing part: new kinds and tokens arrive server-side with
+      no schema change, so an unrecognised token is the common case over time and a raw identifier on
+      screen has to be impossible by construction rather than by anyone remembering to add a row.
+    </p>
+
+    <h3>Births are a rate, not an event — so an accumulator turns one into the other</h3>
+    <p>
+      <code>births = working0 × fertility</code> is a <code>Scalar</code>. A band of thirty gets a
+      fraction of a birth per turn, never one. Rounding per turn would either announce a birth in a
+      band too small to have had one, or announce nothing for the whole game.
+    </p>
+    <p>
+      So each cohort carries three fractional accumulators — births, maturations, and deaths per
+      bracket. Each turn adds that turn's flow; when an accumulator's integer part increments, one
+      event fires naming <code>count</code> whole people and the accumulator keeps the remainder.
+      Small bands get a birth every eight turns or so; large ones get several a turn. The deaths
+      accumulator carries the cause that dominated the turn it crossed on, so
+      <code>cause=cold</code> is the cold that actually killed rather than a re-derivation after the
+      fact.
+    </p>
+    <p>
+      This is the same discipline the fertility factors already follow — the sim stores the inputs
+      that <em>drove</em> a turn's outcome rather than letting the client re-derive them from a
+      post-turn state that never produced them.
+    </p>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">06</span><h2>Decisions, settled</h2></div>
+    <p class="lede">
+      All six were reviewed and taken as recommended, with one amendment: a death is
+      <b>Notable</b>, not an Alert. Each recommendation below is now the spec.
+    </p>
+
+    <div class="decisions">
+      <div class="dq">
+        <h4>Does an alert hold its slot, or does the newest event always win?</h4>
+        <p>
+          Toggle <b>Order</b> in the prototype. <em>Newest first</em> keeps the bar chronological and
+          readable, but a wolf raid can be pushed off by two forage receipts within a turn.
+          <em>Most important</em> never loses the raid but makes the bar jump around, and the top row
+          stops meaning "the latest thing".
+        </p>
+        <p class="rec">
+          <b>Settled:</b> newest-first, with one exception: an unread Alert pins to the leading slot
+          and stays until the log is opened. You get chronology and you never lose the raid. That is
+          the default the prototype boots in.
+        </p>
+      </div>
+
+      <div class="dq">
+        <h4>On a shared edge, which one hugs the screen edge?</h4>
+        <p>
+          The reserved-edge registry already stacks co-edge panels by priority. The bar can sit
+          outside the band panel (hard against the screen edge) or inside it.
+        </p>
+        <p class="rec">
+          <b>Settled:</b> the bar hugs the edge, band panel inboard — a thin strip on the rim reads
+          as chrome, and it means the band panel's own position relative to the map never changes
+          when the bar grows a row. Costs one renumbering of <code>RESERVER_PRIORITY</code>.
+        </p>
+      </div>
+
+      <div class="dq">
+        <h4>Does the old <code>R</code> feed survive alongside this?</h4>
+        <p>
+          The left-dock command feed and this bar would show the same events in two places, and the
+          feed's 40%-of-dock cap exists to stop it crowding out the selection card.
+        </p>
+        <p class="rec">
+          <b>Settled:</b> retiring the left-dock feed entirely and freeing <code>R</code> to toggle
+          this bar instead. Its <code>KIND_STYLE</code> alert table and signature de-duplication move
+          across; the dock column goes back to the selection card.
+        </p>
+      </div>
+
+      <div class="dq">
+        <h4>Where do four preferences live?</h4>
+        <p>
+          <code>user://narrative.cfg</code> <code>[hud_panels]</code> holds panel toggles;
+          <code>user://band_city_dock.cfg</code> holds the other dockable panel's edge. There are
+          already two files and the panel rules say not to add a third.
+        </p>
+        <p class="rec">
+          <b>Settled:</b> a new <code>[events]</code> section in <code>narrative.cfg</code> holding
+          <code>edge</code>, <code>recent_count</code>, <code>detail_level</code>,
+          <code>channels</code> and <code>suppressed</code>.
+        </p>
+      </div>
+
+      <div class="dq">
+        <h4>Do migrations get events too?</h4>
+        <p>
+          <code>lastEmigrated</code> / <code>lastImmigrated</code> are the only true per-turn people
+          deltas already on the wire — no accumulator needed, they are whole counts today.
+        </p>
+        <p class="rec">
+          <b>Settled:</b> yes, as a Notable <code>migrated</code> kind, since a band losing people
+          to a neighbour is precisely the thing the current diff-based alert misreads as death.
+        </p>
+      </div>
+
+      <div class="dq">
+        <h4>How loud is a death?</h4>
+        <p>
+          The first draft put <code>died</code> on the Alert rung beside a wolf raid. But bands lose
+          elders to cold as a matter of course, and a rung that interrupts for every one of them
+          trains the player to stop reading the bar — the precise failure the three-rung ladder
+          exists to prevent.
+        </p>
+        <p class="rec">
+          <b>Settled:</b> <code>died</code> is <b>Notable</b>. Alert stays for violence, for an
+          investment going feral, and for the client's own faults. A death that matters — a whole
+          band starving out — will announce itself through the starvation and morale channels that
+          already exist.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ── the fixture ─────────────────────────────────────────────────────────
+  // Real kinds, real vocabulary. `rung` drives accent + filter floor;
+  // `channel` drives the World/System chips in the expanded log.
+  //
+  // `detail` here is what the client RENDERS, not what the sim sends. The sim publishes
+  // space-delimited `key=value` TOKENS — a machine contract, so the client can join a `band=` id to
+  // its roster name and promote a `status=` row to Alert — and the client renders them as prose
+  // (`EventDockPanel.detail_phrase`). Printing the tokens was a real defect: a row read
+  // `category=settle_site at (64,36)` on a player-facing bar. §05's table below lists the tokens
+  // each kind sends; this fixture shows what they come out as. Note several are EMPTY here: a
+  // `count=` is already in the label ("Two children came of age"), so it is dropped rather than
+  // said twice.
+  var EVENTS = [
+    { turn: 47, kind: "predator_raid",     rung: "alert",   channel: "world",  glyph: "⚔", label: "Grey wolves took two from Ashfoot",              detail: "Wounded 1 · Warriors 3 · Grey Wolf" },
+    { turn: 47, kind: "came_of_age",       rung: "routine", channel: "world",  glyph: "◦", label: "Two children came of age in Ashfoot",            detail: "" },
+    { turn: 47, kind: "forage",            rung: "routine", channel: "world",  glyph: "◦", label: "Foragers returned with 12 provisions",           detail: "" },
+    { turn: 47, kind: "sow",               rung: "routine", channel: "world",  glyph: "◦", label: "Barley sown on the river terrace",               detail: "" },
+
+    { turn: 46, kind: "hunt_danger",       rung: "warnish", channel: "world",  glyph: "⚠", label: "The aurochs hunt cost the party three lives",    detail: "Wounded 1 · Aurochs" },
+    { turn: 46, kind: "site_discovered",   rung: "notable", channel: "world",  glyph: "✦", label: "The Weeping Arch",                               detail: "Landmark · (18, 31)" },
+    { turn: 46, kind: "born",              rung: "notable", channel: "world",  glyph: "✦", label: "A child was born in Ashfoot",                    detail: "" },
+    { turn: 46, kind: "hunt",              rung: "routine", channel: "world",  glyph: "◦", label: "Hunters brought back red deer",                  detail: "" },
+
+    { turn: 45, kind: "died",              rung: "alert",   channel: "world",  glyph: "⚠", label: "An elder died of cold in Windhollow",            detail: "elder · cold" },
+    { turn: 45, kind: "expedition_arrived",rung: "notable", channel: "world",  glyph: "✦", label: "Expedition reached 24,9 — awaiting orders",      detail: "" },
+    { turn: 45, kind: "cultivate",         rung: "warnish", channel: "world",  glyph: "⚠", label: "The upper patch has gone feral",                 detail: "feral" },
+    { turn: 45, kind: "corral",            rung: "routine", channel: "world",  glyph: "◦", label: "Corral raised at Ashfoot",                       detail: "" },
+
+    { turn: 44, kind: "system",            rung: "alert",   channel: "system", glyph: "⚠", label: "Command socket lost — reconnecting",             detail: "Eof" },
+    { turn: 44, kind: "campaign_milestone",rung: "notable", channel: "world",  glyph: "✦", label: "Ashfoot has become a hamlet",                    detail: "" },
+    { turn: 44, kind: "came_of_age",       rung: "routine", channel: "world",  glyph: "◦", label: "A child came of age in Windhollow",              detail: "" },
+    { turn: 44, kind: "scout",             rung: "routine", channel: "world",  glyph: "◦", label: "Two workers sent to scout the northern ridge",   detail: "" },
+
+    { turn: 43, kind: "system",            rung: "routine", channel: "system", glyph: "◦", label: "Connected to simulation on 127.0.0.1:41002",     detail: "" },
+    { turn: 43, kind: "found_settlement",  rung: "notable", channel: "world",  glyph: "✦", label: "Windhollow was settled",                         detail: "" },
+    { turn: 43, kind: "born",              rung: "notable", channel: "world",  glyph: "✦", label: "A child was born in Windhollow",                 detail: "" },
+
+    { turn: 42, kind: "tame",              rung: "notable", channel: "world",  glyph: "✦", label: "The aurochs herd has grown tame",                detail: "" },
+    { turn: 42, kind: "forage",            rung: "routine", channel: "world",  glyph: "◦", label: "Foragers returned with 9 provisions",            detail: "" },
+
+    { turn: 41, kind: "expedition_sent",   rung: "routine", channel: "world",  glyph: "◦", label: "Party of four sent east",                        detail: "" },
+    { turn: 41, kind: "died",              rung: "alert",   channel: "world",  glyph: "⚠", label: "Two died of hunger in Ashfoot",                  detail: "hunger" }
+  ];
+
+  var RETENTION_TURNS = 20;
+  var LOG_WINDOW_TURNS = 5;
+
+  // A detail floor admits its own rung and everything above it. `warnish` is an
+  // Alert that reads amber rather than crimson (a loss you caused, not an attack),
+  // so it ranks with the alerts.
+  var FLOOR = { alert: ["alert", "warnish"], notable: ["alert", "warnish", "notable"], routine: ["alert", "warnish", "notable", "routine"] };
+  var WEIGHT = { alert: 0, warnish: 1, notable: 2, routine: 3 };
+
+  var state = {
+    edge: "bottom",
+    count: 2,
+    detail: "notable",
+    order: "recent",
+    band: "same",
+    expanded: false,
+    channels: { world: true, system: true },
+    windowTurns: LOG_WINDOW_TURNS,
+    alertSeen: false
+  };
+
+  var el = {
+    screen:     document.getElementById("screen"),
+    rows:       document.getElementById("dock-rows"),
+    more:       document.getElementById("dock-more"),
+    moreCount:  document.getElementById("more-count"),
+    moreWord:   document.getElementById("more-word"),
+    moreCaret:  document.getElementById("more-caret"),
+    log:        document.getElementById("dock-log"),
+    logScroll:  document.getElementById("log-scroll"),
+    earlier:    document.getElementById("earlier"),
+    retention:  document.getElementById("retention-note"),
+    band:       document.getElementById("bandmock"),
+    caption:    document.getElementById("stage-caption")
+  };
+
+  function visible() {
+    var allowed = FLOOR[state.detail];
+    return EVENTS.filter(function (e) {
+      return allowed.indexOf(e.rung) !== -1 && state.channels[e.channel];
+    });
+  }
+
+  function barRows() {
+    var pool = visible();
+    if (pool.length === 0) { return []; }
+
+    if (state.order === "important") {
+      var byWeight = pool.slice().sort(function (a, b) {
+        return (WEIGHT[a.rung] - WEIGHT[b.rung]) || (b.turn - a.turn);
+      });
+      return byWeight.slice(0, state.count);
+    }
+
+    // Newest-first, with the pinned-alert exception: an unread alert that would
+    // fall outside the window claims the leading slot instead of vanishing.
+    var newest = pool.slice(0, state.count);
+    if (!state.alertSeen) {
+      var topAlert = null;
+      for (var i = 0; i < pool.length; i++) {
+        if (pool[i].rung === "alert") { topAlert = pool[i]; break; }
+      }
+      if (topAlert && newest.indexOf(topAlert) === -1) {
+        newest = [topAlert].concat(newest.slice(0, Math.max(0, state.count - 1)));
+        topAlert.pinned = true;
+      }
+    }
+    return newest;
+  }
+
+  function rowNode(e, pinned) {
+    var row = document.createElement("div");
+    row.className = "ev " + e.rung + (pinned ? " pinned" : "");
+
+    var g = document.createElement("span");
+    g.className = "glyph";
+    g.textContent = e.glyph;
+
+    var t = document.createElement("span");
+    t.className = "turn";
+    t.textContent = "T" + e.turn;
+
+    var l = document.createElement("span");
+    l.className = "label";
+    l.textContent = e.label;
+
+    row.appendChild(g);
+    row.appendChild(t);
+    row.appendChild(l);
+
+    if (e.detail) {
+      var d = document.createElement("span");
+      d.className = "detail";
+      d.textContent = e.detail;
+      row.appendChild(d);
+    }
+    return row;
+  }
+
+  function renderBar() {
+    EVENTS.forEach(function (e) { delete e.pinned; });
+    var pool = visible();
+    var rows = state.expanded ? [] : barRows();
+    el.rows.textContent = "";
+
+    if (state.expanded) {
+      // THE BAR IS THE COLLAPSED STATE. Keeping the recent rows while the log is
+      // open prints the log's own first turn-group twice, which is what the
+      // 4-row prototype made obvious — so the strip becomes a one-line title.
+      var head = document.createElement("div");
+      head.className = "ev is-empty";
+      var turns = pool.map(function (e) { return e.turn; });
+      head.textContent = pool.length === 0
+        ? "Nothing to report."
+        : "All events — turns " + Math.min.apply(null, turns) + "–" + Math.max.apply(null, turns);
+      el.rows.appendChild(head);
+    } else if (rows.length === 0) {
+      var empty = document.createElement("div");
+      empty.className = "ev is-empty";
+      empty.textContent = "Nothing to report.";
+      el.rows.appendChild(empty);
+    } else {
+      rows.forEach(function (e) { el.rows.appendChild(rowNode(e, !!e.pinned)); });
+    }
+
+    var badge = state.expanded ? pool.length : Math.max(0, pool.length - rows.length);
+    el.moreCount.textContent = String(badge);
+    el.moreCount.className = "count" + (!state.alertSeen && !state.expanded && badge > 0 ? " hot" : "");
+    el.moreWord.textContent = state.expanded ? "close" : "more";
+
+    var pointsAway = (state.edge === "bottom") ? (state.expanded ? "▾" : "▴") : (state.expanded ? "▴" : "▾");
+    el.moreCaret.textContent = pointsAway;
+    el.more.setAttribute("aria-expanded", String(state.expanded));
+  }
+
+  function renderLog() {
+    el.log.hidden = !state.expanded;
+    if (!state.expanded) { return; }
+
+    var pool = visible();
+    var turns = [];
+    pool.forEach(function (e) { if (turns.indexOf(e.turn) === -1) { turns.push(e.turn); } });
+    var shown = turns.slice(0, state.windowTurns);
+
+    el.logScroll.textContent = "";
+    shown.forEach(function (turn) {
+      var group = document.createElement("div");
+      group.className = "turn-group";
+
+      var head = document.createElement("div");
+      head.className = "turn-head";
+      head.textContent = "Turn " + turn;
+      group.appendChild(head);
+
+      pool.filter(function (e) { return e.turn === turn; })
+          .forEach(function (e) { group.appendChild(rowNode(e, false)); });
+
+      el.logScroll.appendChild(group);
+    });
+
+    var exhausted = shown.length >= turns.length;
+    el.earlier.disabled = exhausted;
+    el.earlier.textContent = exhausted ? "No earlier turns" : "Earlier turns";
+    el.retention.textContent = "showing " + shown.length + " of " + turns.length +
+      " retained turns · the sim keeps " + RETENTION_TURNS;
+  }
+
+  function renderCaption() {
+    var parts = [];
+    parts.push(state.edge === "bottom" ? "Docked bottom." : "Docked top.");
+    parts.push(state.count + (state.count === 1 ? " row" : " rows") + " in the bar, floor at “" +
+      (state.detail === "alert" ? "Alerts only" : state.detail === "notable" ? "Notable" : "Everything") + "”.");
+    if (state.order === "recent") {
+      parts.push(state.alertSeen
+        ? "Newest first; the pinned alert has been read and released its slot."
+        : "Newest first, with an unread alert pinned to the leading slot.");
+    } else {
+      parts.push("Ordered by importance — note the bar is no longer chronological.");
+    }
+    if (state.band === "same") {
+      parts.push("Sharing the edge with the band panel, bar outermost.");
+    }
+    el.caption.textContent = parts.join(" ");
+  }
+
+  function render() {
+    el.screen.setAttribute("data-edge", state.edge);
+    el.band.style.display = (state.band === "same") ? "" : "none";
+    renderBar();
+    renderLog();
+    renderCaption();
+  }
+
+  function wireSeg(id, key, cast) {
+    var group = document.getElementById(id);
+    group.addEventListener("click", function (ev) {
+      var btn = ev.target.closest("button");
+      if (!btn) { return; }
+      Array.prototype.forEach.call(group.querySelectorAll("button"), function (b) {
+        b.setAttribute("aria-pressed", String(b === btn));
+      });
+      state[key] = cast(btn.dataset[key]);
+      if (key === "detail" || key === "order") { state.windowTurns = LOG_WINDOW_TURNS; }
+      render();
+    });
+  }
+
+  wireSeg("seg-edge", "edge", String);
+  wireSeg("seg-count", "count", Number);
+  wireSeg("seg-detail", "detail", String);
+  wireSeg("seg-order", "order", String);
+  wireSeg("seg-band", "band", String);
+
+  el.more.addEventListener("click", function () {
+    state.expanded = !state.expanded;
+    // Opening the log is what marks alerts read — the pin exists to survive
+    // until the player has actually had a chance to look.
+    if (state.expanded) { state.alertSeen = true; }
+    render();
+  });
+
+  el.earlier.addEventListener("click", function () {
+    state.windowTurns += LOG_WINDOW_TURNS;
+    render();
+  });
+
+  Array.prototype.forEach.call(document.querySelectorAll(".chip[data-channel]"), function (chip) {
+    chip.addEventListener("click", function () {
+      var ch = chip.dataset.channel;
+      state.channels[ch] = !state.channels[ch];
+      chip.setAttribute("aria-pressed", String(state.channels[ch]));
+      render();
+    });
+  });
+
+  render();
+}());
+</script>

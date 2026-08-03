@@ -3,7 +3,6 @@ extends Node2D
 const SnapshotLoader = preload("res://src/scripts/SnapshotLoader.gd")
 const CommandClient = preload("res://src/scripts/CommandClient.gd")
 const ScriptHostManager = preload("res://src/scripts/scripting/ScriptHostManager.gd")
-const LocalizationStore = preload("res://src/scripts/LocalizationStore.gd")
 const ServerPortsFile = preload("res://src/scripts/ServerPortsFile.gd")
 const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 
@@ -12,8 +11,15 @@ const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 @onready var camera: Camera2D = $Camera2D
 @onready var inspector: CanvasLayer = $Inspector
 @onready var band_city_panel: CanvasLayer = $BandCityPanel
+## The Workbench's host layer. The surface itself is BUILT (not instanced) into it — see
+## `_connect_workbench`.
+@onready var workbench_layer: CanvasLayer = $Workbench
+@onready var event_dock: CanvasLayer = $EventDockPanel
 @onready var pause_layer: CanvasLayer = $PauseLayer
 @onready var pause_menu: MenuShell = $PauseLayer/MenuShell
+
+## The designer surface, built into `workbench_layer` at `_connect_workbench` and hidden until `` ` ``.
+var workbench: WorkbenchShell = null
 
 var snapshot_loader: SnapshotLoader
 var streaming_mode: bool = false
@@ -32,8 +38,6 @@ var _reveal_baseline_epoch: int = 0
 var _world_epoch_applied: int = 0
 var loading_overlay: CanvasLayer = null
 var script_host_manager: ScriptHostManager = null
-var localization_store: LocalizationStore = null
-var _campaign_label_signature: String = ""
 # Per-HUD-method time accumulated during one `_apply_snapshot` fan-out, in microseconds. Filled by
 # `_hud_invoke` only while `_hud_profiling` is up (i.e. inside the fan-out block), drained by
 # `_record_hud_calls`.
@@ -92,6 +96,27 @@ const HUD_CALL_REPORT_MIN_MSEC := 0.5
 # Loading overlay: a CanvasLayer above HUD (101) and Inspector (102), so it fully covers the blank
 # map/HUD until the new world reveals.
 const LOADING_OVERLAY_LAYER = 150
+## The Workbench sits one layer above the Inspector (102) and well under the loading overlay (150):
+## the two dev surfaces are never usefully stacked, and whichever was opened last should be the
+## readable one. It stays BELOW the event dock (`EventDockPanel.LAYER_INDEX` = 104) for the reason
+## that constant gives — the bar must not be drawn under a surface whose reservation is what pulls
+## the bar's own edges in, during the frame that reflow lands.
+##
+## **It ties with `BandCityPanel.LAYER_INDEX` (103), and the tie is resolved by tree order** — the
+## `Workbench` node follows `BandCityPanel` in `Main.tscn`, so the Workbench wins. That is the wanted
+## side of the tie (the surface being toggled is the one that should be legible mid-reflow), and the
+## two never overlap in steady state anyway: the Band panel offsets past the Workbench's reservation.
+const WORKBENCH_LAYER = 103
+## Toggle action for the designer surface. **Backquote**, which nothing else in the client binds (the
+## hotkey table in `clients/godot_thin_client/CLAUDE.md` is the roster) and which costs the game no
+## letter it may still want.
+const WORKBENCH_TOGGLE_ACTION := "toggle_workbench"
+const WORKBENCH_RESERVER := &"workbench"
+## Receipt the command log shows for a Workbench-issued command; `%s` is the command's verb. The verb
+## alone, because the argument is a JSON patch that would swamp the feed.
+const WORKBENCH_COMMAND_MESSAGE := "Workbench: %s sent."
+## Label the Workbench's status lines wear on the event dock's System channel.
+const WORKBENCH_LOG_LABEL := "Workbench"
 const LOADING_OVERLAY_TEXT = "Generating world…"
 const LOADING_OVERLAY_FONT_SIZE = 28
 const COMMAND_HOST = "127.0.0.1"
@@ -154,8 +179,6 @@ func _ready() -> void:
     if ext == null:
         push_warning("ShadowScale Godot extension not found; streaming disabled.")
     snapshot_loader = SnapshotLoader.new()
-    localization_store = LocalizationStore.new()
-    localization_store.load_default()
     # Loading gate: capture the last-revealed world epoch (persisted across Main.tscn reloads by the
     # GameLaunch autoload) as the reveal baseline, show the loading overlay, and hold the blank
     # map/HUD behind it until a FULL snapshot with a higher epoch (the freshly generated world)
@@ -202,7 +225,6 @@ func _ready() -> void:
     script_host_manager.setup(command_client)
     if inspector != null and inspector.has_method("attach_script_host"):
         inspector.call("attach_script_host", script_host_manager)
-    _hud_invoke("set_localization_store", [localization_store])
 
     # Wire HUD reference to MapView for embedded minimap (must happen before first snapshot)
     if map_view != null and map_view.has_method("set_hud_reference") and hud != null:
@@ -299,13 +321,16 @@ func _ready() -> void:
     _ensure_action_binding("toggle_inspector", Key.KEY_I)
     _ensure_action_binding("toggle_legend", Key.KEY_L)
     _ensure_action_binding("toggle_victory", Key.KEY_V)
-    _ensure_action_binding("toggle_command_feed", Key.KEY_R)
+    _ensure_action_binding("toggle_event_dock", Key.KEY_R)
     _ensure_action_binding("toggle_fow", Key.KEY_F)
+    _ensure_action_binding(WORKBENCH_TOGGLE_ACTION, Key.KEY_QUOTELEFT)
     if inspector != null and inspector.has_signal("reserved_width_changed") and not inspector.is_connected("reserved_width_changed", Callable(self, "_on_inspector_reserved_width_changed")):
         inspector.connect("reserved_width_changed", Callable(self, "_on_inspector_reserved_width_changed"))
     if inspector != null and inspector.has_method("reserved_width"):
         _apply_reservation(&"inspector", SIDE_LEFT, float(inspector.call("reserved_width")))
+    _connect_workbench()
     _connect_band_city_panel()
+    _connect_event_dock()
     _connect_pause_menu()
 
 ## The ESC pause overlay ($PauseLayer): hidden until ESC opens it. Resume hides it, Abandon
@@ -467,7 +492,6 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
             _reset_per_world_state()
             _world_epoch_applied = snapshot_epoch
     _sync_fog_of_war(snapshot, is_delta)
-    _update_campaign_label(snapshot.get("campaign_label", {}))
     var metrics: Dictionary = {}
     var t_display: int = profile.begin(PROFILE_DISPLAY)
     if map_view != null and map_view.has_method("display_snapshot"):
@@ -534,10 +558,16 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         _hud_invoke("update_voice_medium", [snapshot["voice_medium"]])
     if snapshot.has("populations") and SnapshotSections.changed(snapshot, "populations"):
         _hud_invoke("update_band_alerts", [snapshot["populations"]])
-    if not is_delta:
-        _hud_invoke("reset_command_feed")
+    # `command_events` is PER-FRAME HISTORY, never reconstructible: a delta carries only the rows
+    # appended since the baseline, a full snapshot carries the whole retained ring. Both consumers
+    # (the Telling, and the event dock) accumulate and de-duplicate, so re-ingesting a full
+    # snapshot's ring is harmless. (The Telling is deliberately NOT reset on a full frame — it keeps
+    # its own scrolled-off history and de-dupes on a signature, not on `seq`.)
     if snapshot.has("command_events") and SnapshotSections.changed(snapshot, "command_events"):
         _hud_invoke("ingest_command_events", [snapshot["command_events"]])
+    # The dock's four per-frame steps are one seam, because their ORDER is the contract and stating
+    # it in one place is what keeps it stated at all — see `apply_event_dock_frame`.
+    apply_event_dock_frame(event_dock, snapshot, is_delta)
     if snapshot.has("victory") and SnapshotSections.changed(snapshot, "victory"):
         var victory_variant: Variant = snapshot["victory"]
         if victory_variant is Dictionary:
@@ -560,6 +590,10 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         if inspector.has_method("set_streaming_active"):
             inspector.call("set_streaming_active", streaming_mode)
     profile.end(PROFILE_INSPECTOR, t_inspector)
+    # The Workbench takes both frame kinds through ONE entry point and gates on its own visibility,
+    # so a hidden surface costs a cached reference and nothing else.
+    if workbench != null:
+        workbench.update_snapshot(snapshot, not is_delta)
     var t_selection: int = profile.begin(PROFILE_SELECTION)
     _refresh_hud_selection()
     profile.end(PROFILE_SELECTION, t_selection)
@@ -609,11 +643,15 @@ func _record_hud_calls(profile: TurnProfile) -> void:
 ## Main uses, so a surface without one simply skips (it merges nothing worth clearing).
 func _reset_per_world_state() -> void:
     _hud_invoke("reset_world_state")
+    # The event dock needs no clear here: a world change always arrives on a FULL snapshot, and the
+    # `command_events` dispatch below clears it on every one of those (see the note there — a
+    # rollback reuses `seq`, so the full-frame clear is a correctness requirement in its own right).
     if map_view != null and map_view.has_method("reset_world_state"):
         map_view.call("reset_world_state")
-    # Both analytics lines print once per DISTINCT value, so a new world whose campaign label or
-    # victory winner happens to match the old one's would print nothing at all without this.
-    _campaign_label_signature = ""
+    if workbench != null:
+        workbench.reset_pages()
+    # The victory analytics line prints once per DISTINCT value, so a new world whose winner happens
+    # to match the old one's would print nothing at all without this.
     _victory_analytics_signature = ""
 
 func _emit_victory_analytics(data: Dictionary) -> void:
@@ -1016,9 +1054,16 @@ func _on_hud_answer_fork(payload: Dictionary) -> void:
         "Answered the question."
     )
 
-func _send_runtime_command(line: String, message: String) -> void:
+## `message` is the line the player may see on the event dock's System channel, and `ack_kind` says
+## what it IS. The default — `KIND_COMMAND_ECHO` — is right for every command the player issued
+## through the UI: "Advance 1 turn.", "Answered the question.", "Stop improving (12, 8)" restate an
+## action just taken, so the dock ignores them (`HudEventVocab.IGNORED_KINDS`) and only the
+## Inspector's debug console keeps them. A caller whose message reports a FAULT the client acted on
+## by itself passes `HudEventVocab.KIND_SYSTEM` instead — see `_tick_resync`.
+func _send_runtime_command(line: String, message: String,
+        ack_kind: String = HudEventVocab.KIND_COMMAND_ECHO) -> void:
     if inspector != null and inspector.has_method("send_runtime_command"):
-        var result: Variant = inspector.call("send_runtime_command", line, message)
+        var result: Variant = inspector.call("send_runtime_command", line, message, ack_kind)
         if result is bool and result:
             return
         push_warning("Command pending or rejected: %s" % line)
@@ -1075,10 +1120,25 @@ func _toggle_inspector_visibility() -> void:
         var current_visible: bool = bool(inspector.call("is_panel_visible"))
         inspector.call("set_panel_visible", not current_visible)
     # The inset update arrives via the inspector's reserved_width_changed signal.
+    if _inspector_visible() and workbench != null and workbench.is_panel_visible():
+        workbench.set_panel_visible(false)
+
+func _inspector_visible() -> bool:
+    if inspector == null or not inspector.has_method("is_panel_visible"):
+        return false
+    return bool(inspector.call("is_panel_visible"))
 
 ## Stable stacking order for co-edge reservers: lower priority sits INBOARD (against the screen
-## edge). The Inspector is always the screen-edge reserver; the Band panel stacks outboard of it.
-const RESERVER_PRIORITY := {&"inspector": 0, &"band_panel": 1}
+## edge). The Inspector and the Workbench are screen-edge reservers; the Band panel stacks outboard
+## of either. The two dev surfaces share a priority because only one of them is ever open — opening
+## either closes the other (`_toggle_workbench_visibility`) — so what matters is that the Band panel
+## offsets past whichever one is showing.
+##
+## **The event dock is deliberately absent.** It reserves nothing from any of them — it OVERLAYS
+## the map (see `EventDockPanel`'s header) — so it has no place in a stacking order and no entry in
+## `_reservations`. Its horizontal bound comes from `_update_event_dock_insets`, which reads the
+## OTHER reservers; that is the perpendicular axis and a different question from this one.
+const RESERVER_PRIORITY := {&"inspector": 0, &"workbench": 0, &"band_panel": 1}
 const BAND_PANEL_RESERVER := &"band_panel"
 
 ## Reserve space for a docked panel by insetting the game area (map + HUD) from
@@ -1097,6 +1157,10 @@ func _apply_reservation(id: StringName, edge: int, size: float) -> void:
     # Co-edge stacking: push the Band panel's leading offset so it sits just past any inboard
     # reserver on its edge (e.g. the Inspector when both are left) instead of overlapping it.
     _update_band_panel_edge_offset()
+    # The PERPENDICULAR axis: pull the horizontal event bar in from whatever is docked left/right.
+    # Recomputed on EVERY reservation change, not just the dock's own — the band panel changing edge
+    # or collapsing has to move the bar.
+    _update_event_dock_insets()
 
 ## The Band panel's leading offset = Σ sizes of all lower-priority reservers currently on the SAME
 ## edge as the Band panel (today just the Inspector when both dock left; 0 otherwise). Recomputed
@@ -1105,7 +1169,7 @@ func _update_band_panel_edge_offset() -> void:
     if band_city_panel == null or not band_city_panel.has_method("set_edge_offset") or not band_city_panel.has_method("get_dock"):
         return
     var band_edge: int = int(band_city_panel.call("get_dock"))
-    var band_priority: int = int(RESERVER_PRIORITY.get(BAND_PANEL_RESERVER, 1))
+    var band_priority: int = int(RESERVER_PRIORITY.get(BAND_PANEL_RESERVER, 0))
     var offset: float = 0.0
     for other_id in _reservations:
         if other_id == BAND_PANEL_RESERVER:
@@ -1117,8 +1181,129 @@ func _update_band_panel_edge_offset() -> void:
             offset += float(r.get("size", 0.0))
     band_city_panel.call("set_edge_offset", offset)
 
+## The event dock's counterpart to `_update_band_panel_edge_offset`, on the OTHER axis.
+##
+## The bar is top/bottom only, so every `SIDE_LEFT` / `SIDE_RIGHT` reserver is a full-height column
+## the bar must live BESIDE rather than across: it starts to the right of whatever is docked left and
+## finishes to the left of whatever is docked right. Sums the per-edge totals and hands the pair
+## over. Every reserver counts — the dock is not one of them, so there is nothing to exclude.
+##
+## **A RESERVATION IS ONLY HALF THE BOUND.** The HUD's own side columns — the left dock, and on the
+## right the dock plus the top-bar readout block — are not reservers, so bounding against
+## reservations alone still drew the bar over `Turn N` / `Units` / `Pop`. They live INSIDE whatever
+## strip the docks reserved, so the two terms ADD rather than compete: `reservation + column`. Both
+## column widths are AUTHORED (`Hud.left_column_width` / `right_column_width` read
+## `custom_minimum_size.x` off the scene), so the bar's edges are a function of constants and cannot
+## move when the player selects a tile or a metric gains a digit.
+##
+## **This is not `RESERVER_PRIORITY`.** That orders reservers stacked ALONG one shared edge, and the
+## dock is not in it at all — it reserves nothing. This is the cross axis, where there is no stacking
+## question — a vertical column simply takes room the horizontal bar may not use. Conflating the two
+## is the easy mistake: priority would never have fixed this, because TOP and LEFT are not co-edge and
+## `_update_band_panel_edge_offset` correctly ignores each other's edges.
+func _update_event_dock_insets() -> void:
+    if event_dock == null or not event_dock.has_method("set_perpendicular_insets"):
+        return
+    var left: float = 0.0
+    var right: float = 0.0
+    for other_id in _reservations:
+        var r: Dictionary = _reservations[other_id]
+        match int(r.get("edge", -1)):
+            SIDE_LEFT:
+                left += float(r.get("size", 0.0))
+            SIDE_RIGHT:
+                right += float(r.get("size", 0.0))
+    if hud != null and hud.has_method("left_column_width"):
+        left += float(hud.call("left_column_width"))
+    if hud != null and hud.has_method("right_column_width"):
+        right += float(hud.call("right_column_width"))
+    event_dock.call("set_perpendicular_insets", left, right)
+
 func _on_inspector_reserved_width_changed(width: float) -> void:
     _apply_reservation(&"inspector", SIDE_LEFT, width)
+
+## THE WORKBENCH — the designer surface (`.claude/rules/client/workbench.md`), hosted on its own
+## CanvasLayer above the Inspector's and hidden at startup exactly like it: a dev surface that opened
+## itself on every launch would cost the player half the map to close.
+##
+## It is BUILT HERE rather than instanced from a scene because `WorkbenchShell` has no `.tscn` — the
+## surface assembles its own chrome, which is what lets a page arrive without a scene edit.
+func _connect_workbench() -> void:
+    if workbench_layer == null or workbench != null:
+        return
+    workbench_layer.layer = WORKBENCH_LAYER
+    workbench = WorkbenchShell.new()
+    workbench.set_anchors_and_offsets_preset(Control.PRESET_LEFT_WIDE)
+    workbench.offset_right = WorkbenchVocab.SURFACE_WIDTH
+    workbench_layer.add_child(workbench)
+    workbench.reserved_width_changed.connect(_on_workbench_reserved_width_changed)
+    workbench.set_services(_workbench_services())
+    workbench.set_command_connected(command_client != null)
+    # Hidden at startup — and the reservation seeded from what a hidden surface reserves (0), so the
+    # map starts with the whole viewport rather than a strip it can never reclaim.
+    workbench.set_panel_visible(false)
+    _apply_reservation(WORKBENCH_RESERVER, SIDE_LEFT, workbench.reserved_width())
+
+## The capabilities the Workbench's pages are lent, by name (`WorkbenchVocab.SERVICE_*`).
+##
+## **A new page needing a new capability adds a row HERE and reads it by name there** — the shell
+## carries this dictionary without reading a single entry, so nothing in between has to change. That
+## is the property the whole services indirection exists for; passing these as positional arguments
+## is what made the previous version need a shell edit per capability.
+func _workbench_services() -> Dictionary:
+    return {
+        WorkbenchVocab.SERVICE_SEND_COMMAND: Callable(self, "_workbench_send_command"),
+        WorkbenchVocab.SERVICE_APPEND_LOG: Callable(self, "_workbench_append_log"),
+        WorkbenchVocab.SERVICE_NEW_GAME: Callable(self, "_workbench_new_game"),
+    }
+
+## Send one Workbench command down the SAME transport every other client command uses. Answers
+## whether it went, so a page can tell "sent" from "no server" — `_send_runtime_command` only warns.
+func _workbench_send_command(line: String) -> bool:
+    if inspector == null or not inspector.has_method("send_runtime_command"):
+        return false
+    var verb := line.get_slice(" ", 0)
+    var result: Variant = inspector.call("send_runtime_command", line,
+        WORKBENCH_COMMAND_MESSAGE % verb)
+    return result is bool and result
+
+## The surface's status log goes to the EVENT DOCK's System channel (`R`) — the client's existing
+## "what just happened" surface, which is where the retired command feed's audience went. It routes
+## through `_note_system_event`, so a client without the dock simply drops the line.
+##
+## **`KIND_SYSTEM`, not the command echo.** An Apply's "3 overrides sent" is not a receipt for a line
+## the player typed; it is the surface reporting a state change it made on their behalf, and
+## `HudEventVocab.IGNORED_KINDS` would swallow an echo outright. The command RECEIPTS the Workbench
+## generates are separate and do take the echo default — see `_workbench_send_command`.
+##
+## The Workbench's own Logs page is registered but unbuilt; when it is built, this is the one row
+## that moves.
+func _workbench_append_log(text: String) -> void:
+    _note_system_event(WORKBENCH_LOG_LABEL, text, false)
+
+## Re-issue the CURRENT world's `new_game` line — the same preset/size/seed/profile this session
+## launched with, so an override applies to a world the designer can compare against the last one.
+## The reveal gate is not disturbed: the rebuild arrives as a higher world epoch like any other.
+func _workbench_new_game() -> void:
+    if _new_game_command.is_empty():
+        return
+    _send_runtime_command(_new_game_command["line"], _new_game_command["message"])
+
+func _on_workbench_reserved_width_changed(width: float) -> void:
+    _apply_reservation(WORKBENCH_RESERVER, SIDE_LEFT, width)
+
+## THE TWO DEV SURFACES ARE MUTUALLY EXCLUSIVE, and it is a correctness rule, not tidiness. Both
+## reserve SIDE_LEFT, so an open pair insets the map and HUD by the SUM of their widths (380 + 560)
+## while the Workbench — on the higher CanvasLayer — draws only its own 560, leaving a wide strip of
+## bare background and an Inspector that is invisible yet still reserving. Opening one closes the
+## other, which is also the behaviour the shared reserver priority already assumed.
+func _toggle_workbench_visibility() -> void:
+    if workbench == null:
+        return
+    workbench.set_panel_visible(not workbench.is_panel_visible())
+    # The inset update arrives via each surface's reserved_width_changed signal.
+    if workbench.is_panel_visible() and _inspector_visible():
+        inspector.call("set_panel_visible", false)
 
 ## Wire the dockable Band/City panel onto the slice-1 reservation fan-out and seed
 ## its initial reservation (mirrors the inspector: children _ready before us, so the
@@ -1152,6 +1337,65 @@ func _connect_band_city_panel() -> void:
 func _on_band_panel_reservation_changed(edge: int, size: float) -> void:
     _apply_reservation(&"band_panel", edge, size)
 
+## Wire the event dock's CONTENT inlets — the HUD's own System notes, the HUD's band roster, the
+## Inspector's console chatter — and seed the one geometry it does take, its perpendicular insets.
+##
+## **THERE IS NO RESERVATION TO FAN OUT.** Unlike the Band/City panel, the dock overlays the map and
+## reserves nothing: it has no entry in `_reservations`, no row in `RESERVER_PRIORITY` (whose `0` is
+## the Inspector's), and publishes neither `reservation_changed` nor `current_reservation_size()`, so
+## nothing here touches `_apply_reservation`. It is bounded on the OTHER axis instead — see
+## `_update_event_dock_insets`.
+func _connect_event_dock() -> void:
+    if event_dock == null:
+        return
+    # The HUD's own client-side notes (a quick-hunt refusal, a knowledge unlock, an unanswered fork)
+    # used to land in the command feed. They are System-channel events now, and the HUD relays them
+    # rather than reaching for a panel it does not own.
+    if hud != null and hud.has_signal("system_note_requested") and not hud.is_connected(
+            "system_note_requested", Callable(self, "_on_system_note_requested")):
+        hud.connect("system_note_requested", Callable(self, "_on_system_note_requested"))
+    # THE DOCK NAMES A BAND THE WAY THE REST OF THE HUD DOES. The snapshot carries no band NAME, so
+    # the sim writes a positional `Band <BandId>` into a demographic event's label and repeats the id
+    # in the detail's `band=` token; the client's own name is a ROSTER POSITION, which the HUD owns.
+    # So the HUD publishes the map and the dock does the substitution — the sim's label is never
+    # changed, and neither surface reaches into the other.
+    if hud != null and hud.has_signal("band_labels_changed") and not hud.is_connected(
+            "band_labels_changed", Callable(self, "_on_band_labels_changed")):
+        hud.connect("band_labels_changed", Callable(self, "_on_band_labels_changed"))
+    # The Inspector's console chatter — connection state, a command sent or refused, a rollback.
+    # A dropped command socket is something the player must be told, and the debug console is not
+    # where they will see it.
+    if inspector != null and inspector.has_signal("system_event") and not inspector.is_connected(
+            "system_event", Callable(self, "_on_inspector_system_event")):
+        inspector.connect("system_event", Callable(self, "_on_inspector_system_event"))
+    # Seed the perpendicular insets: nothing else will, since the dock never enters
+    # `_apply_reservation`'s fan-out. Wiring runs after `_connect_band_city_panel`, so the vertical
+    # reservers are already in `_reservations` by now.
+    _update_event_dock_insets()
+
+func _on_band_labels_changed(labels: Dictionary) -> void:
+    _event_dock_invoke("set_band_labels", [labels])
+
+## The HUD's own client-side notes — a quick-hunt refusal, a knowledge unlock, an unanswered fork.
+## Every one of them is a fault or a state change the player is owed, so this path states no kind and
+## takes the `system` default; the HUD has no acknowledgement path to distinguish.
+func _on_system_note_requested(label: String, detail: String) -> void:
+    _note_system_event(label, detail, false)
+
+func _on_inspector_system_event(label: String, detail: String, alert: bool, kind: String) -> void:
+    _note_system_event(label, detail, alert, kind)
+
+func _note_system_event(label: String, detail: String, alert: bool,
+        kind: String = HudEventVocab.KIND_SYSTEM) -> void:
+    if event_dock != null and event_dock.has_method("note_system"):
+        event_dock.call("note_system", label, detail, alert, kind)
+
+## `R` toggles the event dock — the hotkey the retired left-dock command feed used to own, and the
+## persisted `command_feed_suppressed` preference migrates onto the dock's own `suppressed` key.
+func _toggle_event_dock_visibility() -> void:
+    if event_dock != null and event_dock.has_method("toggle_suppressed"):
+        event_dock.call("toggle_suppressed")
+
 func _toggle_legend_visibility() -> void:
     if hud == null:
         return
@@ -1163,14 +1407,6 @@ func _toggle_victory_visibility() -> void:
         return
     if hud.has_method("toggle_victory"):
         _hud_invoke("toggle_victory")
-
-## The command feed ships hidden (six read-only receipts, no verbs) so the selection card owns the
-## left dock's height; `R` opens it on demand, exactly as `L` / `V` open the two reference cards.
-func _toggle_command_feed_visibility() -> void:
-    if hud == null:
-        return
-    if hud.has_method("toggle_command_feed"):
-        _hud_invoke("toggle_command_feed")
 
 # FOG OF WAR IS SERVER-AUTHORITATIVE. The sim owns `fog_enabled` on its config — it gates BOTH the
 # visibility raster and the herd display list, which is the point: with fog off the fauna the filter
@@ -1231,45 +1467,6 @@ func _sync_fog_of_war(snapshot: Dictionary, is_delta: bool) -> void:
         map_view.call("set_fow_enabled", enabled)
     _push_fog_preference()
 
-func _update_campaign_label(raw_value: Variant) -> void:
-    var label_dict: Dictionary = {}
-    if raw_value is Dictionary:
-        label_dict = raw_value.duplicate(true)
-    if hud != null and hud.has_method("update_campaign_label"):
-        _hud_invoke("update_campaign_label", [label_dict])
-    var title_text: String = _resolve_campaign_field(label_dict, "title")
-    var subtitle_text: String = _resolve_campaign_field(label_dict, "subtitle")
-    var title_key := String(label_dict.get("title_loc_key", ""))
-    var subtitle_key := String(label_dict.get("subtitle_loc_key", ""))
-    var profile_id := String(label_dict.get("profile_id", ""))
-    var signature := "%s|%s|%s|%s|%s" % [
-        profile_id,
-        title_text,
-        subtitle_text,
-        title_key,
-        subtitle_key
-    ]
-    if signature == _campaign_label_signature:
-        return
-    _campaign_label_signature = signature
-    if title_text != "" or subtitle_text != "" or title_key != "" or subtitle_key != "":
-        print("[analytics] campaign_label title=\"%s\" subtitle=\"%s\" loc_title=\"%s\" loc_subtitle=\"%s\"" % [
-            title_text,
-            subtitle_text,
-            title_key,
-            subtitle_key
-        ])
-
-func _resolve_campaign_field(label_dict: Dictionary, field: String) -> String:
-    var raw_text := String(label_dict.get(field, ""))
-    var loc_key_field := "%s_loc_key" % field
-    var loc_key := String(label_dict.get(loc_key_field, ""))
-    if localization_store != null and loc_key != "":
-        var localized: String = localization_store.resolve(loc_key, raw_text)
-        if localized.strip_edges() != "":
-            return localized
-    return raw_text
-
 func _process(delta: float) -> void:
     if Input.is_action_just_pressed("toggle_inspector"):
         _toggle_inspector_visibility()
@@ -1277,10 +1474,12 @@ func _process(delta: float) -> void:
         _toggle_legend_visibility()
     if Input.is_action_just_pressed("toggle_victory"):
         _toggle_victory_visibility()
-    if Input.is_action_just_pressed("toggle_command_feed"):
-        _toggle_command_feed_visibility()
+    if Input.is_action_just_pressed("toggle_event_dock"):
+        _toggle_event_dock_visibility()
     if Input.is_action_just_pressed("toggle_fow"):
         _toggle_fow_overlay()
+    if Input.is_action_just_pressed(WORKBENCH_TOGGLE_ACTION):
+        _toggle_workbench_visibility()
     if command_client != null:
         command_client.poll()
         command_client.ensure_connected()
@@ -1306,13 +1505,18 @@ func _process(delta: float) -> void:
 ## The drop itself is correct and deliberate — merging a delta onto the wrong baseline produces a
 ## world that is silently wrong rather than visibly broken (`docs/plan_delta_streaming.md` §3.3).
 ## But dropping alone leaves the client frozen, so the request is the other half of that contract.
+##
+## **BOTH SENDS STATE `KIND_SYSTEM` RATHER THAN TAKING THE ECHO DEFAULT.** A resync is not a receipt
+## for anything the player did — the client sent it because a frame could not be applied — so it is a
+## fault report, and the System channel is where a fault report belongs.
 func _tick_resync(delta: float) -> void:
     if snapshot_loader == null:
         return
     if snapshot_loader.resync_needed:
         snapshot_loader.resync_needed = false
         if _resync_pending_accum < 0.0:
-            _send_runtime_command("resync", "resync requested (unapplicable delta)")
+            _send_runtime_command("resync", "resync requested (unapplicable delta)",
+                HudEventVocab.KIND_SYSTEM)
             _resync_pending_accum = 0.0
         return
     if _resync_pending_accum < 0.0:
@@ -1320,7 +1524,8 @@ func _tick_resync(delta: float) -> void:
     _resync_pending_accum += delta
     if _resync_pending_accum >= RESYNC_ANSWER_TIMEOUT:
         _resync_pending_accum = 0.0
-        _send_runtime_command("resync", "resync retry (still no baseline)")
+        _send_runtime_command("resync", "resync retry (still no baseline)",
+            HudEventVocab.KIND_SYSTEM)
 
 ## Loading gate: while the world is not yet revealed, decide whether a streamed snapshot is the
 ## freshly generated world (reveal + apply) or a pre-rebuild frame of the OLD one (ignore).
@@ -1405,6 +1610,51 @@ func _snapshot_is_delta(snapshot: Dictionary) -> bool:
         if snapshot.has(field):
             return true
     return false
+
+## Everything one snapshot frame owes the event dock, in the ONE order that is correct:
+## **RESET → CURRENT TURN → RETENTION → INGEST**. Each arrow is load-bearing.
+##
+## - **`reset()` first, and on a FULL frame only.** It is a correctness requirement rather than
+##   hygiene: `CommandEventLog` is checkpoint state, so a ROLLBACK restores it including its
+##   `next_seq` counter and the replayed events reuse sequence numbers the client has already seen.
+##   A rollback publishes a full frame, so without the clear the dock suppresses every replayed row
+##   as a duplicate `seq` and goes on showing a plausible but stale log, silently. It must still be
+##   the FIRST step, because the same frame carries the backfill and clearing after the dispatch
+##   would wipe what just landed.
+## - **The current turn AFTER the reset.** `reset()` sets `_current_turn = -1` and `set_current_turn`
+##   only ever RAISES it, so stamping the turn ahead of the clear is simply erased — after which the
+##   dock's "current turn" is whatever the newest INGESTED event's tick happened to be (or `-1` on an
+##   empty ring, where `_prune()` then no-ops entirely). A client-side `note_system` posted before the
+##   next frame would then be stamped and grouped under a turn that is not the one it happened on.
+## - **Retention BEFORE the ingest**: the sim's window is hot-reloadable, so a frame can both narrow
+##   it and carry the events that must be trimmed against the NEW value.
+## - **The ingest last**, since it is what the other three configure.
+##
+## `static`, taking the dock, so `tools/ui_preview.gd` can drive this exact sequence against a real
+## `EventDockPanel` with no `Main` in the tree — the same named-seam pattern
+## `tools/snapshot_alias_guard.gd` uses on `MapView`'s ingests. An assertion that re-typed the order
+## in the harness would pass on any order this function chose.
+static func apply_event_dock_frame(dock: Node, snapshot: Dictionary, is_delta: bool) -> void:
+    if dock == null:
+        return
+    if not is_delta:
+        _dock_invoke(dock, "reset")
+    # The turn a client-side System event is stamped with, so it groups with the sim events of the
+    # turn it actually happened on.
+    _dock_invoke(dock, "set_current_turn", [int(snapshot.get("turn", 0))])
+    if snapshot.has("command_events_retention_turns"):
+        _dock_invoke(dock, "set_retention_turns", [int(snapshot["command_events_retention_turns"])])
+    if snapshot.has("command_events") and SnapshotSections.changed(snapshot, "command_events"):
+        _dock_invoke(dock, "ingest_events", [snapshot["command_events"]])
+
+## The event dock's twin of `_hud_invoke` — a silent `has_method` probe, so a client running
+## without the panel (a harness, a partial scene) simply does nothing rather than erroring.
+func _event_dock_invoke(method: String, args: Array = []) -> void:
+    _dock_invoke(event_dock, method, args)
+
+static func _dock_invoke(dock: Node, method: String, args: Array = []) -> void:
+    if dock != null and dock.has_method(method):
+        dock.callv(method, args)
 
 func _hud_invoke(method: String, args: Array = []) -> Variant:
     var result: Variant = null

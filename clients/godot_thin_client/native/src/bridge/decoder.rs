@@ -622,6 +622,18 @@ fn decode_delta_against(
         frame.insert_changed("command_events", &command_events_to_array(events));
     }
 
+    // The retention window is hot-reloadable, so a delta may carry a NEW value; `0` is the
+    // FlatBuffers default meaning "not stated" and is withheld. `insert_always`, not
+    // `insert_changed`: it rides the campaign section rather than being a section of its own, and
+    // naming it in the manifest would invite a consumer to gate on a section name nothing else uses.
+    let retention_turns = delta
+        .campaign()
+        .map(|s| s.commandEventsRetentionTurns())
+        .unwrap_or(0);
+    if retention_turns > 0 {
+        frame.insert_always("command_events_retention_turns", retention_turns as i64);
+    }
+
     if let Some(pending_forks) = delta.campaign().and_then(|s| s.pendingForks()) {
         frame.insert_changed("pending_forks", &pending_forks_to_array(pending_forks));
     }

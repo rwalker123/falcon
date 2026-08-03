@@ -361,9 +361,9 @@ pub fn spawn_initial_world(
     let food_overlay_cfg = overlays_cfg.food();
     let preference = &config.start_profile_overrides.food_modules;
     let land_tiles = province_map.land_tiles().max(1);
-    let baseline_total = food_overlay_cfg.max_total_sites();
-    let scaled_total = (land_tiles / 120).max(24);
-    let target_total = scaled_total.max(baseline_total).min(land_tiles);
+    // The site budget is a share of the map's LAND, resolved through the config's one seam so
+    // curation and anything that reports the budget cannot disagree about it.
+    let target_total = food_overlay_cfg.site_budget(land_tiles);
     let mut module_candidates: std::collections::BTreeMap<FoodModule, Vec<FoodSiteCandidate>> =
         std::collections::BTreeMap::new();
 
@@ -2430,6 +2430,248 @@ pub fn reconcile_food_modules(
     );
 }
 
+/// **Move each curated gathering marker onto the best ground in its own spatial bucket, counting
+/// fresh water as quality** (issue #466).
+///
+/// **Why this exists at all.** The `FoodSiteRegistry` is not decoration: `food_modules` on the wire is
+/// the *only* source the client's `_forage_compose_available` gate reads, so a hex without a marker
+/// offers no Forage button — and `sow` requires a band already foraging the tile. The ~130 markers
+/// (`site_land_fraction` 0.08 of land) are therefore the whole of the ground a player can climb the
+/// plant ladder on, out of ~2,000 food-bearing hexes. Curation chose them by spatial bucket, latitude
+/// quota and min-spacing — and fresh water, the thing `plant:field`'s site rule actually demands, was
+/// invisible to it.
+///
+/// **What this pass overrides in curation's ranking.** `compare_food_site` sorts on `seasonal_weight`
+/// DESC and then on `preferred` DESC. The *seasonal-weight* term is inert — every candidate ships
+/// `INITIAL_SEASONAL_WEIGHT = 1.0`, so the first key is always `Equal` — but the `preferred` tie-break
+/// is live: it is `FoodModulePreference::matches` against `start_profile_overrides.food_modules`, and
+/// the shipped `start_profiles.json` names `savanna_grassland` primary and `riverine_delta` secondary.
+/// So `preferred` is what actually decided which hex inside a bucket carried the marker, and this pass
+/// **deliberately overrides it**, scoring on forage capacity + fresh water alone. The accepted
+/// consequence: a marker may move off a start-profile-preferred module onto wetter ground. That is
+/// tolerable because `riverine_delta` *is* the fresh-water module, so the bias largely reinforces the
+/// preference rather than fighting it — and adding `preferred` as a second term in the score would
+/// make "why did this marker move" far harder to reason about for a tie-break that only ever ran
+/// because the term above it was constant.
+///
+/// **Why it is a separate pass rather than a fix inside curation.** Curation runs inside
+/// `spawn_initial_world`, which is **before `generate_hydrology`** — at that moment the map has lakes
+/// but no rivers, no deltas, no floodplains and no `river_edges`, i.e. none of the fresh water the rule
+/// is about. Curation cannot simply be moved later either: `best_start_tile` consumes the curated list
+/// and the starting population is spawned around its answer, all in the same system. So the selection
+/// stays where it is (start geography is untouched) and this pass **re-ranks the result** over the
+/// final terrain.
+///
+/// **It relocates, it never adds or drops.** The marker count, the per-bucket quota and the latitude
+/// distribution are all preserved by construction, because every move stays inside the marker's own
+/// bucket and the min-spacing rule is re-checked against every other marker. That is the "re-rank
+/// only" decision: gathering stays exactly as scarce as it was, it just sits on the river valleys.
+///
+/// **Chain position.** After `reconcile_food_modules` — which is what guarantees every surviving entry
+/// still classifies to a real module on the final terrain — and before the wire ever sees the list.
+///
+/// **Deterministic**: candidates are scored, then sorted by score descending with an explicit
+/// `(y, x)` tie-break; markers are visited in their existing list order; no `HashMap` iteration and no
+/// RNG.
+///
+/// **`fresh_water_site_weight = 0.0` is a no-op because of the early return, not because of the
+/// score.** With the bonus off, quality is bare forage capacity — and curation did not pick the
+/// highest-capacity hex in each bucket, so a pass that ran at weight 0 would still relocate (measured
+/// at 82 of ~130 markers on one seed). The guard is therefore load-bearing, and
+/// [`FoodSiteWaterBiasReport`] is what makes it *testable*: the pass publishes how many markers it
+/// moved, on every path, and the zero-weight arm asserts that number is `0`.
+pub fn bias_food_sites_toward_fresh_water(
+    registry: Res<TileRegistry>,
+    config: Res<SimulationConfig>,
+    labor: Res<crate::LaborConfigHandle>,
+    snapshot_overlays: Res<SnapshotOverlaysConfigHandle>,
+    mut food_sites: ResMut<FoodSiteRegistry>,
+    mut report: ResMut<FoodSiteWaterBiasReport>,
+    tiles: Query<&Tile>,
+) {
+    let overlays = snapshot_overlays.get();
+    let food_cfg = overlays.food();
+    let water_weight = food_cfg.fresh_water_site_weight();
+
+    let width = registry.width.max(1);
+    let height = registry.height.max(1);
+    let wrap = config.map_topology.wrap_horizontal;
+
+    let tile_at = |pos: UVec2| -> Option<&Tile> {
+        registry
+            .index(pos.x, pos.y)
+            .and_then(|entity| tiles.get(entity).ok())
+    };
+    let is_watered = |pos: UVec2| -> bool {
+        tile_at(pos).is_some_and(|tile| {
+            crate::tile_is_fresh_watered(tile, width, height, wrap, |neighbor| {
+                tile_at(neighbor).map(|t| t.terrain_tags)
+            })
+        })
+    };
+    let count_watered = |entries: &[FoodSiteEntry]| -> usize {
+        entries
+            .iter()
+            .filter(|entry| is_watered(entry.position))
+            .count()
+    };
+
+    if water_weight <= 0.0 {
+        // The report is written on this path too, and `moved`/`relabelled` written as **zero**: it is
+        // the evidence that the kill switch really killed the pass, so a count left behind by a
+        // previous build would be exactly the failure it exists to detect.
+        *report = FoodSiteWaterBiasReport {
+            moved: 0,
+            relabelled: 0,
+            watered: count_watered(food_sites.sites()),
+            total: food_sites.sites().len(),
+        };
+        info!(
+            target: "shadow_scale::mapgen",
+            "mapgen.food_sites.water_bias.skipped=weight_zero"
+        );
+        return;
+    }
+
+    let forage = &labor.get().forage;
+    let bucket_cols = BUCKET_COLS.max(1);
+    let bucket_rows = BUCKET_ROWS.max(1);
+    let bucket_of = |pos: UVec2| -> usize {
+        let bx = ((pos.x * bucket_cols) / width).min(bucket_cols - 1);
+        let by = ((pos.y * bucket_rows) / height).min(bucket_rows - 1);
+        (by * bucket_cols + bx) as usize
+    };
+
+    // **Site quality** — the tile's own forage capacity plus what fresh water is worth, in the same
+    // units. Read through `tile_forage_capacity`, never a private table, so a marker is ranked by the
+    // very number that sizes the patch it will carry and that `plant:field`'s floor is compared against.
+    let quality = |tile: &Tile| -> f32 {
+        crate::tile_forage_capacity(forage, tile)
+            + if is_watered(tile.position) {
+                water_weight
+            } else {
+                0.0
+            }
+    };
+
+    // One pass over the map builds every bucket's candidate list. A candidate must pass **both**
+    // gates, and they are not redundant: `classify_food_module` says *which kind* of gathering a hex
+    // offers — a marker on ground that classifies to nothing is exactly what `reconcile_food_modules`
+    // drops — while the capacity gate says whether there is *any* food to gather at all. Four biomes
+    // classify to a real module while `capacity_by_biome` reads `NO_FORAGE_CAPACITY`: `SaltFlat`
+    // (→ SemiAridScrub), `HydrothermalVentField` (→ WetlandSwamp), `Glacier` (→ BorealArctic via the
+    // POLAR tag) and `ActiveVolcanoSlope` (→ MontaneHighland via HIGHLAND). `spawn_initial_forage`
+    // seeds them **no `ForagePatch`**. Since the water bonus alone can outscore a modest dry hex, a
+    // marker relocated onto one of those would publish a Forage affordance — `food_modules` is the
+    // only thing the client's gate reads — over ground the sim deliberately left patchless. Same
+    // constant as `spawn_initial_forage`, so the two cannot drift.
+    let bucket_count = (bucket_cols * bucket_rows) as usize;
+    let mut buckets: Vec<Vec<(UVec2, f32)>> = vec![Vec::new(); bucket_count];
+    for y in 0..height {
+        for x in 0..width {
+            let pos = UVec2::new(x, y);
+            let Some(tile) = tile_at(pos) else {
+                continue;
+            };
+            if classify_food_module(tile).is_none() {
+                continue;
+            }
+            if crate::tile_forage_capacity(forage, tile) <= crate::NO_FORAGE_CAPACITY {
+                continue;
+            }
+            buckets[bucket_of(pos)].push((pos, quality(tile)));
+        }
+    }
+    for bucket in buckets.iter_mut() {
+        // Score DESC, then `(y, x)` ASC — a total order, so two builds cannot disagree about which of
+        // two equally good hexes a marker lands on.
+        bucket.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| (a.0.y, a.0.x).cmp(&(b.0.y, b.0.x)))
+        });
+    }
+
+    let min_spacing = food_cfg.min_site_spacing().max(1);
+    let min_spacing_sq = (min_spacing * min_spacing) as i64;
+    let mut positions: Vec<UVec2> = food_sites.iter().map(|entry| entry.position).collect();
+    // Squared *offset-grid* distance, matching curation's own spacing test rather than inventing a
+    // second one — the two rules have to agree or a relocation could land inside a gap curation forbade.
+    let too_close = |a: UVec2, b: UVec2| -> bool {
+        let dx = (a.x as i64 - b.x as i64).abs();
+        let dy = (a.y as i64 - b.y as i64).abs();
+        dx * dx + dy * dy < min_spacing_sq
+    };
+
+    let mut moved = 0usize;
+    let mut relabelled = 0usize;
+    let mut entries = food_sites.sites().to_vec();
+    for idx in 0..entries.len() {
+        let current = entries[idx].position;
+        let Some(current_tile) = tile_at(current) else {
+            continue;
+        };
+        let current_quality = quality(current_tile);
+
+        let mut best: Option<(UVec2, f32)> = None;
+        for &(pos, score) in buckets[bucket_of(current)].iter() {
+            // The list is score-descending, so once it drops to what we already have nothing further
+            // in this bucket can beat it.
+            if score <= current_quality {
+                break;
+            }
+            if pos == current {
+                continue;
+            }
+            if positions
+                .iter()
+                .enumerate()
+                .any(|(other, &taken)| other != idx && too_close(pos, taken))
+            {
+                continue;
+            }
+            best = Some((pos, score));
+            break;
+        }
+
+        let Some((target, _)) = best else {
+            continue;
+        };
+        let Some(target_tile) = tile_at(target) else {
+            continue;
+        };
+        // Terrain authors module + kind at the destination — the same division of labour
+        // `reconcile_food_modules` keeps — while the marker's own `seasonal_weight` travels with it.
+        let Some(module) = classify_food_module(target_tile) else {
+            continue;
+        };
+        if entries[idx].module != module || entries[idx].kind != module.site_kind() {
+            entries[idx].module = module;
+            entries[idx].kind = module.site_kind();
+            relabelled += 1;
+        }
+        entries[idx].position = target;
+        positions[idx] = target;
+        moved += 1;
+    }
+
+    let watered_sites = count_watered(&entries);
+    let total = entries.len();
+    food_sites.set_sites(entries);
+    *report = FoodSiteWaterBiasReport {
+        moved,
+        relabelled,
+        watered: watered_sites,
+        total,
+    };
+
+    info!(
+        target: "shadow_scale::mapgen",
+        "mapgen.food_sites.water_bias moved={} relabelled={} watered={}/{} weight={}",
+        moved, relabelled, watered_sites, total, water_weight
+    );
+}
+
 fn seeded_modifiers_for_position(position: UVec2) -> [Scalar; CULTURE_TRAIT_AXES] {
     let mut modifiers = [Scalar::zero(); CULTURE_TRAIT_AXES];
     let seed = position.x as i32 * 31 + position.y as i32 * 17;
@@ -2761,6 +3003,10 @@ fn spawn_population_entity(
     // The band's durable identity — see `BandId`. Allocated here rather than derived from position
     // because several bands can share a hex and a band outlives the hex it started on.
     entity.insert(band_ids.allocate());
+    // The fractional carry that turns the demographic rates into whole-person feed events. Spawned
+    // empty here, beside the cohort whose flows it accumulates — a band without one runs the model
+    // but reports no births/deaths (see `simulate_population`'s query).
+    entity.insert(DemographicFlowAccumulator::default());
     // Positive `ResidentBand` marker: this is a real band and participates in the
     // population/settlement arc (demographics, migration, sedentarization, startup seeding, supply
     // networks, default-band command pickers). Detached expeditions are spawned separately and

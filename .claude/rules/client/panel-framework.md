@@ -18,7 +18,7 @@ panel IS:
 - **Free-floating panel** (anchored against the viewport — the Inspector,
   `NarrativeForkPanel`) → `ui/AutoSizingPanel.gd`: attach it and call `fit_to_content`.
   It sizes against the *viewport* via `global_position` + anchors + `offset_bottom`.
-- **Dock card** (a child of a `PanelDock` `VBoxContainer` — command feed, subject drawer)
+- **Dock card** (a child of a `PanelDock` `VBoxContainer` — the subject drawer)
   → `PanelCard` + `ui/hud/DockScrollFit.gd`. The container overwrites a dock child's size
   every layout pass and the ceiling that matters is the *dock's* remaining height, not the
   window's — `AutoSizingPanel` there just fights the container.
@@ -51,6 +51,14 @@ the next height fit.
 content's width, so the card *looks* right while its own rect, and every placement decision
 made from it, is the nominal number.
 
+**And the same is true of a card fitted too SHORT, with one extra consequence:** the panel grows out
+of the bottom instead, and `fit_to_content`'s scroll test — which compares the caller's own
+`content_height + extra_height` against the room below the card — under-reports by the same amount, so
+a sheet that genuinely does not fit is left with its scroll DISABLED and runs off the screen. Whatever
+a caller passes as `extra_height` must therefore be the chrome that is really there. `ComposeSheet`
+measured its title label where its header ROW carries a taller ✕ button; the autopsy and the two
+assertions that pin it are in `labor-ui.md` → "THE HEIGHT CHROME IS THE HEADER **ROW**".
+
 ## Key scripts
 
 | Script | Purpose |
@@ -75,10 +83,62 @@ by reserver id, so multiple panels can reserve (possibly different) edges at onc
   Each stores `{edge, size}` under `id` and recomputes four per-edge totals
   (`left/right/top/bottom` = Σ of sizes whose edge matches).
 - **`Main._apply_reservation(id, edge, size)`** fans a reserver's contribution out
-  to both surfaces. Two reservers today: the **Inspector** (`&"inspector"`,
+  to both surfaces. Three reservers today: the **event dock** (`&"event_dock"`,
+  `SIDE_TOP`/`SIDE_BOTTOM` — see `event-dock.md`), the **Inspector** (`&"inspector"`,
   `SIDE_LEFT` — `reserved_width()` / `reserved_width_changed` on show/hide + live
   drag-resize) and the **Band/City panel** (`&"band_panel"`, its currently-docked
   edge — see below).
+- **`Main.RESERVER_PRIORITY` = `{event_dock: 0, inspector: 1, band_panel: 2}`** — the
+  stable stacking order for co-edge reservers, LOWER sitting against the screen edge.
+  It is read by `_update_band_panel_edge_offset()`, which offsets the Band panel
+  inboard by the Σ sizes of lower-priority reservers on its own edge. A new reserver
+  therefore only has to pick a number; the offset falls out. The event dock is 0
+  because a thin strip on the rim reads as chrome and it keeps the band panel's
+  position relative to the map fixed when the bar grows a row.
+- **`Main._update_event_dock_insets()` is the PERPENDICULAR axis, and it is NOT
+  priority.** `RESERVER_PRIORITY` orders reservers stacked ALONG one shared edge;
+  a top/bottom strip and a left/right column are never co-edge, so priority has
+  nothing to say about them and `_update_band_panel_edge_offset` correctly ignores
+  the pairing. What the horizontal bar needs instead is to be pulled IN from the
+  vertical columns — it starts right of whatever is docked left and stops left of
+  whatever is docked right. Recomputed on every `_apply_reservation`, so a panel
+  changing edge or collapsing moves the bar. It changes where the strip is DRAWN,
+  never what it reserves. Conflating the two axes is the easy mistake, and it is
+  the one that shipped: a `SIDE_TOP` bar spanning the raw window drew straight
+  over the `SIDE_LEFT` band panel's tab bar.
+- **A reservation is FULL WIDTH, and that is why not every panel wants one.**
+  Every reserver insets both surfaces — the map so its content cannot hide under
+  the strip, the HUD so its bars and docks reflow beside it — across the whole
+  edge. The event dock briefly reserved and then stopped: its strip is bounded to
+  the centre band, so the full-width reservation pushed the map down for a bar
+  that filled only the middle of it and left bare background at the ends. It
+  **overlays** instead (`event-dock.md`), and is not in this registry at all. A
+  panel that does not span its edge should ask whether it should be reserving.
+
+### The HUD's own side columns are AUTHORED, and a horizontal panel must respect them
+
+A panel that spans the HUD's width draws over the left dock, the right dock and
+the top-bar readout block — none of which are reservers, so bounding against the
+reservation registry alone is not enough. `Hud.left_column_width()` /
+`right_column_width()` publish those widths, and they read `custom_minimum_size.x`
+off the scene's own regions rather than measuring content:
+
+| Region | Authored | Why it cannot drift |
+|---|---|---|
+| `LeftDock` | 360 | `PanelDock` zeroes the stack's horizontal minimum on construction, so no card can widen the column |
+| `RightDock` | 344 | its card minimum (320) plus its authored margins (8 + 16), authored as the outer minimum so the published number is the one it renders at |
+| `TurnBlock` | 344 | authored to match the dock beneath it — it had **no** minimum of its own and was pure text width, which is exactly the measurement that must not decide a panel's edge |
+
+`TurnBlock` is the **only** content in `TopBar` besides the expanding spacer that pushes it right —
+the campaign title block that used to sit at its left end is gone, so the bar's authored 96px height
+is now carrying one right-aligned readout column and nothing else.
+
+**A bar whose edge tracked a MEASURED width is the flicker rule again**: it would
+jump when the player selects a tile and the selection card appears, or when a
+metric gains a digit — and worse than on the band panel, since an event arrives
+every turn. `ui_preview` asserts the live rects never exceed the authored numbers,
+so a scene edit that outgrows a column fails loudly instead of the bar quietly
+overlapping.
 - **`MapView`** applies the totals via three coordinated pieces:
   1. `_get_adjusted_viewport_size()` subtracts `left+right` on x and `top+bottom`
      on y, so fit, pan-clamp, draw extents, hit-testing and the minimap indicator
@@ -124,9 +184,10 @@ always reports a correct minimum size, so the dock reflows automatically.
   the title on the shared `HudStyle.INK`.
 - Replaces the bespoke `ui/AutoSizingPanel.gd` height math — the dock's own
   `ScrollContainer` owns overflow, so cards only size to content. A card whose
-  content grows without bound (the command feed) additionally caps itself against
-  the dock via the shared `ui/hud/DockScrollFit.gd`; the Telling panel grows to
-  fit its own bounded page capped at `PAGE_MAX_HEIGHT` and needs neither.
+  content grows without bound caps itself against the dock via the shared
+  `ui/hud/DockScrollFit.gd` (the subject drawer is the remaining caller, the command
+  feed having been retired); the Telling panel grows to fit its own bounded page
+  capped at `PAGE_MAX_HEIGHT` and needs neither.
 
 ### PanelDock (`ui/PanelDock.gd`)
 Ordered controller for one dock region's `VBoxContainer`. Panels `add(panel,
@@ -135,9 +196,10 @@ data-driven — `set_relevant(panel, false)` (or `panel.visible = false`) remove
 panel from layout flow and the stack reflows with no gap. Hud builds `left_dock`
 and `right_dock` in `_ready()`.
 
-**The current roster:** LEFT = Tile 10 · Stockpile 20 · Command feed 30 (the feed
-`set_relevant(false)` by default too — six read-only receipts and no verbs, toggled
-by `R` via `Hud.toggle_command_feed`, persisted to the same `[hud_panels]` section).
+**The current roster:** LEFT = Tile 10 · Stockpile 20. **The command feed card is
+gone** (issue #272): its events are the event dock's now (`event-dock.md`), `R` toggles
+that instead, and the left column is the selection card's again — which is what its
+40%-of-dock `DockScrollFit` cap existed to protect in the first place.
 RIGHT = **Telling 10** · Victory 20 · Terrain Types 30, the last two
 `set_relevant(false)` by default and toggled by `V` / `L` (`Hud.toggle_victory` /
 `toggle_legend`, both persisting to `user://narrative.cfg` `[hud_panels]` — the
@@ -153,7 +215,7 @@ spilling under a sideways scrollbar (which reads as unpolished for a game HUD).
 the scene (`HudLayer.tscn`); both docks use `AUTO`, so a scrollbar appears only
 when the stack actually overflows.
 
-**Migration status:** `TilePanel` (the one selection card), `CommandFeedPanel`, `TellingPanel`, and
+**Migration status:** `TilePanel` (the one selection card), `TellingPanel`, and
 `TerrainLegendPanel` are now `PanelCard`s (the last two dropped the bespoke
 `AutoSizingPanel` height math and the legend's absolute `PRESET_TOP_RIGHT`
 positioning that used to overlap the Victory panel). `StockpilePanel` and

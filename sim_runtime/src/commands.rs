@@ -3,8 +3,6 @@ use std::convert::TryFrom;
 use prost::Message;
 use thiserror::Error;
 
-use crate::{CorruptionSubsystem, InfluenceScopeKind};
-
 mod proto {
     include!(concat!(env!("OUT_DIR"), "/shadow_scale.commands.rs"));
 }
@@ -29,43 +27,12 @@ pub enum CommandPayload {
         width: u32,
         height: u32,
     },
-    Heat {
-        target_x: u32,
-        target_y: u32,
-        delta: i64,
-    },
     Orders {
         faction_id: u32,
         directive: OrdersDirective,
     },
     Rollback {
         tick: u64,
-    },
-    AxisBias {
-        axis: u32,
-        value: f32,
-    },
-    SupportInfluencer {
-        id: u32,
-        magnitude: f32,
-    },
-    SuppressInfluencer {
-        id: u32,
-        magnitude: f32,
-    },
-    SupportInfluencerChannel {
-        id: u32,
-        channel: SupportChannel,
-        magnitude: f32,
-    },
-    SpawnInfluencer {
-        scope: Option<InfluenceScopeKind>,
-        generation: Option<u16>,
-    },
-    InjectCorruption {
-        subsystem: CorruptionSubsystem,
-        intensity: f32,
-        exposure_timer: u32,
     },
     UpdateEspionageGenerators {
         updates: Vec<EspionageGeneratorUpdate>,
@@ -260,6 +227,18 @@ pub enum CommandPayload {
         seed: u64,
         profile_id: String,
     },
+    /// Stage a config-tuning override, applied at the **next** `new_game`. Proto field 47.
+    ///
+    /// `patch_json` is carried as an opaque string on purpose: it is a *sparse* patch whose shape is
+    /// that of the target config, which `sim_runtime` deliberately knows nothing about. The server
+    /// merges, validates and installs it.
+    SetConfigOverride {
+        kind: ConfigOverrideKind,
+        patch_json: String,
+    },
+    /// Drop every staged config override; the next `new_game` boots on the shipped configs.
+    /// Proto field 48.
+    ClearConfigOverrides,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -326,13 +305,51 @@ pub enum ReloadConfigKind {
     CrisisTelemetry,
 }
 
-/// Influencer support channels exposed to the command surface.
+/// Which boot config a staged tuning override applies to.
+///
+/// Deliberately **not** [`ReloadConfigKind`]: that names the configs the running world can
+/// hot-reload, this names the ones the client's tuning manifest can stage for the next `new_game`.
+/// The two sets barely overlap and answer different questions, so folding them together would make
+/// half of each list nonsense.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SupportChannel {
-    Popular,
-    Peer,
-    Institutional,
-    Humanitarian,
+pub enum ConfigOverrideKind {
+    Simulation,
+    Labor,
+    Demographics,
+    Expedition,
+    Combat,
+}
+
+impl ConfigOverrideKind {
+    /// Every kind, in manifest order. Iterating this is what lets a reader (the manifest drift
+    /// test, the help text) stay exhaustive without a second hand-maintained list.
+    pub const ALL: &'static [ConfigOverrideKind] = &[
+        ConfigOverrideKind::Simulation,
+        ConfigOverrideKind::Labor,
+        ConfigOverrideKind::Demographics,
+        ConfigOverrideKind::Expedition,
+        ConfigOverrideKind::Combat,
+    ];
+
+    /// The wire spelling, shared with the client's `tuning_manifest.json` `kind` field.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ConfigOverrideKind::Simulation => "simulation",
+            ConfigOverrideKind::Labor => "labor",
+            ConfigOverrideKind::Demographics => "demographics",
+            ConfigOverrideKind::Expedition => "expedition",
+            ConfigOverrideKind::Combat => "combat",
+        }
+    }
+
+    /// Parse a wire spelling. `None` for anything else — an unknown kind is rejected, never
+    /// defaulted, because guessing which config a designer meant to retune is the wrong answer.
+    pub fn from_wire_str(value: &str) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|kind| kind.as_str() == value)
+    }
 }
 
 /// Counter-intelligence security posture controls.
@@ -364,8 +381,6 @@ pub enum CommandDecodeError {
     MissingPayload,
     #[error("invalid enum value {value} for {field}")]
     InvalidEnum { field: &'static str, value: i32 },
-    #[error("generation id {value} exceeds u16 range")]
-    GenerationOverflow { value: u32 },
 }
 
 impl CommandEnvelope {
@@ -395,15 +410,6 @@ impl CommandEnvelope {
                     height: *height,
                 })
             }
-            CommandPayload::Heat {
-                target_x,
-                target_y,
-                delta,
-            } => pb::command_envelope::Command::Heat(pb::HeatCommand {
-                target_x: *target_x,
-                target_y: *target_y,
-                delta: *delta,
-            }),
             CommandPayload::Orders {
                 faction_id,
                 directive,
@@ -414,50 +420,6 @@ impl CommandEnvelope {
             CommandPayload::Rollback { tick } => {
                 pb::command_envelope::Command::Rollback(pb::RollbackCommand { tick: *tick })
             }
-            CommandPayload::AxisBias { axis, value } => {
-                pb::command_envelope::Command::AxisBias(pb::AxisBiasCommand {
-                    axis: *axis,
-                    value: *value,
-                })
-            }
-            CommandPayload::SupportInfluencer { id, magnitude } => {
-                pb::command_envelope::Command::SupportInfluencer(pb::SupportInfluencerCommand {
-                    id: *id,
-                    magnitude: *magnitude,
-                })
-            }
-            CommandPayload::SuppressInfluencer { id, magnitude } => {
-                pb::command_envelope::Command::SuppressInfluencer(pb::SuppressInfluencerCommand {
-                    id: *id,
-                    magnitude: *magnitude,
-                })
-            }
-            CommandPayload::SupportInfluencerChannel {
-                id,
-                channel,
-                magnitude,
-            } => {
-                pb::command_envelope::Command::SupportChannel(pb::SupportInfluencerChannelCommand {
-                    id: *id,
-                    channel: support_channel_to_proto(*channel) as i32,
-                    magnitude: *magnitude,
-                })
-            }
-            CommandPayload::SpawnInfluencer { scope, generation } => {
-                pb::command_envelope::Command::SpawnInfluencer(pb::SpawnInfluencerCommand {
-                    scope: scope.map(influence_scope_to_proto).map(|v| v as i32),
-                    generation: generation.map(|value| value as u32),
-                })
-            }
-            CommandPayload::InjectCorruption {
-                subsystem,
-                intensity,
-                exposure_timer,
-            } => pb::command_envelope::Command::InjectCorruption(pb::InjectCorruptionCommand {
-                subsystem: corruption_subsystem_to_proto(*subsystem) as i32,
-                intensity: *intensity,
-                exposure_timer: *exposure_timer,
-            }),
             CommandPayload::UpdateEspionageGenerators { updates } => {
                 pb::command_envelope::Command::UpdateEspionageGenerators(
                     pb::UpdateEspionageGeneratorsCommand {
@@ -773,6 +735,17 @@ impl CommandEnvelope {
                 seed: *seed,
                 profile_id: profile_id.clone(),
             }),
+            CommandPayload::SetConfigOverride { kind, patch_json } => {
+                pb::command_envelope::Command::SetConfigOverride(pb::SetConfigOverrideCommand {
+                    kind: config_override_kind_to_proto(*kind) as i32,
+                    patch_json: patch_json.clone(),
+                })
+            }
+            CommandPayload::ClearConfigOverrides => {
+                pb::command_envelope::Command::ClearConfigOverrides(
+                    pb::ClearConfigOverridesCommand {},
+                )
+            }
         });
 
         pb::CommandEnvelope {
@@ -789,65 +762,12 @@ impl CommandEnvelope {
                 width: cmd.width,
                 height: cmd.height,
             },
-            pb::command_envelope::Command::Heat(cmd) => CommandPayload::Heat {
-                target_x: cmd.target_x,
-                target_y: cmd.target_y,
-                delta: cmd.delta,
-            },
             pb::command_envelope::Command::Orders(cmd) => CommandPayload::Orders {
                 faction_id: cmd.faction_id,
                 directive: OrdersDirective::try_from(cmd.directive)?,
             },
             pb::command_envelope::Command::Rollback(cmd) => {
                 CommandPayload::Rollback { tick: cmd.tick }
-            }
-            pb::command_envelope::Command::AxisBias(cmd) => CommandPayload::AxisBias {
-                axis: cmd.axis,
-                value: cmd.value,
-            },
-            pb::command_envelope::Command::SupportInfluencer(cmd) => {
-                CommandPayload::SupportInfluencer {
-                    id: cmd.id,
-                    magnitude: cmd.magnitude,
-                }
-            }
-            pb::command_envelope::Command::SuppressInfluencer(cmd) => {
-                CommandPayload::SuppressInfluencer {
-                    id: cmd.id,
-                    magnitude: cmd.magnitude,
-                }
-            }
-            pb::command_envelope::Command::SupportChannel(cmd) => {
-                let channel = SupportChannel::try_from(cmd.channel)?;
-                CommandPayload::SupportInfluencerChannel {
-                    id: cmd.id,
-                    channel,
-                    magnitude: cmd.magnitude,
-                }
-            }
-            pb::command_envelope::Command::SpawnInfluencer(cmd) => {
-                let scope = match cmd.scope {
-                    Some(value) => Some(influence_scope_from_proto(value)?),
-                    None => None,
-                };
-                let generation = match cmd.generation {
-                    Some(value) => {
-                        if value > u16::MAX as u32 {
-                            return Err(CommandDecodeError::GenerationOverflow { value });
-                        }
-                        Some(value as u16)
-                    }
-                    None => None,
-                };
-                CommandPayload::SpawnInfluencer { scope, generation }
-            }
-            pb::command_envelope::Command::InjectCorruption(cmd) => {
-                let subsystem = corruption_subsystem_from_proto(cmd.subsystem)?;
-                CommandPayload::InjectCorruption {
-                    subsystem,
-                    intensity: cmd.intensity,
-                    exposure_timer: cmd.exposure_timer,
-                }
             }
             pb::command_envelope::Command::UpdateEspionageGenerators(cmd) => {
                 let mut updates = Vec::with_capacity(cmd.updates.len());
@@ -1082,6 +1002,15 @@ impl CommandEnvelope {
                 seed: cmd.seed,
                 profile_id: cmd.profile_id,
             },
+            pb::command_envelope::Command::SetConfigOverride(cmd) => {
+                CommandPayload::SetConfigOverride {
+                    kind: config_override_kind_from_proto(cmd.kind)?,
+                    patch_json: cmd.patch_json,
+                }
+            }
+            pb::command_envelope::Command::ClearConfigOverrides(_) => {
+                CommandPayload::ClearConfigOverrides
+            }
         };
 
         Ok(CommandEnvelope {
@@ -1105,23 +1034,6 @@ impl TryFrom<i32> for OrdersDirective {
     }
 }
 
-impl TryFrom<i32> for SupportChannel {
-    type Error = CommandDecodeError;
-
-    fn try_from(value: i32) -> Result<Self, Self::Error> {
-        match pb::SupportChannel::try_from(value) {
-            Ok(pb::SupportChannel::Popular) => Ok(SupportChannel::Popular),
-            Ok(pb::SupportChannel::Peer) => Ok(SupportChannel::Peer),
-            Ok(pb::SupportChannel::Institutional) => Ok(SupportChannel::Institutional),
-            Ok(pb::SupportChannel::Humanitarian) => Ok(SupportChannel::Humanitarian),
-            _ => Err(CommandDecodeError::InvalidEnum {
-                field: "SupportChannel",
-                value,
-            }),
-        }
-    }
-}
-
 impl From<OrdersDirective> for pb::OrdersDirective {
     fn from(value: OrdersDirective) -> Self {
         match value {
@@ -1132,15 +1044,6 @@ impl From<OrdersDirective> for pb::OrdersDirective {
 
 fn orders_directive_to_proto(value: OrdersDirective) -> pb::OrdersDirective {
     value.into()
-}
-
-fn support_channel_to_proto(value: SupportChannel) -> pb::SupportChannel {
-    match value {
-        SupportChannel::Popular => pb::SupportChannel::Popular,
-        SupportChannel::Peer => pb::SupportChannel::Peer,
-        SupportChannel::Institutional => pb::SupportChannel::Institutional,
-        SupportChannel::Humanitarian => pb::SupportChannel::Humanitarian,
-    }
 }
 
 fn security_policy_kind_to_proto(value: SecurityPolicyKind) -> pb::SecurityPolicyKind {
@@ -1163,23 +1066,25 @@ fn reload_config_kind_to_proto(kind: ReloadConfigKind) -> pb::ReloadConfigKind {
     }
 }
 
-fn influence_scope_to_proto(value: InfluenceScopeKind) -> pb::InfluenceScopeKind {
-    match value {
-        InfluenceScopeKind::Local => pb::InfluenceScopeKind::Local,
-        InfluenceScopeKind::Regional => pb::InfluenceScopeKind::Regional,
-        InfluenceScopeKind::Global => pb::InfluenceScopeKind::Global,
-        InfluenceScopeKind::Generation => pb::InfluenceScopeKind::Generation,
+fn config_override_kind_to_proto(kind: ConfigOverrideKind) -> pb::ConfigOverrideKind {
+    match kind {
+        ConfigOverrideKind::Simulation => pb::ConfigOverrideKind::Simulation,
+        ConfigOverrideKind::Labor => pb::ConfigOverrideKind::Labor,
+        ConfigOverrideKind::Demographics => pb::ConfigOverrideKind::Demographics,
+        ConfigOverrideKind::Expedition => pb::ConfigOverrideKind::Expedition,
+        ConfigOverrideKind::Combat => pb::ConfigOverrideKind::Combat,
     }
 }
 
-fn influence_scope_from_proto(value: i32) -> Result<InfluenceScopeKind, CommandDecodeError> {
-    match pb::InfluenceScopeKind::try_from(value) {
-        Ok(pb::InfluenceScopeKind::Local) => Ok(InfluenceScopeKind::Local),
-        Ok(pb::InfluenceScopeKind::Regional) => Ok(InfluenceScopeKind::Regional),
-        Ok(pb::InfluenceScopeKind::Global) => Ok(InfluenceScopeKind::Global),
-        Ok(pb::InfluenceScopeKind::Generation) => Ok(InfluenceScopeKind::Generation),
-        _ => Err(CommandDecodeError::InvalidEnum {
-            field: "InfluenceScopeKind",
+fn config_override_kind_from_proto(value: i32) -> Result<ConfigOverrideKind, CommandDecodeError> {
+    match pb::ConfigOverrideKind::try_from(value) {
+        Ok(pb::ConfigOverrideKind::Simulation) => Ok(ConfigOverrideKind::Simulation),
+        Ok(pb::ConfigOverrideKind::Labor) => Ok(ConfigOverrideKind::Labor),
+        Ok(pb::ConfigOverrideKind::Demographics) => Ok(ConfigOverrideKind::Demographics),
+        Ok(pb::ConfigOverrideKind::Expedition) => Ok(ConfigOverrideKind::Expedition),
+        Ok(pb::ConfigOverrideKind::Combat) => Ok(ConfigOverrideKind::Combat),
+        Ok(pb::ConfigOverrideKind::Unspecified) | Err(_) => Err(CommandDecodeError::InvalidEnum {
+            field: "ConfigOverrideKind",
             value,
         }),
     }
@@ -1198,28 +1103,6 @@ fn security_policy_kind_from_proto(value: i32) -> Result<SecurityPolicyKind, Com
     }
 }
 
-fn corruption_subsystem_to_proto(value: CorruptionSubsystem) -> pb::CorruptionSubsystem {
-    match value {
-        CorruptionSubsystem::Logistics => pb::CorruptionSubsystem::Logistics,
-        CorruptionSubsystem::Trade => pb::CorruptionSubsystem::Trade,
-        CorruptionSubsystem::Military => pb::CorruptionSubsystem::Military,
-        CorruptionSubsystem::Governance => pb::CorruptionSubsystem::Governance,
-    }
-}
-
-fn corruption_subsystem_from_proto(value: i32) -> Result<CorruptionSubsystem, CommandDecodeError> {
-    match pb::CorruptionSubsystem::try_from(value) {
-        Ok(pb::CorruptionSubsystem::Logistics) => Ok(CorruptionSubsystem::Logistics),
-        Ok(pb::CorruptionSubsystem::Trade) => Ok(CorruptionSubsystem::Trade),
-        Ok(pb::CorruptionSubsystem::Military) => Ok(CorruptionSubsystem::Military),
-        Ok(pb::CorruptionSubsystem::Governance) => Ok(CorruptionSubsystem::Governance),
-        _ => Err(CommandDecodeError::InvalidEnum {
-            field: "CorruptionSubsystem",
-            value,
-        }),
-    }
-}
-
 fn reload_config_kind_from_proto(value: i32) -> Result<ReloadConfigKind, CommandDecodeError> {
     match pb::ReloadConfigKind::try_from(value) {
         Ok(pb::ReloadConfigKind::Simulation) => Ok(ReloadConfigKind::Simulation),
@@ -1232,5 +1115,55 @@ fn reload_config_kind_from_proto(value: i32) -> Result<ReloadConfigKind, Command
             field: "ReloadConfigKind",
             value,
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The patch rides the wire as an opaque string, so the only thing that can break it is the
+    /// envelope plumbing — which this covers for the whole staged-override pair.
+    #[test]
+    fn config_override_commands_round_trip_through_the_envelope() {
+        for payload in [
+            CommandPayload::SetConfigOverride {
+                kind: ConfigOverrideKind::Combat,
+                patch_json: r#"{"lethality": 1.5}"#.to_string(),
+            },
+            CommandPayload::ClearConfigOverrides,
+        ] {
+            let envelope = CommandEnvelope {
+                payload: payload.clone(),
+                correlation_id: None,
+            };
+            let bytes = envelope.encode_to_vec().expect("encode");
+            let decoded = CommandEnvelope::decode(&bytes).expect("decode");
+            assert_eq!(decoded.payload, payload);
+        }
+    }
+
+    /// `0` is the protobuf default, so an unset `kind` field decodes as UNSPECIFIED. Accepting it
+    /// would silently retune whichever config happened to be first in the table.
+    #[test]
+    fn an_unspecified_config_override_kind_is_rejected() {
+        let envelope = pb::CommandEnvelope {
+            correlation_id: None,
+            command: Some(pb::command_envelope::Command::SetConfigOverride(
+                pb::SetConfigOverrideCommand {
+                    kind: pb::ConfigOverrideKind::Unspecified as i32,
+                    patch_json: "{}".to_string(),
+                },
+            )),
+        };
+        let mut bytes = Vec::new();
+        prost::Message::encode(&envelope, &mut bytes).expect("encode");
+        assert!(matches!(
+            CommandEnvelope::decode(&bytes),
+            Err(CommandDecodeError::InvalidEnum {
+                field: "ConfigOverrideKind",
+                ..
+            })
+        ));
     }
 }

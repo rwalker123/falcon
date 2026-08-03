@@ -5,12 +5,25 @@
 //! field that simply did not change. Nothing in normal play surfaces any of them, which is why they
 //! are pinned rather than left to review.
 
-use core_sim::SnapshotHistory;
+use core_sim::{Scalar, SnapshotHistory};
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 use sim_runtime::{
-    CampaignProfileState, CultureLayerScope, CultureTensionKind, CultureTensionState, WorldDelta,
-    WorldSnapshot,
+    CampaignProfileState, CommandEventState, CultureLayerScope, CultureTensionKind,
+    CultureTensionState, ScalarRasterState, WorldDelta, WorldSnapshot,
 };
+
+/// One retained feed row, at the sequence the log would have stamped on it (**one-based** — a
+/// fresh client cursor is `0`, so a zeroth event could never be delivered).
+fn command_event(seq: u64, tick: u64) -> CommandEventState {
+    CommandEventState {
+        tick,
+        kind: "born".to_string(),
+        faction: 0,
+        label: format!("event {seq}"),
+        detail: Some(format!("count=1 seq={seq}")),
+        seq,
+    }
+}
 
 /// Apply a delta to a snapshot the way the client's merge does: a section present on the delta
 /// replaces its counterpart, an absent one is left alone.
@@ -43,6 +56,15 @@ fn apply(base: &mut WorldSnapshot, delta: &WorldDelta) {
     }
     if let Some(v) = delta.campaign_profiles.as_ref() {
         base.campaign_profiles = v.clone();
+    }
+    // **APPEND, not replace.** `command_events` is the one section whose delta carries the rows
+    // appended since the client's cursor rather than the whole section (`snapshot::diff_appended`),
+    // so a client that overwrote here would hold only the newest turn's events and lose the ring.
+    if let Some(v) = delta.command_events.as_ref() {
+        base.command_events.extend(v.iter().cloned());
+    }
+    if let Some(v) = delta.command_events_retention_turns {
+        base.command_events_retention_turns = v;
     }
     if let Some(v) = delta.intensification_knowledge.as_ref() {
         base.intensification_knowledge = v.clone();
@@ -111,6 +133,12 @@ fn a_baseline_plus_its_deltas_reconstructs_the_world() {
                 ..Default::default()
             }];
         }
+        // The event log grows on two separate turns, so the reconstruction has to have ACCUMULATED
+        // rather than merely taken the last delta's rows.
+        if tick == 2 || tick == 4 {
+            let seq = next.command_events.len() as u64 + 1;
+            next.command_events.push(command_event(seq, tick));
+        }
         history.update(next);
         let delta = history.last_delta().expect("a delta per turn").clone();
         apply(&mut reconstructed, &delta);
@@ -136,6 +164,148 @@ fn a_baseline_plus_its_deltas_reconstructs_the_world() {
         reconstructed.tiles.len(),
         authoritative.tiles.len(),
         "tile set must match"
+    );
+    assert_eq!(
+        authoritative.command_events.len(),
+        2,
+        "the run must actually append events, or the next assertion proves nothing"
+    );
+    assert_eq!(
+        reconstructed.command_events, authoritative.command_events,
+        "command_events must survive delta reconstruction — its delta is APPEND-only, so a client \
+         that replaced the section (or a diff that shipped the whole ring) shows up here"
+    );
+}
+
+/// **A recapture's delta is cumulative, so losing one loses nothing** — the property that makes
+/// `Baseline::Hold` load-bearing for an append-only section.
+///
+/// `refresh_latest` does not commit the baseline, so each recapture diffs from the *turn's* cursor.
+/// Advancing that cursor on a recapture would consume the rows: the recapture frame would carry
+/// them, and the next real turn delta — which diffs from the turn baseline — would then never send
+/// them at all. Silent, and unrecoverable without a resync.
+#[test]
+fn a_recapture_delta_carries_every_event_since_the_turn_baseline() {
+    let mut history = SnapshotHistory::with_capacity(64);
+    let mut world = WorldSnapshot {
+        fog_enabled: true,
+        ..Default::default()
+    };
+    world.header.tick = 1;
+    history.update(world.clone());
+
+    // Two world-mutating commands land inside the same tick, each triggering a recapture.
+    world.command_events.push(command_event(1, 1));
+    history.refresh_latest(world.clone());
+    let first = history.last_delta().expect("first recapture").clone();
+
+    world.command_events.push(command_event(2, 1));
+    history.refresh_latest(world.clone());
+    let second = history.last_delta().expect("second recapture").clone();
+
+    let seqs = |delta: &WorldDelta| -> Vec<u64> {
+        delta
+            .command_events
+            .as_ref()
+            .map(|rows| rows.iter().map(|row| row.seq).collect())
+            .unwrap_or_default()
+    };
+    assert_eq!(seqs(&first), vec![1], "the first command's event");
+    assert_eq!(
+        seqs(&second),
+        vec![1, 2],
+        "the second recapture still carries the first command's event — it diffs from the TURN \
+         cursor, not from the first recapture, which is what makes dropping the first one safe"
+    );
+
+    // And the turn AFTER the recaptures still owes both, because no recapture advanced the cursor.
+    world.header.tick = 2;
+    world.command_events.push(command_event(3, 2));
+    history.update(world.clone());
+    let turn = history.last_delta().expect("turn delta").clone();
+    assert_eq!(
+        seqs(&turn),
+        vec![1, 2, 3],
+        "a recapture must not consume rows the committed turn delta is responsible for"
+    );
+}
+
+/// **A gap in the delta chain must not silently lose events.**
+///
+/// An append-only delta is not self-healing: the rows it carried are gone if it is dropped, where
+/// the old whole-vector resend would have re-stated them on the next turn. It is safe for exactly
+/// one reason — the client applies a delta only when it holds the named base frame
+/// (`WorldCache::accepts`), and a mismatch raises `resync_needed`, whose answer is a **full
+/// snapshot** carrying the entire retained ring. This pins both halves: the gap is detectable, and
+/// the resync answer really does re-backfill.
+#[test]
+fn a_dropped_delta_is_detectable_and_the_resync_answer_re_backfills_every_event() {
+    let mut history = SnapshotHistory::with_capacity(64);
+    let mut world = WorldSnapshot {
+        fog_enabled: true,
+        ..Default::default()
+    };
+    world.header.tick = 0;
+    history.update(world.clone());
+
+    let mut client = history
+        .last_snapshot()
+        .expect("baseline captured")
+        .as_ref()
+        .clone();
+    let mut client_frame = client.header.frame_seq;
+
+    let mut deltas = Vec::new();
+    for tick in 1..=3u64 {
+        world.header.tick = tick;
+        let seq = world.command_events.len() as u64 + 1;
+        world.command_events.push(command_event(seq, tick));
+        history.update(world.clone());
+        deltas.push(history.last_delta().expect("a delta per turn").clone());
+    }
+
+    // The middle frame never arrives.
+    for (index, delta) in deltas.iter().enumerate() {
+        let dropped = index == 1;
+        let applicable = delta.header.base_frame_seq == client_frame;
+        if dropped {
+            continue;
+        }
+        if !applicable {
+            // The client's gate: it CANNOT merge this, so it must ask for a resync instead of
+            // applying it against the wrong baseline.
+            assert_eq!(
+                index, 2,
+                "only the frame after the gap should be unapplicable"
+            );
+            continue;
+        }
+        apply(&mut client, delta);
+        client_frame = delta.header.frame_seq;
+    }
+
+    assert_eq!(
+        client.command_events.len(),
+        1,
+        "the gap really did cost the client events — an append-only delta is not self-healing, \
+         which is why the base-frame gate is load-bearing rather than belt-and-braces"
+    );
+
+    // The resync answer: a full snapshot, carrying the whole retained ring.
+    let authoritative = history.last_snapshot().expect("latest").as_ref().clone();
+    assert_eq!(
+        authoritative.command_events.len(),
+        3,
+        "the sim still holds every event inside its retention window"
+    );
+    assert_eq!(
+        authoritative
+            .command_events
+            .iter()
+            .map(|row| row.seq)
+            .collect::<Vec<_>>(),
+        vec![1, 2, 3],
+        "so a resynced client is whole again — nothing was lost, only undelivered"
     );
 }
 
@@ -478,4 +648,170 @@ fn a_turn_that_changes_nothing_publishes_a_delta_that_carries_nothing() {
     assert_eq!(delta.terrain, None, "unchanged section: terrain overlay");
     assert_eq!(delta.victory, None, "unchanged section: victory");
     assert_eq!(delta.herds, None, "unchanged section: herds");
+}
+
+/// A map small enough to write out, and big enough that "every cell" is a claim rather than a
+/// single value.
+const GUARD_RASTER_WIDTH: u32 = 2;
+const GUARD_RASTER_HEIGHT: u32 = 2;
+
+/// The two visibility samples `visibility_raster_from_ledger` publishes at the extremes: fog off
+/// fills the whole raster with `Scalar::SCALE` (Active), an unseen cell is `0` (Unexplored).
+const ACTIVE: i64 = Scalar::SCALE;
+const UNEXPLORED: i64 = 0;
+
+fn visibility_raster(sample: i64) -> ScalarRasterState {
+    ScalarRasterState {
+        width: GUARD_RASTER_WIDTH,
+        height: GUARD_RASTER_HEIGHT,
+        samples: vec![sample; (GUARD_RASTER_WIDTH * GUARD_RASTER_HEIGHT) as usize],
+    }
+}
+
+/// **A section a command moved and a later command in the SAME TICK moved back is restated.**
+///
+/// The reported instance is `set_fog off` then `set_fog on` with no turn between. The fog-off
+/// recapture publishes the all-Active raster; the fog-on recapture finds the fogged raster equal to
+/// the *turn* baseline and — before the `held` flag — published nothing, leaving the client
+/// rendering a fully-revealed map while `fogEnabled` on the very same delta said fog was on.
+///
+/// It does not self-heal: the visibility raster is byte-identical turn over turn whenever nothing
+/// moves, so no later turn ever finds it changed. That is the property that makes this class of bug
+/// permanent rather than one-turn, and it is why the guard is on this section.
+#[test]
+fn a_visibility_raster_toggled_off_and_back_within_a_tick_is_restated() {
+    let mut history = SnapshotHistory::with_capacity(64);
+    let mut world = WorldSnapshot {
+        fog_enabled: true,
+        visibility_raster: visibility_raster(UNEXPLORED),
+        ..Default::default()
+    };
+    world.header.tick = 1;
+    history.update(world.clone());
+
+    // `set_fog off`: a mid-tick recapture reveals the whole map.
+    world.fog_enabled = false;
+    world.visibility_raster = visibility_raster(ACTIVE);
+    history.refresh_latest(world.clone());
+    assert_eq!(
+        history
+            .last_delta()
+            .expect("a delta per recapture")
+            .visibility_raster,
+        Some(visibility_raster(ACTIVE)),
+        "the fog-off recapture must carry the revealed raster — this half always worked"
+    );
+
+    // `set_fog on`, still with no turn between: back to exactly the turn baseline.
+    world.fog_enabled = true;
+    world.visibility_raster = visibility_raster(UNEXPLORED);
+    history.refresh_latest(world.clone());
+    let delta = history.last_delta().expect("a delta per recapture");
+    assert_eq!(
+        delta.visibility_raster,
+        Some(visibility_raster(UNEXPLORED)),
+        "the fog-on recapture must RESTATE the fogged raster: it equals the turn baseline, but the \
+         client is holding the revealed one the previous recapture published"
+    );
+    assert!(
+        delta.fog_enabled,
+        "…and the flag that rides every delta must agree with the raster beside it"
+    );
+}
+
+/// The same property on a section that has nothing to do with fog, so the guard reads as the
+/// general rule it is: any whole section published on a held frame is restated when it comes back.
+#[test]
+fn a_tension_roster_changed_and_reverted_within_a_tick_is_restated() {
+    let mut history = SnapshotHistory::with_capacity(64);
+    let mut world = WorldSnapshot {
+        fog_enabled: true,
+        culture_tensions: vec![guard_tension()],
+        ..Default::default()
+    };
+    world.header.tick = 1;
+    history.update(world.clone());
+
+    world.culture_tensions.clear();
+    history.refresh_latest(world.clone());
+    assert_eq!(
+        history
+            .last_delta()
+            .expect("a delta per recapture")
+            .culture_tensions,
+        Some(Vec::new()),
+        "the first recapture carries the emptied roster"
+    );
+
+    world.culture_tensions = vec![guard_tension()];
+    history.refresh_latest(world.clone());
+    assert_eq!(
+        history
+            .last_delta()
+            .expect("a delta per recapture")
+            .culture_tensions,
+        Some(vec![guard_tension()]),
+        "the second must restate the roster the client was told to clear, even though it now equals \
+         the turn baseline again"
+    );
+}
+
+/// **A revert that straddles a turn boundary is restated by the TURN.**
+///
+/// The flag outlives the held frames, so the `Baseline::Advance` arm has to consult it too:
+/// otherwise a command that changes a section and a turn that puts it back leaves the client on the
+/// command's intermediate value with the baseline agreeing it is correct.
+#[test]
+fn a_turn_restates_a_section_a_recapture_moved_and_gave_back() {
+    let mut history = SnapshotHistory::with_capacity(64);
+    let mut world = WorldSnapshot {
+        fog_enabled: true,
+        campaign_profiles: vec![CampaignProfileState {
+            id: Some("straddle".to_string()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    world.header.tick = 1;
+    history.update(world.clone());
+
+    let baseline_profiles = world.campaign_profiles.clone();
+    world.campaign_profiles = vec![CampaignProfileState {
+        id: Some("mid-tick".to_string()),
+        ..Default::default()
+    }];
+    history.refresh_latest(world.clone());
+    assert_eq!(
+        history
+            .last_delta()
+            .expect("a delta per recapture")
+            .campaign_profiles,
+        Some(world.campaign_profiles.clone()),
+        "the recapture carries the command's change"
+    );
+
+    // The turn resolves with the roster back where the last turn left it.
+    world.header.tick = 2;
+    world.campaign_profiles = baseline_profiles.clone();
+    history.update(world.clone());
+    assert_eq!(
+        history
+            .last_delta()
+            .expect("a delta per turn")
+            .campaign_profiles,
+        Some(baseline_profiles),
+        "the turn must restate the roster — the client is holding the recapture's value"
+    );
+
+    // …and the turn after that is quiet again, because the restatement cleared the flag.
+    world.header.tick = 3;
+    history.update(world.clone());
+    assert_eq!(
+        history
+            .last_delta()
+            .expect("a delta per turn")
+            .campaign_profiles,
+        None,
+        "a restatement clears the flag, so the steady turn after it carries nothing"
+    );
 }

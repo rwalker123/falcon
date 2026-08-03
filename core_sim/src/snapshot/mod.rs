@@ -305,7 +305,48 @@ fn diff_new_culture_layers(
     )
 }
 
-/// Diff one **whole section** against its published baseline: `None` when nothing changed.
+/// A whole-section baseline **plus the flag that says the client may have moved off it**.
+///
+/// Diffing against the last *turn* rather than the last *publication* leaves a hole that never
+/// errors: if one command changes a section and a later command **in the same tick** changes it
+/// back, the second [`Baseline::Hold`] diff finds the section equal to the turn baseline and sends
+/// nothing — while the client is still holding the intermediate value the first command published.
+/// The client is stale against a baseline it agrees with, so nothing anywhere reports it.
+///
+/// `held` closes it: it means *"this section went out on a held frame since the last
+/// [`Baseline::Advance`], so the client may be holding a value this baseline does not know about"*.
+/// [`diff_whole`] restates a section whose flag is set even when it compares unchanged.
+///
+/// The wrapper exists so a **new** whole section cannot be added without the flag — the baseline
+/// field's type carries it rather than a convention someone has to remember.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct Whole<T> {
+    baseline: T,
+    /// Published on a held frame since the last [`Baseline::Advance`]. See the type's doc comment.
+    held: bool,
+}
+
+impl<T> Whole<T> {
+    /// The last committed value, for the paths that compare against it outside [`diff_whole`]
+    /// (the auxiliary feed deltas).
+    pub(crate) fn baseline(&self) -> &T {
+        &self.baseline
+    }
+
+    /// Re-baseline on `value` and clear the held flag.
+    ///
+    /// The two callers both hand the client a value and commit it in the same breath — a rollback
+    /// re-baselines with a full snapshot (`PublishState::reset_to_entry`), and an auxiliary feed
+    /// delta publishes its own section whole — so afterwards there is nothing the client could be
+    /// holding that this baseline does not know about.
+    pub(crate) fn reset(&mut self, value: T) {
+        self.baseline = value;
+        self.held = false;
+    }
+}
+
+/// Diff one **whole section** against its published baseline: `None` when nothing changed and the
+/// client is known to be on that baseline.
 ///
 /// The clone happens only on the changed branch. It used to be unconditional and taken *before* the
 /// comparison (`let state = snapshot.x.clone(); if self.x == state {…}`), which cost a full copy of
@@ -314,17 +355,42 @@ fn diff_new_culture_layers(
 /// **An unchanged section is not rewritten either**, for the same reason the indexed diff leaves an
 /// unchanged entry alone: the baseline already equals the captured value, so the assignment is a
 /// copy that cannot change anything.
-fn diff_whole<T>(baseline: &mut T, current: &T, write: Baseline) -> Option<T>
+///
+/// **The two rules around [`Whole::held`]**, which are what stop a within-tick revert from leaving
+/// the client holding a superseded intermediate value:
+/// * [`Baseline::Advance`] — send when changed (and advance), send when *unchanged but held* (a
+///   restatement, because the last thing the client was given is not this baseline). Clear the flag
+///   either way.
+/// * [`Baseline::Hold`] — send when changed and **set** the flag; send when *unchanged but held*
+///   and **clear** it, because that frame puts the client back on the baseline. Unchanged and not
+///   held sends nothing, exactly as before.
+///
+/// Every held frame is therefore still exactly `baseline(last turn) → now` plus at most one
+/// redundant restatement, so a recapture delta stays cumulative and dropping one stays harmless.
+fn diff_whole<T>(slot: &mut Whole<T>, current: &T, write: Baseline) -> Option<T>
 where
     T: Clone + PartialEq,
 {
-    if *baseline == *current {
-        return None;
+    let unchanged = slot.baseline == *current;
+    match write {
+        Baseline::Advance => {
+            let held = std::mem::take(&mut slot.held);
+            if unchanged && !held {
+                return None;
+            }
+            if !unchanged {
+                slot.baseline = current.clone();
+            }
+            Some(current.clone())
+        }
+        Baseline::Hold => {
+            if unchanged && !slot.held {
+                return None;
+            }
+            slot.held = !unchanged;
+            Some(current.clone())
+        }
     }
-    if write == Baseline::Advance {
-        *baseline = current.clone();
-    }
-    Some(current.clone())
 }
 
 /// A section that is **indexed for comparison but sent whole**: the baseline is a map (so other
@@ -333,8 +399,10 @@ where
 /// `great_discovery_definitions` is the only one — a catalog that changes when a config is loaded
 /// and never during play, so the comparison is a probe per entry and the rebuild is unreachable in
 /// steady state.
+///
+/// It sends a whole list, so it carries a [`Whole`] and obeys [`diff_whole`]'s held rules verbatim.
 fn diff_whole_indexed<K, T, Key>(
-    baseline: &mut HashMap<K, T>,
+    slot: &mut Whole<HashMap<K, T>>,
     current: &[T],
     key: Key,
     write: Baseline,
@@ -344,20 +412,76 @@ where
     T: Clone + PartialEq,
     Key: Fn(&T) -> K,
 {
-    let unchanged = current.len() == baseline.len()
-        && current
-            .iter()
-            .all(|state| baseline.get(&key(state)).is_some_and(|held| held == state));
-    if unchanged {
+    let unchanged = current.len() == slot.baseline.len()
+        && current.iter().all(|state| {
+            slot.baseline
+                .get(&key(state))
+                .is_some_and(|previous| previous == state)
+        });
+    match write {
+        Baseline::Advance => {
+            let held = std::mem::take(&mut slot.held);
+            if unchanged && !held {
+                return None;
+            }
+            if !unchanged {
+                slot.baseline.clear();
+                for state in current {
+                    slot.baseline.insert(key(state), state.clone());
+                }
+            }
+            Some(current.to_vec())
+        }
+        Baseline::Hold => {
+            if unchanged && !slot.held {
+                return None;
+            }
+            slot.held = !unchanged;
+            Some(current.to_vec())
+        }
+    }
+}
+
+/// Diff an **append-only log** against a published cursor: the rows appended since, or `None`.
+///
+/// The third diff shape, and the only one whose baseline is a single number. `command_events` is a
+/// log — rows are appended, never edited, and the oldest fall out of the retention window — so
+/// `diff_whole` re-serialised the entire retained ring on every turn any event fired, which at a
+/// 20-turn window is ~200 rows to say that three of them are new.
+///
+/// **A dropped delta permanently loses the events it carried**, where a whole-vector resend was
+/// self-healing. That is safe for exactly one reason: the client applies a delta only when it holds
+/// the base frame (`WorldCache::accepts`), and a gap raises `resync_needed`, whose answer is a full
+/// snapshot carrying the whole retained ring. Break that gate and this diff silently drops history —
+/// `core_sim/tests/delta_streaming.rs` pins the pairing.
+///
+/// **`Baseline::Hold` must not advance the cursor**, and that is load-bearing rather than symmetry
+/// with the other diffs: a mid-tick recapture that advanced it would consume the rows, and the next
+/// real turn delta — which diffs from the *turn's* baseline — would never send them at all. It is
+/// the same cumulativity property recaptures already have for every other section.
+fn diff_appended(
+    baseline: &mut u64,
+    current: &[CommandEventState],
+    write: Baseline,
+) -> Option<Vec<CommandEventState>> {
+    let cursor = *baseline;
+    let appended: Vec<CommandEventState> = current
+        .iter()
+        .filter(|state| state.seq > cursor)
+        .cloned()
+        .collect();
+    if appended.is_empty() {
         return None;
     }
     if write == Baseline::Advance {
-        baseline.clear();
-        for state in current {
-            baseline.insert(key(state), state.clone());
+        // The highest seq PRESENT, not the highest ever issued: the two differ only if the window
+        // evicted the newest row, which cannot happen, and taking the max of what shipped is what
+        // keeps the cursor a statement about the client's held state.
+        if let Some(highest) = appended.iter().map(|state| state.seq).max() {
+            *baseline = highest;
         }
     }
-    Some(current.to_vec())
+    Some(appended)
 }
 
 /// The O(changed) property of the indexed diffs, asserted on the baseline map itself.
@@ -477,16 +601,143 @@ mod indexed_diff_tests {
     /// A whole section that did not move is neither cloned nor written back.
     #[test]
     fn an_unchanged_whole_section_is_not_rewritten() {
-        let mut baseline = vec![1u8, 2, 3];
+        let mut slot = Whole::default();
+        slot.reset(vec![1u8, 2, 3]);
         assert_eq!(
-            diff_whole(&mut baseline, &vec![1u8, 2, 3], Baseline::Advance),
+            diff_whole(&mut slot, &vec![1u8, 2, 3], Baseline::Advance),
             None
         );
         assert_eq!(
-            diff_whole(&mut baseline, &vec![4u8], Baseline::Advance),
+            diff_whole(&mut slot, &vec![4u8], Baseline::Advance),
             Some(vec![4u8])
         );
-        assert_eq!(baseline, vec![4u8]);
+        assert_eq!(slot.baseline(), &vec![4u8]);
+    }
+
+    /// A section changed and changed **back** within one tick is restated, rather than silently
+    /// leaving the client on the intermediate value the first held frame published.
+    #[test]
+    fn a_section_reverted_within_a_tick_is_restated_and_then_settles() {
+        let mut slot = Whole::default();
+        slot.reset(vec![1u8]);
+
+        // The command that moves it: a held frame carries the new value and flags the section.
+        assert_eq!(
+            diff_whole(&mut slot, &vec![2u8], Baseline::Hold),
+            Some(vec![2u8])
+        );
+        // The command that moves it back: equal to the baseline, but the client is not on it.
+        assert_eq!(
+            diff_whole(&mut slot, &vec![1u8], Baseline::Hold),
+            Some(vec![1u8])
+        );
+        // The flag is cleared by that restatement, so a third held frame is quiet again.
+        assert_eq!(diff_whole(&mut slot, &vec![1u8], Baseline::Hold), None);
+        // …and so is the turn that follows, which is the property the steady-turn budget rests on.
+        assert_eq!(diff_whole(&mut slot, &vec![1u8], Baseline::Advance), None);
+        assert_eq!(slot.baseline(), &vec![1u8]);
+    }
+
+    /// A revert that straddles a turn boundary is restated by the turn: the flag outlives the held
+    /// frames and is consulted by the [`Baseline::Advance`] arm.
+    #[test]
+    fn a_turn_restates_a_section_a_held_frame_moved_and_gave_back() {
+        let mut slot = Whole::default();
+        slot.reset(vec![1u8]);
+
+        assert_eq!(
+            diff_whole(&mut slot, &vec![2u8], Baseline::Hold),
+            Some(vec![2u8])
+        );
+        assert_eq!(
+            diff_whole(&mut slot, &vec![1u8], Baseline::Advance),
+            Some(vec![1u8])
+        );
+        assert_eq!(diff_whole(&mut slot, &vec![1u8], Baseline::Advance), None);
+    }
+
+    fn event(seq: u64) -> CommandEventState {
+        CommandEventState {
+            tick: seq,
+            kind: "born".to_string(),
+            faction: 0,
+            label: format!("event {seq}"),
+            detail: None,
+            seq,
+        }
+    }
+
+    #[test]
+    fn an_append_only_diff_ships_only_the_rows_above_the_cursor() {
+        let mut cursor = 0u64;
+        let ring = vec![event(1), event(2), event(3)];
+
+        let first = diff_appended(&mut cursor, &ring, Baseline::Advance)
+            .expect("a fresh cursor is owed every row");
+        assert_eq!(
+            first.iter().map(|row| row.seq).collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        assert_eq!(cursor, 3, "the cursor advances to the newest row shipped");
+
+        assert_eq!(
+            diff_appended(&mut cursor, &ring, Baseline::Advance),
+            None,
+            "nothing new is `None`, not an empty vector — an empty section on the wire would mean \
+             'the log was cleared'"
+        );
+
+        let mut grown = ring.clone();
+        grown.push(event(4));
+        let second = diff_appended(&mut cursor, &grown, Baseline::Advance).expect("one new row");
+        assert_eq!(
+            second.iter().map(|row| row.seq).collect::<Vec<_>>(),
+            vec![4]
+        );
+        assert_eq!(cursor, 4);
+    }
+
+    /// **The `Hold` case, which is the whole reason `write` is a parameter here.** A mid-tick
+    /// recapture must not consume rows: it does not commit the baseline, so the committed turn
+    /// delta is still responsible for them, and a cursor advanced by a recapture would make that
+    /// turn delta skip them forever.
+    #[test]
+    fn a_held_diff_reports_the_same_rows_again() {
+        let mut cursor = 0u64;
+        let ring = vec![event(1), event(2)];
+
+        let recapture = diff_appended(&mut cursor, &ring, Baseline::Hold).expect("both rows");
+        assert_eq!(
+            recapture.iter().map(|row| row.seq).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert_eq!(
+            cursor, 0,
+            "a recapture leaves the cursor exactly where it was"
+        );
+
+        let mut grown = ring.clone();
+        grown.push(event(3));
+        let turn = diff_appended(&mut cursor, &grown, Baseline::Advance)
+            .expect("the committed turn still owes all three");
+        assert_eq!(
+            turn.iter().map(|row| row.seq).collect::<Vec<_>>(),
+            vec![1, 2, 3],
+            "cumulative — losing the recapture frame costs nothing"
+        );
+        assert_eq!(cursor, 3);
+    }
+
+    /// The window evicting old rows must not re-send anything: the cursor is a statement about the
+    /// client, not an index into the ring.
+    #[test]
+    fn eviction_does_not_resurrect_delivered_rows() {
+        let mut cursor = 0u64;
+        diff_appended(&mut cursor, &[event(1), event(2)], Baseline::Advance).expect("both rows");
+
+        // The window dropped 1 and 2; 3 is new.
+        let after = diff_appended(&mut cursor, &[event(3)], Baseline::Advance).expect("one row");
+        assert_eq!(after.iter().map(|row| row.seq).collect::<Vec<_>>(), vec![3]);
     }
 }
 
@@ -685,6 +936,7 @@ mod tests {
             capability_flags: 0,
             campaign_profiles: Vec::new(),
             command_events: Vec::new(),
+            command_events_retention_turns: 0,
             pending_forks: Vec::new(),
             stance_axes: Vec::new(),
             voice_medium: Vec::new(),
@@ -747,6 +999,7 @@ mod tests {
             capability_flags: 0,
             campaign_profiles: Vec::new(),
             command_events: Vec::new(),
+            command_events_retention_turns: 0,
             pending_forks: Vec::new(),
             stance_axes: Vec::new(),
             voice_medium: Vec::new(),
@@ -804,6 +1057,7 @@ mod tests {
             capability_flags: 0,
             campaign_profiles: Vec::new(),
             command_events: Vec::new(),
+            command_events_retention_turns: 0,
             pending_forks: Vec::new(),
             stance_axes: Vec::new(),
             voice_medium: Vec::new(),

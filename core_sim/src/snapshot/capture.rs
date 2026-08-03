@@ -182,53 +182,61 @@ pub(crate) struct PublishState {
     trade_links: HashMap<u64, TradeLinkState>,
     populations: HashMap<u64, PopulationCohortState>,
     power: HashMap<u64, PowerNodeState>,
-    power_metrics: PowerTelemetryState,
+    power_metrics: Whole<PowerTelemetryState>,
     generations: HashMap<u16, GenerationState>,
     influencers: HashMap<u32, InfluentialIndividualState>,
     culture_layers: HashMap<u32, CultureLayerState>,
-    culture_tensions: Vec<CultureTensionState>,
+    culture_tensions: Whole<Vec<CultureTensionState>>,
     discovery_progress: HashMap<(u32, u32), DiscoveryProgressEntry>,
     great_discoveries: HashMap<(u32, u16), GreatDiscoveryState>,
-    great_discovery_definitions: HashMap<u16, GreatDiscoveryDefinitionState>,
+    great_discovery_definitions: Whole<HashMap<u16, GreatDiscoveryDefinitionState>>,
     great_discovery_progress: HashMap<(u32, u16), GreatDiscoveryProgressState>,
-    great_discovery_telemetry: GreatDiscoveryTelemetryState,
+    great_discovery_telemetry: Whole<GreatDiscoveryTelemetryState>,
     knowledge_ledger: HashMap<u64, KnowledgeLedgerEntryState>,
-    knowledge_metrics: KnowledgeMetricsState,
-    knowledge_timeline: Vec<KnowledgeTimelineEventState>,
-    crisis_telemetry: CrisisTelemetryState,
-    crisis_overlay: CrisisOverlayState,
-    start_marker: Option<StartMarkerState>,
-    axis_bias: AxisBiasState,
-    sentiment: SentimentTelemetryState,
-    terrain_overlay: TerrainOverlayState,
-    logistics_raster: ScalarRasterState,
-    sentiment_raster: ScalarRasterState,
-    corruption_raster: ScalarRasterState,
-    visibility_raster: ScalarRasterState,
+    knowledge_metrics: Whole<KnowledgeMetricsState>,
+    knowledge_timeline: Whole<Vec<KnowledgeTimelineEventState>>,
+    crisis_telemetry: Whole<CrisisTelemetryState>,
+    crisis_overlay: Whole<CrisisOverlayState>,
+    start_marker: Whole<Option<StartMarkerState>>,
+    axis_bias: Whole<AxisBiasState>,
+    sentiment: Whole<SentimentTelemetryState>,
+    terrain_overlay: Whole<TerrainOverlayState>,
+    logistics_raster: Whole<ScalarRasterState>,
+    sentiment_raster: Whole<ScalarRasterState>,
+    corruption_raster: Whole<ScalarRasterState>,
+    visibility_raster: Whole<ScalarRasterState>,
     /// Last published `SimulationConfig::fog_enabled`, so the auxiliary (axis-bias / sentiment)
     /// deltas below echo the live setting instead of the `bool` derived default (`false`).
     fog_enabled: bool,
-    culture_raster: ScalarRasterState,
-    military_raster: ScalarRasterState,
-    moisture_raster: FloatRasterState,
-    elevation_overlay: ElevationOverlayState,
-    climate_bands: ClimateBandsState,
-    corruption: CorruptionLedger,
-    victory: VictorySnapshotState,
-    capability_flags: u32,
-    faction_inventory: Vec<SchemaFactionInventoryState>,
-    sedentarization: Vec<SchemaSedentarizationState>,
-    discovered_sites: Vec<SchemaDiscoveredSitesState>,
-    demographics: Vec<SchemaPopulationDemographicsState>,
-    forage_patches: Vec<ForagePatchState>,
-    intensification_knowledge: Vec<IntensificationKnowledgeState>,
-    campaign_profiles: Vec<CampaignProfileState>,
-    command_events: Vec<CommandEventState>,
-    pending_forks: Vec<PendingForksState>,
-    stance_axes: Vec<StanceState>,
-    voice_medium: Vec<VoiceMediumState>,
-    herds: Vec<HerdTelemetryState>,
-    food_modules: Vec<FoodModuleState>,
+    culture_raster: Whole<ScalarRasterState>,
+    military_raster: Whole<ScalarRasterState>,
+    moisture_raster: Whole<FloatRasterState>,
+    elevation_overlay: Whole<ElevationOverlayState>,
+    climate_bands: Whole<ClimateBandsState>,
+    corruption: Whole<CorruptionLedger>,
+    victory: Whole<VictorySnapshotState>,
+    capability_flags: Whole<u32>,
+    faction_inventory: Whole<Vec<SchemaFactionInventoryState>>,
+    sedentarization: Whole<Vec<SchemaSedentarizationState>>,
+    discovered_sites: Whole<Vec<SchemaDiscoveredSitesState>>,
+    demographics: Whole<Vec<SchemaPopulationDemographicsState>>,
+    forage_patches: Whole<Vec<ForagePatchState>>,
+    intensification_knowledge: Whole<Vec<IntensificationKnowledgeState>>,
+    campaign_profiles: Whole<Vec<CampaignProfileState>>,
+    /// The event log's baseline is a **cursor**, not a copy of the ring: the highest `seq` the
+    /// client has been sent. See `snapshot::diff_appended`.
+    ///
+    /// It carries no [`Whole`] flag, and cannot want one: `held` exists for a section that can be
+    /// changed and changed *back* within a tick, and an append-only log has no "back". A held frame
+    /// leaves the cursor where the turn left it, so every later frame in the tick re-ships every row
+    /// since that turn — the restatement is structural, not a flag.
+    command_events: u64,
+    command_events_retention_turns: Whole<u32>,
+    pending_forks: Whole<Vec<PendingForksState>>,
+    stance_axes: Whole<Vec<StanceState>>,
+    voice_medium: Whole<Vec<VoiceMediumState>>,
+    herds: Whole<Vec<HerdTelemetryState>>,
+    food_modules: Whole<Vec<FoodModuleState>>,
     history: VecDeque<StoredSnapshot>,
 }
 
@@ -322,7 +330,7 @@ struct CultureParts {
 /// roster that rides with it.
 fn diff_culture(
     layers: &mut HashMap<u32, CultureLayerState>,
-    tensions: &mut Vec<CultureTensionState>,
+    tensions: &mut Whole<Vec<CultureTensionState>>,
     snapshot: &WorldSnapshot,
     write: Baseline,
 ) -> CultureParts {
@@ -344,7 +352,7 @@ struct PowerParts {
 /// Power: one node per tile, so map-sized like the two above, plus the grid's telemetry block.
 fn diff_power(
     nodes: &mut HashMap<u64, PowerNodeState>,
-    metrics: &mut PowerTelemetryState,
+    metrics: &mut Whole<PowerTelemetryState>,
     snapshot: &WorldSnapshot,
     write: Baseline,
 ) -> PowerParts {
@@ -374,16 +382,16 @@ struct RasterParts {
 
 /// The baselines the raster section owns, borrowed disjointly out of [`PublishState`].
 struct RasterBaselines<'a> {
-    terrain: &'a mut TerrainOverlayState,
-    moisture: &'a mut FloatRasterState,
-    elevation: &'a mut ElevationOverlayState,
-    climate_bands: &'a mut ClimateBandsState,
-    logistics: &'a mut ScalarRasterState,
-    sentiment: &'a mut ScalarRasterState,
-    corruption: &'a mut ScalarRasterState,
-    culture: &'a mut ScalarRasterState,
-    military: &'a mut ScalarRasterState,
-    visibility: &'a mut ScalarRasterState,
+    terrain: &'a mut Whole<TerrainOverlayState>,
+    moisture: &'a mut Whole<FloatRasterState>,
+    elevation: &'a mut Whole<ElevationOverlayState>,
+    climate_bands: &'a mut Whole<ClimateBandsState>,
+    logistics: &'a mut Whole<ScalarRasterState>,
+    sentiment: &'a mut Whole<ScalarRasterState>,
+    corruption: &'a mut Whole<ScalarRasterState>,
+    culture: &'a mut Whole<ScalarRasterState>,
+    military: &'a mut Whole<ScalarRasterState>,
+    visibility: &'a mut Whole<ScalarRasterState>,
 }
 
 fn diff_rasters(
@@ -422,13 +430,13 @@ struct KnowledgeParts {
 /// The baselines the knowledge section owns.
 struct KnowledgeBaselines<'a> {
     ledger: &'a mut HashMap<u64, KnowledgeLedgerEntryState>,
-    metrics: &'a mut KnowledgeMetricsState,
-    timeline: &'a mut Vec<KnowledgeTimelineEventState>,
+    metrics: &'a mut Whole<KnowledgeMetricsState>,
+    timeline: &'a mut Whole<Vec<KnowledgeTimelineEventState>>,
     discovery_progress: &'a mut HashMap<(u32, u32), DiscoveryProgressEntry>,
     great_discoveries: &'a mut HashMap<(u32, u16), GreatDiscoveryState>,
     great_discovery_progress: &'a mut HashMap<(u32, u16), GreatDiscoveryProgressState>,
-    great_discovery_definitions: &'a mut HashMap<u16, GreatDiscoveryDefinitionState>,
-    great_discovery_telemetry: &'a mut GreatDiscoveryTelemetryState,
+    great_discovery_definitions: &'a mut Whole<HashMap<u16, GreatDiscoveryDefinitionState>>,
+    great_discovery_telemetry: &'a mut Whole<GreatDiscoveryTelemetryState>,
 }
 
 /// Knowledge, espionage and great discoveries.
@@ -496,9 +504,9 @@ struct CrisisParts {
 
 /// Crisis and victory — the two whole-section telemetry blocks that decide how a campaign ends.
 fn diff_crisis(
-    telemetry: &mut CrisisTelemetryState,
-    overlay: &mut CrisisOverlayState,
-    victory: &mut VictorySnapshotState,
+    telemetry: &mut Whole<CrisisTelemetryState>,
+    overlay: &mut Whole<CrisisOverlayState>,
+    victory: &mut Whole<VictorySnapshotState>,
     snapshot: &WorldSnapshot,
     write: Baseline,
 ) -> CrisisParts {
@@ -513,6 +521,7 @@ fn diff_crisis(
 struct CampaignParts {
     profiles: Option<Vec<CampaignProfileState>>,
     command_events: Option<Vec<CommandEventState>>,
+    command_events_retention_turns: Option<u32>,
     pending_forks: Option<Vec<PendingForksState>>,
     stance_axes: Option<Vec<StanceState>>,
     voice_medium: Option<Vec<VoiceMediumState>>,
@@ -526,17 +535,18 @@ struct CampaignParts {
 
 /// The baselines the campaign section owns.
 struct CampaignBaselines<'a> {
-    profiles: &'a mut Vec<CampaignProfileState>,
-    command_events: &'a mut Vec<CommandEventState>,
-    pending_forks: &'a mut Vec<PendingForksState>,
-    stance_axes: &'a mut Vec<StanceState>,
-    voice_medium: &'a mut Vec<VoiceMediumState>,
-    faction_inventory: &'a mut Vec<SchemaFactionInventoryState>,
-    sedentarization: &'a mut Vec<SchemaSedentarizationState>,
-    discovered_sites: &'a mut Vec<SchemaDiscoveredSitesState>,
-    demographics: &'a mut Vec<SchemaPopulationDemographicsState>,
-    intensification_knowledge: &'a mut Vec<IntensificationKnowledgeState>,
-    start_marker: &'a mut Option<StartMarkerState>,
+    profiles: &'a mut Whole<Vec<CampaignProfileState>>,
+    command_events: &'a mut u64,
+    command_events_retention_turns: &'a mut Whole<u32>,
+    pending_forks: &'a mut Whole<Vec<PendingForksState>>,
+    stance_axes: &'a mut Whole<Vec<StanceState>>,
+    voice_medium: &'a mut Whole<Vec<VoiceMediumState>>,
+    faction_inventory: &'a mut Whole<Vec<SchemaFactionInventoryState>>,
+    sedentarization: &'a mut Whole<Vec<SchemaSedentarizationState>>,
+    discovered_sites: &'a mut Whole<Vec<SchemaDiscoveredSitesState>>,
+    demographics: &'a mut Whole<Vec<SchemaPopulationDemographicsState>>,
+    intensification_knowledge: &'a mut Whole<Vec<IntensificationKnowledgeState>>,
+    start_marker: &'a mut Whole<Option<StartMarkerState>>,
 }
 
 /// Campaign and the Telling: the profile roster, the stance vector, the fork queue, and the
@@ -548,7 +558,13 @@ fn diff_campaign(
 ) -> CampaignParts {
     CampaignParts {
         profiles: diff_whole(baseline.profiles, &snapshot.campaign_profiles, write),
-        command_events: diff_whole(baseline.command_events, &snapshot.command_events, write),
+        // The one append-only section: rows above the cursor, never the whole ring.
+        command_events: diff_appended(baseline.command_events, &snapshot.command_events, write),
+        command_events_retention_turns: diff_whole(
+            baseline.command_events_retention_turns,
+            &snapshot.command_events_retention_turns,
+            write,
+        ),
         pending_forks: diff_whole(baseline.pending_forks, &snapshot.pending_forks, write),
         stance_axes: diff_whole(baseline.stance_axes, &snapshot.stance_axes, write),
         voice_medium: diff_whole(baseline.voice_medium, &snapshot.voice_medium, write),
@@ -581,9 +597,9 @@ struct SubsistenceParts {
 
 /// Fauna and flora: the herd roster, the forage patches, and the food-module map.
 fn diff_subsistence(
-    herds: &mut Vec<HerdTelemetryState>,
-    forage_patches: &mut Vec<ForagePatchState>,
-    food_modules: &mut Vec<FoodModuleState>,
+    herds: &mut Whole<Vec<HerdTelemetryState>>,
+    forage_patches: &mut Whole<Vec<ForagePatchState>>,
+    food_modules: &mut Whole<Vec<FoodModuleState>>,
     snapshot: &WorldSnapshot,
     write: Baseline,
 ) -> SubsistenceParts {
@@ -619,10 +635,10 @@ struct PeopleBaselines<'a> {
     populations: &'a mut HashMap<u64, PopulationCohortState>,
     generations: &'a mut HashMap<u16, GenerationState>,
     influencers: &'a mut HashMap<u32, InfluentialIndividualState>,
-    axis_bias: &'a mut AxisBiasState,
-    sentiment: &'a mut SentimentTelemetryState,
-    corruption: &'a mut CorruptionLedger,
-    capability_flags: &'a mut u32,
+    axis_bias: &'a mut Whole<AxisBiasState>,
+    sentiment: &'a mut Whole<SentimentTelemetryState>,
+    corruption: &'a mut Whole<CorruptionLedger>,
+    capability_flags: &'a mut Whole<u32>,
 }
 
 /// People and the networks between them: cohorts, generations, influencers, the logistics and trade
@@ -696,51 +712,53 @@ impl PublishState {
             trade_links: HashMap::new(),
             populations: HashMap::new(),
             power: HashMap::new(),
-            power_metrics: PowerTelemetryState::default(),
+            power_metrics: Whole::default(),
             generations: HashMap::new(),
             influencers: HashMap::new(),
             culture_layers: HashMap::new(),
-            culture_tensions: Vec::new(),
+            culture_tensions: Whole::default(),
             discovery_progress: HashMap::new(),
             great_discoveries: HashMap::new(),
-            great_discovery_definitions: HashMap::new(),
+            great_discovery_definitions: Whole::default(),
             great_discovery_progress: HashMap::new(),
-            great_discovery_telemetry: GreatDiscoveryTelemetryState::default(),
+            great_discovery_telemetry: Whole::default(),
             knowledge_ledger: HashMap::new(),
-            knowledge_metrics: KnowledgeMetricsState::default(),
-            knowledge_timeline: Vec::new(),
-            crisis_telemetry: CrisisTelemetryState::default(),
-            crisis_overlay: CrisisOverlayState::default(),
-            start_marker: None,
-            axis_bias: AxisBiasState::default(),
-            sentiment: SentimentTelemetryState::default(),
-            terrain_overlay: TerrainOverlayState::default(),
-            logistics_raster: ScalarRasterState::default(),
-            sentiment_raster: ScalarRasterState::default(),
-            corruption_raster: ScalarRasterState::default(),
-            visibility_raster: ScalarRasterState::default(),
+            knowledge_metrics: Whole::default(),
+            knowledge_timeline: Whole::default(),
+            crisis_telemetry: Whole::default(),
+            crisis_overlay: Whole::default(),
+            start_marker: Whole::default(),
+            axis_bias: Whole::default(),
+            sentiment: Whole::default(),
+            terrain_overlay: Whole::default(),
+            logistics_raster: Whole::default(),
+            sentiment_raster: Whole::default(),
+            corruption_raster: Whole::default(),
+            visibility_raster: Whole::default(),
             fog_enabled: true,
-            culture_raster: ScalarRasterState::default(),
-            military_raster: ScalarRasterState::default(),
-            moisture_raster: FloatRasterState::default(),
-            elevation_overlay: ElevationOverlayState::default(),
-            climate_bands: ClimateBandsState::default(),
-            corruption: CorruptionLedger::default(),
-            victory: VictorySnapshotState::default(),
-            capability_flags: 0,
-            faction_inventory: Vec::new(),
-            sedentarization: Vec::new(),
-            discovered_sites: Vec::new(),
-            demographics: Vec::new(),
-            forage_patches: Vec::new(),
-            intensification_knowledge: Vec::new(),
-            campaign_profiles: Vec::new(),
-            command_events: Vec::new(),
-            pending_forks: Vec::new(),
-            stance_axes: Vec::new(),
-            voice_medium: Vec::new(),
-            herds: Vec::new(),
-            food_modules: Vec::new(),
+            culture_raster: Whole::default(),
+            military_raster: Whole::default(),
+            moisture_raster: Whole::default(),
+            elevation_overlay: Whole::default(),
+            climate_bands: Whole::default(),
+            corruption: Whole::default(),
+            victory: Whole::default(),
+            capability_flags: Whole::default(),
+            faction_inventory: Whole::default(),
+            sedentarization: Whole::default(),
+            discovered_sites: Whole::default(),
+            demographics: Whole::default(),
+            forage_patches: Whole::default(),
+            intensification_knowledge: Whole::default(),
+            campaign_profiles: Whole::default(),
+            // A fresh world has sent nothing, so every event ever pushed is "appended since".
+            command_events: 0,
+            command_events_retention_turns: Whole::default(),
+            pending_forks: Whole::default(),
+            stance_axes: Whole::default(),
+            voice_medium: Whole::default(),
+            herds: Whole::default(),
+            food_modules: Whole::default(),
             history: VecDeque::new(),
         }
     }
@@ -845,6 +863,7 @@ impl PublishState {
             victory,
             campaign_profiles,
             command_events,
+            command_events_retention_turns,
             pending_forks,
             stance_axes,
             voice_medium,
@@ -942,6 +961,7 @@ impl PublishState {
                         CampaignBaselines {
                             profiles: campaign_profiles,
                             command_events,
+                            command_events_retention_turns,
                             pending_forks,
                             stance_axes,
                             voice_medium,
@@ -1023,6 +1043,7 @@ impl PublishState {
             victory: crisis_parts.victory,
             campaign_profiles: campaign_parts.profiles,
             command_events: campaign_parts.command_events,
+            command_events_retention_turns: campaign_parts.command_events_retention_turns,
             pending_forks: campaign_parts.pending_forks,
             stance_axes: campaign_parts.stance_axes,
             voice_medium: campaign_parts.voice_medium,
@@ -1161,39 +1182,64 @@ impl PublishState {
             .iter()
             .map(|state| (state.id, state.clone()))
             .collect();
-        self.corruption = entry.snapshot.corruption.clone();
-        self.axis_bias = entry.snapshot.axis_bias.clone();
-        self.sentiment = entry.snapshot.sentiment.clone();
-        self.terrain_overlay = entry.snapshot.terrain.clone();
-        self.logistics_raster = entry.snapshot.logistics_raster.clone();
-        self.sentiment_raster = entry.snapshot.sentiment_raster.clone();
-        self.corruption_raster = entry.snapshot.corruption_raster.clone();
-        self.visibility_raster = entry.snapshot.visibility_raster.clone();
+        self.corruption.reset(entry.snapshot.corruption.clone());
+        self.axis_bias.reset(entry.snapshot.axis_bias.clone());
+        self.sentiment.reset(entry.snapshot.sentiment.clone());
+        self.terrain_overlay.reset(entry.snapshot.terrain.clone());
+        self.logistics_raster
+            .reset(entry.snapshot.logistics_raster.clone());
+        self.sentiment_raster
+            .reset(entry.snapshot.sentiment_raster.clone());
+        self.corruption_raster
+            .reset(entry.snapshot.corruption_raster.clone());
+        self.visibility_raster
+            .reset(entry.snapshot.visibility_raster.clone());
         self.fog_enabled = entry.snapshot.fog_enabled;
-        self.culture_raster = entry.snapshot.culture_raster.clone();
-        self.military_raster = entry.snapshot.military_raster.clone();
-        self.moisture_raster = entry.snapshot.moisture_raster.clone();
-        self.culture_tensions = entry.snapshot.culture_tensions.clone();
+        self.culture_raster
+            .reset(entry.snapshot.culture_raster.clone());
+        self.military_raster
+            .reset(entry.snapshot.military_raster.clone());
+        self.moisture_raster
+            .reset(entry.snapshot.moisture_raster.clone());
+        self.culture_tensions
+            .reset(entry.snapshot.culture_tensions.clone());
         self.discovery_progress = entry
             .snapshot
             .discovery_progress
             .iter()
             .map(|state| ((state.faction, state.discovery), state.clone()))
             .collect();
-        self.victory = entry.snapshot.victory.clone();
-        self.faction_inventory = entry.snapshot.faction_inventory.clone();
-        self.sedentarization = entry.snapshot.sedentarization.clone();
-        self.discovered_sites = entry.snapshot.discovered_sites.clone();
-        self.demographics = entry.snapshot.demographics.clone();
-        self.forage_patches = entry.snapshot.forage_patches.clone();
-        self.intensification_knowledge = entry.snapshot.intensification_knowledge.clone();
-        self.campaign_profiles = entry.snapshot.campaign_profiles.clone();
-        self.command_events = entry.snapshot.command_events.clone();
-        self.pending_forks = entry.snapshot.pending_forks.clone();
-        self.stance_axes = entry.snapshot.stance_axes.clone();
-        self.voice_medium = entry.snapshot.voice_medium.clone();
-        self.herds = entry.snapshot.herds.clone();
-        self.food_modules = entry.snapshot.food_modules.clone();
+        self.victory.reset(entry.snapshot.victory.clone());
+        self.faction_inventory
+            .reset(entry.snapshot.faction_inventory.clone());
+        self.sedentarization
+            .reset(entry.snapshot.sedentarization.clone());
+        self.discovered_sites
+            .reset(entry.snapshot.discovered_sites.clone());
+        self.demographics.reset(entry.snapshot.demographics.clone());
+        self.forage_patches
+            .reset(entry.snapshot.forage_patches.clone());
+        self.intensification_knowledge
+            .reset(entry.snapshot.intensification_knowledge.clone());
+        self.campaign_profiles
+            .reset(entry.snapshot.campaign_profiles.clone());
+        // Rewind the cursor to the newest event the restored frame carries — a rollback un-sends
+        // everything after it, and a cursor left ahead would suppress the re-send.
+        self.command_events = entry
+            .snapshot
+            .command_events
+            .iter()
+            .map(|state| state.seq)
+            .max()
+            .unwrap_or(0);
+        self.command_events_retention_turns
+            .reset(entry.snapshot.command_events_retention_turns);
+        self.pending_forks
+            .reset(entry.snapshot.pending_forks.clone());
+        self.stance_axes.reset(entry.snapshot.stance_axes.clone());
+        self.voice_medium.reset(entry.snapshot.voice_medium.clone());
+        self.herds.reset(entry.snapshot.herds.clone());
+        self.food_modules.reset(entry.snapshot.food_modules.clone());
         self.great_discoveries = entry
             .snapshot
             .great_discoveries
@@ -1206,7 +1252,8 @@ impl PublishState {
             .iter()
             .map(|state| ((state.faction, state.discovery), state.clone()))
             .collect();
-        self.great_discovery_telemetry = entry.snapshot.great_discovery_telemetry.clone();
+        self.great_discovery_telemetry
+            .reset(entry.snapshot.great_discovery_telemetry.clone());
         self.knowledge_ledger = entry
             .snapshot
             .knowledge_ledger
@@ -1218,13 +1265,18 @@ impl PublishState {
                 )
             })
             .collect();
-        self.knowledge_metrics = entry.snapshot.knowledge_metrics.clone();
-        self.knowledge_timeline = entry.snapshot.knowledge_timeline.clone();
-        self.crisis_telemetry = entry.snapshot.crisis_telemetry.clone();
-        self.crisis_overlay = entry.snapshot.crisis_overlay.clone();
-        self.elevation_overlay = entry.snapshot.elevation_overlay.clone();
-        self.start_marker = entry.snapshot.start_marker.clone();
-        self.capability_flags = entry.snapshot.capability_flags;
+        self.knowledge_metrics
+            .reset(entry.snapshot.knowledge_metrics.clone());
+        self.knowledge_timeline
+            .reset(entry.snapshot.knowledge_timeline.clone());
+        self.crisis_telemetry
+            .reset(entry.snapshot.crisis_telemetry.clone());
+        self.crisis_overlay
+            .reset(entry.snapshot.crisis_overlay.clone());
+        self.elevation_overlay
+            .reset(entry.snapshot.elevation_overlay.clone());
+        self.start_marker.reset(entry.snapshot.start_marker.clone());
+        self.capability_flags.reset(entry.snapshot.capability_flags);
 
         self.last_snapshot = Some(entry.snapshot.clone());
         self.last_delta = Some(entry.delta.clone());
@@ -1290,11 +1342,14 @@ impl PublishState {
     }
 
     pub(crate) fn update_axis_bias(&mut self, bias: AxisBiasState) -> Option<Arc<Vec<u8>>> {
-        if self.axis_bias == bias {
+        if self.axis_bias.baseline() == &bias {
             return None;
         }
 
-        self.axis_bias = bias.clone();
+        // An auxiliary feed delta publishes this section whole and commits it in the same breath,
+        // so it re-baselines rather than assigning: whatever a held frame left outstanding on this
+        // section is superseded by the value going out here.
+        self.axis_bias.reset(bias.clone());
 
         let header = self
             .last_snapshot
@@ -1326,6 +1381,7 @@ impl PublishState {
             capability_flags: None,
             campaign_profiles: None,
             command_events: None,
+            command_events_retention_turns: None,
             pending_forks: None,
             stance_axes: None,
             voice_medium: None,
@@ -1454,6 +1510,7 @@ impl PublishState {
             capability_flags: None,
             campaign_profiles: None,
             command_events: None,
+            command_events_retention_turns: None,
             pending_forks: None,
             stance_axes: None,
             voice_medium: None,
@@ -1529,11 +1586,12 @@ impl PublishState {
     }
 
     pub(crate) fn update_corruption(&mut self, ledger: CorruptionLedger) -> Option<Arc<Vec<u8>>> {
-        if self.corruption == ledger {
+        if self.corruption.baseline() == &ledger {
             return None;
         }
 
-        self.corruption = ledger.clone();
+        // Re-baselines for the same reason as `update_axis_bias` above.
+        self.corruption.reset(ledger.clone());
 
         let header = self
             .last_snapshot
@@ -1565,6 +1623,7 @@ impl PublishState {
             capability_flags: None,
             campaign_profiles: None,
             command_events: None,
+            command_events_retention_turns: None,
             pending_forks: None,
             stance_axes: None,
             voice_medium: None,
@@ -1857,9 +1916,13 @@ pub fn capture_snapshot(
         let fresh_water = tile_is_fresh_watered(tile, grid.x, grid.y, wrap_horizontal, |coord| {
             tile_tags.get(coord)
         });
-        if let Some(refusal) =
-            rung_site_refusal(field_rung, tile, &labor_config.forage, fresh_water)
-        {
+        if let Some(refusal) = rung_site_refusal(
+            field_rung,
+            tile,
+            &labor_config.forage,
+            food_sites.is_site(tile.position),
+            fresh_water,
+        ) {
             sow_site_refusals.insert(tile.position, refusal);
         }
         flora_sweep.quotes(tile);
@@ -2384,6 +2447,7 @@ pub fn capture_snapshot(
         forage_patches: forage_patches_state.clone(),
         intensification_knowledge: intensification_knowledge_state.clone(),
         command_events: command_events_state.clone(),
+        command_events_retention_turns: command_events.retention_turns() as u32,
         pending_forks: pending_forks_state.clone(),
         stance_axes: stance_axes_state.clone(),
         voice_medium: voice_medium_state.clone(),

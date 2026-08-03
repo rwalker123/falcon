@@ -116,6 +116,7 @@ pub fn command_events_to_state(log: &CommandEventLog) -> Vec<CommandEventState> 
             faction: entry.faction.0,
             label: entry.label.clone(),
             detail: entry.detail.clone(),
+            seq: entry.seq,
         })
         .collect()
 }

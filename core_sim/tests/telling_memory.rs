@@ -20,6 +20,20 @@ use telling_support::{
 const PLAYER: FactionId = FactionId(0);
 const FORK_BEAT: &str = "sedentarization.soft_drift";
 
+/// The ticks on which a medium-advance beat reached the feed, newest last.
+fn medium_advance_ticks(app: &bevy::app::App) -> Vec<u64> {
+    beats(app)
+        .into_iter()
+        .filter(|event| {
+            event
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("voice.medium_index"))
+        })
+        .map(|event| event.tick)
+        .collect()
+}
+
 fn beat_fired(app: &bevy::app::App, beat: &str) -> bool {
     app.world.resource::<BeatLedger>().has_fired(beat)
 }
@@ -349,19 +363,13 @@ fn crossing_a_medium_threshold_advances_the_voice_and_fires_its_beat_once() {
         "advancing the medium must be narrated"
     );
 
-    let painted_lines = beats(&app)
-        .into_iter()
-        .filter(|event| {
-            event
-                .detail
-                .as_deref()
-                .is_some_and(|detail| detail.contains("voice.medium_index"))
-        })
-        .count();
+    let painted_ticks: Vec<u64> = medium_advance_ticks(&app);
     assert_eq!(
-        painted_lines, 1,
+        painted_ticks.len(),
+        1,
         "the medium-advance beat fires exactly once"
     );
+    let advanced_at = painted_ticks[0];
 
     // The civilization comes apart, but a people that learned to paint does not forget.
     telling_support::undomesticate_all(&mut app);
@@ -376,15 +384,17 @@ fn crossing_a_medium_threshold_advances_the_voice_and_fires_its_beat_once() {
         .cloned()
         .expect("still attained");
     assert_eq!(held.index, 1, "the medium must never regress");
-    assert_eq!(
-        beats(&app)
-            .into_iter()
-            .filter(|event| event
-                .detail
-                .as_deref()
-                .is_some_and(|detail| detail.contains("voice.medium_index")))
-            .count(),
-        1,
-        "and it must not re-fire when the signal wobbles back across the threshold"
+    // Asserted as "nothing fired AFTER the advance" rather than "the log still holds exactly one".
+    // The feed is bounded by a TURN WINDOW now (`CommandEventLog::retention_turns`), so the
+    // original line has legitimately aged out of a 25-turn collapse — while a re-fire during that
+    // collapse would be inside the window and therefore still visible here.
+    let re_fired: Vec<u64> = medium_advance_ticks(&app)
+        .into_iter()
+        .filter(|tick| *tick > advanced_at)
+        .collect();
+    assert!(
+        re_fired.is_empty(),
+        "and it must not re-fire when the signal wobbles back across the threshold \
+         (advanced at {advanced_at}, saw {re_fired:?})"
     );
 }

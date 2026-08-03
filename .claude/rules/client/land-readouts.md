@@ -19,8 +19,9 @@ paths:
   (`cultivation_progress` / `is_cultivated` / `patch_ecology_phase` / `patch_has_owner` /
   `patch_owner` / `patch_biomass` / `patch_carrying_capacity`, plus the harvest-floor instrument's four
   — `patch_per_worker_biomass` / `patch_regrowth_samples` / `patch_collapse_fraction` /
-  `patch_stressed_fraction` — all in `FOW_DISCOVERED_HIDDEN_KEYS`
-  so a remembered tile redacts them; the cross-ref is an explicit key list, so a decoded field left
+  `patch_stressed_fraction` — all in `FOW_DISCOVERED_HIDDEN_KEYS` **except
+  `patch_carrying_capacity`**, so a remembered tile redacts them but keeps the ceiling (see "Fog
+  splits a stock from its CAPACITY" below); the cross-ref is an explicit key list, so a decoded field left
   off it is absent on the plant web alone — see `labor-ui.md` → "THE PATCH'S FORECAST FIELDS REACH THE
   SHEET THROUGH `tile_info`"). The
   card shows a **Cultivation** row: "N%" while the patch is being tended, "🌾 Tended Patch"
@@ -61,19 +62,25 @@ paths:
     still read identically.
   Each row renders only where that web has a stock at all (`patch_carrying_capacity > 0` /
   `graze_capacity > 0`) — never a `0 / 0`, which reads as a starved stock rather than an absent one.
-  **A REMEMBERED TILE IS THE ONE STATE WHERE THE SURVIVING ROW IS THE ANIMAL ONE**, and it takes its
-  own explicit branch rather than relying on redaction: grass is a property of the GROUND (you can
-  read a steppe from a ridge, and the biome is already remembered) while every term of `Foraging` is
-  live patch state in `FOW_DISCOVERED_HIDDEN_KEYS`. Written as a branch because the pair's meaning is
-  POSITIONAL — a card showing `Grazing` alone must do so by decision, not because a key happened to
-  be missing (and a leaky fixture would otherwise render a false frame).
+  **AND THE `Foraging` ROW HAS A SECOND GATE THE `Grazing` ROW DOES NOT: the ground must be a
+  GATHERING SITE** (`DetailFormat.tile_is_gathering_site`, issue #464). The row's label is a **VERB**,
+  and the sim's plant rungs 1–3 all carry `requires_gathering_site`, so on ground that is not one the
+  verb is impossible and the row is a property readout for a capability the player does not have.
+  It rendered `Foraging 205 / 205 · Thriving` over a Wild Emmer basket on ground no crew could ever be
+  put on, while the land row two rows above said `No forage` and the drawer offered no compose block —
+  every signal in the block reading *go here*, the card arguing with itself, and the stand being the
+  half that was lying. **The asymmetry with `Grazing` is the point, not an oversight**: pasture feeds
+  herds with no player action at all, so it is a fact about the ground rather than an offer, and it
+  keeps its row on ground nobody gathers. See "The row is an AFFORDANCE" below.
+  **A REMEMBERED TILE STATES BOTH ROWS WITH BOTH STOCKS WITHHELD** — see "Fog splits a stock from its
+  CAPACITY" below, which is the one home for that rule.
   **The `Forage:` MODULE ROW WAS DELETED OUTRIGHT.** `Riverine / Delta — River Garden` named a
   category the player can neither choose nor change, and the basket says the same thing in the terms
   a decision is actually made in. Nothing replaced it; the module still drives the land row's glyph
   and the sim's yield, and `_format_food_kind_label` + `_value_hex`'s `"Forage"` case went with it.
   ui_preview: `tile_food_layers` (the three-role reference tile) / `food_tile` (staples only) /
   `tile_pasture_stressed` (the phase inline and amber) / `tile_pasture_none` + `tile_panel_no_forage`
-  (each web absent) / `tile_sight_remembered` (`Grazing` alone).
+  (each web absent) / `tile_sight_remembered` (both webs, capacity only).
 - **The tile card's BASKET — the plant COMPOSITION, as the `Foraging` row's decomposition** (Flora
   Roster F1/F5; snapshot `ForagePatchState.composition:[FloraShareInfo]` →
   decoded in `native/src/dict/subsistence.rs` as a `composition` array of
@@ -111,9 +118,11 @@ paths:
   `SourceForecast.flora_basket_entries` folds the rounding remainder into the LARGEST share (the
   first entry); and an empty / absent list renders **no rows** (a biome that carries no forage).
   **The basket itself is NOT in `FOW_DISCOVERED_HIDDEN_KEYS`** — it is a pure function of the BIOME —
-  **but it no longer renders on a remembered tile anyway**, because it is nested under the `Foraging`
-  row's capacity guard. With no parent row above them and no capacity to state each plant's biomass,
-  the rows would be exactly the free-floating "three more resources" list this layout exists to stop.
+  **but it does not render on a remembered tile**, because a remembered tile has no standing STOCK to
+  decompose and each row states the biomass its share amounts to. (It is the STOCK that stops it, not
+  the capacity, which a remembered tile now keeps: the `Foraging` row above the basket still renders,
+  reading `— / 205`.) With nothing to split, the rows would be exactly the free-floating "three more
+  resources" list this layout exists to stop.
   ui_preview: `tile_food_layers` (all three roles, and the biomass-remainder test — 38/31/31 of 205
   naively rounds to 206) / `tile_food_layers_unstated` (the same tile with one role missing from the
   wire: that row renders no icon) / `food_tile` / `tile_panel_land` (the fixture's shares naively round
@@ -309,11 +318,12 @@ paths:
   resolved THERE into the same phase *strings* the herd/patch payloads carry, so the client keeps ONE
   ecology vocabulary), cached in `MapView.tile_graze` — **only for tiles that actually carry
   pasture**, mirroring the sim's `GrazeRegistry`, so "no pasture" is an *absent* reading — and
-  cross-referenced onto `tile_info` by `_tile_info_at`. They are **deliberately NOT in
-  `FOW_DISCOVERED_HIDDEN_KEYS`**: grass is a property of the GROUND (you can read a steppe from a
-  ridge) and the biome above it is already remembered, so a remembered tile keeps its `Grazing` row;
-  what a remembered tile redacts is live *contents*. How the row itself reads — and why it sits
-  directly under `Foraging` — is "The tile card's TWO FOOD-WEB ROWS" above.
+  cross-referenced onto `tile_info` by `_tile_info_at`. The trio **SPLITS across
+  `FOW_DISCOVERED_HIDDEN_KEYS`** — and that list holds DECODED DICT KEYS, so it names
+  `graze_biomass` / `graze_ecology_phase` (in it) beside `graze_capacity` (deliberately not),
+  **not** the camelCase schema fields above. Exactly as the plant web's three split; see "Fog splits
+  a stock from its CAPACITY" below. How the row itself reads — and why it sits directly under
+  `Foraging` — is "The tile card's TWO FOOD-WEB ROWS" above.
 - **Sedentarization meter** (`Hud.gd` `update_sedentarization`, dispatched from `Main.gd`):
   the player faction's `SedentarizationState.score` (snapshot `sedentarization[]`) shows as a
   compact top-bar block-glyph meter (`▰▰▰▰▰▱▱ 62/100 · soft`, `SedentarizationLabel` in
@@ -357,3 +367,159 @@ paths:
     transition (player faction only). Note `herding`'s note now names **Tame**, not Corral — see the
     gate reshuffle below.
   See `core_sim` intensification ladder — knowledge.
+
+## The row is an AFFORDANCE, not a property — one predicate, three surfaces
+
+**`DetailFormat.tile_is_gathering_site(tile_info)` is the ONE test** behind all three of the tile
+card's answers to *"can anyone work this ground?"*, and it exists because they used to disagree:
+
+| Surface | What it does on ground that is not a gathering site |
+|---|---|
+| `SelectionCardController._land_row_meta` | reads `No forage` |
+| `DrawerComposeController._forage_compose_available` | offers no **Assign foragers** button |
+| `SubjectDrawerController._tile_terrain_lines` | **states no `Foraging` row and no basket** (#464) |
+
+The third disagreed with the other two for as long as the block existed. Each had open-coded the same
+`String(tile_info.get("food_module", "")).strip_edges() != ""` — except the drawer, which had never
+asked the question at all.
+
+**It is the module KEY, never its label** — a tile with no site still ships the label `"None"`, which
+would render as a site called "None". And **the wire only ever carries the curated sites**
+(`foodModules` ← the sim's `FoodSiteRegistry`, a spatially-quota'd 130–134 entries per map — 8% of
+land, biased toward fresh water since #466), so
+presence *is* the answer; there is no "carries a food module but is not a site" case to distinguish
+client-side, even though that describes most land tiles in the sim.
+
+**THE SIM OWNS THIS RULE NOW, AND DID NOT BEFORE.** Until #464 the gathering-site requirement existed
+in *one GDScript predicate* — `_forage_compose_available` — and nowhere else in the game: the sim
+accepted `assign_labor … forage` on any patch, so the client was refusing a command the server would
+have honoured, and the rule lived where the sim could not see it. It is now
+`RungSiteRequirement::requires_gathering_site` on plant rungs 1–3, enforced in the command validators
+(`.claude/rules/core_sim/cultivation.md`). The client half is a **reflection** of that rule, not the
+rule itself.
+
+**WHAT IS DELIBERATELY NOT GATED.** The remembered (Discovered) branch of `_tile_terrain_lines` takes
+no site test and cannot: `food_module` is in `FOW_DISCOVERED_HIDDEN_KEYS`, so a remembered tile has no
+reading to gate on, and inferring "not a site" from the redacted key would drop the `Foraging: — / K`
+row from **every** remembered hex — the exact card `_assert_fog_stock_parity` exists to prevent. A
+remembered card states each web's capacity and withholds its stock; whether the ground can be worked
+*now* is a question about the present, which is what a remembered tile does not know. The build meters
+(`Crop` / `Cultivation` / `Field`) are likewise ungated — they state a standing INVESTMENT, and hiding
+one would hide work already paid for.
+
+**When rung 4 (Farm) drops `requires_gathering_site`, the block returns on the ground it unlocks**, and
+that reappearance is the discovery the rung is made of. ui_preview: `tile_panel_ungathered` (the #464
+tile — the `tile_food_layers` fixture with its **site keys** cleared together, `food_module` and the
+two that describe the same site, on distinct coordinates so the frame is its own; **every patch,
+graze and composition key is identical**, which is what makes the pair a controlled comparison) with
+four assertions: no `Foraging` row, no basket, `Grazing` still stated, and — the half without which
+the rest pass against a producer that stopped emitting food-web rows entirely — the SAME tile as a
+gathering site still stating both. Sabotage-verified: dropping the gate fails the first two and leaves
+the last two green.
+
+## Fog splits a stock from its CAPACITY, never one web from the other
+
+**On a remembered (Discovered) tile both webs state their capacity and neither states its stock** —
+`Foraging: — / 205` over `Grazing: — / 130`, the same two rows in the same order as the live card
+(issue #462).
+
+The rule this replaced cut between the WEBS: grass was "a property of the ground, remembered", while
+the whole forage-patch payload was "live contents, redacted". Coherent, and it does not actually
+separate the two — a stand of wild tubers is no less a property of the ground than a stand of grass —
+so it just got applied to one of them. What it cost was a card on which the pasture was the ONLY stock
+pair on screen, which is exactly the condition under which a reader carries the grazing capacity into
+their model of the forage patch. It caused that in play more than once, including the case that
+prompted the tile-card redesign: a floodplain reading `Pasture 130 / 130` while the harvest floor was
+computed against the forage patch's 205.
+
+**The line that does separate them runs inside each web.** It rests on a sim guarantee, not on taste:
+
+- **A carrying capacity is ground.** `advance_forage_regrowth` recomputes `K` from the tile *every
+  turn* and states the invariant itself — *"THE LAND OWNS `K` … no rung below 4 raises `K` and none
+  lowers it, so a commitment changes only what the patch's biomass is made of"* — and `GrazePatch`'s
+  is *"the tile's biome-derived graze capacity … the land's property, not any animal's"*. **No player
+  action moves either.** So the value the client is sent for a hex it cannot see IS the value that hex
+  last showed, and rendering it leaks nothing. That is what makes remembering it honest with **no
+  last-known store anywhere in the client** — and there is none; "remembered" here has only ever meant
+  "the sim says Discovered, so we hide some of what it sent us".
+- **A biomass is live.** It moves every turn as the ground is grazed or gathered, by herds and rival
+  bands a remembered tile cannot see, so a remembered reading is stale by construction. The ecology
+  phase goes with it, being `classify_ecology_phase`'s reading OF that biomass.
+
+**The sim ships both webs' payload for every tile every turn, with no visibility filter at all**
+(`snapshot/map.rs`, `snapshot/subsistence.rs::snapshot_forage_patches` — neither takes a visibility
+argument; the sim's only fog gates are the visibility raster and the herd display list). So this
+redaction is wholly client-side, and the pre-fix `Grazing 130 / 130` on a fogged hex was not a memory
+at all — it was that turn's live value, arriving through a hole in the redaction list.
+
+### Where each half lives, and why the render is a BRANCH rather than a consequence
+
+- `MapView.FOW_DISCOVERED_HIDDEN_KEYS` holds `graze_biomass` / `graze_ecology_phase` /
+  `patch_biomass` / `patch_ecology_phase` and **not** `graze_capacity` / `patch_carrying_capacity`.
+- `SubjectDrawerController._tile_terrain_lines` derives `stock_known` from the VISIBILITY STATE and
+  threads it into the two symmetric leaves `_forage_stock_lines` / `_graze_stock_lines`, which share
+  `_stock_value`. **The flag is not inferred from an absent key**: the pair's meaning is positional,
+  so a card must state what it states by decision — a leaky fixture (and every ui_preview fixture is
+  one; they set `visibility_state` and redact nothing) would otherwise render a false frame.
+- `HudFloraVocab.STOCK_UNKNOWN_FORMAT` is the `— / %.0f` face, built structurally from
+  `STOCK_UNKNOWN_GLYPH` so the row and the harness searching it cannot drift. The em-dash holds the
+  numerator's place rather than the row being dropped, which keeps the pair parallel with the live
+  card — and it is the one glyph that cannot be misread as a quantity. **That is the whole point of
+  the form**: the `Remembered` chip, the unknown-contents note and the map's mist tint were all
+  already on screen when the confusion happened. They label the TILE; nothing labelled the NUMBER.
+
+### An unseen hex says so ONCE, and promises nothing it cannot do
+
+**BOTH unseen states carried the same sentence twice**, plus the Sight chip saying it a third time:
+
+| | chip | the drawer's line (**deleted**) | the roster note (**kept**) |
+|---|---|---|---|
+| Discovered | `Remembered` | `Last seen — information incomplete. Scout to update.` | `You remember the ground here, but not what's on it now.` |
+| Unexplored | `Unexplored` | `Not yet scouted — send a band to reveal this area.` | `Nobody has been here. Send a band to reveal what's on this ground.` |
+
+**The drawer emits ROWS; the one sentence is the roster's** (`_render_unknown_contents_note`, which
+renders directly beneath the drawer's label, so the pair read as one paragraph saying one thing
+twice). That is the cut — not "keep the better sentence", but *whose job is a sentence at all*.
+
+**The remembered pair also promised what the verb cannot deliver.** Both its forms closed on
+scouting, and scouting makes a hex **Discovered** — precisely the state being described — so it can
+never take a hex out of it. Current contents need **sight**: a band standing there now. Reported from
+play by a player who scouted a hex and found it already back to `Remembered` by the time they reached
+camp, i.e. the copy was telling them to redo what they had just done. `OCCUPANTS_UNKNOWN_REMEMBERED`
+is therefore trimmed to a bare statement, while **`OCCUPANTS_UNKNOWN_UNEXPLORED` keeps its verb** —
+there sending a band genuinely does make the hex discovered. **FoW copy names a verb only where the
+verb changes the state being described.**
+
+**An unexplored hex now produces NO drawer rows at all** (nothing about that ground is knowable), the
+first state in which `_tile_terrain_lines` returns empty — so `_render_land_drawer` gates
+`_tile_detail.visible` on `lines.is_empty()`. A visible empty `RichTextLabel` is not free: it still
+claims its line height and the drawer's separation, and would read as a blank gap between the land
+row and the note. Frames: `tile_sight_unexplored` / `tile_panel_unseen` / `tile_sight_remembered`.
+
+**AND THE SAME `lines.is_empty()` IS WHAT FORCES THE NOTE** — `_render_land_drawer` passes it to
+`_render_unknown_contents_note(force)`, which otherwise skips itself on a NON-empty roster (there the
+list's own `OCCUPANTS_UNSEEN_OTHERS_HINT` is the sentence, and the note would be a second copy). The
+two rules collide on one real hex: an **Unexplored** tile carrying your own party, which is routine
+because the sim excludes expeditions from fog reveal. With no rows, no compose block and the note
+suppressed, every child of the drawer is hidden at once and the LAND subject renders as a blank capped
+area under the divider — the whole card's content gone. The invariant is therefore a pair: *the LAND
+drawer on an unseen hex is never empty, and the card never states the same unseen-contents sentence
+twice.* Frame + four assertions: `tile_panel_unexplored_own_band` (two preconditions — no terrain rows,
+a non-empty roster — then the note's visibility and its text, asserted on `%OccupantDetail` itself
+because a PNG cannot tell a blank drawer from one that rendered fine). Sabotage-verified against the
+unconditional roster skip: both content assertions fail, both preconditions still pass.
+
+**The harvest-floor chart still correctly disappears**, and not because the capacity is hidden:
+`SourceForecast.floor_chart_model`'s `known` gate needs `patch_regrowth_samples` (redacted) as well as
+a capacity, so un-redacting the ceiling cannot light it. Planning a harvest on a hex you cannot see
+stays impossible. The same holds for `escapement_room` (biomass-gated) and `take_draws_down`
+(curve-gated).
+
+**Guarded by ui_preview's `_assert_fog_stock_parity`** (frame: `tile_sight_remembered`), seven
+assertions, each sabotage-verified: both webs render in the live order; each states its capacity with
+the stock unknown; neither carries a phase; the basket does not render; the SAME fixture in sight
+still states both stocks in full (the half without which the rest pass on a blank card); and — the
+half a fixture alone cannot reach — a tile put through the REAL `FOW_DISCOVERED_HIDDEN_KEYS` still
+states both capacity rows, reading identically to the unredacted one. That last pair is what would
+catch `patch_carrying_capacity` going back into the list, which every other assertion would survive
+while the live client shipped a card with no `Foraging` row at all.

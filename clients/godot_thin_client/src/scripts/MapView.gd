@@ -246,10 +246,22 @@ const FOW_EXPLORED_THRESHOLD := 0.3  # Above this a tile is at least Discovered
 # Tile-info fields that describe live/current contents. They are stripped from a
 # Discovered (remembered, not currently in sight) tile because the player only
 # retains the terrain memory, not what is happening on the tile right now.
+#
+# THE TWO FOOD WEBS SPLIT ON STOCK vs CAPACITY, NOT ON WEB (issue #462). Each web's CAPACITY is
+# remembered and each web's BIOMASS — plus the ecology phase, which is classified FROM that biomass —
+# is redacted. So `graze_capacity` / `patch_carrying_capacity` are deliberately ABSENT from this list
+# while `graze_biomass` / `patch_biomass` and both phases are in it. Why a live capacity can be shown
+# on a hex the player cannot see without leaking anything is in
+# `.claude/rules/client/land-readouts.md` → "Fog splits a stock from its CAPACITY"; the short form is
+# that the sim recomputes `K` from the tile every turn and no player action moves it, so the value we
+# are sent for an unseen hex IS the value that hex last showed.
 const FOW_DISCOVERED_HIDDEN_KEYS := [
 	"food_module", "food_module_label", "food_module_weight", "food_kind",
 	"patch_cultivation_progress", "patch_is_cultivated", "patch_has_owner", "patch_owner",
-	"patch_ecology_phase", "patch_biomass", "patch_carrying_capacity",
+	"patch_ecology_phase", "patch_biomass",
+	# The ANIMAL web's stock, redacted under the same rule as the plant web's above — grass on a hex
+	# you cannot see is drawn down by herds you cannot see. Its `graze_capacity` twin stays.
+	"graze_biomass", "graze_ecology_phase",
 	# The phase BANDS and the two growth terms travel with the stock they describe: all four are read
 	# only to compose the harvest-floor instrument, which a hex the player cannot currently see does not
 	# render — one rule for the whole patch payload, as with the dips and the crews below.
@@ -267,8 +279,9 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# THE TILE'S PER-BIOMASS YIELD VECTOR (docs/plan_harvest_floor.md §5) — what one unit of this
 	# patch's standing crop is worth in each account, plus the two investment rungs' non-food payoff
 	# twins. **It replaced the six per-policy row dicts**, which could only answer four floors; the
-	# client composes `max(0, B − floor·K) × rate` at any floor from these three plus `patch_biomass` /
-	# `patch_carrying_capacity` (both already redacted above). Redacted for the same reason every
+	# client composes `max(0, B − floor·K) × rate` at any floor from these three plus `patch_biomass`
+	# (redacted above — `patch_carrying_capacity` is NOT, per the stock/capacity split in this list's
+	# header, which is why the composition still answers nothing). Redacted for the same reason every
 	# forecast field is — each describes live patch state a remembered tile does not know — and
 	# redacting them is also what keeps a remembered tile reading "no forecast" rather than a stale
 	# one: `SourceForecast.forecast_is_known` reads the vector's PRESENCE, so the answer comes for free.
@@ -2642,9 +2655,13 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		info["habitability"] = float(tile_habitability[tile_key])
 	if tile_temperature.has(tile_key):
 		info["temperature"] = float(tile_temperature[tile_key])
-	# Pasture (graze). Deliberately NOT in FOW_DISCOVERED_HIDDEN_KEYS: like the biome, the height and
-	# the habitability above it, the grass is a property of the GROUND — you can see a steppe from a
-	# ridge, and it is remembered, not live contents. (Occupants are what a remembered tile redacts.)
+	# Pasture (graze). SPLIT across FOW_DISCOVERED_HIDDEN_KEYS rather than kept whole: `graze_capacity`
+	# is a property of the GROUND — you can read a steppe's carrying capacity from a ridge, and the
+	# biome above it is already remembered — while `graze_biomass` and the phase derived from it are
+	# live stock, drawn down every turn by herds a remembered tile cannot see. The forage patch below
+	# is split on the same line, which is the point: the two webs are stocks on one piece of ground and
+	# a rule that separates them separates a stock from its capacity, never one web from the other
+	# (issue #462).
 	if tile_graze.has(tile_key):
 		var graze: Dictionary = tile_graze[tile_key]
 		info["graze_biomass"] = float(graze.get("biomass", 0.0))

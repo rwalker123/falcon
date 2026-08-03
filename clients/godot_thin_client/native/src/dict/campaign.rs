@@ -268,6 +268,11 @@ pub(crate) fn command_events_to_array(
         if let Some(detail) = event.detail() {
             let _ = dict.insert("detail", detail);
         }
+        // The sim's monotonic sequence, and the ONE key the client de-duplicates on. It is
+        // ONE-BASED: `0` is the FlatBuffers default and means "this row never went through
+        // `CommandEventLog::push`", so the client must treat 0 as unsequenced and fall back to its
+        // signature de-dup rather than letting every such row collide on key 0.
+        let _ = dict.insert("seq", event.seq() as i64);
         array.push(&dict.to_variant());
     }
     array

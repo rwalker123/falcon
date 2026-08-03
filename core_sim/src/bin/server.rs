@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::io::{self, BufReader, Read};
 use std::net::{TcpListener, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -27,45 +27,52 @@ use core_sim::sim_state::{restore_sim_state, Replaying};
 use core_sim::turn_profile;
 use core_sim::{
     apply_port_base, available_workers, floor_is_valid, forage_source_yield_preview,
-    hunt_source_yield_preview, knows, output_multiplier, resolve_active_profile,
-    resolve_committed_species, rung_site_refusal, tile_flora_composition, tile_is_fresh_watered,
-    ActiveStartProfile, BandTravel, BeatCatalogHandle, BeatConfigHandle, BeatLedger, CampaignLabel,
-    Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FloraConfigHandle,
-    FoodModuleTag, ForkAnswerError, LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore,
-    ResidentBand, RungKey, SiteRefusal, SpeciesRefusal, StartProfile, StartProfileOverrides,
-    WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR, NO_FORAGE_SEASON,
+    hunt_source_yield_preview, knows, load_simulation_config_for_new_world, output_multiplier,
+    resolve_active_profile, resolve_committed_species, rung_site_refusal, tile_flora_composition,
+    tile_is_fresh_watered, ActiveStartProfile, BandTravel, BeatCatalogHandle, BeatConfigHandle,
+    BeatLedger, CampaignLabel, Expedition, ExpeditionConfigHandle, ExpeditionMission,
+    ExpeditionPhase, FloraConfigHandle, FoodModuleTag, ForkAnswerError, LaborAllocation,
+    LaborTarget, LadderConfigHandle, LocalStore, ResidentBand, RungKey, SiteRefusal,
+    SpeciesRefusal, StartProfile, StartProfileOverrides, WellbeingConfigHandle,
+    DEFAULT_ESCAPEMENT_FLOOR, NO_FORAGE_SEASON,
 };
 use core_sim::{
-    build_headless_app, hunt_trip_forecast, recapture_snapshot_in_place, run_turn, scalar_from_f32,
-    AgentAssignment, BandId, BandIdAllocator, CommandEventEntry, CommandEventKind, CommandEventLog,
-    CorruptionLedgers, CounterIntelBudgets, CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle,
-    CrisisArchetypeCatalogMetadata, CrisisModifierCatalog, CrisisModifierCatalogHandle,
-    CrisisModifierCatalogMetadata, CrisisTelemetry, CrisisTelemetryConfig,
-    CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, DiscoveryProgressLedger,
-    EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionKind,
-    EspionageMissionState, EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders,
-    FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle, ForageRegistry, FrameSink,
-    GenerationId, GenerationRegistry, HerdRegistry, Improvement, InfluencerImpacts,
-    InfluentialRoster, LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort,
-    QueueMissionError, QueueMissionParams, Scalar, SecurityPolicy, SentimentAxisBias, Settlement,
-    SimulationConfig, SimulationConfigMetadata, SimulationTick, SnapshotHistory,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
-    StartLocation, StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot,
-    SubmitError, SubmitOutcome, SupportChannel, Tile, TileRegistry, TownCenter, TurnPipelineConfig,
-    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FOOD,
+    build_headless_app, clear_config_overrides, hunt_trip_forecast, install_config_override,
+    recapture_snapshot_in_place, run_turn, scalar_from_f32, AgentAssignment, BandId,
+    BandIdAllocator, CommandEventEntry, CommandEventKind, CommandEventLog, CounterIntelBudgets,
+    CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle, CrisisArchetypeCatalogMetadata,
+    CrisisModifierCatalog, CrisisModifierCatalogHandle, CrisisModifierCatalogMetadata,
+    CrisisTelemetry, CrisisTelemetryConfig, CrisisTelemetryConfigHandle,
+    CrisisTelemetryConfigMetadata, DiscoveryProgressLedger, EspionageAgentHandle, EspionageCatalog,
+    EspionageMissionId, EspionageMissionKind, EspionageMissionState, EspionageMissionTemplate,
+    EspionageRoster, FactionId, FactionOrders, FactionRegistry, FactionSecurityPolicies,
+    FaunaConfigHandle, FoodSiteRegistry, ForageRegistry, FrameSink, HerdRegistry, Improvement,
+    LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError,
+    QueueMissionParams, Scalar, SecurityPolicy, Settlement, SimulationConfig,
+    SimulationConfigMetadata, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StartLocation,
+    StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot, SubmitError,
+    SubmitOutcome, Tile, TileRegistry, TownCenter, TurnPipelineConfig, TurnPipelineConfigHandle,
+    TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FOOD,
 };
 use sim_runtime::{
-    commands::{EspionageGeneratorUpdate as CommandGeneratorUpdate, ReloadConfigKind},
-    AxisBiasState, CancelScope, CommandEnvelope as ProtoCommandEnvelope,
-    CommandPayload as ProtoCommandPayload, CorruptionEntry, CorruptionSubsystem,
-    InfluenceScopeKind, OrdersDirective as ProtoOrdersDirective, SecurityPolicyKind,
-    SupportChannel as ProtoSupportChannel, TerrainTags,
+    commands::{
+        ConfigOverrideKind, EspionageGeneratorUpdate as CommandGeneratorUpdate, ReloadConfigKind,
+    },
+    CancelScope, CommandEnvelope as ProtoCommandEnvelope, CommandPayload as ProtoCommandPayload,
+    OrdersDirective as ProtoOrdersDirective, SecurityPolicyKind, TerrainTags,
 };
 use sim_schema::{encode_map_export_json, MapExport};
 
 /// Gitignored scratch directory that `export_map` writes into when the command
 /// is invoked without an explicit path.
 const DEFAULT_EXPORT_DIR: &str = "exports";
+
+/// Gitignored scratch directory holding the merged configs that `set_config_override` stages,
+/// one `<kind>.json` per config. Alongside `exports/` and for the same reason: it is a per-run
+/// artifact of a dev tool, not a source file, but it is worth being able to open and read while
+/// explaining a playtest.
+const DEFAULT_CONFIG_OVERRIDE_DIR: &str = "config_overrides";
 
 const SETTLEMENT_PROVISION_COST: i64 = 80;
 const SETTLEMENT_CONSTRUCTION_RADIUS: u32 = 3;
@@ -409,43 +416,12 @@ enum Command {
         width: u32,
         height: u32,
     },
-    Heat {
-        target_x: u32,
-        target_y: u32,
-        delta: i64,
-    },
     Orders {
         faction: FactionId,
         orders: FactionOrders,
     },
     Rollback {
         tick: u64,
-    },
-    AxisBias {
-        axis: usize,
-        value: f32,
-    },
-    SupportInfluencer {
-        id: u32,
-        magnitude: f32,
-    },
-    SuppressInfluencer {
-        id: u32,
-        magnitude: f32,
-    },
-    SupportInfluencerChannel {
-        id: u32,
-        channel: SupportChannel,
-        magnitude: f32,
-    },
-    SpawnInfluencer {
-        scope: Option<InfluenceScopeKind>,
-        generation: Option<GenerationId>,
-    },
-    InjectCorruption {
-        subsystem: CorruptionSubsystem,
-        intensity: f32,
-        exposure_timer: u16,
     },
     UpdateEspionageGenerators {
         updates: Vec<CommandGeneratorUpdate>,
@@ -587,11 +563,14 @@ enum Command {
         seed: u64,
         profile_id: String,
     },
-}
-
-enum InfluencerAction {
-    Support,
-    Suppress,
+    /// Stage a sparse config patch for the **next** `new_game`. Validated and installed by
+    /// `core_sim::install_config_override`; the running world is never touched.
+    SetConfigOverride {
+        kind: ConfigOverrideKind,
+        patch_json: String,
+    },
+    /// Drop every staged override, so the next `new_game` boots on the shipped configs.
+    ClearConfigOverrides,
 }
 
 #[derive(Resource, Clone)]
@@ -1092,6 +1071,35 @@ fn write_map_export(app: &bevy::prelude::App, requested_path: Option<String>) {
     }
 }
 
+/// Stage a config-tuning override for the next `new_game`.
+///
+/// **Rejection is the interesting case, and it is not defensive coding.** `load_config_from_env`
+/// panics on a present-but-broken file *by design* (`.claude/rules/core_sim/config-loading.md`), so
+/// an override installed without validating it would not fail here — it would kill the server at
+/// the next New Game, arbitrarily far from the edit that caused it. `install_config_override`
+/// therefore parses the merged config through the kind's own `from_json_str` (where `validate` runs)
+/// **before** anything is written or registered, and a failure changes nothing at all: no file, no
+/// registry entry, and — since this handler never touches `app` — no effect on the running world.
+///
+/// Hence `warn!` rather than a panic or an error!: the operator is sitting at a UI that will show
+/// them the refusal, and the world they are playing is fine.
+fn handle_set_config_override(kind: ConfigOverrideKind, patch_json: &str) {
+    match install_config_override(kind, patch_json, Path::new(DEFAULT_CONFIG_OVERRIDE_DIR)) {
+        Ok(installed) => info!(
+            target: "shadow_scale::server",
+            kind = kind.as_str(),
+            path = %installed.path.display(),
+            "config_override.installed"
+        ),
+        Err(err) => warn!(
+            target: "shadow_scale::server",
+            kind = kind.as_str(),
+            error = %err,
+            "config_override.rejected"
+        ),
+    }
+}
+
 /// The config-file watch paths carried across a world rebuild, so the fresh app keeps watching the
 /// same files the old one did. Gathered once from the live app by [`collect_watch_paths`].
 struct WatchPaths {
@@ -1167,10 +1175,17 @@ fn rebuild_world_from_config(
     configure: impl FnOnce(&mut bevy::prelude::App),
 ) -> bevy::prelude::App {
     let mut new_app = build_headless_app();
+    // The base this process actually bound travels with the config — `new_game` carries the binds
+    // over from the outgoing world and `ResetMap` clones them — but the resource does not:
+    // `build_headless_app` never inserts it, so without this line the first rebuild dropped it and a
+    // later `reload_config` re-applied the *file's* base, leaving the in-world config naming sockets
+    // nothing is listening on (the exact thing `ResolvedPortBase` exists to prevent).
+    let resolved_port_base = ResolvedPortBase(config.port_base_bind.port());
     {
         let mut config_res = new_app.world.resource_mut::<SimulationConfig>();
         *config_res = config;
     }
+    new_app.insert_resource(resolved_port_base);
     new_app.insert_resource(SimulationMetrics::default());
     new_app.insert_resource(CommandSenderResource(command_sender.clone()));
     new_app.insert_resource(ConfigWatcherRegistry::default());
@@ -1295,7 +1310,16 @@ fn handle_new_game(
     };
     let watch_paths = collect_watch_paths(app);
 
-    let mut new_config = app.world.resource::<SimulationConfig>().clone();
+    // Start from the config that would load RIGHT NOW, not from a clone of the outgoing world's:
+    // a `simulation` override staged by the tuning panel reaches a world only because New Game
+    // re-reads every config, and cloning skipped that read (see
+    // `load_simulation_config_for_new_world`, which also carries back the narrow set of fields the
+    // file cannot know).
+    // The *watched* path is deliberately left alone — `rebuild_world_from_config` keeps this
+    // server's `SimulationConfigMetadata` path, so a staged override never becomes the file the
+    // watcher hot-reloads into a running world.
+    let mut new_config =
+        load_simulation_config_for_new_world(app.world.resource::<SimulationConfig>());
     new_config.grid_size = UVec2::new(width, height);
     new_config.map_preset_id = preset_id.clone();
     // `seed == 0` randomizes: worldgen resolves a `map_seed` of 0 to a fresh entropy seed, exactly the
@@ -1706,6 +1730,20 @@ fn validate_labor_policy(
             Ok(())
         }
         LaborTarget::Forage { tile, species, .. } => {
+            // **CAN THEY GATHER HERE AT ALL?** The plant branch's rung 1 carries a
+            // `site_requirement` of its own — the ground must be a **gathering site** — and this is
+            // where it is enforced. It is the whole of the early game's scarcity: a `FoodModuleTag`
+            // (and therefore a forage patch, and therefore a stand of named plants) sits on ~every
+            // land tile, so without this rule a band gathers anywhere it stands and *which* ground
+            // it can reach never matters.
+            //
+            // It was a CLIENT-SIDE rule until this arc — the tile card simply declined to offer the
+            // compose sheet off-site — which meant the sim accepted a command no player could send,
+            // the card advertised a stand nobody could work, and the rule lived nowhere the sim
+            // could see it (issue #464).
+            if let Some(refusal) = plant_rung_site_refusal(app, RungKey::PlantWild, *tile) {
+                return Err(site_refusal_message(refusal, *tile, "gather"));
+            }
             // **Judge the crop the player NAMED, and only then.** Absent means "pick the tile's
             // dominant legal plant for me", which cannot be wrong and — crucially — must not drag
             // an ordinary wild gather into the ladder's refusals: ground whose whole basket is
@@ -1776,6 +1814,85 @@ fn validate_improvement(
     }
 }
 
+/// **Does the land admit `rung` here?** — the ONE place the server resolves a plant rung's
+/// `site_requirement`, so the gather gate, `cultivate` and `sow` cannot drift into disagreeing about
+/// which ground may be worked. It gathers the three readings [`rung_site_refusal`] judges (is this a
+/// gathering site, what is the tile's own forage capacity, is it fresh-watered) and hands them to
+/// that one seam — the same seam the labor arm's placement gate and the wire's `sowSiteRefusal` use.
+///
+/// `None` on a tile that is off the map: the caller's own "there is no tile there" error is the
+/// better message, and inventing a site refusal for a coordinate that does not exist would hide it.
+///
+/// **A world with no `TileRegistry` answers `None`, and that must stay a `get_resource`** — the idle
+/// boot and the command-unit harnesses run an `App` that has never generated a map, and
+/// `Command::AssignLabor` is dispatched with no `world_active` gate, so a `assign_labor … forage`
+/// arriving before `new_game` reaches this function. Panicking here unwinds out of the command loop
+/// and kills the server. The permissive answer is the same one [`validate_species_selection`] gives
+/// for exactly this case: with no tiles there is no ground to judge, and the labor arm — which
+/// always has the real tiles — remains the authority.
+fn plant_rung_site_refusal(
+    app: &bevy::prelude::App,
+    rung_key: RungKey,
+    tile: UVec2,
+) -> Option<SiteRefusal> {
+    let registry = app.world.get_resource::<TileRegistry>()?;
+    let tile_entity = registry.index(tile.x, tile.y)?;
+    let ground = app.world.get::<Tile>(tile_entity)?;
+    let (grid_width, grid_height) = (registry.width, registry.height);
+    let wrap_horizontal = app
+        .world
+        .resource::<SimulationConfig>()
+        .map_topology
+        .wrap_horizontal;
+    let fresh_water =
+        tile_is_fresh_watered(ground, grid_width, grid_height, wrap_horizontal, |coord| {
+            registry
+                .index(coord.x, coord.y)
+                .and_then(|entity| app.world.get::<Tile>(entity))
+                .map(|neighbor| neighbor.terrain_tags)
+        });
+    let labor = app.world.resource::<LaborConfigHandle>().get();
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    rung_site_refusal(
+        ladder.rung(rung_key),
+        ground,
+        &labor.forage,
+        app.world.resource::<FoodSiteRegistry>().is_site(tile),
+        fresh_water,
+    )
+}
+
+/// **The land's refusal, phrased for the player** — one wording per fault, shared by every plant
+/// gate, so the same ground never gets two different explanations depending on which verb asked.
+///
+/// Each names the thing the player can actually *do* about it. `NotGatheringSite` is the one that is
+/// not a "yet": no rung below Farm relaxes it, so the answer is to work ground your people already
+/// gather rather than to wait.
+fn site_refusal_message(refusal: SiteRefusal, tile: UVec2, verb: &str) -> String {
+    match refusal {
+        SiteRefusal::NotGatheringSite => format!(
+            "Nobody gathers at ({}, {}) — your people cannot {} ground they do not already work. \
+             Choose a gathering site, or move to one.",
+            tile.x, tile.y, verb
+        ),
+        SiteRefusal::TooPoor => format!(
+            "Nothing will grow at ({}, {}) — that ground is too thin to take a crop. Your people \
+             cannot yet feed the land.",
+            tile.x, tile.y
+        ),
+        SiteRefusal::TooDry => format!(
+            "Nothing will grow at ({}, {}) — that ground is too dry to take a crop. Your people can \
+             carry seed, but not yet water: sow the well-watered ground along the rivers.",
+            tile.x, tile.y
+        ),
+        SiteRefusal::TooPoorAndTooDry => format!(
+            "Nothing will grow at ({}, {}) — that ground is too thin and too dry to take a crop. \
+             Your people can carry seed, but not yet water or feed the land.",
+            tile.x, tile.y
+        ),
+    }
+}
+
 /// The **`Cultivate`** verb's gates — the plant rung-2 twin of [`validate_tame`], split out of the
 /// old inline chain when the improvement became its own axis.
 fn validate_cultivate(
@@ -1803,6 +1920,13 @@ fn validate_cultivate(
     });
     if !knows_cultivation {
         return Err("Your people have not learned Cultivation yet. Sustain-forage thriving patches to learn it.".to_string());
+    }
+    // **Rung 2 asks exactly what rung 1 asks** — Cultivate improves the output of ground you already
+    // gather, so it can only stand on a gathering site. Resolved through the same seam rather than
+    // leaning on "the Forage assignment must already have passed", because an improvement can be
+    // named on the same command that first staffs the tile.
+    if let Some(refusal) = plant_rung_site_refusal(app, RungKey::PlantTended, tile) {
+        return Err(site_refusal_message(refusal, tile, "tend"));
     }
     let Some(patch) = app.world.resource::<ForageRegistry>().patch(tile) else {
         return Err(format!("No forage patch at ({}, {}).", tile.x, tile.y));
@@ -1892,13 +2016,11 @@ fn validate_corral(
 /// Each rejection is distinct, and the order is deliberate:
 /// 1. **The tile exists.** A coordinate off the map names no ground at all.
 /// 2. **The LAND will take seed** — the rung's own `site_requirement` (`RungSiteRequirement`), read
-///    off the ladder record and judged by the *rung*, not restated here: the ground must already be
-///    **very fertile** *and* **near fresh water**. This is the rung's defining limit and the whole of
-///    its scarcity: rung 3 knows how to move seed but not how to *fertilize*, so it can only place a
-///    Field where the land does the fertilizing itself. The two failures are **distinct** and phrased
-///    distinctly — **too poor** and **too dry** are different problems with different answers — and
-///    each points at **rung 4, Worked Land** (plows and irrigation, a later arc) rather than reading
-///    as an arbitrary refusal. Checked *before* knowledge, because it is a property of the *place*,
+///    off the ladder record and judged by the *rung*, not restated here: the ground must be a
+///    **gathering site** *and* **near fresh water**. Rung 3 knows how to move seed but not how to
+///    carry water, and it does not yet work unfamiliar ground — so it sows the watered ground its
+///    people already gather. The failures are **distinct** and phrased distinctly through the shared
+///    [`site_refusal_message`]. Checked *before* knowledge, because it is a property of the *place*,
 ///    not of the player (the `validate_tame` rule: the animal's own nature outranks who is hunting it).
 /// 3. **Seed Selection** — the rung's own `unlock_knowledge`, read off the ladder rather than
 ///    hard-coded, naming both the knowledge and how it is learned.
@@ -1906,64 +2028,43 @@ fn validate_corral(
 /// 5. **Not another faction's ground** — mirrors the Cultivate arm's "another people are cultivating
 ///    it".
 ///
-/// **There is deliberately no "the tile already has a patch" requirement, and no health gate.** Both
-/// are the point of the rung: seed travels, so qualifying ground with *no* forage site is a legal —
-/// indeed the interesting — target (§2, "where the two webs legitimately differ": `Corral` needs a
-/// herd you already tamed, `Sow` needs nothing), and freshly sown ground starts at the reseed floor,
-/// i.e. Collapsing, so requiring Thriving would forbid exactly the case this rung exists for.
+/// **There is deliberately no health gate**: freshly sown ground starts at the reseed floor, i.e.
+/// Collapsing, so requiring Thriving would forbid exactly the case this rung exists for.
+///
+/// **`Sow` USED TO NEED NO SITE AT ALL, AND THAT WAS THE REVERSAL THIS ARC MADE.** §2 read "where the
+/// two webs legitimately differ: `Corral` needs a herd you already tamed, `Sow` needs nothing" —
+/// seed travels, so any qualifying ground was a legal, indeed the interesting, target. What that
+/// missed is that a player could never *reach* such ground: gathering itself is site-bound, so the
+/// only tiles a band works are gathering sites, and a rung that could leap off them existed on paper
+/// only. Moving "seed travels" up to **rung 4 (Farm)** is what gives that rung its identity — it is
+/// the first rung to drop `requires_gathering_site` — and leaves rung 3 as what it always played as:
+/// *commit one of the plants you already gather here to a single crop*.
 fn validate_sow(
     app: &bevy::prelude::App,
     faction: FactionId,
     tile: UVec2,
     species: Option<&str>,
 ) -> Result<(), String> {
-    let Some(tile_entity) = app.world.resource::<TileRegistry>().index(tile.x, tile.y) else {
-        return Err(format!("There is no tile at ({}, {}).", tile.x, tile.y));
-    };
-    let Some(ground) = app.world.get::<Tile>(tile_entity) else {
-        return Err(format!("There is no tile at ({}, {}).", tile.x, tile.y));
-    };
-    let labor = app.world.resource::<LaborConfigHandle>().get();
-    let (grid_width, grid_height) = {
-        let registry = app.world.resource::<TileRegistry>();
-        (registry.width, registry.height)
-    };
-    let wrap_horizontal = app
-        .world
-        .resource::<SimulationConfig>()
-        .map_topology
-        .wrap_horizontal;
-    let fresh_water =
-        tile_is_fresh_watered(ground, grid_width, grid_height, wrap_horizontal, |coord| {
-            app.world
-                .resource::<TileRegistry>()
-                .index(coord.x, coord.y)
-                .and_then(|entity| app.world.get::<Tile>(entity))
-                .map(|neighbor| neighbor.terrain_tags)
-        });
-    let (knowledge_threshold, field_unlock, site_refusal) = {
+    // `get_resource`, not `resource`: a world that has never been generated carries no
+    // `TileRegistry`, and this arm is reachable from an ungated `assign_labor` before `new_game`.
+    // A map-less world has no tile to name as missing either, so it falls through to the same
+    // permissive stance `plant_rung_site_refusal` and `validate_species_selection` take.
+    if let Some(registry) = app.world.get_resource::<TileRegistry>() {
+        if registry.index(tile.x, tile.y).is_none() {
+            return Err(format!("There is no tile at ({}, {}).", tile.x, tile.y));
+        }
+    }
+    let (knowledge_threshold, field_unlock) = {
         let ladder = app.world.resource::<LadderConfigHandle>().get();
-        let field = ladder.rung(RungKey::PlantField);
         (
             ladder.knowledge.completion_threshold,
-            field.unlock_discovery_id(),
-            rung_site_refusal(field, ground, &labor.forage, fresh_water),
+            ladder.rung(RungKey::PlantField).unlock_discovery_id(),
         )
     };
-    // The land's own answer, phrased. Rung 4 (Worked Land) is what will change it — say so, so the
-    // refusal reads as a rung the player has yet to climb rather than an arbitrary "no".
-    if let Some(refusal) = site_refusal {
-        let fault = match refusal {
-            SiteRefusal::TooPoor => "that ground is too thin to take a crop",
-            SiteRefusal::TooDry => "that ground is too dry to take a crop",
-            SiteRefusal::TooPoorAndTooDry => "that ground is too thin and too dry to take a crop",
-        };
-        return Err(format!(
-            "Nothing will grow at ({}, {}) — {}. Your people can carry seed, but not yet water or \
-             feed the land: sow the rich, well-watered ground along the rivers until they learn to \
-             work the land itself.",
-            tile.x, tile.y, fault
-        ));
+    // The land's own answer, phrased through the shared message table so a tile the gather gate
+    // already refused does not get a second, differently-worded "no" from this verb.
+    if let Some(refusal) = plant_rung_site_refusal(app, RungKey::PlantField, tile) {
+        return Err(site_refusal_message(refusal, tile, "sow"));
     }
     let knows_seed_selection = field_unlock.is_none_or(|knowledge| {
         knows(
@@ -3367,22 +3468,27 @@ fn handle_cultivate(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec
 /// **rung-3** verb, and the exact twin of `handle_cultivate` one rung up. It is the command form of
 /// what the client's improvement checkbox does; it **sows nothing outright**.
 ///
-/// What makes it the interesting verb: `Sow` **places** a food source — *including on ground that
-/// carries no forage site at all* — so a crew can put a Field on the floodplain they chose rather than
-/// the stand the wild chose for them. That is the one place the two food webs legitimately differ
-/// (`Corral` needs a herd you already tamed; seed travels). The seed itself goes into the ground in
-/// the labor arm, on the first turn a crew actually works the tile under this policy — so
-/// `assign_labor … sow` and this command place a Field on exactly the same terms.
+/// What makes it the interesting verb: `Sow` **places** a food source where the wild put none — a
+/// crew commits the ground they already gather to a single crop instead of taking what the stand
+/// offers. The seed itself goes into the ground in the labor arm, on the first turn a crew actually
+/// works the tile under this policy — so `assign_labor … sow` and this command place a Field on
+/// exactly the same terms.
 ///
-/// **And the ground is scarce, which is the point**: rung 3 carries seed but not water or fertilizer,
-/// so the `plant:field` rung's `site_requirement` demands land that is *already* very fertile and near
-/// fresh water — **46 of 4160 tiles** on the standard map. *Which* tile a band can farm is therefore a
-/// real decision, and a band may have to **move** to farm at all: that is the sedentarization pull.
+/// **`Sow` used to place a source on ground carrying no forage site at all, and this arc reversed
+/// that** — see [`validate_sow`] for the autopsy. Rung 3 is now bound to the ground its people
+/// already work: the `plant:field` rung's `site_requirement` demands a **gathering site** that is
+/// also **near fresh water**, because rung 3 knows how to move seed but not how to carry water, and
+/// does not yet work unfamiliar ground. "Seed travels" moved up to **rung 4 (Farm)**, the first rung
+/// to drop `requires_gathering_site`.
 ///
-/// Gates (via the shared `validate_labor_policy` → `validate_sow`): the **land** must take seed —
-/// too thin and/or too dry ground waits for **rung 4, Worked Land** — the faction must know **Seed
-/// Selection**, and the tile must not already be a Field or another people's — plus the rejection when
-/// **no band is foraging** it.
+/// **And the ground is scarce, which is the point**: watered gathering sites are a small slice of the
+/// sites a people hold, so *which* tile a band can farm is a real decision, and a band may have to
+/// **move** to farm at all — that is the sedentarization pull.
+///
+/// Gates (via the shared `validate_labor_policy` → `validate_sow`): the tile must be ground the
+/// people already gather ("Nobody gathers at (x, y)…") and be fresh-watered, the faction must know
+/// **Seed Selection**, and the tile must not already be a Field or another people's — plus the
+/// rejection when **no band is foraging** it.
 fn handle_sow(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
     // As in `handle_cultivate`: the command sets the *improvement* and leaves the crew's stance and
     // crop alone — which is exactly why the crop it must gate on is the crew's, judged at **this**
@@ -3976,6 +4082,12 @@ fn handle_reload_simulation_config(app: &mut bevy::prelude::App, path: Option<St
         *config_res = new_config.clone();
     }
 
+    // The event log's turn window is a live tunable: re-window (and prune) the running log so the
+    // reloaded number is the one the next snapshot publishes.
+    if let Some(mut log) = app.world.get_resource_mut::<CommandEventLog>() {
+        log.set_retention_turns(new_config.command_events_retention_turns);
+    }
+
     // The publication ring's depth is a constant now (`snapshot::PUBLICATION_RING_DEPTH`), so a
     // config reload no longer resizes it; `checkpoint_history_turns` is read where it is used.
 
@@ -4389,15 +4501,6 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
         ProtoCommandPayload::ResetMap { width, height } => {
             Some(Command::ResetMap { width, height })
         }
-        ProtoCommandPayload::Heat {
-            target_x,
-            target_y,
-            delta,
-        } => Some(Command::Heat {
-            target_x,
-            target_y,
-            delta,
-        }),
         ProtoCommandPayload::Orders {
             faction_id,
             directive,
@@ -4408,52 +4511,6 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             }),
         },
         ProtoCommandPayload::Rollback { tick } => Some(Command::Rollback { tick }),
-        ProtoCommandPayload::AxisBias { axis, value } => Some(Command::AxisBias {
-            axis: axis as usize,
-            value,
-        }),
-        ProtoCommandPayload::SupportInfluencer { id, magnitude } => {
-            Some(Command::SupportInfluencer { id, magnitude })
-        }
-        ProtoCommandPayload::SuppressInfluencer { id, magnitude } => {
-            Some(Command::SuppressInfluencer { id, magnitude })
-        }
-        ProtoCommandPayload::SupportInfluencerChannel {
-            id,
-            channel,
-            magnitude,
-        } => {
-            let mapped = map_support_channel(channel)?;
-            Some(Command::SupportInfluencerChannel {
-                id,
-                channel: mapped,
-                magnitude,
-            })
-        }
-        ProtoCommandPayload::SpawnInfluencer { scope, generation } => {
-            let generation = generation.map(|value| value as GenerationId);
-            Some(Command::SpawnInfluencer { scope, generation })
-        }
-        ProtoCommandPayload::InjectCorruption {
-            subsystem,
-            intensity,
-            exposure_timer,
-        } => {
-            let exposure = if exposure_timer > u16::MAX as u32 {
-                warn!(
-                    "Proto command exposure_timer {} exceeds u16::MAX; clamping",
-                    exposure_timer
-                );
-                u16::MAX
-            } else {
-                exposure_timer as u16
-            };
-            Some(Command::InjectCorruption {
-                subsystem,
-                intensity,
-                exposure_timer: exposure,
-            })
-        }
         ProtoCommandPayload::UpdateEspionageGenerators { updates } => {
             Some(Command::UpdateEspionageGenerators { updates })
         }
@@ -4703,6 +4760,10 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             scope,
         }),
         ProtoCommandPayload::ExportMap { path } => Some(Command::ExportMap { path }),
+        ProtoCommandPayload::SetConfigOverride { kind, patch_json } => {
+            Some(Command::SetConfigOverride { kind, patch_json })
+        }
+        ProtoCommandPayload::ClearConfigOverrides => Some(Command::ClearConfigOverrides),
         ProtoCommandPayload::Resync => Some(Command::Resync),
         ProtoCommandPayload::NewGame {
             preset_id,
@@ -4720,15 +4781,6 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
     }
 }
 
-fn map_support_channel(channel: ProtoSupportChannel) -> Option<SupportChannel> {
-    match channel {
-        ProtoSupportChannel::Popular => Some(SupportChannel::Popular),
-        ProtoSupportChannel::Peer => Some(SupportChannel::Peer),
-        ProtoSupportChannel::Institutional => Some(SupportChannel::Institutional),
-        ProtoSupportChannel::Humanitarian => Some(SupportChannel::Humanitarian),
-    }
-}
-
 fn map_security_policy(kind: SecurityPolicyKind) -> Option<SecurityPolicy> {
     Some(match kind {
         SecurityPolicyKind::Lenient => SecurityPolicy::Lenient,
@@ -4737,37 +4789,6 @@ fn map_security_policy(kind: SecurityPolicyKind) -> Option<SecurityPolicy> {
         SecurityPolicyKind::Crisis => SecurityPolicy::Crisis,
     })
 }
-/// Heat a tile, addressed by **position**.
-///
-/// It used to take raw `Entity` bits off the wire. A rollback rebuilds the world and renumbers every
-/// entity, so a logged `Heat` naming one would resolve to nothing when replayed — the same reason no
-/// `Entity` crosses any other persistence boundary in this arc.
-fn apply_heat(app: &mut bevy::prelude::App, position: UVec2, delta_raw: i64) {
-    let Some(entity) = app
-        .world
-        .resource::<TileRegistry>()
-        .index(position.x, position.y)
-    else {
-        warn!(
-            target: "shadow_scale::server",
-            x = position.x,
-            y = position.y,
-            "command.heat.rejected=no_such_tile"
-        );
-        return;
-    };
-    if let Some(mut tile) = app.world.get_mut::<Tile>(entity) {
-        tile.temperature += Scalar::from_raw(delta_raw);
-    } else {
-        warn!(
-            target: "shadow_scale::server",
-            x = position.x,
-            y = position.y,
-            "command.heat.rejected=tile_missing"
-        );
-    }
-}
-
 fn ensure_land_tile(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -5086,6 +5107,13 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::ExpeditionRecalled => "Expedition recalled",
         CommandEventKind::ExpeditionReturned => "Expedition returned",
         CommandEventKind::HerdUnderHerded => "Under-herded",
+        // The demographic kinds are world events, not commands — they never reach
+        // `emit_command_failure`. Named anyway so the display map stays total.
+        CommandEventKind::Born => "Birth",
+        CommandEventKind::Died => "Death",
+        CommandEventKind::CameOfAge => "Came of age",
+        CommandEventKind::Aged => "Joined the elders",
+        CommandEventKind::Migrated => "Migration",
     }
 }
 
@@ -5243,13 +5271,19 @@ impl CommandLog {
 /// `Rollback` is excluded because logging it would make a replay re-enter the rollback it is
 /// serving. A config reload is excluded because it is not replayable at all — a `SimState` carries
 /// no config by design, so replaying across one would run turns under whatever tuning is live rather
-/// than that tick's; it re-bases the origin instead.
+/// than that tick's; it re-bases the origin instead. The staged config overrides are excluded for
+/// the *same* reason from the other end: they only ever change what the **next** `new_game` boots
+/// on, so a replay of this timeline that re-installed them would re-do file writes to change
+/// nothing about the world being replayed.
 fn log_dispatched_command(log: &mut CommandLog, command: &Command) {
-    let rebases_origin_or_reenters = matches!(
+    let unreplayable = matches!(
         command,
-        Command::ReloadConfig { .. } | Command::Rollback { .. }
+        Command::ReloadConfig { .. }
+            | Command::Rollback { .. }
+            | Command::SetConfigOverride { .. }
+            | Command::ClearConfigOverrides
     );
-    if !rebases_origin_or_reenters {
+    if !unreplayable {
         log.push(LogEntry::Command(command.clone()));
     }
 }
@@ -5258,6 +5292,19 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
     match command {
         Command::ExportMap { path } => {
             write_map_export(app, path);
+        }
+        // Staged config tuning. Takes NO `app`: it changes what the next `new_game` boots on and
+        // nothing about the world running now — which is also why the client states the
+        // next-New-Game contract on the panel itself.
+        Command::SetConfigOverride { kind, patch_json } => {
+            handle_set_config_override(kind, &patch_json);
+        }
+        Command::ClearConfigOverrides => {
+            clear_config_overrides();
+            info!(
+                target: "shadow_scale::server",
+                "config_override.cleared"
+            );
         }
         // Republish the world as a FULL frame. The client asks for this when it cannot apply a
         // delta (`docs/plan_delta_streaming.md` §3.3), so the answer must be a complete world
@@ -5291,48 +5338,8 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
                 }
             }
         }
-        Command::Heat {
-            target_x,
-            target_y,
-            delta,
-        } => {
-            apply_heat(app, UVec2::new(target_x, target_y), delta);
-            info!(
-                target: "shadow_scale::server",
-                target_x,
-                target_y,
-                delta,
-                "command.applied=heat"
-            );
-        }
         Command::Orders { faction, orders } => {
             handle_order_submission(app, faction, orders);
-        }
-        Command::AxisBias { axis, value } => {
-            handle_axis_bias(app, axis, value, flat_server);
-        }
-        Command::SupportInfluencer { id, magnitude } => {
-            handle_influencer_command(app, id, magnitude, InfluencerAction::Support, flat_server);
-        }
-        Command::SuppressInfluencer { id, magnitude } => {
-            handle_influencer_command(app, id, magnitude, InfluencerAction::Suppress, flat_server);
-        }
-        Command::SupportInfluencerChannel {
-            id,
-            channel,
-            magnitude,
-        } => {
-            handle_influencer_channel_support(app, id, channel, magnitude, flat_server);
-        }
-        Command::SpawnInfluencer { scope, generation } => {
-            handle_influencer_spawn(app, scope, generation, flat_server);
-        }
-        Command::InjectCorruption {
-            subsystem,
-            intensity,
-            exposure_timer,
-        } => {
-            handle_inject_corruption(app, subsystem, intensity, exposure_timer, flat_server);
         }
         Command::UpdateEspionageGenerators { updates } => {
             handle_update_espionage_generators(app, updates);
@@ -5579,282 +5586,6 @@ fn handle_order_submission(
             "orders.rejected=duplicate_submission"
         ),
     }
-}
-
-fn handle_axis_bias(
-    app: &mut bevy::prelude::App,
-    axis: usize,
-    value: f32,
-    snapshot_server_flat: &SnapshotServer,
-) {
-    if axis >= 4 {
-        warn!(
-            target: "shadow_scale::server",
-            axis,
-            "axis_bias.rejected=invalid_axis"
-        );
-        return;
-    }
-
-    let clamped = value.clamp(-1.0, 1.0);
-    {
-        let mut bias_res = app.world.resource_mut::<SentimentAxisBias>();
-        bias_res.set_policy_axis(axis, Scalar::from_f32(clamped));
-    }
-
-    let bias_state = {
-        let bias_res = app.world.resource::<SentimentAxisBias>();
-        let raw = bias_res.as_raw();
-        AxisBiasState {
-            knowledge: raw[0],
-            trust: raw[1],
-            equity: raw[2],
-            agency: raw[3],
-        }
-    };
-
-    let broadcast_payload = {
-        let mut history = app.world.resource_mut::<SnapshotHistory>();
-        history.update_axis_bias(bias_state)
-    };
-
-    if let Some(flat) = broadcast_payload {
-        snapshot_server_flat.broadcast(&flat);
-    }
-
-    info!(
-        target: "shadow_scale::server",
-        axis,
-        value = clamped,
-        "axis_bias.updated"
-    );
-}
-
-fn handle_influencer_channel_support(
-    app: &mut bevy::prelude::App,
-    id: u32,
-    channel: SupportChannel,
-    magnitude: f32,
-    snapshot_server_flat: &SnapshotServer,
-) {
-    let clamped = magnitude.clamp(0.1, 5.0);
-    let scalar_amount = Scalar::from_f32(clamped);
-    let applied = {
-        let mut roster = app.world.resource_mut::<InfluentialRoster>();
-        roster.apply_channel_support(id, channel, scalar_amount)
-    };
-
-    if !applied {
-        warn!(
-            target: "shadow_scale::server",
-            id,
-            channel = channel.as_str(),
-            magnitude = clamped,
-            "influencer.channel_support.rejected=unknown_id"
-        );
-        return;
-    }
-
-    broadcast_influencer_update(app, snapshot_server_flat);
-
-    info!(
-        target: "shadow_scale::server",
-        id,
-        channel = channel.as_str(),
-        magnitude = clamped,
-        "influencer.channel_support.applied"
-    );
-}
-
-fn handle_influencer_spawn(
-    app: &mut bevy::prelude::App,
-    scope: Option<InfluenceScopeKind>,
-    generation: Option<GenerationId>,
-    snapshot_server_flat: &SnapshotServer,
-) {
-    let registry_snapshot = app.world.resource::<GenerationRegistry>().clone();
-    // The spawn's draw is derived from `(seed, tick, id)`, so the command needs the tick it lands
-    // on — a manual spawn is reproducible on replay exactly like an organic one.
-    let tick = app.world.resource::<SimulationTick>().0;
-    let spawned = {
-        let mut roster = app.world.resource_mut::<InfluentialRoster>();
-        roster.force_spawn(scope, generation, &registry_snapshot, tick)
-    };
-
-    let Some(new_id) = spawned else {
-        warn!(
-            target: "shadow_scale::server",
-            scope = ?scope,
-            generation = ?generation,
-            "influencer.spawn.rejected"
-        );
-        return;
-    };
-
-    broadcast_influencer_update(app, snapshot_server_flat);
-
-    let label = {
-        let roster = app.world.resource::<InfluentialRoster>();
-        roster
-            .states()
-            .into_iter()
-            .find(|state| state.id == new_id)
-            .map(|state| state.name)
-            .unwrap_or_else(|| "unknown".to_string())
-    };
-
-    info!(
-        target: "shadow_scale::server",
-        id = new_id,
-        scope = ?scope,
-        generation = ?generation,
-        name = label.as_str(),
-        "influencer.spawn.manual"
-    );
-}
-
-fn broadcast_influencer_update(
-    app: &mut bevy::prelude::App,
-    snapshot_server_flat: &SnapshotServer,
-) {
-    let (states, sentiment_totals, logistics_total, morale_total, power_total) = {
-        let roster = app.world.resource::<InfluentialRoster>();
-        (
-            roster.states(),
-            roster.sentiment_totals(),
-            roster.logistics_total(),
-            roster.morale_total(),
-            roster.power_total(),
-        )
-    };
-
-    {
-        let mut impacts = app.world.resource_mut::<InfluencerImpacts>();
-        impacts.set_from_totals(logistics_total, morale_total, power_total);
-    }
-
-    {
-        let mut bias_res = app.world.resource_mut::<SentimentAxisBias>();
-        bias_res.set_influencer(sentiment_totals);
-    }
-
-    let bias_state = {
-        let bias_res = app.world.resource::<SentimentAxisBias>();
-        let raw = bias_res.as_raw();
-        AxisBiasState {
-            knowledge: raw[0],
-            trust: raw[1],
-            equity: raw[2],
-            agency: raw[3],
-        }
-    };
-
-    let (influencer_delta, bias_delta) = {
-        let mut history = app.world.resource_mut::<SnapshotHistory>();
-        let influencer_delta = history.update_influencers(states);
-        let bias_delta = history.update_axis_bias(bias_state);
-        (influencer_delta, bias_delta)
-    };
-
-    if let Some(flat) = influencer_delta {
-        snapshot_server_flat.broadcast(&flat);
-    }
-    if let Some(flat) = bias_delta {
-        snapshot_server_flat.broadcast(&flat);
-    }
-}
-
-fn handle_influencer_command(
-    app: &mut bevy::prelude::App,
-    id: u32,
-    magnitude: f32,
-    action: InfluencerAction,
-    snapshot_server_flat: &SnapshotServer,
-) {
-    let clamped = magnitude.clamp(0.1, 5.0);
-    let scalar_amount = Scalar::from_f32(clamped);
-
-    let applied = {
-        let mut roster = app.world.resource_mut::<InfluentialRoster>();
-        match action {
-            InfluencerAction::Support => roster.apply_support(id, scalar_amount),
-            InfluencerAction::Suppress => roster.apply_suppress(id, scalar_amount),
-        }
-    };
-
-    if !applied {
-        warn!(
-            target: "shadow_scale::server",
-            id,
-            magnitude = clamped,
-            "influencer.command.rejected=unknown_id"
-        );
-        return;
-    }
-
-    broadcast_influencer_update(app, snapshot_server_flat);
-
-    match action {
-        InfluencerAction::Support => info!(
-            target: "shadow_scale::server",
-            id,
-            magnitude = clamped,
-            "influencer.support.applied"
-        ),
-        InfluencerAction::Suppress => info!(
-            target: "shadow_scale::server",
-            id,
-            magnitude = clamped,
-            "influencer.suppress.applied"
-        ),
-    }
-}
-
-fn handle_inject_corruption(
-    app: &mut bevy::prelude::App,
-    subsystem: CorruptionSubsystem,
-    intensity: f32,
-    exposure_timer: u16,
-    snapshot_server_flat: &SnapshotServer,
-) {
-    let clamped_intensity = intensity.clamp(-5.0, 5.0);
-    let timer = exposure_timer.max(1);
-    let restitution = timer.saturating_add(4);
-    let tick = app.world.resource::<SimulationTick>().0;
-
-    let (ledger_clone, incident_id) = {
-        let mut ledgers = app.world.resource_mut::<CorruptionLedgers>();
-        let ledger = ledgers.ledger_mut();
-        let incident_id = (tick << 32) | (((ledger.entry_count() as u64) + 1) & 0xFFFF_FFFF);
-        let entry = CorruptionEntry {
-            subsystem,
-            intensity: Scalar::from_f32(clamped_intensity).raw(),
-            incident_id,
-            exposure_timer: timer,
-            restitution_window: restitution,
-            last_update_tick: tick,
-        };
-        ledger.register_incident(entry);
-        (ledger.clone(), incident_id)
-    };
-
-    let delta_payload = {
-        let mut history = app.world.resource_mut::<SnapshotHistory>();
-        history.update_corruption(ledger_clone)
-    };
-
-    if let Some(flat) = delta_payload {
-        snapshot_server_flat.broadcast(&flat);
-    }
-
-    info!(
-        target: "shadow_scale::server",
-        ?subsystem,
-        intensity = clamped_intensity,
-        exposure_timer = timer,
-        incident_id,
-        "corruption.injected"
-    );
 }
 
 fn handle_update_espionage_generators(
@@ -6311,18 +6042,48 @@ mod tests {
     // The ladder's knowledge ids are named only by the tests now: the handlers resolve their gate
     // off the rung record (`unlock_discovery_id`), never a hard-coded id.
     use core_sim::{
-        build_headless_app, EcologyPhase, ForagePatch, CULTIVATION_DISCOVERY_ID,
-        HERDING_DISCOVERY_ID, NO_IMPROVEMENT_UNDERWAY, PENNING_DISCOVERY_ID, RUNG_COMPLETE,
-        SEED_SELECTION_DISCOVERY_ID, SITE_ACCEPTED,
+        build_headless_app, default_species_for_rung, EcologyPhase, FoodModule, FoodSiteEntry,
+        ForagePatch, CULTIVATION_DISCOVERY_ID, HERDING_DISCOVERY_ID, NO_IMPROVEMENT_UNDERWAY,
+        PENNING_DISCOVERY_ID, RUNG_COMPLETE, SEED_SELECTION_DISCOVERY_ID, SITE_ACCEPTED,
     };
 
     /// Insert a **Thriving, wild** patch — a valid Cultivate target (there is no early claim any
     /// more; progress must be earned with the Cultivate improvement in flight).
     fn seed_thriving_patch(app: &mut bevy::prelude::App, coord: UVec2) {
+        seed_gathering_site(app, coord);
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = ForagePatch::new(coord, 100.0);
         assert_eq!(patch.ecology_phase, EcologyPhase::Thriving);
         registry.patches.insert(coord, patch);
+    }
+
+    /// **Put ground under `coord` and make it a GATHERING SITE.**
+    ///
+    /// Every plant rung carries `requires_gathering_site`, so a fixture that seeds a patch on bare
+    /// nothing describes a world the sim cannot produce — `spawn_initial_forage` only ever seeds a
+    /// patch on a tile, and worldgen only ever curates a site onto one. Without this, every Forage /
+    /// Cultivate / Sow gate in these tests refuses ground the test meant to be workable, and the
+    /// failure reads as a broken gate rather than a fixture that never had a map.
+    ///
+    /// Idempotent in both halves: a fixture that already laid down its own grid keeps it, and a coord
+    /// already curated is not curated twice.
+    fn seed_gathering_site(app: &mut bevy::prelude::App, coord: UVec2) {
+        if !app.world.contains_resource::<TileRegistry>() {
+            seed_grid_with_baskets(app, coord.x.max(coord.y).max(PHASE_GATE_GRID - 1) + 1);
+        }
+        let mut sites = app.world.resource_mut::<FoodSiteRegistry>();
+        if sites.is_site(coord) {
+            return;
+        }
+        let module = FoodModule::SavannaGrassland;
+        let mut entries = sites.sites().to_vec();
+        entries.push(FoodSiteEntry {
+            position: coord,
+            module,
+            kind: module.site_kind(),
+            seasonal_weight: 1.0,
+        });
+        sites.set_sites(entries);
     }
 
     /// A band of `faction` sitting on tile entity `home` with one labor assignment (the band the
@@ -6406,6 +6167,52 @@ mod tests {
     fn loopback_snapshot_server() -> Arc<SnapshotServer> {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
         Arc::new(start_snapshot_server(listener))
+    }
+
+    /// **The plant site gates must survive a world that has no tiles.** `Command::AssignLabor` is
+    /// dispatched with no `world_active` gate, so an `assign_labor … forage` arriving before
+    /// `new_game` reaches `validate_labor_policy` on an `App` that carries no `TileRegistry`. A
+    /// panicking accessor there unwinds out of the command loop and takes the server down, so both
+    /// plant arms answer permissively instead and leave the labor arm as the authority.
+    #[test]
+    fn plant_site_gates_do_not_panic_before_a_world_exists() {
+        let app = build_headless_app();
+        assert!(
+            app.world.get_resource::<TileRegistry>().is_none(),
+            "idle boot carries no world"
+        );
+        let faction = FactionId(1);
+        let tile = UVec2::new(3, 4);
+
+        assert!(
+            plant_rung_site_refusal(&app, RungKey::PlantWild, tile).is_none(),
+            "no tiles means no ground to refuse"
+        );
+        assert!(
+            validate_labor_policy(
+                &app,
+                faction,
+                &LaborTarget::Forage {
+                    tile,
+                    floor: DEFAULT_ESCAPEMENT_FLOOR,
+                    species: None,
+                },
+            )
+            .is_ok(),
+            "the Forage gate must not reject — or panic — on a map-less world"
+        );
+        // `Sow` still answers from its *knowledge* gate — that one needs no tiles — but it must
+        // reach that gate rather than panicking, and must not invent a verdict about ground that
+        // does not exist.
+        let sow = validate_sow(&app, faction, tile, None);
+        assert!(
+            sow.as_ref()
+                .err()
+                .is_none_or(|reason| !reason.contains("There is no tile at")
+                    && !reason.contains("Nobody gathers at")),
+            "a map-less world has no ground to judge, so Sow may only fail on knowledge: {:?}",
+            sow
+        );
     }
 
     /// Boot-idle + `new_game`: the server boots with no world (Startup never ran), `new_game` builds
@@ -7371,8 +7178,43 @@ mod tests {
             ladder.rung(RungKey::PlantField),
             ground,
             &labor.forage,
+            app.world.resource::<FoodSiteRegistry>().is_site(coord),
             fresh_water,
         ))
+    }
+
+    /// **The same tile, judged by a rung that asks only about WATER** — the control the
+    /// short-circuit test needs. `site_verdict` can never report a water fault on ground that is off
+    /// every gathering site (the site test supersedes), so proving the suppressed fault was real
+    /// takes a rung with the site term switched off. Everything else about the reading is identical.
+    fn water_only_verdict(app: &bevy::prelude::App, coord: UVec2) -> Option<SiteRefusal> {
+        let entity = app
+            .world
+            .resource::<TileRegistry>()
+            .index(coord.x, coord.y)?;
+        let ground = app.world.get::<Tile>(entity)?;
+        let (width, height) = {
+            let registry = app.world.resource::<TileRegistry>();
+            (registry.width, registry.height)
+        };
+        let wrap = app
+            .world
+            .resource::<SimulationConfig>()
+            .map_topology
+            .wrap_horizontal;
+        let fresh_water = tile_is_fresh_watered(ground, width, height, wrap, |neighbor| {
+            app.world
+                .resource::<TileRegistry>()
+                .index(neighbor.x, neighbor.y)
+                .and_then(|entity| app.world.get::<Tile>(entity))
+                .map(|tile| tile.terrain_tags)
+        });
+        core_sim::RungSiteRequirement {
+            requires_gathering_site: false,
+            min_forage_capacity: 0.0,
+            requires_fresh_water: true,
+        }
+        .refusal(false, 0.0, fresh_water)
     }
 
     /// The first tile matching `accept`, scanned in a **totally ordered** `(y, x)` sweep — never map
@@ -7448,15 +7290,15 @@ mod tests {
         );
     }
 
-    /// **Sow places, it does not conjure — and rung 3 cannot fertilize.** Ground too **thin** to take
-    /// a crop is refused *even when it is watered*, and the refusal names the fault and points at rung
-    /// 4 (Worked Land). Checked with the knowledge in hand: it is a property of the place, not the
-    /// player.
+    /// **Sow stands on ground the people already work.** Rung 3 knows how to move seed, not how to
+    /// break unfamiliar country — so ground nobody gathers is refused however rich and however wet,
+    /// and the refusal says so rather than blaming the soil or the water. That is rung 4's ground,
+    /// and this refusal is the shape of what rung 4 will unlock.
     #[test]
-    fn sow_rejected_on_ground_that_is_too_poor() {
+    fn sow_rejected_on_ground_nobody_gathers() {
         let mut app = build_world_app();
         let faction = FactionId(0);
-        let coord = find_refused_tile(&app, SiteRefusal::TooPoor);
+        let coord = find_refused_tile(&app, SiteRefusal::NotGatheringSite);
         grant_seed_selection(&mut app, faction);
         spawn_working_band(
             &mut app,
@@ -7471,16 +7313,17 @@ mod tests {
         handle_sow(&mut app, faction, coord);
 
         assert!(
-            sow_failure_detail_contains(&app, "too thin to take a crop"),
-            "thin ground must be refused, and the message must name the fault"
+            sow_failure_detail_contains(&app, "Nobody gathers at"),
+            "ground off every gathering site must be refused, naming that fault"
         );
         assert!(
-            !sow_failure_detail_contains(&app, "too dry"),
-            "...and must NOT blame the water on watered ground"
+            !sow_failure_detail_contains(&app, "too dry")
+                && !sow_failure_detail_contains(&app, "too thin"),
+            "...and must NOT teach the player a soil or water fault they cannot act on"
         );
         assert!(
-            sow_failure_detail_contains(&app, "work the land itself"),
-            "...pointing at rung 4, so the refusal reads as a rung not yet climbed"
+            sow_failure_detail_contains(&app, "move to one"),
+            "...pointing at what the player can actually do about it"
         );
     }
 
@@ -7527,13 +7370,26 @@ mod tests {
         );
     }
 
-    /// A tile that fails **both** says so in one line, rather than making the player fix one problem
-    /// only to discover the other.
+    /// **A SITE WHOSE BASKET CANNOT CLIMB IS REFUSED, and this became reachable in this arc.**
+    ///
+    /// Rung 3's fertility floor of 195 used to admit only the river-deposit class, whose baskets are
+    /// full of `field`-ceiling staples — so "the ground takes seed" implied "something here can be
+    /// sown", and the two questions never came apart. Dropping the floor for the gathering-site rule
+    /// separates them: an open-water fishery or an alpine shelf is a perfectly good gathering site
+    /// whose whole basket is `wild`-ceiling, and `flora_config.json` calls that "the ruling working,
+    /// not a gap".
+    ///
+    /// The refusal already existed (`SpeciesRefusal::NothingClimbsHere`, reached because `sow` with no
+    /// named species asks `resolve_committed_species` for the rung's default). Nothing pinned it, and
+    /// it now guards a case the shipped map actually offers. The client withholds the rung outright
+    /// rather than gating it — `RungGates._any_crop_allows`, asserted in `ui_preview` — so this is the
+    /// server-side half of one rule.
     #[test]
-    fn sow_rejected_naming_both_faults_on_poor_dry_ground() {
+    fn sow_rejected_where_nothing_in_the_basket_can_climb() {
         let mut app = build_world_app();
         let faction = FactionId(0);
-        let coord = find_refused_tile(&app, SiteRefusal::TooPoorAndTooDry);
+        let coord = find_unsowable_basket_site(&app)
+            .expect("the pinned map must carry a gathering site whose basket is all wild-ceiling");
         grant_seed_selection(&mut app, faction);
         spawn_working_band(
             &mut app,
@@ -7547,10 +7403,97 @@ mod tests {
 
         handle_sow(&mut app, faction, coord);
 
-        assert!(sow_failure_detail_contains(
-            &app,
-            "too thin and too dry to take a crop"
-        ));
+        assert!(
+            sow_failure_detail_contains(&app, "can be sown"),
+            "a site whose basket cannot climb must be refused on the CROP, naming that fault"
+        );
+        assert!(
+            !sow_failure_detail_contains(&app, "Nobody gathers at"),
+            "...and not on the site, which this ground satisfies"
+        );
+    }
+
+    /// The first tile that clears the **whole site rule** — a curated gathering site, on fresh water
+    /// — and whose realized basket still holds nothing that can climb to `field`. Scanned in a
+    /// totally-ordered `(y, x)` sweep, and resolved through the same `plant_rung_site_refusal` /
+    /// `tile_flora_composition` / `default_species_for_rung` seams the command judges with, so the
+    /// fixture cannot select a tile the rule would accept for a different reason.
+    ///
+    /// **The site rule has to pass, or the test asserts the wrong refusal.** `validate_sow` answers
+    /// the LAND before the CROP, so a site that merely failed the water rule would be refused with
+    /// "too dry" and the crop check would never be reached — which is exactly how this fixture broke
+    /// when #466's water-biased curation moved the marker list under it.
+    fn find_unsowable_basket_site(app: &bevy::prelude::App) -> Option<UVec2> {
+        let (width, height) = {
+            let registry = app.world.resource::<TileRegistry>();
+            (registry.width, registry.height)
+        };
+        let labor = app.world.resource::<LaborConfigHandle>().get();
+        let flora = app.world.resource::<FloraConfigHandle>().get();
+        let map_seed = app.world.resource::<SimulationConfig>().map_seed;
+        for y in 0..height {
+            for x in 0..width {
+                let coord = UVec2::new(x, y);
+                if plant_rung_site_refusal(app, RungKey::PlantField, coord).is_some() {
+                    continue;
+                }
+                let Some(ground) = app
+                    .world
+                    .resource::<TileRegistry>()
+                    .index(x, y)
+                    .and_then(|entity| app.world.get::<Tile>(entity))
+                else {
+                    continue;
+                };
+                let composition = tile_flora_composition(&flora, &labor.forage, ground, map_seed);
+                if default_species_for_rung(&composition, &flora, RungKey::PlantField).is_none() {
+                    return Some(coord);
+                }
+            }
+        }
+        None
+    }
+
+    /// **The gathering-site fault SUPERSEDES the ground readings, and the map proves it is not a
+    /// hypothetical.** A dry tile that is also off every gathering site is refused for the site alone
+    /// — telling the player "and it is dry" would hand them a second fault they cannot act on, and
+    /// the one they *can* act on is "work a site instead".
+    ///
+    /// Asserted on a tile that would fail the water rule too, so it distinguishes "the site test
+    /// short-circuits" from "this tile only had one fault anyway".
+    #[test]
+    fn the_site_fault_supersedes_the_ground_readings() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let coord = find_tile(&app, |verdict, _| {
+            verdict == Some(SiteRefusal::NotGatheringSite)
+        })
+        .expect("the pinned map must carry ground off every gathering site");
+        // The same ground, judged by a rung that asks only about water: it is genuinely dry, so the
+        // refusal above suppressed a real second fault rather than a vacuous one.
+        assert_eq!(
+            water_only_verdict(&app, coord),
+            Some(SiteRefusal::TooDry),
+            "the fixture tile must ALSO fail the water rule, or this asserts nothing"
+        );
+        grant_seed_selection(&mut app, faction);
+        spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                floor: 0.5,
+                species: None,
+            },
+        );
+
+        handle_sow(&mut app, faction, coord);
+
+        assert!(sow_failure_detail_contains(&app, "Nobody gathers at"));
+        assert!(
+            !sow_failure_detail_contains(&app, "too dry"),
+            "the site fault must be the whole of the message"
+        );
     }
 
     #[test]
@@ -7693,8 +7636,8 @@ mod tests {
         for (expected_wire, expected_command_fault) in [
             (SITE_ACCEPTED, None),
             (
-                SiteRefusal::TooPoor.as_str(),
-                Some("too thin to take a crop"),
+                SiteRefusal::NotGatheringSite.as_str(),
+                Some("Nobody gathers at"),
             ),
             (SiteRefusal::TooDry.as_str(), Some("too dry to take a crop")),
         ] {
@@ -7702,8 +7645,15 @@ mod tests {
             let faction = FactionId(0);
             let coord = match expected_command_fault {
                 None => find_sowable_tile(&app),
-                Some(_) if expected_wire == SiteRefusal::TooPoor.as_str() => {
-                    find_refused_tile(&app, SiteRefusal::TooPoor)
+                // **With a patch on it** — this test reads the tile off the WIRE, and the wire
+                // carries one entry per patch. Ground off every gathering site is mostly ordinary
+                // land that has one, but the first such tile in the sweep can as easily be a glacier
+                // that does not, and then the assertion fails on the fixture rather than the rule.
+                Some(_) if expected_wire == SiteRefusal::NotGatheringSite.as_str() => {
+                    find_tile(&app, |verdict, patch| {
+                        verdict == Some(SiteRefusal::NotGatheringSite) && patch.is_some()
+                    })
+                    .expect("the pinned map must carry a patch off every gathering site")
                 }
                 Some(_) => find_refused_tile(&app, SiteRefusal::TooDry),
             };
@@ -8866,6 +8816,7 @@ mod tests {
         biomass: f32,
         phase: EcologyPhase,
     ) {
+        seed_gathering_site(app, coord);
         let cap = forage_carrying_capacity(app);
         let mut patch = ForagePatch::new(coord, cap);
         patch.biomass = biomass;

@@ -6,30 +6,6 @@ option optimize_for = SPEED;
 
 // NOTE: *_UNSPECIFIED entries are reserved and will be rejected by the runtime
 // decode helpers. Clients must populate concrete values before sending envelopes.
-enum SupportChannel {
-  SUPPORT_CHANNEL_UNSPECIFIED = 0;
-  SUPPORT_CHANNEL_POPULAR = 1;
-  SUPPORT_CHANNEL_PEER = 2;
-  SUPPORT_CHANNEL_INSTITUTIONAL = 3;
-  SUPPORT_CHANNEL_HUMANITARIAN = 4;
-}
-
-enum InfluenceScopeKind {
-  INFLUENCE_SCOPE_KIND_UNSPECIFIED = 0;
-  INFLUENCE_SCOPE_KIND_LOCAL = 1;
-  INFLUENCE_SCOPE_KIND_REGIONAL = 2;
-  INFLUENCE_SCOPE_KIND_GLOBAL = 3;
-  INFLUENCE_SCOPE_KIND_GENERATION = 4;
-}
-
-enum CorruptionSubsystem {
-  CORRUPTION_SUBSYSTEM_UNSPECIFIED = 0;
-  CORRUPTION_SUBSYSTEM_LOGISTICS = 1;
-  CORRUPTION_SUBSYSTEM_TRADE = 2;
-  CORRUPTION_SUBSYSTEM_MILITARY = 3;
-  CORRUPTION_SUBSYSTEM_GOVERNANCE = 4;
-}
-
 enum OrdersDirective {
   ORDERS_DIRECTIVE_UNSPECIFIED = 0;
   ORDERS_DIRECTIVE_READY = 1;
@@ -44,14 +20,6 @@ message ResetMapCommand {
   uint32 height = 2;
 }
 
-message HeatCommand {
-  // Tile coordinates, not an ECS handle: a rollback rebuilds the world and renumbers every entity,
-  // so a command that named one would resolve to nothing when replayed from the log.
-  uint32 target_x = 3;
-  uint32 target_y = 4;
-  sint64 delta = 2;
-}
-
 message OrdersCommand {
   uint32 faction_id = 1;
   OrdersDirective directive = 2;
@@ -59,38 +27,6 @@ message OrdersCommand {
 
 message RollbackCommand {
   uint64 tick = 1;
-}
-
-message AxisBiasCommand {
-  uint32 axis = 1;
-  float value = 2;
-}
-
-message SupportInfluencerCommand {
-  uint32 id = 1;
-  float magnitude = 2;
-}
-
-message SuppressInfluencerCommand {
-  uint32 id = 1;
-  float magnitude = 2;
-}
-
-message SupportInfluencerChannelCommand {
-  uint32 id = 1;
-  SupportChannel channel = 2;
-  float magnitude = 3;
-}
-
-message SpawnInfluencerCommand {
-  optional InfluenceScopeKind scope = 1;
-  optional uint32 generation = 2;
-}
-
-message InjectCorruptionCommand {
-  CorruptionSubsystem subsystem = 1;
-  float intensity = 2;
-  uint32 exposure_timer = 3;
 }
 
 message EspionageGeneratorUpdate {
@@ -408,6 +344,34 @@ message NewGameCommand {
   string profile_id = 5;
 }
 
+// Which boot config a staged tuning override applies to. Deliberately a SHORT list: these are the
+// kinds the client's tuning manifest exposes, not every config the sim loads.
+enum ConfigOverrideKind {
+  CONFIG_OVERRIDE_KIND_UNSPECIFIED = 0;
+  CONFIG_OVERRIDE_KIND_SIMULATION = 1;
+  CONFIG_OVERRIDE_KIND_LABOR = 2;
+  CONFIG_OVERRIDE_KIND_DEMOGRAPHICS = 3;
+  CONFIG_OVERRIDE_KIND_EXPEDITION = 4;
+  CONFIG_OVERRIDE_KIND_COMBAT = 5;
+}
+
+// Stage a config-tuning override that takes effect at the NEXT new_game — `build_headless_app`
+// re-runs every `load_*_from_env`, so no process restart is needed.
+//
+// `patch_json` is a SPARSE patch: a JSON object holding only the parameters the designer edited,
+// nested by their JSON-pointer path. The server deep-merges it into that kind's current effective
+// JSON, parses the result through the kind's own `from_json_str` (where `validate` runs), and only
+// then writes the file and registers the path. A patch that fails validation changes NOTHING —
+// rejecting here is what keeps the deliberately strict boot loader from panicking later, arbitrarily
+// far from the edit that caused it.
+message SetConfigOverrideCommand {
+  ConfigOverrideKind kind = 1;
+  string patch_json = 2;
+}
+
+// Drop every staged override, so the next new_game boots on the shipped configs again.
+message ClearConfigOverridesCommand {}
+
 message CommandEnvelope {
   optional uint64 correlation_id = 15;
 
@@ -416,21 +380,28 @@ message CommandEnvelope {
   //   24 `found_camp`  — retired.
   //   30 `domesticate` — the intensification ladder's animal rung-2 EARLY-CLAIM, retired in favour
   //      of `tame` (field 40), which makes the player actually pay the taming investment.
-  reserved 24, 30;
+  //
+  // The debug-poke block — 2, 5, 6, 7, 8, 9, 10. These were the manual injection entry points for
+  // tile heat, axis bias, the influencer roster (support / suppress / channel boost / spawn) and the
+  // corruption ledger. Every one of those systems is still simulated and still published; only the
+  // hand-poking went, with the Inspector's Commands tab that was their sole caller.
+  //   2  `heat`
+  //   5  `axis_bias`
+  //   6  `support_influencer`
+  //   7  `suppress_influencer`
+  //   8  `support_channel`
+  //   9  `spawn_influencer`
+  //   10 `inject_corruption`
+  reserved 2, 5, 6, 7, 8, 9, 10, 24, 30;
   reserved "found_camp", "domesticate";
+  reserved "heat", "axis_bias", "support_influencer", "suppress_influencer";
+  reserved "support_channel", "spawn_influencer", "inject_corruption";
 
   oneof command {
     TurnCommand turn = 1;
     ResetMapCommand reset_map = 11;
-    HeatCommand heat = 2;
     OrdersCommand orders = 3;
     RollbackCommand rollback = 4;
-    AxisBiasCommand axis_bias = 5;
-    SupportInfluencerCommand support_influencer = 6;
-    SuppressInfluencerCommand suppress_influencer = 7;
-    SupportInfluencerChannelCommand support_channel = 8;
-    SpawnInfluencerCommand spawn_influencer = 9;
-    InjectCorruptionCommand inject_corruption = 10;
     UpdateEspionageGeneratorsCommand update_espionage_generators = 12;
     QueueEspionageMissionCommand queue_espionage_mission = 13;
     UpdateEspionageQueueDefaultsCommand update_espionage_queue_defaults = 14;
@@ -468,5 +439,8 @@ message CommandEnvelope {
     ResyncCommand resync = 45;
     // 45 is held by `resync`, so `abandon_improvement` takes 46 (append-only; never renumber).
     AbandonImprovementCommand abandon_improvement = 46;
+    // 46 is held by `abandon_improvement`; the config-override pair takes 47 and 48.
+    SetConfigOverrideCommand set_config_override = 47;
+    ClearConfigOverridesCommand clear_config_overrides = 48;
   }
 }

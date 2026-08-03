@@ -126,13 +126,14 @@ const DERIVED_RESOURCES: [(&str, &str); 4] = [
 /// day a checkpoint becomes a **save file** loaded into a fresh process — at which point every
 /// entry here has to be either serialized or regenerated from `WorldGenSeed`. Do not read this
 /// table as "these can never matter".
-const WORLD_STATIC_RESOURCES: [&str; 16] = [
+const WORLD_STATIC_RESOURCES: [&str; 17] = [
     "ActiveStartProfile",
     "BiomePalette",
     "CampaignLabel",
     "ElevationField",
     "FactionRegistry",
     "FoodSiteRegistry",
+    "FoodSiteWaterBiasReport",
     "GenerationRegistry",
     "GreatDiscoveryRegistry",
     "HydrologyState",
@@ -262,7 +263,7 @@ const CONFIG_RESOURCES_CONT: [&str; 13] = [
 /// Component state on entities. Omitting one of these is exactly the failure `PowerNode`'s missing
 /// `base_generation` / `base_demand` already is, which is why this table exists alongside the
 /// resource one: a resource-only guard would have missed the bug that motivated the guard.
-const SIM_STATE_COMPONENTS: [&str; 15] = [
+const SIM_STATE_COMPONENTS: [&str; 16] = [
     "Tile",
     // A band's durable identity — the thing `Entity` could not be across a restore.
     "BandId",
@@ -272,6 +273,10 @@ const SIM_STATE_COMPONENTS: [&str; 15] = [
     // a hole with a comment on it.
     "BandTravel",
     "PopulationCohort",
+    // The fractional carry behind a band's birth, death and age-transition events. Carried for the same
+    // reason as `BandTravel`: a band two-thirds of the way to a birth was two-thirds of the way
+    // there, and dropping the remainder re-times every demographic event after a restore.
+    "DemographicFlowAccumulator",
     "LaborAllocation",
     "Expedition",
     "LogisticsLink",
