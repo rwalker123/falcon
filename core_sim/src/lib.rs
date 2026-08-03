@@ -98,11 +98,12 @@ pub use combat_config::{
 };
 pub use components::{
     available_workers, floor_is_valid, floor_overdraws, raid_is_recurring, BandId, BandTravel,
-    ElementKind, Expedition, ExpeditionMission, ExpeditionPhase, Improvement, KnowledgeFragment,
-    LaborAllocation, LaborAssignment, LaborTarget, LocalStore, LogisticsLink, MoraleCause,
-    PendingMigration, PopulationCohort, PowerNode, ResidentBand, Settlement, SourceYield,
-    StartingUnit, Tile, TownCenter, TradeLink, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD,
-    NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE, TRADE_GOODS,
+    DeathCause, DemographicFlowAccumulator, ElementKind, Expedition, ExpeditionMission,
+    ExpeditionPhase, Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget,
+    LocalStore, LogisticsLink, MoraleCause, PendingMigration, PopulationCohort, PowerNode,
+    ResidentBand, Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink,
+    DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE,
+    TRADE_GOODS,
 };
 pub use config_load::ConfigLoadError;
 pub use config_override::{
@@ -501,6 +502,11 @@ pub fn build_headless_app() -> App {
         espionage::SecurityPolicy::Standard,
     );
 
+    // Read before `config` is moved into the world: the log's turn window is a config lever, and
+    // `CommandEventLog::default()` only knows the builtin default.
+    let command_event_log =
+        CommandEventLog::with_retention_turns(config.command_events_retention_turns);
+
     app.insert_resource(config)
         .insert_resource(config_metadata)
         .insert_resource(MapPresetsHandle::new(map_presets.clone()))
@@ -592,7 +598,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(HerdDensityMap::default())
         .insert_resource(ForageRegistry::default())
         .insert_resource(GrazeRegistry::default())
-        .insert_resource(CommandEventLog::default())
+        .insert_resource(command_event_log)
         .insert_resource(FoodSiteRegistry::default())
         .init_resource::<FoodSiteWaterBiasReport>()
         .insert_resource(snapshot_history)

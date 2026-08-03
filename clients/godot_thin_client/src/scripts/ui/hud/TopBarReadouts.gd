@@ -3,7 +3,7 @@ extends RefCounted
 
 ## Owns the TOP-BAR FACTION READOUTS cluster (docs/plan_hud_decomposition.md): the Sedentarization
 ## meter, the demographics line, the discovered Wondrous-Sites strip, the intensification-ladder
-## knowledge strip. Built on the LegendController/CommandFeedController
+## knowledge strip. Built on the LegendController
 ## idiom — HudLayer holds one as `_topbar` and delegates the snapshot `update_*` handlers to it.
 ##
 ## It holds PURE DATA + the top-bar label nodes, never `_selection`/`_band_labor`. Everything
@@ -91,14 +91,16 @@ var discoveries_strip: HBoxContainer = null
 var intensification_label: Label = null
 
 # --- Collaborators ---
-var _command_feed: CommandFeedController = null
+## Where the one-shot knowledge-unlock nudge goes: `HudLayer.note_system_event`, i.e. the event
+## dock's System channel. It was the retired left-dock command feed.
+var _note_sink: Callable
 
 # --- Owned state (moved off HudLayer) ---
 # Per-faction intensification knowledge from the latest snapshot: entity → {cultivation, herding, …},
 # each 0..1. Backs the top-bar meters AND the policy-gate reasons (via faction_knowledge()); the
 # previous value is what makes the one-shot unlock nudge possible.
 var _intensification_knowledge: Dictionary = {}
-# "<faction>:<track>" keys already announced to the command feed, so the nudge fires once.
+# "<faction>:<track>" keys already announced, so the nudge fires once.
 var _knowledge_announced: Dictionary = {}
 
 func _init(
@@ -110,7 +112,7 @@ func _init(
 	discoveries_label_: Label,
 	discoveries_strip_: HBoxContainer,
 	intensification_label_: Label,
-	command_feed: CommandFeedController,
+	note_sink: Callable,
 ) -> void:
 	turn_label = turn_label_
 	metrics_label = metrics_label_
@@ -120,7 +122,7 @@ func _init(
 	discoveries_label = discoveries_label_
 	discoveries_strip = discoveries_strip_
 	intensification_label = intensification_label_
-	_command_feed = command_feed
+	_note_sink = note_sink
 
 ## WORLD BOUNDARY (`Main._reset_per_world_state` → `HudLayer.reset_world_state`): drop every top-bar
 ## cache that belongs to ONE world, then re-render each strip off the now-empty caches.
@@ -393,7 +395,7 @@ func _announce_knowledge_unlock(faction: int, track: String) -> void:
 	_knowledge_announced[key] = true
 	if faction != HudConst.PLAYER_FACTION_ID:
 		return
-	_command_feed.note(String(KNOWLEDGE_UNLOCK_LABELS[track]), String(KNOWLEDGE_UNLOCK_NOTES[track]))
+	_note_sink.call(String(KNOWLEDGE_UNLOCK_LABELS[track]), String(KNOWLEDGE_UNLOCK_NOTES[track]))
 
 ## A faction's progress (0..1) on one intensification track; 0 when the faction has not begun it
 ## (the snapshot row is sparse) or no snapshot has arrived yet. PUBLIC because the rung-gate reasons

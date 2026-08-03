@@ -39,7 +39,6 @@ paths:
 | `ui/inspector/LogsPanel.gd` | Logs tab panel — owns the LogStreamClient + polling + filters + tick sparkline; emits `log_entry_received` (coordinator dispatches to Knowledge); fed synthetic lines via `append_entry`. **Ingest is per entry, render is once per poll.** `_render()` rebuilds the whole `LOG_ENTRY_LIMIT` buffer into one BBCode string and re-shapes it (`set_text` + `get_line_count()`), so calling it from `_record` re-shaped the buffer once per ingested line — ~145 times per turn at `RUST_LOG=info`, measured at **1.9–2.2 s of blocked main thread per turn** (client-wide: `_apply_snapshot` was only 11–31 ms of it). It now renders once in `_poll_stream`'s `if updated:` block beside `_update_sparkline()`; `append_entry` renders its own single line. The INGEST stays per entry — a dropped log line is an accumulator loss, not a re-renderable one |
 | `ui/inspector/InfluencerPanel.gd` | Influencers tab panel — owns the influencer roster; capability-gated (`CAP_INDUSTRY_T1`/`T2`) via `set_available`; exposes `aggregate_resonance()` (coordinator feeds it into the Culture tab) and `get_influencers()` (coordinator's still-inline influencer command controls read the roster back). The influencer *command* controls stay coordinator-owned |
 | `ui/inspector/CorruptionPanel.gd` | Corruption tab panel — display-only ledger (reputation modifier, audit capacity, incidents); not capability-gated |
-| `ui/inspector/CommandsPanel.gd` | Commands tab panel — the designer/debug console (axis-bias, influencer/channel/spawn, corruption inject, heat, config reload, autoplay row, command status/log; the scenario scout/follow rows were removed with the retired single-task commands). Outbound: issues verbs via `set_command_hooks` and logs via the sink; the command transport + autoplay timer + turn-sending stay in the coordinator. Couplings are coordinator-mediated: emits `axis_bias_apply_requested` (coordinator owns `_axis_bias`, pushes back via `set_axis_bias`), `autoplay_toggled`/`autoplay_interval_changed` (coordinator drives the timer, mirrors via `set_autoplay_active`); fed the roster via `set_influencer_roster` and gated via `set_command_connected`. NOT in `_tab_panels` (no snapshot inputs) |
 | `ui/inspector/OverlayPanel.gd` | "Map Overlays" section (nested inside the Map tab, attached to `OverlaySection`) — owns the overlay-channel selector (built at runtime), channel metadata, and the culture/military readouts; drives `MapView.set_overlay_channel`. Fed via `set_map_view` + `ingest(overlay_dict, terrain_tag_labels)` (the coordinator re-homes the palette → Terrain and crisis_annotations → Crisis side-routes that share the `overlays` key, and passes Terrain's tag labels since the terrain-tags channel depends on them). NOT in `_tab_panels` |
 | `ui/inspector/MapPanel.gd` | Map tab panel — map-size controls, start-profile (scenario) controls, and the highlight-rivers toggle (now a shader uniform — see Edge Blending → Rivers). Snapshot-driven (in `_tab_panels`): `apply_update` consumes `grid`/`campaign_profiles`/`campaign_label`/`faction_inventory`. Issues `map_size`/`start_profile` via `set_command_hooks`, gated by `set_command_connected`, and drives `MapView.set_highlight_rivers` **and the trade overlay** via `set_map_view` — the `%LogisticsOverlayToggle` always lived physically under this tab and became this panel's when the Trade tab was retired (issue #381); the sync pushes **only `set_trade_overlay_enabled`** — the links come from the snapshot's `trade_links` section via `MapView.display_snapshot`, and since the renderer rebuilds its list from whatever array it is handed, a panel that pushed links too would be a competing source of truth. The per-link selection highlight went with the retired tab, which owned the `ItemList` that chose one. The nested Map-Overlays section keeps its own `OverlayPanel` script |
 | `ui/inspector/CulturePanel.gd` | Culture tab panel — culture layers, divergence list + detail, tension readout; drives `MapView.set_culture_layer_highlight`. Snapshot-driven (in `_tab_panels`): `apply_update` ingests `culture_layers`/`culture_layer_updates`/`culture_layer_removed`/`culture_tensions`, but rendering is driven by the coordinator via `render(resonance)` — the influencer-resonance "pushes" line is coordinator-mediated (`InfluencerPanel.aggregate_resonance()` passed in). `set_map_view` (highlight) + `set_log_hook` (new tensions log to the Logs feed) |
@@ -103,9 +102,20 @@ Three clauses, and the third is the one that bites:
    the decoder builds a fresh tree per frame that no consumer mutates.
 3. **Anything ACCUMULATING must stay above the gate.** The test is not "is it cheap", it is **"is
    it reconstructible from the next full snapshot?"** Panel state is a rebuild-from-keys and so
-   survives being skipped. `_ingest_command_events` is not: those are per-turn *events*, and a
-   dropped one is gone from the running log forever. It runs unconditionally, and replay is safe
-   because `_seen_command_events` dedupes.
+   survives being skipped.
+
+   **The Inspector currently holds NO accumulator, and that is a change worth knowing about.**
+   `command_events` was the one — per-turn *events*, a dropped one gone from the running log
+   forever, so `_ingest_command_events` ran unconditionally and `_seen_command_events` made the
+   replay safe. Issue #272 retired that stream: the events belong to the **event dock**
+   (`Main._apply_snapshot` feeds `EventDockPanel.ingest_events` directly and never routes them
+   through here), and the Commands tab that displayed them has since been deleted. What survives above the
+   gate is the cheap per-frame prefix — `_cached_snapshot` and `_last_turn` — which is what makes
+   clauses 1 and 2 possible at all, so the gate still may not creep upward over it.
+   `inspector_hidden_guard` witnesses the prefix on `_last_turn` (written above the gate, read
+   nowhere else on this path) now that `_seen_command_events` is gone.
+
+   **An accumulator added back here goes above the gate and gets its own assertion in that guard.**
 
    Adding anything to `_apply_update` means answering that question for it. Near-misses that are
    safe, each checked rather than assumed: `VictoryPanel._log_victory` is edge-triggered but on
@@ -116,6 +126,38 @@ Three clauses, and the third is the one that bites:
 `tools/inspector_hidden_guard.gd` pins all of it (see `test-harnesses.md`) — the property is
 invisible in normal play, since a stale-when-opened Inspector looks like a panel that just hasn't
 updated yet.
+
+## The console chatter has left the building
+
+`_append_command_log` is the funnel for every client-side line the Inspector writes — connection
+state, a command sent, a command refused, a rollback. It has two outlets, and **neither is a console
+widget any more**: the Logs tab's buffer (`_append_log_entry`, tagged `COMMAND` /
+`inspector.command`) and **`system_event(label, detail, alert, kind)`**, which `Main` relays to the
+event dock's System channel. A dropped command socket is something the player must be told, and the
+Commands tab that used to mirror every line shipped hidden behind a debug tab — which is why the
+dock is now the surface that carries it and the tab was deleted rather than kept in parallel.
+
+**`kind` is what keeps the funnel's completeness from becoming the bar's noise.** `_send_command`'s
+ACCEPTED-send line — the only place in the client where a command is known to have gone — logs
+`HudEventVocab.KIND_COMMAND_ECHO`, which the dock ignores outright; every other site here takes the
+`KIND_SYSTEM` default and reaches the player. That is the boundary: a command accepted for sending is
+an echo, everything else (including both failure exits of `_send_command`) is a fault. `_send_command`
+and `send_runtime_command` take an `ack_kind` defaulting to the echo, for the one caller whose success
+message reports a fault rather than a receipt (`Main`'s `resync`). **The Logs buffer is unaffected by
+the kind** — it records every line, because it is the debug console now. The rest of the rule is in
+`event-dock.md` → "A kind the dock IGNORES".
+
+Two details are load-bearing:
+
+- **`alert` is stated by the emitting site, never derived from the text.** `_append_command_log`
+  takes it as a defaulted parameter (`false`), so the five panel-injected `Callable`s (Map / Terrain
+  / Crisis / Knowledge / Victory) are unchanged and a panel's own command receipt is a
+  Routine note; the six FAILURE sites in this file pass `true`. This file knows which of its own
+  lines is bad news — a string match on its own log strings would only pretend to.
+- **The LINE is the dock row's label, not a detail beside a fixed one.** A dock row draws its label
+  at full size on the leading edge and its detail as small faint text on the TRAILING one, so
+  emitting `("Command", entry)` strands the only words that matter at the far end of a screen-wide
+  bar. The channel chip already says where the line came from.
 
 ## Inspector Panels
 
@@ -132,7 +174,19 @@ See `docs/godot_inspector_plan.md` for full roadmap.
 | Crisis | Dashboard gauges, modifier tray, event log |
 | Knowledge | Ledger overview, timeline graph, espionage mission queue, trade-diffusion events |
 | Logs | Streaming tracing feed, level/target/text filters, duration sparkline |
-| Commands | Turn/rollback/autoplay, axis bias, spawn utilities, debug hooks |
+
+**There is no Commands tab.** Turn stepping, rollback and autoplay are the `CommandToolbar` buttons
+above the `TabContainer`, not a tab. Six of the designer/debug verbs it carried — `bias`, `support`,
+`suppress`, `support_channel`, `spawn_influencer`, `corruption` and `heat` — **no longer exist in
+the command surface at all**: the tab was their only caller, so they were removed end to end
+(parser, payload, proto field numbers now `reserved`). The systems they poked are untouched — axis
+bias, the influencer roster, the corruption ledger and tile temperature are still simulated and
+still stream to the client, which is why `SentimentPanel` still renders `axis_bias`. `reload_config`
+(and its `reload_sim_config` alias) **survives**, reachable via `cargo xtask command` with no client
+control. The command
+*hub* (`_send_command` / `send_runtime_command` / `_ensure_command_connection` / `command_client` /
+`autoplay_timer`) is Inspector-level and carries every command the game sends, so it long outlives
+the tab.
 
 **Capability gating** (`Inspector._apply_capability_gating`): most tabs enable only when the matching `CapabilityFlags` bit is set. **Terrain is exempt** — it is an always-available inspection tab with no capability-gated actions (the former Found Camp action + its CAP_CONSTRUCTION gate were removed with the retired `found_camp` command). **Migrated tab panels don't grey out** — instead of disabling the tab (confusing: a dead tab with no explanation), the coordinator calls `panel.set_available(has_flag)` and the panel stays clickable, rendering a "🔒 Locked — unlocks via …" message while gated (see `PowerPanel`). `_set_tab_enabled` is still used for tabs not yet migrated to the panel contract. Its **terrain-type highlight** dropdown lists every defined terrain (via `TerrainDefinitions`), and selecting one calls `MapView.set_terrain_highlight(id)`, which outlines/tints all matching hexes map-wide (ignoring Fog of War) — handy for spotting a biome or confirming one is absent. Selecting "none" (`-1`) clears it.
 
@@ -186,9 +240,10 @@ Optional contract hooks a panel adds only if it needs them:
   Prefer that shape: if the would-be producer and consumer are both already fed the same raw
   stream, parse at the consumer instead of adding a seam.
 - Coordinator-owned state pushed into a display panel: `SentimentPanel.set_axis_bias`
-  — axis bias belongs to the Commands axis controls (which mutate it optimistically),
-  so the coordinator pushes it to the Sentiment view at both the snapshot and the
-  optimistic-write sites, instead of the panel owning the key.
+  — the coordinator reads the snapshot's `axis_bias` key into `_axis_bias` and pushes it
+  to the Sentiment view, instead of the panel owning the key. It held that state because
+  the Commands tab's axis controls also mutated it optimistically; with those gone the
+  snapshot is the only writer, and the push is the one remaining reason the key lives here.
 - Command-issuing via a signal when the command needs coordinator-only context (pattern
   reference; the Fauna/Terrain examples were retired with the single-task commands — FaunaPanel
   is now display-only and TerrainPanel's Scout button is gone). `set_log_hook(append_log)` is the
@@ -203,32 +258,29 @@ conflict (see the `crisis_overlay` vs `overlays.crisis_annotations` precedence n
 snapshot/render), `ui/inspector/CrisisPanel.gd` (Crisis — command hooks +
 typography), `ui/inspector/KnowledgePanel.gd` (Knowledge — the fullest: connection
 gating and log-path ingestion). **The decomposition is complete** — every inspector tab is
-now its own panel (see the key-scripts table). `Inspector.gd` (≈880 lines, down from
+now its own panel (see the key-scripts table). `Inspector.gd` (≈870 lines, down from
 ~6,500) is purely the coordinator: streaming fan-out, the command hub + autoplay timer,
 capability gating, typography, MapView attach, and the cross-panel seams (faction
 resolution for Fauna/Terrain, influencer resonance → Culture, the `overlays` fan-out
 junction routing palette→Terrain / annotations→Crisis / channels→Overlay).
 
-**Commands tab (designer/debug console).** The `Commands` tab (axis-bias, heat,
-config-reload, autoplay row, influencer/corruption command
-buttons, command status/log; the scenario scout/follow rows were removed with the retired
-single-task commands) is now `CommandsPanel` (see the key-scripts table). Its
-subtree once went missing in the 2025-11-21 scene split (`Main.tscn` → instanced
-`InspectorLayer.tscn`) and sat dead for months — the coordinator's
-`get_node_or_null("RootPanel/TabContainer/Commands/…")` refs silently resolved to
-`null` — before it was transplanted back from git history and extracted onto the
-tab-panel contract. The **command hub stays in the coordinator**: `_send_command` →
-`command_client`, `_ensure_command_connection`, the `autoplay_timer`, and turn-sending
-are shared with the turn controls in `RootPanel/CommandToolbar` (outside the
-`TabContainer`) and the Terrain tab's Export Map button. The panel issues
-verbs through `set_command_hooks` and is connection-gated via `set_command_connected`.
-Autoplay is split: the toggle+interval widgets live in the panel (relayed as
-`autoplay_toggled`/`autoplay_interval_changed`), while the timer that steps turns and
-the toolbar Play/Pause mirroring stay in the coordinator (which calls back
-`set_autoplay_active`). Axis bias is coordinator-owned (Sentiment depends on it): the
-panel emits `axis_bias_apply_requested` and the coordinator sends + mirrors it back via
-`set_axis_bias`. The influencer dropdown is fed `InfluencerPanel.get_influencers()`
-through the coordinator (`set_influencer_roster`).
+**The command hub is Inspector-level, not tab-level — and that is the reason deleting the Commands
+tab was safe.** `_send_command` → `command_client`, `send_runtime_command` (what `Main` calls for
+every order the player gives: new-game, turn advance, labor, move band, resync), the
+`autoplay_timer`, `_ensure_command_connection` and `_update_command_status` all live in the
+coordinator, shared with the turn controls in `RootPanel/CommandToolbar` (outside the
+`TabContainer`), the Terrain tab's Export Map button, and the four panels holding
+`set_command_hooks` Callables. What went with the tab was only the tab-facing half: the log/status
+mirroring, the axis-bias apply signal (`_axis_bias` itself survives — Sentiment renders it), the
+`set_influencer_roster` push, and the autoplay toggle's mirror.
+
+**Autoplay's only control is now the toolbar Play/Pause button**, so `_on_autoplay_toggled` is the
+single entry point and `AUTOPLAY_INTERVAL_SECONDS` (0.5 s, the interval the retired spin box
+shipped with) is the single rate — the interval is no longer settable from the UI.
+`_disable_autoplay` un-presses the button as well as stopping the timer: it used to only clear the
+tab's mirror toggle, which left the toolbar button lit over a stopped timer whenever a failed
+advance or a lost snapshot stream killed autoplay. With the tab gone that button is the only state
+the player can see, so the mirror had to move onto it rather than be deleted.
 
 ---
 

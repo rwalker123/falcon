@@ -49,8 +49,9 @@ use bevy::utils::HashMap;
 
 use crate::{
     components::{
-        BandId, BandTravel, Expedition, LaborAllocation, LogisticsLink, PopulationCohort,
-        PowerNode, ResidentBand, Settlement, StartingUnit, Tile, TownCenter, TradeLink,
+        BandId, BandTravel, DemographicFlowAccumulator, Expedition, LaborAllocation, LogisticsLink,
+        PopulationCohort, PowerNode, ResidentBand, Settlement, StartingUnit, Tile, TownCenter,
+        TradeLink,
     },
     crisis::{ActiveCrisisLedger, CrisisTelemetry},
     culture::{CultureManager, CultureManagerCheckpoint},
@@ -132,6 +133,11 @@ pub struct BandRecord {
     /// consequence of it not being persisted, not an intent.
     pub travel: Option<BandTravel>,
     pub expedition: Option<ExpeditionRecord>,
+    /// The fractional carry behind the band's birth, death and age-transition events. **Carried**, for
+    /// the same reason as `travel`: a band that was two-thirds of the way to a birth at tick T was
+    /// two-thirds of the way there at tick T, and dropping the remainder would re-time every
+    /// demographic event after a restore.
+    pub flow_accumulator: DemographicFlowAccumulator,
 }
 
 /// A settlement and its town centre.
@@ -305,6 +311,10 @@ pub fn capture_sim_state(world: &World) -> SimState {
                 starting_unit: entity.get::<StartingUnit>().cloned(),
                 travel: entity.get::<BandTravel>().copied(),
                 expedition,
+                flow_accumulator: entity
+                    .get::<DemographicFlowAccumulator>()
+                    .copied()
+                    .unwrap_or_default(),
             })
         })
         .collect();
@@ -458,7 +468,7 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
         cohort.home = home;
         cohort.current_tile = current;
 
-        let mut entity = world.spawn((cohort, record.id));
+        let mut entity = world.spawn((cohort, record.id, record.flow_accumulator));
         if let Some(labor) = &record.labor {
             entity.insert(labor.clone());
         }

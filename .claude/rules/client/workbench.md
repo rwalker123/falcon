@@ -62,6 +62,11 @@ dictionary and reads entries by name; the shell stores it and hands it on, and d
 page uses which service. `Main` supplies three today (names are consts in `WorkbenchVocab`):
 `send_command` `(String) -> bool`, `append_log` `(String) -> void`, and `new_game` `() -> void`.
 
+**`append_log` lands on the event dock's System channel** (`R`), as a `HudEventVocab.KIND_SYSTEM`
+event labelled `Workbench` — not as a command echo, which `HudEventVocab.IGNORED_KINDS` drops
+outright. A page's status line reports a state change the surface made on the designer's behalf; the
+command *receipts* `send_command` generates are the echoes, and they take the echo default.
+
 **`send_command` answers `bool` so a page can tell "sent" from "there is no server"** — that
 distinction is what lets the tuning page abandon an Apply *before* asking for a new game, instead of
 starting a fresh world on overrides that never reached the server. `WorkbenchPage.service(name)`

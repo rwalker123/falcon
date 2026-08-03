@@ -32,12 +32,6 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "new_game <preset_id> <width> <height> <seed> <profile_id>",
     },
     CommandVerbHelp {
-        verb: "heat",
-        aliases: &[],
-        summary: "Adjust an entity's heat budget by the provided delta (default 100000).",
-        usage: "heat <x> <y> [delta]",
-    },
-    CommandVerbHelp {
         verb: "order",
         aliases: &[],
         summary: "Submit orders for a faction (currently only 'ready').",
@@ -48,36 +42,6 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         aliases: &[],
         summary: "Rollback the simulation to a specific tick.",
         usage: "rollback <tick>",
-    },
-    CommandVerbHelp {
-        verb: "bias",
-        aliases: &[],
-        summary: "Override an axis bias with a floating-point value.",
-        usage: "bias <axis> <value>",
-    },
-    CommandVerbHelp {
-        verb: "support",
-        aliases: &[],
-        summary: "Add support for an influencer by id (default magnitude 1.0).",
-        usage: "support <id> [magnitude]",
-    },
-    CommandVerbHelp {
-        verb: "suppress",
-        aliases: &[],
-        summary: "Suppress support for an influencer by id (default magnitude 1.0).",
-        usage: "suppress <id> [magnitude]",
-    },
-    CommandVerbHelp {
-        verb: "support_channel",
-        aliases: &[],
-        summary: "Boost an influencer's specific support channel.",
-        usage: "support_channel <id> <channel> [magnitude]",
-    },
-    CommandVerbHelp {
-        verb: "spawn_influencer",
-        aliases: &[],
-        summary: "Spawn a new influencer with optional scope or generation id.",
-        usage: "spawn_influencer [local|regional|global|generation [id]]",
     },
     CommandVerbHelp {
         verb: "counterintel_policy",
@@ -96,12 +60,6 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         aliases: &["queue_mission"],
         summary: "Queue an espionage mission with owner/target metadata.",
         usage: "queue_espionage_mission <mission_id> owner <id> target <id> discovery <id> agent <handle> [tier <value>] [tick <value>]",
-    },
-    CommandVerbHelp {
-        verb: "corruption",
-        aliases: &[],
-        summary: "Inject corruption into a subsystem with optional intensity/exposure.",
-        usage: "corruption [logistics|trade|military|governance] [intensity] [exposure_ticks]",
     },
     CommandVerbHelp {
         verb: "reload_config",
@@ -268,8 +226,8 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
 ];
 
 use crate::{
-    commands::ConfigOverrideKind, CancelScope, CommandPayload, CorruptionSubsystem,
-    InfluenceScopeKind, OrdersDirective, ReloadConfigKind, SecurityPolicyKind, SupportChannel,
+    CancelScope, CommandPayload, ConfigOverrideKind, OrdersDirective, ReloadConfigKind,
+    SecurityPolicyKind,
 };
 
 #[derive(Debug, Error)]
@@ -303,12 +261,6 @@ pub enum CommandParseError {
          everything)"
     )]
     RetiredStanceToken(String),
-    #[error("invalid support channel '{0}'")]
-    InvalidSupportChannel(String),
-    #[error("invalid influence scope '{0}'")]
-    InvalidScope(String),
-    #[error("invalid corruption subsystem '{0}'")]
-    InvalidSubsystem(String),
     #[error("invalid orders directive '{0}'")]
     InvalidDirective(String),
     #[error("invalid security policy '{0}'")]
@@ -372,20 +324,6 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 profile_id: profile_id.to_string(),
             })
         }
-        "heat" => {
-            let x_str = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("x"))?;
-            let y_str = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("y"))?;
-            let delta_str = parts.next().unwrap_or("100000");
-            Ok(CommandPayload::Heat {
-                target_x: parse_u32(x_str, "heat x")?,
-                target_y: parse_u32(y_str, "heat y")?,
-                delta: parse_i64(delta_str, "heat delta")?,
-            })
-        }
         "order" => {
             let faction_str = parts
                 .next()
@@ -409,52 +347,6 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 .ok_or(CommandParseError::MissingArgument("tick"))?;
             let tick = parse_u64(tick_str, "rollback tick")?;
             Ok(CommandPayload::Rollback { tick })
-        }
-        "bias" => {
-            let axis_str = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("axis"))?;
-            let value_str = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("value"))?;
-            let axis = parse_u32(axis_str, "bias axis")?;
-            let value = parse_f32(value_str, "bias value")?;
-            Ok(CommandPayload::AxisBias { axis, value })
-        }
-        "support" => {
-            let id_str = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("id"))?;
-            let magnitude_str = parts.next().unwrap_or("1.0");
-            let id = parse_u32(id_str, "support id")?;
-            let magnitude = parse_f32(magnitude_str, "support magnitude")?;
-            Ok(CommandPayload::SupportInfluencer { id, magnitude })
-        }
-        "suppress" => {
-            let id_str = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("id"))?;
-            let magnitude_str = parts.next().unwrap_or("1.0");
-            let id = parse_u32(id_str, "suppress id")?;
-            let magnitude = parse_f32(magnitude_str, "suppress magnitude")?;
-            Ok(CommandPayload::SuppressInfluencer { id, magnitude })
-        }
-        "support_channel" => {
-            let id_str = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("id"))?;
-            let channel_str = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("channel"))?;
-            let magnitude_str = parts.next().unwrap_or("1.0");
-            let id = parse_u32(id_str, "support_channel id")?;
-            let channel = parse_support_channel(channel_str)?;
-            let magnitude = parse_f32(magnitude_str, "support_channel magnitude")?;
-            Ok(CommandPayload::SupportInfluencerChannel {
-                id,
-                channel,
-                magnitude,
-            })
         }
         "counterintel_policy" => {
             let faction_str = parts
@@ -583,46 +475,6 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 agent_handle,
                 target_tier,
                 scheduled_tick,
-            })
-        }
-        "spawn_influencer" => {
-            let mut scope: Option<InfluenceScopeKind> = None;
-            let mut generation: Option<u16> = None;
-            if let Some(token) = parts.next() {
-                let token_lower = token.to_ascii_lowercase();
-                match token_lower.as_str() {
-                    "local" => scope = Some(InfluenceScopeKind::Local),
-                    "regional" => scope = Some(InfluenceScopeKind::Regional),
-                    "global" => scope = Some(InfluenceScopeKind::Global),
-                    "generation" | "gen" => {
-                        scope = Some(InfluenceScopeKind::Generation);
-                        if let Some(gen_token) = parts.next() {
-                            generation = Some(parse_u16(gen_token, "generation id")?);
-                        }
-                    }
-                    other => {
-                        if let Ok(value) = other.parse::<u16>() {
-                            scope = Some(InfluenceScopeKind::Generation);
-                            generation = Some(value);
-                        } else {
-                            return Err(CommandParseError::InvalidScope(other.to_string()));
-                        }
-                    }
-                }
-            }
-            Ok(CommandPayload::SpawnInfluencer { scope, generation })
-        }
-        "corruption" => {
-            let subsystem_str = parts.next().unwrap_or("logistics").to_ascii_lowercase();
-            let subsystem = parse_corruption_subsystem(&subsystem_str)?;
-            let intensity_str = parts.next().unwrap_or("0.25");
-            let exposure_str = parts.next().unwrap_or("3");
-            let intensity = parse_f32(intensity_str, "corruption intensity")?;
-            let exposure_timer = parse_u32(exposure_str, "corruption exposure")?;
-            Ok(CommandPayload::InjectCorruption {
-                subsystem,
-                intensity,
-                exposure_timer,
             })
         }
         "reload_config" | "reload_sim_config" => {
@@ -1265,16 +1117,6 @@ fn parse_u32(value: &str, context: &'static str) -> Result<u32, CommandParseErro
         })
 }
 
-fn parse_u16(value: &str, context: &'static str) -> Result<u16, CommandParseError> {
-    value
-        .parse::<u16>()
-        .map_err(|source| CommandParseError::InvalidInteger {
-            value: value.to_string(),
-            context,
-            source,
-        })
-}
-
 fn parse_u64(value: &str, context: &'static str) -> Result<u64, CommandParseError> {
     value
         .parse::<u64>()
@@ -1288,16 +1130,6 @@ fn parse_u64(value: &str, context: &'static str) -> Result<u64, CommandParseErro
 fn parse_u8(value: &str, context: &'static str) -> Result<u8, CommandParseError> {
     value
         .parse::<u8>()
-        .map_err(|source| CommandParseError::InvalidInteger {
-            value: value.to_string(),
-            context,
-            source,
-        })
-}
-
-fn parse_i64(value: &str, context: &'static str) -> Result<i64, CommandParseError> {
-    value
-        .parse::<i64>()
         .map_err(|source| CommandParseError::InvalidInteger {
             value: value.to_string(),
             context,
@@ -1347,18 +1179,6 @@ fn parse_bool(value: &str, context: &'static str) -> Result<bool, CommandParseEr
     }
 }
 
-fn parse_support_channel(token: &str) -> Result<SupportChannel, CommandParseError> {
-    match token.to_ascii_lowercase().as_str() {
-        "popular" | "pop" | "mass" => Ok(SupportChannel::Popular),
-        "peer" | "prestige" | "research" => Ok(SupportChannel::Peer),
-        "institutional" | "institution" | "industrial" | "inst" => {
-            Ok(SupportChannel::Institutional)
-        }
-        "humanitarian" | "hum" | "civic" => Ok(SupportChannel::Humanitarian),
-        other => Err(CommandParseError::InvalidSupportChannel(other.to_string())),
-    }
-}
-
 fn parse_security_policy(token: &str) -> Result<SecurityPolicyKind, CommandParseError> {
     match token.to_ascii_lowercase().as_str() {
         "lenient" | "light" | "open" => Ok(SecurityPolicyKind::Lenient),
@@ -1366,16 +1186,6 @@ fn parse_security_policy(token: &str) -> Result<SecurityPolicyKind, CommandParse
         "hardened" | "secure" | "fortified" => Ok(SecurityPolicyKind::Hardened),
         "crisis" | "panic" | "lockdown" => Ok(SecurityPolicyKind::Crisis),
         other => Err(CommandParseError::InvalidSecurityPolicy(other.to_string())),
-    }
-}
-
-fn parse_corruption_subsystem(token: &str) -> Result<CorruptionSubsystem, CommandParseError> {
-    match token {
-        "logistics" | "log" | "supply" => Ok(CorruptionSubsystem::Logistics),
-        "trade" | "smuggling" | "commerce" => Ok(CorruptionSubsystem::Trade),
-        "military" | "procurement" | "army" => Ok(CorruptionSubsystem::Military),
-        "governance" | "bureaucracy" | "civic" => Ok(CorruptionSubsystem::Governance),
-        other => Err(CommandParseError::InvalidSubsystem(other.to_string())),
     }
 }
 
@@ -1517,6 +1327,97 @@ mod tests {
                 .any(|help| help.verb == "domesticate" || help.aliases.contains(&"domesticate")),
             "the retired early-claim must not linger in the help listing"
         );
+    }
+
+    /// The seven debug pokes are gone; `reload_config` is not.
+    ///
+    /// `heat`, `bias`, `support`, `suppress`, `support_channel`, `spawn_influencer` and
+    /// `corruption` were manual injection entry points for systems the sim still runs on its own —
+    /// tile temperature, axis bias, the influencer roster, the corruption ledger. Only the pokes
+    /// went, with the Inspector tab that was their sole caller.
+    #[test]
+    fn the_debug_poke_verbs_are_gone_and_reload_config_is_not() {
+        const REMOVED: [&str; 7] = [
+            "heat",
+            "bias",
+            "support",
+            "suppress",
+            "support_channel",
+            "spawn_influencer",
+            "corruption",
+        ];
+        for verb in REMOVED {
+            assert!(
+                matches!(
+                    parse_command_line(verb),
+                    Err(CommandParseError::UnknownCommand(ref parsed)) if parsed == verb
+                ),
+                "'{verb}' must no longer parse"
+            );
+            assert!(
+                !COMMAND_VERBS
+                    .iter()
+                    .any(|help| help.verb == verb || help.aliases.contains(&verb)),
+                "'{verb}' must not linger in the help listing"
+            );
+        }
+
+        // The one verb explicitly kept — every kind token, both spellings of the verb, and the
+        // optional path. A neighbouring row's deletion must not take this table entry with it.
+        assert!(COMMAND_VERBS.iter().any(
+            |help| help.verb == "reload_config" && help.aliases.contains(&"reload_sim_config")
+        ));
+        for (line, expected) in [
+            ("reload_config", ReloadConfigKind::Simulation),
+            ("reload_sim_config", ReloadConfigKind::Simulation),
+            ("reload_config sim", ReloadConfigKind::Simulation),
+            ("reload_config pipeline", ReloadConfigKind::TurnPipeline),
+            ("reload_config overlays", ReloadConfigKind::SnapshotOverlays),
+            (
+                "reload_config crisis_archetypes",
+                ReloadConfigKind::CrisisArchetypes,
+            ),
+            (
+                "reload_config crisis_modifiers",
+                ReloadConfigKind::CrisisModifiers,
+            ),
+            (
+                "reload_config crisis_telemetry",
+                ReloadConfigKind::CrisisTelemetry,
+            ),
+        ] {
+            assert_eq!(
+                parse_command_line(line).unwrap(),
+                CommandPayload::ReloadConfig {
+                    kind: expected,
+                    path: None,
+                },
+                "'{line}' must still parse"
+            );
+        }
+        assert_eq!(
+            parse_command_line("reload_config pipeline /tmp/turn_pipeline_config.json").unwrap(),
+            CommandPayload::ReloadConfig {
+                kind: ReloadConfigKind::TurnPipeline,
+                path: Some("/tmp/turn_pipeline_config.json".to_string()),
+            }
+        );
+    }
+
+    /// `reload_config` survives the wire, not just the parser.
+    ///
+    /// Retiring the seven pokes freed proto field numbers 2, 5..=10, which are `reserved` rather
+    /// than reusable. `reload_config` is field 16 and must round-trip untouched.
+    #[test]
+    fn reload_config_round_trips_the_command_envelope() {
+        let envelope = crate::CommandEnvelope {
+            payload: parse_command_line("reload_config crisis_telemetry cfg.json").unwrap(),
+            correlation_id: Some(7),
+        };
+        let bytes = envelope.encode_to_vec().expect("encode");
+        let decoded = crate::CommandEnvelope::decode(&bytes).expect("decode");
+        assert_eq!(decoded.payload, envelope.payload);
+        assert_eq!(decoded.correlation_id, Some(7));
     }
 
     #[test]

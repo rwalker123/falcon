@@ -155,6 +155,11 @@ pub struct SimulationConfig {
     /// two cannot disagree; a client-local render flag could not do the first, because unseen herds
     /// are already dropped from the payload. Not part of `WorldSnapshot`, so it survives a rollback.
     pub fog_enabled: bool,
+    /// How many turns of world events the [`CommandEventLog`] keeps (and therefore how far back the
+    /// client's event dock can scroll without a resync). Long enough to answer "what happened while
+    /// I was away", short enough to bound a full snapshot. Published as
+    /// `CampaignSection.commandEventsRetentionTurns` so the client can say how much history exists.
+    pub command_events_retention_turns: u64,
 }
 
 #[derive(Resource, Debug, Clone, Default)]
@@ -236,6 +241,13 @@ pub enum SimulationConfigError {
         #[source]
         source: io::Error,
     },
+    #[error(
+        "`command_events_retention_turns` must be at least 1: it is published as \
+         `CampaignSection.commandEventsRetentionTurns`, where 0 is the FlatBuffers default and the \
+         client reads it as \"the sim did not state a window\" — so a configured 0 would leave the \
+         sim and the event dock silently running different windows"
+    )]
+    ZeroCommandEventsRetentionTurns,
 }
 
 impl ConfigLoadError for SimulationConfigError {
@@ -316,6 +328,8 @@ struct SimulationConfigData {
     /// bool — fog of war is ON unless a config or the `set_fog` command says otherwise.
     #[serde(default = "default_fog_enabled")]
     fog_enabled: bool,
+    #[serde(default = "default_command_events_retention_turns")]
+    command_events_retention_turns: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -459,6 +473,12 @@ impl HydrologyOverridesData {
 
 impl SimulationConfigData {
     fn into_config(self) -> Result<SimulationConfig, SimulationConfigError> {
+        // A parsed-but-incoherent config counts as broken (see `config-loading.md`): boot panics
+        // through the `config_load.rs` seam, hot reload warns and keeps the live config. Both
+        // enter here, which is why the check lives at this seam and not at either call site.
+        if self.command_events_retention_turns == 0 {
+            return Err(SimulationConfigError::ZeroCommandEventsRetentionTurns);
+        }
         Ok(SimulationConfig {
             grid_size: UVec2::new(self.grid_size.x, self.grid_size.y),
             map_topology: MapTopology {
@@ -519,12 +539,21 @@ impl SimulationConfigData {
             log_bind: parse_socket(self.log_bind, "log_bind")?,
             crisis_auto_seed: self.crisis_auto_seed,
             fog_enabled: self.fog_enabled,
+            command_events_retention_turns: self.command_events_retention_turns,
         })
     }
 }
 
 fn default_fog_enabled() -> bool {
     true
+}
+
+/// 20 turns of world events: long enough that a player returning from a few quick turns can read
+/// what happened, short enough that a full snapshot's event list stays small. The single source of
+/// the number — [`CommandEventLog::default`] reads it too, so an untouched config and an absent key
+/// cannot disagree.
+fn default_command_events_retention_turns() -> u64 {
+    20
 }
 
 fn default_map_preset_id() -> String {
@@ -1270,6 +1299,26 @@ pub enum CommandEventKind {
     /// turn), distinct from the pen-*lost* (`Corral`) and pen-*starving* (`Corral`) edges — this is the
     /// herder-shortfall edge, and it applies to pastoral herds too.
     HerdUnderHerded,
+    /// **A whole child was born** into a band (`systems::population`). Births are a per-turn *rate*
+    /// (`working × fertility`), so this fires when the band's birth accumulator crosses a whole
+    /// person — never once per turn, and never rounded per turn. See
+    /// [`crate::components::DemographicFlowAccumulator`].
+    Born,
+    /// **Whole people died** in one age bracket, with the dominant cause (hunger or cold) recorded
+    /// on the turn the accumulator crossed. The cause is carried on the event rather than
+    /// re-derived later: post-turn state no longer knows which term killed them.
+    Died,
+    /// **A child reached working age** — the maturation accumulator crossed a whole person, which is
+    /// a new pair of hands rather than merely a bigger head-count.
+    CameOfAge,
+    /// **People left or joined a band** through discontent-driven migration. Whole counts already
+    /// (`PopulationCohort::last_emigrated` / `last_immigrated`), so this kind needs no accumulator.
+    Migrated,
+    /// **Workers reached elderhood** — the aging accumulator crossed a whole person. The twin of
+    /// [`CommandEventKind::CameOfAge`] at the other end of a working life: it moves nobody in or
+    /// out of the band, but it is a pair of hands the player no longer has, which is why the
+    /// workforce shrinking is announced rather than merely happening.
+    Aged,
 }
 
 impl CommandEventKind {
@@ -1299,6 +1348,11 @@ impl CommandEventKind {
             CommandEventKind::NarrativeBeat => "narrative_beat",
             CommandEventKind::NarrativeFork => "narrative_fork",
             CommandEventKind::HerdUnderHerded => "herd_under_herded",
+            CommandEventKind::Born => "born",
+            CommandEventKind::Died => "died",
+            CommandEventKind::CameOfAge => "came_of_age",
+            CommandEventKind::Migrated => "migrated",
+            CommandEventKind::Aged => "aged",
         }
     }
 }
@@ -1310,6 +1364,15 @@ pub struct CommandEventEntry {
     pub faction: FactionId,
     pub label: String,
     pub detail: Option<String>,
+    /// Monotonic publication sequence, assigned by [`CommandEventLog::push`] and **never reused**,
+    /// so the delta path can ship only the rows appended since a client's cursor
+    /// (`snapshot::diff_appended`).
+    ///
+    /// **One-based**, and that is load-bearing: a cursor is compared with `seq > cursor`, so `0`
+    /// has to mean *no event* — a zeroth event would be permanently unsendable to a client whose
+    /// cursor starts at `0`. Every `new` leaves it `0` for the same reason: an unpushed entry
+    /// carries the "no sequence" value, and the log is the only writer.
+    pub seq: u64,
 }
 
 impl CommandEventEntry {
@@ -1326,36 +1389,126 @@ impl CommandEventEntry {
             faction,
             label: label.into(),
             detail,
+            // The real value is stamped by `CommandEventLog::push` — the log owns the sequence, so
+            // no call site can hand out a number the log has already issued. `0` is the
+            // never-pushed value; real sequences start at 1.
+            seq: 0,
         }
     }
 }
 
+/// Hard cap on how many entries the log will hold **regardless of the turn window**.
+///
+/// The window is the real bound; this is the backstop that stops one pathological turn (a
+/// crisis firing an event per band per source) from growing the log — and therefore the resync
+/// snapshot — without limit. Reaching it means events from *within* the window are dropped, so it
+/// is set well above a normal turn's traffic rather than at it.
+const MAX_RETAINED_EVENTS: usize = 512;
+
+/// The first sequence a log issues. **Not zero** — a delta ships the rows whose `seq` exceeds the
+/// client's cursor, and a fresh cursor is `0`, so a zeroth event could never be sent.
+const FIRST_COMMAND_EVENT_SEQ: u64 = 1;
+
+/// The player-facing feed of resolved commands and world events, bounded by a **turn window**.
+///
+/// It used to keep the newest 32 entries. Once the sim reports births, deaths and coming-of-age
+/// per band, a count-bounded ring evicts a wolf raid within two turns — the bound would eat exactly
+/// what it exists to preserve. A turn window drops whole turns off the back instead, which is the
+/// unit the player (and the client's grouped log) thinks in.
 #[derive(Resource, Debug, Clone)]
 pub struct CommandEventLog {
     entries: Vec<CommandEventEntry>,
-    max_entries: usize,
+    retention_turns: u64,
+    next_seq: u64,
 }
 
 impl Default for CommandEventLog {
     fn default() -> Self {
-        Self {
-            entries: Vec::new(),
-            max_entries: 32,
-        }
+        Self::with_retention_turns(default_command_events_retention_turns())
     }
 }
 
 impl CommandEventLog {
-    pub fn push(&mut self, entry: CommandEventEntry) {
-        if self.entries.len() >= self.max_entries {
-            let overflow = self.entries.len() + 1 - self.max_entries;
-            self.entries.drain(0..overflow);
+    pub fn with_retention_turns(retention_turns: u64) -> Self {
+        Self {
+            entries: Vec::new(),
+            retention_turns,
+            // One-based — see `CommandEventEntry::seq`.
+            next_seq: FIRST_COMMAND_EVENT_SEQ,
         }
+    }
+
+    /// Append an event, stamping it with the next sequence number, then drop every entry that has
+    /// fallen out of the turn window.
+    ///
+    /// The newest entry's tick is the window's anchor: pushes are monotonic in tick (a turn
+    /// resolves before the next one starts, and a rollback replaces the whole log), so the entry
+    /// just pushed is the latest turn the log knows about.
+    pub fn push(&mut self, mut entry: CommandEventEntry) {
+        entry.seq = self.next_seq;
+        self.next_seq = self.next_seq.saturating_add(1);
+        let anchor = entry.tick;
         self.entries.push(entry);
+        self.evict(anchor);
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &CommandEventEntry> {
         self.entries.iter()
+    }
+
+    /// How many **distinct turns** the window keeps, counting the newest one — see [`Self::evict`].
+    pub fn retention_turns(&self) -> u64 {
+        self.retention_turns
+    }
+
+    /// Re-window the log (a `simulation_config.json` reload), pruning immediately so the live log
+    /// matches the number the snapshot is about to publish.
+    pub fn set_retention_turns(&mut self, retention_turns: u64) {
+        self.retention_turns = retention_turns;
+        if let Some(anchor) = self.entries.last().map(|entry| entry.tick) {
+            self.evict(anchor);
+        }
+    }
+
+    /// The sequence the **next** push will claim — i.e. one past the highest issued.
+    pub fn next_seq(&self) -> u64 {
+        self.next_seq
+    }
+
+    /// Every retained entry appended after `cursor`, oldest first. The delta path's whole reason
+    /// for the sequence: a client holding `cursor` needs exactly these rows.
+    pub fn appended_since(&self, cursor: u64) -> impl Iterator<Item = &CommandEventEntry> {
+        self.entries.iter().filter(move |entry| entry.seq > cursor)
+    }
+
+    /// Drop everything older than the window anchored at `anchor_tick`, then apply the backstop.
+    ///
+    /// The window is **inclusive of the anchor turn**, so `retention_turns` of N keeps ticks
+    /// `anchor − (N − 1) ..= anchor` — exactly N distinct turns, which is what the config key's
+    /// name promises and what the client's own prune keeps. (It used to reach back N turns *past*
+    /// the anchor and so kept N+1, shipping one turn the dock immediately discarded.)
+    ///
+    /// The `N − 1` leans on `retention_turns` never being zero:
+    /// [`SimulationConfigError::ZeroCommandEventsRetentionTurns`] rejects a configured `0` at parse
+    /// time, which is also what makes the number representable on the wire. `saturating_sub` keeps
+    /// a hand-built zero-turn log (only reachable through [`Self::with_retention_turns`]) at the
+    /// anchor turn alone rather than underflowing into "keep everything" — but the config guard is
+    /// the invariant, so restore it before removing it.
+    fn evict(&mut self, anchor_tick: u64) {
+        let turns_before_anchor = self.retention_turns.saturating_sub(1);
+        let oldest_kept = anchor_tick.saturating_sub(turns_before_anchor);
+        let stale = self
+            .entries
+            .iter()
+            .take_while(|entry| entry.tick < oldest_kept)
+            .count();
+        if stale > 0 {
+            self.entries.drain(0..stale);
+        }
+        if self.entries.len() > MAX_RETAINED_EVENTS {
+            let overflow = self.entries.len() - MAX_RETAINED_EVENTS;
+            self.entries.drain(0..overflow);
+        }
     }
 }
 
@@ -1523,6 +1676,203 @@ mod tests {
                 config.log_bind.port(),
             ),
             before
+        );
+    }
+
+    fn event(tick: u64) -> CommandEventEntry {
+        CommandEventEntry::new(
+            tick,
+            CommandEventKind::Born,
+            FactionId(0),
+            format!("tick {tick}"),
+            None,
+        )
+    }
+
+    /// The sequence numbers a log currently holds, oldest first.
+    fn seqs(log: &CommandEventLog) -> Vec<u64> {
+        log.iter().map(|entry| entry.seq).collect()
+    }
+
+    /// The window drops whole TURNS, which is the point of replacing the 32-entry ring: a turn that
+    /// fires twenty events must not evict the previous turn's.
+    #[test]
+    fn the_turn_window_evicts_by_tick_not_by_count() {
+        let mut log = CommandEventLog::with_retention_turns(2);
+        for tick in 0..=1u64 {
+            for _ in 0..20 {
+                log.push(event(tick));
+            }
+        }
+        assert_eq!(log.iter().count(), 40, "two turns inside a 2-turn window");
+
+        log.push(event(2));
+        assert!(
+            log.iter().all(|entry| entry.tick >= 1),
+            "tick 0 fell out of the window whole: {:?}",
+            log.iter().map(|entry| entry.tick).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            log.iter().filter(|entry| entry.tick == 1).count(),
+            20,
+            "…and the turns still inside it are untouched"
+        );
+    }
+
+    /// **`retention_turns` of N keeps N turns, not N+1.** The key is named for a count of turns and
+    /// the client prunes to exactly that many, so an off-by-one here ships a turn the dock discards
+    /// on ingest — and makes the expanded log's "showing N of M retained turns" foot describe a
+    /// frame that carried M+1.
+    #[test]
+    fn the_window_keeps_exactly_retention_turns_distinct_turns() {
+        for retention_turns in 1..=5u64 {
+            let mut log = CommandEventLog::with_retention_turns(retention_turns);
+            for tick in 0..20u64 {
+                log.push(event(tick));
+            }
+            let ticks: Vec<u64> = log.iter().map(|entry| entry.tick).collect();
+            let expected: Vec<u64> = (20 - retention_turns..20).collect();
+            assert_eq!(
+                ticks, expected,
+                "a {retention_turns}-turn window anchored at tick 19"
+            );
+        }
+    }
+
+    /// Eviction never rewinds the sequence: a client's cursor is a statement about what it has
+    /// SEEN, so a reissued number would silently suppress a real event.
+    #[test]
+    fn the_sequence_is_monotonic_across_eviction() {
+        // Two turns, so more than one row survives and the contiguity assertion below has
+        // something to measure.
+        let mut log = CommandEventLog::with_retention_turns(2);
+        for tick in 0..10u64 {
+            log.push(event(tick));
+        }
+        let held = seqs(&log);
+        assert!(
+            held.windows(2).all(|pair| pair[1] == pair[0] + 1),
+            "held sequence is contiguous and rising: {held:?}"
+        );
+        assert_eq!(
+            log.next_seq(),
+            11,
+            "ten pushes issued ten numbers, one-based"
+        );
+        assert_eq!(
+            *held.last().expect("a retained entry"),
+            10,
+            "the newest entry carries the newest number, not a recycled one"
+        );
+    }
+
+    /// The backstop bounds one pathological turn. Everything here shares a tick, so the window
+    /// evicts nothing and only `MAX_RETAINED_EVENTS` can.
+    #[test]
+    fn the_backstop_holds_when_one_turn_floods_the_window() {
+        let mut log = CommandEventLog::default();
+        for _ in 0..(MAX_RETAINED_EVENTS + 50) {
+            log.push(event(7));
+        }
+        assert_eq!(log.iter().count(), MAX_RETAINED_EVENTS);
+        assert_eq!(
+            log.iter().next().expect("a retained entry").seq,
+            51,
+            "the backstop drains from the FRONT — the oldest 50 went, not the newest"
+        );
+    }
+
+    /// A fresh cursor is `0` and the first event is `1`, so the very first event is sendable. A
+    /// zero-based sequence would have made it permanently invisible to every new client.
+    #[test]
+    fn the_first_event_is_above_a_fresh_cursor() {
+        let mut log = CommandEventLog::default();
+        log.push(event(0));
+        assert_eq!(log.appended_since(0).count(), 1);
+    }
+
+    /// `appended_since` answers about the client's cursor, not about the log's own indices, so an
+    /// eviction between two frames must not resurrect rows the client already holds.
+    #[test]
+    fn appended_since_is_correct_across_an_eviction() {
+        let mut log = CommandEventLog::with_retention_turns(2);
+        for tick in 0..3u64 {
+            log.push(event(tick));
+        }
+        let cursor = log
+            .iter()
+            .map(|entry| entry.seq)
+            .max()
+            .expect("three entries");
+        assert!(
+            log.appended_since(cursor).next().is_none(),
+            "a caught-up cursor is owed nothing"
+        );
+
+        // Two more turns: the window drops ticks 1 and 2 while two new rows arrive.
+        log.push(event(3));
+        log.push(event(4));
+        let owed: Vec<u64> = log.appended_since(cursor).map(|entry| entry.tick).collect();
+        assert_eq!(
+            owed,
+            vec![3, 4],
+            "only the genuinely new rows, and the evicted ones are simply gone"
+        );
+        assert_eq!(
+            log.iter().count(),
+            2,
+            "the window kept ticks 3..=4 and dropped everything before them"
+        );
+    }
+
+    /// The window is a config lever, so re-windowing prunes immediately rather than waiting for the
+    /// next push — otherwise the published retention and the published rows would disagree.
+    #[test]
+    fn narrowing_the_window_prunes_immediately() {
+        let mut log = CommandEventLog::with_retention_turns(20);
+        for tick in 0..=20u64 {
+            log.push(event(tick));
+        }
+        assert_eq!(
+            log.iter().count(),
+            20,
+            "ticks 1..=20 — twenty turns, not 21"
+        );
+
+        log.set_retention_turns(2);
+        assert_eq!(log.retention_turns(), 2);
+        assert_eq!(
+            log.iter().map(|entry| entry.tick).collect::<Vec<_>>(),
+            vec![19, 20]
+        );
+    }
+
+    /// **A zero-turn window is rejected at parse time.** Server-side `0` is coherent (the log would
+    /// keep the current turn alone), but it is unrepresentable on the wire: it is the FlatBuffers
+    /// default for `CampaignSection.commandEventsRetentionTurns` and both client decoders read a
+    /// `0` as "the sim did not state a window", falling back to their own default. That divergence
+    /// is silent, so the config never gets to express it.
+    #[test]
+    fn a_zero_retention_window_is_refused_by_the_config() {
+        let json = BUILTIN_SIMULATION_CONFIG.replace(
+            "\"command_events_retention_turns\": 20",
+            "\"command_events_retention_turns\": 0",
+        );
+        assert!(
+            json != BUILTIN_SIMULATION_CONFIG,
+            "the builtin config still carries the key this test rewrites"
+        );
+
+        let err = SimulationConfig::from_json_str(&json)
+            .expect_err("a zero-turn window must not parse into a config");
+        assert!(
+            matches!(err, SimulationConfigError::ZeroCommandEventsRetentionTurns),
+            "rejected for the right reason: {err}"
+        );
+        assert!(
+            !err.is_not_found(),
+            "an incoherent value is a file that is there and wrong, so boot must panic rather \
+             than fall back to the builtin"
         );
     }
 }

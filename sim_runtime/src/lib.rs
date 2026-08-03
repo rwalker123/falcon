@@ -11,7 +11,7 @@ pub use sim_schema::*;
 pub mod commands;
 pub use commands::{
     CancelScope, CommandDecodeError, CommandEncodeError, CommandEnvelope, CommandPayload,
-    ConfigOverrideKind, OrdersDirective, ReloadConfigKind, SecurityPolicyKind, SupportChannel,
+    ConfigOverrideKind, OrdersDirective, ReloadConfigKind, SecurityPolicyKind,
 };
 
 pub mod command_text;
@@ -402,6 +402,7 @@ pub mod knowledge {
                 capability_flags: 0,
                 campaign_profiles: Vec::new(),
                 command_events: Vec::new(),
+                command_events_retention_turns: 0,
                 pending_forks: Vec::new(),
                 stance_axes: Vec::new(),
                 voice_medium: Vec::new(),
