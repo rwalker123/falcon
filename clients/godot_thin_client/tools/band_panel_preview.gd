@@ -45,6 +45,19 @@ const MANY_SOURCE_CHILD_RATIO := 0.56
 const MANY_SOURCE_ELDER_RATIO := 0.31
 # Sub-pixel slack when comparing a zone's content rect against its host rect.
 const ZONE_BOUNDS_TOLERANCE := 1.0
+## The merged Food line's hay clause, as it reads AFTER the BBCode is stripped — the needle proving the
+## SHORT tier really merged the two larders rather than dropping one. The word, not the number: the
+## stock is a fixture value and this is a claim about the CLAUSE.
+const MERGED_FOOD_HAY_NEEDLE := "hay"
+## The standalone `Fodder:` row's key, which must be ABSENT wherever the merge fired. Matched bare —
+## `DetailFormat._split_kv` drops the `": "` separator into two table cells, so the colon is never in
+## the rendered text (the rule `_assert_trade_row_absent_in_short_tier` already records).
+const FODDER_ROW_NEEDLE := "Fodder"
+## The `RichTextLabel` theme keys the vitals width measurement reads its OWN font/size/gutter from —
+## never a hardcoded face, since the measurement is only honest in the font the label actually draws.
+const VITALS_FONT_THEME_KEY := "normal_font"
+const VITALS_FONT_SIZE_THEME_KEY := "normal_font_size"
+const VITALS_TABLE_SEPARATION_THEME_KEY := "table_h_separation"
 ## Offset applied to a fixture cohort's `entity` to derive its `band_id` — see `_push_bands`.
 const FIXTURE_BAND_ID_OFFSET := 4000
 ## One Wild Boar's worth of yield in provisions (`HerdTelemetryState.foodPerAnimal`) — the quarry
@@ -623,6 +636,24 @@ func _ready() -> void:
 	await _save("band_panel_trade_short_tier")
 	_assert_zones_within_bounds()
 	_assert_trade_row_absent_in_short_tier()
+
+	# (iv) THE WORST CASE — every optional vitals row a band can carry AT ONCE, in the height-capped
+	# TOP dock. Nothing in this harness had ever rendered one: each optional row had its own frame and
+	# each of those fixtures was otherwise ordinary, so the zone was never asked to hold all of them
+	# together — which is exactly how a band with the full set came to overflow a box that CLIPS.
+	# The fixture carries a hay larder AND a pen feed bill, productivity below full, a fertility
+	# reading, a trade stock and rate, and the projected arrivals the FOOD OUTLOOK chart needs, so
+	# every gate in `build_band_zone` / `unit_summary_lines` is live at once.
+	_push_bands([_vitals_worst_case_band_fixture()])
+	_panel.set_dock(SIDE_TOP)
+	await _settle()
+	await _settle()   # let the deferred fit_content re-pack settle before capture
+	await _save("band_panel_vitals_worst_case")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_report_zone_content_extent("band_panel_vitals_worst_case")
+	_assert_merged_food_row_fits()
 
 	# (c) CONCERNING food (net negative + low runway): the breakdown AUTO-shows (no click) under a red net.
 	_push_bands([_concerning_food_band_fixture()])
@@ -1655,6 +1686,81 @@ func _assert_trade_row_absent_in_short_tier() -> void:
 		push_error("band_panel_preview: SHORT tier still renders the Trade row — the compact gate is off")
 		return
 	print("band_panel_preview: assert OK — SHORT tier drops the Trade row (Food row still present)")
+
+## MEASUREMENT (not an assertion — `_assert_zone_content_fits` is the assertion): print how tall each
+## zone's content actually came out against the box it was given, so a state that PASSES still says by
+## how much. A near-miss and a comfortable fit are the same green line otherwise, and the whole point
+## of the worst-case state is knowing what the margin is.
+## Uses the SAME walk `_collect_zone_content_shortfall` does — the deepest `top + needed` any measurable
+## control reaches — so the number printed here and the number asserted on cannot come from two reads.
+func _report_zone_content_extent(state_name: String) -> void:
+	for host_variant in _find_zone_hosts(_panel):
+		var host: Control = host_variant
+		var extent := _zone_content_extent(host, host)
+		if extent <= 0.0:
+			continue
+		print("band_panel_preview: %s — zone %s content %.0fpx of a %.0fpx box (%.0f spare)" % [
+			state_name, host.name, extent, host.size.y, host.size.y - extent])
+
+## The deepest point any measurable control in this zone reaches, relative to the zone's own top.
+func _zone_content_extent(node: Node, host: Control) -> float:
+	var deepest := 0.0
+	for child in node.get_children():
+		if not (child is Control):
+			continue
+		var content: Control = child
+		if not content.visible:
+			continue
+		var needed := content.get_combined_minimum_size().y
+		if needed <= 0.0:
+			deepest = maxf(deepest, _zone_content_extent(content, host))
+			continue
+		deepest = maxf(deepest, content.global_position.y - host.global_position.y + needed)
+	return deepest
+
+## GUARD: the SHORT tier merges the hay larder onto the Food line (`BandDetailLines`'
+## `BAND_FOOD_HAY_CLAUSE_FORMAT`) to save a row — and the vitals label is `AUTOWRAP_WORD`, so a merged
+## line too wide for the band zone WRAPS and costs back the very row the merge bought. A wrap is also
+## invisible in the frame: two lines of a rendered vitals block look exactly like two rows.
+##
+## Measured rather than eyeballed: the Food row's natural (unwrapped) run, in the label's OWN font at
+## its OWN size, against the width the label was actually given, plus the gutter the `[table=2]`
+## spends between its key and value cells — so the figure is the whole ROW rather than one cell.
+##
+## **THE ROW IS CUT OUT OF THE PARSED TEXT BY THE NEXT ROW'S KEY, not by a newline.** `[table]` rows
+## carry NO line break into `get_parsed_text()` — every row of the vitals block comes back concatenated
+## into one string (measured: the three-row worst case reads as a single 916px run) — so a per-line
+## split measures the whole block and reports a wrap on a label that fits comfortably.
+func _assert_merged_food_row_fits() -> void:
+	var vitals := _find_vitals_label(_panel)
+	if vitals == null:
+		push_error("band_panel_preview: merged-food-row assert found no vitals label")
+		return
+	var text: String = vitals.get_parsed_text()
+	if not text.contains(MERGED_FOOD_HAY_NEEDLE):
+		push_error("band_panel_preview: the SHORT tier's Food row carries no hay clause — the merge is off (got: %s)" % text)
+		return
+	if text.contains(FODDER_ROW_NEEDLE):
+		push_error("band_panel_preview: the SHORT tier still renders a standalone Fodder row beside the merged Food line")
+		return
+	var next_row := text.find(HudDisclosureVocab.DETAIL_ROW_MORALE)
+	if next_row <= 0:
+		push_error("band_panel_preview: merged-food-row assert cannot find the Morale row that bounds the Food one (got: %s)" % text)
+		return
+	var food_run := text.substr(0, next_row)
+	var font := vitals.get_theme_font(VITALS_FONT_THEME_KEY)
+	var font_size := vitals.get_theme_font_size(VITALS_FONT_SIZE_THEME_KEY)
+	var table_gap := float(vitals.get_theme_constant(VITALS_TABLE_SEPARATION_THEME_KEY))
+	var needed: float = font.get_string_size(food_run, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x + table_gap
+	var available := vitals.size.x
+	print("band_panel_preview: merged Food row — \"%s\" measures %.0fpx of a %.0fpx column" % [
+		food_run, needed, available])
+	if needed > available:
+		push_error("band_panel_preview: the merged Food line WRAPS — %.0fpx of run in a %.0fpx column" % [
+			needed, available])
+	else:
+		print("band_panel_preview: assert OK — the merged Food line fits its column (%.0f spare)" % [
+			available - needed])
 
 ## **THE FORAGE-TRADE REGRESSION.** A forage source ships `realized_trade_yield == 0` (the documented
 ## not-yet-projected sentinel) beside a real `trade_yield`, and the decoder always inserts the key — so
@@ -3274,6 +3380,64 @@ func _arrivals_band_fixture() -> Dictionary:
 			"arrival_schedule": _continuous_forage_schedule()},
 		{"kind": "scout", "workers": 2},
 	]
+	return band
+
+## Every quantity the WORST-CASE vitals fixture states, named because each one exists to keep ONE
+## optional row alive — and because the merged Food line's width is measured against them, so a
+## fixture tuned to short numbers would measure a line no player ever sees.
+##
+## The larder is DELIBERATELY LARGE with a LONG runway and a NEGATIVE net rate, which is a real
+## combination (a big store draining slowly) and the widest the Food row can render: three digits of
+## provisions, three digits of turns, a signed rate, and a three-digit hay stock beside them.
+const WORST_CASE_PROVISIONS := 248.0
+## `WORST_CASE_PROVISIONS` walked down at the net drain below (3.60 income − 4.60 eaten − 0.41 pen
+## feed = −1.41/turn), so the runway the row prints is the one the larder actually implies.
+const WORST_CASE_TURNS_OF_FOOD := 176.0
+## The hay larder (Flora roster F3) and the pen bill it offsets — either one alone lights the fodder
+## readout, and this fixture carries BOTH so neither gate can be the thing keeping it on.
+const WORST_CASE_FODDER_STORE := 128.4
+const WORST_CASE_PEN_FEED_UPKEEP := 0.41
+## The band's trade stock, so the Trade row (dropped in this tier) has real content in the taller one.
+const WORST_CASE_TRADE_STOCK := 46.5
+## Discontent below full, so the WORK head renders its Output item.
+const WORST_CASE_OUTPUT_MULTIPLIER := 0.62
+## Chosen against the two worked rows' realized income (3.60) and the pen bill so the net comes out
+## NEGATIVE — a signed rate is a character wider than an unsigned one, and a draining larder beside a
+## long runway is the shape a big-store band really shows.
+const WORST_CASE_FOOD_CONSUMPTION := 4.60
+
+## THE WORST CASE: a band carrying EVERY optional vitals row it can simultaneously have. Built on the
+## arrivals fixture, so it also carries the per-source `arrival_schedule`s the FOOD OUTLOOK chart
+## needs — the block `build_band_zone` gates on height — and its two worked rows are given trade
+## components so the Trade row has a rate as well as a stock.
+func _vitals_worst_case_band_fixture() -> Dictionary:
+	var band := _arrivals_band_fixture()
+	band["entity"] = 922
+	band["id"] = "Band 11"
+	band["turns_of_food"] = WORST_CASE_TURNS_OF_FOOD
+	band["stores"] = {"provisions": WORST_CASE_PROVISIONS, "trade_goods": WORST_CASE_TRADE_STOCK}
+	band["fodder_store"] = WORST_CASE_FODDER_STORE
+	band["pen_feed_upkeep"] = WORST_CASE_PEN_FEED_UPKEEP
+	band["output_multiplier"] = WORST_CASE_OUTPUT_MULTIPLIER
+	band["food_consumption"] = WORST_CASE_FOOD_CONSUMPTION
+	# Falling morale with a named cause, so the Morale row renders its longest form beside the rest.
+	band["morale"] = 0.31
+	band["morale_delta"] = -0.040
+	band["morale_cause"] = 1   # Terrain
+	band["morale_settling"] = 0.010
+	band["morale_terrain"] = -0.030
+	band["morale_climate"] = -0.020
+	# `_arrivals_band_fixture` restates the assignments, so the trade components have to be re-added:
+	# they are what gives the (taller-tier) Trade row a live rate rather than a bare stock.
+	for entry in (band["labor_assignments"] as Array):
+		var assignment: Dictionary = entry
+		if String(assignment.get("kind", "")) == SourceForecast.LABOR_KIND_HUNT:
+			assignment["trade_yield"] = 0.06
+			assignment["realized_trade_yield"] = 0.06
+		elif String(assignment.get("kind", "")) == SourceForecast.LABOR_KIND_FORAGE:
+			# The live forage shape: a real `trade_yield` beside the not-yet-projected `0.0`.
+			assignment["trade_yield"] = 0.04
+			assignment["realized_trade_yield"] = 0.0
 	return band
 
 ## A player band whose larder EMPTIES inside the horizon: a heavy drain over a sparse hunt + a thin

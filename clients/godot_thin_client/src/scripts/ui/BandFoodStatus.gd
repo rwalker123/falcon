@@ -180,6 +180,17 @@ static func hex_for_output(o: float) -> String:
 		return HudStyle.WARN_HEX
 	return HudStyle.INK_HEX
 
+## The same buckets as a `Color`, for a readout built out of Labels rather than BBCode — the WORK
+## zone head's Output item. Mirrors the `color_for_morale` / `hex_for_morale` pairing, so the panel's
+## two productivity surfaces can never grade the same multiplier differently.
+static func color_for_output(o: float) -> Color:
+	_ensure_loaded()
+	if o < _critical_output:
+		return HudStyle.DANGER
+	if o < _warn_output:
+		return HudStyle.WARN
+	return HudStyle.INK
+
 ## Minimum |per-turn morale contribution| worth listing in the itemized breakdown.
 static func morale_breakdown_epsilon() -> float:
 	_ensure_loaded()
