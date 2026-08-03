@@ -102,6 +102,54 @@ to `3 × 0.05 = 0.15`; flooring says a small band can never *reach* a mammoth, w
 rate means — they can walk up to it. What stops them is that they cannot hurt it fast enough to
 matter, which the fight already reports. Contact is not the gate.
 
+**It scales linearly with party size.** One hunter engages `X`, two engage `2X`; there is nothing
+magic about crowding, and the fractional values below are **throughput, not a threshold**. Forty
+hunters engage two mammoths a turn; five still engage one and grind it down over many turns.
+
+### 2.1 Values — SETTLED
+
+`ceiling = engage_rate × body_mass` is the most biomass one hunter can ever take from a species per
+turn, at any weapon tier (§4.4), so it is the number these are authored against.
+
+| species | body | engage_rate | reads as | **ceiling** |
+|---|---|---|---|---|
+| mammoth | 800 | 0.05 | 20 hunters per animal | **40** |
+| steppe runner | 53 | 0.5 | 2 hunters | **26.5** |
+| seal | 12 | 2 | 1 hunter, 2 animals | **24** |
+| marsh grazer | 47 | 0.5 | 2 hunters | **23.5** |
+| wild elk | 47 | 0.5 | 2 hunters | **23.5** |
+| aurochs | 120 | 0.17 | 6 hunters | **20** |
+| wild horse | 40 | 0.5 | 2 hunters | **20** |
+| reindeer | 20 | 1 | 1 hunter | **20** |
+| deer | 15 | 1 | 1 hunter | **15** |
+| alpine ibex | 10 | 1 | 1 hunter | **10** |
+| river fish | 0.67 | 15 | nets | **10** |
+| crag goat | 6 | 1.5 | 1 hunter | **9** |
+| wild sheep | 5.6 | 1.5 | 1 hunter | **8.4** |
+| gazelle | 3.3 | 2 | 1 hunter | **6.6** |
+| snow hare | 0.6 | 10 | snares | **6** |
+| boar | 12 | 0.33 | 3 hunters | **4** |
+| forest grouse | 0.47 | 8 | snares | **3.8** |
+| rabbit | 0.27 | 10 | snares | **2.7** |
+| wolf | 5.3 | 0.33 | 3 hunters | **1.75** |
+| fowl | 0.13 | 10 | snares | **1.3** |
+
+Four things the ordering is *meant* to say, and which a re-tune must not quietly undo:
+
+- **Mammoth is an outlier, not the top of a curve** — 40 against 26.5 for the next. That margin is
+  what makes organising twenty hunters worth doing.
+- **The tameable species are also the good hunting.** Steppe runner, marsh grazer, reindeer and wild
+  horse (20–26.5) are all `pastoral`; aurochs (20) is the `pen` branch's prize. You hunt them until
+  you can tame them, which is the ladder's own story.
+- **Pen small game is at the bottom** — rabbit 2.7, fowl 1.3, grouse 3.8. Hunting them is pointless,
+  which is the pressure toward penning.
+- **Dangerous-for-their-size are the worst deals in the game** — boar 4, wolf 1.75. Three hunters for
+  a 12-unit animal is a bad trade however it is sliced, and a boar hunt should read as a mistake.
+
+**Seal at 24 is the row most likely to cause trouble.** Historically right — seals are helpless on a
+haul-out — but it makes a coastal start materially stronger than an inland one. Known, not
+discovered.
+
 **The gate is §4.2's attack-vs-defense.** Twenty bare-handed hunters *do* engage a mammoth — the
 fight then resolves as casualties with no kills, because their effective attack is zero. That is
 deliberately better than a disabled button: the sim teaches the lesson instead of a tooltip.
@@ -456,11 +504,10 @@ Slices 1–2 are deliberately identities so slice 3 is the only one that can mov
 | # | Question | Notes |
 |---|---|---|
 | 1 | **`engage_rate` values.** | The roster needs a pass. The readable form (`1 / engage_rate` = hunters per animal) is what to author against — "twenty hunters to take a mammoth" is a judgement anyone can make; "0.05" is not. |
-| 2 | **Are `engage_rate` values authored against the herd's spare stock?** | For most species the escapement floor binds long before engagement does, so a rate set too low silently becomes a *second* floor. It should bite only for megafauna, the big migratory herds, and denial. |
-| 3 | **Does engagement scale linearly with party size?** | Twenty hunters engaging twenty times one hunter's worth assumes no crowding and no detection penalty. A large party is easier to notice, which is an argument for sub-linearity — and it interacts with wariness rather than replacing it. |
-| 4 | **Does the escapement floor bound `engaged` or `killed`?** | Specified as `engaged`, so restraint means not starting the fight. Bounding `killed` instead would mean killing animals and letting them lie, which is denial's job, not a hunt's. |
-| 5 | **Do escaped animals become warier?** | The dynamic half of §3 exists for troops. A herd that has been hunted hard learning to flee is the same mechanic, and would give hunting pressure a memory — but it makes species values non-static and is deliberately out of this arc. |
-| 6 | **What does the client show for a fight it cannot win?** | The gate produces "you will lose people and kill nothing." That must be legible *before* committing a party, which is a stronger demand on the pre-launch readout than a yield number. |
+| 2 | **Do the `engage_rate` values hold up in play?** | §2.1 settles them against the ceiling ordering. The risk they carry is that for most species the escapement floor binds long before engagement does, so a rate set too low silently becomes a *second* floor. |
+| 3 | **Does the escapement floor bound `engaged` or `killed`?** | Specified as `engaged`, so restraint means not starting the fight. Bounding `killed` instead would mean killing animals and letting them lie, which is denial's job, not a hunt's. |
+| 4 | **Do escaped animals become warier?** | The dynamic half of §3 exists for troops. A herd that has been hunted hard learning to flee is the same mechanic, and would give hunting pressure a memory — but it makes species values non-static and is deliberately out of this arc. |
+| 5 | **What does the client show for a fight it cannot win?** | The gate produces "you will lose people and kill nothing." That must be legible *before* committing a party, which is a stronger demand on the pre-launch readout than a yield number. |
 
 ---
 
