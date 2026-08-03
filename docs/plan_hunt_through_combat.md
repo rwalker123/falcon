@@ -1,6 +1,7 @@
 # The hunt is a fight — resolving the take through the combat system
 
-**Status:** §9 slices **1 and 2 have landed**; slices 3–5 are design. Issue #456, repurposed: the
+**Status:** §9 slices **1 and 2 have landed**; slices 3–6 are design, and **slice 3 blocks the
+rest** (§5.1 — found in play, not in review). Issue #456, repurposed: the
 denial raid that issue asks for turns out to need this first, and becomes small once it exists
 (`docs/plan_denial_raid.md`).
 
@@ -421,7 +422,7 @@ it is the cheapest number here to revisit once the loop is playable.
 
 ---
 
-## 5. Carry is separate, and stays exactly as it is
+## 5. Carry is separate — and it is what ends a trip
 
 The two halves of a hunt have opposite shapes, which is why one number could never do both:
 
@@ -435,6 +436,77 @@ The two halves of a hunt have opposite shapes, which is why one number could nev
 **`max(1, carryable)` survives untouched.** A party too small to haul a whole animal still takes one
 and wastes the rest — that is where hunting's waste comes from, and deleting it would silently remove
 waste from the game everywhere except a denial raid.
+
+### 5.1 A raid's length is a species constant, and the party stepper cannot change it
+
+**Found in play, not in review.** Eight hunters sent after a Wild Fowl herd reported *"away ≈43 turns
+— 31 hunting, 12 travel"*, with no control that moved the number.
+
+A raid ends when the **pack fills** (or the herd reaches the floor, or the herd is lost — whichever
+comes first). The pack is measured in **carry**; since §2 the take is measured in **reach**. That
+mismatch is the whole of it:
+
+```text
+pack        = workers × per_worker_carry            = 8 × 40   = 320 biomass
+rate        = workers × engage_rate × body_mass     = 8 × 10 × 0.13 = 10.4 biomass/turn
+turns       = 320 / 10.4                            = 31
+```
+
+**Party size cancels.** Both terms scale linearly with `workers`, so:
+
+```text
+turns_to_fill = per_worker_carry / (engage_rate × body_mass) = per_worker_carry / ceiling
+```
+
+Four hunters take 31 turns; sixteen take 31 turns. The stepper is not a weak lever here, it is
+**structurally not a lever at all** — which is exactly what the player reported.
+
+**So §4.6's ceiling table is silently also the trip-length table**, and nobody noticed it was setting
+two things:
+
+| | ceiling | turns to fill |
+|---|---|---|
+| mammoth | 40.0 | **1.0** |
+| steppe runner / seal / marsh grazer / wild elk | 23.5–26.5 | 1.5–1.7 |
+| aurochs / reindeer / wild horse | 20 | 2.0 |
+| deer | 15 | 2.7 |
+| ibex / river fish / crag goat / wild sheep | 8.4–10.1 | 4.0–4.8 |
+| gazelle / snow hare | 6.0–6.6 | 6.1–6.7 |
+| boar / forest grouse | 3.8–4.0 | 10.1–10.6 |
+| rabbit | 2.7 | 14.8 |
+| wolf | 1.7 | 22.9 |
+| fowl | 1.3 | **30.8** |
+
+The *ordering* is the design working — a mammoth raid is one hunting turn plus travel, which is what
+"megafauna is the prize" should feel like. The small end is not merely unattractive, it is
+**unusable**, and that is the defect.
+
+### 5.2 The fill target is the party-side twin of the floor
+
+The termination condition already has a party-side term — the pack — but it is **a physical constant
+nobody chose**. Make it a number the player sets, below capacity:
+
+> **The floor says how deep to draw the herd. The fill target says how long you will wait.**
+
+That needs **no new termination logic**: it replaces a constant in a condition the raid already
+evaluates. *"Take ≈50 and come home"* is a fill target under capacity, and a target at or above
+capacity is exactly today's behaviour — which is what makes the change safe to land.
+
+**The escapement graph returns on the expedition sheet** for the herd-side half. The two levers then
+read as a pair rather than as one dial and one mystery.
+
+**The forecast's job becomes naming which bound ends the trip**, and that is the readout that makes
+the choice legible — more than either number alone:
+
+- *"You come home on your fill target in 4 turns; the herd never reaches the floor."*
+- *"You reach the floor in 2 turns with the pack a third full."*
+
+**The party stepper stops pretending to be a trip-length dial** — it never was one — and becomes
+purely *how much you bring back per trip*, which is honest and still worth deciding.
+
+**This blocks the remaining slices** rather than sitting beside them: slice 4 changes what a take is,
+and re-tuning trip lengths against a mechanic that has no player lever would be tuning the wrong
+thing twice.
 
 ---
 
@@ -546,15 +618,26 @@ Each lands on its own PR.
    2 is an identity.
 2. **`CombatProfile::wariness`** + the retreat stage, seeded per event; wariness `0` everywhere, so
    this slice is a provable identity.
-3. **The take resolves through `resolve_fight`.** `quantise_animal_take`'s kill arm is replaced by
+3. **The fill target** (§5.2) — a player-set stop below the pack's capacity, the escapement graph
+   restored on the expedition sheet, and a forecast that names which bound ends the trip. **Next,
+   and blocking**: without it a raid's length is a species constant with no lever (§5.1), and every
+   later slice would be tuned against that.
+4. **The take resolves through `resolve_fight`.** `quantise_animal_take`'s kill arm is replaced by
    the resolver's enemy losses; the herd-as-`Force` mapping and the one-sided fast path land here.
    Carry, waste and `max(1, carryable)` are untouched.
-4. **Wariness values authored** across the roster — the first slice with visible behaviour change.
-5. **Forecast + client**: the range readout, and the hunters-per-animal figure on the pre-launch
-   panel.
+5. **Forecast reports a range** (§6.4) + the client readout, and the hunters-per-animal figure on the
+   pre-launch panel.
+6. **Wariness values authored** across the roster — the first slice with visible retreat behaviour.
+
+   **6 must follow 5, and the order is not a preference.** Authoring wariness makes the take
+   stochastic; until the forecast reports a distribution, `forecast == actual` breaks on the animal
+   web the moment a non-zero value ships. There is a second, harder half to settle with it: a
+   forecast has no event seed (a projection cannot know a future tick), so the preview cannot draw
+   the retreat the live take will draw. Either the forecast reports the **expectation**, or the draw
+   is made forecast-reproducible — a design call, not an implementation detail.
 
 Slice 2 is deliberately an identity (wariness `0` makes the retreat stage a provable no-op), so its
-review can be about the seam rather than about balance. Slices 1 and 3 both move numbers.
+review can be about the seam rather than about balance. Slices 1, 3 and 4 all move numbers.
 
 ---
 
@@ -594,7 +677,17 @@ review can be about the seam rather than about balance. Slices 1 and 3 both move
 - **Distribution over seeds, with liveness.** Non-zero wariness produces a spread whose mean tracks
   the retreat probability, asserted across many seeds; paired with an assertion that takes are
   non-zero, because a dead retreat stage and a dead engagement stage both "pass" a range check.
-- **The pen is untouched** — a corral-tend take is byte-identical before and after slice 3. Penned
+- **A fill target below capacity shortens the trip; a target at or above it is an exact identity**
+  (§5.2). Both halves are the assertion — the second is what makes the slice safe to land, and a
+  target that silently did nothing would pass the first alone.
+- **Trip length responds to the target.** Pinned directly, because §5.1's defect is precisely a
+  number that looked like a lever and was not: assert that two different fill targets give two
+  different trip lengths, and pair it with the invariance that caused the bug — with **no** target
+  set, `turns_to_fill` is unchanged by party size.
+- **The forecast names which bound ends the trip**, and its answer matches which one actually did.
+  A raid that comes home on its fill target and a raid that comes home on the floor must be
+  distinguishable in the readout, not merely in the turn count.
+- **The pen is untouched** — a corral-tend take is byte-identical before and after slice 4. Penned
   animals are not engaged, not fought, and not wary.
 
 ---
@@ -607,7 +700,8 @@ Every value is settled (§2.1, §4.2, §4.3, §4.8). What remains is what only p
 |---|---|---|
 | 1 | **Do the roster values hold up in play?** | The risk they carry is specific: for most species the escapement floor binds long before engagement does, so an `engage_rate` set too low silently becomes a *second* floor. §6.6's hunt report is what makes that visible rather than mysterious. |
 | 2 | **Is a coastal start too strong?** | Seal's ceiling of 24 is second only to megafauna, because seals are helpless on a haul-out. Historically right; possibly a start-position imbalance. Known, not discovered. |
-| 3 | **Does the food economy settle after the body-mass correction?** | §4.3 cuts mid-game hunting yield to roughly a third and is deliberately uncompensated, on the reasoning that tuning around still-moving numbers bakes in a fix for a problem that may not survive them. |
+| 3 | **Is the fill target in ANIMALS or in PACK FRACTION?** | *"Take ≈50 fowl"* is what the player said and matches the escapement graph's own units, so the two levers would speak one language. *"Come home half-full"* survives a species change without re-picking a number, and is the unit the termination condition is already written in. §5.2 specifies the mechanic and deliberately not this. |
+| 4 | **Does the food economy settle after the body-mass correction?** | §4.3 cuts mid-game hunting yield to roughly a third and is deliberately uncompensated, on the reasoning that tuning around still-moving numbers bakes in a fix for a problem that may not survive them. |
 
 ---
 
