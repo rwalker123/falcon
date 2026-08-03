@@ -72,7 +72,7 @@ build for FREE (a fraction of a bigger standing stock still filled the crew's ba
 leaves the ceiling linear in the floor and therefore composable at all. The player-visible
 consequence: a crew big enough to saturate the source's stock pays **no** dip, so the remedy for a
 slow build is HANDS — at the shipped 50% carry, twice as many; at the 25% that fixture cans, four
-times (`_cultivating_forage_band_fixture`'s `workers_needed` went 2 → 12 on exactly that arithmetic).
+times (`BandFx.cultivating_forage_band_fixture`'s `workers_needed` went 2 → 12 on exactly that arithmetic).
 **The harness fixtures carry their own `*_build_fraction` wire values** (`STALE_VERB_BUILD_FRACTION`
 0.25, `HERD_DIP_BUILD_FRACTION` 0.5), so a config re-dial does NOT move them — which is what keeps
 these frames pinned to the arithmetic they were built to prove rather than to a balance number. `expected_yield_account` therefore has **no
@@ -199,7 +199,7 @@ call, not a new key plus a new type test plus a new branch.
 
 The assertion that can see this is a **CHANGE, never a presence**: a stale yields row is a perfectly
 valid, perfectly findable node, so "the row is still there" passes with the bug fully restored. The
-harness captures `_yields_text` before driving `floor_changed(f, committed = false)` and requires it to
+harness captures `Readout.yields_text` before driving `floor_changed(f, committed = false)` and requires it to
 differ after (sabotage-verified by taking the yields host back out of the set — exactly that one
 assertion fails, the chart-survives and verdict-re-read pair beside it still passing).
 
@@ -953,8 +953,9 @@ markup; no factor of any kind now rides the depth of the draw, so one scalar sta
 
 ### The fixture adapter, in both preview harnesses
 
-Every fixture states its take as the retired per-stance table, so `_floorify` converts one to the
-other in ONE place rather than rewriting ~50 literals. It **pins the old `sustain` row to the food
+Every fixture states its take as the retired per-stance table, so a floorify adapter converts one to
+the other in ONE place per harness (`ForageFx.floorify` for `ui_preview`,
+`band_panel_preview`'s own `_floorify`) rather than rewriting ~50 literals. It **pins the old `sustain` row to the food
 peak** (Sustain took the renewable yield; the peak is the floor that pays the most forever), so every
 frame's headline number at the default floor is what the fixture was tuned to show. Two repairs it has
 to make, both because the four-row model let a fixture be internally inconsistent: a source with a
@@ -964,7 +965,7 @@ B − floor·K)` is `B` everywhere when K is 0, so every preset would quote one 
 would silently claim the dial does nothing.
 
 **IT ALSO SEEDS THE GROWTH TERMS AND THE PHASE BANDS NO PRE-4b FIXTURE CAN CARRY**
-(`_seed_growth_terms`), and the chart needs the first two — without a curve it renders nothing at all, which would silently drop the instrument
+(`ForageFx.seed_growth_terms`), and the chart needs the first two — without a curve it renders nothing at all, which would silently drop the instrument
 out of ~50 frames. `per_worker_biomass` is recovered EXACTLY from the fixture's own numbers where they
 can state it (which leaves every existing expected-yield line unchanged) and falls back to the config's
 throughput where the recovery is `0/0`; `body_mass` is derived from the fixture's own per-animal /
@@ -997,7 +998,7 @@ line) · **`floor_chart_herd_allee`** (the herd below `collapse_fraction`, whose
 toward extinction — the frame the sampled curve exists for) · **`herd_hunt_pelts_only`** (the wolf:
 the readout has no food line and the chart does not care, a floor being a fraction of BIOMASS) ·
 **`forage_dead_season`** (`perWorkerBiomass == 0`, so both crew targets are absent rather than zero).
-`_find_meta_node` / `_crew_target_count` / `_verdict_severity` reach the three new controls by
+`Q.find_meta_node` / `Readout.crew_target_count` / `Readout.verdict_severity` reach the three new controls by
 IDENTITY (`FLOOR_CHART_META` / `CREW_TARGET_META` / `VERDICT_META`) — the chart carries no text at all
 and the other two wear faces made of live numbers, so a text match would find nothing and pass.
 
@@ -1027,7 +1028,7 @@ with the bug restored (measured, twice). Each is sabotage-verified against a dif
 forcing the rebuild fails the first, no-oping `_refresh_floor_live` fails the second, and taking the
 yields host back out of the live set fails the third and only the third.
 
-**`_compose_forage` GOES THROUGH `_floorify` NOW, LIKE ITS HERD TWIN.** Most states pass a FRESH
+**`_compose_forage` GOES THROUGH `ForageFx.floorify` NOW, LIKE ITS HERD TWIN.** Most states pass a FRESH
 fixture to it rather than the object `_show_tile` already converted, so the sheet was built from a
 dict the adapter had never seen. That was invisible while the adapter only rewrote ceilings — the
 fixture builders seed those themselves — and stopped being invisible the moment it also had to seed
@@ -1204,7 +1205,7 @@ so there is no crew to hand back and a party of 0 is simply refused. ui_preview:
 the rename, the dead button AND the absent improvement control (with a positive-crew open beside it, so
 the absence is a change rather than a sheet that never offers that herd a rung).
 
-**`ui_preview` asserts the ORDER, because a frame cannot.** `_compose_spine` reduces an open sheet to
+**`ui_preview` asserts the ORDER, because a frame cannot.** `Spine.compose_spine` reduces an open sheet to
 its structural controls — band picker, stance picker, crew stepper, improvement, each found by meta or
 by node type, with the prose between them deliberately excluded — and the three sheets' spines are
 captured at `food_tile` / `herd_hunt_expedition` / `herd_hunt_local_sustain`. Every sheet must open on

@@ -99,13 +99,28 @@ Then **actually look** — `Read` the relevant PNG(s) in
 renders images, so inspect the frame and confirm your change looks right; don't
 just trust that the file was written.
 
-**To preview a new state**, add a block to `_ready()` in `tools/ui_preview.gd`:
+**To preview a new state**, add a block to the CHAPTER that owns the arc —
+`tools/ui_preview/chapters/*.gd`, one per arc (`hunt`, `forage_crop`,
+`herd_graze_pen`, `event_dock`, …). `ui_preview.gd` itself is a ~730-line
+harness: it holds `_settle` / `_save` / `_assert_hud`, the prologue that stands
+the HUD up, and the `CHAPTERS` list that fixes the run order. **You almost never
+edit it** — that is the point of the split, since two worktrees working
+different arcs would otherwise collide in one file.
+
 ```gdscript
-_hud.update_demographics([{ "faction": 0, "children": 34, "working": 51, "elders": 15 }])
-await _settle()      # process_frame → frame_post_draw → process_frame, so the render lands
-await _save("demographics")   # writes ui_preview_out/demographics.png
+# in tools/ui_preview/chapters/band_expedition.gd, inside `run(harness)`:
+h._hud.update_demographics([{ "faction": 0, "children": 34, "working": 51, "elders": 15 }])
+await h._settle()      # process_frame → frame_post_draw → process_frame, so the render lands
+await h._save("demographics")   # writes ui_preview_out/demographics.png
 ```
-That `update_*/show_*` → `_settle` → `_save` triple is the whole contract.
+That `update_*/show_*` → `_settle` → `_save` triple is the whole contract; `h`
+is the harness node the chapter is handed. A fixture used by ONE chapter is a
+method on that chapter; one shared across chapters belongs in
+`tools/ui_preview/fixtures_*.gd` as a pure `static func`.
+
+**Order is load-bearing.** States render into one long-lived `HudLayer`, so
+moving a state (or a chapter) between arcs changes the frames that follow it.
+Append within a chapter rather than reordering.
 
 **Gotchas** (put these to use, don't relearn them):
 - Always reimport before rendering when scenes/scripts changed — the build-number
