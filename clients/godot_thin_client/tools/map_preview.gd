@@ -1990,8 +1990,18 @@ const FAUNA_SPRITE_ROSTER := [
 	["game_wolf_01", "Grey Wolf Pack"],
 	["game_seal_01", "Grey Seals"],
 	["game_catfish_01", "Silt Catfish"],
+	["game_steppe_runner_01", "Steppe Runners"],
+	["game_marsh_grazer_01", "Marsh Grazers"],
 ]
-## TWO rows of eight. It was one row of eleven until the roster outgrew `GRID_W` (16 columns, and a
+## THIS LIST CANNOT PROVE COVERAGE, and adding these last two is what made that concrete. It is
+## hand-written on the CLIENT side, so it enumerates the client's own vocabulary: Steppe Runners and
+## Marsh Grazers were absent from `FaunaSprites.SPRITE_PATHS` AND from here, and a frame that only
+## shows what the table already knows cannot fail on a species the table has never heard of. Both
+## drew an OS emoji on a live map for as long as they have existed (issue #439). **The coverage
+## claim belongs to `cargo xtask fauna-icon-guard`**, which checks this side against the sim's
+## `fauna_config.json`; what this frame is for is JUDGING art that exists — swapped, clipped or
+## fringed sprites, and species that read as one another — which no guard can do.
+## Rows of eight — two full ones and a short third. It was one row of eleven until the roster outgrew `GRID_W` (16 columns, and a
 ## single spaced row of 16 would run off the map), and `seal` + `catfish` were simply ABSENT from a
 ## frame whose whole job is to prove coverage — so the row count is not cosmetic, it is what let two
 ## PNGs go unjudged. MapView is COVER-fit, so the axis that gets cropped is whichever one the grid is
@@ -1999,10 +2009,14 @@ const FAUNA_SPRITE_ROSTER := [
 ## than the window's aspect, so all twelve ROWS are on screen and it is the outer COLUMNS that are
 ## cut (roughly cols 2–14 survive). Cols 4–11 therefore sit well inside with margin to spare.
 const FAUNA_ROSTER_COLUMNS := 8
-## Rows 4 and 5 — NOT 5 and 6, and that is the whole reason this constant is not simply centred: the
-## band camp stands on (BAND_X, BAND_Y) = (8, 6), and with the roster's second row on 6 the Jungle
-## Fowl landed on that very hex and rendered STACKED under the camp marker instead of alone at true
-## marker size. A roster frame that judges sprites cannot let one share a hex with the band.
+## Starts on row 4, NOT row 5, and that is the whole reason this constant is not simply centred: the
+## band camp stands on (BAND_X, BAND_Y) = (8, 6). Starting on 5 put the roster's second row on 6,
+## where the Jungle Fowl landed on that very hex and rendered STACKED under the camp marker instead
+## of alone at true marker size. A roster frame that judges sprites cannot let one share a hex with
+## the band. **The roster now spills onto row 6 anyway (entries 17-18), and that is fine only because
+## it wraps at column 4** — cols 4-5, nowhere near the band's col 8. If this list ever grows past 20
+## entries the wrap reaches col 8 on row 6 and the collision returns, so move the origin or widen
+## `FAUNA_ROSTER_COLUMNS` at that point rather than discovering it in a frame.
 const FAUNA_ROSTER_ORIGIN := Vector2i(4, 4)
 ## Hexes between roster entries — one apart, so eight fit across GRID_W without markers colliding.
 const FAUNA_ROSTER_SPACING := 1

@@ -140,11 +140,31 @@
 # ============================================================================
 #
 # The KEY IS THE ART FILENAME STEM, not the sim's species name — a few species
-# alias onto one file (see the notes). Coverage is complete: 16 files, 16 prompts
+# alias onto one file (see the notes). Coverage is complete: 18 files, 18 prompts
 # (wolf.png landed with Predators Phase 1a — the first predator sprite; "Grey Wolf
 # Pack" resolves via the `wolf` key, no longer the 🐺 emoji fallback. elk.png,
 # reindeer.png and gazelle.png landed with issue #439, splitting the three roster
-# species that had been drawing `deer.png`).
+# species that had been drawing `deer.png`; steppe_runner.png and marsh_grazer.png
+# landed with the same issue, and see the warning immediately below for why they
+# were found late).
+#
+# ⚠ "COVERAGE IS COMPLETE" IS A CLAIM ABOUT THE SIM'S ROSTER, NOT ABOUT THIS FILE.
+# It was written here — and in `FaunaSprites.gd`, and in `sprites-widgets.md` — while
+# **Steppe Runners and Marsh Grazers were both drawing the 🦬 `HERD_DEFAULT` emoji**,
+# and it had been false since those two species were added to `fauna_config.json`.
+# The claim was checked the easy way, by confirming every key in `SPRITE_PATHS` had a
+# PNG, which is a different question from every SPECIES having art and cannot detect a
+# species the table has never heard of.
+#
+# The reason nothing caught it is structural and worth naming: **`SPRITE_PATHS` and
+# `map_preview`'s `FAUNA_SPRITE_ROSTER` are both hand-written CLIENT-side lists, and
+# the coverage frame enumerates the client's own table.** A species the table does not
+# know is invisible to the frame by construction, so the frame cannot fail on it —
+# exactly the blind spot that let the four cervids share one marker. The player-visible
+# tell was that the OS emoji **faced LEFT** while every bundled sprite obeys the house
+# style's "facing right" clause, which is a cheap thing to notice in a screenshot.
+# `cargo xtask fauna-icon-guard` now cross-checks this against `fauna_config.json`, so
+# the claim is verified rather than asserted. Re-run it after adding a species.
 #
 # THE FOUR CERVID-ISH SPECIES ARE THE SET MOST AT RISK OF READING AS ONE ANIMAL, so
 # each prompt below names the ONE feature that separates it from the other three at
@@ -156,6 +176,17 @@
 #   gazelle   — HORNS not antlers (slim, ringed, lyre-curved), tiny body, dark flank bar
 # A generated icon that could be swapped with another row of that list is a reject,
 # whatever it scores on ground contrast.
+#
+# THE NO-TILE COUNTER-CLAUSE IS CARRIED BY `steppe_runner` AND `marsh_grazer` ALONE,
+# and the other sixteen are the exception rather than the rule. The PIPELINE section
+# says to carry it into any new prompt because "plain solid magenta background" alone
+# reads to current models as a request for an APP ICON — measured at 73.2% coverage on
+# the first `staple` pair. Every fauna prompt written before those two omits it,
+# INCLUDING elk / reindeer / gazelle, whose renders happened to come back clean at
+# 20-27% coverage; the clause is cheap insurance, not a fix for a bug those sixteen
+# have. **Carry it into the next new prompt, and keep reading the coverage number
+# either way** — that printed line is the actual detector, and no prompt clause
+# replaces it.
 
 
 # aurochs.png — Wild Aurochs / bison / buffalo (aliases share this art)
@@ -316,6 +347,23 @@ horse: Flat vector game icon of a wild horse with a short upright bristly mane, 
 
 mammoth: Flat vector game icon of a woolly mammoth standing in a calm neutral pose, with two huge curved tusks, a domed head, a raised curled trunk and shaggy hanging fur, sturdy column legs, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in medium warm brown earth tones that stay clearly lighter than the outline, simple two-tone shading, the shaggy fur drawn as a few chunky simple locks rather than many fine hairs, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the mammoth floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
+# marsh_grazer.png — Marsh Grazers (an INVENTED species; no real animal to copy)
+# 100 kg pastoral migratory grazer of `wetland_swamp` + `riverine_delta`. Read it as a WADING
+# grazer: high rump, long legs made for standing in water, splayed spreading hooves, and long
+# gently-spiralled horns — the lechwe/sitatunga build. It must NOT read as `aurochs.png` (the heavy
+# short-horned bovines) or `cattle.png`; the high rump and the long legs are what separate it.
+# GROUND-CONTRAST HAZARD, and here it decides the palette outright: every one of this species'
+# grounds is DARK — hydrothermal_vent_field 34, freshwater_marsh 40, alluvial_plain 53, floodplain
+# 59, navigable_river 89, inland_sea 90. There is no bright ground anywhere in its range, so the
+# animal must be PALE, and the real-world analogues are the wrong guide — a chestnut lechwe would
+# measure ~90 and sit exactly on top of navigable_river, which is catfish v1's failure repeated
+# knowingly. Target a fill around 190: that clears the darkest ground by ~155 and the lightest by
+# ~100. Dark lower legs are the one place to spend the dark tone, and they read as the waterline.
+# KEYING: pale-and-cool is FAR from magenta (a cream measures ~230), so unlike the gazelle this one
+# has real headroom — a wider ramp is available if JPEG ringing leaves a fringe. Measure the min
+# distance-from-key first, as always, rather than assuming either direction.
+marsh_grazer: Flat vector game icon of a marsh grazer, a large pale wading antelope with a high arched rump, a deep chest, long slender legs with wide splayed hooves, and a pair of long gently spiralling horns sweeping back from its head, standing calmly ankle-deep as if in shallow water, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in pale cream and light silver-grey that stays clearly lighter than the outline and reads clearly LIGHT overall so it stands out sharply against dark swamp water, black peat and wet river mud, with distinctly darker charcoal lower legs below the knee suggesting a waterline, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background with the flat magenta touching the subject on every side, no rounded square, no tile, no card, no badge, no frame, no border and no background panel of any kind, the animal floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
 rabbit: Flat vector game icon of a wild brown rabbit with long upright ears, a compact crouched body and a short round tail, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in warm earth tones with simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, the rabbit floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
 # reindeer.png — Wild Reindeer, and the `caribou` alias (issue #439; both drew deer.png until then)
@@ -344,6 +392,25 @@ reindeer: Flat vector game icon of a wild reindeer, a stocky short-legged deer w
 seal: Flat vector game icon of a grey seal with a sleek rounded torpedo body, a short whiskered muzzle, a large dark round eye, short front flippers and paired rear flippers, hauled out resting on its belly with its head and chest raised in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in cool slate grey and soft pale silver tones that stay clearly lighter than the outline, simple two-tone shading with a lighter underside and a few subtle darker mottled spots along the back, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the seal floating with no ground shadow and no shadow beneath the body, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
 sheep: Flat vector game icon of a sheep with a thick rounded woolly fleece, a small dark face and dark slender legs, standing in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette using a soft cream and warm grey fleece that is clearly darker than pure white, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the sheep floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# steppe_runner.png — Steppe Runners (an INVENTED species; no real animal to copy)
+# 120 kg pastoral migratory grazer of `savanna_grassland`. Read it as a fast open-country runner —
+# the saiga build: lean and deep-chested on long thin legs, a distinctive bulbous down-turned
+# muzzle, and short ringed horns rising nearly vertical. The muzzle and the vertical horns are what
+# carry it at 24px. It must NOT read as `horse.png` (the only other big open-grassland grazer) —
+# horses have no horns and a flowing tail, so keep the horns crisp and the tail a short tuft — nor
+# as `sheep.png`, the set's other pale animal, which is a rounded fleece blob with no legs to speak
+# of; this one is all leg.
+# GROUND-CONTRAST HAZARD: its three grounds cluster in the MIDDLE — oasis_basin 71, prairie_steppe
+# 110, semi_arid_scrub 125 — which is the worst possible arrangement for a mid-toned animal. The
+# gaps between them are only ~20 and ~8 wide, so ANY mid-brown fill lands within a hair of one of
+# them; there is no safe middle to aim at. The escape is to leave the middle entirely, and PALE is
+# the right direction (dark would fight the thick charcoal outline for the same tonal space). At a
+# fill around 200 the gaps are ~129 / ~90 / ~75 — comfortable on all three — and it matches what a
+# real saiga looks like anyway.
+# KEYING: same headroom note as `marsh_grazer` — pale-and-cool sits far from magenta, so a wider
+# ramp is available if needed. Measure the min distance-from-key rather than assuming.
+steppe_runner: Flat vector game icon of a steppe runner, a lean fast-running antelope of the open grassland with a deep chest, a narrow waist and long slender legs built for speed, a distinctive bulging down-turned nose, and a pair of short ringed horns rising almost straight up from its forehead, a short tufted tail, standing alert in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in pale sandy cream and soft white that stays clearly lighter than the outline and reads clearly LIGHT overall so it stands out against mid-toned dry grassland and scrub, with a slightly warmer tan along the back, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background with the flat magenta touching the subject on every side, no rounded square, no tile, no card, no badge, no frame, no border and no background panel of any kind, the animal floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
 # wolf.png — Grey Wolf Pack (Predators Phase 1a — the first PREDATOR, a carnivore herd)
 # The art is ONE wolf in profile (like every fauna row), not a pack — the species is "Grey Wolf
