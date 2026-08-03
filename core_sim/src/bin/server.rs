@@ -6382,8 +6382,8 @@ mod tests {
     // The ladder's knowledge ids are named only by the tests now: the handlers resolve their gate
     // off the rung record (`unlock_discovery_id`), never a hard-coded id.
     use core_sim::{
-        build_headless_app, EcologyPhase, FoodModule, FoodSiteEntry, ForagePatch,
-        CULTIVATION_DISCOVERY_ID, HERDING_DISCOVERY_ID, NO_IMPROVEMENT_UNDERWAY,
+        build_headless_app, default_species_for_rung, EcologyPhase, FoodModule, FoodSiteEntry,
+        ForagePatch, CULTIVATION_DISCOVERY_ID, HERDING_DISCOVERY_ID, NO_IMPROVEMENT_UNDERWAY,
         PENNING_DISCOVERY_ID, RUNG_COMPLETE, SEED_SELECTION_DISCOVERY_ID, SITE_ACCEPTED,
     };
 
@@ -7662,6 +7662,84 @@ mod tests {
                     .is_field(),
             "a refused sow must not build a field"
         );
+    }
+
+    /// **A SITE WHOSE BASKET CANNOT CLIMB IS REFUSED, and this became reachable in this arc.**
+    ///
+    /// Rung 3's fertility floor of 195 used to admit only the river-deposit class, whose baskets are
+    /// full of `field`-ceiling staples — so "the ground takes seed" implied "something here can be
+    /// sown", and the two questions never came apart. Dropping the floor for the gathering-site rule
+    /// separates them: an open-water fishery or an alpine shelf is a perfectly good gathering site
+    /// whose whole basket is `wild`-ceiling, and `flora_config.json` calls that "the ruling working,
+    /// not a gap".
+    ///
+    /// The refusal already existed (`SpeciesRefusal::NothingClimbsHere`, reached because `sow` with no
+    /// named species asks `resolve_committed_species` for the rung's default). Nothing pinned it, and
+    /// it now guards a case the shipped map actually offers. The client withholds the rung outright
+    /// rather than gating it — `RungGates._any_crop_allows`, asserted in `ui_preview` — so this is the
+    /// server-side half of one rule.
+    #[test]
+    fn sow_rejected_where_nothing_in_the_basket_can_climb() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let coord = find_unsowable_basket_site(&app)
+            .expect("the pinned map must carry a gathering site whose basket is all wild-ceiling");
+        grant_seed_selection(&mut app, faction);
+        spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                floor: 0.5,
+                species: None,
+            },
+        );
+
+        handle_sow(&mut app, faction, coord);
+
+        assert!(
+            sow_failure_detail_contains(&app, "can be sown"),
+            "a site whose basket cannot climb must be refused on the CROP, naming that fault"
+        );
+        assert!(
+            !sow_failure_detail_contains(&app, "Nobody gathers at"),
+            "...and not on the site, which this ground satisfies"
+        );
+    }
+
+    /// The first **gathering site** whose realized basket holds nothing that can climb to `field`,
+    /// scanned in a totally-ordered `(y, x)` sweep. Resolved through the same
+    /// `tile_flora_composition` + `default_species_for_rung` seams the command judges with, so the
+    /// fixture cannot select a tile the rule would actually accept.
+    fn find_unsowable_basket_site(app: &bevy::prelude::App) -> Option<UVec2> {
+        let (width, height) = {
+            let registry = app.world.resource::<TileRegistry>();
+            (registry.width, registry.height)
+        };
+        let labor = app.world.resource::<LaborConfigHandle>().get();
+        let flora = app.world.resource::<FloraConfigHandle>().get();
+        let map_seed = app.world.resource::<SimulationConfig>().map_seed;
+        for y in 0..height {
+            for x in 0..width {
+                let coord = UVec2::new(x, y);
+                if !app.world.resource::<FoodSiteRegistry>().is_site(coord) {
+                    continue;
+                }
+                let Some(ground) = app
+                    .world
+                    .resource::<TileRegistry>()
+                    .index(x, y)
+                    .and_then(|entity| app.world.get::<Tile>(entity))
+                else {
+                    continue;
+                };
+                let composition = tile_flora_composition(&flora, &labor.forage, ground, map_seed);
+                if default_species_for_rung(&composition, &flora, RungKey::PlantField).is_none() {
+                    return Some(coord);
+                }
+            }
+        }
+        None
     }
 
     /// **The gathering-site fault SUPERSEDES the ground readings, and the map proves it is not a

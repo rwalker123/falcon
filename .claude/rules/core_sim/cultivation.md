@@ -353,13 +353,20 @@ herd has one appetite).
     the two demanded a curated site that ALSO landed on one of three biomes AND had water — scarcity
     three times over on a set already ~1% of the map. **The dial stays live because rung 4 needs it**:
     Farm has no site rule, so fertility is the only thing between it and planting a glacier.
-  - **A GATHERING SITE ADMITS BASKETS RUNG 3 CANNOT COMMIT TO, and that is new.** The 195 floor used
-    to imply a rich basket, so "the ground takes seed" implied "something here can be sown". It no
-    longer does: a site on a fishery or an alpine shelf passes the site rule and grows nothing with a
-    `field` cultivation ceiling. The labor arm already handles it (`default_species_for_rung` answers
-    `None` → no commit, no accrual) and the client's crop picker already renders every illegal entry
-    disabled with its reason, but the two questions are now genuinely separate — see the follow-up in
-    the PR for #464.
+  - **A GATHERING SITE ADMITS BASKETS RUNG 3 CANNOT COMMIT TO — the site and the CROP are now two
+    questions, and both already answer.** The 195 floor used to imply a rich basket (the river-deposit
+    class is full of `field`-ceiling staples), so "the ground takes seed" implied "something here can be
+    sown" and the two never came apart. They do now: an open-water fishery or an alpine shelf is a
+    perfectly good gathering site whose whole basket is `wild`-ceiling — which `flora_config.json`'s
+    own `cultivation_ceiling` note calls *"the ruling working, not a gap"*. **Neither half needed
+    fixing, only pinning:** `validate_sow` refuses it through `SpeciesRefusal::NothingClimbsHere`
+    (`sow` names no species, so `resolve_committed_species` asks the rung for its default and finds
+    none), and the client **withholds the rung outright rather than gating it**
+    (`RungGates._any_crop_allows` — greying it would imply a prerequisite that could be lifted). Guards:
+    `server::tests::sow_rejected_where_nothing_in_the_basket_can_climb`, whose fixture *finds* such a
+    site on the pinned map through the same `tile_flora_composition` + `default_species_for_rung`
+    seams the command judges with, and `ui_preview`'s "a wild-ceiling species is offered nothing,
+    gated or otherwise".
   - **The refusal names the fault** (`SiteRefusal::{NotGatheringSite, TooPoor, TooDry,
     TooPoorAndTooDry}` — the rung judges, the caller phrases through the shared
     `server::site_refusal_message`). **`NotGatheringSite` supersedes the ground readings** rather than
