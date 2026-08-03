@@ -200,6 +200,16 @@ pub(crate) fn herds_to_array(
                     // both halves of the sampled pair have to be readable off the row itself, and
                     // the key stays what it always was — an opaque unique id.
                     let _ = entry.insert("party_workers", i64::from(estimate.partyWorkers()));
+                    // **WHICH STOP ENDS THIS SAMPLED TRIP** (`docs/plan_hunt_through_combat.md`
+                    // §5.2) — a `core_sim::HuntTripBound` key. A trip LENGTH alone cannot tell the
+                    // player's two levers apart ("you come home on your target in 4 turns" and "you
+                    // reach the floor in 2 turns with the pack a third full" are different
+                    // decisions carrying the same kind of number), so the sim names the bound.
+                    //
+                    // **NO ROW HERE EVER READS `"fill_target"`**: this table is band-agnostic and
+                    // samples floor × party size only, so every row is the UNTARGETED raid. A
+                    // launched party's own bound is `expedition_trip_bound` on its cohort.
+                    let _ = entry.insert("bound", estimate.bound().unwrap_or(""));
                     let key = format!("{}:{}", floor, estimate.partyWorkers());
                     let _ = estimate_dict.insert(key, &entry);
                 }

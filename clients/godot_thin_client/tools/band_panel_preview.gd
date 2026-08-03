@@ -1004,6 +1004,17 @@ func _ready() -> void:
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
+	# **THE DOCK IS THE SECOND LAUNCH SITE, AND IT MUST OFFER THE SAME ORDERS** (§5.2). A lever on the
+	# herd drawer's sheet and absent here is the same defect as a lever that does nothing, so both
+	# halves are asserted: the fill-target control is present, and the trip's BOUND is named. The bound
+	# rides its own quiet line here (this zone's forecast is the one-LINE form, already dense with five
+	# facts) where the drawer folds the identical clause into its readout verdict — one table, so the
+	# two surfaces cannot describe one stop differently.
+	_assert_band_panel("the dock's hunt sheet offers a fill target, like the herd drawer's",
+		_find_meta_control(_panel, HudWidgets.FILL_TARGET_META) != null)
+	_assert_band_panel("…and names which stop ends the trip",
+		_has_label_containing(_panel, SourceForecast.TRIP_BOUND_CLAUSES[
+			SourceForecast.TRIP_BOUND_PACK_FULL]))
 
 	# The same sheet on ERADICATE — the frame the EXPEDITION rung's hint is judged on (issue #337). The
 	# launch picker is the ONE surface that renders `SEND_HUNT_POLICY_HINTS` verbatim, and Eradicate's
@@ -1778,6 +1789,30 @@ func _assert_forage_jump_names_land() -> void:
 
 ## Pass/fail reporting for the rung-ready assertions, in this harness's `push_error` idiom so a
 ## regression fails loudly in the run log rather than waiting to be noticed in a thumbnail.
+## A control carrying `meta`, found by IDENTITY rather than by face — the rule this harness already
+## follows for policy rungs (`HudWidgets.POLICY_RUNG_META`). The fill-target control is a checkbox
+## whose own text FLIPS between its two states, so a text match would find it in one state and pass
+## vacuously in the other.
+func _find_meta_control(node: Node, meta: String) -> Control:
+	if node is Control and (node as Control).has_meta(meta):
+		return node as Control
+	for child in node.get_children():
+		var found := _find_meta_control(child, meta)
+		if found != null:
+			return found
+	return null
+
+## Does any Label under `node` carry `text`? For the bound clause, which is a plain
+## `HudWidgets.alloc_hint_label` sentence — the ONE case where "this text appears somewhere" IS the
+## claim, and it is paired above with a positive identity check so neither can pass alone.
+func _has_label_containing(node: Node, text: String) -> bool:
+	if node is Label and (node as Label).text.contains(text):
+		return true
+	for child in node.get_children():
+		if _has_label_containing(child, text):
+			return true
+	return false
+
 func _assert_band_panel(label: String, ok: bool) -> void:
 	if ok:
 		print("band_panel_preview: PASS — ", label)
@@ -2746,7 +2781,13 @@ func _quarry_herd_fixtures() -> Array:
 				"animals_taken": animals,
 				"delivered_food": float(animals) * QUARRY_FOOD_PER_ANIMAL,
 				"delivered_trade": float(animals) * QUARRY_TRADE_PER_ANIMAL,
-				"wasted_food": 0.0}
+				"wasted_food": 0.0,
+				# **WHICH STOP ENDS THIS SAMPLED TRIP** (`docs/plan_hunt_through_combat.md` §5.2).
+				# The sim writes it on every row, so a fixture without it is a herd no live server can
+				# produce — and the dock sheet's bound line would then be absent for the honest
+				# "not stated" reason, leaving its ONE render site unexercised. A clean raid that
+				# hauls its whole kill is stopped by the PACK.
+				SourceForecast.TRIP_BOUND_KEY: SourceForecast.TRIP_BOUND_PACK_FULL}
 	herd["hunt_trip_estimates"] = table
 	# A second huntable herd INSIDE the band's hunt reach. It is not a party's job (the band can work
 	# it from home), so the picker must refuse it — the near half of the eligibility assertion.

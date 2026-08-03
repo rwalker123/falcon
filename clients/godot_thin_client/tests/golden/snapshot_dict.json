@@ -671,6 +671,7 @@
       "hunt_trip_estimates": {
         "33.43:72": {
           "animals_taken": 191,
+          "bound": "herds[0].hunt_trip_estimates[1].bound",
           "delivered_food": 49.540001,
           "delivered_trade": 97.989998,
           "delivers_food": true,
@@ -682,6 +683,7 @@
         },
         "36.89:147": {
           "animals_taken": 76,
+          "bound": "herds[0].hunt_trip_estimates[0].bound",
           "delivered_food": 29.25,
           "delivered_trade": 61.939999,
           "delivers_food": true,
@@ -753,6 +755,7 @@
       "hunt_trip_estimates": {
         "22.36:150": {
           "animals_taken": 65,
+          "bound": "herds[1].hunt_trip_estimates[0].bound",
           "delivered_food": 6.45,
           "delivered_trade": 57.189999,
           "delivers_food": true,
@@ -764,6 +767,7 @@
         },
         "46.47:73": {
           "animals_taken": 118,
+          "bound": "herds[1].hunt_trip_estimates[1].bound",
           "delivered_food": 61.830002,
           "delivered_trade": 71.190002,
           "delivers_food": true,
@@ -1366,6 +1370,7 @@
       "entity": 100,
       "expedition_carry_cap": 64.029999,
       "expedition_eta_turns": 125,
+      "expedition_fill_target": 81,
       "expedition_floor": 69.809998,
       "expedition_mission": "populations[0].expedition_mission",
       "expedition_per_worker_carry": 3.28,
@@ -1373,6 +1378,7 @@
       "expedition_projected_delivery": 86.919998,
       "expedition_recurring": true,
       "expedition_target_herd": "populations[0].expedition_target_herd",
+      "expedition_trip_bound": "populations[0].expedition_trip_bound",
       "expedition_viability_warn_turns": 89,
       "faction": 182,
       "fertility_hunger": 0.000048,
@@ -1516,6 +1522,7 @@
       "entity": 101,
       "expedition_carry_cap": 0.73,
       "expedition_eta_turns": 200,
+      "expedition_fill_target": 32,
       "expedition_floor": 33.860001,
       "expedition_mission": "populations[1].expedition_mission",
       "expedition_per_worker_carry": 96.309998,
@@ -1523,6 +1530,7 @@
       "expedition_projected_delivery": 110.099998,
       "expedition_recurring": true,
       "expedition_target_herd": "populations[1].expedition_target_herd",
+      "expedition_trip_bound": "populations[1].expedition_trip_bound",
       "expedition_viability_warn_turns": 190,
       "faction": 141,
       "fertility_hunger": 0.000157,

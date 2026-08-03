@@ -2750,3 +2750,137 @@ tooltip + PASS pair that a rendered frame structurally cannot show. The paged bo
 the narrowest legal column. Those fixtures carry **rung fields only** — no `per_worker_yield` /
 `ceiling_*` — so `max_useful_workers` stays unbounded and the steppers gate exactly as they did before
 patches were pushed into those frames at all.
+
+---
+
+## The FILL TARGET — the party-side twin of the floor (`docs/plan_hunt_through_combat.md` §5.2)
+
+**A raid's length was a species constant with no lever, and it was reported from PLAY.** Eight hunters
+after a Wild Fowl flock read *"away ≈43 turns — 31 hunting, 12 travel"*, with no control that moved
+the number. The mechanism (§5.1): a raid ends when its pack fills, the pack is measured in **carry**
+and the take is measured in **reach**, so
+
+```text
+turns_to_fill = per_worker_carry / (engage_rate × body_mass)
+```
+
+and **party size cancels out** — both the pack and the rate scale linearly with hunters. Four hunters
+and sixteen spend the same number of turns. The party stepper was not a weak lever here, it was
+**structurally not one**, which is why the fix is a new control rather than a re-tune.
+
+**The floor says how deep to draw the herd; the fill target says how long you will wait.** The two are
+one sentence, and that is why the escapement graph came BACK to the expedition sheet in the same pass:
+a target arriving beside a mystery would have been one dial and one blank.
+
+### The three surfaces, and what each one is authoritative for
+
+| Surface | What it renders | Authority |
+|---|---|---|
+| compose sheet (drawer + dock) | `HudWidgets.build_fill_target_control` off `SourceForecast.raid_fill_target_model` | the client's PROPORTION on the sim's untargeted pair |
+| trip readout / one-line banner | the bound clause off `HuntTripEstimate.bound` | the sim, per sampled (floor × party) |
+| launched-party drawer + row tooltip | `Fill target:` + the clause off `PopulationCohortState.expeditionTripBound` | **the sim, for this party's REAL orders** |
+
+**The sim cannot preview a TARGETED trip, and that is a design constraint rather than a gap.**
+`huntTripEstimates` samples floor × party size only; a third axis would multiply an already
+40-row-per-herd table. So the client composes the pre-launch turn count as
+`ceil(target × turns_to_fill ÷ animals_taken)` — **a proportion on the sim's own answer, never a
+second copy of the take model.** That is the whole discipline: four fixes this arc were spent undoing
+client-composed numbers that disagreed with the sim, and this one takes the sim's numbers as its
+input rather than re-deriving them.
+
+**It is exact where it is used and conservative where it is not, and both halves matter:**
+
+- the raid's per-turn take is `min(room above the floor, what the party carries, what it engages)`,
+  and the last two do **not** move as the herd draws down — so while the room is not the binding arm
+  the rate is FLAT and the average IS it;
+- where the room does bind, the raid ends on the **floor** before any target could fire, so
+  `raid_target_binds` is false and the proportion is never consulted;
+- the only residue is the last, partial turn of a floor-bound raid, which drags the average DOWN and
+  can therefore only OVER-state a target's turns. **It never promises a trip shorter than the sim
+  will run.**
+
+`ui_preview`'s `_assert_fill_target_arithmetic` pins the exact half directly — on a fixture whose rate
+divides evenly, asking for `k` turns' animals answers exactly `k` for every reachable `k`.
+
+**A HORIZON raid gets no control at all** (`turns_to_fill == 0` — still delivering when the projection
+ran out). That is not a length, so there is no rate to take a proportion of and no step to denominate
+the axis in; `raid_fill_target_model` answers `available: false` and the sheet renders nothing rather
+than a stepper it cannot price.
+
+### The identity is what makes it safe to land, and it is held WHOLE
+
+A target at or above what the raid already brings home **is** the untargeted raid — the sim's
+`raid_load` hands the pack straight back. So `hunt_trip_forecast` must answer with the *very same
+forecast*, not a nearly-equal one: `clamp_fill_target` folds such a target back to `NO_FILL_TARGET`
+on the control, and the forecast deliberately **does not carry the composed target on its result
+dict**, because echoing it back would make the two answers differ in a field nobody reads. The
+assertion is a whole-dictionary comparison for exactly that reason.
+
+### The control is a CHECKBOX plus a stepper, and the step is one HUNTING TURN
+
+"Do I set a target at all?" is a CHOICE with a real default (`NO_FILL_TARGET` — fill the pack, which
+is what every raid did before), so it wears the improvement control's `CheckBox`; "how many animals"
+is a value you operate, so it wears the sheet's stepper. **Folding them into one stepper whose zero
+read as a word would put the LONGEST trip at the low end of an ascending axis** — a dial that reverses
+on its last step.
+
+**The step is `SourceForecast.raid_animals_per_turn`, not one animal.** The roster spans a mammoth
+(one animal is most of a trip) and a fowl flock (thousands), so a ±1 stepper is unusable at one end
+and meaningless at the other, while a press that buys exactly one more turn of hunting is the same
+size of decision on every species — and it is the decision the control is FOR. The count still travels
+and still reads in whole animals, the unit the chart's own floor flag speaks.
+
+**`HudStyle.apply_checkbox` is not optional** — the stock CheckBox art is drawn for a light surface and
+vanishes against this console's. This control shipped one preview frame as a bare phrase with a gap
+where the box should be; the improvement control makes the same call for the same reason.
+
+### The escapement graph is BACK on the expedition sheet, and the crew targets are NOT
+
+The note that used to stand in `_build_herd_assign_controls` — *"an EXPEDITION gets no chart, a raid's
+trip is a forward simulation, not a per-turn drawdown"* — was written before the party had a stop of
+its own, and it is wrong on its own terms: a party's per-turn take is the same
+`min(room, carry, engagement)` a resident crew's is, so the curve IS the raid's. What the picture
+cannot show is where the trip ENDS, which is now the fill target's and the bound clause's job.
+
+**The crew targets stay off.** They answer *clear it now* and *hold it after*, and the second is a
+promise about a crew that STAYS — a detached party leaves. `_mount_crew_row` is handed an empty model
+on the expedition branch, which also correctly drops the build-dip note (a party builds nothing).
+
+**`live_hosts` stays empty on that branch, deliberately.** A raid's numbers are a lookup into a table
+sampled at five floors, so most of a drag moves nothing and the release rebuilds against the sample
+the player landed on. The drag itself still survives the live callback, which is the whole contract.
+
+### `""` on a bound is NOT `horizon`
+
+`expeditionTripBound` reads `""` for **not raiding** — a resident band, a scout, or a party already
+walking a load home — and that is a different statement from `"horizon"`, which means the projection
+ran and found no stop. Both render no clause, for reasons that are not interchangeable. On an estimate
+row `""` additionally means a snapshot that predates the field, which is why every raid fixture in
+`ui_preview` now carries a bound: a fixture omitting it is a herd no live server can produce, and
+every bound assertion would pass vacuously against it.
+
+**No estimate row ever reads `"fill_target"`** — the table is band-agnostic, so every row is the
+UNTARGETED raid. `hunt_trip_forecast`'s own target branch is what puts that key on a forecast, which
+mirrors the sim's division of labour exactly.
+
+### The command grammar is positional and append-only
+
+`send_hunt_expedition <faction> <band> <party> <fauna_id> [floor] [fill_target]`. The target rides
+AFTER the floor because the floor shipped first; the client always sends the floor, so the target
+never has to be padded past a missing one. **`NO_FILL_TARGET` OMITS the token**, so an untargeted raid
+emits the byte-identical line it emitted before the lever existed — the command-layer half of the
+identity above. The feed receipt names BOTH orders when both were given, because a receipt quoting one
+describes a mission the player did not order.
+
+### Frames
+
+`ui_preview`: **`fill_target_off`** (the control offered and clear — the untargeted raid's own turns) ·
+**`fill_target_one_turn`** (ticked, seeded at the shortest real trip, the verdict flipping from the
+pack clause to the target clause and the payload shrinking with it) · **`fill_target_three_turns`**
+(three steps up, three hunting turns) · **`fill_target_floor_bound`** (identical numbers, the OTHER
+stop — the frame that makes the bound a discriminator rather than a decoration) ·
+**`expedition_hunt_targeted`** (the launched party: `Fill target: 50 Red Deer` beside `Leaves
+standing`, and the sim's own clause under `Next delivery`). `herd_hunt_expedition` gained the chart,
+the control and the pack clause. The PNG-less blocks are where the arithmetic lives —
+`_assert_fill_target_arithmetic` (the exact-`k` walk, the at-capacity identity, the clamp) and
+`_assert_fill_target_command` (the token appended, and the untargeted line unchanged).

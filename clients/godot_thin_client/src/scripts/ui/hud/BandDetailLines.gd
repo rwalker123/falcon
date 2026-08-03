@@ -248,6 +248,11 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
         lines.append("Leaves standing: %s" % (HudComposeVocab.FLOOR_VALUE_FORMAT
             % SourceForecast.floor_percent(float(unit_data.get("expedition_floor",
                 SourceForecast.DEFAULT_HARVEST_FLOOR)))))
+        # …and its PARTY-SIDE twin (`docs/plan_hunt_through_combat.md` §5.2), directly beneath, because
+        # the two are one sentence: how deep to draw the herd, and how long to wait. Stated
+        # unconditionally for the same reason the floor is — `NO_FILL_TARGET` is a real order ("fill
+        # the pack"), not a missing field.
+        lines.append(DetailFormat.expedition_fill_target_line(unit_data, mission, target_herd))
     var phase := String(unit_data.get("expedition_phase", "")).strip_edges()
     if phase != "":
         lines.append("Phase: %s" % HudFormat.expedition_phase_label(phase))
@@ -282,6 +287,13 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
         # than a false "none".
         if unit_data.has("expedition_projected_delivery"):
             lines.append(DetailFormat.expedition_next_delivery_line(unit_data, target_herd))
+        # **WHICH STOP ENDS THE TRIP** — the sim's own answer for THIS party's real orders, off the
+        # same in-flight forward simulation the ETA above comes from. A `""` bound (not raiding: a
+        # party already walking a load home, or a snapshot predating the field) renders no line, so
+        # the strip never states a stop for a party that is not hunting toward one.
+        var bound_line := DetailFormat.expedition_trip_bound_line(unit_data, mission)
+        if bound_line != "":
+            lines.append(bound_line)
     else:
         lines.append("Provisions: %d  (%s)" % [carried, DetailFormat.food_turns_text(turns)])
     var pos_array: Array = Array(unit_data.get("pos", []))

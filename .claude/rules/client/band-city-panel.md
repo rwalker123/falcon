@@ -352,6 +352,19 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   it rather than forecasting a stale id) and cleared on open, cancel, send, and a panel-band change.
   **SCOUT is unchanged** — its only input is party size and nothing about it depends on the destination,
   so it has no ordering problem to fix and still picks its target tile on the map after the send.
+  **The HUNT form gained the FILL TARGET** (`docs/plan_hunt_through_combat.md` §5.2), under the party
+  stepper it is priced by, plus the trip's BOUND clause as its own quiet line beneath the one-line
+  forecast. **This zone is the SECOND launch site of `send_hunt_expedition`, and the arc's standing
+  rule is that the two entry points cannot offer different orders** — a lever present on the herd
+  drawer's sheet and absent here would be the same defect as a lever that does nothing. It is the SAME
+  `HudWidgets.build_fill_target_control` over the same `SourceForecast.raid_fill_target_model`, so the
+  two sheets cannot quote different turn counts. The bound rides its own line rather than the forecast
+  line because THAT form is the one-liner already carrying five facts; the drawer's readout folds the
+  identical clause into its verdict instead, both through `SourceForecast.trip_bound_clause`.
+  `_send_hunt_fill_target` clears WITH the quarry (`_clear_party_quarry`, the pairing
+  `ComposeState.seed_hunt` makes on the other side): a target is a count of ONE herd's animals, and a
+  target outliving its quarry is one the next raid silently ignores. The design and the arithmetic
+  live in `labor-ui.md` → "The FILL TARGET".
 - **Destructive bulk actions ASK, and name what is SPARED** (`_confirm_destructive`, a
   `ConfirmationDialog` — a Window, like the `⋯` `MenuButton`'s popup, so opening either cannot move a
   zone's height). `Unassign all work` sends **`cancel_order <faction> <band> work`** — the signal

@@ -382,6 +382,27 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "expedition_carry_cap",
         f64::from(cohort.expeditionCarryCap()),
     );
+    // **THE PARTY-SIDE TWIN OF THE FLOOR** (`docs/plan_hunt_through_combat.md` §5.2): the whole
+    // animals this party will wait for before turning for camp. `0` = NO TARGET (fill the pack),
+    // which is what a scout, a resident band, and every raid launched before the field existed
+    // report. It REPLACES the pack's capacity in a completion the raid already evaluates, so a
+    // target at or above what the pack holds is exactly the untargeted raid.
+    let _ = dict.insert(
+        "expedition_fill_target",
+        i64::from(cohort.expeditionFillTarget()),
+    );
+    // WHICH STOP WILL END THIS PARTY'S RAID — the `core_sim::HuntTripBound` key
+    // ("pack_full" | "fill_target" | "floor" | "herd_lost" | "horizon"), off the same in-flight
+    // forward simulation `expedition_eta_turns` comes from, so it answers for the party's REAL
+    // orders rather than for the band-agnostic pre-launch table.
+    //
+    // `""` = NOT RAIDING (a resident band, a scout, or a party already walking a load home), and it
+    // is deliberately a different statement from `"horizon"`, which means the projection ran and
+    // found no stop. The client renders no bound clause at all for `""`.
+    let _ = dict.insert(
+        "expedition_trip_bound",
+        cohort.expeditionTripBound().unwrap_or(""),
+    );
     // In-flight hunt-party next-delivery forecast (the drawer's "Next delivery: ~X food in ~N turns"
     // line) — the in-flight twin of the pre-launch huntTripEstimates. 0 / 0.0 / false when n/a
     // (scout, normal band, or a raid with no finite ETA). See core_sim expedition_delivery.

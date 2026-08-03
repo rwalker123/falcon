@@ -112,6 +112,13 @@ var _party_compose_mission: String = ""
 var _send_expedition_count: int = HudConst.WORKER_STEP
 # Compose state for the hunt-expedition launch FLOOR — where the raid stops, `0.0..=1.0`.
 var _send_hunt_floor: float = SourceForecast.DEFAULT_HARVEST_FLOOR
+# …and its party-side twin (`docs/plan_hunt_through_combat.md` §5.2): the whole animals the party
+# waits for, `SourceForecast.NO_FILL_TARGET` for the untargeted raid. **This zone is the SECOND launch
+# site of `send_hunt_expedition`**, and the arc's standing rule is that the two entry points cannot
+# offer different orders — a lever present on one sheet and absent on the other is the same defect as
+# a lever that does nothing. Cleared with the quarry, for `ComposeState.seed_hunt`'s reason: a target
+# is a count of ONE herd's animals.
+var _send_hunt_fill_target: int = SourceForecast.NO_FILL_TARGET
 
 func _init(band_labor: HudBandLaborState, compose: ComposeState,
         selectioncard: SelectionCardController, disclosures: DisclosureController,
@@ -1441,7 +1448,7 @@ func _build_mission_launch_button(mission: String, label: String, hint: String,
         _party_compose_open = true
         _party_compose_mission = mission
         # A fresh compose act starts with no quarry — never a herd left over from a cancelled one.
-        _compose.clear_party_quarry()
+        _clear_party_quarry()
         rerender())
     return btn
 
@@ -1503,7 +1510,7 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     var herd := _band_labor.find_world_herd(_compose.party_quarry_id())
     if herd.is_empty() or not _targeting.is_expedition_quarry(band, herd):
         herd = {}
-        _compose.clear_party_quarry()
+        _clear_party_quarry()
     sheet.add_child(_build_quarry_row(band, herd))
     if _compose.party_quarry_id() == "":
         # Visible-and-disabled-with-its-reason, the same convention as the idle-0 footer: the send is
@@ -1547,13 +1554,33 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     var cap_note := String(capped["note"])
     if cap_note != "":
         sheet.add_child(HudWidgets.alloc_hint_label(cap_note))
-    # LIVE raid forecast for the quarry + floor + party now dialed — the same trip lookup and the
-    # same one-line renderer the herd drawer uses.
+    # **THE FILL TARGET, under the party it is priced by** (§5.2) — the same control and the same
+    # composed axis the herd drawer's expedition branch renders, so neither entry point can offer
+    # orders the other cannot. Its axis comes off the UNTARGETED raid, and the clamped value is
+    # written straight back so the control, the forecast and the launch payload are one number.
+    var fill_target_model := SourceForecast.raid_fill_target_model(band, herd, _send_hunt_floor,
+        _send_expedition_count, _band_labor.grid_width(), _band_labor.wrap_horizontal(),
+        _send_hunt_fill_target)
+    _send_hunt_fill_target = int(fill_target_model.get("target", SourceForecast.NO_FILL_TARGET))
+    if bool(fill_target_model.get("available", false)):
+        sheet.add_child(HudWidgets.build_fill_target_control(fill_target_model,
+            func(new_target: int) -> void:
+                _send_hunt_fill_target = maxi(new_target, SourceForecast.NO_FILL_TARGET)
+                rerender()))
+    # LIVE raid forecast for the quarry + floor + party + target now dialed — the same trip lookup and
+    # the same one-line renderer the herd drawer uses.
     var trip := SourceForecast.hunt_trip_forecast(band, herd, _send_hunt_floor, _send_expedition_count,
-        _band_labor.grid_width(), _band_labor.wrap_horizontal())
+        _band_labor.grid_width(), _band_labor.wrap_horizontal(), _send_hunt_fill_target)
     var forecast_line := SourceForecast.hunt_forecast_line_bbcode(trip, SourceForecast.herd_display_name(herd))
     if forecast_line != "":
         sheet.add_child(HudWidgets.forecast_label(forecast_line))
+    # **WHICH STOP ENDS THE TRIP, as its own quiet line.** This zone's forecast is the ONE-LINE form,
+    # which is already dense with five facts; the herd drawer folds the same clause into its readout
+    # verdict instead. Both read `SourceForecast.trip_bound_clause`, so the two surfaces cannot
+    # describe one stop differently, and a forecast carrying no bound renders no line at all.
+    var bound_clause := SourceForecast.trip_bound_clause(trip)
+    if bound_clause != "":
+        sheet.add_child(HudWidgets.alloc_hint_label(bound_clause))
     var no_surplus := SourceForecast.hunt_trip_no_surplus(trip)
     var reason := SourceForecast.hunt_no_surplus_reason(herd) if no_surplus else ""
     var confirm := Button.new()
@@ -1573,9 +1600,19 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
             "fauna_id": quarry_id,
             "fauna_label": SourceForecast.herd_display_name(herd),
             "floor": _send_hunt_floor,
+            "fill_target": _send_hunt_fill_target,
         })
         _close_party_compose())
     sheet.add_child(confirm)
+
+## Drop the composed quarry AND the fill target it was counted in. **They are one act**: a target is a
+## count of a SPECIFIC herd's animals, so a target outliving its quarry would be handed to the next
+## one, where `raid_load` answers a target at or above capacity by returning the pack — a lever that
+## silently does nothing, which is the defect §5.2 exists to remove. `ComposeState.seed_hunt` makes
+## the same pairing on the herd drawer's side.
+func _clear_party_quarry() -> void:
+    _compose.clear_party_quarry()
+    _send_hunt_fill_target = SourceForecast.NO_FILL_TARGET
 
 ## The Quarry row — the Party row's shape, with a button instead of a stepper. Unpicked it invites
 ## (`Choose…`, primary); picked it states the herd and stays available for a re-pick (ghost).
@@ -1621,7 +1658,7 @@ func _scout_party_max(band: Dictionary, idle: int) -> int:
 func _close_party_compose() -> void:
     _party_compose_open = false
     _party_compose_mission = ""
-    _compose.clear_party_quarry()
+    _clear_party_quarry()
     _targeting.cancel_pick_quarry()
     rerender()
 
@@ -1668,7 +1705,7 @@ func render_band(unit: Dictionary) -> void:
     # A quarry is chosen FOR a band (its travel time and useful party size are band-relative), so the
     # cycler swapping the panel subject must not carry one across.
     if int(unit.get("entity", -1)) != int(_band_labor.panel_band().get("entity", -1)):
-        _compose.clear_party_quarry()
+        _clear_party_quarry()
     # DEEP-COPY the subject: the panel band must NOT alias the selection's unit dict (the
     # selection path passes it in). The panel persists across selection changes, so it needs its
     # own stable copy — a later selection swap (or an in-place edit of the selection's unit dict)

@@ -1335,9 +1335,15 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # control** (`docs/plan_harvest_floor.md` §7.3). It is the same setter the presets use, so a
     # dragged value and a clicked preset are one state — which is what lets the picker honestly show
     # NO preset selected between two of them. It replaced the plain slider slice 4a shipped as a
-    # placeholder. An EXPEDITION gets no chart: a raid's trip is a forward simulation the sim answers
-    # in `huntTripEstimates`, not a per-turn drawdown of the herd by a resident crew, so projecting
-    # one here would draw a curve the raid does not follow.
+    # placeholder.
+    #
+    # **IT RENDERS ON THE EXPEDITION BRANCH TOO NOW** (`docs/plan_hunt_through_combat.md` §5.2), and
+    # the note that used to stand here saying it must not was written before the party had a stop of
+    # its own. The curve IS one a raid follows: a party's per-turn take is the same
+    # `min(room, carry, engagement)` a resident crew's is, so the drawdown it draws is the raid's. What
+    # the picture cannot show is where the trip ENDS, and the fill target plus the bound clause in the
+    # readout are exactly what now say that — the herd-side half and the party-side half of one
+    # decision, which is why the graph had to come back rather than the target arriving alone.
     var chart_model: Dictionary = {}
     var live_hosts: Array[Dictionary] = []
     # **WHETHER THE FACTION ALREADY KNOWS WHAT THIS HERD TEACHES**, bound once and captured by the
@@ -1346,25 +1352,28 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # it — see `SourceForecast.teaching_note`.
     var lesson_known := SourceForecast.rung_lesson_known(SourceForecast.SOURCE_KIND_HERD, herd,
         HudComposeVocab.BARE_FORECAST_PREFIX, _player_knowledge())
-    if not is_expedition:
-        chart_model = SourceForecast.floor_chart_model(herd, SourceForecast.SOURCE_KIND_HERD,
-            HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_floor(), _compose.hunt_count(),
-            composed_improvement, crew_label.to_lower(), lesson_known)
-        if bool(chart_model.get("known", false)):
-            target.add_child(HudWidgets.build_floor_chart(chart_model,
-                func(floor: float, committed: bool) -> void:
-                    _compose.set_hunt_floor(floor)
-                    if committed:
-                        _compose.arm_hunt_autofill()
-                        _build_herd_assign_controls(_live_herd(herd_id, herd), target)
-                    else:
-                        # A LIVE drag must not rebuild these controls — the rebuild frees the chart
-                        # and the drag dies with it. Refill only the readings that follow the floor.
-                        _refresh_floor_live(live_hosts, SourceForecast.floor_chart_model(
-                            _live_herd(herd_id, herd), SourceForecast.SOURCE_KIND_HERD,
-                            HudComposeVocab.BARE_FORECAST_PREFIX, floor, _compose.hunt_count(),
-                            composed_improvement, crew_label.to_lower(), lesson_known),
-                            _compose.hunt_count())))
+    chart_model = SourceForecast.floor_chart_model(herd, SourceForecast.SOURCE_KIND_HERD,
+        HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_floor(), _compose.hunt_count(),
+        composed_improvement, crew_label.to_lower(), lesson_known)
+    if bool(chart_model.get("known", false)):
+        target.add_child(HudWidgets.build_floor_chart(chart_model,
+            func(floor: float, committed: bool) -> void:
+                _compose.set_hunt_floor(floor)
+                if committed:
+                    _compose.arm_hunt_autofill()
+                    _build_herd_assign_controls(_live_herd(herd_id, herd), target)
+                else:
+                    # A LIVE drag must not rebuild these controls — the rebuild frees the chart
+                    # and the drag dies with it. Refill only the readings that follow the floor.
+                    # **On the EXPEDITION branch `live_hosts` is empty and that is deliberate**: the
+                    # raid's numbers are a lookup into a table SAMPLED at five floors, so most of a
+                    # drag moves nothing, and the release rebuilds the sheet against the sample the
+                    # player landed on. The drag itself still survives, which is the contract.
+                    _refresh_floor_live(live_hosts, SourceForecast.floor_chart_model(
+                        _live_herd(herd_id, herd), SourceForecast.SOURCE_KIND_HERD,
+                        HudComposeVocab.BARE_FORECAST_PREFIX, floor, _compose.hunt_count(),
+                        composed_improvement, crew_label.to_lower(), lesson_known),
+                        _compose.hunt_count())))
     # The expedition branch spends this slot on the distance refusal — it is that branch's answer to
     # "why is this a party rather than a hunt?" — and the local branch on what the floor means for the
     # herd. **ONE hint table serves both webs and both branches now** (`HudFormat.floor_hint`): a
@@ -1376,12 +1385,27 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # renders (the cap clamp is already done above, and nothing between here and the button moves it),
     # so the readout at the bottom and the floor hint at the top branch on ONE lookup rather than two.
     var trip: Dictionary = {}
+    # The fill target's axis, composed from the UNTARGETED raid so it does not move under the handle.
+    # Empty on the local branch: a resident crew works a source turn after turn and has no trip to end.
+    var fill_target_model: Dictionary = {}
     if is_expedition:
         target.add_child(HudWidgets.alloc_hint_label(
             "%s is %d tiles away — beyond this band's hunt reach (%d). Detach a party to follow it." \
             % [_herd_label_for_id(herd_id), distance, reach]))
+        # **THE TARGET IS FOLDED BACK ONTO ITS AXIS BEFORE THE TRIP IS LOOKED UP.** The axis is a
+        # function of the party and the floor, both of which the player has just been moving, so a
+        # target held from a bigger party could otherwise ask for more animals than this raid brings
+        # home — which `raid_load` answers by handing the pack back, i.e. a lever that silently does
+        # nothing. `raid_fill_target_model` returns the clamped value; writing it straight back is what
+        # makes the control, the readout and the launch payload one number.
+        fill_target_model = SourceForecast.raid_fill_target_model(band, herd, _compose.hunt_floor(),
+            _compose.hunt_count(), _band_labor.grid_width(), _band_labor.wrap_horizontal(),
+            _compose.hunt_fill_target())
+        _compose.set_hunt_fill_target(int(fill_target_model.get(
+            "target", SourceForecast.NO_FILL_TARGET)))
         trip = SourceForecast.hunt_trip_forecast(band, herd, _compose.hunt_floor(),
-            _compose.hunt_count(), _band_labor.grid_width(), _band_labor.wrap_horizontal())
+            _compose.hunt_count(), _band_labor.grid_width(), _band_labor.wrap_horizontal(),
+            _compose.hunt_fill_target())
         # **THE FLOOR HINT TRAVELS INTO THE TRIP READOUT'S ASIDE**, where the local sheet keeps its
         # own — the two branches now read alike. It stays HERE only for the raids that get no readout
         # box (no estimate, a denial quarry, a herd with nothing above the floor): those state one
@@ -1395,19 +1419,33 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # THE CREW, on ONE line with both targets (§7.6) — with its cap note, which explains THIS stepper's
     # dead `+` and therefore travels with it. Clicking a target staffs it, clamped to the same cap the
     # `+` obeys: a target is a shortcut to a count, never a way past the ceiling.
+    #
+    # **THE CREW TARGETS STAY OFF THE EXPEDITION BRANCH even now that it has a chart.** They answer
+    # *clear it now* and *hold it after*, and the second is a promise about a crew that STAYS — a
+    # detached party leaves. So the crew row is handed an empty model there (which is also what drops
+    # the build-dip note, correctly: a party builds nothing).
     _mount_crew_row(target, live_hosts,
         HudComposeVocab.COMPOSE_FIELD_PARTY if is_expedition else crew_label,
         _compose.hunt_count(), _compose.hunt_count() < cap,
         func(n: int) -> void:
             _compose.set_hunt_count(clampi(n, 0, cap))
             _build_herd_assign_controls(_live_herd(herd_id, herd), target),
-        chart_model,
+        {} if is_expedition else chart_model,
         func(count: int) -> void:
             _compose.set_hunt_count(clampi(count, 0, cap))
             _build_herd_assign_controls(_live_herd(herd_id, herd), target))
     var cap_note := String(capped["note"])
     if cap_note != "":
         target.add_child(HudWidgets.alloc_hint_label(cap_note))
+    # **THE FILL TARGET, DIRECTLY UNDER THE PARTY IT IS PRICED BY** (§5.2). It reads *how long you will
+    # wait*, and both terms of that — the animals and the turns they cost — are functions of the party
+    # size one row up, so the two controls belong adjacent and in that order. Only a DELIVERING raid
+    # gets one: a refused trip has no length to shorten.
+    if is_expedition and bool(fill_target_model.get("available", false)):
+        target.add_child(HudWidgets.build_fill_target_control(fill_target_model,
+            func(new_target: int) -> void:
+                _compose.set_hunt_fill_target(new_target)
+                _build_herd_assign_controls(_live_herd(herd_id, herd), target)))
     # WOULD THIS SUBMIT CHANGE ANYTHING? — the forage sheet's rule, on the hunt web, because
     # `workers == 0` means the SAME two different things here (the sim's `assign_labor` skips validation
     # entirely at 0, so the unassign is always legal). `current` is the pending-aware standing crew on
@@ -1503,7 +1541,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         assign_btn.pressed.connect(func() -> void:
             if _compose.hunt_count() <= 0 or SourceForecast.hunt_trip_no_surplus(
                     SourceForecast.hunt_trip_forecast(band, herd, _compose.hunt_floor(), _compose.hunt_count(),
-            _band_labor.grid_width(), _band_labor.wrap_horizontal())):
+            _band_labor.grid_width(), _band_labor.wrap_horizontal(), _compose.hunt_fill_target())):
                 return
             emit_signal("send_hunt_expedition_requested", {
                 "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
@@ -1514,6 +1552,10 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
                 # THE PARTY'S ORDERS: where the raid stops, as a fraction of the herd's capacity.
                 # `send_hunt_expedition` takes it as its optional trailing token.
                 "floor": _compose.hunt_floor(),
+                # …and the party-side half of the same sentence (§5.2): the whole animals it waits
+                # for. `NO_FILL_TARGET` = fill the pack, which is what the command sent before this
+                # lever existed and what `Main` omits the token for.
+                "fill_target": _compose.hunt_fill_target(),
             })
             # Committing is the end of the compose act — return to the read state (§15).
             close_compose_sheet())

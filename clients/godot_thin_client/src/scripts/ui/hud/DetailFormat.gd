@@ -1307,8 +1307,43 @@ static func expedition_row_tooltip(exp: Dictionary, phase: String, target_herd: 
             SourceForecast.LABOR_KIND_HUNT, true)
     return HudFormat.join_tooltip_lines([
         expedition_mission_label(mission), floor_hint,
+        expedition_fill_target_line(exp, mission, target_herd),
         HudFormat.status_tooltip_line(phase), _expedition_delivery_tooltip_line(exp, mission, target_herd),
+        expedition_trip_bound_line(exp, mission),
         EXPEDITION_ROW_FOCUS_HINT])
+
+## **THE PARTY'S OTHER ORDER** (`docs/plan_hunt_through_combat.md` §5.2) — how many whole animals it
+## waits for, beside the floor that says how deep to draw the herd. The two are one sentence, so a
+## readout quoting only the floor describes a raid the player did not order.
+##
+## Named in the QUARRY's own units where the target herd is still in telemetry; a party whose target
+## was lost keeps the bare count rather than inventing a species for it. `NO_FILL_TARGET` states
+## "none — fills the pack" rather than nothing at all: on a hunt party that is a real order, and the
+## silence would read as a field the client failed to show. `""` for a scout or a resident band, both
+## of which report `0` for a stop they never evaluate.
+static func expedition_fill_target_line(exp: Dictionary, mission: String,
+        target_herd: Dictionary) -> String:
+    if mission != HudExpeditionVocab.EXPEDITION_MISSION_HUNT:
+        return ""
+    var fill_target := int(exp.get("expedition_fill_target", SourceForecast.NO_FILL_TARGET))
+    if fill_target <= SourceForecast.NO_FILL_TARGET:
+        return SourceForecast.FILL_TARGET_ORDERS_NONE
+    return SourceForecast.FILL_TARGET_ORDERS_FORMAT % [
+        fill_target, SourceForecast.herd_display_name(target_herd)]
+
+## **WHICH STOP WILL END THIS PARTY'S RAID**, in the same words the pre-launch readout uses
+## (`SourceForecast.TRIP_BOUND_CLAUSES`) — one table, so what the sheet promised and what the party
+## reports cannot be phrased differently.
+##
+## `""` on the wire is NOT RAIDING (a resident band, a scout, or a party already walking a load home)
+## and is deliberately distinct from `"horizon"`, which is the projection having found no stop; both
+## render nothing, but for reasons that are not interchangeable and must not be collapsed here.
+static func expedition_trip_bound_line(exp: Dictionary, mission: String) -> String:
+    if mission != HudExpeditionVocab.EXPEDITION_MISSION_HUNT:
+        return ""
+    return SourceForecast.trip_bound_clause(
+        {SourceForecast.TRIP_BOUND_KEY: String(exp.get("expedition_trip_bound",
+            SourceForecast.TRIP_BOUND_NONE))})
 
 ## The full-wording next-delivery line for a hunt row's tooltip — the compact `· ~14 in 6t` token on
 ## the row itself is legible-but-terse in the 300px column, so hover carries the same phrasing the
