@@ -112,13 +112,23 @@ passed in, which `handle_new_game` had cloned from the *outgoing* world. The loa
 result is discarded. The other four kinds survive because they are installed as their own resources
 inside `build_headless_app` and nothing overwrites them afterwards.
 
-So the new world's `SimulationConfig` is loaded afresh and then has the **runtime-owned** fields
-carried back from the outgoing world: `fog_enabled` and `crisis_auto_seed` (set by client commands),
-and the four socket binds (resolved at boot by port allocation, which a fresh load cannot reproduce —
-it only knows an explicit `SIM_PORT_BASE`, never an auto-bump). `start_profile_id` is deliberately
-**not** carried: `handle_new_game` re-applies the profile its own command names, after the config is
-installed, so a carried value would be dead. Everything else — every numeric lever the panel exposes
-— comes from the fresh load, which is the whole point.
+So the new world's `SimulationConfig` is loaded afresh, and only then has a **deliberately short**
+list of fields carried back from the outgoing world. The rule that decides the list: **the file is
+the authority at world start; only what the file CANNOT know is carried.**
+
+- **The four socket binds** — port allocation auto-bumps on a collision, and a fresh load can only
+  reproduce an explicit `SIM_PORT_BASE`, never a bump. The in-world config has to describe the ports
+  the process actually holds.
+- **`fog_enabled`** — not a tunable at all, but a player preference with its own persisted home in
+  the client, pushed to the server as a command. Resetting it every New Game would be a visible
+  regression, and it would never appear on the tuning panel.
+
+Everything else comes from the fresh load. `crisis_auto_seed` was carried in the first cut and is
+deliberately **not** any more: it lives in `simulation_config.json` beside exactly the levers this
+panel exists to change, so carrying it would make it permanently un-overridable — a future manifest
+row for it would silently do nothing, which is this very bug one field over. `start_profile_id` is
+likewise not carried, because `handle_new_game` re-applies the profile its own command names right
+after the config is installed, so a carried value would be dead.
 
 The general lesson is worth more than the fix: **"the config is loaded" and "the loaded config is
 what runs" are different claims**, and only the second one matters here.

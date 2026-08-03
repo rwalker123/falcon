@@ -672,14 +672,21 @@ pub fn load_simulation_config_from_env() -> (SimulationConfig, SimulationConfigM
 /// Game re-reads every config — so a rebuild that clones the outgoing world's `SimulationConfig`
 /// instead makes every `simulation` lever the client's tuning panel exposes inert.
 ///
-/// Carrying the fields below is the other half: rebuilding must not silently undo state the running
-/// server was told about after boot, none of which the file on disk knows anything about.
+/// Carrying a field is the other half, and the rule is narrow: **the file is the authority at world
+/// start; only what the file CANNOT know gets carried.** Anything the file *could* have said is a
+/// tunable, and a tunable that is carried is permanently un-overridable — staging it on the tuning
+/// panel would install, log, and do nothing, which is precisely the bug this function was written to
+/// fix. So the carried set is a consequence of that principle, not a list of conveniences.
 ///
-/// | Carried field | Who owns it at runtime |
+/// | Carried field | Why the file cannot know it |
 /// |---|---|
-/// | `fog_enabled` | the `set_fog` command |
-/// | `crisis_auto_seed` | the `set_crisis_auto_seed` command |
-/// | the four bind addresses | `crate::port_alloc::allocate` at boot — after an auto-bump these are *not* what the file says, and the in-world config must describe the ports the process actually holds |
+/// | `fog_enabled` | Not a tunable at all: a **player preference** with its own persisted home in the client (`.claude/rules/client/fog-of-war.md`), pushed to the server as a `set_fog` command. It would never appear on the tuning panel, and resetting it every New Game would be a visible regression. |
+/// | the four bind addresses | `crate::port_alloc::allocate` at boot — port allocation auto-bumps on a collision, so after a bump these are *not* what the file says and a fresh load could never reproduce them. The in-world config must describe the ports the process actually holds. |
+///
+/// **`crisis_auto_seed` is deliberately NOT carried**, though `set_crisis_auto_seed` writes it at
+/// runtime: it lives in `simulation_config.json` alongside exactly the levers the tuning panel
+/// exists to change, so the file is its authority at world start. The cost is re-issuing one debug
+/// command after a New Game; the command still works within a world.
 ///
 /// `start_profile_id` / `start_profile_overrides` are runtime-owned too, but deliberately **not**
 /// carried: the new-game path re-applies the profile its command names (`apply_start_profile`) after
@@ -689,7 +696,6 @@ pub fn load_simulation_config_for_new_world(outgoing: &SimulationConfig) -> Simu
     let (mut config, _metadata) = load_simulation_config_from_env();
 
     config.fog_enabled = outgoing.fog_enabled;
-    config.crisis_auto_seed = outgoing.crisis_auto_seed;
     config.port_base_bind = outgoing.port_base_bind;
     config.snapshot_flat_bind = outgoing.snapshot_flat_bind;
     config.command_bind = outgoing.command_bind;
@@ -1371,16 +1377,20 @@ mod tests {
     /// running process nonetheless holds.
     const BUMPED_PORT_BASE: u16 = 41530;
 
-    /// **A staged `simulation` override must reach the world the next New Game builds, and the
-    /// fields the running server owns must survive that rebuild.**
+    /// **A staged `simulation` override must reach the world the next New Game builds, and only what
+    /// the file cannot know may survive that rebuild.**
     ///
     /// The rebuild used to clone the *outgoing* world's `SimulationConfig`, so every lever the
     /// client's tuning panel exposes under the `simulation` kind installed, logged, and then did
     /// nothing at all. Reloading afresh is only half the answer, though: `fog_enabled` and the bound
     /// ports exist nowhere on disk, and a New Game that took the file's word for them would silently
     /// undo a `set_fog` and start claiming ports the process never bound.
+    ///
+    /// `crisis_auto_seed` is the counter-example, and it is asserted here for that reason: it is an
+    /// ordinary lever in `simulation_config.json`, so carrying it would make it permanently
+    /// un-overridable — the exact failure the fresh load exists to fix, one field over.
     #[test]
-    fn a_new_world_config_takes_the_staged_override_and_keeps_the_runtime_owned_fields() {
+    fn a_new_world_config_takes_the_file_and_keeps_only_what_the_file_cannot_know() {
         // The override registry is process-global; this is the guard that serializes every test
         // that stages into it.
         let _guard = lock_config_registry_for_test();
@@ -1407,6 +1417,8 @@ mod tests {
         let mut outgoing = shipped.clone();
         outgoing.climate.equator_temp = OUTGOING_EQUATOR_TEMP;
         outgoing.fog_enabled = !shipped.fog_enabled;
+        // Negated so the outgoing value is unmistakably not the file's: whichever of the two the
+        // rebuild ends up with, the assertions below can tell which.
         outgoing.crisis_auto_seed = !shipped.crisis_auto_seed;
         assert!(apply_port_base(&mut outgoing, BUMPED_PORT_BASE));
 
@@ -1425,8 +1437,9 @@ mod tests {
             "a New Game must not undo `set_fog`"
         );
         assert_eq!(
-            rebuilt.crisis_auto_seed, outgoing.crisis_auto_seed,
-            "a New Game must not undo `set_crisis_auto_seed`"
+            rebuilt.crisis_auto_seed, shipped.crisis_auto_seed,
+            "`crisis_auto_seed` is a file lever, so a New Game must take the file's value and not \
+             the outgoing world's — carrying it would make it un-overridable"
         );
         for (rebuilt_bind, carried) in [
             (rebuilt.port_base_bind, outgoing.port_base_bind),

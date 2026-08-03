@@ -100,12 +100,27 @@ installed as their own resources inside `build_headless_app` and are simply what
 `SimulationConfig` is not: the rebuild overwrites it with a config the *caller* supplies, and
 `handle_new_game` used to supply a clone of the outgoing world's — which discarded the fresh load
 and made every `simulation` lever on the tuning panel inert. It now starts from
-`load_simulation_config_for_new_world` (`resources.rs`), which loads afresh and then carries back
-the fields the **running process** owns and the file cannot know: `fog_enabled` (`set_fog`),
-`crisis_auto_seed` (`set_crisis_auto_seed`), and the four bind addresses (which after a port
-auto-bump are not what the file says). `start_profile_id`/`start_profile_overrides` are runtime-owned
-too but deliberately not carried — `apply_start_profile` re-applies the profile the command names
-right after. `ResetMap` keeps cloning the running config: it is a map reroll, not a retune.
+`load_simulation_config_for_new_world` (`resources.rs`), which loads afresh and then carries back a
+deliberately narrow set.
+
+**The file is the authority at world start; only what the file CANNOT know gets carried.** Anything
+the file *could* have said is a tunable, and a carried tunable is permanently un-overridable — a
+staged override for it would install, log, and do nothing, re-creating the very bug this function
+fixed. Two things qualify:
+
+- **`fog_enabled`** — not a tunable at all. It is a *player preference* with its own persisted home
+  in the client (`.claude/rules/client/fog-of-war.md`), pushed over as a `set_fog` command; it would
+  never appear on the tuning panel, and resetting it every New Game would be a visible regression.
+- **the four bind addresses** — port allocation auto-bumps on a collision, and a fresh load can only
+  reproduce an explicit `SIM_PORT_BASE`, never a bump. The in-world config must describe the ports
+  the process actually holds.
+
+**`crisis_auto_seed` does not qualify**, though `set_crisis_auto_seed` writes it at runtime: it sits
+in `simulation_config.json` among exactly the levers the panel exists to change, so it comes from the
+fresh load like any other tunable. The cost is re-issuing one debug command after a New Game.
+`start_profile_id`/`start_profile_overrides` are runtime-owned too but likewise not carried —
+`apply_start_profile` re-applies the profile the command names right after. `ResetMap` keeps cloning
+the running config: it is a map reroll, not a retune.
 
 **The staged file is never the watched file.** The rebuild keeps the outgoing world's
 `SimulationConfigMetadata` path, so the config watcher still watches the shipped

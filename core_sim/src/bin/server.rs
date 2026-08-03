@@ -1352,7 +1352,8 @@ fn handle_new_game(
     // Start from the config that would load RIGHT NOW, not from a clone of the outgoing world's:
     // a `simulation` override staged by the tuning panel reaches a world only because New Game
     // re-reads every config, and cloning skipped that read (see
-    // `load_simulation_config_for_new_world`, which also carries the runtime-owned fields over).
+    // `load_simulation_config_for_new_world`, which also carries back the narrow set of fields the
+    // file cannot know).
     // The *watched* path is deliberately left alone — `rebuild_world_from_config` keeps this
     // server's `SimulationConfigMetadata` path, so a staged override never becomes the file the
     // watcher hot-reloads into a running world.
