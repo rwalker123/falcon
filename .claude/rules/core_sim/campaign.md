@@ -66,9 +66,11 @@ The bedrock number the rest of the economy builds on. Each `PopulationCohort` (a
    the core tension.
 
 > **The flows are REPORTED, not discarded** (issue #272). `DemographicOutcome::flows` carries
-> births, maturations and the per-bracket death terms (with the dominant `DeathCause` per bracket)
+> births, **both** age transitions (maturations and agings) and the per-bracket death terms (with the
+> dominant `DeathCause` per bracket)
 > out of `advance_demographics`, and a per-band `DemographicFlowAccumulator` turns each rate into
-> whole-person feed events (`born` / `came_of_age` / `died`, plus `migrated` off the already-whole
+> whole-person feed events (`born` / `came_of_age` / `aged` / `died`, plus `migrated` off the
+> already-whole
 > `last_emigrated`/`last_immigrated`). A rate has to accumulate before it can be an event — a
 > thirty-person band earns a fraction of a birth per turn — and the carry is checkpoint state.
 > **`elder_mortality` is one of those death terms**, not a separate aging transition: it rides in

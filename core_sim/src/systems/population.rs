@@ -130,6 +130,11 @@ struct DemographicOutcome {
 struct DemographicFlows {
     pub births: Scalar,
     pub maturations: Scalar,
+    /// Working→elder transitions. The one flow here that **moves** a person rather than adding or
+    /// removing one, so it is outside the ledger's head-count identity — but it is carried and
+    /// reported like the rest, because a band whose workforce quietly drains into the elder bracket
+    /// is the same silent transition `maturations` already fixed at the young end.
+    pub agings: Scalar,
     pub child_deaths: Scalar,
     pub working_deaths: Scalar,
     /// Starvation + cold **plus** the flat old-age term (`elder_mortality_rate`). One number,
@@ -326,7 +331,8 @@ fn advance_demographics(
     let fertility = scalar_from_f32(births_cfg.birth_rate) * factors.multiplier();
     let births = working0 * fertility;
 
-    // 4. Aging flows. `elder_mortality` is a **death**, not a transition — it is the flat rate at
+    // 4. Aging flows. `maturation` and `aging` are the two ends of a working life and both ride out
+    // in the flows; `elder_mortality` is a **death**, not a transition — it is the flat rate at
     // which elders simply grow too old, and it is reported alongside the elders' starvation/cold
     // term in `flows.elder_deaths`. In a fed band in fair weather it is the only mortality there
     // is, so leaving it out of the flows made a healthy band shrink in total silence.
@@ -371,6 +377,7 @@ fn advance_demographics(
         flows: DemographicFlows {
             births,
             maturations: maturation,
+            agings: aging,
             child_deaths,
             working_deaths,
             // Old age is one of the ways an elder dies, so it rides in the same flow rather than a
@@ -574,6 +581,24 @@ fn push_demographic_events(
             faction,
             label,
             Some(format!("band={} count={}", band.0, matured)),
+        ));
+    }
+
+    // The other end of a working life. No head-count moves — the person is still in the band — but
+    // a pair of hands left the workforce, so it accrues and reports exactly like `maturations`.
+    let aged = DemographicFlowAccumulator::accrue(&mut accumulator.agings, flows.agings);
+    if aged > 0 {
+        let label = if aged == 1 {
+            format!("A worker joined the elders in {name}")
+        } else {
+            format!("{aged} workers joined the elders in {name}")
+        };
+        event_log.push(CommandEventEntry::new(
+            tick,
+            CommandEventKind::Aged,
+            faction,
+            label,
+            Some(format!("band={} count={}", band.0, aged)),
         ));
     }
 
@@ -1500,6 +1525,7 @@ mod death_event_tests {
         DemographicFlows {
             births: scalar_zero(),
             maturations: scalar_zero(),
+            agings: scalar_zero(),
             child_deaths: scalar_from_f32(child),
             working_deaths: scalar_from_f32(working),
             elder_deaths: scalar_from_f32(elder),
@@ -1616,6 +1642,110 @@ mod death_event_tests {
             "the second event is about the children it announced, not the elders of the first: \
              {details:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod aging_event_tests {
+    //! The working→elder carry. Driven through `push_demographic_events` directly, because the
+    //! property at stake is *when a fractional flow becomes an announcement* — a full turn would
+    //! bury it behind the model's own rates.
+    use super::push_demographic_events;
+    use crate::components::{DeathCause, DemographicFlowAccumulator};
+    use crate::orders::FactionId;
+    use crate::resources::{CommandEventKind, CommandEventLog};
+    use crate::scalar::{scalar_from_f32, scalar_zero};
+    use crate::systems::population::DemographicFlows;
+    use crate::BandId;
+
+    const TICK: u64 = 11;
+    const FACTION: FactionId = FactionId(1);
+    const BAND: BandId = BandId(4);
+
+    fn aging(flow: f32) -> DemographicFlows {
+        DemographicFlows {
+            births: scalar_zero(),
+            maturations: scalar_zero(),
+            agings: scalar_from_f32(flow),
+            child_deaths: scalar_zero(),
+            working_deaths: scalar_zero(),
+            elder_deaths: scalar_zero(),
+            child_death_cause: DeathCause::default(),
+            working_death_cause: DeathCause::default(),
+            elder_death_cause: DeathCause::default(),
+        }
+    }
+
+    fn aged_events(log: &CommandEventLog) -> Vec<(String, String)> {
+        log.iter()
+            .filter(|entry| entry.kind == CommandEventKind::Aged)
+            .map(|entry| {
+                (
+                    entry.label.clone(),
+                    entry.detail.clone().unwrap_or_default(),
+                )
+            })
+            .collect()
+    }
+
+    /// **A fraction of a worker is nobody.** The shipped `aging_rate` moves a fraction of a person
+    /// per turn out of the working bracket; rounding that per turn would announce an elder the band
+    /// never gained.
+    #[test]
+    fn a_fraction_of_a_worker_announces_nothing() {
+        let mut log = CommandEventLog::default();
+        let mut carry = DemographicFlowAccumulator::default();
+
+        push_demographic_events(&mut log, TICK, FACTION, BAND, &mut carry, &aging(0.3));
+        push_demographic_events(&mut log, TICK, FACTION, BAND, &mut carry, &aging(0.3));
+
+        assert!(
+            aged_events(&log).is_empty(),
+            "0.6 of a worker is still nobody: {:?}",
+            aged_events(&log)
+        );
+    }
+
+    /// **The crossing reports whole people and the remainder rides on**, which is what makes a
+    /// small band's transitions *late* rather than absent.
+    #[test]
+    fn the_crossing_reports_whole_workers_and_keeps_the_remainder() {
+        let mut log = CommandEventLog::default();
+        let mut carry = DemographicFlowAccumulator::default();
+
+        // 0.6 + 0.6 crosses one person with 0.2 owed.
+        push_demographic_events(&mut log, TICK, FACTION, BAND, &mut carry, &aging(0.6));
+        push_demographic_events(&mut log, TICK, FACTION, BAND, &mut carry, &aging(0.6));
+
+        let events = aged_events(&log);
+        assert_eq!(events.len(), 1, "one crossing, one event: {events:?}");
+        assert_eq!(
+            events[0].0,
+            format!("A worker joined the elders in Band {}", BAND.0)
+        );
+        assert_eq!(events[0].1, format!("band={} count=1", BAND.0));
+        assert!(
+            (carry.agings.to_f32() - 0.2).abs() < 1e-5,
+            "1.2 reported one worker and kept 0.2: {}",
+            carry.agings.to_f32()
+        );
+    }
+
+    /// **One event names a COUNT.** Two workers crossing on one turn is one line, in the plural.
+    #[test]
+    fn several_workers_in_one_turn_are_one_pluralized_line() {
+        let mut log = CommandEventLog::default();
+        let mut carry = DemographicFlowAccumulator::default();
+
+        push_demographic_events(&mut log, TICK, FACTION, BAND, &mut carry, &aging(2.5));
+
+        let events = aged_events(&log);
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(
+            events[0].0,
+            format!("2 workers joined the elders in Band {}", BAND.0)
+        );
+        assert_eq!(events[0].1, format!("band={} count=2", BAND.0));
     }
 }
 

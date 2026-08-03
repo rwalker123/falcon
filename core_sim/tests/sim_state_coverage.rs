@@ -272,7 +272,7 @@ const SIM_STATE_COMPONENTS: [&str; 16] = [
     // a hole with a comment on it.
     "BandTravel",
     "PopulationCohort",
-    // The fractional carry behind a band's birth/death/coming-of-age events. Carried for the same
+    // The fractional carry behind a band's birth, death and age-transition events. Carried for the same
     // reason as `BandTravel`: a band two-thirds of the way to a birth was two-thirds of the way
     // there, and dropping the remainder re-times every demographic event after a restore.
     "DemographicFlowAccumulator",

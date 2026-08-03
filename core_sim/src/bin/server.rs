@@ -5097,6 +5097,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::Born => "Birth",
         CommandEventKind::Died => "Death",
         CommandEventKind::CameOfAge => "Came of age",
+        CommandEventKind::Aged => "Joined the elders",
         CommandEventKind::Migrated => "Migration",
     }
 }

@@ -499,6 +499,11 @@ pub struct DemographicFlowAccumulator {
     pub births: Scalar,
     /// Fractional children→working transitions not yet reported.
     pub maturations: Scalar,
+    /// Fractional working→elder transitions not yet reported. A bracket **move**, not a loss — the
+    /// band's head-count is unchanged — but it is the other end of the same working life, and a
+    /// workforce that shrinks with the feed silent about why is the same bug `maturations` exists
+    /// to prevent at the young end.
+    pub agings: Scalar,
     /// Fractional deaths not yet reported — **one carry for all three brackets**, so every whole
     /// person the band loses is announced exactly once however the loss was spread.
     ///

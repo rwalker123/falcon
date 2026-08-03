@@ -161,6 +161,27 @@ because the token is a wire contract and the label is prose.
 > assertion could not have found it, because a per-case assertion only checks the terms someone
 > thought of.
 
+### A bracket TRANSITION is an event, and is outside the ledger
+
+`maturations` (children→working) and `agings` (working→elders) are carried and reported exactly like
+births and deaths — `came_of_age` and `aged`, one carry each on `DemographicFlowAccumulator`, same
+crossing arithmetic — but they are a different kind of fact. **They move a person between brackets;
+the band's head-count does not change.** `aging` was the second silent transition: computed in
+`advance_demographics`, applied to the working bracket, and announced nowhere, so a band's workforce
+drained into elderhood with the feed saying only that people were being born and dying. It reports
+now, and it is deliberately **not** a notable — losing a pair of hands is worth a line, not an
+interrupt.
+
+> **They must NOT join the ledger's identity.**
+> `the_reported_flows_account_for_every_person_a_band_gains_or_loses` closes over *head-count*:
+> `births − deaths + migration`, carries included. A transition contributes zero to that total, so
+> counting either side of it would create residue against a number that never moved — the guard
+> would fail on a correct sim. Their honesty is pinned by their own carry guards
+> (`population::aging_event_tests`, `demographic_events::a_band_reports_workers_joining_the_elders`),
+> which assert the crossing reports whole people and the remainder survives. The rule *"every term
+> that removes a person must be in `DemographicFlows`"* is about people leaving the **band**; a
+> transition is in `DemographicFlows` for the different reason that the feed must speak it.
+
 **Combat casualties are the deliberate exception.** `PopulationCohort::apply_combat_casualties`
 (hunt danger, predator raids) takes people out of the working bracket without passing through
 `DemographicFlows`; those deaths narrate as `HuntDanger` / `PredatorRaid` rows carrying their own
@@ -175,6 +196,7 @@ with that sentence rather than mutely breaking the arithmetic.
 |---|---|
 | `born` | `band= count=` |
 | `came_of_age` | `band= count=` |
+| `aged` | `band= count=` |
 | `died` | `band= count= bracket={child\|working\|elder} cause={hunger\|cold\|age}` |
 | `migrated` | `band= count= direction={out\|in}` |
 

@@ -133,7 +133,7 @@ pub struct BandRecord {
     /// consequence of it not being persisted, not an intent.
     pub travel: Option<BandTravel>,
     pub expedition: Option<ExpeditionRecord>,
-    /// The fractional carry behind the band's birth/death/coming-of-age events. **Carried**, for
+    /// The fractional carry behind the band's birth, death and age-transition events. **Carried**, for
     /// the same reason as `travel`: a band that was two-thirds of the way to a birth at tick T was
     /// two-thirds of the way there at tick T, and dropping the remainder would re-time every
     /// demographic event after a restore.

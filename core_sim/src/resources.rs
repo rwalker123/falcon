@@ -1212,6 +1212,11 @@ pub enum CommandEventKind {
     /// **People left or joined a band** through discontent-driven migration. Whole counts already
     /// (`PopulationCohort::last_emigrated` / `last_immigrated`), so this kind needs no accumulator.
     Migrated,
+    /// **Workers reached elderhood** — the aging accumulator crossed a whole person. The twin of
+    /// [`CommandEventKind::CameOfAge`] at the other end of a working life: it moves nobody in or
+    /// out of the band, but it is a pair of hands the player no longer has, which is why the
+    /// workforce shrinking is announced rather than merely happening.
+    Aged,
 }
 
 impl CommandEventKind {
@@ -1245,6 +1250,7 @@ impl CommandEventKind {
             CommandEventKind::Died => "died",
             CommandEventKind::CameOfAge => "came_of_age",
             CommandEventKind::Migrated => "migrated",
+            CommandEventKind::Aged => "aged",
         }
     }
 }

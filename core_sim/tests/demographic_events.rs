@@ -134,6 +134,61 @@ fn reported_births_never_exceed_what_the_carry_has_crossed() {
     );
 }
 
+/// **A shrinking workforce is announced.** `aging` moves workers into the elder bracket every turn
+/// and used to be applied in silence, so a band's pair of hands disappeared with the feed saying
+/// nothing — the same bug `came_of_age` fixes at the young end of a working life. Nobody leaves the
+/// band, which is why this is an event and not a head-count term.
+#[test]
+fn a_band_reports_workers_joining_the_elders() {
+    let mut app = world();
+    for _ in 0..GROWTH_TURNS {
+        run_turn(&mut app);
+    }
+
+    let aged = events_of(&app, CommandEventKind::Aged);
+    assert!(
+        !aged.is_empty(),
+        "the shipped band ages a fraction of a worker every turn; the transition must cross and \
+         report inside the retention window"
+    );
+
+    let first = &aged[0];
+    assert!(
+        first.label.contains("joined the elders"),
+        "the label reads as prose: {:?}",
+        first.label
+    );
+    let count: u32 = token(first, "count")
+        .expect("an aging names its count")
+        .parse()
+        .expect("count is a number");
+    assert!(count >= 1, "an event is never fired for nobody");
+    assert!(
+        token(first, "band").is_some(),
+        "an aging names the band it happened in, so the client can re-label the row"
+    );
+    assert!(
+        first.seq > 0,
+        "every pushed event carries a real sequence — 0 is the never-pushed value"
+    );
+
+    // The carry never holds a whole person it has not announced — the same honesty property the
+    // births guard pins, on the flow that moves people between brackets.
+    let carried: f32 = {
+        let mut query = app
+            .world
+            .query_filtered::<&DemographicFlowAccumulator, With<ResidentBand>>();
+        query
+            .iter(&app.world)
+            .map(|carry| carry.agings.to_f32())
+            .sum()
+    };
+    assert!(
+        carried < 1.0 + f32::EPSILON,
+        "a carry never sits on a whole worker it has not reported: {carried}"
+    );
+}
+
 /// **A band that starves reports its dead, with the cause the turn recorded.** Emptying every
 /// larder makes hunger — not cold — the dominant term, and the event has to say so rather than
 /// re-deriving it from a post-turn world that no longer knows.
@@ -201,6 +256,7 @@ fn a_demographic_event_names_a_live_band_id() {
         CommandEventKind::Born,
         CommandEventKind::Died,
         CommandEventKind::CameOfAge,
+        CommandEventKind::Aged,
         CommandEventKind::Migrated,
     ];
     let mut seen = 0;
@@ -299,6 +355,12 @@ const LEDGER_TURNS: usize = 12;
 /// `elder_mortality` was such a term for the whole of issue #272: elders × 0.06 per turn, applied to
 /// the bracket and reported nowhere, which is why a fed 30-person band shrank to 29 with the feed
 /// completely silent. Before the fix this guard failed by 3.78 people over these 12 turns.
+///
+/// **`maturations` and `agings` are deliberately absent from the identity.** They move a person
+/// from one bracket to the next; the band's head-count does not change, so adding either side of a
+/// transition here would double-count it against a total that never moved. They are reported as
+/// events for a different reason — the *workforce* changed — and their honesty is pinned by their
+/// own carry guards, not by this ledger.
 #[test]
 fn the_reported_flows_account_for_every_person_a_band_gains_or_loses() {
     let mut app = world();
