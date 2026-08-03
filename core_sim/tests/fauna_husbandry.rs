@@ -2158,7 +2158,11 @@ fn the_shed_is_bounded_by_the_true_overage_near_a_ceil_boundary() {
 
     run_understaffed_turns(&mut app, &id, herded, 1);
 
-    let shed_animals = (start_biomass - herd_of(&app, &id).biomass) / body_mass;
+    // **Rounded to whole animals, because that is what is being asserted.** The count is recovered by
+    // dividing a ~1-animal delta by a ~400-animal total, and f32 carries ~7 digits — so the exact
+    // quotient lands within ~1e-5 of the integer either side of it, and a hair-tight bound passes or
+    // fails on the fixture's magnitude rather than on the shed's behaviour.
+    let shed_animals = ((start_biomass - herd_of(&app, &id).biomass) / body_mass).round();
     assert!(
         (1.0..=3.0).contains(&shed_animals),
         "the shed is the true overage (~1–2 animals), not the ceil-boundary over-estimate (~dozens): \
