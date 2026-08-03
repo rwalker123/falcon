@@ -151,16 +151,23 @@ const TRADE_GOODS_GLYPH := "⇄"
 # people, feed for animals, or goods to trade. The role is a DISPLAY TAG the sim ships and nothing
 # branches on — the yield vector is the behaviour — so nothing here may be derived from a payoff.
 #
-# ALL THREE ARE BORROWED, NOT INVENTED, and each is already this HUD's mark for that account:
+# THE THREE EMOJI BELOW ARE NOW THE FALLBACK, NOT THE SHIPPED MARK — `CropRoleSprites` carries
+# bundled art for all three, and `for_crop_role` prefers it (issue #463). They are kept, and kept
+# accurate, because that fallback is LIVE: it is what renders while art is being iterated on, and
+# what renders if a PNG ever fails to load. All three were BORROWED rather than invented, and TWO OF
+# THEM STILL MEAN SOMETHING ELSE ELSEWHERE IN THIS HUD, which is exactly why they were replaced:
 #   • 🌾 is the food/forage mark the roster's land row wears beside its staffed forager count
 #     (`2 🌾`) and the map's grassland site marker, i.e. "what people eat off this ground".
-#   • 🐄 is `POLICY_CORRAL`'s penned-livestock mark, and fodder is defined on this HUD as "feed for
-#     penned animals, not food for people" (`FLORA_CROP_FODDER_TOOLTIP_FORMAT`) — the same animals.
-#   • ⇄ is `TRADE_GOODS_GLYPH` itself, the one mark every non-food component of a yield already
-#     wears, so a cash crop is marked with the account it pays into rather than a fourth glyph.
-# Borrowing is also what keeps them legible: 🌾/🐄 are grandfathered emoji already judged at row
-# size (`food_tile.png`, `herd_corral.png`) and ⇄ is a text-presentation symbol that inherits the
-# label's colour. A NEW mark here would have to be re-proven at ~13px; these are already proven.
+#   • 🐄 is `POLICY_CORRAL`'s penned-livestock mark — still, on the work board and the map — and
+#     fodder is defined on this HUD as "feed for penned animals, not food for people"
+#     (`FLORA_CROP_FODDER_TOOLTIP_FORMAT`). Near enough to pass, but not the same claim.
+#   • ⇄ is `TRADE_GOODS_GLYPH` itself, the mark every non-food component of a yield wears, so a cash
+#     crop was marked with the ACCOUNT IT PAYS INTO rather than with what it is.
+# The art names the PRODUCT instead (a grain ear / a bale of cut forage / a bolt of dyed cloth), so
+# no mark is doing two jobs. Borrowing was what kept these legible without a fresh proof at ~13px;
+# the art is proven at that size directly — see `assets/icons/icon_prompts.txt` → CROP ROLES, which
+# is the one place the sub-style is written down, and note it INVERTS the marker house style's
+# thick-dark-outline clause (the panel behind these is darker than any terrain).
 const CROP_ROLE_STAPLE := "staple"
 const CROP_ROLE_FODDER := "fodder"
 const CROP_ROLE_CASH := "cash"
@@ -170,11 +177,44 @@ const CROP_ROLE_ICONS := {
 	CROP_ROLE_CASH: TRADE_GOODS_GLYPH,
 }
 
-## Icon for a crop ROLE. **`""` (or an unknown tag) means UNSTATED, never "staple"** — the wire says
-## so explicitly, and a client that defaulted a missing tag into a real category would invent a fact
-## about the plant. Callers render no icon on the empty answer.
-static func for_crop_role(role: String) -> String:
-	return String(CROP_ROLE_ICONS.get(role.strip_edges().to_lower(), ""))
+## The `[img]` BBCode a bundled mark is rendered through. Boxed SQUARE at the caller's pixel size:
+## every keyed icon is a square canvas with the subject centred inside it (`icon_key.py` re-frames
+## to one), so a square box makes all four slots — the three marks and the blank one — exactly the
+## same width whatever their subject's aspect.
+const CROP_ROLE_IMG_FORMAT := "[img=%dx%d]%s[/img]"
+
+## Icon for a crop ROLE — the bundled art where we have it, else the emoji fallback above.
+##
+## **`""` (or an unknown tag) means UNSTATED, never "staple"** — the wire says so explicitly, and a
+## client that defaulted a missing tag into a real category would invent a fact about the plant.
+## Callers render a blank slot on the empty answer (see `crop_role_spacer`), never no slot at all.
+##
+## `icon_px` is the box the art is drawn in, and **`0` means "text only"** — the answer is then
+## always the emoji. It is a PARAMETER rather than a constant because the box has to track the
+## host label's font size, which only the host knows; passing a literal here would be the hardcoded
+## pixel size the discoveries strip already refuses to write (`WonderSprites`' two consumers).
+static func for_crop_role(role: String, icon_px: int = 0) -> String:
+	var key := role.strip_edges().to_lower()
+	if not CROP_ROLE_ICONS.has(key):
+		return ""
+	if icon_px > 0:
+		var art := CropRoleSprites.path_for(key)
+		if art != "":
+			return CROP_ROLE_IMG_FORMAT % [icon_px, icon_px, art]
+	return String(CROP_ROLE_ICONS[key])
+
+
+## The blank slot an UNSTATED role renders, as a transparent image boxed exactly like a real mark —
+## or `""` when there is no art to match the width of, in which case the caller falls back to its
+## own text spacer. Split from `for_crop_role` deliberately: that function's contract is that an
+## unstated role yields NOTHING, and the decision to hold the column anyway belongs to the row.
+static func crop_role_spacer(icon_px: int = 0) -> String:
+	if icon_px <= 0:
+		return ""
+	var spacer := CropRoleSprites.spacer_path()
+	if spacer == "":
+		return ""
+	return CROP_ROLE_IMG_FORMAT % [icon_px, icon_px, spacer]
 
 # Action-STATUS glyphs, read by the Band panel's Current-actions + Active-expeditions rows (Hud) so
 # a row states what it is doing with a glyph instead of a word (the words move into the row
