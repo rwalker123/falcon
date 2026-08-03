@@ -780,11 +780,15 @@ pub enum ExpeditionMission {
         /// the floor therefore governs both the take and the trip's shape
         /// ([`crate::systems::raid_is_recurring`]).
         ///
-        /// **Floor `0` is denial** — nothing is left standing, the herd falls under
+        /// **Floor `0` takes everything** — nothing is left standing, the herd falls under
         /// `extinction_floor`, and the party banks the whole-stock windfall on the way (an end
         /// state, not an empty pack). That reading is a *consequence* of the number here rather than
-        /// a mission kind; issue #456 gives denial its own mission, at which point this field goes
-        /// back to meaning only "how deep a harvest".
+        /// a mission kind.
+        ///
+        /// **It is maximal *harvest*, and that is not denial** (`docs/plan_denial_raid.md` §0): the
+        /// take is still bounded by what the party can **carry**, so erasing a herd this way is as
+        /// slow and as crew-hungry as eating it. Denial is a mission of its own with the carry bound
+        /// removed, at which point this field means only "how deep a harvest".
         floor: f32,
     },
 }

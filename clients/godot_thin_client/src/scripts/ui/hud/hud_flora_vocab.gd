@@ -348,6 +348,21 @@ const GRAZING_KEY := "Grazing"
 # biomass stocks in the hundreds, and a decimal on either side buys no decision.
 const STOCK_FORMAT := "%.0f / %.0f"
 
+# THE SAME ROW WITH THE STOCK UNKNOWN — `— / 205`, what BOTH webs read on a remembered tile
+# (issue #462). The capacity is still the tile's own and still true; only the standing level is
+# unknowable on ground the player cannot see. The em-dash holds the numerator's place rather than the
+# row being dropped, so the pair stays positionally parallel with the live card — and it is the one
+# glyph that cannot be misread as a quantity, which is the entire failure this form exists to
+# prevent: the tile-level "Remembered" chip and unknown-contents note were both already on screen
+# when a reader last carried a fogged `130 / 130` into their model of the forage patch. A label on
+# the tile does not label the number; this does.
+#
+# Spelled STRUCTURALLY (the `DetailFormat.RECOVERY_GUIDANCE_TEXT` idiom) so the glyph the harness
+# searches for and the glyph the row actually renders are one value and cannot drift apart.
+const STOCK_UNKNOWN_GLYPH := "—"
+
+const STOCK_UNKNOWN_FORMAT := STOCK_UNKNOWN_GLYPH + " / %.0f"
+
 # THE ECOLOGY PHASE RIDES THE STOCK ROW, IT IS NO LONGER A ROW OF ITS OWN. Two standing `Ecology` /
 # `Pasture ecology` rows doubled the height of a readout whose whole content is one word each, and
 # put the second web's stock two rows away from the first's. The phase is a condition OF that stock,
