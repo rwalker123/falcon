@@ -1156,14 +1156,17 @@ func _apply_reservation(id: StringName, edge: int, size: float) -> void:
         _reservations[id] = {"edge": edge, "size": size}
     # THE MAP is exempted for a HORIZONTAL band dock (issue #377): that dock is a floating CARD over
     # live map now, not a full-bleed bar, so insetting the map would blank the whole strip and leave
-    # dead space either side of the card — the very thing the islands removed. The HUD inset STAYS, so
-    # the docks and the bottom bar keep clear of the strip and nothing can be drawn over. The band
-    # panel also keeps its `_reservations` entry, which is what still displaces the event dock past it.
+    # dead space either side of the card — the very thing the islands removed. THE HUD is exempted on the
+    # TOP edge only; see `_reserver_overlays_hud` for why the two horizontal edges differ. The band panel
+    # keeps its `_reservations` entry either way, which is what still displaces the event dock past it.
     var map_size: float = 0.0 if _reserver_overlays_map(id, edge) else size
+    var hud_size: float = 0.0 if _reserver_overlays_hud(id, edge) else size
     if map_view != null and map_view.has_method("set_reserved_inset"):
         map_view.call("set_reserved_inset", id, edge, map_size)
     if hud != null and hud.has_method("set_reserved_inset"):
-        hud.call("set_reserved_inset", id, edge, size)
+        hud.call("set_reserved_inset", id, edge, hud_size)
+    # A card sharing its strip with the HUD must be told what to keep clear of.
+    _update_band_panel_lateral_bounds()
     # Co-edge stacking: push the Band panel's leading offset so it sits just past any inboard
     # reserver on its edge (e.g. the Inspector when both are left) instead of overlapping it.
     _update_band_panel_edge_offset()
@@ -1184,6 +1187,49 @@ func _apply_reservation(id: StringName, edge: int, size: float) -> void:
 ## from the map as it always did. Every other reserver is unaffected.
 func _reserver_overlays_map(id: StringName, edge: int) -> bool:
     return id == BAND_PANEL_RESERVER and (edge == SIDE_TOP or edge == SIDE_BOTTOM)
+
+## Does this reserver float over the HUD too? **A TOP band dock, and only that one.**
+##
+## The two horizontal edges are NOT symmetric, and that asymmetry is the whole content of this test.
+## Insetting the HUD makes `LayoutRoot` yield the strip, which is right exactly when the HUD has
+## something IN that strip the card would otherwise be drawn over:
+##
+## - **BOTTOM** — the HUD's bottom bar lives there, so the HUD yields and `DockRowController` relocates
+##   the minimap and turn orb into the card's own row. Unchanged.
+## - **TOP** — the HUD's top-right column (turn, faction totals, the Telling card) lives there, and the
+##   card is a CENTRED island with open strip either side of it. Yielding pushed that whole column DOWN
+##   below the strip, stranding it in the middle of the map while the space it belongs in sat empty
+##   beside the card. It belongs BESIDE the card, which is what it gets when the HUD does not yield.
+##
+## **The exemption is only half the fix** — see `_update_band_panel_lateral_bounds` for the other half,
+## without which a busy band's card is simply drawn over the column instead of pushing it away.
+##
+## A vertical dock reserves a strip the card still fills edge to edge, so it yields as it always did.
+func _reserver_overlays_hud(id: StringName, edge: int) -> bool:
+    return id == BAND_PANEL_RESERVER and edge == SIDE_TOP
+
+## Tell the Band panel which HUD columns its card must keep clear of.
+##
+## Only an edge where the HUD does NOT yield needs them: on a bottom dock the HUD moves out of the strip
+## entirely, so the card has the whole row and the bounds are 0. On a top dock the HUD stays put, so the
+## card has to be told that the leftmost `left_column_width()` and the rightmost `right_column_width()`
+## are spoken for — otherwise a 34-source band's 1570px card lands straight through the readouts in a
+## 1920px strip. A band with NO sources makes a narrow card with room to spare, which is exactly why the
+## exemption alone LOOKS complete until you open a busy band.
+##
+## The widths are the HUD's AUTHORED minimums, never measured, so this bound cannot jump when the player
+## selects a tile and the selection card appears — the same rule the event dock's own bound follows.
+func _update_band_panel_lateral_bounds() -> void:
+    if band_city_panel == null or not band_city_panel.has_method("set_lateral_bounds"):
+        return
+    if hud == null or not hud.has_method("lateral_column_widths"):
+        return
+    var edge: int = int(band_city_panel.call("get_dock")) if band_city_panel.has_method("get_dock") else SIDE_LEFT
+    if not _reserver_overlays_hud(BAND_PANEL_RESERVER, edge):
+        band_city_panel.call("set_lateral_bounds", 0.0, 0.0)
+        return
+    var columns: Vector2 = hud.call("lateral_column_widths")
+    band_city_panel.call("set_lateral_bounds", columns.x, columns.y)
 
 ## The Band panel's leading offset = Σ sizes of all lower-priority reservers currently on the SAME
 ## edge as the Band panel (today just the Inspector when both dock left; 0 otherwise). Recomputed

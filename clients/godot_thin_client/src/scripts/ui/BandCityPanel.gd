@@ -302,6 +302,12 @@ var _rail_stack: VBoxContainer
 var _rail_slots: Dictionary = {}          # slot:int (RAIL_SLOT_*) -> Control host
 ## The rail column's width, DECLARED by the HUD (`set_rail_width`) — never measured from the content.
 var _rail_declared_width: float = 0.0
+## What the card must LEAVE at each end of a horizontal strip, declared by `Main` (`set_lateral_bounds`)
+## — the HUD's left and right column widths. Only a TOP dock has any, because it is the only edge where
+## the HUD does NOT yield its strip (see `Main._reserver_overlays_hud`); a bottom dock's HUD moves out of
+## the way, so the card has the whole row.
+var _bound_leading: float = 0.0
+var _bound_trailing: float = 0.0
 ## How many columns the WORK board wants, DECLARED by `BandPanelController` (`set_work_columns`). It is
 ## what the card's wide-shell width is built from. Seeded at the maximum so the first layout pass — which
 ## happens before any controller has counted anything — draws the widest card rather than a one-column
@@ -834,9 +840,12 @@ func _position_card_and_rail() -> void:
 		_rail.offset_bottom = 0.0
 	# The card: its content width, centred in what the chrome leaves. Clamped to the available room so a
 	# window narrower than the content can never slide the card under the chrome.
-	var available: float = maxf(_panel_extent().x - _rail_span(), 0.0)
+	# Centred in the room the chrome cluster and the HUD columns leave — and OFFSET past the leading
+	# bound, so "centred" means centred in the gap rather than centred on the screen with a column
+	# underneath one end of it.
+	var available: float = _available_card_span()
 	var card_width: float = minf(_card_width(), available)
-	var lead: float = 0.5 * maxf(available - card_width, 0.0)
+	var lead: float = _bound_leading + 0.5 * maxf(available - card_width, 0.0)
 	_panel.anchor_left = 0.0
 	_panel.anchor_right = 0.0
 	_panel.anchor_top = 0.0
@@ -906,10 +915,33 @@ func _apply_wide_content_cap() -> void:
 ##
 ## The narrow shell takes the whole available strip: it is reached only when there is too little room
 ## for three zones, i.e. exactly when there is nothing to give back.
+## Declare the room the card must leave at each end of a horizontal strip — the HUD columns it must not
+## be drawn over. `Main` owns the widths (they are the HUD's, and authored rather than measured, so this
+## bound cannot jump when the player selects a tile); the panel owns what to do with them.
+##
+## **Without this the top-dock HUD exemption is only correct for a SPARSE band.** A band with no worked
+## sources makes a narrow card with room either side, which is what made the fix look complete; a band
+## with 34 sources makes a 1570px card in a 1920px strip and puts it straight through the readouts.
+func set_lateral_bounds(leading: float, trailing: float) -> void:
+	var lead: float = maxf(leading, 0.0)
+	var trail: float = maxf(trailing, 0.0)
+	if is_equal_approx(lead, _bound_leading) and is_equal_approx(trail, _bound_trailing):
+		return
+	_bound_leading = lead
+	_bound_trailing = trail
+	_apply_dock_layout()
+	_notify_zones_resized()
+
+## The span of strip a horizontal card may actually use: the whole row less the chrome cluster and less
+## whatever HUD column sits at either end. The ONE definition, so `_card_width`, `_interior_size` and
+## `_position_card_and_rail` cannot disagree about how much room there is.
+func _available_card_span() -> float:
+	return maxf(_panel_extent().x - _rail_span() - _bound_leading - _bound_trailing, 0.0)
+
 func _card_width() -> float:
 	if _is_vertical_edge(_dock_edge):
 		return PANEL_WIDTH
-	var available: float = maxf(_panel_extent().x - _rail_span(), 0.0)
+	var available: float = _available_card_span()
 	if not _shell_is_wide():
 		return available
 	var work: float = float(clampi(_work_columns, 1, WORK_MAX_COLUMNS)) * ZONE_WORK_MIN_WIDTH
@@ -955,8 +987,11 @@ func set_work_columns(columns: int) -> int:
 func _affordable_work_columns() -> int:
 	if not _shell_is_wide():
 		return maxi(int(_interior_size().x / ZONE_WORK_MIN_WIDTH), 1)
-	var available: float = maxf(_panel_extent().x - _rail_span(), 0.0)
-	var room: float = available - PANEL_CHROME_H - ZONE_BAND_WIDTH - ZONE_PARTY_WIDTH - _wide_separator_span()
+	# `_available_card_span()`, not the raw strip: the HUD columns a top dock must keep clear of come off
+	# the card's room BEFORE the board gets any of it, so counting columns against the whole row builds a
+	# board the clamped card cannot hold — measured as 135px of it hanging out of a clipping zone host.
+	var room: float = _available_card_span() - PANEL_CHROME_H - ZONE_BAND_WIDTH - ZONE_PARTY_WIDTH \
+		- _wide_separator_span()
 	return maxi(int(room / ZONE_WORK_MIN_WIDTH), 1)
 
 ## True when the panel is wide enough for the three zones side by side. A WIDTH test, never a
@@ -966,7 +1001,13 @@ func _affordable_work_columns() -> int:
 ## `PANEL_CHROME_H` and is tested against the OUTER width, so the chrome rail (which spends that same
 ## outer width before the zones see any of it — its column AND its separator gutter) must come off first.
 func _shell_is_wide() -> bool:
-	return _panel_extent().x - _rail_span() >= WIDE_SHELL_MIN_WIDTH
+	if _is_vertical_edge(_dock_edge):
+		return _panel_extent().x - _rail_span() >= WIDE_SHELL_MIN_WIDTH
+	# `_available_card_span()` on a horizontal dock, because the HUD columns a top dock keeps clear of
+	# come off the CARD's room before any zone sees it (issue #377). Testing the raw strip put the panel
+	# into the wide shell on a 1920 top dock whose card could only have 1141 — a 331px work zone against
+	# a 380px minimum, i.e. exactly the invariant `WIDE_SHELL_MIN_WIDTH` was derived to protect.
+	return _available_card_span() >= WIDE_SHELL_MIN_WIDTH
 
 ## The panel card's outer size for the current dock: fixed on the cross axis, the window on the other.
 func _panel_extent() -> Vector2:
@@ -992,7 +1033,7 @@ func _interior_size() -> Vector2:
 	# dock, so the strip's width stopped being what the zones have to spend. `_card_width()` has already
 	# subtracted the chrome cluster and its gutter, which is why `_rail_span()` does not appear again
 	# here. The HEIGHT is still the strip's — the card is full-height on both axes of a horizontal dock.
-	var card_width: float = minf(_card_width(), maxf(_panel_extent().x - _rail_span(), 0.0))
+	var card_width: float = minf(_card_width(), _available_card_span())
 	return Vector2(maxf(card_width - PANEL_CHROME_H, 0.0), maxf(_panel_extent().y - chrome_v, 0.0))
 
 ## Height of the header row — pure chrome (two text rows beside the icon controls), so measuring it

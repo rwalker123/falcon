@@ -466,10 +466,17 @@ func _ready() -> void:
 
 	_panel = BAND_PANEL_SCENE.instantiate()
 	add_child(_panel)
-	# Fan the panel's reservation onto the HUD, as Main does for both surfaces.
+	# Fan the panel's reservation onto the HUD as Main does — INCLUDING its TOP-dock exemption and the
+	# lateral bounds that go with it (issue #377), or these frames would show the HUD yielding a strip the
+	# live client does not, and a card free to sit where the live one is bounded. `Main` is not instanced
+	# here, so the two rules are restated; `Main._reserver_overlays_hud` /
+	# `Main._update_band_panel_lateral_bounds` are the authority.
 	_panel.reservation_changed.connect(func(edge: int, size: float):
+		var hud_yields: bool = edge != SIDE_TOP
 		if _hud.has_method("set_reserved_inset"):
-			_hud.set_reserved_inset(&"band_panel", edge, size))
+			_hud.set_reserved_inset(&"band_panel", edge, size if hud_yields else 0.0)
+		var columns: Vector2 = Vector2.ZERO if hud_yields else _hud.lateral_column_widths()
+		_panel.set_lateral_bounds(columns.x, columns.y))
 
 	await get_tree().process_frame
 	await get_tree().process_frame
@@ -1261,7 +1268,14 @@ func _render_dock_row_states() -> void:
 	_assert_chrome_parked(false, "band_panel_dockrow_top")
 	_assert_no_rail_width("band_panel_dockrow_top")
 	_assert_chrome_home_exact("band_panel_dockrow_top")
-	_assert_shell_is_wide(true, "band_panel_dockrow_top")
+	# The NARROW shell here, and that is arithmetic rather than a regression: a top dock keeps the HUD's
+	# strip, so its card has 1920 − 360 (left dock) − 419 (readouts) = 1141px, under the 1190 the wide
+	# shell needs for three zones. The alternative to tabbing is drawing the card over the readouts, which
+	# is the bug this state exists to prove is gone. A top dock reaches the wide shell on a wider window —
+	# `band_panel_dockrow_ultrawide` is bottom-docked, where the HUD yields and the whole row is the
+	# card's.
+	_assert_shell_is_wide(false, "band_panel_dockrow_top")
+	_assert_card_clears_hud_columns("band_panel_dockrow_top")
 
 	# LEFT — THE CONTROL. A vertical dock keeps today's behaviour exactly: the chrome is back in
 	# `BottomBar` and the rails contribute nothing. The work-zone baseline captured here is what the
@@ -1505,6 +1519,44 @@ func _assert_card_follows_its_content(busy_width: float, busy_columns: int, stat
 	if failures.is_empty():
 		print("band_panel_preview: assert OK — %s the card follows its content (%.0fpx / %d columns busy → %.0fpx / %d quiet)" % [
 			state_name, busy_width, busy_columns, quiet_width, quiet_columns])
+		return
+	for failure in failures:
+		push_error("band_panel_preview: %s — %s" % [state_name, failure])
+
+## GUARD: a TOP-docked card is drawn over NEITHER HUD column (issue #377).
+##
+## The top dock is the one edge where the HUD keeps its strip — its right-hand column of readouts belongs
+## BESIDE the card, not pushed under the map — so it is also the one edge where the card can be drawn
+## over something. The claim is made as rect non-overlap against the live regions rather than as "the
+## bound was applied", because a bound that is set and then ignored reads identically to one that works.
+##
+## **It takes a negative control first, on the same two live rects**: with the bounds cleared the card
+## genuinely DOES overlap, so a pass cannot be satisfied by two rects that happen never to meet — which
+## is what a sparse band would give for free, and exactly how the half-fix looked complete.
+func _assert_card_clears_hud_columns(state_name: String) -> void:
+	var card := _panel._panel.get_global_rect()
+	var columns := {
+		"the left dock": _hud.left_dock_region.get_global_rect(),
+		"the right readouts": _hud.turn_block.get_global_rect(),
+	}
+	# NEGATIVE CONTROL: unbound, this band's card must actually reach at least one of them.
+	_panel.set_lateral_bounds(0.0, 0.0)
+	var unbound := _panel._panel.get_global_rect()
+	var would_collide := false
+	for rect_variant in columns.values():
+		if unbound.intersects(rect_variant):
+			would_collide = true
+	var live: Vector2 = _hud.lateral_column_widths()
+	_panel.set_lateral_bounds(live.x, live.y)
+	var failures: Array[String] = []
+	if not would_collide:
+		failures.append("the UNBOUND card %s clears both columns anyway, so this state proves nothing — stage a busier band" % unbound)
+	for name_variant in columns:
+		var rect: Rect2 = columns[name_variant]
+		if card.intersects(rect):
+			failures.append("the card %s is drawn over %s %s" % [card, name_variant, rect])
+	if failures.is_empty():
+		print("band_panel_preview: assert OK — %s the card clears both HUD columns (and would collide unbound)" % state_name)
 		return
 	for failure in failures:
 		push_error("band_panel_preview: %s — %s" % [state_name, failure])

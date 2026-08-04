@@ -166,10 +166,32 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   - **The MAP therefore stops insetting for a horizontal band dock.** `Main._reserver_overlays_map`
     zeroes the map's share of the reservation for `band_panel` on `SIDE_TOP`/`SIDE_BOTTOM`, so live map
     renders under and either side of the card. Without it the strip either side of the card is
-    reserved-but-blank — *worse* than the bar, since it is dead space you can neither see nor click.
-    **The HUD inset STAYS**, so the docks and the bottom bar keep clear of the strip and nothing can be
-    drawn over; and the panel keeps its `_reservations` entry, which is what still displaces the event
-    dock past it.
+    reserved-but-blank — *worse* than the bar, since it is dead space you can neither see nor click. The
+    panel keeps its `_reservations` entry, which is what still displaces the event dock past it.
+  - **THE HUD YIELDS ON THE BOTTOM EDGE AND NOT ON THE TOP, and the asymmetry is the whole rule**
+    (`Main._reserver_overlays_hud`). Insetting the HUD is right exactly when the HUD has something IN
+    that strip the card would be drawn over. **BOTTOM**: the bottom bar lives there, so the HUD yields
+    and `DockRowController` relocates the minimap and orb into the card's row. **TOP**: the HUD's
+    top-right column (turn, faction totals, the Telling card) lives there, and the card is a centred
+    island with open strip either side — so yielding pushed that whole column DOWN below the strip,
+    stranding it mid-map while the space it belongs in sat empty beside the card.
+  - **The exemption is only HALF the fix, and the missing half is why it looks complete.**
+    `Main._update_band_panel_lateral_bounds` → **`set_lateral_bounds`** tells the card what to keep clear
+    of, and `_available_card_span()` is the one definition of the room that leaves. Without it a band
+    with NO worked sources makes a narrow card with room to spare — which is what a first look shows —
+    while a 34-source band makes a 1570px card in a 1920px strip and lands straight through the readouts.
+    Two consequences follow and both are arithmetic, not regressions: `_affordable_work_columns` counts
+    against the bounded span (counting against the raw row builds a board the clamped card cannot hold,
+    measured at 135px of overflow into a clipping host), and **`_shell_is_wide` tests the bounded span
+    too**, so a 1920 top dock correctly picks the NARROW tabbed shell — 1920 − 360 − 419 = 1141 against
+    the 1190 three zones need. The alternative to tabbing there is drawing over the readouts.
+  - **The bound is the LIVE column width, not the authored minimum** (`HudLayer.lateral_column_widths`),
+    and that is the opposite of `left_column_width` / `right_column_width`, which the event dock uses.
+    Those bound an EDGE that must not move every turn, so authored is right and a column drawing wider
+    merely overlaps a little. This bound decides whether a CARD is drawn over the readouts: measured at
+    1920 they render **419px against a 344px authored minimum** (the metrics line is simply longer than
+    the minimum allows), so an authored bound puts the card through them. The band card re-lays-out per
+    snapshot anyway, so tracking the live width costs it nothing.
   - **The seam is a VERTICAL-dock thing now.** It accents the map-facing edge of the *strip*, which is
     right while the card fills that strip and wrong once it does not — on a horizontal dock it would
     rule a line across the whole monitor with a small card floating under part of it, re-drawing the
