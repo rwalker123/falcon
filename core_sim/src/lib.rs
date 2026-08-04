@@ -91,8 +91,8 @@ use bevy::prelude::*;
 
 pub use combat::{
     attacks_landed_seeded, resolve_fight, strike_damage, units_brought_down, CombatStats,
-    CombatTuning, Contingent, ContingentId, ContingentResult, FightOutcome, FightPayload, Force,
-    ForceId, Posture, RangeBand, TerrainContext,
+    CombatTuning, Contingent, ContingentId, ContingentResult, DamageLedger, FightOutcome,
+    FightPayload, Force, ForceId, Posture, RangeBand, TerrainContext,
 };
 pub use combat_config::{
     load_combat_config_from_env, CombatConfig, CombatConfigHandle, CombatConfigMetadata,
@@ -163,14 +163,14 @@ pub use fauna::{
     advance_herd_grazing, advance_herds, advance_husbandry, advance_predation, animals_affordable,
     animals_engaged, animals_that_stay, build_prey_index, carnivore_k_at, escapement_ceiling,
     forecast_expected_take, herd_capacity, herd_ecology, herd_herders_needed, herd_hunt_yield,
-    herded_fraction, herders_needed, hunt_engage_workers, hunt_escapement_ceiling,
-    hunt_haul_workers, hunt_source_yield_preview, hunt_take_workers, pen_upkeep,
-    project_arrivals_hunt, project_realized_hunt, quantise_animal_take, repopulate_fauna,
-    resolve_hunt_fight, retreat_seed, spawn_initial_herds, species_requires_denial, AnimalTake,
-    EcologyPhase, FightCasualties, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
-    HerdTelemetryEntry, HuntFight, HuntingParty, PreyDatum, QuarryFight, RoamState,
-    SourceYieldForecast, FODDERING_DISCOVERY_ID, FULLY_HERDED, HERDING_DISCOVERY_ID,
-    MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID,
+    herd_quarry_fight, herded_fraction, herders_needed, hunt_engage_workers,
+    hunt_escapement_ceiling, hunt_haul_workers, hunt_source_yield_preview, hunt_take_workers,
+    pen_upkeep, project_arrivals_hunt, project_realized_hunt, quantise_animal_take,
+    repopulate_fauna, resolve_hunt_fight, retreat_seed, spawn_initial_herds,
+    species_requires_denial, AnimalTake, EcologyPhase, FightCasualties, Herd, HerdDensityMap,
+    HerdRegistry, HerdTelemetry, HerdTelemetryEntry, HuntFight, HuntingParty, PreyDatum,
+    QuarryFight, RoamState, SourceYieldForecast, FODDERING_DISCOVERY_ID, FULLY_HERDED,
+    HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, NO_DEATHS_TO_REPORT, PENNING_DISCOVERY_ID,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle,

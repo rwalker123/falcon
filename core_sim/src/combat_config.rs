@@ -44,6 +44,18 @@ pub struct CombatConfig {
     /// the take stays deterministic and `forecast == actual` per component holds until slice 5
     /// teaches the forecast to report a range. Ships finite, `> 0` and `<= 1`.
     pub hit_chance: f32,
+    /// **How much of its own `durability` a wounded body knits back per turn out of contact** — the
+    /// decay half of [`crate::combat::DamageLedger`]. Ships **0.2** (five quiet turns clear any
+    /// wound); finite, `> 0` and `<= 1`.
+    pub wound_recovery_rate: f32,
+    /// **Damage a hunt does to its own party per ANIMAL ENGAGED**, independent of what the quarry
+    /// swings (`docs/plan_hunt_through_combat.md` §4.6) — hunters fall, are trampled in a drive, cut
+    /// themselves butchering.
+    ///
+    /// **A lever, not a per-species field**: the danger is in the activity, not in the rabbit, so it
+    /// scales with the *engagement* and lives here beside `expedition_danger_multiplier` — the other
+    /// dial in this file that only the hunt adapter reads. Ships **0.15**, finite and `> 0`.
+    pub hunt_injury_damage_per_animal: f32,
 }
 
 impl CombatConfig {
@@ -75,6 +87,7 @@ impl CombatConfig {
             lethality: self.lethality,
             disengage_fraction: self.disengage_fraction,
             hit_chance: self.hit_chance,
+            wound_recovery_rate: self.wound_recovery_rate,
         }
     }
 
@@ -106,6 +119,24 @@ impl CombatConfig {
                 value: self.hit_chance.to_string(),
             });
         }
+        // A share of `durability`, so the same `(0, 1]` bound. **`0` is rejected** on the same
+        // reasoning as the dials above: a ledger that never decays is a wound the quarry carries for
+        // the rest of the campaign, which is the "never forgets" end the design explicitly refused.
+        require_positive_finite("wound_recovery_rate", self.wound_recovery_rate)?;
+        if self.wound_recovery_rate > MAX_FRACTION {
+            return Err(CombatConfigError::Invalid {
+                field: "wound_recovery_rate",
+                constraint: format!("be at most {MAX_FRACTION}"),
+                value: self.wound_recovery_rate.to_string(),
+            });
+        }
+        // Damage, not a fraction, so only the positive-finite half applies — but `0` is rejected for
+        // the same reason every other severity dial here is: it silently deletes the baseline risk
+        // rather than tuning it down.
+        require_positive_finite(
+            "hunt_injury_damage_per_animal",
+            self.hunt_injury_damage_per_animal,
+        )?;
         Ok(())
     }
 }
@@ -221,6 +252,49 @@ mod tests {
         assert_eq!(config.lethality, 1.0);
         assert_eq!(config.disengage_fraction, 0.5);
         assert_eq!(config.expedition_danger_multiplier, 1.5);
+        assert_eq!(config.wound_recovery_rate, 0.2);
+        assert_eq!(config.hunt_injury_damage_per_animal, 0.15);
+    }
+
+    #[test]
+    fn validate_rejects_a_wound_recovery_rate_above_one() {
+        let mut config = CombatConfig::builtin().as_ref().clone();
+        config.wound_recovery_rate = 1.5;
+        assert!(matches!(
+            config.validate(),
+            Err(CombatConfigError::Invalid {
+                field: "wound_recovery_rate",
+                ..
+            })
+        ));
+    }
+
+    /// A ledger that never decays is the "never forgets" model the design refused — a party chipping
+    /// at a mammoth across fifty turns of unrelated play.
+    #[test]
+    fn validate_rejects_a_wound_recovery_rate_of_zero() {
+        let mut config = CombatConfig::builtin().as_ref().clone();
+        config.wound_recovery_rate = 0.0;
+        assert!(matches!(
+            config.validate(),
+            Err(CombatConfigError::Invalid {
+                field: "wound_recovery_rate",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_a_non_positive_hunt_injury_damage() {
+        let mut config = CombatConfig::builtin().as_ref().clone();
+        config.hunt_injury_damage_per_animal = 0.0;
+        assert!(matches!(
+            config.validate(),
+            Err(CombatConfigError::Invalid {
+                field: "hunt_injury_damage_per_animal",
+                ..
+            })
+        ));
     }
 
     #[test]

@@ -2076,6 +2076,7 @@ pub fn capture_snapshot(
                                 .hunting_equipped(&equipment_config),
                         ),
                         tuning: expedition_combat_tuning,
+                        injury_damage_per_animal: combat_config.hunt_injury_damage_per_animal,
                     };
                     crate::systems::expedition_delivery(
                         exp,
@@ -2435,6 +2436,7 @@ pub fn capture_snapshot(
         party: crate::fauna::HuntingParty {
             hunter: equipment_config.hunter_profile(kit_levers.hunter_intrinsic, true),
             tuning: combat_config.tuning(),
+            injury_damage_per_animal: combat_config.hunt_injury_damage_per_animal,
         },
     });
     drop(herds_scope);

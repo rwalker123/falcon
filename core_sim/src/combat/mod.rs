@@ -222,6 +222,13 @@ pub struct ContingentResult {
     /// **Recoverable** losses — survive at reduced capacity while they heal. Modelled from day one so
     /// the real recovery slice is purely additive.
     pub wounded: f32,
+    /// **How much damage landed on this contingent this turn** — after [`CombatTuning::lethality`]
+    /// and before the division by `durability`, so it is the raw *flow* rather than a body count.
+    ///
+    /// It exists because a fight that spans turns has to bank what did not finish a body
+    /// ([`DamageLedger`]), and only the resolver knows how much that was: `killed + wounded` has
+    /// already been through the division **and** the clamp to `count`, so it cannot be inverted.
+    pub damage_dealt: f32,
 }
 
 /// The result of one fight: per-contingent casualties, who won, and whether the loser withdrew.
@@ -261,6 +268,18 @@ pub struct CombatTuning {
     /// stays exact until slice 5 teaches the forecast to report a range) with the machinery in place
     /// and tested. Same discipline as [`CombatStats::wariness`]'s `0`.
     pub hit_chance: f32,
+    /// **How much of its own `durability` a wounded body knits back per turn OUT OF CONTACT** — the
+    /// decay half of [`DamageLedger`], as a share of `durability` rather than of the banked damage.
+    ///
+    /// Linear in `durability`, deliberately: a geometric decay of the *bank* never reaches zero, so a
+    /// mammoth would carry a sliver of a hunt forever and "something eventually clears it" could not
+    /// be pinned. This shape empties the ledger in exactly `ceil(1 / rate)` idle turns whatever it
+    /// held. Ships **0.2** — five quiet turns and the animal is whole again.
+    ///
+    /// **It only applies out of contact** (see [`DamageLedger::recover`]). Healing every turn
+    /// regardless would make `hunters × effective_attack > rate × durability` a *second* absolute
+    /// threshold, which is exactly the shape the accumulator exists to remove.
+    pub wound_recovery_rate: f32,
 }
 
 impl Default for CombatTuning {
@@ -269,6 +288,7 @@ impl Default for CombatTuning {
             lethality: DEFAULT_LETHALITY,
             disengage_fraction: DEFAULT_DISENGAGE_FRACTION,
             hit_chance: DEFAULT_HIT_CHANCE,
+            wound_recovery_rate: DEFAULT_WOUND_RECOVERY_RATE,
         }
     }
 }
@@ -280,6 +300,9 @@ pub(crate) const DEFAULT_DISENGAGE_FRACTION: f32 = 0.5;
 /// Shipped `hit_chance` — **certainty**, so the resolver draws nothing and consumes no randomness.
 /// See [`CombatTuning::hit_chance`].
 pub(crate) const DEFAULT_HIT_CHANCE: f32 = 1.0;
+/// Shipped `wound_recovery_rate` — a fifth of a body per idle turn, so five quiet turns clear any
+/// wound. See [`CombatTuning::wound_recovery_rate`].
+pub(crate) const DEFAULT_WOUND_RECOVERY_RATE: f32 = 0.2;
 
 /// The smallest `durability` [`resolve_fight`] will divide damage by. Named rather than bare so a
 /// reader sees it guards a denominator: every config path validates `durability > 0`, and this stops
@@ -390,6 +413,117 @@ pub fn units_brought_down(damage: f32, profile: &CombatStats, count: f32) -> f32
     (damage / profile.durability.max(DURABILITY_EPS)).clamp(0.0, count.max(0.0))
 }
 
+/// **THE kill↔wound severity split** — `incoming_per_defender / (incoming_per_defender + defense)`,
+/// stated once (`docs/plan_predators.md`: *"warriors and equipment shift the kill↔wound split, not
+/// just the total"*).
+///
+/// More defenders thin the blow each of them takes, so a bigger force loses the same number of bodies
+/// but buries fewer of them; higher own `defense` does the same, which is the equip-to-shift-severity
+/// lever. **It takes an ATTACKER's damage**, which is why the hunt's own hazards
+/// (`docs/plan_hunt_through_combat.md` §4.6) do not pass through it at all — see
+/// `fauna::hunt_injuries`.
+fn killed_share(incoming_per_defender: f32, defense: f32) -> f32 {
+    let denom = incoming_per_defender + defense;
+    if denom > 0.0 {
+        (incoming_per_defender / denom).clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+/// The relative slop [`DamageLedger::strike`] allows when asking whether banked damage has completed
+/// a whole body. Named because it guards a `floor()` on a quotient built by repeated addition: the
+/// blow that exactly finishes a unit must count as finishing it, not land one ulp short and leave a
+/// body standing on a rounding error.
+const WHOLE_UNIT_EPSILON: f32 = 1e-4;
+
+/// **Damage a body has soaked in an ONGOING engagement, carried between turns** — combat's own state
+/// type, so a hunt, a predator raid and a future TOE-vs-TOE battle bank a multi-turn fight the same
+/// way instead of each growing a private meter.
+///
+/// # Without it the gate is absolute rather than steep
+///
+/// A stateless resolver makes `ceil(durability / (attack − defense))` a **hard threshold** — 63
+/// hunters for a mammoth at the shipped spear — so a party of 62 takes casualties every turn and
+/// kills nothing, on any horizon (`docs/plan_hunt_through_combat.md` §4.2). *"Twenty weak spears and
+/// then follow it around for days"* is the intended low-tech experience, and it requires the days to
+/// count for something. The **gate itself is untouched**: below it [`strike_damage`] is exactly `0`,
+/// and banking zero forever is still zero.
+///
+/// # Banking damage is legitimate where banking a ceiling was not
+///
+/// `Herd::hunt_credit`'s resident-band arm was deleted because the escapement ceiling is a **stock**
+/// — the biomass standing above the floor — and accumulating a stock compounds it: the herd would
+/// hand over its whole surplus every turn *plus* everything it had already given (§7). **Damage is a
+/// flow**, a rate of harm per turn, and an accumulator is the correct integral of a rate. A stock
+/// must not bank; a rate must. The two are easy to confuse and are opposites, which is why this
+/// paragraph sits with the state rather than in a design document.
+///
+/// # The invariant that keeps it honest
+///
+/// [`DamageLedger::pending`] is always **below one body's `durability`** and never above what the
+/// units actually standing there could soak: whole units are handed back the moment their damage is
+/// complete, and a blow struck at bodies that are not there falls on the ground rather than being
+/// banked and spent on the next thing that walks past.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct DamageLedger {
+    /// Damage banked toward the next body, always `< durability`.
+    pending: f32,
+    /// Was this block struck this turn — the gate on [`DamageLedger::recover`].
+    in_contact: bool,
+}
+
+impl DamageLedger {
+    /// Damage banked toward the next body. `0` for a block nobody is fighting.
+    pub fn pending(&self) -> f32 {
+        self.pending
+    }
+
+    /// Nothing banked and nothing in flight — a block that carries no memory of a fight.
+    pub fn is_clean(&self) -> bool {
+        self.pending <= 0.0 && !self.in_contact
+    }
+
+    /// **Bank this turn's `damage` and hand back the WHOLE units it brings down**, keeping the
+    /// unfinished remainder for next turn.
+    ///
+    /// Whole units, because the caller that needs an accumulator at all is the one that cannot spend
+    /// a fraction — you cannot take half a mammoth home, and a fractional kill silently discarded
+    /// every turn is exactly the leak this type closes. Excess beyond what the `standing` units could
+    /// soak is dropped, the same clamp [`units_brought_down`] applies.
+    pub fn strike(&mut self, damage: f32, profile: &CombatStats, standing: f32) -> f32 {
+        let damage = damage.max(0.0);
+        if damage > 0.0 {
+            self.in_contact = true;
+        }
+        let durability = profile.durability.max(DURABILITY_EPS);
+        let soakable = standing.max(0.0) * durability;
+        let total = (self.pending + damage).min(soakable);
+        let down = (total / durability * (1.0 + WHOLE_UNIT_EPSILON)).floor();
+        self.pending = (total - down * durability).max(0.0);
+        down
+    }
+
+    /// **One turn's healing** — a body left alone knits back `recovery_rate × durability`
+    /// ([`CombatTuning::wound_recovery_rate`]).
+    ///
+    /// **A block struck this turn does not heal**, it simply clears the contact flag: a wound is
+    /// forgotten only once the party breaks off. Because the strike lands in the Population stage and
+    /// this runs in the *next* turn's Logistics, a party that keeps hunting never lets a turn's
+    /// healing through, and one that walks away gets a single turn of grace before the decay starts.
+    pub fn recover(&mut self, recovery_rate: f32, profile: &CombatStats) {
+        if self.in_contact {
+            self.in_contact = false;
+            return;
+        }
+        if self.pending <= 0.0 {
+            return;
+        }
+        let per_turn = recovery_rate.max(0.0) * profile.durability.max(DURABILITY_EPS);
+        self.pending = (self.pending - per_turn).max(0.0);
+    }
+}
+
 /// **Resolve one fight — a pure function of `(payload, tuning)`**, deterministic and rollback-safe:
 /// any variance is drawn from [`FightPayload::seed`], never a shared stream.
 ///
@@ -441,6 +575,12 @@ pub fn units_brought_down(damage: f32, profile: &CombatStats, count: f32) -> f32
 /// `range`, `terrain` and `posture` are accepted and **ignored** — reserved for the real resolver.
 /// Casualties stay `f32` (whole-unit quantization belongs to the caller: a hunt floors the animals it
 /// brings down, a cohort's brackets are genuinely fractional).
+///
+/// # A fight that spans turns
+///
+/// This function resolves **one turn**. A fight that runs longer banks its unfinished damage in a
+/// [`DamageLedger`], fed from each result's [`ContingentResult::damage_dealt`] — see that type for
+/// why banking a *flow* is right where banking a *stock* was not.
 pub fn resolve_fight(payload: &FightPayload, tuning: &CombatTuning) -> FightOutcome {
     let powers: Vec<f32> = payload.sides.iter().map(force_power).collect();
     let counts: Vec<f32> = payload.sides.iter().map(force_count).collect();
@@ -497,25 +637,17 @@ pub fn resolve_fight(payload: &FightPayload, tuning: &CombatTuning) -> FightOutc
                     damage += landed * per_strike;
                 }
             }
-            let down = units_brought_down(
-                damage * tuning.lethality,
-                &contingent.profile,
-                contingent.count,
-            );
+            let damage_dealt = damage * tuning.lethality;
+            let down = units_brought_down(damage_dealt, &contingent.profile, contingent.count);
             losses_total += down;
-            let denom = incoming_per_defender + contingent.profile.defense;
-            let killed_frac = if denom > 0.0 {
-                incoming_per_defender / denom
-            } else {
-                0.0
-            };
-            let killed = down * killed_frac;
+            let killed = down * killed_share(incoming_per_defender, contingent.profile.defense);
             let wounded = down - killed;
             results.push(ContingentResult {
                 force: side.id,
                 kind: contingent.kind.clone(),
                 killed,
                 wounded,
+                damage_dealt,
             });
         }
         loss_totals[i] = losses_total;
@@ -838,6 +970,91 @@ mod tests {
         assert_eq!(people.killed, 0.0);
         assert_eq!(people.wounded, 0.0);
         assert_eq!(out.victor, Some(ForceId(1)));
+    }
+
+    /// **Damage banks toward the next body and hands back only WHOLE units** — the ledger's core
+    /// contract (`docs/plan_hunt_through_combat.md` §4.2). Three sub-threshold turns bring nothing
+    /// down and the fourth lands the kill, which a stateless `units_brought_down` never would.
+    #[test]
+    fn a_ledger_turns_sub_threshold_damage_into_a_kill() {
+        let body = CombatStats {
+            durability: MEGAFAUNA_DURABILITY,
+            ..CombatStats::default()
+        };
+        /// A third of a body per turn — never enough on its own.
+        const PER_TURN: f32 = MEGAFAUNA_DURABILITY / 3.0;
+        let mut ledger = DamageLedger::default();
+        assert_eq!(units_brought_down(PER_TURN, &body, 1.0).floor(), 0.0);
+
+        assert_eq!(ledger.strike(PER_TURN, &body, 1.0), 0.0, "turn 1 banks");
+        assert_eq!(ledger.strike(PER_TURN, &body, 1.0), 0.0, "turn 2 banks");
+        assert!(ledger.pending() > 0.0, "the bank is real");
+        assert_eq!(
+            ledger.strike(PER_TURN, &body, 1.0),
+            1.0,
+            "the third turn completes the body"
+        );
+        assert_eq!(ledger.pending(), 0.0, "and the kill spends the bank");
+    }
+
+    /// **The bank never exceeds the bodies standing there.** A huge blow at a single animal does not
+    /// bank a surplus to spend on whatever walks past next — the same clamp
+    /// [`units_brought_down`] applies, so the two cannot disagree about a herd of one.
+    #[test]
+    fn a_ledger_never_banks_damage_the_bodies_could_not_soak() {
+        let body = CombatStats {
+            durability: MEGAFAUNA_DURABILITY,
+            ..CombatStats::default()
+        };
+        let mut ledger = DamageLedger::default();
+        let down = ledger.strike(MEGAFAUNA_DURABILITY * 50.0, &body, 1.0);
+        assert_eq!(down, 1.0, "one animal standing, one animal down");
+        assert_eq!(ledger.pending(), 0.0, "and nothing carried over");
+    }
+
+    /// **Banking zero forever is still zero** — the gate is untouched by the accumulator, which is
+    /// the one property a cross-turn ledger could plausibly have broken (§0.2).
+    #[test]
+    fn a_ledger_cannot_accumulate_a_sub_gate_partys_nothing() {
+        let mammoth = CombatStats {
+            defense: 12.0,
+            durability: MEGAFAUNA_DURABILITY,
+            ..CombatStats::default()
+        };
+        let bare_hand = strike_damage(1.0, mammoth.defense);
+        assert_eq!(bare_hand, 0.0, "the fixture must be below the gate");
+        let mut ledger = DamageLedger::default();
+        for _ in 0..1_000 {
+            assert_eq!(ledger.strike(800.0 * bare_hand, &mammoth, 1.0), 0.0);
+        }
+        assert_eq!(ledger.pending(), 0.0);
+        assert!(ledger.is_clean(), "and no contact was ever recorded");
+    }
+
+    /// **`resolve_fight` reports the damage it dealt**, which is what a caller banking across turns
+    /// needs: `killed + wounded` has already been divided by `durability` and clamped, so it cannot
+    /// be inverted back into a flow.
+    #[test]
+    fn a_result_carries_the_damage_that_landed_not_only_the_bodies() {
+        let out = resolve_fight(
+            &payload(
+                vec![person(10.0, 20.0, 1.0)],
+                vec![soldier("mammoth", 1.0, 0.0, 12.0, MEGAFAUNA_DURABILITY)],
+            ),
+            &CombatTuning::default(),
+        );
+        let quarry = side_result(&out, ForceId(2));
+        // The resolver reports a FRACTION of a body, which is exactly the problem: a caller that
+        // quantises to whole animals discards it, and the discarded part is what has to be banked.
+        assert!(
+            quarry.killed + quarry.wounded < 1.0,
+            "no whole body goes down yet"
+        );
+        assert!(
+            (quarry.damage_dealt - 10.0 * (20.0 - 12.0)).abs() < 1e-4,
+            "…but the damage that landed is reported: {}",
+            quarry.damage_dealt
+        );
     }
 
     #[test]

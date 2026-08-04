@@ -326,9 +326,9 @@ fn hunting_party() -> core_sim::HuntingParty {
 /// derived from config so a retune of any of its three inputs moves it rather than stranding a
 /// hard-coded crew.
 ///
-/// **Damage does not bank between turns** (§7 — *the animal does not wait*; there is no partial-kill
-/// meter), so a party below this takes **nothing however long it stays**. A fixture that sweeps party
-/// size therefore has to start here: below it the sweep is measuring the fight's gate, not the
+/// **Damage carries between turns** (§4.2), so a party below this takes nothing *this* turn and a
+/// whole animal several turns later. A fixture that sweeps party size therefore still has to start
+/// here: below it a per-turn comparison is measuring which turn of the grind it landed on, not the
 /// property it names. Boar reads **2** and Red Deer **2** at the shipped spear; a mammoth reads 63.
 #[test]
 fn boar_raid_crew_matches_the_derived_threshold() {

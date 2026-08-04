@@ -51,6 +51,8 @@ fn spawn_world() -> App {
     app.world.insert_resource(HerdTelemetry::default());
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(FaunaConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::CombatConfigHandle::default());
     app.world.insert_resource(LadderConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.run_system_once(spawn_initial_herds);

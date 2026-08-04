@@ -1943,15 +1943,21 @@ impl FaunaConfig {
     /// default with `ferocity 0` — a harmless body at the neutral `durability 1`, which is the honest
     /// reading of *"the roster does not describe this herd"* and matches what
     /// [`FaunaConfig::wariness_for`] already answers for the same case.
+    ///
+    /// **It answers the SPECIES, so the wounds come back empty** — an un-hunted animal. A path with a
+    /// live herd in hand resolves through [`crate::fauna::herd_quarry_fight`] instead, which carries
+    /// [`crate::fauna::Herd::wounds`] into the fight.
     pub fn quarry_fight_for(&self, display: &str) -> crate::fauna::QuarryFight {
         self.species_by_display(display).map_or(
             crate::fauna::QuarryFight {
                 profile: CombatStats::default(),
                 ferocity: 0.0,
+                wounds: crate::combat::DamageLedger::default(),
             },
             |def| crate::fauna::QuarryFight {
                 profile: def.combat,
                 ferocity: def.ferocity,
+                wounds: crate::combat::DamageLedger::default(),
             },
         )
     }

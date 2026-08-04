@@ -11,8 +11,8 @@ use std::hash::{Hash, Hasher};
 
 use crate::{
     combat::{
-        self, CombatStats, CombatTuning, Contingent, ContingentId, FightPayload, Force, ForceId,
-        Posture,
+        self, CombatStats, CombatTuning, Contingent, ContingentId, DamageLedger, FightPayload,
+        Force, ForceId, Posture,
     },
     components::{floor_overdraws, Improvement, PopulationCohort, ResidentBand, SourceYield, Tile},
     fauna_config::{
@@ -509,6 +509,25 @@ pub struct Herd {
     /// not a managed herd at all** — a wild herd is nobody's to neglect. Incremented on every other
     /// turn.
     ///
+    /// **Damage the engaged animals are carrying from earlier turns of an ongoing hunt**
+    /// (`docs/plan_hunt_through_combat.md` §4.2) — the cross-turn accumulator that makes the fight's
+    /// gate **steep instead of absolute**: twenty hunters with weak spears wear a mammoth down over
+    /// several turns rather than bouncing off it forever, and a party of 62 (one short of the
+    /// stateless threshold) is not condemned to take casualties for nothing on every turn of the
+    /// campaign.
+    ///
+    /// **A herd-level fact, not a party-level one** — the animal does not care who wounded it, so two
+    /// bands working the same herd wear it down together. It heals in [`advance_herds`] on any turn
+    /// nobody is in contact ([`crate::combat::DamageLedger::recover`]).
+    ///
+    /// **This is not `hunt_credit` coming back.** That bank was deleted because the escapement
+    /// ceiling is a *stock* and accumulating a stock compounds it; damage is a **flow**, and an
+    /// accumulator is the correct integral of a rate — see [`crate::combat::DamageLedger`], which
+    /// carries the long form because it is the objection every reader will raise.
+    ///
+    /// Authoritative sim state — rewound by rollback with the cloned registry (sim-side only, not on
+    /// the client wire), so a restored herd resumes the hunt exactly as wounded as it was.
+    pub wounds: DamageLedger,
     /// Animals leave only while this **exceeds** the herd's current rung's
     /// [`RungDef::neglect_grace_turns`] — `animal:pastoral`'s for a tamed herd, `animal:pen`'s for a
     /// penned one, which is why the grace is per-rung: the fence holds a flock without a keeper for
@@ -593,6 +612,8 @@ impl Herd {
             herders_needed: 0,
             // A fresh herd is fully contained (nothing to hold yet).
             under_herded: false,
+            // Nobody has laid a hand on it yet.
+            wounds: DamageLedger::default(),
             neglect_turns: NEGLECT_NONE,
         }
     }
@@ -1903,6 +1924,9 @@ pub fn advance_herds(
     mut density: ResMut<HerdDensityMap>,
     config: Res<SimulationConfig>,
     fauna_config: Res<FaunaConfigHandle>,
+    // **The wound-recovery rate** (`CombatTuning::wound_recovery_rate`) — a herd nobody is fighting
+    // knits its accumulated damage back together here, in the same Logistics pass that regrows it.
+    combat_config: Res<crate::combat_config::CombatConfigHandle>,
     // The ladder decides **how a herd moves**: each herd's rung declares its `behavior.movement`
     // primitive (§3's proximity spine `roam` → `drift_to_owner` → `fixed`), and this system is the
     // first consumer of the behavior schema (slice 3b).
@@ -1929,6 +1953,7 @@ pub fn advance_herds(
     }
     let fauna = fauna_config.get();
     let ladder = ladder_config.get();
+    let combat_tuning = combat_config.get().tuning();
     let width = config.grid_size.x.max(1);
     let height = config.grid_size.y.max(1);
     let wrap = config.map_topology.wrap_horizontal;
@@ -1951,6 +1976,15 @@ pub fn advance_herds(
             SmallRng::seed_from_u64(base_seed ^ HERD_MOVEMENT_SEED_SALT ^ hasher.finish());
         // Movement cadence levers for this species (fall back to a slow game default if unresolved).
         let def = fauna.species_by_display(&herd.species);
+        // **A herd nobody fought last turn knits back together** (`docs/plan_hunt_through_combat.md`
+        // §4.2). Logistics runs before Population, so this reads the contact the *previous* turn's
+        // take recorded: a party that keeps hunting never lets a turn of healing through, and one
+        // that breaks off gets a single turn of grace before the ledger starts draining. An
+        // unresolvable species falls back to the neutral body, whose `durability` is what the ledger
+        // was banked against anyway.
+        let quarry_body = def.map_or_else(CombatStats::default, |d| d.combat);
+        herd.wounds
+            .recover(combat_tuning.wound_recovery_rate, &quarry_body);
         // **The movement primitive comes from the herd's RUNG (diet-adjusted), not from
         // `is_domesticated()`** — the ladder's `behavior.movement` is config (§5), and this is the
         // first place the engine reads it. §3's proximity spine falls out of the shipped records: wild
@@ -4144,34 +4178,26 @@ pub fn project_realized_hunt(
     // **The build dip rides the CREW** (`docs/plan_harvest_floor.md` §3.1) — the same term
     // `systems::hunt_take` applies, so the projection and the take stay one model.
     let collection = workers as f32 * per_worker_biomass_capacity * ladder.build_dip(improvement);
-    // **The engagement bound, in biomass** — how much the party can bring into contact each projected
+    // **The engagement bound, in animals** — how many the party can bring into contact each projected
     // turn (`docs/plan_hunt_through_combat.md` §2). Constant for the run: the crew does not change
     // size mid-projection and the quarry is never re-speciated. A **pen** has no engagement stage at
     // all (a penned animal is not stalked), so it is unbounded there — the same exemption
     // `project_arrivals_hunt` states by passing `f32::INFINITY` to the quantiser on its corral branch.
-    let engagement_biomass = if corralled {
+    let engaged = if corralled {
         f32::INFINITY
     } else {
-        let engaged = animals_engaged(
+        animals_engaged(
             workers,
             fauna.engage_rate_for(&quarry.species),
             ladder.build_dip(improvement),
-        );
-        // **And the FIGHT bounds it too** (`docs/plan_hunt_through_combat.md` §4). Dropping the
-        // quantiser here is sound because rounding is a timing effect; dropping the fight would not
-        // be, for exactly the reason the engagement bound belongs here — a bare-handed party brings
-        // down **nothing** from a mammoth herd however much room stands above the floor, and a
-        // `realized` that ignored that would quote a steady food rate the party can never collect.
-        resolve_hunt_fight(
-            engaged,
-            workers as f32 * ladder.build_dip(improvement),
-            party,
-            &fauna.quarry_fight_for(&quarry.species),
-            FORECAST_FIGHT_SEED,
         )
-        .brought_down
-            * quarry.body_mass
     };
+    // **The FIGHT is resolved INSIDE the loop, and it is the wounds that force that** (§4.2). It used
+    // to be hoisted out as a constant, which was right for a stateless resolver and is now wrong: a
+    // sub-threshold party brings down nothing for several turns and then a whole animal, and a
+    // projection that froze the first turn's answer would quote **zero forever** for exactly the
+    // parties the accumulator exists to serve. The quarry's body is constant; only its wounds move.
+    let mut quarry_fight = herd_quarry_fight(&quarry, fauna);
     let mut total = YieldAccounts::ZERO;
     // The number of turns actually simulated. A self-terminating policy (Eradicate strips the herd in
     // ~1 turn, Deplete drives it extinct) breaks early, and the average divides by THIS — not the full
@@ -4194,14 +4220,35 @@ pub fn project_realized_hunt(
         } else {
             hunt_escapement_ceiling(floor, quarry.biomass, capacity)
         };
-        let take = rate
-            .min(collection)
-            .min(engagement_biomass)
-            .min(quarry.biomass)
-            .max(0.0);
-        if take <= REALIZED_PROJECTION_TAKE_EPSILON {
-            break; // the source is spent — stop before diluting the average with empty turns.
+        // Dropping the *quantiser* here is sound because rounding is a timing effect; dropping the
+        // fight would not be, for exactly the reason the engagement bound belongs here — a
+        // bare-handed party brings down **nothing** from a mammoth herd however much room stands
+        // above the floor, and a `realized` that ignored that would quote a steady food rate the
+        // party can never collect.
+        let engagement_biomass = if corralled {
+            f32::INFINITY
+        } else {
+            let fight = resolve_hunt_fight(
+                engaged,
+                workers as f32 * ladder.build_dip(improvement),
+                party,
+                &quarry_fight,
+                FORECAST_FIGHT_SEED,
+            );
+            quarry_fight = quarry_fight.with_wounds(fight.wounds);
+            fight.brought_down * quarry.body_mass
+        };
+        // **The SOURCE-side offer is what decides whether the run is over** — the stock standing
+        // above the floor. A zero take is no longer proof the source is spent: since damage carries
+        // between turns a party can grind for several turns and *then* land a body (§4.2), and
+        // breaking on the first of those would report **zero forever** for exactly the parties the
+        // accumulator exists to serve. So the wait turns stay in, counted in the denominator like the
+        // `0.0` slots the arrivals schedule already publishes, and only a spent source breaks.
+        let offered = rate.min(quarry.biomass).max(0.0);
+        if offered <= REALIZED_PROJECTION_TAKE_EPSILON {
+            break; // the source is spent — stop before diluting the average with dead turns.
         }
+        let take = offered.min(collection).min(engagement_biomass).max(0.0);
         quarry.biomass -= take;
         // **Both products are projected from the same simulated take**, so the steady trade headline
         // can never drift from the steady food one (`docs/plan_hunt_yield_model.md` §9).
@@ -4276,17 +4323,11 @@ pub fn project_arrivals_hunt(
         fauna.engage_rate_for(&quarry.species),
         ladder.build_dip(improvement),
     );
-    // **The fight, resolved once for the run** — constant for the same reason `engaged` is (the crew
-    // does not change size mid-projection and the quarry is never re-speciated), and inert to the
-    // seed at the shipped `hit_chance` (see [`FORECAST_FIGHT_SEED`]).
-    let brought_down = resolve_hunt_fight(
-        engaged,
-        workers as f32 * ladder.build_dip(improvement),
-        party,
-        &fauna.quarry_fight_for(&quarry.species),
-        FORECAST_FIGHT_SEED,
-    )
-    .brought_down;
+    // **The fight is resolved PER TURN, not once for the run**, because its wounds accumulate
+    // (§4.2): a sub-threshold party lands nothing for several turns and then a whole animal, and that
+    // pulse is exactly what this schedule exists to draw. Only the quarry's *body* is constant.
+    // Inert to the seed at the shipped `hit_chance` (see [`FORECAST_FIGHT_SEED`]).
+    let mut quarry_fight = herd_quarry_fight(&quarry, fauna);
     let corralled = quarry.is_corralled();
     // **The build dip rides the CREW** (`docs/plan_harvest_floor.md` §3.1) — the same term
     // `systems::hunt_take` applies, so the projection and the take stay one model.
@@ -4318,7 +4359,16 @@ pub fn project_arrivals_hunt(
             // A wild/pastoral herd hands over the stock standing above its stance's floor, rounded to
             // whole animals — the `systems::hunt_take` sequence, helper for helper.
             let ceiling = hunt_escapement_ceiling(floor, quarry.biomass, capacity);
-            let take = quantise_animal_take(ceiling, collection, quarry.body_mass, brought_down);
+            let fight = resolve_hunt_fight(
+                engaged,
+                workers as f32 * ladder.build_dip(improvement),
+                party,
+                &quarry_fight,
+                FORECAST_FIGHT_SEED,
+            );
+            quarry_fight = quarry_fight.with_wounds(fight.wounds);
+            let take =
+                quantise_animal_take(ceiling, collection, quarry.body_mass, fight.brought_down);
             quarry.biomass -= take.killed_biomass();
             take.carried
         };
@@ -4807,9 +4857,23 @@ pub struct QuarryFight {
     /// **Does it fight back, or flee** — `0` makes the engagement one-sided (§4.4/§4.6): the animal
     /// side contributes no attack at all, so nobody is hurt and no battle report is emitted.
     pub ferocity: f32,
+    /// **What earlier turns of this hunt already did to it** ([`Herd::wounds`]) — the cross-turn
+    /// accumulator, carried on the quarry because it is a fact about the animal rather than about the
+    /// party (§4.2).
+    ///
+    /// Defaults empty, which is the un-hunted animal and the exact pre-accumulation behaviour; a live
+    /// take path fills it from the herd with [`herd_quarry_fight`] and stores
+    /// [`HuntFight::wounds`] back afterwards.
+    pub wounds: DamageLedger,
 }
 
 impl QuarryFight {
+    /// The same quarry, carrying the wounds a herd has already taken — the one seam between
+    /// [`Herd::wounds`] and the fight.
+    pub fn with_wounds(self, wounds: DamageLedger) -> Self {
+        Self { wounds, ..self }
+    }
+
     /// **What the animal actually swings** — `attack × ferocity`, the one composition
     /// (`docs/plan_predators.md`: *danger = strength × behaviour*). A fleeing deer barely scratches
     /// the party; a cornered mammoth is a real fight.
@@ -4841,6 +4905,18 @@ pub struct HuntingParty {
     /// The resolver severity dials this party fights at. An expedition passes the
     /// `expedition_danger_multiplier`-scaled lethality; a resident band the base tuning.
     pub tuning: CombatTuning,
+    /// **The hunt's own hazard, per animal engaged**
+    /// ([`crate::combat_config::CombatConfig::hunt_injury_damage_per_animal`]) — damage the *activity*
+    /// does to the party whatever the quarry swings (§4.6).
+    ///
+    /// Hunters fall, break bones, are trampled in a drive, cut themselves butchering. Without it only
+    /// mammoth, aurochs and wolf could hurt anyone on the shipped roster and a boar cost nothing,
+    /// contradicting §4.2's own *"survives by ferocity alone — frail, still costs you people"*.
+    ///
+    /// It rides the **party** rather than the quarry because the danger is in the activity, not in
+    /// the rabbit; it scales with the *engagement* at the point of use, so more animals worked means
+    /// more chances to get hurt.
+    pub injury_damage_per_animal: f32,
 }
 
 impl HuntingParty {
@@ -4853,22 +4929,26 @@ impl HuntingParty {
     /// live handle and a band whose kit may be worn out, and must resolve
     /// [`crate::equipment_config::EquipmentConfig::hunter_profile`] against it.
     pub fn builtin_equipped() -> Self {
+        let combat = crate::combat_config::CombatConfig::builtin();
         let equipment = crate::equipment_config::EquipmentConfig::builtin();
         Self {
             hunter: equipment.hunter_profile(
                 crate::creatures_config::CreaturesConfig::builtin().person(),
                 true,
             ),
-            tuning: crate::combat_config::CombatConfig::builtin().tuning(),
+            tuning: combat.tuning(),
+            injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
         }
     }
 
     /// The same party **with its spears gone** — the unequipped tier, which is the `person` row's
     /// intrinsic `attack 1`. The other side of §4.8's cliff, and what a test asserting the gate wants.
     pub fn builtin_unequipped() -> Self {
+        let combat = crate::combat_config::CombatConfig::builtin();
         Self {
             hunter: crate::creatures_config::CreaturesConfig::builtin().person(),
-            tuning: crate::combat_config::CombatConfig::builtin().tuning(),
+            tuning: combat.tuning(),
+            injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
         }
     }
 }
@@ -4882,8 +4962,16 @@ pub struct FightCasualties {
     pub wounded: f32,
 }
 
+/// The `killed` a `HuntDanger` line needs before it is worth pushing — see the gate in
+/// `systems::labor`'s Hunt arm for why it is a death rather than [`FightCasualties::any`].
+pub const NO_DEATHS_TO_REPORT: f32 = 0.0;
+
 impl FightCasualties {
-    /// Did anyone go down at all? The gate on emitting a `HuntDanger` line.
+    /// Did anyone go down at all — killed **or** wounded?
+    ///
+    /// **Not the `HuntDanger` gate any more.** The hunt's baseline injury risk (§4.6) makes this true
+    /// on every engagement, so the feed line is gated on [`NO_DEATHS_TO_REPORT`] instead; this stays
+    /// the honest "did the fight cost anything" question a test or a future readout wants.
     pub fn any(&self) -> bool {
         self.killed + self.wounded > 0.0
     }
@@ -4899,7 +4987,17 @@ pub struct HuntFight {
     pub casualties: FightCasualties,
     /// **Was this a real fight** — `false` for the one-sided engagement of §4.5 (the animal side
     /// contributes no attack), which resolves without ceremony, cost or a battle report.
+    ///
+    /// **It is not the gate on casualties any more.** The hunt's own baseline injury risk fires on a
+    /// harmless quarry too (§4.6), so a `false` here means *no battle report*, not *no cost*.
     pub fought: bool,
+    /// **The quarry's wound ledger AFTER this turn's damage** — what a live take path stores back on
+    /// [`Herd::wounds`], and what a forward projection threads into its next simulated turn.
+    ///
+    /// Returned by value rather than mutated through a `&mut` so [`resolve_hunt_fight`] stays a pure
+    /// function of its inputs, exactly as [`crate::combat::resolve_fight`] is: a forecast can resolve
+    /// the same fight the take will and simply drop the ledger.
+    pub wounds: DamageLedger,
 }
 
 /// **The fight stage** (`docs/plan_hunt_through_combat.md` §4) — the party engages `stayed` animals
@@ -4937,16 +5035,31 @@ pub struct HuntFight {
 /// count is identical either way. A second *formula* for small game would recreate exactly the
 /// parallel-model problem §0 exists to delete.
 ///
-/// # No fight carries over
+/// # The fight CARRIES OVER — a wounded animal stays wounded (§4.2)
 ///
-/// Damage does not bank between turns — there is no partial-kill meter (§7: *the animal does not
-/// wait*). A party whose whole turn of damage cannot bring down one animal takes **nothing**, and
-/// keeps taking nothing however long it stays. That is the intended, legible outcome of §0.2's gate
-/// applied to a small party — hunters die, nothing is killed — and it is what §6.5 asks the client to
-/// warn about *before* the launch.
+/// Damage that does not finish a body this turn is banked on the quarry ([`QuarryFight::wounds`] in,
+/// [`HuntFight::wounds`] out), so twenty hunters with weak spears wear a mammoth down over several
+/// turns instead of bouncing off it forever. **Without it the gate is absolute rather than steep**:
+/// `ceil(durability / (attack − defense))` would be a hard threshold — 63 hunters for a mammoth at
+/// the shipped spear — and a party of 62 would take casualties every turn and never kill anything, on
+/// any horizon.
 ///
-/// A non-finite `stayed` (a pen — a penned animal is not stalked, not fought and not wary) is returned
-/// unchanged with no fight at all.
+/// **The gate itself is untouched.** Below it [`crate::combat::strike_damage`] is exactly `0`, and no
+/// length of horizon accumulates zero into a kill: eight hundred bare-handed people still cannot take
+/// a mammoth. Why banking a *flow* is right where banking the escapement *stock* was not is recorded
+/// on [`DamageLedger`], because that is the objection this design invites.
+///
+/// # The hunt itself injures people (§4.6)
+///
+/// On top of whatever the quarry does, the hunt carries a **baseline injury risk** —
+/// [`HuntingParty::injury_damage_per_animal`] × the animals engaged, run through the resolver's own
+/// severity arithmetic ([`crate::combat::casualties_from_damage`]) and **added to** the fight's
+/// casualties rather than reported beside them. Hunters fall, are trampled in a drive, cut themselves
+/// butchering; a harmless animal is not a risk-free day out. It scales with the **engagement**, not
+/// with the quarry, so it is one lever rather than a per-species field.
+///
+/// A non-finite `stayed` (a pen — a penned animal is not stalked, not fought, not wary and not
+/// dangerous) is returned unchanged with no fight and no injuries at all.
 pub fn resolve_hunt_fight(
     stayed: f32,
     // **The party's EFFECTIVE strength, build dip included** — `workers × build_dip`, the same term
@@ -4964,21 +5077,23 @@ pub fn resolve_hunt_fight(
             brought_down: stayed,
             casualties: FightCasualties::default(),
             fought: false,
+            wounds: quarry.wounds,
         };
     }
+    // **What the activity costs whoever shows up** (§4.6) — resolved before the quarry is even asked
+    // whether it fights back, because it does not depend on the answer.
+    let injuries = hunt_injuries(stayed, hunters, party);
+    let mut wounds = quarry.wounds;
     if quarry.effective_attack() <= 0.0 {
-        // **The one-sided engagement.** Nobody can be hurt, so the kill is all there is to compute.
+        // **The one-sided engagement.** The animal cannot hurt anyone, so the fight itself costs
+        // nothing and the kill is all the resolver would have computed.
         let landed = combat::attacks_landed_seeded(hunters, party.tuning.hit_chance, seed);
         let damage = landed * combat::strike_damage(party.hunter.attack, quarry.profile.defense);
         return HuntFight {
-            brought_down: combat::units_brought_down(
-                damage * party.tuning.lethality,
-                &quarry.profile,
-                stayed,
-            )
-            .floor(),
-            casualties: FightCasualties::default(),
+            brought_down: wounds.strike(damage * party.tuning.lethality, &quarry.profile, stayed),
+            casualties: injuries,
             fought: false,
+            wounds,
         };
     }
     let payload = FightPayload {
@@ -5008,11 +5123,15 @@ pub fn resolve_hunt_fight(
         seed,
     };
     let outcome = combat::resolve_fight(&payload, &party.tuning);
-    let mut brought_down = 0.0_f32;
-    let mut casualties = FightCasualties::default();
+    let mut quarry_damage = 0.0_f32;
+    let mut casualties = injuries;
     for result in &outcome.results {
         if result.force == QUARRY_FORCE {
-            brought_down += result.killed + result.wounded;
+            // **The DAMAGE, not the bodies.** The resolver's own `killed + wounded` has already been
+            // divided by `durability` and clamped, so it cannot be banked; the raw flow can, and the
+            // ledger below is what turns it into whole animals — this turn's and every earlier
+            // turn's together.
+            quarry_damage += result.damage_dealt;
         } else {
             casualties.killed += result.killed;
             casualties.wounded += result.wounded;
@@ -5020,12 +5139,45 @@ pub fn resolve_hunt_fight(
     }
     HuntFight {
         // **Whole animals** — the same rule `quantise_animal_take` exists for. A fractional kill left
-        // un-floored would let `killed_biomass` and the reported `killed` count disagree.
-        brought_down: brought_down.floor(),
+        // un-floored would let `killed_biomass` and the reported `killed` count disagree, so the
+        // ledger hands back only completed bodies and keeps the remainder.
+        brought_down: wounds.strike(quarry_damage, &quarry.profile, stayed),
         casualties,
         fought: true,
+        wounds,
     }
 }
+
+/// **The hunt's own hazard, resolved into people** (`docs/plan_hunt_through_combat.md` §4.6) —
+/// [`HuntingParty::injury_damage_per_animal`] × the animals engaged, put through
+/// [`crate::combat::units_brought_down`] — the very primitive that turns an enemy's damage into
+/// bodies — and **added into** the fight's own [`FightCasualties`] rather than reported beside them.
+/// The party's `lethality` scales it, so a detached raid's `expedition_danger_multiplier` reaches it
+/// like every other blow.
+///
+/// **It is not gated**: a ravine does not have to beat your `defense` to hurt you, so
+/// [`crate::combat::strike_damage`] is deliberately absent here.
+///
+/// # Always WOUNDED, never killed — and that is the gate doing its job, not an exemption
+///
+/// What makes a blow lethal is an attacker landing it past your defense; a hunt's hazards have no
+/// attacker, so they land as `wounded` — the resolver's own name for a loss a force takes and keeps.
+/// It is also what keeps this *texture* instead of a second combat model:
+/// [`crate::components::available_workers`] **floors** a cohort's working scalar, so **any** fatality,
+/// however fractional, costs a whole worker of throughput on the spot. A four-hunter raid that lost a
+/// quarter of its capacity the first time it engaged a rabbit would be a balance change wearing a
+/// flavour note's clothes.
+fn hunt_injuries(stayed: f32, hunters: f32, party: &HuntingParty) -> FightCasualties {
+    let hazard = party.injury_damage_per_animal.max(0.0) * stayed * party.tuning.lethality;
+    FightCasualties {
+        killed: NO_FATAL_HUNTING_ACCIDENTS,
+        wounded: combat::units_brought_down(hazard, &party.hunter, hunters),
+    }
+}
+
+/// The baseline hunting hazard's fatal share — see [`hunt_injuries`] for why it is `0` rather than
+/// the resolver's severity split.
+const NO_FATAL_HUNTING_ACCIDENTS: f32 = 0.0;
 
 /// The hunting party's side of a hunt fight — the aggressor.
 const HUNTING_PARTY_FORCE: ForceId = ForceId(0);
@@ -5339,6 +5491,19 @@ pub fn herd_hunt_yield(herd: &Herd, fauna: &FaunaConfig) -> HuntYield {
     fauna.hunt_yield_for(&herd.species)
 }
 
+/// **The quarry a live herd presents to a fight** — the species' body from
+/// [`FaunaConfig::quarry_fight_for`] carrying **this herd's** accumulated [`Herd::wounds`].
+///
+/// **THE seam between the herd's damage ledger and the fight**, and the sugar every path holding a
+/// `&Herd` must use: `quarry_fight_for` alone hands back an *un-hunted* animal, so a take path that
+/// skipped this would silently restart the mammoth's wounds every turn — the stateless behaviour the
+/// accumulator exists to replace, failing quietly rather than loudly.
+pub fn herd_quarry_fight(herd: &Herd, fauna: &FaunaConfig) -> QuarryFight {
+    fauna
+        .quarry_fight_for(&herd.species)
+        .with_wounds(herd.wounds)
+}
+
 /// The **gross** managed yield a **penned** herd hands its keeper each turn: the pen's MSY
 /// ([`pen_yield_biomass`]) through the herd's **own species vector** — a corralled wolf pays pelts,
 /// exactly as a wild one does, because the pen changes the *intensity* (a managed rate on a herd you
@@ -5427,7 +5592,9 @@ pub(crate) fn hunt_forecast(
         // animals the party can even reach.
         engage_rate: fauna.engage_rate_for(&herd.species),
         // ...and the fight that decides how many of those actually go down (§4).
-        fight: Some((*party, fauna.quarry_fight_for(&herd.species))),
+        // ...carrying **this herd's** accumulated wounds, so a single-turn preview says "this is the
+        // turn it finally goes down" on the turn it does (`herd_quarry_fight`, §4.2).
+        fight: Some((*party, herd_quarry_fight(herd, fauna))),
         // **The TERMS of the take, not a set of answers.** `ceiling_at(floor, improvement)` composes
         // them into exactly what `hunt_take` computes — the herd's own `K` (`herd_capacity`, never
         // the raw field) and its CURRENT biomass, so the forecast and the take read the same stock.
@@ -7183,6 +7350,7 @@ mod tests {
         world.insert_resource(config);
         world.insert_resource(FaunaConfigHandle::default());
         world.insert_resource(LadderConfigHandle::default());
+        world.insert_resource(crate::combat_config::CombatConfigHandle::default());
         world.insert_resource(SimulationTick::default());
         world.insert_resource(HerdTelemetry::default());
         world.insert_resource(HerdDensityMap::default());

@@ -45,6 +45,7 @@ fn land_world(width: u32, height: u32) -> World {
     config.map_seed = 7;
     world.insert_resource(config);
     world.insert_resource(FaunaConfigHandle::default());
+    world.insert_resource(core_sim::CombatConfigHandle::default());
     world.insert_resource(LadderConfigHandle::default());
     world.insert_resource(SimulationTick::default());
     world.insert_resource(HerdRegistry::default());

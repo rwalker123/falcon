@@ -621,6 +621,54 @@ fn precommit_pair(app: &App, id: &str, policy: f32, workers: u32) -> (f32, f32) 
     precommit_pair_building(app, id, policy, workers, NO_IMPROVEMENT_UNDERWAY)
 }
 
+/// [`precommit_pair`] at the band's **live** output multiplier rather than the content-band `1.0`.
+///
+/// A single-turn fixture can assume a content band; a multi-turn one cannot — morale moves under a
+/// run, and the resolved take applies the multiplier while [`precommit_pair`] does not. Reading the
+/// exported cohort's own multiplier is what `expedition_hunt`'s band-preview sweep already does, and
+/// it keeps a multi-turn comparison about the fight rather than about wellbeing.
+fn precommit_pair_at_band_morale(
+    app: &App,
+    id: &str,
+    band: bevy::prelude::Entity,
+    policy: f32,
+    workers: u32,
+) -> (f32, f32) {
+    let multiplier = {
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let cohort = snapshot
+            .populations
+            .iter()
+            .find(|p| p.entity == band.to_bits())
+            .expect("the hunting band is in the snapshot");
+        core_sim::Scalar::from_raw(cohort.output_multiplier).to_f32()
+    };
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let labor = app.world.resource::<LaborConfigHandle>().get();
+    let registry = app.world.resource::<HerdRegistry>();
+    let herd = registry.find(id).expect("the herd is on the map");
+    let seed = hunt_source_yield_preview(
+        herd,
+        &fauna,
+        &ladder,
+        labor.hunt.per_worker_biomass_capacity,
+        &HuntingParty::builtin_equipped(),
+        multiplier,
+        workers,
+        policy,
+        NO_IMPROVEMENT_UNDERWAY,
+        labor.yield_average_horizon_turns,
+        labor.arrivals_horizon_turns,
+    );
+    (seed.actual, seed.trade)
+}
+
 /// [`precommit_pair`] with a build verb in flight.
 fn precommit_pair_building(
     app: &App,
@@ -786,6 +834,86 @@ fn the_forecast_equals_the_paid_take_in_both_products_on_the_wire() {
         saw_labor_bound && saw_escapement_bound,
         "both regimes must be covered: labor-bound={saw_labor_bound} \
          escapement-bound={saw_escapement_bound}"
+    );
+}
+
+/// **7c. `forecast == actual` ACROSS A MULTI-TURN KILL** (`docs/plan_hunt_through_combat.md` §4.2).
+///
+/// Damage now carries between turns, so a sub-threshold party takes **nothing** for several turns and
+/// then a whole animal. That pulse is exactly the shape a forward projection can miss: a forecast
+/// that resolved the fight once and froze it would quote the first turn's zero forever, and a
+/// forecast that ignored the herd's banked wounds would quote a zero on the very turn the kill lands.
+/// Either way the multi-turn kill is invisible in the preview while the sim pays it — the defect
+/// class this suite exists for.
+///
+/// Asserted on the **exported snapshot**, per component, on **every** turn of the run: the wait turns
+/// (both zero, honestly) and the kill turn (both the same body). Paired with the liveness half —
+/// a kill must actually land, or a forecast frozen at zero would agree with a take frozen at zero.
+#[test]
+fn the_forecast_equals_the_paid_take_across_a_multi_turn_kill() {
+    /// Far below `ceil(500 / (20 − 12)) = 63`, so the party grinds the mammoth down over several
+    /// turns instead of taking one every turn.
+    const SUB_THRESHOLD_CREW: u32 = 12;
+    /// Long enough to contain at least one wait→kill cycle at that crew.
+    const TURNS: u32 = 12;
+    /// Take everything the herd can spare, so the escapement never binds and the *fight* is the only
+    /// term that can produce a zero.
+    const STRIP_IT_BARE: f32 = 0.0;
+
+    let (mut app, id, pos) = headless_with_species(HEAVY_BODIED_SPECIES);
+    reveal_herd(&mut app, &id);
+    let band = spawn_resident_hunters(&mut app, pos, &id, STRIP_IT_BARE, SUB_THRESHOLD_CREW);
+    // The band has to be on the wire before its multiplier can be read off it.
+    recapture_snapshot_in_place(&mut app.world);
+
+    let mut saw_wait_turn = false;
+    let mut saw_kill_turn = false;
+    for turn in 1..=TURNS {
+        // **Quote the crew the turn will actually field.** A mammoth hunt costs the band people, so
+        // `working` shrinks under the run and `advance_labor_allocation` normalizes the assignment
+        // down to what is left. Forecasting a stale headcount would measure that lag rather than the
+        // accumulator — casualty-aware staffing in the preview is its own follow-up.
+        let crew = {
+            let cohort = app
+                .world
+                .get::<PopulationCohort>(band)
+                .expect("the band is alive");
+            core_sim::available_workers(cohort.working).min(SUB_THRESHOLD_CREW)
+        };
+        // The pre-commit quote for THIS turn's herd state — banked wounds and all — at the band's
+        // live morale, since a multi-turn run cannot assume a content band.
+        let forecast = precommit_pair_at_band_morale(&app, &id, band, STRIP_IT_BARE, crew);
+        app.world.run_system_once(advance_labor_allocation);
+        recapture_snapshot_in_place(&mut app.world);
+        let paid = exported_pair(&app, band);
+
+        assert!(
+            (forecast.0 - paid.0).abs() <= YIELD_EPSILON,
+            "turn {turn}: forecast FOOD {} must equal the paid {}",
+            forecast.0,
+            paid.0
+        );
+        assert!(
+            (forecast.1 - paid.1).abs() <= YIELD_EPSILON,
+            "turn {turn}: forecast TRADE {} must equal the paid {}",
+            forecast.1,
+            paid.1
+        );
+        if paid.0 > 0.0 {
+            saw_kill_turn = true;
+        } else {
+            saw_wait_turn = true;
+        }
+    }
+    assert!(
+        saw_wait_turn,
+        "the fixture must be genuinely sub-threshold — a party that kills every turn does not \
+         exercise the accumulator"
+    );
+    assert!(
+        saw_kill_turn,
+        "liveness: the banked damage must eventually land a kill, or both sides agree on zero \
+         for the wrong reason"
     );
 }
 

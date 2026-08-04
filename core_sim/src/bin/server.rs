@@ -1693,6 +1693,11 @@ fn seed_source_yield(
                         .hunting_equipped(&equipment_cfg),
                 ),
                 tuning: app.world.resource::<CombatConfigHandle>().get().tuning(),
+                injury_damage_per_animal: app
+                    .world
+                    .resource::<CombatConfigHandle>()
+                    .get()
+                    .hunt_injury_damage_per_animal,
             };
             hunt_source_yield_preview(
                 herd,
@@ -2799,6 +2804,11 @@ fn handle_send_hunt_expedition(
                 tuning.lethality *= combat.expedition_danger_multiplier;
                 tuning
             },
+            injury_damage_per_animal: app
+                .world
+                .resource::<CombatConfigHandle>()
+                .get()
+                .hunt_injury_damage_per_animal,
         };
         let registry = app.world.resource::<HerdRegistry>();
         registry.find(&fauna_id).map(|herd| {

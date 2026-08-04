@@ -146,9 +146,10 @@ fn a_bare_handed_horde_takes_nothing_over_any_horizon() {
     /// Long enough that a `p = a/(a+d)` soft gate would have killed the mammoth many times over —
     /// §4.7 measures that model at sixteen turns for this exact party.
     const HORIZON: u32 = 200;
-    /// Sized past a soft gate for the same reason the sweep above is — see that comment. At `800` a
-    /// soft gate would *also* report zero here, because damage does not bank between turns (§7), and
-    /// this test would pass on the model it exists to reject.
+    /// Sized past a soft gate for the same reason the sweep above is — see that comment. **Damage
+    /// banks between turns now** (§4.2), so a soft gate's trickle would accumulate into kills here;
+    /// the horde makes that certain rather than merely likely, and the hard gate still answers zero
+    /// because banking exactly `0` forever is still `0`.
     const HORDE: u32 = 100_000;
 
     let fauna = FaunaConfig::builtin();
@@ -350,21 +351,24 @@ fn a_fractional_engagement_reaches_one_animal_and_fails_at_the_fight() {
 // §4.5 — most hunts must not feel like battles
 // ---------------------------------------------------------------------------------------------
 
-/// **The one-sided engagement is free** (§4.5): a quarry that contributes no attack costs the party
-/// nothing, produces no battle report, and still hands over everything it engaged. Snaring rabbits is
-/// not a war.
+/// **The one-sided engagement is not a BATTLE** (§4.5) — no report, no ceremony — **but it is not
+/// free** (§4.6): the hunt's own hazard hurts people whatever the quarry does.
 ///
-/// `fought == false` is what the systems read to decide whether a `HuntDanger` line is emitted, so
-/// this is the report assertion, not a proxy for it.
+/// `fought == false` is what the systems read to decide whether a battle happened; the `HuntDanger`
+/// feed line is gated on a **death** (`NO_DEATHS_TO_REPORT`), which is what keeps a rabbit warren
+/// from pushing "cost 0 lives" every turn.
 #[test]
-fn a_harmless_quarry_costs_nothing_and_reports_nothing() {
+fn a_harmless_quarry_is_no_battle_but_still_hurts_someone() {
     const CREW: u32 = 16;
     let (killed, casualties, fought) = hunt_once(RABBIT, CREW, &HuntingParty::builtin_equipped());
     assert!(killed > 0, "liveness: the party must actually take rabbits");
-    assert_eq!(casualties, 0.0, "a rabbit cannot hurt anyone");
     assert!(
         !fought,
         "a one-sided engagement is not a battle — no report, no ceremony"
+    );
+    assert!(
+        casualties > 0.0,
+        "a rabbit cannot swing at you, but the hunt itself can hurt you (got {casualties})"
     );
     // The same crew against a quarry that DOES fight back takes the other branch, so the flag is
     // discriminating rather than always-false.
@@ -374,11 +378,73 @@ fn a_harmless_quarry_costs_nothing_and_reports_nothing() {
         deer_fought,
         "a ferocity-bearing quarry must resolve as a real fight"
     );
-    // A Red Deer's `attack 0.8 × ferocity 0.15 = 0.12` does not clear a human's `defense 1`, so the
-    // fight happens and costs nothing — the gate applied to the ANIMAL side.
+    assert!(
+        deer_casualties > 0.0,
+        "…and it costs the same baseline injuries the rabbit hunt did"
+    );
+}
+
+/// **The baseline injury NEVER kills** (§4.6) — the whole reason it can ride every hunt without
+/// being a balance change. `available_workers` floors a cohort's working scalar, so one fractional
+/// death costs a whole worker of throughput; a harmless quarry must therefore produce `wounded`
+/// alone, while a quarry that genuinely fights back still buries people.
+#[test]
+fn the_baseline_injury_wounds_and_never_kills() {
+    const CREW: u32 = 16;
+    let fauna = FaunaConfig::builtin();
+    let party = HuntingParty::builtin_equipped();
+    let harmless = fauna.quarry_fight_for(RABBIT);
+    let injured = resolve_hunt_fight(8.0, CREW as f32, &party, &harmless, FIXED_SEED);
     assert_eq!(
-        deer_casualties, 0.0,
-        "a deer swings, and the gate says it does not connect"
+        injured.casualties.killed, 0.0,
+        "a hunting accident is recoverable — it must not touch the working-age bracket"
+    );
+    assert!(
+        injured.casualties.wounded > 0.0,
+        "…but it is real: someone got hurt"
+    );
+
+    // The control: a mammoth swings hard enough to clear a human's `defense`, and that DOES kill.
+    let (_, _, fought) = hunt_once(MAMMOTH, CREW, &party);
+    assert!(fought, "the control must be a real fight");
+    let mammoth = fauna.quarry_fight_for(MAMMOTH);
+    let mauled = resolve_hunt_fight(1.0, CREW as f32, &party, &mammoth, FIXED_SEED);
+    assert!(
+        mauled.casualties.killed > 0.0,
+        "a mammoth still buries people — the baseline is an addition, not a replacement"
+    );
+}
+
+/// **The baseline injury scales with the ENGAGEMENT and not with the quarry** (§4.6), and it does
+/// **not dominate a dangerous one** — the two halves that make it texture rather than a second
+/// combat model.
+#[test]
+fn the_baseline_injury_tracks_the_engagement_and_never_dominates_a_real_fight() {
+    const CREW: f32 = 16.0;
+    let fauna = FaunaConfig::builtin();
+    let party = HuntingParty::builtin_equipped();
+    let harmless = fauna.quarry_fight_for(RABBIT);
+
+    // More animals worked → more chances to get hurt, on the same crew and the same quarry.
+    let few = resolve_hunt_fight(2.0, CREW, &party, &harmless, FIXED_SEED);
+    let many = resolve_hunt_fight(20.0, CREW, &party, &harmless, FIXED_SEED);
+    assert!(
+        many.casualties.wounded > few.casualties.wounded,
+        "working ten times as many animals must cost more: {} vs {}",
+        many.casualties.wounded,
+        few.casualties.wounded
+    );
+
+    // ...and against a quarry that fights back it is a rounding error beside what the animal does.
+    let mammoth = fauna.quarry_fight_for(MAMMOTH);
+    let one_mammoth = resolve_hunt_fight(1.0, CREW, &party, &mammoth, FIXED_SEED);
+    let baseline_only = resolve_hunt_fight(1.0, CREW, &party, &harmless, FIXED_SEED);
+    let mammoth_cost = one_mammoth.casualties.killed + one_mammoth.casualties.wounded;
+    let baseline_cost = baseline_only.casualties.killed + baseline_only.casualties.wounded;
+    assert!(
+        baseline_cost * 10.0 < mammoth_cost,
+        "the activity's hazard ({baseline_cost}) must be far below what a mammoth does \
+         ({mammoth_cost}) on the same engagement"
     );
 }
 
@@ -425,6 +491,187 @@ fn the_fast_path_agrees_with_the_full_resolver() {
         fast.brought_down, full.brought_down,
         "the fast path is an optimisation, not a second model"
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// §4.2 — damage carries between turns
+// ---------------------------------------------------------------------------------------------
+
+/// **A SUB-THRESHOLD PARTY EVENTUALLY KILLS** — the case the whole cross-turn ledger exists for
+/// (§4.2). A party below `ceil(durability / (attack − defense))` brings down nothing on turn one and
+/// a whole animal several turns later, because the damage it deals is banked on the quarry.
+///
+/// Without the ledger the gate is **absolute rather than steep**: 63 hunters for a mammoth at the
+/// shipped spear would be a hard threshold, and 62 would take casualties every turn forever.
+///
+/// Paired both ways: the first turn is honestly zero (the gate has not been softened) **and** the
+/// kill arrives (the bank is live).
+#[test]
+fn a_sub_threshold_party_kills_after_enough_turns() {
+    /// Far below `ceil(500 / (20 − 12)) = 63`, so a stateless resolver answers zero forever.
+    const SMALL_PARTY: u32 = 10;
+    /// Generous room past the ~7 turns the arithmetic predicts, so the test measures the mechanic
+    /// rather than an exact tuning.
+    const PATIENCE: u32 = 40;
+
+    let fauna = FaunaConfig::builtin();
+    let ladder = LadderConfig::builtin();
+    let labor = LaborConfig::builtin();
+    let party = HuntingParty::builtin_equipped();
+    let threshold = {
+        let quarry = fauna.species_by_display(MAMMOTH).expect("shipped species");
+        let per_hunter = core_sim::strike_damage(party.hunter.attack, quarry.combat.defense);
+        (quarry.combat.durability / per_hunter).ceil()
+    };
+    assert!(
+        (SMALL_PARTY as f32) < threshold,
+        "the fixture must be genuinely sub-threshold ({SMALL_PARTY} vs {threshold})"
+    );
+
+    let mut herd = herd_of(&fauna, MAMMOTH);
+    let mut first_kill_turn = None;
+    for turn in 1..=PATIENCE {
+        let outcome = hunt_take(
+            &mut herd,
+            SMALL_PARTY,
+            STRIP_IT_BARE,
+            NO_IMPROVEMENT,
+            labor.hunt.per_worker_biomass_capacity,
+            &party,
+            &fauna,
+            &ladder,
+            NO_CARRY_LIMIT,
+            FIXED_SEED,
+        );
+        if turn == 1 {
+            assert_eq!(
+                outcome.take.killed, 0,
+                "one turn of a sub-threshold party is still not a kill — the gate is steep, \
+                 not softened"
+            );
+        }
+        if outcome.take.killed > 0 {
+            first_kill_turn = Some(turn);
+            break;
+        }
+        assert!(
+            herd.wounds.pending() > 0.0,
+            "turn {turn}: the damage must be BANKED, not discarded"
+        );
+    }
+    let first_kill_turn =
+        first_kill_turn.expect("a sub-threshold party must eventually bring the mammoth down");
+    assert!(
+        first_kill_turn > 1,
+        "the fixture is only interesting if the kill takes several turns (got {first_kill_turn})"
+    );
+    // The ledger holds at most ONE unfinished body — a completed kill spends its damage.
+    let body = fauna
+        .species_by_display(MAMMOTH)
+        .expect("shipped species")
+        .combat
+        .durability;
+    assert!(
+        herd.wounds.pending() < body,
+        "the bank must never hold more than one unfinished animal ({} vs {body})",
+        herd.wounds.pending()
+    );
+}
+
+/// **A bigger sub-threshold party kills SOONER** — the ledger integrates a rate, so the wait is
+/// `durability / (hunters × effective_attack)` rather than an on/off threshold.
+#[test]
+fn more_hunters_shorten_the_wait_for_a_sub_threshold_kill() {
+    let turns_to_first_kill = |workers: u32| -> u32 {
+        let fauna = FaunaConfig::builtin();
+        let ladder = LadderConfig::builtin();
+        let labor = LaborConfig::builtin();
+        let party = HuntingParty::builtin_equipped();
+        let mut herd = herd_of(&fauna, MAMMOTH);
+        for turn in 1..=100 {
+            let outcome = hunt_take(
+                &mut herd,
+                workers,
+                STRIP_IT_BARE,
+                NO_IMPROVEMENT,
+                labor.hunt.per_worker_biomass_capacity,
+                &party,
+                &fauna,
+                &ladder,
+                NO_CARRY_LIMIT,
+                FIXED_SEED,
+            );
+            if outcome.take.killed > 0 {
+                return turn;
+            }
+        }
+        panic!("{workers} hunters never brought a mammoth down");
+    };
+    let slow = turns_to_first_kill(5);
+    let fast = turns_to_first_kill(20);
+    assert!(slow > 1, "liveness: the small party must genuinely wait");
+    assert!(
+        fast < slow,
+        "four times the hunters must land the kill sooner: {fast} vs {slow} turns"
+    );
+}
+
+/// **Wounds heal when the party breaks off — and they heal to EXACTLY zero** (§4.2). Pinned in both
+/// directions, because either failure mode is silent: instant forgetting makes a broken-off hunt
+/// worthless, and never forgetting lets a party chip at a mammoth across fifty turns of unrelated
+/// play.
+#[test]
+fn wounds_decay_out_of_contact_but_not_instantly() {
+    let fauna = FaunaConfig::builtin();
+    let combat = core_sim::CombatConfig::builtin();
+    let body = fauna
+        .species_by_display(MAMMOTH)
+        .expect("shipped species")
+        .combat;
+    let mut wounds = core_sim::DamageLedger::default();
+    /// Enough to bank real damage without completing a body.
+    const HALF_A_MAMMOTH: f32 = 250.0;
+    assert_eq!(
+        wounds.strike(HALF_A_MAMMOTH, &body, 1.0),
+        0.0,
+        "the fixture must bank rather than kill"
+    );
+    assert_eq!(wounds.pending(), HALF_A_MAMMOTH);
+
+    // The turn the party is still in contact spends the grace, not the wound.
+    wounds.recover(combat.wound_recovery_rate, &body);
+    assert_eq!(
+        wounds.pending(),
+        HALF_A_MAMMOTH,
+        "a herd struck this turn does not heal — it clears the contact flag"
+    );
+
+    // The first genuinely idle turn decays it, and by less than all of it.
+    wounds.recover(combat.wound_recovery_rate, &body);
+    let after_one = wounds.pending();
+    assert!(
+        after_one < HALF_A_MAMMOTH,
+        "an idle turn must heal something ({after_one} vs {HALF_A_MAMMOTH})"
+    );
+    assert!(
+        after_one > 0.0,
+        "…and NOT everything: a hunt broken off for one turn must still be worth resuming"
+    );
+
+    // Left alone it reaches exactly zero — "something eventually clears it".
+    for _ in 0..core_sim::CombatTuning::default()
+        .wound_recovery_rate
+        .recip()
+        .ceil() as u32
+    {
+        wounds.recover(combat.wound_recovery_rate, &body);
+    }
+    assert_eq!(
+        wounds.pending(),
+        0.0,
+        "linear decay must empty the ledger, not asymptote at a sliver"
+    );
+    assert!(wounds.is_clean(), "and leave no contact flag behind");
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -316,9 +316,17 @@ one §7 records: `hunt_credit` was deleted because the escapement ceiling is a *
 accumulating a stock compounds it. Damage is a **flow** — a rate of harm per turn — so an
 accumulator is its correct integral. A stock must not bank; a rate must.
 
-Open: whether wounds **heal** when the party disengages, and how fast. A herd that forgets instantly
-makes a broken-off hunt worthless; one that never forgets lets a party chip at a mammoth across fifty
-turns of unrelated play.
+**Wounds heal only OUT OF CONTACT — SETTLED.** A body left alone knits back
+`combat_config.wound_recovery_rate` (**0.2**) of its own `durability` per turn, so any ledger empties
+in exactly five quiet turns; a turn in which the party struck spends the grace rather than the wound.
+
+Three things decided it. **Linear in `durability`, not geometric in the bank**: a geometric decay
+never reaches zero, so a mammoth would carry a sliver of a hunt forever and *"something eventually
+clears it"* could not be pinned. **Only out of contact**: healing every turn regardless would make
+`hunters × effective_attack > rate × durability` a **second** absolute threshold — the exact shape
+this accumulator exists to remove. **One turn of grace falls out of the stage order** (recovery runs
+in Logistics, the strike in Population), so a hunt broken off for a single turn is still worth
+resuming and a week away is a fresh animal.
 
 ### 4.3 The body masses were wrong — SETTLED
 
@@ -411,7 +419,16 @@ day out.
 
 It scales with the **engagement**, not with the quarry — more animals worked means more chances to
 get hurt — and it is a config lever, not a per-species field: the danger is in the activity, not in
-the rabbit.
+the rabbit. Ships as `combat_config.hunt_injury_damage_per_animal` = **0.15**.
+
+**It is always `wounded`, never `killed` — SETTLED, and it is the gate doing its job rather than an
+exemption.** What makes a blow lethal is an attacker landing it past your defense, and a hunt's own
+hazards have no attacker. It is also what keeps this texture rather than a balance change:
+`available_workers` **floors** a cohort's working scalar, so *any* fatality, however fractional,
+costs a whole worker of throughput on the spot — measured, a four-hunter raid lost a quarter of its
+capacity the first turn it engaged a boar. The `HuntDanger` feed line is correspondingly gated on a
+**death**, since every hunt now produces some `wounded` and a "cost 0 lives" line every turn for
+every band is not a report.
 
 ### 4.7 Randomness lives in the attack, and never in the gate
 

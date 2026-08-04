@@ -653,18 +653,36 @@ fn a_deeper_floor_never_takes_less_on_turn_one_on_either_web() {
                      {animal:?}"
                 );
             }
-            // **The liveness pair now asks whether the party could bring one down** — the premise the
-            // fight added (`docs/plan_hunt_through_combat.md` §4.2). Below that threshold the take is
-            // honestly zero at *every* floor, and that is a statement about the GATE, not about the
-            // floor: asserting liveness there would be asserting that a lone hunter can kill a
-            // mammoth. So the two regimes are asserted as the two different things they are.
+            // **The liveness pair asks whether the party could bring one down IN ONE TURN** — the
+            // premise the fight added (`docs/plan_hunt_through_combat.md` §4.2). Below that
+            // threshold **turn one** is honestly zero at every floor, and that is a statement about
+            // the fight, not about the floor: asserting liveness there would be asserting that a
+            // lone hunter can drop a mammoth on the spot. So the two regimes are asserted as the two
+            // different things they are.
+            //
+            // **It is a claim about turn one and nothing more.** Damage carries between turns now,
+            // so the same party *does* kill on a later turn — that is
+            // `hunt_fight::a_sub_threshold_party_kills_after_enough_turns`, and it is why the zeros
+            // below are read off `first_turn_take` rather than the 600-turn total beside it.
             if crew >= hunters_to_bring_one_down(key) {
                 assert_live_below_capacity(&animal, &format!("{key}, {crew} hunters"));
             } else {
                 assert!(
                     animal.iter().all(|take| *take == 0.0),
-                    "{key}, {crew} hunters: a party that cannot bring one down takes nothing at ANY \
-                     floor — no floor is deep enough to substitute for a weapon: {animal:?}"
+                    "{key}, {crew} hunters: a party that cannot bring one down in a turn takes \
+                     nothing on turn one at ANY floor — no floor is deep enough to substitute for a \
+                     weapon: {animal:?}"
+                );
+                // **And the horizon is the other half.** Left long enough the SAME party grinds the
+                // animal down, so a zero here must be a statement about one turn and not about the
+                // party. Without this the block above would pass identically on a stateless
+                // resolver — the model the accumulator replaced.
+                let over_time = run_herd_with_crew(key, STRIP_IT_BARE, None, FULL_HERD, crew);
+                assert!(
+                    over_time.total_take > 0.0,
+                    "{key}, {crew} hunters: a sub-threshold party must still kill EVENTUALLY — \
+                     damage carries between turns, so the turn-one zeros above are about the turn, \
+                     not about the party"
                 );
             }
         }
@@ -676,10 +694,10 @@ fn a_deeper_floor_never_takes_less_on_turn_one_on_either_web() {
 /// (`docs/plan_hunt_through_combat.md` §4.2), derived from config rather than tabulated so a retune
 /// of any of the three inputs moves it.
 ///
-/// **Damage does not bank between turns** (§7: *the animal does not wait* — there is no partial-kill
-/// meter), so a party below this threshold takes **nothing, at every floor, forever**. That list of
-/// zeros orders perfectly, which is exactly why the sweep above must not read it as a floor
-/// property.
+/// **Damage carries between turns** (§4.2), so a party below this threshold takes nothing **on turn
+/// one** at every floor and then, given enough turns, a whole animal. That list of turn-one zeros
+/// orders perfectly, which is exactly why the sweep above must not read it as a floor property — and
+/// why the sweep pairs it with the horizon assertion that the same party does eventually eat.
 ///
 /// A party that cannot beat the quarry's `defense` at all can never bring one down, at any headcount
 /// — §0.2's founding case — so this answers [`u32::MAX`] there rather than a large finite crew.

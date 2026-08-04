@@ -148,7 +148,10 @@ pub fn advance_labor_allocation(
     // the base human's intrinsic combat profile, resolved once: a dangerous hunt builds a fight from
     // the hunting party (the hunters on that herd) vs the animal's fighting stock and applies the
     // band-side casualties. Hoisted out of the per-cohort loop — neither changes within a turn.
-    let combat_tuning = configs.combat.get().tuning();
+    let combat_config = configs.combat.get();
+    let combat_tuning = combat_config.tuning();
+    // The hunt's own baseline hazard, per animal engaged — hoisted with the tuning it rides beside.
+    let hunt_injury_damage = combat_config.hunt_injury_damage_per_animal;
     let person_profile = configs.creatures.get().person();
     // **The minimal TOE** (`docs/plan_hunt_through_combat.md` §4.8) — the two-tier table and the
     // durability dials, resolved once. What varies per band is only its `BandEquipment` *wear*.
@@ -248,6 +251,7 @@ pub fn advance_labor_allocation(
                     .hunting_equipped(&equipment_cfg),
             ),
             tuning: combat_tuning,
+            injury_damage_per_animal: hunt_injury_damage,
         };
         // Normalize each turn: if `working` shrank, trim assignments so Σ ≤ available.
         let available = available_workers(cohort.working);
@@ -1699,10 +1703,13 @@ pub fn advance_labor_allocation(
                     // animal side is already off the herd as `take.killed_biomass()`, and this is
                     // where the band side lands.
                     //
-                    // **A one-sided engagement produces nothing here at all** — no casualties, no
-                    // feed line, no cost (§4.5: snaring rabbits is not a war), which is exactly what
-                    // `HuntFight::fought == false` reports.
-                    if outcome.fight.casualties.any() {
+                    // **The line is gated on a DEATH, not on any casualty** (§4.5: snaring rabbits
+                    // is not a war). Since the hunt carries a baseline injury risk (§4.6) every hunt
+                    // now produces *some* `wounded`, so `casualties.any()` would push a
+                    // "cost N lives" line — reading `0` — for every band, every turn. A hunting
+                    // accident is real in the numbers and becomes mechanically live with the rest of
+                    // `wounded` when the recovery slice lands; it is not a battle report.
+                    if outcome.fight.casualties.killed > fauna::NO_DEATHS_TO_REPORT {
                         let killed_f = outcome.fight.casualties.killed;
                         let wounded_f = outcome.fight.casualties.wounded;
                         // `killed` come out of the working-age bracket (the casualty mortality path);

@@ -174,6 +174,7 @@ pub fn advance_expeditions(
             hunter: equipment_cfg
                 .hunter_profile(person_profile, party_kit.hunting_equipped(&equipment_cfg)),
             tuning: combat_tuning,
+            injury_damage_per_animal: combat_config.hunt_injury_damage_per_animal,
         };
         // Home band's LIVE tile (bands are nomadic): drives the comm check, the return target, and
         // the hunt drop-off. An orphaned expedition (home band gone) simply can't report/deliver.
@@ -320,8 +321,10 @@ pub fn advance_expeditions(
                         kit.wear_hunting(&equipment_cfg, take.killed)
                             .wear_carry(&equipment_cfg, take.carried);
                     }
-                    // A scout that picked a fight it could not win still pays for it.
-                    if outcome.fight.casualties.any() {
+                    // A scout that picked a fight it could not win still pays for it. Gated on a
+                    // **death**, like the resident band's line: the hunt's baseline injury risk
+                    // (§4.6) makes `casualties.any()` true on every engagement.
+                    if outcome.fight.casualties.killed > fauna::NO_DEATHS_TO_REPORT {
                         cohort.apply_combat_casualties(scalar_from_f32(
                             outcome.fight.casualties.killed,
                         ));
@@ -489,7 +492,9 @@ pub fn advance_expeditions(
                         // composed BEFORE the mutable borrow, exactly as the scout replenish does.
                         let engage_rate = fauna.engage_rate_for(&herds.herds[idx].species);
                         let wariness = fauna.wariness_for(&herds.herds[idx].species);
-                        let quarry_fight = fauna.quarry_fight_for(&herds.herds[idx].species);
+                        // The herd's own accumulated wounds ride in with the species body, so a raid
+                        // spanning turns wears the quarry down (`fauna::herd_quarry_fight`).
+                        let quarry_fight = fauna::herd_quarry_fight(&herds.herds[idx], &fauna);
                         let species_name = fauna
                             .species_by_display(&herds.herds[idx].species)
                             .map(|def| def.display_name.clone())
@@ -518,7 +523,9 @@ pub fn advance_expeditions(
                             &mut herd.hunt_credit,
                         );
                         let take = outcome.take;
-                        // The herd loses every animal killed, carried home or not (slice 8).
+                        // The herd loses every animal killed, carried home or not (slice 8) — and
+                        // keeps the damage that did not finish a body (§4.2).
+                        herd.wounds = outcome.fight.wounds;
                         herd.biomass -= take.killed_biomass();
                         let herd_biomass_after = herd.biomass;
                         // **BOTH KITS ARE CHARGED FOR USE, AND ONLY FOR USE** — the resident band's
@@ -538,7 +545,8 @@ pub fn advance_expeditions(
                         // already off the herd as `take.killed_biomass()`. A detached party still
                         // fights at the `expedition_danger_multiplier`-scaled lethality — that rides
                         // `hunting_party.tuning`.
-                        if outcome.fight.casualties.any() {
+                        // Gated on a **death** — see the resident band's arm in `systems::labor`.
+                        if outcome.fight.casualties.killed > fauna::NO_DEATHS_TO_REPORT {
                             let killed_f = outcome.fight.casualties.killed;
                             let wounded_f = outcome.fight.casualties.wounded;
                             cohort.apply_combat_casualties(scalar_from_f32(killed_f));
@@ -932,6 +940,7 @@ fn expedition_take_biomass(
                 brought_down: 0.0,
                 casualties: fauna::FightCasualties::default(),
                 fought: false,
+                wounds: quarry.wounds,
             },
         };
     }
@@ -1131,13 +1140,18 @@ pub fn hunt_take(
     let engaged = engaged.min(fauna::animals_affordable(ceiling, herd.body_mass));
     let stayed = fauna::animals_that_stay(engaged, fauna.wariness_for(&herd.species), retreat_seed);
     // **The fight decides the kill** — stage 3, and the arm that used to be a bespoke hunt formula.
+    // The quarry comes in carrying **this herd's** accumulated wounds (`fauna::herd_quarry_fight`),
+    // so a party below the one-turn threshold wears the animal down over several turns instead of
+    // bouncing off it forever (`docs/plan_hunt_through_combat.md` §4.2).
     let fight = fauna::resolve_hunt_fight(
         stayed,
         workers as f32 * ladder.build_dip(improvement),
         party,
-        &fauna.quarry_fight_for(&herd.species),
+        &fauna::herd_quarry_fight(herd, fauna),
         retreat_seed,
     );
+    // ...and the ledger goes straight back onto the herd, before anything can early-return past it.
+    herd.wounds = fight.wounds;
     let take = fauna::quantise_animal_take(ceiling, collection, herd.body_mass, fight.brought_down);
     // **The herd loses every animal KILLED, not merely what was carried** — you cannot un-kill the
     // mammoth you could not haul. That is the waste, and it is `take.wasted`.
@@ -1507,7 +1521,10 @@ fn hunt_trip_forecast_seeded(
     // whole run — see [`forecast_retreat_seed`] for why a projection cannot vary it per turn.
     let engage_rate = fauna.engage_rate_for(&quarry.species);
     let wariness = fauna.wariness_for(&quarry.species);
-    let quarry_fight = fauna.quarry_fight_for(&quarry.species);
+    // **The wounds are NOT resolved once** — they are the one term that changes every projected turn,
+    // and a projection that froze them could not see a multi-turn kill at all (§4.2). Seeded from the
+    // live herd, then re-carried from each simulated turn's result below.
+    let mut quarry_fight = fauna::herd_quarry_fight(&quarry, fauna);
     let retreat_seed = forecast_retreat_seed(&quarry.id, workers);
     let mut larder = initial_larder;
     let mut first_turn_provisions = 0.0_f32;
@@ -1540,7 +1557,7 @@ fn hunt_trip_forecast_seeded(
         } else {
             (cap - larder).max(scalar_zero()).to_f32() / hunt_yield.provisions_per_biomass
         };
-        let take = expedition_take_biomass(
+        let outcome = expedition_take_biomass(
             workers,
             labor.hunt.per_worker_biomass_capacity,
             floor,
@@ -1554,8 +1571,10 @@ fn hunt_trip_forecast_seeded(
             party,
             retreat_seed,
             &mut quarry.hunt_credit,
-        )
-        .take;
+        );
+        let take = outcome.take;
+        // Carry the fight forward: this turn's unfinished damage is next turn's head start.
+        quarry_fight = quarry_fight.with_wounds(outcome.fight.wounds);
         quarry.biomass -= take.killed_biomass();
         // The kill count — a raid may now kill a partial (one it cannot seat whole) and waste the rest,
         // exactly like the resident band; the delivered payload is `delivered_food`, not this count.

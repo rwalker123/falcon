@@ -554,6 +554,13 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >     crew size, and the three terms above stay the crew's three jobs. See `combat.md` for the seam
 >     and for why all six take/forecast paths call the one helper.
 >
+>     **The fight is also the one bound with MEMORY.** Damage carries between turns on `Herd::wounds`
+>     (`combat::DamageLedger`), so a party below `ceil(durability / (attack − defense))` brings down
+>     nothing for several turns and then a whole animal — the gate is *steep*, not absolute. Every
+>     take and forecast path must resolve its quarry through **`fauna::herd_quarry_fight`** and store
+>     `HuntFight::wounds` back, and every forward projection resolves the fight **inside** its loop.
+>     `combat.md` → "Damage carries between turns" owns the mechanism and the rollback contract.
+>
 >   **The per-species figures that used to sit here were measured against the PRE-CORRECTION body
 >   masses and are deleted rather than restated** (`docs/plan_hunt_through_combat.md` §4.3). Nineteen
 >   of the twenty masses moved, and `herders_needed` divides by `body_mass`, so every one of them
