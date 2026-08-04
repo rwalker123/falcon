@@ -557,16 +557,40 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
 ## `inspected` is the open inspector's model, EMPTY when none is open.
 func _work_board_capacity(count: int, inspected: Dictionary) -> Dictionary:
     var box := _zone_box()
-    var cols := clampi(int(box.x / HudWorkVocab.WORK_COLUMN_MIN_WIDTH), 1, HudWorkVocab.WORK_MAX_COLUMNS)
     var inspector_h := 0.0 if inspected.is_empty() else _work_inspector_height(inspected)
     var chrome := HudWorkVocab.ZONE_HEAD_HEIGHT + HudWorkVocab.WORK_CHIPS_HEIGHT + inspector_h \
         + float(HudWorkVocab.ZONE_BLOCK_SEPARATION) * HudWorkVocab.WORK_ZONE_GAP_COUNT
     var rows := maxi(1, int((box.y - chrome) / HudWorkVocab.WORK_ROW_HEIGHT))
+    var cols := _declare_work_columns(count, rows)
     var pages := ceili(float(count) / float(maxi(cols * rows, 1)))
     if pages > 1:
         rows = maxi(1, int((box.y - chrome - HudWorkVocab.WORK_PAGER_HEIGHT - float(HudWorkVocab.ZONE_BLOCK_SEPARATION)) / HudWorkVocab.WORK_ROW_HEIGHT))
+        cols = _declare_work_columns(count, rows)
         pages = ceili(float(count) / float(maxi(cols * rows, 1)))
     return {"cols": cols, "rows_per_col": rows, "page_size": cols * rows, "pages": maxi(pages, 1)}
+
+## How many board columns this band's sources actually WANT, declared to the panel so the card can be
+## drawn that wide (issue #377), and answered back for the board to fill.
+##
+## **THE DIRECTION INVERTED HERE, and that is the whole point.** `cols` used to be read OFF the zone's
+## width — the panel spanned the monitor, so on an ultrawide the board got four columns whether or not
+## the band had anything to put in them, and a band with no sources at all got an empty zone stretched
+## across two feet of screen. It is now derived from the SOURCE COUNT and the rows a column holds, and
+## the panel sizes its card to the answer.
+##
+## **It stays acyclic because `rows` comes from the zone's HEIGHT**, which a horizontal dock fixes and
+## which nothing here can move. Width follows count; count never follows width.
+##
+## Without a panel (the `ui_preview` no-dock fallback) there is nobody to declare to, so it falls back
+## to measuring the box exactly as before — that host is a fixed-width card with no card to resize.
+## **The panel's ANSWER is what gets built, not the want.** `set_work_columns` clamps to what the strip
+## can actually pay for — a 380px side dock affords one column however many sources there are — and a
+## board built to the unclamped want overflows its clipping zone host silently.
+func _declare_work_columns(count: int, rows: int) -> int:
+    if _panel == null:
+        return clampi(int(_zone_box().x / HudWorkVocab.WORK_COLUMN_MIN_WIDTH), 1, HudWorkVocab.WORK_MAX_COLUMNS)
+    var wanted := clampi(ceili(float(count) / float(maxi(rows, 1))), 1, HudWorkVocab.WORK_MAX_COLUMNS)
+    return _panel.set_work_columns(wanted)
 
 ## The board itself: `cols` column VBoxes filled COLUMN-MAJOR (top of column 1 to its bottom, then
 ## column 2), separated by a hairline rule. Fixed-height rows, no scroll — the page IS the limit.
