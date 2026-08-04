@@ -274,7 +274,10 @@ func build_band_zone(band: Dictionary, with_vitals: bool = true) -> VBoxContaine
     col.add_child(_build_workforce_block(band, _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT))
     return col
 
-## The vitals readout — the Food / Morale / Output rows with their click-to-expand disclosures. A
+## The vitals readout — Food, Fodder, Trade, Morale and Growth, of which Food / Trade / Morale /
+## Growth carry the click-to-expand disclosures (Fodder is a plain row, and there is no Output row:
+## productivity reads on the WORK zone's head). Which of the optional rows appear is the producer's
+## call — see `BandDetailLines.unit_summary_lines` and the `compact` note below. A
 ## FRESH RichTextLabel each render, so its `meta_clicked` is wired here (bound to ITSELF as the
 ## popover's anchor). The tint context is likewise fresh per render: it is built here, filled by
 ## `BandDetailLines.unit_summary_lines` as it emits the rows, and handed straight to the formatter.
@@ -290,9 +293,12 @@ func _build_vitals_label(band: Dictionary) -> RichTextLabel:
     # The SHORT tier drops the Trade row, the same budget call `build_band_zone` makes for the
     # food-outlook chart one block below: a ~300px T/B zone CLIPS what it cannot hold, and the row
     # measures 26px against a zone that is already tight.
+    # No Position row either: the coordinates are IDENTITY and the panel HEADER states them
+    # (`_panel_position_label`), so a vitals row would be a second telling — and one this zone pays
+    # for in height. The drawer host keeps it (it has no header and renders foreign bands).
     detail_label.text = DetailFormat.detail_bbcode(
         _banddetail.unit_summary_lines(band, _selectioncard.selected_terrain_label(), ctx,
-            _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT), ctx)
+            _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT, false), ctx)
     return detail_label
 
 ## "PEOPLE" — who the band IS: a stacked children/working-age/elders bar plus its key and the
@@ -629,6 +635,21 @@ func _build_work_head(band: Dictionary, models: Array, income: float, trade_inco
         HudWidgets.set_label_tooltip(trade_total, HudWorkVocab.WORK_TRADE_TOTAL_TOOLTIP)
         head.add_child(trade_total)
         head.move_child(trade_total, head.get_child_count() - 2)
+    # THE OUTPUT ITEM — a THIRD sibling, and it qualifies the two beside it rather than adding to
+    # them: `output_multiplier` is the discontent modifier every rate on this board is already scaled
+    # by, so it belongs where its consequence is visible and not as a row of the height-capped band
+    # zone. Same gate the vitals row carried — only BELOW full output — because a head item
+    # permanently reading `Output 100%` is noise on a row that is otherwise live summary. It trails
+    # the rates deliberately: it is a note ABOUT them.
+    var output: float = float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
+    if output < SourceForecast.OUTPUT_FULL:
+        var output_item := Label.new()
+        output_item.text = HudWorkVocab.WORK_OUTPUT_FORMAT % int(round(output * 100.0))
+        output_item.add_theme_font_size_override("font_size", HudWorkVocab.ZONE_HEAD_FONT_SIZE)
+        output_item.add_theme_color_override("font_color", BandFoodStatus.color_for_output(output))
+        HudWidgets.set_label_tooltip(output_item, HudWorkVocab.WORK_OUTPUT_TOOLTIP)
+        head.add_child(output_item)
+        head.move_child(output_item, head.get_child_count() - 2)
     return head
 
 ## The filter chips ARE the summary: counts + per-kind rates, and pressing one filters the board.
@@ -721,12 +742,12 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     stripe.color = _work_row_stripe_color(model)
     stripe.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(stripe)
-    var icon := Label.new()
-    icon.text = String(model.get("icon", ""))
-    icon.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_ICON_WIDTH, 0.0)
-    icon.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
-    icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    line.add_child(icon)
+    # The SOURCE mark: bundled art where the client has it, the emoji where it does not. The column
+    # is the same fixed `WORK_ROW_ICON_WIDTH` either way, so a board mixing art and emoji rows still
+    # lines up down the icon column (issue #439).
+    line.add_child(HudWidgets.build_marker_icon(
+        model.get("icon_texture") as Texture2D, String(model.get("icon", "")),
+        HudWorkVocab.WORK_ROW_ICON_WIDTH, HudWorkVocab.WORK_ROW_FONT_SIZE))
     var label := Label.new()
     label.text = String(model.get("label", ""))
     label.clip_text = true
@@ -870,8 +891,14 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
     strip.add_child(col)
     var head := HBoxContainer.new()
     head.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
+    # The mark is its own child rather than a prefix welded into the title's text: a texture cannot
+    # live inside a `Label.text`, and splitting it is what lets the strip show the same art as the
+    # row it belongs to. `WORK_ROW_SEPARATION` on `head` is what spaces them, as it did the string.
+    head.add_child(HudWidgets.build_marker_icon(
+        model.get("icon_texture") as Texture2D, String(model.get("icon", "")),
+        HudWorkVocab.WORK_ROW_ICON_WIDTH, HudWorkVocab.WORK_ROW_FONT_SIZE))
     var title := Label.new()
-    title.text = "%s %s" % [String(model.get("icon", "")), String(model.get("label", ""))]
+    title.text = String(model.get("label", ""))
     title.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     title.clip_text = true
     title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -989,6 +1016,13 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # this crew pulls.
         var improvement := String(m.get("improvement", "")).strip_edges().to_lower()
         var icon := ""
+        # The row's bundled ART, resolved BESIDE the emoji rather than instead of it (issue #439):
+        # the emoji stays as the fallback, it is not replaced. BOTH webs fill it, and that is
+        # deliberate — hunt and forage rows share ONE list and ONE icon column, so spriting only the
+        # hunt half would leave a board that is half art and half emoji, a new inconsistency
+        # introduced by the fix. `null` where the client has no art for this source, which is the
+        # case `HudWidgets.build_marker_icon` renders the glyph for.
+        var icon_texture: Texture2D = null
         var label := ""
         var cap := {}
         var live_herd := {}
@@ -998,6 +1032,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # `HudFormat.source_icon_prefix`, which welds it to the label with a trailing space for the
             # single-label row this replaced.
             icon = _band_labor.food_module_icon(x, y)
+            icon_texture = _band_labor.food_module_sprite(x, y)
             # Held in a local because the RUNG mark reads it too — `forage_patch_lookup` spells its keys
             # BARE (`is_cultivated` / `is_field`), unlike the `patch_`-prefixed `tile_info` cross-ref.
             patch = _band_labor.forage_patch_lookup().get(Vector2i(x, y), {})
@@ -1020,6 +1055,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         else:
             var herd_label := _herd_label_for_id(herd_id)
             icon = FoodIcons.for_herd(herd_label)
+            icon_texture = FaunaSprites.for_herd(herd_label)
             label = HudWorkVocab.WORK_ROW_HUNT_FORMAT % herd_label
             # Herds MIGRATE, so the cap reads the herd's LIVE dict from `_band_labor.world_herds()` rather than the
             # assignment's launch-time target.
@@ -1067,7 +1103,8 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             if note == "":
                 note = HudWorkVocab.WORK_ROW_UNDER_HERDED_NOTE
         models.append({
-            "key": String(key), "kind": kind, "icon": icon, "label": label,
+            "key": String(key), "kind": kind, "icon": icon, "icon_texture": icon_texture,
+            "label": label,
             "rate": float(yld.get("rate", 0.0)),
             # The row's TRADE component (issue #337), 0 when the source pays none. Carried so the
             # inspector sentence states the same two products the row headline does.
@@ -1658,7 +1695,22 @@ func _build_quarry_row(band: Dictionary, herd: Dictionary) -> HBoxContainer:
         HudStyle.apply_button(pick, "primary")
     else:
         var name_text := SourceForecast.herd_display_name(herd)
-        pick.text = HudComposeVocab.COMPOSE_QUARRY_LABEL_FORMAT % [FoodIcons.for_herd(name_text), name_text]
+        # The picked quarry wears the species' bundled ART where there is any (issue #439). A Button
+        # takes an icon natively, so this is its `icon` PROPERTY rather than a glyph welded into the
+        # face — and only the emoji branch keeps the format string, so a species with art loses the
+        # leading glyph instead of carrying both. `icon_max_width` is what stops the 256px source
+        # setting the button's minimum and dragging the compose row wide; `expand_icon` then fits it
+        # to the button's own height. UNTINTED: `apply_button` sets no `icon_*_color`, and the stock
+        # theme's is opaque white, so the animal renders in its own colours like every other marker.
+        var quarry_sprite := FaunaSprites.for_herd(name_text)
+        if quarry_sprite != null:
+            pick.icon = quarry_sprite
+            pick.expand_icon = true
+            pick.add_theme_constant_override("icon_max_width",
+                HudComposeVocab.COMPOSE_QUARRY_ICON_MAX_WIDTH)
+            pick.text = name_text
+        else:
+            pick.text = HudComposeVocab.COMPOSE_QUARRY_LABEL_FORMAT % [FoodIcons.for_herd(name_text), name_text]
         pick.clip_text = true
         pick.tooltip_text = HudComposeVocab.COMPOSE_QUARRY_TOOLTIP_FORMAT % [
             name_text, int(herd.get("x", -1)), int(herd.get("y", -1)),
@@ -1751,10 +1803,27 @@ func render_band(unit: Dictionary) -> void:
     var glyph := String(_band_labor.panel_band().get("settlement_stage_icon", "")).strip_edges()
     var stage_label := String(_band_labor.panel_band().get("settlement_stage_label", "")).strip_edges()
     var index := _index_of_player_band(int(_band_labor.panel_band().get("entity", -1)))
-    _panel.set_header(stage_id, glyph, HudFormat.band_display_name(_band_labor.panel_band(), index + 1), stage_label)
+    _panel.set_header(stage_id, glyph, HudFormat.band_display_name(_band_labor.panel_band(), index + 1), stage_label,
+        _panel_position_label(_band_labor.panel_band()))
     _panel.set_cycler(index, _band_labor.player_bands().size())
     # `set_zones` above already flipped the panel to band-present; just make sure it is shown.
     _panel.set_shown(true)
+
+## The band's hex coordinates for the panel header — the ONE place they are resolved, because the two
+## paths that reach this panel spell them DIFFERENTLY and used to render differently because of it.
+## The per-snapshot refresh hands over the cohort dict the native decoder built
+## (`native/src/dict/population.rs`), which carries `current_x` / `current_y` and NO `pos`; a click on
+## the band's map marker hands over MapView's marker copy, which carries a two-element `pos` array.
+## So the snapshot path rendered no coordinates at all and the map path did, and a turn tick then took
+## them away again. Preferring the cohort keys and falling back to `pos` makes both paths produce the
+## identical header; neither resolvable ⇒ `""`, which the panel renders as nothing.
+func _panel_position_label(band: Dictionary) -> String:
+    if band.has("current_x") and band.has("current_y"):
+        return HudFormat.BAND_HEADER_POSITION_FORMAT % [int(band["current_x"]), int(band["current_y"])]
+    var pos_array: Array = Array(band.get("pos", []))
+    if pos_array.size() == 2:
+        return HudFormat.BAND_HEADER_POSITION_FORMAT % [int(pos_array[0]), int(pos_array[1])]
+    return ""
 
 ## Select an expedition (from the panel's Active-expeditions list) on the map: recenter + select
 ## its hex (rebuilds that hex's roster), then pin the exact expedition so the map ring moves and the

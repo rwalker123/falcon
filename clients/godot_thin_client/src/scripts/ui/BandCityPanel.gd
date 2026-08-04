@@ -58,6 +58,11 @@ const STAGE_GLYPH_FONT_SIZE := 20
 const STAGE_SPRITE_SIZE := Vector2(STAGE_GLYPH_FONT_SIZE, STAGE_GLYPH_FONT_SIZE)
 const NAME_FONT_SIZE := 15
 const STAGE_LABEL_FONT_SIZE := 10
+## Gap between the stage word and the band's hex coordinates on the header's second line. Its own
+## const rather than the borrowed `HEADER_SEPARATION`: that one spaces the header's top-level
+## CLUSTERS (subject / cycler / dock chooser / collapse), and this spaces two words inside one of
+## them, which reads too loose at the cluster gap.
+const STAGE_ROW_SEPARATION := 6
 const CYCLER_FONT_SIZE := 13
 const COUNT_FONT_SIZE := 11
 const ICON_BUTTON_FONT_SIZE := 13
@@ -84,10 +89,33 @@ const PANEL_CONTENT_MARGIN_V := 10
 ## panel reports the interior box its Work zone may fill. Declared here, beside the margins it is
 ## always summed with, so `PANEL_CHROME_H` below can be a `const`.
 const PANEL_BORDER_WIDTH := 1.0
+## What the card's own horizontal chrome costs — the border plus the content margins the card draws
+## with, i.e. exactly what `_interior_size()` subtracts from `_panel_extent().x`. Named so the shell
+## threshold (which is tested against the panel's OUTER width) can add it back, and so
+## `ZONE_PARTY_WIDTH` below can state the narrow shell's zone width as a derivation. Declared HERE,
+## with the two terms it sums, because a `const` may not reference one declared further down.
+const PANEL_CHROME_H := 2.0 * (float(PANEL_CONTENT_MARGIN_H) + PANEL_BORDER_WIDTH)
 # ---- responsive body layout (wide 3-column shell vs narrow tabbed shell) -----
 ## Fixed widths of the two flanking zones in the wide shell; Work takes whatever is left.
-const ZONE_BAND_WIDTH := 300.0
-const ZONE_PARTY_WIDTH := 300.0
+## **THE BAND ZONE IS `PANEL_WIDTH` WIDE, DELIBERATELY THE SAME NUMBER**: the NARROW shell hands its
+## one zone the panel's strip less chrome (`ZONE_PARTY_WIDTH` below is exactly that), so a band column
+## narrower than that gave the layout with a whole screen to spend LESS width for the same rows than
+## the layout squeezed into a side dock — and the band zone CLIPS rather than scrolls, so the width it
+## lacks comes straight off its vitals rows as wraps. It takes the full 380 rather than that floor
+## because it is the zone whose rows are widest (the merged Food line measures 353px) and, unlike the
+## parties zone, 380 here still leaves the work board two columns at 1920 on every shipped map. 380 is
+## already this file's vocabulary (`PANEL_WIDTH`, `ZONE_WORK_MIN_WIDTH`): one readable column of rows.
+const ZONE_BAND_WIDTH := 380.0
+## **THE PARTIES ZONE IS EXACTLY THE NARROW SHELL'S ZONE WIDTH** — the panel's strip less the card
+## chrome — which IS the requirement: the wide shell must never hand a zone LESS room than the side
+## dock does for the same content, and this zone's four-rung compose picker is already 2×2 at that
+## width because 3-across does not fit. It is deliberately NOT `ZONE_BAND_WIDTH`'s 380, and the
+## difference is MEASURED, not taste: the flanks come out of the work zone, and at 1920 in a bottom
+## dock on the widest shipped map (Large, whose chrome rail is 308px against Standard's 296) a 380px
+## parties zone leaves the board 751px — under 2 × `ZONE_WORK_MIN_WIDTH`, so the work board drops to
+## ONE column, which is the very thing the wide shell exists to prevent. The ceiling that keeps two
+## columns there is 371; 354 clears it by 17px. Raise this only with that measurement re-run.
+const ZONE_PARTY_WIDTH := PANEL_WIDTH - PANEL_CHROME_H
 ## The NARROWEST the WORK zone may be for the wide shell to be worth choosing: one readable board
 ## column. MIRRORS Hud's `WORK_COLUMN_MIN_WIDTH` (380) — the width below which `_work_board_capacity`
 ## clamps to a single column, and a single column crammed into less than that clips its row labels.
@@ -115,16 +143,12 @@ const RAIL_SEPARATOR_SPAN := ZONE_SEPARATOR_THICKNESS + 2.0 * float(ZONE_SEPARAT
 ## so the threshold, the content cap and `work_zone_size` can never disagree about how much width the
 ## chrome eats.
 const WIDE_SEPARATOR_SPAN := 2.0 * RAIL_SEPARATOR_SPAN
-## What the card's own horizontal chrome costs — the border plus the content margins the card draws
-## with, i.e. exactly what `_interior_size()` subtracts from `_panel_extent().x`. Named so the shell
-## threshold (which is tested against the panel's OUTER width) can add it back.
-const PANEL_CHROME_H := 2.0 * (float(PANEL_CONTENT_MARGIN_H) + PANEL_BORDER_WIDTH)
 ## The panel switches to the wide (3-zones-side-by-side) shell once its own WIDTH reaches this;
 ## below it the narrow (tabbed, one-zone) shell is used. A WIDTH test, never a dock-edge test, so a
 ## resizable dock or a narrow window needs no special case. DERIVED, never hand-picked: the wide
 ## shell is only worth choosing when it can still give the work zone one readable column, so this is
-## exactly what the three zones + the separators + the card chrome need (300 + 300 + 380 + 50 + 26 =
-## 1056). It is compared against the OUTER `_panel_extent().x`, hence the chrome term — below it the
+## exactly what the three zones + the separators + the card chrome need (380 + 354 + 380 + 50 + 26 =
+## 1190). It is compared against the OUTER `_panel_extent().x`, hence the chrome term — below it the
 ## narrow shell would hand the board the panel's whole interior, so flipping wide too early makes the
 ## board several times NARROWER, degrading the very thing the wide shell exists to improve.
 const WIDE_SHELL_MIN_WIDTH := ZONE_BAND_WIDTH + ZONE_PARTY_WIDTH + ZONE_WORK_MIN_WIDTH \
@@ -236,6 +260,12 @@ var _stage_glyph_sprite: TextureRect
 var _rail_glyph_sprite: TextureRect
 var _name_label: Label
 var _stage_label: Label
+## The band's hex coordinates, beside the stage word on the header's second line. IDENTITY, not a
+## vital: it answers "which band am I looking at", exactly as the name and the stage do, so it lives
+## in the header rather than as a row in the band zone's vitals grid (where it cost that
+## height-capped zone a row it could not spare, and rendered only on the map-click path). Hidden when
+## the caller passes no coordinates, so an empty value costs no gap.
+var _position_label: Label
 var _count_label: Label
 var _collapse_button: Button
 var _rail_expand_button: Button
@@ -309,9 +339,13 @@ func _ready() -> void:
 # ---- public API ------------------------------------------------------------
 
 ## Push the header subject: settlement stage id (the server's stable key), its emoji glyph
-## fallback, display name, stage label. The stage renders as bundled art when `StageSprites` has
-## a texture for the id; a stage with no bundled art (the config is user-editable) keeps its emoji.
-func set_header(stage_id: String, glyph: String, subject_name: String, stage_label: String) -> void:
+## fallback, display name, stage label, and the band's preformatted hex coordinates. The stage
+## renders as bundled art when `StageSprites` has a texture for the id; a stage with no bundled art
+## (the config is user-editable) keeps its emoji.
+## `position_label` is a preformatted `String` the CALLER resolves (the panel never reads a band
+## dict), and `""` renders nothing — the caller could not resolve the coordinates.
+func set_header(stage_id: String, glyph: String, subject_name: String, stage_label: String,
+		position_label: String = "") -> void:
 	var resolved_glyph := glyph if not glyph.is_empty() else DEFAULT_STAGE_GLYPH
 	var sprite := StageSprites.for_stage(stage_id)
 	_apply_stage_visual(_stage_glyph_label, _stage_glyph_sprite, sprite, resolved_glyph)
@@ -320,6 +354,9 @@ func set_header(stage_id: String, glyph: String, subject_name: String, stage_lab
 		_name_label.text = subject_name
 	if _stage_label != null:
 		_stage_label.text = stage_label
+	if _position_label != null:
+		_position_label.text = position_label
+		_position_label.visible = not position_label.is_empty()
 
 ## Update the cycler readout ("index+1 / count"). count <= 0 blanks it.
 func set_cycler(index: int, count: int) -> void:
@@ -605,8 +642,22 @@ func _build_header_full() -> HBoxContainer:
 	_stage_label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
 	_stage_label.text = ""
 	_stage_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# The stage word and the band's coordinates share the header's second line: both are secondary
+	# IDENTITY, so they wear the same quiet ink and size, and the coordinates sit AFTER the stage
+	# (a band is "Camp" first and "at (68, 30)" second).
+	var stage_row := HBoxContainer.new()
+	stage_row.add_theme_constant_override("separation", STAGE_ROW_SEPARATION)
+	stage_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_position_label = Label.new()
+	_position_label.add_theme_font_size_override("font_size", STAGE_LABEL_FONT_SIZE)
+	_position_label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+	_position_label.text = ""
+	_position_label.visible = false
+	_position_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	stage_row.add_child(_stage_label)
+	stage_row.add_child(_position_label)
 	subject.add_child(_name_label)
-	subject.add_child(_stage_label)
+	subject.add_child(stage_row)
 	cluster_row.add_child(subject)
 
 	header.add_child(_subject_cluster)

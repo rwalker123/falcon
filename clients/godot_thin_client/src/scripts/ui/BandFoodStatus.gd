@@ -169,23 +169,27 @@ static func hex_for_morale(m: float) -> String:
 		return HudStyle.WARN_HEX
 	return HudStyle.HEALTHY_HEX
 
-## Output multiplier (0–1) tint for the productivity readout. Below full the row grades
-## ink → amber → red as discontent bites harder. Distinct from the morale/food palette:
-## near-full output reads neutral ink (not green) — it's a productivity note, not a "good".
-static func hex_for_output(o: float) -> String:
+## Output multiplier (0–1) tint for the WORK zone head's `Output NN%` item, which is the panel's ONE
+## productivity surface — the vitals `Output:` row and `DetailFormat`'s `"Output"` tint branch are
+## both retired, so nothing grades this multiplier through BBCode any more. **That is why a `Color`
+## accessor is what survives and there is no `hex_for_output` twin**: the head is built out of
+## `Label`s, which take an `add_theme_color_override`, not a `[color=…]` tag. Below full it grades
+## ink → amber → red as discontent bites harder. Distinct from the morale/food palette: near-full
+## output reads neutral ink (not green) — it's a productivity note, not a "good".
+static func color_for_output(o: float) -> Color:
 	_ensure_loaded()
 	if o < _critical_output:
-		return HudStyle.DANGER_HEX
+		return HudStyle.DANGER
 	if o < _warn_output:
-		return HudStyle.WARN_HEX
-	return HudStyle.INK_HEX
+		return HudStyle.WARN
+	return HudStyle.INK
 
 ## Minimum |per-turn morale contribution| worth listing in the itemized breakdown.
 static func morale_breakdown_epsilon() -> float:
 	_ensure_loaded()
 	return _morale_breakdown_epsilon
 
-## Fertility-multiplier tint for the Growth readout. Mirrors `hex_for_output`'s ink -> amber -> red
+## Fertility-multiplier tint for the Growth readout. Mirrors `color_for_output`'s ink -> amber -> red
 ## grading rather than the morale/food green palette: a band at or above its normal birth rate is
 ## simply normal, not a "good", so neutral ink is the top bucket even at 150%.
 static func hex_for_fertility(f: float) -> String:

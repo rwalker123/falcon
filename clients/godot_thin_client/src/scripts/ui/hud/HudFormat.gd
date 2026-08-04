@@ -38,6 +38,11 @@ const PANEL_EXPEDITION_SCOUT_GLYPH := "⚑"
 const PANEL_EXPEDITION_HUNT_GLYPH := "🏹"
 ## Positional band names ("Band 1", "Band 2", …), matching the roster's numbering.
 const BAND_DISPLAY_NAME_FORMAT := "Band %d"
+## The band's hex coordinates in the Band/City panel HEADER, beside its stage word — the header's
+## other word is `BAND_DISPLAY_NAME_FORMAT` above, so the pair lives together. Coordinates are the
+## band's IDENTITY ("which one am I looking at"), not a vital, which is why they read as a bare
+## parenthesised pair here rather than as a labelled `Position:` row in the band zone's vitals.
+const BAND_HEADER_POSITION_FORMAT := "(%d, %d)"
 
 ## The food-module display names. This table came here WITH `food_module_label`, its only reader —
 ## the words belong to the vocabulary layer, not to the compose builders that print them.

@@ -19,7 +19,15 @@ Read the issue and its linked `docs/plan_*.md` spec so you understand the work b
    then create it with `EnterWorktree` (branches fresh off `origin/main`). Run every
    build/edit/commit from the worktree root — confirm with `git rev-parse --show-toplevel`
    before builds or commits (see CLAUDE.md → Working from a Git Worktree).
-4. Draft the PR body you will open the PR with, including `Closes #<NUM>` so the merge
+4. **Ask the user to name the session after the issue.** With several sessions in flight,
+   a derived name (`falcon-3f`) says nothing about which task it is. `/rename` is a slash
+   command the agent cannot invoke, so emit a one-line message with the exact command to
+   paste:
+
+   > Name this session: `/rename #<NUM> <short title>`
+
+   Keep the short title to a few words from the issue title, not the whole thing.
+5. Draft the PR body you will open the PR with, including `Closes #<NUM>` so the merge
    auto-closes the issue and moves it to Done.
 
 ## Git ownership — READ THIS
@@ -32,8 +40,9 @@ Read the issue and its linked `docs/plan_*.md` spec so you understand the work b
 - Stage only the specific files you changed, by explicit path (never `git add -A`/`.`/`<dir>`).
 
 ## Report
-Issue set In Progress + assigned; the worktree/branch name created; the draft PR body (and
-the PR URL once opened). A short summary of what the work entails from the spec is helpful.
+Issue set In Progress + assigned; the worktree/branch name created; the session name to set
+(step 4); the draft PR body (and the PR URL once opened). A short summary of what the work
+entails from the spec is helpful.
 
 ## Notes
 - Merging PRs is the human's job — commit, push, and open, but never merge.

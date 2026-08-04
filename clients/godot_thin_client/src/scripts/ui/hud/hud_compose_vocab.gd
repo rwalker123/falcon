@@ -634,6 +634,13 @@ const COMPOSE_QUARRY_TOOLTIP_FORMAT := "%s (%d, %d)\nClick to choose a different
 
 const COMPOSE_QUARRY_LABEL_FORMAT := "%s %s"
 
+# The picked quarry's face carries the species' bundled ART where there is any (issue #439), as the
+# Button's own `icon` rather than a glyph in its text. The source PNGs are 256px, which a Button
+# would otherwise reserve in full and blow the compose row's width apart, so the icon is capped
+# through the stock `icon_max_width` theme constant — sized to sit with the button's label rather
+# than to be read on its own, the row already naming the herd in words beside it.
+const COMPOSE_QUARRY_ICON_MAX_WIDTH := 20
+
 ## The refusal when the player picks a herd the band can already work from home. The hunt_reach split
 ## is a rule the map does not spell out, so the refusal is where it gets taught — it names the herd,
 ## the distance, the reach that binds and the local alternative.

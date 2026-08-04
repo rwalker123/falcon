@@ -507,8 +507,13 @@ down at full MSY every turn (issue #427). The same take now feeds all three acco
   nowhere to put it hands out animal feed nobody bid for. So an **uncommitted** patch's `FODDER`
   credit is gated on the faction knowing **Foddering** (2007, the same gate the pen's draw reads), and
   the gate lives at the **credit site in `systems/labor.rs`** so `forage.rs` stays free of knowledge
-  lookups and the vector stays commodity-generic. Rungs 2 and 3 are **ungated**: committing a patch to
-  `hay_grass` *is* the bid.
+  lookups and the vector stays commodity-generic. **A COMMITTED patch is ungated, and the predicate is
+  the COMMITMENT rather than the rung** — `patch.species.is_some() || knows(…, FODDERING)` — so the gate
+  lifts on the first turn of a `Cultivate`/`Sow` build, while the patch still stands at rung 1 and still
+  converts at the wild basket's rate. That is the rationale working, not an off-by-one: committing a
+  patch to `hay_grass` *is* the bid, and the bid is placed when the crew starts, not when the meter
+  fills. Reading this as "rungs 2 and 3 are ungated" is narrower than the code and mis-states which
+  turn the credit begins.
   - **Both halves of the fodder answer are on the wire** (#485). The rate seam publishes what the
     **land** pays — `ForagePatchState.fodderPerBiomass`, commodity-generic and knowledge-blind, as the
     gate's placement at the consumer requires — and the **capability** rides
@@ -521,6 +526,11 @@ down at full MSY every turn (issue #427). The same take now feeds all three acco
     the pen's hay draw, the pen's `K` fodder term, and this wild credit. **What that costs the capture
     is stated where the capture is edited** — `.claude/rules/core_sim/yield-forecast.md`, which owns
     `core_sim/src/snapshot/**`, not this file.
+  - **The CLIENT reads the same predicate, and it is the commitment there too.**
+    `RungGates.wild_fodder_reason` tests the patch's PUBLISHED `committed_species`, never the composed
+    improvement — so the lock lifts on exactly the turn the sim's does, and a rung the player has
+    ticked but not yet committed still reads as refused. Keying the client on the RUNG would have shown
+    a refusal through the whole build while the sim was already paying.
 - **Pinned by `core_sim/tests/forage_tended_vector.rs`**: the #427 grapevine-under-Sustain regression, hay
   crediting `FODDER`, a staple keeping its food *and* gaining its token trade, the wild `Deplete` sale
   unchanged, no double credit under `Deplete`, and `Deplete > Sustain` on the same tended cash crop. Five
