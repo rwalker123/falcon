@@ -20,8 +20,8 @@ extends RefCounted
 ## rows, was retired in the same pass (those rows printed the faction stockpile too).
 
 # --- Block-glyph meter widths (the top-bar strip's own display constants) ---
-# The Sedentarization meter width. The knowledge strip runs NARROWER because it carries four tracks on
-# one top-bar line — at the standard width the line overflowed and clipped its last track off-screen.
+# The Sedentarization meter width. The knowledge strip runs NARROWER because it carries several tracks
+# per top-bar line — at the standard width the line overflowed and clipped its last track off-screen.
 const METER_BAR_CELLS := 10
 const KNOWLEDGE_METER_CELLS := 5
 
@@ -37,7 +37,7 @@ const DISCOVERIES_UNKNOWN_GLYPH := "◇"
 const DISCOVERIES_STRIP_SEPARATION := 6
 
 # --- Intensification knowledge strip ---
-# Separator between the four knowledge tracks in the top-bar intensification readout.
+# Separator between the knowledge tracks in the top-bar intensification readout.
 const INTENSIFICATION_SEGMENT_SEP := "  ·  "
 # Leads the top-bar knowledge strip. This strip is the FACTION half of the two-meter split (§4.1) —
 # what your PEOPLE have learned, permanently, from cumulative practice — as opposed to the per-source
@@ -54,12 +54,17 @@ const KNOWLEDGE_STRIP_TRACKS_PER_LINE := 2
 const KNOWLEDGE_KNOWN_BADGE := "✔"
 # The player-facing name of each track, from the manual's vocabulary (§2a is authoritative). Also the
 # order the top-bar knowledge strip renders them in: each web's own ladder, bottom rung first, so the
-# strip reads as two ladders climbing rather than four unrelated numbers.
+# strip reads as two ladders climbing rather than a list of unrelated numbers.
+## **`foddering` COMES LAST AND IS NOT A RUNG TRANSITION.** The four above are one per
+## rung-transition; this one is the capability the PEN rung teaches, so it reads as the animal
+## ladder's continuation rather than as a sixth rung — which is exactly where the strip's order puts
+## it, directly after `penning`.
 const KNOWLEDGE_TRACK_LABELS := {
 	"cultivation": "Cultivation",
 	"seed_selection": "Seed Selection",
 	"herding": "Herding",
 	"penning": "Penning",
+	"foddering": "Foddering",
 }
 # Command-feed nudge fired ONCE when a track completes: the rung it unlocks is a new verb the player
 # has never seen, so learning the discovery has to say what it bought — and, since the verb is only
@@ -69,6 +74,7 @@ const KNOWLEDGE_UNLOCK_LABELS := {
 	"seed_selection": "Seed Selection learned",
 	"herding": "Herding learned",
 	"penning": "Penning learned",
+	"foddering": "Foddering learned",
 }
 # NOTE: `herding` used to read "The Corral policy is now available on domesticated herds." Both
 # halves were wrong after the §4.3 reshuffle — Herding gates **Tame** (rung 2) and it is **Penning**
@@ -78,6 +84,10 @@ const KNOWLEDGE_UNLOCK_NOTES := {
 	"seed_selection": "The Sow policy is now available — but only on rich, well-watered ground.",
 	"herding": "The Tame policy is now available on wild herds that can be domesticated.",
 	"penning": "The Corral policy is now available on herds you have tamed.",
+	# The one note that names no new VERB, because this discovery unlocks none: it is what keeping a
+	# pen taught your people, and what it buys is an account they could not bank before. Said in the
+	# siblings' voice — what the capability bought, and where it now lands.
+	"foddering": "Hay you gather now goes into the fodder store and feeds your pens.",
 }
 
 # --- Top-bar label nodes (handed in by HudLayer) ---
@@ -311,9 +321,11 @@ func _discoveries_glyph_label(entry: Dictionary, site_name: String) -> Label:
 ## picker (`RungGates.hunt_gates` / `forage_gates`), which names the knowledge, its live
 ## percent, and the practice that fills it. That line is what teaches the ladder.
 ##
-## All FOUR tracks render (slice 4 added Seed Selection + Penning), in `KNOWLEDGE_TRACK_LABELS` order
-## — each web's ladder bottom-rung-first — so the strip reads as two ladders climbing rather than
-## four unrelated numbers. A track is hidden until the faction begins learning it (the snapshot row is
+## All FIVE tracks render (slice 4 added Seed Selection + Penning; Foddering came after them and is
+## the one that gates a CAPABILITY rather than a rung), in `KNOWLEDGE_TRACK_LABELS` order — each web's
+## ladder bottom-rung-first, Foddering trailing the animal one it is taught by — so the strip reads as
+## two ladders climbing rather than a list of
+## unrelated numbers. A track is hidden until the faction begins learning it (the snapshot row is
 ## sparse, and an unstarted rung is noise); a completed track reads "✔ known" (SIGNAL) not a full bar.
 func update_intensification(intensification_variant: Variant) -> void:
 	_ingest_intensification(intensification_variant)
@@ -334,7 +346,7 @@ func update_intensification(intensification_variant: Variant) -> void:
 	intensification_label.visible = true
 	# The prefix is what makes this strip read as YOUR PEOPLE'S SKILL rather than as a stat of
 	# whatever is currently selected — the one line of copy carrying the §4.1 distinction in the HUD.
-	# Break the tracks into rows of KNOWLEDGE_STRIP_TRACKS_PER_LINE so a fourth (or future fifth) track
+	# Break the tracks into rows of KNOWLEDGE_STRIP_TRACKS_PER_LINE so the fifth (or any later) track
 	# can NEVER run off the right edge: the strip lives in a content-sized top-bar block, so a single
 	# long line just widens the block until it clips (the Penning playtest report) — autowrap can't
 	# engage without a bounded width. Explicit rows bound each line regardless of window width. The
@@ -405,7 +417,7 @@ func faction_knowledge(faction: int, track: String) -> float:
 
 ## The WHOLE `{track: progress}` row for a faction — the value `faction_knowledge` reads one key out
 ## of, and the shape `RungGates` takes as its `knowledge` parameter. Public so a gate caller threads
-## the row in ONCE instead of calling `faction_knowledge` per track (four tracks × two webs), and so
+## the row in ONCE instead of calling `faction_knowledge` per track (five tracks × two webs), and so
 ## the map's mark model can be derived against the same value the compose sheet gates on.
 ##
 ## Returned BY REFERENCE, matching this HUD's accessor convention. Every reader is read-only; the

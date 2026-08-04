@@ -520,5 +520,32 @@ decode guard still exercises the decode path for it — that fixture is **synthe
 (`xtask/src/decode_fixture.rs` builds it, not the sim), so its golden is independent of what the
 capture publishes.
 
+### `IntensificationKnowledgeState` publishes a CAPABILITY beside its four rung gates
+
+`snapshot_intensification_knowledge` emits five meters, and the fifth is a different kind of thing.
+Cultivation / Seed Selection / Herding / Penning are one per **rung transition** — a rung waits on
+each. **`foddering` (2007) is a capability**: no rung waits on it, the pen rung *teaches* it
+(`intensification_ladder.json`, corral's `earns_knowledge`), and what it unlocks is every fodder seam
+a faction has — the pen's hay draw, the pen's `K` fodder term, and the **wild** forage patch's
+`FODDER` credit in `systems/labor.rs`. The design ruling behind that credit gate is
+`.claude/rules/core_sim/flora.md` → "Wild fodder is gated at the CONSUMER".
+
+**It is published because a rate alone cannot answer the question the client is asking.**
+`ForagePatchState.fodderPerBiomass` states what the **land** pays and is deliberately knowledge-blind
+(the gate lives at the credit site, so the rate seam stays commodity-generic). Without the capability
+beside it, a viewer holding a patch row cannot tell a **refused** fodder credit — real hay, no
+Foddering — from an **absent** one, and composes an account the sim will discard. That is issue #485.
+
+> **`foddering` must stay in this function's all-zero skip**, and it is the one meter there that does
+> not fall out of a lower rung. The four gates chain (you cannot hold Penning without Herding), so
+> dropping any one of them from the condition changes nothing; dropping `foddering` silently loses the
+> row for a faction whose only ladder progress is Foddering. Pinned by
+> `snapshot_intensification_knowledge_reports_foddering_on_its_own`.
+
+**Appended last, after `penning`.** The table is append-only, and the field's Rust struct, codec entry
+and capture all read `foddering`; `sim_schema/src/lib.rs`'s roundtrip asserts on the **decoded**
+`fb::IntensificationKnowledgeState::foddering()` rather than the in-process struct, because a field
+that never reached the codec still passes an in-process assertion.
+
 ---
 

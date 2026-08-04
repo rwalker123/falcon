@@ -428,3 +428,27 @@ paths:
   `Hud._tile_terrain_lines` SKIPS the Climate row rather than inventing a threshold (`band_for`
   returns `BAND_UNKNOWN "—"`). The row is **informational** — neutral ink, no HEALTHY/WARN/DANGER
   tint, so it doesn't overload the Habitability row's warning semantics.
+
+## The knowledge strip's FIFTH track is a capability, not a rung transition
+
+`IntensificationKnowledgeState.foddering` rides beside the ladder's four rung-transition tracks and
+is a different kind of thing: **no rung waits on it**. The other four are one per transition
+(`wild --cultivation--> tended --seed_selection--> field`,
+`wild --herding--> pastoral --penning--> pen`), so the list reads as the ladder itself; Foddering is
+what the **pen rung teaches** (the corral rung's `earns_knowledge`), and what it buys is every fodder
+seam a faction has — the pen's hay draw, the pen's `K` fodder term, and the **wild** forage patch's
+fodder credit.
+
+- **It renders LAST**, after `penning`, so it reads as the animal ladder's continuation rather than
+  as a sixth rung of anything. `KNOWLEDGE_TRACK_LABELS` is both the label table and the render order,
+  and `_ingest_intensification` rebuilds each faction's row from that table alone — so adding a track
+  is a label entry plus a decoder field, never an edit to the ingest.
+- **The strip needed no layout work**, and that was verified in a rendered frame rather than assumed:
+  it already wrapped at `KNOWLEDGE_STRIP_TRACKS_PER_LINE` (2), so the fifth track opens a third row
+  (`forage_fodder_known`, where every track is non-zero at once).
+- **Its unlock note names no new VERB**, because this discovery unlocks none. The other four notes say
+  which policy became available; this one says what the capability BOUGHT — *"Hay you gather now goes
+  into the fodder store and feeds your pens."*
+- The gate reason it produces is the compose sheet's, not the strip's:
+  `RungGates.wild_fodder_reason`, in `labor-ui.md` → "The FODDER account can be real and unbankable at
+  once".

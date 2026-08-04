@@ -210,6 +210,49 @@ mod tests {
         assert!((patch.fodderPerBiomass() - PATCH_FODDER_RATE).abs() < 1e-6);
     }
 
+    /// **The FODDER CAPABILITY rides the wire beside the fodder RATE.** `fodderPerBiomass` (above)
+    /// states what the *land* pays; `IntensificationKnowledgeState.foddering` states whether *this
+    /// faction* may bank it — the wild forage fodder credit is gated on the Foddering discovery
+    /// (`core_sim/src/systems/labor.rs`), so without this field a client composes a hay account the
+    /// sim will refuse. Encode → decode through the generated reader, because a struct field that
+    /// never reached the codec would still pass an in-process assertion.
+    #[test]
+    fn the_foddering_capability_rides_the_wire_beside_the_fodder_rate() {
+        /// Partway to Foddering — a learning meter, so a bool would lose the reading.
+        const FODDERING_PROGRESS: f32 = 0.75;
+        /// A known rung-gate beside it, so the appended slot cannot be read off a neighbour's value.
+        const PENNING_PROGRESS: f32 = 1.0;
+
+        let snapshot = WorldSnapshot {
+            intensification_knowledge: vec![IntensificationKnowledgeState {
+                faction: 1,
+                penning: PENNING_PROGRESS,
+                foddering: FODDERING_PROGRESS,
+                ..Default::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("snapshot decodes");
+        let knowledge = envelope
+            .payload_as_snapshot()
+            .expect("snapshot payload")
+            .subsistence()
+            .expect("subsistence section present")
+            .intensificationKnowledge()
+            .expect("intensification knowledge present")
+            .get(0);
+
+        assert_eq!(knowledge.faction(), 1);
+        assert!((knowledge.penning() - PENNING_PROGRESS).abs() < 1e-6);
+        assert!(
+            (knowledge.foddering() - FODDERING_PROGRESS).abs() < 1e-6,
+            "the fodder capability must cross verbatim: {}",
+            knowledge.foddering()
+        );
+    }
+
     /// **The per-worker BIOMASS throughput crosses the wire, on both food webs — and it survives on
     /// exactly the sources where the client's old derivation dies.**
     ///

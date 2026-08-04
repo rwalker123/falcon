@@ -514,6 +514,23 @@ down at full MSY every turn (issue #427). The same take now feeds all three acco
   patch to `hay_grass` *is* the bid, and the bid is placed when the crew starts, not when the meter
   fills. Reading this as "rungs 2 and 3 are ungated" is narrower than the code and mis-states which
   turn the credit begins.
+  - **Both halves of the fodder answer are on the wire** (#485). The rate seam publishes what the
+    **land** pays — `ForagePatchState.fodderPerBiomass`, commodity-generic and knowledge-blind, as the
+    gate's placement at the consumer requires — and the **capability** rides
+    `IntensificationKnowledgeState.foddering`, the faction's 0..1 progress on discovery 2007, appended
+    after `penning`. So a viewer holding a patch row and its faction's knowledge row can tell a
+    **refused** fodder credit (positive rate, no Foddering) from an **absent** one (a patch whose
+    basket grows no hay), which the rate alone cannot distinguish. `foddering` is the one field on that
+    table that is **not** a rung-transition gate: no rung waits on it, the pen rung *teaches* it
+    (`intensification_ladder.json`, corral's `earns_knowledge`), and it gates all three fodder seams —
+    the pen's hay draw, the pen's `K` fodder term, and this wild credit. **What that costs the capture
+    is stated where the capture is edited** — `.claude/rules/core_sim/yield-forecast.md`, which owns
+    `core_sim/src/snapshot/**`, not this file.
+  - **The CLIENT reads the same predicate, and it is the commitment there too.**
+    `RungGates.wild_fodder_reason` tests the patch's PUBLISHED `committed_species`, never the composed
+    improvement — so the lock lifts on exactly the turn the sim's does, and a rung the player has
+    ticked but not yet committed still reads as refused. Keying the client on the RUNG would have shown
+    a refusal through the whole build while the sim was already paying.
 - **Pinned by `core_sim/tests/forage_tended_vector.rs`**: the #427 grapevine-under-Sustain regression, hay
   crediting `FODDER`, a staple keeping its food *and* gaining its token trade, the wild `Deplete` sale
   unchanged, no double credit under `Deplete`, and `Deplete > Sustain` on the same tended cash crop. Five
