@@ -68,6 +68,13 @@ fn spawn_world() -> App {
     app.world.insert_resource(HerdTelemetry::default());
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(FaunaConfigHandle::default());
+    // **This harness is a deterministic pin, so the retreat stage is held at its identity.**
+    // Slice 7 authored a non-zero `combat.wariness` across the roster
+    // (`docs/plan_hunt_through_combat.md` §3.1); `FaunaConfig::without_retreat` carries the whole
+    // reasoning for why the pre-existing suite neutralises it rather than re-baselining.
+    app.world
+        .resource_mut::<FaunaConfigHandle>()
+        .hold_wariness_at_zero();
     app.world.insert_resource(LaborConfigHandle::default());
     app.world
         .insert_resource(core_sim::FloraConfigHandle::default());

@@ -209,7 +209,9 @@ branches on mission:
 >   of zeros for the two world terms a projection lacks: stable and reproducible, and still wrong in
 >   *kind* — it drew a **sample** and presented it as the answer, so the moment a stochastic stage was
 >   authored the preview would report one draw while the take paid another, indistinguishably. At the
->   shipped `wariness 0` / `hit_chance 1.0` both are bit-identical, so no raid number moved; see
+>   `wariness 0` / `hit_chance 1.0` it landed on, both were bit-identical, so no raid number moved —
+>   and once slice 7 authored the roster's wariness the raid preview became a genuine **expectation**
+>   rather than a sample, which is exactly the promise the retired seed could not have kept. See
 >   `yield-forecast.md` → "THE INVARIANT IS RESTATED".
 > - **The take brings home a PARTIAL when it must, and wastes the rest — reconciled with the band.**
 >   The party's processing throughput (`workers × per_worker_biomass_capacity`) is banked onto the herd's

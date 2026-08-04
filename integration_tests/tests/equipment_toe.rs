@@ -23,9 +23,9 @@
 use bevy::{math::UVec2, prelude::Entity};
 use core_sim::{
     available_workers, build_headless_app, run_turn, BandEquipment, CommandEventKind,
-    CommandEventLog, CreaturesConfig, EquipmentConfig, ForageRegistry, Herd, HerdRegistry,
-    LaborAllocation, LaborAssignment, LaborConfig, LaborTarget, PopulationCohort, SimulationConfig,
-    SizeClass, SnapshotHistory, Tile,
+    CommandEventLog, CreaturesConfig, EquipmentConfig, FaunaConfigHandle, ForageRegistry, Herd,
+    HerdRegistry, LaborAllocation, LaborAssignment, LaborConfig, LaborTarget, PopulationCohort,
+    SimulationConfig, SizeClass, SnapshotHistory, Tile,
 };
 use sim_schema::state::PopulationCohortState;
 
@@ -172,6 +172,14 @@ fn scouting_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
 fn booted_band() -> (bevy::prelude::App, Entity, u32, UVec2) {
     let mut app = build_headless_app();
     app.world.resource_mut::<SimulationConfig>().map_seed = SEED;
+    // **This suite pins the KIT, so the retreat stage is held at its identity.** Its hunt cases
+    // compare two worlds that differ only in equipment; slice 7's authored `combat.wariness`
+    // (`docs/plan_hunt_through_combat.md` §3.1) makes each world draw its own retreat, and a
+    // "sledless hauls strictly less" ordering then turns on which side drew better. See
+    // `FaunaConfig::without_retreat`.
+    app.world
+        .resource_mut::<FaunaConfigHandle>()
+        .hold_wariness_at_zero();
     app.update();
 
     let (band, tile_entity, workers) = {

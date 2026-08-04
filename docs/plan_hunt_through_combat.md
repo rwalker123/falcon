@@ -208,6 +208,47 @@ never moves. That keeps species values reproducible and the field's two halves c
 consumed, and the outcome is the deterministic one. That is what keeps every existing yield test
 pinning the numbers it pins today (§6).
 
+### 3.1 Values — SETTLED
+
+Authored on `combat.wariness`, roster-wide, in slice 7. Read each row against §4.2's **"survives
+by"** column: a species leaning on evasion belongs above one leaning on durability, defense or
+ferocity.
+
+| species | wariness | survives by (§4.2) | | species | wariness | survives by (§4.2) |
+|---|---|---|---|---|---|---|
+| mammoth | **0.10** | fortress + fights back | | steppe runner | **0.60** | bulk |
+| aurochs | **0.20** | soak + aggression | | forest grouse | **0.60** | wariness |
+| boar | **0.25** | ferocity alone | | crag goat | **0.60** | terrain |
+| seal | **0.35** | nothing | | deer | **0.65** | wariness |
+| river fish | **0.40** | numbers | | fowl | **0.65** | nothing |
+| reindeer | **0.45** | nothing much | | alpine ibex | **0.70** | terrain |
+| marsh grazer | **0.50** | bulk | | wolf | **0.70** | evasion + ferocity |
+| wild elk | **0.50** | bulk | | rabbit | **0.75** | wariness + breeding |
+| wild sheep | **0.50** | wariness | | snow hare | **0.75** | wariness |
+| wild horse | **0.55** | speed | | gazelle | **0.85** | wariness alone |
+
+Three things the ordering is *meant* to say, and which a re-tune must not quietly undo:
+
+- **Mammoth is lowest because it stands and fights.** Its defences are hide and ferocity (§4.2), not
+  absence; a mammoth that fled would have no reason to carry `defense 12`.
+- **Gazelle is highest because evasion is all it has.** §4.2 lists it as surviving by *wariness
+  alone* — frail, fast, `durability 8`. It is the row the field exists for.
+- **The pen small game clusters high** — rabbit and snow hare at `0.75`, fowl and grouse at
+  `0.60`–`0.65`. A warren that scatters is the second half of §2.1's pressure toward penning: their
+  ceilings are already the worst on the roster, and now the take you *do* get is uncertain.
+
+**No row ships `0`, and none ships `1.0`.** A species at `1.0` would be unhuntable — every engaged
+animal breaks off at every headcount and every weapon tier, which no fight could answer. `0` is
+reserved for the identity path (a test holding a species deterministic, §6.1); validation bounds the
+field finite in `[0, 1]` either way.
+
+**Three rows sit in tension with §4.2's column, deliberately, and are the first place to look on a
+retune.** *Wild sheep* is labelled "survives by wariness" and sits at the median `0.50`, level with
+two bulk grazers — it reads as a flock animal that is watchful but not fast. *Fowl* ("nothing") is
+warier than *forest grouse* ("wariness"), which the small-game cluster's floor outranks the column.
+*Steppe runner* is a bulk grazer at `0.60`, `0.10` above its combat-identical twins (marsh grazer and
+wild elk share its `defense 3` / `durability 60`) — a runner runs, but §4.2 does not say so.
+
 ---
 
 ## 4. The fight
@@ -601,11 +642,27 @@ thing twice.
 
 ## 6. Determinism, and what the player is told
 
-### 6.1 Existing tests are unaffected
+### 6.1 Existing tests hold wariness at `0` — SETTLED
 
-`forecast == actual` is a hard invariant here, and wariness does not challenge it: at wariness `0` the
-retreat stage is an identity, so every existing yield test resolves the same numbers it resolves
-today. Range behaviour arrives with **new** tests against species that carry a non-zero value.
+At wariness `0` the retreat stage is an exact identity, so an existing yield test resolves the same
+numbers it always did. Through slices 1–6 that was free, because the roster shipped `0`; **slice 7
+authored a real value on every species, and the existing suite pins the `0` explicitly instead**
+(`FaunaConfig::without_retreat`, the shared spelling of `hunt_yield_vector::steady_quarry`'s move for
+`engage_rate` and `defense`).
+
+**That is a decision, not a convenience, and the alternative was worse.** The pre-existing suite is
+this arc's deterministic regression net; a test that carries variance can no longer tell a real
+regression from a bad draw, which is the one thing it exists to do. Re-baselining those tests against
+a stochastic take — or pinning seeds until they went green — would have retired the net to make a
+number match. So the variance lives in exactly one file, `core_sim/tests/hunt_wariness.rs`, which owns
+the whole stochastic surface: the band's containment, the ordering, the hunter-turn cost, and the
+surviving zero identity.
+
+Eleven suites needed the pin, and what each was measuring says why: the floor probe
+(`forage::stance_probe`) asserts monotonicity in the floor; `hunt_yield_vector` measures the yield
+*vector*; `hunt_fight` pins the fight's exact arithmetic; `expedition_hunt` compares a raid against a
+forecast; `equipment_toe` compares two worlds that differ only in kit. None of them is about the
+retreat, and each would have started reporting one instead.
 
 ### 6.2 Seed per event, never from a shared stream
 
@@ -647,10 +704,12 @@ turn 40, so the risk the range exists to communicate would never actually materi
 could *learn* which pairings roll well — the spreadsheet §4.7 says variance exists to prevent. It
 also contradicts §6.2, whose event is `(herd, tick, party)`: a tick-free seed is not per-event.
 
-**It ships degenerate, and that is the point.** `wariness` is `0` across the roster and `hit_chance`
-is `1.0`, so both binomials take their exact identities at every quantile, the range is a point, and
-**no number in the game moved** when it landed — the provable-identity shape slice 2 used, applied to
-the readout. Slice 7 authors wariness and the range becomes real.
+**It shipped degenerate, and that was the point.** `wariness` was `0` across the roster and
+`hit_chance` is `1.0`, so both binomials took their exact identities at every quantile, the range was
+a point, and **no number in the game moved** when it landed — the provable-identity shape slice 2
+used, applied to the readout. **Slice 7 authored the wariness and the band became real on the animal
+web, with no further client work.** It stays a point wherever nothing is stochastic: the whole plant
+web, a pen, every resolved row, and a species held at `wariness 0` by config.
 
 The width is `combat_config.forecast_range_sigmas` (**2.0**, ~95% of a normal-approximated binomial)
 and it is a **readout lever**: nothing the sim resolves reads it, so widening the band cannot move an
@@ -781,13 +840,19 @@ Each lands on its own PR.
    the range line, the hunters-per-animal figure (`1 / engageRate`, composed client-side from a term
    already on the wire), and the pre-launch "you cannot win this" line — remain.
 7. **Wariness values authored** across the roster — the first slice with visible retreat behaviour.
+   **LANDED**: §3.1 is the table, and every mechanism it turns on was already built, so the slice
+   changed one config file and the tests around it. Two things went live at once — engaged animals now
+   break off before the fight, and the forecast's range stopped being degenerate on the animal web
+   (the client readout from slice 6 switched on with **no client change**).
 
-   **7 must follow 6, and the order is not a preference.** Authoring wariness makes the take
-   stochastic; until the forecast reports a distribution, `forecast == actual` breaks on the animal
-   web the moment a non-zero value ships. Its second, harder half — that a forecast has no event seed
-   — **is settled in §6.4**: the forecast reports the expectation and the invariant is restated. So
-   slice 7 is now purely an authoring pass: every value it writes turns a point into a real range
-   through machinery that is already live and tested.
+   **7 had to follow 6, and the order was not a preference.** Authoring wariness makes the take
+   stochastic; until the forecast reported a distribution, `forecast == actual` would have broken on
+   the animal web the moment a non-zero value shipped. Its second, harder half — that a forecast has
+   no event seed — is settled in §6.4: the forecast reports the expectation and the invariant is
+   restated.
+
+   **What it cost the test suite is recorded in §6.1**: eleven pre-existing suites now hold wariness
+   at `0` explicitly, because a deterministic regression net that carries variance stops being one.
 
 Slice 2 is deliberately an identity (wariness `0` makes the retreat stage a provable no-op), so its
 review can be about the seam rather than about balance. Slices 1, 3 and 4 all move numbers.

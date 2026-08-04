@@ -4128,11 +4128,13 @@ pub fn forecast_expected_take(
 /// > within `[low, high]`.** Where no stage is stochastic the distribution is degenerate and
 /// > `low == likely == high == the take`, **bit-for-bit**.
 ///
-/// The second sentence is the whole of today's behaviour: `wariness` is `0` across the roster and
-/// `hit_chance` is `1.0`, so both binomials take their exact identities at every quantile and the
-/// range is a point. That degeneracy is not a coincidence to be re-derived at each site — it falls
-/// out of [`animals_that_stay`] and [`crate::combat::attacks_landed_at`] sharing the live path's own
-/// early returns.
+/// **Both sentences are now live.** Slice 7 authored a non-zero `wariness` on every species
+/// (`docs/plan_hunt_through_combat.md` §3.1), so the animal web's band is a real one — the first
+/// sentence — while the **plant** web has no retreat and no fight at all and `hit_chance` is still
+/// `1.0`, so a gather stays a point. That degeneracy is not a coincidence to be re-derived at each
+/// site: it falls out of [`animals_that_stay`] and [`crate::combat::attacks_landed_at`] sharing the
+/// live path's own early returns, which is what keeps a wariness-`0` species (config-only now) and
+/// the whole plant web bit-for-bit exact.
 ///
 /// # Why three evaluations of the take rather than a spread applied to one
 ///
@@ -4996,9 +4998,11 @@ pub fn animals_that_stay(engaged: f32, wariness: f32, draw: HuntDraw) -> f32 {
 ///
 /// So a forecast asks for a **quantile of the distribution the take will draw from** instead:
 /// `sigmas = `[`crate::combat::EXPECTED_STRIKES`] is its point estimate, and `±forecast_range_sigmas`
-/// are the bounds it reports as a range. Where there is no randomness — the shipped
-/// `wariness 0` / `hit_chance 1.0` — every stage takes its exact identity whatever `sigmas` says, so
-/// low, likely and high collapse onto the one number the take pays, **bit-for-bit**.
+/// are the bounds it reports as a range. Where there is no randomness — the plant web, a pen, or a
+/// species held at `wariness 0`, all at the shipped `hit_chance 1.0` — every stage takes its exact
+/// identity whatever `sigmas` says, so low, likely and high collapse onto the one number the take
+/// pays, **bit-for-bit**. On the animal web they no longer do: slice 7's authored `wariness` (§3.1)
+/// is what makes the reported band real.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HuntDraw {
     /// **A live hunt** — draw both stages from this per-event seed (§6.2), never a shared stream, so

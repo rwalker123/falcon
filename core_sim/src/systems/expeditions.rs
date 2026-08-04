@@ -1117,7 +1117,9 @@ pub struct HuntOutcome {
     /// the fight and is not the fight's to know: the resolver is handed the animals that *stayed*.
     pub engaged: f32,
     /// **Animals that broke off before contact** — `engaged − stayed`, the retreat stage's own
-    /// output (§3). `0` across the shipped roster, where `wariness` is `0` everywhere.
+    /// output (§3). Real on every wild hunt since slice 7 authored the roster's `wariness` (§3.1);
+    /// `0` only where the retreat is an identity — a pen, a plant, or a species held at `0` by
+    /// config.
     pub fled: f32,
     /// **Which of the four bounds ended the take** ([`fauna::hunt_take_bound`]) — engagement, the
     /// floor, carry, or the fight.
@@ -1143,7 +1145,7 @@ pub(crate) const NOTHING_ENGAGED: f32 = 0.0;
 /// | token | meaning |
 /// |---|---|
 /// | `engaged` | animals brought into contact (§2) |
-/// | `fled` | of those, how many broke off before contact (§3) — `0` across the shipped roster |
+/// | `fled` | of those, how many broke off before contact (§3) — real since the roster's wariness was authored |
 /// | `killed` | whole animals put down |
 /// | `carried_biomass` / `wasted_biomass` | what came home, and what was left on the range |
 /// | `hunters_killed` / `hunters_wounded` | what it cost the party, fractional as the resolver reports it |
@@ -1506,9 +1508,11 @@ const FIRST_HUNTING_TURN: u32 = 1;
 /// take paid a different one, with no way for a reader to tell them apart.
 ///
 /// A projection cannot know a future tick — that is a fact about time, not a gap to be filled — so
-/// it reads the take's distribution instead. At the shipped `wariness 0` / `hit_chance 1.0` both
-/// stages take their exact identities, so this is bit-identical to what the old seed produced and
-/// every pinned raid number is unchanged.
+/// it reads the take's distribution instead. When it landed, at `wariness 0` / `hit_chance 1.0`, both
+/// stages took their exact identities, so it was bit-identical to what the old seed produced and no
+/// pinned raid number moved. Slice 7 authored the roster's wariness (§3.1), so the retreat half is
+/// now a real distribution and a raid preview quotes its **expectation** — which is precisely the
+/// promise the retired seed could not have kept.
 const RAID_FORECAST_DRAW: fauna::HuntDraw = fauna::HuntDraw::EXPECTED;
 
 /// Forecast a hunting **raid** by simulating it forward turn by turn against the herd's own ecology,

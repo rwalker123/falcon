@@ -40,6 +40,18 @@ const DEER: &str = "Red Deer";
 /// `ferocity 0` — the one-sided engagement of §4.5.
 const RABBIT: &str = "Rabbit Warren";
 
+/// **The shipped roster with the retreat stage held at its identity** ([`FaunaConfig::without_retreat`]).
+///
+/// This file pins the **fight** — the gate, the spillover, the ceiling, the multi-turn wound ledger —
+/// and every one of those is an exact-arithmetic claim. Slice 7 authored a non-zero `combat.wariness`
+/// roster-wide (`docs/plan_hunt_through_combat.md` §3.1), which puts a binomial in front of the fight
+/// and would turn "no headcount of bare hands kills a mammoth" and "the seed cannot move the shipped
+/// take" into statements about a draw. The retreat is a different stage with its own suite
+/// (`hunt_wariness.rs`); here it is held at `0`.
+fn deterministic_fauna() -> std::sync::Arc<FaunaConfig> {
+    std::sync::Arc::new(FaunaConfig::builtin().without_retreat())
+}
+
 /// A herd of `species` fat enough that only the party's own limits can bind.
 fn herd_of(fauna: &FaunaConfig, species: &str) -> Herd {
     let def = fauna
@@ -74,7 +86,7 @@ fn party_at(attack: f32) -> HuntingParty {
 
 /// One turn of a resident band's hunt: the animals killed, and what the fight cost the party.
 fn hunt_once(species: &str, workers: u32, party: &HuntingParty) -> (u32, f32, bool) {
-    let fauna = FaunaConfig::builtin();
+    let fauna = deterministic_fauna();
     let ladder = LadderConfig::builtin();
     let labor = LaborConfig::builtin();
     let mut herd = herd_of(&fauna, species);
@@ -153,7 +165,7 @@ fn a_bare_handed_horde_takes_nothing_over_any_horizon() {
     /// because banking exactly `0` forever is still `0`.
     const HORDE: u32 = 100_000;
 
-    let fauna = FaunaConfig::builtin();
+    let fauna = deterministic_fauna();
     let ladder = LadderConfig::builtin();
     let labor = LaborConfig::builtin();
     let bare = HuntingParty::builtin_unequipped();
@@ -191,7 +203,7 @@ fn a_bare_handed_horde_takes_nothing_over_any_horizon() {
 
 /// Biomass per hunter-turn at a given weapon tier — §4.6's table, measured rather than restated.
 fn biomass_per_hunter(species: &str, workers: u32, attack: f32) -> f32 {
-    let fauna = FaunaConfig::builtin();
+    let fauna = deterministic_fauna();
     let body = fauna
         .species_by_display(species)
         .expect("shipped species")
@@ -247,7 +259,7 @@ fn no_weapon_tier_beats_the_engagement_ceiling() {
     const ABSURD_ATTACK: f32 = 10_000.0;
     const CREW: u32 = 64;
 
-    let fauna = FaunaConfig::builtin();
+    let fauna = deterministic_fauna();
     for (species, def) in fauna.species.iter() {
         let ceiling = def.engage_rate * def.body_mass;
         let mut ever_took = false;
@@ -323,7 +335,7 @@ fn the_kill_rate_responds_to_party_weapon_and_quarry() {
 #[test]
 fn a_fractional_engagement_reaches_one_animal_and_fails_at_the_fight() {
     const TINY_PARTY: u32 = 3;
-    let fauna = FaunaConfig::builtin();
+    let fauna = deterministic_fauna();
     let engage = fauna
         .species_by_display(MAMMOTH)
         .expect("shipped species")
@@ -392,7 +404,7 @@ fn a_harmless_quarry_is_no_battle_but_still_hurts_someone() {
 #[test]
 fn the_baseline_injury_wounds_and_never_kills() {
     const CREW: u32 = 16;
-    let fauna = FaunaConfig::builtin();
+    let fauna = deterministic_fauna();
     let party = HuntingParty::builtin_equipped();
     let harmless = fauna.quarry_fight_for(RABBIT);
     let injured = resolve_hunt_fight(8.0, CREW as f32, &party, &harmless, FIXED_SEED);
@@ -422,7 +434,7 @@ fn the_baseline_injury_wounds_and_never_kills() {
 #[test]
 fn the_baseline_injury_tracks_the_engagement_and_never_dominates_a_real_fight() {
     const CREW: f32 = 16.0;
-    let fauna = FaunaConfig::builtin();
+    let fauna = deterministic_fauna();
     let party = HuntingParty::builtin_equipped();
     let harmless = fauna.quarry_fight_for(RABBIT);
 
@@ -460,7 +472,7 @@ fn the_fast_path_agrees_with_the_full_resolver() {
     /// forbids.
     const CREW: f32 = 2.0;
     const STAYED: f32 = 40.0;
-    let fauna = FaunaConfig::builtin();
+    let fauna = deterministic_fauna();
     let party = HuntingParty::builtin_equipped();
     let harmless = fauna.quarry_fight_for(RABBIT);
     assert_eq!(
@@ -515,7 +527,7 @@ fn a_sub_threshold_party_kills_after_enough_turns() {
     /// rather than an exact tuning.
     const PATIENCE: u32 = 40;
 
-    let fauna = FaunaConfig::builtin();
+    let fauna = deterministic_fauna();
     let ladder = LadderConfig::builtin();
     let labor = LaborConfig::builtin();
     let party = HuntingParty::builtin_equipped();
@@ -584,7 +596,7 @@ fn a_sub_threshold_party_kills_after_enough_turns() {
 #[test]
 fn more_hunters_shorten_the_wait_for_a_sub_threshold_kill() {
     let turns_to_first_kill = |workers: u32| -> u32 {
-        let fauna = FaunaConfig::builtin();
+        let fauna = deterministic_fauna();
         let ladder = LadderConfig::builtin();
         let labor = LaborConfig::builtin();
         let party = HuntingParty::builtin_equipped();
@@ -623,7 +635,7 @@ fn more_hunters_shorten_the_wait_for_a_sub_threshold_kill() {
 /// play.
 #[test]
 fn wounds_decay_out_of_contact_but_not_instantly() {
-    let fauna = FaunaConfig::builtin();
+    let fauna = deterministic_fauna();
     let combat = core_sim::CombatConfig::builtin();
     let body = fauna
         .species_by_display(MAMMOTH)
@@ -684,7 +696,7 @@ fn wounds_decay_out_of_contact_but_not_instantly() {
 /// including for a species that would otherwise be the deadliest fight on the map.
 #[test]
 fn a_pen_has_no_fight_at_all() {
-    let fauna = FaunaConfig::builtin();
+    let fauna = deterministic_fauna();
     let party = HuntingParty::builtin_equipped();
     let mammoth = fauna.quarry_fight_for(MAMMOTH);
     assert!(
@@ -723,7 +735,7 @@ fn a_pen_has_no_fight_at_all() {
 /// consumes no randomness and the property would hold for the wrong reason.
 #[test]
 fn hunt_ordering_does_not_change_outcomes() {
-    let fauna = FaunaConfig::builtin();
+    let fauna = deterministic_fauna();
     let base = HuntingParty::builtin_equipped();
     let party = HuntingParty {
         tuning: core_sim::CombatTuning {
@@ -765,13 +777,18 @@ fn hunt_ordering_does_not_change_outcomes() {
     );
 }
 
-/// **The shipped tuning consumes no randomness at all**, which is what keeps `forecast == actual`
-/// per component an exact identity — and the forecast's reported range a **point**
-/// (`docs/plan_hunt_through_combat.md` §6.4). Pinned directly: the seed cannot move the take.
+/// **The shipped FIGHT consumes no randomness at all** — `hit_chance` is `1.0`, so every strike lands
+/// by identity and the seed cannot move the take (`docs/plan_hunt_through_combat.md` §6.4). It is the
+/// fight's half of what keeps `forecast == actual` an exact identity where nothing else is stochastic.
+///
+/// **The retreat is the other half, and it is no longer inert** — slice 7 authored a real
+/// `combat.wariness`, so the roster's own take *is* seed-dependent now. [`deterministic_fauna`] holds
+/// it at `0` here precisely so this pin keeps measuring `hit_chance` rather than silently becoming a
+/// statement about the retreat draw; `hunt_wariness.rs` asserts the seed-dependence deliberately.
 #[test]
 fn the_shipped_fight_is_seed_independent() {
     const CREW: u32 = 40;
-    let fauna = FaunaConfig::builtin();
+    let fauna = deterministic_fauna();
     let ladder = LadderConfig::builtin();
     let labor = LaborConfig::builtin();
     let party = HuntingParty::builtin_equipped();
@@ -810,7 +827,7 @@ fn the_shipped_fight_is_seed_independent() {
 #[test]
 fn the_escapement_floor_still_bounds_a_party_that_could_take_far_more() {
     const HUGE_CREW: u32 = 500;
-    let fauna = FaunaConfig::builtin();
+    let fauna = deterministic_fauna();
     let ladder = LadderConfig::builtin();
     let labor = LaborConfig::builtin();
     let mut herd = herd_of(&fauna, DEER);

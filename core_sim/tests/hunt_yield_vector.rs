@@ -120,6 +120,13 @@ fn spawn_world() -> App {
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(ForageRegistry::default());
     app.world.insert_resource(FaunaConfigHandle::default());
+    // **This harness is a deterministic pin, so the retreat stage is held at its identity.**
+    // Slice 7 authored a non-zero `combat.wariness` across the roster
+    // (`docs/plan_hunt_through_combat.md` §3.1); `FaunaConfig::without_retreat` carries the whole
+    // reasoning for why the pre-existing suite neutralises it rather than re-baselining.
+    app.world
+        .resource_mut::<FaunaConfigHandle>()
+        .hold_wariness_at_zero();
     app.world.insert_resource(LaborConfigHandle::default());
     app.world.insert_resource(FloraConfigHandle::default());
     app.world.insert_resource(LadderConfigHandle::default());
@@ -487,6 +494,15 @@ const INEDIBLE_SPECIES: &str = "Grey Wolf Pack";
 /// `expedition_hunt::exported_snapshot_fields_reproduce_band_hunt_take` uses.
 fn headless_with_species(display_name: &str) -> (App, String, UVec2) {
     let mut app = build_headless_app();
+    // **This suite measures the yield VECTOR, so the retreat stage is held at its identity** — the
+    // same move [`steady_quarry`] makes for `engage_rate` and `defense`, one field further along.
+    // Slice 7 authored a non-zero `combat.wariness` roster-wide
+    // (`docs/plan_hunt_through_combat.md` §3.1), and a `forecast == actual` pin cannot be read off a
+    // stochastic take at all: the forecast reports the take's *expectation*, so an equality here
+    // would be asserting that one draw equals a mean. See `FaunaConfig::without_retreat`.
+    app.world
+        .resource_mut::<FaunaConfigHandle>()
+        .hold_wariness_at_zero();
     app.update();
     let id = {
         let registry = app.world.resource::<HerdRegistry>();

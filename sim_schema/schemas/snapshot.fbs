@@ -927,9 +927,10 @@ table LaborAssignment {
   //   actualYield is the take's EXPECTATION over the seed, and the take the sim pays lies within
   //   [actualYieldLow, actualYieldHigh].
   // Where nothing is stochastic the distribution is degenerate and low == actual == high, bit-for-
-  // bit. That is the SHIPPED case: wariness is 0 across the roster and hit_chance is 1.0, so every
-  // stage takes its exact identity at every quantile and the range is a point. Render a single
-  // number when low == high; render a range only when they differ.
+  // bit. That is the plant web (no engagement, no retreat, no fight), a pen, and every RESOLVED row.
+  // A WILD HUNT is no longer one of them: the roster's wariness is authored (0.10 mammoth to 0.85
+  // gazelle), so an animal-web pre-commit row carries a real band. Render a single number when
+  // low == high; render a range only when they differ - the rule is unchanged and covers both.
   //
   // A RESOLVED row reports low == actual == high by construction - the take happened, so there is
   // no distribution left. The band is a pre-commit statement.

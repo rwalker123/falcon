@@ -1208,8 +1208,11 @@ impl YieldRange {
     };
 
     /// **A range that is a point** — what a *resolved* row reports (the take happened; there is
-    /// nothing left to be uncertain about), and what a *forecast* row reports on the shipped roster,
-    /// where `wariness` is `0` and `hit_chance` is `1.0` so neither stage draws at all.
+    /// nothing left to be uncertain about), and what a *forecast* row reports wherever no stage is
+    /// stochastic: the whole plant web (no engagement, no retreat, no fight), a pen, and a species
+    /// held at `wariness 0`. Since slice 7 authored the roster's wariness
+    /// (`docs/plan_hunt_through_combat.md` §3.1) a **wild hunt's** forecast is no longer one of
+    /// them.
     pub fn certain(provisions: f32, trade_goods: f32) -> Self {
         Self {
             low: provisions,

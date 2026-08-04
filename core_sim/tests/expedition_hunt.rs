@@ -107,6 +107,13 @@ fn spawn_world() -> App {
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(ForageRegistry::default());
     app.world.insert_resource(FaunaConfigHandle::default());
+    // **This harness is a deterministic pin, so the retreat stage is held at its identity.**
+    // Slice 7 authored a non-zero `combat.wariness` across the roster
+    // (`docs/plan_hunt_through_combat.md` §3.1); `FaunaConfig::without_retreat` carries the whole
+    // reasoning for why the pre-existing suite neutralises it rather than re-baselining.
+    app.world
+        .resource_mut::<FaunaConfigHandle>()
+        .hold_wariness_at_zero();
     app.world.insert_resource(LaborConfigHandle::default());
     app.world
         .insert_resource(core_sim::FloraConfigHandle::default());
@@ -315,6 +322,26 @@ const BOAR_K: f32 = 1433.0;
 const BOAR_BODY: f32 = 50.0;
 const BOAR_R: f32 = 0.10;
 
+/// [`build_headless_app`] with the whole roster's `combat.wariness` held at `0` — the world-driven
+/// twin of [`deterministic_fauna`], for the fixtures that run a real turn instead of calling a pure
+/// helper. See [`FaunaConfig::without_retreat`].
+fn deterministic_headless_app() -> App {
+    let mut app = build_headless_app();
+    app.world
+        .resource_mut::<FaunaConfigHandle>()
+        .hold_wariness_at_zero();
+    app
+}
+
+/// **The shipped roster with the retreat stage held at its identity** — every raid pin in this file
+/// is a deterministic one, and [`FaunaConfig::without_retreat`] carries the whole reasoning for why
+/// slice 7's authored `combat.wariness` (`docs/plan_hunt_through_combat.md` §3.1) is neutralised here
+/// rather than re-baselined. The `hunters_to_bring_one_down` guard above deliberately keeps reading
+/// the **shipped** roster: it asserts a derived crew size against config, which wariness never enters.
+fn deterministic_fauna() -> std::sync::Arc<FaunaConfig> {
+    std::sync::Arc::new(FaunaConfig::builtin().without_retreat())
+}
+
 /// **The party every pure-forecast fixture below fights with** — the shipped, fully-kitted hunter
 /// (`docs/plan_hunt_through_combat.md` §4.8's spear tier). The take resolves through the fight now,
 /// so a raid forecast is quoted for a *party*, and these fixtures mean "an ordinary outfitted one".
@@ -422,7 +449,7 @@ const PARITY_PARTY: u32 = 5;
 /// the answer is the *engagement* bound rather than the carry bound they would share anyway.
 #[test]
 fn a_raid_and_a_resident_band_reach_the_same_animals() {
-    let fauna = FaunaConfig::builtin();
+    let fauna = deterministic_fauna();
     let labor = LaborConfig::builtin();
     let cfg = unbounded_carry_config();
     let per_worker = labor.hunt.per_worker_biomass_capacity;
@@ -499,7 +526,7 @@ fn unbounded_carry_config() -> Arc<ExpeditionConfig> {
 /// the load-bearing claim is the turn count.) Prints the boar numbers.
 #[test]
 fn more_hunters_raid_the_surplus_faster() {
-    let fauna = FaunaConfig::builtin();
+    let fauna = deterministic_fauna();
     let labor = LaborConfig::builtin();
     let cfg = unbounded_carry_config();
     let herd = wild_herd(1010.0, BOAR_K, BOAR_BODY, BOAR_R);
@@ -570,7 +597,7 @@ fn more_hunters_raid_the_surplus_faster() {
 /// the playtest report quotes.
 #[test]
 fn a_second_hunter_raids_more_animals_no_slower() {
-    let fauna = FaunaConfig::builtin();
+    let fauna = deterministic_fauna();
     let labor = LaborConfig::builtin();
     let cfg = ExpeditionConfig::builtin(); // pack = party × per_worker_carry (4 food = 4 boar)
     let herd = wild_herd(1010.0, BOAR_K, BOAR_BODY, BOAR_R);
@@ -638,7 +665,7 @@ fn a_second_hunter_raids_more_animals_no_slower() {
 /// force-partials — a separate regime, covered elsewhere), so this test sweeps the whole-seating range.
 #[test]
 fn animals_delivered_scale_with_the_pack_and_never_over_kill() {
-    let fauna = FaunaConfig::builtin();
+    let fauna = deterministic_fauna();
     let labor = LaborConfig::builtin();
     let cfg = ExpeditionConfig::builtin(); // pack = workers × per_worker_carry (0.8 food/worker)
                                            // Marsh Grazer: body 100 ⇒ food/animal = 100 × 0.02 = 2; a full 6000-K herd stands 3000 (30 animals)
@@ -681,7 +708,7 @@ fn animals_delivered_scale_with_the_pack_and_never_over_kill() {
 /// `K/2` (plus the regrowth it earns along the way).
 #[test]
 fn a_sustain_raid_leaves_about_half_k() {
-    let fauna = FaunaConfig::builtin();
+    let fauna = deterministic_fauna();
     let labor = LaborConfig::builtin();
     let cfg = unbounded_carry_config();
     let herd = wild_herd(BOAR_K, BOAR_K, BOAR_BODY, BOAR_R);
@@ -733,7 +760,7 @@ fn fauna_msy(_fauna: &FaunaConfig, cap: f32, r: f32) -> f32 {
 /// a deeper policy leaves a leaner herd and its raid takes strictly more animals off a full herd.
 #[test]
 fn deeper_policies_raid_deeper() {
-    let fauna = FaunaConfig::builtin();
+    let fauna = deterministic_fauna();
     let labor = LaborConfig::builtin();
     let cfg = unbounded_carry_config();
     let herd = wild_herd(BOAR_K, BOAR_K, BOAR_BODY, BOAR_R);
@@ -775,7 +802,7 @@ fn deeper_policies_raid_deeper() {
 /// honest claim is the cap itself: **more hunters can never take MORE than the herd can spare.**
 #[test]
 fn the_standing_surplus_caps_the_raid() {
-    let fauna = FaunaConfig::builtin();
+    let fauna = deterministic_fauna();
     let labor = LaborConfig::builtin();
     let cfg = unbounded_carry_config();
     let herd = wild_herd(1010.0, BOAR_K, BOAR_BODY, BOAR_R);
@@ -819,7 +846,7 @@ fn the_standing_surplus_caps_the_raid() {
 /// policy's floor delivers **zero** animals (the party would return empty).
 #[test]
 fn a_herd_at_its_floor_has_no_surplus() {
-    let fauna = FaunaConfig::builtin();
+    let fauna = deterministic_fauna();
     let labor = LaborConfig::builtin();
     let cfg = unbounded_carry_config();
     // Exactly at Sustain's K/2 floor → no surplus.
@@ -881,7 +908,7 @@ fn a_herd_at_its_floor_has_no_surplus() {
 /// carryable)`, and a fixture that let the fight bind would stop testing it.
 #[test]
 fn a_small_party_on_a_big_animal_delivers_a_partial_with_waste() {
-    let fauna = FaunaConfig::builtin();
+    let fauna = deterministic_fauna();
     let labor = LaborConfig::builtin();
     let cfg = ExpeditionConfig::builtin(); // pack = workers × per_worker_carry (4 food/worker = 200 biomass)
     const MAMMOTH_BODY: f32 = 800.0; // 16 food; a 1-worker pack (200 biomass) seats 0 whole
@@ -1290,7 +1317,7 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
 /// local-hunt preview is lying, and this test fails.
 #[test]
 fn exported_snapshot_fields_reproduce_band_hunt_take() {
-    let mut app = build_headless_app();
+    let mut app = deterministic_headless_app();
     app.update();
 
     let collapse_fraction = app
@@ -1519,7 +1546,7 @@ fn pin_frozen_full_big_herd(app: &mut App) -> (String, UVec2) {
 /// frozen `K` ⇒ the forecast is exact.)
 #[test]
 fn in_flight_delivery_forecast_matches_a_real_party_run() {
-    let mut app = build_headless_app();
+    let mut app = deterministic_headless_app();
     app.update();
 
     // Carry cap effectively unbounded → the raid completes only when the standing surplus is spent,
@@ -1633,7 +1660,7 @@ fn in_flight_delivery_forecast_matches_a_real_party_run() {
 /// `systems::raid_is_recurring` seam end-to-end through the snapshot.
 #[test]
 fn a_deplete_party_reports_recurring_on_the_wire() {
-    let mut app = build_headless_app();
+    let mut app = deterministic_headless_app();
     app.update();
 
     let (id, herd_pos) = pin_frozen_full_big_herd(&mut app);
@@ -1691,7 +1718,7 @@ fn pin_frozen_boar_herd(app: &mut App, fraction: f32) -> (String, UVec2) {
 /// `initial_larder = carried = 0`, so a disagreement (the live 0) is the bug.
 #[test]
 fn a_far_just_launched_party_projects_the_estimate_delivery() {
-    let mut app = build_headless_app();
+    let mut app = deterministic_headless_app();
     app.update();
 
     let (id, herd_pos) = pin_frozen_boar_herd(&mut app, 0.86);
@@ -1788,7 +1815,7 @@ fn a_far_just_launched_party_projects_the_estimate_delivery() {
 /// not a forecast bug. (Also rules out the "workers == 0" suspect: the party has a full worker count.)
 #[test]
 fn a_lost_target_herd_projects_zero_while_a_healthy_boar_still_estimates_positive() {
-    let mut app = build_headless_app();
+    let mut app = deterministic_headless_app();
     app.update();
 
     // The healthy boar the player is looking at (positive estimates).
@@ -1913,7 +1940,7 @@ fn spawn_home_band_near_herd(
 /// avoid.
 #[test]
 fn a_raid_keeps_hunting_when_the_herd_wanders_near_the_band() {
-    let mut app = build_headless_app();
+    let mut app = deterministic_headless_app();
     app.update();
     app.world
         .insert_resource(ExpeditionConfigHandle::new(drop_off_pack_config()));
@@ -2072,7 +2099,7 @@ const FILL_TARGET_ABOVE_ANY_PACK: u32 = 10_000;
 /// while the payload moved would be no identity at all.
 #[test]
 fn a_fill_target_below_capacity_shortens_the_trip_and_above_it_is_an_identity() {
-    let fauna = FaunaConfig::builtin();
+    let fauna = deterministic_fauna();
     let labor = LaborConfig::builtin();
     let cfg = ExpeditionConfig::builtin();
     let flock = wild_herd_of("Wild Fowl", FOWL_K, FOWL_K, FOWL_BODY, FOWL_R);
@@ -2173,7 +2200,7 @@ fn a_fill_target_below_capacity_shortens_the_trip_and_above_it_is_an_identity() 
 /// invariance half would read as "party size does nothing".
 #[test]
 fn trip_length_responds_to_the_fill_target_but_not_to_party_size_without_one() {
-    let fauna = FaunaConfig::builtin();
+    let fauna = deterministic_fauna();
     let labor = LaborConfig::builtin();
     let cfg = ExpeditionConfig::builtin();
     let flock = wild_herd_of("Wild Fowl", FOWL_K, FOWL_K, FOWL_BODY, FOWL_R);
@@ -2320,7 +2347,7 @@ fn the_exported_bound_names_the_stop_that_ends_the_raid() {
     // (a) FILL-TARGET bound: a full flock the party could raid for 31 turns, told to come home with
     // `SHORT_FILL_TARGET` fowl.
     {
-        let mut app = build_headless_app();
+        let mut app = deterministic_headless_app();
         app.update();
         let (id, herd_pos) =
             pin_frozen_herd(&mut app, "Wild Fowl", FOWL_BODY, FOWL_K, FOWL_K, FOWL_R);
@@ -2359,7 +2386,7 @@ fn the_exported_bound_names_the_stop_that_ends_the_raid() {
     // standing surplus is spent long before any pack fills.
     {
         const NO_REGROWTH: f32 = 0.0;
-        let mut app = build_headless_app();
+        let mut app = deterministic_headless_app();
         app.update();
         let lean = FOWL_K * PEAK_FLOOR * 1.02;
         let (id, herd_pos) =
@@ -2401,7 +2428,7 @@ fn the_exported_bound_names_the_stop_that_ends_the_raid() {
         const WARREN_K: f32 = 2000.0;
         const WARREN_R: f32 = 0.05;
         const LONE_HUNTER: u32 = 1;
-        let mut app = build_headless_app();
+        let mut app = deterministic_headless_app();
         app.update();
         app.world
             .insert_resource(ExpeditionConfigHandle::new(unbounded_carry_config()));
@@ -2449,7 +2476,7 @@ fn the_exported_bound_names_the_stop_that_ends_the_raid() {
 /// client could branch on), and it never claims a target the row was not simulated with.
 #[test]
 fn every_pre_launch_estimate_row_names_an_untargeted_bound() {
-    let mut app = build_headless_app();
+    let mut app = deterministic_headless_app();
     app.update();
     let (id, _) = pin_frozen_herd(&mut app, "Wild Fowl", FOWL_BODY, FOWL_K, FOWL_K, FOWL_R);
     reveal_herds(&mut app, std::slice::from_ref(&id));

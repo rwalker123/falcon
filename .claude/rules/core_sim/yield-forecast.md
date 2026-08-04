@@ -353,10 +353,19 @@ projection* is the sustained MSY. Pinned by
 > > within `SourceYield::range`.** Where no stage is stochastic the distribution is **degenerate** and
 > > `low == actual == high == the take`, bit-for-bit.
 >
-> **The second sentence is the whole of today's behaviour.** `wariness` is `0` across the roster and
-> `hit_chance` is `1.0`, so both binomials take their exact identities at every quantile and the
-> reported range is a **point** — which is why the range could be wired through every forecast path
-> with **no number in the game moving**. Slice 7 authors wariness and the range becomes real.
+> **It landed degenerate and that is why it landed safely.** When slice 6 shipped, `wariness` was `0`
+> across the roster and `hit_chance` was `1.0`, so both binomials took their exact identities at every
+> quantile, the reported range was a **point**, and the band could be wired through every forecast
+> path with **no number in the game moving**.
+>
+> **Slice 7 authored the wariness, and the band is now real on the animal web.** A wild hunt's
+> forecast reports a genuine `low < likely < high`; the **second** sentence still governs everywhere
+> nothing is stochastic — the whole plant web, a pen, and a species held at `wariness 0` by config —
+> and those stay bit-for-bit exact. Because a forecast reports the **expectation**, a `forecast ==
+> actual` equality test on a wild hunt is no longer a meaningful assertion: it would be comparing one
+> draw against a mean. Every pre-existing suite therefore holds the roster at `0` through
+> `FaunaConfig::without_retreat` (the shared spelling of `hunt_yield_vector::steady_quarry`'s move),
+> and the variance is asserted in one place, `core_sim/tests/hunt_wariness.rs`.
 >
 > **The rejected alternative was to make the draw forecast-reproducible** by taking the tick out of
 > `retreat_seed`. It was refused for three reasons, all fatal: the draw would become a per-`(herd,
@@ -400,6 +409,14 @@ projection* is the sustained MSY. Pinned by
 > (`combat::tests::a_certain_hit_chance_has_no_spread_to_quantile`,
 > `fauna::tests::zero_wariness_has_no_spread_for_the_forecast_to_report`), because the wire test reads
 > the take *after* the quantiser, which absorbs a small perturbation.
+>
+> **That file holds the roster at `wariness 0` and states the degenerate half; the LIVE half is
+> `core_sim/tests/hunt_wariness.rs`**, which runs the same containment sweep on the **shipped**
+> config — the exported band widens, contains 400 live takes, and its `likely` tracks their mean —
+> plus the ordering (a warier quarry yields less to the same crew, one field changed on one species so
+> "all else equal" is a fact), the hunter-turns identity (the herd loses exactly what was *killed*,
+> never what fled), and the surviving `wariness 0` identity, which is config-only now and is what
+> every other suite installs.
 
 **Invariant: forecast == actual — no duplicated yield math.** The forecast and the take path read the
 *same* pure helpers, so the UI can never promise a number the sim won't pay:

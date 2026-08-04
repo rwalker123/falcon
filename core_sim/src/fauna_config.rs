@@ -1524,6 +1524,12 @@ const MAX_FRACTION: f32 = 1.0;
 /// best-case sanity check, not an every-species guarantee.
 const PEN_ESCAPEMENT_QUARTERS: f32 = 2.0;
 
+/// **The wariness at which the retreat stage is an exact identity** — no draw, no randomness
+/// consumed, every engaged animal stays (`docs/plan_hunt_through_combat.md` §3). No roster row ships
+/// it; it is what [`FaunaConfig::without_retreat`] installs to keep a deterministic harness
+/// deterministic.
+pub const NO_RETREAT: f32 = 0.0;
+
 impl FaunaConfig {
     pub fn builtin() -> Arc<Self> {
         Arc::new(
@@ -1536,6 +1542,34 @@ impl FaunaConfig {
         let config: FaunaConfig = serde_json::from_str(json)?;
         config.validate()?;
         Ok(config)
+    }
+
+    /// **This roster with every species' `combat.wariness` held at `0`** — the retreat stage
+    /// (`docs/plan_hunt_through_combat.md` §3) reduced to its exact identity, so a hunt take is a
+    /// *deterministic* function of the crew, the floor and the fight again.
+    ///
+    /// # Why a shared helper rather than a per-suite pin
+    ///
+    /// Slice 7 authored a non-zero `wariness` on all 20 species, which makes every take on the
+    /// animal web stochastic. The existing suite is this arc's **deterministic regression net**: a
+    /// test carrying variance can no longer tell a real regression from a draw, which is the one
+    /// thing it exists to do. So every pre-existing harness holds wariness at `0` and keeps pinning
+    /// the numbers it pinned before, and the variance lives *only* in the tests written for it
+    /// (`core_sim/tests/hunt_wariness.rs`).
+    ///
+    /// This is [`crate::fauna::animals_that_stay`]'s zero-identity used as a lever, and it is the
+    /// same move `hunt_yield_vector::steady_quarry` already makes for `engage_rate` and `defense`
+    /// — one more field, hoisted to a shared helper because eleven suites need it and a copy in each
+    /// would drift.
+    ///
+    /// **It is not a general "make the hunt deterministic" switch**: the fight's own draw is
+    /// `combat_config.hit_chance`, which ships at `1.0` and is already an identity.
+    pub fn without_retreat(&self) -> Self {
+        let mut config = self.clone();
+        for def in config.species.values_mut() {
+            def.combat.wariness = NO_RETREAT;
+        }
+        config
     }
 
     pub fn from_file(path: &Path) -> Result<Self, FaunaConfigError> {
@@ -2383,6 +2417,13 @@ impl FaunaConfigHandle {
 
     pub fn replace(&mut self, config: Arc<FaunaConfig>) {
         self.0 = config;
+    }
+
+    /// **Hold the whole roster's `combat.wariness` at `0` in place** — the handle-side spelling of
+    /// [`FaunaConfig::without_retreat`], which is how a harness that already has the world's
+    /// resources in hand keeps its take deterministic in one line.
+    pub fn hold_wariness_at_zero(&mut self) {
+        self.0 = Arc::new(self.0.without_retreat());
     }
 }
 

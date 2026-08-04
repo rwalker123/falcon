@@ -199,6 +199,20 @@ ferocity alone — frail, still costs you people"*. `fauna::hunt_injuries` adds 
   durable; wolf is lighter than a wild sheep and tougher; ibex outlasts a seal at less than half the
   weight. The five small-game rows also carry **`defense 0`**, which is what a bare-handed band can
   hunt and nothing else.
+- **The wariness roster** (`fauna_config.json`, playtest dials, `docs/plan_hunt_through_combat.md`
+  §3.1): gazelle **0.85**, rabbit / snow hare **0.75**, ibex / wolf **0.70**, deer / fowl **0.65**,
+  steppe runner / grouse / crag goat **0.60**, wild horse **0.55**, marsh grazer / elk / wild sheep
+  **0.50**, reindeer **0.45**, catfish **0.40**, seal **0.35**, boar **0.25**, aurochs **0.20**,
+  mammoth **0.10**. **The ordering is the design** and a re-tune must not invert it: the mammoth is
+  lowest because it *stands and fights* (its defences are `defense 12` and `ferocity`, not absence),
+  the gazelle highest because §4.2 lists it as surviving by *wariness alone*, and the pen small game
+  cluster high — a warren that scatters is the second half of the pressure toward penning. **No row
+  ships `0` or `1.0`**: `1.0` would be unhuntable at any headcount or weapon tier, and `0` is the
+  identity path a deterministic test harness installs (`FaunaConfig::without_retreat`), never a
+  species' value. Guard: `hunt_wariness::the_authored_ordering_is_the_one_the_design_states`.
+  **Authoring it made the animal web's take stochastic**, which is why every pre-existing suite pins
+  the roster back to `0` and the variance lives only in `core_sim/tests/hunt_wariness.rs` — see
+  `yield-forecast.md` → "THE INVARIANT IS RESTATED".
 - **The graduated roster** (`fauna_config.json`, playtest dials): mammoth `attack 8 / ferocity 0.9`
   (strong AND fights back → deadly), aurochs `4 / 0.7 / aggression 0.1`, boar `1.5 / 0.6` (cornered
   and mean), steppe/marsh grazer `2.5 / 0.4`, elk `2 / 0.4`, horse `2 / 0.3`, seal `1 / 0.3`, down to
@@ -285,7 +299,12 @@ responds to party, weapon and quarry; a fractional engagement reaches one animal
 resolver; a pen has no fight at all; hunt ordering does not change outcomes at a live sub-1
 `hit_chance`; **a sub-threshold party kills after enough turns**, **more hunters shorten the wait**,
 **wounds decay out of contact but not instantly**, **the baseline injury wounds and never kills**,
-**it tracks the engagement and never dominates a real fight**); `core_sim/tests/predators.rs`
+**it tracks the engagement and never dominates a real fight** — all at a **`wariness 0`** roster, since
+this file pins exact-arithmetic claims about the *fight* and the retreat is a different stage);
+**`core_sim/tests/hunt_wariness.rs`** (the retreat's own suite and the only home of the take's
+variance: the authored ordering's shape, the exported band's containment across 400 live seeds, "a
+wary herd costs hunter-turns and never herd biomass", and the surviving zero identity);
+`core_sim/tests/predators.rs`
 (a mammoth hunt costs working-age lives with a killed/wounded split; a **rabbit** hunt — ferocity 0 —
 costs nobody; ferocity scales hunt-danger; config-validation rejections including ferocity); `core_sim/tests/expedition_hunt.rs`
 (a hunting expedition takes casualties against a mammoth; the `expedition_danger_multiplier` scales

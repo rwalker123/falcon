@@ -178,7 +178,7 @@ pub use fauna_config::{
     load_fauna_config_from_env, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle,
     FaunaConfigMetadata, GrazeConfig, HuntYield, HuntYieldDef, HusbandryCeiling,
     MigratoryAbundanceConfig, ShoreRequirement, SizeClass, SpeciesDef, YieldAccounts,
-    BUILTIN_FAUNA_CONFIG, NO_GRAZE_CAPACITY,
+    BUILTIN_FAUNA_CONFIG, NO_GRAZE_CAPACITY, NO_RETREAT,
 };
 pub use flora_config::{
     load_flora_config_from_env, CultivationCeiling, FloraConfig, FloraConfigHandle,

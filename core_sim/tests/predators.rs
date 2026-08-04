@@ -321,12 +321,11 @@ fn ferocity_scales_the_danger_of_a_hunt() {
 /// of the builtin config. Named because a silent mismatch turns every `is_err()` below into an
 /// assertion that the *unmodified* builtin fails to parse, which it never will; the
 /// `the_rejection_fixtures_still_match_the_shipped_config` guard below is what makes that loud.
-const MAMMOTH_COMBAT_BLOCK: &str =
-    r#""combat": { "attack": 8.0, "defense": 12.0, "durability": 500, "range": "melee" }"#;
+const MAMMOTH_COMBAT_BLOCK: &str = r#""combat": { "attack": 8.0, "defense": 12.0, "durability": 500, "wariness": 0.10, "range": "melee" }"#;
 
 /// The wolf's shipped `combat` block, verbatim — same role, for the carnivore fixtures.
 const WOLF_COMBAT_BLOCK: &str =
-    r#""attack": 3.0, "defense": 3.0, "durability": 20, "range": "melee""#;
+    r#""attack": 3.0, "defense": 3.0, "durability": 20, "wariness": 0.70, "range": "melee""#;
 
 /// **A rejection fixture that no longer matches asserts nothing.** Every `is_err()` below works by
 /// string-replacing a block of the shipped config; if the block is re-authored and the fixture is
@@ -351,7 +350,7 @@ fn fauna_config_rejects_illegitimate_combat_dials() {
     // rejected is a NEGATIVE one, which would hand an attacker free damage.
     let negative_defense = FaunaConfig::from_json_str(&core_sim::BUILTIN_FAUNA_CONFIG.replace(
         MAMMOTH_COMBAT_BLOCK,
-        r#""combat": { "attack": 8.0, "defense": -1.0, "durability": 500, "range": "melee" }"#,
+        r#""combat": { "attack": 8.0, "defense": -1.0, "durability": 500, "wariness": 0.10, "range": "melee" }"#,
     ));
     assert!(
         negative_defense.is_err(),
@@ -364,7 +363,7 @@ fn fauna_config_rejects_illegitimate_combat_dials() {
     // is not "unprotected", it is absent.
     let zero_durability = FaunaConfig::from_json_str(&core_sim::BUILTIN_FAUNA_CONFIG.replace(
         MAMMOTH_COMBAT_BLOCK,
-        r#""combat": { "attack": 8.0, "defense": 12.0, "durability": 0.0, "range": "melee" }"#,
+        r#""combat": { "attack": 8.0, "defense": 12.0, "durability": 0.0, "wariness": 0.10, "range": "melee" }"#,
     ));
     assert!(
         zero_durability.is_err(),
@@ -374,12 +373,32 @@ fn fauna_config_rejects_illegitimate_combat_dials() {
     // A negative attack is rejected.
     let negative_attack = FaunaConfig::from_json_str(&core_sim::BUILTIN_FAUNA_CONFIG.replace(
         MAMMOTH_COMBAT_BLOCK,
-        r#""combat": { "attack": -1.0, "defense": 12.0, "durability": 500, "range": "melee" }"#,
+        r#""combat": { "attack": -1.0, "defense": 12.0, "durability": 500, "wariness": 0.10, "range": "melee" }"#,
     ));
     assert!(
         negative_attack.is_err(),
         "a negative combat.attack must be rejected"
     );
+
+    // **A wariness outside [0, 1] is rejected — and a NaN one especially**
+    // (`docs/plan_hunt_through_combat.md` §3.1). Since slice 7 every species carries a real value, so
+    // a retune is a live way to author a bad one. `fauna::animals_that_stay` clamps with `.min(1.0)`,
+    // which would hide an over-1 slip; a `NaN` is worse than hidden, because `NaN <= 0.0` is false so
+    // the zero-identity early return is skipped and `NaN.min(1.0)` is `1.0` in Rust — every engaged
+    // animal retreats and the species' take is **silently zero on every hunt**.
+    for bad in [
+        r#""combat": { "attack": 8.0, "defense": 12.0, "durability": 500, "wariness": 1.5, "range": "melee" }"#,
+        r#""combat": { "attack": 8.0, "defense": 12.0, "durability": 500, "wariness": -0.1, "range": "melee" }"#,
+        r#""combat": { "attack": 8.0, "defense": 12.0, "durability": 500, "wariness": null, "range": "melee" }"#,
+    ] {
+        assert!(
+            FaunaConfig::from_json_str(
+                &core_sim::BUILTIN_FAUNA_CONFIG.replace(MAMMOTH_COMBAT_BLOCK, bad)
+            )
+            .is_err(),
+            "a combat.wariness outside [0, 1] must be rejected: {bad}"
+        );
+    }
 
     // Aggression outside [0, 1] is rejected.
     let bad_aggression = FaunaConfig::from_json_str(&core_sim::BUILTIN_FAUNA_CONFIG.replace(
@@ -773,7 +792,7 @@ fn fauna_config_rejects_illegitimate_predator_dials() {
     assert!(
         FaunaConfig::from_json_str(&builtin.replace(
             WOLF_COMBAT_BLOCK,
-            r#""attack": 0.0, "defense": 3.0, "durability": 20, "range": "melee""#,
+            r#""attack": 0.0, "defense": 3.0, "durability": 20, "wariness": 0.70, "range": "melee""#,
         ))
         .is_err(),
         "a carnivore with combat.attack 0 must be rejected"

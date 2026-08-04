@@ -135,8 +135,9 @@ pub struct LaborAssignmentState {
     /// will pay inside. `forecast == actual` is restated accordingly: `actual_yield` is the take's
     /// **expectation** over the seed, and the take lies within `[low, high]`. **Where nothing is
     /// stochastic the range is a point** — `low == actual_yield == high`, bit-for-bit — which is the
-    /// shipped roster (`wariness 0`, `hit_chance 1.0`). Render one number then, a range only when the
-    /// two differ.
+    /// plant web, a pen, and every resolved row. A **wild hunt** is not one of them: the roster's
+    /// `wariness` is authored, so an animal-web pre-commit row carries a real band. Render one number
+    /// when the two agree, a range only when they differ — one rule, covering both.
     ///
     /// A **resolved** row reports the point it paid: the take happened, so there is no distribution
     /// left. Appended (append-only).

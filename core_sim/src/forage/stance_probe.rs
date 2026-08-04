@@ -73,10 +73,21 @@ const FULLY_STAFFED_HUNTERS: u32 = 100_000;
 
 /// A resident band's Hunt take has no carry limit — it banks the whole take (`hunt_take`'s own
 /// contract).
-/// The probe measures the FLOOR, so it holds the retreat draw fixed. Every probe species ships
-/// `wariness 0`, which makes the draw an identity and the seed inert — pinning it anyway keeps the
-/// probe deterministic if a species it uses is ever given a value.
+/// The probe measures the FLOOR, so it holds the retreat draw fixed — and [`probe_fauna`] holds the
+/// wariness that draw reads at `0` besides, so the seed is inert as well as fixed.
 const PROBE_RETREAT_SEED: crate::fauna::HuntDraw = crate::fauna::HuntDraw::Seeded(0);
+
+/// **The shipped roster with the retreat stage held at its identity** (`FaunaConfig::without_retreat`).
+///
+/// This probe asserts *monotonicity in the floor* — a deeper floor takes more now and less over 600
+/// turns — and a monotonicity assertion cannot be read off a stochastic take: slice 7's authored
+/// `wariness` would put a binomial between the floor and the number the probe compares, so a run
+/// that broke the ordering and a run that merely drew badly would be indistinguishable. The floor is
+/// what is under test here, so the retreat is neutralised exactly the way `engage_rate` and
+/// `defense` already are in `hunt_yield_vector::steady_quarry`.
+fn probe_fauna() -> std::sync::Arc<FaunaConfig> {
+    std::sync::Arc::new(FaunaConfig::builtin().without_retreat())
+}
 
 const NO_CARRY_LIMIT: f32 = f32::INFINITY;
 
@@ -378,7 +389,7 @@ fn run_herd_with_crew(
     start_fraction: f32,
     hunters: u32,
 ) -> HerdOutcome {
-    let fauna = FaunaConfig::builtin();
+    let fauna = probe_fauna();
     let labor = LaborConfig::builtin();
     let ladder = LadderConfig::builtin();
     let mut herd = probe_herd(&fauna, species_key, start_fraction);
@@ -459,7 +470,7 @@ struct HerdBuildOutcome {
 /// `advance_labor_allocation` does. `accrue_corral`'s gate is Penning + the species ceiling +
 /// ownership — **no health check**, so this measures whether a stance can stop a pen being built.
 fn run_corral(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutcome {
-    let fauna = FaunaConfig::builtin();
+    let fauna = probe_fauna();
     let labor = LaborConfig::builtin();
     let ladder = LadderConfig::builtin();
     let pen = ladder.rung(RungKey::AnimalPen);
@@ -523,7 +534,7 @@ fn run_corral(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOu
 /// `advance_labor_allocation` does — after the take, gated on the herd being `Thriving` and its
 /// species' husbandry ceiling allowing domestication, at the species' own `taming_rate` timescale.
 fn run_tame(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutcome {
-    let fauna = FaunaConfig::builtin();
+    let fauna = probe_fauna();
     let labor = LaborConfig::builtin();
     let ladder = LadderConfig::builtin();
     let pastoral = ladder.rung(RungKey::AnimalPastoral);
@@ -704,7 +715,7 @@ fn a_deeper_floor_never_takes_less_on_turn_one_on_either_web() {
 /// A party that cannot beat the quarry's `defense` at all can never bring one down, at any headcount
 /// — §0.2's founding case — so this answers [`u32::MAX`] there rather than a large finite crew.
 fn hunters_to_bring_one_down(species_key: &str) -> u32 {
-    let fauna = FaunaConfig::builtin();
+    let fauna = probe_fauna();
     let party = crate::fauna::HuntingParty::builtin_equipped();
     let quarry = fauna
         .species
@@ -874,7 +885,7 @@ fn floor_zero_strips_a_patch_that_recovers_and_a_herd_that_does_not() {
     // --- The animal web: the same 0.02, and the herd crosses it. `advance_herds` despawns there
     // (pinned live in `core_sim/tests/fauna_deplete.rs`); this pins that the take path takes it
     // under.
-    let fauna = FaunaConfig::builtin();
+    let fauna = probe_fauna();
     for key in PROBE_SPECIES {
         let wiped = run_herd(key, STRIP_IT_BARE, None, FULL_HERD);
         assert!(
@@ -993,7 +1004,7 @@ fn probe_plant_stances() {
 #[test]
 #[ignore = "measurement harness — run with --ignored --nocapture"]
 fn probe_animal_stances() {
-    let fauna = FaunaConfig::builtin();
+    let fauna = probe_fauna();
     let ladder = LadderConfig::builtin();
     println!("\n=== ANIMAL WEB — wild herds ({PROBE_TURNS} turns) ===");
     println!(
@@ -1182,7 +1193,7 @@ fn probe_rung_three_builds() {
         );
     }
 
-    let fauna = FaunaConfig::builtin();
+    let fauna = probe_fauna();
     for key in ["rabbit", "boar"] {
         let def = &fauna.species[key];
         println!(
