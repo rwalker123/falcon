@@ -295,6 +295,31 @@ Whether a hunter can hurt the animal *at all* is settled per hunter, before head
 The gate is not a new rule to write. It is what a combat resolver comparing attack to defense already
 does; §0.2's failure only arises when the comparison is *outside* the resolver.
 
+#### Damage carries between turns — a wounded animal stays wounded
+
+**A fight that does not kill this turn is not forgotten.** Damage dealt to the engaged animals
+accumulates while the party stays in contact, so twenty hunters with weak spears wear a mammoth down
+over several turns rather than bouncing off it forever.
+
+**Without this the gate is absolute rather than steep**, and that is the wrong model: a stateless
+resolver means `ceil(durability / (attack − defense))` hunters is a hard threshold — 63 for a
+mammoth at the shipped spear — and a party of 62 takes casualties every turn and never kills
+anything, on any horizon. *"Twenty weak spears and then follow it around for days"* is the intended
+experience, and it requires the days to count for something.
+
+**This is a combat-system feature, not a hunt one.** Any fight that spans turns needs it; a
+TOE-vs-TOE battle has the same requirement, and putting it in the resolver keeps the hunt from
+growing a private copy.
+
+**Banking damage is legitimate where banking the ceiling was not**, and the distinction is the same
+one §7 records: `hunt_credit` was deleted because the escapement ceiling is a **stock**, and
+accumulating a stock compounds it. Damage is a **flow** — a rate of harm per turn — so an
+accumulator is its correct integral. A stock must not bank; a rate must.
+
+Open: whether wounds **heal** when the party disengages, and how fast. A herd that forgets instantly
+makes a broken-off hunt worthless; one that never forgets lets a party chip at a mammoth across fifty
+turns of unrelated play.
+
 ### 4.3 The body masses were wrong — SETTLED
 
 `body_mass` no longer sets durability (§4.2), but it still sets the food a carcass yields, and
@@ -372,6 +397,21 @@ So *"twenty weak spears and then follow it for days"* is the correct low-tech ex
 points turn the same herd into the richest food on the map without a single number being re-authored.
 **This is a property to pin, not a happy accident** (§10): it falls out of defense subtraction and
 the engagement cap together, and a change to either could silently flatten it.
+
+#### The hunt itself injures people, whatever the quarry does
+
+Casualties currently come only from the animal fighting back, so at the shipped roster **only mammoth,
+aurochs and wolf can hurt anyone** — a boar costs nothing, which contradicts §4.2's own "survives by
+ferocity alone, still costs you people".
+
+**Hunting is dangerous before anything bites you.** Hunters fall, break bones, are trampled in a
+drive, cut themselves butchering. So a hunt carries a **small baseline injury risk independent of the
+quarry's `attack`**, on top of whatever the fight itself does. A harmless animal is not a risk-free
+day out.
+
+It scales with the **engagement**, not with the quarry — more animals worked means more chances to
+get hurt — and it is a config lever, not a per-species field: the danger is in the activity, not in
+the rabbit.
 
 ### 4.7 Randomness lives in the attack, and never in the gate
 
