@@ -208,8 +208,9 @@ command center**: shown whenever ≥1 player band exists, always displaying a
     middle and losing 25px of zone. **`_rail_span()` (width + gutter), NOT `_rail_width()`, is what the
     width maths subtracts** — using the bare width would silently over-report the usable row by 25px.
   - **Two SLOTS, stacked top-to-bottom** (`RAIL_SLOT_TOP` = nav cluster, `RAIL_SLOT_BOTTOM` = turn
-    cluster), minimap-on-top for BOTH `SIDE_TOP` and `SIDE_BOTTOM` so the stack reads the same either
-    way. `RAIL_SLOT_SEPARATION` is its own const because `DockRowController._required_height` reads it
+    cluster), minimap on top — which on a bottom dock also leaves the orb where it already lives,
+    bottom-right. **Only the BOTTOM dock has a rail at all since issue #377**; a TOP dock leaves the
+    chrome home (see `DockRowController.REFLOW_EDGES`). `RAIL_SLOT_SEPARATION` is its own const because `DockRowController._required_height` reads it
     as part of the stack's measured height.
   - **The panel owns the rail, its stack and the slot HOSTS — and NOTHING inside those hosts.**
     `rail_slot_host(slot)` (always non-null; the hosts exist from `_build`) hands the HUD a slot;
@@ -233,10 +234,14 @@ command center**: shown whenever ≥1 player band exists, always displaying a
     height is *only* `custom_minimum_size`) offsets `[0, 0, 0, 0]` — its TOP edge pinned to the mid-line,
     then grown DOWNWARD by `_size_changed`'s minimum clamp, rendering **64px low** (rect y 900–1028 in a
     host spanning 730–1070). A container-driven stack has no such asymmetry.
-  - **A rail exists only on a HORIZONTAL dock**, and `_rail_width` forces 0 by EDGE rather than trusting
+  - **A rail exists only on a BOTTOM dock**, and `_rail_width` forces 0 by EDGE rather than trusting
     the declared value, so the panel is correct whatever order a dock change and the HUD's push arrive
     in. A vertical strip is `PANEL_WIDTH` (380) with no room beside its zones for a ~300px chrome column,
-    so `SIDE_LEFT`/`SIDE_RIGHT` are **bit-identical to before**.
+    so `SIDE_LEFT`/`SIDE_RIGHT` are **bit-identical to before**. **`SIDE_TOP` joined them in issue #377**:
+    it never displaced `BottomBar` (the inset and the bar are on opposite edges there), so it had nothing
+    to recover, and relocating anyway put the minimap and turn orb at the TOP of the screen — chrome with
+    a fixed home, moved for a symmetry that was never measured. A top-docked card still floats and
+    centres; it simply has the whole strip to do it in.
   - **`_rail_span()` is folded in at exactly TWO places** — `_shell_is_wide()` (the threshold is
     zones + separators + `PANEL_CHROME_H` tested against the OUTER width, and the rail spends that same
     outer width before the zones see any of it) and `_interior_size()`. **`work_zone_size()` and

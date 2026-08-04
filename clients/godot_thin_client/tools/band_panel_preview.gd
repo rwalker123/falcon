@@ -1246,17 +1246,21 @@ func _render_dock_row_states() -> void:
 		_hud._dockrow._required_height(), _panel.current_reservation_size(),
 		_panel.work_zone_size().x])
 
-	# TOP: the same column at the other horizontal edge, minimap still on top so the stack reads the same
-	# either way. The nav cluster relocating from bottom-left to the TOP row is INTENDED — the chrome
-	# follows the dock.
+	# TOP — THE SECOND CONTROL, and it asserts the OPPOSITE of what it used to (issue #377). The chrome
+	# must stay HOME: the minimap bottom-left and the turn orb bottom-right, where they always live.
+	# Relocating for a top dock was a symmetry that was never measured — `Hud.set_reserved_inset` only
+	# displaces `BottomBar` when the inset and the bar share an edge, i.e. on a BOTTOM dock, so a top
+	# dock had nothing to recover and dragging the chrome to the top of the screen only cost the player
+	# a fixed landmark. The card still floats and centres here; it simply has the whole strip to do it in.
 	_panel.set_dock(SIDE_TOP)
 	await _settle()
 	await _save("band_panel_dockrow_top")
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
-	_assert_chrome_parked(true, "band_panel_dockrow_top")
-	_assert_parked_chrome_fits("band_panel_dockrow_top")
+	_assert_chrome_parked(false, "band_panel_dockrow_top")
+	_assert_no_rail_width("band_panel_dockrow_top")
+	_assert_chrome_home_exact("band_panel_dockrow_top")
 	_assert_shell_is_wide(true, "band_panel_dockrow_top")
 
 	# LEFT — THE CONTROL. A vertical dock keeps today's behaviour exactly: the chrome is back in
@@ -1541,10 +1545,10 @@ func _assert_no_rail_width(state_name: String) -> void:
 	if not is_zero_approx(span):
 		failures.append("still spends %.0fpx on the chrome rail" % span)
 	if failures.is_empty():
-		print("band_panel_preview: assert OK — %s vertical dock spends nothing on the chrome rail and draws no hairline" % state_name)
+		print("band_panel_preview: assert OK — %s spends nothing on the chrome rail" % state_name)
 		return
 	for failure in failures:
-		push_error("band_panel_preview: %s vertical dock — %s" % [state_name, failure])
+		push_error("band_panel_preview: %s — %s" % [state_name, failure])
 
 ## GUARD: the clusters came home to the EXACT authored parent, child index, anchors and size flags the
 ## controller captured before the first reflow. A preset applied on park must not leak into the

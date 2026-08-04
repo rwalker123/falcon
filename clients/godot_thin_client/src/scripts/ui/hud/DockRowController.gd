@@ -25,9 +25,20 @@ extends RefCounted
 ## owns only the empty rail SLOTS it parks them into. That is the exact opposite of `set_zones`, which
 ## takes ownership of (and frees) what it is handed — do NOT "unify" the two.
 
-## The dock edges that reserve a full-width ROW, i.e. the ones with ends to spare for the chrome. A
-## vertical dock is a `PANEL_WIDTH` strip with no room beside its zones, and keeps today's stacking.
-const HORIZONTAL_EDGES: Array[int] = [SIDE_TOP, SIDE_BOTTOM]
+## The dock edges the chrome relocates for. **BOTTOM ONLY** — and the TOP edge's removal is a fix, not a
+## narrowing (issue #377).
+##
+## The whole reason for relocating (see the header) is that `Hud.set_reserved_inset` insets `LayoutRoot`,
+## so the panel pushes `BottomBar` clear of itself and STACKS it, costing `ContentRow` the bar's height on
+## top of the panel's own. **That only happens on a BOTTOM dock**, where the inset and the bar are on the
+## same edge. A TOP dock insets the top; `BottomBar` sits at the bottom of `RootColumn` and never moves,
+## so there was nothing to recover — and relocating anyway dragged the minimap and turn orb to the TOP of
+## the screen, where the player has to hunt for chrome that has a fixed home. Shipping `[SIDE_TOP,
+## SIDE_BOTTOM]` generalised a bottom-edge problem to both horizontal edges by symmetry rather than by
+## measurement.
+##
+## A vertical dock is a `PANEL_WIDTH` strip with no room beside its zones, and keeps today's stacking.
+const REFLOW_EDGES: Array[int] = [SIDE_BOTTOM]
 ## What the card's own vertical chrome costs, folded into the fit gate — see `_required_height`. Read off
 ## the panel's public consts rather than duplicated, so the two cannot drift.
 const CARD_CHROME_V := 2.0 * (float(BandCityPanel.PANEL_CONTENT_MARGIN_V) + BandCityPanel.PANEL_BORDER_WIDTH)
@@ -75,7 +86,7 @@ func set_panel(panel: BandCityPanel) -> void:
 ## cross-axis size (0 when hidden, `COLLAPSED_SIZE` when railed).
 func apply(edge: int, size: float) -> void:
 	var wants_reflow := _panel != null \
-		and HORIZONTAL_EDGES.has(edge) \
+		and REFLOW_EDGES.has(edge) \
 		and size >= _required_height()
 	if wants_reflow == _is_reflowed:
 		return

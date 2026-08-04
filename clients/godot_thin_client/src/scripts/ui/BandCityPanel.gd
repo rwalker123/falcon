@@ -1169,8 +1169,12 @@ func _apply_rail() -> void:
 ## The rail's effective width: the declared value on a horizontal dock, 0 on a vertical one. Forcing 0 by
 ## EDGE rather than trusting the declared value keeps the panel correct whatever order the dock change
 ## and the HUD's push arrive in.
+## Only the BOTTOM dock carries a rail: a vertical strip has no room beside its zones, and a TOP dock
+## never displaces `BottomBar` in the first place, so its chrome stays home (`DockRowController.REFLOW_EDGES`).
+## Forcing 0 by EDGE rather than trusting the declared value keeps the panel correct whatever order the
+## dock change and the HUD's push arrive in.
 func _rail_width() -> float:
-	if _is_vertical_edge(_dock_edge):
+	if _dock_edge != SIDE_BOTTOM:
 		return 0.0
 	return maxf(_rail_declared_width, 0.0)
 
