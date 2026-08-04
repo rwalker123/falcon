@@ -827,13 +827,26 @@ func _wide_separator_span() -> float:
 ## `SHRINK_CENTER` takes the container's MINIMUM size, so the cap is applied as that minimum — and it
 ## MUST be cleared when filling, or the column would refuse to shrink below the cap on a narrower
 ## window and would overflow the card.
+##
+## **`SIZE_EXPAND` RIDES THE CAPPED BRANCH, AND IT IS WHAT KEEPS THE CHROME RAIL FLUSH RIGHT** (issue
+## #377). The two flags answer DIFFERENT questions: `SIZE_EXPAND` tells the `HBoxContainer` who claims
+## the row's slack, `SHRINK_CENTER` tells `fit_child_in_rect` where the child sits inside the rect it is
+## given. A bare `SHRINK_CENTER` answers only the second — and with the rail on `SIZE_FILL`, that left
+## the row with NO expanding child at all, so `BoxContainer` packed both at their minimums from the
+## LEADING edge and stranded every remaining pixel AFTER the rail. On a 3440-wide dock that put the
+## column flush left, the parked minimap and turn orb around the 72% mark, and ~790px of dead card to
+## their right — i.e. the cap's own centring never happened either, and the "chrome pinned to the
+## trailing edge" claim in `_interior_size()` was false exactly when the cap engaged. With `SIZE_EXPAND`
+## the column claims the slack and renders centred inside it, so the rail is pushed hard against the
+## card's trailing inset. Below the cap `EXPAND_FILL` already carried the expand flag, which is why the
+## sub-cap dock was always right and this only ever showed above ~2651px of window.
 func _apply_wide_content_cap() -> void:
 	if _panel_column == null:
 		return
 	var cap := _wide_content_cap()
 	if _body_is_wide and _interior_size().x > cap:
 		_panel_column.custom_minimum_size.x = cap
-		_panel_column.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		_panel_column.size_flags_horizontal = Control.SIZE_EXPAND | Control.SIZE_SHRINK_CENTER
 	else:
 		_panel_column.custom_minimum_size.x = 0.0
 		_panel_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL

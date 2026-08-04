@@ -218,6 +218,18 @@ command center**: shown whenever ≥1 player band exists, always displaying a
     outer width before the zones see any of it) and `_interior_size()`. **`work_zone_size()` and
     `_apply_wide_content_cap()` both read `_interior_size()`, so they follow with NO edit**, and the
     ultrawide `SHRINK_CENTER` path then centres the content column in the room the rail leaves.
+  - **THE CAPPED COLUMN CARRIES `SIZE_EXPAND` AS WELL AS `SHRINK_CENTER`, AND THAT IS WHAT PINS THE RAIL
+    RIGHT** (issue #377). The two flags answer different questions: `SIZE_EXPAND` tells the `HBoxContainer`
+    who claims the row's slack, `SHRINK_CENTER` tells `fit_child_in_rect` where the child sits inside the
+    rect it is handed. A bare `SHRINK_CENTER` answers only the second — and with `_rail` on `SIZE_FILL`
+    that left the row with **no expanding child at all**, so `BoxContainer` packed both at their minimums
+    from the LEADING edge and stranded every remaining pixel AFTER the rail. Measured on a 3440-wide
+    bottom dock: interior 3093 against a 2304 cap, so the content column sat flush left, the parked
+    minimap and turn orb landed around the **72% mark**, and **789px of dead card** trailed them — i.e.
+    the cap's own centring never happened either, and the "chrome pinned to the trailing edge, content
+    centred" claim one bullet up was false for exactly the case it describes. Below the cap the fill
+    branch already carried the expand flag, which is why a sub-cap dock was always right and this only
+    ever showed past **~2651px of window** (`_wide_content_cap()` + `PANEL_CHROME_H` + the rail's span).
     `_panel_extent()` is deliberately **untouched** — it is documented as the card's OUTER size and the
     card is still full-width — and `_position_seam()` needs no change either: the seam spans `_root` and
     correctly accents the whole reserved strip.
@@ -530,7 +542,21 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   gone, the wide shell held, work zone ≥ `ZONE_WORK_MIN_WIDTH`. `_left`: **the control** — chrome home in
   `BottomBar`, `_rail_width()` zero, and it captures the never-reflowed `work_zone_size()` baseline.
   `_collapsed_bottom`: the fit gate DECLINES a 46px strip, which is the frame that proves collapse cannot
-  slice the minimap. `_reflow_round_trip`: bottom → left → bottom → left, asserting the clusters came home
+  slice the minimap. **`_ultrawide`: the ONE frame that reaches the configuration issue #377 was reported
+  on** — a bottom dock at 3440×1080, i.e. past `_wide_content_cap()`, rendered LAST because it re-pins the
+  canvas and `_reflow_round_trip` compares against a baseline captured at `DOCKROW_CANVAS`. It is a
+  DOCK-ROW state rather than a wider `band_panel_wide_ultrawide` because the parked chrome is the subject
+  and it needs this block's REAL seeded minimap: against an empty `MinimapContainer` the rail is the zoom
+  rail's ~80px and a mis-placed rail is nearly invisible. Three assertions ride it —
+  **`_assert_content_cap_engaged`** (the PRECONDITION: interior > cap, without which the other two pass
+  vacuously on any window under ~2651px, where the column fills and right-justifies the rail for free),
+  **`_assert_rail_is_right_justified`** (the rail's right edge within a pixel of the card's trailing
+  content inset — measured against the CARD's inset, never the viewport's, since the card correctly draws
+  `PANEL_CONTENT_MARGIN_H` + `PANEL_BORDER_WIDTH` the rail sits inside of) and
+  **`_assert_content_column_centred`** (equal margins either side of the column, in the room the rail
+  LEAVES). Sabotage-verified: dropping `SIZE_EXPAND` fails exactly those two, naming `790px of dead row`
+  and `-1px of margin leading, 790px trailing`, while the precondition and every older assertion stay
+  green. `_reflow_round_trip`: bottom → left → bottom → left, asserting the clusters came home
   to their EXACT parent, child index, anchors and size flags, `BottomBar`'s authored minimum height, and a
   work zone identical to that baseline — reparenting round-trips are where this class of change rots. Four
   assertions back them: `_assert_chrome_parked` (both halves of the swap — the bar's visibility AND each

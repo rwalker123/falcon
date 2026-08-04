@@ -1302,6 +1302,29 @@ func _render_dock_row_states() -> void:
 	else:
 		print("band_panel_preview: assert OK — round trip restored work_zone_size() to %s" % round_trip_work_zone)
 
+	# ULTRAWIDE BOTTOM DOCK — the frame issue #377 was reported on, and the ONLY one that reaches the
+	# configuration it describes. It runs LAST because it re-pins the canvas, and the round-trip state
+	# above compares against a baseline captured at `DOCKROW_CANVAS`.
+	#
+	# Past `_wide_content_cap()` the content column stops filling, and the whole question is what the
+	# `HBoxContainer` then does with the slack. It is deliberately a DOCK-ROW state rather than a wider
+	# `band_panel_wide_ultrawide`: the parked chrome is the subject, so the frame needs the REAL minimap
+	# this block has already seeded — against an empty `MinimapContainer` the rail is the zoom rail's
+	# ~80px and a mis-placed rail is nearly invisible.
+	await _pin_canvas(Vector2i(ULTRAWIDE_WIDTH, DOCKROW_CANVAS.y))
+	_panel.set_dock(SIDE_BOTTOM)
+	await _settle()
+	await _save("band_panel_dockrow_ultrawide")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_chrome_parked(true, "band_panel_dockrow_ultrawide")
+	_assert_parked_chrome_fits("band_panel_dockrow_ultrawide")
+	_assert_shell_is_wide(true, "band_panel_dockrow_ultrawide")
+	_assert_content_cap_engaged("band_panel_dockrow_ultrawide")
+	_assert_rail_is_right_justified("band_panel_dockrow_ultrawide")
+	_assert_content_column_centred("band_panel_dockrow_ultrawide")
+
 ## Put a REAL embedded minimap in the HUD's `MinimapContainer` before the dock-row states render.
 ## Without it those frames judge the reflow against an EMPTY container — the left rail collapses to the
 ## zoom rail's ~80px instead of the ~290px the game actually has, so both the measured rail span and the
@@ -1400,6 +1423,64 @@ func _assert_parked_chrome_fits(state_name: String) -> void:
 		return
 	for failure in failures:
 		push_error("band_panel_preview: %s — %s" % [state_name, failure])
+
+## PRECONDITION for the two assertions below: the panel really is past its content cap, so the branch
+## they judge is the one that ran. Without it both would pass vacuously on any window narrower than
+## ~2651px — the column fills there, which right-justifies the rail for free and centres nothing.
+func _assert_content_cap_engaged(state_name: String) -> void:
+	var interior := _panel._interior_size().x
+	var cap := _panel._wide_content_cap()
+	if interior <= cap:
+		push_error("band_panel_preview: %s — the content cap is NOT engaged (interior %.0fpx ≤ cap %.0fpx), so the capped-branch assertions below prove nothing" % [
+			state_name, interior, cap])
+		return
+	print("band_panel_preview: assert OK — %s content cap engaged (interior %.0fpx > cap %.0fpx, %.0fpx of slack)" % [
+		state_name, interior, cap, interior - cap])
+
+## GUARD: the chrome rail is FLUSH RIGHT against the card's trailing content inset (issue #377).
+##
+## The rail is the LAST child of `_card_row`, so it looks right-justified by construction — and it is
+## not, once the content column stops filling. A `BoxContainer` distributes slack only to children
+## carrying `SIZE_EXPAND`; with the capped column on a bare `SHRINK_CENTER` and the rail on `SIZE_FILL`
+## NOTHING expanded, so both were packed at their minimums from the LEADING edge and every remaining
+## pixel was stranded AFTER the rail. Measured at 3440: the parked minimap and turn orb sat around the
+## 72% mark with ~790px of dead card to their right, which is the reported "3/4 mark".
+##
+## It is asserted against the card's INTERIOR right edge rather than the window's, because the card
+## draws `PANEL_CONTENT_MARGIN_H` + `PANEL_BORDER_WIDTH` of chrome the rail is correctly inside of —
+## comparing against the raw viewport would demand the rail overhang its own card.
+func _assert_rail_is_right_justified(state_name: String) -> void:
+	var rail_right := _panel._rail.get_global_rect().end.x
+	var inset: float = float(BandCityPanel.PANEL_CONTENT_MARGIN_H) + BandCityPanel.PANEL_BORDER_WIDTH
+	var card_inner_right := _panel._panel.get_global_rect().end.x - inset
+	var gap: float = card_inner_right - rail_right
+	if absf(gap) > ZONE_BOUNDS_TOLERANCE:
+		push_error("band_panel_preview: %s — the chrome rail ends at %.0f but the card's content inset is %.0f (%.0fpx of dead row to its right)" % [
+			state_name, rail_right, card_inner_right, gap])
+		return
+	print("band_panel_preview: assert OK — %s the chrome rail is flush to the card's trailing inset (%.0f)" % [
+		state_name, card_inner_right])
+
+## GUARD: the capped content column sits CENTRED in the room the rail leaves — the other half of the
+## same flag, and the behaviour `BandCityPanel._interior_size()` has always documented.
+##
+## Fitting does not imply centring (the `_assert_parked_chrome_fits` lesson on the other axis): a column
+## packed hard against the leading edge is entirely inside its row and reads as a panel that ignores the
+## right half of an ultrawide. The margins are measured against the card's own content insets, and the
+## rail's span comes off the trailing side because the column is centred in what the rail LEAVES, not in
+## the whole card.
+func _assert_content_column_centred(state_name: String) -> void:
+	var column := _panel._panel_column.get_global_rect()
+	var card := _panel._panel.get_global_rect()
+	var inset: float = float(BandCityPanel.PANEL_CONTENT_MARGIN_H) + BandCityPanel.PANEL_BORDER_WIDTH
+	var lead_margin: float = column.position.x - (card.position.x + inset)
+	var trail_margin: float = (card.end.x - inset - _panel._rail_span()) - column.end.x
+	if absf(lead_margin - trail_margin) > ZONE_BOUNDS_TOLERANCE:
+		push_error("band_panel_preview: %s — the content column is not centred: %.0fpx of margin leading, %.0fpx trailing" % [
+			state_name, lead_margin, trail_margin])
+		return
+	print("band_panel_preview: assert OK — %s the content column is centred (%.0fpx of margin either side)" % [
+		state_name, lead_margin])
 
 ## How far `rect` pokes outside `bounds` on each axis (negative = comfortably inside).
 func _rect_overflow(rect: Rect2, bounds: Rect2) -> Vector2:
