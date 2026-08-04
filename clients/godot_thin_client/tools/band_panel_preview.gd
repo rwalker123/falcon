@@ -1321,9 +1321,25 @@ func _render_dock_row_states() -> void:
 	_assert_chrome_parked(true, "band_panel_dockrow_ultrawide")
 	_assert_parked_chrome_fits("band_panel_dockrow_ultrawide")
 	_assert_shell_is_wide(true, "band_panel_dockrow_ultrawide")
-	_assert_content_cap_engaged("band_panel_dockrow_ultrawide")
+	_assert_card_is_narrower_than_strip("band_panel_dockrow_ultrawide")
 	_assert_rail_is_right_justified("band_panel_dockrow_ultrawide")
-	_assert_content_column_centred("band_panel_dockrow_ultrawide")
+	_assert_card_is_centred("band_panel_dockrow_ultrawide")
+	var busy_card := _panel._panel.get_global_rect().size.x
+	var busy_columns: int = _panel._work_columns
+
+	# THE SAME ULTRAWIDE DOCK WITH NOTHING TO SHOW — the state the whole width rework is FOR, and the
+	# one the 34-source frame above structurally cannot make: a board with 34 rows wants every column it
+	# can get, so a card sized to its content and a card sized to the monitor look identical there.
+	# A band with NO worked sources wants ONE column, so the card must come back visibly narrower.
+	_push_bands([_band_fixture()])
+	await _settle()
+	await _save("band_panel_dockrow_ultrawide_empty")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_card_is_narrower_than_strip("band_panel_dockrow_ultrawide_empty")
+	_assert_rail_is_right_justified("band_panel_dockrow_ultrawide_empty")
+	_assert_card_is_centred("band_panel_dockrow_ultrawide_empty")
+	_assert_card_follows_its_content(busy_card, busy_columns, "band_panel_dockrow_ultrawide_empty")
 
 ## Put a REAL embedded minimap in the HUD's `MinimapContainer` before the dock-row states render.
 ## Without it those frames judge the reflow against an EMPTY container — the left rail collapses to the
@@ -1408,8 +1424,10 @@ func _assert_parked_chrome_fits(state_name: String) -> void:
 		if over.x > ZONE_BOUNDS_TOLERANCE or over.y > ZONE_BOUNDS_TOLERANCE:
 			failures.append("%s %s spills the rail %s by (%.1f, %.1f)" % [
 				cluster.name, rect, rail_rect, maxf(over.x, 0.0), maxf(over.y, 0.0)])
-	# The rail itself must stay inside the card's interior — the strip the panel actually reserved.
-	var strip := _panel._panel.get_global_rect()
+	# The rail must stay inside the STRIP — `_root`, not the card. Since issue #377 the chrome cluster is
+	# a SIBLING of the card rather than its last cell, so asking whether it fits the card would now be
+	# asking the wrong container entirely (and would fail on a correct layout).
+	var strip := _panel._root.get_global_rect()
 	var rail_over := _rect_overflow(rail_rect, strip)
 	if rail_over.x > ZONE_BOUNDS_TOLERANCE or rail_over.y > ZONE_BOUNDS_TOLERANCE:
 		failures.append("the chrome rail %s spills the card %s by (%.1f, %.1f)" % [
@@ -1424,62 +1442,85 @@ func _assert_parked_chrome_fits(state_name: String) -> void:
 	for failure in failures:
 		push_error("band_panel_preview: %s — %s" % [state_name, failure])
 
-## PRECONDITION for the two assertions below: the panel really is past its content cap, so the branch
-## they judge is the one that ran. Without it both would pass vacuously on any window narrower than
-## ~2651px — the column fills there, which right-justifies the rail for free and centres nothing.
-func _assert_content_cap_engaged(state_name: String) -> void:
-	var interior := _panel._interior_size().x
-	var cap := _panel._wide_content_cap()
-	if interior <= cap:
-		push_error("band_panel_preview: %s — the content cap is NOT engaged (interior %.0fpx ≤ cap %.0fpx), so the capped-branch assertions below prove nothing" % [
-			state_name, interior, cap])
+## PRECONDITION for the two assertions below: the strip really is WIDER than the card wants to be, so
+## the island geometry they judge has slack to get wrong. Without it both would pass vacuously on a
+## window the card fills anyway, where "centred" and "flush right" are true for free.
+func _assert_card_is_narrower_than_strip(state_name: String) -> void:
+	var card := _panel._panel.get_global_rect().size.x
+	var strip := _panel._root.get_global_rect().size.x
+	var slack: float = strip - card - _panel._rail_span()
+	if slack <= ZONE_BOUNDS_TOLERANCE:
+		push_error("band_panel_preview: %s — the card (%.0fpx) fills its %.0fpx strip, so the island assertions below prove nothing" % [
+			state_name, card, strip])
 		return
-	print("band_panel_preview: assert OK — %s content cap engaged (interior %.0fpx > cap %.0fpx, %.0fpx of slack)" % [
-		state_name, interior, cap, interior - cap])
+	print("band_panel_preview: assert OK — %s the card is an island (%.0fpx card + %.0fpx chrome span in a %.0fpx strip, %.0fpx of open map)" % [
+		state_name, card, _panel._rail_span(), strip, slack])
 
-## GUARD: the chrome rail is FLUSH RIGHT against the card's trailing content inset (issue #377).
+## GUARD: the chrome cluster is FLUSH RIGHT against the STRIP's trailing edge (issue #377).
 ##
-## The rail is the LAST child of `_card_row`, so it looks right-justified by construction — and it is
-## not, once the content column stops filling. A `BoxContainer` distributes slack only to children
-## carrying `SIZE_EXPAND`; with the capped column on a bare `SHRINK_CENTER` and the rail on `SIZE_FILL`
-## NOTHING expanded, so both were packed at their minimums from the LEADING edge and every remaining
-## pixel was stranded AFTER the rail. Measured at 3440: the parked minimap and turn orb sat around the
-## 72% mark with ~790px of dead card to their right, which is the reported "3/4 mark".
-##
-## It is asserted against the card's INTERIOR right edge rather than the window's, because the card
-## draws `PANEL_CONTENT_MARGIN_H` + `PANEL_BORDER_WIDTH` of chrome the rail is correctly inside of —
-## comparing against the raw viewport would demand the rail overhang its own card.
+## Measured against the strip rather than the card, and that changed with the islands: the rail used to
+## be the last cell of `_card_row`, so the only sensible claim was "inside its own card's trailing
+## inset". It is a sibling of the card now, anchored to `_root`, so the claim is the stronger one — it
+## sits at the edge of the screen, with the card floating well to its left.
 func _assert_rail_is_right_justified(state_name: String) -> void:
 	var rail_right := _panel._rail.get_global_rect().end.x
-	var inset: float = float(BandCityPanel.PANEL_CONTENT_MARGIN_H) + BandCityPanel.PANEL_BORDER_WIDTH
-	var card_inner_right := _panel._panel.get_global_rect().end.x - inset
-	var gap: float = card_inner_right - rail_right
+	var strip_right := _panel._root.get_global_rect().end.x
+	var gap: float = strip_right - rail_right
 	if absf(gap) > ZONE_BOUNDS_TOLERANCE:
-		push_error("band_panel_preview: %s — the chrome rail ends at %.0f but the card's content inset is %.0f (%.0fpx of dead row to its right)" % [
-			state_name, rail_right, card_inner_right, gap])
+		push_error("band_panel_preview: %s — the chrome cluster ends at %.0f but the strip ends at %.0f (%.0fpx of dead space to its right)" % [
+			state_name, rail_right, strip_right, gap])
 		return
-	print("band_panel_preview: assert OK — %s the chrome rail is flush to the card's trailing inset (%.0f)" % [
-		state_name, card_inner_right])
+	print("band_panel_preview: assert OK — %s the chrome cluster is flush to the strip's trailing edge (%.0f)" % [
+		state_name, strip_right])
 
-## GUARD: the capped content column sits CENTRED in the room the rail leaves — the other half of the
-## same flag, and the behaviour `BandCityPanel._interior_size()` has always documented.
+## GUARD: the card's width FOLLOWS ITS CONTENT — the claim the whole rework rests on (issue #377).
 ##
-## Fitting does not imply centring (the `_assert_parked_chrome_fits` lesson on the other axis): a column
-## packed hard against the leading edge is entirely inside its row and reads as a panel that ignores the
-## right half of an ultrawide. The margins are measured against the card's own content insets, and the
-## rail's span comes off the trailing side because the column is centred in what the rail LEAVES, not in
-## the whole card.
-func _assert_content_column_centred(state_name: String) -> void:
-	var column := _panel._panel_column.get_global_rect()
+## Compared against the SAME dock at the SAME canvas with a busier band, because the absolute width
+## proves nothing on its own: a card hard-wired to any constant would satisfy "narrower than the strip"
+## and "centred" perfectly. What it cannot satisfy is *changing* when the band does.
+##
+## Both halves are asserted, and the column count is not redundant with the width — a width that moved
+## for some unrelated reason (a chrome tweak, a flank retune) would pass a width-only test while the
+## board stayed at four columns, which is the actual complaint: an empty work zone stretched across the
+## monitor. The exact arithmetic is asserted too, so a card that merely shrank *somewhat* fails.
+func _assert_card_follows_its_content(busy_width: float, busy_columns: int, state_name: String) -> void:
+	var failures: Array[String] = []
+	var quiet_width := _panel._panel.get_global_rect().size.x
+	var quiet_columns: int = _panel._work_columns
+	if quiet_columns >= busy_columns:
+		failures.append("an unworked band still asks for %d board columns against the busy band's %d" % [
+			quiet_columns, busy_columns])
+	if quiet_width >= busy_width:
+		failures.append("the card is %.0fpx with nothing to show and %.0fpx with 34 sources — it did not follow its content" % [
+			quiet_width, busy_width])
+	# The difference must be exactly the columns dropped: nothing else in the card may have moved.
+	var expected: float = busy_width - float(busy_columns - quiet_columns) * BandCityPanel.ZONE_WORK_MIN_WIDTH
+	if absf(quiet_width - expected) > ZONE_BOUNDS_TOLERANCE:
+		failures.append("the card is %.0fpx but dropping %d columns from %.0fpx predicts %.0fpx" % [
+			quiet_width, busy_columns - quiet_columns, busy_width, expected])
+	if failures.is_empty():
+		print("band_panel_preview: assert OK — %s the card follows its content (%.0fpx / %d columns busy → %.0fpx / %d quiet)" % [
+			state_name, busy_width, busy_columns, quiet_width, quiet_columns])
+		return
+	for failure in failures:
+		push_error("band_panel_preview: %s — %s" % [state_name, failure])
+
+## GUARD: the CARD sits centred in the room the chrome cluster leaves.
+##
+## Fitting does not imply centring (the `_assert_parked_chrome_fits` lesson on the other axis): a card
+## packed hard against the leading edge is entirely inside its strip and reads as a panel that ignores
+## the right half of an ultrawide. It is the CARD being measured now, not its content column — the
+## column simply fills the card since the card itself became the thing that narrows.
+func _assert_card_is_centred(state_name: String) -> void:
 	var card := _panel._panel.get_global_rect()
-	var inset: float = float(BandCityPanel.PANEL_CONTENT_MARGIN_H) + BandCityPanel.PANEL_BORDER_WIDTH
-	var lead_margin: float = column.position.x - (card.position.x + inset)
-	var trail_margin: float = (card.end.x - inset - _panel._rail_span()) - column.end.x
+	var strip := _panel._root.get_global_rect()
+	var lead_margin: float = card.position.x - strip.position.x
+	var trail_margin: float = (strip.end.x - _panel._rail_span()) - card.end.x
 	if absf(lead_margin - trail_margin) > ZONE_BOUNDS_TOLERANCE:
-		push_error("band_panel_preview: %s — the content column is not centred: %.0fpx of margin leading, %.0fpx trailing" % [
+		push_error("band_panel_preview: %s — the card is not centred: %.0fpx of margin leading, %.0fpx trailing" % [
 			state_name, lead_margin, trail_margin])
 		return
-	print("band_panel_preview: assert OK — %s the content column is centred (%.0fpx of margin either side)" % [
+	print("band_panel_preview: assert OK — %s the card is centred (%.0fpx of open map either side)" % [
 		state_name, lead_margin])
 
 ## How far `rect` pokes outside `bounds` on each axis (negative = comfortably inside).
@@ -1499,8 +1540,6 @@ func _assert_no_rail_width(state_name: String) -> void:
 	var span := _panel._rail_span()
 	if not is_zero_approx(span):
 		failures.append("still spends %.0fpx on the chrome rail" % span)
-	if _panel._rail_separator.visible:
-		failures.append("the rail separator hairline is still visible")
 	if failures.is_empty():
 		print("band_panel_preview: assert OK — %s vertical dock spends nothing on the chrome rail and draws no hairline" % state_name)
 		return

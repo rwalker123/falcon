@@ -1154,8 +1154,14 @@ func _apply_reservation(id: StringName, edge: int, size: float) -> void:
         _reservations.erase(id)
     else:
         _reservations[id] = {"edge": edge, "size": size}
+    # THE MAP is exempted for a HORIZONTAL band dock (issue #377): that dock is a floating CARD over
+    # live map now, not a full-bleed bar, so insetting the map would blank the whole strip and leave
+    # dead space either side of the card — the very thing the islands removed. The HUD inset STAYS, so
+    # the docks and the bottom bar keep clear of the strip and nothing can be drawn over. The band
+    # panel also keeps its `_reservations` entry, which is what still displaces the event dock past it.
+    var map_size: float = 0.0 if _reserver_overlays_map(id, edge) else size
     if map_view != null and map_view.has_method("set_reserved_inset"):
-        map_view.call("set_reserved_inset", id, edge, size)
+        map_view.call("set_reserved_inset", id, edge, map_size)
     if hud != null and hud.has_method("set_reserved_inset"):
         hud.call("set_reserved_inset", id, edge, size)
     # Co-edge stacking: push the Band panel's leading offset so it sits just past any inboard
@@ -1168,6 +1174,16 @@ func _apply_reservation(id: StringName, edge: int, size: float) -> void:
     # The bar's OWN axis: push it past whatever reserves the edge it is DOCKED to, so a co-edge band
     # panel is not drawn over. Same "recompute on every change" reason as the line above.
     _update_event_dock_edge_offset()
+
+## Does this reserver FLOAT over the map rather than push it aside? Only one does, and only on one pair
+## of edges: the Band/City panel docked TOP or BOTTOM, which since issue #377 draws a content-width card
+## centred in its strip with the HUD's chrome cluster beside it. Two islands over live map — so the map
+## must keep rendering underneath, exactly as it does under the tile bar.
+##
+## A VERTICAL band dock is a full-height 380px strip the card still fills edge to edge, so it reserves
+## from the map as it always did. Every other reserver is unaffected.
+func _reserver_overlays_map(id: StringName, edge: int) -> bool:
+    return id == BAND_PANEL_RESERVER and (edge == SIDE_TOP or edge == SIDE_BOTTOM)
 
 ## The Band panel's leading offset = Σ sizes of all lower-priority reservers currently on the SAME
 ## edge as the Band panel (today just the Inspector when both dock left; 0 otherwise). Recomputed

@@ -152,11 +152,35 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   the reservation is constant per dock edge. See the `ui/BandCityPanel.gd` roster row for the full
   contract (`work_zone_size()`, `zones_resized`, `set_tab_badge`, the no-ScrollContainer rule, and
   the plain-`Control` zone hosts).
+- **A HORIZONTAL DOCK IS TWO FLOATING ISLANDS OVER LIVE MAP** (issue #377) — the card, sized to its
+  content and centred, and the HUD's chrome cluster pinned to the strip's trailing edge. The reference
+  is the TILE BAR at the top of the screen: a card as wide as what it has to say, over map, with the
+  readouts as their own cluster beside it. `_position_card_and_rail` writes both rects; `_card_width()`
+  is the card's own width and **`_interior_size()` reads the CARD, not the strip**, so every zone
+  measurement follows with no edit of its own. A VERTICAL dock is untouched — the card still fills its
+  380px strip edge to edge and there is no rail.
+  - **This REVERSES the `PRESET_FULL_RECT` decision below, and the reversal is the point.** The card
+    used to span the strip deliberately so a bottom dock read as ONE continuous bar. On a 3440-wide
+    monitor that bar is two feet of dark chrome with an empty work zone stretched across the middle of
+    it — the reported defect. The card no longer spans anything; only `_root` (the layout region) does.
+  - **The MAP therefore stops insetting for a horizontal band dock.** `Main._reserver_overlays_map`
+    zeroes the map's share of the reservation for `band_panel` on `SIDE_TOP`/`SIDE_BOTTOM`, so live map
+    renders under and either side of the card. Without it the strip either side of the card is
+    reserved-but-blank — *worse* than the bar, since it is dead space you can neither see nor click.
+    **The HUD inset STAYS**, so the docks and the bottom bar keep clear of the strip and nothing can be
+    drawn over; and the panel keeps its `_reservations` entry, which is what still displaces the event
+    dock past it.
+  - **The seam is a VERTICAL-dock thing now.** It accents the map-facing edge of the *strip*, which is
+    right while the card fills that strip and wrong once it does not — on a horizontal dock it would
+    rule a line across the whole monitor with a small card floating under part of it, re-drawing the
+    very bar the islands replaced. `_position_seam` hides it; a floating card states its edge with its
+    border.
 - **THE TRAILING CHROME RAIL — the HUD's bottom-bar chrome SHARES a horizontal dock's row** (issue #324).
-  `_build` wraps `_panel_column` in a `_card_row` HBox and appends `_rail` AFTER it, so the row is
-  `content column · rail` and the rail sits at the TRAILING end. The **card itself stays
-  `PRESET_FULL_RECT`** deliberately: a bottom dock reads as ONE continuous bar, and insetting the card
-  would break it into visual islands — the chrome sits ON the card, only the content column is inset.
+  `_build` wraps `_panel_column` in a `_card_row` HBox; **`_rail` is a SIBLING of the card under `_root`**,
+  anchored to the trailing edge (it was the row's last cell until #377, i.e. chrome sitting ON the card,
+  which is exactly what welded the two into one bar). `ChromeRailSeparator` went with that join — a
+  hairline down the gap between two islands would re-assert it — so `RAIL_SEPARATOR_SPAN` is now a BARE
+  gutter, the room the card must leave, with nothing drawn in it.
   - **ONE column, not a gutter at each end.** A leading + trailing pair was built first and rejected on
     sight with a real minimap in it: `NavBacking` is ~300px wide, so two opposite gutters cost ~562px of
     row, pushed the band zone inward AND stranded dead space around the orb. One column costs
@@ -218,18 +242,39 @@ command center**: shown whenever ≥1 player band exists, always displaying a
     outer width before the zones see any of it) and `_interior_size()`. **`work_zone_size()` and
     `_apply_wide_content_cap()` both read `_interior_size()`, so they follow with NO edit**, and the
     ultrawide `SHRINK_CENTER` path then centres the content column in the room the rail leaves.
-  - **THE CAPPED COLUMN CARRIES `SIZE_EXPAND` AS WELL AS `SHRINK_CENTER`, AND THAT IS WHAT PINS THE RAIL
-    RIGHT** (issue #377). The two flags answer different questions: `SIZE_EXPAND` tells the `HBoxContainer`
-    who claims the row's slack, `SHRINK_CENTER` tells `fit_child_in_rect` where the child sits inside the
-    rect it is handed. A bare `SHRINK_CENTER` answers only the second — and with `_rail` on `SIZE_FILL`
-    that left the row with **no expanding child at all**, so `BoxContainer` packed both at their minimums
-    from the LEADING edge and stranded every remaining pixel AFTER the rail. Measured on a 3440-wide
-    bottom dock: interior 3093 against a 2304 cap, so the content column sat flush left, the parked
-    minimap and turn orb landed around the **72% mark**, and **789px of dead card** trailed them — i.e.
-    the cap's own centring never happened either, and the "chrome pinned to the trailing edge, content
-    centred" claim one bullet up was false for exactly the case it describes. Below the cap the fill
-    branch already carried the expand flag, which is why a sub-cap dock was always right and this only
-    ever showed past **~2651px of window** (`_wide_content_cap()` + `PANEL_CHROME_H` + the rail's span).
+  - **THE CARD'S WIDTH IS BUILT UP FROM A DECLARED COLUMN COUNT, NOT CLAMPED DOWN FROM A CAP** (issue
+    #377). `_card_width()` (wide shell) = `ZONE_BAND_WIDTH + ZONE_PARTY_WIDTH + columns ×
+    ZONE_WORK_MIN_WIDTH + WIDE_SEPARATOR_SPAN + PANEL_CHROME_H`, and the column count arrives through
+    **`set_work_columns`** from `BandPanelController`, which is the only thing that knows how many
+    sources there are. That is the `set_rail_width` contract again — DECLARED, never measured here.
+    - **It is acyclic because the count comes from the zone's HEIGHT.** `_work_board_capacity` derives
+      `rows` from the box's height (which a horizontal dock fixes), then `cols = ceil(count / rows)`.
+      Width follows count; count never follows width. The SHELL is still chosen from the room the
+      *strip* has (`_shell_is_wide`), never from the card, so nothing can feed back into the choice
+      that produced it.
+    - **`set_work_columns` RETURNS the count it granted, and the board must build to that.** A want is
+      not a grant: `_affordable_work_columns()` caps it at what the strip can actually pay for, and a
+      board built to the want overflows its CLIPPING zone host silently — measured at ~190px in a 380px
+      side dock and ~725px at the wide shell's own minimum width, where a 34-source band asks for four
+      columns and the strip affords one.
+    - **It must NOT emit `zones_resized`.** The caller is the controller in the middle of building the
+      board, and that signal is what makes it re-page — emitting would re-enter `_fill_work_zone` from
+      inside itself. The cached size is refreshed silently instead, which also stops the next genuine
+      resize firing a spurious re-page against a stale value.
+    - **`set_rail_width` runs the FULL `_apply_dock_layout`**, not `_apply_rail` alone: the rail's rect
+      is anchored by `_position_card_and_rail` rather than laid out by a container, and the card's width
+      and centring are both computed against `_rail_span()`. Calling `_apply_rail` alone left the cluster
+      at whatever width the dock was last applied at — measured as a 296px rail hanging 180px off the
+      end of a 1920px strip.
+    - **What this fixes, in the reporter's words: "the work area seems too wide."** It was. With the
+      width read off the monitor, a band with NO worked sources still got four board columns and a
+      2330px card. It now gets one column and a **1190px** card with 1929px of open map around it.
+    - **The COLUMN's own `SHRINK_CENTER` cap is gone with it.** `_apply_wide_content_cap` capped the
+      column inside a full-width card — the only thing a full-bleed bar leaves to narrow — and
+      `SHRINK_CENTER` clears the expand flag, so with `_rail` on `SIZE_FILL` the row had no expanding
+      child and `BoxContainer` packed both from the LEADING edge: column flush left, parked chrome at
+      the **72% mark**, ~790px of dead card trailing it. The column simply fills its card now, and the
+      centring happens one level up on the whole card.
     `_panel_extent()` is deliberately **untouched** — it is documented as the card's OUTER size and the
     card is still full-width — and `_position_seam()` needs no change either: the seam spans `_root` and
     correctly accents the whole reserved strip.
@@ -542,21 +587,26 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   gone, the wide shell held, work zone ≥ `ZONE_WORK_MIN_WIDTH`. `_left`: **the control** — chrome home in
   `BottomBar`, `_rail_width()` zero, and it captures the never-reflowed `work_zone_size()` baseline.
   `_collapsed_bottom`: the fit gate DECLINES a 46px strip, which is the frame that proves collapse cannot
-  slice the minimap. **`_ultrawide`: the ONE frame that reaches the configuration issue #377 was reported
-  on** — a bottom dock at 3440×1080, i.e. past `_wide_content_cap()`, rendered LAST because it re-pins the
-  canvas and `_reflow_round_trip` compares against a baseline captured at `DOCKROW_CANVAS`. It is a
-  DOCK-ROW state rather than a wider `band_panel_wide_ultrawide` because the parked chrome is the subject
-  and it needs this block's REAL seeded minimap: against an empty `MinimapContainer` the rail is the zoom
-  rail's ~80px and a mis-placed rail is nearly invisible. Three assertions ride it —
-  **`_assert_content_cap_engaged`** (the PRECONDITION: interior > cap, without which the other two pass
-  vacuously on any window under ~2651px, where the column fills and right-justifies the rail for free),
-  **`_assert_rail_is_right_justified`** (the rail's right edge within a pixel of the card's trailing
-  content inset — measured against the CARD's inset, never the viewport's, since the card correctly draws
-  `PANEL_CONTENT_MARGIN_H` + `PANEL_BORDER_WIDTH` the rail sits inside of) and
-  **`_assert_content_column_centred`** (equal margins either side of the column, in the room the rail
-  LEAVES). Sabotage-verified: dropping `SIZE_EXPAND` fails exactly those two, naming `790px of dead row`
-  and `-1px of margin leading, 790px trailing`, while the precondition and every older assertion stay
-  green. `_reflow_round_trip`: bottom → left → bottom → left, asserting the clusters came home
+  slice the minimap. **The `_ultrawide` PAIR is the frame set issue #377 is judged on** — a bottom dock at
+  3440×1080, rendered LAST because it re-pins the canvas and `_reflow_round_trip` compares against a
+  baseline captured at `DOCKROW_CANVAS`. They are DOCK-ROW states rather than a wider
+  `band_panel_wide_ultrawide` because the parked chrome is half the subject and they need this block's
+  REAL seeded minimap: against an empty `MinimapContainer` the rail is the zoom rail's ~80px and a
+  mis-placed cluster is nearly invisible. **`_ultrawide` is the busy half** (34 sources, four columns) and
+  **`_ultrawide_empty` is the one that carries the width claim** — a band with nothing worked, which the
+  busy frame structurally cannot test, since a 34-row board wants every column it can get and a
+  content-sized card is then indistinguishable from a monitor-sized one. Four assertions —
+  **`_assert_card_is_narrower_than_strip`** (the PRECONDITION: without it the rest pass for free on any
+  window the card fills anyway), **`_assert_rail_is_right_justified`** (measured against the STRIP now,
+  not the card — the cluster is the card's SIBLING, so the claim is the stronger "at the edge of the
+  screen"), **`_assert_card_is_centred`** (the CARD, not its content column) and
+  **`_assert_card_follows_its_content`** (the empty card is narrower than the busy one, asks for fewer
+  columns, and the difference is EXACTLY the columns dropped — a width-only test would pass on a card
+  that shrank for an unrelated reason while the board stayed at four). Measured: **2330px / 4 columns
+  busy → 1190px / 1 quiet**, in a 3440px strip. Sabotage-verified: making `_card_width` return the whole
+  available strip trips the precondition on BOTH frames (loudly refusing to prove anything, rather than
+  passing) plus both halves of the content claim, naming `3119px with nothing to show and 3119px with 34
+  sources`. `_reflow_round_trip`: bottom → left → bottom → left, asserting the clusters came home
   to their EXACT parent, child index, anchors and size flags, `BottomBar`'s authored minimum height, and a
   work zone identical to that baseline — reparenting round-trips are where this class of change rots. Four
   assertions back them: `_assert_chrome_parked` (both halves of the swap — the bar's visibility AND each
