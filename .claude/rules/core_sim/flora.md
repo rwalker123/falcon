@@ -518,9 +518,9 @@ down at full MSY every turn (issue #427). The same take now feeds all three acco
     basket grows no hay), which the rate alone cannot distinguish. `foddering` is the one field on that
     table that is **not** a rung-transition gate: no rung waits on it, the pen rung *teaches* it
     (`intensification_ladder.json`, corral's `earns_knowledge`), and it gates all three fodder seams —
-    the pen's hay draw, the pen's `K` fodder term, and this wild credit. It also stands alone in
-    `snapshot_intensification_knowledge`'s all-zero skip, so a faction whose only ladder progress is
-    Foddering is still published rather than dropped.
+    the pen's hay draw, the pen's `K` fodder term, and this wild credit. **What that costs the capture
+    is stated where the capture is edited** — `.claude/rules/core_sim/yield-forecast.md`, which owns
+    `core_sim/src/snapshot/**`, not this file.
 - **Pinned by `core_sim/tests/forage_tended_vector.rs`**: the #427 grapevine-under-Sustain regression, hay
   crediting `FODDER`, a staple keeping its food *and* gaining its token trade, the wild `Deplete` sale
   unchanged, no double credit under `Deplete`, and `Deplete > Sustain` on the same tended cash crop. Five

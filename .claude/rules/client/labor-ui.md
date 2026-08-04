@@ -192,10 +192,16 @@ keys, the crew targets and the verdict — and the **YIELDS ROW was outside it**
 the floor watched the verdict move while the food and trade numbers *they were dragging toward* sat
 frozen until release. Reported from play. `_register_live(hosts, host, model, workers, fill)` now takes
 any container plus the `fill(host, model, workers)` that refills it, and `_refresh_floor_live` walks
-the list, so the rule is stated once: **anything whose value depends on the floor belongs in the set —
-the yields, both crew targets, the verdict and the teaching line — and anything
-that does not must stay out, or the drag pays for work it does not need.** Adding a reading is one
-call, not a new key plus a new type test plus a new branch.
+the list, so the rule is stated once: **anything whose value — or whose PRESENCE — depends on the
+floor belongs in the set — the yields, both crew targets, the verdict, the teaching line and the
+locked-account reason — and anything that does not must stay out, or the drag pays for work it does
+not need.** Adding a reading is one call, not a new key plus a new type test plus a new branch.
+
+**PRESENCE counts, and it is the half that reads as safe to omit.** A reading whose *number* is
+constant can still belong here: the locked fodder reason (#485) says the same words at every floor,
+but raising the floor takes the fodder row away, so a sentence resolved once before the render goes on
+explaining a `—` no longer on screen. "It does not move under a drag" is a claim about the string, and
+the registry is about the ROW.
 
 The assertion that can see this is a **CHANGE, never a presence**: a stale yields row is a perfectly
 valid, perfectly findable node, so "the row is still there" passes with the bug fully restored. The
@@ -2024,8 +2030,9 @@ discard is precisely what this axis split removed.
       A completed **Field** deliberately reads as a *different thing* from a Tended Patch — different
       word, different glyph — not as a bigger percentage; that IS rung 3's readout test.
       `Sowing`/`Building`/`Fencing` share one build-verb convention.
-    - **Knowledge-unlock nudge.** `_ingest_intensification` keeps the per-faction tracks (all four,
-      driven off `KNOWLEDGE_TRACK_LABELS` — adding a rung's knowledge is a label entry + a decoder
+    - **Knowledge-unlock nudge.** `_ingest_intensification` keeps the per-faction tracks (all FIVE
+      since #485 added Foddering — the four rung gates plus the pen rung's own capability — driven off
+      `KNOWLEDGE_TRACK_LABELS`, so adding a knowledge is a label entry + a decoder
       field, never an edit there) and fires a ONE-SHOT `KNOWLEDGE_UNLOCK_NOTES` command-feed note the
       turn a track crosses to complete. Only a real `<1 → >=1` transition fires it (a track already
       complete on first snapshot / a rehydrated save is silent), player faction only, keyed per
@@ -2497,16 +2504,25 @@ fodder take is non-zero:
   presence would key the row header's `now → after` off an account that has neither.
 - **The joined sentence (`YIELD_MODEL_TEXT`) composes with fodder `0.0`.** A sentence has no room for
   the reason, so it must not promise the account at all — the readout can qualify a number, prose
-  cannot.
+  cannot. **That branch has no PLAYER-FACING reader today**, and knowing so is what stops the next
+  reader treating it as a live prose surface: `YIELD_MODEL_TEXT` is read only by
+  `_yield_preview_bbcode`, whose two callers (`_local_forage_preview_bbcode` /
+  `_local_hunt_preview_bbcode`) are reached from the `ui_preview` chapters alone — the drawer's
+  standing summary composes from `SourceForecast.source_yield_readout` instead. The term is kept
+  because the producer is shared and the rule is what a re-wired preview must obey, not because a
+  frame shows it.
 - **THE OVERDRAW TEST KEEPS THE FODDER CEILING COMPARISON UNCHANGED, and deleting it is the plausible
   wrong move.** The take draws the same biomass down whether or not the crew banks the hay, and on a
   hay-only patch that comparison is the only drawdown signal there is.
 
 The reason travels out on the model (`YIELD_MODEL_LOCKED_REASON`) and **`_mount_readout`'s aside closure
 reads it off the SAME `yields_at` answer the yields host is built from**, at the same floor and the same
-crew (`_live_floor` / `_live_reaches`, one definition apiece). One model evaluation per refresh, so the
-muted row and the sentence explaining it cannot disagree in either direction. The hunt web needs no
-branch and no parameter: its model carries no such key, so the read answers `""` and no line renders.
+crew. What guarantees the muted row and the sentence explaining it cannot disagree is **not** a single
+evaluation — `_mount_readout` calls `yields_at` three times per refresh (the emptiness probe, the yields
+host, the aside). It is that the yield models are **pure** and every one of those calls passes
+**identical arguments**, which `_live_floor` / `_live_reaches` enforce by having one definition apiece.
+The hunt web needs no branch and no parameter: its model carries no such key, so the read answers `""`
+and no line renders.
 
 **IT IS IN THE LIVE SET, and its PRESENCE is what depends on the floor.** The sentence itself does not
 move — it states what the FACTION is missing — which is exactly the reasoning that first put it outside
@@ -2521,6 +2537,33 @@ teaching line are standing copy. It carries **its own meta**
 other lines move with the floor and this one does not, so an assertion on "the aside changed" testifies
 about this sentence in neither direction.
 
+### What the FLOOR PRESETS do with it — they quote no fodder term at all
+
+The readout is not the only surface on the sheet that composes a fodder ceiling. `_forage_floor_takes`
+feeds `forecast["ceiling_fodder"]` into `SourceForecast.extractive_take_pair`, whose `full` string rides
+each preset button's `tooltip_text` — so hovering `♻ Best harvest` read `up to +0.12/turn · +0.40
+fodder/turn`, a quantity the sim will refuse, ONE CONTROL ABOVE a readout marked `— FODDER` and an aside
+saying the hay stays in the field. **Where the fodder is locked, the preset tooltips quote no fodder term
+at all** — not a dash, not a zero, no clause.
+
+- **Because a tooltip is one flat string with nowhere to hang a reason**, and the sheet already states
+  the lock ONCE, in the register built to explain it: the muted row plus the aside directly below the
+  presets. Dropping the clause hides nothing that is not still on screen — the account's EXISTENCE is
+  stated by the row that keeps its `FODDER` unit — whereas quoting the number states something the sim
+  will refuse.
+- **The account's own ZERO goes with its ceiling.** On a hay-ONLY patch fodder is `zero_account_of`'s
+  answer, so merely passing `0.0` would print `up to +0.00 fodder/turn` on every preset — the refusal
+  again, now at a number the ground contradicts. The zero account is stepped to
+  `SourceForecast.YIELD_ACCOUNT_NONE`, which renders no line, and the preset keeps its name-only tooltip.
+- **One predicate, through `DrawerComposeController._wild_fodder_lock`**, which both surfaces call and
+  which is the only spelling of `RungGates.wild_fodder_reason` on this sheet. Two predicates over one
+  gate is exactly how the presets came to quote a ceiling the row below them was already refusing.
+- **Scoped to the FORAGE presets and to the WILD take.** The hunt picker has no fodder account to drop.
+  Neither the CROP PICKER's rows nor the improvement control's PAYOFF faces (`Hay Grass 30% · 1.80 hay`,
+  the `→ … fodder` terms) are touched: they quote what COMMITTING to the crop would pay, and a committed
+  patch's hay is credited unconditionally — committing IS the bid — so gating them would state a refusal
+  that does not exist.
+
 **Frames — a THREE-STATE set on one patch, judged as a set**, because a lone negative here is satisfied
 by silencing the account everywhere: `forage_fodder_locked` (wild meadow, Foddering part-learned → the
 `—`, the reason by meta, the food row still a live number) · `forage_fodder_known` (the SAME patch,
@@ -2530,6 +2573,16 @@ line — the half that pins `species.is_some()`, without which the whole thing p
 knowledge alone"). Sabotage-verified in both directions: pinning the lock ON fails the known and
 committed states (and `floor_chart_drawn_down`'s two-account `now → after` claim), pinning it OFF fails
 exactly the locked state's three assertions — no state passes under both.
+
+**The PRESET TOOLTIPS ride the same three frames, asserted as a PAIR** (reached by
+`HudWidgets.POLICY_RUNG_META` through the chapter's `_policy_rung_tooltip`, never by face text, since a
+preset's face carries no metric at all): the locked frame's `♻ Best harvest` quotes no fodder clause
+AND still quotes the food + trade ceilings it can bank (`HAY_PEAK_TOOLTIP_FODDER_LOCKED`), while the
+known and committed frames quote all three (`HAY_PEAK_TOOLTIP`). Sabotage-verified three ways, each
+failing a DISJOINT set: restoring the refused clause fails the locked negative alone; dropping the
+fodder clause unconditionally fails the known and committed twins (plus `forage_three_accounts`' two
+wire-order claims, which stand on the same tooltip); and blanking the locked tooltip outright fails the
+"not merely blanked" half alone — which is why the pair is what is asserted and not the negative.
 
 **The live-set claim is a DRIVEN DISAPPEARANCE, never a presence**, for the reason the frozen-yields
 triple records: a stale sentence is a perfectly valid, perfectly findable node. `forage_fodder_locked`

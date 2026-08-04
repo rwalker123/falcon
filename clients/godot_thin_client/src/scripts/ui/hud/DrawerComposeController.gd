@@ -511,8 +511,9 @@ const YIELD_MODEL_TEXT := "text"
 const YIELD_MODEL_OVERDRAW := "overdraw"
 const YIELD_MODEL_WASTE := "waste"
 ## WHY one of this model's accounts renders as a dash instead of a number — `""` when every account
-## this take pays is bankable. Carried on the MODEL rather than resolved at the render, so the muted
-## row and the sentence explaining it come from one answer.
+## this take pays is bankable. It rides the MODEL rather than being resolved at the render, so the
+## muted row and the sentence explaining it are two readings of one model dict: whoever evaluates this
+## model at a given floor and crew gets both, and neither can be composed without the other.
 const YIELD_MODEL_LOCKED_REASON := "locked_reason"
 func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
         workers: int, improvement: String = SourceForecast.IMPROVEMENT_NONE,
@@ -558,8 +559,7 @@ func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
     # band reads a live `fodder_per_biomass` off the meadow and banks nothing from it. The take is not
     # recomputed: it is what the crew MOVES, and only the credit is refused, so the row keeps its unit
     # and loses its number while the sentence beside it goes to `0.0`.
-    var locked := RungGates.wild_fodder_reason(
-        String(tile_info.get("patch_committed_species", "")).strip_edges(), _player_knowledge())
+    var locked := _wild_fodder_lock(tile_info)
     var banked_fodder := actual_fodder
     if locked != "" and SourceForecast.has_component(actual_fodder):
         for row in rows:
@@ -591,6 +591,19 @@ func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
         YIELD_MODEL_WASTE: "",
         YIELD_MODEL_LOCKED_REASON: locked,
     }
+
+## **THE ONE SPELLING OF THE WILD-FODDER LOCK ON THIS SHEET** — `""` when this crew's hay is bankable,
+## the reason when it is not. Two surfaces answer to it and they sit one control apart: the yields
+## row's muted `—` (with the aside sentence explaining it) and the FLOOR PRESETS' dropped fodder
+## ceiling. A second predicate over one gate — even one spelled identically today — is exactly how the
+## presets came to quote a ceiling the row below them was already refusing (issue #485), so both go
+## through this call and through `RungGates.wild_fodder_reason` behind it.
+##
+## **The PUBLISHED commitment, never the composed improvement**: a Cultivate the player has ticked and
+## not yet committed is not a bid the sim has accepted.
+func _wild_fodder_lock(tile_info: Dictionary) -> String:
+    return RungGates.wild_fodder_reason(
+        String(tile_info.get("patch_committed_species", "")).strip_edges(), _player_knowledge())
 
 ## One yield model → the one-line BBCode preview, for both webs. Green + `· renewable` inside the
 ## source's own regrowth, WARN-amber with the shared ⚠ and the web's own overdraw clause outside it;
@@ -1057,9 +1070,11 @@ func _mount_crew_row(parent: VBoxContainer, hosts: Array, crew_label: String, co
 ## **EVERY REGISTER IN THIS BOX IS LIVE**, including the aside's locked-account line. Anything whose
 ## value — or whose PRESENCE — depends on the floor belongs in the live set: the lock's sentence
 ## explains a `—` in the register above it, and raising the floor takes the fodder row away, so a
-## sentence resolved once before the render would outlive the mark it answers. It is read off the same
-## `yields_at` answer the yields host is built from, so the row and its explanation come from one
-## evaluation and cannot disagree in either direction.
+## sentence resolved once before the render would outlive the mark it answers. The row and its
+## explanation cannot disagree in either direction, and what guarantees that is NOT a single call —
+## this function calls `yields_at` three times per refresh (the emptiness probe, the yields host, the
+## aside). It is that the yield models are PURE and every one of those calls passes IDENTICAL
+## arguments, which `_live_floor` / `_live_reaches` enforce by having one definition apiece.
 func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, workers: int,
         yields_at: Callable, labor_kind: String) -> void:
     var known := bool(model.get("known", false))
@@ -1098,8 +1113,10 @@ func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, work
             # **READ OFF THE SAME `yields_at` ANSWER THE ROW ABOVE IS BUILT FROM, at this floor and
             # this crew.** Its PRESENCE is floor-dependent — raise the floor (or step the crew to 0)
             # and the fodder take goes to nothing, the row leaves, and a sentence resolved once before
-            # the render would go on explaining a `—` no longer on screen. One model evaluation per
-            # refresh is also what makes it impossible for the row and its explanation to disagree.
+            # the render would go on explaining a `—` no longer on screen. This is its OWN `yields_at`
+            # call, not the row's — what makes it impossible for the two to disagree is that the yield
+            # models are PURE and both calls pass the same arguments, which is why the floor and the
+            # reaches flag are spelled `_live_floor` / `_live_reaches` and nowhere else.
             # The hunt web needs no branch here: its model carries no such key, so this reads `""`.
             var locked_reason := String((yields_at.call(
                 _live_floor(live), crew, _live_reaches(live)) as Dictionary).get(
@@ -1569,10 +1586,33 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
 ## here, wearing the crop-substituted payoff because a build verb was a rung of this picker. The
 ## improvement control states the same terms now, against the same crop, through the same
 ## `_crop_payoff_terms`.
+##
+## **A LOCKED FODDER ACCOUNT IS QUOTED IN NO PRESET TOOLTIP AT ALL** (issue #485) — not a dash, not a
+## zero, no clause. A tooltip is one flat string with nowhere to hang a reason, and this sheet already
+## states the lock ONCE, in the register built to explain it: the muted `—` row that keeps its FODDER
+## unit, plus the aside sentence directly below these very buttons. So dropping the clause hides
+## nothing that is not still on screen — the account's EXISTENCE is stated by that surviving unit —
+## whereas quoting the ceiling states a quantity the sim will refuse, one control above the readout
+## refusing it. That self-contradicting sheet is the defect this scoping fixes.
+##
+## **The lock is resolved through `_wild_fodder_lock`, the same call the yields row is muted by.** Two
+## predicates over one gate is how these two surfaces started disagreeing in the first place.
+##
+## **Scoped to the FORAGE presets, and to the WILD take.** The hunt picker has no fodder account to
+## drop; and neither the crop picker's rows nor the improvement control's payoff faces (`Hay Grass 30%
+## · 1.80 hay`, `→ … fodder`) are touched by the lock — they quote what COMMITTING to the crop would
+## pay, and a committed patch's hay is credited unconditionally, committing being the bid.
 func _forage_floor_takes(tile_info: Dictionary) -> Dictionary:
     var takes := {}
     var zero_account := SourceForecast.zero_account_of(
         tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX)
+    var locked := _wild_fodder_lock(tile_info) != ""
+    # **THE ACCOUNT'S OWN ZERO GOES WITH ITS CEILING.** On a hay-ONLY patch fodder is the
+    # `zero_account`, so merely zeroing the term would print `up to +0.00 fodder/turn` on every preset
+    # — the refused quantity again, now at a number the ground itself contradicts. `YIELD_ACCOUNT_NONE`
+    # renders no line, leaving the preset its name-only tooltip.
+    if locked and zero_account == SourceForecast.YIELD_ACCOUNT_FODDER:
+        zero_account = SourceForecast.YIELD_ACCOUNT_NONE
     for preset_variant in SourceForecast.FLOOR_PRESETS:
         var preset := String(preset_variant)
         var forecast := SourceForecast.forecast_inputs(tile_info, SourceForecast.SOURCE_KIND_FORAGE,
@@ -1581,7 +1621,7 @@ func _forage_floor_takes(tile_info: Dictionary) -> Dictionary:
             continue
         takes[preset] = SourceForecast.extractive_take_pair(
             float(forecast["ceiling"]), float(forecast["ceiling_trade"]),
-            float(forecast["ceiling_fodder"]), zero_account)
+            0.0 if locked else float(forecast["ceiling_fodder"]), zero_account)
     return takes
 
 

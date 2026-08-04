@@ -82,6 +82,12 @@ const FODDER_LOCK_FORAGERS := 3
 ## fixture at 0 could not tell "unlearned" from "partly learned but still refused".
 const FODDER_LOCK_PROGRESS := 0.42
 
+## The peak preset's TOOLTIP with the hay locked — `HAY_PEAK_TOOLTIP` minus its third clause, and
+## NOTHING in its place: a tooltip is one flat string with nowhere to hang the reason, so a refused
+## ceiling is dropped rather than dashed or zeroed. Written out rather than sliced off that constant,
+## for the reason every literal in this file is: a derived needle passes on whatever the code emits.
+const HAY_PEAK_TOOLTIP_FODDER_LOCKED := "up to +0.60/turn · ⇄ +0.01 trade goods/turn"
+
 ## Which line of a rung's two-line face carries the metric: line 0 is the rung NAME
 ## (`HudFormat.policy_face`), line 1 the products (`HudWidgets._policy_rung_cell` builds them in that
 ## order). A rung with no metric wears line 0 alone.
@@ -1248,6 +1254,18 @@ func run(harness) -> void:
 		not h._hud._drawercompose._local_forage_preview_bbcode(h._hud._band_labor.player_band(),
 			wild_hay, SourceForecast.FLOOR_FOOD_PEAK, FODDER_LOCK_FORAGERS)
 			.contains(SourceForecast.YIELD_ACCOUNT_FODDER))
+	# **NOR DO THE FLOOR PRESETS ONE CONTROL ABOVE THE ROW.** Their tooltips are the OTHER surface on
+	# this sheet composing a fodder ceiling, and a `♻ Best harvest` reading `+0.40 fodder/turn` directly
+	# over a readout marked `— FODDER` is the sheet contradicting itself — the very defect #485 is
+	# about. A tooltip is one flat string with nowhere to hang a reason, so the clause is DROPPED: the
+	# lock is already stated once, in the register built to explain it. Asserted as a PAIR with the
+	# line below, or a tooltip blanked outright would satisfy the negative half.
+	var locked_tooltip := _policy_rung_tooltip(
+		h._hud._drawercompose._compose_sheet, SourceForecast.FLOOR_PRESET_PEAK)
+	h._assert_hud("a preset quotes no fodder ceiling the sim would refuse — no clause, not a zero",
+		not locked_tooltip.contains(SourceForecast.YIELD_ACCOUNT_FODDER))
+	h._assert_hud("…while the ceilings this crew CAN bank survive, so the tooltip is not merely blanked",
+		locked_tooltip.contains(HAY_PEAK_TOOLTIP_FODDER_LOCKED))
 	# **THE LOCK LINE IS IN THE LIVE SET, and only a DRIVEN CHANGE can say so.** Its text does not move
 	# with the floor — it states what the FACTION is missing — but its PRESENCE does: raise the floor
 	# above the stock and the fodder take goes to nothing, the muted row leaves with it, and a sentence
@@ -1290,6 +1308,9 @@ func run(harness) -> void:
 			and float(known_fodder) > 0.0)
 	h._assert_hud("…and the aside drops the lock line entirely — no line, not a blank",
 		Readout.locked_account_line(h._hud._drawercompose._compose_sheet) == "")
+	h._assert_hud("…and the preset tooltips quote the hay ceiling again, all three clauses",
+		_policy_rung_tooltip(h._hud._drawercompose._compose_sheet,
+			SourceForecast.FLOOR_PRESET_PEAK).contains(HAY_PEAK_TOOLTIP))
 	h._assert_hud("…and the strip names the fifth track, which is a capability and not a rung",
 		h._hud._topbar.intensification_label.text.contains(
 			String(TopBarReadouts.KNOWLEDGE_TRACK_LABELS[HudFloraVocab.KNOWLEDGE_TRACK_FODDERING])))
@@ -1313,6 +1334,11 @@ func run(harness) -> void:
 			and float(committed_fodder) > 0.0)
 	h._assert_hud("…so the commitment closes the gate on its own — no lock line either",
 		Readout.locked_account_line(h._hud._drawercompose._compose_sheet) == "")
+	# The presets follow the same gate from its OTHER end: the credit is open on the commitment alone,
+	# so the ceiling they quote is the full three-account one with the knowledge still unlearned.
+	h._assert_hud("…and a committed patch's presets quote its hay ceiling, knowledge or no knowledge",
+		_policy_rung_tooltip(h._hud._drawercompose._compose_sheet,
+			SourceForecast.FLOOR_PRESET_PEAK).contains(HAY_PEAK_TOOLTIP))
 	# The DRAWDOWN is a fact about the biomass the crew moves, not about which accounts it banks, so
 	# the fodder ceiling comparison is unchanged by the lock — on a hay-only patch it is the only
 	# drawdown signal there is. Asked of the two fixtures at one floor and one crew.
