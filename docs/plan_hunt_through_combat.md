@@ -1,7 +1,7 @@
 # The hunt is a fight — resolving the take through the combat system
 
-**Status:** §9 slices **1 and 2 have landed**; slices 3–6 are design, and **slice 3 blocks the
-rest** (§5.1 — found in play, not in review). Issue #456, repurposed: the
+**Status:** §9 slices **1–4 have landed**, plus the minimal TOE of §4.8; slices 5–7 are design. §4.8's kit split (slice 5) is a **correction to shipped behaviour** — this doc
+pointed baskets at the hunt's carry, and the implementation faithfully built that. Issue #456, repurposed: the
 denial raid that issue asks for turns out to need this first, and becomes small once it exists
 (`docs/plan_denial_raid.md`).
 
@@ -402,11 +402,43 @@ Without equipment a hunter's `attack` is `1`, which is below every megafauna's `
 band can hunt a mammoth until spears exist**, and the progression stops being a note and starts being
 load-bearing. That makes a minimal TOE part of this arc rather than a dependency beside it:
 
-- **the hunting kit** — spears, `attack 20` against an unequipped `1`. **SETTLED**, and the number
-  that opens the gate;
-- **the carry kit** — baskets, raising the carry side (§5), the other half of `plan_early_game_labor`'s
-  role table;
-- consumable with the durability cliff, start-stocked, **not craftable**.
+- **spears** — `attack 20` against an unequipped `1`. **SETTLED**, and the number that opens the gate;
+- **a sled** (travois, drag harness) — the **hunt's** carry, §5. **A flat per-hunter multiplier, and
+  it needs no pullers** — SETTLED. Modelling a crew cost would make the hunt's carry non-linear in
+  party size, and `hunt_haul_workers`, the fill target's arithmetic and §5.1's trip length all assume
+  that linearity; the ripple is not worth what the realism buys;
+- **baskets** — the **forage** web's carry and yield, `plan_early_game_labor`'s other role.
+
+Consumable with the durability cliff, start-stocked, **not craftable**.
+
+#### One kit, one job — and an earlier draft got the carry half wrong
+
+This section used to read *"the carry kit — **baskets**, raising the carry side (§5)"*, and §5 is the
+**hunt's** carry. That is a physical nonsense and it shipped: baskets currently raise a hunter's haul
+rate and do nothing at all for foraging.
+
+**A carcass is one lumpy object you drag out whole.** A container does not help you move a deer —
+what helps is a *sled*. Berries are the opposite case: loose, divisible, and bounded entirely by what
+you can hold, which is exactly what a basket fixes. So the two webs want different kits, and their
+unequipped tiers want different **shapes**, not merely different numbers:
+
+| | forage | hunt |
+|---|---|---|
+| the constraint | **containment** — a handful against a basketful | **transport** — dragging a carcass |
+| bare-handed tier | a small fraction of equipped; the ratio is large | moderately reduced; you can always drag *something* |
+| where the shortfall shows | less gathered | **`wasted`** — meat left on the range, already computed and already on screen |
+
+The hunt's sledless case therefore needs **no new mechanic**: a party that cannot haul its kill
+leaves more of it, which `AnimalTake.wasted` has always expressed.
+
+**Megafauna then needs BOTH kits**, which is the property worth having: spears get you through a
+mammoth's `defense 12`, the sled gets 800 biomass home, and neither alone is enough. "Megafauna is
+the prize" gets two gates rather than one.
+
+**A sled does not shorten a raid — it lengthens it.** Trip length is
+`carry / (engage_rate × body_mass)` (§5.1), so a bigger pack takes *longer* to fill. The sled buys
+more meat per trip; the **fill target** (§5.2) is the lever for trip length. They are complementary
+and it is easy to assume otherwise.
 
 The crafting economy that replenishes kit stays deferred. What ships is enough to make `attack` a
 real number and the equipped/unequipped distinction visible.
@@ -625,11 +657,16 @@ Each lands on its own PR.
 4. **The take resolves through `resolve_fight`.** `quantise_animal_take`'s kill arm is replaced by
    the resolver's enemy losses; the herd-as-`Force` mapping and the one-sided fast path land here.
    Carry, waste and `max(1, carryable)` are untouched.
-5. **Forecast reports a range** (§6.4) + the client readout, and the hunters-per-animal figure on the
+5. **The three kits split correctly** (§4.8) — a sled takes over the hunt's carry, baskets move to
+   the forage web with a much lower bare-handed tier, spears keep `attack`. **A correction to shipped
+   behaviour, not new scope**: minimal TOE landed with baskets raising the *hunt's* haul rate and
+   doing nothing for foraging, because this doc told it to. Worth landing before any balance
+   evaluation, since it moves both webs' carry.
+6. **Forecast reports a range** (§6.4) + the client readout, and the hunters-per-animal figure on the
    pre-launch panel.
-6. **Wariness values authored** across the roster — the first slice with visible retreat behaviour.
+7. **Wariness values authored** across the roster — the first slice with visible retreat behaviour.
 
-   **6 must follow 5, and the order is not a preference.** Authoring wariness makes the take
+   **7 must follow 6, and the order is not a preference.** Authoring wariness makes the take
    stochastic; until the forecast reports a distribution, `forecast == actual` breaks on the animal
    web the moment a non-zero value ships. There is a second, harder half to settle with it: a
    forecast has no event seed (a projection cannot know a future tick), so the preview cannot draw
@@ -700,7 +737,7 @@ Every value is settled (§2.1, §4.2, §4.3, §4.8). What remains is what only p
 |---|---|---|
 | 1 | **Do the roster values hold up in play?** | The risk they carry is specific: for most species the escapement floor binds long before engagement does, so an `engage_rate` set too low silently becomes a *second* floor. §6.6's hunt report is what makes that visible rather than mysterious. |
 | 2 | **Is a coastal start too strong?** | Seal's ceiling of 24 is second only to megafauna, because seals are helpless on a haul-out. Historically right; possibly a start-position imbalance. Known, not discovered. |
-| 3 | **Is the fill target in ANIMALS or in PACK FRACTION?** | *"Take ≈50 fowl"* is what the player said and matches the escapement graph's own units, so the two levers would speak one language. *"Come home half-full"* survives a species change without re-picking a number, and is the unit the termination condition is already written in. §5.2 specifies the mechanic and deliberately not this. |
+| 3 | **What the fill target measures.** | **SETTLED as ANIMALS** — it matches the escapement graph's own units, so both levers speak one language. But it measures what comes **home**, not what dies: it caps a carry quantity, so a party too small to haul a whole animal kills more than the number typed. *"Take ≈50"* reads as *"bring home 50 worth"*. A kill target needs trip-scoped kill state and is a different change. |
 | 4 | **Does the food economy settle after the body-mass correction?** | §4.3 cuts mid-game hunting yield to roughly a third and is deliberately uncompensated, on the reasoning that tuning around still-moving numbers bakes in a fix for a problem that may not survive them. |
 
 ---
