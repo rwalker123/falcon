@@ -426,7 +426,7 @@ static func _value_hex(key: String, value: String, ctx: Context) -> String:
             return BandFoodStatus.hex_for_morale(ctx.morale)
     elif key == HudDisclosureVocab.DETAIL_ROW_GROWTH:
         # The band's birth rate as a share of normal, tinted by the fertility buckets. Same
-        # ink → amber → red grading as `BandFoodStatus.hex_for_output` and for the same reason: normal
+        # ink → amber → red grading as `BandFoodStatus.color_for_output` and for the same reason: normal
         # growth is normal, not a "good", so the top bucket is neutral ink even when the band
         # out-breeds its base rate.
         if not is_nan(ctx.fertility):

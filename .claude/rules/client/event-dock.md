@@ -410,6 +410,22 @@ Two separate rules, both learned elsewhere in this HUD:
   second finding. `ui_preview` asserts BOTH ways the dock can grow (the widest bar with the log
   closed, and the log open, which collapses the bar to one title line) against the cap, as a pair —
   they are alternatives rather than addends, so neither is the worst case by inspection.
+
+  **That clamp is measured against the WHOLE viewport, and on a shared edge the displaced strip
+  therefore reads `[_edge_offset, _edge_offset + cross]` with nothing bounding the pair** —
+  `BandCityPanel.MAX_WIDE_HEIGHT_FRACTION` (0.6) and this one (0.5) sum to 1.1 of the window. **What
+  holds the line is that neither fraction is ever the binding term.** Both heights are dominated by
+  absolute caps: `PANEL_HEIGHT_WIDE` is 360 and the tallest strip the dock can build is a one-line
+  title bar + `LOG_HEIGHT` + the section gap = **304**, so the pair tops out at **664** — while
+  `_viewport_size().y` never drops below **1080**, because `project.godot` stretches `canvas_items`
+  from a 1920×1080 base with an `expand` aspect and the visible rect is `window / min(w/1920,
+  h/1080)`. A short WINDOW therefore yields a WIDE canvas, never a short one: measured, a 1200×650
+  window lays out at 1993×1080 and a 1500×500 one at 3240×1080. The fractions bind only below
+  viewport heights of 600 and 608 respectively, which are unreachable. **A repro stated in window
+  pixels is not a repro** — nothing in either panel's layout ever sees that number.
+  `event_dock_co_edge_expanded` is the frame that holds the sum to account, and it prints its slack
+  (488 of a 1152-px harness canvas) rather than merely passing, so the day `LOG_HEIGHT` or
+  `PANEL_HEIGHT_WIDE` grows into the floor is visible before it overflows.
 - **The strip's cross-axis size reads only the preference, the expanded flag and the viewport** —
   never the event list. It is `recent_count` rows tall whether or not it has that many events. This
   is `BandCityPanel`'s rule, learned there as a map flicker on every `+` press; here an arriving
@@ -525,10 +541,14 @@ panels that happen never to meet. `event_dock_bottom` carries the zero case, so 
 to a constant cannot pass either.
 
 **The CO-EDGE displacement is pinned the same way, and for the same reason: an overlapping strip
-renders a perfectly plausible bar**, which is exactly how it reached live play. Four frames —
+renders a perfectly plausible bar**, which is exactly how it reached live play. Five frames —
 `event_dock_co_edge_top` / `event_dock_co_edge_bottom` (both edges, since the two branches of
 `_apply_dock_layout` write different offsets against different anchors, so a fix reaching only
-`SIDE_TOP` must fail) / `event_dock_co_edge_collapsed` / `event_dock_co_edge_control` — each judged
+`SIDE_TOP` must fail) / `event_dock_co_edge_collapsed` / `event_dock_co_edge_control` /
+**`event_dock_co_edge_expanded`** (co-edge TOP with the log OPEN — the other four are all the
+COLLAPSED bar, so the tallest displaced strip had never been rendered or measured; it carries
+`_assert_strip_within_viewport`, the far-edge claim described under "The strip yields to the map")
+— each judged
 as a **rect non-overlap against a real `BandCityPanel`**, again behind a negative control taken
 first on the same two live nodes (at zero offset the rects genuinely DO overlap). Two of them are
 the claims a naive fix would pass: **collapsing the panel brings the bar back down with it** (the

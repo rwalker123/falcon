@@ -274,7 +274,10 @@ func build_band_zone(band: Dictionary, with_vitals: bool = true) -> VBoxContaine
     col.add_child(_build_workforce_block(band, _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT))
     return col
 
-## The vitals readout — the Food / Morale / Output rows with their click-to-expand disclosures. A
+## The vitals readout — Food, Fodder, Trade, Morale and Growth, of which Food / Trade / Morale /
+## Growth carry the click-to-expand disclosures (Fodder is a plain row, and there is no Output row:
+## productivity reads on the WORK zone's head). Which of the optional rows appear is the producer's
+## call — see `BandDetailLines.unit_summary_lines` and the `compact` note below. A
 ## FRESH RichTextLabel each render, so its `meta_clicked` is wired here (bound to ITSELF as the
 ## popover's anchor). The tint context is likewise fresh per render: it is built here, filled by
 ## `BandDetailLines.unit_summary_lines` as it emits the rows, and handed straight to the formatter.

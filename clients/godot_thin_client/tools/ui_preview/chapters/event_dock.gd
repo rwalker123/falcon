@@ -394,6 +394,31 @@ func _assert_bar_clears_co_edge(dock: EventDockPanel, panel: BandCityPanel, what
 	h._assert_hud("co-edge: the bar clears %s — bar %s vs panel %s" % [what, bar, box],
 		not bar.intersects(box))
 
+## THE DISPLACED STRIP MUST STILL LAND ON SCREEN. `_apply_dock_layout` places the bar at
+## `[_edge_offset, _edge_offset + cross]` in from its own rim, and the two heights are set by SEPARATE
+## clamps — `BandCityPanel.MAX_WIDE_HEIGHT_FRACTION` (0.6) and `EventDockPanel.MAX_STRIP_HEIGHT_FRACTION`
+## (0.5) — which sum to 1.1 of the viewport with nothing bounding the pair. What actually holds the
+## line is that BOTH fractions are dominated by absolute caps: `PANEL_HEIGHT_WIDE` (360) plus the
+## tallest strip the dock builds (a 1-row title bar + `LOG_HEIGHT` + the section gap = 304) is **664**,
+## against a layout height that never drops below **1080** — `project.godot` stretches `canvas_items`
+## from a 1920×1080 base with an `expand` aspect, so a short WINDOW yields a wide canvas, never a short
+## one, and `_viewport_size()` is floored at the base height. So the two fractions are never both
+## binding and this claim has real margin today. **The margin is therefore PRINTED**: a strip ending
+## 2px inside the viewport and one ending 400px inside are the same green line otherwise, and the
+## whole point of the assertion is to notice if `LOG_HEIGHT` or `PANEL_HEIGHT_WIDE` ever grows into it.
+##
+## Judged as a RECT, never from the frame — a strip whose "Earlier turns" footer has fallen off the
+## bottom of the window renders an entirely plausible log above it.
+func _assert_strip_within_viewport(dock: EventDockPanel, what: String) -> void:
+	var bar := dock._root.get_global_rect()
+	var viewport_height: float = dock._viewport_size().y
+	var slack: float = viewport_height - (dock._edge_offset + dock._cross_axis_size())
+	h._assert_hud("%s: offset %.0f + strip %.0f stays inside the %.0f-px viewport (%.0f px of slack; bar rect %.0f..%.0f)"
+			% [what, dock._edge_offset, dock._cross_axis_size(), viewport_height, slack,
+				bar.position.y, bar.end.y],
+		slack >= 0.0 and bar.position.y >= -CO_EDGE_RECT_EPSILON
+			and bar.end.y <= viewport_height + CO_EDGE_RECT_EPSILON)
+
 func run(harness) -> void:
 	h = harness
 
@@ -1059,6 +1084,29 @@ func run(harness) -> void:
 	h._assert_hud("non-shared edge: …so the bar sits flush against its own screen edge (bar top %.0f)"
 			% event_dock._root.get_global_rect().position.y,
 		absf(event_dock._root.get_global_rect().position.y) <= CO_EDGE_RECT_EPSILON)
+
+	# THE DISPLACED STRIP AT ITS TALLEST: co-edge TOP with the log OPEN. Every co-edge frame above is
+	# the COLLAPSED bar, so the configuration where the strip's own far edge could run off the bottom
+	# of the screen — the panel holding 360px of rim and the bar wanting 304 more — has never been
+	# rendered or measured. The claim is a rect (see `_assert_strip_within_viewport`), and the frame
+	# is worth having beside it because it is the only picture of the log opening BELOW a co-edge
+	# panel rather than against the screen edge.
+	co_edge_panel.set_dock(SIDE_TOP)
+	event_dock.set_dock(SIDE_TOP)
+	h._hud.set_reserved_inset(&"band_panel", SIDE_BOTTOM, 0.0)
+	h._hud.set_reserved_inset(&"band_panel", SIDE_TOP, co_edge_panel.current_reservation_size())
+	_preview_push_event_dock_edge_offset(event_dock, [co_edge_panel])
+	event_dock.set_expanded(true)
+	await h._settle()
+	await h._save("event_dock_co_edge_expanded")
+	h._assert_hud("precondition: the log is OPEN and the bar really is displaced, so the strip is at its tallest (%.0f px at offset %.0f)"
+			% [event_dock._cross_axis_size(), event_dock._edge_offset],
+		event_dock._expanded and event_dock._edge_offset > 0.0)
+	_assert_bar_clears_co_edge(event_dock, co_edge_panel, "the TOP-docked panel with the log OPEN")
+	_assert_strip_within_viewport(event_dock, "co-edge TOP with the log open")
+	event_dock.set_expanded(false)
+	h._hud.set_reserved_inset(&"band_panel", SIDE_TOP, 0.0)
+	await h._settle()
 
 	h._hud.set_reserved_inset(&"band_panel", SIDE_BOTTOM, 0.0)
 	event_dock.set_edge_offset(0.0)

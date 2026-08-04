@@ -298,8 +298,9 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   in the height-capped band zone stated it away from everything it acts on. Same gate that row
   carried (**only below `SourceForecast.OUTPUT_FULL`** — a permanent `Output 100%` is noise on a row
   that is otherwise live summary, the rule the trade total already follows) and the same buckets,
-  through `BandFoodStatus.color_for_output`, the `Color` twin of `hex_for_output` added for a head
-  built out of `Label`s rather than BBCode. Vocabulary (`WORK_OUTPUT_FORMAT` /
+  through `BandFoodStatus.color_for_output`, a `Color` accessor rather than a hex one because this
+  head is built out of `Label`s rather than BBCode — and, since the head is now the multiplier's ONE
+  surface, the only accessor there is (`hex_for_output` went with the vitals row that called it). Vocabulary (`WORK_OUTPUT_FORMAT` /
   `WORK_OUTPUT_TOOLTIP`) is `HudWorkVocab`'s, like every other head item's.
   **The chips ARE the summary and the filter** (All / 🌿 Foraging n · rate / 🦌 Hunting n · rate / ⚠ k,
   the last hidden at k = 0), replacing collapsible group headers. Both the header total and the chip

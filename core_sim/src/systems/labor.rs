@@ -725,8 +725,13 @@ pub fn advance_labor_allocation(
                     // pen's own hay draw reads. Since every rate is now the basket's average, a wild
                     // tile that happens to realize `hay_grass` pays hay on any harvest; banking it for
                     // a faction that has not learned to hay a herd would hand out animal feed nobody
-                    // bid for. A **committed** patch (rung 2 or 3) is ungated: committing to
-                    // `hay_grass` *is* the bid. The gate lives here, at the credit site, so the rate
+                    // bid for. A **committed** patch is ungated — and the predicate below is the
+                    // COMMITMENT (`patch.species`), not the rung, so the gate lifts on the first turn
+                    // of a Cultivate/Sow build, while the patch still stands at rung 1 and still
+                    // converts at the wild basket's rate: committing to `hay_grass` *is* the bid, and
+                    // the bid is placed when the crew starts, not when the meter fills. (Reading this
+                    // as "rungs 2 and 3 are ungated" is narrower than the code and mis-states which
+                    // turn the credit begins.) The gate lives here, at the credit site, so the rate
                     // seam in `forage.rs` stays free of knowledge lookups.
                     let fodder_permitted = patch.species.is_some()
                         || knows(
