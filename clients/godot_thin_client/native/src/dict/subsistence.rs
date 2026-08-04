@@ -622,6 +622,14 @@ pub(crate) fn intensification_knowledge_to_array(
         // `tame` ALONE, and `penning` — not `herding` — gates `corral` + `extend_pen`.
         let _ = dict.insert("seed_selection", state.seedSelection());
         let _ = dict.insert("penning", state.penning());
+        // **NOT A RUNG-TRANSITION GATE like the four above** — no rung waits on it. It is the lesson
+        // the PEN rung itself teaches (`intensification_ladder.json`, corral's
+        // `earns_knowledge: "foddering"`), and it gates every fodder seam a faction has: the pen's
+        // hay DRAW, the pen's `K` fodder term, and the WILD forage patch's fodder credit. So a wild
+        // hay meadow can publish a positive `ForagePatchState.fodderPerBiomass` — what the LAND pays
+        // — that this faction cannot bank. Appended after `penning`, and this decoder has repeatedly
+        // dropped appended fields silently: if it arrives as zero, check HERE first.
+        let _ = dict.insert("foddering", state.foddering());
         array.push(&dict.to_variant());
     }
     array

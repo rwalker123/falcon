@@ -357,6 +357,7 @@ fn create_intensification_knowledge<'a>(
                 herding: state.herding,
                 seedSelection: state.seed_selection,
                 penning: state.penning,
+                foddering: state.foddering,
             },
         );
         entries.push(entry);

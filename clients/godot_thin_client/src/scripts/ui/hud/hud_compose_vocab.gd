@@ -162,6 +162,13 @@ const READOUT_YIELD_PART_SEPARATION := 6
 # a wrapped third account drops by.
 const READOUT_YIELD_H_SEPARATION := 18
 const READOUT_YIELD_V_SEPARATION := 4
+# **AN ACCOUNT THE BAND CANNOT BANK READS AS A DASH, NOT AS A NUMBER.** A wild patch's hay is real
+# ground truth — the meadow grows it — but a faction without Foddering banks none of it, so the row
+# keeps its UNIT (hiding the account would be the hidden gate this repo forbids) and loses its
+# QUANTITY. The em-dash is the one glyph that cannot be misread as a quantity, the same reasoning
+# `HudFloraVocab.STOCK_UNKNOWN_GLYPH` records for a fogged stock; the reason rides the aside.
+const YIELD_LOCKED_GLYPH := "—"
+
 const READOUT_VERDICT_FONT_SIZE := 12
 const READOUT_ASIDE_FONT_SIZE := 11
 const READOUT_ASIDE_SEPARATION := 4

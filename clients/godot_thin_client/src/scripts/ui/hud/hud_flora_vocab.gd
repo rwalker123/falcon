@@ -44,6 +44,16 @@ const GATE_REASON_SEED_SELECTION_KNOWLEDGE_FORMAT := "Your people know Seed Sele
 
 const GATE_REASON_PENNING_KNOWLEDGE_FORMAT := "Your people know Penning %d%% — %s hunt a tamed herd to learn it"
 
+# THE WILD FODDER LOCK — the one gate reason on either web that carries TWO remedies, because there
+# genuinely are two and they are reached from different ends of the game. Foddering is what KEEPING A
+# PENNED HERD teaches, so a pre-pastoral band cannot have it at any price; but the sim credits a
+# COMMITTED patch's hay unconditionally, committing being the bid. Naming only the knowledge would
+# tell a forager band the hay is out of reach for another whole ladder, while the improvement control
+# that fixes it sits directly below on the same sheet.
+# Format args: %d = the live Foddering percent, then the CORRAL glyph and the CULTIVATE glyph — the
+# rung each remedy is reached through, the `GATE_REASON_HERD_DOMESTICATED_FORMAT` idiom.
+const GATE_REASON_WILD_FODDER_FORMAT := "Hay stays in the field: your people know Foddering %d%% — %s keep a penned herd to learn it, or %s commit this patch to its crop."
+
 # The SOURCE reasons — this one animal/patch's own build meter. `Corral`'s remedy now names the
 # `Tame` VERB (glyph %s), not "Sustain-hunt this Thriving herd": since slice 3a, Sustain tames
 # nothing. That correction is the single most load-bearing copy fix in this slice — the old sentence
@@ -324,9 +334,9 @@ const FLORA_CROP_COMMITTED_HINT := "Already committed — the crop cannot be cha
 # The one ecology phase a patch can be cultivated from (matches `EcologyPhase::as_str`).
 const ECOLOGY_PHASE_THRIVING := "thriving"
 
-# The FOUR intensification knowledge tracks (the `intensification_knowledge[]` row's field names) —
-# the FACTION-WIDE half of the two-meter split (§4.1). One per rung-transition, so the list IS the
-# ladder, and §4.3 pins "no two rungs share an unlock gate":
+# The FIVE intensification knowledge tracks (the `intensification_knowledge[]` row's field names) —
+# the FACTION-WIDE half of the two-meter split (§4.1). The first FOUR are one per rung-transition, so
+# they read as the ladder itself, and §4.3 pins "no two rungs share an unlock gate":
 #   plant:  wild --cultivation--> tended --seed_selection--> field
 #   animal: wild --herding------> pastoral --penning-------> pen
 # `seed_selection`/`penning` were appended by slice 4 (discovery ids 2005/2006).
@@ -337,6 +347,14 @@ const KNOWLEDGE_TRACK_HERDING := "herding"
 const KNOWLEDGE_TRACK_SEED_SELECTION := "seed_selection"
 
 const KNOWLEDGE_TRACK_PENNING := "penning"
+
+# **THE FIFTH IS DELIBERATELY NOT A RUNG TRANSITION** — no rung waits on it, and nothing about the
+# ladder's shape changes when it is learned. It is what the PEN rung TEACHES (the corral rung's
+# `earns_knowledge`), and what it buys is every FODDER seam a faction has: the pen's hay draw, the
+# pen's `K` fodder term, and the WILD forage patch's fodder credit. So a wild hay meadow can publish a
+# positive `fodder_per_biomass` — what the LAND pays — that a pre-pastoral band cannot bank; see
+# `GATE_REASON_WILD_FODDER_FORMAT` below, and `RungGates.wild_fodder_reason` which composes it.
+const KNOWLEDGE_TRACK_FODDERING := "foddering"
 
 # ---- THE TILE CARD'S TWO FOOD-WEB STOCK ROWS ---------------------------------------------------
 # One row per WEB, named for WHO EATS IT, and rendered ADJACENT with Foraging first.

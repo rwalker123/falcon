@@ -509,6 +509,18 @@ down at full MSY every turn (issue #427). The same take now feeds all three acco
   the gate lives at the **credit site in `systems/labor.rs`** so `forage.rs` stays free of knowledge
   lookups and the vector stays commodity-generic. Rungs 2 and 3 are **ungated**: committing a patch to
   `hay_grass` *is* the bid.
+  - **Both halves of the fodder answer are on the wire** (#485). The rate seam publishes what the
+    **land** pays — `ForagePatchState.fodderPerBiomass`, commodity-generic and knowledge-blind, as the
+    gate's placement at the consumer requires — and the **capability** rides
+    `IntensificationKnowledgeState.foddering`, the faction's 0..1 progress on discovery 2007, appended
+    after `penning`. So a viewer holding a patch row and its faction's knowledge row can tell a
+    **refused** fodder credit (positive rate, no Foddering) from an **absent** one (a patch whose
+    basket grows no hay), which the rate alone cannot distinguish. `foddering` is the one field on that
+    table that is **not** a rung-transition gate: no rung waits on it, the pen rung *teaches* it
+    (`intensification_ladder.json`, corral's `earns_knowledge`), and it gates all three fodder seams —
+    the pen's hay draw, the pen's `K` fodder term, and this wild credit. It also stands alone in
+    `snapshot_intensification_knowledge`'s all-zero skip, so a faction whose only ladder progress is
+    Foddering is still published rather than dropped.
 - **Pinned by `core_sim/tests/forage_tended_vector.rs`**: the #427 grapevine-under-Sustain regression, hay
   crediting `FODDER`, a staple keeping its food *and* gaining its token trade, the wild `Deplete` sale
   unchanged, no double credit under `Deplete`, and `Deplete > Sustain` on the same tended cash crop. Five

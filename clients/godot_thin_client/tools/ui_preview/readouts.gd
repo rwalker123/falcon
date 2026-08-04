@@ -49,6 +49,34 @@ static func yields_text(root: Node) -> String:
 	var row := Q.find_meta_node(root, HudWidgets.YIELDS_ROW_META)
 	return " ".join(face_lines(row)) if row != null else ""
 
+## ONE ACCOUNT'S NUMBER out of the yields row — the reading beside the unit `account` names, or
+## `YIELDS_ACCOUNT_ABSENT` when that account renders no row at all. The two answers are different
+## claims, and both matter here: a locked account still HAS a row (unit kept, number replaced by the
+## em-dash), so an assertion that could not tell "muted" from "gone" would pass on a row the panel had
+## silently dropped — which is the hidden gate this repo forbids.
+##
+## Structural, like the spine walk: a reading is a number Label followed by its unit Label inside one
+## `HBoxContainer`, and the unit renders UPPERCASE. A `contains` over `yields_text` cannot do this
+## job — `—` and `0.00` both appear in other registers of the same box.
+const YIELDS_ACCOUNT_ABSENT := "<absent>"
+
+static func yields_account_number(root: Node, account: String) -> String:
+	var row := Q.find_meta_node(root, HudWidgets.YIELDS_ROW_META)
+	if row == null:
+		return YIELDS_ACCOUNT_ABSENT
+	for pair in row.get_children():
+		var lines := face_lines(pair)
+		if lines.size() >= 2 and lines[1] == account.to_upper():
+			return lines[0]
+	return YIELDS_ACCOUNT_ABSENT
+
+## The aside's LOCKED-ACCOUNT line alone, by its own meta — the twin of `teaching_line`, and separate
+## for the same reason: its siblings move with the floor while this one does not, so a whole-aside
+## comparison is satisfied by them and testifies about this sentence in neither direction.
+static func locked_account_line(root: Node) -> String:
+	var node := Q.find_meta_node(root, HudWidgets.READOUT_LOCKED_ACCOUNT_META)
+	return (node as Label).text if node is Label else ""
+
 ## The readout's HEADER — the caption over the yields row, carrying the unit and (when the readings
 ## state one) the key to their arrow. It is the row's SIBLING, not a Label inside it, which is what
 ## keeps `yields_text` reading only the numbers: asserting "the unit is not repeated per account"

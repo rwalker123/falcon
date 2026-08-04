@@ -500,6 +500,11 @@ const READOUT_ASIDE_META := "readout_aside"
 ## and says nothing about this line — measured: blanking the teaching note entirely still passed a
 ## whole-aside comparison. A claim about this sentence has to be able to find this sentence.
 const READOUT_TEACHING_META := "readout_teaching"
+## The LOCKED-ACCOUNT line's own identity, for the same reason one line up: it leads the aside, and its
+## siblings (the floor hint, the teaching line) move with the floor while this one does not, so
+## "the aside changed" cannot testify about it in either direction. It explains a `—` the player is
+## looking at, which is why it comes FIRST — the other two are standing copy.
+const READOUT_LOCKED_ACCOUNT_META := "readout_locked_account"
 
 ## The CREW ROW's own label, as `Control` meta. It names the crew from the composed improvement axis
 ## (`Hunters` vs `Herders`), which is a real claim about the sheet — and it renders UPPERCASE, exactly
@@ -1022,6 +1027,12 @@ static func build_yields_row(rows: Array, number_tint: Color, note: String, note
 ## may carry it as its own override of the account table.
 const YIELD_ROW_UNIT := "unit"
 const YIELD_ROW_NUMBER := "number"
+## **ONE ACCOUNT'S NUMBER, MUTED, WHATEVER THE ROW TINT IS.** The tint passed to `build_yields_row` is
+## a WHOLE-ROW parameter — it says how the TAKE reads (amber when it overdraws, ink otherwise) — and
+## one account being unbankable is not a property of the take. So a row may opt its number out into
+## `INK_FAINT` on its own, which is what lets the locked fodder reading sit beside two live ones in an
+## overdrawing row without either claim contradicting the other.
+const YIELD_ROW_MUTED := "muted"
 static func _yield_reading(row: Dictionary, number_tint: Color) -> HBoxContainer:
     var account := String(row.get(SourceForecast.YIELD_ROW_ACCOUNT, ""))
     var pair := HBoxContainer.new()
@@ -1046,7 +1057,8 @@ static func _yield_reading(row: Dictionary, number_tint: Color) -> HBoxContainer
         number.text = SourceForecast.format_magnitude(
             float(row.get(SourceForecast.YIELD_ROW_VALUE, 0.0)))
     number.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-    number.add_theme_color_override("font_color", number_tint)
+    number.add_theme_color_override("font_color",
+        HudStyle.INK_FAINT if bool(row.get(YIELD_ROW_MUTED, false)) else number_tint)
     number.add_theme_font_size_override("font_size",
         HudComposeVocab.READOUT_YIELD_NUMBER_FONT_SIZE)
     pair.add_child(number)

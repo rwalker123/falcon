@@ -510,6 +510,10 @@ const YIELD_MODEL_ROWS := "rows"
 const YIELD_MODEL_TEXT := "text"
 const YIELD_MODEL_OVERDRAW := "overdraw"
 const YIELD_MODEL_WASTE := "waste"
+## WHY one of this model's accounts renders as a dash instead of a number — `""` when every account
+## this take pays is bankable. Carried on the MODEL rather than resolved at the render, so the muted
+## row and the sentence explaining it come from one answer.
+const YIELD_MODEL_LOCKED_REASON := "locked_reason"
 func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
         workers: int, improvement: String = SourceForecast.IMPROVEMENT_NONE,
         reaches: bool = false) -> Dictionary:
@@ -548,16 +552,44 @@ func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
     if rows.is_empty():
         # The patch pays in NO account at all — there is no line to draw rather than a zero to print.
         return {}
+    # **THE FODDER ACCOUNT MAY BE REAL AND UNBANKABLE AT ONCE** (issue #485). The sim credits a WILD
+    # patch's hay only to a faction that has learned Foddering (a committed patch is paid
+    # unconditionally — committing is the bid), and Foddering is taught by KEEPING A PEN, so a forager
+    # band reads a live `fodder_per_biomass` off the meadow and banks nothing from it. The take is not
+    # recomputed: it is what the crew MOVES, and only the credit is refused, so the row keeps its unit
+    # and loses its number while the sentence beside it goes to `0.0`.
+    var locked := RungGates.wild_fodder_reason(
+        String(tile_info.get("patch_committed_species", "")).strip_edges(), _player_knowledge())
+    var banked_fodder := actual_fodder
+    if locked != "" and SourceForecast.has_component(actual_fodder):
+        for row in rows:
+            if String(row.get(SourceForecast.YIELD_ROW_ACCOUNT, "")) \
+                    != SourceForecast.YIELD_ACCOUNT_FODDER:
+                continue
+            row[HudWidgets.YIELD_ROW_NUMBER] = HudComposeVocab.YIELD_LOCKED_GLYPH
+            row[HudWidgets.YIELD_ROW_MUTED] = true
+            # An arrow to a rate nobody banks is noise — and its presence alone would key the row
+            # header's `now → after` off an account that has neither reading.
+            row.erase(SourceForecast.YIELD_ROW_AFTER)
+        banked_fodder = 0.0
+    else:
+        locked = ""
     return {
         YIELD_MODEL_ROWS: rows,
+        # The joined sentence has no room for the reason, so it must not promise the account at all.
         YIELD_MODEL_TEXT: SourceForecast.yield_components(
-            actual, actual_trade, actual_fodder, zero_account),
+            actual, actual_trade, banked_fodder, zero_account),
+        # **THE FODDER CEILING COMPARISON STAYS, LOCK OR NO LOCK, and deleting it is the plausible
+        # wrong move.** The take draws the same biomass down whether or not the crew banks the hay, so
+        # the drawdown is unchanged — and on a hay-only patch this comparison is the only drawdown
+        # signal there is.
         YIELD_MODEL_OVERDRAW: (_is_overdraw(actual, float(sustain["ceiling"]) * output) \
             or _is_overdraw(actual_trade, float(sustain["ceiling_trade"]) * output) \
             or _is_overdraw(actual_fodder, float(sustain["ceiling_fodder"]) * output)) \
             and SourceForecast.take_draws_down(tile_info, SourceForecast.SOURCE_KIND_FORAGE,
                 HudComposeVocab.FORAGE_FORECAST_PREFIX, floor, workers, improvement),
         YIELD_MODEL_WASTE: "",
+        YIELD_MODEL_LOCKED_REASON: locked,
     }
 
 ## One yield model → the one-line BBCode preview, for both webs. Green + `· renewable` inside the
@@ -1021,6 +1053,13 @@ func _mount_crew_row(parent: VBoxContainer, hosts: Array, crew_label: String, co
 ##
 ## No box at all when there is nothing to put in it — a source with no floor axis AND no priceable
 ## take has no readout, rather than an empty well.
+##
+## **EVERY REGISTER IN THIS BOX IS LIVE**, including the aside's locked-account line. Anything whose
+## value — or whose PRESENCE — depends on the floor belongs in the live set: the lock's sentence
+## explains a `—` in the register above it, and raising the floor takes the fodder row away, so a
+## sentence resolved once before the render would outlive the mark it answers. It is read off the same
+## `yields_at` answer the yields host is built from, so the row and its explanation come from one
+## evaluation and cannot disagree in either direction.
 func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, workers: int,
         yields_at: Callable, labor_kind: String) -> void:
     var known := bool(model.get("known", false))
@@ -1038,9 +1077,7 @@ func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, work
     _register_live(hosts, yields_host, model, workers,
         func(host: Container, live: Dictionary, crew: int) -> void:
             _fill_yields_host(host, yields_at.call(
-                float(live.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR)), crew,
-                int(live.get("reached_turn", SourceForecast.PROJECTION_REACHED_NONE))
-                    != SourceForecast.PROJECTION_REACHED_NONE), labor_kind))
+                _live_floor(live), crew, _live_reaches(live)), labor_kind))
     if known:
         var verdict_host := VBoxContainer.new()
         verdict_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1052,13 +1089,29 @@ func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, work
     aside_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     column.add_child(aside_host)
     _register_live(hosts, aside_host, model, workers,
-        func(host: Container, live: Dictionary, _crew: int) -> void:
+        func(host: Container, live: Dictionary, crew: int) -> void:
             var lines: Array[Dictionary] = []
+            # THE LOCKED-ACCOUNT REASON LEADS, because it is the only aside line answering a mark the
+            # player is already looking at. Its own meta: the two lines below it move with the floor,
+            # so an assertion on "the aside changed" says nothing about this sentence.
+            #
+            # **READ OFF THE SAME `yields_at` ANSWER THE ROW ABOVE IS BUILT FROM, at this floor and
+            # this crew.** Its PRESENCE is floor-dependent — raise the floor (or step the crew to 0)
+            # and the fodder take goes to nothing, the row leaves, and a sentence resolved once before
+            # the render would go on explaining a `—` no longer on screen. One model evaluation per
+            # refresh is also what makes it impossible for the row and its explanation to disagree.
+            # The hunt web needs no branch here: its model carries no such key, so this reads `""`.
+            var locked_reason := String((yields_at.call(
+                _live_floor(live), crew, _live_reaches(live)) as Dictionary).get(
+                    YIELD_MODEL_LOCKED_REASON, ""))
+            if locked_reason != "":
+                lines.append(HudWidgets.readout_aside_line(locked_reason, HudStyle.INK_FAINT,
+                    HudWidgets.READOUT_LOCKED_ACCOUNT_META))
             # The floor's own teaching line, whatever zone it is in. A zone with nothing to say
             # answers `""` in `FLOOR_ZONE_HINTS` and `build_readout_aside` drops an empty line, so
             # there is no zone to test for here.
             lines.append(HudWidgets.readout_aside_line(HudFormat.floor_hint(
-                float(live.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR)), labor_kind)))
+                _live_floor(live), labor_kind)))
             # **THE TEACHING RATE, and the one aside line that can be CYAN.** It states what
             # `learn_multiplier` actually buys — the chart's gradient rail only gestures at it — so
             # it wears `SIGNAL` while the crew is genuinely earning it, and the aside's own faint ink
@@ -1071,6 +1124,18 @@ func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, work
                     HudStyle.SIGNAL if bool(teaching.get("teaching", false))
                         else HudStyle.INK_FAINT, HudWidgets.READOUT_TEACHING_META))
             host.add_child(HudWidgets.build_readout_aside(lines)))
+
+## The floor a live refresh is reading at, and whether its walk REACHES that floor — the two arguments
+## every `yields_at` call in the readout is made with. One definition apiece, because the yields row and
+## the aside's locked-account line must be composed at the SAME point on the dial: the row shows the
+## mark, the line explains it, and a second spelling of either argument is all it would take for one to
+## outlive the other.
+func _live_floor(live: Dictionary) -> float:
+    return float(live.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))
+
+func _live_reaches(live: Dictionary) -> bool:
+    return int(live.get("reached_turn", SourceForecast.PROJECTION_REACHED_NONE)) \
+        != SourceForecast.PROJECTION_REACHED_NONE
 
 ## One yields model into the readout's first register. **The overdraw state moves the NUMBER, not just
 ## a suffix**: the row is the loudest thing in the box, so a take the source cannot pay forever has to

@@ -758,7 +758,8 @@ pub struct FloraShareInfo {
 /// One field per rung-transition — *"practice rung N unlocks rung N+1"*
 /// (`docs/plan_intensification_ladder.md` §4) — so the struct reads as the ladder itself:
 /// `wild --cultivation--> tended --seed_selection--> field` and
-/// `wild --herding--> pastoral --penning--> pen`.
+/// `wild --herding--> pastoral --penning--> pen`. [`IntensificationKnowledgeState::foddering`] is the
+/// one exception — a *capability* the top animal rung teaches rather than a gate on reaching a rung.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct IntensificationKnowledgeState {
     pub faction: u32,
@@ -775,6 +776,13 @@ pub struct IntensificationKnowledgeState {
     /// a **pastoral** herd.
     #[serde(default)]
     pub penning: f32,
+    /// **Not a rung transition** — no rung waits on it; it is the capability the **pen** rung teaches
+    /// (`intensification_ladder.json`, corral's `earns_knowledge: "foddering"`). It gates every
+    /// fodder seam: a penned herd's hay *draw*, the pen's `K` fodder term, and the **wild** forage
+    /// patch's fodder credit. So it is the other half of the fodder answer — `ForagePatchState`
+    /// states what the land pays, this states whether the faction can bank it.
+    #[serde(default)]
+    pub foddering: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]

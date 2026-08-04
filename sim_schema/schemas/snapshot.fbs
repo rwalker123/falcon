@@ -1591,7 +1591,8 @@ table FloraShareInfo {
 //   plant:  wild --cultivation--> tended --seedSelection--> field (the Sow rung, a later slice)
 //   animal: wild --herding------> pastoral --penning------> pen
 // APPEND-ONLY: cultivation/herding keep their shipped slots; seedSelection/penning are appended
-// strictly after (slice 4's two new discoveries, ids 2005/2006).
+// strictly after (slice 4's two new discoveries, ids 2005/2006), and foddering after those (2007 —
+// a capability, not a rung transition; see its comment below).
 table IntensificationKnowledgeState {
   faction:uint;
   // Gates `cultivate`. Earned by working a WILD patch under a stewardship policy.
@@ -1603,6 +1604,12 @@ table IntensificationKnowledgeState {
   // Gates `corral` + `extend_pen` — the §4.3 reshuffle took this off `herding`. Earned by working a
   // PASTORAL (tamed) herd.
   penning:float = 0;
+  // NOT a rung-transition gate like the four above — no rung waits on it. It is the capability the
+  // PEN rung teaches (`intensification_ladder.json`, corral's `earns_knowledge: "foddering"`), and
+  // it gates every fodder seam a faction has: the pen's hay DRAW, the pen's `K` fodder term, and the
+  // WILD forage patch's fodder credit. So a wild hay patch can publish a positive
+  // `ForagePatchState.fodderPerBiomass` — what the LAND pays — that this faction cannot bank.
+  foddering:float = 0;
 }
 
 // One discovered Wondrous Site in a faction's registry. `category`/`display_name`/`glyph` are
