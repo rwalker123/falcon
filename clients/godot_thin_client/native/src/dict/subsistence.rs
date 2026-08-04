@@ -390,6 +390,17 @@ pub(crate) fn herds_to_array(
         // decoder has a history of silently dropping appended fields; it is the newest slot on
         // `HerdTelemetryState`, decoded beside the neglect pair it follows.
         let _ = dict.insert("engage_rate", herd.engageRate());
+        // HOW MUCH DAMAGE ONE ANIMAL SOAKS BEFORE IT GOES DOWN (`docs/plan_hunt_through_combat.md`
+        // 4.2 / 6.5) — the last term needed to explain the combat gate BEFORE a hunt is launched.
+        // The client already held the other two (`PopulationCohortState.hunterAttack`, `defense`
+        // above), so the gate is composable client-side and the sim exports no verdict:
+        //     effective_attack = max(0, hunter_attack − defense)   // 0 ⇒ cannot be hunted at all
+        //     hunter_turns     = durability / effective_attack     // what ONE hunter needs
+        // **DEFENSE AND DURABILITY ARE DIFFERENT AXES**: defense is whether a hit counts at all,
+        // durability is how many counting hits it takes. Authored per species, never derived from
+        // `body_mass`. `0` for a herd whose species the roster cannot resolve. It is the newest slot
+        // on `HerdTelemetryState`, decoded beside the `engage_rate` it follows.
+        let _ = dict.insert("durability", herd.durability());
         array.push(&dict.to_variant());
     }
     array

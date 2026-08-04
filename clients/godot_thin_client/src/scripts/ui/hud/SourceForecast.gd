@@ -910,6 +910,180 @@ static func format_trade(value: float) -> String:
 static func has_component(rate: float) -> bool:
     return rate >= COMPONENT_RENDER_MIN
 
+# =====================================================================================
+#  THE FORECAST'S BAND (docs/plan_hunt_through_combat.md §6.4)
+# =====================================================================================
+# `actual_yield` stopped being a promise and became an EXPECTATION: the take the sim pays lies inside
+# `[actual_yield_low, actual_yield_high]`, and `trade_yield` carries the same pair in the other
+# product. **Where nothing is stochastic the distribution is DEGENERATE** — low == actual == high,
+# bit-for-bit — and that is the shipped case on every source today, because wariness is `0` across
+# the roster and `hit_chance` is `1.0`, so both binomials take their exact identities at every
+# quantile. It is also true by construction of every RESOLVED row: the take happened, so there is no
+# distribution left to report.
+#
+# **SO THE READOUT MUST RENDER ONE NUMBER WHEN THE BOUNDS AGREE**, and the range only when they
+# differ. Slice 7 authors wariness and the band turns on with no further change on this side; until
+# then a band appearing anywhere is a defect, which is why the degenerate case is pinned rather than
+# merely expected to be rare.
+#
+# **The band is an ANSWER, never a term.** The take passes through the whole-animal quantiser's
+# `floor()`, so a band on the animals brought down is not a band on the food; the client renders the
+# pair the sim published and composes nothing from wariness or hit-chance.
+const YIELD_RANGE_LOW_KEY := "actual_yield_low"
+const YIELD_RANGE_HIGH_KEY := "actual_yield_high"
+const TRADE_RANGE_LOW_KEY := "trade_yield_low"
+const TRADE_RANGE_HIGH_KEY := "trade_yield_high"
+# The band's shape — an en dash between the two bounds. It rides BESIDE the expectation rather than
+# replacing it: `actualYield` is the number `forecast == actual` is restated on, so the band
+# QUALIFIES the headline and never becomes it.
+const YIELD_RANGE_TOOLTIP_FORMAT := "%s–%s"
+# The band as a clause on the row's take note and on its tooltip. One word — "likely" — because the
+# spread's cause (quarry breaking off before contact) is a species property the row cannot name and a
+# sentence the row has no width for.
+const YIELD_RANGE_CLAUSE_FORMAT := " · likely %s"
+# The TRADE band's own clause, glyphed like every other trade number this client writes, so a
+# trade-only quarry (a wolf, whose food band is honestly all-zero) can still state its spread.
+const YIELD_RANGE_TRADE_CLAUSE_FORMAT := " · likely %s %s"
+
+## **IS THERE A BAND HERE AT ALL?** — the ONE test, so no two surfaces can disagree about whether a
+## source's take is uncertain. Gated at the FORMATTER's resolution rather than on raw inequality, the
+## same call `has_component` makes and for the same reason: bounds that round to one printed string
+## are one number on screen, and a `low != high` test would render `0.31–0.31` as a range.
+static func has_yield_range(low: float, high: float) -> bool:
+    return format_magnitude(high) != format_magnitude(low)
+
+## The band as a bare `6.00–11.00`, or the point's own magnitude when the bounds agree. Magnitudes,
+## not signed rates: a take is never negative, and a `+6.00–+11.00` reads as an arithmetic expression.
+static func format_yield_range(low: float, high: float) -> String:
+    return YIELD_RANGE_TOOLTIP_FORMAT % [format_magnitude(low), format_magnitude(high)] \
+        if has_yield_range(low, high) else format_magnitude(low)
+
+## **BOTH PRODUCTS' BANDS AS ONE CLAUSE** (` · likely 6.00–11.00 · likely ⇄ 0.20–0.40`), or `""` when
+## neither is a band — which is the shipped case, and what keeps every existing readout
+## byte-identical. Reads the two pairs straight off a labor-assignment / worker-map dict; an
+## assignment from a snapshot that predates the fields carries no key at all, and two absent bounds
+## are equal, so it answers `""` there too.
+##
+## **THE TWO ACCOUNTS ARE READ SEPARATELY AND NEITHER SUBSTITUTES FOR THE OTHER** — the pair travels
+## as a vector, exactly as `actual_yield` / `trade_yield` do, because a wolf's food band is honestly
+## all-zero while its trade band is the whole of what the raid pays.
+static func yield_range_clause(m: Dictionary) -> String:
+    var clause := ""
+    var food_low := float(m.get(YIELD_RANGE_LOW_KEY, 0.0))
+    var food_high := float(m.get(YIELD_RANGE_HIGH_KEY, 0.0))
+    if has_yield_range(food_low, food_high):
+        clause += YIELD_RANGE_CLAUSE_FORMAT % format_yield_range(food_low, food_high)
+    var trade_low := float(m.get(TRADE_RANGE_LOW_KEY, 0.0))
+    var trade_high := float(m.get(TRADE_RANGE_HIGH_KEY, 0.0))
+    if has_yield_range(trade_low, trade_high):
+        clause += YIELD_RANGE_TRADE_CLAUSE_FORMAT % [
+            FoodIcons.TRADE_GOODS_GLYPH, format_yield_range(trade_low, trade_high)]
+    return clause
+
+# =====================================================================================
+#  THE PRE-LAUNCH FIGHT (docs/plan_hunt_through_combat.md §2.1, §4.2, §6.5)
+# =====================================================================================
+# A hunt is a fight, and two of its facts have to be legible BEFORE the party leaves.
+#
+# **HOW MANY HUNTERS ONE ANIMAL TAKES** is `1 / engageRate` — "twenty hunters to take a mammoth" is a
+# number a player can reason about and `0.05` is not. It is composed here from the SAME
+# `engagement_per_worker` every crew target divides by, never from a second reading of the pair, so
+# the sentence and the stepper's cap can never disagree; and the dip rides it for the same reason it
+# rides them (hands gentling a herd are hands not stalking it).
+#
+# **WHETHER THE FIGHT CAN BE WON AT ALL** is `max(0, hunterAttack − defense)`. At zero the party
+# kills nothing at ANY headcount and still takes casualties, which is a real outcome that reads as a
+# bug unexplained. The sim deliberately exports no verdict — the expression is linear and exact in
+# three terms already on the wire, so it ships as terms and the client asks itself the question.
+#
+# `durability / effective_attack` turns *"you cannot"* into an effort figure: the hunter-turns ONE
+# hunter needs per kill, which is what makes the two ends of the roster comparable (a mammoth at 62
+# against a rabbit at 0.1). **It is deliberately not divided by the party**: the herd's accumulated
+# wounds are not exported, so a per-party turn count here would be a second, always-pessimistic
+# duration model competing with the sim's own `huntTripEstimates`.
+
+## Whether the pre-launch fight lines have anything to say about this source. A PEN and the whole
+## PLANT web publish no engagement stage (`NO_ENGAGEMENT_STAGE`), which is exactly the byte-identity
+## this gate buys: a penned animal is not stalked and a berry does not fight back.
+static func has_engagement_stage(engage_rate: float, dip: float) -> bool:
+    return not is_inf(engagement_per_worker(engage_rate, dip))
+
+## **HOW MANY HUNTERS ONE ANIMAL TAKES, IN WORDS** — `""` where there is no engagement stage.
+##
+## Two phrasings, because the roster spans two orders of magnitude and one of them would read as
+## nonsense at the other end: a mammoth is `20 hunters` (reach below one animal), a rabbit warren is
+## `1 hunter reaches 10` (reach above one). The pivot is the reach itself, and both sentences are the
+## same quotient read from its two sides — `2.1`'s own "reads as" column.
+static func hunters_per_animal_face(engage_rate: float, dip: float, quarry: String) -> String:
+    var reach := engagement_per_worker(engage_rate, dip)
+    if is_inf(reach):
+        return ""
+    if reach < ENGAGED_AT_LEAST:
+        return HUNTERS_PER_ANIMAL_FORMAT % [ceili(ENGAGED_AT_LEAST / reach), quarry]
+    return ANIMALS_PER_HUNTER_FORMAT % [floori(reach), quarry]
+
+# The two readings of `1 / (engageRate × dip)`. The threshold between them is `ENGAGED_AT_LEAST` —
+# the sim's own `max(1.0)` on `animals_engaged` — so the sentence flips at exactly the point the
+# engagement floor does rather than at a display constant of its own.
+const HUNTERS_PER_ANIMAL_FORMAT := "%d hunters bring one %s into contact."
+const ANIMALS_PER_HUNTER_FORMAT := "One hunter brings %d %s into contact."
+
+# THE GATE's two verdicts. The refusal names both terms, because "you cannot" without the arithmetic
+# is a tooltip the player has no way to act on: knowing it is the WEAPON and not the headcount is the
+# whole lesson (`4.8` — the first spear should feel like a different game).
+const HUNT_GATE_BLOCKED_FORMAT := "%sYour hunters cannot hurt %s — attack %s against its defense %s. No party size changes that: they would take casualties and kill nothing."
+const HUNT_GATE_EFFORT_FORMAT := "%s hunter-turns to bring one %s down (attack %s against defense %s)."
+# The effort figure's own rounding. Hunter-turns span 0.1 (a rabbit) to 62 (a mammoth), so a whole
+# number would print `0` for a third of the roster and claim a free kill; one decimal is the coarsest
+# rule that keeps the small end honest.
+const HUNT_GATE_EFFORT_DECIMALS := 1
+# What `attack`/`defense`/`durability` are printed with. They are open-ended strength scalars on a
+# human anchor of 1, authored as small whole-ish numbers, so a rate's two decimals would be false
+# precision — `attack 20.00` claims a resolution the roster does not have.
+const HUNT_GATE_SCALAR_DECIMALS := 0
+
+## **THE COMBAT GATE, COMPOSED CLIENT-SIDE FROM THREE TERMS ALREADY ON THE WIRE** —
+## `{stated, blocked, effective_attack, hunter_turns, text}`.
+##
+## `stated` is false when the band or the herd is silent about its half: a snapshot that predates the
+## fields, or a species the roster cannot resolve (`durability == 0`). Absent terms must render NO
+## line — a defaulted `attack 0` would refuse every hunt in the game.
+##
+## **`blocked` and the forecast's own zero are two signals from different paths, and both are kept.**
+## The sim quotes a sub-gate party `0` at every quantile because the fight is already inside
+## `hunt_source_yield_preview`; this line is arithmetic over the exported terms. A failure in either
+## still leaves the player warned, which is the whole point of not exporting a verdict.
+static func hunt_gate_model(band: Dictionary, herd: Dictionary, quarry: String) -> Dictionary:
+    var blank := {"stated": false, "blocked": false, "effective_attack": 0.0,
+        "hunter_turns": 0.0, "text": ""}
+    if not band.has(BAND_HUNTER_ATTACK_KEY):
+        return blank
+    var attack := float(band.get(BAND_HUNTER_ATTACK_KEY, 0.0))
+    var defense := float(herd.get(HERD_DEFENSE_KEY, 0.0))
+    var durability := float(herd.get(HERD_DURABILITY_KEY, 0.0))
+    if durability <= 0.0:
+        return blank
+    var effective := maxf(attack - defense, 0.0)
+    var attack_face := String.num(attack, HUNT_GATE_SCALAR_DECIMALS)
+    var defense_face := String.num(defense, HUNT_GATE_SCALAR_DECIMALS)
+    if effective <= 0.0:
+        return {"stated": true, "blocked": true, "effective_attack": 0.0, "hunter_turns": INF,
+            "text": HUNT_GATE_BLOCKED_FORMAT % [
+                HUNT_FORECAST_WARN_GLYPH, quarry, attack_face, defense_face]}
+    var hunter_turns := durability / effective
+    return {"stated": true, "blocked": false, "effective_attack": effective,
+        "hunter_turns": hunter_turns,
+        "text": HUNT_GATE_EFFORT_FORMAT % [
+            String.num(hunter_turns, HUNT_GATE_EFFORT_DECIMALS), quarry,
+            attack_face, defense_face]}
+
+# The three wire terms the gate is composed from — the BAND's resolved per-hunter attack (1 bare-
+# handed, 20 speared) and the HERD's two defensive axes. `defense` is whether a hit counts at all,
+# `durability` is how many counting hits it takes; they blur easily and must not.
+const BAND_HUNTER_ATTACK_KEY := "hunter_attack"
+const HERD_DEFENSE_KEY := "defense"
+const HERD_DURABILITY_KEY := "durability"
+
 ## THE ONE DEFINITION of a worked source's trade rate, read off a labor-assignment / worker-map dict.
 ##
 ## **THE SENTINEL IS THE VALUE `0`, NOT AN ABSENT KEY — and getting that wrong made every FORAGE
@@ -2520,6 +2694,12 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
         warn = bool(m.get("overdraws", false))
         var renewable := kind == LABOR_KIND_FORAGE and not warn
         tooltip = "Actual %s" % format_yield(actual)
+        # **THE ACTUAL IS AN EXPECTATION NOW, AND ITS BAND RIDES BESIDE IT** (§6.4). The headline
+        # stays the expectation — that is what `forecast == actual` is restated on — and the band
+        # QUALIFIES it rather than replacing it, in both products, so a wolf's trade-only take can
+        # still state its spread. `""` where the distribution is degenerate, which is every row
+        # shipped today and is what keeps this string byte-identical to what it printed before.
+        tooltip += yield_range_clause(m)
         if renewable:
             tooltip += YIELD_TOOLTIP_RENEWABLE
         else:
@@ -2577,10 +2757,15 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
     # Understaffing a BUILD is a real loss and a real prompt — a Cultivate or a Tame accrues at
     # `min(workers / crew_needed, 1)` and decays when neglected — but this note has never carried that
     # signal, so nothing is lost by silencing it here.
-    var muted_note := ""
+    # **THE BAND, ON THE ROW ITSELF** (§6.4) — the same clause the tooltip carries, in the muted
+    # register the wasted note already uses, so all three hosts of this readout (the work board's
+    # rows, the drawer's standing summary, the stepper's status line) show it without a channel of
+    # their own. `""` while the distribution is degenerate, so no row grows a band where there is
+    # none: that emptiness is the assertion, not a hope.
+    var muted_note := yield_range_clause(m) if bool(m.get("has_yield", false)) else ""
     var wasted := float(m.get("wasted_yield", 0.0))
     if kind != LABOR_KIND_FORAGE and wasted >= FOOD_FLOW_MIN:
-        muted_note = WASTED_NOTE_FORMAT % format_magnitude(wasted)
+        muted_note += WASTED_NOTE_FORMAT % format_magnitude(wasted)
         var wasted_tip := WASTED_TOOLTIP % format_yield(wasted)
         tooltip = wasted_tip if tooltip == "" else tooltip + TOOLTIP_LINE_SEPARATOR + wasted_tip
     return {

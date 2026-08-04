@@ -167,6 +167,23 @@ raids THIS turn — the raid twin of `pen_feed_upkeep`. Both are consumed client
 `raid_radius` derives the "Predator nearby" Warrior alert (the DANGER itself is derived on the client
 from visible-herd telemetry, never a wire flag), `raid_forfeit` is the "Lost to raids" food-ledger row.
 
+`population_to_dict` also decodes the **minimal TOE** (`docs/plan_hunt_through_combat.md` §4.8) — the
+band's three consumable kits and the tiers they resolve to: `hunting_kit_durability` /
+`sled_kit_durability` / `basket_kit_durability` (condition on equipment.json's 0-100 scale, `0` = dry)
+plus `hunter_attack` / `hunt_carry_per_worker_biomass` / `forage_carry_per_worker_biomass`. All six
+shipped on the wire with **no consumer here at all** — the third time this arc reproduced this crate's
+most-repeated bug — as did the labor assignment's forecast BAND (`actual_yield_low`/`_high`,
+`trade_yield_low`/`_high`, §6.4) and `HerdTelemetryState.durability` (§4.2/§6.5, the last term the
+combat gate needed). Eleven fields, thirty golden lines, no fixture edit: `decode_fixture.rs`'s
+SATURATION reaches an appended scalar automatically, so the only step an appended scalar needs here is
+the converter and a re-record.
+
+**ONE KIT, ONE JOB, and the two carry tiers are not two readings of one number.** A band can be out of
+baskets with its sled untouched, so `hunt_carry_per_worker_biomass` and
+`forage_carry_per_worker_biomass` must never be rendered on each other's rows — the defect slice 5
+corrected sim-side. The golden gives every field a DISTINCT saturated value, which is what makes a
+swapped accessor visible in the diff rather than merely different.
+
 **The whole path is gated by `tools/decode_guard.gd`** (see its Key Scripts row) — the answer to
 "`VarDictionary` cannot be built outside a live engine", which is why the coverage here was a single
 `cohort_decode_tests` module for so long. Run it from the workspace root:

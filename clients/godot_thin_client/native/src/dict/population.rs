@@ -180,6 +180,38 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     //                  Full net is larder_delta == food_income − food_consumption − pen_feed_upkeep
     //                  − raid_forfeit.
     let _ = dict.insert("raid_forfeit", cohort.raidForfeit() as f64);
+    // --- THE MINIMAL TOE (`docs/plan_hunt_through_combat.md` 4.8) ---------------------------------
+    // The band's THREE consumable kits and the tiers they resolve to. **All six shipped on the wire
+    // with NO consumer here**, which is this crate's most-repeated bug and the third time this arc
+    // has reproduced it — so they are decoded beside `raid_forfeit`, the previous newest slot, and
+    // the golden now carries all six.
+    //
+    // ONE KIT, ONE JOB. Spears raise `hunter_attack`, a SLED raises the HUNT's carry, BASKETS raise
+    // the FORAGE web's. The two carry tiers are NOT two readings of one number — a band can be out
+    // of baskets with its sled untouched — and a readout that renders one on the other's row is the
+    // exact defect slice 5 corrected.
+    //
+    // Remaining condition on the equipment.json 0-100 scale; `0` = DRY, and a dry kit steps its role
+    // down to the unequipped tier and STAYS there (no replenishment path exists yet). **Performance
+    // is FLAT until expiry**, so no client readout may scale anything by what is left here.
+    let _ = dict.insert(
+        "hunting_kit_durability",
+        cohort.huntingKitDurability() as f64,
+    );
+    let _ = dict.insert("sled_kit_durability", cohort.sledKitDurability() as f64);
+    let _ = dict.insert("basket_kit_durability", cohort.basketKitDurability() as f64);
+    // The RESOLVED tiers, so the client renders this band's real numbers instead of re-deriving them
+    // from the durabilities plus a config it does not have. `hunter_attack` is the term the combat
+    // gate `max(0, attack − defense)` compares against `HerdTelemetryState.defense`.
+    let _ = dict.insert("hunter_attack", cohort.hunterAttack() as f64);
+    let _ = dict.insert(
+        "hunt_carry_per_worker_biomass",
+        cohort.huntCarryPerWorkerBiomass() as f64,
+    );
+    let _ = dict.insert(
+        "forage_carry_per_worker_biomass",
+        cohort.forageCarryPerWorkerBiomass() as f64,
+    );
     // Data-driven settlement stage (id/label/icon are opaque pass-through strings resolved
     // by the sim from `settlement_stage_config.json`). Missing/pre-stage snapshots yield
     // `None` → empty strings, which the client renders as a neutral non-circular fallback
@@ -261,6 +293,21 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // is renewable, so its two values match; only depletable herds diverge.
             let _ = entry.insert("actual_yield", assignment.actualYield() as f64);
             let _ = entry.insert("sustainable_yield", assignment.sustainableYield() as f64);
+            // **THE BAND THE TWO SCALARS ABOVE SIT IN THE MIDDLE OF** (§6.4). `actual_yield` is the
+            // take's EXPECTATION over the retreat seed; the take the sim pays lies inside
+            // [low, high], and where nothing is stochastic the distribution is degenerate and
+            // low == actual == high BIT-FOR-BIT. That is the shipped case today (wariness 0,
+            // hit_chance 1.0 across the roster), so a reader must render ONE number when the bounds
+            // agree and a range only when they differ — slice 7 authors wariness and the same
+            // readout turns on with no further change here.
+            //
+            // BOTH CURRENCIES, read as one vector beside their scalars: a wolf's food band is
+            // honestly all-zero, so a food-only range could not state its take at all. Undecoded
+            // until now — see the kit block in `population_to_dict` for the class of bug.
+            let _ = entry.insert("actual_yield_low", assignment.actualYieldLow() as f64);
+            let _ = entry.insert("actual_yield_high", assignment.actualYieldHigh() as f64);
+            let _ = entry.insert("trade_yield_low", assignment.tradeYieldLow() as f64);
+            let _ = entry.insert("trade_yield_high", assignment.tradeYieldHigh() as f64);
             // The per-source STEADY average: the honest long-run average of this source's lumpy
             // `actual_yield`. Headlines the Band panel row + map label so they don't swing turn-to-turn.
             let _ = entry.insert("realized_yield", assignment.realizedYield() as f64);

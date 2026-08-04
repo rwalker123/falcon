@@ -56,6 +56,20 @@ const BAND_FOOD_HAY_CLAUSE_FORMAT := " · [color=#%s]%.1f hay[/color]"
 # beside a visibly non-zero rate if this printed an integer.
 const BAND_TRADE_ROW_FORMAT := "Trade: %.1f · [color=#%s]%s[/color]"
 
+# ---- The band's KIT row (`docs/plan_hunt_through_combat.md` §4.8) — `Kit: Spears 87 · Sled 54 ·
+# Baskets dry`. Three consumable kits, start-stocked and not craftable, each with its own condition
+# and its own job; a dry one has stepped its role down to bare hands FOR GOOD, so it reads DANGER
+# rather than merely dim.
+#
+# **THE ROW IS THE CLOCK, THE DISCLOSURE IS THE CLIFF.** What a player needs at a glance is how long
+# until each kit runs out and which side of the line they are already on — never a gauge, never a
+# bar, and never a number scaled by what is left, because performance is FLAT until expiry and any
+# gradient drawn here would claim a taper the model does not have. What each kit actually DOES lives
+# one click down, where there is room to say it and to say that it stops.
+const BAND_KIT_ROW_PREFIX := "Kit: "
+const BAND_KIT_ROW_SEPARATOR := " · "
+const BAND_KIT_ROW_ENTRY_FORMAT := "%s [color=#%s]%s[/color]"
+
 # ---- The hunt party's carry-ceiling FULL badge (shown when carried ≥ cap; the party heads home full).
 const HUNT_FULL_BADGE := "· FULL"
 
@@ -183,6 +197,16 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
             if DetailFormat.band_has_trade_flow(unit_data):
                 _disclosures.register(HudDisclosureVocab.DETAIL_ROW_TRADE, HudDisclosureVocab.BREAKDOWN_KIND_TRADE,
                     unit_data, _disclosures.trade_breakdown_lines(unit_data))
+        # THE BAND'S KIT, beneath its larders and above its morale: three consumable tools whose
+        # condition only ever falls, and whose expiry silently drops a whole role to bare hands. It is
+        # our OWN bands' business, like Food and Trade — a rival's equipment is not ours to count.
+        # **Gated on the field being STATED, never on a value**: a dry kit is `0` and is the single
+        # most important reading here, so only an absent field may suppress the row.
+        if DetailFormat.band_states_kit(unit_data):
+            lines.append(_band_kit_line(unit_data))
+            _disclosures.register(HudDisclosureVocab.DETAIL_ROW_KIT,
+                HudDisclosureVocab.BREAKDOWN_KIND_KIT, unit_data,
+                _disclosures.kit_breakdown_lines(unit_data))
     # Morale is our own bands' business only (a non-player band's morale isn't ours
     # to see); morale drives productivity + migration (a harsh tile erodes it until
     # people begin leaving), while deaths stay starvation/cold-driven.
@@ -395,6 +419,37 @@ func _band_trade_line(unit_data: Dictionary) -> String:
     return BAND_TRADE_ROW_FORMAT % [
         DetailFormat.band_trade_stock(unit_data), hex,
         SourceForecast.format_yield(income)]
+
+## Selection-panel band KIT row: `Kit: Spears 87 · Sled 54 · Baskets dry` — the band's three
+## consumable kits and how much is left of each, with a spent one named in DANGER ink.
+##
+## **THE CONDITION IS A CLOCK, NOT A PERFORMANCE READING.** Durability and performance are orthogonal
+## axes: a kit works at its full tier until it hits zero and then the role steps down permanently. So
+## this row prints the number flat, tints only the ZERO, and draws no bar — a filled gauge here would
+## say "half a sled hauls half as much", which is exactly wrong.
+##
+## **ALL THREE ARE ALWAYS LISTED, including on a band that neither hunts nor forages today.** Each
+## kit wears on its own quantum (spears per animal killed, the sled per biomass hauled, baskets per
+## biomass gathered), so what a band is doing this turn does not predict which kit is closest to
+## running out — and a row that hid the idle ones would hide the very kit whose loss is about to
+## change what the band CAN do.
+##
+## **IT SURVIVES THE `compact` TIER**, unlike Trade. The Trade row is a rate the WORK zone's head
+## restates; a spent kit is stated nowhere else in the client at all, and it is not recoverable.
+func _band_kit_line(unit_data: Dictionary) -> String:
+    var entries: Array[String] = []
+    for kit in [
+        [DetailFormat.KIT_LABEL_SPEARS, DetailFormat.KIT_DURABILITY_KEY_SPEARS],
+        [DetailFormat.KIT_LABEL_SLED, DetailFormat.KIT_DURABILITY_KEY_SLED],
+        [DetailFormat.KIT_LABEL_BASKETS, DetailFormat.KIT_DURABILITY_KEY_BASKETS],
+    ]:
+        var label := String(kit[0])
+        var key := String(kit[1])
+        var hex := HudStyle.INK_HEX if DetailFormat.kit_is_equipped(unit_data, key) \
+            else HudStyle.DANGER_HEX
+        entries.append(BAND_KIT_ROW_ENTRY_FORMAT % [
+            label, hex, DetailFormat.kit_condition_face(unit_data, key)])
+    return BAND_KIT_ROW_PREFIX + BAND_KIT_ROW_SEPARATOR.join(entries)
 
 ## Selection-panel band morale row: "Morale: 41% ▼ — harsh terrain (Karst Cavern Mouth)".
 ## Morale, its per-turn trend, and the dominant cause come from the snapshot cohort dict

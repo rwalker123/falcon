@@ -135,8 +135,12 @@ func run(harness) -> void:
 		wasted_model, SourceForecast.LABOR_KIND_FORAGE)
 	var wasted_hunt := SourceForecast.source_yield_readout(
 		wasted_model, SourceForecast.LABOR_KIND_HUNT)
+	# **THE CLAIM IS ABOUT THE WASTE NOTE, NOT ABOUT AN EMPTY CHANNEL.** `muted_note` is a shared
+	# small-print slot — the forecast's BAND rides it too since §6.4 — so an `== ""` here would start
+	# failing on a patch that merely reports a stochastic take, i.e. for a reason this assertion has
+	# nothing to say about. It reads the note the same way the tooltip half beside it already does.
 	h._assert_hud("a PATCH states no waste — the stock it did not reach is still standing",
-		String(wasted_forage.get("muted_note", "")) == ""
+		not String(wasted_forage.get("muted_note", "")).contains("wasted")
 			and not String(wasted_forage.get("tooltip", "")).contains("wasted"))
 	h._assert_hud("…while a HERD still does, where the meat really rotted",
 		String(wasted_hunt.get("muted_note", "")).contains("wasted")

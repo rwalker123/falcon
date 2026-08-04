@@ -296,8 +296,16 @@ func reconcile_pending(turn: int) -> bool:
 # Per-source rate keys whose ABSENCE is meaningful, so they are copied through only when the wire
 # assignment carried them (see the loop in `effective_worker_map`). `realized_yield` is the steady
 # food average; `trade_yield` / `realized_trade_yield` are its issue-#337 twins in the other product.
+## THE FORECAST'S BAND (`docs/plan_hunt_through_combat.md` §6.4) travels the same presence-sensitive
+## way, and for a sharper reason than the rates above: `source_yield_readout` renders a range ONLY
+## when the two bounds differ, so a `get(..., 0.0)` default would hand it `0.0–0.0` — equal, and
+## therefore silent — on an assignment that never carried them. Copying only what the wire sent keeps
+## "no band published" and "the band is a point" the same rendered answer by construction rather than
+## by luck. Both products, read as one vector beside their scalars.
 const OPTIONAL_YIELD_KEYS: Array[String] = [
 	"realized_yield", "trade_yield", "realized_trade_yield",
+	SourceForecast.YIELD_RANGE_LOW_KEY, SourceForecast.YIELD_RANGE_HIGH_KEY,
+	SourceForecast.TRADE_RANGE_LOW_KEY, SourceForecast.TRADE_RANGE_HIGH_KEY,
 ]
 
 ## Confirmed labor assignments overlaid with this band's pending assigns, keyed by source/role.

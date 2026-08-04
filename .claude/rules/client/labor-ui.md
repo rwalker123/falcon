@@ -3038,3 +3038,69 @@ standing`, and the sim's own clause under `Next delivery`). `herd_hunt_expeditio
 the control and the pack clause. The PNG-less blocks are where the arithmetic lives —
 `_assert_fill_target_arithmetic` (the exact-`k` walk, the at-capacity identity, the clamp) and
 `_assert_fill_target_command` (the token appended, and the untargeted line unchanged).
+
+---
+
+## The FIGHT is stated before the party leaves (`docs/plan_hunt_through_combat.md` §2.1 / §6.5)
+
+The combat gate produces a real outcome that reads as a bug unexplained: **hunters die and nothing is
+killed.** So the hunt compose sheet says two things under its crew row, in that order — how many
+hunters one animal takes, and whether these hunters can hurt it at all.
+
+| line | expression | source |
+|---|---|---|
+| **the reach** | `1 / (engageRate × dip)`, through `SourceForecast.hunters_per_animal_face` | `HerdTelemetryState.engageRate` |
+| **the gate** | `max(0, hunterAttack − defense)`, and above it `durability / that`, through `SourceForecast.hunt_gate_model` | `PopulationCohortState.hunterAttack` + the herd's `defense` / `durability` |
+
+**THE SIM EXPORTS NO VERDICT, and that is the boundary rule working rather than an omission.** Both
+expressions are linear and exact in terms already on the wire, so they ship as TERMS and the client
+asks itself the question — a "can this band win" boolean would be an answer to something the client
+can compute. What was genuinely missing is `durability`, which is what turns *"you cannot"* into
+*"you cannot, and with spears it would take 62 hunter-turns"*.
+
+- **`engageRate` is composed through `engagement_per_worker`, never re-divided.** That is the ONE
+  composition of the `engageRate × dip` pair every crew target in this file already divides by, so the
+  sentence and the stepper's cap cannot disagree; the dip rides it for the reason it rides them (hands
+  gentling a herd are hands not stalking it).
+- **Two phrasings, pivoting on `ENGAGED_AT_LEAST`.** The roster spans `0.05` to `10`, so a mammoth
+  reads `20 hunters bring one … into contact` and a warren `One hunter brings 10 … into contact` —
+  the same quotient read from its two sides, and `2.1`'s own "reads as" column. The pivot is the sim's
+  own engagement floor rather than a display constant.
+- **THE EFFORT FIGURE IS NOT DIVIDED BY THE PARTY.** The herd's accumulated wounds are deliberately
+  not exported (damage carries between turns, so a part-worn quarry needs fewer), and the sim already
+  answers duration where it matters in `huntTripEstimates` — a per-party turn count here would be a
+  second, always-pessimistic duration model competing with it. It is hunter-turns for ONE hunter.
+- **The client cannot state the counterfactual `§6.5` quotes.** *"…and with SPEARS it would take 62"*
+  needs the equipped attack tier, which is `equipment.json` and not on the wire; what ships is the
+  effort at THIS band's own tier, and the refusal names its `attack` beside the quarry's `defense` so
+  the lesson still reads as the weapon rather than the headcount.
+- **`defense` and `durability` must not be blurred**: defense is whether a hit counts at all,
+  durability is how many counting hits it takes. The first decides the refusal, the second the effort.
+
+### The engagement stage is the gate on BOTH lines, and that is the byte-identity
+
+A **pen** and the whole **plant web** publish `NO_ENGAGEMENT_STAGE` — a penned animal is not stalked
+and a berry does not fight back — so `SourceForecast.has_engagement_stage` suppresses the pair and
+neither sheet moves. The negative is asserted on a pen fixture that carries a REAL `defense` and
+`durability` (`chapters/hunt.gd` `_combat_gate_pen`), so the silence is demonstrably the engagement
+gate's doing rather than a fixture that omitted the terms.
+
+### KNOWN GAP — the local per-turn readout does not carry the gate
+
+The compose sheet's `PER TURN` row is client-composed from `forecast_inputs` (escapement × carry ×
+engagement) and has **no combat term**, so a sub-gate party reads a positive take directly beneath a
+line saying it would kill nothing. The SIM's own answers are correct — `SourceYield.actual` and
+`huntTripEstimates` both resolve the fight, so a standing row and a raid forecast quote zero — and
+§6.5's "two signals from different paths" is satisfied by those; it is the local pre-commit CURVE that
+is gate-blind. Closing it means threading `hunterAttack` into `forecast_inputs`, which would put a
+band-scoped term into a source-scoped layer and ripple through `max_useful_workers`, both crew targets
+and the chart.
+
+**Frames + assertions (`chapters/hunt.gd`):** `herd_hunt_gate_effort` (a speared party — the reach
+line plus `62.5 hunter-turns`) · `herd_hunt_gate_blocked` (**the same mammoth, the same party size,
+bare hands** — an A/B on the WEAPON, since only the band's kit moves between them), which also pins
+that the reach line is UNCHANGED: contact is not the gate, and twenty bare-handed hunters do walk up
+to a mammoth. Each line carries its own meta (`HudWidgets.HUNTERS_PER_ANIMAL_META` /
+`HUNT_GATE_META`, the latter valued `true` while the fight is unwinnable) because they are composed
+from disjoint wire terms and a single handle would let one break while an assertion on the other kept
+passing.

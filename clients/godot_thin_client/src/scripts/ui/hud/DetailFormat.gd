@@ -140,6 +140,66 @@ const FOOD_LABEL_PEN_FEED := "%s Pen feed (animals)" % CORRAL_GLYPH
 const RAID_GLYPH := "⚔"
 const FOOD_LABEL_RAID_FORFEIT := "%s Lost to raids" % RAID_GLYPH
 
+# ---- THE THREE KITS (`docs/plan_hunt_through_combat.md` §4.8) ------------------------------------
+# ONE KIT, ONE JOB: spears raise a hunter's `attack`, a SLED is the HUNT's carry (a carcass is one
+# lumpy object you drag out whole), BASKETS are the FORAGE web's (berries are loose and bounded by
+# what you can hold). The three names are typed once, here, because the Kit ROW lists them and the Kit
+# BREAKDOWN explains them — and the pairing of a kit with its role is the whole readout: a sled line
+# quoting the forage carry, or a basket line quoting the hunt's, is exactly the defect slice 5
+# corrected in the sim and the one this client must not reintroduce.
+const KIT_LABEL_SPEARS := "Spears"
+const KIT_LABEL_SLED := "Sled"
+const KIT_LABEL_BASKETS := "Baskets"
+
+# The three wire keys, beside the labels they belong to. A cohort from a snapshot that predates the
+# TOE carries none of them, which is what the Kit row's presence gate reads.
+const KIT_DURABILITY_KEY_SPEARS := "hunting_kit_durability"
+const KIT_DURABILITY_KEY_SLED := "sled_kit_durability"
+const KIT_DURABILITY_KEY_BASKETS := "basket_kit_durability"
+
+# The RESOLVED tiers each kit sets. **`hunt_carry_per_worker_biomass` and
+# `forage_carry_per_worker_biomass` ARE NOT TWO READINGS OF ONE NUMBER** — a band can be out of
+# baskets with its sled untouched — so each is named beside its own kit and neither is ever read for
+# the other's row.
+const KIT_TIER_KEY_ATTACK := "hunter_attack"
+const KIT_TIER_KEY_HUNT_CARRY := "hunt_carry_per_worker_biomass"
+const KIT_TIER_KEY_FORAGE_CARRY := "forage_carry_per_worker_biomass"
+
+# **A KIT IS EQUIPPED WHILE ITS CONDITION IS ABOVE ZERO** — the schema's own rule, and the only test
+# there is: at 0 the role steps down to its unequipped tier and STAYS there, because nothing
+# replenishes kit yet. Not a threshold of the client's choosing.
+const KIT_DRY := 0.0
+
+# What a dry kit reads as on the row. A WORD, not a `0`, because the number is not the point: the
+# point is which SIDE OF THE CLIFF the role is on.
+const KIT_DRY_FACE := "dry"
+
+# The condition's own rounding — it is a 0-100 scale, so a whole number is its full resolution.
+const KIT_CONDITION_DECIMALS := 0
+
+# The two carry tiers are biomass per worker per turn; one decimal, because the bare-handed forage
+# tier is `1.6` and an integer would print it as `2` beside an equipped `8`.
+const KIT_CARRY_DECIMALS := 1
+
+# The role each kit sets, as the breakdown's own phrasing. The tier is stated FLAT — never scaled by
+# the remaining condition — because durability and performance are orthogonal axes: a kit at 3
+# performs exactly as one at 97, and then stops.
+const KIT_ROLE_ATTACK_FORMAT := "attack %s"
+const KIT_ROLE_HUNT_CARRY_FORMAT := "hunt carry %s per hunter"
+const KIT_ROLE_FORAGE_CARRY_FORMAT := "gathering %s per forager"
+
+# The bare-handed tag on a dry kit's breakdown row — the state worth saying plainly, since there is no
+# replenishment path and the role stays there.
+const KIT_BARE_HANDS_SUFFIX := " — bare hands"
+
+# One `    ▲ Spears 87 — attack 20`-style breakdown row, and the sentence beneath the three of them.
+const KIT_BREAKDOWN_ROW_FORMAT := "%s%s %s %s — %s"
+
+# **THE CLIFF, IN ONE SENTENCE.** Without it a player reads the conditions as a performance gradient
+# and paces their hunting against a number that does not move anything — which is the exact
+# misreading the flat-until-expiry model invites.
+const KIT_BREAKDOWN_CLIFF_NOTE := "A kit works at full strength until it runs out — the condition is how long you have, not how well it works. There is no way to make more yet."
+
 const BREAKDOWN_CARET_OPEN := "▾"
 const BREAKDOWN_CARET_CLOSED := "▸"
 
@@ -1123,6 +1183,49 @@ static func fertility_breakdown_row(factor: float, label: String) -> String:
     var glyph := DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH if factor > BandFoodStatus.FERTILITY_NEUTRAL \
         else DetailFormat.MORALE_CONTRIB_NEGATIVE_GLYPH
     return FERTILITY_BREAKDOWN_ROW_FORMAT % [DetailFormat.MORALE_BREAKDOWN_INDENT, glyph, factor, label]
+
+## **DOES THIS BAND STATE ITS KIT AT ALL?** — `has()`, never `> 0`, because a dry kit is a real and
+## important reading and only an ABSENT field means "not stated". One test behind the Kit row and its
+## disclosure, so a band cannot show one without the other.
+static func band_states_kit(band: Dictionary) -> bool:
+    return band.has(KIT_DURABILITY_KEY_SPEARS)
+
+## **HAS ANY KIT RUN OUT?** — what tints the Kit row's caret WARN, and the row's own value. It is the
+## whole of what "concerning" means here: running dry is a permanent step down to bare hands, and a
+## kit merely wearing is not a fact to shout about, because nothing the player can do changes its
+## rate. `false` for a band that states no kit at all.
+static func band_kit_is_dry(band: Dictionary) -> bool:
+    if not band_states_kit(band):
+        return false
+    return not kit_is_equipped(band, KIT_DURABILITY_KEY_SPEARS) \
+        or not kit_is_equipped(band, KIT_DURABILITY_KEY_SLED) \
+        or not kit_is_equipped(band, KIT_DURABILITY_KEY_BASKETS)
+
+## Is this kit still equipped? The schema's own rule and the only test there is (see `KIT_DRY`).
+static func kit_is_equipped(band: Dictionary, durability_key: String) -> bool:
+    return float(band.get(durability_key, KIT_DRY)) > KIT_DRY
+
+## One kit's condition as the Kit ROW says it — the whole number, or the word for a kit that has run
+## out. **Never a bar, never a fraction of a maximum**: performance is flat until expiry, so a filled
+## gauge would draw a taper the model does not have.
+static func kit_condition_face(band: Dictionary, durability_key: String) -> String:
+    return String.num(float(band.get(durability_key, KIT_DRY)), KIT_CONDITION_DECIMALS) \
+        if kit_is_equipped(band, durability_key) else KIT_DRY_FACE
+
+## One `    ▲ Spears 87 — attack 20` breakdown row. Green while the kit is equipped, amber once it is
+## dry — through the SAME ▲/▼ sign glyphs the food and morale breakdowns tint by, so the popover has
+## one two-tone rule rather than a per-family one.
+##
+## `role` is composed by the caller from THAT KIT's own tier. It is a parameter rather than a lookup
+## here on purpose: the wrong pairing (a sled quoting the forage carry) is the defect this arc keeps
+## reproducing, so the pairing is written once per kit at the one call site and is assertable there.
+static func kit_breakdown_row(band: Dictionary, durability_key: String, label: String,
+        role: String) -> String:
+    var equipped := kit_is_equipped(band, durability_key)
+    var glyph := MORALE_CONTRIB_POSITIVE_GLYPH if equipped else MORALE_CONTRIB_NEGATIVE_GLYPH
+    var suffix := "" if equipped else KIT_BARE_HANDS_SUFFIX
+    return KIT_BREAKDOWN_ROW_FORMAT % [MORALE_BREAKDOWN_INDENT, glyph, label,
+        kit_condition_face(band, durability_key), role + suffix]
 
 ## One `    ▲ +0.48  Gathered`-style breakdown row (morale-indent + sign glyph → shared tint path).
 static func food_breakdown_row(value: float, label: String) -> String:

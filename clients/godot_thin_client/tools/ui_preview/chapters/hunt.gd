@@ -1542,3 +1542,212 @@ func run(harness) -> void:
 	h._hud._compose.reset_hunt_source()
 	h._hud._compose.set_hunt_band(-1)
 	h._hud._compose.set_hunt_floor(SourceForecast.FLOOR_FOOD_PEAK)
+
+	# ---- THE FIGHT, SAID BEFORE THE PARTY LEAVES (§2.1 / §6.5) -----------------------------------
+	await _combat_gate_states()
+
+	# ---- THE FORECAST REPORTS A RANGE (§6.4) -----------------------------------------------------
+	await _yield_range_states()
+
+
+# =====================================================================================
+#  THE PRE-LAUNCH FIGHT (`docs/plan_hunt_through_combat.md` §2.1, §4.2, §6.5)
+# =====================================================================================
+# The gate produces a real outcome that reads as a bug unexplained: **hunters die and nothing is
+# killed.** The client holds every term it needs — the band's resolved `hunterAttack`, the herd's
+# `defense` and its newly-exported `durability` — so the sim exports no verdict and the sheet asks
+# itself the question. Beside it, `1 / engageRate` turns `0.05` into *"twenty hunters to take a
+# mammoth"*, which is a number a player can size a party against.
+
+## The mammoth's own two defensive axes, at the roster's settled values (§4.2). They must not be
+## blurred: **`defense` is whether a hit counts at all, `durability` is how many counting hits it
+## takes** — so the first decides the refusal and the second the effort figure, and a fixture that
+## moved one would move only one of the two assertions below.
+const GATE_MAMMOTH_DEFENSE := 12.0
+
+const GATE_MAMMOTH_DURABILITY := 500.0
+
+## §2.1's own row: twenty hunters can surround one mammoth. Stated as the wire's `engageRate` and
+## INVERTED by the assertion rather than restated, so the harness and the readout arrive at 20 from
+## opposite ends.
+const GATE_MAMMOTH_ENGAGE_RATE := 0.05
+
+## A herd carrying ALL THREE of the fight's terms — the two above plus the engagement stage that gates
+## whether either line is spoken at all. Built on the deadly-herd mammoth, which already carries the
+## `defense 12` the refusal is judged on, so this fixture adds the two fields the arc appended and
+## changes nothing else about the animal.
+func _combat_gate_mammoth() -> Dictionary:
+	var herd := HerdFx.deadly_herd_fixture()
+	herd["defense"] = GATE_MAMMOTH_DEFENSE
+	herd["durability"] = GATE_MAMMOTH_DURABILITY
+	herd["engage_rate"] = GATE_MAMMOTH_ENGAGE_RATE
+	return herd
+
+## **A PEN CARRYING THE FIGHT'S TERMS AND STILL SAYING NOTHING.** The herd is corralled, so it
+## publishes `NO_ENGAGEMENT_STAGE` — a penned animal is not stalked — while keeping a real `defense`
+## and `durability`. That is what makes the negative below a claim about the ENGAGEMENT GATE rather
+## than about a fixture that simply omitted the fields: strip the gate and this sheet grows both
+## lines, which is the byte-identity this arc has to hold for the pen and the whole plant web.
+func _combat_gate_pen() -> Dictionary:
+	var herd := HerdFx.domesticated_herd_fixture()
+	herd["defense"] = GATE_MAMMOTH_DEFENSE
+	herd["durability"] = GATE_MAMMOTH_DURABILITY
+	herd["engage_rate"] = SourceForecast.NO_ENGAGEMENT_STAGE
+	return herd
+
+func _combat_gate_states() -> void:
+	var quarry := String(HerdFx.deadly_herd_fixture()["species"])
+	var mammoth := _combat_gate_mammoth()
+	# **THE HUNTERS-PER-ANIMAL FIGURE, COMPOSED FROM THE OTHER SIDE OF THE QUOTIENT.** The sheet
+	# divides `1` by `engageRate`; the harness multiplies back up, so the two agree only if the
+	# readout really is the inverse rather than a number that happens to look right.
+	var hunters_per_animal := ceili(1.0 / GATE_MAMMOTH_ENGAGE_RATE)
+	var reach_line: String = SourceForecast.HUNTERS_PER_ANIMAL_FORMAT % [hunters_per_animal, quarry]
+
+	# State gate-a — A SPEARED PARTY, above the gate. The sheet states what the fight COSTS rather
+	# than only whether it is hopeless: `durability / (attack − defense)` hunter-turns per kill, which
+	# is what makes a mammoth (62.5) and a rabbit comparable at all.
+	var speared := BandFx.with_equipped_kit(BandFx.hunt_preview_local_band())
+	h._hud._band_labor._player_bands = [speared]
+	h._hud._band_labor._player_band = speared
+	h._hud._compose.reset_hunt_source()
+	h._hud._compose.set_hunt_band(-1)
+	h._show_herd(mammoth)
+	h._compose_herd(mammoth, LOCAL_HUNT_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
+	await h._settle()
+	await h._save("herd_hunt_gate_effort")
+	var speared_sheet: Control = h._hud._drawercompose._compose_sheet
+	h._assert_hud("twenty hunters reach one mammoth — \"%s\"" % reach_line,
+		Readout.hunters_per_animal_line(speared_sheet) == reach_line)
+	# **THE EFFORT FIGURE IS NOT DIVIDED BY THE PARTY**, deliberately: the herd's accumulated wounds
+	# are not exported, so a per-party turn count here would be a second duration model competing
+	# with the sim's own `huntTripEstimates`. It is hunter-turns for ONE hunter, and it is what turns
+	# a bare refusal into something a player can plan against.
+	var hunter_turns := GATE_MAMMOTH_DURABILITY / (BandFx.KIT_ATTACK_EQUIPPED - GATE_MAMMOTH_DEFENSE)
+	h._assert_hud("a party above the gate is quoted the EFFORT (%s hunter-turns), not a refusal"
+		% String.num(hunter_turns, SourceForecast.HUNT_GATE_EFFORT_DECIMALS),
+		Readout.hunt_gate_blocked(speared_sheet) == Readout.HUNT_GATE_WINNABLE
+			and Readout.hunt_gate_line(speared_sheet).contains(
+				String.num(hunter_turns, SourceForecast.HUNT_GATE_EFFORT_DECIMALS)))
+
+	# State gate-b — THE SAME MAMMOTH, THE SAME PARTY SIZE, BARE HANDS. `max(0, 1 − 12)` is zero, so
+	# no headcount kills anything and the party takes casualties for nothing. **The only thing that
+	# moves between the two frames is the band's kit**, which is what makes this an A/B on the WEAPON
+	# rather than on the animal — §4.8's whole claim that the first spear should feel like a different
+	# game.
+	var bare := BandFx.with_bare_hands(BandFx.hunt_preview_local_band())
+	h._hud._band_labor._player_bands = [bare]
+	h._hud._band_labor._player_band = bare
+	h._hud._compose.reset_hunt_source()
+	h._show_herd(mammoth)
+	h._compose_herd(mammoth, LOCAL_HUNT_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
+	await h._settle()
+	await h._save("herd_hunt_gate_blocked")
+	var bare_sheet: Control = h._hud._drawercompose._compose_sheet
+	h._assert_hud("bare hands against a mammoth is refused IN WORDS, before the party is sent",
+		Readout.hunt_gate_blocked(bare_sheet) == Readout.HUNT_GATE_BLOCKED)
+	h._assert_hud("…and the refusal names BOTH terms, so the lesson is the weapon and not the headcount",
+		Readout.hunt_gate_line(bare_sheet).contains(
+				String.num(BandFx.KIT_ATTACK_BARE, SourceForecast.HUNT_GATE_SCALAR_DECIMALS))
+			and Readout.hunt_gate_line(bare_sheet).contains(
+				String.num(GATE_MAMMOTH_DEFENSE, SourceForecast.HUNT_GATE_SCALAR_DECIMALS)))
+	# **CONTACT IS NOT THE GATE** (§2.1): twenty bare-handed hunters DO walk up to a mammoth, and the
+	# fight is where they fail. So the reach line must be unchanged by the kit — a sheet that hid it
+	# alongside the refusal would teach that the party cannot find the animal.
+	h._assert_hud("…while the engagement figure is untouched — contact is not the gate",
+		Readout.hunters_per_animal_line(bare_sheet) == reach_line)
+
+	# **THE NEGATIVE, AND IT IS THE HALF THE ARC KEEPS BREAKING.** A PEN publishes no engagement
+	# stage, so neither line may render on one — and this fixture carries a real `defense` and
+	# `durability`, so the silence is the ENGAGEMENT GATE's doing rather than a fixture that omitted
+	# the terms. PNG-less: the claim is an absence, which a picture states only by not showing
+	# something, and the frame set's byte-diff is where a regression would actually surface.
+	var pen := _combat_gate_pen()
+	h._hud._compose.reset_hunt_source()
+	h._show_herd(pen)
+	h._compose_herd(pen, LOCAL_HUNT_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
+	await h._settle()
+	var pen_sheet: Control = h._hud._drawercompose._compose_sheet
+	h._assert_hud("a PEN is not stalked and not fought — neither pre-launch line renders on one",
+		Readout.hunters_per_animal_line(pen_sheet) == ""
+			and Readout.hunt_gate_blocked(pen_sheet) == Readout.HUNT_GATE_ABSENT)
+
+	# Reset for whatever renders next.
+	h._hud._band_labor._player_bands = []
+	h._hud._band_labor._player_band = BandFx.band_fixture()
+	h._hud._compose.reset_hunt_source()
+	h._hud._compose.set_hunt_band(-1)
+
+
+# =====================================================================================
+#  THE FORECAST REPORTS A RANGE (`docs/plan_hunt_through_combat.md` §6.4)
+# =====================================================================================
+# `actualYield` became the take's EXPECTATION over the retreat seed, and the pair around it says how
+# far the real take can land from it. **It ships DEGENERATE** — wariness is `0` across the roster and
+# `hit_chance` is `1.0`, so every stage takes its exact identity at every quantile and `low == actual
+# == high` bit-for-bit — which means the range UI has to be correct and currently near-invisible.
+# Slice 7 authors wariness and it turns on with no further client work.
+#
+# **SO THE PAIR OF STATES IS THE CLAIM.** A band renders where the bounds differ, and NO band renders
+# where they agree; the second is what stops the first passing on a readout that decorates every row,
+# and it is the case every source in the game is in today.
+
+## A real band on this turn's take — the spec's own worked example, *"6–11, likely 9"*, in the food
+## units a deer hunt actually pays. `actual` sits between them because it is the EXPECTATION, which is
+## what `forecast == actual` is restated on.
+const RANGE_ACTUAL := 0.90
+
+const RANGE_LOW := 0.60
+
+const RANGE_HIGH := 1.10
+
+## The band's own hunt assignment, with the pair either SPREAD or collapsed onto the expectation.
+## One builder for both states, so the only thing that differs between them is the two bounds —
+## a second fixture could drift in a term the assertion does not name.
+func _range_band(low: float, high: float) -> Dictionary:
+	var band := BandFx.hunt_preview_local_band()
+	band["labor_assignments"] = [{
+		"kind": "hunt", "workers": 2, "fauna_id": HerdFx.herd_fixture()["id"],
+		"target_x": 66, "target_y": 10, "floor": SourceForecast.FLOOR_FOOD_PEAK,
+		"actual_yield": RANGE_ACTUAL, "sustainable_yield": RANGE_ACTUAL,
+		"realized_yield": RANGE_ACTUAL, "workers_needed": 2, "overdraws": false,
+		SourceForecast.YIELD_RANGE_LOW_KEY: low,
+		SourceForecast.YIELD_RANGE_HIGH_KEY: high,
+	}]
+	return band
+
+func _yield_range_states() -> void:
+	var herd := HerdFx.herd_fixture()
+	var band_clause: String = SourceForecast.YIELD_RANGE_CLAUSE_FORMAT \
+		% SourceForecast.format_yield_range(RANGE_LOW, RANGE_HIGH)
+
+	# State range-a — A REAL BAND. The row's headline stays the steady realized rate (the band is
+	# about this turn's expectation, which is a different number), and the spread rides beside it in
+	# the muted register the wasted note already uses.
+	var spread := _range_band(RANGE_LOW, RANGE_HIGH)
+	h._hud._band_labor._player_bands = [spread]
+	h._hud._band_labor._player_band = spread
+	h._hud._compose.reset_hunt_source()
+	h._show_herd(herd)
+	await h._settle()
+	await h._save("herd_hunt_yield_range")
+	h._assert_hud("a stochastic take states its band beside the expectation — \"%s\"" % band_clause,
+		Q.has_label_containing(h._hud, band_clause))
+
+	# State range-b — **THE DEGENERATE CASE, PINNED.** Every source in the game reports this today, so
+	# a band appearing here is a defect rather than a rarity — and without this half the state above
+	# passes just as well on a readout that draws a range unconditionally.
+	var point := _range_band(RANGE_ACTUAL, RANGE_ACTUAL)
+	h._hud._band_labor._player_bands = [point]
+	h._hud._band_labor._player_band = point
+	h._hud._compose.reset_hunt_source()
+	h._show_herd(herd)
+	await h._settle()
+	await h._save("herd_hunt_yield_point")
+	h._assert_hud("…and where the distribution is a POINT no band is drawn at all",
+		not Q.has_label_containing(h._hud, SourceForecast.YIELD_RANGE_CLAUSE_FORMAT % ""))
+
+	# Reset for whatever renders next.
+	h._hud._band_labor._player_bands = []
+	h._hud._band_labor._player_band = BandFx.band_fixture()
+	h._hud._compose.reset_hunt_source()

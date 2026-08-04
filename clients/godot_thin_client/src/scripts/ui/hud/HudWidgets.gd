@@ -591,6 +591,19 @@ const CREW_ROW_DIP_META := "crew_row_dip"
 ## the assertable half: the sentence carries turn counts and percentages that move with the fixture.
 const VERDICT_META := "verdict"
 
+## **THE PRE-LAUNCH FIGHT'S TWO LINES** (`docs/plan_hunt_through_combat.md` §2.1 / §6.5), each with its
+## own meta because each must be assertable by ABSENCE as well as by presence — a pen and the whole
+## plant web render neither, and that emptiness is the byte-identity claim this arc has to hold.
+##
+## They are deliberately two metas rather than one block: the engagement figure and the combat gate
+## come from DIFFERENT wire terms (`engageRate` against `hunterAttack`/`defense`/`durability`), so a
+## single handle would let one break while an assertion on the other kept passing.
+const HUNTERS_PER_ANIMAL_META := "hunters_per_animal"
+
+## The gate line's meta carries `true` while the fight is UNWINNABLE, so the refusal and the effort
+## figure — one line, two states — are told apart structurally rather than by matching their words.
+const HUNT_GATE_META := "hunt_gate"
+
 ## The "send a hunting expedition" CONFIRM button, as `Button` meta — set by BOTH hosts that build
 ## one (the herd drawer's compose control and the Band panel's parties compose sheet). Same reason as
 ## the rung meta above, only more so: this button's face is the raid VERDICT

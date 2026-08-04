@@ -1519,6 +1519,40 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     var cap_note := String(capped["note"])
     if cap_note != "":
         target.add_child(HudWidgets.alloc_hint_label(cap_note))
+    # **THE FIGHT, STATED BEFORE THE PARTY LEAVES** (`docs/plan_hunt_through_combat.md` §2.1 / §6.5),
+    # directly under the crew that will fight it — both lines answer "is this crew the right size, and
+    # can it win at all", which is what the stepper one row up has just posed.
+    #
+    # **THE ENGAGEMENT STAGE IS THE GATE ON BOTH, and that is what keeps a PEN and the whole PLANT web
+    # byte-identical**: both publish `NO_ENGAGEMENT_STAGE` — a penned animal is not stalked and a berry
+    # does not fight back — so neither line renders and neither sheet moves. The dip rides the reach
+    # exactly as it rides every crew target (hands gentling a herd are hands not stalking it), so a
+    # Tame in progress raises the hunters-per-animal figure honestly rather than quoting a wild reach.
+    var engage_rate := float(herd.get(
+        HudComposeVocab.BARE_FORECAST_PREFIX + SourceForecast.FORECAST_ENGAGE_RATE_KEY,
+        SourceForecast.NO_ENGAGEMENT_STAGE))
+    var engage_dip := SourceForecast.build_dip(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
+        composed_improvement)
+    if SourceForecast.has_engagement_stage(engage_rate, engage_dip):
+        var quarry := _herd_label_for_id(herd_id)
+        # HOW MANY HUNTERS ONE ANIMAL TAKES — `1 / engageRate`, off the SAME `engagement_per_worker`
+        # every crew target divides by. "Twenty hunters to take a mammoth" is a number a player can
+        # size a party against; `0.05` is not.
+        var reach_label := HudWidgets.alloc_hint_label(
+            SourceForecast.hunters_per_animal_face(engage_rate, engage_dip, quarry))
+        reach_label.set_meta(HudWidgets.HUNTERS_PER_ANIMAL_META, true)
+        target.add_child(reach_label)
+        # …AND WHETHER THEY CAN HURT IT AT ALL. A sub-gate party kills nothing at any headcount and
+        # still takes casualties, which reads as a bug unexplained. The refusal is DANGER-inked; above
+        # the gate the same line states the effort instead, so the sheet always says what the fight
+        # costs rather than only when it is hopeless.
+        var gate := SourceForecast.hunt_gate_model(band, herd, quarry)
+        if bool(gate["stated"]):
+            var gate_label := HudWidgets.forecast_label("[color=#%s]%s[/color]" % [
+                HudStyle.DANGER_HEX if bool(gate["blocked"]) else HudStyle.INK_DIM_HEX,
+                String(gate["text"])])
+            gate_label.set_meta(HudWidgets.HUNT_GATE_META, bool(gate["blocked"]))
+            target.add_child(gate_label)
     # **THE FILL TARGET, DIRECTLY UNDER THE PARTY IT IS PRICED BY** (§5.2). It reads *how long you will
     # wait*, and both terms of that — the animals and the turns they cost — are functions of the party
     # size one row up, so the two controls belong adjacent and in that order. Only a DELIVERING raid

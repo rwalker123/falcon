@@ -675,6 +675,9 @@ func run(harness) -> void:
 	# what lets the turn counts below be asserted as equalities rather than as ranges.
 	await _fill_target_states()
 
+	# ---- THE THREE KITS (`docs/plan_hunt_through_combat.md` §4.8) --------------------------------
+	await _kit_states()
+
 	# band_alerts (above) left _player_band as an alert-fixture band (no work_range, far from the food
 	# tile); seed a NEAR band so the forage controls resolve an in-range actor.
 	h._hud._band_labor._player_band = BandFx.forage_range_bands()[0]
@@ -932,3 +935,133 @@ func _find_first_checkbox(root: Node) -> CheckBox:
 		if found != null:
 			return found
 	return null
+
+
+# ---- THE THREE KITS (`docs/plan_hunt_through_combat.md` §4.8) ------------------------------------
+# The kit disclosure key for the kitted band — `DetailFormat.breakdown_key(kind, band)`'s shape, over
+# the reference band's own entity so it cannot collide with its Food/Morale/Growth popovers.
+const BAND_DISCLOSURE_KIT := "kit:904"
+
+## **THE KITS WERE INVISIBLE, AND A PLAYER COULD NOT SEE THEIR EQUIPMENT DYING.** Three consumables
+## ship — spears raising `attack`, a SLED carrying the hunt, BASKETS carrying the forage web — and all
+## six wire fields arrived and were dropped. These four frames are the readout, and the split is
+## deliberate: the ROW answers *how long have I got and which side of the line am I on*, and only the
+## DISCLOSURE has room for *what each one is doing for me, and what happens when it stops*.
+##
+## **NOTHING HERE MAY BE SCALED BY THE REMAINING CONDITION.** Durability and performance are
+## orthogonal — a kit at 3 performs exactly as one at 97 and then stops — so the assertions below pin
+## the TIER against its shipped constant rather than against anything derived from the condition, and
+## a readout that drew a gradient would fail them at every condition but full.
+func _kit_states() -> void:
+	# State kit-a — ONE KIT DRY, the other two intact. The row reads two live conditions and one
+	# DANGER-inked word, which is the whole of what a glance has to deliver: two clocks and one loss.
+	var worn := BandFx.with_baskets_dry(BandFx.band_fixture())
+	h._hud._band_labor._player_band = worn
+	h._hud.show_unit_selection(worn)
+	await h._settle()
+	await h._save("band_kit")
+	# **THE FACES ARE READ OFF THE PARSED TEXT, THE INK OFF THE SOURCE**, and the split is forced by
+	# the row itself: each kit's condition is wrapped in its own `[color]` span, so the rendered
+	# source never contains `Spears 87` contiguously — while the parsed text, having dropped every
+	# tag, cannot testify about a colour. Two readings of one label, each asked what it can answer.
+	var kit_row := String(h._hud.occupant_detail.get_parsed_text())
+	h._assert_hud("the Kit row states all three kits, live ones by condition",
+		kit_row.contains("%s %s" % [DetailFormat.KIT_LABEL_SPEARS,
+				String.num(BandFx.KIT_CONDITION_SPEARS, DetailFormat.KIT_CONDITION_DECIMALS)])
+			and kit_row.contains("%s %s" % [DetailFormat.KIT_LABEL_SLED,
+				String.num(BandFx.KIT_CONDITION_SLED, DetailFormat.KIT_CONDITION_DECIMALS)]))
+	# **A SPENT KIT READS AS A WORD, NOT A ZERO.** The number is not the point — which side of the
+	# cliff the role is on is — and a `0` beside two live conditions reads as a quantity on the same
+	# scale rather than as a state change. The DANGER span is asserted with the kit's own NAME in
+	# front of it, because this label carries other red runs (a negative food net) that a bare hex
+	# search would match.
+	h._assert_hud("…and a spent kit reads as a WORD, in DANGER ink",
+		h._hud.occupant_detail.text.contains("%s [color=#%s]%s" % [DetailFormat.KIT_LABEL_BASKETS,
+			HudStyle.DANGER_HEX, DetailFormat.KIT_DRY_FACE]))
+
+	# State kit-b — the SAME band, disclosure OPEN. **This frame carries the cross-check the whole
+	# three-kit split exists for**: the sled's line must quote the HUNT's carry and the basket's line
+	# the FORAGE web's, and neither may quote the other's. Baskets boosting the hunt is precisely the
+	# defect slice 5 corrected in the sim, and rendering one tier on the other's row would carry it
+	# straight back into the UI where no sim test can see it.
+	_click_disclosure(BAND_DISCLOSURE_KIT)
+	await h._settle()
+	await h._save("band_kit_expanded")
+	var kit_popover := _kit_popover_text()
+	var sled_line := _kit_breakdown_line(kit_popover, DetailFormat.KIT_LABEL_SLED)
+	var basket_line := _kit_breakdown_line(kit_popover, DetailFormat.KIT_LABEL_BASKETS)
+	var hunt_carry := String.num(BandFx.KIT_HUNT_CARRY_EQUIPPED, DetailFormat.KIT_CARRY_DECIMALS)
+	var forage_carry := String.num(BandFx.KIT_FORAGE_CARRY_BARE, DetailFormat.KIT_CARRY_DECIMALS)
+	h._assert_hud("the SLED's line quotes the HUNT's carry (%s) and never the forage web's (%s)"
+		% [hunt_carry, forage_carry],
+		sled_line.contains(hunt_carry) and not sled_line.contains(forage_carry))
+	h._assert_hud("the BASKETS' line quotes the FORAGE web's carry (%s) and never the hunt's (%s)"
+		% [forage_carry, hunt_carry],
+		basket_line.contains(forage_carry) and not basket_line.contains(hunt_carry))
+	h._assert_hud("the SPEARS' line quotes the attack tier they set (%s)"
+		% String.num(BandFx.KIT_ATTACK_EQUIPPED, DetailFormat.KIT_CONDITION_DECIMALS),
+		_kit_breakdown_line(kit_popover, DetailFormat.KIT_LABEL_SPEARS).contains(
+			DetailFormat.KIT_ROLE_ATTACK_FORMAT % String.num(BandFx.KIT_ATTACK_EQUIPPED,
+				DetailFormat.KIT_CONDITION_DECIMALS)))
+	# **THE CLIFF SENTENCE IS WHAT STOPS THE CONDITIONS READING AS A PERFORMANCE GRADIENT.** Without
+	# it a player paces their hunting against `87` and `54` as if they were rates.
+	h._assert_hud("…and the popover says the condition is a clock, not a rate",
+		kit_popover.contains(DetailFormat.KIT_BREAKDOWN_CLIFF_NOTE))
+	h._assert_hud("…and only the spent kit is called out as bare hands",
+		basket_line.contains(DetailFormat.KIT_BARE_HANDS_SUFFIX)
+			and not sled_line.contains(DetailFormat.KIT_BARE_HANDS_SUFFIX))
+	_click_disclosure(BAND_DISCLOSURE_KIT)
+
+	# State kit-c — EVERY kit run dry. Bare hands is a state worth showing plainly: there is no
+	# replenishment path, so all three roles have stepped down and stay there.
+	var bare := BandFx.with_bare_hands(BandFx.band_fixture())
+	h._hud._band_labor._player_band = bare
+	h._hud.show_unit_selection(bare)
+	await h._settle()
+	_click_disclosure(BAND_DISCLOSURE_KIT)
+	await h._settle()
+	await h._save("band_kit_bare")
+	var bare_popover := _kit_popover_text()
+	h._assert_hud("a band with nothing left states bare hands on all three roles",
+		_kit_breakdown_line(bare_popover, DetailFormat.KIT_LABEL_SPEARS).contains(
+				DetailFormat.KIT_BARE_HANDS_SUFFIX)
+			and _kit_breakdown_line(bare_popover, DetailFormat.KIT_LABEL_SLED).contains(
+				DetailFormat.KIT_BARE_HANDS_SUFFIX)
+			and _kit_breakdown_line(bare_popover, DetailFormat.KIT_LABEL_BASKETS).contains(
+				DetailFormat.KIT_BARE_HANDS_SUFFIX))
+	h._assert_hud("…and the two carries STILL do not swap: the sled reads %s, the baskets %s"
+		% [String.num(BandFx.KIT_HUNT_CARRY_BARE, DetailFormat.KIT_CARRY_DECIMALS),
+			String.num(BandFx.KIT_FORAGE_CARRY_BARE, DetailFormat.KIT_CARRY_DECIMALS)],
+		_kit_breakdown_line(bare_popover, DetailFormat.KIT_LABEL_SLED).contains(
+				String.num(BandFx.KIT_HUNT_CARRY_BARE, DetailFormat.KIT_CARRY_DECIMALS))
+			and _kit_breakdown_line(bare_popover, DetailFormat.KIT_LABEL_BASKETS).contains(
+				String.num(BandFx.KIT_FORAGE_CARRY_BARE, DetailFormat.KIT_CARRY_DECIMALS)))
+	_click_disclosure(BAND_DISCLOSURE_KIT)
+
+	# **THE NEGATIVE HALF, and without it the three frames above are satisfied by a row that renders
+	# unconditionally.** A band that states no kit at all — every fixture predating the TOE, and the
+	# state a rehydrated cohort is in — must render NO Kit row, because a defaulted `Spears 0` would
+	# report equipment destroyed that was never there. It is asserted rather than rendered: the
+	# reference band's own frame (`band`, far above) is the picture.
+	h._hud._band_labor._player_band = BandFx.band_fixture()
+	h._hud.show_unit_selection(BandFx.band_fixture())
+	await h._settle()
+	h._assert_hud("a band that states no kit renders no Kit row — never a defaulted zero",
+		Readout.detail_excerpt(h._hud.occupant_detail.text, HudDisclosureVocab.DETAIL_ROW_KIT)
+			== Readout.DETAIL_EXCERPT_ABSENT)
+
+## The open breakdown popover's text — the RENDERED disclosure, not the producer's return, so the
+## assertions above cover the click, the payload stash and the popover's own restate.
+func _kit_popover_text() -> String:
+	var label = h._hud._disclosures._breakdown_popover_label
+	return "" if label == null else (label as RichTextLabel).get_parsed_text()
+
+## ONE kit's breakdown line out of the popover, by the kit's NAME. Split per line rather than matched
+## across the whole popover, because the three lines carry the same shape and a whole-popover
+## `contains` could be satisfied by the WRONG kit's row — which is the exact substitution these
+## assertions exist to catch.
+func _kit_breakdown_line(popover: String, label: String) -> String:
+	for line in popover.split("\n"):
+		if String(line).contains(label):
+			return String(line)
+	return ""
