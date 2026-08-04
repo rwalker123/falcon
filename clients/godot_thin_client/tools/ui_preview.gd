@@ -15,25 +15,52 @@ extends Node
 ##
 ## Adding a state means editing ONE chapter; adding a chapter means adding ONE line here. That is
 ## the whole point of the split: two worktrees working different arcs no longer edit one file.
+##
+## **PATHS, NOT `preload`s, AND THAT IS THE FIX FOR A HANG.** A `preload` of a chapter carrying a
+## parse error is a parse error in THIS file: the engine answers `Could not preload resource script`
+## and then `Failed to load script "res://tools/ui_preview.gd"`, so the scene's root node comes up
+## with **no script at all**, `_ready` never runs, no PNG is written, no `FAIL` is printed and
+## `get_tree().quit()` is never reached — the process just sits there (measured once at 59 minutes)
+## while a stale, plausible-looking frame set from the previous run stays on disk. Loading them at
+## runtime instead keeps a broken chapter INSIDE the harness's own error handling, where
+## `_instantiate_chapters` can name it, print the `FAIL` token and exit non-zero before a single
+## frame is written. The compile check the `preload`s gave is not lost — every chapter is still
+## loaded and instantiated, just up front and with the failure reported rather than fatal.
 const CHAPTERS := [
-	preload("res://tools/ui_preview/chapters/band_expedition.gd"),
-	preload("res://tools/ui_preview/chapters/land_readouts.gd"),
-	preload("res://tools/ui_preview/chapters/forage_crop.gd"),
-	preload("res://tools/ui_preview/chapters/forage_accounts.gd"),
-	preload("res://tools/ui_preview/chapters/improvements.gd"),
-	preload("res://tools/ui_preview/chapters/sight_fog.gd"),
-	preload("res://tools/ui_preview/chapters/herd_graze_pen.gd"),
-	preload("res://tools/ui_preview/chapters/herd_improve.gd"),
-	preload("res://tools/ui_preview/chapters/hunt.gd"),
-	preload("res://tools/ui_preview/chapters/tile_panel.gd"),
-	preload("res://tools/ui_preview/chapters/turn_orb.gd"),
-	preload("res://tools/ui_preview/chapters/docks_legend.gd"),
-	preload("res://tools/ui_preview/chapters/telling.gd"),
-	preload("res://tools/ui_preview/chapters/compose_rungs.gd"),
-	preload("res://tools/ui_preview/chapters/world_reset.gd"),
-	preload("res://tools/ui_preview/chapters/event_dock.gd"),
-	preload("res://tools/ui_preview/chapters/button_faces.gd"),
+	"res://tools/ui_preview/chapters/band_expedition.gd",
+	"res://tools/ui_preview/chapters/land_readouts.gd",
+	"res://tools/ui_preview/chapters/forage_crop.gd",
+	"res://tools/ui_preview/chapters/forage_accounts.gd",
+	"res://tools/ui_preview/chapters/improvements.gd",
+	"res://tools/ui_preview/chapters/sight_fog.gd",
+	"res://tools/ui_preview/chapters/herd_graze_pen.gd",
+	"res://tools/ui_preview/chapters/herd_improve.gd",
+	"res://tools/ui_preview/chapters/hunt.gd",
+	"res://tools/ui_preview/chapters/tile_panel.gd",
+	"res://tools/ui_preview/chapters/turn_orb.gd",
+	"res://tools/ui_preview/chapters/docks_legend.gd",
+	"res://tools/ui_preview/chapters/telling.gd",
+	"res://tools/ui_preview/chapters/compose_rungs.gd",
+	"res://tools/ui_preview/chapters/world_reset.gd",
+	"res://tools/ui_preview/chapters/event_dock.gd",
+	"res://tools/ui_preview/chapters/button_faces.gd",
 ]
+
+## The one method a chapter owes the harness (see the chapter contract in
+## `.claude/rules/client/test-harnesses.md`). Checked up front, because a chapter that loads but
+## cannot be driven is the same lost run as one that does not load.
+const CHAPTER_ENTRY_METHOD := "run"
+
+## The hang guard, a SIBLING node in `ui_preview.tscn` rather than anything this script owns — see
+## `preview_watchdog.gd` for why that placement is the whole point.
+const WATCHDOG_NODE := "Watchdog"
+const WATCHDOG_PROGRESS_METHOD := "note_progress"
+
+## The run's exit status. **A clean run exits 0 and a run with any `FAIL` in it exits non-zero**, so
+## the status and the output agree; nothing in `xtask`, CI or `scripts/` consumed this harness's
+## status before (only agents reading its output did), so there was no consumer to break.
+const EXIT_OK := 0
+const EXIT_FAILED := 1
 
 const Spine := preload("res://tools/ui_preview/compose_vocab.gd")
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
@@ -97,6 +124,14 @@ const MOUSE_PARK_POSITION := Vector2(750, 640)
 
 var _hud: HudLayer
 
+## The hang guard from `ui_preview.tscn`, or `null` if the scene has lost the node — the harness must
+## still run in that case, since the guard is a safety net and not a dependency.
+var _watchdog: Node = null
+
+## Every `FAIL` this run has printed, from any of the sinks below. **The exit status is derived from
+## it**, so the two signals a reader might use — `grep FAIL` and `$?` — can never disagree.
+var _failures := 0
+
 ## Every compose spine captured this run, keyed by the sheet it came from (see `_record_compose_spine`).
 ## A DICT rather than two fields because the parity assertion is about the RELATION between them, and a
 ## missing capture must fail loudly rather than compare an empty array against another empty one.
@@ -129,7 +164,96 @@ func _set_world_herds(herds: Array) -> void:
 	_hud.update_herds(herds)
 
 
+## The hang guard from the scene, checked for its method rather than assumed: calling a missing
+## method on an untyped `Node` is a runtime error, and an error raised HERE would abort `_ready`
+## exactly the way the guard exists to survive.
+func _resolve_watchdog() -> Node:
+	var node := get_node_or_null(WATCHDOG_NODE)
+	if node != null and node.has_method(WATCHDOG_PROGRESS_METHOD):
+		return node
+	push_warning(("ui_preview: no %s node in the scene — the run has NO hang guard. Restore it from "
+		+ "tools/ui_preview.tscn (see preview_watchdog.gd).") % WATCHDOG_NODE)
+	return null
+
+## A sign of life for the hang guard. Called as each chapter starts and each frame is saved, which is
+## every few hundred milliseconds in a healthy run.
+func _note_progress() -> void:
+	if _watchdog != null:
+		_watchdog.note_progress()
+
+
+## Load and instantiate every chapter, reporting each failure rather than dying of it.
+##
+## Returns the drivable chapters in `CHAPTERS` order; `_failures` says whether the roster is whole,
+## and the caller must NOT walk a partial one — a run missing a chapter renders a frame set whose
+## gaps are invisible on disk, which is the same lie as a half-written one.
+func _instantiate_chapters() -> Array:
+	var chapters: Array = []
+	for path in CHAPTERS:
+		# **`can_instantiate()` IS THE TEST, AND A NULL CHECK IS NOT.** `load` on a chapter that does
+		# not compile prints the engine's own `Parse Error` lines and then answers a NON-null,
+		# non-functional `GDScript` — calling `new()` on it raises `Nonexistent function 'new'`,
+		# which ABORTS this function, and GDScript answers an aborted call with the return type's
+		# default. The caller would then walk an EMPTY roster and report a clean run (measured:
+		# 1 PNG, no FAIL, exit 0). Ask whether the script can be instantiated instead.
+		var script: Resource = ResourceLoader.load(path) if ResourceLoader.exists(path) else null
+		if script == null or not (script is GDScript) or not (script as GDScript).can_instantiate():
+			_fail(("chapter — %s did not load. Either the file is missing or it does not compile; "
+				+ "the engine's Parse Error lines above name the line. No frame has been rendered.")
+				% path)
+			continue
+		var chapter: Object = (script as GDScript).new()
+		if chapter == null:
+			_fail("chapter — %s loaded but could not be instantiated. No frame has been rendered." % path)
+			continue
+		if not chapter.has_method(CHAPTER_ENTRY_METHOD):
+			_fail(("chapter — %s has no `%s(harness)`, so the walk cannot drive it. No frame has been "
+				+ "rendered.") % [path, CHAPTER_ENTRY_METHOD])
+			continue
+		chapters.append(chapter)
+	return chapters
+
+
+## The ONE failure sink, so `_failures` cannot drift from what was printed. Every caller passes the
+## text AFTER the `FAIL` token, which is what the output scanning keys on.
+func _fail(message: String) -> void:
+	_failures += 1
+	push_error("ui_preview: FAIL %s" % message)
+
+
+## **THE ONLY WAY OUT OF THIS HARNESS.** Every path that ends the run comes through here, so the
+## status is derived from the run's own tally in exactly one place and the hang guard is stood down
+## before shutdown (a slow teardown is not a stall).
+func _finish() -> void:
+	if _watchdog != null:
+		_watchdog.disarm()
+	if _failures > 0:
+		print("ui_preview: RUN FAILED — %d failure(s); see the FAIL lines above" % _failures)
+	else:
+		print("ui_preview: run complete — no failures")
+	get_tree().quit(EXIT_FAILED if _failures > 0 else EXIT_OK)
+
+
 func _ready() -> void:
+	_watchdog = _resolve_watchdog()
+	# **THE WHOLE CHAPTER ROSTER IS LOADED AND INSTANTIATED BEFORE ANYTHING RENDERS.** Discovering a
+	# broken chapter partway through the walk leaves a HALF-WRITTEN frame set beside the previous
+	# run's leftovers — 200-odd fresh PNGs and 70 stale ones, indistinguishable from a real run — so
+	# the roster is proven drivable first and a bad one costs zero frames.
+	var chapters := _instantiate_chapters()
+	# **THE ROSTER IS CHECKED BY COUNT, not merely by the failures reported above**, because an
+	# unforeseen runtime error INSIDE `_instantiate_chapters` would abort it — and GDScript answers
+	# an aborted (non-coroutine) call with the return type's DEFAULT, so the caller sails on. That is
+	# not hypothetical: the first cut of this fix called `new()` on a chapter that had not compiled,
+	# which aborted the loop, returned an empty Array, and rendered ONE frame while printing no FAIL
+	# and exiting 0. A short roster is a failed run whatever produced it.
+	if _failures > 0 or chapters.size() != CHAPTERS.size():
+		if _failures == 0:
+			_fail(("chapters — only %d of %d chapters came back drivable, so the walk would render an "
+				+ "incomplete frame set. No frame has been rendered.") % [chapters.size(), CHAPTERS.size()])
+		_finish()
+		return
+
 	# FREEZE ANIMATION TIME — the same treatment `map_preview` and `blend_probe` carry, and taken for
 	# the same reason: a frame that varies run-to-run cannot be pixel-diffed to prove a HUD refactor
 	# changed nothing. Measured before the freeze, two runs of IDENTICAL code differed byte-wise in
@@ -251,8 +375,9 @@ func _ready() -> void:
 	])
 
 	# The state walk, in the ONE order that reproduces the frame set.
-	for chapter_script in CHAPTERS:
-		await chapter_script.new().run(self)
+	for chapter in chapters:
+		_note_progress()
+		await chapter.run(self)
 
 	# Icon probe last, on a top layer with its own backdrop (rendering is warm by
 	# now), so every food glyph is captured via the map's draw path.
@@ -274,7 +399,7 @@ func _ready() -> void:
 	_assert_hud("every herd fixture keeps the herders_needed pair consistent (%d herd dicts carrying it)"
 		% _herd_pair_scans, _herd_pair_violations == 0)
 
-	get_tree().quit()
+	_finish()
 
 
 ## Open / close the Terrain Types legend around a block of legend states.
@@ -300,6 +425,9 @@ func _close_legend() -> void:
 ## layout WITHOUT capturing a frame — there is no screenshot to finish anything for, and flushing
 ## would fire tween-finished callbacks mid-suite and move frames captured later in the run.
 func _settle(finish_tweens: bool = true) -> void:
+	# The hang guard's sign of life. `_settle` rather than `_save`, because it is what EVERY state
+	# reaches — including the PNG-less assertion blocks, which would otherwise look like a stall.
+	_note_progress()
 	await _ensure_canvas()
 	if finish_tweens:
 		_flush_tweens()
@@ -556,7 +684,7 @@ func _assert_hud(label: String, ok: bool) -> void:
 	if ok:
 		print("ui_preview: PASS hud — ", label)
 	else:
-		push_error("ui_preview: FAIL hud — %s" % label)
+		_fail("hud — %s" % label)
 
 # ---- the herd herders_needed FIELD-PAIR guard ---------------------------------------------------
 # The sim exports TWO herder counts per herd and the client reads DIFFERENT ones by rung, so a fixture
@@ -601,7 +729,7 @@ func _guard_herd_fields(subject: Variant, where: String, depth: int = 0) -> void
 		var if_managed := int(dict.get(HerdFx.HERDERS_NEEDED_IF_MANAGED_KEY, 0))
 		if if_managed < needed:
 			_herd_pair_violations += 1
-			push_error(("ui_preview: FAIL herd fields — %s herd \"%s\" declares %s %d but %s %d. "
+			_fail(("herd fields — %s herd \"%s\" declares %s %d but %s %d. "
 				+ "The would-be crew can never be SMALLER than the ownership-gated one, and on a herd "
 				+ "with herders (i.e. a managed one) the sim exports them EQUAL — the investment rungs' "
 				+ "worker cap floors on the second field, so half-setting the pair silently caps the "
@@ -615,7 +743,7 @@ func _guard_herd_fields(subject: Variant, where: String, depth: int = 0) -> void
 			# a conservative fixture, it is an impossible herd: it claims managing this herd would cost
 			# MORE than managing it already does.
 			_herd_pair_violations += 1
-			push_error(("ui_preview: FAIL herd fields — %s herd \"%s\" declares %s %d and %s %d. Once "
+			_fail(("herd fields — %s herd \"%s\" declares %s %d and %s %d. Once "
 				+ "%s is above zero the herd IS managed, and the would-be crew is the SAME crew — the "
 				+ "sim's two functions differ only by the ownership gate this herd has already passed, "
 				+ "so they must be EQUAL here. Set both through HerdFx.set_managed_herders; only a still-WILD "
@@ -641,7 +769,7 @@ func _assert_turn_orb(label: String, ok: bool) -> void:
 	if ok:
 		print("ui_preview: PASS turn-orb — ", label)
 	else:
-		push_error("ui_preview: FAIL turn-orb — %s" % label)
+		_fail("turn-orb — %s" % label)
 
 
 ## **NO ROW OF AN OPEN COMPOSE SHEET MAY DEMAND MORE THAN THE CARD'S USABLE WIDTH.** The card is an

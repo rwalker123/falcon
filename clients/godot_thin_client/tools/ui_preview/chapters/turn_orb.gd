@@ -203,8 +203,10 @@ func _settle_turn_orb_resolve(answer_turn: int) -> void:
 			return
 		orb._advance_resolve_animation(TURN_ORB_ANIM_STEP_SEC)
 		await h.get_tree().process_frame
-	push_error("ui_preview: FAIL turn-orb — the resolve gate never lifted in %d steps of %.2fs" % [
-		TURN_ORB_RESOLVE_MAX_STEPS, TURN_ORB_ANIM_STEP_SEC])
+	# Through the harness's sink, not a bare `push_error`: the run's exit status is derived from the
+	# failure tally, so a FAIL printed around it would be a red run reporting success.
+	h._assert_turn_orb("the resolve gate never lifted in %d steps of %.2fs" % [
+		TURN_ORB_RESOLVE_MAX_STEPS, TURN_ORB_ANIM_STEP_SEC], false)
 
 ## The SAME penned herd, UNDER-CREWED (`turn_orb_unworked_rung`): 2 keepers standing where the sim
 ## demands 4, so the shed clock has started and `neglect_grace_remaining` is counting down.

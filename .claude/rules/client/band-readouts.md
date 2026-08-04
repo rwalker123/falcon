@@ -516,11 +516,14 @@ muted ` · likely 6.00–11.00` on the row and the same clause on its tooltip, t
 `muted_note` channel — so all three hosts of `source_yield_readout` (the work board's rows, the
 drawer's standing summary, the stepper's status line) show it without a channel of their own.
 
-**IT SHIPS DEGENERATE, AND THAT IS THE POINT.** Wariness is `0` across the roster and `hit_chance` is
-`1.0`, so every stage takes its exact identity at every quantile and `low == actual == high`
-bit-for-bit; a resolved row is degenerate by construction too, the take having happened. So the clause
-is `""` on every source in the game today and every existing readout is byte-identical — while slice
-7's authored wariness turns the band on with no further client work.
+**IT SHIPPED DEGENERATE, AND THAT WAS THE POINT.** When the readout landed, wariness was `0` across
+the roster and `hit_chance` `1.0`, so every stage took its exact identity at every quantile,
+`low == actual == high` bit-for-bit, and the clause was `""` on every source in the game — every
+existing readout byte-identical. **Slice 7 authored the roster's wariness and the band turned on with
+no client change at all**, which is the whole return on shipping it inert: a wild hunt's rows now
+carry a real ` · likely 6.00–11.00`. It stays `""` wherever nothing is stochastic — the whole plant
+web, a pen, and every **resolved** row, which is degenerate by construction since the take has
+happened.
 
 - **The presence test is at the FORMATTER's resolution** (`has_yield_range`), the call `has_component`
   makes and for the same reason: bounds that round to one printed string are one number on screen, so

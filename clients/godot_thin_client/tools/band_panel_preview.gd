@@ -13,6 +13,21 @@ extends Node
 ## then read ui_preview_out/band_panel_*.png.
 
 const HUD_SCENE := preload("res://src/ui/HudLayer.tscn")
+
+## The hang guard, a SIBLING node in `band_panel_preview.tscn` (`tools/preview_watchdog.gd`).
+##
+## **This harness does NOT have `ui_preview`'s chapter-loading defect** — it loads no chapters, so
+## nothing here can leave a half-written frame set behind a broken sub-script. What it DOES share is
+## the shape underneath it: the whole run is one long `await`ing `_ready()` whose last line is
+## `get_tree().quit()`, so any runtime error aborts it without ever exiting, and any of the three
+## scenes/scripts it `preload`s failing to compile takes THIS script's parse down with it — leaving
+## the root node scriptless and the process idling forever with no FAIL and no status. The guard is
+## the same node, for that shape only; this harness's own PASS/FAIL contract is untouched (it prints
+## `ERROR: band_panel_preview` lines and still exits 0 on a red run — see
+## `.claude/rules/client/test-harnesses.md`).
+const WATCHDOG_NODE := "Watchdog"
+const WATCHDOG_PROGRESS_METHOD := "note_progress"
+
 ## Scratch prefs file — never the player's `user://narrative.cfg`.
 const PREVIEW_PREFS_PATH := "user://band_panel_preview_prefs.cfg"
 ## Scratch DOCK prefs — never the player's `user://band_city_dock.cfg`. Without this the harness both
@@ -203,6 +218,8 @@ var _pinned_size := PREVIEW_SIZE
 var _pinned_canvas := Vector2i.ZERO
 var _hud: HudLayer
 var _panel: BandCityPanel
+## The hang guard from the scene, or `null` if it has gone — a safety net, never a dependency.
+var _watchdog: Node = null
 ## The last state `_save`d, so an assertion failure names the frame it fired on.
 var _current_state := "<pre-render>"
 ## Set by `_unhandled_input` below — this harness's stand-in for `MapView`'s hex picking, which is also
@@ -424,6 +441,7 @@ func _set_forage_patches(patches: Array) -> void:
 const DEEP_DRAW_FLOOR := 0.15
 
 func _ready() -> void:
+	_watchdog = _resolve_watchdog()
 	# FREEZE ANIMATION TIME — the treatment `ui_preview`, `map_preview` and `blend_probe` all carry, and
 	# taken for the same reason: a frame that varies run-to-run cannot be pixel-diffed to prove a panel
 	# refactor changed nothing. Measured before the freeze, two runs of IDENTICAL code differed byte-wise
@@ -1247,7 +1265,7 @@ func _ready() -> void:
 	await _render_dock_row_states()
 
 	_assert_herd_field_pairs()
-	get_tree().quit()
+	_finish()
 
 # ---- THE DOCK-ROW REFLOW (issue #324) ---------------------------------------------------------
 #
@@ -3192,7 +3210,30 @@ func _capture(name: String) -> Image:
 	push_error("band_panel_preview: viewport never came back to the pinned %s canvas for %s" % [_pinned_size, name])
 	return null
 
+## The hang guard from the scene, or `null` if the node has gone. Checked for its method rather than
+## assumed: calling a missing method on an untyped `Node` is a runtime error, and one raised here
+## would abort `_ready` exactly the way the guard exists to survive.
+func _resolve_watchdog() -> Node:
+	var node := get_node_or_null(WATCHDOG_NODE)
+	if node != null and node.has_method(WATCHDOG_PROGRESS_METHOD):
+		return node
+	push_warning(("band_panel_preview: no %s node in the scene — the run has NO hang guard. Restore "
+		+ "it from tools/band_panel_preview.tscn (see preview_watchdog.gd).") % WATCHDOG_NODE)
+	return null
+
+## A sign of life for the hang guard, from the one call every state makes.
+func _note_progress() -> void:
+	if _watchdog != null:
+		_watchdog.note_progress()
+
+## Stand the guard down on the way out, so a slow shutdown cannot be reported as a stall.
+func _finish() -> void:
+	if _watchdog != null:
+		_watchdog.disarm()
+	get_tree().quit()
+
 func _settle() -> void:
+	_note_progress()
 	# Re-assert the window EVERY state: the WM's maximize lands asynchronously and can arrive between
 	# two states, rendering them at different resolutions (blend_probe hit the same thing).
 	await _pin_window(_pinned_size)
