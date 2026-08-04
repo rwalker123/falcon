@@ -224,7 +224,18 @@ static func build_status_part(text: String, color: Color) -> Label:
 ## state, so state rides GEOMETRY beside it — the work row's severity stripe, the roster row's
 ## ecology dot, the marks column. Tinting a marker was tried on the map, rendered as a slightly
 ## darker brown animal, and was reverted.
-static func build_marker_icon(texture: Texture2D, glyph: String, box_px: float, font_size: int) -> Control:
+##
+## **THE GLYPH BRANCH IS THE ONE THAT TAKES A COLOUR, and it is the caller's to supply.** A bare
+## `Label` carries no `font_color` override and this client applies no `Theme` resource, so an
+## un-coloured glyph renders at Godot's STOCK near-white — which on a host whose text is `INK_DIM`
+## reads as a brighter mark beside a dimmer name, and stops tracking the row's state entirely. The
+## glyph used to live INSIDE the host's own label (`"%s %s" % [glyph, name]`) and inherited that
+## label's colour for free; splitting it out is what dropped the inheritance, so hosts whose text is
+## state-tinted pass `glyph_color` and hosts whose text is stock leave it `null`. `null` means "set
+## no override at all", which is exactly what those stock-coloured hosts had before this parameter
+## existed. The TEXTURE branch ignores it — see the untinted rule above.
+static func build_marker_icon(texture: Texture2D, glyph: String, box_px: float, font_size: int,
+        glyph_color = null) -> Control:
     if texture != null:
         var art := TextureRect.new()
         art.texture = texture
@@ -239,6 +250,8 @@ static func build_marker_icon(texture: Texture2D, glyph: String, box_px: float, 
     var label := Label.new()
     label.text = glyph
     label.add_theme_font_size_override("font_size", font_size)
+    if glyph_color != null:
+        label.add_theme_color_override("font_color", glyph_color)
     # Width only: the emoji sets its own height off the font, and pinning it would fight the row.
     label.custom_minimum_size = Vector2(box_px, 0.0)
     label.mouse_filter = Control.MOUSE_FILTER_IGNORE

@@ -133,6 +133,26 @@ func _land_row_icon_class() -> String:
 	var icon := row.get_meta("row_icon") as Control
 	return "" if icon == null else icon.get_class()
 
+## The land row's leading GLYPH mark and its NAME, as the colours those two labels actually RENDER
+## in: `get_theme_color` answers the override when one is set and Godot's stock `Label` default when
+## none is, so this reads what is on screen rather than whether anybody remembered to set something.
+## An "an override is set" assertion would pass on the broken version — the bug IS the missing
+## override — which is why the claim is phrased as the two rendered colours agreeing.
+## `[]` when the mark is not a glyph at all: a land row whose site has bundled art draws a
+## `TextureRect`, which is deliberately untinted and has no ink to compare.
+func _land_row_glyph_ink_pair() -> Array:
+	if h._hud.subject_list == null or h._hud.subject_list.get_child_count() == 0:
+		return []
+	# The LAND is always the roster's first row (docs/plan_tile_panel_layout.md).
+	var row := h._hud.subject_list.get_child(0) as Button
+	if row == null or not row.has_meta("row_icon") or not row.has_meta("name_label"):
+		return []
+	var icon := row.get_meta("row_icon") as Label
+	var name_label := row.get_meta("name_label") as Label
+	if icon == null or name_label == null:
+		return []
+	return [icon.get_theme_color("font_color"), name_label.get_theme_color("font_color")]
+
 ## The instance ids of a container's direct children, so an assertion can prove a restate REUSED the
 ## same nodes (in-place patch) rather than freeing + recreating them (teardown).
 func _child_instance_ids(node: Node) -> Array:
@@ -485,6 +505,16 @@ func run(harness) -> void:
 	h._show_tile(_barren_tile_fixture())
 	await h._settle()
 	await h._save("tile_panel_no_forage")
+	# THE MODULE-LESS LAND ROW'S `◈` WEARS THE ROW'S OWN INK — the LIT half of the claim (this hex has
+	# no occupants, so the land is the auto-picked subject). The mark has been its own bare `Label`
+	# since issue #439 and this client applies no `Theme`, so a glyph nobody colours renders at
+	# Godot's stock near-white: brighter than the name beside it, and no longer tracking the row.
+	# The unselected half rides on the icon-flip block further down, which is where a module-less land
+	# row renders UNLIT — the two together are what say the ink follows the state.
+	var lit_land_ink := _land_row_glyph_ink_pair()
+	h._assert_hud("the LIT module-less land row's ◈ renders in the same ink its name does (INK)",
+		lit_land_ink.size() == 2 and lit_land_ink[0] == lit_land_ink[1] \
+			and lit_land_ink[1] == HudStyle.INK)
 
 	# tile_panel_ungathered — issue #464: a RICH stand on ground nobody gathers. Distinct from
 	# `tile_panel_no_forage` in the only way that matters: there the ground truly carries nothing,
@@ -593,6 +623,23 @@ func run(harness) -> void:
 		land_icon_before == "TextureRect")
 	h._assert_hud("…and losing the module SWAPS that node for the glyph Label, never just its texture",
 		_land_row_icon_class() == "Label")
+	# THE UNLIT half of the ink claim `tile_panel_no_forage` makes for the lit one — and the half that
+	# can only be made on the PATCH path. The land row is lit here; selecting the band beside it dims
+	# the row WITHOUT rebuilding it, so a `◈` coloured only where it is BUILT would keep the ink it
+	# was born with while the name beside it dims. The precondition is what makes that a real claim:
+	# the same nodes must survive the selection change, or a rebuild would launder the bug.
+	var unlit_land_row_ids := _child_instance_ids(h._hud.subject_list)
+	# The band is addressed through the fixture that placed it, never a repeated literal id.
+	var icon_flip_band: Dictionary = icon_flip_bare["units"][0]
+	h._hud._selectioncard.select_roster_occupant("unit", int(icon_flip_band.get("entity", -1)))
+	await h._settle()
+	h._assert_hud("precondition: lighting the band PATCHED the land row rather than rebuilding it",
+		_child_instance_ids(h._hud.subject_list) == unlit_land_row_ids and not unlit_land_row_ids.is_empty())
+	var unlit_land_ink := _land_row_glyph_ink_pair()
+	h._assert_hud("the UNLIT module-less land row's ◈ dims with its name (INK_DIM), never stock white",
+		unlit_land_ink.size() == 2 and unlit_land_ink[0] == unlit_land_ink[1] \
+			and unlit_land_ink[1] == HudStyle.INK_DIM)
+	await h._save("tile_panel_land_glyph_unlit")
 	h._hud.clear_selection()
 	h._hud._band_labor._player_band = {}
 

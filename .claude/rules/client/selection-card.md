@@ -240,6 +240,23 @@ avoid. `_set_row_icon` therefore patches the one property when the kind is uncha
 node at its own child index** when it flips, re-stashing it on the button — so the common case stays
 rebuild-free and the flip is still correct.
 
+**THE GLYPH FALLBACK'S INK IS APPLIED, NOT INHERITED, AND BOTH PATHS OWE IT.** Fusing the glyph into
+the name label used to give it that label's `font_color` for free; as its own bare `Label` it inherits
+nothing (this client applies no `Theme`), so a `◈` nobody colours renders at Godot's stock near-white —
+brighter than the `INK_DIM` name beside it and no longer dimming or brightening with the row. The pair
+is decided in ONE place, `_roster_row_ink(selected)`, which `_roster_name_label` / `_set_row_name` and
+`_row_icon` / `_set_row_icon` all read, so the mark and the name cannot disagree about how lit the row
+is. **`_set_row_icon` re-applies it on the patch path**, not only at build time: a row's lit state
+changes without the row being rebuilt — that is what the patch path is FOR — so a mark coloured only at
+birth keeps its original ink while the name moves. Art takes no colour: a marker sprite is drawn
+untinted (`hud-modules.md` → `build_marker_icon`). `ui_preview`'s `tile_panel` chapter holds both
+halves as claims about the colours the two labels actually RESOLVE (`get_theme_color`, which answers
+the stock default when no override is set — an "an override is set" assertion would pass on the bug,
+which IS a missing override): the LIT half on `tile_panel_no_forage`, the UNLIT half on
+`tile_panel_land_glyph_unlit`, where lighting the band beside the land row dims it through the patch
+path. Sabotage-verified, and they fail DISJOINTLY — dropping the build-time colour fails only the lit
+one, dropping the patch-path re-apply only the unlit one.
+
 `row_icon` is deliberately **not** the `glyph_label` meta slot: that is the band row's TRAILING activity
 glyph, a different question in a different place, and folding them would make one meta key mean two
 things.

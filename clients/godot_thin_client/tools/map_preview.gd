@@ -715,9 +715,11 @@ func _ready() -> void:
 	await _save("map_herd_starving")
 
 	# State J-sprites — the FAUNA SPRITE ROSTER: one herd per bundled-art species, each on its own
-	# hex, so every `FaunaSprites` PNG is judged at true marker size in one frame (right species, no
-	# clipping, no key fringe). Every HERD_SPECIES key now has art, so this frame is the coverage
-	# check that used to be spread across whichever fixtures happened to name a species.
+	# hex. What this frame is FOR is JUDGING art that exists, at true marker size and side by side —
+	# a swapped, clipped or key-fringed sprite, and species that read as one another. It does NOT
+	# prove coverage: `FAUNA_SPRITE_ROSTER` (see its doc comment) is hand-written on the CLIENT side,
+	# so it can only show species the client already knows about. **The coverage claim belongs to
+	# `cargo xtask fauna-icon-guard`**, which checks this side against the sim's `fauna_config.json`.
 	_map.display_snapshot(_snapshot_fauna_sprites())
 	_map._fit_map_to_view()
 	await _settle()
@@ -2002,9 +2004,9 @@ const FAUNA_SPRITE_ROSTER := [
 ## `fauna_config.json`; what this frame is for is JUDGING art that exists — swapped, clipped or
 ## fringed sprites, and species that read as one another — which no guard can do.
 ## Rows of eight — two full ones and a short third. It was one row of eleven until the roster outgrew `GRID_W` (16 columns, and a
-## single spaced row of 16 would run off the map), and `seal` + `catfish` were simply ABSENT from a
-## frame whose whole job is to prove coverage — so the row count is not cosmetic, it is what let two
-## PNGs go unjudged. MapView is COVER-fit, so the axis that gets cropped is whichever one the grid is
+## single spaced row of 16 would run off the map), and `seal` + `catfish` were simply pushed OFF a
+## frame whose whole job is to put every sprite this list names in one picture — so the row count is
+## not cosmetic, it is what let two PNGs go unjudged. MapView is COVER-fit, so the axis that gets cropped is whichever one the grid is
 ## longer in relative to the window: on this state's `DEFAULT_CANVAS_SIZE` the 16×12 grid is wider
 ## than the window's aspect, so all twelve ROWS are on screen and it is the outer COLUMNS that are
 ## cut (roughly cols 2–14 survive). Cols 4–11 therefore sit well inside with margin to spare.

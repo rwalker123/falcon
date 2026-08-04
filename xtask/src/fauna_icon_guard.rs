@@ -18,10 +18,19 @@
 //! 1. resolve the label through a faithful copy of `FoodIcons.species_key_for` (longest keyword
 //!    wins) — an empty answer means the species has no keyword and would draw an emoji;
 //! 2. look that key up in `FaunaSprites.SPRITE_PATHS` — a miss means the emoji again;
-//! 3. stat the PNG it names — a miss means `IconSprites` loads nothing and the caller falls back.
+//! 3. stat the PNG it names **and its `<name>.png.import` sidecar** — either missing means
+//!    `IconSprites` loads nothing and the caller falls back.
 //!
-//! Every `SPRITE_PATHS` entry is stat'd too, so a typo'd filename is caught even under a key no
-//! species currently reaches.
+//! The sidecar is part of the runtime path, not metadata beside it: Godot never loads
+//! `res://…/elk.png` off disk, it reads `elk.png.import` and loads the `.ctex` its `path=` key names
+//! under `.godot/imported/`. A PNG committed without its sidecar therefore fails to load exactly as
+//! if the art were absent — and it is an easy commit to make, because `.import` files are tracked,
+//! nothing gitignores them, and this repo forbids broad `git add`, so every one is staged by hand.
+//! No Godot harness runs in CI, so a PNG-only stat is the difference between a green gate and a
+//! roster that draws emoji in every checkout but the author's.
+//!
+//! Every `SPRITE_PATHS` entry is stat'd the same way, so a typo'd filename or an unstaged sidecar is
+//! caught even under a key no species currently reaches.
 //!
 //! ## Why it parses GDScript as data
 //!
@@ -58,6 +67,10 @@ const SPRITE_PATHS_DICT: &str = "SPRITE_PATHS";
 /// rather than hardcoded, so moving the art folder does not need an edit here.
 const SPRITE_DIR_CONST: &str = "SPRITE_DIR";
 
+/// Godot's import sidecar suffix. It is APPENDED to the whole file name (`elk.png` →
+/// `elk.png.import`), never substituted for the extension.
+const IMPORT_SIDECAR_SUFFIX: &str = ".import";
+
 pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     if let Some(arg) = args.first() {
         return Err(format!(
@@ -75,7 +88,7 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let mut species_failures: Vec<String> = Vec::new();
     let mut table_failures: Vec<String> = Vec::new();
     let mut reached_files: BTreeSet<PathBuf> = BTreeSet::new();
-    let mut missing_files: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut flagged_files: BTreeSet<PathBuf> = BTreeSet::new();
 
     for (species_id, display_name) in &species {
         let key = species_key_for(display_name, &keywords);
@@ -96,31 +109,58 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
             continue;
         };
         let disk_path = disk_path_for(res_path);
-        if !disk_path.exists() {
-            species_failures.push(format!(
-                "{species_id} (\"{display_name}\"): resolves to keyword `{key}` → `{res_path}`, but \
-                 that file DOES NOT EXIST ({}). The texture load fails and the marker falls back to \
-                 the emoji.",
-                disk_path.display()
-            ));
-            missing_files.insert(disk_path);
-            continue;
+        match art_state(&disk_path) {
+            ArtState::Bundled => {
+                reached_files.insert(disk_path);
+            }
+            ArtState::MissingPng => {
+                species_failures.push(format!(
+                    "{species_id} (\"{display_name}\"): resolves to keyword `{key}` → `{res_path}`, \
+                     but that file DOES NOT EXIST ({}). The texture load fails and the marker falls \
+                     back to the emoji.",
+                    disk_path.display()
+                ));
+                flagged_files.insert(disk_path);
+            }
+            ArtState::MissingSidecar(sidecar) => {
+                species_failures.push(format!(
+                    "{species_id} (\"{display_name}\"): resolves to keyword `{key}` → `{res_path}`, \
+                     whose PNG is on disk but whose Godot IMPORT SIDECAR IS MISSING ({}). Godot does \
+                     not load the PNG — it reads the sidecar's `path=` and loads the imported texture \
+                     under `.godot/imported/` — so the load fails and the marker falls back to the \
+                     emoji. Stage the `{IMPORT_SIDECAR_SUFFIX}` file beside the PNG (open the Godot \
+                     project once to regenerate it if it was never created).",
+                    sidecar.display()
+                ));
+                flagged_files.insert(disk_path);
+            }
         }
-        reached_files.insert(disk_path);
     }
 
-    // Stat'd independently of the roster: a typo'd filename under a key no species currently reaches
-    // is still art that will never load the day a species does reach it. Files already named by a
-    // species line are skipped — one missing PNG is one defect, however many ways it is arrived at.
+    // Stat'd independently of the roster: a typo'd filename or an unstaged sidecar under a key no
+    // species currently reaches is still art that will never load the day a species does reach it.
+    // Files already named by a species line are skipped — one broken file is one defect, however
+    // many ways it is arrived at.
     for (key, res_path) in &sprites {
         let disk_path = disk_path_for(res_path);
-        if !disk_path.exists() && !missing_files.contains(&disk_path) {
-            table_failures.push(format!(
+        if flagged_files.contains(&disk_path) {
+            continue;
+        }
+        match art_state(&disk_path) {
+            ArtState::Bundled => {}
+            ArtState::MissingPng => table_failures.push(format!(
                 "{SPRITE_PATHS_DICT}[\"{key}\"] → `{res_path}`: file DOES NOT EXIST ({}). No species \
                  currently resolves to this key, so nothing renders wrong yet — but the day one does, \
                  it will.",
                 disk_path.display()
-            ));
+            )),
+            ArtState::MissingSidecar(sidecar) => table_failures.push(format!(
+                "{SPRITE_PATHS_DICT}[\"{key}\"] → `{res_path}`: the PNG exists but its Godot IMPORT \
+                 SIDECAR IS MISSING ({}). Godot resolves the PNG through that sidecar, so this art \
+                 cannot load. No species currently resolves to this key, so nothing renders wrong yet \
+                 — but the day one does, it will draw the emoji.",
+                sidecar.display()
+            )),
         }
     }
 
@@ -145,8 +185,8 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     }
 
     println!(
-        "fauna-icon-guard: {} species -> {} sprites, all present ({} keys in {SPRITE_PATHS_DICT}, \
-         {} in {HERD_SPECIES_DICT})",
+        "fauna-icon-guard: {} species -> {} sprites, all present with their `{IMPORT_SIDECAR_SUFFIX}` \
+         sidecars ({} keys in {SPRITE_PATHS_DICT}, {} in {HERD_SPECIES_DICT})",
         species.len(),
         reached_files.len(),
         sprites.len(),
@@ -340,6 +380,42 @@ fn disk_path_for(res_path: &str) -> PathBuf {
     Path::new(CLIENT_DIR).join(res_path.trim_start_matches(RES_PREFIX))
 }
 
+/// The `.import` sidecar that belongs beside a bundled file.
+///
+/// The suffix is appended to the FULL file name, so this cannot be `Path::with_extension`, which
+/// would turn `elk.png` into `elk.import` — a path that is always absent and would make the check
+/// below fire on every species at once.
+fn import_sidecar_for(disk_path: &Path) -> PathBuf {
+    let mut name = disk_path.as_os_str().to_os_string();
+    name.push(IMPORT_SIDECAR_SUFFIX);
+    PathBuf::from(name)
+}
+
+/// What Godot would find for one bundled sprite: both halves of it, or which half is missing.
+///
+/// The two failures are kept apart because they have different causes and different fixes —
+/// "generate the art" versus "stage the sidecar / re-import the project".
+#[derive(Debug, PartialEq, Eq)]
+enum ArtState {
+    /// PNG and sidecar both present — the marker draws its sprite.
+    Bundled,
+    /// No PNG on disk.
+    MissingPng,
+    /// PNG on disk, sidecar absent from the path it should occupy.
+    MissingSidecar(PathBuf),
+}
+
+fn art_state(disk_path: &Path) -> ArtState {
+    if !disk_path.exists() {
+        return ArtState::MissingPng;
+    }
+    let sidecar = import_sidecar_for(disk_path);
+    if !sidecar.exists() {
+        return ArtState::MissingSidecar(sidecar);
+    }
+    ArtState::Bundled
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,6 +440,40 @@ mod tests {
     #[test]
     fn unknown_species_resolves_to_nothing() {
         assert!(species_key_for("Thunder Mammoths", &keywords()).is_empty());
+    }
+
+    /// The sidecar is a SIBLING of the whole file name, not a re-extension of it — `with_extension`
+    /// here would look for `elk.import` and report every species broken.
+    #[test]
+    fn sidecar_suffix_is_appended_not_substituted() {
+        assert_eq!(
+            import_sidecar_for(Path::new("assets/icons/fauna/elk.png")),
+            PathBuf::from("assets/icons/fauna/elk.png.import")
+        );
+    }
+
+    /// A PNG staged without its sidecar is the failure this guard was extended to catch: Godot loads
+    /// the imported texture the sidecar names, so the art is unreachable and the marker draws an
+    /// emoji, while a PNG-only stat calls it present.
+    #[test]
+    fn png_without_its_sidecar_is_its_own_failure() {
+        let dir = std::env::temp_dir().join("fauna_icon_guard_sidecar_test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("temp dir");
+        let png = dir.join("elk.png");
+
+        assert_eq!(art_state(&png), ArtState::MissingPng);
+
+        fs::write(&png, []).expect("write png");
+        assert_eq!(
+            art_state(&png),
+            ArtState::MissingSidecar(import_sidecar_for(&png))
+        );
+
+        fs::write(import_sidecar_for(&png), []).expect("write sidecar");
+        assert_eq!(art_state(&png), ArtState::Bundled);
+
+        fs::remove_dir_all(&dir).expect("clean up");
     }
 
     #[test]

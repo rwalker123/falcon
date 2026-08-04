@@ -374,7 +374,7 @@ func _build_land_row(tile_info: Dictionary) -> Button:
 	# The mark is its OWN child ahead of the name, never a prefix fused into it (issue #439): a
 	# texture cannot live inside a `Label.text`, and the name label is the row IDENTITY, which
 	# must carry the name alone so the meta beside it goes on absorbing the slack.
-	var icon := _row_icon(_land_row_sprite(tile_info), glyph)
+	var icon := _row_icon(_land_row_sprite(tile_info), glyph, selected)
 	row.add_child(icon)
 	var name_label := _roster_name_label(terrain_label, selected)
 	row.add_child(name_label)
@@ -399,7 +399,7 @@ func _update_land_row(button: Button, tile_info: Dictionary) -> void:
 	var glyph := HudSelectionVocab.LAND_ROW_GLYPH
 	if module_key != "":
 		glyph = FoodIcons.for_site(module_key, false, int(tile_info.get("terrain_id", -1)))
-	_set_row_icon(button, _land_row_sprite(tile_info), glyph)
+	_set_row_icon(button, _land_row_sprite(tile_info), glyph, selected)
 	_set_row_name(button, String(tile_info.get("terrain_label", "Unknown")), selected)
 	_set_row_meta(button, _land_row_meta(tile_info))
 
@@ -530,7 +530,7 @@ func _build_herd_row(herd: Dictionary) -> Button:
 	# The SPECIES mark, split out of the name for the same reason the land row's is — and this
 	# is the row issue #439 is about: Unicode ships ONE deer, so a Wild Elk, a Wild Reindeer
 	# and a Desert Gazelle sharing a hex were three identical 🦌 rows until the art landed.
-	var icon := _row_icon(FaunaSprites.for_herd(label), glyph)
+	var icon := _row_icon(FaunaSprites.for_herd(label), glyph, selected)
 	row.add_child(icon)
 	var name_label := _roster_name_label(name_text, selected)
 	row.add_child(name_label)
@@ -559,7 +559,7 @@ func _update_herd_row(button: Button, herd: Dictionary) -> void:
 	_set_row_dot(button, _ecology_tier_color(String(herd.get("ecology_phase", ""))))
 	var label := String(herd.get("label", herd.get("id", "Herd")))
 	var glyph := FoodIcons.for_herd(label)
-	_set_row_icon(button, FaunaSprites.for_herd(label), glyph)
+	_set_row_icon(button, FaunaSprites.for_herd(label), glyph, selected)
 	_set_row_name(button, String(herd.get("species", label)), selected)
 	_set_row_meta(button, _herd_row_meta(herd))
 	button.tooltip_text = label
@@ -666,11 +666,25 @@ func _set_row_dot(button: Button, color: Color) -> void:
 	if button.has_meta("dot"):
 		(button.get_meta("dot") as ColorRect).color = color
 
+## A roster row's INK, by lit state — the ONE place the pair is decided, so the row's name and its
+## leading mark cannot disagree about how bright this row is. Both `_roster_name_label`/`_set_row_name`
+## and `_row_icon`/`_set_row_icon` read it; a glyph mark that picked its own colour is exactly the
+## drift this exists to make impossible.
+func _roster_row_ink(selected: bool) -> Color:
+	return HudStyle.INK if selected else HudStyle.INK_DIM
+
 ## The row's leading MARK, built through the ONE shared builder every HUD text surface uses, so a
 ## roster row and a work row can never render one species two different ways.
-func _row_icon(texture: Texture2D, glyph: String) -> Control:
+##
+## The glyph FALLBACK is handed the row's ink. It used to be a prefix inside the name label's own
+## text and inherited that label's colour for free; as its own bare `Label` it inherits nothing (this
+## client applies no `Theme`), so an un-tinted `◈` on a module-less land row rendered stock near-white
+## beside an `INK_DIM` name and stopped dimming with the row at all. Bundled ART takes no colour —
+## a marker sprite is drawn untinted (`HudWidgets.build_marker_icon`).
+func _row_icon(texture: Texture2D, glyph: String, selected: bool) -> Control:
 	return HudWidgets.build_marker_icon(texture, glyph,
-		HudSelectionVocab.ROSTER_ROW_ICON_BOX, HudSelectionVocab.ROSTER_ROW_ICON_FONT_SIZE)
+		HudSelectionVocab.ROSTER_ROW_ICON_BOX, HudSelectionVocab.ROSTER_ROW_ICON_FONT_SIZE,
+		_roster_row_ink(selected))
 
 ## The land row's site art, resolved from the SAME `(module, is_hunt, terrain_id)` triple its emoji
 ## is — so the two can never disagree about which site this is. `""` module ⇒ no art, and the row
@@ -690,7 +704,11 @@ func _land_row_sprite(tile_info: Dictionary) -> Texture2D:
 ## mark beside a freshly patched name — exactly the staleness this whole in-place path exists to
 ## avoid. Same kind ⇒ patch the one property; different kind ⇒ swap the node at its own index and
 ## re-stash it, which keeps the row rebuild-free in the common case.
-func _set_row_icon(button: Button, texture: Texture2D, glyph: String) -> void:
+##
+## THE GLYPH'S INK IS RE-APPLIED ON THE PATCH PATH, not just at build time: a row's lit state changes
+## without the row being rebuilt (that is what this whole path is for), so a mark coloured only in
+## `_row_icon` would keep the ink it was BORN with while the name beside it brightened or dimmed.
+func _set_row_icon(button: Button, texture: Texture2D, glyph: String, selected: bool) -> void:
 	if not button.has_meta("row_icon"):
 		return
 	var current := button.get_meta("row_icon") as Control
@@ -700,12 +718,14 @@ func _set_row_icon(button: Button, texture: Texture2D, glyph: String) -> void:
 		(current as TextureRect).texture = texture
 		return
 	if texture == null and current is Label:
-		(current as Label).text = glyph
+		var label := current as Label
+		label.text = glyph
+		label.add_theme_color_override("font_color", _roster_row_ink(selected))
 		return
 	var parent := current.get_parent()
 	if parent == null:
 		return
-	var replacement := _row_icon(texture, glyph)
+	var replacement := _row_icon(texture, glyph, selected)
 	parent.add_child(replacement)
 	parent.move_child(replacement, current.get_index())
 	parent.remove_child(current)
@@ -717,7 +737,7 @@ func _set_row_name(button: Button, text: String, selected: bool) -> void:
 		return
 	var label := button.get_meta("name_label") as Label
 	label.text = text
-	label.add_theme_color_override("font_color", HudStyle.INK if selected else HudStyle.INK_DIM)
+	label.add_theme_color_override("font_color", _roster_row_ink(selected))
 
 func _set_row_meta(button: Button, text: String) -> void:
 	if button.has_meta("meta_label"):
@@ -729,7 +749,7 @@ func _roster_name_label(text: String, selected: bool) -> Label:
 	var label := Label.new()
 	label.text = text
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	label.add_theme_color_override("font_color", HudStyle.INK if selected else HudStyle.INK_DIM)
+	label.add_theme_color_override("font_color", _roster_row_ink(selected))
 	return label
 
 func _roster_meta_label(text: String) -> Label:
