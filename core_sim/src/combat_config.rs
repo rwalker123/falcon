@@ -38,6 +38,12 @@ pub struct CombatConfig {
     /// supply, plus a *home-advantage* discount for local hunts) will supersede this flat dial. Ships
     /// finite & `> 0`.
     pub expedition_danger_multiplier: f32,
+    /// **The probability one unit's attack lands** — where the resolver's variance lives
+    /// (`docs/plan_hunt_through_combat.md` §4.7), drawn per unit so it is *binomial in force size*.
+    /// Ships **1.0**, which is an *exact identity*: no draw is made and no randomness consumed, so
+    /// the take stays deterministic and `forecast == actual` per component holds until slice 5
+    /// teaches the forecast to report a range. Ships finite, `> 0` and `<= 1`.
+    pub hit_chance: f32,
 }
 
 impl CombatConfig {
@@ -68,6 +74,7 @@ impl CombatConfig {
         CombatTuning {
             lethality: self.lethality,
             disengage_fraction: self.disengage_fraction,
+            hit_chance: self.hit_chance,
         }
     }
 
@@ -86,6 +93,17 @@ impl CombatConfig {
                 field: "disengage_fraction",
                 constraint: format!("be at most {MAX_FRACTION}"),
                 value: self.disengage_fraction.to_string(),
+            });
+        }
+        // A probability, so the same `(0, 1]` bound. **`0` is rejected**, not treated as "never
+        // hits": a fight where no attack ever lands is the whole subsystem silently disabled, which
+        // is exactly what the `lethality`/`disengage_fraction` bounds above exist to refuse.
+        require_positive_finite("hit_chance", self.hit_chance)?;
+        if self.hit_chance > MAX_FRACTION {
+            return Err(CombatConfigError::Invalid {
+                field: "hit_chance",
+                constraint: format!("be at most {MAX_FRACTION}"),
+                value: self.hit_chance.to_string(),
             });
         }
         Ok(())

@@ -543,7 +543,16 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   - **A PEN and the plant web have no engagement stage at all** — `engage_rate_for` /
 >     `SourceYieldForecast::managed` answer `f32::INFINITY`, `hunt_engage_workers` returns `0` for it,
 >     and the `max()` collapses to the two terms those sources always had. A penned animal is not
->     stalked.
+>     stalked — and, since the fight landed, not fought either (`SourceYieldForecast::fight` is `None`
+>     there and on every plant source).
+>   - **THE FIGHT IS A FOURTH BOUND, and it is not a crew term** (`docs/plan_hunt_through_combat.md`
+>     §4, slice 4). `quantise_animal_take`'s fourth argument is no longer the raw engagement: it is
+>     `fauna::resolve_hunt_fight(...).brought_down` — the animals the party actually put on the
+>     ground, already floored to whole animals, with the engagement capping it from above (you cannot
+>     bring down what you never reached). It is deliberately **absent from `workersNeeded`**: adding
+>     hunters raises damage, so a fight bound inverts to *"staff more"* without limit rather than to a
+>     crew size, and the three terms above stay the crew's three jobs. See `combat.md` for the seam
+>     and for why all six take/forecast paths call the one helper.
 >
 >   **The per-species figures that used to sit here were measured against the PRE-CORRECTION body
 >   masses and are deleted rather than restated** (`docs/plan_hunt_through_combat.md` §4.3). Nineteen

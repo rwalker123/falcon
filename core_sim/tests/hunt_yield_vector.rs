@@ -22,13 +22,14 @@ use core_sim::{
     CreaturesConfigHandle, CultureManager, Diet, DiscoveryProgressLedger, Expedition,
     ExpeditionMission, ExpeditionPhase, FactionId, FactionInventory, FaunaConfig,
     FaunaConfigHandle, FloraConfigHandle, ForageRegistry, GenerationId, GenerationRegistry,
-    HerdDensityMap, HerdRegistry, HerdTelemetry, HuntYield, Improvement, LaborAllocation,
-    LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets,
-    MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, SimulationConfig,
-    SimulationTick, SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
-    TileRegistry, WellbeingConfigHandle, FOOD, MSY_BIOMASS_FRACTION, NO_BUILD_UNDERWAY_DIP,
-    NO_FILL_TARGET, NO_IMPROVEMENT_UNDERWAY, TRADE_GOODS,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, HuntYield, HuntingParty, Improvement,
+    LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle,
+    LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand,
+    SimulationConfig, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
+    MSY_BIOMASS_FRACTION, NO_BUILD_UNDERWAY_DIP, NO_FILL_TARGET, NO_IMPROVEMENT_UNDERWAY,
+    TRADE_GOODS,
 };
 
 /// Four depths on the intensity dial. Every one of them must pay the species' product vector; none
@@ -52,11 +53,17 @@ const UNBOUNDED_CREW: u32 = 60;
 /// (`workers × engage_rate`). Proving Eradicate empties a herd needs a crew that clears both, or the
 /// test measures a crew bound instead of the policy.
 ///
-/// `TEST_CAPACITY / body_mass` is ~267 animals at the shipped Red Deer mass, and Red Deer engage at
-/// `1.0`, so the engagement bound is the tighter of the two and sets this number. It was `100`, sized
-/// against carry alone — at which Sustain and Eradicate both engage 100 and pay **identically**,
-/// which is a true statement about a small crew and says nothing about the floor.
-const HAUL_THE_WHOLE_HERD_CREW: u32 = 300;
+/// **Three crew bounds now, not two** — slice 4 added the **fight**
+/// (`docs/plan_hunt_through_combat.md` §4): the kill is `combat::resolve_fight`'s enemy losses, so a
+/// crew must also do enough damage to put the whole herd on the ground in one turn.
+///
+/// `TEST_CAPACITY / body_mass` is ~267 animals at the shipped Red Deer mass. Red Deer engage at
+/// `1.0` (so engagement wants ≥ 267) and a spear-armed hunter brings down `(20 − 1) / 25 = 0.76` of
+/// one a turn (so the fight wants ≥ 351) — the fight is now the tighter of the three and sets this
+/// number. It was `100` sized against carry alone, then `300` when engagement landed; at each of
+/// those Sustain and Eradicate paid **identically**, which is a true statement about a small crew and
+/// says nothing about the floor.
+const HAUL_THE_WHOLE_HERD_CREW: u32 = 400;
 
 /// **A crew far too small to clear the herd's escapement room** — the *labor-bound* half of the
 /// forecast==actual sweep. One hunter carries `per_worker_biomass_capacity`, which is a rounding
@@ -632,6 +639,7 @@ fn precommit_pair_building(
         &fauna,
         &ladder,
         labor.hunt.per_worker_biomass_capacity,
+        &HuntingParty::builtin_equipped(),
         FORECAST_OUTPUT_MULTIPLIER,
         workers,
         policy,
@@ -1119,10 +1127,28 @@ fn steady_quarry(app: &mut App, display_name: &str) {
     def.combat.attack = 0.0;
     def.diet = Diet::Herbivore;
     def.engage_rate = RAID_UNBOUNDED_ENGAGE_RATE;
+    // **The FIGHT must not bind either** — the same reason `engage_rate` is pinned above. This suite
+    // measures a species' PRODUCT vector (`docs/plan_hunt_yield_model.md`), so neither the party's
+    // reach nor its ability to bring the quarry down may be the term that decides the take. Since
+    // slice 4 the kill resolves through `combat::resolve_fight`
+    // (`docs/plan_hunt_through_combat.md` §4), and a shipped wolf (`defense 3`, `durability 20`)
+    // would cap a 4-hunter raid at 3.4 animals a turn — nine times below its carry, which pushed
+    // every wolf raid past the forecast horizon and left this harness comparing nothing.
+    def.combat.defense = RAID_UNGUARDED_DEFENSE;
+    def.combat.durability = RAID_UNBOUNDED_DURABILITY;
     app.world
         .resource_mut::<FaunaConfigHandle>()
         .replace(std::sync::Arc::new(config));
 }
+
+/// **No protection at all** — the raid harness's quarry, so the party's `attack` clears the gate by
+/// its whole value and the *weapon tier* cannot decide this suite's numbers.
+const RAID_UNGUARDED_DEFENSE: f32 = 0.0;
+
+/// **A body that soaks almost nothing**, so the fight is never the binding term here: at the shipped
+/// spear one hunter brings down `20 / 0.1 = 200` a turn, far past any crew's carry. The fight's own
+/// behaviour is pinned by `core_sim/tests/hunt_fight.rs`; this suite is about products.
+const RAID_UNBOUNDED_DURABILITY: f32 = 0.1;
 
 /// The wild-game reference growth rate the raid harness pins its quarry to — the same `r` the
 /// sibling `expedition_hunt` raid tests use for their worked boar example.

@@ -75,18 +75,31 @@ in `bin/server.rs`, and restored by `sim_state.rs` (`BandRecord::equipment`, car
 
 ## What is NOT wired yet, deliberately
 
-- **The attack tier is published and inert in the fight.** The Phase-0 hunt-danger adapter still
-  fields the intrinsic `person` profile; `EquipmentConfig::hunter_profile` is the composition seam
-  the slice that moves the kill into `combat::resolve_fight` will call. Pinned as an identity by
-  `the_attack_tier_is_published_but_inert_in_the_take`: a spent hunting kit and a full one resolve a
-  hunt with the same take, the same food income and the same casualties, while the exported
-  `hunterAttack` differs 20 against 1.
-- **Expeditions are implicitly always equipped.** `advance_expeditions` still reads
-  `labor.hunt.per_worker_biomass_capacity` directly and never wears a party's kit, so a detached
-  party hauls at the kitted rate for as long as it is out. It is spawned with a full
-  `BandEquipment` so its wire row does not contradict its haul rate.
 - **The Crafter role, replenishment/upgrade, and the Scouting and Warrior kits** from that arc's role
   table are out of scope for this slice.
+
+## The attack tier went live with the fight
+
+`docs/plan_hunt_through_combat.md` slice 4 moved the kill into `combat::resolve_fight`, so
+`EquipmentConfig::hunter_profile` is now read on **every** take and forecast path (through
+`fauna::HuntingParty`) and the hunting kit is the difference between eating and not:
+
+- **`max(0, attack − defense)` is the gate**, so a dry-speared band drops to `attack 1` and can hurt
+  only quarry with **no `defense` at all** — rabbit, fowl, grouse, snow hare, catfish. Everything from
+  a gazelle upward becomes untouchable, at any headcount. `the_attack_tier_decides_the_take`
+  (`integration_tests/tests/equipment_toe.rs`) pins both halves: the kitted band takes Red Deer and
+  wears its kit; the bare-handed one takes **exactly zero** and wears nothing. It is the inversion of
+  the identity that test asserted one slice earlier.
+- **A detached party now resolves and wears its own kit.** `advance_expeditions` queries
+  `&mut BandEquipment`, resolves the attack tier via `hunter_profile` and the haul tier via
+  `per_worker_biomass_capacity`, and charges `wear_hunting` per animal killed + `wear_carry` per
+  biomass hauled — the same use quanta a resident band pays. Before slice 4 a raid ran on free,
+  immortal equipment, which is the cost model `docs/plan_denial_raid.md` §1.2 depends on.
+- **The carry tier only decides a take where the fight leaves it room.** §4.6's per-hunter-turn
+  ceiling is `min(engage_rate, (attack − defense) / durability) × body_mass`; the carry kit is a lever
+  only where that sits between the two haul rates (12 and 40). A Red Deer's is `11.4` — under both, so
+  neither tier binds on deer — while a Wild Horse's is `20.0`, which is why
+  `both_carry_tiers_are_live_and_a_dry_kit_hauls_less` measures horses.
 
 ## On the wire
 

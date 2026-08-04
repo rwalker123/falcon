@@ -233,6 +233,22 @@ pub fn advance_labor_allocation(
             .carry_equipped(&equipment_cfg);
         let hunt_per_worker_biomass =
             equipment_cfg.per_worker_biomass_capacity(equipped_haul_rate, carry_equipped);
+        // **And this band's FIGHTING tier, on the same one-kit-state-per-turn rule**
+        // (`docs/plan_hunt_through_combat.md` §4). The hunting kit swaps the whole `attack` tier
+        // (`1` bare-handed, `20` speared), which is the gate every take now resolves through — so a
+        // band whose spears ran dry stops being able to hurt anything with a `defense`, and the
+        // forecast it is seeded from says so on the same tier.
+        let hunting_party = fauna::HuntingParty {
+            hunter: equipment_cfg.hunter_profile(
+                person_profile,
+                band_equipment
+                    .as_deref()
+                    .copied()
+                    .unwrap_or_default()
+                    .hunting_equipped(&equipment_cfg),
+            ),
+            tuning: combat_tuning,
+        };
         // Normalize each turn: if `working` shrank, trim assignments so Σ ≤ available.
         let available = available_workers(cohort.working);
         let faction = cohort.faction;
@@ -1053,6 +1069,7 @@ pub fn advance_labor_allocation(
                         &fauna,
                         &ladder,
                         hunt_per_worker_biomass,
+                        &hunting_party,
                         mult_f,
                         workers,
                         *floor,
@@ -1326,6 +1343,7 @@ pub fn advance_labor_allocation(
                             &fauna,
                             &ladder,
                             hunt_per_worker_biomass,
+                            &hunting_party,
                             mult_f,
                             workers,
                             *floor,
@@ -1384,17 +1402,19 @@ pub fn advance_labor_allocation(
                     let working_the_herd = crew_is_working_the_source(standing_above_floor);
                     // The band has no carry room — it eats/banks whatever it hauls, so pass an
                     // unbounded carry cap (behaviour unchanged from before the expedition clamp).
-                    let take = hunt_take(
+                    let outcome = hunt_take(
                         herd,
                         workers,
                         *floor,
                         improvement,
                         hunt_per_worker_biomass,
+                        &hunting_party,
                         &fauna,
                         &ladder,
                         f32::INFINITY,
                         fauna::retreat_seed(sim_config.map_seed, tick.0, &herd.id, workers),
                     );
+                    let take = outcome.take;
                     // **BOTH KITS ARE CHARGED FOR USE, AND ONLY FOR USE** (the minimal TOE,
                     // `docs/plan_denial_raid.md` §1.2). The hunting kit pays per **animal killed**
                     // and the carry kit per **biomass carried home**, so a party that waits out a
@@ -1649,6 +1669,7 @@ pub fn advance_labor_allocation(
                         &fauna,
                         &ladder,
                         hunt_per_worker_biomass,
+                        &hunting_party,
                         mult_f,
                         workers,
                         *floor,
@@ -1670,101 +1691,44 @@ pub fn advance_labor_allocation(
                         realized: hunt_realized.provisions,
                         arrivals,
                     };
-                    // **Predators Phase 0 — the hunt turns dangerous** (`docs/plan_predators.md`).
-                    // A herd whose species can fight back (`combat.attack > 0` — mammoth, ox) turns on
-                    // the party after the take resolves. It composes a fight (the hunters assigned to
-                    // this herd vs the beast's fighting stock), resolves it through the neutral combat
-                    // subsystem, and applies **only the band-side** casualties — the take path already
-                    // removed the animal's biomass, so applying the animal-side result too would
-                    // double-count (discarded in Phase 0).
-                    if let Some(species) = fauna.species_by_display(&herd.species) {
-                        // **Danger = strength × BEHAVIOUR** (`docs/plan_predators.md`): a hunt only faces
-                        // the animal's attack to the extent it *fights back* rather than flees, so the
-                        // beast's effective attack is `attack × ferocity`. A fleeing deer (ferocity ~0.15)
-                        // costs almost nothing; a cornered boar (0.6) does; a mammoth (0.9) is deadly.
-                        let effective_attack = species.combat.attack * species.ferocity;
-                        if effective_attack > 0.0 {
-                            // **The hunting party answers the danger itself** — its defending strength is
-                            // just the hunters assigned to THIS herd (bare-hands `person` profile today).
-                            // Warriors are a band-wide standing guard (border/camp patrol) and do NOT
-                            // mitigate a hunt; the hunters' own equipment (TOE, deferred) will compose
-                            // into this profile when it lands, with no rework here.
-                            let party_count = workers as f32;
-                            // The animal fights at its ferocity-scaled attack (defense/range unchanged).
-                            let animal_profile = CombatStats {
-                                attack: effective_attack,
-                                ..species.combat
-                            };
-                            // A single beast turns on the party each dangerous hunt-turn — a deliberate
-                            // Phase-0 simplification (scaling the engaged count with take/party size is a
-                            // later refinement). Its intrinsic combat body is the same `attack` predation
-                            // will one day read.
-                            // Deterministic, rollback-stable seed (reserved/unused by the placeholder
-                            // resolver, but a real value): map_seed ^ tick ^ herd-id hash.
-                            let mut hasher = crate::hashing::FnvHasher::new();
-                            std::hash::Hash::hash(&herd.id, &mut hasher);
-                            let seed = map_seed ^ tick.0 ^ std::hash::Hasher::finish(&hasher);
-                            let payload = FightPayload {
-                                sides: vec![
-                                    Force {
-                                        id: ForceId(0),
-                                        posture: Posture::Aggressor,
-                                        contingents: vec![Contingent {
-                                            kind: ContingentId::from("person"),
-                                            count: party_count,
-                                            profile: person_profile,
-                                        }],
-                                    },
-                                    Force {
-                                        id: ForceId(1),
-                                        posture: Posture::Defender,
-                                        contingents: vec![Contingent {
-                                            kind: ContingentId(herd.species.clone()),
-                                            count: 1.0,
-                                            profile: animal_profile,
-                                        }],
-                                    },
-                                ],
-                                terrain: vec![TerrainContext {
-                                    hex: (band_pos.x, band_pos.y),
-                                }],
-                                seed,
-                            };
-                            let outcome = resolve_fight(&payload, &combat_tuning);
-                            // Apply ONLY the band side (`ForceId(0)`); discard the animal side.
-                            let band_side = outcome
-                                .results
-                                .iter()
-                                .find(|r| r.force == ForceId(0))
-                                .map(|r| (r.killed, r.wounded))
-                                .unwrap_or((0.0, 0.0));
-                            let (killed_f, wounded_f) = band_side;
-                            if killed_f + wounded_f > 0.0 {
-                                // `killed` come out of the working-age bracket (the new casualty
-                                // mortality path); `wounded` is **computed and surfaced but mechanically
-                                // inert this phase** — no capacity/recovery effect yet (a later slice).
-                                cohort.apply_combat_casualties(scalar_from_f32(killed_f));
-                                // The prose rounds `killed` for a readable "cost N lives"; the **detail
-                                // carries the fractional truth** (casualties are `Scalar`-fractional by
-                                // design — a well-guarded party takes a fraction of a death), so a
-                                // consumer reads precise killed/wounded rather than a rounded 0.
-                                let killed_r = killed_f.round() as u32;
-                                event_log.push(CommandEventEntry::new(
-                                    tick.0,
-                                    CommandEventKind::HuntDanger,
-                                    faction,
-                                    // Human text names the SPECIES, never the internal herd id.
-                                    format!(
-                                        "The {} hunt cost {} lives",
-                                        species.display_name, killed_r
-                                    ),
-                                    Some(format!(
-                                        "killed={:.3} wounded={:.3} species={}",
-                                        killed_f, wounded_f, species.display_name
-                                    )),
-                                ));
-                            }
-                        }
+                    // **The fight already happened — inside the take** (`docs/plan_hunt_through_combat.md`
+                    // §0.1). This site used to resolve the party's casualties in a *second*
+                    // `resolve_fight` beside a take computed from carrying capacity, so a band could
+                    // succeed at the take on one path while the other said the mammoth routed it.
+                    // There is one resolution now: `hunt_take` handed back both sides of it, the
+                    // animal side is already off the herd as `take.killed_biomass()`, and this is
+                    // where the band side lands.
+                    //
+                    // **A one-sided engagement produces nothing here at all** — no casualties, no
+                    // feed line, no cost (§4.5: snaring rabbits is not a war), which is exactly what
+                    // `HuntFight::fought == false` reports.
+                    if outcome.fight.casualties.any() {
+                        let killed_f = outcome.fight.casualties.killed;
+                        let wounded_f = outcome.fight.casualties.wounded;
+                        // `killed` come out of the working-age bracket (the casualty mortality path);
+                        // `wounded` is **computed and surfaced but mechanically inert this phase** —
+                        // no capacity/recovery effect yet (a later slice).
+                        cohort.apply_combat_casualties(scalar_from_f32(killed_f));
+                        // The prose rounds `killed` for a readable "cost N lives"; the **detail
+                        // carries the fractional truth** (casualties are `Scalar`-fractional by
+                        // design — a well-guarded party takes a fraction of a death), so a consumer
+                        // reads precise killed/wounded rather than a rounded 0.
+                        let killed_r = killed_f.round() as u32;
+                        // Human text names the SPECIES, never the internal herd id.
+                        let species_name = fauna
+                            .species_by_display(&herd.species)
+                            .map(|def| def.display_name.clone())
+                            .unwrap_or_else(|| herd.species.clone());
+                        event_log.push(CommandEventEntry::new(
+                            tick.0,
+                            CommandEventKind::HuntDanger,
+                            faction,
+                            format!("The {} hunt cost {} lives", species_name, killed_r),
+                            Some(format!(
+                                "killed={:.3} wounded={:.3} species={}",
+                                killed_f, wounded_f, species_name
+                            )),
+                        ));
                     }
                 }
                 LaborTarget::Scout => {
@@ -2375,6 +2339,9 @@ pub fn advance_predator_raids(
                                 profile: CombatStats {
                                     attack: 0.0,
                                     defense: person.defense,
+                                    // The exposed folk are the same bodies as the warriors — they
+                                    // simply have nothing to fight back with.
+                                    durability: person.durability,
                                     range: person.range,
                                     // Hunters do not break off — the party chose this fight, and
                                     // whether it holds is the resolver's business, not a per-hunter
@@ -3234,6 +3201,7 @@ mod labor_yield_tests {
                 &fauna,
                 &ladder,
                 labor.hunt.per_worker_biomass_capacity,
+                &crate::fauna::HuntingParty::builtin_equipped(),
                 1.0,
             );
             (
@@ -3267,6 +3235,7 @@ mod labor_yield_tests {
                 &fauna,
                 &ladder,
                 labor.hunt.per_worker_biomass_capacity,
+                &crate::fauna::HuntingParty::builtin_equipped(),
                 1.0,
                 crew,
                 0.5,
@@ -3646,6 +3615,7 @@ mod labor_yield_tests {
                 &fauna,
                 &ladder,
                 labor.hunt.per_worker_biomass_capacity,
+                &crate::fauna::HuntingParty::builtin_equipped(),
                 NEUTRAL_OUTPUT_MULT,
                 WORKERS,
                 crate::fauna::MSY_BIOMASS_FRACTION,
@@ -3954,6 +3924,7 @@ mod labor_yield_tests {
                 &fauna,
                 &ladder,
                 labor.hunt.per_worker_biomass_capacity,
+                &crate::fauna::HuntingParty::builtin_equipped(),
                 1.0,
             );
             let ceiling = forecast
@@ -4190,6 +4161,7 @@ mod labor_yield_tests {
                             &fauna,
                             &LadderConfig::builtin(),
                             per_worker,
+                            &crate::fauna::HuntingParty::builtin_equipped(),
                             NEUTRAL_OUTPUT_MULT,
                         );
                         drop(fauna);
@@ -4312,6 +4284,7 @@ mod labor_yield_tests {
             &fauna,
             &LadderConfig::builtin(),
             hunt_per_worker,
+            &crate::fauna::HuntingParty::builtin_equipped(),
             NEUTRAL_OUTPUT_MULT,
         );
         drop(fauna);

@@ -16,9 +16,9 @@
 
 use bevy::prelude::Entity;
 use core_sim::{
-    available_workers, build_headless_app, run_turn, scalar_from_f32, ForageRegistry, Herd,
-    HerdRegistry, LaborAllocation, LaborAssignment, LaborTarget, PopulationCohort,
-    SimulationConfig, SizeClass, SnapshotHistory, Tile, FOOD,
+    available_workers, build_headless_app, run_turn, scalar_from_f32, CommandEventKind,
+    CommandEventLog, ForageRegistry, Herd, HerdRegistry, LaborAllocation, LaborAssignment,
+    LaborTarget, PopulationCohort, SimulationConfig, SizeClass, SnapshotHistory, Tile, FOOD,
 };
 
 /// The shipped default `map_seed` is `0` ("seed from entropy"), so a test must pin its own.
@@ -128,10 +128,17 @@ fn the_food_ledger_reconciles_with_a_predator_raid() {
         .find(|c| c.entity == band.to_bits())
         .expect("the resident band is exported");
 
-    // The raid happened: people died AND food was forfeited.
+    // **The raid happened: people died AND food was forfeited.**
+    //
+    // Read off the raid's own feed line rather than the band's net `working` delta. The delta was
+    // never a clean signal — births move the same bracket — and since the take resolves through the
+    // gate (`docs/plan_hunt_through_combat.md` §4.2) a wolf's `attack 3 × aggression 0.6 = 1.8`
+    // clears a human's `defense 1` by only `0.8`, spread over the whole camp: real casualties, and a
+    // fraction of a person, which one turn of births comfortably outruns. The forfeit below is gated
+    // on those same casualties, so the ledger identity this file exists for is untouched.
     assert!(
-        working_after < working_before,
-        "the wolf must raid the camp and cost lives: {working_before} -> {working_after}"
+        raid_casualties(&app) > 0.0,
+        "the wolf must raid the camp and cost lives (working {working_before} -> {working_after})"
     );
     assert!(
         cohort.raid_forfeit > 0.0,
@@ -180,4 +187,22 @@ fn larder_of(app: &bevy::app::App, band: Entity) -> f32 {
         .stores
         .get(FOOD)
         .to_f32()
+}
+
+/// The **killed** figure the `PredatorRaid` feed line reports this turn, summed over every raid — the
+/// precise casualty count, where the cohort's `working` delta is the casualty count *net of births*.
+/// The detail is `killed=<k> wounded=<w> …` (`advance_predator_raids`).
+fn raid_casualties(app: &bevy::prelude::App) -> f32 {
+    app.world
+        .resource::<CommandEventLog>()
+        .iter()
+        .filter(|entry| entry.kind == CommandEventKind::PredatorRaid)
+        .filter_map(|entry| entry.detail.as_deref())
+        .filter_map(|detail| {
+            detail
+                .split_whitespace()
+                .find_map(|field| field.strip_prefix("killed="))
+                .and_then(|value| value.parse::<f32>().ok())
+        })
+        .sum()
 }

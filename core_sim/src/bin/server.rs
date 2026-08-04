@@ -30,11 +30,12 @@ use core_sim::{
     hunt_source_yield_preview, knows, load_simulation_config_for_new_world, output_multiplier,
     resolve_active_profile, resolve_committed_species, rung_site_refusal, tile_flora_composition,
     tile_is_fresh_watered, ActiveStartProfile, BandEquipment, BandTravel, BeatCatalogHandle,
-    BeatConfigHandle, BeatLedger, CampaignLabel, Expedition, ExpeditionConfigHandle,
-    ExpeditionMission, ExpeditionPhase, FloraConfigHandle, FoodModuleTag, ForkAnswerError,
-    LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore, ResidentBand, RungKey,
-    SiteRefusal, SpeciesRefusal, StartProfile, StartProfileOverrides, WellbeingConfigHandle,
-    DEFAULT_ESCAPEMENT_FLOOR, NO_FILL_TARGET, NO_FORAGE_SEASON,
+    BeatConfigHandle, BeatLedger, CampaignLabel, CombatConfigHandle, CreaturesConfigHandle,
+    Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FloraConfigHandle,
+    FoodModuleTag, ForkAnswerError, HuntingParty, LaborAllocation, LaborTarget, LadderConfigHandle,
+    LocalStore, ResidentBand, RungKey, SiteRefusal, SpeciesRefusal, StartProfile,
+    StartProfileOverrides, WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR, NO_FILL_TARGET,
+    NO_FORAGE_SEASON,
 };
 use core_sim::{
     build_headless_app, clear_config_overrides, hunt_trip_forecast, install_config_override,
@@ -1678,11 +1679,27 @@ fn seed_source_yield(
                 labor.hunt.per_worker_biomass_capacity,
                 carry_equipped,
             );
+            // **And at THIS band's FIGHTING tier**, for the same reason and through the same seam
+            // (`docs/plan_hunt_through_combat.md` §4): the take now resolves through the combat
+            // system, so a band whose spears are gone brings down less — or, past a quarry's
+            // `defense`, nothing at all — and the seed has to say so.
+            let hunting_party = HuntingParty {
+                hunter: equipment_cfg.hunter_profile(
+                    app.world.resource::<CreaturesConfigHandle>().get().person(),
+                    app.world
+                        .get::<BandEquipment>(band)
+                        .copied()
+                        .unwrap_or_default()
+                        .hunting_equipped(&equipment_cfg),
+                ),
+                tuning: app.world.resource::<CombatConfigHandle>().get().tuning(),
+            };
             hunt_source_yield_preview(
                 herd,
                 &fauna,
                 &ladder,
                 per_worker_biomass,
+                &hunting_party,
                 output_mult,
                 workers,
                 *floor,
@@ -2766,6 +2783,23 @@ fn handle_send_hunt_expedition(
     let forecast = {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
         let labor = app.world.resource::<LaborConfigHandle>().get();
+        // **The party leaves outfitted** (`BandEquipment::default()` at the spawn below is a full
+        // kit), so the launch quote is priced at the equipped tier — the same tier the party will
+        // fight its first turns at. Wear is what moves it later, and the in-flight
+        // `expeditionProjectedDelivery` re-quotes against the party's live kit each turn.
+        let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
+        let party = HuntingParty {
+            hunter: equipment_cfg.hunter_profile(
+                app.world.resource::<CreaturesConfigHandle>().get().person(),
+                BandEquipment::default().hunting_equipped(&equipment_cfg),
+            ),
+            tuning: {
+                let combat = app.world.resource::<CombatConfigHandle>().get();
+                let mut tuning = combat.tuning();
+                tuning.lethality *= combat.expedition_danger_multiplier;
+                tuning
+            },
+        };
         let registry = app.world.resource::<HerdRegistry>();
         registry.find(&fauna_id).map(|herd| {
             hunt_trip_forecast(
@@ -2776,6 +2810,7 @@ fn handle_send_hunt_expedition(
                 &fauna,
                 &labor,
                 &cfg,
+                &party,
             )
         })
     };
@@ -9086,6 +9121,7 @@ mod tests {
             &fauna,
             &ladder,
             labor.hunt.per_worker_biomass_capacity,
+            &HuntingParty::builtin_equipped(),
             1.0,
             BAND_WORKERS,
             0.5,

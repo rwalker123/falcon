@@ -5,11 +5,12 @@
 //! two halves of this slice have deliberately different shapes and must not be allowed to hide in one
 //! aggregate:
 //!
-//! - **The attack half is a provable IDENTITY.** Nothing reads a hunter's `attack` for the take
-//!   today, so equipping or expiring the hunting kit must move **no** number the turn produces — the
-//!   fight still fields the intrinsic `person` profile until the slice that resolves the kill through
-//!   `combat::resolve_fight`. What it *does* move is the exported `hunterAttack`, which is the whole
-//!   point of landing it now: `max(0, attack − defense)` needs `attack` to be a real number.
+//! - **The attack half is now LIVE in the take** (`docs/plan_hunt_through_combat.md` §4, slice 4).
+//!   The kill resolves through `combat::resolve_fight`, so `max(0, attack − defense)` decides whether
+//!   a band can hurt its quarry at all: a spear-armed band takes Red Deer and a bare-handed one takes
+//!   **nothing** from them, at any headcount (§4.8 — "everything from a gazelle upward is
+//!   untouchable"). It shipped as a provable identity one slice earlier; that is now inverted, and
+//!   the test below asserts the difference rather than the sameness.
 //! - **The carry half is a stated BALANCE CHANGE.** `per_worker_biomass_capacity` is live in every
 //!   hunt take, so a dry carry kit genuinely hauls less.
 //!
@@ -40,6 +41,18 @@ const HERD_BIOMASS: f32 = 6_000.0;
 const DEER_BODY_MASS: f32 = 15.0;
 const DEER_REGROWTH: f32 = 0.1;
 const DEER_FODDER_PER_BIOMASS: f32 = 0.05;
+/// **Wild Horses** — the *carry* half's quarry, and it has to be a different animal since slice 4.
+///
+/// §4.6's per-hunter-turn ceiling is `min(engage_rate, (attack − defense) / durability) × body_mass`,
+/// and the carry tier only decides a take when that ceiling sits **above** the dry rate (12) and
+/// **below** the kitted one (40) — otherwise one bound or the other binds on both tiers and the two
+/// hauls are identical. A Red Deer's ceiling is `min(1, 0.76) × 15 = 11.4`, under *both* rates; a
+/// Wild Horse's is `min(0.5, 0.514) × 40 = 20.0`, squarely between them. That is the regime the carry
+/// kit is a lever in, so that is where it is measured.
+const HORSE: &str = "Wild Horses";
+/// `Wild Horses` body mass (`fauna_config.json`).
+const HORSE_BODY_MASS: f32 = 40.0;
+
 /// A shallow floor: the hunt is allowed to draw the herd down, so nothing about escapement is under
 /// test here.
 const SHALLOW_FLOOR: f32 = 0.05;
@@ -55,6 +68,17 @@ const EPSILON: f32 = 1e-3;
 /// A booted world with its one resident band hunting a fat deer herd standing on its camp.
 /// `kit` is the band's starting wear, which is the only thing these tests vary.
 fn hunting_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
+    hunting_world_of(DEER, DEER_BODY_MASS, kit)
+}
+
+/// [`hunting_world`] against a named quarry — the fight's dials are resolved off the species
+/// (`FaunaConfig::quarry_fight_for`), so a test about which *bound* binds has to say which animal it
+/// means.
+fn hunting_world_of(
+    species: &str,
+    body_mass: f32,
+    kit: BandEquipment,
+) -> (bevy::prelude::App, Entity) {
     let mut app = build_headless_app();
     app.world.resource_mut::<SimulationConfig>().map_seed = SEED;
     app.update();
@@ -70,7 +94,7 @@ fn hunting_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
         .expect("band tile")
         .position;
 
-    seat_deer(&mut app, band_pos);
+    seat_quarry(&mut app, band_pos, species, body_mass);
     app.world.entity_mut(band).insert((
         LaborAllocation {
             assignments: vec![LaborAssignment {
@@ -104,20 +128,20 @@ fn scouting_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
     (app, band)
 }
 
-fn seat_deer(app: &mut bevy::prelude::App, pos: UVec2) {
+fn seat_quarry(app: &mut bevy::prelude::App, pos: UVec2, species: &str, body_mass: f32) {
     app.world
         .resource_mut::<HerdRegistry>()
         .herds
         .push(Herd::new(
             HERD_ID.to_string(),
-            DEER.to_string(),
+            species.to_string(),
             SizeClass::Big,
             vec![pos],
             HERD_BIOMASS,
             HERD_BIOMASS,
             DEER_FODDER_PER_BIOMASS,
             DEER_REGROWTH,
-            DEER_BODY_MASS,
+            body_mass,
         ));
 }
 
@@ -222,8 +246,9 @@ fn a_fresh_band_is_kitted_and_publishes_both_equipped_tiers() {
 /// zero take on either side would pass a naive "equipped > dry" check while meaning the model broke.
 #[test]
 fn both_carry_tiers_are_live_and_a_dry_kit_hauls_less() {
-    let (mut kitted, kitted_band) = hunting_world(BandEquipment::default());
-    let (mut dry, dry_band) = hunting_world(dry_carry());
+    let (mut kitted, kitted_band) =
+        hunting_world_of(HORSE, HORSE_BODY_MASS, BandEquipment::default());
+    let (mut dry, dry_band) = hunting_world_of(HORSE, HORSE_BODY_MASS, dry_carry());
 
     run_turn(&mut kitted);
     run_turn(&mut dry);
@@ -444,16 +469,21 @@ fn a_kit_run_dry_stays_dry() {
 // The attack half — a provable identity
 // ---------------------------------------------------------------------------------------------
 
-/// **The attack half moves NOTHING the turn produces — yet.** Nothing reads a hunter's `attack` for
-/// the take today (the Phase-0 hunt-danger fight still fields the intrinsic `person` profile), so a
-/// band with a spent hunting kit and a band with a full one must resolve a hunt *identically*: same
-/// take, same food income, same casualties.
+/// **The attack half DECIDES the take** (`docs/plan_hunt_through_combat.md` §4, slice 4) — the
+/// inversion of what this test asserted one slice ago, when nothing read a hunter's `attack` and the
+/// two tiers were a provable identity.
 ///
-/// The paired liveness assertion is the reason this ships at all: the exported `hunterAttack`
-/// **does** differ, 20 against 1, which is the number the fight's `max(0, attack − defense)` gate will
-/// be resolved through when the kill moves into `combat::resolve_fight`.
+/// The kill is now `combat::resolve_fight`'s enemy losses, so §4.2's gate `max(0, attack − defense)`
+/// runs the whole hunt: against a Red Deer's `defense 1` a spear-armed hunter deals `19` and brings
+/// down `19/25` of a body a turn, while a bare-handed one deals **exactly zero** — so the kitted band
+/// eats and the dry band takes **nothing at all**. That is §4.8 in one number: *"everything from a
+/// gazelle upward is untouchable"* without spears, and *"without kit you are a trapper, not a
+/// hunter"*.
+///
+/// **Both halves are asserted.** A bare-handed take of zero is only meaningful beside a kitted take
+/// that is real, or the fixture could be measuring a herd nobody hunted.
 #[test]
-fn the_attack_tier_is_published_but_inert_in_the_take() {
+fn the_attack_tier_decides_the_take() {
     let (mut kitted, kitted_band) = hunting_world(BandEquipment::default());
     let (mut bare, bare_band) = hunting_world(dry_hunting());
 
@@ -465,33 +495,44 @@ fn the_attack_tier_is_published_but_inert_in_the_take() {
     let kitted_row = exported(&kitted, kitted_band);
     let bare_row = exported(&bare, bare_band);
 
-    // The identity: every number the turn produced is the same.
-    assert_eq!(
-        herd_biomass(&kitted),
-        herd_biomass(&bare),
-        "the take must not depend on the hunting kit yet — slice 4 owns the fight"
+    // **The kitted band really hunted** — the liveness half, without which the zeros below prove
+    // nothing.
+    assert!(
+        kitted_row.food_income > 0.0,
+        "a spear-armed band must bring deer home (income={})",
+        kitted_row.food_income
     );
-    assert_eq!(kitted_row.food_income, bare_row.food_income);
-    assert_eq!(
-        kitted
-            .world
-            .get::<PopulationCohort>(kitted_band)
-            .unwrap()
-            .working,
-        bare.world
-            .get::<PopulationCohort>(bare_band)
-            .unwrap()
-            .working,
-        "hunt-danger casualties must not depend on the hunting kit yet"
-    );
-    // ...and the carry kit wore identically too, since the take did.
-    assert_eq!(
-        kit_of(&kitted, kitted_band).carry_wear,
-        kit_of(&bare, bare_band).carry_wear
+    assert!(
+        kit_of(&kitted, kitted_band).hunting_wear > 0.0,
+        "the hunting kit is charged per animal killed, so a real take must have worn it"
     );
 
-    // Liveness on the other side: the tiers really are different, and the fight really did happen
-    // (a hunt that never engaged anything would make the identity above vacuous).
+    // **The bare-handed band took nothing** — `attack 1` against `defense 1` is `max(0, 0)`, the hard
+    // gate, so no animal ever went down however long the band hunted.
+    assert_eq!(
+        bare_row.food_income, 0.0,
+        "a bare-handed band cannot take a Red Deer at all — the gate is exact, not merely small"
+    );
+    assert_eq!(
+        kit_of(&bare, bare_band).hunting_wear,
+        dry_hunting().hunting_wear,
+        "no kills, so no hunting-kit wear beyond what the band started spent"
+    );
+    assert_eq!(
+        kit_of(&bare, bare_band).carry_wear,
+        0.0,
+        "nothing was hauled, so the carry kit is untouched — wear tracks USE"
+    );
+
+    // The herd shows it from the other side: the kitted band drew it down, the bare one did not.
+    assert!(
+        herd_biomass(&kitted) < herd_biomass(&bare),
+        "the take depends on the hunting kit: kitted left {} standing, bare left {}",
+        herd_biomass(&kitted),
+        herd_biomass(&bare)
+    );
+
+    // The tiers really are different on the wire, which is the number the gate is resolved through.
     let equipment = equipment();
     assert_eq!(
         kitted_row.hunter_attack,
@@ -505,18 +546,20 @@ fn the_attack_tier_is_published_but_inert_in_the_take() {
         bare_row.hunter_attack < kitted_row.hunter_attack,
         "the spear must be the larger number, or the gate opens the wrong way"
     );
-    // ...and the danger fight really fired in both worlds, so "casualties are identical" is a
-    // statement about a fight that happened rather than about one that never started. (The cohort's
-    // `working` bracket cannot carry this: births move it too, and on a fat deer herd they outrun
-    // the losses.)
+    // **And the gate cuts BOTH ways** — a property worth pinning here because it was not true one
+    // slice ago. A Red Deer swings at `attack 0.8 × ferocity 0.15 = 0.12`, which does not clear a
+    // human's `defense 1`, so it costs the party *nothing* — where the retired power-ratio model gave
+    // every positive attack some casualties. Deer are now safe to hunt, and only the roster's three
+    // real fighters (mammoth, aurochs, wolf) clear a person's defense at all.
     assert!(
-        hunt_danger_fired(&kitted) && hunt_danger_fired(&bare),
-        "the deer's ferocity must actually turn the hunt into a fight in BOTH worlds"
+        !hunt_danger_fired(&kitted) && !hunt_danger_fired(&bare),
+        "a Red Deer cannot hurt a human: 0.8 × 0.15 = 0.12 is below `person.defense` 1, so the gate \
+         gives it exactly zero — no casualties, no feed line"
     );
 }
 
-/// Did the Phase-0 hunt-danger adapter resolve a fight this run? Read off the command feed, which is
-/// the only place a casualty-causing hunt announces itself.
+/// Did the hunt-danger path resolve casualties this run? Read off the command feed, which is the only
+/// place a casualty-causing hunt announces itself.
 fn hunt_danger_fired(app: &bevy::prelude::App) -> bool {
     app.world
         .resource::<CommandEventLog>()

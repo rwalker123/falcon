@@ -823,6 +823,7 @@ mod tests {
             visibility,
             viewer: VIEWER,
             fog_enabled,
+            party: crate::fauna::HuntingParty::builtin_equipped(),
         })
     }
 

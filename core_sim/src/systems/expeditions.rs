@@ -2,6 +2,20 @@ use super::*;
 use crate::fauna::AnimalTake;
 use crate::intensification::NO_BUILD_UNDERWAY_DIP;
 
+/// **Everything one detached party is, as a query tuple.** Named because the tuple grew past the
+/// point of readability when the party's own kit joined it: **a detached party carries its OWN kit**
+/// (`docs/plan_denial_raid.md` §1.2). It leaves outfitted (`BandEquipment::default()` is zero wear)
+/// and, since the take resolves through the fight (`docs/plan_hunt_through_combat.md` §4), it must
+/// also *wear* that kit — a raid on free, immortal equipment is denial for nothing, and its `attack`
+/// tier is what the fight's gate compares against.
+type ExpeditionParty = (
+    Entity,
+    &'static mut PopulationCohort,
+    Option<&'static BandTravel>,
+    &'static mut Expedition,
+    Option<&'static mut BandEquipment>,
+);
+
 /// The config handles [`advance_expeditions`] reads, bundled into one `SystemParam` so the system
 /// stays under Bevy's 16-parameter ceiling once the combat + creatures handles join it (Predators
 /// Phase 0 — the expedition-hunt danger adapter).
@@ -14,6 +28,8 @@ pub struct ExpeditionConfigs<'w> {
     pub ladder: Res<'w, LadderConfigHandle>,
     pub combat: Res<'w, CombatConfigHandle>,
     pub creatures: Res<'w, CreaturesConfigHandle>,
+    /// The TOE kit table — a detached party resolves its own attack/haul tiers off it and wears them.
+    pub equipment: Res<'w, EquipmentConfigHandle>,
 }
 
 /// Advance any `move_band` order one step toward its target. The band travels at
@@ -90,12 +106,7 @@ pub fn advance_expeditions(
     mut event_log: ResMut<CommandEventLog>,
     mut herds: ResMut<HerdRegistry>,
     tiles: Query<&Tile>,
-    mut expeditions: Query<(
-        Entity,
-        &mut PopulationCohort,
-        Option<&BandTravel>,
-        &mut Expedition,
-    )>,
+    mut expeditions: Query<ExpeditionParty>,
     mut bands: Query<&mut PopulationCohort, Without<Expedition>>,
 ) {
     // The common turn has zero expeditions — bail before building the O(w×h) terrain grid so a
@@ -121,12 +132,16 @@ pub fn advance_expeditions(
     let mut combat_tuning = combat_config.tuning();
     combat_tuning.lethality *= combat_config.expedition_danger_multiplier;
     let person_profile = configs.creatures.get().person();
+    // **The minimal TOE** — the two-tier table and the durability dials, resolved once. What varies
+    // per party is only its `BandEquipment` *wear*.
+    let equipment_cfg = configs.equipment.get();
+    // The **equipped** per-hunter haul rate; the carry kit names the step down.
+    let equipped_haul_rate = labor.hunt.per_worker_biomass_capacity;
     let map_seed = sim_config.map_seed;
     let wrap_horizontal = sim_config.map_topology.wrap_horizontal;
     let grid_width = tile_registry.width;
     let current_turn = tick.0;
     let comm_range = cfg.effective_comm_range();
-    let per_worker_biomass = labor.hunt.per_worker_biomass_capacity;
 
     // Shared LOS inputs (built once per turn for the few expeditions).
     let terrain_tags = crate::visibility_systems::build_terrain_tags_grid(
@@ -138,12 +153,28 @@ pub fn advance_expeditions(
         &vis_cfg.line_of_sight.blocking_terrain_tags,
     );
 
-    for (entity, mut cohort, travel, mut expedition) in expeditions.iter_mut() {
+    for (entity, mut cohort, travel, mut expedition, mut party_equipment) in expeditions.iter_mut()
+    {
         let Ok(exp_pos) = tiles.get(cohort.current_tile).map(|tile| tile.position) else {
             continue;
         };
         let faction = cohort.faction;
         let workers = available_workers(cohort.working);
+        // **This party's two kit tiers, resolved ONCE per party per turn** — the same discipline
+        // `advance_labor_allocation` applies to a resident band, through the same
+        // `EquipmentConfig` seams. An absent component reads as a full kit (wear, not stock).
+        let party_kit = party_equipment.as_deref().copied().unwrap_or_default();
+        let per_worker_biomass = equipment_cfg.per_worker_biomass_capacity(
+            equipped_haul_rate,
+            party_kit.carry_equipped(&equipment_cfg),
+        );
+        // The hunting kit decides what the party can hurt at all (§4.2's gate), so it is resolved
+        // here and not left at the intrinsic bare-handed tier.
+        let hunting_party = fauna::HuntingParty {
+            hunter: equipment_cfg
+                .hunter_profile(person_profile, party_kit.hunting_equipped(&equipment_cfg)),
+            tuning: combat_tuning,
+        };
         // Home band's LIVE tile (bands are nomadic): drives the comm check, the return target, and
         // the hunt drop-off. An orphaned expedition (home band gone) simply can't report/deliver.
         let home_pos = bands
@@ -266,7 +297,7 @@ pub fn advance_expeditions(
                         &herds.herds[idx].id,
                         workers,
                     );
-                    let take = hunt_take(
+                    let outcome = hunt_take(
                         &mut herds.herds[idx],
                         workers,
                         // A scout's roadside kill is a **restrained** one: it stops at the food peak,
@@ -275,11 +306,26 @@ pub fn advance_expeditions(
                         DEFAULT_ESCAPEMENT_FLOOR,
                         NO_IMPROVEMENT_UNDERWAY,
                         per_worker_biomass,
+                        &hunting_party,
                         &fauna,
                         &ladder,
                         carry_room_biomass,
                         seed,
                     );
+                    let take = outcome.take;
+                    // **A roadside kill wears the scout's kit like any other** — the hunting kit per
+                    // animal killed, the carry kit per biomass hauled (`docs/plan_denial_raid.md`
+                    // §1.2: wear tracks USE, never turns elapsed).
+                    if let Some(kit) = party_equipment.as_mut() {
+                        kit.wear_hunting(&equipment_cfg, take.killed)
+                            .wear_carry(&equipment_cfg, take.carried);
+                    }
+                    // A scout that picked a fight it could not win still pays for it.
+                    if outcome.fight.casualties.any() {
+                        cohort.apply_combat_casualties(scalar_from_f32(
+                            outcome.fight.casualties.killed,
+                        ));
+                    }
                     // **One conversion, both products** — a roadside kill is skinned as well as
                     // butchered (#337). The food tops the pack up to `room`; the hides ride home on
                     // `carried_trade` like the hunt party's, so an opportunistic take on an
@@ -439,10 +485,15 @@ pub fn advance_expeditions(
                             (cap - cohort.stores.get(FOOD)).max(scalar_zero()).to_f32()
                                 / quarry_yield.provisions_per_biomass
                         };
-                        // The quarry's engagement/retreat dials, and the per-event retreat seed —
+                        // The quarry's engagement/retreat/fight dials, and the per-event seed —
                         // composed BEFORE the mutable borrow, exactly as the scout replenish does.
                         let engage_rate = fauna.engage_rate_for(&herds.herds[idx].species);
                         let wariness = fauna.wariness_for(&herds.herds[idx].species);
+                        let quarry_fight = fauna.quarry_fight_for(&herds.herds[idx].species);
+                        let species_name = fauna
+                            .species_by_display(&herds.herds[idx].species)
+                            .map(|def| def.display_name.clone())
+                            .unwrap_or_else(|| herds.herds[idx].species.clone());
                         let seed = fauna::retreat_seed(
                             map_seed,
                             current_turn,
@@ -451,7 +502,7 @@ pub fn advance_expeditions(
                         );
                         let herd = &mut herds.herds[idx];
                         let body_mass = herd.body_mass;
-                        let take = expedition_take_biomass(
+                        let outcome = expedition_take_biomass(
                             workers,
                             per_worker_biomass,
                             floor,
@@ -461,83 +512,50 @@ pub fn advance_expeditions(
                             carry_room_biomass,
                             engage_rate,
                             wariness,
+                            quarry_fight,
+                            &hunting_party,
                             seed,
                             &mut herd.hunt_credit,
                         );
+                        let take = outcome.take;
                         // The herd loses every animal killed, carried home or not (slice 8).
                         herd.biomass -= take.killed_biomass();
                         let herd_biomass_after = herd.biomass;
-                        // **Predators Phase 0 — the hunt turns dangerous, bloodier for a detached
-                        // party** (`docs/plan_predators.md`). After the take, a herd whose species can
-                        // fight back (`combat.attack > 0` — mammoth, ox) turns on the party. The
-                        // expedition answers with its OWN hunters (bare-hands `person` today), at the
-                        // expedition-scaled lethality, and applies **only the band side's** casualties
-                        // (the take already removed the animal's biomass). Fires only on an engagement
-                        // turn (inside the `in_reach` guard).
-                        if let Some(species) = fauna.species_by_display(&herd.species) {
-                            // Danger = strength × BEHAVIOUR: the beast fights back at `attack × ferocity`
-                            // (a fleeing animal barely scratches the party). See the labor.rs adapter.
-                            let effective_attack = species.combat.attack * species.ferocity;
-                            if effective_attack > 0.0 {
-                                let animal_profile = CombatStats {
-                                    attack: effective_attack,
-                                    ..species.combat
-                                };
-                                let mut hasher = crate::hashing::FnvHasher::new();
-                                std::hash::Hash::hash(&herd.id, &mut hasher);
-                                let seed =
-                                    map_seed ^ current_turn ^ std::hash::Hasher::finish(&hasher);
-                                let payload = FightPayload {
-                                    sides: vec![
-                                        Force {
-                                            id: ForceId(0),
-                                            posture: Posture::Aggressor,
-                                            contingents: vec![Contingent {
-                                                kind: ContingentId::from("person"),
-                                                count: workers as f32,
-                                                profile: person_profile,
-                                            }],
-                                        },
-                                        Force {
-                                            id: ForceId(1),
-                                            posture: Posture::Defender,
-                                            contingents: vec![Contingent {
-                                                kind: ContingentId(herd.species.clone()),
-                                                count: 1.0,
-                                                profile: animal_profile,
-                                            }],
-                                        },
-                                    ],
-                                    terrain: vec![TerrainContext {
-                                        hex: (exp_pos.x, exp_pos.y),
-                                    }],
-                                    seed,
-                                };
-                                let outcome = resolve_fight(&payload, &combat_tuning);
-                                let (killed_f, wounded_f) = outcome
-                                    .results
-                                    .iter()
-                                    .find(|r| r.force == ForceId(0))
-                                    .map(|r| (r.killed, r.wounded))
-                                    .unwrap_or((0.0, 0.0));
-                                if killed_f + wounded_f > 0.0 {
-                                    cohort.apply_combat_casualties(scalar_from_f32(killed_f));
-                                    let killed_r = killed_f.round() as u32;
-                                    event_log.push(CommandEventEntry::new(
-                                        current_turn,
-                                        CommandEventKind::HuntDanger,
-                                        faction,
-                                        format!(
-                                            "The {} hunt cost the expedition {} lives",
-                                            species.display_name, killed_r
-                                        ),
-                                        Some(format!(
-                                            "killed={:.3} wounded={:.3} species={}",
-                                            killed_f, wounded_f, species.display_name
-                                        )),
-                                    ));
-                                }
-                            }
+                        // **BOTH KITS ARE CHARGED FOR USE, AND ONLY FOR USE** — the resident band's
+                        // rule (`docs/plan_denial_raid.md` §1.2), which the raid path did not apply
+                        // at all until the take became a fight. A party that marches all turn without
+                        // engaging, or waits out a herd too thin to spare a body, spends nothing;
+                        // one that slaughters pays per animal killed and per unit hauled home.
+                        if let Some(kit) = party_equipment.as_mut() {
+                            kit.wear_hunting(&equipment_cfg, take.killed)
+                                .wear_carry(&equipment_cfg, take.carried);
+                        }
+                        // **The fight already happened — inside the take** (§0.1). This path used
+                        // to resolve the party's casualties in a *second* `resolve_fight` beside a
+                        // take computed from carrying capacity, so a raid could succeed on one path
+                        // while the other said the mammoth routed it. There is one resolution now,
+                        // and this is where its band-side result is applied; the animal side is
+                        // already off the herd as `take.killed_biomass()`. A detached party still
+                        // fights at the `expedition_danger_multiplier`-scaled lethality — that rides
+                        // `hunting_party.tuning`.
+                        if outcome.fight.casualties.any() {
+                            let killed_f = outcome.fight.casualties.killed;
+                            let wounded_f = outcome.fight.casualties.wounded;
+                            cohort.apply_combat_casualties(scalar_from_f32(killed_f));
+                            let killed_r = killed_f.round() as u32;
+                            event_log.push(CommandEventEntry::new(
+                                current_turn,
+                                CommandEventKind::HuntDanger,
+                                faction,
+                                format!(
+                                    "The {} hunt cost the expedition {} lives",
+                                    species_name, killed_r
+                                ),
+                                Some(format!(
+                                    "killed={:.3} wounded={:.3} species={}",
+                                    killed_f, wounded_f, species_name
+                                )),
+                            ));
                         }
                         // **Every rung is paid its species' vector — including Eradicate** (#337).
                         // Denial is the END STATE (the species is gone, for you and everyone else),
@@ -889,21 +907,33 @@ fn expedition_take_biomass(
     carrying_capacity: f32,
     body_mass: f32,
     carry_room_biomass: f32,
-    // The quarry's engagement/retreat dials, resolved by the caller off the species — this function
-    // takes resolved scalars, never a config handle (as it already does for `body_mass`).
+    // The quarry's engagement/retreat/fight dials, resolved by the caller off the species — this
+    // function takes resolved scalars, never a config handle (as it already does for `body_mass`).
     engage_rate: f32,
     wariness: f32,
-    // Per-event seed for the retreat draw (`fauna::retreat_seed`) — never a shared RNG stream, or
-    // raid ordering would change outcomes and rollback would stop reproducing (§6.2).
+    quarry: fauna::QuarryFight,
+    // The party's own strength — kit composed in — and the tuning it fights at. **A raid is not
+    // exempt from the gate**: a detached party that cannot beat the quarry's `defense` spends its
+    // whole trip taking casualties and killing nothing.
+    party: &fauna::HuntingParty,
+    // Per-event seed for the retreat draw (`fauna::retreat_seed`) and the fight — never a shared RNG
+    // stream, or raid ordering would change outcomes and rollback would stop reproducing (§6.2).
     retreat_seed: u64,
     credit: &mut f32,
-) -> AnimalTake {
+) -> HuntOutcome {
     if !body_mass.is_finite() || body_mass <= 0.0 {
         debug_assert!(
             false,
             "body_mass must be finite and positive; got {body_mass}"
         );
-        return AnimalTake::default();
+        return HuntOutcome {
+            take: AnimalTake::default(),
+            fight: fauna::HuntFight {
+                brought_down: 0.0,
+                casualties: fauna::FightCasualties::default(),
+                fought: false,
+            },
+        };
     }
     // The standing surplus above the mission's floor — everything the raid may take.
     let floor = floor * carrying_capacity.max(0.0);
@@ -918,20 +948,33 @@ fn expedition_take_biomass(
     // `docs/plan_hunt_through_combat.md` §1, in the same order `systems::hunt_take` runs them.
     // Wariness `0` makes the retreat an exact identity that consumes no randomness, so a raid is
     // byte-identical until values are authored.
-    let engaged = fauna::animals_engaged(workers, engage_rate, NO_BUILD_UNDERWAY_DIP);
+    let engaged = fauna::animals_engaged(workers, engage_rate, NO_BUILD_UNDERWAY_DIP)
+        // **Restraint is free** — the mission's floor bounds what the party goes after, so a raid at
+        // its floor takes no casualties for animals it was never going to kill (§1).
+        .min(fauna::animals_affordable(ceiling, body_mass));
     let stayed = fauna::animals_that_stay(engaged, wariness, retreat_seed);
+    // **The fight decides the kill** (§4) — the same resolution the resident band runs.
+    // A detached party builds nothing, so its crew carries the identity dip ([`NO_BUILD_UNDERWAY_DIP`]).
+    let fight = fauna::resolve_hunt_fight(
+        stayed,
+        workers as f32 * NO_BUILD_UNDERWAY_DIP,
+        party,
+        &quarry,
+        retreat_seed,
+    );
     // Whole animals through **the** quantiser: as many as the bank has readied, bounded by what the
-    // party can reach and by what the pack can seat but never below one — so if the pack cannot seat
-    // one (`carryable == 0`) while the herd has banked one, the party still kills ONE and wastes what
-    // it cannot haul, and with no banked animal it kills nothing and waits (the true no-surplus case).
-    let take = fauna::quantise_animal_take(ceiling, room, body_mass, stayed);
+    // party brought down and by what the pack can seat but never below one — so if the pack cannot
+    // seat one (`carryable == 0`) while the herd has banked one, the party still kills ONE and wastes
+    // what it cannot haul, and with no banked animal it kills nothing and waits (the true no-surplus
+    // case).
+    let take = fauna::quantise_animal_take(ceiling, room, body_mass, fight.brought_down);
     // Drain the bank by what was KILLED (carried + wasted), not merely carried — you cannot un-kill the
     // animal you could not haul. Cap at the surplus so it can't grow unbounded at the floor (surplus <
     // body ⇒ no kill ⇒ the bank would otherwise climb every turn). `0 ≤ credit ≤ surplus`.
     *credit = (*credit + rate - take.killed_biomass())
         .max(0.0)
         .min(standing_surplus);
-    take
+    HuntOutcome { take, fight }
 }
 
 /// The **provisions a hunting party actually lands in its larder per turn** at a herd's current state
@@ -955,12 +998,14 @@ pub fn expedition_take_provisions(
     hunt_yield: HuntYield,
     engage_rate: f32,
     wariness: f32,
+    quarry: fauna::QuarryFight,
+    party: &fauna::HuntingParty,
     retreat_seed: u64,
 ) -> f32 {
     // A single-turn preview starting from an empty bank (this readout is the client's per-turn rate,
     // not a specific banked turn) — the forward-sim `hunt_trip_forecast` is the one pinned to actual.
     let mut credit = 0.0_f32;
-    let take = expedition_take_biomass(
+    let outcome = expedition_take_biomass(
         workers,
         labor.hunt.per_worker_biomass_capacity,
         floor,
@@ -971,13 +1016,15 @@ pub fn expedition_take_provisions(
         f32::INFINITY,
         engage_rate,
         wariness,
+        quarry,
+        party,
         retreat_seed,
         &mut credit,
     );
     // Quantized onto the larder's `Scalar` grid, exactly as the real take lands there.
     scalar_from_f32(
         hunt_yield
-            .apply(take.carried, EXPEDITION_OUTPUT_MULTIPLIER)
+            .apply(outcome.take.carried, EXPEDITION_OUTPUT_MULTIPLIER)
             .provisions,
     )
     .to_f32()
@@ -1007,6 +1054,19 @@ pub fn expedition_take_provisions(
 /// linear: the client cannot re-derive a whole-animal take from a ceiling and a per-worker rate, so
 /// the sim must **export the answer**. `fauna::hunt_source_yield_preview` (→ `SourceYield`) is that
 /// answer, and `core_sim/tests/expedition_hunt.rs` pins it to this function.
+/// **One turn's hunt, both sides of it** — what came home, and what the fight cost.
+///
+/// The two used to be resolved by two unrelated code paths that could disagree
+/// (`docs/plan_hunt_through_combat.md` §0.1); they are one resolution now, so they come back
+/// together and no caller can apply one without the other.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HuntOutcome {
+    /// Killed / carried / wasted, in biomass.
+    pub take: AnimalTake,
+    /// The fight the take resolved through — its casualties, and whether it was a fight at all.
+    pub fight: fauna::HuntFight,
+}
+
 #[allow(clippy::too_many_arguments)] // the ecology, the ladder and the caller's caps are all levers
 pub fn hunt_take(
     herd: &mut Herd,
@@ -1014,13 +1074,18 @@ pub fn hunt_take(
     floor: f32,
     improvement: Option<Improvement>,
     per_worker_biomass_capacity: f32,
+    // The hunters' own strength — kit composed in — and the tuning they fight at. The take's kill
+    // arm IS this fight (`docs/plan_hunt_through_combat.md` §4), so a party that cannot beat the
+    // quarry's `defense` comes home with nothing however much the herd could spare.
+    party: &fauna::HuntingParty,
     fauna: &FaunaConfig,
     ladder: &LadderConfig,
     carry_room_biomass: f32,
-    // Per-event seed for the retreat draw (`fauna::retreat_seed`) — never a shared RNG stream, or
-    // hunt ordering would change outcomes and rollback would stop reproducing (§6.2).
+    // Per-event seed for the retreat draw (`fauna::retreat_seed`) and the fight's own draws — never a
+    // shared RNG stream, or hunt ordering would change outcomes and rollback would stop reproducing
+    // (§6.2).
     retreat_seed: u64,
-) -> AnimalTake {
+) -> HuntOutcome {
     // **Constant escapement** (`docs/plan_harvest_floor.md` §1): the herd hands over the stock
     // standing above the assignment's floor, at its CURRENT biomass. Resolved against the herd's OWN
     // capacity (`herd_capacity` — the single source of the rung → `K` mapping), never the raw wild
@@ -1059,12 +1124,25 @@ pub fn hunt_take(
         fauna.engage_rate_for(&herd.species),
         ladder.build_dip(improvement),
     );
+    // **Restraint is FREE, and the floor is what makes it so** (`docs/plan_hunt_through_combat.md`
+    // §1): the escapement floor bounds what the party *goes after*, not what it declines to kill
+    // afterwards. A crew at its floor that engaged normally would take casualties and wear its kit
+    // and then hand nothing back — and killing without taking is denial, not restraint.
+    let engaged = engaged.min(fauna::animals_affordable(ceiling, herd.body_mass));
     let stayed = fauna::animals_that_stay(engaged, fauna.wariness_for(&herd.species), retreat_seed);
-    let take = fauna::quantise_animal_take(ceiling, collection, herd.body_mass, stayed);
+    // **The fight decides the kill** — stage 3, and the arm that used to be a bespoke hunt formula.
+    let fight = fauna::resolve_hunt_fight(
+        stayed,
+        workers as f32 * ladder.build_dip(improvement),
+        party,
+        &fauna.quarry_fight_for(&herd.species),
+        retreat_seed,
+    );
+    let take = fauna::quantise_animal_take(ceiling, collection, herd.body_mass, fight.brought_down);
     // **The herd loses every animal KILLED, not merely what was carried** — you cannot un-kill the
     // mammoth you could not haul. That is the waste, and it is `take.wasted`.
     herd.biomass -= take.killed_biomass();
-    take
+    HuntOutcome { take, fight }
 }
 
 /// **WHICH of the raid's four stops actually ended the trip.** A trip length alone cannot tell the
@@ -1339,6 +1417,10 @@ pub fn hunt_trip_forecast(
     fauna: &FaunaConfig,
     labor: &LaborConfig,
     expedition: &ExpeditionConfig,
+    // The party that would go — its per-hunter profile and the tuning it fights at. The take resolves
+    // through the fight (`docs/plan_hunt_through_combat.md` §4), so a raid quoted for a bare-handed
+    // party must project the bare-handed take.
+    party: &fauna::HuntingParty,
 ) -> HuntTripForecast {
     // The pre-launch estimate: an EMPTY pack (the party has not left yet). See
     // `hunt_trip_forecast_seeded` for the in-flight (partial-pack) variant.
@@ -1350,6 +1432,7 @@ pub fn hunt_trip_forecast(
         fauna,
         labor,
         expedition,
+        party,
         scalar_zero(),
     )
 }
@@ -1368,6 +1451,7 @@ fn hunt_trip_forecast_seeded(
     fauna: &FaunaConfig,
     labor: &LaborConfig,
     expedition: &ExpeditionConfig,
+    party: &fauna::HuntingParty,
     initial_larder: Scalar,
 ) -> HuntTripForecast {
     // The quarry's yield vector — **the species decides the product**, the policy only the intensity.
@@ -1423,6 +1507,7 @@ fn hunt_trip_forecast_seeded(
     // whole run — see [`forecast_retreat_seed`] for why a projection cannot vary it per turn.
     let engage_rate = fauna.engage_rate_for(&quarry.species);
     let wariness = fauna.wariness_for(&quarry.species);
+    let quarry_fight = fauna.quarry_fight_for(&quarry.species);
     let retreat_seed = forecast_retreat_seed(&quarry.id, workers);
     let mut larder = initial_larder;
     let mut first_turn_provisions = 0.0_f32;
@@ -1465,9 +1550,12 @@ fn hunt_trip_forecast_seeded(
             carry_room_biomass,
             engage_rate,
             wariness,
+            quarry_fight,
+            party,
             retreat_seed,
             &mut quarry.hunt_credit,
-        );
+        )
+        .take;
         quarry.biomass -= take.killed_biomass();
         // The kill count — a raid may now kill a partial (one it cannot seat whole) and waste the rest,
         // exactly like the resident band; the delivered payload is `delivered_food`, not this count.
@@ -1593,6 +1681,9 @@ pub fn expedition_delivery(
     fauna: &FaunaConfig,
     labor: &LaborConfig,
     expedition_cfg: &ExpeditionConfig,
+    // The in-flight party's own strength — kit resolved by the caller, so the ETA projects the take
+    // this party can actually make (`docs/plan_hunt_through_combat.md` §4).
+    party: &fauna::HuntingParty,
     grid_width: u32,
     wrap_horizontal: bool,
 ) -> Option<ExpeditionDelivery> {
@@ -1654,6 +1745,7 @@ pub fn expedition_delivery(
                 fauna,
                 labor,
                 expedition_cfg,
+                party,
                 scalar_from_f32(carried),
             );
             let projected_food = carried + fc.delivered_food; // room-capped by construction, ≤ cap

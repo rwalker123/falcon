@@ -405,11 +405,15 @@ fn run_herd_with_crew(
             floor,
             improvement,
             labor.hunt.per_worker_biomass_capacity,
+            // The probe measures what the FLOOR does to a herd, so it hunts with the shipped kit —
+            // the tier an ordinary band is on. A dry-speared party is a different probe.
+            &crate::fauna::HuntingParty::builtin_equipped(),
             &fauna,
             &ladder,
             NO_CARRY_LIMIT,
             PROBE_RETREAT_SEED,
-        );
+        )
+        .take;
         let provisions = hunt_yield
             .apply(take.carried, UNIT_OUTPUT_MULTIPLIER)
             .provisions;
@@ -475,11 +479,13 @@ fn run_corral(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOu
             floor,
             improvement,
             labor.hunt.per_worker_biomass_capacity,
+            &crate::fauna::HuntingParty::builtin_equipped(),
             &fauna,
             &ladder,
             NO_CARRY_LIMIT,
             PROBE_RETREAT_SEED,
-        );
+        )
+        .take;
         if turns_to_complete.is_none() {
             provisions_over_build += hunt_yield
                 .apply(take.carried, UNIT_OUTPUT_MULTIPLIER)
@@ -540,11 +546,13 @@ fn run_tame(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutc
             floor,
             improvement,
             labor.hunt.per_worker_biomass_capacity,
+            &crate::fauna::HuntingParty::builtin_equipped(),
             &fauna,
             &ladder,
             NO_CARRY_LIMIT,
             PROBE_RETREAT_SEED,
-        );
+        )
+        .take;
         if turns_to_complete.is_none() {
             provisions_over_build += hunt_yield
                 .apply(take.carried, UNIT_OUTPUT_MULTIPLIER)
@@ -645,9 +653,48 @@ fn a_deeper_floor_never_takes_less_on_turn_one_on_either_web() {
                      {animal:?}"
                 );
             }
-            assert_live_below_capacity(&animal, &format!("{key}, {crew} hunters"));
+            // **The liveness pair now asks whether the party could bring one down** — the premise the
+            // fight added (`docs/plan_hunt_through_combat.md` §4.2). Below that threshold the take is
+            // honestly zero at *every* floor, and that is a statement about the GATE, not about the
+            // floor: asserting liveness there would be asserting that a lone hunter can kill a
+            // mammoth. So the two regimes are asserted as the two different things they are.
+            if crew >= hunters_to_bring_one_down(key) {
+                assert_live_below_capacity(&animal, &format!("{key}, {crew} hunters"));
+            } else {
+                assert!(
+                    animal.iter().all(|take| *take == 0.0),
+                    "{key}, {crew} hunters: a party that cannot bring one down takes nothing at ANY \
+                     floor — no floor is deep enough to substitute for a weapon: {animal:?}"
+                );
+            }
         }
     }
+}
+
+/// **The smallest party that can bring one animal of this species down in a single turn** —
+/// `ceil(durability / max(0, attack − defense))` at the shipped kitted tier
+/// (`docs/plan_hunt_through_combat.md` §4.2), derived from config rather than tabulated so a retune
+/// of any of the three inputs moves it.
+///
+/// **Damage does not bank between turns** (§7: *the animal does not wait* — there is no partial-kill
+/// meter), so a party below this threshold takes **nothing, at every floor, forever**. That list of
+/// zeros orders perfectly, which is exactly why the sweep above must not read it as a floor
+/// property.
+///
+/// A party that cannot beat the quarry's `defense` at all can never bring one down, at any headcount
+/// — §0.2's founding case — so this answers [`u32::MAX`] there rather than a large finite crew.
+fn hunters_to_bring_one_down(species_key: &str) -> u32 {
+    let fauna = FaunaConfig::builtin();
+    let party = crate::fauna::HuntingParty::builtin_equipped();
+    let quarry = fauna
+        .species
+        .get(species_key)
+        .expect("probe names a shipped species");
+    let per_hunter = crate::combat::strike_damage(party.hunter.attack, quarry.combat.defense);
+    if per_hunter <= 0.0 {
+        return u32::MAX;
+    }
+    (quarry.combat.durability / per_hunter).ceil() as u32
 }
 
 /// **The liveness bound that pairs with every turn-one monotonicity assertion** — a full source has

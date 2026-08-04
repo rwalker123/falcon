@@ -1680,12 +1680,20 @@ impl FaunaConfig {
             require_at_least_one(species_field("pastoral_density"), def.pastoral_density)?;
             require_at_least_one(species_field("pen_density"), def.pen_density)?;
             // **The intrinsic combat body** (Predators Phase 0, `docs/plan_predators.md`). `attack` may
-            // be `0` (most prey just runs — a harmless hunt), but `defense` is a **denominator** in the
-            // kill/wound split (`combat::resolve_fight`): at `0` the split is `0/0` and a species would
-            // be un-fightable. `aggression` is a `[0, 1]` probability of initiating a raid (inert this
-            // phase). All finite — a NaN would poison the fight arithmetic.
+            // be `0` (most prey just runs — a harmless hunt), and so may **`defense`**: it is the hard
+            // gate `max(0, attack − defense)` (`docs/plan_hunt_through_combat.md` §4.2), and `0` is the
+            // meaningful statement *"no protection at all"* that the five small-game rows carry — the
+            // whole of why a bare-handed band can still take a rabbit. It appears in the kill/wound
+            // split's denominator too, where `resolve_fight` already guards the `0/0` a harmless
+            // attacker would otherwise produce. `aggression` is a `[0, 1]` probability of initiating a
+            // raid. All finite — a NaN would poison the fight arithmetic.
             require_non_negative_finite(species_field("combat.attack"), def.combat.attack)?;
-            require_positive_finite(species_field("combat.defense"), def.combat.defense)?;
+            require_non_negative_finite(species_field("combat.defense"), def.combat.defense)?;
+            // **Durability is a DENOMINATOR** (`units_down = damage / durability`, §4.2), so `0` would
+            // turn a single point of damage into every animal in the engagement — a species wiped out
+            // by one hunter — and negative would hand back a negative kill count. Unlike `defense`
+            // there is no coherent zero: a body that soaks nothing is not "unprotected", it is absent.
+            require_positive_finite(species_field("combat.durability"), def.combat.durability)?;
             require_in_unit_range(species_field("aggression"), def.aggression)?;
             // `ferocity` is a probability (fights back vs flees), so the same `[0, 1]` bound as
             // `aggression`. It scales the animal's effective attack in the hunt-casualty adapters.
@@ -1924,6 +1932,28 @@ impl FaunaConfig {
     pub fn engage_rate_for(&self, display: &str) -> f32 {
         self.species_by_display(display)
             .map_or(f32::INFINITY, |def| def.engage_rate)
+    }
+
+    /// **The quarry's side of a hunt fight** ([`crate::fauna::QuarryFight`] — its combat body plus the
+    /// `ferocity` that decides whether it fights back), resolved by display name through the
+    /// [`FaunaConfig::taming_rate_for`] path. **THE seam** every take and forecast path resolves the
+    /// fight's quarry through, so none of them can assemble a different animal.
+    ///
+    /// An unresolvable species (an isolated test fixture) reads [`crate::combat::CombatStats`]'s
+    /// default with `ferocity 0` — a harmless body at the neutral `durability 1`, which is the honest
+    /// reading of *"the roster does not describe this herd"* and matches what
+    /// [`FaunaConfig::wariness_for`] already answers for the same case.
+    pub fn quarry_fight_for(&self, display: &str) -> crate::fauna::QuarryFight {
+        self.species_by_display(display).map_or(
+            crate::fauna::QuarryFight {
+                profile: CombatStats::default(),
+                ferocity: 0.0,
+            },
+            |def| crate::fauna::QuarryFight {
+                profile: def.combat,
+                ferocity: def.ferocity,
+            },
+        )
     }
 
     /// **The species' resolved hunt-yield vector** ([`SpeciesDef::hunt_yield`]) — *what* a take of this

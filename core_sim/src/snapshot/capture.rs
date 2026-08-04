@@ -86,6 +86,9 @@ pub struct SnapshotContext<'w> {
     /// The TOE kit table — the equipped attack tier, the unequipped haul tier, and the durability
     /// dials each band's `BandEquipment` wear is measured against.
     pub equipment: Res<'w, crate::equipment_config::EquipmentConfigHandle>,
+    /// Resolver tuning — read so a herd's pre-commit forecast resolves the SAME fight the take will
+    /// (`docs/plan_hunt_through_combat.md` §4).
+    pub combat: Res<'w, crate::combat_config::CombatConfigHandle>,
     pub settlement_stage: Res<'w, crate::settlement_stage_config::SettlementStageConfigHandle>,
     pub supply_membership: Res<'w, SupplyNetworkMembership>,
     pub pipeline_config: Res<'w, TurnPipelineConfigHandle>,
@@ -1833,6 +1836,7 @@ pub fn capture_snapshot(
         expedition,
         creatures,
         equipment,
+        combat,
         settlement_stage,
         supply_membership,
         pipeline_config,
@@ -2005,6 +2009,14 @@ pub fn capture_snapshot(
     // `person` profile and `labor_config`'s kitted haul rate. What varies per band is only its
     // `BandEquipment` wear, which `population_state` resolves against these.
     let equipment_config = equipment.get();
+    let combat_config = combat.get();
+    // A detached party fights at the `expedition_danger_multiplier`-scaled lethality, exactly as
+    // `advance_expeditions` resolves it — so the in-flight ETA and the turn agree.
+    let expedition_combat_tuning = {
+        let mut tuning = combat_config.tuning();
+        tuning.lethality *= combat_config.expedition_danger_multiplier;
+        tuning
+    };
     let kit_levers = crate::snapshot::population::BandKitLevers {
         config: &equipment_config,
         hunter_intrinsic: creatures.get().person(),
@@ -2052,6 +2064,19 @@ pub fn capture_snapshot(
                 let expedition_delivery = expedition.and_then(|exp| {
                     let party_pos = current_pos?;
                     let home_pos = cohort_positions.get(&exp.home_band).copied();
+                    // **This party's own fighting tier** — its `BandEquipment` wear, resolved through
+                    // the same `hunter_profile` seam `advance_expeditions` reads, so the ETA projects
+                    // the take the party can actually make once its spears are gone.
+                    let party = crate::fauna::HuntingParty {
+                        hunter: equipment_config.hunter_profile(
+                            kit_levers.hunter_intrinsic,
+                            equipment
+                                .copied()
+                                .unwrap_or_default()
+                                .hunting_equipped(&equipment_config),
+                        ),
+                        tuning: expedition_combat_tuning,
+                    };
                     crate::systems::expedition_delivery(
                         exp,
                         cohort.stores.get(FOOD).to_f32(),
@@ -2062,6 +2087,7 @@ pub fn capture_snapshot(
                         &fauna_config,
                         &labor_config,
                         &expedition_cfg,
+                        &party,
                         config.grid_size.x,
                         config.map_topology.wrap_horizontal,
                     )
@@ -2404,6 +2430,12 @@ pub fn capture_snapshot(
         visibility: &visibility_ledger,
         viewer: viewer_faction.0,
         fog_enabled: config.fog_enabled,
+        // **The equipped tier, deliberately** — the herd row is a fact about the herd, quoted for a
+        // standard kitted party exactly as its haul is priced at `hunt.per_worker_biomass_capacity`.
+        party: crate::fauna::HuntingParty {
+            hunter: equipment_config.hunter_profile(kit_levers.hunter_intrinsic, true),
+            tuning: combat_config.tuning(),
+        },
     });
     drop(herds_scope);
     let faction_inventory_state = snapshot_faction_inventory(&faction_inventory);

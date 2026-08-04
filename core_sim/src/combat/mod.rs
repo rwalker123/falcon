@@ -11,11 +11,19 @@
 //! creatures roster holds the base human's), so a new combatant kind (barbarians, armies, mechs) is
 //! a new *adapter*, never an edit to combat.
 //!
-//! [`resolve_fight`] is a **pure function** (deterministic, rollback-safe, no RNG). Its internals are
-//! a deliberate *placeholder* that nonetheless consumes the real contract shapes — per-contingent
-//! composition, range bands, death/wound split — so when the real resolver lands (ranged pre-phase,
-//! terrain cover, morale/break) only the function body changes and every caller stays put.
+//! [`resolve_fight`] is a **pure function of its payload** (deterministic and rollback-safe: any
+//! randomness is drawn from [`FightPayload::seed`], never from a shared stream). Its internals stay a
+//! deliberate *placeholder* in the parts this arc did not need — ranged pre-phase, terrain cover,
+//! morale/break — so those land as a body change with every caller in place.
+//!
+//! **The attrition model is damage against durability, and the gate is hard**
+//! (`docs/plan_hunt_through_combat.md` §4.2): a unit that cannot beat its target's `defense` does
+//! **zero** damage, at any headcount, over any horizon. That is the one property a smooth hit
+//! probability would silently break (§4.7 — `p = a/(a+d)` gives eight hundred bare-handed hunters a
+//! dead mammoth in sixteen turns), and it is why the gate is a subtraction outside the dice rather
+//! than a term inside them.
 
+use rand::{rngs::SmallRng, Rng, SeedableRng};
 use serde::Deserialize;
 
 /// **Which range band a unit fights in** — combat's neutral range type, persisted-enum convention
@@ -65,10 +73,30 @@ pub struct CombatStats {
     /// Offensive / retaliation power when a fight happens. Default `0.0` — most prey just runs, so a
     /// hunt is harmless.
     pub attack: f32,
-    /// How hard the unit is to bring down. **A denominator in the kill/wound split** (higher defense →
-    /// more wounded, fewer killed — the equip-to-shift-severity lever), so it must be `> 0`. Default
-    /// `1.0`.
+    /// **Whether an incoming hit counts at all** — the hard gate of
+    /// `docs/plan_hunt_through_combat.md` §4.2: an attacker lands `max(0, attack − defense)` per
+    /// strike, so an attacker below this does **nothing**, however many of it there are. Also a
+    /// denominator in the kill/wound split (higher defense → more wounded, fewer killed — the
+    /// equip-to-shift-severity lever). Default `1.0`; `0` is legal and means *no protection at all*
+    /// (a rabbit).
+    ///
+    /// **`defense` and [`CombatStats::durability`] blur easily and must not**: defense is whether a
+    /// hit counts, durability is how many counting hits it takes.
     pub defense: f32,
+    /// **How much damage the unit soaks before it goes down** — the §4.2 attrition denominator, so
+    /// `units_down = damage / durability`. Default `1.0`.
+    ///
+    /// **Authored, never derived from body mass.** Durability is a defensive *strategy* and plenty of
+    /// creatures do not use it: a gazelle is not one-third of a deer's toughness, it is not tough at
+    /// all — it survives by not being there (`wariness`). Boar and seal are the same body mass and the
+    /// boar is nearly twice as durable; a wolf is lighter than a wild sheep and tougher than one.
+    /// Deriving it would have destroyed exactly that.
+    ///
+    /// **Excess damage spills to the next unit in the contingent**, because the division is
+    /// continuous: 20 damage into 2-durability rabbits brings down ten of them, and the number rises
+    /// on its own when the party's weapon improves. No creature carries a "how many of these per turn"
+    /// figure.
+    pub durability: f32,
     /// Which range band the unit fights in. Default [`RangeBand::Melee`].
     pub range: RangeBand,
     /// **The probability this combatant breaks off when contact is made** — engaged, then gone before
@@ -92,6 +120,7 @@ impl Default for CombatStats {
         Self {
             attack: 0.0,
             defense: 1.0,
+            durability: 1.0,
             range: RangeBand::Melee,
             wariness: 0.0,
         }
@@ -211,13 +240,27 @@ pub struct FightOutcome {
 /// creature-identity data (`docs/plan_predators.md`: `combat_config.json` is resolver tuning, not
 /// creature identity). Held here as combat's own type so [`resolve_fight`] stays a pure function
 /// testable without a Bevy world; [`crate::combat_config`] loads it from JSON.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CombatTuning {
     /// Scales every side's total losses. `1.0` is the shipped anchor.
     pub lethality: f32,
     /// A loser whose losses exceed this fraction of its headcount is driven off (`disengaged`) rather
     /// than annihilated. `0.5` is the shipped anchor.
     pub disengage_fraction: f32,
+    /// **The probability one unit's attack lands** — where variance lives
+    /// (`docs/plan_hunt_through_combat.md` §4.7). Drawn per *unit*, so it is **binomial in force
+    /// size**: three hunters are a gamble, thirty are reliable, and party size is a real decision
+    /// rather than a threshold to clear. A flat ±X% on the damage total cannot buy that.
+    ///
+    /// **It never softens the gate.** A unit below its target's `defense` deals `max(0, a − d) = 0`
+    /// per landed strike, so no number of successful rolls produces damage — the requirement §4.7
+    /// calls the trap.
+    ///
+    /// **`1.0` is an exact identity, not a roll that always succeeds**: no draw is made and no
+    /// randomness is consumed, which is what lets this ship inert (`forecast == actual` per component
+    /// stays exact until slice 5 teaches the forecast to report a range) with the machinery in place
+    /// and tested. Same discipline as [`CombatStats::wariness`]'s `0`.
+    pub hit_chance: f32,
 }
 
 impl Default for CombatTuning {
@@ -225,6 +268,7 @@ impl Default for CombatTuning {
         Self {
             lethality: DEFAULT_LETHALITY,
             disengage_fraction: DEFAULT_DISENGAGE_FRACTION,
+            hit_chance: DEFAULT_HIT_CHANCE,
         }
     }
 }
@@ -233,11 +277,21 @@ impl Default for CombatTuning {
 pub(crate) const DEFAULT_LETHALITY: f32 = 1.0;
 /// Shipped `disengage_fraction` — a loser past this loss share is driven off, not annihilated.
 pub(crate) const DEFAULT_DISENGAGE_FRACTION: f32 = 0.5;
+/// Shipped `hit_chance` — **certainty**, so the resolver draws nothing and consumes no randomness.
+/// See [`CombatTuning::hit_chance`].
+pub(crate) const DEFAULT_HIT_CHANCE: f32 = 1.0;
 
-/// The smallest own-power we will divide by, so a zero-attack side (all defenders, no offense) does
-/// not blow up the enemy-relative loss ratio. Named rather than bare so a reader sees it guards a
-/// denominator, not a magic epsilon.
-const POWER_EPS: f32 = 1e-6;
+/// The smallest `durability` [`resolve_fight`] will divide damage by. Named rather than bare so a
+/// reader sees it guards a denominator: every config path validates `durability > 0`, and this stops
+/// a hand-built [`CombatStats`] from turning one point of damage into infinitely many casualties.
+const DURABILITY_EPS: f32 = 1e-6;
+
+/// **The most individual attack rolls one contingent will make.** Above this the binomial is
+/// indistinguishable from its mean at `f32` precision, and rolling it would cost more than the fight
+/// is worth — so a contingent larger than this takes its expectation (`count × hit_chance`) instead.
+/// The shipped `hit_chance` of `1.0` draws nothing at all, so nothing reaches this today; it exists
+/// so a future sub-1 chance cannot turn a hundred-thousand-strong force into a hang.
+const MAX_INDIVIDUAL_ATTACK_ROLLS: f32 = 100_000.0;
 
 /// A force's aggregate power — `Σ count × attack` over its contingents. **Combat's job, never the
 /// caller's**: a scalar handed in from outside cannot survive TOE (see `docs/plan_predators.md`).
@@ -277,37 +331,127 @@ fn strict_victor(sides: &[Force], powers: &[f32]) -> Option<ForceId> {
     }
 }
 
-/// **Resolve one fight — deterministic pure arithmetic, no RNG.** The placeholder model
-/// (`docs/plan_predators.md` "The placeholder resolver"):
+/// **How many of `attackers` land a blow this round** — the binomial of
+/// `docs/plan_hunt_through_combat.md` §4.7, drawn per *unit* so variance shrinks as the force grows.
+///
+/// `chance >= 1` is an **exact identity**: every unit lands, no draw is made and **no randomness is
+/// consumed**, which is what lets the shipped tuning keep `resolve_fight` a pure arithmetic function.
+/// `chance <= 0` is the mirror identity — nobody lands, and again no draw.
+///
+/// The fractional remainder of a `count` (the sim's cohorts are fractional) contributes its
+/// expectation rather than a half-roll; and a force past [`MAX_INDIVIDUAL_ATTACK_ROLLS`] takes its
+/// expectation whole, because at that size the binomial is its mean.
+pub fn attacks_landed(attackers: f32, chance: f32, rng: &mut SmallRng) -> f32 {
+    if attackers <= 0.0 {
+        return 0.0;
+    }
+    if chance >= 1.0 {
+        return attackers;
+    }
+    if chance <= 0.0 {
+        return 0.0;
+    }
+    if attackers > MAX_INDIVIDUAL_ATTACK_ROLLS {
+        return attackers * chance;
+    }
+    let whole = attackers.floor();
+    let odds = f64::from(chance);
+    let landed = (0..whole as u32).filter(|_| rng.gen_bool(odds)).count() as f32;
+    landed + (attackers - whole) * chance
+}
+
+/// [`attacks_landed`] for a caller that owns no stream — a **provably one-sided** engagement resolving
+/// without a [`FightPayload`] (see [`units_brought_down`]). Seeded per event exactly as a fight is, so
+/// it is order-independent for the same reason.
+pub fn attacks_landed_seeded(attackers: f32, chance: f32, seed: u64) -> f32 {
+    let mut rng = SmallRng::seed_from_u64(seed);
+    attacks_landed(attackers, chance, &mut rng)
+}
+
+/// **THE GATE** — what one landed strike does to a target of this `defense`:
+/// `max(0, attack − defense)` (`docs/plan_hunt_through_combat.md` §4.2). Below it the answer is
+/// **exactly** `0`, which is what makes headcount unable to substitute for a weapon.
+///
+/// Exposed because [`resolve_fight`] is not the only shape a fight takes: a caller whose enemy
+/// contributes no attack at all can read the same numbers without building a payload for casualties
+/// that are structurally zero. **It is the only definition of the gate in the crate** — that is why it
+/// is a function rather than a subtraction repeated at two sites.
+pub fn strike_damage(attack: f32, defense: f32) -> f32 {
+    (attack - defense).max(0.0)
+}
+
+/// **How many units `damage` brings down** — `damage / durability`, capped at the units present.
+///
+/// The division is continuous, so **excess damage spills to the next unit** for free: that is what
+/// makes "many small animals per turn" a consequence of the weapon rather than an authored
+/// per-species count. [`resolve_fight`]'s companion primitive to [`strike_damage`]; see that function
+/// for why both are public.
+pub fn units_brought_down(damage: f32, profile: &CombatStats, count: f32) -> f32 {
+    (damage / profile.durability.max(DURABILITY_EPS)).clamp(0.0, count.max(0.0))
+}
+
+/// **Resolve one fight — a pure function of `(payload, tuning)`**, deterministic and rollback-safe:
+/// any variance is drawn from [`FightPayload::seed`], never a shared stream.
+///
+/// # The attrition model — damage against durability (`docs/plan_hunt_through_combat.md` §4.2)
+///
+/// ```text
+/// per-strike damage = max(0, attacker.attack − target.defense)     // THE GATE, and it is hard
+/// damage into a target contingent = Σ landed strikes × per-strike damage × lethality
+/// units down = min(count, damage / durability)                     // excess spills to the next unit
+/// ```
+///
+/// Three properties this shape exists to guarantee, each of which a more "natural" formulation
+/// silently breaks:
+/// - **Headcount cannot substitute for a weapon.** Below the gate the per-strike damage is exactly
+///   `0`, so no quantity of attackers and no length of horizon produces a single casualty — eight
+///   hundred bare-handed people cannot kill a mammoth (§0.2). A smooth `p = a/(a+d)` hit probability
+///   would let enough dice roll through, and does it in sixteen turns (§4.7).
+/// - **"Many small animals per turn" is not authored.** Excess damage spills to the next unit in the
+///   contingent because the division is continuous, so twenty damage into 2-durability quarry brings
+///   down ten of them — and the number rises on its own with a better weapon.
+/// - **Above the gate, high-`defense` quarry gains SUPER-linearly from a better weapon** (§4.6):
+///   doubling `attack` 20 → 40 takes a `defense 12` target's effective attack 8 → 28, while a
+///   `defense 0` target's merely doubles.
+///
+/// # What is unchanged from the placeholder
 ///
 /// - `power(side) = Σ contingent.count × attack`; `victor` = strictly-higher power (`None` on a tie).
-/// - Each side's **total losses depend on ENEMY power relative to OWN power**, scaled by `lethality`
-///   and clamped to its headcount — so **more/stronger defenders take FEWER own casualties** (own
-///   count does *not* scale losses; that would invert the mitigation).
-/// - Losses distribute across a side's contingents ∝ `count`, capped per contingent.
 /// - The kill/wound split is `killed_frac = incoming_per_defender / (incoming_per_defender +
 ///   own.defense)`, where `incoming_per_defender = power_enemy / count_self` — the enemy's total
 ///   attack **diluted across the defenders it lands on**. So **more defenders → more wounded, fewer
 ///   killed** (warriors shift severity by thinning the incoming blow) and **higher own defense → more
-///   wounded, fewer killed** (the equip-to-shift-severity lever). Both are the design's whole thesis:
-///   *"Warriors and equipment shift the kill↔wound split, not just the total."*
+///   wounded, fewer killed** (the equip-to-shift-severity lever): *"Warriors and equipment shift the
+///   kill↔wound split, not just the total."* (`docs/plan_predators.md`).
 /// - `disengaged` iff the loser's losses exceed `disengage_fraction` of its headcount.
 ///
-/// **Note on the seam** (`docs/plan_predators.md`): the design's prose spelled the split's denominator
-/// as `power_enemy / count_enemy`. With the enemy a *single* beast (count 1, fixed) that would leave
-/// the split constant no matter how many warriors join — which contradicts the very behaviour Phase 0
-/// exists to demonstrate ("the split shifts toward wounded as warriors rise"). Dividing by the
-/// **defenders** instead is what makes warriors move severity, so that is the model implemented here.
+/// **A side's own losses no longer shrink with its own headcount, and that is the model change.** The
+/// placeholder scaled losses by `power_enemy / power_self`; damage is a quantity the enemy *deals*, so
+/// a bigger party takes the same absolute damage and simply spreads it thinner — which is what the
+/// split above then reports as a shift toward wounded. Mitigation by numbers survives as severity, not
+/// as an exemption from being hit.
 ///
-/// `range`, `terrain`, `posture` and `seed` are accepted and **ignored** — reserved for the real
-/// resolver. Casualties stay `f32` (whole-unit quantization is a deliberate later refinement).
+/// # Allocation across contingents
+///
+/// Enemy attackers are split across a side's contingents ∝ `count`, and each pair is gated by **that
+/// target's** own defense. Damage is **not** redistributed when a contingent is annihilated — one more
+/// piece of the placeholder that the real resolver will own; every shipped caller fields a single
+/// target contingent per side except the predator raid, whose two contingents share one `defense`.
+///
+/// `range`, `terrain` and `posture` are accepted and **ignored** — reserved for the real resolver.
+/// Casualties stay `f32` (whole-unit quantization belongs to the caller: a hunt floors the animals it
+/// brings down, a cohort's brackets are genuinely fractional).
 pub fn resolve_fight(payload: &FightPayload, tuning: &CombatTuning) -> FightOutcome {
     let powers: Vec<f32> = payload.sides.iter().map(force_power).collect();
     let counts: Vec<f32> = payload.sides.iter().map(force_count).collect();
     let total_power: f32 = powers.iter().sum();
-    let total_count: f32 = counts.iter().sum();
 
     let victor = strict_victor(&payload.sides, &powers);
+
+    // One stream per fight, seeded per event by the caller (`docs/plan_hunt_through_combat.md` §6.2)
+    // — so resolving the same fights in a different order gives identical outcomes. At the shipped
+    // `hit_chance` of `1.0` nothing draws from it at all.
+    let mut rng = SmallRng::seed_from_u64(payload.seed);
 
     let mut results = Vec::new();
     let mut loss_totals = vec![0.0_f32; payload.sides.len()];
@@ -315,30 +459,50 @@ pub fn resolve_fight(payload: &FightPayload, tuning: &CombatTuning) -> FightOutc
         let power_self = powers[i];
         let count_self = counts[i];
         // "Enemy" = every OTHER side (generalizes cleanly to the >2-side future; today it is the one
-        // opposing force). Losses key off enemy strength RELATIVE TO OWN, so a stronger own side is
-        // mitigated — never scaled up by its own count.
+        // opposing force).
         let power_enemy = total_power - power_self;
-        let count_enemy = total_count - count_self;
-        let losses_total =
-            ((power_enemy / power_self.max(POWER_EPS)) * tuning.lethality).clamp(0.0, count_self);
-        loss_totals[i] = losses_total;
-
         // The enemy's total attack **diluted across the defenders it lands on** drives the kill/wound
         // severity split — so more defenders (warriors) thin each blow toward wounding, not killing.
         // Zero own count, or a zero-attack enemy (→ zero power), means zero incoming lethality: nobody
-        // dies. `count_enemy` is read only so the >2-side generalization stays explicit.
-        let _ = count_enemy;
+        // dies.
         let incoming_per_defender = if count_self > 0.0 {
             power_enemy / count_self
         } else {
             0.0
         };
+        let mut losses_total = 0.0_f32;
         for contingent in &side.contingents {
-            let down = if count_self > 0.0 {
-                (losses_total * contingent.count / count_self).clamp(0.0, contingent.count)
+            // The enemy's units are split across this side's contingents ∝ their counts, and each
+            // pairing is gated by THIS contingent's defense.
+            let share = if count_self > 0.0 {
+                contingent.count / count_self
             } else {
                 0.0
             };
+            let mut damage = 0.0_f32;
+            for (j, enemy) in payload.sides.iter().enumerate() {
+                if j == i {
+                    continue;
+                }
+                for attacker in &enemy.contingents {
+                    // **THE GATE.** Below the target's defense a strike does nothing at all — not a
+                    // small amount, nothing — so no headcount clears it, and no draw is even made.
+                    let per_strike =
+                        strike_damage(attacker.profile.attack, contingent.profile.defense);
+                    if per_strike <= 0.0 {
+                        continue;
+                    }
+                    let landed =
+                        attacks_landed(attacker.count * share, tuning.hit_chance, &mut rng);
+                    damage += landed * per_strike;
+                }
+            }
+            let down = units_brought_down(
+                damage * tuning.lethality,
+                &contingent.profile,
+                contingent.count,
+            );
+            losses_total += down;
             let denom = incoming_per_defender + contingent.profile.defense;
             let killed_frac = if denom > 0.0 {
                 incoming_per_defender / denom
@@ -354,6 +518,7 @@ pub fn resolve_fight(payload: &FightPayload, tuning: &CombatTuning) -> FightOutc
                 wounded,
             });
         }
+        loss_totals[i] = losses_total;
     }
 
     // The loser withdrew rather than being annihilated iff its losses cleared the disengage share.
@@ -375,26 +540,33 @@ pub fn resolve_fight(payload: &FightPayload, tuning: &CombatTuning) -> FightOutc
 mod tests {
     use super::*;
 
+    /// The durability every fixture below leaves at the neutral `1.0` unless it is the thing under
+    /// test — one damage brings one unit down, so a fixture's arithmetic reads straight off `attack −
+    /// defense`.
+    const UNIT_DURABILITY: f32 = 1.0;
+
+    /// The shipped `person` row's `combat.durability` (`creatures.json`) and the mammoth's
+    /// (`fauna_config.json`) — used where the fixture needs bodies that do **not** clamp to headcount
+    /// on the first blow, so an assertion measures the model rather than the clamp.
+    const PERSON_DURABILITY: f32 = 20.0;
+    const MEGAFAUNA_DURABILITY: f32 = 500.0;
+
     fn person(count: f32, attack: f32, defense: f32) -> Contingent {
-        Contingent {
-            kind: ContingentId::from("person"),
-            count,
-            profile: CombatStats {
-                attack,
-                defense,
-                range: RangeBand::Melee,
-                wariness: 0.0,
-            },
-        }
+        soldier("person", count, attack, defense, UNIT_DURABILITY)
     }
 
     fn beast(count: f32, attack: f32, defense: f32) -> Contingent {
+        soldier("beast", count, attack, defense, UNIT_DURABILITY)
+    }
+
+    fn soldier(kind: &str, count: f32, attack: f32, defense: f32, durability: f32) -> Contingent {
         Contingent {
-            kind: ContingentId::from("beast"),
+            kind: ContingentId::from(kind),
             count,
             profile: CombatStats {
                 attack,
                 defense,
+                durability,
                 range: RangeBand::Melee,
                 wariness: 0.0,
             },
@@ -426,53 +598,207 @@ mod tests {
 
     #[test]
     fn an_even_fight_ties_with_no_victor() {
+        // Attack 2 against defense 1 — both sides clear the gate by exactly one point, so each deals
+        // `5 × 1 = 5` damage into 1-durability units and the whole five-strong side goes down.
         let out = resolve_fight(
-            &payload(vec![person(5.0, 1.0, 1.0)], vec![person(5.0, 1.0, 1.0)]),
+            &payload(vec![person(5.0, 2.0, 1.0)], vec![person(5.0, 2.0, 1.0)]),
             &CombatTuning::default(),
         );
         assert_eq!(out.victor, None);
-        // Symmetric: equal power both ways → each side's losses_total == lethality (= 1.0), split
-        // identically, so both results are equal.
         let a = side_result(&out, ForceId(1));
         let b = side_result(&out, ForceId(2));
         assert!((a.killed - b.killed).abs() < 1e-4);
         assert!((a.wounded - b.wounded).abs() < 1e-4);
-        assert!((a.killed + a.wounded - 1.0).abs() < 1e-4);
+        assert!((a.killed + a.wounded - 5.0).abs() < 1e-4);
+    }
+
+    /// **Nobody is hurt by an enemy that cannot beat their defense**, at any headcount — the gate
+    /// (`docs/plan_hunt_through_combat.md` §0.2), asserted here at the resolver rather than only
+    /// through the hunt adapter.
+    #[test]
+    fn an_evenly_matched_attack_and_defense_draws_no_blood() {
+        let out = resolve_fight(
+            &payload(vec![person(800.0, 1.0, 1.0)], vec![beast(1.0, 1.0, 1.0)]),
+            &CombatTuning::default(),
+        );
+        for result in &out.results {
+            assert_eq!(result.killed, 0.0, "{:?} should be untouched", result.kind);
+            assert_eq!(result.wounded, 0.0, "{:?} should be untouched", result.kind);
+        }
+        // Power still decides the victor — the gate is about damage, not about who is winning.
+        assert_eq!(out.victor, Some(ForceId(1)));
     }
 
     #[test]
     fn a_five_to_one_mismatch_crushes_the_weak_side() {
         let out = resolve_fight(
-            &payload(vec![person(5.0, 1.0, 1.0)], vec![person(1.0, 1.0, 1.0)]),
+            &payload(vec![person(5.0, 2.0, 1.0)], vec![person(1.0, 2.0, 1.0)]),
             &CombatTuning::default(),
         );
         assert_eq!(out.victor, Some(ForceId(1)));
-        // Weak side (power 1) faces enemy power 5 → losses = 5/1 = 5, clamped to its headcount of 1.
+        // Weak side takes 5 damage into its single 1-durability unit → annihilated.
         let weak = side_result(&out, ForceId(2));
         assert!((weak.killed + weak.wounded - 1.0).abs() < 1e-4);
-        // Strong side (power 5) faces enemy power 1 → losses = 1/5 = 0.2 of its 5 — far fewer.
+        // **Compared as a SHARE of headcount, not as an absolute** — and that is the model, not a
+        // weakened assertion. Damage is a quantity the enemy *deals*: the strong side takes the one
+        // unit of damage its lone opponent can deal whatever its own size, so its absolute loss is
+        // flat and its *share* is what a bigger party buys. Reading these as absolutes would assert
+        // that a crowd makes the enemy swing less, which is exactly what it does not do.
         let strong = side_result(&out, ForceId(1));
-        assert!(strong.killed + strong.wounded < weak.killed + weak.wounded);
+        let strong_share = (strong.killed + strong.wounded) / 5.0;
+        let weak_share = weak.killed + weak.wounded; // headcount 1
+        assert!(
+            strong_share < weak_share,
+            "strong side lost {strong_share} of itself, weak side {weak_share}"
+        );
         // The loser lost its whole headcount (> 0.5) → driven off.
         assert!(out.disengaged);
     }
 
+    /// **Excess damage spills to the next unit, exactly** — the property that makes "many small
+    /// animals per turn" fall out of the weapon instead of being authored (§4.2). One attacker doing
+    /// 20 against 2-durability quarry brings down ten, and doubling its attack doubles that.
+    #[test]
+    fn excess_damage_spills_to_the_next_unit_in_the_contingent() {
+        let tuning = CombatTuning::default();
+        let quarry = || soldier("quarry", 40.0, 0.0, 0.0, 2.0);
+        let spear = resolve_fight(
+            &payload(vec![person(1.0, 20.0, 1.0)], vec![quarry()]),
+            &tuning,
+        );
+        assert!((side_result(&spear, ForceId(2)).killed - 10.0).abs() < 1e-4);
+        let better = resolve_fight(
+            &payload(vec![person(1.0, 40.0, 1.0)], vec![quarry()]),
+            &tuning,
+        );
+        assert!((side_result(&better, ForceId(2)).killed - 20.0).abs() < 1e-4);
+    }
+
+    /// **The spill stops at the contingent's headcount** — twenty damage cannot bring down more
+    /// quarry than is standing there.
+    #[test]
+    fn spillover_never_exceeds_the_units_present() {
+        let out = resolve_fight(
+            &payload(
+                vec![person(1.0, 20.0, 1.0)],
+                vec![soldier("quarry", 3.0, 0.0, 0.0, 2.0)],
+            ),
+            &CombatTuning::default(),
+        );
+        let quarry = side_result(&out, ForceId(2));
+        assert!((quarry.killed + quarry.wounded - 3.0).abs() < 1e-4);
+    }
+
+    /// **The shipped `hit_chance` of `1.0` consumes no randomness** — the seed cannot change the
+    /// outcome, which is what keeps `forecast == actual` exact until slice 5 teaches the forecast to
+    /// report a range.
+    #[test]
+    fn the_shipped_hit_chance_is_an_exact_identity_across_seeds() {
+        let tuning = CombatTuning::default();
+        assert_eq!(tuning.hit_chance, DEFAULT_HIT_CHANCE);
+        let baseline = resolve_fight(
+            &payload(vec![person(9.0, 20.0, 1.0)], vec![beast(4.0, 6.0, 2.0)]),
+            &tuning,
+        );
+        for seed in [1_u64, 7, 9_999, u64::MAX] {
+            let mut p = payload(vec![person(9.0, 20.0, 1.0)], vec![beast(4.0, 6.0, 2.0)]);
+            p.seed = seed;
+            assert_eq!(resolve_fight(&p, &tuning), baseline);
+        }
+    }
+
+    /// **Variance is binomial in force size** (§4.7): three attackers are a gamble, thirty are
+    /// reliable. Asserted as a spread across many seeds — paired with a liveness assertion that the
+    /// small force's outcome moves at all, because a dead draw would "pass" a spread check.
+    #[test]
+    fn variance_shrinks_as_the_force_grows() {
+        let tuning = CombatTuning {
+            hit_chance: 0.5,
+            ..CombatTuning::default()
+        };
+        let spread = |attackers: f32| {
+            let mut seen: Vec<f32> = Vec::new();
+            for seed in 0..200_u64 {
+                // Attack 1 against defense 0 → exactly one damage per landed strike, into
+                // 1-durability quarry: one unit down per hit, so the per-attacker figure below IS the
+                // realised hit rate. Quarry deep enough that the headcount clamp never binds.
+                let mut p = payload(
+                    vec![person(attackers, 1.0, 1.0)],
+                    vec![soldier("quarry", 1_000.0, 0.0, 0.0, UNIT_DURABILITY)],
+                );
+                p.seed = seed;
+                let out = resolve_fight(&p, &tuning);
+                let down = side_result(&out, ForceId(2));
+                seen.push((down.killed + down.wounded) / attackers);
+            }
+            let mean = seen.iter().sum::<f32>() / seen.len() as f32;
+            let var = seen.iter().map(|v| (v - mean).powi(2)).sum::<f32>() / seen.len() as f32;
+            (mean, var.sqrt())
+        };
+        let (small_mean, small_sd) = spread(3.0);
+        let (large_mean, large_sd) = spread(300.0);
+        // Liveness: the draw is real, and it is centred on the hit chance.
+        assert!(small_sd > 0.0, "a hit chance below 1 must actually roll");
+        assert!((small_mean - 0.5).abs() < 0.1, "mean was {small_mean}");
+        assert!((large_mean - 0.5).abs() < 0.02, "mean was {large_mean}");
+        // The property: per-attacker variance falls as the force grows.
+        assert!(
+            large_sd < small_sd * 0.5,
+            "large force sd {large_sd} should be far below the small force's {small_sd}"
+        );
+    }
+
+    /// **A sub-gate force rolls nothing, however many dice it would otherwise throw** (§4.7): the
+    /// probability below the gate is *exactly* zero, not merely small, so no seed produces a casualty.
+    #[test]
+    fn no_seed_lets_a_sub_gate_force_through() {
+        let tuning = CombatTuning {
+            hit_chance: 0.5,
+            ..CombatTuning::default()
+        };
+        for seed in 0..500_u64 {
+            let mut p = payload(
+                vec![person(800.0, 1.0, 1.0)],
+                vec![soldier("mammoth", 1.0, 0.0, 12.0, 500.0)],
+            );
+            p.seed = seed;
+            let out = resolve_fight(&p, &tuning);
+            let quarry = side_result(&out, ForceId(2));
+            assert_eq!(
+                quarry.killed + quarry.wounded,
+                0.0,
+                "seed {seed} broke the gate"
+            );
+        }
+    }
+
+    /// **A bigger party still buries fewer of its own** — but it buys that through the kill/wound
+    /// *split*, not by making the beast swing less. The bodies here carry the roster's real
+    /// `durability`, deliberately: at the fixture's neutral `1.0` the beast's damage exceeds a lone
+    /// human entirely, the clamp-to-headcount binds, and the comparison measures the clamp instead of
+    /// the property.
     #[test]
     fn adding_defenders_reduces_the_strong_sides_own_casualties() {
         let tuning = CombatTuning::default();
+        let human = |count: f32| soldier("person", count, 1.0, 1.0, PERSON_DURABILITY);
+        let dangerous_beast = || soldier("beast", 1.0, 8.0, 12.0, MEGAFAUNA_DURABILITY);
         // A lone human vs a dangerous beast (attack 8, defense 12).
-        let solo = resolve_fight(
-            &payload(vec![person(1.0, 1.0, 1.0)], vec![beast(1.0, 8.0, 12.0)]),
-            &tuning,
-        );
-        // The same beast, but the party is reinforced with warriors (more count → more own power).
-        let reinforced = resolve_fight(
-            &payload(vec![person(6.0, 1.0, 1.0)], vec![beast(1.0, 8.0, 12.0)]),
-            &tuning,
-        );
+        let solo = resolve_fight(&payload(vec![human(1.0)], vec![dangerous_beast()]), &tuning);
+        // The same beast, but the party is reinforced with warriors.
+        let reinforced =
+            resolve_fight(&payload(vec![human(6.0)], vec![dangerous_beast()]), &tuning);
         let solo_people = side_result(&solo, ForceId(1));
         let reinforced_people = side_result(&reinforced, ForceId(1));
-        // FEWER own casualties as the party grows: losses key off enemy power ÷ own power.
+        // The beast deals the SAME total damage either way — it is one animal — so the same number of
+        // people go down...
+        assert!(
+            ((solo_people.killed + solo_people.wounded)
+                - (reinforced_people.killed + reinforced_people.wounded))
+                .abs()
+                < 1e-4,
+            "one beast deals one beast's damage, whatever the party size"
+        );
+        // ...but FEWER of them are buried, because the blow is thinned across more defenders.
         assert!(reinforced_people.killed < solo_people.killed);
         // ...and the split shifts toward WOUNDED — the enemy's average attack is spread thinner across
         // the larger party, so a smaller share of each casualty is fatal.

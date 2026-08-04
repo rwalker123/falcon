@@ -30,6 +30,12 @@ use core_sim::{
 const WOLF: &str = "Grey Wolf Pack";
 /// A herbivore (`diet herbivore`, `aggression 0`) — it never raids.
 const DEER: &str = "Red Deer";
+/// The shipped wolf's `combat.durability` (`fauna_config.json`) — how much damage a pack soaks before
+/// it goes down (`docs/plan_hunt_through_combat.md` §4.2). Restated here so the hand-built fight below
+/// is the roster's wolf and not a neutral stand-in.
+const WOLF_DURABILITY: f32 = 20.0;
+/// The shipped `person` row's `combat.durability` (`creatures.json`), for the same reason.
+const PERSON_DURABILITY: f32 = 20.0;
 
 /// Build a real earthlike world (so tiles exist for the band position lookup), then **clear** the
 /// worldgen herds and resident bands so each test controls exactly the actors on the map. Returns the
@@ -344,6 +350,7 @@ fn aggression_scales_raid_lethality() {
                         profile: CombatStats {
                             attack: 3.0 * aggression, // the adapter's `attack × aggression`
                             defense: 3.0,
+                            durability: WOLF_DURABILITY,
                             range: RangeBand::Melee,
                             wariness: 0.0,
                         },
@@ -359,6 +366,7 @@ fn aggression_scales_raid_lethality() {
                             profile: CombatStats {
                                 attack: 1.0,
                                 defense: 1.0,
+                                durability: PERSON_DURABILITY,
                                 range: RangeBand::Melee,
                                 wariness: 0.0,
                             },
@@ -369,6 +377,7 @@ fn aggression_scales_raid_lethality() {
                             profile: CombatStats {
                                 attack: 0.0,
                                 defense: 1.0,
+                                durability: PERSON_DURABILITY,
                                 range: RangeBand::Melee,
                                 wariness: 0.0,
                             },

@@ -10,6 +10,10 @@ use tracing::info;
 use std::hash::{Hash, Hasher};
 
 use crate::{
+    combat::{
+        self, CombatStats, CombatTuning, Contingent, ContingentId, FightPayload, Force, ForceId,
+        Posture,
+    },
     components::{floor_overdraws, Improvement, PopulationCohort, ResidentBand, SourceYield, Tile},
     fauna_config::{
         default_loiter_radius, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle, GrazeConfig,
@@ -3897,6 +3901,14 @@ pub struct SourceYieldForecast {
     /// animal is not either, so there is no engagement stage for either. Same shape as
     /// `body_mass_yield`, which is likewise inert on the plant web.
     pub engage_rate: f32,
+    /// **The fight the take resolves through** (`docs/plan_hunt_through_combat.md` §4) — the party's
+    /// per-hunter profile and the quarry's body, so the preview brings down exactly the animals the
+    /// take will. Without it a forecast would promise a mammoth to a bare-handed party, which is the
+    /// forecast-vs-actual split `.claude/rules/core_sim/yield-forecast.md` forbids.
+    ///
+    /// **`None` = there is no fight stage at all** — every plant source, and a pen (a penned animal is
+    /// slaughtered, not stalked). The same statement `engage_rate: f32::INFINITY` makes beside it.
+    pub fight: Option<(HuntingParty, QuarryFight)>,
 }
 
 /// [`SourceYieldForecast::pastoral_yield`] for a source that never offers the `Tame` verb — a forage
@@ -3952,8 +3964,9 @@ impl SourceYieldForecast {
             // same multiplier and *different facts*, and the wire has to be able to say the second
             // one. See `intensification::NO_BUILD_REMAINING_FRACTION`.
             build_dips: BuildDips::NOTHING_LEFT_TO_BUILD,
-            // A penned animal is not stalked — no engagement stage.
+            // A penned animal is not stalked — no engagement stage, and so no fight either.
             engage_rate: f32::INFINITY,
+            fight: None,
             managed_yield: production,
             // A rung-3 managed source (a Pen or a Field) is past taming — a penned herd never offers
             // the Tame verb — so it advertises no pastoral payoff.
@@ -4106,6 +4119,9 @@ pub fn project_realized_hunt(
     fauna: &FaunaConfig,
     ladder: &LadderConfig,
     per_worker_biomass_capacity: f32,
+    // The party doing the hunting — the fight is a per-turn bound on the projected take exactly as
+    // the engagement is (see the doc above).
+    party: &HuntingParty,
     output_multiplier: f32,
     workers: u32,
     floor: f32,
@@ -4136,11 +4152,25 @@ pub fn project_realized_hunt(
     let engagement_biomass = if corralled {
         f32::INFINITY
     } else {
-        animals_engaged(
+        let engaged = animals_engaged(
             workers,
             fauna.engage_rate_for(&quarry.species),
             ladder.build_dip(improvement),
-        ) * quarry.body_mass
+        );
+        // **And the FIGHT bounds it too** (`docs/plan_hunt_through_combat.md` §4). Dropping the
+        // quantiser here is sound because rounding is a timing effect; dropping the fight would not
+        // be, for exactly the reason the engagement bound belongs here — a bare-handed party brings
+        // down **nothing** from a mammoth herd however much room stands above the floor, and a
+        // `realized` that ignored that would quote a steady food rate the party can never collect.
+        resolve_hunt_fight(
+            engaged,
+            workers as f32 * ladder.build_dip(improvement),
+            party,
+            &fauna.quarry_fight_for(&quarry.species),
+            FORECAST_FIGHT_SEED,
+        )
+        .brought_down
+            * quarry.body_mass
     };
     let mut total = YieldAccounts::ZERO;
     // The number of turns actually simulated. A self-terminating policy (Eradicate strips the herd in
@@ -4220,6 +4250,8 @@ pub fn project_arrivals_hunt(
     fauna: &FaunaConfig,
     ladder: &LadderConfig,
     per_worker_biomass_capacity: f32,
+    // The party doing the hunting — the schedule runs the same fight the take does.
+    party: &HuntingParty,
     output_multiplier: f32,
     workers: u32,
     floor: f32,
@@ -4244,6 +4276,17 @@ pub fn project_arrivals_hunt(
         fauna.engage_rate_for(&quarry.species),
         ladder.build_dip(improvement),
     );
+    // **The fight, resolved once for the run** — constant for the same reason `engaged` is (the crew
+    // does not change size mid-projection and the quarry is never re-speciated), and inert to the
+    // seed at the shipped `hit_chance` (see [`FORECAST_FIGHT_SEED`]).
+    let brought_down = resolve_hunt_fight(
+        engaged,
+        workers as f32 * ladder.build_dip(improvement),
+        party,
+        &fauna.quarry_fight_for(&quarry.species),
+        FORECAST_FIGHT_SEED,
+    )
+    .brought_down;
     let corralled = quarry.is_corralled();
     // **The build dip rides the CREW** (`docs/plan_harvest_floor.md` §3.1) — the same term
     // `systems::hunt_take` applies, so the projection and the take stay one model.
@@ -4275,7 +4318,7 @@ pub fn project_arrivals_hunt(
             // A wild/pastoral herd hands over the stock standing above its stance's floor, rounded to
             // whole animals — the `systems::hunt_take` sequence, helper for helper.
             let ceiling = hunt_escapement_ceiling(floor, quarry.biomass, capacity);
-            let take = quantise_animal_take(ceiling, collection, quarry.body_mass, engaged);
+            let take = quantise_animal_take(ceiling, collection, quarry.body_mass, brought_down);
             quarry.biomass -= take.killed_biomass();
             take.carried
         };
@@ -4329,15 +4372,30 @@ fn forecast_production_and_take(
     {
         Some(axis) => {
             let quantum = forecast.body_mass_yield;
+            let engaged = animals_engaged(
+                workers,
+                forecast.engage_rate,
+                forecast.build_dips.of(improvement),
+            );
+            // **Engagement, then the fight** — the same order and the same helpers every take path
+            // runs (`docs/plan_hunt_through_combat.md` §1). The retreat stage between them is an exact
+            // identity at wariness `0` and a projection cannot draw it (see [`FORECAST_FIGHT_SEED`]),
+            // so it is `engaged` that goes into the fight here, as it does in the arrivals schedule.
+            let brought_down = forecast.fight.map_or(engaged, |(party, quarry)| {
+                resolve_hunt_fight(
+                    engaged,
+                    workers as f32 * forecast.build_dips.of(improvement),
+                    &party,
+                    &quarry,
+                    FORECAST_FIGHT_SEED,
+                )
+                .brought_down
+            });
             let take = quantise_animal_take(
                 ceiling.component(axis),
                 collection.component(axis),
                 quantum.component(axis),
-                animals_engaged(
-                    workers,
-                    forecast.engage_rate,
-                    forecast.build_dips.of(improvement),
-                ),
+                brought_down,
             );
             (
                 quantum.rescaled_to(axis, take.killed_biomass()),
@@ -4494,6 +4552,8 @@ pub fn hunt_source_yield_preview(
     fauna: &FaunaConfig,
     ladder: &LadderConfig,
     per_worker_biomass_capacity: f32,
+    // The band's own party — kit and tuning — so the seed resolves the fight the turn will.
+    party: &HuntingParty,
     output_multiplier: f32,
     workers: u32,
     floor: f32,
@@ -4506,6 +4566,7 @@ pub fn hunt_source_yield_preview(
         fauna,
         ladder,
         per_worker_biomass_capacity,
+        party,
         output_multiplier,
     );
     let sustainable = herd_hunt_yield(herd, fauna)
@@ -4525,6 +4586,7 @@ pub fn hunt_source_yield_preview(
         fauna,
         ladder,
         per_worker_biomass_capacity,
+        party,
         output_multiplier,
         workers,
         floor,
@@ -4538,6 +4600,7 @@ pub fn hunt_source_yield_preview(
         fauna,
         ladder,
         per_worker_biomass_capacity,
+        party,
         output_multiplier,
         workers,
         floor,
@@ -4729,6 +4792,261 @@ pub fn animals_that_stay(engaged: f32, wariness: f32, seed: u64) -> f32 {
     (0..engaged as u32).filter(|_| !rng.gen_bool(odds)).count() as f32
 }
 
+/// **The quarry's side of a hunt fight** — the species dials the resolver needs, resolved off
+/// [`SpeciesDef`] by [`FaunaConfig::quarry_fight_for`] so no take path reaches past that seam.
+///
+/// `ferocity` is **not** part of [`CombatStats`] because it is not a body: it is *"does it fight back
+/// or flee"*, and it composes into the animal's attack at the adapter (`docs/plan_predators.md`'s
+/// strength-vs-behaviour split, §4.4 here). Everything else — `defense`, `durability`, the intrinsic
+/// `attack` it scales — is the neutral combat body.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct QuarryFight {
+    /// The species' intrinsic combat body: `defense` (the gate), `durability` (the attrition
+    /// denominator) and the `attack` `ferocity` scales.
+    pub profile: CombatStats,
+    /// **Does it fight back, or flee** — `0` makes the engagement one-sided (§4.4/§4.6): the animal
+    /// side contributes no attack at all, so nobody is hurt and no battle report is emitted.
+    pub ferocity: f32,
+}
+
+impl QuarryFight {
+    /// **What the animal actually swings** — `attack × ferocity`, the one composition
+    /// (`docs/plan_predators.md`: *danger = strength × behaviour*). A fleeing deer barely scratches
+    /// the party; a cornered mammoth is a real fight.
+    pub fn effective_attack(&self) -> f32 {
+        self.profile.attack * self.ferocity
+    }
+
+    /// The animal's profile **as it fights** — its body with the ferocity-scaled attack.
+    pub fn fighting_profile(&self) -> CombatStats {
+        CombatStats {
+            attack: self.effective_attack(),
+            ..self.profile
+        }
+    }
+}
+
+/// **The party's side of a hunt fight, resolved once per band/party** — the per-hunter profile with
+/// the hunting kit composed in ([`crate::equipment_config::EquipmentConfig::hunter_profile`]) and the
+/// resolver tuning it fights at.
+///
+/// **Every take and forecast path takes this same struct**, which is the point: `hunt_take`, the
+/// expedition raid, the arrivals schedule, the steady projection and the pre-commit preview all
+/// resolve the *identical* fight, so `forecast == actual` per component cannot drift into two
+/// answers.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HuntingParty {
+    /// One hunter's combat profile — intrinsic ⊕ hunting kit. `attack 1` bare-handed, `20` speared.
+    pub hunter: CombatStats,
+    /// The resolver severity dials this party fights at. An expedition passes the
+    /// `expedition_danger_multiplier`-scaled lethality; a resident band the base tuning.
+    pub tuning: CombatTuning,
+}
+
+impl HuntingParty {
+    /// **The shipped, fully-kitted party at the base tuning** — the `person` row's intrinsic profile
+    /// with the hunting kit's `attack` tier composed in.
+    ///
+    /// **It reads the BUILTIN configs, so a `*_CONFIG_PATH` override or a staged tuning patch does
+    /// not reach it.** That makes it a fixture helper — the party a test means when it says "an
+    /// ordinary band" — and **not** something a production path may call: every one of those has a
+    /// live handle and a band whose kit may be worn out, and must resolve
+    /// [`crate::equipment_config::EquipmentConfig::hunter_profile`] against it.
+    pub fn builtin_equipped() -> Self {
+        let equipment = crate::equipment_config::EquipmentConfig::builtin();
+        Self {
+            hunter: equipment.hunter_profile(
+                crate::creatures_config::CreaturesConfig::builtin().person(),
+                true,
+            ),
+            tuning: crate::combat_config::CombatConfig::builtin().tuning(),
+        }
+    }
+
+    /// The same party **with its spears gone** — the unequipped tier, which is the `person` row's
+    /// intrinsic `attack 1`. The other side of §4.8's cliff, and what a test asserting the gate wants.
+    pub fn builtin_unequipped() -> Self {
+        Self {
+            hunter: crate::creatures_config::CreaturesConfig::builtin().person(),
+            tuning: crate::combat_config::CombatConfig::builtin().tuning(),
+        }
+    }
+}
+
+/// **What the fight cost the party** — the band-side casualties of one hunt, in people.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct FightCasualties {
+    /// Permanent losses, applied at the population `death_fraction` seam.
+    pub killed: f32,
+    /// Recoverable losses — surfaced, mechanically inert until the recovery slice.
+    pub wounded: f32,
+}
+
+impl FightCasualties {
+    /// Did anyone go down at all? The gate on emitting a `HuntDanger` line.
+    pub fn any(&self) -> bool {
+        self.killed + self.wounded > 0.0
+    }
+}
+
+/// **One turn's fight** — how many animals the party brought down, and what it cost.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HuntFight {
+    /// **Whole animals brought down** — the bound [`quantise_animal_take`] takes as its fight arm.
+    /// [`f32::INFINITY`] for a source with no fight stage at all (a pen).
+    pub brought_down: f32,
+    /// What the party lost.
+    pub casualties: FightCasualties,
+    /// **Was this a real fight** — `false` for the one-sided engagement of §4.5 (the animal side
+    /// contributes no attack), which resolves without ceremony, cost or a battle report.
+    pub fought: bool,
+}
+
+/// **The fight stage** (`docs/plan_hunt_through_combat.md` §4) — the party engages `stayed` animals
+/// and the combat subsystem decides who dies, on both sides.
+///
+/// This replaced a bespoke hunt formula. Before it, one event was resolved **twice**: what happened to
+/// the hunters went through [`crate::combat::resolve_fight`] while what happened to the animals came
+/// out of the party's *carrying capacity*, and nothing reconciled them (§0.1). Now the take's kill arm
+/// **is** the resolver's enemy losses, so a party cannot succeed on one path while the other says the
+/// mammoth routed them — and `plan_predators.md` §7's *"casualties resolve through a first-class
+/// combat subsystem, never a bespoke hunt formula"* holds for both sides of the same fight.
+///
+/// # A herd is a `Force` (§4.1)
+///
+/// The take already quantised to whole animals, so the herd already knew its animal count. `stayed`
+/// animals map to one [`Contingent`] carrying the species' [`CombatStats`], the party to one
+/// `"person"` contingent at the kit-composed profile, and the enemy losses map back to whole animals
+/// on the way out. [`AnimalTake`] needed no new field.
+///
+/// # Brought down, not killed — the split is about a force that persists
+///
+/// The animal side's losses are read as **`killed + wounded`**. The kill/wound split exists to model
+/// *recoverable* losses for a force that fights again; a hunting party finishes what it brings down,
+/// so an animal on the ground is meat either way. Reading only `killed` would apply a silent
+/// few-percent haircut that varies with party size — and would break §4.6's ceiling arithmetic, which
+/// is `min(engage_rate, (attack − defense)/durability) × body_mass` exactly.
+///
+/// # The one-sided fast path (§4.5)
+///
+/// **Snaring rabbits is not a war.** When the animal contributes no attack, the party's casualties are
+/// *structurally* zero — there is no damage to take — so the payload, the party's `Force` and the
+/// battle report are all skipped and `fought` reports `false`. It is a genuine short-circuit and **not
+/// a second model**: it composes the very same [`crate::combat::strike_damage`] /
+/// [`crate::combat::units_brought_down`] primitives [`crate::combat::resolve_fight`] does, so the kill
+/// count is identical either way. A second *formula* for small game would recreate exactly the
+/// parallel-model problem §0 exists to delete.
+///
+/// # No fight carries over
+///
+/// Damage does not bank between turns — there is no partial-kill meter (§7: *the animal does not
+/// wait*). A party whose whole turn of damage cannot bring down one animal takes **nothing**, and
+/// keeps taking nothing however long it stays. That is the intended, legible outcome of §0.2's gate
+/// applied to a small party — hunters die, nothing is killed — and it is what §6.5 asks the client to
+/// warn about *before* the launch.
+///
+/// A non-finite `stayed` (a pen — a penned animal is not stalked, not fought and not wary) is returned
+/// unchanged with no fight at all.
+pub fn resolve_hunt_fight(
+    stayed: f32,
+    // **The party's EFFECTIVE strength, build dip included** — `workers × build_dip`, the same term
+    // [`animals_engaged`] is handed (`docs/plan_harvest_floor.md` §3.1: the dip multiplies the crew,
+    // never the ceiling). Hands spent gentling a herd are hands not fighting it, so a crew mid-build
+    // brings down proportionally less; passing the raw head count would let a build fight for free
+    // and reopen §0.3's "the harshest stance builds free" through a new door.
+    hunters: f32,
+    party: &HuntingParty,
+    quarry: &QuarryFight,
+    seed: u64,
+) -> HuntFight {
+    if !stayed.is_finite() || stayed <= 0.0 || hunters <= 0.0 {
+        return HuntFight {
+            brought_down: stayed,
+            casualties: FightCasualties::default(),
+            fought: false,
+        };
+    }
+    if quarry.effective_attack() <= 0.0 {
+        // **The one-sided engagement.** Nobody can be hurt, so the kill is all there is to compute.
+        let landed = combat::attacks_landed_seeded(hunters, party.tuning.hit_chance, seed);
+        let damage = landed * combat::strike_damage(party.hunter.attack, quarry.profile.defense);
+        return HuntFight {
+            brought_down: combat::units_brought_down(
+                damage * party.tuning.lethality,
+                &quarry.profile,
+                stayed,
+            )
+            .floor(),
+            casualties: FightCasualties::default(),
+            fought: false,
+        };
+    }
+    let payload = FightPayload {
+        sides: vec![
+            Force {
+                id: HUNTING_PARTY_FORCE,
+                posture: Posture::Aggressor,
+                contingents: vec![Contingent {
+                    kind: ContingentId::from(HUNTER_CONTINGENT),
+                    count: hunters,
+                    profile: party.hunter,
+                }],
+            },
+            Force {
+                id: QUARRY_FORCE,
+                posture: Posture::Defender,
+                contingents: vec![Contingent {
+                    kind: ContingentId::from(QUARRY_CONTINGENT),
+                    count: stayed,
+                    profile: quarry.fighting_profile(),
+                }],
+            },
+        ],
+        // The engagement's hex is the herd's, and the placeholder resolver ignores it; a hunt has no
+        // second tile to name.
+        terrain: Vec::new(),
+        seed,
+    };
+    let outcome = combat::resolve_fight(&payload, &party.tuning);
+    let mut brought_down = 0.0_f32;
+    let mut casualties = FightCasualties::default();
+    for result in &outcome.results {
+        if result.force == QUARRY_FORCE {
+            brought_down += result.killed + result.wounded;
+        } else {
+            casualties.killed += result.killed;
+            casualties.wounded += result.wounded;
+        }
+    }
+    HuntFight {
+        // **Whole animals** — the same rule `quantise_animal_take` exists for. A fractional kill left
+        // un-floored would let `killed_biomass` and the reported `killed` count disagree.
+        brought_down: brought_down.floor(),
+        casualties,
+        fought: true,
+    }
+}
+
+/// The hunting party's side of a hunt fight — the aggressor.
+const HUNTING_PARTY_FORCE: ForceId = ForceId(0);
+/// The herd's side of a hunt fight — the defender.
+const QUARRY_FORCE: ForceId = ForceId(1);
+/// The party's one contingent key, matching the `person` row of the creatures roster.
+const HUNTER_CONTINGENT: &str = "person";
+/// The herd's one contingent key. The species name is *not* used: it would make the key vary by
+/// quarry for no consumer, and nothing downstream reads it.
+const QUARRY_CONTINGENT: &str = "quarry";
+
+/// **The seed a FORWARD PROJECTION fights with.** A projection cannot know the tick it is projecting,
+/// so it cannot compose the per-event seed the live take will use — the same problem
+/// `systems::expeditions::forecast_retreat_seed` documents for the retreat draw.
+///
+/// At the shipped `hit_chance` of `1.0` the fight draws nothing at all, so this is **inert** and
+/// `forecast == actual` is exact. When a sub-1 chance is authored the forecast becomes an
+/// expectation, and reporting that honestly is slice 5's range readout — not a seed this constant
+/// could ever guess right.
+pub const FORECAST_FIGHT_SEED: u64 = 0;
+
 /// **THE whole-animal quantiser** (intensification ladder slice 8) — the one place a take is rounded
 /// to animals, shared by **every rung**: `systems::hunt_take` (the resident band + the scout's
 /// replenish), `systems::expedition_take_biomass` (the hunting party + its forward-simulated
@@ -4785,6 +5103,28 @@ pub fn animals_that_stay(engaged: f32, wariness: f32, seed: u64) -> f32 {
 /// animal is counted killed and its meat reported wasted.
 const ANIMAL_COUNT_EPSILON: f32 = 1e-6;
 
+/// **How many whole animals the source can spare** — [`whole_animals`] of a policy ceiling, exposed
+/// so a take path can bound its **engagement** by it before the fight
+/// (`docs/plan_hunt_through_combat.md` §1: the escapement floor bounds `engaged`, not `killed`).
+///
+/// That ordering is what makes **restraint free**. Bounding the kill instead would have a party at
+/// its floor engage normally, take casualties, wear its kit, and then decline to kill what it had
+/// already fought — and killing without taking is denial, not restraint.
+///
+/// **It is deliberately not applied on the forecast paths, and that costs nothing**: the quantiser
+/// clamps the kill by this same `affordable` whatever the engagement was, so trimming the engagement
+/// cannot move the *take* by a single animal — only the casualties and the kit wear, neither of which
+/// a yield forecast models. `forecast == actual` is unaffected.
+///
+/// A non-finite `body_mass` (never reachable — `FaunaConfig::validate` pins it finite-positive) is
+/// answered `0`, matching [`quantise_animal_take`]'s own guard.
+pub fn animals_affordable(policy_ceiling: f32, body_mass: f32) -> f32 {
+    if !body_mass.is_finite() || body_mass <= 0.0 {
+        return 0.0;
+    }
+    whole_animals(policy_ceiling.max(0.0), body_mass)
+}
+
 /// Whole animals in `available` biomass, at `body_mass` each — `floor`, with
 /// [`ANIMAL_COUNT_EPSILON`] of relative slop so the same take counts the same animals whether it is
 /// quantised in biomass or in provisions.
@@ -4797,7 +5137,7 @@ pub fn quantise_animal_take(
     policy_ceiling: f32,
     collection: f32,
     body_mass: f32,
-    engaged: f32,
+    brought_down: f32,
 ) -> AnimalTake {
     if !body_mass.is_finite() || body_mass <= 0.0 {
         debug_assert!(
@@ -4816,10 +5156,15 @@ pub fn quantise_animal_take(
     let carryable = whole_animals(collection, body_mass);
     // `max(1.0)`: a party that can't carry one still takes one — and wastes the rest.
     //
-    // **`engaged` is the THIRD bound, and it is spatial** (`docs/plan_hunt_through_combat.md` §2):
-    // you cannot take an animal you could not get near, however much you can carry and however much
-    // the herd could spare. A pen passes [`f32::INFINITY`] — a penned animal is not stalked.
-    let killed = affordable.min(carryable.max(1.0)).min(engaged.max(0.0));
+    // **`brought_down` is the THIRD bound, and it is THE FIGHT** (`docs/plan_hunt_through_combat.md`
+    // §4): the animals the party actually put on the ground, which the engagement bound (§2) already
+    // caps from above because you cannot bring down an animal you never reached. It arrives already
+    // whole — [`resolve_hunt_fight`] floors it — so `killed` below stays integral and
+    // `killed_biomass` cannot disagree with the reported count. A pen passes [`f32::INFINITY`]: a
+    // penned animal is not stalked and not fought.
+    let killed = affordable
+        .min(carryable.max(1.0))
+        .min(brought_down.max(0.0));
     let killed_biomass = killed * body_mass;
     let carried = killed_biomass.min(collection);
     AnimalTake {
@@ -5045,6 +5390,10 @@ pub(crate) fn hunt_forecast(
     fauna: &FaunaConfig,
     ladder: &LadderConfig,
     per_worker_biomass_capacity: f32,
+    // The party that would work this herd — its per-hunter profile (kit composed in) and the resolver
+    // tuning it fights at, so the preview resolves the SAME fight the take will
+    // (`docs/plan_hunt_through_combat.md` §4).
+    party: &HuntingParty,
     output_multiplier: f32,
 ) -> SourceYieldForecast {
     // The pen's yield is **gross** — its feed is debited separately (wire: `penUpkeep`).
@@ -5077,6 +5426,8 @@ pub(crate) fn hunt_forecast(
         // The engagement throughput the take is bounded by, so preview and take agree on how many
         // animals the party can even reach.
         engage_rate: fauna.engage_rate_for(&herd.species),
+        // ...and the fight that decides how many of those actually go down (§4).
+        fight: Some((*party, fauna.quarry_fight_for(&herd.species))),
         // **The TERMS of the take, not a set of answers.** `ceiling_at(floor, improvement)` composes
         // them into exactly what `hunt_take` computes — the herd's own `K` (`herd_capacity`, never
         // the raw field) and its CURRENT biomass, so the forecast and the take read the same stock.
@@ -6501,7 +6852,14 @@ mod tests {
         herd.regrowth_rate = 0.10;
         herd.husbandry_ceiling = HusbandryCeiling::Pen;
         herd.body_mass = 50.0;
-        let forecast = hunt_forecast(&herd, &fauna, &ladder, 40.0, 1.0);
+        let forecast = hunt_forecast(
+            &herd,
+            &fauna,
+            &ladder,
+            40.0,
+            &HuntingParty::builtin_equipped(),
+            1.0,
+        );
 
         // **The dip is read off the CREW, not the ceiling** (`docs/plan_harvest_floor.md` §3.1), so
         // it is visible only at a staffing the crew's carry binds — `DIP_VISIBLE_CREW` hunters carry
@@ -6573,7 +6931,14 @@ mod tests {
         // steady forecast must ignore it.
         herd.hunt_credit = herd.body_mass;
 
-        let forecast = hunt_forecast(&herd, &fauna, &ladder, 40.0, 1.0);
+        let forecast = hunt_forecast(
+            &herd,
+            &fauna,
+            &ladder,
+            40.0,
+            &HuntingParty::builtin_equipped(),
+            1.0,
+        );
 
         // Extractive ladder — deeper floor, more stock standing above it, unperturbed by the stale bank.
         assert!(
@@ -6655,7 +7020,14 @@ mod tests {
         herd.species = "Wild Boar".to_string();
         herd.husbandry_ceiling = HusbandryCeiling::Pen;
         herd.corralled_at = Some(UVec2::new(1, 1));
-        let forecast = hunt_forecast(&herd, &fauna, &ladder, 40.0, 1.0);
+        let forecast = hunt_forecast(
+            &herd,
+            &fauna,
+            &ladder,
+            40.0,
+            &HuntingParty::builtin_equipped(),
+            1.0,
+        );
         assert_eq!(
             forecast.pastoral_yield, NO_PASTORAL_YIELD,
             "a penned herd is past taming — no Tame payoff to advertise",
@@ -7033,7 +7405,14 @@ mod tests {
         }
         let fauna = world.resource::<FaunaConfigHandle>().get();
         let before = world.resource::<HerdRegistry>().herds[0].clone();
-        let forecast_before = hunt_forecast(&before, &fauna, &LadderConfig::builtin(), 40.0, 1.0);
+        let forecast_before = hunt_forecast(
+            &before,
+            &fauna,
+            &LadderConfig::builtin(),
+            40.0,
+            &HuntingParty::builtin_equipped(),
+            1.0,
+        );
 
         world.run_system_once(advance_herd_grazing);
 
@@ -7048,7 +7427,14 @@ mod tests {
         );
         // K is still the species constant, not a graze-derived value.
         assert_eq!(herd_capacity(after, &fauna), after.carrying_capacity);
-        let forecast_after = hunt_forecast(after, &fauna, &LadderConfig::builtin(), 40.0, 1.0);
+        let forecast_after = hunt_forecast(
+            after,
+            &fauna,
+            &LadderConfig::builtin(),
+            40.0,
+            &HuntingParty::builtin_equipped(),
+            1.0,
+        );
         assert_eq!(
             forecast_before.ceiling_at(PEAK_FLOOR),
             forecast_after.ceiling_at(PEAK_FLOOR),

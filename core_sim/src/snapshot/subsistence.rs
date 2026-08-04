@@ -170,6 +170,9 @@ pub(crate) fn hunt_trip_estimate_entries(
     fauna: &FaunaConfig,
     labor: &LaborConfig,
     expedition: &ExpeditionConfig,
+    // The party the table is quoted for — see [`HerdSnapshotInputs::party`] for why it is the
+    // equipped tier rather than any one band's.
+    party: &crate::fauna::HuntingParty,
 ) -> Vec<HuntTripEstimateState> {
     let denial_only = crate::fauna::species_requires_denial(fauna.hunt_yield_for(&herd.species));
     let sampled: &[f32] = if denial_only {
@@ -188,6 +191,7 @@ pub(crate) fn hunt_trip_estimate_entries(
                 fauna,
                 labor,
                 expedition,
+                party,
             );
             entries.push(HuntTripEstimateState {
                 floor,
@@ -237,6 +241,12 @@ pub(crate) struct HerdSnapshotInputs<'a> {
     /// the filter below is a no-op, which is the ONLY way to reveal hidden fauna: unseen herds never
     /// reach the wire, so no client render flag could put them back.
     pub(crate) fog_enabled: bool,
+    /// **The party this per-herd estimate is priced for** — the equipped hunter profile and the base
+    /// resolver tuning (`docs/plan_hunt_through_combat.md` §4). The herd row is a fact about the
+    /// *herd*, not about any one band, so it quotes the **standard kitted tier** for exactly the
+    /// reason it already prices the haul at `labor.hunt.per_worker_biomass_capacity` rather than a
+    /// band's own carry tier. A band's real, kit-resolved numbers ride its `SourceYield` row.
+    pub(crate) party: crate::fauna::HuntingParty,
 }
 
 impl HerdSnapshotInputs<'_> {
@@ -279,6 +289,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
         expedition,
         grid_size,
         wrap_horizontal,
+        party,
         ..
     } = inputs;
     let width = grid_size.x.max(1);
@@ -304,6 +315,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                         fauna,
                         ladder,
                         labor.hunt.per_worker_biomass_capacity,
+                        &party,
                         FORECAST_OUTPUT_MULTIPLIER,
                     )
                 })
@@ -426,7 +438,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // Only a huntable herd can be the target of a trip — don't pay for the rest.
                 hunt_trip_estimates: herd
                     .filter(|_| entry.huntable)
-                    .map(|herd| hunt_trip_estimate_entries(herd, fauna, labor, expedition))
+                    .map(|herd| hunt_trip_estimate_entries(herd, fauna, labor, expedition, &party))
                     .unwrap_or_default(),
                 // Grazing 2b-iii: the herd's live derived K, and the exact hex radius the sim
                 // grazes/derives K over (migratory `loiter_radius` resolved via `species_by_display`,

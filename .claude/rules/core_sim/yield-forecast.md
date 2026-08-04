@@ -391,10 +391,21 @@ client's compose-time "Expected yield" row promises. Shape:
   `hunt_haul_workers` off `SourceYieldForecast::ceiling_at` for a whole-animal source, so the seed
   matches the client's max-useful cap), and `wasted` = the understaffing mirror. No new formula, no new
   config lever.
-- **The Hunt seed resolves the band's CARRY-KIT tier**, through the same
-  `EquipmentConfig::per_worker_biomass_capacity` seam `advance_labor_allocation` reads (see
+- **The Hunt seed resolves BOTH of the band's kit tiers** — carry through
+  `EquipmentConfig::per_worker_biomass_capacity` and **attack** through
+  `EquipmentConfig::hunter_profile`, the same two seams `advance_labor_allocation` reads (see
   `equipment.md`). It has to: a band-agnostic equipped rate would promise a band whose baskets ran
-  dry a kitted haul, and forecast == actual is exactly what that breaks.
+  dry a kitted haul, and since the take resolves through the fight
+  (`docs/plan_hunt_through_combat.md` §4) a band-agnostic *attack* would promise a bare-handed band a
+  mammoth. forecast == actual is exactly what that breaks.
+- **The fight is a forecast term now**, threaded as `fauna::HuntingParty` through `hunt_forecast`,
+  `hunt_source_yield_preview`, `project_realized_hunt`, `project_arrivals_hunt` and
+  `forecast_production_and_take`, so all six take/forecast paths resolve the *identical* fight via the
+  one `fauna::resolve_hunt_fight` helper. A projection cannot know the tick it is projecting, so it
+  passes `fauna::FORECAST_FIGHT_SEED` — **inert at the shipped `combat_config.hit_chance` of `1.0`,
+  where the fight makes no draw at all**, which is what keeps forecast == actual *exact* rather than
+  in-expectation. Authoring a sub-1 hit chance (or a non-zero `wariness`) makes the take stochastic
+  and is what the range-reporting forecast slice exists for.
 - **Only the source the command touched** is seeded (other sources keep their real actuals), and only
   where the turn would actually pay: out of `band_work_range` / past the hunt leash, an unseeded patch
   or a vanished herd keeps its zero row, and a **genuinely barren source still seeds `0.0`** — `+0.00`
