@@ -162,6 +162,13 @@ const READOUT_YIELD_PART_SEPARATION := 6
 # a wrapped third account drops by.
 const READOUT_YIELD_H_SEPARATION := 18
 const READOUT_YIELD_V_SEPARATION := 4
+# **AN ACCOUNT THE BAND CANNOT BANK READS AS A DASH, NOT AS A NUMBER.** A wild patch's hay is real
+# ground truth — the meadow grows it — but a faction without Foddering banks none of it, so the row
+# keeps its UNIT (hiding the account would be the hidden gate this repo forbids) and loses its
+# QUANTITY. The em-dash is the one glyph that cannot be misread as a quantity, the same reasoning
+# `HudFloraVocab.STOCK_UNKNOWN_GLYPH` records for a fogged stock; the reason rides the aside.
+const YIELD_LOCKED_GLYPH := "—"
+
 const READOUT_VERDICT_FONT_SIZE := 12
 const READOUT_ASIDE_FONT_SIZE := 11
 const READOUT_ASIDE_SEPARATION := 4
@@ -626,6 +633,13 @@ const COMPOSE_QUARRY_HINT := "Choose a quarry — the rest of the form follows f
 const COMPOSE_QUARRY_TOOLTIP_FORMAT := "%s (%d, %d)\nClick to choose a different herd."
 
 const COMPOSE_QUARRY_LABEL_FORMAT := "%s %s"
+
+# The picked quarry's face carries the species' bundled ART where there is any (issue #439), as the
+# Button's own `icon` rather than a glyph in its text. The source PNGs are 256px, which a Button
+# would otherwise reserve in full and blow the compose row's width apart, so the icon is capped
+# through the stock `icon_max_width` theme constant — sized to sit with the button's label rather
+# than to be read on its own, the row already naming the herd in words beside it.
+const COMPOSE_QUARRY_ICON_MAX_WIDTH := 20
 
 ## The refusal when the player picks a herd the band can already work from home. The hunt_reach split
 ## is a rule the map does not spell out, so the refusal is where it gets taught — it names the herd,

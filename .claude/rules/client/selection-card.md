@@ -220,3 +220,50 @@ paths:
   exact `HudStyle` HEALTHY/WARN/DANGER constants. Non-player bands list with a neutral
   dot and no allocation panel (their larder/orders aren't ours to see). (The Tile card
   has no camp action — the `found_camp` command was removed end-to-end.)
+
+
+## The roster row's leading MARK is a node, and the patch path must SWAP it (issue #439)
+
+A land / herd row used to fuse its glyph into the name (`_roster_name_label("%s %s" % [glyph, name])`).
+It cannot, now that the mark is bundled art: a texture does not live inside a `Label.text`. The mark is
+therefore its own child ahead of the name, built by **`HudWidgets.build_marker_icon`** (the one builder
+every HUD text surface shares — see `hud-modules.md` for what it is and why it is a `TextureRect`), and
+the name label carries the name ALONE so the meta beside it goes on absorbing the row's slack.
+
+**THE TRAP IS THE IN-PLACE PATCH PATH.** These rows are patched rather than rebuilt (`_set_row_name` /
+`_store_row_refs` / `button.get_meta`), and the mark is a **`TextureRect` when the subject has bundled
+art and a glyph `Label` when it does not** — a distinction a row can cross between restates: a tile
+gains or loses a food module, a herd's label resolves to a species the client has no art for. Writing
+`.text` to a `TextureRect` is a **silent no-op**, so a patch that only wrote to the existing node would
+leave a stale mark beside a freshly-patched name, which is the exact staleness the patch path exists to
+avoid. `_set_row_icon` therefore patches the one property when the kind is unchanged and **swaps the
+node at its own child index** when it flips, re-stashing it on the button — so the common case stays
+rebuild-free and the flip is still correct.
+
+**THE GLYPH FALLBACK'S INK IS APPLIED, NOT INHERITED, AND BOTH PATHS OWE IT.** Fusing the glyph into
+the name label used to give it that label's `font_color` for free; as its own bare `Label` it inherits
+nothing (this client applies no `Theme`), so a `◈` nobody colours renders at Godot's stock near-white —
+brighter than the `INK_DIM` name beside it and no longer dimming or brightening with the row. The pair
+is decided in ONE place, `_roster_row_ink(selected)`, which `_roster_name_label` / `_set_row_name` and
+`_row_icon` / `_set_row_icon` all read, so the mark and the name cannot disagree about how lit the row
+is. **`_set_row_icon` re-applies it on the patch path**, not only at build time: a row's lit state
+changes without the row being rebuilt — that is what the patch path is FOR — so a mark coloured only at
+birth keeps its original ink while the name moves. Art takes no colour: a marker sprite is drawn
+untinted (`hud-modules.md` → `build_marker_icon`). `ui_preview`'s `tile_panel` chapter holds both
+halves as claims about the colours the two labels actually RESOLVE (`get_theme_color`, which answers
+the stock default when no override is set — an "an override is set" assertion would pass on the bug,
+which IS a missing override): the LIT half on `tile_panel_no_forage`, the UNLIT half on
+`tile_panel_land_glyph_unlit`, where lighting the band beside the land row dims it through the patch
+path. Sabotage-verified, and they fail DISJOINTLY — dropping the build-time colour fails only the lit
+one, dropping the patch-path re-apply only the unlit one.
+
+`row_icon` is deliberately **not** the `glyph_label` meta slot: that is the band row's TRAILING activity
+glyph, a different question in a different place, and folding them would make one meta key mean two
+things.
+
+**No frame can hold this claim** — both renderings are a perfectly ordinary row, and the stale one is
+stale only against a tile that is not in the same picture. `ui_preview`'s `tile_panel` chapter asserts it
+instead, on the same-tile restate block: one land row loses its `food_module` between two
+`reapply_selection`s, with a precondition that the roster really PATCHED (identical child instance ids —
+otherwise a rebuild would launder the bug) and the before/after classes read off `row_icon`.
+Sabotage-verified: dropping the swap fails exactly that one assertion.

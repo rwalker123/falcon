@@ -45,6 +45,19 @@ const MANY_SOURCE_CHILD_RATIO := 0.56
 const MANY_SOURCE_ELDER_RATIO := 0.31
 # Sub-pixel slack when comparing a zone's content rect against its host rect.
 const ZONE_BOUNDS_TOLERANCE := 1.0
+## The merged Food line's hay clause, as it reads AFTER the BBCode is stripped — the needle proving the
+## SHORT tier really merged the two larders rather than dropping one. The word, not the number: the
+## stock is a fixture value and this is a claim about the CLAUSE.
+const MERGED_FOOD_HAY_NEEDLE := "hay"
+## The standalone `Fodder:` row's key, which must be ABSENT wherever the merge fired. Matched bare —
+## `DetailFormat._split_kv` drops the `": "` separator into two table cells, so the colon is never in
+## the rendered text (the rule `_assert_trade_row_absent_in_short_tier` already records).
+const FODDER_ROW_NEEDLE := "Fodder"
+## The `RichTextLabel` theme keys the vitals width measurement reads its OWN font/size/gutter from —
+## never a hardcoded face, since the measurement is only honest in the font the label actually draws.
+const VITALS_FONT_THEME_KEY := "normal_font"
+const VITALS_FONT_SIZE_THEME_KEY := "normal_font_size"
+const VITALS_TABLE_SEPARATION_THEME_KEY := "table_h_separation"
 ## Offset applied to a fixture cohort's `entity` to derive its `band_id` — see `_push_bands`.
 const FIXTURE_BAND_ID_OFFSET := 4000
 ## One Wild Boar's worth of yield in provisions (`HerdTelemetryState.foodPerAnimal`) — the quarry
@@ -192,6 +205,15 @@ var _hud: HudLayer
 var _panel: BandCityPanel
 ## The last state `_save`d, so an assertion failure names the frame it fired on.
 var _current_state := "<pre-render>"
+## Set by `_unhandled_input` below — this harness's stand-in for `MapView`'s hex picking, which is also
+## an `_unhandled_input` handler. See `_assert_open_strip_reaches_the_map`.
+var _unhandled_press_seen := false
+
+## The probe MapView's hex picking stands in for: a press that survives the GUI pass and reaches
+## unhandled input is a press that would have selected the hex under the pointer.
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed:
+		_unhandled_press_seen = true
 
 
 # ---- LEGACY FIXTURE ADAPTER: the four stances -> the escapement floor ---------------------------
@@ -437,6 +459,13 @@ func _ready() -> void:
 	var bg := ColorRect.new()
 	bg.color = Color(0.10, 0.15, 0.16)
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	# IT STANDS IN FOR THE MAP, AND THE MAP CONSUMES NOTHING. A `ColorRect` is a `Control`, so at the
+	# default `STOP` this backdrop swallowed every press that was not over the panel — which made the
+	# click-through claim `_assert_open_strip_reaches_the_map` exists for unaskable here (the harness's
+	# own decoration would have failed it whatever the panel did). In the live client the map is a
+	# `Node2D` picking hexes out of `_unhandled_input`, so `IGNORE` is what makes the backdrop honest.
+	# The same fix `ui_preview`'s backdrop needed for the event dock's overlay probe.
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bg_layer.add_child(bg)
 
 	# Isolate the narrative/HUD-panel preferences from the player's real profile before the HUD
@@ -453,10 +482,17 @@ func _ready() -> void:
 
 	_panel = BAND_PANEL_SCENE.instantiate()
 	add_child(_panel)
-	# Fan the panel's reservation onto the HUD, as Main does for both surfaces.
+	# Fan the panel's reservation onto the HUD as Main does — INCLUDING its TOP-dock exemption and the
+	# lateral bounds that go with it (issue #377), or these frames would show the HUD yielding a strip the
+	# live client does not, and a card free to sit where the live one is bounded. `Main` is not instanced
+	# here, so the two rules are restated; `Main._reserver_overlays_hud` /
+	# `Main._update_band_panel_lateral_bounds` are the authority.
 	_panel.reservation_changed.connect(func(edge: int, size: float):
+		var hud_yields: bool = edge != SIDE_TOP
 		if _hud.has_method("set_reserved_inset"):
-			_hud.set_reserved_inset(&"band_panel", edge, size))
+			_hud.set_reserved_inset(&"band_panel", edge, size if hud_yields else 0.0)
+		var columns: Vector2 = Vector2.ZERO if hud_yields else _hud.lateral_column_widths()
+		_panel.set_lateral_bounds(columns.x, columns.y))
 
 	await get_tree().process_frame
 	await get_tree().process_frame
@@ -624,6 +660,24 @@ func _ready() -> void:
 	_assert_zones_within_bounds()
 	_assert_trade_row_absent_in_short_tier()
 
+	# (iv) THE WORST CASE — every optional vitals row a band can carry AT ONCE, in the height-capped
+	# TOP dock. Nothing in this harness had ever rendered one: each optional row had its own frame and
+	# each of those fixtures was otherwise ordinary, so the zone was never asked to hold all of them
+	# together — which is exactly how a band with the full set came to overflow a box that CLIPS.
+	# The fixture carries a hay larder AND a pen feed bill, productivity below full, a fertility
+	# reading, a trade stock and rate, and the projected arrivals the FOOD OUTLOOK chart needs, so
+	# every gate in `build_band_zone` / `unit_summary_lines` is live at once.
+	_push_bands([_vitals_worst_case_band_fixture()])
+	_panel.set_dock(SIDE_TOP)
+	await _settle()
+	await _settle()   # let the deferred fit_content re-pack settle before capture
+	await _save("band_panel_vitals_worst_case")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_report_zone_content_extent("band_panel_vitals_worst_case")
+	_assert_merged_food_row_fits()
+
 	# (c) CONCERNING food (net negative + low runway): the breakdown AUTO-shows (no click) under a red net.
 	_push_bands([_concerning_food_band_fixture()])
 	for state in [{"edge": SIDE_LEFT, "name": "band_panel_food_concerning_left"},
@@ -765,6 +819,10 @@ func _ready() -> void:
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
+	# The board renders in NAME order now (issue #460), so this is where both halves of that change are
+	# judged: the sorts themselves, and the `⋯` menu saying which one is running.
+	_assert_work_sort_stable()
+	_assert_work_menu_marks_active_sort("band_panel_work_page")
 
 	# The same 34 sources in the WIDE (bottom dock) shell: multi-column, column-major, hairlines.
 	_panel.set_dock(SIDE_BOTTOM)
@@ -1222,18 +1280,29 @@ func _render_dock_row_states() -> void:
 		_hud._dockrow._required_height(), _panel.current_reservation_size(),
 		_panel.work_zone_size().x])
 
-	# TOP: the same column at the other horizontal edge, minimap still on top so the stack reads the same
-	# either way. The nav cluster relocating from bottom-left to the TOP row is INTENDED — the chrome
-	# follows the dock.
+	# TOP — THE SECOND CONTROL, and it asserts the OPPOSITE of what it used to (issue #377). The chrome
+	# must stay HOME: the minimap bottom-left and the turn orb bottom-right, where they always live.
+	# Relocating for a top dock was a symmetry that was never measured — `Hud.set_reserved_inset` only
+	# displaces `BottomBar` when the inset and the bar share an edge, i.e. on a BOTTOM dock, so a top
+	# dock had nothing to recover and dragging the chrome to the top of the screen only cost the player
+	# a fixed landmark. The card still floats and centres here; it simply has the whole strip to do it in.
 	_panel.set_dock(SIDE_TOP)
 	await _settle()
 	await _save("band_panel_dockrow_top")
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
-	_assert_chrome_parked(true, "band_panel_dockrow_top")
-	_assert_parked_chrome_fits("band_panel_dockrow_top")
-	_assert_shell_is_wide(true, "band_panel_dockrow_top")
+	_assert_chrome_parked(false, "band_panel_dockrow_top")
+	_assert_no_rail_width("band_panel_dockrow_top")
+	_assert_chrome_home_exact("band_panel_dockrow_top")
+	# The NARROW shell here, and that is arithmetic rather than a regression: a top dock keeps the HUD's
+	# strip, so its card has 1920 − 360 (left dock) − 419 (readouts) = 1141px, under the 1190 the wide
+	# shell needs for three zones. The alternative to tabbing is drawing the card over the readouts, which
+	# is the bug this state exists to prove is gone. A top dock reaches the wide shell on a wider window —
+	# `band_panel_dockrow_ultrawide` is bottom-docked, where the HUD yields and the whole row is the
+	# card's.
+	_assert_shell_is_wide(false, "band_panel_dockrow_top")
+	_assert_card_clears_hud_columns("band_panel_dockrow_top")
 
 	# LEFT — THE CONTROL. A vertical dock keeps today's behaviour exactly: the chrome is back in
 	# `BottomBar` and the rails contribute nothing. The work-zone baseline captured here is what the
@@ -1277,6 +1346,50 @@ func _render_dock_row_states() -> void:
 			round_trip_work_zone, vertical_work_zone])
 	else:
 		print("band_panel_preview: assert OK — round trip restored work_zone_size() to %s" % round_trip_work_zone)
+
+	# ULTRAWIDE BOTTOM DOCK — the frame issue #377 was reported on, and the ONLY one that reaches the
+	# configuration it describes. It runs LAST because it re-pins the canvas, and the round-trip state
+	# above compares against a baseline captured at `DOCKROW_CANVAS`.
+	#
+	# The card is sized from `_card_width()` and placed by `_position_card_and_rail`, so the question this
+	# frame asks is what the panel does with a strip FAR wider than its content wants: the card must come
+	# out at its declared width and sit centred in the room the chrome cluster leaves, with open map
+	# either side, rather than stretching to the monitor. It is deliberately a DOCK-ROW state rather than a wider
+	# `band_panel_wide_ultrawide`: the parked chrome is the subject, so the frame needs the REAL minimap
+	# this block has already seeded — against an empty `MinimapContainer` the rail is the zoom rail's
+	# ~80px and a mis-placed rail is nearly invisible.
+	await _pin_canvas(Vector2i(ULTRAWIDE_WIDTH, DOCKROW_CANVAS.y))
+	_panel.set_dock(SIDE_BOTTOM)
+	await _settle()
+	await _save("band_panel_dockrow_ultrawide")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_chrome_parked(true, "band_panel_dockrow_ultrawide")
+	_assert_parked_chrome_fits("band_panel_dockrow_ultrawide")
+	_assert_shell_is_wide(true, "band_panel_dockrow_ultrawide")
+	_assert_card_is_narrower_than_strip("band_panel_dockrow_ultrawide")
+	_assert_rail_is_right_justified("band_panel_dockrow_ultrawide")
+	_assert_card_is_centred("band_panel_dockrow_ultrawide")
+	var busy_card := _panel._panel.get_global_rect().size.x
+	var busy_columns: int = _panel._work_columns
+
+	# THE SAME ULTRAWIDE DOCK WITH NOTHING TO SHOW — the state the whole width rework is FOR, and the
+	# one the 34-source frame above structurally cannot make: a board with 34 rows wants every column it
+	# can get, so a card sized to its content and a card sized to the monitor look identical there.
+	# A band with NO worked sources wants ONE column, so the card must come back visibly narrower.
+	_push_bands([_band_fixture()])
+	await _settle()
+	await _save("band_panel_dockrow_ultrawide_empty")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_card_is_narrower_than_strip("band_panel_dockrow_ultrawide_empty")
+	_assert_rail_is_right_justified("band_panel_dockrow_ultrawide_empty")
+	_assert_card_is_centred("band_panel_dockrow_ultrawide_empty")
+	_assert_card_follows_its_content(busy_card, busy_columns, "band_panel_dockrow_ultrawide_empty")
+	# The state with the MOST open map around its card, so the gaps this probes are the ones a player
+	# actually loses when the strip eats their clicks.
+	await _assert_open_strip_reaches_the_map("band_panel_dockrow_ultrawide_empty")
 
 ## Put a REAL embedded minimap in the HUD's `MinimapContainer` before the dock-row states render.
 ## Without it those frames judge the reflow against an EMPTY container — the left rail collapses to the
@@ -1361,8 +1474,10 @@ func _assert_parked_chrome_fits(state_name: String) -> void:
 		if over.x > ZONE_BOUNDS_TOLERANCE or over.y > ZONE_BOUNDS_TOLERANCE:
 			failures.append("%s %s spills the rail %s by (%.1f, %.1f)" % [
 				cluster.name, rect, rail_rect, maxf(over.x, 0.0), maxf(over.y, 0.0)])
-	# The rail itself must stay inside the card's interior — the strip the panel actually reserved.
-	var strip := _panel._panel.get_global_rect()
+	# The rail must stay inside the STRIP — `_root`, not the card. Since issue #377 the chrome cluster is
+	# a SIBLING of the card rather than its last cell, so asking whether it fits the card would now be
+	# asking the wrong container entirely (and would fail on a correct layout).
+	var strip := _panel._root.get_global_rect()
 	var rail_over := _rect_overflow(rail_rect, strip)
 	if rail_over.x > ZONE_BOUNDS_TOLERANCE or rail_over.y > ZONE_BOUNDS_TOLERANCE:
 		failures.append("the chrome rail %s spills the card %s by (%.1f, %.1f)" % [
@@ -1376,6 +1491,284 @@ func _assert_parked_chrome_fits(state_name: String) -> void:
 		return
 	for failure in failures:
 		push_error("band_panel_preview: %s — %s" % [state_name, failure])
+
+## PRECONDITION for the two assertions below: the strip really is WIDER than the card wants to be, so
+## the island geometry they judge has slack to get wrong. Without it both would pass vacuously on a
+## window the card fills anyway, where "centred" and "flush right" are true for free.
+func _assert_card_is_narrower_than_strip(state_name: String) -> void:
+	var card := _panel._panel.get_global_rect().size.x
+	var strip := _panel._root.get_global_rect().size.x
+	var slack: float = strip - card - _panel._rail_span()
+	if slack <= ZONE_BOUNDS_TOLERANCE:
+		push_error("band_panel_preview: %s — the card (%.0fpx) fills its %.0fpx strip, so the island assertions below prove nothing" % [
+			state_name, card, strip])
+		return
+	print("band_panel_preview: assert OK — %s the card is an island (%.0fpx card + %.0fpx chrome span in a %.0fpx strip, %.0fpx of open map)" % [
+		state_name, card, _panel._rail_span(), strip, slack])
+
+## GUARD: the chrome cluster is FLUSH RIGHT against the STRIP's trailing edge (issue #377).
+##
+## Measured against the strip rather than the card, and that changed with the islands: the rail used to
+## be the last cell of `_card_row`, so the only sensible claim was "inside its own card's trailing
+## inset". It is a sibling of the card now, anchored to `_root`, so the claim is the stronger one — it
+## sits at the edge of the screen, with the card floating well to its left.
+func _assert_rail_is_right_justified(state_name: String) -> void:
+	var rail_right := _panel._rail.get_global_rect().end.x
+	var strip_right := _panel._root.get_global_rect().end.x
+	var gap: float = strip_right - rail_right
+	if absf(gap) > ZONE_BOUNDS_TOLERANCE:
+		push_error("band_panel_preview: %s — the chrome cluster ends at %.0f but the strip ends at %.0f (%.0fpx of dead space to its right)" % [
+			state_name, rail_right, strip_right, gap])
+		return
+	print("band_panel_preview: assert OK — %s the chrome cluster is flush to the strip's trailing edge (%.0f)" % [
+		state_name, strip_right])
+
+## GUARD: the card's width FOLLOWS ITS CONTENT — the claim the whole rework rests on (issue #377).
+##
+## Compared against the SAME dock at the SAME canvas with a busier band, because the absolute width
+## proves nothing on its own: a card hard-wired to any constant would satisfy "narrower than the strip"
+## and "centred" perfectly. What it cannot satisfy is *changing* when the band does.
+##
+## Both halves are asserted, and the column count is not redundant with the width — a width that moved
+## for some unrelated reason (a chrome tweak, a flank retune) would pass a width-only test while the
+## board stayed at four columns, which is the actual complaint: an empty work zone stretched across the
+## monitor. The exact arithmetic is asserted too, so a card that merely shrank *somewhat* fails.
+func _assert_card_follows_its_content(busy_width: float, busy_columns: int, state_name: String) -> void:
+	var failures: Array[String] = []
+	var quiet_width := _panel._panel.get_global_rect().size.x
+	var quiet_columns: int = _panel._work_columns
+	if quiet_columns >= busy_columns:
+		failures.append("an unworked band still asks for %d board columns against the busy band's %d" % [
+			quiet_columns, busy_columns])
+	if quiet_width >= busy_width:
+		failures.append("the card is %.0fpx with nothing to show and %.0fpx with 34 sources — it did not follow its content" % [
+			quiet_width, busy_width])
+	# The difference must be exactly the columns dropped: nothing else in the card may have moved.
+	var expected: float = busy_width - float(busy_columns - quiet_columns) * BandCityPanel.ZONE_WORK_MIN_WIDTH
+	if absf(quiet_width - expected) > ZONE_BOUNDS_TOLERANCE:
+		failures.append("the card is %.0fpx but dropping %d columns from %.0fpx predicts %.0fpx" % [
+			quiet_width, busy_columns - quiet_columns, busy_width, expected])
+	if failures.is_empty():
+		print("band_panel_preview: assert OK — %s the card follows its content (%.0fpx / %d columns busy → %.0fpx / %d quiet)" % [
+			state_name, busy_width, busy_columns, quiet_width, quiet_columns])
+		return
+	for failure in failures:
+		push_error("band_panel_preview: %s — %s" % [state_name, failure])
+
+## GUARD: a TOP-docked card is drawn over NEITHER HUD column (issue #377).
+##
+## The top dock is the one edge where the HUD keeps its strip — its right-hand column of readouts belongs
+## BESIDE the card, not pushed under the map — so it is also the one edge where the card can be drawn
+## over something. The claim is made as rect non-overlap against the live regions rather than as "the
+## bound was applied", because a bound that is set and then ignored reads identically to one that works.
+##
+## **It takes a negative control first, on the same two live rects**: with the bounds cleared the card
+## genuinely DOES overlap, so a pass cannot be satisfied by two rects that happen never to meet — which
+## is what a sparse band would give for free, and exactly how the half-fix looked complete.
+func _assert_card_clears_hud_columns(state_name: String) -> void:
+	var card := _panel._panel.get_global_rect()
+	var columns := {
+		"the left dock": _hud.left_dock_region.get_global_rect(),
+		"the right readouts": _hud.turn_block.get_global_rect(),
+	}
+	# NEGATIVE CONTROL: unbound, this band's card must actually reach at least one of them.
+	_panel.set_lateral_bounds(0.0, 0.0)
+	var unbound := _panel._panel.get_global_rect()
+	var would_collide := false
+	for rect_variant in columns.values():
+		if unbound.intersects(rect_variant):
+			would_collide = true
+	var live: Vector2 = _hud.lateral_column_widths()
+	_panel.set_lateral_bounds(live.x, live.y)
+	var failures: Array[String] = []
+	if not would_collide:
+		failures.append("the UNBOUND card %s clears both columns anyway, so this state proves nothing — stage a busier band" % unbound)
+	for name_variant in columns:
+		var rect: Rect2 = columns[name_variant]
+		if card.intersects(rect):
+			failures.append("the card %s is drawn over %s %s" % [card, name_variant, rect])
+	if failures.is_empty():
+		print("band_panel_preview: assert OK — %s the card clears both HUD columns (and would collide unbound)" % state_name)
+		return
+	for failure in failures:
+		push_error("band_panel_preview: %s — %s" % [state_name, failure])
+
+## GUARD: the CARD sits centred in the room the chrome cluster leaves.
+##
+## Fitting does not imply centring (the `_assert_parked_chrome_fits` lesson on the other axis): a card
+## packed hard against the leading edge is entirely inside its strip and reads as a panel that ignores
+## the right half of an ultrawide. It is the CARD being measured now, not its content column — the
+## column simply fills the card since the card itself became the thing that narrows.
+func _assert_card_is_centred(state_name: String) -> void:
+	var card := _panel._panel.get_global_rect()
+	var strip := _panel._root.get_global_rect()
+	var lead_margin: float = card.position.x - strip.position.x
+	var trail_margin: float = (strip.end.x - _panel._rail_span()) - card.end.x
+	if absf(lead_margin - trail_margin) > ZONE_BOUNDS_TOLERANCE:
+		push_error("band_panel_preview: %s — the card is not centred: %.0fpx of margin leading, %.0fpx trailing" % [
+			state_name, lead_margin, trail_margin])
+		return
+	print("band_panel_preview: assert OK — %s the card is centred (%.0fpx of open map either side)" % [
+		state_name, lead_margin])
+
+## GUARD: THE OPEN MAP EITHER SIDE OF THE CARD IS STILL CLICKABLE (issue #377).
+##
+## A horizontal dock reserves the whole strip but only DRAWS two islands in it, and the map renders
+## through the gaps — so the gaps must behave like map. `MapView` picks hexes out of `_unhandled_input`,
+## and the Viewport marks a press handled the moment any `STOP` control under the pointer takes it, so a
+## `PanelRoot` left at the `Control` default silently eats every click, drag-pan and wheel-zoom aimed at
+## the ~1929px of visible map around a 3440 bottom dock. Nothing about that is visible in a PNG: the
+## frame is pixel-identical either way, which is why this claim is behavioural.
+##
+## **Driven through the REAL dispatch** (`Viewport.push_input`) against this harness's own
+## `_unhandled_input`, the `ui_preview` event-dock idiom: the GUI pass runs first, and a press it
+## consumes never becomes unhandled. Inspecting `mouse_filter` alone would assert the cause and not the
+## effect — the filters are read back too, but only BESIDE the behaviour, so a future regression is
+## legible rather than merely detected.
+##
+## **All three halves are required.** The precondition (open canvas reaches the map path) is what stops a
+## probe that never fires from passing everywhere — the failure the event-dock version was rewritten to
+## avoid. The gaps must reach. And the two ISLANDS must not, or a probe that fires indiscriminately would
+## pass just as well.
+##
+## **The island half is asserted on each island's OWN surface** — the card's chrome ring (its border and
+## content margins, where `PanelCard` itself is what the pointer finds) and the chrome cluster's bare
+## column — never on the card's INTERIOR. The interior is zone content, whose controls carry their own
+## filters, and it is measured as leaky: a press into the work board's blank area (a ~200×50 canvas-px
+## region of `Zone_work` here) reaches `_unhandled_input` even though `PanelCard` is `STOP` and covers it,
+## and neither a `STOP` child of the card nor a `STOP` sibling BEHIND it closes the hole (both tried; only
+## a sibling in FRONT of the card does, which would eat the panel's own buttons). Asserting the interior
+## would therefore pin an engine behaviour this panel does not control, in a claim about `_root`.
+func _assert_open_strip_reaches_the_map(state_name: String) -> void:
+	var strip := _panel._root.get_global_rect()
+	var card := _panel._panel.get_global_rect()
+	var rail_span: float = _panel._rail_span()
+	var failures: Array[String] = []
+	# PRECONDITION: a press on bare canvas, far from the strip, must reach unhandled input at all.
+	var canvas: Vector2 = get_viewport().get_visible_rect().size
+	if not await _press_reaches_map(_canvas_to_window(canvas * PROBE_CANVAS_CENTRE_FRACTION)):
+		failures.append("a press on bare canvas never reaches _unhandled_input, so this probe proves nothing")
+	# THE CLAIM: both gaps — leading (strip edge → card) and trailing (card → the chrome cluster).
+	var gaps := {
+		"the open strip LEADING the card": Rect2(
+			strip.position, Vector2(card.position.x - strip.position.x, strip.size.y)),
+		"the open strip TRAILING the card": Rect2(
+			Vector2(card.end.x, strip.position.y),
+			Vector2(strip.end.x - rail_span - card.end.x, strip.size.y)),
+	}
+	for gap_name_variant in gaps:
+		var gap: Rect2 = gaps[gap_name_variant]
+		if gap.size.x <= 2.0 * PROBE_RECT_INSET:
+			failures.append("%s is only %.0fpx wide — there is no open map to click, so stage a narrower card" % [
+				gap_name_variant, gap.size.x])
+			continue
+		for point in _rect_probe_points(gap):
+			if not await _press_reaches_map(_canvas_to_window(point)):
+				failures.append("a press at %s in %s never reached the map's input path" % [point, gap_name_variant])
+				break
+	# THE COMPLEMENT: each ISLAND still eats the clicks that land on its own surface, or the probe is
+	# simply always true. The card is probed on its chrome RING and the chrome cluster on its bare column.
+	var islands := {
+		"the card's own chrome ring": _rect_ring_probe_points(card),
+		"the chrome cluster": _rect_ring_probe_points(Rect2(
+			Vector2(strip.end.x - _panel._rail_width(), strip.position.y),
+			Vector2(_panel._rail_width(), strip.size.y))),
+	}
+	for island_name_variant in islands:
+		for point: Vector2 in islands[island_name_variant]:
+			if await _press_reaches_map(_canvas_to_window(point)):
+				failures.append("a press at %s on %s fell through to the map's input path" % [
+					point, island_name_variant])
+				break
+	# The filters that make all of that true, read back beside the behaviour.
+	if _panel._root.mouse_filter != Control.MOUSE_FILTER_IGNORE:
+		failures.append("PanelRoot's mouse_filter is %d, not IGNORE — the strip is not transparent to the pointer" % _panel._root.mouse_filter)
+	if _panel._panel.mouse_filter != Control.MOUSE_FILTER_STOP:
+		failures.append("PanelCard's mouse_filter is %d, not STOP" % _panel._panel.mouse_filter)
+	if _panel._rail.mouse_filter != Control.MOUSE_FILTER_STOP:
+		failures.append("ChromeRail's mouse_filter is %d, not STOP" % _panel._rail.mouse_filter)
+	if failures.is_empty():
+		print("band_panel_preview: assert OK — %s the open map either side of the card takes clicks (%.0fpx leading, %.0fpx trailing) and the card still eats its own" % [
+			state_name, card.position.x - strip.position.x, strip.end.x - rail_span - card.end.x])
+		return
+	for failure in failures:
+		push_error("band_panel_preview: %s — %s" % [state_name, failure])
+
+## Where the "is the probe alive at all" press lands: the middle of the canvas, which on every state
+## that runs this guard is bare ground — the strip is on an edge and the HUD's own columns are not.
+const PROBE_CANVAS_CENTRE_FRACTION := 0.5
+## How far inside a rect a probe point sits. Two canvas px: unambiguously within the rect after the
+## canvas→window scale, small enough to still land inside a thin margin.
+const PROBE_RECT_INSET := 2.0
+
+## The RING of a rect — its corners and edge midpoints, `PROBE_RECT_INSET` inside, with the centre left
+## out. That is the band an island owns itself: the card's border + content margins, the chrome
+## cluster's bare column. See the guard's docstring for why the interior is deliberately not asked.
+func _rect_ring_probe_points(rect: Rect2) -> Array[Vector2]:
+	var points := _rect_probe_points(rect)
+	points.remove_at(points.size() / 2)
+	return points
+
+## Nine points across a rect — corners, edge midpoints and centre, each pulled `PROBE_RECT_INSET`
+## inside. The centre alone would never do for the OPEN-STRIP half: the gap beside the card is wide, and
+## a filter that leaked only at its edges would pass a single-sample probe.
+func _rect_probe_points(rect: Rect2) -> Array[Vector2]:
+	var lo := rect.position + Vector2(PROBE_RECT_INSET, PROBE_RECT_INSET)
+	var hi := rect.end - Vector2(PROBE_RECT_INSET, PROBE_RECT_INSET)
+	var mid := rect.get_center()
+	return [
+		Vector2(lo.x, lo.y), Vector2(mid.x, lo.y), Vector2(hi.x, lo.y),
+		Vector2(lo.x, mid.y), mid, Vector2(hi.x, mid.y),
+		Vector2(lo.x, hi.y), Vector2(mid.x, hi.y), Vector2(hi.x, hi.y),
+	]
+
+## Did a left-press at this WINDOW point survive the GUI pass and reach `_unhandled_input`? That is
+## exactly "would MapView have picked the hex underneath".
+func _press_reaches_map(window_point: Vector2) -> bool:
+	_unhandled_press_seen = false
+	var approach := InputEventMouseMotion.new()
+	approach.position = window_point
+	get_viewport().push_input(approach)
+	await get_tree().process_frame
+	var press := InputEventMouseButton.new()
+	press.button_index = MOUSE_BUTTON_LEFT
+	press.pressed = true
+	press.position = window_point
+	get_viewport().push_input(press)
+	await get_tree().process_frame
+	var seen := _unhandled_press_seen
+	await _release_press(window_point)
+	return seen
+
+## Finish the click `_press_reaches_map` started, and it is not optional. A press with no release
+## LATCHES `gui.mouse_focus` on whatever control took it, and Godot then routes every later press to
+## that control WITHOUT re-picking — so probe 2 onwards would report probe 1's answer wherever they
+## landed. The MOTION comes first so a `BaseButton` holding the press sees the pointer leave and clears
+## `pressing_inside`: the release then cancels the click instead of firing it, which is what keeps a
+## probe over the header's dock chooser from re-docking the panel mid-assertion.
+
+func _release_press(window_point: Vector2) -> void:
+	var park := _canvas_to_window(get_viewport().get_visible_rect().size * PROBE_CANVAS_CENTRE_FRACTION)
+	var motion := InputEventMouseMotion.new()
+	motion.position = park
+	motion.relative = park - window_point
+	get_viewport().push_input(motion)
+	var release := InputEventMouseButton.new()
+	release.button_index = MOUSE_BUTTON_LEFT
+	release.pressed = false
+	release.position = park
+	get_viewport().push_input(release)
+	await get_tree().process_frame
+
+## Canvas coordinates → WINDOW coordinates, which is what `push_input` takes. The states pin
+## `content_scale_size` to their canvas, and the WM can refuse the matching window size, so a control's
+## own rect and an input position are not guaranteed to be in the same units.
+func _canvas_to_window(canvas_point: Vector2) -> Vector2:
+	var canvas: Vector2 = get_viewport().get_visible_rect().size
+	if canvas.x <= 0.0 or canvas.y <= 0.0:
+		return canvas_point
+	var window := Vector2(get_window().size)
+	return Vector2(canvas_point.x / canvas.x * window.x, canvas_point.y / canvas.y * window.y)
 
 ## How far `rect` pokes outside `bounds` on each axis (negative = comfortably inside).
 func _rect_overflow(rect: Rect2, bounds: Rect2) -> Vector2:
@@ -1394,13 +1787,11 @@ func _assert_no_rail_width(state_name: String) -> void:
 	var span := _panel._rail_span()
 	if not is_zero_approx(span):
 		failures.append("still spends %.0fpx on the chrome rail" % span)
-	if _panel._rail_separator.visible:
-		failures.append("the rail separator hairline is still visible")
 	if failures.is_empty():
-		print("band_panel_preview: assert OK — %s vertical dock spends nothing on the chrome rail and draws no hairline" % state_name)
+		print("band_panel_preview: assert OK — %s spends nothing on the chrome rail" % state_name)
 		return
 	for failure in failures:
-		push_error("band_panel_preview: %s vertical dock — %s" % [state_name, failure])
+		push_error("band_panel_preview: %s — %s" % [state_name, failure])
 
 ## GUARD: the clusters came home to the EXACT authored parent, child index, anchors and size flags the
 ## controller captured before the first reflow. A preset applied on park must not leak into the
@@ -1663,6 +2054,81 @@ func _assert_trade_row_absent_in_short_tier() -> void:
 		return
 	print("band_panel_preview: assert OK — SHORT tier drops the Trade row (Food row still present)")
 
+## MEASUREMENT (not an assertion — `_assert_zone_content_fits` is the assertion): print how tall each
+## zone's content actually came out against the box it was given, so a state that PASSES still says by
+## how much. A near-miss and a comfortable fit are the same green line otherwise, and the whole point
+## of the worst-case state is knowing what the margin is.
+## Uses the SAME walk `_collect_zone_content_shortfall` does — the deepest `top + needed` any measurable
+## control reaches — so the number printed here and the number asserted on cannot come from two reads.
+func _report_zone_content_extent(state_name: String) -> void:
+	for host_variant in _find_zone_hosts(_panel):
+		var host: Control = host_variant
+		var extent := _zone_content_extent(host, host)
+		if extent <= 0.0:
+			continue
+		print("band_panel_preview: %s — zone %s content %.0fpx of a %.0fpx box (%.0f spare)" % [
+			state_name, host.name, extent, host.size.y, host.size.y - extent])
+
+## The deepest point any measurable control in this zone reaches, relative to the zone's own top.
+func _zone_content_extent(node: Node, host: Control) -> float:
+	var deepest := 0.0
+	for child in node.get_children():
+		if not (child is Control):
+			continue
+		var content: Control = child
+		if not content.visible:
+			continue
+		var needed := content.get_combined_minimum_size().y
+		if needed <= 0.0:
+			deepest = maxf(deepest, _zone_content_extent(content, host))
+			continue
+		deepest = maxf(deepest, content.global_position.y - host.global_position.y + needed)
+	return deepest
+
+## GUARD: the SHORT tier merges the hay larder onto the Food line (`BandDetailLines`'
+## `BAND_FOOD_HAY_CLAUSE_FORMAT`) to save a row — and the vitals label is `AUTOWRAP_WORD`, so a merged
+## line too wide for the band zone WRAPS and costs back the very row the merge bought. A wrap is also
+## invisible in the frame: two lines of a rendered vitals block look exactly like two rows.
+##
+## Measured rather than eyeballed: the Food row's natural (unwrapped) run, in the label's OWN font at
+## its OWN size, against the width the label was actually given, plus the gutter the `[table=2]`
+## spends between its key and value cells — so the figure is the whole ROW rather than one cell.
+##
+## **THE ROW IS CUT OUT OF THE PARSED TEXT BY THE NEXT ROW'S KEY, not by a newline.** `[table]` rows
+## carry NO line break into `get_parsed_text()` — every row of the vitals block comes back concatenated
+## into one string (measured: the three-row worst case reads as a single 916px run) — so a per-line
+## split measures the whole block and reports a wrap on a label that fits comfortably.
+func _assert_merged_food_row_fits() -> void:
+	var vitals := _find_vitals_label(_panel)
+	if vitals == null:
+		push_error("band_panel_preview: merged-food-row assert found no vitals label")
+		return
+	var text: String = vitals.get_parsed_text()
+	if not text.contains(MERGED_FOOD_HAY_NEEDLE):
+		push_error("band_panel_preview: the SHORT tier's Food row carries no hay clause — the merge is off (got: %s)" % text)
+		return
+	if text.contains(FODDER_ROW_NEEDLE):
+		push_error("band_panel_preview: the SHORT tier still renders a standalone Fodder row beside the merged Food line")
+		return
+	var next_row := text.find(HudDisclosureVocab.DETAIL_ROW_MORALE)
+	if next_row <= 0:
+		push_error("band_panel_preview: merged-food-row assert cannot find the Morale row that bounds the Food one (got: %s)" % text)
+		return
+	var food_run := text.substr(0, next_row)
+	var font := vitals.get_theme_font(VITALS_FONT_THEME_KEY)
+	var font_size := vitals.get_theme_font_size(VITALS_FONT_SIZE_THEME_KEY)
+	var table_gap := float(vitals.get_theme_constant(VITALS_TABLE_SEPARATION_THEME_KEY))
+	var needed: float = font.get_string_size(food_run, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x + table_gap
+	var available := vitals.size.x
+	print("band_panel_preview: merged Food row — \"%s\" measures %.0fpx of a %.0fpx column" % [
+		food_run, needed, available])
+	if needed > available:
+		push_error("band_panel_preview: the merged Food line WRAPS — %.0fpx of run in a %.0fpx column" % [
+			needed, available])
+	else:
+		print("band_panel_preview: assert OK — the merged Food line fits its column (%.0f spare)" % [
+			available - needed])
+
 ## **THE FORAGE-TRADE REGRESSION.** A forage source ships `realized_trade_yield == 0` (the documented
 ## not-yet-projected sentinel) beside a real `trade_yield`, and the decoder always inserts the key — so
 ## a fallback spelled `has("realized_trade_yield")` silently drops every cash crop and the row reads
@@ -1818,6 +2284,148 @@ func _assert_band_panel(label: String, ok: bool) -> void:
 		print("band_panel_preview: PASS — ", label)
 	else:
 		push_error("band_panel_preview: FAIL — %s" % label)
+
+## THE BOARD MUST NOT RE-ORDER UNDER THE PLAYER'S OWN EDIT (issue #460), and both comparators must be
+## TOTAL ORDERS. Neither claim is visible in a PNG — a re-sorted board is a perfectly plausible board —
+## so the sorts are driven directly, over models shaped like `_work_source_models`' output.
+##
+## Four claims, and the second is what stops the first being satisfied by a comparator that ignores
+## `rate` altogether:
+##   1. under the DEFAULT sort a worker step (a `rate` change) leaves the key order identical;
+##   2. under `WORK_SORT_YIELD` the SAME step DOES reorder — the opt-in sort still ranks live;
+##   3. both sorts answer the same key sequence from two different starting permutations, which is the
+##      only thing that can see a missing `key` tiebreak (`sort_custom` is not stable in Godot);
+##   4. the DEFAULT sort groups by KIND — every `forage` row above every `hunt` row — which the label
+##      order alone does NOT give, since a managed plant row reads "Tend (…)" and sorts after "Hunt".
+##      Asserted on `kind`, never on the label: testing the label would re-enact the assumption that
+##      the prefix identifies the kind, which is exactly what is false.
+func _assert_work_sort_stable() -> void:
+	var controller = _hud._bandpanel
+	# THE FIRST CLAIM IS ABOUT THE LIVE DEFAULT, so it does NOT set the sort — nothing in this harness
+	# has picked one, so `_work_sort` is exactly what a fresh session boots with. Pinning it to
+	# `WORK_SORT_NAME` here would assert that the name sort is stable and say nothing about which sort
+	# the board actually uses, which is the whole of issue #460.
+	var restore_sort: StringName = controller._work_sort
+	var models := _work_sort_fixture_models()
+	var name_before := _sorted_work_keys(controller, models)
+	_bump_work_sort_fixture_rate(models)
+	var name_after := _sorted_work_keys(controller, models)
+	_assert_band_panel("work sort — a worker step leaves the DEFAULT (`%s`) order untouched (%s)"
+		% [String(restore_sort), ", ".join(name_after)], name_after == name_before)
+	# 4 — still on the live default: the kind blocks the filter chips name must be the board's blocks.
+	var kinds := _sorted_work_kinds(controller, _work_sort_fixture_models())
+	var last_forage := kinds.rfind(SourceForecast.LABOR_KIND_FORAGE)
+	var first_hunt := kinds.find(SourceForecast.LABOR_KIND_HUNT)
+	_assert_band_panel("work sort — the DEFAULT (`%s`) puts every forage row above every hunt row (%s)"
+		% [String(restore_sort), ", ".join(kinds)], last_forage < first_hunt)
+	# 2 — the counter-check: the opt-in yield sort must genuinely track the same edit.
+	controller._work_sort = HudWorkVocab.WORK_SORT_YIELD
+	var yield_models := _work_sort_fixture_models()
+	var yield_before := _sorted_work_keys(controller, yield_models)
+	_bump_work_sort_fixture_rate(yield_models)
+	var yield_after := _sorted_work_keys(controller, yield_models)
+	_assert_band_panel("work sort — the same worker step DOES re-rank `Sort by yield` (%s → %s)"
+		% [", ".join(yield_before), ", ".join(yield_after)], yield_after != yield_before)
+	# 3 — total order, both modes, from two different starting permutations.
+	for sort in HudWorkVocab.WORK_SORTS:
+		controller._work_sort = sort
+		var forward := _sorted_work_keys(controller, _work_sort_fixture_models())
+		var reversed_models := _work_sort_fixture_models()
+		reversed_models.reverse()
+		var backward := _sorted_work_keys(controller, reversed_models)
+		_assert_band_panel("work sort — `%s` is a total order (same keys from a reversed input: %s)"
+			% [String(sort), ", ".join(forward)], forward == backward)
+	controller._work_sort = restore_sort
+
+## The sort fixture, carrying BOTH reachable ties: two herds sharing a label (`WORK_ROW_HUNT_FORMAT`
+## renders one string per species, so two Wild Boar herds collide) and two sources sharing a rate.
+## Only the keys the two comparators read are populated — this exercises the sort, not the board.
+##
+## The TEND row is what makes claim 4 bite: its label is built from `WORK_ROW_TEND_FORMAT`, so it
+## sorts alphabetically AFTER every "Hunt …" row while its `kind` is still `forage`. Composing the
+## label from the format const rather than a literal means renaming the format cannot silently leave
+## this case uncovered.
+func _work_sort_fixture_models() -> Array:
+	return [
+		{"key": "hunt:boar_b", "label": "Hunt Wild Boar", "kind": "hunt",
+			"rate": 0.40, "trade_rate": 0.10},
+		{"key": WORK_SORT_STEPPED_KEY, "label": "Hunt Wild Boar", "kind": "hunt",
+			"rate": WORK_SORT_TIED_RATE, "trade_rate": 0.10},
+		{"key": "forage:12,7", "label": "Forage (12, 7)", "kind": "forage",
+			"rate": WORK_SORT_TIED_RATE, "trade_rate": 0.0},
+		{"key": "forage:3,9", "label": "Forage (3, 9)", "kind": "forage",
+			"rate": 0.60, "trade_rate": 0.0},
+		{"key": "forage:8,4", "kind": "forage",
+			"label": HudWorkVocab.WORK_ROW_TEND_FORMAT % [WORK_SORT_TEND_TILE.x, WORK_SORT_TEND_TILE.y],
+			"rate": 0.30, "trade_rate": 0.0},
+		{"key": "hunt:wolf", "label": "Hunt Grey Wolf", "kind": "hunt",
+			"rate": 0.0, "trade_rate": 0.22},
+	]
+
+## The tile the fixture's managed plant row sits on — only its label is read, so any coordinate does.
+const WORK_SORT_TEND_TILE := Vector2i(8, 4)
+
+## The source whose crew the assertion "steps", and the rate two sources start tied on. The stepped
+## source is one of the tied pair, so the step both breaks a tie and moves the row to the TOP of the
+## yield order — an edit the name sort must ignore and the yield sort must not.
+const WORK_SORT_STEPPED_KEY := "hunt:boar_a"
+const WORK_SORT_TIED_RATE := 0.25
+## Where the stepped source lands after its "+" press — above every other row's rate.
+const WORK_SORT_STEPPED_RATE := 0.90
+
+func _bump_work_sort_fixture_rate(models: Array) -> void:
+	for m in models:
+		if String((m as Dictionary).get("key", "")) == WORK_SORT_STEPPED_KEY:
+			(m as Dictionary)["rate"] = WORK_SORT_STEPPED_RATE
+
+## Sort a COPY through the controller's own comparator and report the resulting key order.
+func _sorted_work_keys(controller, models: Array) -> Array:
+	var copy := models.duplicate()
+	controller._sort_work_models(copy)
+	var keys: Array = []
+	for m in copy:
+		keys.append(String((m as Dictionary).get("key", "")))
+	return keys
+
+## The same, reporting each row's `kind` instead of its key — the field the filter chips select on.
+func _sorted_work_kinds(controller, models: Array) -> Array:
+	var copy := models.duplicate()
+	controller._sort_work_models(copy)
+	var kinds: Array = []
+	for m in copy:
+		kinds.append(String((m as Dictionary).get("kind", "")))
+	return kinds
+
+## The `⋯` menu must SAY which sort is active — without the mark the board's order is unexplained, the
+## menu offering two sorts and stating neither. Asserted on the popup rather than in a frame: the popup
+## is a Window and never renders into the capture.
+func _assert_work_menu_marks_active_sort(state_name: String) -> void:
+	var popup := _find_work_menu_popup(_panel)
+	if popup == null:
+		_assert_band_panel("%s — the work zone's `⋯` menu was not found" % state_name, false)
+		return
+	var checked: Array = []
+	for i in range(popup.item_count):
+		if popup.is_item_checked(i):
+			checked.append(popup.get_item_text(i))
+	var want := HudWorkVocab.WORK_MENU_SORT_NAME if _hud._bandpanel._work_sort == HudWorkVocab.WORK_SORT_NAME \
+		else HudWorkVocab.WORK_MENU_SORT_YIELD
+	_assert_band_panel("%s — the work menu marks exactly the active sort (checked: %s, active: %s)"
+		% [state_name, str(checked), want], checked == [want])
+
+## The work zone's section menu, found by the SORT ENTRY its popup carries — the parties zone builds a
+## `⋯` menu too, and both are plain `MenuButton`s, so the node type alone cannot tell them apart.
+func _find_work_menu_popup(node: Node) -> PopupMenu:
+	if node is MenuButton:
+		var popup: PopupMenu = (node as MenuButton).get_popup()
+		for i in range(popup.item_count):
+			if popup.get_item_text(i) == HudWorkVocab.WORK_MENU_SORT_NAME:
+				return popup
+	for child in node.get_children():
+		var found := _find_work_menu_popup(child)
+		if found != null:
+			return found
+	return null
 
 ## The rung-ready board fixture: three sources, exactly one of each answer the mark can give.
 func _ready_band_fixture() -> Dictionary:
@@ -2850,7 +3458,7 @@ func _cap_demo_herd_fixtures() -> Array:
 ## are a patch's only ceiling representation (#426). Every rung gets the same ceiling and per-worker
 ## term, which is all these cap fixtures need; the two non-food accounts stay absent, so the
 ## render-only-when-non-zero rule leaves every frame unchanged. The ui_preview twin is
-## `_seed_forage_rows`, which derives its numbers from `patch_`-prefixed tile_info keys instead.
+## `BaseFx.seed_forage_rows`, which derives its numbers from `patch_`-prefixed tile_info keys instead.
 func _wire_patch_rows(patch: Dictionary, ceiling: float) -> Dictionary:
 	var ceilings := {}
 	var per_worker := {}
@@ -3169,6 +3777,64 @@ func _arrivals_band_fixture() -> Dictionary:
 			"arrival_schedule": _continuous_forage_schedule()},
 		{"kind": "scout", "workers": 2},
 	]
+	return band
+
+## Every quantity the WORST-CASE vitals fixture states, named because each one exists to keep ONE
+## optional row alive — and because the merged Food line's width is measured against them, so a
+## fixture tuned to short numbers would measure a line no player ever sees.
+##
+## The larder is DELIBERATELY LARGE with a LONG runway and a NEGATIVE net rate, which is a real
+## combination (a big store draining slowly) and the widest the Food row can render: three digits of
+## provisions, three digits of turns, a signed rate, and a three-digit hay stock beside them.
+const WORST_CASE_PROVISIONS := 248.0
+## `WORST_CASE_PROVISIONS` walked down at the net drain below (3.60 income − 4.60 eaten − 0.41 pen
+## feed = −1.41/turn), so the runway the row prints is the one the larder actually implies.
+const WORST_CASE_TURNS_OF_FOOD := 176.0
+## The hay larder (Flora roster F3) and the pen bill it offsets — either one alone lights the fodder
+## readout, and this fixture carries BOTH so neither gate can be the thing keeping it on.
+const WORST_CASE_FODDER_STORE := 128.4
+const WORST_CASE_PEN_FEED_UPKEEP := 0.41
+## The band's trade stock, so the Trade row (dropped in this tier) has real content in the taller one.
+const WORST_CASE_TRADE_STOCK := 46.5
+## Discontent below full, so the WORK head renders its Output item.
+const WORST_CASE_OUTPUT_MULTIPLIER := 0.62
+## Chosen against the two worked rows' realized income (3.60) and the pen bill so the net comes out
+## NEGATIVE — a signed rate is a character wider than an unsigned one, and a draining larder beside a
+## long runway is the shape a big-store band really shows.
+const WORST_CASE_FOOD_CONSUMPTION := 4.60
+
+## THE WORST CASE: a band carrying EVERY optional vitals row it can simultaneously have. Built on the
+## arrivals fixture, so it also carries the per-source `arrival_schedule`s the FOOD OUTLOOK chart
+## needs — the block `build_band_zone` gates on height — and its two worked rows are given trade
+## components so the Trade row has a rate as well as a stock.
+func _vitals_worst_case_band_fixture() -> Dictionary:
+	var band := _arrivals_band_fixture()
+	band["entity"] = 922
+	band["id"] = "Band 11"
+	band["turns_of_food"] = WORST_CASE_TURNS_OF_FOOD
+	band["stores"] = {"provisions": WORST_CASE_PROVISIONS, "trade_goods": WORST_CASE_TRADE_STOCK}
+	band["fodder_store"] = WORST_CASE_FODDER_STORE
+	band["pen_feed_upkeep"] = WORST_CASE_PEN_FEED_UPKEEP
+	band["output_multiplier"] = WORST_CASE_OUTPUT_MULTIPLIER
+	band["food_consumption"] = WORST_CASE_FOOD_CONSUMPTION
+	# Falling morale with a named cause, so the Morale row renders its longest form beside the rest.
+	band["morale"] = 0.31
+	band["morale_delta"] = -0.040
+	band["morale_cause"] = 1   # Terrain
+	band["morale_settling"] = 0.010
+	band["morale_terrain"] = -0.030
+	band["morale_climate"] = -0.020
+	# `_arrivals_band_fixture` restates the assignments, so the trade components have to be re-added:
+	# they are what gives the (taller-tier) Trade row a live rate rather than a bare stock.
+	for entry in (band["labor_assignments"] as Array):
+		var assignment: Dictionary = entry
+		if String(assignment.get("kind", "")) == SourceForecast.LABOR_KIND_HUNT:
+			assignment["trade_yield"] = 0.06
+			assignment["realized_trade_yield"] = 0.06
+		elif String(assignment.get("kind", "")) == SourceForecast.LABOR_KIND_FORAGE:
+			# The live forage shape: a real `trade_yield` beside the not-yet-projected `0.0`.
+			assignment["trade_yield"] = 0.04
+			assignment["realized_trade_yield"] = 0.0
 	return band
 
 ## A player band whose larder EMPTIES inside the horizon: a heavy drain over a sparse hunt + a thin

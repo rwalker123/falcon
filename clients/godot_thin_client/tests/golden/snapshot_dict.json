@@ -930,6 +930,7 @@
     {
       "cultivation": 94.459999,
       "faction": 72,
+      "foddering": 36.84,
       "herding": 31.219999,
       "penning": 29.51,
       "seed_selection": 21.629999
@@ -937,6 +938,7 @@
     {
       "cultivation": 28.549999,
       "faction": 103,
+      "foddering": 10.48,
       "herding": 37.700001,
       "penning": 54.32,
       "seed_selection": 14.35

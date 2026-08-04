@@ -50,8 +50,8 @@ use crate::{
     expedition_config::ExpeditionConfig,
     fauna::{
         herd_herders_needed, hunt_forecast, pen_upkeep, would_be_herders_needed, EcologyPhase,
-        Herd, HerdRegistry, HerdTelemetry, FULLY_HERDED, HERDING_DISCOVERY_ID,
-        PENNING_DISCOVERY_ID, PEN_FULLY_FED,
+        Herd, HerdRegistry, HerdTelemetry, FODDERING_DISCOVERY_ID, FULLY_HERDED,
+        HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID, PEN_FULLY_FED,
     },
     fauna_config::FaunaConfig,
     flora_config::{FloraConfig, FloraConfigHandle, FloraShare},
@@ -1889,6 +1889,40 @@ mod tests {
         assert_eq!(f2.faction, 2);
         assert!((f2.cultivation - 1.0).abs() < 1e-6);
         assert!((f2.herding - 0.5).abs() < 1e-6);
+        assert_eq!(
+            f2.foddering, 0.0,
+            "a faction that never ran a pen has no fodder capability"
+        );
+    }
+
+    /// **Foddering is published, and it alone keeps a faction's row alive.** It is not a rung gate,
+    /// so nothing else in the row implies it — a faction whose only non-zero track is Foddering must
+    /// still be emitted, or the client cannot tell "cannot bank this hay" from "no row at all".
+    #[test]
+    fn snapshot_intensification_knowledge_reports_foddering_on_its_own() {
+        /// Partway to Foddering — a learning meter, so the row must carry the fraction rather than a
+        /// known/unknown bit.
+        const PARTIAL_FODDERING: f32 = 0.25;
+
+        let mut ledger = DiscoveryProgressLedger::default();
+        ledger.add_progress(FactionId(7), PENNING_DISCOVERY_ID, Scalar::one());
+        ledger.add_progress(FactionId(7), FODDERING_DISCOVERY_ID, Scalar::one());
+        // Faction 9 has NOTHING but Foddering progress — the all-zero skip must not drop it.
+        ledger.add_progress(
+            FactionId(9),
+            FODDERING_DISCOVERY_ID,
+            Scalar::from_f32(PARTIAL_FODDERING),
+        );
+
+        let rows = snapshot_intensification_knowledge(&ledger);
+        assert_eq!(rows.len(), 2, "both factions are on the ladder");
+        let penned = &rows[0];
+        assert_eq!(penned.faction, 7);
+        assert!((penned.foddering - 1.0).abs() < 1e-6);
+        let fodder_only = &rows[1];
+        assert_eq!(fodder_only.faction, 9);
+        assert!((fodder_only.foddering - PARTIAL_FODDERING).abs() < 1e-6);
+        assert_eq!(fodder_only.penning, 0.0);
     }
 
     #[test]

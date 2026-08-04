@@ -85,8 +85,13 @@ var _targeting: TargetingController = null
 var _panel: BandCityPanel = null
 # ---- Band/City zone state (persists across renders, so a filter/tab/page survives a snapshot) ----
 ## Which sources the work board shows, how it orders them, and which page is on screen.
+## **THE DEFAULT SORT IS ONE THE PLAYER'S OWN EDIT CANNOT MOVE** (issue #460). Yield scales with
+## workers, so a yield-sorted board re-ranked on every `+`/`−` press — `_repage_work_zone` re-sorts
+## immediately, the row jumped out from under the pointer, and the next press landed on a different
+## source. A name is a fact about the source, not about the edit in flight. `Sort by yield` is still
+## one pick away in the `⋯` menu, and `set_panel` adopts the player's persisted choice over this.
 var _work_filter: StringName = HudWorkVocab.WORK_FILTER_ALL
-var _work_sort: StringName = HudWorkVocab.WORK_SORT_YIELD
+var _work_sort: StringName = HudWorkVocab.WORK_SORT_NAME
 var _work_page: int = 0
 ## The source key open in the work inspector strip ("" = none), and whether its floor picker is out.
 ## One row at a time — the strip costs board rows, which `_work_board_capacity` subtracts.
@@ -276,7 +281,10 @@ func build_band_zone(band: Dictionary, with_vitals: bool = true) -> VBoxContaine
     col.add_child(_build_workforce_block(band, _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT))
     return col
 
-## The vitals readout — the Food / Morale / Output rows with their click-to-expand disclosures. A
+## The vitals readout — Food, Fodder, Trade, Morale and Growth, of which Food / Trade / Morale /
+## Growth carry the click-to-expand disclosures (Fodder is a plain row, and there is no Output row:
+## productivity reads on the WORK zone's head). Which of the optional rows appear is the producer's
+## call — see `BandDetailLines.unit_summary_lines` and the `compact` note below. A
 ## FRESH RichTextLabel each render, so its `meta_clicked` is wired here (bound to ITSELF as the
 ## popover's anchor). The tint context is likewise fresh per render: it is built here, filled by
 ## `BandDetailLines.unit_summary_lines` as it emits the rows, and handed straight to the formatter.
@@ -292,9 +300,12 @@ func _build_vitals_label(band: Dictionary) -> RichTextLabel:
     # The SHORT tier drops the Trade row, the same budget call `build_band_zone` makes for the
     # food-outlook chart one block below: a ~300px T/B zone CLIPS what it cannot hold, and the row
     # measures 26px against a zone that is already tight.
+    # No Position row either: the coordinates are IDENTITY and the panel HEADER states them
+    # (`_panel_position_label`), so a vitals row would be a second telling — and one this zone pays
+    # for in height. The drawer host keeps it (it has no header and renders foreign bands).
     detail_label.text = DetailFormat.detail_bbcode(
         _banddetail.unit_summary_lines(band, _selectioncard.selected_terrain_label(), ctx,
-            _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT), ctx)
+            _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT, false), ctx)
     return detail_label
 
 ## "PEOPLE" — who the band IS: a stacked children/working-age/elders bar plus its key and the
@@ -553,16 +564,40 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
 ## `inspected` is the open inspector's model, EMPTY when none is open.
 func _work_board_capacity(count: int, inspected: Dictionary) -> Dictionary:
     var box := _zone_box()
-    var cols := clampi(int(box.x / HudWorkVocab.WORK_COLUMN_MIN_WIDTH), 1, HudWorkVocab.WORK_MAX_COLUMNS)
     var inspector_h := 0.0 if inspected.is_empty() else _work_inspector_height(inspected)
     var chrome := HudWorkVocab.ZONE_HEAD_HEIGHT + HudWorkVocab.WORK_CHIPS_HEIGHT + inspector_h \
         + float(HudWorkVocab.ZONE_BLOCK_SEPARATION) * HudWorkVocab.WORK_ZONE_GAP_COUNT
     var rows := maxi(1, int((box.y - chrome) / HudWorkVocab.WORK_ROW_HEIGHT))
+    var cols := _declare_work_columns(count, rows)
     var pages := ceili(float(count) / float(maxi(cols * rows, 1)))
     if pages > 1:
         rows = maxi(1, int((box.y - chrome - HudWorkVocab.WORK_PAGER_HEIGHT - float(HudWorkVocab.ZONE_BLOCK_SEPARATION)) / HudWorkVocab.WORK_ROW_HEIGHT))
+        cols = _declare_work_columns(count, rows)
         pages = ceili(float(count) / float(maxi(cols * rows, 1)))
     return {"cols": cols, "rows_per_col": rows, "page_size": cols * rows, "pages": maxi(pages, 1)}
+
+## How many board columns this band's sources actually WANT, declared to the panel so the card can be
+## drawn that wide (issue #377), and answered back for the board to fill.
+##
+## **THE DIRECTION INVERTED HERE, and that is the whole point.** `cols` used to be read OFF the zone's
+## width — the panel spanned the monitor, so on an ultrawide the board got four columns whether or not
+## the band had anything to put in them, and a band with no sources at all got an empty zone stretched
+## across two feet of screen. It is now derived from the SOURCE COUNT and the rows a column holds, and
+## the panel sizes its card to the answer.
+##
+## **It stays acyclic because `rows` comes from the zone's HEIGHT**, which a horizontal dock fixes and
+## which nothing here can move. Width follows count; count never follows width.
+##
+## Without a panel (the `ui_preview` no-dock fallback) there is nobody to declare to, so it falls back
+## to measuring the box exactly as before — that host is a fixed-width card with no card to resize.
+## **The panel's ANSWER is what gets built, not the want.** `set_work_columns` clamps to what the strip
+## can actually pay for — a 380px side dock affords one column however many sources there are — and a
+## board built to the unclamped want overflows its clipping zone host silently.
+func _declare_work_columns(count: int, rows: int) -> int:
+    if _panel == null:
+        return clampi(int(_zone_box().x / HudWorkVocab.WORK_COLUMN_MIN_WIDTH), 1, HudWorkVocab.WORK_MAX_COLUMNS)
+    var wanted := clampi(ceili(float(count) / float(maxi(rows, 1))), 1, HudWorkVocab.WORK_MAX_COLUMNS)
+    return _panel.set_work_columns(wanted)
 
 ## The board itself: `cols` column VBoxes filled COLUMN-MAJOR (top of column 1 to its bottom, then
 ## column 2), separated by a hairline rule. Fixed-height rows, no scroll — the page IS the limit.
@@ -593,9 +628,17 @@ func _build_work_board(band: Dictionary, page: Array, cols: int, rows_per_col: i
 
 ## The zone's head row: WORK · n sources · the band's total rate(s) · the `⋯` section menu.
 func _build_work_head(band: Dictionary, models: Array, income: float, trade_income: float) -> HBoxContainer:
+    # The two sorts are a mutually exclusive SET, so they carry the radio mark and `Unassign all` — an
+    # action, not a member — does not. Without it the menu offered two sorts and stated neither, which
+    # is what made the board's default order unreadable. `_repage_work_zone` rebuilds this head, so a
+    # pick refreshes the mark with no extra wiring.
     var menu := HudWidgets.build_section_menu([
-        {"label": HudWorkVocab.WORK_MENU_SORT_YIELD, "on_pick": func() -> void: _set_work_sort(HudWorkVocab.WORK_SORT_YIELD)},
-        {"label": HudWorkVocab.WORK_MENU_SORT_NAME, "on_pick": func() -> void: _set_work_sort(HudWorkVocab.WORK_SORT_NAME)},
+        {"label": HudWorkVocab.WORK_MENU_SORT_YIELD,
+            HudWidgets.MENU_ENTRY_CHECKED: _work_sort == HudWorkVocab.WORK_SORT_YIELD,
+            "on_pick": func() -> void: _set_work_sort(HudWorkVocab.WORK_SORT_YIELD)},
+        {"label": HudWorkVocab.WORK_MENU_SORT_NAME,
+            HudWidgets.MENU_ENTRY_CHECKED: _work_sort == HudWorkVocab.WORK_SORT_NAME,
+            "on_pick": func() -> void: _set_work_sort(HudWorkVocab.WORK_SORT_NAME)},
         {"label": HudWorkVocab.WORK_MENU_UNASSIGN_FORMAT % models.size(), "disabled": models.is_empty(),
             "on_pick": func() -> void: _on_work_unassign_all_pressed(band, models.size())},
     ], HudWorkVocab.WORK_MENU_TOOLTIP)
@@ -623,6 +666,21 @@ func _build_work_head(band: Dictionary, models: Array, income: float, trade_inco
         HudWidgets.set_label_tooltip(trade_total, HudWorkVocab.WORK_TRADE_TOTAL_TOOLTIP)
         head.add_child(trade_total)
         head.move_child(trade_total, head.get_child_count() - 2)
+    # THE OUTPUT ITEM — a THIRD sibling, and it qualifies the two beside it rather than adding to
+    # them: `output_multiplier` is the discontent modifier every rate on this board is already scaled
+    # by, so it belongs where its consequence is visible and not as a row of the height-capped band
+    # zone. Same gate the vitals row carried — only BELOW full output — because a head item
+    # permanently reading `Output 100%` is noise on a row that is otherwise live summary. It trails
+    # the rates deliberately: it is a note ABOUT them.
+    var output: float = float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
+    if output < SourceForecast.OUTPUT_FULL:
+        var output_item := Label.new()
+        output_item.text = HudWorkVocab.WORK_OUTPUT_FORMAT % int(round(output * 100.0))
+        output_item.add_theme_font_size_override("font_size", HudWorkVocab.ZONE_HEAD_FONT_SIZE)
+        output_item.add_theme_color_override("font_color", BandFoodStatus.color_for_output(output))
+        HudWidgets.set_label_tooltip(output_item, HudWorkVocab.WORK_OUTPUT_TOOLTIP)
+        head.add_child(output_item)
+        head.move_child(output_item, head.get_child_count() - 2)
     return head
 
 ## The filter chips ARE the summary: counts + per-kind rates, and pressing one filters the board.
@@ -715,12 +773,12 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     stripe.color = _work_row_stripe_color(model)
     stripe.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(stripe)
-    var icon := Label.new()
-    icon.text = String(model.get("icon", ""))
-    icon.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_ICON_WIDTH, 0.0)
-    icon.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
-    icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    line.add_child(icon)
+    # The SOURCE mark: bundled art where the client has it, the emoji where it does not. The column
+    # is the same fixed `WORK_ROW_ICON_WIDTH` either way, so a board mixing art and emoji rows still
+    # lines up down the icon column (issue #439).
+    line.add_child(HudWidgets.build_marker_icon(
+        model.get("icon_texture") as Texture2D, String(model.get("icon", "")),
+        HudWorkVocab.WORK_ROW_ICON_WIDTH, HudWorkVocab.WORK_ROW_FONT_SIZE))
     var label := Label.new()
     label.text = String(model.get("label", ""))
     label.clip_text = true
@@ -864,8 +922,14 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
     strip.add_child(col)
     var head := HBoxContainer.new()
     head.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
+    # The mark is its own child rather than a prefix welded into the title's text: a texture cannot
+    # live inside a `Label.text`, and splitting it is what lets the strip show the same art as the
+    # row it belongs to. `WORK_ROW_SEPARATION` on `head` is what spaces them, as it did the string.
+    head.add_child(HudWidgets.build_marker_icon(
+        model.get("icon_texture") as Texture2D, String(model.get("icon", "")),
+        HudWorkVocab.WORK_ROW_ICON_WIDTH, HudWorkVocab.WORK_ROW_FONT_SIZE))
     var title := Label.new()
-    title.text = "%s %s" % [String(model.get("icon", "")), String(model.get("label", ""))]
+    title.text = String(model.get("label", ""))
     title.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     title.clip_text = true
     title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -983,6 +1047,13 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # this crew pulls.
         var improvement := String(m.get("improvement", "")).strip_edges().to_lower()
         var icon := ""
+        # The row's bundled ART, resolved BESIDE the emoji rather than instead of it (issue #439):
+        # the emoji stays as the fallback, it is not replaced. BOTH webs fill it, and that is
+        # deliberate — hunt and forage rows share ONE list and ONE icon column, so spriting only the
+        # hunt half would leave a board that is half art and half emoji, a new inconsistency
+        # introduced by the fix. `null` where the client has no art for this source, which is the
+        # case `HudWidgets.build_marker_icon` renders the glyph for.
+        var icon_texture: Texture2D = null
         var label := ""
         var cap := {}
         var live_herd := {}
@@ -992,6 +1063,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # `HudFormat.source_icon_prefix`, which welds it to the label with a trailing space for the
             # single-label row this replaced.
             icon = _band_labor.food_module_icon(x, y)
+            icon_texture = _band_labor.food_module_sprite(x, y)
             # Held in a local because the RUNG mark reads it too — `forage_patch_lookup` spells its keys
             # BARE (`is_cultivated` / `is_field`), unlike the `patch_`-prefixed `tile_info` cross-ref.
             patch = _band_labor.forage_patch_lookup().get(Vector2i(x, y), {})
@@ -1014,6 +1086,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         else:
             var herd_label := _herd_label_for_id(herd_id)
             icon = FoodIcons.for_herd(herd_label)
+            icon_texture = FaunaSprites.for_herd(herd_label)
             label = HudWorkVocab.WORK_ROW_HUNT_FORMAT % herd_label
             # Herds MIGRATE, so the cap reads the herd's LIVE dict from `_band_labor.world_herds()` rather than the
             # assignment's launch-time target.
@@ -1061,7 +1134,8 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             if note == "":
                 note = HudWorkVocab.WORK_ROW_UNDER_HERDED_NOTE
         models.append({
-            "key": String(key), "kind": kind, "icon": icon, "label": label,
+            "key": String(key), "kind": kind, "icon": icon, "icon_texture": icon_texture,
+            "label": label,
             "rate": float(yld.get("rate", 0.0)),
             # The row's TRADE component (issue #337), 0 when the source pays none. Carried so the
             # inspector sentence states the same two products the row headline does.
@@ -1150,9 +1224,39 @@ func _work_models_matching(filter: StringName, models: Array) -> Array:
 
 func _sort_work_models(models: Array) -> void:
     if _work_sort == HudWorkVocab.WORK_SORT_NAME:
-        models.sort_custom(func(a, b): return String(a["label"]).naturalnocasecmp_to(String(b["label"])) < 0)
+        models.sort_custom(_work_name_sorts_before)
     else:
         models.sort_custom(func(a, b): return _work_sorts_before(a as Dictionary, b as Dictionary))
+
+## "Sort by name" — KIND FIRST, then label, then `key`.
+##
+## **THE LABEL PREFIX IS NOT A PROXY FOR THE KIND, so alphabetical order alone SPLITS A KIND IN TWO.**
+## A forage row whose Cultivate improvement is done renders through `WORK_ROW_TEND_FORMAT`
+## ("Tend (%d, %d)"), which is display only — its `kind` is still `forage`. With three live prefixes
+## and "Forage" < "Hunt" < "Tend", a band working a wild patch, a herd and a Tended Patch would read
+## Forage → Hunt → Tend, i.e. the forage block interrupted by the hunt block. The `Forage`/`Hunt`
+## filter chips select on `kind` (`_work_models_matching`), so the unsorted-by-kind board would not
+## match the blocks those chips name. Leading with the kind makes the board agree with the chips
+## whatever a row's label says.
+##
+## The `key` tiebreak makes it a TOTAL ORDER. `sort_custom` is NOT stable in Godot and a label tie is
+## genuinely reachable — two herds of the same species render the identical `WORK_ROW_HUNT_FORMAT`
+## label — so without it two tied rows could swap on any unrelated re-render (a snapshot tick, a zone
+## resize), which is the same row-jumps-under-the-pointer failure the default sort exists to remove.
+## `key` is the source identity `_work_source_models` already assigns, i.e. the one available field no
+## game state moves.
+func _work_name_sorts_before(a: Dictionary, b: Dictionary) -> bool:
+    # A BOOLEAN TIER, the same idiom `_work_sorts_before` uses, because there are exactly two labor
+    # kinds. A third kind cannot be expressed this way — it would need an explicit rank table, since
+    # a bool can only say "this one first".
+    var a_is_forage := String(a.get("kind", "")) == SourceForecast.LABOR_KIND_FORAGE
+    var b_is_forage := String(b.get("kind", "")) == SourceForecast.LABOR_KIND_FORAGE
+    if a_is_forage != b_is_forage:
+        return a_is_forage
+    var by_label := String(a.get("label", "")).naturalnocasecmp_to(String(b.get("label", "")))
+    if by_label != 0:
+        return by_label < 0
+    return String(a.get("key", "")) < String(b.get("key", ""))
 
 ## "Sort by yield", in TWO TIERS (issue #337): every FOOD-paying source first, ordered by its food
 ## figure descending, then the trade-only sources, ordered by their trade figure descending.
@@ -1172,14 +1276,27 @@ func _sort_work_models(models: Array) -> void:
 ## inedible quarry is worth nothing" reading the per-row work removed.)
 ##
 ## A source paying NEITHER component sorts into the trade tier at 0.0, i.e. last — unchanged.
+##
+## **THE `key` TIEBREAK MAKES IT A TOTAL ORDER, and that is a correctness fix**: `sort_custom` is NOT
+## stable in Godot and equal rates are common — two patches at the same food figure inside the food
+## tier, and every source paying neither component, all of which sit together at 0.0 in the trade
+## tier. Tied rows could otherwise swap on any unrelated re-render. The tiebreak rides BELOW the tier
+## + rate comparisons and changes neither.
 func _work_sorts_before(a: Dictionary, b: Dictionary) -> bool:
     var a_pays_food := SourceForecast.has_component(float(a.get("rate", 0.0)))
     var b_pays_food := SourceForecast.has_component(float(b.get("rate", 0.0)))
     if a_pays_food != b_pays_food:
         return a_pays_food
+    # Exact `!=` rather than `is_equal_approx`: an epsilon tie test is NOT transitive (a≈b and b≈c
+    # without a≈c), which would break the strict weak ordering `sort_custom` requires — the very
+    # property this tiebreak exists to establish.
     if a_pays_food:
-        return float(a.get("rate", 0.0)) > float(b.get("rate", 0.0))
-    return float(a.get("trade_rate", 0.0)) > float(b.get("trade_rate", 0.0))
+        if float(a.get("rate", 0.0)) != float(b.get("rate", 0.0)):
+            return float(a.get("rate", 0.0)) > float(b.get("rate", 0.0))
+        return String(a.get("key", "")) < String(b.get("key", ""))
+    if float(a.get("trade_rate", 0.0)) != float(b.get("trade_rate", 0.0)):
+        return float(a.get("trade_rate", 0.0)) > float(b.get("trade_rate", 0.0))
+    return String(a.get("key", "")) < String(b.get("key", ""))
 
 func _find_work_model(models: Array, key: String) -> Dictionary:
     if key == "":
@@ -1240,6 +1357,10 @@ func _set_work_sort(sort: StringName) -> void:
     if _work_sort == sort:
         return
     _work_sort = sort
+    # A sort is a standing preference, not a per-session mood — persist it through the panel, which
+    # owns the prefs file.
+    if _panel != null:
+        _panel.set_work_sort_pref(String(sort))
     _work_page = 0
     _repage_work_zone()
 
@@ -1635,7 +1756,22 @@ func _build_quarry_row(band: Dictionary, herd: Dictionary) -> HBoxContainer:
         HudStyle.apply_button(pick, "primary")
     else:
         var name_text := SourceForecast.herd_display_name(herd)
-        pick.text = HudComposeVocab.COMPOSE_QUARRY_LABEL_FORMAT % [FoodIcons.for_herd(name_text), name_text]
+        # The picked quarry wears the species' bundled ART where there is any (issue #439). A Button
+        # takes an icon natively, so this is its `icon` PROPERTY rather than a glyph welded into the
+        # face — and only the emoji branch keeps the format string, so a species with art loses the
+        # leading glyph instead of carrying both. `icon_max_width` is what stops the 256px source
+        # setting the button's minimum and dragging the compose row wide; `expand_icon` then fits it
+        # to the button's own height. UNTINTED: `apply_button` sets no `icon_*_color`, and the stock
+        # theme's is opaque white, so the animal renders in its own colours like every other marker.
+        var quarry_sprite := FaunaSprites.for_herd(name_text)
+        if quarry_sprite != null:
+            pick.icon = quarry_sprite
+            pick.expand_icon = true
+            pick.add_theme_constant_override("icon_max_width",
+                HudComposeVocab.COMPOSE_QUARRY_ICON_MAX_WIDTH)
+            pick.text = name_text
+        else:
+            pick.text = HudComposeVocab.COMPOSE_QUARRY_LABEL_FORMAT % [FoodIcons.for_herd(name_text), name_text]
         pick.clip_text = true
         pick.tooltip_text = HudComposeVocab.COMPOSE_QUARRY_TOOLTIP_FORMAT % [
             name_text, int(herd.get("x", -1)), int(herd.get("y", -1)),
@@ -1728,10 +1864,27 @@ func render_band(unit: Dictionary) -> void:
     var glyph := String(_band_labor.panel_band().get("settlement_stage_icon", "")).strip_edges()
     var stage_label := String(_band_labor.panel_band().get("settlement_stage_label", "")).strip_edges()
     var index := _index_of_player_band(int(_band_labor.panel_band().get("entity", -1)))
-    _panel.set_header(stage_id, glyph, HudFormat.band_display_name(_band_labor.panel_band(), index + 1), stage_label)
+    _panel.set_header(stage_id, glyph, HudFormat.band_display_name(_band_labor.panel_band(), index + 1), stage_label,
+        _panel_position_label(_band_labor.panel_band()))
     _panel.set_cycler(index, _band_labor.player_bands().size())
     # `set_zones` above already flipped the panel to band-present; just make sure it is shown.
     _panel.set_shown(true)
+
+## The band's hex coordinates for the panel header — the ONE place they are resolved, because the two
+## paths that reach this panel spell them DIFFERENTLY and used to render differently because of it.
+## The per-snapshot refresh hands over the cohort dict the native decoder built
+## (`native/src/dict/population.rs`), which carries `current_x` / `current_y` and NO `pos`; a click on
+## the band's map marker hands over MapView's marker copy, which carries a two-element `pos` array.
+## So the snapshot path rendered no coordinates at all and the map path did, and a turn tick then took
+## them away again. Preferring the cohort keys and falling back to `pos` makes both paths produce the
+## identical header; neither resolvable ⇒ `""`, which the panel renders as nothing.
+func _panel_position_label(band: Dictionary) -> String:
+    if band.has("current_x") and band.has("current_y"):
+        return HudFormat.BAND_HEADER_POSITION_FORMAT % [int(band["current_x"]), int(band["current_y"])]
+    var pos_array: Array = Array(band.get("pos", []))
+    if pos_array.size() == 2:
+        return HudFormat.BAND_HEADER_POSITION_FORMAT % [int(pos_array[0]), int(pos_array[1])]
+    return ""
 
 ## Select an expedition (from the panel's Active-expeditions list) on the map: recenter + select
 ## its hex (rebuilds that hex's roster), then pin the exact expedition so the map ring moves and the
@@ -1828,6 +1981,16 @@ func _index_of_player_band(entity: int) -> int:
 ## in `render_band`, since main's section-block model rebuilds that label each render.)
 func set_panel(panel: BandCityPanel) -> void:
     _panel = panel
+    # THE PANEL OWNS THE FILE, THIS CONTROLLER OWNS THE VOCABULARY. The panel stores the work sort as
+    # an opaque string, so validating it is this side's job: an empty (never chosen) or unknown value
+    # — a hand-edited prefs file, a sort retired since it was written — leaves the default standing.
+    # Without the guard it would not produce a broken board but a YIELD-sorted one: `_sort_work_models`
+    # branches on `== WORK_SORT_NAME`, so anything else falls through to yield, silently reinstating
+    # the re-ranking-under-your-own-edit behaviour issue #460 removed.
+    if panel != null:
+        var stored := StringName(panel.work_sort_pref())
+        if HudWorkVocab.WORK_SORTS.has(stored):
+            _work_sort = stored
     # The panel re-reports its zone box on a shell flip / dock change / collapse / window resize.
     # Re-PAGE the work board on it — the other two zones are unaffected by a box change.
     if panel != null and not panel.zones_resized.is_connected(_on_zones_resized):

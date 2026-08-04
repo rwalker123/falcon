@@ -198,6 +198,65 @@ static func build_status_part(text: String, color: Color) -> Label:
     label.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
     return label
 
+## THE SPECIES / SITE MARK ON A TEXT ROW — bundled art where the client has it, the emoji where it
+## does not. One builder, so the HUD's text surfaces cannot drift apart from each other or from the
+## map.
+##
+## WHY IT EXISTS (issue #439). The map has drawn `FaunaSprites` / `SiteSprites` art for a while; the
+## HUD's text rows kept rendering `FoodIcons`' emoji, and **Unicode ships ONE deer for the four
+## cervids the roster carries** — Red Deer, Wild Elk, Wild Reindeer and Desert Gazelle all resolve to
+## 🦌 — so a work row, a roster row and the quarry picker could not tell them apart. Splitting the
+## MARKER art fixed the map and left every text surface collided.
+##
+## WHY A `TextureRect` AND NOT `[img]` BBCODE. `CropRoleSprites` renders through `[img]` because its
+## host genuinely IS a `RichTextLabel`; every host here is a `Label` in an `HBoxContainer`. The
+## precedent for THIS situation is `StageSprites` + `BandCityPanel.set_header`, which swaps a
+## `TextureRect` in for a glyph `Label`. Choose by host widget — do not convert a row to RichTextLabel
+## to get an icon into it.
+##
+## **THE `null` BRANCH IS LOAD-BEARING even at full art coverage**, exactly as it is in the sprite
+## tables themselves: it catches a herd label naming a species the client does not know
+## (`FoodIcons.species_key_for` → `""`) and the `HERD_DEFAULT` case, neither of which has a key to
+## look art up by — and the land row's module-less `◈`, which is not a species at all.
+##
+## **THE SPRITE IS DRAWN UNTINTED — never set `modulate` on what this returns.** That is the map
+## markers' own rule (`.claude/rules/client/sprites-widgets.md`): a full-colour animal carries no
+## state, so state rides GEOMETRY beside it — the work row's severity stripe, the roster row's
+## ecology dot, the marks column. Tinting a marker was tried on the map, rendered as a slightly
+## darker brown animal, and was reverted.
+##
+## **THE GLYPH BRANCH IS THE ONE THAT TAKES A COLOUR, and it is the caller's to supply.** A bare
+## `Label` carries no `font_color` override and this client applies no `Theme` resource, so an
+## un-coloured glyph renders at Godot's STOCK near-white — which on a host whose text is `INK_DIM`
+## reads as a brighter mark beside a dimmer name, and stops tracking the row's state entirely. The
+## glyph used to live INSIDE the host's own label (`"%s %s" % [glyph, name]`) and inherited that
+## label's colour for free; splitting it out is what dropped the inheritance, so hosts whose text is
+## state-tinted pass `glyph_color` and hosts whose text is stock leave it `null`. `null` means "set
+## no override at all", which is exactly what those stock-coloured hosts had before this parameter
+## existed. The TEXTURE branch ignores it — see the untinted rule above.
+static func build_marker_icon(texture: Texture2D, glyph: String, box_px: float, font_size: int,
+        glyph_color = null) -> Control:
+    if texture != null:
+        var art := TextureRect.new()
+        art.texture = texture
+        # EXPAND_IGNORE_SIZE so the 256px source cannot set the row's minimum width, and
+        # KEEP_ASPECT_CENTERED so the box stays a BOX: the art sits inside it at its own aspect
+        # instead of being stretched square (these sources are not square — see `icon_prompts.txt`).
+        art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+        art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+        art.custom_minimum_size = Vector2(box_px, box_px)
+        art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        return art
+    var label := Label.new()
+    label.text = glyph
+    label.add_theme_font_size_override("font_size", font_size)
+    if glyph_color != null:
+        label.add_theme_color_override("font_color", glyph_color)
+    # Width only: the emoji sets its own height off the font, and pinning it would fight the row.
+    label.custom_minimum_size = Vector2(box_px, 0.0)
+    label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    return label
+
 ## The shared −/+ stepper controls (minus, centered count, plus) appended to a row's HBox, so the
 ## one-line and two-line forms compose the same stepper. `on_change` fires with the new count.
 static func add_stepper_controls(row: HBoxContainer, count: int, plus_enabled: bool, on_change: Callable, compact_chrome: bool = false) -> void:
@@ -416,9 +475,16 @@ static func zone_head(title: String, readout: String, menu: MenuButton = null, r
         head.add_child(menu)
     return head
 
+## A `build_section_menu` entry's OPTIONAL radio-check flag. **ITS ABSENCE IS NOT `false`.** An entry
+## carrying the key is a member of a mutually exclusive SET and is built as a radio-check item — the
+## menu then states which member is active, which a menu of plain items structurally cannot. An entry
+## WITHOUT it is a plain action (`Unassign all …`), and marking one would claim it belongs to a set it
+## has no members of; hence the key is tested with `has` rather than read with a `false` default.
+const MENU_ENTRY_CHECKED := "checked"
+
 ## The `⋯` section menu: a `MenuButton`, so its popup is a WINDOW and opening it cannot change any
 ## zone's layout height (the whole zone model depends on heights not moving). `entries` is an ordered
-## array of `{label, disabled, on_pick}` dictionaries.
+## array of `{label, disabled, on_pick}` dictionaries, each optionally carrying `MENU_ENTRY_CHECKED`.
 static func build_section_menu(entries: Array, tooltip: String) -> MenuButton:
     var button := MenuButton.new()
     button.text = HudWorkVocab.SECTION_MENU_GLYPH
@@ -434,7 +500,11 @@ static func build_section_menu(entries: Array, tooltip: String) -> MenuButton:
             continue
         var entry: Dictionary = entry_variant
         var index := picks.size()
-        popup.add_item(String(entry.get("label", "")), index)
+        if entry.has(MENU_ENTRY_CHECKED):
+            popup.add_radio_check_item(String(entry.get("label", "")), index)
+            popup.set_item_checked(index, bool(entry[MENU_ENTRY_CHECKED]))
+        else:
+            popup.add_item(String(entry.get("label", "")), index)
         popup.set_item_disabled(index, bool(entry.get("disabled", false)))
         var pick: Variant = entry.get("on_pick", null)
         picks.append(pick if pick is Callable else Callable())
@@ -500,6 +570,11 @@ const READOUT_ASIDE_META := "readout_aside"
 ## and says nothing about this line — measured: blanking the teaching note entirely still passed a
 ## whole-aside comparison. A claim about this sentence has to be able to find this sentence.
 const READOUT_TEACHING_META := "readout_teaching"
+## The LOCKED-ACCOUNT line's own identity, for the same reason one line up: it leads the aside, and its
+## siblings (the floor hint, the teaching line) move with the floor while this one does not, so
+## "the aside changed" cannot testify about it in either direction. It explains a `—` the player is
+## looking at, which is why it comes FIRST — the other two are standing copy.
+const READOUT_LOCKED_ACCOUNT_META := "readout_locked_account"
 
 ## The CREW ROW's own label, as `Control` meta. It names the crew from the composed improvement axis
 ## (`Hunters` vs `Herders`), which is a real claim about the sheet — and it renders UPPERCASE, exactly
@@ -969,8 +1044,13 @@ static func build_crew_targets(model: Dictionary, workers: int, on_pick: Callabl
         var selected := workers == count
         HudStyle.apply_pill_button(btn, selected)
         btn.pressed.connect(func() -> void: on_pick.call(count))
+        # The tint is the SHARED TABLE's answer for this button's own state — `btn.disabled` included,
+        # exactly as `build_floor_picker` asks it. `apply_pill_button` already writes a `disabled`
+        # stylebox, so the box can fade; a face built from child Labels cannot follow it through the
+        # theme (see `_crew_target_pill`), so the state has to reach the tint here or the box would
+        # fade under two lines still at full brightness.
         row.add_child(_crew_target_pill(btn, count, String(spec[2]),
-            HudStyle.button_font_color("primary" if selected else "ghost")))
+            HudStyle.button_font_color("primary" if selected else "ghost", btn.disabled)))
     return row
 
 ## **THE CREW ROW'S BUILD-DIP NOTE** — *"— while building, each carries 25% as much"*, the one line
@@ -1130,6 +1210,12 @@ static func build_yields_row(rows: Array, number_tint: Color, note: String, note
 ## readouts take the table's unit and the whole-animal reading is the chart's above them.
 const YIELD_ROW_UNIT := "unit"
 const YIELD_ROW_NUMBER := "number"
+## **ONE ACCOUNT'S NUMBER, MUTED, WHATEVER THE ROW TINT IS.** The tint passed to `build_yields_row` is
+## a WHOLE-ROW parameter — it says how the TAKE reads (amber when it overdraws, ink otherwise) — and
+## one account being unbankable is not a property of the take. So a row may opt its number out into
+## `INK_FAINT` on its own, which is what lets the locked fodder reading sit beside two live ones in an
+## overdrawing row without either claim contradicting the other.
+const YIELD_ROW_MUTED := "muted"
 static func _yield_reading(row: Dictionary, number_tint: Color) -> HBoxContainer:
     var account := String(row.get(SourceForecast.YIELD_ROW_ACCOUNT, ""))
     var pair := HBoxContainer.new()
@@ -1156,7 +1242,8 @@ static func _yield_reading(row: Dictionary, number_tint: Color) -> HBoxContainer
         number.text = SourceForecast.format_magnitude(
             float(row.get(SourceForecast.YIELD_ROW_VALUE, 0.0)))
     number.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-    number.add_theme_color_override("font_color", number_tint)
+    number.add_theme_color_override("font_color",
+        HudStyle.INK_FAINT if bool(row.get(YIELD_ROW_MUTED, false)) else number_tint)
     number.add_theme_font_size_override("font_size",
         HudComposeVocab.READOUT_YIELD_NUMBER_FONT_SIZE)
     pair.add_child(number)

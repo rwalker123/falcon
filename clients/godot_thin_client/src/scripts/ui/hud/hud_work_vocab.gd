@@ -337,6 +337,12 @@ const WORK_SORT_YIELD := &"yield"
 
 const WORK_SORT_NAME := &"name"
 
+## Every legal work sort. The persisted preference is validated against this, so an unknown or retired
+## value in the prefs file falls back to the default. The failure this prevents is NOT a broken board:
+## `_sort_work_models` branches on `== WORK_SORT_NAME` and treats everything else as yield, so an
+## unvalidated value would silently reinstate the yield sort — the behaviour issue #460 removed.
+const WORK_SORTS: Array[StringName] = [WORK_SORT_NAME, WORK_SORT_YIELD]
+
 const WORK_CHIP_ALL_FORMAT := "All %d"
 
 const WORK_CHIP_KIND_FORMAT := "%s %d · %s"
@@ -371,6 +377,15 @@ const WORK_TOTAL_TOOLTIP := "Total food per turn from every worked source."
 # break the identity the Food line is denominated in. Shown only when a worked source actually pays
 # trade, so a band with none reads exactly as it did before the two-product model.
 const WORK_TRADE_TOTAL_TOOLTIP := "Total trade goods per turn from every worked source. Trade goods are stockpiled for exchange — they are not food, so they are counted beside the food total, not in it."
+
+# The band's PRODUCTIVITY, as a head item beside the two totals. It is the multiplier every rate on
+# this board is ALREADY scaled by, which is why it reads here rather than as a band-zone vitals row:
+# the head is where its consequence is. Rendered ONLY below full output (`SourceForecast.OUTPUT_FULL`)
+# — a permanent "Output 100%" is noise on a row that is otherwise live summary, the same rule the
+# trade total follows.
+const WORK_OUTPUT_FORMAT := "Output %d%%"
+
+const WORK_OUTPUT_TOOLTIP := "Discontent is holding this band below full productivity, and every rate on this board is already scaled by it. Raise morale to restore full output."
 
 const WORK_MENU_TOOLTIP := "Sort and bulk actions for worked sources."
 

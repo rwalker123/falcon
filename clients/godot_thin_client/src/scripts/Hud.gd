@@ -1205,6 +1205,30 @@ func right_column_width() -> float:
     var readouts: float = turn_block.custom_minimum_size.x if turn_block != null else 0.0
     return maxf(dock, readouts)
 
+## The room the two HUD side columns actually occupy, as `(leading, trailing)` — what a panel sharing
+## the HUD's strip must keep clear of (issue #377, `Main._update_band_panel_lateral_bounds`).
+##
+## **It takes the LIVE rect where that exceeds the authored minimum, unlike `left_column_width` /
+## `right_column_width` above, and the difference is deliberate.** Those two bound the EVENT DOCK's edge,
+## which must not move every turn — so they are authored, and a column that draws wider than its minimum
+## merely overlaps a little. This bound decides whether a CARD is drawn over the readouts, where being a
+## little wrong is not a cosmetic difference: measured live at 1920, the readouts render 419px against a
+## 344px authored minimum (the metrics line — `Units: 0 | Logistics: 0.00 | Sentiment: 0.00` — is simply
+## longer than the minimum allows for), so an authored bound puts the card straight through them.
+##
+## The band card re-lays-out per snapshot anyway, so tracking the live width costs it nothing; the event
+## dock's no-jitter rule is about a different surface with a different cadence.
+func lateral_column_widths() -> Vector2:
+    var lead: float = left_column_width()
+    if left_dock_region != null:
+        lead = maxf(lead, left_dock_region.get_global_rect().size.x)
+    var trail: float = right_column_width()
+    if right_dock_region != null:
+        trail = maxf(trail, right_dock_region.get_global_rect().size.x)
+    if turn_block != null:
+        trail = maxf(trail, turn_block.get_global_rect().size.x)
+    return Vector2(lead, trail)
+
 ## A CLIENT-SIDE note — a refusal, a nudge, a knowledge unlock. It used to land in the left-dock
 ## command feed; it is a System-channel event on the event dock now, which is `Main`'s panel, so the
 ## HUD EMITS rather than reaching for it. `_note_sink` is the Callable the three controllers that

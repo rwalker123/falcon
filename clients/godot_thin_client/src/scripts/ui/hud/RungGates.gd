@@ -2,7 +2,9 @@ class_name RungGates
 extends RefCounted
 
 ## **All-`static`, stateless** shared RUNG-GATE layer — the one answer to "may this source climb
-## its next rung, and if not, why not?".
+## its next rung, and if not, why not?", and (since `wild_fodder_reason`) to the sibling question
+## "…and will the work it is already doing actually pay out?". Same shape of answer — what is
+## missing, its live progress, the remedy — asked of the same faction knowledge.
 ##
 ## **WHY ITS OWN FILE.** These three functions were private to `DrawerComposeController`, which is
 ## correct while the compose sheet is the only surface asking. It is not: the Band panel's WORK
@@ -110,6 +112,40 @@ static func hunt_gates(herd: Dictionary, knowledge: Dictionary) -> Dictionary:
     if not corral_reasons.is_empty():
         gates[SourceForecast.IMPROVEMENT_CORRAL] = corral_reasons
     return gates
+
+## **WILL THE HAY THIS CREW GATHERS ACTUALLY BE BANKED?** — `""` when it will, the reason when it will
+## not. The plant twin in shape of the rung gates above, and a deliberate BROADENING of this file's
+## remit: from "may this source climb its next rung" to "…and will the work it is doing actually pay
+## out". Same kind of answer (what is missing, how far along, and the remedy), same statelessness, so
+## it belongs beside them rather than in a second gate layer.
+##
+## The sim credits a wild patch's fodder take only to a faction that has learned **Foddering**, or on a
+## patch already COMMITTED to a crop — committing IS the bid, so the crop's hay is paid unconditionally
+## (`systems/labor.rs`: `patch.species.is_some() || knows(faction, FODDERING)`). Foddering is earned by
+## KEEPING A PENNED HERD, so a pre-pastoral band structurally cannot have it: the meadow publishes a
+## real `fodder_per_biomass` and the band banks none of it.
+##
+## **It takes the committed-species STRING, not the patch dict, deliberately.** Every caller has
+## already read that key, and the `patch_`-prefixed-vs-bare trap this file documents is not worth
+## re-entering for one lookup. **And it must be the PUBLISHED commitment** (`patch_committed_species`),
+## never the composed improvement: a Cultivate the player has ticked but not committed is not a bid the
+## sim has accepted, and quoting it would unlock a credit that is still being refused.
+##
+## Partial progress refuses the credit exactly like every other track — this is a 0..1 learning meter,
+## and only `>= KNOWLEDGE_COMPLETE` is "known".
+static func wild_fodder_reason(committed_species: String, knowledge: Dictionary) -> String:
+    if committed_species.strip_edges() != "":
+        return ""
+    var foddering := track(knowledge, HudFloraVocab.KNOWLEDGE_TRACK_FODDERING)
+    if foddering >= HudConst.KNOWLEDGE_COMPLETE:
+        return ""
+    # TWO remedies, both real and both reachable from where the player is standing: learn the craft by
+    # keeping a pen (the corral rung's glyph), or commit this patch (the cultivate rung's glyph, whose
+    # control is directly below this line on the same sheet).
+    return HudFloraVocab.GATE_REASON_WILD_FODDER_FORMAT % [
+        HudFormat.progress_percent(foddering),
+        FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CORRAL),
+        FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CULTIVATE)]
 
 ## The BARE-KEYED twin of `forage_gates`, for the raw wire patch dict (`forage_patch_lookup`) rather
 ## than the `patch_`-prefixed `tile_info` cross-ref.

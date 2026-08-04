@@ -338,6 +338,15 @@ func set_surface_width(width: float) -> void:
 	_emit_reserved_width()
 
 
+## Width is set through the RIGHT OFFSET, never through `size`. The surface is anchored
+## `PRESET_LEFT_WIDE` — left/right anchors equal, top/bottom NOT — and `Control` warns on a `size`
+## write under unequal opposite anchors ("will have their size overridden after _ready()"), which
+## `Main` triggers because it hides the surface from its own `_ready`, before the deferred callback
+## that clears the warning has run. The warning is pointing at a real asymmetry: `size` is a
+## `Vector2`, so `size.x = w` also writes the current — minimum-size-clamped — `size.y` back as an
+## explicit bottom offset, pinning a height the anchors are supposed to stretch. The offset touches
+## the horizontal axis only, and is the same knob `Main` and `workbench_preview` seed the surface
+## with.
 func _emit_reserved_width() -> void:
-	size.x = _surface_width
+	offset_right = offset_left + _surface_width
 	reserved_width_changed.emit(reserved_width())

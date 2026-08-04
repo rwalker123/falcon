@@ -1,15 +1,18 @@
 # Bundled Icon Generation Prompts
 #
 # The icon twin of assets/terrain/texture_prompts.txt. These prompts generate the
-# bundled PNG art behind the four icon families:
+# bundled PNG art behind the five icon families:
 #
 #   assets/icons/fauna/    herd map markers      (ui/FaunaSprites.gd)
 #   assets/icons/sites/    food-site markers     (ui/SiteSprites.gd)
 #   assets/icons/wonders/  Wondrous Site markers (ui/WonderSprites.gd)
 #   assets/icons/stages/   settlement tokens     (ui/StageSprites.gd)
+#   assets/icons/crops/    crop-ROLE row marks   (ui/CropRoleSprites.gd)
 #
-# All four share ONE pipeline and ONE house style, so both are documented once here
-# rather than per family.
+# The first four share ONE pipeline and ONE house style, so both are documented once
+# here rather than per family. THE FIFTH DOES NOT — `crops/` is not a map marker, it
+# is an inline mark inside a text ROW, and it overrides several of the clauses below.
+# Read its own section before generating one; do not start from the house style.
 #
 # NOTE: prompts predating this file were never committed — only the shipped PNGs
 # survive. The house style below is reconstructed from that art plus the wild-fowl
@@ -22,6 +25,21 @@
 # 1. GENERATE at a large square size (1024x1024) on a plain solid MAGENTA
 #    background. Any uniform background works — icon_key.py samples the four
 #    corners — but magenta keys cleanest against earth-tone subjects.
+#
+#    ASK FOR NO TILE, AND CHECK THE COVERAGE NUMBER BEFORE ANYTHING ELSE. Current
+#    image models read "flat vector game icon … on a magenta background" as a
+#    request for an APP ICON and draw a dark rounded-square tile with the magenta
+#    only as a surround. The key then does exactly what it is told — the corners
+#    are magenta, so it keeps the TILE as the subject — and you get a dark chip
+#    with a shrunken icon centred in it, which composites over the panel as a
+#    visible box. Measured on the first `staple` pair: `icon_key.py` reported
+#    **"subject covers 73.2% of the canvas"** where a bare wheat ear is ~15-20%.
+#    That printed line is the cheapest detector there is, so read it every time —
+#    a coverage figure far above the subject's honest share means something behind
+#    the subject survived. The counter-clause is in every `crops/` prompt below
+#    ("no rounded square, no tile, no card, no badge, no frame, no border … the
+#    flat magenta touching the subject on every side") — carry it into any new
+#    prompt rather than assuming "plain solid magenta background" is enough.
 #
 # 2. KEY OUT the background to transparency and normalize the framing:
 #
@@ -71,7 +89,16 @@
 #      - ui/FaunaSprites.gd SPRITE_PATHS: "<keyword>": SPRITE_DIR + "<file>.png"
 #    The keyword is matched as a substring of the sim's `display_name`, longest
 #    match first — so "Grey Seals" resolves via "seal". Aliases share art
-#    (reindeer/caribou/elk/gazelle -> deer.png, grouse -> fowl.png).
+#    (caribou -> reindeer.png, grouse -> fowl.png).
+#
+#    AN ALIAS IS ONLY HONEST WHEN NO ROSTER SPECIES IS BEHIND IT. `deer.png` once
+#    served reindeer/caribou/elk/gazelle as well, and three of those four were real
+#    entries in `fauna_config.json` — so Wild Elk, Wild Reindeer, Desert Gazelle and
+#    Red Deer were four distinct species drawing one marker (issue #439). Before
+#    aliasing a new keyword, check whether the sim actually ships a species under it;
+#    if it does, it needs its own art. `caribou` survives as an alias precisely
+#    because nothing in the roster is named that — it is a second English word for
+#    the animal `reindeer` already covers.
 #
 # 5. VERIFY at TRUE marker size (10-41px), never in a fitted preview frame which
 #    renders ~2.5x too big:
@@ -112,10 +139,54 @@
 # FAUNA  ->  assets/icons/fauna/  (ui/FaunaSprites.gd)
 # ============================================================================
 #
-# The KEY IS THE ART FILENAME STEM, not the sim's species name — several species
-# alias onto one file (see the notes). Coverage is complete: 13 files, 13 prompts
+# The KEY IS THE ART FILENAME STEM, not the sim's species name — a few species
+# alias onto one file (see the notes). Coverage is complete: 18 files, 18 prompts
 # (wolf.png landed with Predators Phase 1a — the first predator sprite; "Grey Wolf
-# Pack" resolves via the `wolf` key, no longer the 🐺 emoji fallback).
+# Pack" resolves via the `wolf` key, no longer the 🐺 emoji fallback. elk.png,
+# reindeer.png and gazelle.png landed with issue #439, splitting the three roster
+# species that had been drawing `deer.png`; steppe_runner.png and marsh_grazer.png
+# landed with the same issue, and see the warning immediately below for why they
+# were found late).
+#
+# ⚠ "COVERAGE IS COMPLETE" IS A CLAIM ABOUT THE SIM'S ROSTER, NOT ABOUT THIS FILE.
+# It was written here — and in `FaunaSprites.gd`, and in `sprites-widgets.md` — while
+# **Steppe Runners and Marsh Grazers were both drawing the 🦬 `HERD_DEFAULT` emoji**,
+# and it had been false since those two species were added to `fauna_config.json`.
+# The claim was checked the easy way, by confirming every key in `SPRITE_PATHS` had a
+# PNG, which is a different question from every SPECIES having art and cannot detect a
+# species the table has never heard of.
+#
+# The reason nothing caught it is structural and worth naming: **`SPRITE_PATHS` and
+# `map_preview`'s `FAUNA_SPRITE_ROSTER` are both hand-written CLIENT-side lists, and
+# the coverage frame enumerates the client's own table.** A species the table does not
+# know is invisible to the frame by construction, so the frame cannot fail on it —
+# exactly the blind spot that let the four cervids share one marker. The player-visible
+# tell was that the OS emoji **faced LEFT** while every bundled sprite obeys the house
+# style's "facing right" clause, which is a cheap thing to notice in a screenshot.
+# `cargo xtask fauna-icon-guard` now cross-checks this against `fauna_config.json`, so
+# the claim is verified rather than asserted. Re-run it after adding a species.
+#
+# THE FOUR CERVID-ISH SPECIES ARE THE SET MOST AT RISK OF READING AS ONE ANIMAL, so
+# each prompt below names the ONE feature that separates it from the other three at
+# 24px, and they are separated on SILHOUETTE first because hue cannot be trusted at
+# that size over varied ground:
+#   deer      — tall CROWNED antlers branching upward, head raised alert, mid-brown
+#   elk       — antlers sweeping BACK past the shoulder, shaggy dark neck mane, pale rump
+#   reindeer  — a forward BROW SHOVEL over the face, thick white neck ruff, stocky
+#   gazelle   — HORNS not antlers (slim, ringed, lyre-curved), tiny body, dark flank bar
+# A generated icon that could be swapped with another row of that list is a reject,
+# whatever it scores on ground contrast.
+#
+# THE NO-TILE COUNTER-CLAUSE IS CARRIED BY `steppe_runner` AND `marsh_grazer` ALONE,
+# and the other sixteen are the exception rather than the rule. The PIPELINE section
+# says to carry it into any new prompt because "plain solid magenta background" alone
+# reads to current models as a request for an APP ICON — measured at 73.2% coverage on
+# the first `staple` pair. Every fauna prompt written before those two omits it,
+# INCLUDING elk / reindeer / gazelle, whose renders happened to come back clean at
+# 20-27% coverage; the clause is cheap insurance, not a fix for a bug those sixteen
+# have. **Carry it into the next new prompt, and keep reading the coverage number
+# either way** — that printed line is the actual detector, and no prompt clause
+# replaces it.
 
 
 # aurochs.png — Wild Aurochs / bison / buffalo (aliases share this art)
@@ -174,19 +245,100 @@ boar: Flat vector game icon of a wild boar standing in a calm neutral pose, with
 # widening the ramp is exactly what eats thin features. **Judge the fringe at 4x magnification over
 # a MID-GREY field**, not on the magenta plate and not at 1:1: at 1:1 the violet edge is invisible,
 # and against magenta it is invisible by definition.
-# GENERAL RULE: the paler the subject, the wider the keying ramp it needs. Re-tune --lo/--hi per
-# icon rather than trusting the header's default, and always count the residual before shipping.
+# GENERAL RULE — **CORRECTED, and the original cost an icon nearly getting keyed to death** (issue
+# #439, measured while keying the elk). This note used to read "the paler the subject, the wider the
+# keying ramp it needs". That is the wrong variable. `icon_key.py` sets
+# `alpha = smoothstep(lo, hi, dist)` where `dist` is EUCLIDEAN RGB DISTANCE FROM THE KEY COLOUR, so
+# what decides the safe `--hi` is the subject's **hue proximity to the key**, not its LIGHTNESS.
+# Distance from magenta is large for very dark AND very pale palettes and SMALLEST for warm
+# mid-tones — tan, rufous, red-brown — which are the neighbours of magenta in RGB.
+#
+# Measured over the whole shipped fauna set (minimum distance-from-magenta across each sprite's
+# fully-opaque pixels): fowl 103, wolf 112, cattle 122, deer 123, boar 124, aurochs 130, mammoth 132,
+# seal 140, sheep 141, **catfish 151 — the FARTHEST of the set**. The catfish could afford `--hi 240`
+# because its cool sandy-and-olive palette sits farther from magenta than anything else here, and
+# being pale is merely correlated with that, not the cause. Note that the DEFAULT `--hi 170` is
+# already above most of those minima, i.e. every shipped icon's warmest pixels are inside the ramp
+# and slightly soft. That is the normal, accepted state.
+#
+# SO: `--hi` MUST STAY BELOW THE SUBJECT'S OWN MINIMUM DISTANCE, and raising it blindly destroys the
+# icon rather than merely softening it. Measured on the elk candidate at fixed `--lo`: `--hi` 170 →
+# 200 → 230 dropped fully-opaque pixels 22208 → 11469 → 6691, i.e. it dissolved HALF the animal —
+# and raising `--lo` instead is no escape, since 55 → 70 moved ~5800 pixels out of opaque into the
+# semi-transparent rim, eating the thick dark outline that is the house style's one load-bearing
+# clause. The elk therefore shipped at the plain JPEG default.
+#
+# THE CHEAP CHECK, before touching either threshold: measure the subject's minimum
+# distance-from-background over its opaque pixels, and compare the residual against THE SHIPPED SET
+# rather than against an absolute — 3 (deer) to 209 (cattle) is the real band, median ~59, so a
+# candidate scoring 52 needs no intervention at all. **A residual that merely LOOKS bad at 4x
+# magnification is not evidence**; every icon in this directory has that faint violet rim.
+#
+# AND IF A SUBJECT IS GENUINELY TOO CLOSE TO THE KEY, MOVE THE KEY, NOT THE RAMP. `icon_key.py`
+# samples the background from the four corners and `--bg` overrides it, so a warm rufous subject can
+# be generated on a saturated CYAN or GREEN plate instead — worth ~240 distance against magenta's
+# ~130 for the same tan, i.e. roughly double the margin, with no ramp change and no eaten outline.
 # ---------------------------------------------------------------------------------------------
 catfish: Flat vector game icon of a river catfish with a broad flattened head, a wide downturned mouth and four thick barbels sweeping back from its snout, a long tapering body with low-set fins and a rounded tail, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette with pale sandy-buff flanks and a bright cream underside beneath a narrow dark olive back, the body reading clearly PALE and light overall so it stands out sharply against dark brown earth and muddy riverbank ground, strong two-tone contrast between the light flanks and the dark dorsal stripe, the barbels drawn as a few chunky simple tapering strokes in the same pale tone rather than fine whiskers, calm neutral expression, crisp clean edges, centered with even padding on a plain solid magenta background, the fish floating with no ground shadow and no shadow beneath the body, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
 # cattle.png — the domestic ox; keyword aliases `cattle` + `oxen`
 cattle: Flat vector game icon of a domestic ox, a stocky heavy-bodied cow with short blunt horns and a straight back, standing in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in light tan and cream earth tones with simple two-tone shading, clearly lighter overall than a dark wild ox, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the animal floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
-# deer.png — also serves reindeer / caribou / elk / gazelle
+# deer.png — Red Deer ONLY since issue #439 (it served elk / reindeer / caribou / gazelle before)
+# host_biomes temperate_forest / mixed_woodland / savanna_grassland — grounds measuring luma 32–125,
+# i.e. the DARK-to-MID half of the map. Its fill measures 87, which is why this prompt has survived
+# unchanged: it is the one cervid sitting on ground its own tone separates from. Do not lighten it to
+# "match" the three new siblings — they are pale because THEIR ground is pale.
 deer: Flat vector game icon of a wild red deer stag with large branching antlers, a slender body and long legs, head raised alert, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in warm earth tones with simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, the deer floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# elk.png — Wild Elk (issue #439; drew deer.png until then)
+# SEPARATION FROM deer.png IS THE POINT OF THIS ICON, and it is carried by three things that all
+# survive 24px: antlers that sweep BACKWARD along the spine (the red deer's branch UPWARD into a
+# crown), a shaggy dark neck mane hanging under the throat, and a pale rump patch. Head carried
+# LEVEL, not raised — the deer prompt spends "head raised alert", so this one must not.
+# GROUND-CONTRAST HAZARD, and it is the widest in the set: host_biomes is boreal_arctic ALONE, whose
+# four terrains measure luma 40 (boreal_taiga), 117 (tundra), 146 (periglacial_steppe) and 198
+# (seasonal_snowfield) — a 158-point span, so NO single fill tone clears all four. The wolf's answer
+# applies verbatim: force a strong two-tone split (dark body over a pale rump/underside) so whichever
+# half loses to the ground, the other half carries the silhouette. Judge at 24px over BOTH dark taiga
+# and bright snowfield before shipping; a mid-brown elk that reads fine on tundra is not verified.
+elk: Flat vector game icon of a wild elk, a large heavy-bodied deer with a thick shaggy dark mane hanging beneath its throat, tall sturdy legs and long antlers that sweep BACKWARD over the shoulders in a single long beam with short upward tines rather than branching up into a crown, head carried level in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette with a deep chocolate-brown neck and mane and a mid tawny-brown body that stays clearly lighter than the outline, and a distinctly PALE cream rump patch and pale underside, strong two-tone contrast between the dark neck and the pale rump so the shape reads over both dark forest ground and bright snow, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the elk floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
 # fowl.png — also serves grouse
 fowl: Flat vector game icon of a wild jungle fowl rooster with an upright arched tail, a red comb and wattle, and a compact rounded body, standing in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in warm copper brown and dark bronze tones that stay clearly lighter than the outline, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the bird floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# gazelle.png — Desert Gazelle (issue #439; drew deer.png until then)
+# SEPARATION FROM deer.png is the easiest of the three, and it is anatomical rather than stylistic:
+# a gazelle wears HORNS, not antlers — slim, ringed, curving back in a shallow lyre — and it is
+# TINY (body_mass 4 against the red deer's 60), so the proportions do the rest: short body, very
+# long thin neck and legs. Nothing on this animal branches. If the render branches, reject it.
+# GROUND-CONTRAST HAZARD — the catfish lesson, inverted: host_biomes is semi_arid_scrub, whose
+# terrains measure luma 178 (hot_desert_erg), 197 (salt_flat) and 80 (rocky_reg). THE OBVIOUS
+# COLOUR IS THE WRONG ONE — a sandy-buff gazelle is within ~20 of two of its three grounds and is
+# camouflage by construction, which is exactly how catfish v1 shipped and failed. The gap between
+# rocky_reg (80) and the pale pair (178/197) is where a fill has to sit, so aim for a MID rufous
+# tan around luma 125–135 (the goat's band) and make the flank stripe carry the rest: real gazelles
+# wear a hard dark chocolate bar along the flank above a white belly, which is a horizontal
+# high-contrast edge — the one kind of detail that survives downscaling. It is doing the same job
+# the catfish's dark dorsal does, and it must stay.
+# KEYING — THIS IS THE MOST KEY-SENSITIVE ICON IN THE DIRECTORY, and the two hazards pull opposite
+# ways, which is the whole difficulty of it. The ground-contrast rule above demands a warm mid
+# rufous-tan; the corrected GENERAL RULE (catfish note) says warm mid-tones are exactly the palette
+# CLOSEST to magenta in RGB — a representative rufous tan measures ~130 from it, at or below the
+# lowest minimum in the shipped set (fowl, 103) and below the default `--hi` of 170. So key it at the
+# plain default, do NOT widen the ramp under any circumstances, and measure the minimum
+# distance-from-magenta over the opaque pixels before shipping.
+# IF IT FRINGES ANYWAY, MOVE THE KEY RATHER THAN THE RAMP: regenerate on a saturated CYAN or GREEN
+# plate (same prompt, swap the background clause) — the same tan measures ~240 from cyan, roughly
+# double the margin — and let `icon_key.py` sample it from the corners as usual. That is the
+# sanctioned escape hatch for a subject whose required colour collides with the key.
+# WHAT ACTUALLY HAPPENED: the escape hatch was NOT needed. The shipped render measures min
+# distance-from-key **140** with a residual of **18** — mid-pack for the set and better than deer
+# (123) or cattle (122) — so it keyed at the plain default like everything else. The warning above is
+# still worth its space, because it is a property of the REQUESTED PALETTE rather than of this one
+# render, and the next rufous subject re-rolls the same dice. Keep it as a thing to MEASURE, not as a
+# known defect: the check is one number, and it came back fine.
+gazelle: Flat vector game icon of a desert gazelle, a small slender antelope with a short compact body, a long thin neck, long delicate legs and a pair of slim upright ringed HORNS curving gently backward in a shallow lyre shape, never branching antlers, standing in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in a warm mid rufous-tan that stays clearly lighter than the outline but distinctly DARKER than pale desert sand so the shape stands out over bright sand and salt flats, a bold dark chocolate-brown horizontal stripe running along the flank, a crisp white belly and a white stripe on the face, strong two-tone contrast between the tan back and the white underside, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the gazelle floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
 # goat.png — also serves ibex
 goat: Flat vector game icon of a wild goat, a small slender animal with long backward-sweeping curved horns and a pointed chin beard, standing in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in warm sandy tan earth tones that stay clearly lighter than the outline, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the animal floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
@@ -195,12 +347,101 @@ horse: Flat vector game icon of a wild horse with a short upright bristly mane, 
 
 mammoth: Flat vector game icon of a woolly mammoth standing in a calm neutral pose, with two huge curved tusks, a domed head, a raised curled trunk and shaggy hanging fur, sturdy column legs, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in medium warm brown earth tones that stay clearly lighter than the outline, simple two-tone shading, the shaggy fur drawn as a few chunky simple locks rather than many fine hairs, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the mammoth floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
+# marsh_grazer.png — Marsh Grazers (an INVENTED species; no real animal to copy)
+# 100 kg pastoral migratory grazer of `wetland_swamp` + `riverine_delta`. Read it as a WADING
+# grazer: high rump, long legs made for standing in water, splayed spreading hooves, and long
+# gently-spiralled horns — the lechwe/sitatunga build. It must NOT read as `aurochs.png` (the heavy
+# short-horned bovines) or `cattle.png`; the high rump and the long legs are what separate it.
+# GROUND-CONTRAST HAZARD, and here it decides the palette outright: every one of this species'
+# grounds is DARK — hydrothermal_vent_field 34, freshwater_marsh 40, alluvial_plain 53, floodplain
+# 59, navigable_river 89, inland_sea 90. There is no bright ground anywhere in its range, so the
+# animal must be PALE, and the real-world analogues are the wrong guide — a chestnut lechwe would
+# measure ~90 and sit exactly on top of navigable_river, which is catfish v1's failure repeated
+# knowingly. Target a fill around 190: that clears the darkest ground by ~155 and the lightest by
+# ~100. Dark lower legs are the one place to spend the dark tone, and they read as the waterline.
+# KEYING: pale-and-cool is FAR from magenta (a cream measures ~230), so unlike the gazelle this one
+# has real headroom — a wider ramp is available if JPEG ringing leaves a fringe. Measure the min
+# distance-from-key first, as always, rather than assuming either direction.
+#
+# ⚠ DO NOT PUT THE ANIMAL IN WATER, and this prompt used to. It read "standing calmly ankle-deep as
+# if in shallow water", which CONTRADICTED its own "floating with no ground shadow" clause eleven
+# words later — and the generator obeyed the first one, drawing water RIPPLE RINGS around the hooves
+# in both renders. That is a ground element, which is precisely what the house style's no-shadow
+# rule exists to exclude, and it failed exactly the way that rule predicts: at 24px the rings
+# collapsed into a dirty horizontal bar under the feet, carrying a visible PINK CAST on
+# alluvial_plain and navigable_river because thin pale strokes against magenta are almost all edge.
+# Measured, the rings held most of the icon's key fringe — residual **73 with them, 45 without**.
+# The waterline is carried by the DARK LOWER LEGS alone, which is enough and costs nothing.
+#
+# THE SHIPPED PNG IS POST-PROCESSED, so it is not a pure `icon_key.py` output and re-running the
+# prompt will not reproduce it byte-for-byte: the ripple band was cut (every row below the hooves
+# dropped) and the result re-trimmed and re-framed the way `icon_key.py`'s `_fit` does. Connected-
+# component stripping was tried FIRST and does not work — the rings are drawn TOUCHING the hooves,
+# so only 158 px of 4 detached arcs separate out and the bar survives. Cutting also made the icon
+# BETTER, not merely cleaner: the bbox shrank, so the reframe scaled the animal up ~8% (14050 →
+# 15234 opaque px) and it reads larger at marker size. **With the clause above removed, a fresh
+# render should need none of this** — check for rings before assuming it does.
+marsh_grazer: Flat vector game icon of a marsh grazer, a large pale wading antelope with a high arched rump, a deep chest, long slender legs with wide splayed hooves, and a pair of long gently spiralling horns sweeping back from its head, standing calmly in a neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in pale cream and light silver-grey that stays clearly lighter than the outline and reads clearly LIGHT overall so it stands out sharply against dark swamp water, black peat and wet river mud, with distinctly darker charcoal lower legs below the knee suggesting a waterline, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background with the flat magenta touching the subject on every side, no rounded square, no tile, no card, no badge, no frame, no border and no background panel of any kind, the animal floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
 rabbit: Flat vector game icon of a wild brown rabbit with long upright ears, a compact crouched body and a short round tail, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in warm earth tones with simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, the rabbit floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# reindeer.png — Wild Reindeer, and the `caribou` alias (issue #439; both drew deer.png until then)
+# SEPARATION FROM deer.png AND elk.png both matter here, since all three are antlered and two of
+# them share boreal_arctic ground. The reindeer's own mark is the BROW SHOVEL — the flattened
+# palmate tine that hangs forward over the face — which no other cervid in the set has and which
+# reads at 24px as a distinct blob in front of the muzzle. Behind it: a thick white neck ruff and a
+# stocky, short-legged build (body_mass 18, against the elk's 40 and the deer's 60), so it must not
+# be drawn tall and rangy like either.
+# GROUND-CONTRAST HAZARD: host_biomes boreal_arctic + montane_highland — luma 40 (boreal_taiga), 117
+# (tundra), 146 (periglacial_steppe), 198 (seasonal_snowfield), 139 (karst_highland), 155
+# (high_plateau), 170 (alpine_mountain). Six of the seven are PALE, so unlike the elk this one does
+# not need a mid-tone compromise: go dark on the body and let the white ruff be the accent. A pale
+# grey-white reindeer — the obvious real-world colour — would vanish on snow and rock alike.
+# KEYING: use the plain JPEG default, `--lo 55 --hi 170`. An earlier draft of this note said to key
+# the white ruff at `--lo 85 --hi 240` "because a cream subject sits close to magenta" — that is the
+# error the corrected GENERAL RULE in the catfish note above documents, and here it would have been
+# actively destructive: this animal is specified DARK grey-brown over most of its area, and a `--hi`
+# that high dissolves a dark body (measured on the elk: half the opaque pixels gone). The white ruff
+# is far from magenta, not close to it. Measure the min distance-from-magenta and compare the
+# residual against the shipped band before changing either threshold, and check the brow shovel's
+# tines survived — they are the one feature here that a widened ramp would eat.
+reindeer: Flat vector game icon of a wild reindeer, a stocky short-legged deer with a deep chest, a thick shaggy white ruff of fur around its neck and throat, and large antlers of which the front tine is a broad flattened shovel hanging FORWARD over its face, standing in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette with a dark cool grey-brown back and flanks that stay clearly lighter than the outline, contrasted against a bright creamy white neck ruff, white underside and white lower legs, strong two-tone contrast between the dark body and the white ruff so the shape reads over pale snow and pale grey rock, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the reindeer floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
 # seal.png — fauna/seal.png — NOT the same image as sites/seal.png
 seal: Flat vector game icon of a grey seal with a sleek rounded torpedo body, a short whiskered muzzle, a large dark round eye, short front flippers and paired rear flippers, hauled out resting on its belly with its head and chest raised in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in cool slate grey and soft pale silver tones that stay clearly lighter than the outline, simple two-tone shading with a lighter underside and a few subtle darker mottled spots along the back, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the seal floating with no ground shadow and no shadow beneath the body, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
 sheep: Flat vector game icon of a sheep with a thick rounded woolly fleece, a small dark face and dark slender legs, standing in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette using a soft cream and warm grey fleece that is clearly darker than pure white, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the sheep floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# steppe_runner.png — Steppe Runners (an INVENTED species; no real animal to copy)
+# 120 kg pastoral migratory grazer of `savanna_grassland`. Read it as a fast open-country runner —
+# the saiga build: lean and deep-chested on long thin legs, a distinctive bulbous down-turned
+# muzzle, and short ringed horns rising nearly vertical. The muzzle and the vertical horns are what
+# carry it at 24px. It must NOT read as `horse.png` (the only other big open-grassland grazer) —
+# horses have no horns and a flowing tail, so keep the horns crisp and the tail a short tuft — nor
+# as `sheep.png`, the set's other pale animal, which is a rounded fleece blob with no legs to speak
+# of; this one is all leg.
+# GROUND-CONTRAST HAZARD: its three grounds cluster in the MIDDLE — oasis_basin 71, prairie_steppe
+# 110, semi_arid_scrub 125 — which is the worst possible arrangement for a mid-toned animal. The
+# gaps between them are only ~20 and ~8 wide, so ANY mid-brown fill lands within a hair of one of
+# them; there is no safe middle to aim at. The escape is to leave the middle entirely, and PALE is
+# the right direction (dark would fight the thick charcoal outline for the same tonal space). At a
+# fill around 200 the gaps are ~129 / ~90 / ~75 — comfortable on all three — and it matches what a
+# real saiga looks like anyway.
+# KEYING: same headroom note as `marsh_grazer` — pale-and-cool sits far from magenta, so a wider
+# ramp is available if needed. Measure the min distance-from-key rather than assuming.
+# NEAREST LOOKALIKE IS `gazelle`, AND THIS PAIR SEPARATES ON COLOUR RATHER THAN SHAPE — the one
+# place in the set where that is true, so it is worth knowing before regenerating either. Measured
+# on the shipped art their proportions are nearly the same (aspect 0.93 vs 0.78, leg fraction 29%
+# vs 30%), and what carries the read is saturation 0.27 vs 0.46 and luma 174 vs 129 — a flat sand
+# runner against a saturated orange-rufous gazelle with a bold white flank stripe — plus head
+# carriage, this one's muzzle drooping where the gazelle's head is high and level.
+# **The practical risk is low and the reason is worth recording**: their host modules are DISJOINT
+# (`savanna_grassland` → prairie_steppe / semi_arid_scrub / oasis_basin; the gazelle's
+# `semi_arid_scrub` → hot_desert_erg / rocky_reg / salt_flat), so no hex can hold both and they
+# only ever meet across a biome boundary. They look adjacent in `map_fauna_sprites` because that
+# frame deliberately stands every species in one row, which is a property of the FRAME and not of
+# the map. If either is ever regenerated, keep the saturation gap — it is doing the work here.
+steppe_runner: Flat vector game icon of a steppe runner, a lean fast-running antelope of the open grassland with a deep chest, a narrow waist and long slender legs built for speed, a distinctive bulging down-turned nose, and a pair of short ringed horns rising almost straight up from its forehead, a short tufted tail, standing alert in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in pale sandy cream and soft white that stays clearly lighter than the outline and reads clearly LIGHT overall so it stands out against mid-toned dry grassland and scrub, with a slightly warmer tan along the back, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background with the flat magenta touching the subject on every side, no rounded square, no tile, no card, no badge, no frame, no border and no background panel of any kind, the animal floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
 # wolf.png — Grey Wolf Pack (Predators Phase 1a — the first PREDATOR, a carnivore herd)
 # The art is ONE wolf in profile (like every fauna row), not a pack — the species is "Grey Wolf
@@ -304,3 +545,120 @@ camp: Flat vector game icon of a single round thatched hut with a domed straw ro
 
 # village.png — stage id village (🏘️ Village)
 village: Flat vector game icon of a small cluster of three simple houses with pitched roofs at differing heights standing close together, shown from the side, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire group, flat limited color palette in muted terracotta roofs above pale clay walls, simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# ============================================================================
+# CROP ROLES  ->  assets/icons/crops/  (ui/CropRoleSprites.gd)
+# ============================================================================
+#
+# Keyed by the sim's `FloraShareInfo.role` tag verbatim (`staple` / `fodder` /
+# `cash`) — the server sends the key, so there is no client-side resolver. The
+# `StageSprites` degenerate case.
+#
+# THIS FAMILY IS NOT A MAP MARKER, AND THREE OF THE HOUSE STYLE'S CLAUSES INVERT.
+# These are inline marks leading each row of the tile card's basket
+# (`DetailFormat.flora_composition_lines`), drawn inside a RichTextLabel over
+# `HudStyle.PANEL_SOLID`. Everything below follows from those two facts.
+#
+#   1. THEY RENDER AT ~13px, NOT 24-41. `%TileDetail` sets no font-size override,
+#      so it takes the stock 16 through `project.godot`'s `canvas_items` stretch
+#      (1920 authored). That is ROUGHLY HALF the size the entire house style above
+#      is written for, and `sites/reeds.png` already blurs into a mass at ~36px.
+#      Nothing with interior detail survives here. Budget ONE silhouette and AT
+#      MOST ONE interior division; anything narrower than ~1/6 of the icon's width
+#      is gone.
+#
+#   2. THE GROUND IS ONE KNOWN NEAR-BLACK PANEL, SO DROP THE THICK DARK OUTLINE.
+#      `HudStyle.PANEL_SOLID` is Color(0.067, 0.102, 0.118) = #111A1E, Rec.709 luma
+#      ~24 — darker than any terrain a marker sits on (the catfish note measures
+#      its host grounds at 53-89). Two consequences, and the second is the one that
+#      bites: contrast against the ground is nearly FREE here, so the catfish's
+#      "look up the host biomes first" rule collapses to a single fixed target; but
+#      a THICK DARK CHARCOAL OUTLINE — the one clause every shipped icon carries —
+#      is CAMOUFLAGE against a luma-24 panel. It draws nothing and it eats the fill
+#      from both sides at 13px, which is precisely the budget there is none of. The
+#      FILL ITSELF carries the silhouette here. Ask for no outline at all.
+#
+#   3. THE TEST IS THE THREE AGAINST EACH OTHER, NOT EACH AGAINST THE GROUND. They
+#      render stacked vertically, three rows apart, and the question a player asks
+#      is "which of the three is this row" — never "is something there". So the set
+#      is separated on TWO axes that both survive downscaling, because at 13px
+#      either one alone can fail:
+#         SILHOUETTE   staple TALL+NARROW · fodder LOW+WIDE · cash SQUARE+COMPACT
+#         HUE          staple gold ~45deg · fodder green ~110deg · cash rose ~5deg
+#      Keep both splits when regenerating any one of them. Changing a single icon's
+#      colour is a change to the SET.
+#
+# PIPELINE DELTAS from the top of this file:
+#   * Key as normal, at `--size 256`. These are pale subjects, so expect to widen
+#     the ramp per the catfish note (`--lo 85 --hi 240`) and count the residual.
+#   * `.import`: `process/size_limit=64` as everywhere else (headroom for HiDPI and
+#     the `expand` stretch), but MIPMAPS ARE LIVE HERE — `mipmaps/generate=true` is
+#     inert in all four marker families because `MapView` pins
+#     `TEXTURE_FILTER_NEAREST` on itself, and a RichTextLabel does NOT inherit that.
+#     `project.godot` sets no `default_texture_filter`, so this family draws through
+#     Godot's Linear default and genuinely uses the mip chain. Do not copy a fauna
+#     sidecar and assume the flag is decorative.
+#   * JUDGE AT ~13px OVER #111A1E, and judge all three TOGETHER — a contact sheet of
+#     the three stacked as they render in the basket, not one icon at a time. The
+#     shipped frames are ui_preview's `tile_food_layers` (all three roles) and
+#     `tile_food_layers_unstated` (the blank-slot row).
+#
+# WHAT EACH MARK HAS TO SAY (from `FoodIcons.CROP_ROLE_ICONS`, and the reason the
+# borrowed emoji are being retired): staple = food for PEOPLE; fodder = feed for
+# PENNED ANIMALS, not food for people; cash = goods to TRADE. The retired glyphs
+# were the wheat ear / the cow / the exchange arrow, and the last two both still
+# mean something else elsewhere in the HUD (a penned herd on the work board; trade
+# goods on every yield readout) — so DO NOT DRAW AN ANIMAL FOR `fodder` AND DO NOT
+# DRAW AN ARROW, COIN OR SCALE FOR `cash`. Re-introducing either subject
+# re-introduces the collision this art exists to remove. Each mark names the
+# PRODUCT, not the account it pays into.
+
+
+# AS SHIPPED — measured at 13px over #111A1E, which is the only size that decides
+# anything here. All three keyed at `--lo 85 --hi 240`:
+#
+#   mark     silhouette (w x h)   ink    luma   residual bg
+#   staple   3 x 8                16.7%  191    1
+#   fodder   11 x 5               29.9%  158    12
+#   cash     10 x 11              55.5%  134    0
+#
+# The SILHOUETTE column is the whole design: a thin vertical, a wide horizontal and
+# a solid block are three different shapes before they are three different colours,
+# which is what makes the set survive at a size where interior detail does not.
+# Every luma is 5-8x the panel's 24, so contrast never came under pressure — the
+# "contrast is nearly free on this panel" claim above is now measured, not assumed.
+#
+# TWO THINGS THAT DISSOLVE, both expected and both fine: fodder's binding band and
+# cash's cord are gone below ~26px, so those two read as a plain bar and a plain
+# block in play. They were asked for as the ONE permitted interior division and
+# they earn their keep at 26px+; do not "fix" this by thickening them, which would
+# split each mark into two shapes at row size. It is the `reeds` trade again.
+#
+# The cash render came back on a NAVY background rather than magenta and keyed
+# cleanly anyway (0 residual) — `icon_key.py` samples the corners, so any flat
+# uniform field works. Its fold notches are that background showing THROUGH, so
+# they key to transparent and the panel shows through them, which is why they cost
+# nothing. Worth knowing before "correcting" the background of a future render.
+
+
+# staple.png — role `staple` (food for people; retires the wheat-ear emoji)
+# TALL + NARROW, warm gold. Deliberately NOT `sites/grain.png`, which is a TIED
+# SHEAF of several stalks shown from the side and dissolves into a mass at this
+# size — this is ONE ear, which is what leaves enough width per grain to read.
+staple: Flat vector game icon of a single upright ear of ripe wheat, one fat seed head of plump overlapping grains on a very short stubby stalk with no leaves, tall and narrow in overall shape, drawn as one bold flat silhouette with NO outline of any kind, filled in a single bright warm golden amber tone with at most one slightly darker gold division separating the grains, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+# fodder.png — role `fodder` (feed for penned animals; retires the cow emoji)
+# LOW + WIDE, fresh green. NO ANIMAL — the retired cow is `POLICY_CORRAL`'s penned-
+# livestock mark and still means that on the work board and the map. A bound bale of
+# cut green forage says "feed" by the product instead, and its squat horizontal
+# block is the strongest silhouette of the three at 13px.
+fodder: Flat vector game icon of a bound bale of cut green forage, a squat low wide rectangular block of stacked hay with slightly ragged ends and one simple horizontal binding band across its middle, clearly wider than it is tall, drawn as one bold flat silhouette with NO outline of any kind, filled in a single fresh medium green tone with at most one slightly darker green band for the binding, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no individual straws, no fine texture, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+# cash.png — role `cash` (goods to trade; retires the exchange arrow)
+# SQUARE + COMPACT, dusty rose. NO ARROW, COIN OR SCALE — the exchange arrow is
+# `FoodIcons.TRADE_GOODS_GLYPH` on every yield readout in the game, and the coin /
+# money-bag / scales emoji are separately measured and rejected at these sizes. The
+# cash crops here are fibre (cotton, flax), so a wrapped bolt of dyed cloth names
+# the PRODUCT rather than the account. The rose hue is the far side of the wheel
+# from both siblings.
+cash: Flat vector game icon of a compact upright bolt of folded dyed cloth, a roughly square blocky bundle of neatly folded fabric with one simple diagonal binding cord across its face, drawn as one bold flat silhouette with NO outline of any kind, filled in a single warm dusty rose terracotta tone with at most one slightly darker rose line for the cord, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fabric texture, no fine details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon

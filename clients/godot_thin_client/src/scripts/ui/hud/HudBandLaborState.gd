@@ -136,6 +136,22 @@ func food_module_icon(x: int, y: int) -> String:
 	var is_hunt := String((site as Dictionary).get("kind", "")) == FOOD_SITE_KIND_GAME_TRAIL
 	return FoodIcons.for_site(module_key, is_hunt, int((site as Dictionary).get("terrain_id", -1)))
 
+## The bundled SPRITE for the food module on (x, y) — the art twin of `food_module_icon`, and the
+## same art `MapView`'s marker draws there. `null` when the tile has no known module or the site's art
+## key has no PNG, which is the caller's cue to fall back to the emoji (`HudWidgets.build_marker_icon`
+## makes that choice).
+##
+## It lives here, beside its emoji twin, so the module / is-hunt / terrain triple is resolved ONCE:
+## split across two files the sprite and the glyph could come to disagree about which site this is,
+## which is the exact failure `FoodIcons.site_key_for` was factored out to prevent one layer down.
+func food_module_sprite(x: int, y: int) -> Texture2D:
+	var site: Variant = _food_module_by_tile.get(Vector2i(x, y), null)
+	if not (site is Dictionary):
+		return null
+	var module_key := String((site as Dictionary).get("module", ""))
+	var is_hunt := String((site as Dictionary).get("kind", "")) == FOOD_SITE_KIND_GAME_TRAIL
+	return SiteSprites.for_site(module_key, is_hunt, int((site as Dictionary).get("terrain_id", -1)))
+
 ## The player expeditions this band detached (grouped by `home_band_entity`) — the parties zone's row
 ## set and the Workforce bar's Parties segment both read it, so the two can never disagree about which
 ## parties belong to the band.

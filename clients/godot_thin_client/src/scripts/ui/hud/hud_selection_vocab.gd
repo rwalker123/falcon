@@ -19,8 +19,22 @@ const ROSTER_ACCENT_WIDTH := 3.0
 
 const ROSTER_HEADER_FONT_SIZE := 10
 
-# Fallback glyph for the land row on a tile carrying no food module. Text-presentation (the
-# line-art policy in `FoodIcons`): it inherits the row label's colour, so it dims with the row.
+# The leading MARK on a land / herd row — the species or site's bundled art where the client has any
+# (issue #439), the emoji where it does not. A square box, sized to sit inside `ROSTER_ROW_MIN_HEIGHT`
+# (30) with the row's vertical padding intact rather than to fill it.
+const ROSTER_ROW_ICON_BOX := 18.0
+
+# The emoji FALLBACK's size. It matches the size the row's own name label renders at — the stock
+# default, this client applying no `Theme` — because the glyph used to live INSIDE that label, and
+# splitting it out must not resize it.
+const ROSTER_ROW_ICON_FONT_SIZE := 16
+
+# Fallback glyph for the land row on a tile carrying no food module. Text-presentation (the line-art
+# policy in `FoodIcons`), so unlike an emoji it DRAWS in whatever `font_color` its label carries.
+# That colour is now applied EXPLICITLY — `SelectionCardController._roster_row_ink` hands it to
+# `HudWidgets.build_marker_icon` at build time and re-applies it on the in-place patch path — because
+# the mark is its own bare `Label` since issue #439 and inherits nothing (this client applies no
+# `Theme`). Left un-set it would render stock near-white beside an `INK_DIM` name.
 const LAND_ROW_GLYPH := "◈"
 
 # Land-row meta, shortest true form: workers on it · else the module it offers · else nothing.
