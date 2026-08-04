@@ -379,6 +379,146 @@ mod tests {
         );
     }
 
+    /// **THE FORECAST'S BAND CROSSES THE WIRE, IN BOTH CURRENCIES**
+    /// (`docs/plan_hunt_through_combat.md` §6.4).
+    ///
+    /// A forecast has no event seed, so `actualYield` is the take's **expectation** and the band is
+    /// what the invariant now claims contains it. Asserted on the **decoded** FlatBuffers rather than
+    /// the in-process struct, for the reason `IntensificationKnowledgeState::foddering` already
+    /// records: a field that never reached the codec still passes an in-process assertion.
+    ///
+    /// The **degenerate** row is pinned beside the widened one, because it is the shipped case —
+    /// `wariness 0` and `hit_chance 1.0` make the band a point — and a reader must render one number
+    /// there rather than a range of zero width.
+    #[test]
+    fn the_forecast_band_rides_the_wire_in_both_currencies() {
+        /// A stochastic hunt: the point estimate with a band either side of it.
+        const LIKELY_FOOD: f32 = 9.0;
+        const LOW_FOOD: f32 = 6.0;
+        const HIGH_FOOD: f32 = 11.0;
+        /// The trade half of the same take — a wolf's whole payload, and the reason the band is a
+        /// pair rather than a food scalar (#337).
+        const LIKELY_TRADE: f32 = 1.5;
+        const LOW_TRADE: f32 = 1.0;
+        const HIGH_TRADE: f32 = 2.0;
+        /// The shipped case: no stochastic stage, so the band is the point estimate.
+        const CERTAIN_FOOD: f32 = 4.0;
+
+        let snapshot = WorldSnapshot {
+            populations: vec![PopulationCohortState {
+                entity: 1,
+                labor_assignments: vec![
+                    LaborAssignmentState {
+                        kind: "hunt".to_string(),
+                        actual_yield: LIKELY_FOOD,
+                        actual_yield_low: LOW_FOOD,
+                        actual_yield_high: HIGH_FOOD,
+                        trade_yield: LIKELY_TRADE,
+                        trade_yield_low: LOW_TRADE,
+                        trade_yield_high: HIGH_TRADE,
+                        ..Default::default()
+                    },
+                    LaborAssignmentState {
+                        kind: "hunt".to_string(),
+                        actual_yield: CERTAIN_FOOD,
+                        actual_yield_low: CERTAIN_FOOD,
+                        actual_yield_high: CERTAIN_FOOD,
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("snapshot decodes");
+        let rows = envelope
+            .payload_as_snapshot()
+            .expect("snapshot payload")
+            .population()
+            .expect("population section present")
+            .populations()
+            .expect("cohorts present")
+            .get(0)
+            .laborAssignments()
+            .expect("the assignments ride the cohort");
+
+        let stochastic = rows.get(0);
+        assert_eq!(
+            (
+                stochastic.actualYieldLow(),
+                stochastic.actualYield(),
+                stochastic.actualYieldHigh()
+            ),
+            (LOW_FOOD, LIKELY_FOOD, HIGH_FOOD),
+            "the FOOD band and its point estimate must survive the codec"
+        );
+        assert_eq!(
+            (
+                stochastic.tradeYieldLow(),
+                stochastic.tradeYield(),
+                stochastic.tradeYieldHigh()
+            ),
+            (LOW_TRADE, LIKELY_TRADE, HIGH_TRADE),
+            "…and so must the TRADE band, which is a wolf's whole payload"
+        );
+
+        let certain = rows.get(1);
+        assert_eq!(
+            (certain.actualYieldLow(), certain.actualYieldHigh()),
+            (CERTAIN_FOOD, CERTAIN_FOOD),
+            "the shipped roster has no stochastic stage, so its band is a point and a client renders \
+             one number"
+        );
+    }
+
+    /// **`durability` crosses the wire** (`docs/plan_hunt_through_combat.md` §4.2/§6.5) — the term
+    /// that turns the combat gate from *"you cannot"* into *"you cannot, and here is how long it
+    /// would take"*.
+    ///
+    /// Pinned **beside `defense`**, because the two blur and must not: defense is whether a hit counts
+    /// at all, durability is how many counting hits it takes. A decoder that read one for the other
+    /// would pass a single-field check.
+    #[test]
+    fn a_herd_publishes_the_gate_and_the_attrition_denominator_separately() {
+        /// The shipped megafauna row: a hide that stops a bare hand, and a body that soaks 500.
+        const MEGAFAUNA_DEFENSE: f32 = 12.0;
+        const MEGAFAUNA_DURABILITY: f32 = 500.0;
+
+        let snapshot = WorldSnapshot {
+            herds: vec![HerdTelemetryState {
+                id: "herd_mammoth".to_string(),
+                defense: MEGAFAUNA_DEFENSE,
+                durability: MEGAFAUNA_DURABILITY,
+                ..Default::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("snapshot decodes");
+        let herd = envelope
+            .payload_as_snapshot()
+            .expect("snapshot payload")
+            .subsistence()
+            .expect("subsistence section present")
+            .herds()
+            .expect("herds present")
+            .get(0);
+
+        assert_eq!(
+            herd.defense(),
+            MEGAFAUNA_DEFENSE,
+            "the gate crosses the wire"
+        );
+        assert_eq!(
+            herd.durability(),
+            MEGAFAUNA_DURABILITY,
+            "…and so does the attrition denominator beside it"
+        );
+    }
+
     /// **The sampled regrowth curve crosses the wire on both webs, and the two webs are NOT the same
     /// function.** That asymmetry is the load-bearing part: a patch is pure logistic with a reseed
     /// floor and no Allee term, so **no sample is negative**; a herd has critical depensation below

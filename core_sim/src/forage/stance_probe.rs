@@ -76,7 +76,7 @@ const FULLY_STAFFED_HUNTERS: u32 = 100_000;
 /// The probe measures the FLOOR, so it holds the retreat draw fixed. Every probe species ships
 /// `wariness 0`, which makes the draw an identity and the seed inert — pinning it anyway keeps the
 /// probe deterministic if a species it uses is ever given a value.
-const PROBE_RETREAT_SEED: u64 = 0;
+const PROBE_RETREAT_SEED: crate::fauna::HuntDraw = crate::fauna::HuntDraw::Seeded(0);
 
 const NO_CARRY_LIMIT: f32 = f32::INFINITY;
 

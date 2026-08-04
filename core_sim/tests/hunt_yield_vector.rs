@@ -665,6 +665,10 @@ fn precommit_pair_at_band_morale(
         NO_IMPROVEMENT_UNDERWAY,
         labor.yield_average_horizon_turns,
         labor.arrivals_horizon_turns,
+        app.world
+            .resource::<CombatConfigHandle>()
+            .get()
+            .forecast_range_sigmas,
     );
     (seed.actual, seed.trade)
 }
@@ -694,6 +698,10 @@ fn precommit_pair_building(
         improvement,
         labor.yield_average_horizon_turns,
         labor.arrivals_horizon_turns,
+        app.world
+            .resource::<CombatConfigHandle>()
+            .get()
+            .forecast_range_sigmas,
     );
     (seed.actual, seed.trade)
 }

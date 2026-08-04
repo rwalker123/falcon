@@ -554,6 +554,16 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >     crew size, and the three terms above stay the crew's three jobs. See `combat.md` for the seam
 >     and for why all six take/forecast paths call the one helper.
 >
+>     **WHICH bound actually ran out is an OUTPUT now** — `fauna::hunt_take_bound` →
+>     `HuntTakeBound { Engagement, Floor, Carry, Fight }`, carried on `HuntOutcome` beside `engaged`
+>     and `fled` and published on the `hunt_report` feed line (`event-feed.md`). It is a *reading* of
+>     the same terms `quantise_animal_take` was handed, through the same `whole_animals` helper, so
+>     the named bound and the paid take cannot disagree about what "affordable" or "carryable" mean;
+>     ties resolve `Floor → Carry → Fight/Engagement`, stated on the function. It exists for §11's
+>     first open question: for most species the escapement floor binds long before engagement does, so
+>     an `engage_rate` authored too low silently becomes a **second floor** — and `bound=engagement`
+>     is what makes that visible rather than mysterious.
+>
 >     **The fight is also the one bound with MEMORY.** Damage carries between turns on `Herd::wounds`
 >     (`combat::DamageLedger`), so a party below `ceil(durability / (attack − defense))` brings down
 >     nothing for several turns and then a whole animal — the gate is *steep*, not absolute. Every

@@ -312,7 +312,7 @@ pub fn advance_expeditions(
                         &fauna,
                         &ladder,
                         carry_room_biomass,
-                        seed,
+                        fauna::HuntDraw::Seeded(seed),
                     );
                     let take = outcome.take;
                     // **A roadside kill wears the scout's kit like any other** — the hunting kit per
@@ -329,6 +329,20 @@ pub fn advance_expeditions(
                         cohort.apply_combat_casualties(scalar_from_f32(
                             outcome.fight.casualties.killed,
                         ));
+                    }
+                    // **A roadside kill is a hunt and reports as one** (§6.6) — it engages animals,
+                    // wastes what one scout cannot haul, and hurts people, and none of that was
+                    // visible anywhere before the report existed.
+                    if let Some(entry) = hunt_report_event(
+                        tick.0,
+                        faction,
+                        &fauna
+                            .species_by_display(&herds.herds[idx].species)
+                            .map(|def| def.display_name.clone())
+                            .unwrap_or_else(|| herds.herds[idx].species.clone()),
+                        &outcome,
+                    ) {
+                        event_log.push(entry);
                     }
                     // **One conversion, both products** — a roadside kill is skinned as well as
                     // butchered (#337). The food tops the pack up to `room`; the hides ride home on
@@ -520,7 +534,7 @@ pub fn advance_expeditions(
                             wariness,
                             quarry_fight,
                             &hunting_party,
-                            seed,
+                            fauna::HuntDraw::Seeded(seed),
                             &mut herd.hunt_credit,
                         );
                         let take = outcome.take;
@@ -565,6 +579,13 @@ pub fn advance_expeditions(
                                     killed_f, wounded_f, species_name
                                 )),
                             ));
+                        }
+                        // **The raid's own hunt report** (§6.6) — the same facts a resident band
+                        // publishes, so a consumer reads one shape whichever way the hunt was run.
+                        if let Some(entry) =
+                            hunt_report_event(current_turn, faction, &species_name, &outcome)
+                        {
+                            event_log.push(entry);
                         }
                         // **Every rung is paid its species' vector — including Eradicate** (#337).
                         // Denial is the END STATE (the species is gone, for you and everyone else),
@@ -925,9 +946,11 @@ fn expedition_take_biomass(
     // exempt from the gate**: a detached party that cannot beat the quarry's `defense` spends its
     // whole trip taking casualties and killing nothing.
     party: &fauna::HuntingParty,
-    // Per-event seed for the retreat draw (`fauna::retreat_seed`) and the fight — never a shared RNG
-    // stream, or raid ordering would change outcomes and rollback would stop reproducing (§6.2).
-    retreat_seed: u64,
+    // **Live or forecast** — a live raid draws the retreat and the attack rolls from its per-event
+    // seed ([`fauna::retreat_seed`]), never a shared RNG stream, or raid ordering would change
+    // outcomes and rollback would stop reproducing (§6.2); a forecast reads both off their own
+    // binomials, because a projection has no tick to seed with (`fauna::HuntDraw`).
+    draw: fauna::HuntDraw,
     credit: &mut f32,
 ) -> HuntOutcome {
     if !body_mass.is_finite() || body_mass <= 0.0 {
@@ -943,6 +966,9 @@ fn expedition_take_biomass(
                 fought: false,
                 wounds: quarry.wounds,
             },
+            engaged: NOTHING_ENGAGED,
+            fled: NOTHING_ENGAGED,
+            bound: fauna::HuntTakeBound::Floor,
         };
     }
     // The standing surplus above the mission's floor — everything the raid may take.
@@ -962,7 +988,7 @@ fn expedition_take_biomass(
         // **Restraint is free** — the mission's floor bounds what the party goes after, so a raid at
         // its floor takes no casualties for animals it was never going to kill (§1).
         .min(fauna::animals_affordable(ceiling, body_mass));
-    let stayed = fauna::animals_that_stay(engaged, wariness, retreat_seed);
+    let stayed = fauna::animals_that_stay(engaged, wariness, draw);
     // **The fight decides the kill** (§4) — the same resolution the resident band runs.
     // A detached party builds nothing, so its crew carries the identity dip ([`NO_BUILD_UNDERWAY_DIP`]).
     let fight = fauna::resolve_hunt_fight(
@@ -970,7 +996,7 @@ fn expedition_take_biomass(
         workers as f32 * NO_BUILD_UNDERWAY_DIP,
         party,
         &quarry,
-        retreat_seed,
+        draw,
     );
     // Whole animals through **the** quantiser: as many as the bank has readied, bounded by what the
     // party brought down and by what the pack can seat but never below one — so if the pack cannot
@@ -984,7 +1010,15 @@ fn expedition_take_biomass(
     *credit = (*credit + rate - take.killed_biomass())
         .max(0.0)
         .min(standing_surplus);
-    HuntOutcome { take, fight }
+    HuntOutcome {
+        take,
+        fight,
+        engaged,
+        fled: (engaged - stayed).max(NOTHING_ENGAGED),
+        // Read off the very terms the quantiser above was handed, so the report cannot name a bound
+        // the take did not hit.
+        bound: fauna::hunt_take_bound(ceiling, room, body_mass, stayed, fight.brought_down),
+    }
 }
 
 /// The **provisions a hunting party actually lands in its larder per turn** at a herd's current state
@@ -996,7 +1030,7 @@ fn expedition_take_biomass(
 /// (`core_sim/tests/expedition_hunt.rs`).
 /// The quarry's engagement/retreat dials come in resolved (`FaunaConfig::engage_rate_for` /
 /// `wariness_for`) alongside its [`HuntYield`], and the caller composes the retreat seed the way the
-/// take path does (`fauna::retreat_seed`) — this function reads no config handle, only numbers.
+/// take path does (`fauna::HuntDraw::Seeded`) — this function reads no config handle, only numbers.
 #[allow(clippy::too_many_arguments)] // the herd's state, the labor tier and the species vector are all inputs
 pub fn expedition_take_provisions(
     workers: u32,
@@ -1010,7 +1044,7 @@ pub fn expedition_take_provisions(
     wariness: f32,
     quarry: fauna::QuarryFight,
     party: &fauna::HuntingParty,
-    retreat_seed: u64,
+    draw: fauna::HuntDraw,
 ) -> f32 {
     // A single-turn preview starting from an empty bank (this readout is the client's per-turn rate,
     // not a specific banked turn) — the forward-sim `hunt_trip_forecast` is the one pinned to actual.
@@ -1028,7 +1062,7 @@ pub fn expedition_take_provisions(
         wariness,
         quarry,
         party,
-        retreat_seed,
+        draw,
         &mut credit,
     );
     // Quantized onto the larder's `Scalar` grid, exactly as the real take lands there.
@@ -1075,6 +1109,89 @@ pub struct HuntOutcome {
     pub take: AnimalTake,
     /// The fight the take resolved through — its casualties, and whether it was a fight at all.
     pub fight: fauna::HuntFight,
+    /// **Animals the party brought into contact** (`fauna::animals_engaged`, floored by the
+    /// escapement room) — the first of the hunt report's facts
+    /// (`docs/plan_hunt_through_combat.md` §6.6).
+    ///
+    /// It is on the outcome rather than on [`fauna::HuntFight`] because engagement happens **before**
+    /// the fight and is not the fight's to know: the resolver is handed the animals that *stayed*.
+    pub engaged: f32,
+    /// **Animals that broke off before contact** — `engaged − stayed`, the retreat stage's own
+    /// output (§3). `0` across the shipped roster, where `wariness` is `0` everywhere.
+    pub fled: f32,
+    /// **Which of the four bounds ended the take** ([`fauna::hunt_take_bound`]) — engagement, the
+    /// floor, carry, or the fight.
+    pub bound: fauna::HuntTakeBound,
+}
+
+/// A party that engaged nothing — the degenerate reading of [`HuntOutcome::engaged`] / `fled`, named
+/// because a bare `0.0` beside a biomass field reads as "no biomass" rather than "no animals".
+pub(crate) const NOTHING_ENGAGED: f32 = 0.0;
+
+/// **THE HUNT REPORT** (`docs/plan_hunt_through_combat.md` §6.6) — one hunt's facts as a feed entry.
+/// `None` when no hunt happened (nothing was engaged), which is a **fact** gate and not an
+/// importance one.
+///
+/// # Facts, never a composed judgement
+///
+/// Issue #272's notification system owns importance and phrasing; the hunt owns what happened. So
+/// every number rides the `key=value` detail — the form the feed already parses — and the **label
+/// composes nothing but the species**: no adjective, no "successful", no severity. Emitting
+/// presentation-ready text here would bake this arc's guesses about an importance ladder into the
+/// sim, and #272 would then have to unpick prose to recover the numbers.
+///
+/// | token | meaning |
+/// |---|---|
+/// | `engaged` | animals brought into contact (§2) |
+/// | `fled` | of those, how many broke off before contact (§3) — `0` across the shipped roster |
+/// | `killed` | whole animals put down |
+/// | `carried_biomass` / `wasted_biomass` | what came home, and what was left on the range |
+/// | `hunters_killed` / `hunters_wounded` | what it cost the party, fractional as the resolver reports it |
+/// | `bound` | **which of the four limits ran out first** ([`fauna::HuntTakeBound`]) |
+/// | `species` | the display name, never the internal herd id |
+///
+/// **`species` is LAST, and it has to be.** A display name contains spaces, so in a space-delimited
+/// `key=value` grammar it can only be the trailing remainder — which is where the `HuntDanger` line
+/// beside it already puts the same value. A consumer reads it as *everything after `species=`*.
+///
+/// **`carried_biomass` / `wasted_biomass` are BIOMASS, and the token says so.** Provisions is a
+/// *conversion* of it that differs by path (a raid applies no output multiplier, a band applies its
+/// own), and the food a band actually banked is already reported on its assignment row; the biomass
+/// is the unambiguous physical fact this event owes.
+///
+/// **`hunters_wounded` is why [`CommandEventKind::HuntDanger`] did not have to widen.** That line is
+/// gated on a **death** because the hunt's baseline injury risk (§4.6) makes *every* engagement
+/// produce some `wounded`, so gating it on any casualty would push a "cost 0 lives" line for every
+/// band every turn. The wounded are not invisible — they are here, on every hunt, as a number.
+pub fn hunt_report_event(
+    tick: u64,
+    faction: FactionId,
+    species_name: &str,
+    outcome: &HuntOutcome,
+) -> Option<CommandEventEntry> {
+    if outcome.engaged <= NOTHING_ENGAGED || !outcome.engaged.is_finite() {
+        // Nothing was stalked — a pen's tend branch, or a turn the party never reached an animal.
+        return None;
+    }
+    Some(CommandEventEntry::new(
+        tick,
+        CommandEventKind::HuntReport,
+        faction,
+        format!("The {species_name} hunt"),
+        Some(format!(
+            "engaged={:.0} fled={:.0} killed={} carried_biomass={:.3} wasted_biomass={:.3} \
+hunters_killed={:.3} hunters_wounded={:.3} bound={} species={}",
+            outcome.engaged,
+            outcome.fled,
+            outcome.take.killed,
+            outcome.take.carried,
+            outcome.take.wasted,
+            outcome.fight.casualties.killed,
+            outcome.fight.casualties.wounded,
+            outcome.bound.as_str(),
+            species_name,
+        )),
+    ))
 }
 
 #[allow(clippy::too_many_arguments)] // the ecology, the ladder and the caller's caps are all levers
@@ -1091,10 +1208,10 @@ pub fn hunt_take(
     fauna: &FaunaConfig,
     ladder: &LadderConfig,
     carry_room_biomass: f32,
-    // Per-event seed for the retreat draw (`fauna::retreat_seed`) and the fight's own draws — never a
-    // shared RNG stream, or hunt ordering would change outcomes and rollback would stop reproducing
-    // (§6.2).
-    retreat_seed: u64,
+    // **Live or forecast** — a live hunt draws the retreat and the attack rolls from its per-event
+    // seed (`fauna::retreat_seed`), never a shared RNG stream, or hunt ordering would change outcomes
+    // and rollback would stop reproducing (§6.2). See `fauna::HuntDraw`.
+    draw: fauna::HuntDraw,
 ) -> HuntOutcome {
     // **Constant escapement** (`docs/plan_harvest_floor.md` §1): the herd hands over the stock
     // standing above the assignment's floor, at its CURRENT biomass. Resolved against the herd's OWN
@@ -1139,7 +1256,7 @@ pub fn hunt_take(
     // afterwards. A crew at its floor that engaged normally would take casualties and wear its kit
     // and then hand nothing back — and killing without taking is denial, not restraint.
     let engaged = engaged.min(fauna::animals_affordable(ceiling, herd.body_mass));
-    let stayed = fauna::animals_that_stay(engaged, fauna.wariness_for(&herd.species), retreat_seed);
+    let stayed = fauna::animals_that_stay(engaged, fauna.wariness_for(&herd.species), draw);
     // **The fight decides the kill** — stage 3, and the arm that used to be a bespoke hunt formula.
     // The quarry comes in carrying **this herd's** accumulated wounds (`fauna::herd_quarry_fight`),
     // so a party below the one-turn threshold wears the animal down over several turns instead of
@@ -1149,7 +1266,7 @@ pub fn hunt_take(
         workers as f32 * ladder.build_dip(improvement),
         party,
         &fauna::herd_quarry_fight(herd, fauna),
-        retreat_seed,
+        draw,
     );
     // ...and the ledger goes straight back onto the herd, before anything can early-return past it.
     herd.wounds = fight.wounds;
@@ -1157,7 +1274,21 @@ pub fn hunt_take(
     // **The herd loses every animal KILLED, not merely what was carried** — you cannot un-kill the
     // mammoth you could not haul. That is the waste, and it is `take.wasted`.
     herd.biomass -= take.killed_biomass();
-    HuntOutcome { take, fight }
+    HuntOutcome {
+        take,
+        fight,
+        engaged,
+        fled: (engaged - stayed).max(NOTHING_ENGAGED),
+        // The same four terms the quantiser was handed — one reading, not a second computation of
+        // what "affordable" and "carryable" mean.
+        bound: fauna::hunt_take_bound(
+            ceiling,
+            collection,
+            herd.body_mass,
+            stayed,
+            fight.brought_down,
+        ),
+    }
 }
 
 /// **WHICH of the raid's four stops actually ended the trip.** A trip length alone cannot tell the
@@ -1365,34 +1496,20 @@ pub fn hunt_per_worker_provisions(labor: &LaborConfig, fauna: &FaunaConfig) -> f
 /// the party makes its first take). Travel is not counted — see [`hunt_trip_forecast`].
 const FIRST_HUNTING_TURN: u32 = 1;
 
-/// **The world half of a retreat seed a FORWARD PROJECTION cannot know.** `fauna::retreat_seed` is
-/// composed from `(map_seed, tick, herd, party)`; a forecast holds the party and the herd but is
-/// projecting into ticks that have not happened, on a trip whose travel it deliberately does not
-/// model — so there is no tick for it to name. It holds both world terms at this value and derives
-/// **one** seed for the whole simulation.
-const FORECAST_RETREAT_WORLD_TERM: u64 = 0;
-
-/// **The retreat seed a forward projection uses — held FIXED for every projected turn.**
+/// **The draw a raid FORECAST resolves at — the expectation, never a stand-in seed**
+/// (`docs/plan_hunt_through_combat.md` §6.4).
 ///
-/// `forecast == actual` is the invariant this whole readout exists to keep
-/// (`.claude/rules/core_sim/yield-forecast.md`), so the projection must not re-draw the retreat turn
-/// by turn: a per-turn seed would make the same herd, party and floor project a different raid on
-/// every re-render while nothing about the world had changed. One seed, composed from the terms a
-/// projection genuinely holds ([`FORECAST_RETREAT_WORLD_TERM`] for the two it does not), so the
-/// stage's *shape* is projected honestly and the draw is stable and reproducible.
+/// This replaced a `forecast_retreat_seed(herd, workers)` that composed a real per-event seed out of
+/// zeros for the two world terms a projection cannot know (`map_seed` and the tick). That was stable
+/// and reproducible, and it was still **wrong in kind**: it drew a *sample* and presented it as the
+/// answer, so as soon as a stochastic stage was authored the preview would report one draw while the
+/// take paid a different one, with no way for a reader to tell them apart.
 ///
-/// It is therefore **not** the seed the live take will draw with, and cannot be — a projection of a
-/// future turn cannot know that turn's tick. Today that is unobservable: the shipped roster's
-/// `wariness` is `0` everywhere, which `fauna::animals_that_stay` treats as an exact identity that
-/// consumes no randomness, so every seed gives the same answer.
-fn forecast_retreat_seed(herd_id: &str, workers: u32) -> u64 {
-    fauna::retreat_seed(
-        FORECAST_RETREAT_WORLD_TERM,
-        FORECAST_RETREAT_WORLD_TERM,
-        herd_id,
-        workers,
-    )
-}
+/// A projection cannot know a future tick — that is a fact about time, not a gap to be filled — so
+/// it reads the take's distribution instead. At the shipped `wariness 0` / `hit_chance 1.0` both
+/// stages take their exact identities, so this is bit-identical to what the old seed produced and
+/// every pinned raid number is unchanged.
+const RAID_FORECAST_DRAW: fauna::HuntDraw = fauna::HuntDraw::EXPECTED;
 
 /// Forecast a hunting **raid** by simulating it forward turn by turn against the herd's own ecology,
 /// on the sim's arithmetic, until the party comes home — the pack fills, the **standing surplus is
@@ -1518,15 +1635,14 @@ fn hunt_trip_forecast_seeded(
     let capacity = herd_capacity(&quarry, fauna);
     let floor_biomass = floor * capacity.max(0.0);
     // The quarry's engagement/retreat dials, resolved ONCE: the crew does not change size
-    // mid-projection and the quarry is never re-speciated. The retreat seed is held fixed for the
-    // whole run — see [`forecast_retreat_seed`] for why a projection cannot vary it per turn.
+    // mid-projection and the quarry is never re-speciated. The retreat is read at its expectation
+    // rather than drawn — see [`RAID_FORECAST_DRAW`] for why a projection cannot draw it at all.
     let engage_rate = fauna.engage_rate_for(&quarry.species);
     let wariness = fauna.wariness_for(&quarry.species);
     // **The wounds are NOT resolved once** — they are the one term that changes every projected turn,
     // and a projection that froze them could not see a multi-turn kill at all (§4.2). Seeded from the
     // live herd, then re-carried from each simulated turn's result below.
     let mut quarry_fight = fauna::herd_quarry_fight(&quarry, fauna);
-    let retreat_seed = forecast_retreat_seed(&quarry.id, workers);
     let mut larder = initial_larder;
     let mut first_turn_provisions = 0.0_f32;
     let mut animals_taken = 0u32;
@@ -1570,7 +1686,7 @@ fn hunt_trip_forecast_seeded(
             wariness,
             quarry_fight,
             party,
-            retreat_seed,
+            RAID_FORECAST_DRAW,
             &mut quarry.hunt_credit,
         );
         let take = outcome.take;

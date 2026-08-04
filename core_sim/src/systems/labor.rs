@@ -694,6 +694,13 @@ pub fn advance_labor_allocation(
                             // The forward-projected steady headline (computed pre-take above).
                             realized: forage_realized,
                             arrivals,
+                            // **A RESOLVED row is a fact, not a forecast** — the take has happened, so
+                            // the band around it is a point. The distribution belongs to the
+                            // pre-commit seed (`fauna::forecast_take_range`).
+                            range: YieldRange::certain(
+                                paid,
+                                trade_production.min(trade_collection),
+                            ),
                             // The crop the crew could not carry: it stood in the field and rotted.
                             // The understaffing signal — "add hands here" — and the reason a rich
                             // Field is a real labor sink rather than a free ration.
@@ -1023,6 +1030,8 @@ pub fn advance_labor_allocation(
                         // The forward-projected steady headline (computed pre-take above).
                         realized: forage_realized,
                         arrivals,
+                        // Resolved: a fact, so the band is a point — see the Field arm above.
+                        range: YieldRange::certain(provisions.to_f32(), forage_trade),
                         wasted: forage_provisions(
                             (production - take).max(0.0),
                             patch_provisions_per_biomass(
@@ -1388,6 +1397,10 @@ pub fn advance_labor_allocation(
                             // projects its managed yield, already smooth).
                             realized: hunt_realized.provisions,
                             arrivals,
+                            // Resolved: a fact, so the band is a point. A pen is also the one animal
+                            // source with no stochastic stage at all — not stalked, not fought, not
+                            // wary — so its forecast is a point too.
+                            range: YieldRange::certain(tended, paid.trade_goods),
                             wasted: pen_yield.apply(take.wasted, mult_f).provisions,
                             // **ONE CREW doing both jobs** ([`source_crew_needed`]): big enough to
                             // mind the heads *and* to haul the meat. The haul side is the **steady
@@ -1440,7 +1453,12 @@ pub fn advance_labor_allocation(
                         &fauna,
                         &ladder,
                         f32::INFINITY,
-                        fauna::retreat_seed(sim_config.map_seed, tick.0, &herd.id, workers),
+                        fauna::HuntDraw::Seeded(fauna::retreat_seed(
+                            sim_config.map_seed,
+                            tick.0,
+                            &herd.id,
+                            workers,
+                        )),
                     );
                     let take = outcome.take;
                     // **BOTH KITS ARE CHARGED FOR USE, AND ONLY FOR USE** (the minimal TOE,
@@ -1718,6 +1736,10 @@ pub fn advance_labor_allocation(
                         // so it is smooth where `actual` (the whole-animal kill) pulses.
                         realized: hunt_realized.provisions,
                         arrivals,
+                        // Resolved: a fact, so the band is a point — see the Field arm above. This is
+                        // the row whose *seeded* twin carries a real distribution once `wariness` or
+                        // a sub-1 `hit_chance` is authored.
+                        range: YieldRange::certain(provisions.to_f32(), paid.trade_goods),
                     };
                     // **The fight already happened — inside the take** (`docs/plan_hunt_through_combat.md`
                     // §0.1). This site used to resolve the party's casualties in a *second*
@@ -1760,6 +1782,23 @@ pub fn advance_labor_allocation(
                                 killed_f, wounded_f, species_name
                             )),
                         ));
+                    }
+                    // **THE HUNT REPORT** (`docs/plan_hunt_through_combat.md` §6.6) — what happened,
+                    // as facts, every turn a hunt happens. It is not the wounded-only twin of the
+                    // `HuntDanger` line above: that stays gated on a **death**, because the baseline
+                    // injury risk makes every engagement produce some `wounded` and a "cost 0 lives"
+                    // line per band per turn is not a report. The wounded ride here instead, on every
+                    // hunt, beside which bound actually ended the take.
+                    if let Some(entry) = crate::systems::expeditions::hunt_report_event(
+                        tick.0,
+                        faction,
+                        &fauna
+                            .species_by_display(&herd.species)
+                            .map(|def| def.display_name.clone())
+                            .unwrap_or_else(|| herd.species.clone()),
+                        &outcome,
+                    ) {
+                        event_log.push(entry);
                     }
                 }
                 LaborTarget::Scout => {
@@ -2865,6 +2904,11 @@ mod labor_yield_tests {
 
     use crate::components::FOOD;
 
+    /// The shipped `combat_config.forecast_range_sigmas` — the reported band's width. These seeds
+    /// assert on `workers_needed` and the scalar take, never on the band, so the value is inert
+    /// here; it is named rather than a bare literal because it is a config lever.
+    const SHIPPED_FORECAST_RANGE_SIGMAS: f32 = 2.0;
+
     /// Set the source-tile forage patch cultivated (owned by faction 0) at the given biomass.
     fn cultivate_source_patch(world: &mut World, biomass: f32) {
         let forage = world.resource::<LaborConfigHandle>().get().forage.clone();
@@ -3276,6 +3320,7 @@ mod labor_yield_tests {
                 improvement,
                 labor.yield_average_horizon_turns,
                 labor.arrivals_horizon_turns,
+                SHIPPED_FORECAST_RANGE_SIGMAS,
             )
         };
         let tame_seed = seed(Some(Improvement::Tame), &world);
@@ -3376,6 +3421,7 @@ mod labor_yield_tests {
                 improvement,
                 labor.yield_average_horizon_turns,
                 labor.arrivals_horizon_turns,
+                SHIPPED_FORECAST_RANGE_SIGMAS,
             )
         };
         let cultivate_seed = seed(Some(Improvement::Cultivate), &world);
@@ -3528,6 +3574,7 @@ mod labor_yield_tests {
                 Some(Improvement::Cultivate),
                 labor.yield_average_horizon_turns,
                 labor.arrivals_horizon_turns,
+                SHIPPED_FORECAST_RANGE_SIGMAS,
             )
         };
 
@@ -3664,6 +3711,7 @@ mod labor_yield_tests {
                 Some(Improvement::Tame),
                 labor.yield_average_horizon_turns,
                 labor.arrivals_horizon_turns,
+                SHIPPED_FORECAST_RANGE_SIGMAS,
             )
         };
         assert_eq!(

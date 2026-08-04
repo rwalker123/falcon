@@ -194,7 +194,8 @@ branches on mission:
 > - **A raid is ENGAGEMENT-BOUNDED exactly as a resident band is** (`docs/plan_hunt_through_combat.md`
 >   §1; §10 exempts only the pen). `expedition_take_biomass` resolves the party's reach
 >   (`fauna::animals_engaged`, at the identity build dip — a detached party builds nothing) and the
->   quarry's retreat (`fauna::animals_that_stay`, per-event seed) and hands the count to **the**
+>   quarry's retreat (`fauna::animals_that_stay`, under the caller's `fauna::HuntDraw` — a per-event
+>   seed live, a quantile in a forecast) and hands the count to **the**
 >   quantiser, which also retired its hand-rolled copy of the `max(1, carryable)` arithmetic. The bound
 >   is what stops the *same* party on the *same* herd taking a different number of animals purely by
 >   choosing the expedition verb (five hunters took 5 Red Deer a turn from camp and 13 as a raid);
@@ -202,9 +203,14 @@ branches on mission:
 >   **The raid's economics turn on it**: where the herd's regrowth outpaces what a legal party can
 >   reach, the surplus is never spent and the raid does not complete inside
 >   `hunt.forecast_horizon_turns` — an honest "this party cannot clear this herd", not a stall.
->   **The forecast holds ONE retreat seed for the whole forward simulation**
->   (`systems::expeditions::forecast_retreat_seed`): a projection has no tick to name, and re-drawing
->   per projected turn would make an unchanged world project a different raid on every render.
+>   **The forecast DRAWS NOTHING — it resolves at the expectation** (`RAID_FORECAST_DRAW` =
+>   `fauna::HuntDraw::EXPECTED`). A projection has no tick to name, so it cannot compose the live
+>   take's per-event seed at all. This replaced a `forecast_retreat_seed` that built a real seed out
+>   of zeros for the two world terms a projection lacks: stable and reproducible, and still wrong in
+>   *kind* — it drew a **sample** and presented it as the answer, so the moment a stochastic stage was
+>   authored the preview would report one draw while the take paid another, indistinguishably. At the
+>   shipped `wariness 0` / `hit_chance 1.0` both are bit-identical, so no raid number moved; see
+>   `yield-forecast.md` → "THE INVARIANT IS RESTATED".
 > - **The take brings home a PARTIAL when it must, and wastes the rest — reconciled with the band.**
 >   The party's processing throughput (`workers × per_worker_biomass_capacity`) is banked onto the herd's
 >   `hunt_credit` — **the field's one remaining writer**, since the resident band stopped banking — and

@@ -41,8 +41,9 @@ pub struct CombatConfig {
     /// **The probability one unit's attack lands** — where the resolver's variance lives
     /// (`docs/plan_hunt_through_combat.md` §4.7), drawn per unit so it is *binomial in force size*.
     /// Ships **1.0**, which is an *exact identity*: no draw is made and no randomness consumed, so
-    /// the take stays deterministic and `forecast == actual` per component holds until slice 5
-    /// teaches the forecast to report a range. Ships finite, `> 0` and `<= 1`.
+    /// the take stays deterministic and the forecast's reported range is a **point**
+    /// ([`Self::forecast_range_sigmas`]). Authoring a sub-1 chance is what makes the range real.
+    /// Ships finite, `> 0` and `<= 1`.
     pub hit_chance: f32,
     /// **How much of its own `durability` a wounded body knits back per turn out of contact** — the
     /// decay half of [`crate::combat::DamageLedger`]. Ships **0.2** (five quiet turns clear any
@@ -56,6 +57,19 @@ pub struct CombatConfig {
     /// scales with the *engagement* and lives here beside `expedition_danger_multiplier` — the other
     /// dial in this file that only the hunt adapter reads. Ships **0.15**, finite and `> 0`.
     pub hunt_injury_damage_per_animal: f32,
+    /// **How wide the pre-commit forecast's reported range is**, in standard deviations of the take's
+    /// own binomials (`docs/plan_hunt_through_combat.md` §6.4).
+    ///
+    /// A forecast has no event seed — [`crate::fauna::retreat_seed`] is `(map_seed, tick, herd,
+    /// party)` and a projection cannot know a future tick — so it draws nothing and reads the
+    /// distribution instead: the point estimate is the mean, the reported bounds are this many
+    /// sigmas either side. Ships **2.0** (~95% of a normal-approximated binomial), which is the
+    /// *"6–11, likely 9"* the design asks for.
+    ///
+    /// **It is a READOUT width, never a model term** — no resolution path reads it, so widening it
+    /// cannot move a single animal. Finite and `> 0`: a `0` would report a point estimate as a
+    /// certainty, which is exactly the promise this slice exists to stop making.
+    pub forecast_range_sigmas: f32,
 }
 
 impl CombatConfig {
@@ -88,6 +102,9 @@ impl CombatConfig {
             disengage_fraction: self.disengage_fraction,
             hit_chance: self.hit_chance,
             wound_recovery_rate: self.wound_recovery_rate,
+            // Config describes a **live** fight; a forecast substitutes its own draw mode at the
+            // point of use (`fauna::HuntDraw`), never in the loaded tuning.
+            draw: crate::combat::StrikeDraw::Seeded,
         }
     }
 
@@ -137,6 +154,9 @@ impl CombatConfig {
             "hunt_injury_damage_per_animal",
             self.hunt_injury_damage_per_animal,
         )?;
+        // A width in sigmas, so unbounded above but never `0`: a zero-width range reports a
+        // distribution as a promise, which is the failure mode the range readout exists to end.
+        require_positive_finite("forecast_range_sigmas", self.forecast_range_sigmas)?;
         Ok(())
     }
 }
@@ -254,6 +274,22 @@ mod tests {
         assert_eq!(config.expedition_danger_multiplier, 1.5);
         assert_eq!(config.wound_recovery_rate, 0.2);
         assert_eq!(config.hunt_injury_damage_per_animal, 0.15);
+        assert_eq!(config.forecast_range_sigmas, 2.0);
+    }
+
+    /// A zero-width range would report the point estimate as a certainty — the exact promise the
+    /// range readout exists to stop making.
+    #[test]
+    fn validate_rejects_a_zero_forecast_range() {
+        let mut config = CombatConfig::builtin().as_ref().clone();
+        config.forecast_range_sigmas = 0.0;
+        assert!(matches!(
+            config.validate(),
+            Err(CombatConfigError::Invalid {
+                field: "forecast_range_sigmas",
+                ..
+            })
+        ));
     }
 
     #[test]

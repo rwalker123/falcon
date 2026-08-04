@@ -624,12 +624,38 @@ claims are then asserted **across many seeds** rather than as a tolerance on one
 answer is between 6 and 11" assertion is flaky by construction and passes when the feature is dead;
 pair every distribution assertion with a liveness one.
 
-### 6.4 The forecast reports a range
+### 6.4 The forecast reports a range — SETTLED
 
 The pre-commit readout changes from a promise to a distribution: *"6–11, likely 9."* This is a change
 in what the forecast *means*, and it touches every yield readout in the client, so it is in scope
 here rather than a surprise later. It is also an improvement — communicating risk is what makes the
 mammoth decision a decision rather than arithmetic.
+
+**The forecast reports the EXPECTATION, and `forecast == actual` is restated — SETTLED.** Three
+earlier slices deferred this. A forecast has no event seed: `fauna::retreat_seed` is composed from
+`(map_seed, tick, herd, party)` and a projection is projecting into ticks that have not happened, so
+the preview **physically cannot draw** the retreat the live take will draw. The invariant becomes:
+
+> `actualYield` is the take's **expectation** over the seed, and the take the sim pays lies within
+> `[low, high]`. Where no stage is stochastic the distribution is degenerate and
+> `low == likely == high == the take`, **bit-for-bit**.
+
+**The alternative — making the draw forecast-reproducible by taking the tick out of the seed — was
+refused**, and the reasons are worth recording because it is the obviously simpler option. It would
+make the draw a per-`(herd, party)` **constant**: the same pairing rolls identically on turn 1 and
+turn 40, so the risk the range exists to communicate would never actually materialise, and a player
+could *learn* which pairings roll well — the spreadsheet §4.7 says variance exists to prevent. It
+also contradicts §6.2, whose event is `(herd, tick, party)`: a tick-free seed is not per-event.
+
+**It ships degenerate, and that is the point.** `wariness` is `0` across the roster and `hit_chance`
+is `1.0`, so both binomials take their exact identities at every quantile, the range is a point, and
+**no number in the game moved** when it landed — the provable-identity shape slice 2 used, applied to
+the readout. Slice 7 authors wariness and the range becomes real.
+
+The width is `combat_config.forecast_range_sigmas` (**2.0**, ~95% of a normal-approximated binomial)
+and it is a **readout lever**: nothing the sim resolves reads it, so widening the band cannot move an
+animal. Engineering as-built: `.claude/rules/core_sim/yield-forecast.md` → "THE INVARIANT IS
+RESTATED".
 
 ### 6.5 A fight the party cannot win must say so before it is launched
 
@@ -637,6 +663,20 @@ The gate (§4.2) produces a real outcome that reads as a bug if unexplained: hun
 killed. The hunt panel therefore checks it **at launch** and says so in words, and the forecast
 independently estimates **zero food** — two signals from different paths, so a failure in either
 still leaves the player warned.
+
+**The sim exports one new term and no verdict — SETTLED.** The client already held
+`PopulationCohortState.hunterAttack` and `HerdTelemetryState.defense`, so `max(0, attack − defense)`
+was **already composable**: a "can this band win" boolean would be an answer to a question the client
+can ask itself, which this arc's own boundary rule forbids (a linear, exact bound ships as a term).
+What was genuinely missing is **`durability`**, which ships as `HerdTelemetryState.durability` — it
+is what turns *"you cannot"* into *"you cannot, and with spears it would take 62 hunter-turns"*. The
+second signal needed nothing: the fight is already inside `hunt_source_yield_preview`, so a
+sub-gate party is quoted `0` at every quantile.
+
+The herd's **accumulated wounds** are deliberately not exported. Damage carries between turns, so a
+part-worn quarry needs fewer turns than `durability` alone implies — but the sim already answers
+duration where it matters (`huntTripEstimates`), and a client-side duration model reading a live
+accumulator would be a *competing* answer rather than a term.
 
 ### 6.6 The hunt emits events, even before anything consumes them
 
@@ -652,6 +692,20 @@ itself), and what came home — **carried** and **wasted**.
 **Facts, never a composed string.** #272 owns importance and phrasing; the hunt owns what happened.
 Emitting presentation-ready text here would bake this arc's guesses about an importance ladder into
 the sim, and the sim already treats the client this way everywhere else.
+
+**As built — SETTLED.** `CommandEventKind::HuntReport`, pushed by the one
+`systems::expeditions::hunt_report_event` from all three real hunt sites (the resident band, the
+raid, the scout's roadside replenish), gated on `engaged > 0` — a *fact* gate, not an importance one.
+The label composes nothing but the species; every number rides the `key=value` detail
+(`engaged fled killed carried_biomass wasted_biomass hunters_killed hunters_wounded bound species`).
+Which bound ran out first is `fauna::hunt_take_bound`, read off the terms `quantise_animal_take` was
+handed rather than diagnosed beside it.
+
+**`HuntDanger` did NOT widen, and the report is why.** That line is gated on a **death** because
+§4.6's baseline injury makes every engagement produce some `wounded`, so any-casualty gating would
+push a "cost 0 lives" line for every band every turn. The wounded were nonetheless invisible — the
+real defect — and now ride `hunters_wounded` on every report, which is the right home for a number
+that is true every turn.
 
 ---
 
@@ -720,15 +774,20 @@ Each lands on its own PR.
    hunts wears no baskets. `AnimalTake.wasted` is reachable again: a sledless party kills more than it
    hauls. Engineering as-built: `.claude/rules/core_sim/equipment.md`.
 6. **Forecast reports a range** (§6.4) + the client readout, and the hunters-per-animal figure on the
-   pre-launch panel.
+   pre-launch panel. **Sim half LANDED**: the expectation-vs-reproducible-seed call is settled above,
+   `fauna::HuntDraw` threads live-or-forecast through every take path, and the band ships as
+   `LaborAssignment.actualYieldLow/High` + `tradeYieldLow/High`. §6.5's missing term
+   (`HerdTelemetryState.durability`) and §6.6's hunt report ship with it. The **client** readouts —
+   the range line, the hunters-per-animal figure (`1 / engageRate`, composed client-side from a term
+   already on the wire), and the pre-launch "you cannot win this" line — remain.
 7. **Wariness values authored** across the roster — the first slice with visible retreat behaviour.
 
    **7 must follow 6, and the order is not a preference.** Authoring wariness makes the take
    stochastic; until the forecast reports a distribution, `forecast == actual` breaks on the animal
-   web the moment a non-zero value ships. There is a second, harder half to settle with it: a
-   forecast has no event seed (a projection cannot know a future tick), so the preview cannot draw
-   the retreat the live take will draw. Either the forecast reports the **expectation**, or the draw
-   is made forecast-reproducible — a design call, not an implementation detail.
+   web the moment a non-zero value ships. Its second, harder half — that a forecast has no event seed
+   — **is settled in §6.4**: the forecast reports the expectation and the invariant is restated. So
+   slice 7 is now purely an authoring pass: every value it writes turns a point into a real range
+   through machinery that is already live and tested.
 
 Slice 2 is deliberately an identity (wariness `0` makes the retreat stage a provable no-op), so its
 review can be about the seam rather than about balance. Slices 1, 3 and 4 all move numbers.
@@ -737,6 +796,12 @@ review can be about the seam rather than about balance. Slices 1, 3 and 4 all mo
 
 ## 10. Validation
 
+- **`forecast == actual`, in its restated form** (§6.4), on the exported snapshot: the reported band
+  is a **point** wherever nothing is stochastic — bit-for-bit, on both webs and on both a defaulting
+  and an inedible species — it **widens** when a stochastic term is authored, and the live take falls
+  inside it across many seeds. `core_sim/tests/hunt_forecast_range.rs`; the sensitive halves are unit
+  tests on the two quantile functions, because the wire test reads the take *after* the whole-animal
+  quantiser and a small perturbation is absorbed there.
 - **`forecast == actual` still holds at wariness `0`**, per component, on the exported snapshot.
   The existing suite is the assertion, but **not unmodified** — slice 1's engagement bound is a real
   balance change (§9), and three crew constants in `core_sim/tests/hunt_yield_vector.rs` had to grow

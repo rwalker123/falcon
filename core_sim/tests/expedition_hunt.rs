@@ -24,16 +24,17 @@ use core_sim::{
     build_headless_app, herd_hunt_yield, hunt_escapement_ceiling, hunt_source_yield_preview,
     hunt_take, hunt_trip_forecast, recapture_snapshot_in_place, scalar_from_f32, scalar_one,
     scalar_zero, spawn_initial_forage, spawn_initial_herds, spawn_initial_world, BandTravel,
-    CommandEventLog, CultureManager, DiscoveryProgressLedger, Expedition, ExpeditionConfig,
-    ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FactionId, FactionInventory,
-    FaunaConfig, FaunaConfigHandle, ForageRegistry, GenerationId, GenerationRegistry, Herd,
-    HerdDensityMap, HerdRegistry, HerdTelemetry, HuntTripBound, LaborAllocation, LaborConfig,
-    LaborConfigHandle, LadderConfig, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
-    MoraleCause, PopulationCohort, ResidentBand, Scalar, SimulationConfig, SimulationTick,
-    SizeClass, SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
-    TileRegistry, VisibilityConfig, VisibilityConfigHandle, VisibilityLedger,
-    WellbeingConfigHandle, FOOD, NO_FILL_TARGET, NO_IMPROVEMENT_UNDERWAY,
+    CombatConfigHandle, CommandEventLog, CultureManager, DiscoveryProgressLedger, Expedition,
+    ExpeditionConfig, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FactionId,
+    FactionInventory, FaunaConfig, FaunaConfigHandle, ForageRegistry, GenerationId,
+    GenerationRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, HuntDraw, HuntTripBound,
+    LaborAllocation, LaborConfig, LaborConfigHandle, LadderConfig, LadderConfigHandle, LocalStore,
+    MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, Scalar,
+    SimulationConfig, SimulationTick, SizeClass, SnapshotHistory, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, VisibilityConfig,
+    VisibilityConfigHandle, VisibilityLedger, WellbeingConfigHandle, FOOD, NO_FILL_TARGET,
+    NO_IMPROVEMENT_UNDERWAY,
 };
 
 /// Party size used by every trip test: 4 hunters (the design's reference party).
@@ -443,7 +444,7 @@ fn a_raid_and_a_resident_band_reach_the_same_animals() {
             f32::INFINITY,
             // Every shipped species has `wariness 0`, which makes the retreat draw an exact
             // identity — so the seed is unobservable and held fixed on both paths.
-            0,
+            HuntDraw::Seeded(0),
         )
         .take
         .killed
@@ -1226,6 +1227,10 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
                         NO_IMPROVEMENT_UNDERWAY,
                         labor.yield_average_horizon_turns,
                         labor.arrivals_horizon_turns,
+                        app.world
+                            .resource::<CombatConfigHandle>()
+                            .get()
+                            .forecast_range_sigmas,
                     )
                     .actual
                 };
@@ -1251,7 +1256,7 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
                     f32::INFINITY,
                     // The preview pins `forecast == actual`, so the retreat draw is held fixed —
                     // every species here ships `wariness 0`, making it an identity anyway.
-                    0,
+                    HuntDraw::Seeded(0),
                 )
                 .take;
                 let sim_rate = herd_hunt_yield(&herd, &fauna)

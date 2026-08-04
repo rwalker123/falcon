@@ -522,6 +522,10 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // not resolve reads all-zeros (harmless).
                 attack: species_def.map(|def| def.combat.attack).unwrap_or(0.0),
                 defense: species_def.map(|def| def.combat.defense).unwrap_or(0.0),
+                // **The gate's other half** (§6.5): `defense` says whether a hit counts, this says
+                // how many counting hits a body takes. The client composes both — it already holds
+                // the band's own `hunterAttack` — so no "can this band win" answer is exported.
+                durability: species_def.map(|def| def.combat.durability).unwrap_or(0.0),
                 ferocity: species_def.map(|def| def.ferocity).unwrap_or(0.0),
                 aggression: species_def.map(|def| def.aggression).unwrap_or(0.0),
                 // Predators Phase 1a — the herd's prey-sensing radius, but ONLY for a carnivore

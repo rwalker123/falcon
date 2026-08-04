@@ -1163,6 +1163,61 @@ pub struct SourceYield {
     /// trade forecast is a separate arc (#337 covers the animal web). The `actual` trade a Deplete
     /// gather earns *is* reported — only the projection is missing.
     pub realized_trade: f32,
+    /// **The band around [`SourceYield::actual`] / [`SourceYield::trade`]** — *"6–11, likely 9"*
+    /// (`docs/plan_hunt_through_combat.md` §6.4). See [`YieldRange`].
+    pub range: YieldRange,
+}
+
+/// **The distribution a [`SourceYield`]'s `actual` / `trade` sit in the middle of**, in the same two
+/// currencies and the same units (`docs/plan_hunt_through_combat.md` §6.4).
+///
+/// A hunt has two stochastic stages — the quarry's retreat (`fauna::animals_that_stay`) and the
+/// fight's per-unit attack rolls — so a **pre-commit** row states an expectation, not a promise, and
+/// this is the band the sim will actually pay inside. A **resolved** row is a fact rather than a
+/// forecast, so it reports [`YieldRange::certain`]: the take has happened and there is no
+/// distribution left.
+///
+/// **It is an ANSWER, not a term the client composes**, and that follows the boundary rule
+/// `.claude/rules/core_sim/yield-forecast.md` already draws: the take goes through
+/// `fauna::quantise_animal_take`'s `floor()`, so a band on the animals brought down is **not** a band
+/// on the food — on a slow breeder both bounds routinely land on the same whole animal and the range
+/// is a point at a staffing where the underlying draw genuinely varies. Publishing `wariness` and
+/// `hit_chance` as terms instead would put a second, non-linear copy of the model in a language with
+/// no tests over it, which is the same reason `regrowthSamples` ships sampled.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct YieldRange {
+    /// The pessimistic bound on the provisions component.
+    pub low: f32,
+    /// The optimistic bound on the provisions component.
+    pub high: f32,
+    /// The pessimistic bound on the trade-goods component — carried because the forecast is a
+    /// **pair** everywhere else (issue #337): a wolf's food range is honestly all-zero, and a
+    /// food-only band could not state its take at all.
+    pub trade_low: f32,
+    /// The optimistic bound on the trade-goods component.
+    pub trade_high: f32,
+}
+
+impl YieldRange {
+    /// A row that produced nothing in either currency.
+    pub const ZERO: Self = Self {
+        low: 0.0,
+        high: 0.0,
+        trade_low: 0.0,
+        trade_high: 0.0,
+    };
+
+    /// **A range that is a point** — what a *resolved* row reports (the take happened; there is
+    /// nothing left to be uncertain about), and what a *forecast* row reports on the shipped roster,
+    /// where `wariness` is `0` and `hit_chance` is `1.0` so neither stage draws at all.
+    pub fn certain(provisions: f32, trade_goods: f32) -> Self {
+        Self {
+            low: provisions,
+            high: provisions,
+            trade_low: trade_goods,
+            trade_high: trade_goods,
+        }
+    }
 }
 
 impl SourceYield {
@@ -1185,6 +1240,8 @@ impl SourceYield {
         // has not been projected at all, and the client renders "no data" rather than "famine".
         // `Vec::new` allocates nothing, so this stays a `const`.
         arrivals: Vec::new(),
+        // Nothing was taken, so there is nothing to be uncertain about either.
+        range: YieldRange::ZERO,
     };
 }
 

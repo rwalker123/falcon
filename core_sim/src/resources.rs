@@ -1274,6 +1274,25 @@ pub enum CommandEventKind {
     /// event fires on `killed + wounded > 0`, so a wound-only hunt narrates too). The hunting party
     /// answers the danger with its own hunters — **Warriors do NOT mitigate a hunt**.
     HuntDanger,
+    /// **A hunt happened, and these are its facts** (`docs/plan_hunt_through_combat.md` §6.6) —
+    /// animals engaged, how many fled before contact, animals killed, hunters lost or wounded,
+    /// **which bound ran out first** (engagement / the floor / carry / the fight), and what came home
+    /// (carried) against what was left to rot (wasted).
+    ///
+    /// **Facts, never a composed judgement.** Issue #272's notification system owns importance and
+    /// phrasing; the hunt owns what happened. Every number rides the `key=value` detail so a consumer
+    /// reads the resolution rather than this arc's guess at an importance ladder — which is also why
+    /// the label names only the species and the count, and asserts nothing about whether the turn
+    /// went well.
+    ///
+    /// **It is the visibility half of §11's first open question**: for most species the escapement
+    /// floor binds long before engagement does, so an `engage_rate` authored too low silently becomes
+    /// a *second* floor. `bound=engagement` is what makes that legible instead of mysterious.
+    ///
+    /// Gated on the hunt having *happened* (`engaged > 0`) and on nothing else — a fact gate, not an
+    /// importance one. It is deliberately **not** the wounded-only twin of [`Self::HuntDanger`]: that
+    /// line stays gated on a death, and this carries `hunters_wounded` on every hunt instead.
+    HuntReport,
     /// A **carnivore raided a band's camp** (Predators Phase 1b, `docs/plan_predators.md`). A
     /// carnivore with `aggression > 0` within `predators.raid_radius` of a band turns on it, and the
     /// band is defended by its **Warriors** — the Warrior role's **first live consumer**. Fires each
@@ -1337,6 +1356,7 @@ impl CommandEventKind {
             CommandEventKind::Sow => "sow",
             CommandEventKind::Corral => "corral",
             CommandEventKind::HuntDanger => "hunt_danger",
+            CommandEventKind::HuntReport => "hunt_report",
             CommandEventKind::PredatorRaid => "predator_raid",
             CommandEventKind::CancelOrder => "cancel_order",
             CommandEventKind::SedentarizationPrompt => "sedentarization_prompt",

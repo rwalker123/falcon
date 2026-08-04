@@ -2515,6 +2515,10 @@ pub fn forage_source_yield_preview(
     improvement: Option<Improvement>,
     realized_horizon: u32,
     arrivals_horizon: u32,
+    // `combat_config.forecast_range_sigmas`. **The plant web has no stochastic stage** — no
+    // engagement, no retreat, no fight — so its band is always a point whatever this says; it is
+    // threaded so both webs seed their row through the one `fauna::forecast_source_yield`.
+    range_sigmas: f32,
 ) -> SourceYield {
     let forecast = forage_forecast(
         patch,
@@ -2592,6 +2596,7 @@ pub fn forage_source_yield_preview(
         // reported (the resolved row fills `SourceYield::trade`); only the projection is missing.
         PLANT_TRADE_FORECAST_NOT_YET_PROJECTED,
         arrivals,
+        range_sigmas,
     )
 }
 

@@ -915,6 +915,38 @@ table LaborAssignment {
   // The overhunting warning is `overdraws` above, which is now `floor < 0.5`: you are drawing this
   // source below the biomass at which it grows fastest. Appended last (append-only).
   floor:float = 0;
+  // --- THE FORECAST IS A DISTRIBUTION (appended, docs/plan_hunt_through_combat.md 6.4) -----------
+  // THE BAND `actualYield` / `tradeYield` SIT IN THE MIDDLE OF - "6-11, likely 9". A hunt has two
+  // stochastic stages, the quarry's retreat (CombatStats.wariness) and the fight's per-unit attack
+  // rolls (combat_config.hit_chance), so a PRE-COMMIT row states an expectation and not a promise.
+  //
+  // WHAT `forecast == actual` NOW MEANS. It used to read "the forecast is the number the sim will
+  // pay". A forecast has no event seed - fauna::retreat_seed is composed from (map_seed, tick, herd,
+  // party) and a projection cannot know a future tick - so a preview physically CANNOT draw the roll
+  // the live take draws. The invariant is therefore restated, not abandoned:
+  //   actualYield is the take's EXPECTATION over the seed, and the take the sim pays lies within
+  //   [actualYieldLow, actualYieldHigh].
+  // Where nothing is stochastic the distribution is degenerate and low == actual == high, bit-for-
+  // bit. That is the SHIPPED case: wariness is 0 across the roster and hit_chance is 1.0, so every
+  // stage takes its exact identity at every quantile and the range is a point. Render a single
+  // number when low == high; render a range only when they differ.
+  //
+  // A RESOLVED row reports low == actual == high by construction - the take happened, so there is
+  // no distribution left. The band is a pre-commit statement.
+  //
+  // IT IS AN ANSWER, NOT A TERM. The take passes through the whole-animal quantiser's floor(), so a
+  // band on the animals brought down is NOT a band on the food: on a slow breeder both bounds
+  // routinely land on the same whole animal. Publishing wariness/hit_chance as terms would put a
+  // second, non-linear copy of the take model in a language with no tests over it - the same
+  // reasoning that makes regrowthSamples sampled rather than parameterised. Width is
+  // combat_config.forecast_range_sigmas (2.0, ~95% of the normal-approximated binomial).
+  //
+  // BOTH CURRENCIES, for the #337 reason: a wolf's food band is honestly all-zero, so a food-only
+  // range could not state its take at all. Read each pair beside its scalar as one vector.
+  actualYieldLow:float = 0;
+  actualYieldHigh:float = 0;
+  tradeYieldLow:float = 0;
+  tradeYieldHigh:float = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
@@ -2170,6 +2202,33 @@ table HerdTelemetryState {
   // sim's `hunt_engage_workers` returns no crew for it. A **pen** is the other unbounded case and
   // publishes `0` for the same reason: a penned animal is not stalked.
   engageRate:float = 0;
+  // --- DURABILITY (appended, docs/plan_hunt_through_combat.md 4.2 / 6.5) -------------------------
+  // HOW MUCH DAMAGE ONE ANIMAL OF THIS SPECIES SOAKS BEFORE IT GOES DOWN (SpeciesDef.combat
+  // .durability). The last term needed to explain the combat gate BEFORE a hunt is launched, which
+  // is 6.5's requirement: a party below the quarry's `defense` kills nothing and still takes
+  // casualties, and unexplained that reads as a bug.
+  //
+  // The client already holds the other two terms - PopulationCohortState.hunterAttack (this band's
+  // per-hunter attack, 1 bare-handed / 20 speared) and `defense` above - so THE GATE ITSELF IS
+  // ALREADY COMPOSABLE and the sim deliberately exports no "can this band win" boolean:
+  //   effective_attack = max(0, hunterAttack - defense)      // 0 => cannot be hunted at all
+  //   hunter_turns     = durability / effective_attack       // how long ONE hunter needs
+  //   turns_to_kill    = hunter_turns / hunters
+  // This field is what turns "you cannot win" into "you cannot win, and with spears it would take
+  // 62 hunter-turns". Linear and exact in the terms beside it, so it ships as a TERM (see "THE
+  // BOUNDARY" in .claude/rules/core_sim/yield-forecast.md).
+  //
+  // DEFENSE AND DURABILITY ARE DIFFERENT AXES AND MUST NOT BE BLURRED: defense is whether a hit
+  // counts at all, durability is how many counting hits it takes. It is authored per species, never
+  // derived from bodyMass - a gazelle is not one-third of a deer's toughness, it is not tough at
+  // all and survives by not being there.
+  //
+  // The herd's ACCUMULATED wounds are deliberately NOT exported. Damage carries between turns
+  // (combat::DamageLedger), so a part-worn quarry needs fewer turns than this states - but the sim
+  // already answers duration where it matters, in huntTripEstimates, and a second client-side
+  // duration model reading a live accumulator would be a competing answer rather than a term.
+  // 0 for a herd whose species the roster cannot resolve.
+  durability:float = 0;
 }
 
 table CommandEventState {

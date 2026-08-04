@@ -90,9 +90,10 @@ use bevy::ecs::schedule::{LogLevel, ScheduleBuildSettings};
 use bevy::prelude::*;
 
 pub use combat::{
-    attacks_landed_seeded, resolve_fight, strike_damage, units_brought_down, CombatStats,
-    CombatTuning, Contingent, ContingentId, ContingentResult, DamageLedger, FightOutcome,
-    FightPayload, Force, ForceId, Posture, RangeBand, TerrainContext,
+    attacks_landed_at, landed_strikes_seeded, resolve_fight, strike_damage, units_brought_down,
+    CombatStats, CombatTuning, Contingent, ContingentId, ContingentResult, DamageLedger,
+    FightOutcome, FightPayload, Force, ForceId, Posture, RangeBand, StrikeDraw, TerrainContext,
+    EXPECTED_STRIKES,
 };
 pub use combat_config::{
     load_combat_config_from_env, CombatConfig, CombatConfigHandle, CombatConfigMetadata,
@@ -103,7 +104,7 @@ pub use components::{
     BandTravel, DeathCause, DemographicFlowAccumulator, ElementKind, Expedition, ExpeditionMission,
     ExpeditionPhase, Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget,
     LocalStore, LogisticsLink, MoraleCause, PendingMigration, PopulationCohort, PowerNode,
-    ResidentBand, Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink,
+    ResidentBand, Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink, YieldRange,
     DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_FILL_TARGET, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR,
     STRIP_IT_BARE, TRADE_GOODS,
 };
@@ -162,15 +163,16 @@ pub use expedition_config::{
 pub use fauna::{
     advance_herd_grazing, advance_herds, advance_husbandry, advance_predation, animals_affordable,
     animals_engaged, animals_that_stay, build_prey_index, carnivore_k_at, escapement_ceiling,
-    forecast_expected_take, herd_capacity, herd_ecology, herd_herders_needed, herd_hunt_yield,
-    herd_quarry_fight, herded_fraction, herders_needed, hunt_engage_workers,
-    hunt_escapement_ceiling, hunt_haul_workers, hunt_source_yield_preview, hunt_take_workers,
-    pen_upkeep, project_arrivals_hunt, project_realized_hunt, quantise_animal_take,
-    repopulate_fauna, resolve_hunt_fight, retreat_seed, spawn_initial_herds,
+    forecast_expected_take, forecast_take_range, herd_capacity, herd_ecology, herd_herders_needed,
+    herd_hunt_yield, herd_quarry_fight, herded_fraction, herders_needed, hunt_engage_workers,
+    hunt_escapement_ceiling, hunt_haul_workers, hunt_source_yield_preview, hunt_take_bound,
+    hunt_take_workers, pen_upkeep, project_arrivals_hunt, project_realized_hunt,
+    quantise_animal_take, repopulate_fauna, resolve_hunt_fight, retreat_seed, spawn_initial_herds,
     species_requires_denial, AnimalTake, EcologyPhase, FightCasualties, Herd, HerdDensityMap,
-    HerdRegistry, HerdTelemetry, HerdTelemetryEntry, HuntFight, HuntingParty, PreyDatum,
-    QuarryFight, RoamState, SourceYieldForecast, FODDERING_DISCOVERY_ID, FULLY_HERDED,
-    HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, NO_DEATHS_TO_REPORT, PENNING_DISCOVERY_ID,
+    HerdRegistry, HerdTelemetry, HerdTelemetryEntry, HuntDraw, HuntFight, HuntTakeBound,
+    HuntingParty, PreyDatum, QuarryFight, RoamState, SourceYieldForecast, TakeRange,
+    FODDERING_DISCOVERY_ID, FULLY_HERDED, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION,
+    NO_DEATHS_TO_REPORT, PENNING_DISCOVERY_ID,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle,
@@ -315,9 +317,9 @@ pub use snapshot::{
 pub use systems::spawn_initial_world;
 pub use systems::{
     advance_band_movement, advance_expeditions, advance_labor_allocation, advance_predator_raids,
-    expedition_take_provisions, hunt_per_worker_provisions, hunt_take, hunt_trip_forecast,
-    output_multiplier, simulate_power, HuntTripBound, HuntTripForecast, MigrationKnowledgeEvent,
-    PowerSimParams, TradeDiffusionEvent,
+    expedition_take_provisions, hunt_per_worker_provisions, hunt_report_event, hunt_take,
+    hunt_trip_forecast, output_multiplier, simulate_power, HuntOutcome, HuntTripBound,
+    HuntTripForecast, MigrationKnowledgeEvent, PowerSimParams, TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,

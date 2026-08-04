@@ -264,9 +264,9 @@ pub struct CombatTuning {
     /// calls the trap.
     ///
     /// **`1.0` is an exact identity, not a roll that always succeeds**: no draw is made and no
-    /// randomness is consumed, which is what lets this ship inert (`forecast == actual` per component
-    /// stays exact until slice 5 teaches the forecast to report a range) with the machinery in place
-    /// and tested. Same discipline as [`CombatStats::wariness`]'s `0`.
+    /// randomness is consumed, which is what lets this ship inert — the forecast's reported range
+    /// collapses to a point and `forecast == actual` stays an exact identity — with the machinery in
+    /// place and tested. Same discipline as [`CombatStats::wariness`]'s `0`.
     pub hit_chance: f32,
     /// **How much of its own `durability` a wounded body knits back per turn OUT OF CONTACT** — the
     /// decay half of [`DamageLedger`], as a share of `durability` rather than of the banked damage.
@@ -280,7 +280,43 @@ pub struct CombatTuning {
     /// regardless would make `hunters × effective_attack > rate × durability` a *second* absolute
     /// threshold, which is exactly the shape the accumulator exists to remove.
     pub wound_recovery_rate: f32,
+    /// **Whether this side's attack rolls are DRAWN or read off the distribution** — see
+    /// [`StrikeDraw`]. A live fight is [`StrikeDraw::Seeded`]; a forecast is
+    /// [`StrikeDraw::Quantile`], because a projection has no event seed to draw with.
+    pub draw: StrikeDraw,
 }
+
+/// **How a fight resolves the per-unit attack roll of `docs/plan_hunt_through_combat.md` §4.7** —
+/// the one place the model's variance is either *drawn* or *read off its own distribution*.
+///
+/// # Why a forecast cannot simply pass a seed
+///
+/// [`crate::fauna::retreat_seed`] is composed from `(map_seed, tick, herd, party)` and a projection
+/// is projecting into ticks that have not happened, so it cannot name the tick the live fight will
+/// draw with — a forecast that guessed one would report a *different* roll from the take with
+/// exactly the same confidence (§6.4). So a forecast makes **no draw at all** and reads the binomial
+/// analytically instead, which is what lets `forecast == actual` be restated as a claim about the
+/// distribution rather than abandoned.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StrikeDraw {
+    /// **A live fight**: draw each unit's attack from the fight's own per-event stream
+    /// ([`FightPayload::seed`]), so resolving the same fights in a different order gives identical
+    /// outcomes (§6.2).
+    Seeded,
+    /// **A forecast**: make no draw, and take the binomial `sigmas` standard deviations from its
+    /// mean. [`EXPECTED_STRIKES`] is the point estimate; `±k` are the bounds the range readout
+    /// reports.
+    ///
+    /// At `hit_chance >= 1` (the shipped tuning) every unit lands whatever this says, so the two
+    /// variants are the *same function* there — which is what makes the shipped forecast an exact
+    /// identity with the take rather than an approximation of it.
+    Quantile { sigmas: f32 },
+}
+
+/// [`StrikeDraw::Quantile`]'s **point estimate** — zero standard deviations from the mean, i.e. the
+/// expectation. Named because `0.0` at a call site reads like "no variance" when it means "the
+/// middle of it".
+pub const EXPECTED_STRIKES: f32 = 0.0;
 
 impl Default for CombatTuning {
     fn default() -> Self {
@@ -289,6 +325,9 @@ impl Default for CombatTuning {
             disengage_fraction: DEFAULT_DISENGAGE_FRACTION,
             hit_chance: DEFAULT_HIT_CHANCE,
             wound_recovery_rate: DEFAULT_WOUND_RECOVERY_RATE,
+            // A tuning describes a **live** fight unless a forecast says otherwise: the default must
+            // be the one that draws, so a path that forgets to state its mode still reproduces.
+            draw: StrikeDraw::Seeded,
         }
     }
 }
@@ -383,12 +422,48 @@ pub fn attacks_landed(attackers: f32, chance: f32, rng: &mut SmallRng) -> f32 {
     landed + (attackers - whole) * chance
 }
 
-/// [`attacks_landed`] for a caller that owns no stream — a **provably one-sided** engagement resolving
+/// **[`attacks_landed`] read off its own distribution instead of drawn** — the binomial's mean plus
+/// `sigmas` of its standard deviation, clamped to the support `0..=attackers`.
+///
+/// This is what a **forecast** calls, because a projection has no event seed (see [`StrikeDraw`]).
+/// `sigmas = `[`EXPECTED_STRIKES`] is the point estimate; `±k` are the range's bounds.
+///
+/// **Its identities are [`attacks_landed`]'s identities, deliberately.** `chance >= 1` answers
+/// `attackers` and `chance <= 0` answers `0` *whatever* `sigmas` says — a degenerate distribution has
+/// no spread to quantile — which is exactly what makes the shipped tuning's forecast **bit-identical**
+/// to the take rather than merely close to it. Any divergence here would surface as a forecast that
+/// disagrees with the number the sim pays on a roster with no randomness in it at all.
+pub fn attacks_landed_at(attackers: f32, chance: f32, sigmas: f32) -> f32 {
+    if attackers <= 0.0 {
+        return 0.0;
+    }
+    if chance >= 1.0 {
+        return attackers;
+    }
+    if chance <= 0.0 {
+        return 0.0;
+    }
+    let mean = attackers * chance;
+    let deviation = (attackers * chance * (1.0 - chance)).sqrt();
+    (mean + sigmas * deviation).clamp(0.0, attackers)
+}
+
+/// **How many of `attackers` land, resolved the way `tuning` says** — the ONE seam a fight's variance
+/// passes through, live or forecast, so a projection cannot grow a second copy of the roll.
+pub fn landed_strikes(attackers: f32, tuning: &CombatTuning, rng: &mut SmallRng) -> f32 {
+    match tuning.draw {
+        StrikeDraw::Seeded => attacks_landed(attackers, tuning.hit_chance, rng),
+        StrikeDraw::Quantile { sigmas } => attacks_landed_at(attackers, tuning.hit_chance, sigmas),
+    }
+}
+
+/// [`landed_strikes`] for a caller that owns no stream — a **provably one-sided** engagement resolving
 /// without a [`FightPayload`] (see [`units_brought_down`]). Seeded per event exactly as a fight is, so
-/// it is order-independent for the same reason.
-pub fn attacks_landed_seeded(attackers: f32, chance: f32, seed: u64) -> f32 {
+/// it is order-independent for the same reason; the `seed` is unread in
+/// [`StrikeDraw::Quantile`] mode, which makes no draw at all.
+pub fn landed_strikes_seeded(attackers: f32, tuning: &CombatTuning, seed: u64) -> f32 {
     let mut rng = SmallRng::seed_from_u64(seed);
-    attacks_landed(attackers, chance, &mut rng)
+    landed_strikes(attackers, tuning, &mut rng)
 }
 
 /// **THE GATE** — what one landed strike does to a target of this `defense`:
@@ -632,8 +707,7 @@ pub fn resolve_fight(payload: &FightPayload, tuning: &CombatTuning) -> FightOutc
                     if per_strike <= 0.0 {
                         continue;
                     }
-                    let landed =
-                        attacks_landed(attacker.count * share, tuning.hit_chance, &mut rng);
+                    let landed = landed_strikes(attacker.count * share, tuning, &mut rng);
                     damage += landed * per_strike;
                 }
             }
@@ -671,6 +745,98 @@ pub fn resolve_fight(payload: &FightPayload, tuning: &CombatTuning) -> FightOutc
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **A degenerate distribution has no spread to quantile, and that is what keeps the shipped
+    /// forecast EXACT** (`docs/plan_hunt_through_combat.md` §6.4).
+    ///
+    /// At the shipped `hit_chance` of `1.0` every unit lands, so the reported low, likely and high
+    /// must be *the same bits* — otherwise the pre-commit readout reports a range on a roster with no
+    /// randomness in it, and `forecast == actual` stops being an identity. Asserted at the extremes
+    /// too (`chance <= 0`), which is the mirror identity.
+    ///
+    /// **This is the sensitive half of the guard.** The end-to-end wire test
+    /// (`hunt_forecast_range::the_degenerate_range_is_a_point_and_it_is_the_take_the_sim_pays`) reads
+    /// the take *after* the whole-animal quantiser, which absorbs a small perturbation; here nothing
+    /// rounds, so a single ulp of drift fails.
+    #[test]
+    fn a_certain_hit_chance_has_no_spread_to_quantile() {
+        for attackers in [1.0_f32, 2.5, 40.0, 4000.0] {
+            for sigmas in [-3.0_f32, -2.0, 0.0, 2.0, 3.0] {
+                assert_eq!(
+                    attacks_landed_at(attackers, DEFAULT_HIT_CHANCE, sigmas),
+                    attackers,
+                    "hit_chance 1.0 must land every attacker at every quantile"
+                );
+                assert_eq!(
+                    attacks_landed_at(attackers, 0.0, sigmas),
+                    0.0,
+                    "hit_chance 0 must land nobody at every quantile"
+                );
+            }
+        }
+    }
+
+    /// **The quantile IS the binomial the live draw samples** — same mean, and a band that widens
+    /// with `sigmas`. Paired with the liveness half (`0` sigmas is the mean, and the mean is *not*
+    /// the whole count), because a quantile function stuck at `attackers` would satisfy an ordering
+    /// check alone.
+    #[test]
+    fn the_quantile_brackets_the_mean_of_the_draw_it_replaces() {
+        const ATTACKERS: f32 = 100.0;
+        const CHANCE: f32 = 0.25;
+        let mean = attacks_landed_at(ATTACKERS, CHANCE, EXPECTED_STRIKES);
+        assert!(
+            (mean - ATTACKERS * CHANCE).abs() < 1e-4,
+            "zero sigmas must be the binomial's mean: {mean}"
+        );
+        assert!(
+            mean > 0.0 && mean < ATTACKERS,
+            "liveness: a sub-1 chance must land some and not all: {mean}"
+        );
+        let narrow =
+            attacks_landed_at(ATTACKERS, CHANCE, 1.0) - attacks_landed_at(ATTACKERS, CHANCE, -1.0);
+        let wide =
+            attacks_landed_at(ATTACKERS, CHANCE, 3.0) - attacks_landed_at(ATTACKERS, CHANCE, -3.0);
+        assert!(
+            wide > narrow && narrow > 0.0,
+            "the band must widen with sigmas: 1σ {narrow} vs 3σ {wide}"
+        );
+        // ...and it can never leave the support, however many sigmas are asked for.
+        assert_eq!(attacks_landed_at(ATTACKERS, CHANCE, -99.0), 0.0);
+        assert_eq!(attacks_landed_at(ATTACKERS, CHANCE, 99.0), ATTACKERS);
+    }
+
+    /// **A live fight still DRAWS, and a forecast still does not** — the two `StrikeDraw` modes are
+    /// observably different, which is the property the whole seam exists for. At a sub-1 chance the
+    /// seeded mode varies with its seed while the quantile mode is seed-blind.
+    #[test]
+    fn the_seeded_mode_draws_and_the_quantile_mode_does_not() {
+        const ATTACKERS: f32 = 60.0;
+        let live = CombatTuning {
+            hit_chance: 0.5,
+            ..CombatTuning::default()
+        };
+        let forecast = CombatTuning {
+            draw: StrikeDraw::Quantile {
+                sigmas: EXPECTED_STRIKES,
+            },
+            ..live
+        };
+        let seeded: Vec<f32> = (0..8)
+            .map(|seed| landed_strikes_seeded(ATTACKERS, &live, seed))
+            .collect();
+        assert!(
+            seeded.iter().any(|landed| *landed != seeded[0]),
+            "a live fight must actually draw: {seeded:?}"
+        );
+        let quantiled: Vec<f32> = (0..8)
+            .map(|seed| landed_strikes_seeded(ATTACKERS, &forecast, seed))
+            .collect();
+        assert!(
+            quantiled.iter().all(|landed| *landed == quantiled[0]),
+            "a forecast must make no draw at all: {quantiled:?}"
+        );
+    }
 
     /// The durability every fixture below leaves at the neutral `1.0` unless it is the thing under
     /// test — one damage brings one unit down, so a fixture's arithmetic reads straight off `attack −
@@ -822,8 +988,8 @@ mod tests {
     }
 
     /// **The shipped `hit_chance` of `1.0` consumes no randomness** — the seed cannot change the
-    /// outcome, which is what keeps `forecast == actual` exact until slice 5 teaches the forecast to
-    /// report a range.
+    /// outcome, which is what keeps `forecast == actual` an exact identity and the forecast's
+    /// reported range a point.
     #[test]
     fn the_shipped_hit_chance_is_an_exact_identity_across_seeds() {
         let tuning = CombatTuning::default();

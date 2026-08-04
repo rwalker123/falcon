@@ -17,7 +17,7 @@ paths:
 
 | File | Purpose |
 |------|---------|
-| `src/data/combat_config.json` | **Combat resolver tuning** (Predators Phase 0, `docs/plan_predators.md`; loader `combat_config.rs`, env override `COMBAT_CONFIG_PATH`). The severity constants the pure `combat::resolve_fight` reads — `lethality` (**1.0** — scales the damage every side deals) / **`hit_chance`** (**1.0** — P(one unit's attack lands), drawn **per unit** so variance is *binomial in force size*; `1.0` is an **exact identity**, no draw made and no randomness consumed, which is what keeps the take deterministic and `forecast == actual` per component exact until the forecast learns to report a range) / `disengage_fraction` (**0.5** — a loser past this loss share is driven off, not annihilated) / **`wound_recovery_rate`** (**0.2** — share of its own `durability` a wounded body knits back per turn **out of contact**, the decay half of `combat::DamageLedger`; linear in `durability` so the ledger empties in exactly `ceil(1/rate)` idle turns rather than asymptoting at a sliver, and applied **only** on turns with no contact — see "Damage carries between turns") — plus two dials only the **hunt adapter** reads: **`expedition_danger_multiplier`** (**1.5** — a multiplier on `lethality` applied **only** in the expedition-hunt adapter, never the resident-band path: a detached party is far from home, unsupported and tired, so the same beast costs it more; a deferred general combat-modifiers layer — proximity/fatigue/supply + a home-advantage discount for local hunts — will supersede this flat dial) and **`hunt_injury_damage_per_animal`** (**0.15** — the hunt's own hazard per **animal engaged**, independent of the quarry; see "The hunt itself injures people"). **Resolver tuning, NOT creature identity** (creature stats live on `fauna_config`/`creatures.json`). **Validated** inside `from_json_str` (all six finite & `> 0`; `disengage_fraction`, `hit_chance` and `wound_recovery_rate` `≤ 1`); a broken invariant is rejected at **error** level (`combat_config.invalid_rejected`) and the builtin used. Not on the hot-reload path. See "Combat & Casualties" |
+| `src/data/combat_config.json` | **Combat resolver tuning** (Predators Phase 0, `docs/plan_predators.md`; loader `combat_config.rs`, env override `COMBAT_CONFIG_PATH`). The severity constants the pure `combat::resolve_fight` reads — `lethality` (**1.0** — scales the damage every side deals) / **`hit_chance`** (**1.0** — P(one unit's attack lands), drawn **per unit** so variance is *binomial in force size*; `1.0` is an **exact identity**, no draw made and no randomness consumed, which is what keeps the take deterministic, `forecast == actual` an exact identity, and the pre-commit **range a point**) / `disengage_fraction` (**0.5** — a loser past this loss share is driven off, not annihilated) / **`wound_recovery_rate`** (**0.2** — share of its own `durability` a wounded body knits back per turn **out of contact**, the decay half of `combat::DamageLedger`; linear in `durability` so the ledger empties in exactly `ceil(1/rate)` idle turns rather than asymptoting at a sliver, and applied **only** on turns with no contact — see "Damage carries between turns") — plus two dials only the **hunt adapter** reads: **`expedition_danger_multiplier`** (**1.5** — a multiplier on `lethality` applied **only** in the expedition-hunt adapter, never the resident-band path: a detached party is far from home, unsupported and tired, so the same beast costs it more; a deferred general combat-modifiers layer — proximity/fatigue/supply + a home-advantage discount for local hunts — will supersede this flat dial) and **`hunt_injury_damage_per_animal`** (**0.15** — the hunt's own hazard per **animal engaged**, independent of the quarry; see "The hunt itself injures people") — plus **`forecast_range_sigmas`** (**2.0** — how wide the pre-commit forecast's reported band is, in standard deviations of the take's own binomials; a **READOUT** width no resolution path reads, so widening it cannot move an animal. `~95%` of a normal-approximated binomial, i.e. §6.4's *"6–11, likely 9"*; see `yield-forecast.md` → "THE INVARIANT IS RESTATED"). **Resolver tuning, NOT creature identity** (creature stats live on `fauna_config`/`creatures.json`). **Validated** inside `from_json_str` (all seven finite & `> 0`; `disengage_fraction`, `hit_chance` and `wound_recovery_rate` `≤ 1`); a broken invariant is rejected at **error** level (`combat_config.invalid_rejected`) and the builtin used. Not on the hot-reload path. See "Combat & Casualties" |
 
 ## Combat & Casualties (Predators arc — Phase 0)
 
@@ -56,6 +56,19 @@ the casualty math lives in a first-class module, never as a bespoke hunt formula
   **Variance lives in `hit_chance`, drawn per unit** — binomial in force size, so three hunters are a
   gamble and thirty are reliable. It never softens the gate: a sub-gate pairing does not even roll.
   At the shipped `1.0` no draw is made at all.
+
+  **`CombatTuning::draw` decides whether the roll is DRAWN or READ OFF ITS DISTRIBUTION**
+  (`combat::StrikeDraw`, `docs/plan_hunt_through_combat.md` §6.4). `Seeded` is a live fight, taking
+  its stream from `FightPayload::seed`; `Quantile { sigmas }` is a **forecast**, which makes no draw
+  at all and reads the binomial `sigmas` standard deviations from its mean
+  (`combat::attacks_landed_at`). Both go through the one `combat::landed_strikes` seam, which is what
+  lets a forecast resolve `resolve_fight` itself instead of a second copy of the model. **The
+  quantile's identities are the draw's identities** — `chance >= 1` answers `attackers` and
+  `chance <= 0` answers `0` whatever `sigmas` says — which is what makes the shipped forecast
+  bit-identical to the take rather than merely close (`a_certain_hit_chance_has_no_spread_to_quantile`).
+  A forecast has no event seed because `fauna::retreat_seed` needs a tick and a projection cannot know
+  a future one; `.claude/rules/core_sim/yield-forecast.md` → "THE INVARIANT IS RESTATED" owns the
+  consequence.
 
   **`ContingentResult` carries `damage_dealt` beside `killed`/`wounded`** — the raw flow that landed
   on that contingent, after `lethality` and *before* the division by `durability`. It exists because
@@ -148,7 +161,10 @@ ferocity alone — frail, still costs you people"*. `fauna::hunt_injuries` adds 
 - **The `HuntDanger` feed line is now gated on a DEATH** (`fauna::NO_DEATHS_TO_REPORT`), not on
   `FightCasualties::any()`. Every hunt produces some `wounded` now, so `any()` would push a
   "cost N lives" line reading `0` for every band, every turn. The injury is real in the numbers and
-  becomes mechanically live with the rest of `wounded` when the recovery slice lands.
+  becomes mechanically live with the rest of `wounded` when the recovery slice lands. **The gate did
+  not widen when the hunt report landed and must not** — the wounded ride `hunters_wounded` on every
+  `hunt_report` instead, which is where a wounded-only turn became visible (`event-feed.md` → "The
+  hunt report").
 
 ### Strength, behaviour and the roster
 
@@ -195,7 +211,7 @@ ferocity alone — frail, still costs you people"*. `fauna::hunt_injuries` adds 
   while the other said the mammoth routed it. Both separate danger adapters (the `advance_labor_allocation`
   Hunt arm's and `advance_expeditions`' `Hunting` arm's) are **deleted**; each site now applies the
   band-side casualties that came back **with** the take.
-  - **`fauna::resolve_hunt_fight(stayed, hunters, &HuntingParty, &QuarryFight, seed) -> HuntFight`**
+  - **`fauna::resolve_hunt_fight(stayed, hunters, &HuntingParty, &QuarryFight, draw) -> HuntFight`**
     is the single seam, and **all six take/forecast paths call it** — `systems::hunt_take` (resident
     band + scout replenish), `expedition_take_biomass`, `project_arrivals_hunt`,
     `project_realized_hunt`, `forecast_production_and_take` and `hunt_source_yield_preview` — so

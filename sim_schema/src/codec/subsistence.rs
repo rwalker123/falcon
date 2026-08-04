@@ -226,6 +226,8 @@ fn create_herds<'a>(
                 // The engagement throughput — appended last (append-only wire). `0` = no engagement
                 // stage (a pen, an unresolvable species), which a reader treats as unbounded.
                 engageRate: herd.engage_rate,
+                // The attrition denominator — appended last, so the slot stays positional.
+                durability: herd.durability,
             },
         );
         entries.push(entry);

@@ -127,6 +127,32 @@ pub struct LaborAssignmentState {
     /// [`Self::arrival_schedule`].
     #[serde(default)]
     pub realized_trade_yield: f32,
+    /// **The band [`Self::actual_yield`] sits in the middle of** — *"6–11, likely 9"*
+    /// (`docs/plan_hunt_through_combat.md` §6.4).
+    ///
+    /// A hunt has two stochastic stages (the quarry's retreat, the fight's per-unit attack rolls), so
+    /// a **pre-commit** row states an expectation rather than a promise, and this is the band the sim
+    /// will pay inside. `forecast == actual` is restated accordingly: `actual_yield` is the take's
+    /// **expectation** over the seed, and the take lies within `[low, high]`. **Where nothing is
+    /// stochastic the range is a point** — `low == actual_yield == high`, bit-for-bit — which is the
+    /// shipped roster (`wariness 0`, `hit_chance 1.0`). Render one number then, a range only when the
+    /// two differ.
+    ///
+    /// A **resolved** row reports the point it paid: the take happened, so there is no distribution
+    /// left. Appended (append-only).
+    #[serde(default)]
+    pub actual_yield_low: f32,
+    /// The optimistic bound — see [`Self::actual_yield_low`].
+    #[serde(default)]
+    pub actual_yield_high: f32,
+    /// The trade-goods twin of [`Self::actual_yield_low`], carried because the forecast is a **pair**
+    /// everywhere else (#337): a wolf's food band is honestly all-zero, so a food-only range could
+    /// not state its take at all.
+    #[serde(default)]
+    pub trade_yield_low: f32,
+    /// The optimistic bound on the trade component — see [`Self::trade_yield_low`].
+    #[serde(default)]
+    pub trade_yield_high: f32,
     /// **What this crew is BUILDING on the source** — the second, independent axis of an assignment
     /// (issue #442, `docs/plan_investment_rung_toggle.md`): `""` | `"cultivate"` | `"sow"` |
     /// `"tame"` | `"corral"`.

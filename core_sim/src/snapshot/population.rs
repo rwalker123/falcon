@@ -31,6 +31,12 @@ pub(crate) fn labor_assignment_to_state(
         // The other currency, beside the food it never joins (issue #337).
         trade_yield: yields.trade,
         realized_trade_yield: yields.realized_trade,
+        // **The band the two scalars above sit in the middle of** (§6.4). A seeded row carries the
+        // real distribution; a resolved row carries the point it paid.
+        actual_yield_low: yields.range.low,
+        actual_yield_high: yields.range.high,
+        trade_yield_low: yields.range.trade_low,
+        trade_yield_high: yields.range.trade_high,
         // **The second axis** (issue #442) — what this crew is building, `""` for a pure harvest.
         // Written for every kind, because a band-wide role simply never carries one.
         improvement: assignment

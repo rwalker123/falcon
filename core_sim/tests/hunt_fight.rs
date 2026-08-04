@@ -13,8 +13,8 @@
 
 use core_sim::{
     animals_engaged, herd_capacity, hunt_take, quantise_animal_take, resolve_hunt_fight,
-    CombatStats, FaunaConfig, FaunaConfigHandle, Herd, HuntingParty, LaborConfig, LadderConfig,
-    SizeClass,
+    CombatStats, FaunaConfig, FaunaConfigHandle, Herd, HuntDraw, HuntingParty, LaborConfig,
+    LadderConfig, SizeClass,
 };
 
 /// Standing stock far above anything a party can take, so **the escapement never binds** and the take
@@ -26,10 +26,11 @@ const STRIP_IT_BARE: f32 = 0.0;
 const NO_IMPROVEMENT: Option<core_sim::Improvement> = None;
 /// A resident band eats/banks its whole take — no carry limit, so carry never binds either.
 const NO_CARRY_LIMIT: f32 = f32::INFINITY;
-/// Wariness is `0` across the shipped roster (slice 6 authors it), so the retreat draw is an exact
+/// Wariness is `0` across the shipped roster (slice 7 authors it), so the retreat draw is an exact
 /// identity and the seed below is unobservable. Held fixed so these fixtures read as the pure
-/// functions they are.
-const FIXED_SEED: u64 = 0;
+/// functions they are — and it is a **live** draw, not the forecast's quantile, because these
+/// fixtures pin what the sim pays.
+const FIXED_SEED: HuntDraw = HuntDraw::Seeded(0);
 
 /// The shipped megafauna: `defense 12`, `durability 500`, `ferocity 0.9`, `engage_rate 0.05`.
 const MAMMOTH: &str = "Thunder Mammoths";
@@ -174,7 +175,7 @@ fn a_bare_handed_horde_takes_nothing_over_any_horizon() {
             NO_CARRY_LIMIT,
             // A real per-event seed, varying per turn exactly as the take path composes it — so this
             // is not passing because one lucky draw was reused.
-            seed,
+            HuntDraw::Seeded(seed),
         );
         assert_eq!(outcome.take.killed, 0, "turn {turn} broke the gate");
     }
@@ -737,7 +738,7 @@ fn hunt_ordering_does_not_change_outcomes() {
     let a = (30.0_f32, 24.0_f32, 0x5EED_A5EE_u64);
     let b = (17.0_f32, 11.0_f32, 0xBEEF_B00F_u64);
     let resolve = |(stayed, hunters, seed): (f32, f32, u64)| {
-        resolve_hunt_fight(stayed, hunters, &party, &quarry, seed)
+        resolve_hunt_fight(stayed, hunters, &party, &quarry, HuntDraw::Seeded(seed))
     };
 
     let forward = (resolve(a), resolve(b));
@@ -765,8 +766,8 @@ fn hunt_ordering_does_not_change_outcomes() {
 }
 
 /// **The shipped tuning consumes no randomness at all**, which is what keeps `forecast == actual`
-/// per component exact until slice 5 teaches the forecast to report a range. Pinned directly: the
-/// seed cannot move the take.
+/// per component an exact identity — and the forecast's reported range a **point**
+/// (`docs/plan_hunt_through_combat.md` §6.4). Pinned directly: the seed cannot move the take.
 #[test]
 fn the_shipped_fight_is_seed_independent() {
     const CREW: u32 = 40;
@@ -787,7 +788,7 @@ fn the_shipped_fight_is_seed_independent() {
             &fauna,
             &ladder,
             NO_CARRY_LIMIT,
-            seed,
+            HuntDraw::Seeded(seed),
         )
         .take
     };

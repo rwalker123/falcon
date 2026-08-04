@@ -222,6 +222,43 @@ with that sentence rather than mutely breaking the arithmetic.
 | `aged` | `band= count=` |
 | `died` | `band= count= bracket={child\|working\|elder} cause={hunger\|cold\|age}` |
 | `migrated` | `band= count= direction={out\|in}` |
+| `hunt_report` | `engaged= fled= killed= carried_biomass= wasted_biomass= hunters_killed= hunters_wounded= bound={engagement\|floor\|carry\|fight} species=` |
+
+## The hunt report: facts, and the sim's guess at importance is deliberately absent
+
+`CommandEventKind::HuntReport` (`docs/plan_hunt_through_combat.md` §6.6) fires from every real hunt —
+the resident band's Hunt arm, the raid's `Hunting` arm, and the scout's opportunistic replenish —
+through the one `systems::expeditions::hunt_report_event`, so a consumer reads **one shape** whichever
+way the hunt was run. Gated on `engaged > 0`, which is a **fact** gate (did a hunt happen) and not an
+importance one.
+
+- **The label composes nothing but the species** (*"The Red Deer hunt"*) and every number rides the
+  detail. #272 owns importance and phrasing; emitting presentation-ready text here would bake this
+  arc's guesses about an importance ladder into the sim, and #272 would then have to unpick prose to
+  recover the numbers it needs.
+- **`species` is the LAST token, and it has to be.** A display name contains spaces, so in a
+  space-delimited `key=value` grammar it can only be the trailing remainder — which is where the
+  `hunt_danger` line beside it already puts the same value. Read it as *everything after `species=`*.
+- **`carried_biomass` / `wasted_biomass` are BIOMASS, and the token says so.** Provisions is a
+  conversion that differs by path (a raid applies no output multiplier, a band applies its own), and
+  the food a band banked is already on its assignment row; the biomass is the unambiguous physical
+  fact the event owes.
+- **`bound` is why this event exists at all.** `fauna::hunt_take_bound` names which of the take's four
+  limits ran out first — reach, the floor, carry, or the fight — read off the same terms
+  `quantise_animal_take` was handed, through the same `whole_animals` helper, with the tie precedence
+  `Floor → Carry → Fight/Engagement` stated on the function. `plan_hunt_through_combat.md` §11's first
+  open question is that an `engage_rate` authored too low silently becomes a **second floor**;
+  `bound=engagement` is what makes that legible instead of mysterious.
+
+> **`HuntDanger` did NOT widen to cover wounded-only turns, and the report is why.** That line stays
+> gated on a **death** (`fauna::NO_DEATHS_TO_REPORT`) because the hunt's baseline injury risk (§4.6)
+> makes *every* engagement produce some `wounded`, so `casualties.any()` would push a "cost 0 lives"
+> line for every band every turn — the exact non-report the gate was narrowed to prevent. The wounded
+> were nonetheless invisible, which was the real defect; they now ride `hunters_wounded` on **every**
+> hunt report. Pinned together by
+> `hunt_forecast_range::a_harmless_hunt_publishes_its_wounded_without_a_danger_line`: on a
+> `ferocity 0` quarry the feed carries no `hunt_danger` row and a `hunt_report` row whose
+> `hunters_wounded` is strictly positive.
 
 **The label names `Band {id}`**, because the snapshot carries no band *name* — the client renders a
 positional "Band N" (`HudFormat.band_display_name`). Every event also carries the id as a `band=`

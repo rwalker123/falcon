@@ -750,7 +750,7 @@ mod tests {
     use super::*;
     // Used only by the fixtures below. They lived at file scope while
     // `restore_world_from_snapshot` needed them too; with that gone, the tests are the only caller.
-    use crate::components::{ElementKind, LocalStore, MoraleCause};
+    use crate::components::{ElementKind, LocalStore, MoraleCause, YieldRange};
     use crate::forage::ForagePatch;
     use crate::power::PowerNodeId;
     use crate::{
@@ -1223,6 +1223,8 @@ mod tests {
                     realized: 2.5,
                     // A continuous source lands the same amount every turn.
                     arrivals: vec![2.5; 3],
+                    // A resolved fixture row: the take happened, so its band is a point.
+                    range: YieldRange::certain(2.5, 0.0),
                 },
                 SourceYield {
                     trade: 0.0,
@@ -1236,6 +1238,7 @@ mod tests {
                     realized: 0.25,
                     // A lumpy hunt: nothing for two turns, then a whole animal.
                     arrivals: vec![0.0, 0.0, 0.75],
+                    range: YieldRange::certain(0.5, 0.0),
                 },
             ],
             last_pen_feed_upkeep: 0.0,

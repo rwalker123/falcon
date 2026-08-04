@@ -1602,6 +1602,14 @@ fn seed_source_yield(
         .map_topology
         .wrap_horizontal;
     let labor = app.world.resource::<LaborConfigHandle>().get();
+    // **The reported band's width** (`combat_config.forecast_range_sigmas`) — a readout lever, not a
+    // model term (`docs/plan_hunt_through_combat.md` §6.4). Read on both webs so the one
+    // `forecast_source_yield` seeds every row's range the same way.
+    let range_sigmas = app
+        .world
+        .resource::<CombatConfigHandle>()
+        .get()
+        .forecast_range_sigmas;
 
     let seeded = match target {
         LaborTarget::Forage { tile, floor, .. } => {
@@ -1666,6 +1674,7 @@ fn seed_source_yield(
                 improvement,
                 labor.yield_average_horizon_turns,
                 labor.arrivals_horizon_turns,
+                range_sigmas,
             )
         }
         LaborTarget::Hunt { fauna_id, floor } => {
@@ -1727,6 +1736,7 @@ fn seed_source_yield(
                 improvement,
                 labor.yield_average_horizon_turns,
                 labor.arrivals_horizon_turns,
+                range_sigmas,
             )
         }
         LaborTarget::Scout | LaborTarget::Warrior => return,
@@ -5213,6 +5223,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::Sow => "Sow",
         CommandEventKind::Corral => "Corral",
         CommandEventKind::HuntDanger => "Dangerous hunt",
+        CommandEventKind::HuntReport => "Hunt report",
         CommandEventKind::PredatorRaid => "Predator raid",
         CommandEventKind::CancelOrder => "Cancel order",
         CommandEventKind::SedentarizationPrompt => "Sedentarization",
@@ -9090,6 +9101,10 @@ mod tests {
             NO_IMPROVEMENT_UNDERWAY,
             labor.yield_average_horizon_turns,
             labor.arrivals_horizon_turns,
+            app.world
+                .resource::<CombatConfigHandle>()
+                .get()
+                .forecast_range_sigmas,
         );
         assert!(
             (seeded - expected.actual).abs() < SEED_EPSILON,
@@ -9157,6 +9172,10 @@ mod tests {
             NO_IMPROVEMENT_UNDERWAY,
             labor.yield_average_horizon_turns,
             labor.arrivals_horizon_turns,
+            app.world
+                .resource::<CombatConfigHandle>()
+                .get()
+                .forecast_range_sigmas,
         );
         assert!(
             (seeded - expected.actual).abs() < SEED_EPSILON,

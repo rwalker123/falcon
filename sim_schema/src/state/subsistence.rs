@@ -404,6 +404,22 @@ pub struct HerdTelemetryState {
     /// cannot resolve. Read `<= 0` as *unbounded* and drop the term. Appended (append-only).
     #[serde(default)]
     pub engage_rate: f32,
+    /// **How much damage ONE animal of this species soaks before it goes down**
+    /// (`SpeciesDef::combat.durability`, `docs/plan_hunt_through_combat.md` §4.2/§6.5) — the last
+    /// term needed to explain the combat gate *before* a hunt is launched.
+    ///
+    /// The client already holds the other two — `PopulationCohortState::hunter_attack` and
+    /// [`Self::defense`] — so **the gate itself is already composable** and the sim deliberately
+    /// exports no *"can this band win"* boolean:
+    /// `effective_attack = max(0, hunter_attack − defense)` (`0` ⇒ this species cannot be hunted at
+    /// all), `hunter_turns = durability / effective_attack`. This field is what turns *"you cannot
+    /// win"* into *"you cannot win, and with spears it would take 62 hunter-turns"*.
+    ///
+    /// **`defense` and `durability` are different axes**: defense is whether a hit counts at all,
+    /// durability is how many counting hits it takes. Authored per species, never derived from
+    /// [`Self::body_mass`]. `0` for a species the roster cannot resolve. Appended (append-only).
+    #[serde(default)]
+    pub durability: f32,
 }
 
 impl Default for HerdTelemetryState {
@@ -468,6 +484,7 @@ impl Default for HerdTelemetryState {
             // `0` is the "no engagement stage" reading, which is the honest default for a herd
             // nothing has described.
             engage_rate: 0.0,
+            durability: 0.0,
         }
     }
 }
