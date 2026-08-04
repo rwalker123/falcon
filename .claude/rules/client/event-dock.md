@@ -16,7 +16,7 @@ to keep closed.
 
 | Script | Purpose |
 |--------|---------|
-| `ui/EventDockPanel.gd` / `src/ui/EventDockPanel.tscn` | The dockable **event dock** CanvasLayer: a horizontal notification strip on `SIDE_TOP` or `SIDE_BOTTOM` that **overlays the map and reserves nothing** (see "THE BAR RESERVES NOTHING" — it is not a reserver, and it publishes neither `reservation_changed` nor `current_reservation_size()`). It is bounded horizontally by the OTHER reservers plus the HUD's own columns via `set_perpendicular_insets`. Two states — the COLLAPSED bar (`recent_count` rows, newest first, with the pinned-alert exception) and the EXPANDED turn-grouped log (World/System chips, the detail floor, the row count, the dock edge, "Earlier turns"). It accumulates `command_events` and de-duplicates on **`seq`**, prunes by TURN window against the sim's `command_events_retention_turns`, and takes client-side System notes through `note_system(label, detail, alert)`. Prefs live in a new `[events]` section of `user://narrative.cfg`, with a `config_path_override` static for the harnesses. Toggled by `R` (`Main._toggle_event_dock_visibility`) |
+| `ui/EventDockPanel.gd` / `src/ui/EventDockPanel.tscn` | The dockable **event dock** CanvasLayer: a horizontal notification strip on `SIDE_TOP` or `SIDE_BOTTOM` that **overlays the map and reserves nothing** (see "THE BAR RESERVES NOTHING" — it is not a reserver, and it publishes neither `reservation_changed` nor `current_reservation_size()`). **The one thing it does publish is `dock_changed(edge)`**, which is the opposite direction and must never be mistaken for a reservation: it says where the bar WENT, so `Main` can re-measure what displaces it there. It is bounded horizontally by the OTHER reservers plus the HUD's own columns via `set_perpendicular_insets`, and pushed inboard on its OWN axis past whatever reserves the edge it is docked to via `set_edge_offset` (see "On a shared edge the panel keeps the rim"). Two states — the COLLAPSED bar (`recent_count` rows, newest first, with the pinned-alert exception) and the EXPANDED turn-grouped log (World/System chips, the detail floor, the row count, the dock edge, "Earlier turns"). It accumulates `command_events` and de-duplicates on **`seq`**, prunes by TURN window against the sim's `command_events_retention_turns`, and takes client-side System notes through `note_system(label, detail, alert)`. Prefs live in a new `[events]` section of `user://narrative.cfg`, with a `config_path_override` static for the harnesses. Toggled by `R` (`Main._toggle_event_dock_visibility`) |
 | `ui/hud/hud_event_vocab.gd` (`HudEventVocab`) | The importance model, as an ALL-`const` vocabulary leaf (`hud-modules.md`): `RUNG_BY_KIND` · `CHANNEL_BY_KIND` · `RUNG_STYLE` (glyph + `HudStyle` accent per rung) · `KIND_STYLE` (the threat/casualty kinds, absorbed from the retired `CommandFeedController`) · `DETAIL_STATUS_STYLE` (the `status=` token rule) · `DETAIL_FLOOR` (the three player settings as a floor on the rung ladder) · **`IGNORED_KINDS`** (the kinds the dock drops at ingest — see "A kind the dock IGNORES") plus the two client-minted kinds `KIND_SYSTEM` / `KIND_COMMAND_ECHO` and the dock's word tables and glyphs. Reads only `HudStyle`, which reads nothing, so it cannot enter a class-load cycle |
 
 ## Three questions, kept apart
@@ -357,7 +357,9 @@ went with it.
 
 **What did NOT change**: `_update_event_dock_insets` reads the OTHER reservers, so the horizontal
 bound is untouched — the bar still starts past whatever is docked left and stops short of what is
-docked right, plus the HUD's own columns.
+docked right, plus the HUD's own columns. **Both of the bar's bounds are read FROM the reservers and
+neither is contributed to them** — the perpendicular one here, the bar's own axis in
+`_update_event_dock_edge_offset` (see "On a shared edge the panel keeps the rim").
 
 ### Overlaying costs two things a reserved strip never had to pay
 
@@ -408,23 +410,63 @@ Two separate rules, both learned elsewhere in this HUD:
   second finding. `ui_preview` asserts BOTH ways the dock can grow (the widest bar with the log
   closed, and the log open, which collapses the bar to one title line) against the cap, as a pair —
   they are alternatives rather than addends, so neither is the worst case by inspection.
+
+  **That clamp is measured against the WHOLE viewport, and on a shared edge the displaced strip
+  therefore reads `[_edge_offset, _edge_offset + cross]` with nothing bounding the pair** —
+  `BandCityPanel.MAX_WIDE_HEIGHT_FRACTION` (0.6) and this one (0.5) sum to 1.1 of the window. **What
+  holds the line is that neither fraction is ever the binding term.** Both heights are dominated by
+  absolute caps: `PANEL_HEIGHT_WIDE` is 360 and the tallest strip the dock can build is a one-line
+  title bar + `LOG_HEIGHT` + the section gap = **304**, so the pair tops out at **664** — while
+  `_viewport_size().y` never drops below **1080**, because `project.godot` stretches `canvas_items`
+  from a 1920×1080 base with an `expand` aspect and the visible rect is `window / min(w/1920,
+  h/1080)`. A short WINDOW therefore yields a WIDE canvas, never a short one: measured, a 1200×650
+  window lays out at 1993×1080 and a 1500×500 one at 3240×1080. The fractions bind only below
+  viewport heights of 600 and 608 respectively, which are unreachable. **A repro stated in window
+  pixels is not a repro** — nothing in either panel's layout ever sees that number.
+  `event_dock_co_edge_expanded` is the frame that holds the sum to account, and it prints its slack
+  (488 of a 1152-px harness canvas) rather than merely passing, so the day `LOG_HEIGHT` or
+  `PANEL_HEIGHT_WIDE` grows into the floor is visible before it overflows.
 - **The strip's cross-axis size reads only the preference, the expanded flag and the viewport** —
   never the event list. It is `recent_count` rows tall whether or not it has that many events. This
   is `BandCityPanel`'s rule, learned there as a map flicker on every `+` press; here an arriving
   event every turn would be a far worse offender. It outlived the reservation it was written for:
   a strip that resizes per event still shifts the rows the player is reading.
 
-## On a shared edge the bar sits at the rim
+## On a shared edge the panel keeps the rim and the bar is DISPLACED
 
-**There is no priority row for this dock** — it is not a reserver, so `RESERVER_PRIORITY`
-(`{inspector: 0, band_panel: 1}`) does not name it. The bar simply draws against its chosen edge,
-which puts it outboard of anything docked there, and the band panel's position relative to the map
-never changes when the bar grows a row because the bar takes no room from it.
+Reported from live play with a screenshot: with the Band/City panel and the bar on the SAME edge,
+the bar drew straight over the panel. The perpendicular insets below cannot reach it — LEFT/RIGHT is
+a different axis — and neither can `RESERVER_PRIORITY`, which is the reservers' stacking order and
+which this dock must not join. So the bar's OWN axis gets the treatment `BandCityPanel.set_edge_offset`
+already gives the panel: **`Main._update_event_dock_edge_offset` sums every reserver currently on the
+edge the bar is docked to and pushes the total to `EventDockPanel.set_edge_offset`**, which starts
+the strip that far in from its own rim (`_apply_dock_layout` writes `near`/`far` against both anchor
+branches — the top and bottom cases are separate arithmetic, which is why the harness asserts each).
+The panel keeps the screen edge; the bar sits BELOW it on a top dock and ABOVE it on a bottom one,
+and the strip is pushed inboard, never shrunk.
+
+**DISPLACED IS NOT RESERVING, and the distinction has to survive.** The dock still takes no space
+from the map or the HUD, still has no entry in `Main._reservations`, and still has no row in
+`RESERVER_PRIORITY` (`{inspector: 0, workbench: 0, band_panel: 1}`) — the offset is a one-way read
+OFF that table, not a row in it. **That is also why the sum needs no priority test where
+`_update_band_panel_edge_offset` does**: the band panel is itself a reserver and has to know which
+co-edge reservers sit inboard of it, whereas the dock occupies nothing, so nothing can ever stack
+against it and it is by construction the innermost thing on its edge.
+
+**`dock_changed(edge)` exists because that absence WAS half the bug.** A dock chip moves the bar to
+the other horizontal edge, which changes WHICH reservers it must clear — and nothing in
+`_apply_reservation`'s fan-out can see it, since no reservation changed. `Main` connects the signal
+to `_on_event_dock_dock_changed`, which re-runs the measurement; the offset is otherwise recomputed
+on **every** `_apply_reservation` (a co-edge panel arriving, moving, collapsing or hiding) and seeded
+once at connect time, exactly like the perpendicular insets. The edge rides the signal for
+legibility, but the measurement re-reads `get_dock()` — ONE reader, so the offset can never be
+computed against a stale edge.
 
 > An earlier design DID reserve, at priority 0 so it would hug the edge, with the band panel offset
-> inboard by `_update_band_panel_edge_offset()`. That is history — see "THE BAR RESERVES NOTHING" —
-> and re-adding a row for `event_dock` would reintroduce the full-width reservation that shipped
-> black bars.
+> inboard by `_update_band_panel_edge_offset()`. **That reservation is history** — see "THE BAR
+> RESERVES NOTHING" — and adding a row for `event_dock` would reintroduce the full-width reservation
+> that shipped black bars. What survives from it is the opposite arrangement: the panel holds the
+> rim, and the thing that reserves nothing is the thing that moves.
 
 ## …and it lives BETWEEN the vertical docks, which is a different axis entirely
 
@@ -497,6 +539,29 @@ reaching only `SIDE_TOP` must fail), against a **negative control taken first on
 nodes**: at zero inset the rects genuinely do overlap, so the assertion is not satisfiable by two
 panels that happen never to meet. `event_dock_bottom` carries the zero case, so an inset hard-wired
 to a constant cannot pass either.
+
+**The CO-EDGE displacement is pinned the same way, and for the same reason: an overlapping strip
+renders a perfectly plausible bar**, which is exactly how it reached live play. Five frames —
+`event_dock_co_edge_top` / `event_dock_co_edge_bottom` (both edges, since the two branches of
+`_apply_dock_layout` write different offsets against different anchors, so a fix reaching only
+`SIDE_TOP` must fail) / `event_dock_co_edge_collapsed` / `event_dock_co_edge_control` /
+**`event_dock_co_edge_expanded`** (co-edge TOP with the log OPEN — the other four are all the
+COLLAPSED bar, so the tallest displaced strip had never been rendered or measured; it carries
+`_assert_strip_within_viewport`, the far-edge claim described under "The strip yields to the map")
+— each judged
+as a **rect non-overlap against a real `BandCityPanel`**, again behind a negative control taken
+first on the same two live nodes (at zero offset the rects genuinely DO overlap). Two of them are
+the claims a naive fix would pass: **collapsing the panel brings the bar back down with it** (the
+offset is a live read of what the panel currently reserves — 360 open, 46 railed — not a latched
+per-edge constant, and a bar that stayed put would strand a band of dead map), and **a panel on the
+OTHER horizontal edge displaces the bar not at all** (without which an offset that summed every
+reserver regardless of edge would pass everything else). `_assert_bar_clears_co_edge` guards
+vacuity on the **horizontal** band — the opposite axis to `_assert_bar_clears`, since two things on
+one horizontal edge share a vertical band for free, and the strip is centred and capped, so a panel
+narrower than the gap either side would make the claim about nothing. `Main` is never instanced in
+the harness, so the chapter restates the sum (`_preview_push_event_dock_edge_offset`) — reading the
+live panel's own `get_dock()` / `current_reservation_size()`, and with no priority test, matching
+`Main`.
 
 **Each clearance claim is made where it BITES**, through `_assert_bar_clears`, which refuses to pass
 on a pair that shares no vertical band. The HUD's regions sit in different bands — a bottom bar is in

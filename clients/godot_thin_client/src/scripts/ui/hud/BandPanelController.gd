@@ -274,7 +274,10 @@ func build_band_zone(band: Dictionary, with_vitals: bool = true) -> VBoxContaine
     col.add_child(_build_workforce_block(band, _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT))
     return col
 
-## The vitals readout — the Food / Morale / Output rows with their click-to-expand disclosures. A
+## The vitals readout — Food, Fodder, Trade, Morale and Growth, of which Food / Trade / Morale /
+## Growth carry the click-to-expand disclosures (Fodder is a plain row, and there is no Output row:
+## productivity reads on the WORK zone's head). Which of the optional rows appear is the producer's
+## call — see `BandDetailLines.unit_summary_lines` and the `compact` note below. A
 ## FRESH RichTextLabel each render, so its `meta_clicked` is wired here (bound to ITSELF as the
 ## popover's anchor). The tint context is likewise fresh per render: it is built here, filled by
 ## `BandDetailLines.unit_summary_lines` as it emits the rows, and handed straight to the formatter.
@@ -290,9 +293,12 @@ func _build_vitals_label(band: Dictionary) -> RichTextLabel:
     # The SHORT tier drops the Trade row, the same budget call `build_band_zone` makes for the
     # food-outlook chart one block below: a ~300px T/B zone CLIPS what it cannot hold, and the row
     # measures 26px against a zone that is already tight.
+    # No Position row either: the coordinates are IDENTITY and the panel HEADER states them
+    # (`_panel_position_label`), so a vitals row would be a second telling — and one this zone pays
+    # for in height. The drawer host keeps it (it has no header and renders foreign bands).
     detail_label.text = DetailFormat.detail_bbcode(
         _banddetail.unit_summary_lines(band, _selectioncard.selected_terrain_label(), ctx,
-            _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT), ctx)
+            _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT, false), ctx)
     return detail_label
 
 ## "PEOPLE" — who the band IS: a stacked children/working-age/elders bar plus its key and the
@@ -629,6 +635,21 @@ func _build_work_head(band: Dictionary, models: Array, income: float, trade_inco
         HudWidgets.set_label_tooltip(trade_total, HudWorkVocab.WORK_TRADE_TOTAL_TOOLTIP)
         head.add_child(trade_total)
         head.move_child(trade_total, head.get_child_count() - 2)
+    # THE OUTPUT ITEM — a THIRD sibling, and it qualifies the two beside it rather than adding to
+    # them: `output_multiplier` is the discontent modifier every rate on this board is already scaled
+    # by, so it belongs where its consequence is visible and not as a row of the height-capped band
+    # zone. Same gate the vitals row carried — only BELOW full output — because a head item
+    # permanently reading `Output 100%` is noise on a row that is otherwise live summary. It trails
+    # the rates deliberately: it is a note ABOUT them.
+    var output: float = float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
+    if output < SourceForecast.OUTPUT_FULL:
+        var output_item := Label.new()
+        output_item.text = HudWorkVocab.WORK_OUTPUT_FORMAT % int(round(output * 100.0))
+        output_item.add_theme_font_size_override("font_size", HudWorkVocab.ZONE_HEAD_FONT_SIZE)
+        output_item.add_theme_color_override("font_color", BandFoodStatus.color_for_output(output))
+        HudWidgets.set_label_tooltip(output_item, HudWorkVocab.WORK_OUTPUT_TOOLTIP)
+        head.add_child(output_item)
+        head.move_child(output_item, head.get_child_count() - 2)
     return head
 
 ## The filter chips ARE the summary: counts + per-kind rates, and pressing one filters the board.
@@ -1782,10 +1803,27 @@ func render_band(unit: Dictionary) -> void:
     var glyph := String(_band_labor.panel_band().get("settlement_stage_icon", "")).strip_edges()
     var stage_label := String(_band_labor.panel_band().get("settlement_stage_label", "")).strip_edges()
     var index := _index_of_player_band(int(_band_labor.panel_band().get("entity", -1)))
-    _panel.set_header(stage_id, glyph, HudFormat.band_display_name(_band_labor.panel_band(), index + 1), stage_label)
+    _panel.set_header(stage_id, glyph, HudFormat.band_display_name(_band_labor.panel_band(), index + 1), stage_label,
+        _panel_position_label(_band_labor.panel_band()))
     _panel.set_cycler(index, _band_labor.player_bands().size())
     # `set_zones` above already flipped the panel to band-present; just make sure it is shown.
     _panel.set_shown(true)
+
+## The band's hex coordinates for the panel header — the ONE place they are resolved, because the two
+## paths that reach this panel spell them DIFFERENTLY and used to render differently because of it.
+## The per-snapshot refresh hands over the cohort dict the native decoder built
+## (`native/src/dict/population.rs`), which carries `current_x` / `current_y` and NO `pos`; a click on
+## the band's map marker hands over MapView's marker copy, which carries a two-element `pos` array.
+## So the snapshot path rendered no coordinates at all and the map path did, and a turn tick then took
+## them away again. Preferring the cohort keys and falling back to `pos` makes both paths produce the
+## identical header; neither resolvable ⇒ `""`, which the panel renders as nothing.
+func _panel_position_label(band: Dictionary) -> String:
+    if band.has("current_x") and band.has("current_y"):
+        return HudFormat.BAND_HEADER_POSITION_FORMAT % [int(band["current_x"]), int(band["current_y"])]
+    var pos_array: Array = Array(band.get("pos", []))
+    if pos_array.size() == 2:
+        return HudFormat.BAND_HEADER_POSITION_FORMAT % [int(pos_array[0]), int(pos_array[1])]
+    return ""
 
 ## Select an expedition (from the panel's Active-expeditions list) on the map: recenter + select
 ## its hex (rebuilds that hex's roster), then pin the exact expedition so the map ring moves and the

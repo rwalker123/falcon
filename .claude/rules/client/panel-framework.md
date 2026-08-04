@@ -83,18 +83,29 @@ by reserver id, so multiple panels can reserve (possibly different) edges at onc
   Each stores `{edge, size}` under `id` and recomputes four per-edge totals
   (`left/right/top/bottom` = Σ of sizes whose edge matches).
 - **`Main._apply_reservation(id, edge, size)`** fans a reserver's contribution out
-  to both surfaces. Three reservers today: the **event dock** (`&"event_dock"`,
-  `SIDE_TOP`/`SIDE_BOTTOM` — see `event-dock.md`), the **Inspector** (`&"inspector"`,
-  `SIDE_LEFT` — `reserved_width()` / `reserved_width_changed` on show/hide + live
-  drag-resize) and the **Band/City panel** (`&"band_panel"`, its currently-docked
-  edge — see below).
-- **`Main.RESERVER_PRIORITY` = `{event_dock: 0, inspector: 1, band_panel: 2}`** — the
+  to both surfaces. Three reservers today, all of them panels that span their edge:
+  the **Inspector** (`&"inspector"`, `SIDE_LEFT` — `reserved_width()` /
+  `reserved_width_changed` on show/hide + live drag-resize), the **Workbench**
+  (`&"workbench"`, `SIDE_LEFT`, the designer surface replacing the Inspector) and the **Band/City
+  panel** (`&"band_panel"`, its currently-docked edge — see below). **The event dock
+  is not one of them** — it overlays (`event-dock.md`).
+- **`Main.RESERVER_PRIORITY` = `{inspector: 0, workbench: 0, band_panel: 1}`** — the
   stable stacking order for co-edge reservers, LOWER sitting against the screen edge.
   It is read by `_update_band_panel_edge_offset()`, which offsets the Band panel
   inboard by the Σ sizes of lower-priority reservers on its own edge. A new reserver
-  therefore only has to pick a number; the offset falls out. The event dock is 0
-  because a thin strip on the rim reads as chrome and it keeps the band panel's
-  position relative to the map fixed when the bar grows a row.
+  therefore only has to pick a number; the offset falls out. The Inspector and the
+  Workbench share a rank because they are alternatives — opening either closes the
+  other — so they are never co-edge with each other.
+- **A NON-RESERVER CAN STILL BE DISPLACED, and that is a third thing again.**
+  `Main._update_event_dock_edge_offset()` sums every reserver on the edge the event
+  dock is docked to and pushes the total to `EventDockPanel.set_edge_offset`, so a
+  co-edge band panel keeps the screen edge and the bar is drawn just past it. It
+  takes **no priority test** where `_update_band_panel_edge_offset` needs one: the
+  dock reserves nothing, so nothing can stack against it and it is by construction
+  the innermost thing on its edge. Giving it a `RESERVER_PRIORITY` row instead is
+  the reflex mistake — it would reintroduce the full-width reservation two bullets
+  down. Recomputed on every `_apply_reservation` AND on the dock's own
+  `dock_changed`, which is the only thing that can see the bar change edge.
 - **`Main._update_event_dock_insets()` is the PERPENDICULAR axis, and it is NOT
   priority.** `RESERVER_PRIORITY` orders reservers stacked ALONG one shared edge;
   a top/bottom strip and a left/right column are never co-edge, so priority has

@@ -40,6 +40,15 @@ extends RefCounted
 # with no animals never sprouts an empty Fodder line.
 const BAND_FODDER_ROW_FORMAT := "Fodder: %.1f"
 
+# ---- The SAME hay stock as a CLAUSE on the Food row, for the `compact` (SHORT band-zone tier) host.
+# A horizontal dock is short of HEIGHT and has width to spare, so the two larders share one line
+# there; a vertical dock is short of WIDTH and keeps them as two rows. The word is `hay`, the
+# vocabulary the flora basket rows already use (`HudFloraVocab.FLORA_CROP_HAY_CLAUSE_FORMAT`), and the
+# stock keeps the Fodder row's ONE decimal. It carries its OWN colour rather than inheriting the Food
+# row's value tint: a starving band's hay stock is not itself a red reading, and the net rate beside it
+# sets the precedent for a self-tinted run inside that value cell.
+const BAND_FOOD_HAY_CLAUSE_FORMAT := " · [color=#%s]%.1f hay[/color]"
+
 # ---- The band's TRADE row (issue #381): what THIS band HOLDS and what it earns per turn in the
 # second product, in the Food row's shape — `Trade: 12.0 · +0.04 /turn`. The stock carries ONE decimal,
 # like the Fodder row above and for the same reason: sub-unit trade income accumulates in the sim
@@ -110,14 +119,24 @@ func _is_player_unit(unit: Dictionary) -> bool:
 ## `terrain_label` is the SELECTED TILE's biome name — the morale row's "it's the hex you're on"
 ## payload, and the only thing these producers ever asked the selection model for. Passed in so this
 ## module holds no selection coupling.
-## `compact` is the SHORT band-zone tier asking for its optional rows to be dropped — today just the
-## Trade row. It is the row-level twin of `BandPanelController.build_band_zone`'s existing gate on
-## `_build_food_outlook_block`, and it exists for the same measured reason: the T/B dock's band zone is
-## ~300px, and a zone that overflows is CLIPPED rather than scrolled, so an optional row there costs a
-## slice of the WORKFORCE bar or a role card. Measured at 26px for this one row. Defaults false, so the
-## drawer host and both harnesses are unaffected.
+## `compact` is the SHORT band-zone tier saying **HEIGHT is what is scarce here, not width** — which is
+## exactly the horizontal (T/B) dock, whose band zone is height-capped and CLIPS rather than scrolls
+## while having a whole screen of width to spend. It is the row-level twin of
+## `BandPanelController.build_band_zone`'s gate on `_build_food_outlook_block`, and it buys two rows:
+##   * the Trade row is DROPPED (measured at 26px; the WORK head's `⇄` total still states the rate);
+##   * the Fodder row is MERGED onto the Food line as a hay clause rather than dropped — a hay stock
+##     has no other home, and one wider line is exactly the trade this host wants to make.
+## Defaults false, so the drawer host and both harnesses are unaffected.
+## `with_position` is the host saying whether it has somewhere ELSE to state the band's coordinates.
+## The Band/City dock does — they are IDENTITY, so they live in its panel header beside the stage
+## word (`BandCityPanel.set_header`), and repeating them as a vitals row cost that height-capped zone
+## a row it could not spare. The Occupants-card drawer does NOT: it renders FOREIGN bands, whose
+## position is nearly all we can honestly observe, and it has no header to carry it — so it keeps the
+## row and this defaults true. **Deliberately its own parameter and NOT keyed off `compact`**, which
+## is the band zone's HEIGHT TIER: the dock drops this row in every tier, tall or short.
 func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
-        ctx: DetailFormat.Context = null, compact: bool = false) -> Array[String]:
+        ctx: DetailFormat.Context = null, compact: bool = false,
+        with_position: bool = true) -> Array[String]:
     # The tint context is an OUT-PARAMETER of this producer, not a member: the caller (each of the two
     # detail hosts) builds it and hands it straight to the formatter. Defaulted so the preview
     # harnesses can still ask for the lines alone.
@@ -137,7 +156,7 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
     # band shows only what we can honestly observe from outside: where it is (Position) and roughly
     # how many (its roster row's size).
     if _is_player_unit(unit_data):
-        lines.append(_band_food_line(unit_data, context))
+        lines.append(_band_food_line(unit_data, context, compact))
         # Category-aggregated food breakdown under Food: a click-to-open disclosure. `_band_food_line`
         # set `_food_flow_present` (a PRIVATE handshake between the two — the formatter never reads
         # it); `DisclosureController.register` stashes the rows for the popover and records the row so
@@ -148,9 +167,11 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
                 _disclosures.food_breakdown_lines(unit_data))
         # The band's fodder (hay) larder, beneath its food larder — shown only for a band with a
         # fodder economy: it has stockpiled hay, or it pays a pen bread bill it could offset with hay.
-        var fodder_store := float(unit_data.get("fodder_store", 0.0))
-        if fodder_store > SourceForecast.FOOD_FLOW_MIN or float(unit_data.get("pen_feed_upkeep", 0.0)) > SourceForecast.FOOD_FLOW_MIN:
-            lines.append(BAND_FODDER_ROW_FORMAT % fodder_store)
+        # **In the `compact` tier it is not a row at all**: `_band_food_line` has already carried the
+        # stock as a clause on the Food line, because the SHORT tier's scarcity is HEIGHT and that
+        # host has width to spend. See `BAND_FOOD_HAY_CLAUSE_FORMAT`.
+        if not compact and _band_has_fodder_economy(unit_data):
+            lines.append(BAND_FODDER_ROW_FORMAT % float(unit_data.get("fodder_store", 0.0)))
         # The band's TRADE row, beneath the two larder rows: the SECOND product the same worked
         # sources yield. UNCONDITIONAL for a player band (a zero reads `+0.00 /turn`, see
         # `_band_trade_line`) — only the SHORT band-zone tier suppresses it, for room.
@@ -167,11 +188,10 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
     # people begin leaving), while deaths stay starvation/cold-driven.
     if _is_player_unit(unit_data):
         lines.append(_band_morale_line(unit_data, terrain_label, context))
-        # Productivity ties visibly to morale: show the Output row when discontent is
-        # dragging yield below full (near Morale, tinted by how low it is).
-        var output_line := _band_output_line(unit_data, context)
-        if output_line != "":
-            lines.append(output_line)
+        # **NO `Output:` ROW.** Productivity ties visibly to morale, but the multiplier's CONSEQUENCE
+        # is the work board: every rate the WORK zone shows is already scaled by it. So it renders as
+        # an item of that zone's head (`BandPanelController._build_work_head`), under the same
+        # below-full gate, and this height-capped column keeps the row.
         # Itemized morale breakdown: the SAME click-to-open disclosure as Food, in the same popover.
         # Only offered when there's actually a breakdown to show (a contribution above the epsilon, or
         # the concerning recovery line) — `register` declines an empty payload.
@@ -188,9 +208,10 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
             lines.append(growth_line)
             _disclosures.register(HudDisclosureVocab.DETAIL_ROW_GROWTH, HudDisclosureVocab.BREAKDOWN_KIND_GROWTH,
                 unit_data, _fertility_breakdown_lines(unit_data))
-    var pos_array: Array = Array(unit_data.get("pos", []))
-    if pos_array.size() == 2:
-        lines.append("Position: (%d, %d)" % [int(pos_array[0]), int(pos_array[1])])
+    if with_position:
+        var pos_array: Array = Array(unit_data.get("pos", []))
+        if pos_array.size() == 2:
+            lines.append("Position: (%d, %d)" % [int(pos_array[0]), int(pos_array[1])])
     # Per-source labor is now shown by the allocation panel (a real −/+ control set),
     # not as drawer text; the old single-task harvest/scout summaries are retired.
     #
@@ -291,11 +312,20 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
 
 # ---- The band rows `unit_summary_lines` assembles -------------------------------------------------
 
+## Does this band have a fodder economy at all — hay in store, or a pen bill it could offset with hay?
+## The ONE test behind both spellings of that larder (the standalone `Fodder:` row and the `compact`
+## host's clause on the Food line), so the two hosts can never disagree about when it exists.
+func _band_has_fodder_economy(unit_data: Dictionary) -> bool:
+    return float(unit_data.get("fodder_store", 0.0)) > SourceForecast.FOOD_FLOW_MIN \
+        or float(unit_data.get("pen_feed_upkeep", 0.0)) > SourceForecast.FOOD_FLOW_MIN
+
 ## Selection-panel band food row: "Food  <provisions>  (<turns>)" — provisions from
 ## the band's larder stores, turns from `turns_of_food` (∞ when not food-limited).
 ## Stashes the turns on the render context so `DetailFormat.detail_bbcode` can
 ## tint the value by the shared warn/critical thresholds.
-func _band_food_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> String:
+## `merge_fodder` is the `compact` host asking for the hay stock to ride this line instead of taking a
+## row of its own — see `BAND_FOOD_HAY_CLAUSE_FORMAT`.
+func _band_food_line(unit_data: Dictionary, ctx: DetailFormat.Context, merge_fodder: bool = false) -> String:
     var turns: float = float(unit_data.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
     ctx.food_turns = turns
     var provisions := 0
@@ -316,6 +346,11 @@ func _band_food_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> String
         var net_hex := HudStyle.HEALTHY_HEX if net >= 0.0 else HudStyle.DANGER_HEX
         line += " · [color=#%s]%s[/color]" % [net_hex, SourceForecast.format_yield(net)]
         _food_flow_present = true
+    # The hay larder, on this line rather than beneath it, for the height-scarce host only. The gate
+    # is the same one the standalone row uses, so a band with no fodder economy renders no clause.
+    if merge_fodder and _band_has_fodder_economy(unit_data):
+        line += BAND_FOOD_HAY_CLAUSE_FORMAT % [
+            HudStyle.INK_DIM_HEX, float(unit_data.get("fodder_store", 0.0))]
     return line
 
 ## Selection-panel band trade row: "Trade: 12.0 · +0.04 /turn" — what THIS band HOLDS and what it earns
@@ -376,17 +411,6 @@ func _band_morale_line(unit_data: Dictionary, terrain_label: String, ctx: Detail
     elif delta >= DetailFormat.MORALE_TREND_EPSILON:
         text += " %s" % MORALE_TREND_RISING_GLYPH
     return text
-
-## Selection-panel band productivity row: "Output: 56%" — the modifier-stack result
-## (snapshot `output_multiplier`, discontent being Phase 1's sole modifier). Only shown
-## below full output; stashes the value on the render context so `DetailFormat.detail_bbcode`
-## tints it by the output.{warn,critical} buckets (ink → amber → red).
-func _band_output_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> String:
-    var output: float = float(unit_data.get("output_multiplier", SourceForecast.OUTPUT_FULL))
-    if output >= SourceForecast.OUTPUT_FULL:
-        return ""
-    ctx.output = output
-    return "Output: %d%%" % int(round(output * 100.0))
 
 ## Selection-panel band growth row: "Growth: 23% of normal" — the band's birth rate as a share of the
 ## base rate the sim would otherwise apply (`fertility_hunger × fertility_reserve × fertility_trend`,

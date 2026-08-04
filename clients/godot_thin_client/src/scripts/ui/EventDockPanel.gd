@@ -166,6 +166,14 @@ static var config_path_override: String = ""
 ## Top and bottom only.
 const DOCK_EDGES: Array[int] = [SIDE_TOP, SIDE_BOTTOM]
 
+# ---- signals ---------------------------------------------------------------
+## The strip moved to the other horizontal edge (the log's dock chips are the only way this
+## happens). **This is NOT `reservation_changed` and must never become it** — the dock still reserves
+## nothing from either surface. It exists because the strip is DISPLACED by whatever reserves the
+## edge it just landed on, so `Main` has to recompute `set_edge_offset` for the new edge; without it
+## a dock chip press moves the bar onto the band panel's edge and straight over the top of it.
+signal dock_changed(edge: int)
+
 # ---- state -----------------------------------------------------------------
 var _dock_edge: int = DEFAULT_EDGE
 var _suppressed: bool = DEFAULT_SUPPRESSED
@@ -179,6 +187,10 @@ var _log_window_turns: int = LOG_WINDOW_TURNS
 ## for why the bar does not span the raw window.
 var _inset_left: float = 0.0
 var _inset_right: float = 0.0
+## How far the strip is pushed INBOARD from its own docked edge — the current total of every
+## reserver sitting on that edge, pushed by `Main` (`set_edge_offset`). The band panel keeps the
+## screen edge; the bar sits just past it. See that method.
+var _edge_offset: float = 0.0
 ## An unread Alert pins to the leading slot. Opening the log is what marks alerts read — the pin
 ## exists to survive until the player has actually had a chance to look.
 var _alert_seen: bool = true
@@ -625,7 +637,9 @@ func _visible_turns(pool: Array[Dictionary]) -> Array[int]:
 
 # ---- public controls -------------------------------------------------------
 
-## Dock to `SIDE_TOP` / `SIDE_BOTTOM`. Re-anchors, persists, re-emits the reservation.
+## Dock to `SIDE_TOP` / `SIDE_BOTTOM`. Re-anchors, persists, and announces the move so `Main` can
+## re-measure the new edge's displacement (`dock_changed` → `set_edge_offset`). It reserves nothing,
+## so there is no reservation to re-emit.
 func set_dock(edge: int) -> void:
 	if not DOCK_EDGES.has(edge) or edge == _dock_edge:
 		return
@@ -633,6 +647,7 @@ func set_dock(edge: int) -> void:
 	_apply_dock_layout()
 	_render()
 	_save_prefs()
+	dock_changed.emit(_dock_edge)
 
 func get_dock() -> int:
 	return _dock_edge
@@ -660,6 +675,23 @@ func set_perpendicular_insets(left: float, right: float) -> void:
 		return
 	_inset_left = new_left
 	_inset_right = new_right
+	_apply_dock_layout()
+
+## **THE BAND PANEL KEEPS THE SCREEN EDGE; THE BAR IS DISPLACED PAST IT.** The twin of the insets
+## above, on the strip's OWN axis: `Main` sums every reserver sitting on this dock's edge
+## (`_update_event_dock_edge_offset`) and pushes the total here, so a co-edge band panel — top with
+## top, bottom with bottom — is no longer drawn over. The bar sits BELOW a top-docked panel and
+## ABOVE a bottom-docked one; the strip is pushed inboard, never shrunk.
+##
+## **This does not make the dock a reserver.** It still takes no space from the map or the HUD and
+## still has no entry in `Main._reservations` — it is the innermost thing on whatever edge it is on,
+## which is exactly why the sum needs no priority ordering (`BandCityPanel.set_edge_offset` has one;
+## this deliberately does not).
+func set_edge_offset(px: float) -> void:
+	var offset: float = maxf(px, 0.0)
+	if is_equal_approx(offset, _edge_offset):
+		return
+	_edge_offset = offset
 	_apply_dock_layout()
 
 ## Hide/show the whole strip — the `R` hotkey, and the successor to the retired feed's own suppress
@@ -1154,16 +1186,22 @@ func _apply_dock_layout() -> void:
 	_root.anchor_right = 0.0
 	_root.offset_left = leading
 	_root.offset_right = leading + width
+	# On its OWN axis the strip starts `_edge_offset` in from the docked edge, so a co-edge reserver
+	# (the band panel, top with top or bottom with bottom) holds the rim and the bar sits just past
+	# it. Near edge at `_edge_offset`, far edge at `_edge_offset + cross` — the `BandCityPanel`
+	# `_apply_root_anchors` idiom, mirrored.
+	var near := _edge_offset
+	var far := _edge_offset + cross
 	if _dock_edge == SIDE_TOP:
 		_root.anchor_top = 0.0
 		_root.anchor_bottom = 0.0
-		_root.offset_top = 0.0
-		_root.offset_bottom = cross
+		_root.offset_top = near
+		_root.offset_bottom = far
 	else:
 		_root.anchor_top = 1.0
 		_root.anchor_bottom = 1.0
-		_root.offset_top = -cross
-		_root.offset_bottom = 0.0
+		_root.offset_top = -far
+		_root.offset_bottom = -near
 	_order_column()
 	_position_seam()
 

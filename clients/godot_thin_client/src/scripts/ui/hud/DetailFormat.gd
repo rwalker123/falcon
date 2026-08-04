@@ -18,7 +18,7 @@ class_name DetailFormat
 ## The two pieces of HUD state the formatter used to reach sideways for are threaded as EXPLICIT
 ## PARAMETERS instead:
 ##   * the per-render TINT CONTEXT (`Context` below) — the selected band's food runway / morale /
-##     output plus the disclosure carets. These were three `HudLayer` members written by the line
+##     fertility plus the disclosure carets. These were `HudLayer` members written by the line
 ##     producers, reset by four different hosts and read ONLY here; a value passed down cannot be
 ##     stale, and cannot be reset in the wrong order.
 ##   * `world_herds` for the Attack/Defense reference bars (`append_danger_component_lines`), the same
@@ -318,7 +318,9 @@ const DETAIL_KV_SEPARATOR := ": "
 ## rendering, and nothing else. Built fresh by whichever host is about to render, filled by the line
 ## PRODUCERS as they emit the rows, and handed to the renderer. It replaced three `HudLayer` members
 ## (`_selected_band_food_turns` / `_selected_band_morale` / `_selected_band_output`) plus
-## `_disclosure_state`, all of which were per-render out-parameters reached sideways.
+## `_disclosure_state`, all of which were per-render out-parameters reached sideways. The output
+## scalar has since gone with the row it tinted: productivity reads on the WORK zone's head now
+## (`BandPanelController._build_work_head`), which is Labels rather than BBCode and needs no context.
 ##
 ## NAN means "no band" for each scalar: the corresponding row then renders in neutral ink, exactly as
 ## the old `is_nan` guards decided. `disclosures` is row-label → `{key, open, concerning}` (see
@@ -326,7 +328,6 @@ const DETAIL_KV_SEPARATOR := ": "
 class Context extends RefCounted:
     var food_turns: float = NAN
     var morale: float = NAN
-    var output: float = NAN
     ## The band's fertility MULTIPLIER (`hunger x reserve x trend`), 1.0 = its normal birth rate.
     ## NAN when there is no band, or when the sim published no reading yet (the not-projected
     ## sentinel) — in which case no Growth row was emitted to tint.
@@ -409,7 +410,7 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
 
 ## THE KEY→TINT REGISTRY: which hex a row's VALUE renders in, keyed on the row's own label. Every
 ## detail surface in the game consults this one table, which is why the tile card's Sight /
-## Habitability / Ecology cases live beside the band's Food / Morale / Output ones.
+## Habitability / Ecology cases live beside the band's Food / Morale / Growth ones.
 static func _value_hex(key: String, value: String, ctx: Context) -> String:
     if key == HudDisclosureVocab.DETAIL_ROW_FOOD or key == "Provisions" or key == "Carried":
         # The band larder / expedition provisions / hunt-party carried-food row tints by the
@@ -423,14 +424,11 @@ static func _value_hex(key: String, value: String, ctx: Context) -> String:
         # The player band's morale row tints by the morale thresholds.
         if not is_nan(ctx.morale):
             return BandFoodStatus.hex_for_morale(ctx.morale)
-    elif key == "Output":
-        # The productivity row tints by the output buckets (ink → amber → red).
-        if not is_nan(ctx.output):
-            return BandFoodStatus.hex_for_output(ctx.output)
     elif key == HudDisclosureVocab.DETAIL_ROW_GROWTH:
         # The band's birth rate as a share of normal, tinted by the fertility buckets. Same
-        # ink → amber → red grading as Output and for the same reason: normal growth is normal,
-        # not a "good", so the top bucket is neutral ink even when the band out-breeds its base rate.
+        # ink → amber → red grading as `BandFoodStatus.color_for_output` and for the same reason: normal
+        # growth is normal, not a "good", so the top bucket is neutral ink even when the band
+        # out-breeds its base rate.
         if not is_nan(ctx.fertility):
             return BandFoodStatus.hex_for_fertility(ctx.fertility)
     elif key == "Habitability":

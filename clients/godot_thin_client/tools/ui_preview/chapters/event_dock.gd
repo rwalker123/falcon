@@ -38,6 +38,12 @@ const BRIGHT_TERRAIN_COLOR := Color(0.90, 0.86, 0.76)
 ## panel's own `RECENT_COUNT_MAX` cannot drift.
 const EVENT_DOCK_MAX_ROWS := EventDockPanel.RECENT_COUNT_MAX
 
+## Sub-pixel slack for the co-edge rect claims. The offset and the panel's reserved size are the SAME
+## float, so the two rects meet exactly — but they are read back through two CanvasLayers' global
+## transforms, and an equality on a transformed float is a trap. Small enough that a real overlap (a
+## whole strip, ≥ `COLLAPSED_SIZE`) can never hide inside it.
+const CO_EDGE_RECT_EPSILON := 0.5
+
 ## How many `predator_raid` rows the fixture carries on turn 47 — TWO, deliberately identical apart
 ## from `seq`. This is the number the old signature de-duplication answered 1 to.
 const EVENT_DOCK_DUPLICATE_RAIDS := 2
@@ -358,6 +364,60 @@ func _assert_bar_clears(dock: EventDockPanel, region: Control, what: String) -> 
 		return
 	h._assert_hud("the bar clears %s (they share a vertical band, so this is a real claim)" % what,
 		not bar.intersects(box))
+
+## The harness's stand-in for `Main._update_event_dock_edge_offset`: Σ sizes of every reserver sitting
+## on the edge the bar is docked to. `Main` is never instanced here, so the sum is restated — but it
+## reads the live panel's own `get_dock()` / `current_reservation_size()`, so a panel that changes
+## edge, collapses or hides moves the bar here exactly as it does live. **No priority test**, matching
+## `Main`: the dock reserves nothing, so it is always the innermost thing on its edge.
+func _preview_push_event_dock_edge_offset(dock: EventDockPanel, reservers: Array) -> void:
+	var offset := 0.0
+	for reserver: BandCityPanel in reservers:
+		if int(reserver.get_dock()) == dock.get_dock():
+			offset += float(reserver.current_reservation_size())
+	dock.set_edge_offset(offset)
+
+## The CO-EDGE non-overlap claim: the bar and a panel docked to the SAME horizontal edge. Stated as a
+## rect test rather than judged from a PNG — an overlapping strip renders a perfectly plausible bar,
+## which is exactly how this reached live play.
+##
+## Vacuity is guarded on the HORIZONTAL band here, the opposite axis to `_assert_bar_clears`: two
+## things on one horizontal edge trivially share a vertical band, so the question that can be answered
+## for free is whether their x-spans meet. The strip is centred and capped, so a panel narrower than
+## the gap either side would make this claim about nothing.
+func _assert_bar_clears_co_edge(dock: EventDockPanel, panel: BandCityPanel, what: String) -> void:
+	var bar := dock._root.get_global_rect()
+	var box := panel._root.get_global_rect()
+	if bar.position.x >= box.end.x or box.position.x >= bar.end.x:
+		h._assert_hud("VACUOUS — the bar and %s share no horizontal band, so 'they do not overlap' claims nothing" % what, false)
+		return
+	h._assert_hud("co-edge: the bar clears %s — bar %s vs panel %s" % [what, bar, box],
+		not bar.intersects(box))
+
+## THE DISPLACED STRIP MUST STILL LAND ON SCREEN. `_apply_dock_layout` places the bar at
+## `[_edge_offset, _edge_offset + cross]` in from its own rim, and the two heights are set by SEPARATE
+## clamps — `BandCityPanel.MAX_WIDE_HEIGHT_FRACTION` (0.6) and `EventDockPanel.MAX_STRIP_HEIGHT_FRACTION`
+## (0.5) — which sum to 1.1 of the viewport with nothing bounding the pair. What actually holds the
+## line is that BOTH fractions are dominated by absolute caps: `PANEL_HEIGHT_WIDE` (360) plus the
+## tallest strip the dock builds (a 1-row title bar + `LOG_HEIGHT` + the section gap = 304) is **664**,
+## against a layout height that never drops below **1080** — `project.godot` stretches `canvas_items`
+## from a 1920×1080 base with an `expand` aspect, so a short WINDOW yields a wide canvas, never a short
+## one, and `_viewport_size()` is floored at the base height. So the two fractions are never both
+## binding and this claim has real margin today. **The margin is therefore PRINTED**: a strip ending
+## 2px inside the viewport and one ending 400px inside are the same green line otherwise, and the
+## whole point of the assertion is to notice if `LOG_HEIGHT` or `PANEL_HEIGHT_WIDE` ever grows into it.
+##
+## Judged as a RECT, never from the frame — a strip whose "Earlier turns" footer has fallen off the
+## bottom of the window renders an entirely plausible log above it.
+func _assert_strip_within_viewport(dock: EventDockPanel, what: String) -> void:
+	var bar := dock._root.get_global_rect()
+	var viewport_height: float = dock._viewport_size().y
+	var slack: float = viewport_height - (dock._edge_offset + dock._cross_axis_size())
+	h._assert_hud("%s: offset %.0f + strip %.0f stays inside the %.0f-px viewport (%.0f px of slack; bar rect %.0f..%.0f)"
+			% [what, dock._edge_offset, dock._cross_axis_size(), viewport_height, slack,
+				bar.position.y, bar.end.y],
+		slack >= 0.0 and bar.position.y >= -CO_EDGE_RECT_EPSILON
+			and bar.end.y <= viewport_height + CO_EDGE_RECT_EPSILON)
 
 func run(harness) -> void:
 	h = harness
@@ -935,6 +995,124 @@ func run(harness) -> void:
 	h._assert_hud("the strip does not bury the map: %d rows = %.0f px drawn, log open = %.0f px, cap %.0f of a %d px canvas"
 			% [EVENT_DOCK_MAX_ROWS, widest_bar, open_log, strip_cap, h.PREVIEW_CANVAS_SIZE.y],
 		maxf(widest_bar, open_log) <= strip_cap)
+
+	# ---- ON A SHARED EDGE THE PANEL KEEPS THE RIM AND THE BAR IS DISPLACED --------------------
+	# Reported from live play with a screenshot: with the Band/City panel and the bar on the SAME
+	# edge, the bar drew straight over the panel. The perpendicular insets above cannot reach it —
+	# LEFT/RIGHT is a different axis — and neither can `RESERVER_PRIORITY`, which the dock is not in
+	# and must not join (that is the full-width reservation this arc removed). The bar's OWN axis
+	# needed the treatment `BandCityPanel.set_edge_offset` already gives the panel:
+	# `Main._update_event_dock_edge_offset` sums the reservers on the docked edge and pushes the bar
+	# inboard past them. The panel keeps the screen edge; the bar sits BELOW it on a top dock and
+	# ABOVE it on a bottom one.
+	#
+	# **Judged as a RECT NON-OVERLAP against a REAL panel, never from the frame.** An overlapping
+	# strip renders a perfectly plausible-looking bar — which is exactly why this reached live play.
+	event_dock.set_expanded(false)
+	event_dock.set_dock(SIDE_TOP)
+	var co_edge_panel: BandCityPanel = h.BAND_CITY_PANEL_SCENE.instantiate()
+	h.add_child(co_edge_panel)
+	await h.get_tree().process_frame
+	co_edge_panel.set_dock(SIDE_TOP)
+	var co_edge_reserved: float = co_edge_panel.current_reservation_size()
+	h._hud.set_reserved_inset(&"band_panel", SIDE_TOP, co_edge_reserved)
+	await h._settle()
+
+	# THE NEGATIVE CONTROL, taken FIRST and on the same two live nodes: at zero offset — the shipped
+	# behaviour — the rects genuinely DO overlap. So the assertions below are not satisfiable by two
+	# panels that happen never to meet, and the state they describe is the reported bug.
+	event_dock.set_edge_offset(0.0)
+	await h._settle()
+	h._assert_hud("co-edge control: at zero offset the TOP bar genuinely DOES overlap a TOP-docked panel",
+		event_dock._root.get_global_rect().intersects(co_edge_panel._root.get_global_rect()))
+
+	_preview_push_event_dock_edge_offset(event_dock, [co_edge_panel])
+	await h._settle()
+	await h._save("event_dock_co_edge_top")
+	h._assert_hud("co-edge TOP: the bar is displaced by the panel's whole reserved strip (%.0f)" % co_edge_reserved,
+		is_equal_approx(event_dock._edge_offset, co_edge_reserved))
+	h._assert_hud("co-edge TOP: …so the bar begins at or past where the panel ends (bar top %.0f, panel bottom %.0f)"
+			% [event_dock._root.get_global_rect().position.y, co_edge_panel._root.get_global_rect().end.y],
+		event_dock._root.get_global_rect().position.y >= co_edge_panel._root.get_global_rect().end.y - CO_EDGE_RECT_EPSILON)
+	_assert_bar_clears_co_edge(event_dock, co_edge_panel, "the TOP-docked Band/City panel")
+
+	# THE BOTTOM EDGE IS THE MIRROR, and it must be asserted separately: the two branches of
+	# `_apply_dock_layout` write different offsets against different anchors, so a fix reaching only
+	# `SIDE_TOP` has to fail here.
+	event_dock.set_dock(SIDE_BOTTOM)
+	co_edge_panel.set_dock(SIDE_BOTTOM)
+	var co_edge_reserved_bottom: float = co_edge_panel.current_reservation_size()
+	h._hud.set_reserved_inset(&"band_panel", SIDE_BOTTOM, co_edge_reserved_bottom)
+	_preview_push_event_dock_edge_offset(event_dock, [co_edge_panel])
+	await h._settle()
+	await h._save("event_dock_co_edge_bottom")
+	h._assert_hud("co-edge BOTTOM: the bar is displaced by the panel's whole reserved strip (%.0f)" % co_edge_reserved_bottom,
+		is_equal_approx(event_dock._edge_offset, co_edge_reserved_bottom))
+	h._assert_hud("co-edge BOTTOM: …so the bar ends at or before where the panel begins (bar bottom %.0f, panel top %.0f)"
+			% [event_dock._root.get_global_rect().end.y, co_edge_panel._root.get_global_rect().position.y],
+		event_dock._root.get_global_rect().end.y <= co_edge_panel._root.get_global_rect().position.y + CO_EDGE_RECT_EPSILON)
+	_assert_bar_clears_co_edge(event_dock, co_edge_panel, "the BOTTOM-docked Band/City panel")
+
+	# COLLAPSING THE PANEL MUST BRING THE BAR BACK DOWN WITH IT. The offset is a live read of what the
+	# panel currently reserves, not a latched dock-edge constant, so railing it frees the strip it was
+	# holding — and a bar that stayed put would leave a band of dead map between the two.
+	co_edge_panel.set_collapsed(true)
+	var co_edge_railed: float = co_edge_panel.current_reservation_size()
+	h._hud.set_reserved_inset(&"band_panel", SIDE_BOTTOM, co_edge_railed)
+	_preview_push_event_dock_edge_offset(event_dock, [co_edge_panel])
+	await h._settle()
+	await h._save("event_dock_co_edge_collapsed")
+	h._assert_hud("precondition: the railed panel really does reserve less than the open one (%.0f < %.0f)"
+			% [co_edge_railed, co_edge_reserved_bottom],
+		co_edge_railed < co_edge_reserved_bottom)
+	h._assert_hud("co-edge COLLAPSED: the offset tracks down to the rail (%.0f)" % co_edge_railed,
+		is_equal_approx(event_dock._edge_offset, co_edge_railed))
+	_assert_bar_clears_co_edge(event_dock, co_edge_panel, "the collapsed BOTTOM rail")
+
+	# THE NON-SHARED-EDGE CONTROL: a panel on the OTHER horizontal edge displaces nothing, so the bar
+	# goes back to hugging its own rim. Without this an offset that simply summed every reserver
+	# regardless of edge would pass everything above.
+	co_edge_panel.set_collapsed(false)
+	event_dock.set_dock(SIDE_TOP)
+	h._hud.set_reserved_inset(&"band_panel", SIDE_BOTTOM, co_edge_panel.current_reservation_size())
+	_preview_push_event_dock_edge_offset(event_dock, [co_edge_panel])
+	await h._settle()
+	await h._save("event_dock_co_edge_control")
+	h._assert_hud("non-shared edge: a BOTTOM-docked panel displaces the TOP bar not at all (offset %.1f)"
+			% event_dock._edge_offset,
+		is_equal_approx(event_dock._edge_offset, 0.0))
+	h._assert_hud("non-shared edge: …so the bar sits flush against its own screen edge (bar top %.0f)"
+			% event_dock._root.get_global_rect().position.y,
+		absf(event_dock._root.get_global_rect().position.y) <= CO_EDGE_RECT_EPSILON)
+
+	# THE DISPLACED STRIP AT ITS TALLEST: co-edge TOP with the log OPEN. Every co-edge frame above is
+	# the COLLAPSED bar, so the configuration where the strip's own far edge could run off the bottom
+	# of the screen — the panel holding 360px of rim and the bar wanting 304 more — has never been
+	# rendered or measured. The claim is a rect (see `_assert_strip_within_viewport`), and the frame
+	# is worth having beside it because it is the only picture of the log opening BELOW a co-edge
+	# panel rather than against the screen edge.
+	co_edge_panel.set_dock(SIDE_TOP)
+	event_dock.set_dock(SIDE_TOP)
+	h._hud.set_reserved_inset(&"band_panel", SIDE_BOTTOM, 0.0)
+	h._hud.set_reserved_inset(&"band_panel", SIDE_TOP, co_edge_panel.current_reservation_size())
+	_preview_push_event_dock_edge_offset(event_dock, [co_edge_panel])
+	event_dock.set_expanded(true)
+	await h._settle()
+	await h._save("event_dock_co_edge_expanded")
+	h._assert_hud("precondition: the log is OPEN and the bar really is displaced, so the strip is at its tallest (%.0f px at offset %.0f)"
+			% [event_dock._cross_axis_size(), event_dock._edge_offset],
+		event_dock._expanded and event_dock._edge_offset > 0.0)
+	_assert_bar_clears_co_edge(event_dock, co_edge_panel, "the TOP-docked panel with the log OPEN")
+	_assert_strip_within_viewport(event_dock, "co-edge TOP with the log open")
+	event_dock.set_expanded(false)
+	h._hud.set_reserved_inset(&"band_panel", SIDE_TOP, 0.0)
+	await h._settle()
+
+	h._hud.set_reserved_inset(&"band_panel", SIDE_BOTTOM, 0.0)
+	event_dock.set_edge_offset(0.0)
+	co_edge_panel.queue_free()
+	await h.get_tree().process_frame
+	await h._settle()
 
 	event_dock.queue_free()
 	await h.get_tree().process_frame
