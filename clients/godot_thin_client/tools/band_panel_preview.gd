@@ -205,6 +205,15 @@ var _hud: HudLayer
 var _panel: BandCityPanel
 ## The last state `_save`d, so an assertion failure names the frame it fired on.
 var _current_state := "<pre-render>"
+## Set by `_unhandled_input` below — this harness's stand-in for `MapView`'s hex picking, which is also
+## an `_unhandled_input` handler. See `_assert_open_strip_reaches_the_map`.
+var _unhandled_press_seen := false
+
+## The probe MapView's hex picking stands in for: a press that survives the GUI pass and reaches
+## unhandled input is a press that would have selected the hex under the pointer.
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed:
+		_unhandled_press_seen = true
 
 
 # ---- LEGACY FIXTURE ADAPTER: the four stances -> the escapement floor ---------------------------
@@ -450,6 +459,13 @@ func _ready() -> void:
 	var bg := ColorRect.new()
 	bg.color = Color(0.10, 0.15, 0.16)
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	# IT STANDS IN FOR THE MAP, AND THE MAP CONSUMES NOTHING. A `ColorRect` is a `Control`, so at the
+	# default `STOP` this backdrop swallowed every press that was not over the panel — which made the
+	# click-through claim `_assert_open_strip_reaches_the_map` exists for unaskable here (the harness's
+	# own decoration would have failed it whatever the panel did). In the live client the map is a
+	# `Node2D` picking hexes out of `_unhandled_input`, so `IGNORE` is what makes the backdrop honest.
+	# The same fix `ui_preview`'s backdrop needed for the event dock's overlay probe.
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bg_layer.add_child(bg)
 
 	# Isolate the narrative/HUD-panel preferences from the player's real profile before the HUD
@@ -1324,8 +1340,10 @@ func _render_dock_row_states() -> void:
 	# configuration it describes. It runs LAST because it re-pins the canvas, and the round-trip state
 	# above compares against a baseline captured at `DOCKROW_CANVAS`.
 	#
-	# Past `_wide_content_cap()` the content column stops filling, and the whole question is what the
-	# `HBoxContainer` then does with the slack. It is deliberately a DOCK-ROW state rather than a wider
+	# The card is sized from `_card_width()` and placed by `_position_card_and_rail`, so the question this
+	# frame asks is what the panel does with a strip FAR wider than its content wants: the card must come
+	# out at its declared width and sit centred in the room the chrome cluster leaves, with open map
+	# either side, rather than stretching to the monitor. It is deliberately a DOCK-ROW state rather than a wider
 	# `band_panel_wide_ultrawide`: the parked chrome is the subject, so the frame needs the REAL minimap
 	# this block has already seeded — against an empty `MinimapContainer` the rail is the zoom rail's
 	# ~80px and a mis-placed rail is nearly invisible.
@@ -1358,6 +1376,9 @@ func _render_dock_row_states() -> void:
 	_assert_rail_is_right_justified("band_panel_dockrow_ultrawide_empty")
 	_assert_card_is_centred("band_panel_dockrow_ultrawide_empty")
 	_assert_card_follows_its_content(busy_card, busy_columns, "band_panel_dockrow_ultrawide_empty")
+	# The state with the MOST open map around its card, so the gaps this probes are the ones a player
+	# actually loses when the strip eats their clicks.
+	await _assert_open_strip_reaches_the_map("band_panel_dockrow_ultrawide_empty")
 
 ## Put a REAL embedded minimap in the HUD's `MinimapContainer` before the dock-row states render.
 ## Without it those frames judge the reflow against an EMPTY container — the left rail collapses to the
@@ -1578,6 +1599,165 @@ func _assert_card_is_centred(state_name: String) -> void:
 		return
 	print("band_panel_preview: assert OK — %s the card is centred (%.0fpx of open map either side)" % [
 		state_name, lead_margin])
+
+## GUARD: THE OPEN MAP EITHER SIDE OF THE CARD IS STILL CLICKABLE (issue #377).
+##
+## A horizontal dock reserves the whole strip but only DRAWS two islands in it, and the map renders
+## through the gaps — so the gaps must behave like map. `MapView` picks hexes out of `_unhandled_input`,
+## and the Viewport marks a press handled the moment any `STOP` control under the pointer takes it, so a
+## `PanelRoot` left at the `Control` default silently eats every click, drag-pan and wheel-zoom aimed at
+## the ~1929px of visible map around a 3440 bottom dock. Nothing about that is visible in a PNG: the
+## frame is pixel-identical either way, which is why this claim is behavioural.
+##
+## **Driven through the REAL dispatch** (`Viewport.push_input`) against this harness's own
+## `_unhandled_input`, the `ui_preview` event-dock idiom: the GUI pass runs first, and a press it
+## consumes never becomes unhandled. Inspecting `mouse_filter` alone would assert the cause and not the
+## effect — the filters are read back too, but only BESIDE the behaviour, so a future regression is
+## legible rather than merely detected.
+##
+## **All three halves are required.** The precondition (open canvas reaches the map path) is what stops a
+## probe that never fires from passing everywhere — the failure the event-dock version was rewritten to
+## avoid. The gaps must reach. And the two ISLANDS must not, or a probe that fires indiscriminately would
+## pass just as well.
+##
+## **The island half is asserted on each island's OWN surface** — the card's chrome ring (its border and
+## content margins, where `PanelCard` itself is what the pointer finds) and the chrome cluster's bare
+## column — never on the card's INTERIOR. The interior is zone content, whose controls carry their own
+## filters, and it is measured as leaky: a press into the work board's blank area (a ~200×50 canvas-px
+## region of `Zone_work` here) reaches `_unhandled_input` even though `PanelCard` is `STOP` and covers it,
+## and neither a `STOP` child of the card nor a `STOP` sibling BEHIND it closes the hole (both tried; only
+## a sibling in FRONT of the card does, which would eat the panel's own buttons). Asserting the interior
+## would therefore pin an engine behaviour this panel does not control, in a claim about `_root`.
+func _assert_open_strip_reaches_the_map(state_name: String) -> void:
+	var strip := _panel._root.get_global_rect()
+	var card := _panel._panel.get_global_rect()
+	var rail_span: float = _panel._rail_span()
+	var failures: Array[String] = []
+	# PRECONDITION: a press on bare canvas, far from the strip, must reach unhandled input at all.
+	var canvas: Vector2 = get_viewport().get_visible_rect().size
+	if not await _press_reaches_map(_canvas_to_window(canvas * PROBE_CANVAS_CENTRE_FRACTION)):
+		failures.append("a press on bare canvas never reaches _unhandled_input, so this probe proves nothing")
+	# THE CLAIM: both gaps — leading (strip edge → card) and trailing (card → the chrome cluster).
+	var gaps := {
+		"the open strip LEADING the card": Rect2(
+			strip.position, Vector2(card.position.x - strip.position.x, strip.size.y)),
+		"the open strip TRAILING the card": Rect2(
+			Vector2(card.end.x, strip.position.y),
+			Vector2(strip.end.x - rail_span - card.end.x, strip.size.y)),
+	}
+	for gap_name_variant in gaps:
+		var gap: Rect2 = gaps[gap_name_variant]
+		if gap.size.x <= 2.0 * PROBE_RECT_INSET:
+			failures.append("%s is only %.0fpx wide — there is no open map to click, so stage a narrower card" % [
+				gap_name_variant, gap.size.x])
+			continue
+		for point in _rect_probe_points(gap):
+			if not await _press_reaches_map(_canvas_to_window(point)):
+				failures.append("a press at %s in %s never reached the map's input path" % [point, gap_name_variant])
+				break
+	# THE COMPLEMENT: each ISLAND still eats the clicks that land on its own surface, or the probe is
+	# simply always true. The card is probed on its chrome RING and the chrome cluster on its bare column.
+	var islands := {
+		"the card's own chrome ring": _rect_ring_probe_points(card),
+		"the chrome cluster": _rect_ring_probe_points(Rect2(
+			Vector2(strip.end.x - _panel._rail_width(), strip.position.y),
+			Vector2(_panel._rail_width(), strip.size.y))),
+	}
+	for island_name_variant in islands:
+		for point: Vector2 in islands[island_name_variant]:
+			if await _press_reaches_map(_canvas_to_window(point)):
+				failures.append("a press at %s on %s fell through to the map's input path" % [
+					point, island_name_variant])
+				break
+	# The filters that make all of that true, read back beside the behaviour.
+	if _panel._root.mouse_filter != Control.MOUSE_FILTER_IGNORE:
+		failures.append("PanelRoot's mouse_filter is %d, not IGNORE — the strip is not transparent to the pointer" % _panel._root.mouse_filter)
+	if _panel._panel.mouse_filter != Control.MOUSE_FILTER_STOP:
+		failures.append("PanelCard's mouse_filter is %d, not STOP" % _panel._panel.mouse_filter)
+	if _panel._rail.mouse_filter != Control.MOUSE_FILTER_STOP:
+		failures.append("ChromeRail's mouse_filter is %d, not STOP" % _panel._rail.mouse_filter)
+	if failures.is_empty():
+		print("band_panel_preview: assert OK — %s the open map either side of the card takes clicks (%.0fpx leading, %.0fpx trailing) and the card still eats its own" % [
+			state_name, card.position.x - strip.position.x, strip.end.x - rail_span - card.end.x])
+		return
+	for failure in failures:
+		push_error("band_panel_preview: %s — %s" % [state_name, failure])
+
+## Where the "is the probe alive at all" press lands: the middle of the canvas, which on every state
+## that runs this guard is bare ground — the strip is on an edge and the HUD's own columns are not.
+const PROBE_CANVAS_CENTRE_FRACTION := 0.5
+## How far inside a rect a probe point sits. Two canvas px: unambiguously within the rect after the
+## canvas→window scale, small enough to still land inside a thin margin.
+const PROBE_RECT_INSET := 2.0
+
+## The RING of a rect — its corners and edge midpoints, `PROBE_RECT_INSET` inside, with the centre left
+## out. That is the band an island owns itself: the card's border + content margins, the chrome
+## cluster's bare column. See the guard's docstring for why the interior is deliberately not asked.
+func _rect_ring_probe_points(rect: Rect2) -> Array[Vector2]:
+	var points := _rect_probe_points(rect)
+	points.remove_at(points.size() / 2)
+	return points
+
+## Nine points across a rect — corners, edge midpoints and centre, each pulled `PROBE_RECT_INSET`
+## inside. The centre alone would never do for the OPEN-STRIP half: the gap beside the card is wide, and
+## a filter that leaked only at its edges would pass a single-sample probe.
+func _rect_probe_points(rect: Rect2) -> Array[Vector2]:
+	var lo := rect.position + Vector2(PROBE_RECT_INSET, PROBE_RECT_INSET)
+	var hi := rect.end - Vector2(PROBE_RECT_INSET, PROBE_RECT_INSET)
+	var mid := rect.get_center()
+	return [
+		Vector2(lo.x, lo.y), Vector2(mid.x, lo.y), Vector2(hi.x, lo.y),
+		Vector2(lo.x, mid.y), mid, Vector2(hi.x, mid.y),
+		Vector2(lo.x, hi.y), Vector2(mid.x, hi.y), Vector2(hi.x, hi.y),
+	]
+
+## Did a left-press at this WINDOW point survive the GUI pass and reach `_unhandled_input`? That is
+## exactly "would MapView have picked the hex underneath".
+func _press_reaches_map(window_point: Vector2) -> bool:
+	_unhandled_press_seen = false
+	var approach := InputEventMouseMotion.new()
+	approach.position = window_point
+	get_viewport().push_input(approach)
+	await get_tree().process_frame
+	var press := InputEventMouseButton.new()
+	press.button_index = MOUSE_BUTTON_LEFT
+	press.pressed = true
+	press.position = window_point
+	get_viewport().push_input(press)
+	await get_tree().process_frame
+	var seen := _unhandled_press_seen
+	await _release_press(window_point)
+	return seen
+
+## Finish the click `_press_reaches_map` started, and it is not optional. A press with no release
+## LATCHES `gui.mouse_focus` on whatever control took it, and Godot then routes every later press to
+## that control WITHOUT re-picking — so probe 2 onwards would report probe 1's answer wherever they
+## landed. The MOTION comes first so a `BaseButton` holding the press sees the pointer leave and clears
+## `pressing_inside`: the release then cancels the click instead of firing it, which is what keeps a
+## probe over the header's dock chooser from re-docking the panel mid-assertion.
+
+func _release_press(window_point: Vector2) -> void:
+	var park := _canvas_to_window(get_viewport().get_visible_rect().size * PROBE_CANVAS_CENTRE_FRACTION)
+	var motion := InputEventMouseMotion.new()
+	motion.position = park
+	motion.relative = park - window_point
+	get_viewport().push_input(motion)
+	var release := InputEventMouseButton.new()
+	release.button_index = MOUSE_BUTTON_LEFT
+	release.pressed = false
+	release.position = park
+	get_viewport().push_input(release)
+	await get_tree().process_frame
+
+## Canvas coordinates → WINDOW coordinates, which is what `push_input` takes. The states pin
+## `content_scale_size` to their canvas, and the WM can refuse the matching window size, so a control's
+## own rect and an input position are not guaranteed to be in the same units.
+func _canvas_to_window(canvas_point: Vector2) -> Vector2:
+	var canvas: Vector2 = get_viewport().get_visible_rect().size
+	if canvas.x <= 0.0 or canvas.y <= 0.0:
+		return canvas_point
+	var window := Vector2(get_window().size)
+	return Vector2(canvas_point.x / canvas.x * window.x, canvas_point.y / canvas.y * window.y)
 
 ## How far `rect` pokes outside `bounds` on each axis (negative = comfortably inside).
 func _rect_overflow(rect: Rect2, bounds: Rect2) -> Vector2:

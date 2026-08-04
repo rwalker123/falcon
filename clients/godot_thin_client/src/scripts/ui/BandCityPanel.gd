@@ -279,25 +279,23 @@ var _rail_expand_button: Button
 # zone host. `_zones` holds the three Hud-built zone Controls the panel OWNS (freed on the next
 # `set_zones`); `_reparent_zones` homes them into whichever hosts are active, so a shell flip needs no
 # Hud re-render. Nothing here measures content — the shells fill a card whose size is fixed per dock.
-## The card's whole content column (header + body). It is what CENTRES on an ultrawide — the card
-## fill and the accent seam stay full-bleed, since the panel still reserves the entire edge.
+## The card's whole content column (header + body). It always FILLS its card: since issue #377 the CARD
+## is the thing sized to its content, and the centring happens one level up on the card as a whole.
 var _panel_column: VBoxContainer
-## The card's single row: the content column, then the trailing rail host — there is no leading rail. The
-## card itself stays full-bleed (`PRESET_FULL_RECT`) — a bottom dock reads as ONE continuous bar, and
-## insetting the card would break it into visual islands. The chrome sits ON the card; only the content
-## column is inset by the rail.
+## The card's row, holding just the content column. The chrome rail was its trailing cell until issue
+## #377 made the two separate islands, so the row is a single-cell wrapper now — see `_build`.
 var _card_row: HBoxContainer
-## The row's TRAILING chrome rail (issue #324): one column at the row's right end holding the HUD's
-## bottom-bar chrome stacked vertically — nav cluster on top, turn cluster below — so it shares this
-## row instead of stacking against it. The panel owns the rail, its stack and the two slot HOSTS, and
+## The strip's TRAILING chrome rail (issue #324): one column at the strip's right end holding the HUD's
+## bottom-bar chrome stacked vertically — nav cluster on top, turn cluster below — so it shares the
+## panel's row instead of stacking against it. A SIBLING of the card under `_root` since issue #377, not
+## a cell of `_card_row`. The panel owns the rail, its stack and the two slot HOSTS, and
 ## NOTHING inside those hosts — contrast `set_zones`, which owns and frees the zone contents it is
 ## handed. Never add to, read, or free a slot's children here.
 ## `_rail` is a PLAIN `Control` and that is load-bearing: it blocks the stack's minimum size from
 ## propagating out to the card, which is what lets everything INSIDE it be ordinary containers.
 var _rail: Control
-## The hairline + gaps between the content column and the rail, so the rail reads as its own region
-## exactly like the three zones do rather than butting up against the parties content. Shown/hidden
-## WITH the rail — a vertical dock must not grow a stray hairline (nor pay its 25px).
+## The rail's two slots, stacked and centred inside it (`_build_rail` states why the centring is a
+## container's job and not anchor arithmetic).
 var _rail_stack: VBoxContainer
 var _rail_slots: Dictionary = {}          # slot:int (RAIL_SLOT_*) -> Control host
 ## The rail column's width, DECLARED by the HUD (`set_rail_width`) — never measured from the content.
@@ -512,23 +510,37 @@ func _build() -> void:
 	_root = Control.new()
 	_root.name = "PanelRoot"
 	_root.visible = _shown
+	# **THE LAYOUT REGION IS TRANSPARENT TO THE POINTER** (issue #377) — the exact OPPOSITE call from
+	# `EventDockPanel._build`, and for the same mechanism read the other way round. `_root` spans the
+	# WHOLE reserved strip (`_apply_root_anchors`), but since the card became a floating island most of
+	# that strip is LIVE MAP. `MapView` picks hexes out of `_unhandled_input`, and a `STOP` control under
+	# the pointer — the `Control` default — makes the Viewport mark the press handled before it ever gets
+	# there. Without `IGNORE` the ~1929px of open map either side of the card on a 3440 bottom dock can be
+	# neither clicked to select a hex, nor right/middle-dragged to pan, nor wheel-zoomed. The two things
+	# that must still eat their own clicks are `STOP` in their own right below — the card and the chrome
+	# cluster — so this costs the islands nothing; an `IGNORE` parent does not stop its children being
+	# picked. A vertical dock is unaffected either way: the card fills that strip edge to edge.
+	_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_root)
 
 	_panel = PanelContainer.new()
 	_panel.name = "PanelCard"
 	_panel.add_theme_stylebox_override("panel", _panel_stylebox())
 	_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	# The card DOES eat its own clicks — a press on the panel must never also select the hex behind it.
+	# `STOP` is the `Control` default, set explicitly because with `_root` on `IGNORE` it is the surface
+	# that carries the whole claim, exactly as `EventDockPanel` sets its own card's filter.
+	_panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	_root.add_child(_panel)
 
-	# The card's row: content column · trailing rail. The rail is empty until the HUD declares a width
-	# (`set_rail_width`), so on a vertical dock — and on a horizontal one before the HUD parks its
-	# chrome — this HBox is a transparent pass-through and the column fills the card exactly as before.
-	# The column is added FIRST and the rail LAST, which is what puts the rail at the TRAILING end.
+	# The card's row. It has exactly ONE child — the content column — since issue #377 moved the chrome
+	# rail out to be a sibling of the card rather than this row's trailing cell. The HBox is kept because
+	# the column's fill/expand flags and the card's inner padding are stated through it, and because a
+	# second cell inside the card is a thing this row can grow again without a structural change.
 	_card_row = HBoxContainer.new()
 	_card_row.name = "CardRow"
-	# `ZONE_SEPARATION`, the SAME gutter the wide shell puts either side of a zone separator — with the
-	# hairline between them that is `RAIL_SEPARATOR_SPAN`, i.e. one inter-zone gutter exactly. A
-	# `BoxContainer` skips separation for hidden children, so a retired rail costs nothing here.
+	# `ZONE_SEPARATION`, the same gutter the wide shell puts either side of a zone separator. With one
+	# child it costs nothing today; it is here so a second cell would be spaced like every other region.
 	_card_row.add_theme_constant_override("separation", ZONE_SEPARATION)
 	_card_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_card_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -537,8 +549,9 @@ func _build() -> void:
 	var column := VBoxContainer.new()
 	column.name = "PanelColumn"
 	column.add_theme_constant_override("separation", COLUMN_SEPARATION)
-	# Seeded to what `_apply_wide_content_cap`'s fill branch sets, so the column fills the row from the
-	# very first layout pass rather than sitting at its minimum width until that runs.
+	# The column simply FILLS its card — the card is the thing that narrows now (`_card_width`), and the
+	# centring happens one level up on the whole card (`_position_card_and_rail`). Set once, at
+	# construction: no layout pass changes it.
 	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	column.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_card_row.add_child(column)
@@ -864,60 +877,25 @@ func _relayout_body() -> void:
 	_body_is_wide = _shell_is_wide()
 	if _body_is_wide != was_wide:
 		_rebuild_tab_bar()
-	_apply_wide_content_cap()
 	_reparent_zones()
 	_update_body_visibility()
 
-## The widest the three zones can USE: both flanks, the work board at its column cap, and the
-## separators between them. Past this the board cannot grow another column, so every extra pixel would
-## only stretch the zones — which on an ultrawide leaves one row of work strung across two feet of
-## screen and pushes the band zone and the parties zone so far apart that reading one loses the other.
-func _wide_content_cap() -> float:
-	return ZONE_BAND_WIDTH + ZONE_PARTY_WIDTH + ZONE_WORK_MAX_WIDTH + _wide_separator_span()
-
 ## What the two separators + their gaps cost. The value lives in `WIDE_SEPARATOR_SPAN` (a `const`, so
-## `WIDE_SHELL_MIN_WIDTH` can use it too); this is the call-site form, shared by the cap and
+## `WIDE_SHELL_MIN_WIDTH` can use it too); this is the call-site form, shared by `_card_width` and
 ## `work_zone_size`, so the three can never disagree about how much width the chrome eats.
 func _wide_separator_span() -> float:
 	return WIDE_SEPARATOR_SPAN
 
-## Centre the card's whole CONTENT COLUMN once the panel is wider than the zones can use, leaving equal
-## margins either side; below the cap it fills as before. The header goes with it deliberately: capping
-## the body alone left the band's name at the far left of the monitor and its cycler at the far right,
-## a screen apart, straddling a centred island of content. The card fill and the seam are untouched —
-## the panel still reserves the whole edge, it just stops STRETCHING into all of it.
-## **THE CONTENT COLUMN ALWAYS FILLS ITS CARD NOW, AND THE CARD IS WHAT GOT NARROW** (issue #377).
-##
-## This used to cap the COLUMN at `_wide_content_cap()` and centre it inside a full-width card, which
-## is the shape a full-bleed bar forces: the card had to span the strip, so the only thing left to
-## narrow was its content. Two symptoms followed. `SHRINK_CENTER` clears the expand flag, so with the
-## rail on `SIZE_FILL` the row had no expanding child and `BoxContainer` packed both from the LEADING
-## edge — the column flush left, the parked chrome at the 72% mark and ~790px of dead card trailing it.
-## And even fixed, the *card* still stretched the monitor with an empty work zone stranded in it.
-##
-## The card is an island sized to its content now (`_card_width` / `_position_card_and_rail`), so the
-## column's job is simply to fill it — one flag, no branch, and the centring happens one level up where
-## the thing being centred is the whole card rather than its innards.
-func _apply_wide_content_cap() -> void:
-	if _panel_column == null:
-		return
-	_panel_column.custom_minimum_size.x = 0.0
-	_panel_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-
-## How wide the CARD draws. A vertical dock is the fixed strip; a horizontal one is exactly what its
-## content needs, which is what stops a bottom dock spanning an ultrawide.
-##
-## **The wide shell's width is DECLARED, not measured** — the flanks are fixed, and the work board's
-## column count arrives through `set_work_columns` from the controller that knows how many sources
-## there are. That direction is the `set_rail_width` contract again, and it is what keeps this
-## acyclic: the SHELL is still chosen from the room the strip has (`_shell_is_wide`), never from the
-## card, so nothing here can feed back into the choice that produced it.
-##
-## The narrow shell takes the whole available strip: it is reached only when there is too little room
-## for three zones, i.e. exactly when there is nothing to give back.
 ## Declare the room the card must leave at each end of a horizontal strip — the HUD columns it must not
-## be drawn over. `Main` owns the widths (they are the HUD's, and authored rather than measured, so this
-## bound cannot jump when the player selects a tile); the panel owns what to do with them.
+## be drawn over. `Main` owns the widths; the panel owns what to do with them.
+##
+## **They are the columns' LIVE widths, not the HUD's authored minimums** (`HudLayer.lateral_column_widths`),
+## which is the opposite of the bound the event dock takes and deliberately so. That one fixes an EDGE
+## that must not jitter from turn to turn, and a column drawing wider than its minimum merely overlaps it
+## a little. This one decides whether a CARD is drawn THROUGH the readouts, where being a little wrong is
+## not cosmetic: measured at 1920 they render 419px against a 344px authored minimum, because the metrics
+## line is simply longer than the minimum allows for. So the bound moves when the columns do — `Main`
+## re-pushes it per snapshot, and this early-outs on an unchanged pair.
 ##
 ## **Without this the top-dock HUD exemption is only correct for a SPARSE band.** A band with no worked
 ## sources makes a narrow card with room either side, which is what made the fix look complete; a band
@@ -938,6 +916,17 @@ func set_lateral_bounds(leading: float, trailing: float) -> void:
 func _available_card_span() -> float:
 	return maxf(_panel_extent().x - _rail_span() - _bound_leading - _bound_trailing, 0.0)
 
+## How wide the CARD draws. A vertical dock is the fixed strip; a horizontal one is exactly what its
+## content needs, which is what stops a bottom dock spanning an ultrawide.
+##
+## **The wide shell's width is DECLARED, not measured** — the flanks are fixed, and the work board's
+## column count arrives through `set_work_columns` from the controller that knows how many sources
+## there are. That direction is the `set_rail_width` contract again, and it is what keeps this
+## acyclic: the SHELL is still chosen from the room the strip has (`_shell_is_wide`), never from the
+## card, so nothing here can feed back into the choice that produced it.
+##
+## The narrow shell takes the whole available strip: it is reached only when there is too little room
+## for three zones, i.e. exactly when there is nothing to give back.
 func _card_width() -> float:
 	if _is_vertical_edge(_dock_edge):
 		return PANEL_WIDTH
@@ -1009,7 +998,11 @@ func _shell_is_wide() -> bool:
 	# a 380px minimum, i.e. exactly the invariant `WIDE_SHELL_MIN_WIDTH` was derived to protect.
 	return _available_card_span() >= WIDE_SHELL_MIN_WIDTH
 
-## The panel card's outer size for the current dock: fixed on the cross axis, the window on the other.
+## The RESERVED STRIP for the current dock: fixed on the cross axis, the window on the other. It was the
+## card's outer size until issue #377, when the card stopped filling a horizontal strip; it is the region
+## `_root` spans, and what `_available_card_span()` subtracts the chrome cluster and the HUD columns from
+## to get the room the card may actually use. On a VERTICAL dock the card still fills it, so the two
+## readings coincide there.
 func _panel_extent() -> Vector2:
 	var window := _viewport_size()
 	if _is_vertical_edge(_dock_edge):
@@ -1021,12 +1014,10 @@ func _panel_extent() -> Vector2:
 func _wide_panel_height() -> float:
 	return minf(PANEL_HEIGHT_WIDE, _viewport_size().y * MAX_WIDE_HEIGHT_FRACTION)
 
-## The card's INTERIOR box — the outer extent less the border and the content margins the card draws
-## with (`_panel_stylebox`), less whatever the chrome rail + its separator take off the row. Chrome only;
-## never content.
-## `work_zone_size()` and `_apply_wide_content_cap()` both read this, so both follow the rail with no
-## edit of their own — and the ultrawide `SHRINK_CENTER` path then centres the content column in the room
-## the rail leaves, which is the wanted behaviour (chrome pinned to the trailing edge, content centred).
+## The card's INTERIOR box — what the card DRAWS AT, less the border and the content margins it draws
+## with (`_panel_stylebox`). Chrome only; never content.
+## `work_zone_size()` and `_affordable_work_columns()` read this, so both follow the card's width with no
+## edit of their own.
 func _interior_size() -> Vector2:
 	var chrome_v := 2.0 * (PANEL_CONTENT_MARGIN_V + PANEL_BORDER_WIDTH)
 	# The WIDTH comes off the CARD, not the strip (issue #377): the card no longer spans a horizontal
@@ -1146,6 +1137,10 @@ func _build_rail() -> void:
 	_rail.name = "ChromeRail"
 	_rail.clip_contents = true
 	_rail.visible = false
+	# The chrome island eats its own clicks, for the same reason the card does: `_root` is `IGNORE` now,
+	# so a press on the rail's bare column would otherwise fall straight through to the hex behind it.
+	# `STOP` is the `Control` default; explicit because here it is load-bearing rather than incidental.
+	_rail.mouse_filter = Control.MOUSE_FILTER_STOP
 	# **A SIBLING OF THE CARD, NOT A CHILD OF IT** (issue #377). The rail used to be the last cell of
 	# `_card_row`, i.e. chrome sitting ON the card — which is what made a horizontal dock read as ONE
 	# continuous bar spanning the monitor. The card is an ISLAND now (`_position_card_and_rail`), so the

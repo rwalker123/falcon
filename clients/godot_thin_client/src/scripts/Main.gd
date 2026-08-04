@@ -597,6 +597,14 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     var t_selection: int = profile.begin(PROFILE_SELECTION)
     _refresh_hud_selection()
     profile.end(PROFILE_SELECTION, t_selection)
+    # RE-PUSH THE BAND CARD'S LATERAL BOUNDS, here at the end of the fan-out that just moved the HUD
+    # columns they measure. The other caller is `_apply_reservation`, and the band panel's reservation
+    # is fixed per dock edge — so on its own the bound is sampled on dock/collapse/hide/resize and never
+    # again, while the live widths move in ordinary play (the top-bar metrics line grows as its numbers
+    # gain digits; `L`/`V`/`R` toggle right-dock cards). A stale bound leaves the card drawn over the
+    # readouts, which is the exact failure it exists to prevent. `set_lateral_bounds` early-outs on an
+    # unchanged pair, so the per-turn cost is two `maxf`s and a compare — no relayout unless it moved.
+    _update_band_panel_lateral_bounds()
     _camera_initialized = true
     var t_scripting: int = profile.begin(PROFILE_SCRIPTING)
     if script_host_manager != null and script_host_manager.has_host():
@@ -1217,8 +1225,18 @@ func _reserver_overlays_hud(id: StringName, edge: int) -> bool:
 ## 1920px strip. A band with NO sources makes a narrow card with room to spare, which is exactly why the
 ## exemption alone LOOKS complete until you open a busy band.
 ##
-## The widths are the HUD's AUTHORED minimums, never measured, so this bound cannot jump when the player
-## selects a tile and the selection card appears — the same rule the event dock's own bound follows.
+## **The widths are the columns' LIVE extents, not the HUD's authored minimums** — `lateral_column_widths`
+## takes the greater of the two deliberately, and that is the OPPOSITE of the rule the event dock's own
+## bound follows. The dock bounds an EDGE that must not jitter from turn to turn, so authored is right
+## there and a column drawing wider merely overlaps it a little. This bound decides whether a CARD is
+## drawn THROUGH the readouts: measured at 1920 they render 419px against a 344px authored minimum
+## (the metrics line is longer than the minimum allows for), so an authored bound puts the card straight
+## through them.
+##
+## Live widths MOVE in ordinary play — the metrics line grows as its numbers gain digits, `L`/`V`/`R`
+## toggle right-dock cards — which is why this is re-pushed per snapshot from `_apply_snapshot` as well
+## as from `_apply_reservation`: the reservation alone changes only on dock/collapse/hide/resize, and a
+## bound sampled only there goes stale while the card keeps being placed against it.
 func _update_band_panel_lateral_bounds() -> void:
     if band_city_panel == null or not band_city_panel.has_method("set_lateral_bounds"):
         return
