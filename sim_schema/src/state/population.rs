@@ -500,10 +500,19 @@ pub struct PopulationCohortState {
     /// elapsed. Appended (append-only).
     #[serde(default)]
     pub hunting_kit_durability: f32,
-    /// **Remaining condition on the band's CARRY kit** (baskets), same scale and same cliff as
-    /// [`Self::hunting_kit_durability`]. Wears per **biomass hauled home**. Appended (append-only).
+    /// **Remaining condition on the band's SLED kit** (travois / drag harness — the *hunt's* carry),
+    /// same scale and same cliff as [`Self::hunting_kit_durability`]. Wears per **biomass hauled home
+    /// from a hunt**. Appended (append-only).
     #[serde(default)]
-    pub carry_kit_durability: f32,
+    pub sled_kit_durability: f32,
+    /// **Remaining condition on the band's BASKET kit** (the *forage* web's carry), same scale and
+    /// same cliff. Wears per **biomass gathered**.
+    ///
+    /// **A separate field from [`Self::sled_kit_durability`], not a second reading of it** — the two
+    /// kits do different jobs on different webs and run down on different quanta (§4.8, "one kit, one
+    /// job"), so a band can be out of baskets while its sled is untouched. Appended (append-only).
+    #[serde(default)]
+    pub basket_kit_durability: f32,
     /// **This band's per-hunter combat `attack`**, kit resolved in — `1.0` bare-handed (the
     /// `creatures.json` `person` row) and `20.0` with the hunting kit
     /// (`equipment.json` `hunting_kit.equipped_attack`).
@@ -516,16 +525,27 @@ pub struct PopulationCohortState {
     /// (append-only).
     #[serde(default)]
     pub hunter_attack: f32,
-    /// **This band's per-worker hunt haul rate** (biomass/turn), kit resolved in — the term every
-    /// hunt take, crew-size figure and forecast is capped by. Equipped it is `labor_config.json`'s
-    /// `hunt.per_worker_biomass_capacity`; dry it is `equipment.json`'s
-    /// `carry_kit.unequipped_per_worker_biomass_capacity`.
+    /// **This band's per-worker HUNT haul rate** (biomass/turn), sled resolved in — the term every
+    /// hunt take, crew-size figure and hunt forecast is capped by. Equipped it is
+    /// `labor_config.json`'s `hunt.per_worker_biomass_capacity`; sledless it is `equipment.json`'s
+    /// `sled_kit.unequipped_per_worker_biomass_capacity`.
     ///
     /// **Band-scoped, unlike [`crate::state::HerdTelemetryState::per_worker_biomass`]**, which stays
     /// the *equipped reference* rate because a herd has no band to resolve a tier against. Appended
     /// (append-only).
     #[serde(default)]
-    pub carry_per_worker_biomass: f32,
+    pub hunt_carry_per_worker_biomass: f32,
+    /// **This band's per-gatherer FORAGE throughput** (biomass/turn *before* the tile's seasonal
+    /// weight), baskets resolved in — the term every gather take and gather forecast is capped by.
+    /// Equipped it is `labor_config.json`'s `forage.per_worker_biomass_capacity`; bare-handed it is
+    /// `equipment.json`'s `basket_kit.unequipped_per_worker_biomass_capacity`.
+    ///
+    /// **The forage web's own number, and before §4.8 there was none** — the field beside it answers
+    /// only for the hunt, and the client must not render one as the other. Band-scoped for the same
+    /// reason: `ForagePatchState::per_worker_biomass` stays the equipped reference rate because a
+    /// patch has no band. Appended (append-only).
+    #[serde(default)]
+    pub forage_carry_per_worker_biomass: f32,
 }
 
 /// Presentation view of a band's resolved settlement stage (mirror of the `SettlementStageView`

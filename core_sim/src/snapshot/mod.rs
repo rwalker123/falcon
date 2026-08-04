@@ -1147,6 +1147,9 @@ mod tests {
             equipped_haul_rate: crate::labor_config::LaborConfig::builtin()
                 .hunt
                 .per_worker_biomass_capacity,
+            equipped_gather_rate: crate::labor_config::LaborConfig::builtin()
+                .forage
+                .per_worker_biomass_capacity,
         };
         let levers = ExpeditionLevers {
             max_party_size: 0,

@@ -1,28 +1,31 @@
-//! **The minimal TOE — two kits, two tiers, one cliff** (`docs/plan_hunt_through_combat.md` §4.8,
-//! `docs/plan_early_game_labor.md` → "Equipment / TOE").
+//! **The minimal TOE — three kits, one job each, one cliff apiece**
+//! (`docs/plan_hunt_through_combat.md` §4.8, `docs/plan_early_game_labor.md` → "Equipment / TOE").
 //!
 //! Pinned against **real turns through the real systems and the real snapshot export**, because the
-//! two halves of this slice have deliberately different shapes and must not be allowed to hide in one
-//! aggregate:
+//! three halves of this slice have deliberately different shapes and must not be allowed to hide in
+//! one aggregate:
 //!
-//! - **The attack half is now LIVE in the take** (`docs/plan_hunt_through_combat.md` §4, slice 4).
-//!   The kill resolves through `combat::resolve_fight`, so `max(0, attack − defense)` decides whether
-//!   a band can hurt its quarry at all: a spear-armed band takes Red Deer and a bare-handed one takes
-//!   **nothing** from them, at any headcount (§4.8 — "everything from a gazelle upward is
-//!   untouchable"). It shipped as a provable identity one slice earlier; that is now inverted, and
-//!   the test below asserts the difference rather than the sameness.
-//! - **The carry half is a stated BALANCE CHANGE.** `per_worker_biomass_capacity` is live in every
-//!   hunt take, so a dry carry kit genuinely hauls less.
+//! - **Spears decide whether a take happens at all.** The kill resolves through
+//!   `combat::resolve_fight`, so `max(0, attack − defense)` is the gate: a spear-armed band takes Red
+//!   Deer and a bare-handed one takes **nothing** from them, at any headcount.
+//! - **The sled decides how much of the kill comes home.** `hunt.per_worker_biomass_capacity` is live
+//!   in every hunt take, so a sledless party genuinely hauls less — and, on a big enough body, leaves
+//!   meat on the range as `wasted`.
+//! - **Baskets decide how much a gatherer gathers.** Before §4.8's "one kit, one job" correction the
+//!   forage web had no kit at all: the kit called *baskets* raised the *hunt's* haul, which is a
+//!   physical nonsense (you drag a carcass; you do not put it in a container).
 //!
-//! Every ordering assertion here is paired with a liveness assertion: *both* tiers are shown
-//! reachable and productive, never just "the equipped one is bigger".
+//! **Every ordering assertion here is paired with a liveness assertion** on *both* sides of the tier,
+//! never just "the equipped one is bigger". And the split itself is pinned by two cross-checks —
+//! baskets must not touch the hunt, the sled must not touch foraging — because that is exactly the
+//! confusion this slice corrects.
 
 use bevy::{math::UVec2, prelude::Entity};
 use core_sim::{
     available_workers, build_headless_app, run_turn, BandEquipment, CommandEventKind,
-    CommandEventLog, CreaturesConfig, EquipmentConfig, Herd, HerdRegistry, LaborAllocation,
-    LaborAssignment, LaborConfig, LaborTarget, PopulationCohort, SimulationConfig, SizeClass,
-    SnapshotHistory, Tile,
+    CommandEventLog, CreaturesConfig, EquipmentConfig, ForageRegistry, Herd, HerdRegistry,
+    LaborAllocation, LaborAssignment, LaborConfig, LaborTarget, PopulationCohort, SimulationConfig,
+    SizeClass, SnapshotHistory, Tile,
 };
 use sim_schema::state::PopulationCohortState;
 
@@ -30,8 +33,7 @@ use sim_schema::state::PopulationCohortState;
 /// seed as the other food-ledger integration tests, for no reason beyond reproducibility.
 const SEED: u64 = 119_304_647;
 /// **Red Deer** — a herbivore with `ferocity 0.15`, so the Phase-0 hunt-danger fight genuinely fires
-/// (which is what gives the attack-half identity something to be identical *about*) without the
-/// aurochs-scale casualties that would churn the working-age bracket between turns.
+/// without the aurochs-scale casualties that would churn the working-age bracket between turns.
 const DEER: &str = "Red Deer";
 const HERD_ID: &str = "toe_deer";
 /// Standing stock far above anything a band can take, so the **escapement** never binds and the take
@@ -41,44 +43,133 @@ const HERD_BIOMASS: f32 = 6_000.0;
 const DEER_BODY_MASS: f32 = 15.0;
 const DEER_REGROWTH: f32 = 0.1;
 const DEER_FODDER_PER_BIOMASS: f32 = 0.05;
-/// **Wild Horses** — the *carry* half's quarry, and it has to be a different animal since slice 4.
+/// **Wild Horses** — the *sled* half's quarry, and it has to be a different animal since slice 4.
 ///
 /// §4.6's per-hunter-turn ceiling is `min(engage_rate, (attack − defense) / durability) × body_mass`,
-/// and the carry tier only decides a take when that ceiling sits **above** the dry rate (12) and
+/// and the sled tier only decides a take when that ceiling sits **above** the sledless rate (12) and
 /// **below** the kitted one (40) — otherwise one bound or the other binds on both tiers and the two
 /// hauls are identical. A Red Deer's ceiling is `min(1, 0.76) × 15 = 11.4`, under *both* rates; a
-/// Wild Horse's is `min(0.5, 0.514) × 40 = 20.0`, squarely between them. That is the regime the carry
-/// kit is a lever in, so that is where it is measured.
+/// Wild Horse's is `min(0.5, 0.514) × 40 = 20.0`, squarely between them. That is the regime the sled
+/// is a lever in, so that is where it is measured.
 const HORSE: &str = "Wild Horses";
 /// `Wild Horses` body mass (`fauna_config.json`).
 const HORSE_BODY_MASS: f32 = 40.0;
 
+/// **A body one small party can bring down but cannot carry** — the regime `AnimalTake::wasted` lives
+/// in, and the one slice 4 made unreachable at the shipped tier (any crew that could make the kill
+/// could carry it). Waste needs `workers × per_worker_carry < body_mass`, because
+/// `quantise_animal_take`'s `max(1, carryable)` is the only site that kills more than it hauls. With
+/// [`WASTE_CREW`] hunters: kitted collects `2 × 40 = 80 ≥ 50`, so nothing is left; sledless collects
+/// `2 × 12 = 24 < 50`, so one body goes down and less than half of it comes home.
+///
+/// Seated on the `Red Deer` fight dials (the herd carries its own `body_mass`), so the *fight* is the
+/// same on both sides and the only thing that varies is the haul.
+const WASTE_BODY_MASS: f32 = 50.0;
+/// Small enough that the sledless crew cannot seat one body, big enough that the fight still puts one
+/// down (`2 hunters × (20 − 1) = 38` damage against a 25-durability body).
+const WASTE_CREW: u32 = 2;
+
 /// A shallow floor: the hunt is allowed to draw the herd down, so nothing about escapement is under
 /// test here.
 const SHALLOW_FLOOR: f32 = 0.05;
+/// **Strip the patch** — the gather's floor, chosen so the *crew* is the binding term on both basket
+/// tiers rather than the escapement ceiling, which is what makes the two tiers comparable.
+const STRIP_THE_PATCH: f32 = 0.0;
 /// Enough turns for wear to accumulate visibly, few enough that the herd cannot roam past the leash.
 const RUN_TURNS: u32 = 4;
+/// One turn is enough for every gather assertion here: the patch is drawn down as it is worked, so a
+/// longer run measures regrowth rather than the crew's throughput.
+const GATHER_TURNS: u32 = 1;
 /// Exported floats are `f32` sums of `Scalar`-quantized takes; a few ULPs of slack, no more.
 const EPSILON: f32 = 1e-3;
 
 // ---------------------------------------------------------------------------------------------
-// Fixture
+// Fixtures
 // ---------------------------------------------------------------------------------------------
 
 /// A booted world with its one resident band hunting a fat deer herd standing on its camp.
 /// `kit` is the band's starting wear, which is the only thing these tests vary.
 fn hunting_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
-    hunting_world_of(DEER, DEER_BODY_MASS, kit)
+    hunting_world_of(DEER, DEER_BODY_MASS, None, kit)
 }
 
 /// [`hunting_world`] against a named quarry — the fight's dials are resolved off the species
 /// (`FaunaConfig::quarry_fight_for`), so a test about which *bound* binds has to say which animal it
-/// means.
+/// means. `crew` overrides the head-count where the binding term is `workers × per_worker_carry`.
 fn hunting_world_of(
     species: &str,
     body_mass: f32,
+    crew: Option<u32>,
     kit: BandEquipment,
 ) -> (bevy::prelude::App, Entity) {
+    let (mut app, band, workers, band_pos) = booted_band();
+    seat_quarry(&mut app, band_pos, species, body_mass);
+    app.world.entity_mut(band).insert((
+        LaborAllocation {
+            assignments: vec![LaborAssignment {
+                target: LaborTarget::Hunt {
+                    fauna_id: HERD_ID.to_string(),
+                    floor: SHALLOW_FLOOR,
+                },
+                workers: crew.unwrap_or(workers).max(1),
+                improvement: None,
+            }],
+            ..Default::default()
+        },
+        kit,
+    ));
+    (app, band)
+}
+
+/// The same world with the band staffing **Forage** on a patch it is standing on or beside — the
+/// basket kit's half of the split. No herd is seated at all, so nothing on this path can wear a sled.
+fn gathering_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
+    let (mut app, band, workers, band_pos) = booted_band();
+    let patch = app
+        .world
+        .resource::<ForageRegistry>()
+        .patches
+        .keys()
+        .copied()
+        .filter(|p| p.x.abs_diff(band_pos.x).max(p.y.abs_diff(band_pos.y)) <= 1)
+        .min_by_key(|p| (p.y, p.x))
+        .expect("the starting band must sit on or beside a forage patch");
+    app.world.entity_mut(band).insert((
+        LaborAllocation {
+            assignments: vec![LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: patch,
+                    floor: STRIP_THE_PATCH,
+                    species: None,
+                },
+                workers: workers.max(1),
+                improvement: None,
+            }],
+            ..Default::default()
+        },
+        kit,
+    ));
+    (app, band)
+}
+
+/// The same world with the band staffing **Scout** — it works every turn and marches, and neither
+/// kills nor gathers. The control for "wear is charged for use, not for turns elapsed".
+fn scouting_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
+    let (mut app, band) = hunting_world(kit);
+    let workers = available_workers(app.world.get::<PopulationCohort>(band).unwrap().working);
+    app.world.entity_mut(band).insert(LaborAllocation {
+        assignments: vec![LaborAssignment {
+            target: LaborTarget::Scout,
+            workers: workers.max(1),
+            improvement: None,
+        }],
+        ..Default::default()
+    });
+    (app, band)
+}
+
+/// `(app, band, available workers, band tile position)` — the shared opening of every fixture above.
+fn booted_band() -> (bevy::prelude::App, Entity, u32, UVec2) {
     let mut app = build_headless_app();
     app.world.resource_mut::<SimulationConfig>().map_seed = SEED;
     app.update();
@@ -93,39 +184,7 @@ fn hunting_world_of(
         .get::<Tile>(tile_entity)
         .expect("band tile")
         .position;
-
-    seat_quarry(&mut app, band_pos, species, body_mass);
-    app.world.entity_mut(band).insert((
-        LaborAllocation {
-            assignments: vec![LaborAssignment {
-                target: LaborTarget::Hunt {
-                    fauna_id: HERD_ID.to_string(),
-                    floor: SHALLOW_FLOOR,
-                },
-                workers: workers.max(1),
-                improvement: None,
-            }],
-            ..Default::default()
-        },
-        kit,
-    ));
-    (app, band)
-}
-
-/// The same world with the band staffing **Scout** instead — it works every turn and marches, and
-/// kills nothing. The control for "wear is charged for use, not for turns elapsed".
-fn scouting_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
-    let (mut app, band) = hunting_world(kit);
-    let workers = available_workers(app.world.get::<PopulationCohort>(band).unwrap().working);
-    app.world.entity_mut(band).insert(LaborAllocation {
-        assignments: vec![LaborAssignment {
-            target: LaborTarget::Scout,
-            workers: workers.max(1),
-            improvement: None,
-        }],
-        ..Default::default()
-    });
-    (app, band)
+    (app, band, workers, band_pos)
 }
 
 fn seat_quarry(app: &mut bevy::prelude::App, pos: UVec2, species: &str, body_mass: f32) {
@@ -159,6 +218,16 @@ fn exported(app: &bevy::prelude::App, band: Entity) -> PopulationCohortState {
         .clone()
 }
 
+/// The exported `wasted_yield` of the band's one assignment — meat killed and left on the range for a
+/// hunt, stock left standing for a gather.
+fn exported_waste(app: &bevy::prelude::App, band: Entity) -> f32 {
+    exported(app, band)
+        .labor_assignments
+        .first()
+        .expect("the band has exactly one assignment")
+        .wasted_yield
+}
+
 fn herd_biomass(app: &bevy::prelude::App) -> f32 {
     app.world
         .resource::<HerdRegistry>()
@@ -177,9 +246,16 @@ fn equipment() -> std::sync::Arc<EquipmentConfig> {
 
 /// A kit worn exactly to its limit — the first spent state, since `equipped` is *strictly below*
 /// `starting_durability`.
-fn dry_carry() -> BandEquipment {
+fn dry_sled() -> BandEquipment {
     BandEquipment {
-        carry_wear: equipment().carry_kit.starting_durability,
+        sled_wear: equipment().sled_kit.starting_durability,
+        ..Default::default()
+    }
+}
+
+fn dry_baskets() -> BandEquipment {
+    BandEquipment {
+        basket_wear: equipment().basket_kit.starting_durability,
         ..Default::default()
     }
 }
@@ -195,18 +271,12 @@ fn dry_hunting() -> BandEquipment {
 // The band starts stocked
 // ---------------------------------------------------------------------------------------------
 
-/// **Start-stocked, and the wire says so.** A freshly generated band carries a full kit on both roles
-/// and reports the *equipped* tier on both axes — which is the shipped opening, unchanged by this
-/// slice.
+/// **Start-stocked, and the wire says so.** A freshly generated band carries a full kit on all three
+/// roles and reports the *equipped* tier on all three axes — which is the shipped opening, unchanged
+/// by this slice.
 #[test]
-fn a_fresh_band_is_kitted_and_publishes_both_equipped_tiers() {
-    let mut app = build_headless_app();
-    app.world.resource_mut::<SimulationConfig>().map_seed = SEED;
-    app.update();
-    let band = {
-        let mut q = app.world.query::<(Entity, &PopulationCohort)>();
-        q.iter(&app.world).next().expect("a starting band").0
-    };
+fn a_fresh_band_is_kitted_and_publishes_all_three_equipped_tiers() {
+    let (mut app, band, _, _) = booted_band();
     // The component is really there — `spawn_profile_population` must insert it, or every band's
     // wear would be silently discarded and the durability model would be inert.
     assert_eq!(
@@ -218,67 +288,75 @@ fn a_fresh_band_is_kitted_and_publishes_both_equipped_tiers() {
     run_turn(&mut app);
     let cohort = exported(&app, band);
     let equipment = equipment();
+    let labor = LaborConfig::builtin();
     assert_eq!(
         cohort.hunting_kit_durability,
         equipment.hunting_kit.starting_durability
     );
     assert_eq!(
-        cohort.carry_kit_durability,
-        equipment.carry_kit.starting_durability
+        cohort.sled_kit_durability,
+        equipment.sled_kit.starting_durability
+    );
+    assert_eq!(
+        cohort.basket_kit_durability,
+        equipment.basket_kit.starting_durability
     );
     assert_eq!(
         cohort.hunter_attack, equipment.hunting_kit.equipped_attack,
         "a kitted hunter fights at the spear tier"
     );
     assert_eq!(
-        cohort.carry_per_worker_biomass,
-        LaborConfig::builtin().hunt.per_worker_biomass_capacity,
-        "a kitted crew hauls at the shipped labor_config rate"
+        cohort.hunt_carry_per_worker_biomass, labor.hunt.per_worker_biomass_capacity,
+        "a sledded crew hauls at the shipped labor_config rate"
+    );
+    assert_eq!(
+        cohort.forage_carry_per_worker_biomass, labor.forage.per_worker_biomass_capacity,
+        "a basket-carrying crew gathers at the shipped labor_config rate"
     );
 }
 
 // ---------------------------------------------------------------------------------------------
-// The carry half — a stated balance change
+// The sled — the HUNT's carry
 // ---------------------------------------------------------------------------------------------
 
-/// **Both carry tiers are reachable AND productive, and the dry one hauls less.** The liveness half
-/// matters as much as the ordering: a dry band must still hunt (you can always take *some*), so a
-/// zero take on either side would pass a naive "equipped > dry" check while meaning the model broke.
+/// **Both hunt-carry tiers are reachable AND productive, and the sledless one hauls less.** The
+/// liveness half matters as much as the ordering: a sledless band must still hunt (you can always
+/// drag *something*), so a zero take on either side would pass a naive "equipped > dry" check while
+/// meaning the model broke.
 #[test]
-fn both_carry_tiers_are_live_and_a_dry_kit_hauls_less() {
+fn both_hunt_carry_tiers_are_live_and_a_sledless_party_hauls_less() {
     let (mut kitted, kitted_band) =
-        hunting_world_of(HORSE, HORSE_BODY_MASS, BandEquipment::default());
-    let (mut dry, dry_band) = hunting_world_of(HORSE, HORSE_BODY_MASS, dry_carry());
+        hunting_world_of(HORSE, HORSE_BODY_MASS, None, BandEquipment::default());
+    let (mut dry, dry_band) = hunting_world_of(HORSE, HORSE_BODY_MASS, None, dry_sled());
 
     run_turn(&mut kitted);
     run_turn(&mut dry);
 
     let kitted_row = exported(&kitted, kitted_band);
     let dry_row = exported(&dry, dry_band);
-    // **The biomass actually hauled home**, read off the carry kit's own wear — `carry_wear` is
-    // charged exactly `wear_per_biomass_carried × carried`, so it inverts to the haul with no
-    // arithmetic of our own. (The herd's raw biomass delta cannot be used: its ecological `K` is
-    // recomputed from the range every turn, so most of the movement is the clamp, not the hunt.)
-    let per_biomass = equipment().carry_kit.wear_per_biomass_carried;
-    let kitted_haul = kit_of(&kitted, kitted_band).carry_wear / per_biomass;
+    // **The biomass actually hauled home**, read off the sled's own wear — `sled_wear` is charged
+    // exactly `wear_per_biomass_hauled × carried`, so it inverts to the haul with no arithmetic of
+    // our own. (The herd's raw biomass delta cannot be used: its ecological `K` is recomputed from
+    // the range every turn, so most of the movement is the clamp, not the hunt.)
+    let per_biomass = equipment().sled_kit.wear_per_biomass_hauled;
+    let kitted_haul = kit_of(&kitted, kitted_band).sled_wear / per_biomass;
     // The dry band started at its limit, so only the wear ADDED this turn is its haul.
-    let dry_haul = (kit_of(&dry, dry_band).carry_wear - dry_carry().carry_wear) / per_biomass;
+    let dry_haul = (kit_of(&dry, dry_band).sled_wear - dry_sled().sled_wear) / per_biomass;
 
     assert!(
         kitted_haul > 0.0 && kitted_row.food_income > 0.0,
-        "the equipped tier must actually bring game home (haul={kitted_haul}, \
-         income={})",
+        "the equipped tier must actually bring game home (haul={kitted_haul}, income={})",
         kitted_row.food_income
     );
     assert!(
         dry_haul > 0.0 && dry_row.food_income > 0.0,
-        "the UNEQUIPPED tier must STILL bring game home — a dry band is a worse hunter, not a \
+        "the UNEQUIPPED tier must STILL bring game home — a sledless band is a worse hauler, not a \
          non-hunter (haul={dry_haul}, income={})",
         dry_row.food_income
     );
     assert!(
         dry_haul < kitted_haul,
-        "a dry carry kit must haul strictly less biomass: dry={dry_haul} vs kitted={kitted_haul}"
+        "a sledless party must haul strictly less biomass: dry={dry_haul} vs kitted={kitted_haul}"
     );
     assert!(
         dry_row.food_income < kitted_row.food_income,
@@ -290,72 +368,331 @@ fn both_carry_tiers_are_live_and_a_dry_kit_hauls_less() {
     // ...and the wire carries both tiers explicitly, so the client never re-derives them.
     let equipment = equipment();
     assert_eq!(
-        kitted_row.carry_per_worker_biomass,
+        kitted_row.hunt_carry_per_worker_biomass,
         LaborConfig::builtin().hunt.per_worker_biomass_capacity
     );
     assert_eq!(
-        dry_row.carry_per_worker_biomass,
-        equipment.carry_kit.unequipped_per_worker_biomass_capacity
+        dry_row.hunt_carry_per_worker_biomass,
+        equipment.sled_kit.unequipped_per_worker_biomass_capacity
     );
-    assert!(kitted_row.carry_kit_durability > 0.0);
+    assert!(kitted_row.sled_kit_durability > 0.0);
     assert_eq!(
-        dry_row.carry_kit_durability, 0.0,
+        dry_row.sled_kit_durability, 0.0,
         "a spent kit reads exactly 0 remaining, never negative"
     );
 }
 
-/// **The cliff is a CLIFF.** Performance is *flat* right up to expiry and then steps down — a
-/// gradual taper would pass a "kit matters" test and is the wrong model (durability and performance
-/// are orthogonal axes). Asserted on the **exported** rate across a wear sweep, and on both kits.
+/// **A party that cannot haul its kill leaves the rest on the range — and that is the sledless case's
+/// whole mechanic** (§4.8: "the sledless hunt needs no new mechanic"). `AnimalTake::wasted` has always
+/// expressed it and the client already displays it; what slice 4 did was make it *unreachable* at the
+/// shipped tier, because any crew that could make the kill could also carry it. A lower sledless carry
+/// puts it back.
+///
+/// Asserted on **both** sides: the sledless party wastes something, and the equipped party on the
+/// *same* quarry with the *same* crew wastes nothing — so the reading is about the sled and not about
+/// the fixture being too small in general. Both must still have killed, or "wasted 0" would be the
+/// trivial truth about a party that never engaged.
+#[test]
+fn a_sledless_party_wastes_the_kill_it_cannot_carry() {
+    let (mut kitted, kitted_band) = hunting_world_of(
+        DEER,
+        WASTE_BODY_MASS,
+        Some(WASTE_CREW),
+        BandEquipment::default(),
+    );
+    let (mut dry, dry_band) = hunting_world_of(DEER, WASTE_BODY_MASS, Some(WASTE_CREW), dry_sled());
+
+    run_turn(&mut kitted);
+    run_turn(&mut dry);
+
+    // Liveness on both sides: each party actually put a body on the ground this turn. Read off the
+    // hunting kit, which is charged per animal killed.
+    assert!(
+        kit_of(&kitted, kitted_band).hunting_wear > 0.0,
+        "the equipped party must have killed, or 'it wasted nothing' is vacuous"
+    );
+    assert!(
+        kit_of(&dry, dry_band).hunting_wear > 0.0,
+        "the sledless party must have killed, or its waste is not a haul failure"
+    );
+
+    let kitted_waste = exported_waste(&kitted, kitted_band);
+    let dry_waste = exported_waste(&dry, dry_band);
+    assert_eq!(
+        kitted_waste, 0.0,
+        "a sledded party seats the whole body: nothing should be left on the range (got \
+         {kitted_waste})"
+    );
+    assert!(
+        dry_waste > 0.0,
+        "a sledless party kills more than it hauls — the meat it leaves is the shortfall's whole \
+         mechanic (got {dry_waste})"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Baskets — the FORAGE web's carry
+// ---------------------------------------------------------------------------------------------
+
+/// **Both gather tiers are reachable AND productive, and bare hands gather far less.** The forage
+/// web's twin of the sled test above, and the half that did not exist before §4.8: `baskets` used to
+/// raise the hunt's haul while `forage.per_worker_biomass_capacity` sat untouched by any kit.
+#[test]
+fn both_gather_tiers_are_live_and_bare_hands_gather_less() {
+    let (mut kitted, kitted_band) = gathering_world(BandEquipment::default());
+    let (mut bare, bare_band) = gathering_world(dry_baskets());
+
+    for _ in 0..GATHER_TURNS {
+        run_turn(&mut kitted);
+        run_turn(&mut bare);
+    }
+
+    let kitted_row = exported(&kitted, kitted_band);
+    let bare_row = exported(&bare, bare_band);
+    // The biomass actually gathered, inverted from the basket kit's own wear — the same trick the
+    // sled test uses, and for the same reason (the patch regrows within the turn, so its biomass
+    // delta is not the take).
+    let per_biomass = equipment().basket_kit.wear_per_biomass_gathered;
+    let kitted_take = kit_of(&kitted, kitted_band).basket_wear / per_biomass;
+    let bare_take =
+        (kit_of(&bare, bare_band).basket_wear - dry_baskets().basket_wear) / per_biomass;
+
+    assert!(
+        kitted_take > 0.0 && kitted_row.food_income > 0.0,
+        "the equipped tier must actually bring food home (take={kitted_take}, income={})",
+        kitted_row.food_income
+    );
+    assert!(
+        bare_take > 0.0 && bare_row.food_income > 0.0,
+        "the UNEQUIPPED tier must STILL gather — bare hands is a handful, not nothing \
+         (take={bare_take}, income={})",
+        bare_row.food_income
+    );
+    assert!(
+        bare_take < kitted_take,
+        "a bare-handed crew must gather strictly less: bare={bare_take} vs kitted={kitted_take}"
+    );
+    assert!(
+        bare_row.food_income < kitted_row.food_income,
+        "...and the player sees it as less food: bare={} vs kitted={}",
+        bare_row.food_income,
+        kitted_row.food_income
+    );
+
+    // ...and the wire carries the forage tier as its OWN field. A client that read the hunt's number
+    // here would be repeating the very defect §4.8 corrected.
+    let equipment = equipment();
+    assert_eq!(
+        kitted_row.forage_carry_per_worker_biomass,
+        LaborConfig::builtin().forage.per_worker_biomass_capacity
+    );
+    assert_eq!(
+        bare_row.forage_carry_per_worker_biomass,
+        equipment.basket_kit.unequipped_per_worker_biomass_capacity
+    );
+    assert!(kitted_row.basket_kit_durability > 0.0);
+    assert_eq!(
+        bare_row.basket_kit_durability, 0.0,
+        "a spent kit reads exactly 0 remaining, never negative"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// One kit, one job — the cross-checks
+// ---------------------------------------------------------------------------------------------
+
+/// **Baskets do not touch the hunt.** The cross-check that would have caught the original defect: a
+/// band whose baskets are gone must hunt *exactly* as a fully-kitted one, because dragging a carcass
+/// is a transport problem and no container helps.
+///
+/// Liveness on both sides: the shared take is non-zero (or "identical" is a statement about two
+/// zeros), and the basket tier really is live on the wire in the same frame — so this cannot pass by
+/// the basket kit having quietly stopped working altogether.
+#[test]
+fn baskets_do_not_touch_the_hunt() {
+    let (mut kitted, kitted_band) =
+        hunting_world_of(HORSE, HORSE_BODY_MASS, None, BandEquipment::default());
+    let (mut basketless, basketless_band) =
+        hunting_world_of(HORSE, HORSE_BODY_MASS, None, dry_baskets());
+
+    run_turn(&mut kitted);
+    run_turn(&mut basketless);
+
+    let kitted_row = exported(&kitted, kitted_band);
+    let basketless_row = exported(&basketless, basketless_band);
+    assert!(
+        kitted_row.food_income > 0.0,
+        "the hunt must pay for this comparison to mean anything"
+    );
+    assert!(
+        basketless_row.forage_carry_per_worker_biomass < kitted_row.forage_carry_per_worker_biomass,
+        "the basketless band must really be on the lower GATHER tier in this same frame, or the \
+         equality below is vacuous"
+    );
+    assert_eq!(
+        basketless_row.hunt_carry_per_worker_biomass, kitted_row.hunt_carry_per_worker_biomass,
+        "a dry basket must not move the hunt's haul rate"
+    );
+    assert!(
+        (basketless_row.food_income - kitted_row.food_income).abs() < EPSILON,
+        "a dry basket must not change what a hunt brings home: {} vs {}",
+        basketless_row.food_income,
+        kitted_row.food_income
+    );
+    assert_eq!(
+        kit_of(&basketless, basketless_band).basket_wear,
+        dry_baskets().basket_wear,
+        "a hunting turn gathers nothing, so it charges no basket wear at all"
+    );
+}
+
+/// **The sled does not touch foraging.** The mirror of the test above: a band with no sled must gather
+/// exactly as a fully-kitted one, because a drag harness does not help you hold more berries.
+#[test]
+fn the_sled_does_not_touch_foraging() {
+    let (mut kitted, kitted_band) = gathering_world(BandEquipment::default());
+    let (mut sledless, sledless_band) = gathering_world(dry_sled());
+
+    for _ in 0..GATHER_TURNS {
+        run_turn(&mut kitted);
+        run_turn(&mut sledless);
+    }
+
+    let kitted_row = exported(&kitted, kitted_band);
+    let sledless_row = exported(&sledless, sledless_band);
+    assert!(
+        kitted_row.food_income > 0.0,
+        "the gather must pay for this comparison to mean anything"
+    );
+    assert!(
+        sledless_row.hunt_carry_per_worker_biomass < kitted_row.hunt_carry_per_worker_biomass,
+        "the sledless band must really be on the lower HUNT tier in this same frame, or the \
+         equality below is vacuous"
+    );
+    assert_eq!(
+        sledless_row.forage_carry_per_worker_biomass, kitted_row.forage_carry_per_worker_biomass,
+        "a dry sled must not move the gather rate"
+    );
+    assert!(
+        (sledless_row.food_income - kitted_row.food_income).abs() < EPSILON,
+        "a dry sled must not change what a gather brings home: {} vs {}",
+        sledless_row.food_income,
+        kitted_row.food_income
+    );
+    assert_eq!(
+        kit_of(&sledless, sledless_band).sled_wear,
+        dry_sled().sled_wear,
+        "a gathering turn hauls no carcass, so it charges no sled wear at all"
+    );
+}
+
+/// **Each kit wears on its OWN quantum, and only on it** (`docs/plan_denial_raid.md` §1.2 — wear
+/// tracks USE). A band that hunts but does not gather must finish the run with whole baskets, and one
+/// that gathers but does not hunt with a whole sled. Both directions, with the used kit's wear
+/// asserted positive so the untouched one is a real absence rather than a dead system.
+#[test]
+fn the_sled_and_the_baskets_wear_on_different_quanta() {
+    let (mut hunting, hunting_band) = hunting_world(BandEquipment::default());
+    let (mut gathering, gathering_band) = gathering_world(BandEquipment::default());
+    for _ in 0..GATHER_TURNS {
+        run_turn(&mut hunting);
+        run_turn(&mut gathering);
+    }
+
+    let hunted = kit_of(&hunting, hunting_band);
+    let gathered = kit_of(&gathering, gathering_band);
+    assert!(
+        hunted.sled_wear > 0.0,
+        "a hunting band drags carcasses home, so its sled must wear: {hunted:?}"
+    );
+    assert_eq!(
+        hunted.basket_wear, 0.0,
+        "...and it gathered nothing, so its baskets are untouched: {hunted:?}"
+    );
+    assert!(
+        gathered.basket_wear > 0.0,
+        "a gathering band fills baskets, so they must wear: {gathered:?}"
+    );
+    assert_eq!(
+        gathered.sled_wear, 0.0,
+        "...and it hauled no carcass, so its sled is untouched: {gathered:?}"
+    );
+    assert_eq!(
+        gathered.hunting_wear, 0.0,
+        "a gathering band killed nothing, so its spears are untouched: {gathered:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// The cliff, per kit
+// ---------------------------------------------------------------------------------------------
+
+/// **The cliff is a CLIFF, on every kit independently.** Performance is *flat* right up to expiry and
+/// then steps down — a gradual taper would pass a "kit matters" test and is the wrong model
+/// (durability and performance are orthogonal axes). Asserted on the **exported** tiers across a wear
+/// sweep, on all three kits at once.
 #[test]
 fn the_durability_cliff_is_a_step_not_a_taper() {
     let equipment = equipment();
     let hunting_limit = equipment.hunting_kit.starting_durability;
-    let carry_limit = equipment.carry_kit.starting_durability;
+    let sled_limit = equipment.sled_kit.starting_durability;
+    let basket_limit = equipment.basket_kit.starting_durability;
     // Fractions of each kit's life, from brand new to one hair short of spent.
     let almost_spent = [0.0, 0.25, 0.5, 0.75, 0.999];
 
-    let mut carry_rates = Vec::new();
+    let mut hunt_rates = Vec::new();
+    let mut gather_rates = Vec::new();
     let mut attacks = Vec::new();
     for fraction in almost_spent {
         // **A SCOUTING band, deliberately.** The sweep is about the *shape* of the tier function, so
-        // the turn must not itself add wear — a hunting turn at the 0.999 sample would tip the kit
-        // over the limit and the sweep would measure the cliff instead of the flat.
+        // the turn must not itself add wear — a working turn at the 0.999 sample would tip a kit over
+        // its limit and the sweep would measure the cliff instead of the flat.
         let (mut app, band) = scouting_world(BandEquipment {
             hunting_wear: hunting_limit * fraction,
-            carry_wear: carry_limit * fraction,
+            sled_wear: sled_limit * fraction,
+            basket_wear: basket_limit * fraction,
         });
         run_turn(&mut app);
         let row = exported(&app, band);
-        carry_rates.push(row.carry_per_worker_biomass);
+        hunt_rates.push(row.hunt_carry_per_worker_biomass);
+        gather_rates.push(row.forage_carry_per_worker_biomass);
         attacks.push(row.hunter_attack);
     }
     // Flat — every reading below expiry is the SAME number, not a decreasing series.
-    for (i, rate) in carry_rates.iter().enumerate() {
+    for (i, fraction) in almost_spent.iter().enumerate() {
         assert_eq!(
-            *rate, carry_rates[0],
-            "carry performance must be flat until expiry (wear fraction {} read {rate} vs {})",
-            almost_spent[i], carry_rates[0]
+            hunt_rates[i], hunt_rates[0],
+            "the hunt's carry must be flat until expiry (wear fraction {fraction})"
+        );
+        assert_eq!(
+            gather_rates[i], gather_rates[0],
+            "the gather's carry must be flat until expiry (wear fraction {fraction})"
         );
         assert_eq!(
             attacks[i], attacks[0],
-            "attack must be flat until expiry (wear fraction {})",
-            almost_spent[i]
+            "attack must be flat until expiry (wear fraction {fraction})"
         );
     }
 
-    // ...then one step down at the limit, on both axes.
+    // ...then one step down at the limit, on all three axes.
     let (mut spent_app, spent_band) = scouting_world(BandEquipment {
         hunting_wear: hunting_limit,
-        carry_wear: carry_limit,
+        sled_wear: sled_limit,
+        basket_wear: basket_limit,
     });
     run_turn(&mut spent_app);
     let spent = exported(&spent_app, spent_band);
     assert!(
-        spent.carry_per_worker_biomass < carry_rates[0],
-        "the carry role must STEP DOWN at expiry: {} -> {}",
-        carry_rates[0],
-        spent.carry_per_worker_biomass
+        spent.hunt_carry_per_worker_biomass < hunt_rates[0],
+        "the hunt's carry must STEP DOWN at expiry: {} -> {}",
+        hunt_rates[0],
+        spent.hunt_carry_per_worker_biomass
+    );
+    assert!(
+        spent.forage_carry_per_worker_biomass < gather_rates[0],
+        "the gather's carry must STEP DOWN at expiry: {} -> {}",
+        gather_rates[0],
+        spent.forage_carry_per_worker_biomass
     );
     assert!(
         spent.hunter_attack < attacks[0],
@@ -369,8 +706,14 @@ fn the_durability_cliff_is_a_step_not_a_taper() {
         "the step lands exactly on the BARE-HANDED tier, not on some interpolated value"
     );
     assert_eq!(
-        spent.carry_per_worker_biomass, equipment.carry_kit.unequipped_per_worker_biomass_capacity,
-        "the step lands exactly on the unequipped carry tier"
+        spent.hunt_carry_per_worker_biomass,
+        equipment.sled_kit.unequipped_per_worker_biomass_capacity,
+        "the step lands exactly on the sledless tier"
+    );
+    assert_eq!(
+        spent.forage_carry_per_worker_biomass,
+        equipment.basket_kit.unequipped_per_worker_biomass_capacity,
+        "the step lands exactly on the bare-handed gather tier"
     );
 }
 
@@ -395,14 +738,14 @@ fn wear_is_charged_for_kills_not_for_turns_elapsed() {
 
     // Liveness: the hunting band really did wear its kit down over the same span.
     assert!(
-        hunted.hunting_wear > 0.0 && hunted.carry_wear > 0.0,
-        "a hunting band must wear BOTH kits over {RUN_TURNS} turns (got {hunted:?})"
+        hunted.hunting_wear > 0.0 && hunted.sled_wear > 0.0,
+        "a hunting band must wear its spears AND its sled over {RUN_TURNS} turns (got {hunted:?})"
     );
-    // The discriminating half: identical turn count, zero kills, zero wear — on BOTH kits.
+    // The discriminating half: identical turn count, zero kills, zero wear — on ALL THREE kits.
     assert_eq!(
         scouted,
         BandEquipment::default(),
-        "a band that killed nothing for {RUN_TURNS} turns must lose no durability at all"
+        "a band that killed and gathered nothing for {RUN_TURNS} turns must lose no durability at all"
     );
 
     // ...and the hunting kit's wear is an exact whole number of kills, never a per-turn drip.
@@ -424,11 +767,11 @@ fn wear_is_charged_for_kills_not_for_turns_elapsed() {
 #[test]
 fn a_kit_run_dry_stays_dry() {
     let equipment = equipment();
-    let carry_limit = equipment.carry_kit.starting_durability;
-    // One kill's worth of carry life left: this run crosses the cliff mid-flight.
-    let almost = carry_limit - equipment.carry_kit.wear_per_biomass_carried * DEER_BODY_MASS;
+    let sled_limit = equipment.sled_kit.starting_durability;
+    // One deer's worth of sled life left: this run crosses the cliff mid-flight.
+    let almost = sled_limit - equipment.sled_kit.wear_per_biomass_hauled * DEER_BODY_MASS;
     let (mut app, band) = hunting_world(BandEquipment {
-        carry_wear: almost,
+        sled_wear: almost,
         ..Default::default()
     });
 
@@ -436,8 +779,8 @@ fn a_kit_run_dry_stays_dry() {
     let mut rate_series = Vec::new();
     for _ in 0..RUN_TURNS * 2 {
         run_turn(&mut app);
-        wear_series.push(kit_of(&app, band).carry_wear);
-        rate_series.push(exported(&app, band).carry_per_worker_biomass);
+        wear_series.push(kit_of(&app, band).sled_wear);
+        rate_series.push(exported(&app, band).hunt_carry_per_worker_biomass);
     }
 
     // Monotonic: nothing in this slice ever gives condition back.
@@ -448,7 +791,7 @@ fn a_kit_run_dry_stays_dry() {
         );
     }
     // The cliff was actually crossed (liveness), and once crossed it is absorbing.
-    let unequipped = equipment.carry_kit.unequipped_per_worker_biomass_capacity;
+    let unequipped = equipment.sled_kit.unequipped_per_worker_biomass_capacity;
     let first_dry = rate_series
         .iter()
         .position(|rate| *rate == unequipped)
@@ -460,7 +803,52 @@ fn a_kit_run_dry_stays_dry() {
         "once dry the role stays on the unequipped tier: {rate_series:?}"
     );
     assert!(
-        wear_series.last().copied().unwrap_or_default() >= carry_limit,
+        wear_series.last().copied().unwrap_or_default() >= sled_limit,
+        "the kit ends the run spent"
+    );
+}
+
+/// The basket twin of [`a_kit_run_dry_stays_dry`] — the gather's cliff is crossed by *gathering*, on
+/// its own quantum, and is absorbing in the same way.
+#[test]
+fn baskets_run_dry_on_their_own_quantum_and_stay_dry() {
+    let equipment = equipment();
+    let basket_limit = equipment.basket_kit.starting_durability;
+    // A single turn's gathering is enough to tip this over: the crew's throughput is
+    // `workers × 8`, and one unit of biomass costs `wear_per_biomass_gathered`.
+    let almost = basket_limit - equipment.basket_kit.wear_per_biomass_gathered;
+    let (mut app, band) = gathering_world(BandEquipment {
+        basket_wear: almost,
+        ..Default::default()
+    });
+
+    let mut wear_series = Vec::new();
+    let mut rate_series = Vec::new();
+    for _ in 0..RUN_TURNS {
+        run_turn(&mut app);
+        wear_series.push(kit_of(&app, band).basket_wear);
+        rate_series.push(exported(&app, band).forage_carry_per_worker_biomass);
+    }
+
+    for pair in wear_series.windows(2) {
+        assert!(
+            pair[1] >= pair[0],
+            "wear must never decrease (no replenishment exists): {pair:?}"
+        );
+    }
+    let unequipped = equipment.basket_kit.unequipped_per_worker_biomass_capacity;
+    let first_dry = rate_series
+        .iter()
+        .position(|rate| *rate == unequipped)
+        .expect("the run must actually cross the cliff — otherwise this test proves nothing");
+    assert!(
+        rate_series[first_dry..]
+            .iter()
+            .all(|rate| *rate == unequipped),
+        "once dry the role stays on the unequipped tier: {rate_series:?}"
+    );
+    assert!(
+        wear_series.last().copied().unwrap_or_default() >= basket_limit,
         "the kit ends the run spent"
     );
 }
@@ -519,9 +907,9 @@ fn the_attack_tier_decides_the_take() {
         "no kills, so no hunting-kit wear beyond what the band started spent"
     );
     assert_eq!(
-        kit_of(&bare, bare_band).carry_wear,
+        kit_of(&bare, bare_band).sled_wear,
         0.0,
-        "nothing was hauled, so the carry kit is untouched — wear tracks USE"
+        "nothing was hauled, so the sled is untouched — wear tracks USE"
     );
 
     // The herd shows it from the other side: the kitted band drew it down, the bare one did not.

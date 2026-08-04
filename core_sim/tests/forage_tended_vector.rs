@@ -389,8 +389,10 @@ fn the_published_per_biomass_rate_is_what_a_real_turn_credits_on_both_binding_si
                 &labor_config.forage,
             );
             let room = (patch.biomass - floor * patch.carrying_capacity).max(0.0);
-            let throughput = core_sim::forage_per_worker_biomass(&labor_config.forage, seasonal)
-                * workers as f32;
+            let throughput = core_sim::forage_per_worker_biomass(
+                labor_config.forage.per_worker_biomass_capacity,
+                seasonal,
+            ) * workers as f32;
             let expected_trade =
                 core_sim::forage_provisions(room.min(throughput), rate, NEUTRAL_MULTIPLIER);
 

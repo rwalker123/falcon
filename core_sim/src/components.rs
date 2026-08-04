@@ -1200,21 +1200,26 @@ impl SourceYield {
 /// — nothing in this slice ever reduces wear.
 ///
 /// **Wear is charged for USE, never for turns elapsed** (`docs/plan_denial_raid.md` §1.2) — a turn
-/// clock would charge an idle march the same as a slaughter and make denial free. The two kits use
-/// different quanta because they do different jobs: the hunting kit wears per **animal killed**, the
-/// carry kit per **biomass hauled home**.
+/// clock would charge an idle march the same as a slaughter and make denial free. **One kit, one
+/// job, one quantum** (§4.8): the hunting kit wears per **animal killed**, the sled per **biomass
+/// hauled home from a hunt**, baskets per **biomass gathered**. The three ledgers are independent by
+/// construction, so a band that only hunts wears no baskets and one that only gathers wears no sled.
 ///
 /// **Persisted** (`SimState`'s `BandRecord::equipment`) — a checkpoint that forgot how worn your
 /// spears were would silently re-stock them on rollback.
 #[derive(Component, Debug, Clone, Copy, Default, PartialEq)]
 pub struct BandEquipment {
     /// Condition spent on the **hunting kit** (spears), on the config's 0–100 scale. Charged
-    /// `wear_per_kill` per animal a wild hunt kills.
+    /// `wear_per_kill` per animal a hunt kills.
     pub hunting_wear: f32,
-    /// Condition spent on the **carry kit** (baskets), on the config's 0–100 scale. Charged
-    /// `wear_per_biomass_carried` per unit of biomass carried home — by a wild hunt *and* by a pen
-    /// harvest, because both are hauling.
-    pub carry_wear: f32,
+    /// Condition spent on the **sled kit** (travois / drag harness), on the config's 0–100 scale.
+    /// Charged `wear_per_biomass_hauled` per unit of biomass hauled home — by a wild hunt *and* by a
+    /// pen harvest, because both are dragging carcasses.
+    pub sled_wear: f32,
+    /// Condition spent on the **basket kit**, on the config's 0–100 scale. Charged
+    /// `wear_per_biomass_gathered` per unit of biomass a *gather* takes off a patch. The forage web's
+    /// own ledger: nothing on the hunt path touches it.
+    pub basket_wear: f32,
 }
 
 impl BandEquipment {
@@ -1225,9 +1230,14 @@ impl BandEquipment {
         self.hunting_wear < config.hunting_kit.starting_durability
     }
 
-    /// Is the carry kit still serving? Same rule as [`Self::hunting_equipped`].
-    pub fn carry_equipped(&self, config: &crate::equipment_config::EquipmentConfig) -> bool {
-        self.carry_wear < config.carry_kit.starting_durability
+    /// Is the sled still serving? Same rule as [`Self::hunting_equipped`].
+    pub fn sled_equipped(&self, config: &crate::equipment_config::EquipmentConfig) -> bool {
+        self.sled_wear < config.sled_kit.starting_durability
+    }
+
+    /// Are the baskets still serving? Same rule as [`Self::hunting_equipped`].
+    pub fn basket_equipped(&self, config: &crate::equipment_config::EquipmentConfig) -> bool {
+        self.basket_wear < config.basket_kit.starting_durability
     }
 
     /// Remaining condition on the hunting kit, clamped at `0` — the wire readout, and the number a
@@ -1236,9 +1246,14 @@ impl BandEquipment {
         (config.hunting_kit.starting_durability - self.hunting_wear).max(0.0)
     }
 
-    /// Remaining condition on the carry kit, clamped at `0`.
-    pub fn carry_remaining(&self, config: &crate::equipment_config::EquipmentConfig) -> f32 {
-        (config.carry_kit.starting_durability - self.carry_wear).max(0.0)
+    /// Remaining condition on the sled, clamped at `0`.
+    pub fn sled_remaining(&self, config: &crate::equipment_config::EquipmentConfig) -> f32 {
+        (config.sled_kit.starting_durability - self.sled_wear).max(0.0)
+    }
+
+    /// Remaining condition on the baskets, clamped at `0`.
+    pub fn basket_remaining(&self, config: &crate::equipment_config::EquipmentConfig) -> f32 {
+        (config.basket_kit.starting_durability - self.basket_wear).max(0.0)
     }
 
     /// Charge the hunting kit for `kills` animals. **Only USE charges it** — a party that kills
@@ -1252,20 +1267,38 @@ impl BandEquipment {
         self
     }
 
-    /// Charge the carry kit for `biomass` hauled home. Negative/NaN inputs are floored at `0` so a
-    /// degenerate take can never *restore* a kit — there is no replenishment in this slice.
-    pub fn wear_carry(
+    /// Charge the **sled** for `biomass` hauled home from a hunt. Negative/NaN inputs are floored at
+    /// `0` so a degenerate take can never *restore* a kit — there is no replenishment in this slice.
+    pub fn wear_sled(
         &mut self,
         config: &crate::equipment_config::EquipmentConfig,
         biomass: f32,
     ) -> &mut Self {
-        let hauled = if biomass.is_finite() {
-            biomass.max(0.0)
-        } else {
-            0.0
-        };
-        self.carry_wear += hauled * config.carry_kit.wear_per_biomass_carried;
+        self.sled_wear += usable_biomass(biomass) * config.sled_kit.wear_per_biomass_hauled;
         self
+    }
+
+    /// Charge the **baskets** for `biomass` gathered off a patch. Same flooring rule as
+    /// [`Self::wear_sled`], and deliberately a *separate* quantum: a band that hunts but does not
+    /// gather calls this with nothing and its baskets stay whole.
+    pub fn wear_baskets(
+        &mut self,
+        config: &crate::equipment_config::EquipmentConfig,
+        biomass: f32,
+    ) -> &mut Self {
+        self.basket_wear += usable_biomass(biomass) * config.basket_kit.wear_per_biomass_gathered;
+        self
+    }
+}
+
+/// The biomass a wear charge may actually bill for: non-finite or negative input reads as **no use**.
+/// Shared by both carry kits so neither can grow its own flooring rule — a negative take must never
+/// *restore* a kit, because nothing in this slice replenishes one.
+fn usable_biomass(biomass: f32) -> f32 {
+    if biomass.is_finite() {
+        biomass.max(0.0)
+    } else {
+        0.0
     }
 }
 

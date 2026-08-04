@@ -1,10 +1,18 @@
-//! **The minimal TOE** (`data/equipment.json`) — the two consumable kits that lift a band's
-//! Hunting and carry roles from their *unequipped* to their *equipped* tier.
+//! **The minimal TOE** (`data/equipment.json`) — the three consumable kits that lift a band's
+//! hunting, hauling and gathering roles from their *unequipped* to their *equipped* tier.
 //!
 //! Design: `docs/plan_early_game_labor.md` → "Equipment / TOE" (the authoritative arc) and
 //! `docs/plan_hunt_through_combat.md` §4.8 (why a minimal TOE has to land before the hunt resolves
 //! through combat: a bare-handed hunter's `attack` is `1`, below every megafauna's `defense`, so
 //! without a spear the gate is the entire game).
+//!
+//! **One kit, one job** (§4.8) — the three do not overlap, and the pairing is physical:
+//!
+//! | kit | raises |
+//! |---|---|
+//! | **spears** ([`HuntingKitConfig`]) | a hunter's `attack` |
+//! | **sled** ([`SledKitConfig`]) | the **hunt's** carry — a carcass is one lumpy object you *drag* out whole |
+//! | **baskets** ([`BasketKitConfig`]) | the **forage** web's carry — berries are loose, divisible, bounded by what you can hold |
 //!
 //! **Three rules this module exists to keep:**
 //!
@@ -14,12 +22,14 @@
 //!    calls out, and would let a future crafting economy tune only one thing.
 //! 2. **Wear is charged for USE, never for turns elapsed** (`docs/plan_denial_raid.md` §1.2). A
 //!    turn-based clock charges an idle march the same as a slaughter, which would make denial free.
-//!    The hunting kit wears per **animal killed**; the carry kit wears per **biomass hauled home**.
-//! 3. **One home per fact.** Both *unequipped* tiers already had homes and stay there — a bare
-//!    hand's attack is [`crate::creatures_config`]'s `person.combat.attack` (`1.0`) and a hunt's
-//!    per-hunter haul rate is `labor_config.json`'s `hunt.per_worker_biomass_capacity` (`40.0`,
-//!    which **is** the equipped tier: the shipped game has always run kitted). This file carries
-//!    only what the *kit itself* owns, so no shipped number gets a second home to drift from.
+//!    Each kit has its **own** quantum, so the three cannot cross-charge: spears wear per **animal
+//!    killed**, the sled per **biomass hauled home from a hunt**, baskets per **biomass gathered**.
+//! 3. **One home per fact.** All three *equipped* carry/attack tiers already had homes and stay
+//!    there — a bare hand's attack is [`crate::creatures_config`]'s `person.combat.attack` (`1.0`),
+//!    a hunt's per-hunter haul rate is `labor_config.json`'s `hunt.per_worker_biomass_capacity`
+//!    (`40.0`) and a gatherer's is its `forage.per_worker_biomass_capacity` (`8.0`), both of which
+//!    **are** the equipped tiers: the shipped game has always run kitted. This file carries only
+//!    what the *kits themselves* own, so no shipped number gets a second home to drift from.
 //!
 //! **Start-stocked and NOT craftable.** There is no replenishment path in this slice; running dry is
 //! the intended pressure. The band's state is *wear*, not *stock*, so a freshly spawned
@@ -68,30 +78,72 @@ pub struct HuntingKitConfig {
     pub wear_per_kill: f32,
 }
 
-/// **The carry kit** — baskets. The haul side of every hunt take, and the other half of
-/// `plan_early_game_labor`'s role table.
+/// **The sled kit** — a travois or drag harness. The haul side of every *hunt* take.
+///
+/// **A carcass is one lumpy object you drag out whole**, so a container does not help you move a
+/// deer — a sled does (§4.8). This kit used to be called the "carry kit" and was described as
+/// baskets, which is the physical nonsense §4.8's "One kit, one job" corrects.
+///
+/// **It is a flat per-hunter multiplier and it needs NO PULLERS — SETTLED** (§4.8, §11). A crew cost
+/// would make the hunt's carry non-linear in party size, and `hunt_haul_workers`, the fill target's
+/// arithmetic and §5.1's trip length all assume that linearity.
 #[derive(Debug, Clone, Copy, Deserialize)]
-pub struct CarryKitConfig {
-    /// **The unequipped per-worker haul rate**, in biomass/turn — what a crew manages with bare arms
-    /// once the baskets are gone. The *equipped* tier is `labor_config.json`'s
-    /// `hunt.per_worker_biomass_capacity` (`40.0`), which stays where it is: it is the rate the
-    /// shipped, start-kitted game has always run on, and duplicating it here would give one number
-    /// two homes.
+pub struct SledKitConfig {
+    /// **The unequipped per-hunter haul rate**, in biomass/turn — what a sledless party drags home
+    /// by hand. The *equipped* tier is `labor_config.json`'s `hunt.per_worker_biomass_capacity`
+    /// (`40.0`), which stays where it is: it is the rate the shipped, start-kitted game has always
+    /// run on, and duplicating it here would give one number two homes.
+    ///
+    /// **The hunt is TRANSPORT-bound, so this ratio is the SMALLER of the two carries** (§4.8): a
+    /// sledless party can always drag *something*, hence `40 → 12` (under a third) against the
+    /// basket's `8 → 1.6` (exactly a fifth). The shortfall needs no new mechanic — a party that
+    /// cannot haul its kill leaves more of it, which `AnimalTake::wasted` already reports.
     pub unequipped_per_worker_biomass_capacity: f32,
     /// Condition a fresh kit carries, on the shared 0–100 scale.
     pub starting_durability: f32,
-    /// Condition spent per unit of **biomass carried home** — the carry kit's use quantum. Shipped
-    /// at **0.02**, so a full kit hauls **5000 biomass** ≈ 20 turns for the same reference party —
-    /// deliberately on a comparable clock to the hunting kit, so neither kit is the only one the
-    /// player ever watches.
-    pub wear_per_biomass_carried: f32,
+    /// Condition spent per unit of **biomass hauled home from a hunt** — the sled's use quantum, and
+    /// distinct from the basket's by construction so a band that only gathers wears no sled. Shipped
+    /// at **0.02**, so a full kit hauls **5000 biomass** ≈ 20 turns for the reference party —
+    /// deliberately on a comparable clock to the hunting kit, so neither is the only kit the player
+    /// ever watches.
+    pub wear_per_biomass_hauled: f32,
 }
 
-/// Root TOE configuration: one block per shipped kit.
+/// **The basket kit** — the *forage* web's carry, and `plan_early_game_labor`'s other role.
+///
+/// **Berries are loose, divisible and bounded entirely by what you can hold**, which is exactly what
+/// a basket fixes (§4.8). Before the three-kit split the forage web had no kit at all: its
+/// `forage.per_worker_biomass_capacity` sat at its shipped value whatever the band carried.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct BasketKitConfig {
+    /// **The unequipped per-gatherer throughput**, in biomass/turn before the seasonal weight — what
+    /// two cupped hands and the fold of a hide bring back. The *equipped* tier is
+    /// `labor_config.json`'s `forage.per_worker_biomass_capacity` (`8.0`), which stays where it is
+    /// for the same one-home-per-fact reason the sled's does.
+    ///
+    /// **Forage is CONTAINMENT-bound, so this ratio is the LARGER of the two carries** (§4.8): bare
+    /// hands is *a handful against a basketful*. Shipped at **1.6** — exactly one fifth of the
+    /// equipped `8.0`, against the sled's under-a-third — because losing your baskets should be the
+    /// harsher of the two losses, not merely another number.
+    pub unequipped_per_worker_biomass_capacity: f32,
+    /// Condition a fresh kit carries, on the shared 0–100 scale.
+    pub starting_durability: f32,
+    /// Condition spent per unit of **biomass gathered** — the basket's use quantum, distinct from the
+    /// sled's so a band that only hunts wears no baskets. Shipped at **0.04**, so a full kit gathers
+    /// **2500 biomass** ≈ 19.5 turns for the shipped ~16-worker band (`16 × 8 = 128` biomass/turn),
+    /// on the same ~15–20 turn clock as the other two.
+    pub wear_per_biomass_gathered: f32,
+}
+
+/// Root TOE configuration: one block per shipped kit. **One kit, one job** — nothing here composes
+/// two roles onto one block, which is what makes the cross-checks in this module's tests (baskets do
+/// not touch the hunt; the sled does not touch foraging) statements about the *type*, not about a
+/// convention someone has to remember.
 #[derive(Debug, Clone, Deserialize)]
 pub struct EquipmentConfig {
     pub hunting_kit: HuntingKitConfig,
-    pub carry_kit: CarryKitConfig,
+    pub sled_kit: SledKitConfig,
+    pub basket_kit: BasketKitConfig,
 }
 
 impl EquipmentConfig {
@@ -137,23 +189,40 @@ impl EquipmentConfig {
         }
     }
 
-    /// **A band's per-worker hunt haul rate** — the carry kit's tier, resolved against the *equipped*
-    /// rate the caller already holds (`labor_config.hunt.per_worker_biomass_capacity`). The single
-    /// seam every hunt-take, crew-size and forecast site reads, so the assign-time seed and the
+    /// **A band's per-worker HUNT haul rate** — the *sled's* tier, resolved against the equipped rate
+    /// the caller already holds (`labor_config.hunt.per_worker_biomass_capacity`). The single seam
+    /// every hunt-take, crew-size and hunt-forecast site reads, so the assign-time seed and the
     /// resolved row can never disagree about which tier a band is on.
-    pub fn per_worker_biomass_capacity(&self, equipped_rate: f32, equipped: bool) -> f32 {
+    ///
+    /// **Baskets are not consulted here, by construction** — dragging a carcass is not a containment
+    /// problem (§4.8). The forage twin is [`Self::forage_per_worker_biomass_capacity`].
+    pub fn hunt_per_worker_biomass_capacity(&self, equipped_rate: f32, equipped: bool) -> f32 {
         if equipped {
             equipped_rate
         } else {
-            self.carry_kit.unequipped_per_worker_biomass_capacity
+            self.sled_kit.unequipped_per_worker_biomass_capacity
+        }
+    }
+
+    /// **A band's per-worker GATHER throughput** — the *basket's* tier, resolved against the equipped
+    /// rate the caller already holds (`labor_config.forage.per_worker_biomass_capacity`), before the
+    /// tile's seasonal weight is folded in ([`crate::forage::forage_per_worker_biomass`]).
+    ///
+    /// **The sled is not consulted here, by construction** — a drag harness does not help you hold
+    /// more berries (§4.8). The hunt twin is [`Self::hunt_per_worker_biomass_capacity`].
+    pub fn forage_per_worker_biomass_capacity(&self, equipped_rate: f32, equipped: bool) -> f32 {
+        if equipped {
+            equipped_rate
+        } else {
+            self.basket_kit.unequipped_per_worker_biomass_capacity
         }
     }
 
     /// Invariants a TOE config must satisfy. **A kit with no wear rate is not consumable** and a kit
     /// with no durability is born dry, so both are rejected rather than shipped as a silently
-    /// eternal (or silently absent) kit.
+    /// eternal (or silently absent) kit. Three kits × three dials.
     pub fn validate(&self) -> Result<(), EquipmentConfigError> {
-        let checks: [(&'static str, f32); 6] = [
+        let checks: [(&'static str, f32); 9] = [
             (
                 "hunting_kit.equipped_attack",
                 self.hunting_kit.equipped_attack,
@@ -164,16 +233,28 @@ impl EquipmentConfig {
             ),
             ("hunting_kit.wear_per_kill", self.hunting_kit.wear_per_kill),
             (
-                "carry_kit.unequipped_per_worker_biomass_capacity",
-                self.carry_kit.unequipped_per_worker_biomass_capacity,
+                "sled_kit.unequipped_per_worker_biomass_capacity",
+                self.sled_kit.unequipped_per_worker_biomass_capacity,
             ),
             (
-                "carry_kit.starting_durability",
-                self.carry_kit.starting_durability,
+                "sled_kit.starting_durability",
+                self.sled_kit.starting_durability,
             ),
             (
-                "carry_kit.wear_per_biomass_carried",
-                self.carry_kit.wear_per_biomass_carried,
+                "sled_kit.wear_per_biomass_hauled",
+                self.sled_kit.wear_per_biomass_hauled,
+            ),
+            (
+                "basket_kit.unequipped_per_worker_biomass_capacity",
+                self.basket_kit.unequipped_per_worker_biomass_capacity,
+            ),
+            (
+                "basket_kit.starting_durability",
+                self.basket_kit.starting_durability,
+            ),
+            (
+                "basket_kit.wear_per_biomass_gathered",
+                self.basket_kit.wear_per_biomass_gathered,
             ),
         ];
         for (field, value) in checks {
@@ -281,27 +362,38 @@ mod tests {
     use crate::combat::RangeBand;
     use crate::creatures_config::CreaturesConfig;
 
-    /// The shipped equipped haul rate — `labor_config.json`'s `hunt.per_worker_biomass_capacity`,
-    /// named here so this module's unit tests do not restate a number that lives elsewhere.
+    /// The shipped equipped **hunt** haul rate — `labor_config.json`'s
+    /// `hunt.per_worker_biomass_capacity`, named here so this module's unit tests do not restate a
+    /// number that lives elsewhere.
     fn equipped_haul_rate() -> f32 {
         crate::labor_config::LaborConfig::builtin()
             .hunt
             .per_worker_biomass_capacity
     }
 
+    /// The shipped equipped **gather** throughput — `labor_config.json`'s
+    /// `forage.per_worker_biomass_capacity`, for the same reason.
+    fn equipped_gather_rate() -> f32 {
+        crate::labor_config::LaborConfig::builtin()
+            .forage
+            .per_worker_biomass_capacity
+    }
+
     #[test]
-    fn builtin_config_ships_both_kits() {
+    fn builtin_config_ships_all_three_kits() {
         let config = EquipmentConfig::builtin();
         assert_eq!(config.hunting_kit.equipped_attack, 20.0);
         assert!(config.hunting_kit.starting_durability > 0.0);
         assert!(config.hunting_kit.wear_per_kill > 0.0);
-        assert!(config.carry_kit.unequipped_per_worker_biomass_capacity > 0.0);
-        assert!(config.carry_kit.wear_per_biomass_carried > 0.0);
+        assert!(config.sled_kit.unequipped_per_worker_biomass_capacity > 0.0);
+        assert!(config.sled_kit.wear_per_biomass_hauled > 0.0);
+        assert!(config.basket_kit.unequipped_per_worker_biomass_capacity > 0.0);
+        assert!(config.basket_kit.wear_per_biomass_gathered > 0.0);
     }
 
-    /// **The equipped tier must beat the unequipped one on BOTH axes** — a "kit" that made you worse
-    /// is incoherent. The two unequipped tiers live in the two configs that own them, so this is the
-    /// one place the three files are compared.
+    /// **The equipped tier must beat the unequipped one on ALL THREE axes** — a "kit" that made you
+    /// worse is incoherent. The three unequipped tiers live in the configs that own them, so this is
+    /// the one place the files are compared.
     #[test]
     fn every_equipped_tier_beats_its_unequipped_tier() {
         let equipment = EquipmentConfig::builtin();
@@ -311,8 +403,38 @@ mod tests {
             "the hunting kit must raise attack above the bare-handed {bare_attack}"
         );
         assert!(
-            equipped_haul_rate() > equipment.carry_kit.unequipped_per_worker_biomass_capacity,
-            "the carry kit must raise the haul rate above the bare-armed tier"
+            equipped_haul_rate() > equipment.sled_kit.unequipped_per_worker_biomass_capacity,
+            "the sled must raise the hunt's haul rate above the bare-armed tier"
+        );
+        assert!(
+            equipped_gather_rate() > equipment.basket_kit.unequipped_per_worker_biomass_capacity,
+            "baskets must raise the gather rate above the bare-handed tier"
+        );
+    }
+
+    /// **The two carries want different SHAPES, not merely different numbers** (§4.8). Forage is
+    /// *containment*-bound — a handful against a basketful — so its drop is the harsher one; the hunt
+    /// is *transport*-bound, and a sledless party can always drag something. Asserted as the ordering
+    /// between the two ratios, with a liveness assertion on each ratio so a kit whose tiers collapsed
+    /// to equal cannot satisfy it vacuously.
+    #[test]
+    fn losing_your_baskets_costs_proportionally_more_than_losing_your_sled() {
+        let equipment = EquipmentConfig::builtin();
+        let sled_ratio =
+            equipped_haul_rate() / equipment.sled_kit.unequipped_per_worker_biomass_capacity;
+        let basket_ratio =
+            equipped_gather_rate() / equipment.basket_kit.unequipped_per_worker_biomass_capacity;
+        assert!(
+            sled_ratio > 1.0,
+            "the sled must be live at all: ratio {sled_ratio}"
+        );
+        assert!(
+            basket_ratio > 1.0,
+            "baskets must be live at all: ratio {basket_ratio}"
+        );
+        assert!(
+            basket_ratio > sled_ratio,
+            "containment must bite harder than transport: baskets ×{basket_ratio} vs sled ×{sled_ratio}"
         );
     }
 
@@ -331,16 +453,57 @@ mod tests {
     }
 
     #[test]
-    fn the_carry_tier_resolves_to_one_of_exactly_two_rates() {
+    fn each_carry_tier_resolves_to_one_of_exactly_two_rates() {
         let equipment = EquipmentConfig::builtin();
-        let equipped = equipped_haul_rate();
+        let hunt = equipped_haul_rate();
+        let gather = equipped_gather_rate();
+        assert_eq!(equipment.hunt_per_worker_biomass_capacity(hunt, true), hunt);
         assert_eq!(
-            equipment.per_worker_biomass_capacity(equipped, true),
-            equipped
+            equipment.hunt_per_worker_biomass_capacity(hunt, false),
+            equipment.sled_kit.unequipped_per_worker_biomass_capacity
         );
         assert_eq!(
-            equipment.per_worker_biomass_capacity(equipped, false),
-            equipment.carry_kit.unequipped_per_worker_biomass_capacity
+            equipment.forage_per_worker_biomass_capacity(gather, true),
+            gather
+        );
+        assert_eq!(
+            equipment.forage_per_worker_biomass_capacity(gather, false),
+            equipment.basket_kit.unequipped_per_worker_biomass_capacity
+        );
+    }
+
+    /// **ONE KIT, ONE JOB, at the resolver seam** (§4.8) — the cross-check that would have caught the
+    /// original defect, where the "carry kit" called baskets raised the *hunt's* haul and foraging
+    /// got nothing. A dry basket must leave the hunt's tier untouched and a dry sled must leave the
+    /// gather's untouched, so each resolver is swept across the other kit's state.
+    #[test]
+    fn a_dry_basket_does_not_touch_the_hunt_and_a_dry_sled_does_not_touch_the_gather() {
+        let equipment = EquipmentConfig::builtin();
+        let hunt = equipped_haul_rate();
+        let gather = equipped_gather_rate();
+        // Liveness on both sides: each kit really does move its own number...
+        assert_ne!(
+            equipment.hunt_per_worker_biomass_capacity(hunt, true),
+            equipment.hunt_per_worker_biomass_capacity(hunt, false),
+            "the sled tier must be live, or the cross-check below is vacuous"
+        );
+        assert_ne!(
+            equipment.forage_per_worker_biomass_capacity(gather, true),
+            equipment.forage_per_worker_biomass_capacity(gather, false),
+            "the basket tier must be live, or the cross-check below is vacuous"
+        );
+        // ...and neither resolver can even be *asked* about the other kit — each takes one
+        // `equipped` flag and reads one block — so the equipped answers are the shipped rates
+        // whatever the other kit's state is.
+        assert_eq!(
+            equipment.hunt_per_worker_biomass_capacity(hunt, true),
+            hunt,
+            "an equipped sled hauls at the shipped rate whatever the baskets are doing"
+        );
+        assert_eq!(
+            equipment.forage_per_worker_biomass_capacity(gather, true),
+            gather,
+            "equipped baskets gather at the shipped rate whatever the sled is doing"
         );
     }
 
@@ -348,11 +511,12 @@ mod tests {
     fn validate_rejects_a_kit_that_never_wears_out() {
         // `wear_per_kill = 0` would make a "consumable" kit eternal — the one value that silently
         // deletes the whole pressure this slice exists to create.
-        let json = r#"{
-            "hunting_kit": { "equipped_attack": 20.0, "starting_durability": 100.0, "wear_per_kill": 0.0 },
-            "carry_kit": { "unequipped_per_worker_biomass_capacity": 12.0, "starting_durability": 100.0, "wear_per_biomass_carried": 0.05 }
-        }"#;
-        let err = EquipmentConfig::from_json_str(json).expect_err("a zero wear rate is invalid");
+        let err = EquipmentConfig::from_json_str(&kit_json(
+            "\"wear_per_kill\": 0.0",
+            "\"wear_per_biomass_hauled\": 0.02",
+            "\"starting_durability\": 100.0",
+        ))
+        .expect_err("a zero wear rate is invalid");
         assert!(
             matches!(err, EquipmentConfigError::Invalid { field, .. } if field == "hunting_kit.wear_per_kill"),
             "unexpected error: {err}"
@@ -361,14 +525,42 @@ mod tests {
 
     #[test]
     fn validate_rejects_a_kit_born_dry() {
-        let json = r#"{
-            "hunting_kit": { "equipped_attack": 20.0, "starting_durability": 100.0, "wear_per_kill": 2.0 },
-            "carry_kit": { "unequipped_per_worker_biomass_capacity": 12.0, "starting_durability": 0.0, "wear_per_biomass_carried": 0.05 }
-        }"#;
-        let err = EquipmentConfig::from_json_str(json).expect_err("zero durability is invalid");
+        let err = EquipmentConfig::from_json_str(&kit_json(
+            "\"wear_per_kill\": 2.0",
+            "\"wear_per_biomass_hauled\": 0.02",
+            "\"starting_durability\": 0.0",
+        ))
+        .expect_err("zero durability is invalid");
         assert!(
-            matches!(err, EquipmentConfigError::Invalid { field, .. } if field == "carry_kit.starting_durability"),
+            matches!(err, EquipmentConfigError::Invalid { field, .. } if field == "basket_kit.starting_durability"),
             "unexpected error: {err}"
         );
+    }
+
+    /// **The basket block is REQUIRED, not defaulted.** A file that forgot it would otherwise leave
+    /// the forage web silently unkitted again — the exact defect §4.8 corrects.
+    #[test]
+    fn a_config_missing_the_basket_kit_is_rejected() {
+        let json = r#"{
+            "hunting_kit": { "equipped_attack": 20.0, "starting_durability": 100.0, "wear_per_kill": 0.4 },
+            "sled_kit": { "unequipped_per_worker_biomass_capacity": 12.0, "starting_durability": 100.0, "wear_per_biomass_hauled": 0.02 }
+        }"#;
+        let err = EquipmentConfig::from_json_str(json).expect_err("a missing kit block is invalid");
+        assert!(
+            matches!(err, EquipmentConfigError::Parse(_)),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// A three-kit fixture with one dial per kit under the test's control — so a validate test says
+    /// which dial it is breaking instead of restating the whole file.
+    fn kit_json(hunting_wear: &str, sled_wear: &str, basket_durability: &str) -> String {
+        format!(
+            r#"{{
+            "hunting_kit": {{ "equipped_attack": 20.0, "starting_durability": 100.0, {hunting_wear} }},
+            "sled_kit": {{ "unequipped_per_worker_biomass_capacity": 12.0, "starting_durability": 100.0, {sled_wear} }},
+            "basket_kit": {{ "unequipped_per_worker_biomass_capacity": 1.6, {basket_durability}, "wear_per_biomass_gathered": 0.04 }}
+        }}"#
+        )
     }
 }

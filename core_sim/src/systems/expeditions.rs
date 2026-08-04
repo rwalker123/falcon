@@ -135,7 +135,8 @@ pub fn advance_expeditions(
     // **The minimal TOE** — the two-tier table and the durability dials, resolved once. What varies
     // per party is only its `BandEquipment` *wear*.
     let equipment_cfg = configs.equipment.get();
-    // The **equipped** per-hunter haul rate; the carry kit names the step down.
+    // The **equipped** per-hunter haul rate; the SLED kit names the step down. A raid is a hunt, so
+    // baskets never enter this path (§4.8's one kit, one job) — an expedition has no gather mission.
     let equipped_haul_rate = labor.hunt.per_worker_biomass_capacity;
     let map_seed = sim_config.map_seed;
     let wrap_horizontal = sim_config.map_topology.wrap_horizontal;
@@ -164,9 +165,9 @@ pub fn advance_expeditions(
         // `advance_labor_allocation` applies to a resident band, through the same
         // `EquipmentConfig` seams. An absent component reads as a full kit (wear, not stock).
         let party_kit = party_equipment.as_deref().copied().unwrap_or_default();
-        let per_worker_biomass = equipment_cfg.per_worker_biomass_capacity(
+        let per_worker_biomass = equipment_cfg.hunt_per_worker_biomass_capacity(
             equipped_haul_rate,
-            party_kit.carry_equipped(&equipment_cfg),
+            party_kit.sled_equipped(&equipment_cfg),
         );
         // The hunting kit decides what the party can hurt at all (§4.2's gate), so it is resolved
         // here and not left at the intrinsic bare-handed tier.
@@ -315,11 +316,11 @@ pub fn advance_expeditions(
                     );
                     let take = outcome.take;
                     // **A roadside kill wears the scout's kit like any other** — the hunting kit per
-                    // animal killed, the carry kit per biomass hauled (`docs/plan_denial_raid.md`
-                    // §1.2: wear tracks USE, never turns elapsed).
+                    // animal killed, the SLED per biomass hauled (`docs/plan_denial_raid.md`
+                    // §1.2: wear tracks USE, never turns elapsed). No baskets: nothing was gathered.
                     if let Some(kit) = party_equipment.as_mut() {
                         kit.wear_hunting(&equipment_cfg, take.killed)
-                            .wear_carry(&equipment_cfg, take.carried);
+                            .wear_sled(&equipment_cfg, take.carried);
                     }
                     // A scout that picked a fight it could not win still pays for it. Gated on a
                     // **death**, like the resident band's line: the hunt's baseline injury risk
@@ -535,7 +536,7 @@ pub fn advance_expeditions(
                         // one that slaughters pays per animal killed and per unit hauled home.
                         if let Some(kit) = party_equipment.as_mut() {
                             kit.wear_hunting(&equipment_cfg, take.killed)
-                                .wear_carry(&equipment_cfg, take.carried);
+                                .wear_sled(&equipment_cfg, take.carried);
                         }
                         // **The fight already happened — inside the take** (§0.1). This path used
                         // to resolve the party's casualties in a *second* `resolve_fight` beside a

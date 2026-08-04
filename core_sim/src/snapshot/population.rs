@@ -167,8 +167,10 @@ pub(crate) struct BandKitLevers<'a> {
     pub(crate) config: &'a crate::equipment_config::EquipmentConfig,
     /// The base human's intrinsic combat profile — the *unequipped* attack tier.
     pub(crate) hunter_intrinsic: crate::combat::CombatStats,
-    /// `labor_config.hunt.per_worker_biomass_capacity` — the *equipped* haul tier.
+    /// `labor_config.hunt.per_worker_biomass_capacity` — the *equipped* HUNT haul tier (the sled's).
     pub(crate) equipped_haul_rate: f32,
+    /// `labor_config.forage.per_worker_biomass_capacity` — the *equipped* GATHER tier (the basket's).
+    pub(crate) equipped_gather_rate: f32,
 }
 
 pub(crate) struct PopulationStateInputs<'a> {
@@ -225,20 +227,27 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     } = inputs;
     // **The minimal TOE, resolved for the wire.** The component records *wear*, so an absent one
     // reads as no wear — a full kit — exactly as the labor pass reads it. Durability and performance
-    // stay ORTHOGONAL: the two tiers below are read off the equipped/dry *predicate*, never scaled by
-    // the remaining condition.
+    // stay ORTHOGONAL: the tiers below are read off each kit's equipped/dry *predicate*, never scaled
+    // by the remaining condition. **Three kits, three independent readouts** (§4.8): the sled's tier
+    // says nothing about the basket's, so they are published as separate fields rather than one
+    // "carry" number the client would have to guess the job of.
     let kit = equipment.copied().unwrap_or_default();
     let hunting_equipped = kit.hunting_equipped(kit_levers.config);
-    let carry_equipped = kit.carry_equipped(kit_levers.config);
     let hunting_kit_durability = kit.hunting_remaining(kit_levers.config);
-    let carry_kit_durability = kit.carry_remaining(kit_levers.config);
+    let sled_kit_durability = kit.sled_remaining(kit_levers.config);
+    let basket_kit_durability = kit.basket_remaining(kit_levers.config);
     let hunter_attack = kit_levers
         .config
         .hunter_profile(kit_levers.hunter_intrinsic, hunting_equipped)
         .attack;
-    let carry_per_worker_biomass = kit_levers
-        .config
-        .per_worker_biomass_capacity(kit_levers.equipped_haul_rate, carry_equipped);
+    let hunt_carry_per_worker_biomass = kit_levers.config.hunt_per_worker_biomass_capacity(
+        kit_levers.equipped_haul_rate,
+        kit.sled_equipped(kit_levers.config),
+    );
+    let forage_carry_per_worker_biomass = kit_levers.config.forage_per_worker_biomass_capacity(
+        kit_levers.equipped_gather_rate,
+        kit.basket_equipped(kit_levers.config),
+    );
     let migration = cohort.migration.as_ref().map(pending_migration_to_state);
     let (travel_target_x, travel_target_y) = travel_target.map(|t| (t.x, t.y)).unwrap_or((0, 0));
     let demand = food_demand(
@@ -498,12 +507,14 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // Predators Phase 3 — the raid legibility pair. `raid_radius` echoes the global lever
         // (like `work_range`); `raid_forfeit` is this band's past-turn raid debit (set above).
         raid_radius,
-        // The minimal TOE — the two kits' remaining condition and the two tiers they resolve to
+        // The minimal TOE — the three kits' remaining condition and the three tiers they resolve to
         // (resolved above, off the band's own wear).
         hunting_kit_durability,
-        carry_kit_durability,
+        sled_kit_durability,
+        basket_kit_durability,
         hunter_attack,
-        carry_per_worker_biomass,
+        hunt_carry_per_worker_biomass,
+        forage_carry_per_worker_biomass,
     }
 }
 
@@ -595,6 +606,9 @@ mod tests {
             hunter_intrinsic: crate::creatures_config::CreaturesConfig::builtin().person(),
             equipped_haul_rate: crate::labor_config::LaborConfig::builtin()
                 .hunt
+                .per_worker_biomass_capacity,
+            equipped_gather_rate: crate::labor_config::LaborConfig::builtin()
+                .forage
                 .per_worker_biomass_capacity,
         }
     }

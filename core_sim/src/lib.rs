@@ -146,8 +146,8 @@ pub use demographics_config::{
     DemographicsConfigMetadata,
 };
 pub use equipment_config::{
-    load_equipment_config_from_env, CarryKitConfig, EquipmentConfig, EquipmentConfigHandle,
-    EquipmentConfigMetadata, HuntingKitConfig, BUILTIN_EQUIPMENT_CONFIG,
+    load_equipment_config_from_env, BasketKitConfig, EquipmentConfig, EquipmentConfigHandle,
+    EquipmentConfigMetadata, HuntingKitConfig, SledKitConfig, BUILTIN_EQUIPMENT_CONFIG,
 };
 pub use espionage::{
     AgentAssignment, CounterIntelBudgets, EspionageAgentHandle, EspionageCatalog,

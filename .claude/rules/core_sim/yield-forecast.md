@@ -272,8 +272,9 @@ projection* is the sustained MSY. Pinned by
   tile's `seasonal_weight`**, as `forage_take` does — it can be `0` in a dead season, so consumers must
   not divide by it; hunt has no seasonal factor).
 - **`perWorkerBiomass` = the same throughput in BIOMASS**, before any account conversion:
-  `per_worker_biomass_capacity × seasonal_weight` on a patch (`forage::forage_per_worker_biomass`,
-  `0` in a dead season) and `labor_config.hunt.per_worker_biomass_capacity` on a herd (no seasonal
+  `per_worker_biomass_capacity × seasonal_weight` on a patch (`forage::forage_per_worker_biomass` at
+  the *equipped reference* rate — a band's own basket tier rides its cohort row instead, see
+  `equipment.md`; `0` in a dead season) and `labor_config.hunt.per_worker_biomass_capacity` on a herd (no seasonal
   factor). It is the term the **crew** half of the panel divides by — *"clear it now"* is
   `(B − floor·K) ÷ (carry × dip)` and *"hold it after"* is the regrowth at that floor over the same
   carry, both arithmetic in biomass.
@@ -391,13 +392,14 @@ client's compose-time "Expected yield" row promises. Shape:
   `hunt_haul_workers` off `SourceYieldForecast::ceiling_at` for a whole-animal source, so the seed
   matches the client's max-useful cap), and `wasted` = the understaffing mirror. No new formula, no new
   config lever.
-- **The Hunt seed resolves BOTH of the band's kit tiers** — carry through
-  `EquipmentConfig::per_worker_biomass_capacity` and **attack** through
-  `EquipmentConfig::hunter_profile`, the same two seams `advance_labor_allocation` reads (see
-  `equipment.md`). It has to: a band-agnostic equipped rate would promise a band whose baskets ran
-  dry a kitted haul, and since the take resolves through the fight
-  (`docs/plan_hunt_through_combat.md` §4) a band-agnostic *attack* would promise a bare-handed band a
-  mammoth. forecast == actual is exactly what that breaks.
+- **BOTH seed arms resolve the band's own kit tier.** The Hunt seed reads carry through
+  `EquipmentConfig::hunt_per_worker_biomass_capacity` (the **sled**) and **attack** through
+  `EquipmentConfig::hunter_profile`; the Forage seed reads
+  `EquipmentConfig::forage_per_worker_biomass_capacity` (the **baskets**). Those are the same seams
+  `advance_labor_allocation` reads (see `equipment.md`). It has to: a band-agnostic equipped rate
+  would promise a sledless band a kitted haul or a bare-handed crew a basketful, and since the take
+  resolves through the fight (`docs/plan_hunt_through_combat.md` §4) a band-agnostic *attack* would
+  promise a bare-handed band a mammoth. forecast == actual is exactly what that breaks.
 - **The fight is a forecast term now**, threaded as `fauna::HuntingParty` through `hunt_forecast`,
   `hunt_source_yield_preview`, `project_realized_hunt`, `project_arrivals_hunt` and
   `forecast_production_and_take`, so all six take/forecast paths resolve the *identical* fight via the

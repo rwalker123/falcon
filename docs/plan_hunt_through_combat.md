@@ -1,6 +1,6 @@
 # The hunt is a fight — resolving the take through the combat system
 
-**Status:** §9 slices **1–4 have landed**, plus the minimal TOE of §4.8; slices 5–7 are design. §4.8's kit split (slice 5) is a **correction to shipped behaviour** — this doc
+**Status:** §9 slices **1–5 have landed**, including the minimal TOE of §4.8 and its three-kit split; slices 6–7 are design. §4.8's kit split (slice 5) was a **correction to shipped behaviour** — this doc
 pointed baskets at the hunt's carry, and the implementation faithfully built that. Issue #456, repurposed: the
 denial raid that issue asks for turns out to need this first, and becomes small once it exists
 (`docs/plan_denial_raid.md`).
@@ -471,8 +471,8 @@ Consumable with the durability cliff, start-stocked, **not craftable**.
 #### One kit, one job — and an earlier draft got the carry half wrong
 
 This section used to read *"the carry kit — **baskets**, raising the carry side (§5)"*, and §5 is the
-**hunt's** carry. That is a physical nonsense and it shipped: baskets currently raise a hunter's haul
-rate and do nothing at all for foraging.
+**hunt's** carry. That is a physical nonsense and it shipped: baskets raised a hunter's haul rate and
+did nothing at all for foraging. Slice 5 corrected it into the three kits below.
 
 **A carcass is one lumpy object you drag out whole.** A container does not help you move a deer —
 what helps is a *sled*. Berries are the opposite case: loose, divisible, and bounded entirely by what
@@ -714,11 +714,11 @@ Each lands on its own PR.
 4. **The take resolves through `resolve_fight`.** `quantise_animal_take`'s kill arm is replaced by
    the resolver's enemy losses; the herd-as-`Force` mapping and the one-sided fast path land here.
    Carry, waste and `max(1, carryable)` are untouched.
-5. **The three kits split correctly** (§4.8) — a sled takes over the hunt's carry, baskets move to
-   the forage web with a much lower bare-handed tier, spears keep `attack`. **A correction to shipped
-   behaviour, not new scope**: minimal TOE landed with baskets raising the *hunt's* haul rate and
-   doing nothing for foraging, because this doc told it to. Worth landing before any balance
-   evaluation, since it moves both webs' carry.
+5. **The three kits split correctly** (§4.8) — **LANDED**. A sled took over the hunt's carry
+   (`40 → 12` sledless), baskets moved to the forage web with a much lower bare-handed tier
+   (`8 → 1.6`, a fifth), spears keep `attack`. Each kit wears on its own quantum, so a band that only
+   hunts wears no baskets. `AnimalTake.wasted` is reachable again: a sledless party kills more than it
+   hauls. Engineering as-built: `.claude/rules/core_sim/equipment.md`.
 6. **Forecast reports a range** (§6.4) + the client readout, and the hunters-per-animal figure on the
    pre-launch panel.
 7. **Wariness values authored** across the roster — the first slice with visible retreat behaviour.

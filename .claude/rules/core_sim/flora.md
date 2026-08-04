@@ -48,7 +48,8 @@ forage exactly as it does for overhunting. *Sim-only — the client already rend
   can't hold it permanently at `0`.
 - **Draw-down** (`forage_take`, the plant mirror of `hunt_take`): resolves the stance's **escapement
   ceiling** (`forage_escapement_ceiling`), caps it by gather throughput
-  (`workers × per_worker_biomass_capacity × seasonal_weight`), clamps to the patch's biomass,
+  (`workers × per_worker_biomass_capacity × seasonal_weight`, where the per-worker term is the band's
+  **resolved basket tier** — see `equipment.md`), clamps to the patch's biomass,
   **subtracts the take**, and converts to provisions
   (`take × provisions_per_biomass × output_multiplier`).
   **Since `docs/plan_harvest_floor.md` slice 1 the whole axis is ONE expression parameterised by a

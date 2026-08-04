@@ -629,7 +629,12 @@ pub(crate) fn snapshot_forage_patches(
                 forage,
                 flora,
                 ladder,
-                seasonal,
+                // **The EQUIPPED reference rate, not any band's basket tier** — a patch row is a fact
+                // about the *patch*, and a patch has no band to resolve a kit against. Exactly the
+                // rule `HerdTelemetryState` already follows for the hunt's haul; a band's real,
+                // kit-resolved gather rate rides its own `PopulationCohortState`
+                // (`forageCarryPerWorkerBiomass`) and its `SourceYield` row.
+                forage_per_worker_biomass(forage.per_worker_biomass_capacity, seasonal),
                 FORECAST_OUTPUT_MULTIPLIER,
             );
             ForagePatchState {
@@ -696,7 +701,10 @@ pub(crate) fn snapshot_forage_patches(
                 // `per_worker_yield` beside it. Shipped rather than left to
                 // `per_worker_yield / provisions_per_biomass`, which is `0 / 0` on a Field of cotton,
                 // flax or hay.
-                per_worker_biomass: forage_per_worker_biomass(forage, seasonal),
+                per_worker_biomass: forage_per_worker_biomass(
+                    forage.per_worker_biomass_capacity,
+                    seasonal,
+                ),
                 // **The growth curve, sampled** — the plant twin; non-negative at every sample, and
                 // its `0.0` entry is the reseed floor's lift.
                 regrowth_samples: patch_regrowth_samples(patch, forage),

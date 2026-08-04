@@ -366,9 +366,11 @@ fn create_populations<'a>(
                     // The minimal TOE — the two kits' remaining condition and the two tiers they
                     // resolve to, appended after the raid pair.
                     huntingKitDurability: cohort.hunting_kit_durability,
-                    carryKitDurability: cohort.carry_kit_durability,
+                    sledKitDurability: cohort.sled_kit_durability,
+                    basketKitDurability: cohort.basket_kit_durability,
                     hunterAttack: cohort.hunter_attack,
-                    carryPerWorkerBiomass: cohort.carry_per_worker_biomass,
+                    huntCarryPerWorkerBiomass: cohort.hunt_carry_per_worker_biomass,
+                    forageCarryPerWorkerBiomass: cohort.forage_carry_per_worker_biomass,
                 },
             )
         })

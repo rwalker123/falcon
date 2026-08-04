@@ -1637,12 +1637,28 @@ fn seed_source_yield(
                 || Cow::Owned(Vec::new()),
                 |ground| tile_flora_composition(&flora, &labor.forage, ground, map_seed),
             );
+            // **The seed must be priced at THIS band's BASKET tier**, for the same reason the hunt
+            // arm below prices its haul at the band's sled tier: `advance_labor_allocation` resolves
+            // the same tier through the same seam, so a band-agnostic equipped rate here would
+            // promise a bare-handed band a basketful (`yield-forecast.md`).
+            let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
+            let basket_equipped = app
+                .world
+                .get::<BandEquipment>(band)
+                .copied()
+                .unwrap_or_default()
+                .basket_equipped(&equipment_cfg);
+            let per_worker_biomass = equipment_cfg.forage_per_worker_biomass_capacity(
+                labor.forage.per_worker_biomass_capacity,
+                basket_equipped,
+            );
             forage_source_yield_preview(
                 patch,
                 &tile_composition,
                 &labor.forage,
                 &flora,
                 &ladder,
+                per_worker_biomass,
                 seasonal,
                 output_mult,
                 workers,
@@ -1664,20 +1680,20 @@ fn seed_source_yield(
             }
             let fauna = app.world.resource::<FaunaConfigHandle>().get();
             let ladder = app.world.resource::<LadderConfigHandle>().get();
-            // **The seed must be priced at THIS band's carry tier** (the minimal TOE), or the
+            // **The seed must be priced at THIS band's SLED tier** (the minimal TOE), or the
             // exact-forecast-equals-actual invariant breaks the moment a band's baskets run dry:
             // `advance_labor_allocation` resolves the same tier through the same seam, so a
             // band-agnostic equipped rate here would promise a dry band a kitted haul.
             let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
-            let carry_equipped = app
+            let sled_equipped = app
                 .world
                 .get::<BandEquipment>(band)
                 .copied()
                 .unwrap_or_default()
-                .carry_equipped(&equipment_cfg);
-            let per_worker_biomass = equipment_cfg.per_worker_biomass_capacity(
+                .sled_equipped(&equipment_cfg);
+            let per_worker_biomass = equipment_cfg.hunt_per_worker_biomass_capacity(
                 labor.hunt.per_worker_biomass_capacity,
-                carry_equipped,
+                sled_equipped,
             );
             // **And at THIS band's FIGHTING tier**, for the same reason and through the same seam
             // (`docs/plan_hunt_through_combat.md` §4): the take now resolves through the combat
@@ -9064,6 +9080,9 @@ mod tests {
             &labor.forage,
             &flora,
             &ladder,
+            // The band under test is freshly spawned, so its baskets are whole — the seed path
+            // resolves the same equipped tier.
+            labor.forage.per_worker_biomass_capacity,
             1.0,
             1.0,
             BAND_WORKERS,

@@ -166,6 +166,7 @@ fn run_patch_with_crew(
             &flora,
             &ladder,
             UNIT_OUTPUT_MULTIPLIER,
+            forage.per_worker_biomass_capacity,
             FULL_SEASONAL_WEIGHT,
         )
         .to_f32();
@@ -260,6 +261,7 @@ fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
             &flora,
             &ladder,
             UNIT_OUTPUT_MULTIPLIER,
+            forage.per_worker_biomass_capacity,
             FULL_SEASONAL_WEIGHT,
         )
         .to_f32();

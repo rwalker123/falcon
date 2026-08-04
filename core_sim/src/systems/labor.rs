@@ -156,10 +156,13 @@ pub fn advance_labor_allocation(
     // **The minimal TOE** (`docs/plan_hunt_through_combat.md` §4.8) — the two-tier table and the
     // durability dials, resolved once. What varies per band is only its `BandEquipment` *wear*.
     let equipment_cfg = configs.equipment.get();
-    // The **equipped** per-hunter haul rate. `labor_config.json`'s shipped rate IS the kitted tier
-    // (the game has always run kitted); the carry kit's `unequipped_per_worker_biomass_capacity` is
-    // the step down a band takes when its baskets are gone.
+    // The **equipped** tiers of the two carry kits. `labor_config.json`'s shipped rates ARE the
+    // kitted tiers (the game has always run kitted); each kit's own
+    // `unequipped_per_worker_biomass_capacity` is the step down a band takes when that kit is gone.
+    // **One kit, one job** (§4.8): the sled answers for the hunt, baskets for the gather, and neither
+    // can be read for the other.
     let equipped_haul_rate = labor.hunt.per_worker_biomass_capacity;
+    let equipped_gather_rate = labor.forage.per_worker_biomass_capacity;
     let map_seed = sim_config.map_seed;
     let husbandry = &fauna.husbandry;
     let work_range = labor.band_work_range;
@@ -229,27 +232,27 @@ pub fn advance_labor_allocation(
         // *before* the assignment loop so every source this band works is priced on one kit state: a
         // kit that expires part-way through the loop must not pay two different rates to two herds in
         // the same turn.
-        let carry_equipped = band_equipment
-            .as_deref()
-            .copied()
-            .unwrap_or_default()
-            .carry_equipped(&equipment_cfg);
-        let hunt_per_worker_biomass =
-            equipment_cfg.per_worker_biomass_capacity(equipped_haul_rate, carry_equipped);
+        let band_kit = band_equipment.as_deref().copied().unwrap_or_default();
+        let hunt_per_worker_biomass = equipment_cfg.hunt_per_worker_biomass_capacity(
+            equipped_haul_rate,
+            band_kit.sled_equipped(&equipment_cfg),
+        );
+        // **And this band's BASKET tier, on the same rule** — the forage web's carry, which before
+        // §4.8's "one kit, one job" correction had no kit at all. It is the undipped, pre-seasonal
+        // per-gatherer throughput every `forage_take`, gather forecast and staffing inversion below
+        // is capped by; the sled is never consulted for it.
+        let forage_per_worker_capacity = equipment_cfg.forage_per_worker_biomass_capacity(
+            equipped_gather_rate,
+            band_kit.basket_equipped(&equipment_cfg),
+        );
         // **And this band's FIGHTING tier, on the same one-kit-state-per-turn rule**
         // (`docs/plan_hunt_through_combat.md` §4). The hunting kit swaps the whole `attack` tier
         // (`1` bare-handed, `20` speared), which is the gate every take now resolves through — so a
         // band whose spears ran dry stops being able to hurt anything with a `defense`, and the
         // forecast it is seeded from says so on the same tier.
         let hunting_party = fauna::HuntingParty {
-            hunter: equipment_cfg.hunter_profile(
-                person_profile,
-                band_equipment
-                    .as_deref()
-                    .copied()
-                    .unwrap_or_default()
-                    .hunting_equipped(&equipment_cfg),
-            ),
+            hunter: equipment_cfg
+                .hunter_profile(person_profile, band_kit.hunting_equipped(&equipment_cfg)),
             tuning: combat_tuning,
             injury_damage_per_animal: hunt_injury_damage,
         };
@@ -539,6 +542,7 @@ pub fn advance_labor_allocation(
                         &labor.forage,
                         &flora,
                         &ladder,
+                        forage_per_worker_capacity,
                         seasonal,
                         mult_f,
                         workers,
@@ -671,6 +675,7 @@ pub fn advance_labor_allocation(
                             &labor.forage,
                             &flora,
                             &ladder,
+                            forage_per_worker_capacity,
                             seasonal,
                             mult_f,
                             workers,
@@ -737,9 +742,21 @@ pub fn advance_labor_allocation(
                         &flora,
                         &ladder,
                         mult_f,
+                        forage_per_worker_capacity,
                         seasonal,
                     );
                     let take = biomass_before - patch.biomass;
+                    // **The BASKETS are charged for USE, and only for use** (§4.8,
+                    // `docs/plan_denial_raid.md` §1.2). The gather's quantum is the *biomass* the
+                    // crew took off the patch — the same number the fodder credit below routes — so a
+                    // band that hunts all turn and gathers nothing wears no baskets at all, and a
+                    // crew that found nothing standing above its floor pays nothing either. Charged
+                    // **after** the take, the accrue-after-take ordering every rung's build meter
+                    // uses: the turn is paid at the tier it was priced with and the cliff lands on
+                    // the next turn.
+                    if let Some(kit) = band_equipment.as_mut() {
+                        kit.wear_baskets(&equipment_cfg, take);
+                    }
                     // **THE earn path, rungs 1–2** — the drawn-down half of the split above. A crew
                     // with nothing standing above its floor is watching the stand, not practising on
                     // it, whatever it intended; that is what replaced the `EcologyPhase::Thriving`
@@ -946,8 +963,9 @@ pub fn advance_labor_allocation(
                     // by. **Understaffing** (`wasted`): what the escapement ceiling offered beyond
                     // what the crew could gather — here it is not lost, it simply stays in the stock
                     // and regrows, but it is the same "add hands" answer.
-                    let per_worker_biomass = forage_per_worker_biomass(&labor.forage, seasonal)
-                        * ladder.build_dip(improvement);
+                    let per_worker_biomass =
+                        forage_per_worker_biomass(forage_per_worker_capacity, seasonal)
+                            * ladder.build_dip(improvement);
                     // **Floored at the build's own crew**, the plant twin of a herd's `herders_needed`
                     // (see [`source_crew_needed`]): a rung declares how many hands its build wants,
                     // and a thin patch can absorb fewer gatherers than that — inverting the take
@@ -977,6 +995,7 @@ pub fn advance_labor_allocation(
                         &labor.forage,
                         &flora,
                         &ladder,
+                        forage_per_worker_capacity,
                         seasonal,
                         mult_f,
                         workers,
@@ -1278,7 +1297,7 @@ pub fn advance_labor_allocation(
                         // not stalked, so there is no fight and no spear to blunt — which is the
                         // same reason this branch passes no engagement bound to the quantiser.
                         if let Some(kit) = band_equipment.as_mut() {
-                            kit.wear_carry(&equipment_cfg, take.carried);
+                            kit.wear_sled(&equipment_cfg, take.carried);
                         }
                         // **A pen changes the INTENSITY, never the PRODUCT** — the keeper is paid
                         // this herd's own species vector, so a penned wolf yields pelts and no meat
@@ -1431,7 +1450,7 @@ pub fn advance_labor_allocation(
                     // accrue-after-take ordering every rung's build meter uses.
                     if let Some(kit) = band_equipment.as_mut() {
                         kit.wear_hunting(&equipment_cfg, take.killed)
-                            .wear_carry(&equipment_cfg, take.carried);
+                            .wear_sled(&equipment_cfg, take.carried);
                     }
                     // **THE earn path, rungs 1–2** — the drawn-down half of the split above, and the
                     // heart of the ladder: the same hunt teaches **Herding** on a wild herd and
@@ -3126,7 +3145,10 @@ mod labor_yield_tests {
                 &world_labor.forage,
             );
             let take_biomass = tended.actual / rate;
-            let per_worker = crate::forage::forage_per_worker_biomass(&world_labor.forage, 1.0);
+            let per_worker = crate::forage::forage_per_worker_biomass(
+                world_labor.forage.per_worker_biomass_capacity,
+                1.0,
+            );
             (take_biomass / per_worker).ceil() as u32
         };
         assert!(
@@ -3341,6 +3363,7 @@ mod labor_yield_tests {
                 &labor.forage,
                 &flora,
                 &ladder,
+                labor.forage.per_worker_biomass_capacity,
                 SEASONAL_WEIGHT,
                 NEUTRAL_OUTPUT_MULT,
                 crew,
@@ -3373,7 +3396,10 @@ mod labor_yield_tests {
                 &labor.forage,
                 &flora,
                 &ladder,
-                SEASONAL_WEIGHT,
+                crate::forage::forage_per_worker_biomass(
+                    labor.forage.per_worker_biomass_capacity,
+                    SEASONAL_WEIGHT,
+                ),
                 NEUTRAL_OUTPUT_MULT,
             )
             .per_worker_yield
@@ -3458,7 +3484,10 @@ mod labor_yield_tests {
             (
                 patch.biomass,
                 workers as f32
-                    * crate::forage::forage_per_worker_biomass(&labor.forage, SEASONAL_WEIGHT)
+                    * crate::forage::forage_per_worker_biomass(
+                        labor.forage.per_worker_biomass_capacity,
+                        SEASONAL_WEIGHT,
+                    )
                     * build_dip(&world, Improvement::Cultivate),
             )
         };
@@ -3486,6 +3515,7 @@ mod labor_yield_tests {
                 &labor.forage,
                 &flora,
                 &ladder,
+                labor.forage.per_worker_biomass_capacity,
                 SEASONAL_WEIGHT,
                 NEUTRAL_OUTPUT_MULT,
                 workers,
@@ -4080,7 +4110,10 @@ mod labor_yield_tests {
                         &labor.forage,
                         &FloraConfig::builtin(),
                         &LadderConfig::builtin(),
-                        SEASONAL_WEIGHT,
+                        crate::forage::forage_per_worker_biomass(
+                            labor.forage.per_worker_biomass_capacity,
+                            SEASONAL_WEIGHT,
+                        ),
                         NEUTRAL_OUTPUT_MULT,
                     );
                     drop(labor);
@@ -4275,7 +4308,10 @@ mod labor_yield_tests {
             &labor.forage,
             &FloraConfig::builtin(),
             &LadderConfig::builtin(),
-            SEASONAL_WEIGHT,
+            crate::forage::forage_per_worker_biomass(
+                labor.forage.per_worker_biomass_capacity,
+                SEASONAL_WEIGHT,
+            ),
             NEUTRAL_OUTPUT_MULT,
         );
         let hunt_per_worker = labor.hunt.per_worker_biomass_capacity;
@@ -4438,7 +4474,11 @@ mod labor_yield_tests {
         // claim is that a bare tended patch pays exactly this.
         let wild_take = {
             let cfg = world.resource::<LaborConfigHandle>().get();
-            let crew = WORKERS as f32 * crate::forage::forage_per_worker_biomass(&cfg.forage, 1.0);
+            let crew = WORKERS as f32
+                * crate::forage::forage_per_worker_biomass(
+                    cfg.forage.per_worker_biomass_capacity,
+                    1.0,
+                );
             crew.min(biomass - patch_cap * crate::fauna::MSY_BIOMASS_FRACTION) * wild_rate
         };
         cultivate_source_patch(&mut world, biomass);
@@ -5137,7 +5177,10 @@ mod labor_yield_tests {
             &labor.forage,
             &FloraConfig::builtin(),
             &LadderConfig::builtin(),
-            SEASONAL_WEIGHT,
+            crate::forage::forage_per_worker_biomass(
+                labor.forage.per_worker_biomass_capacity,
+                SEASONAL_WEIGHT,
+            ),
             NEUTRAL_OUTPUT_MULT,
         );
         expected_yield(&forecast, workers, floor, improvement)

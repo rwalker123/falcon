@@ -2021,6 +2021,7 @@ pub fn capture_snapshot(
         config: &equipment_config,
         hunter_intrinsic: creatures.get().person(),
         equipped_haul_rate: labor_config.hunt.per_worker_biomass_capacity,
+        equipped_gather_rate: labor_config.forage.per_worker_biomass_capacity,
     };
     let expedition_levers = ExpeditionLevers {
         max_party_size: expedition_cfg.max_party_size,

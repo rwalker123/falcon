@@ -1609,6 +1609,9 @@ pub(crate) fn forage_take(
     flora: &FloraConfig,
     ladder: &LadderConfig,
     output_multiplier: f32,
+    // **This crew's resolved BASKET tier**, in biomass/worker before the season — see
+    // `forage_per_worker_biomass`.
+    per_worker_biomass_capacity: f32,
     seasonal: f32,
 ) -> Scalar {
     // The stance's escapement ceiling + the gather throughput, both from the shared helpers the
@@ -1621,7 +1624,7 @@ pub(crate) fn forage_take(
     // carries a fraction of what a gathering crew carries, whatever floor it holds. Multiplying the
     // ceiling instead is what let the harshest draw build for free.
     let worker_cap = workers as f32
-        * forage_per_worker_biomass(forage, seasonal)
+        * forage_per_worker_biomass(per_worker_biomass_capacity, seasonal)
         * ladder.build_dip(improvement);
     let take = worker_cap
         .min(take_ceiling)
@@ -1672,8 +1675,17 @@ pub(crate) fn forage_escapement_ceiling(floor: f32, biomass: f32, carrying_capac
 /// Biomass one forager can gather this turn (`per_worker_biomass_capacity × seasonal_weight`) — the
 /// per-worker throughput `forage_take`'s worker cap multiplies by the head-count, shared with the
 /// forecast. Hunting has no seasonal factor, so it has no counterpart helper.
-pub fn forage_per_worker_biomass(forage: &ForageLaborConfig, seasonal: f32) -> f32 {
-    forage.per_worker_biomass_capacity * seasonal.max(0.0)
+///
+/// **`per_worker_biomass_capacity` is a RESOLVED tier, not a config read** (`plan_hunt_through_combat`
+/// §4.8): a band with baskets gathers at `labor_config.json`'s `forage.per_worker_biomass_capacity`
+/// and a bare-handed one at `equipment.json`'s `basket_kit.unequipped_per_worker_biomass_capacity`,
+/// resolved once per band per turn through
+/// [`crate::equipment_config::EquipmentConfig::forage_per_worker_biomass_capacity`]. Sites with no
+/// band to resolve against (a tile's telemetry, a Field's managed collection cap) pass the shipped
+/// *equipped reference* rate, exactly as `HerdTelemetryState::per_worker_biomass` does on the animal
+/// web.
+pub fn forage_per_worker_biomass(per_worker_biomass_capacity: f32, seasonal: f32) -> f32 {
+    per_worker_biomass_capacity * seasonal.max(0.0)
 }
 
 /// Biomass → provisions for a gather take (× the caller's productivity multiplier) — the one
@@ -1909,7 +1921,7 @@ pub(crate) fn managed_per_worker_fodder(
     output_multiplier: f32,
 ) -> f32 {
     forage_provisions(
-        forage_per_worker_biomass(forage, MANAGED_HARVEST_SEASON),
+        forage_per_worker_biomass(forage.per_worker_biomass_capacity, MANAGED_HARVEST_SEASON),
         field_fodder_per_biomass(patch, tile_composition, flora, forage),
         output_multiplier,
     )
@@ -1981,7 +1993,7 @@ pub(crate) fn managed_per_worker_trade(
     output_multiplier: f32,
 ) -> f32 {
     forage_provisions(
-        forage_per_worker_biomass(forage, MANAGED_HARVEST_SEASON),
+        forage_per_worker_biomass(forage.per_worker_biomass_capacity, MANAGED_HARVEST_SEASON),
         field_trade_per_biomass(patch, tile_composition, flora, forage),
         output_multiplier,
     )
@@ -2196,7 +2208,11 @@ pub(crate) fn forage_forecast(
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
     ladder: &LadderConfig,
-    seasonal: f32,
+    // **The crew's per-gatherer throughput for THIS turn, season already folded in**
+    // (`forage_per_worker_biomass(resolved basket tier, seasonal)`). Taken pre-folded rather than as
+    // the tier + the season, so this signature stays inside clippy's argument budget and there is
+    // exactly one place the two multiply.
+    per_worker_gather_biomass: f32,
     output_multiplier: f32,
 ) -> SourceYieldForecast {
     // A Field's harvest is biomass-based and **seasonless** — the crop is standing in the field you
@@ -2234,7 +2250,7 @@ pub(crate) fn forage_forecast(
         engage_rate: f32::INFINITY,
         fight: None,
         per_worker_yield: plant_food_only(forage_provisions(
-            forage_per_worker_biomass(forage, seasonal),
+            per_worker_gather_biomass,
             rate,
             output_multiplier,
         )),
@@ -2296,7 +2312,7 @@ pub(crate) fn managed_per_worker_yield(
     output_multiplier: f32,
 ) -> f32 {
     forage_provisions(
-        forage_per_worker_biomass(forage, MANAGED_HARVEST_SEASON),
+        forage_per_worker_biomass(forage.per_worker_biomass_capacity, MANAGED_HARVEST_SEASON),
         rung_provisions_per_biomass(patch, tile_composition, flora, forage, RungKey::PlantField),
         output_multiplier,
     )
@@ -2338,6 +2354,7 @@ pub fn project_realized_forage(
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
     ladder: &LadderConfig,
+    per_worker_biomass_capacity: f32,
     seasonal: f32,
     output_multiplier: f32,
     workers: u32,
@@ -2384,6 +2401,7 @@ pub fn project_realized_forage(
                 flora,
                 ladder,
                 output_multiplier,
+                per_worker_biomass_capacity,
                 seasonal,
             )
             .to_f32()
@@ -2424,6 +2442,7 @@ pub fn project_arrivals_forage(
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
     ladder: &LadderConfig,
+    per_worker_biomass_capacity: f32,
     seasonal: f32,
     output_multiplier: f32,
     workers: u32,
@@ -2465,6 +2484,7 @@ pub fn project_arrivals_forage(
                 flora,
                 ladder,
                 output_multiplier,
+                per_worker_biomass_capacity,
                 seasonal,
             )
             .to_f32()
@@ -2487,6 +2507,7 @@ pub fn forage_source_yield_preview(
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
     ladder: &LadderConfig,
+    per_worker_biomass_capacity: f32,
     seasonal: f32,
     output_multiplier: f32,
     workers: u32,
@@ -2501,7 +2522,7 @@ pub fn forage_source_yield_preview(
         forage,
         flora,
         ladder,
-        seasonal,
+        forage_per_worker_biomass(per_worker_biomass_capacity, seasonal),
         output_multiplier,
     );
     // The patch's OWN MSY (`patch_ecology`) — a tended patch's sustainable line sits on its boosted
@@ -2524,6 +2545,7 @@ pub fn forage_source_yield_preview(
         forage,
         flora,
         ladder,
+        per_worker_biomass_capacity,
         seasonal,
         output_multiplier,
         workers,
@@ -2539,6 +2561,7 @@ pub fn forage_source_yield_preview(
         forage,
         flora,
         ladder,
+        per_worker_biomass_capacity,
         seasonal,
         output_multiplier,
         workers,
@@ -2683,7 +2706,7 @@ mod tests {
         // is the accumulated stock, not a rate — the crew empties the store the patch built up before
         // anyone worked it, and lands it exactly on its most productive biomass.
         let biomass_before = patch.biomass;
-        let crew_cap = 20.0 * forage_per_worker_biomass(&forage, 1.0);
+        let crew_cap = 20.0 * forage_per_worker_biomass(forage.per_worker_biomass_capacity, 1.0);
         let expected_first = crew_cap.min(biomass_before - half_cap);
         let provisions = forage_take(
             &mut patch,
@@ -2695,6 +2718,7 @@ mod tests {
             &FloraConfig::builtin(),
             &LadderConfig::builtin(),
             1.0,
+            forage.per_worker_biomass_capacity,
             1.0,
         );
         let take = biomass_before - patch.biomass;
@@ -2734,6 +2758,7 @@ mod tests {
                 &FloraConfig::builtin(),
                 &LadderConfig::builtin(),
                 1.0,
+                forage.per_worker_biomass_capacity,
                 1.0,
             );
             last_take = before - patch.biomass;
@@ -2788,6 +2813,7 @@ mod tests {
                 &FloraConfig::builtin(),
                 &LadderConfig::builtin(),
                 1.0,
+                forage.per_worker_biomass_capacity,
                 1.0,
             );
             regrow_patch(&mut patch, &forage);
@@ -2830,6 +2856,7 @@ mod tests {
                 &FloraConfig::builtin(),
                 &LadderConfig::builtin(),
                 1.0,
+                forage.per_worker_biomass_capacity,
                 1.0,
             );
             let take = start - patch.biomass;
@@ -2959,6 +2986,7 @@ mod tests {
                 &FloraConfig::builtin(),
                 &LadderConfig::builtin(),
                 1.0,
+                forage.per_worker_biomass_capacity,
                 1.0,
             );
             regrow_patch(&mut patch, &forage);
