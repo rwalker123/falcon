@@ -45,6 +45,13 @@ const HERD_SPECIES := {
 	"grouse": "🐓",
 	"hare": "🐇",
 	"catfish": "🐟",
+	# The two INVENTED species (no real animal, so no matching emoji exists either): a `steppe
+	# runner` is a saiga-like open-country runner and a `marsh grazer` a wading antelope. Both had
+	# NO keyword here at all until issue #439's audit, so `species_key_for` returned "" for them and
+	# they drew `HERD_DEFAULT` — see `FaunaSprites` for why nothing caught it. Two-word keys because
+	# the sole match must be the display name: "Steppe Runners" / "Marsh Grazers".
+	"steppe runner": "🦌",
+	"marsh grazer": "🐃",
 }
 
 # ---- THE ESCAPEMENT FLOOR'S GLYPHS --------------------------------------------------------------

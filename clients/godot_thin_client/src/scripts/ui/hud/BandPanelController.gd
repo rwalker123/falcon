@@ -742,12 +742,12 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     stripe.color = _work_row_stripe_color(model)
     stripe.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(stripe)
-    var icon := Label.new()
-    icon.text = String(model.get("icon", ""))
-    icon.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_ICON_WIDTH, 0.0)
-    icon.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
-    icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    line.add_child(icon)
+    # The SOURCE mark: bundled art where the client has it, the emoji where it does not. The column
+    # is the same fixed `WORK_ROW_ICON_WIDTH` either way, so a board mixing art and emoji rows still
+    # lines up down the icon column (issue #439).
+    line.add_child(HudWidgets.build_marker_icon(
+        model.get("icon_texture") as Texture2D, String(model.get("icon", "")),
+        HudWorkVocab.WORK_ROW_ICON_WIDTH, HudWorkVocab.WORK_ROW_FONT_SIZE))
     var label := Label.new()
     label.text = String(model.get("label", ""))
     label.clip_text = true
@@ -891,8 +891,14 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
     strip.add_child(col)
     var head := HBoxContainer.new()
     head.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
+    # The mark is its own child rather than a prefix welded into the title's text: a texture cannot
+    # live inside a `Label.text`, and splitting it is what lets the strip show the same art as the
+    # row it belongs to. `WORK_ROW_SEPARATION` on `head` is what spaces them, as it did the string.
+    head.add_child(HudWidgets.build_marker_icon(
+        model.get("icon_texture") as Texture2D, String(model.get("icon", "")),
+        HudWorkVocab.WORK_ROW_ICON_WIDTH, HudWorkVocab.WORK_ROW_FONT_SIZE))
     var title := Label.new()
-    title.text = "%s %s" % [String(model.get("icon", "")), String(model.get("label", ""))]
+    title.text = String(model.get("label", ""))
     title.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     title.clip_text = true
     title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1010,6 +1016,13 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # this crew pulls.
         var improvement := String(m.get("improvement", "")).strip_edges().to_lower()
         var icon := ""
+        # The row's bundled ART, resolved BESIDE the emoji rather than instead of it (issue #439):
+        # the emoji stays as the fallback, it is not replaced. BOTH webs fill it, and that is
+        # deliberate — hunt and forage rows share ONE list and ONE icon column, so spriting only the
+        # hunt half would leave a board that is half art and half emoji, a new inconsistency
+        # introduced by the fix. `null` where the client has no art for this source, which is the
+        # case `HudWidgets.build_marker_icon` renders the glyph for.
+        var icon_texture: Texture2D = null
         var label := ""
         var cap := {}
         var live_herd := {}
@@ -1019,6 +1032,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # `HudFormat.source_icon_prefix`, which welds it to the label with a trailing space for the
             # single-label row this replaced.
             icon = _band_labor.food_module_icon(x, y)
+            icon_texture = _band_labor.food_module_sprite(x, y)
             # Held in a local because the RUNG mark reads it too — `forage_patch_lookup` spells its keys
             # BARE (`is_cultivated` / `is_field`), unlike the `patch_`-prefixed `tile_info` cross-ref.
             patch = _band_labor.forage_patch_lookup().get(Vector2i(x, y), {})
@@ -1041,6 +1055,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         else:
             var herd_label := _herd_label_for_id(herd_id)
             icon = FoodIcons.for_herd(herd_label)
+            icon_texture = FaunaSprites.for_herd(herd_label)
             label = HudWorkVocab.WORK_ROW_HUNT_FORMAT % herd_label
             # Herds MIGRATE, so the cap reads the herd's LIVE dict from `_band_labor.world_herds()` rather than the
             # assignment's launch-time target.
@@ -1088,7 +1103,8 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             if note == "":
                 note = HudWorkVocab.WORK_ROW_UNDER_HERDED_NOTE
         models.append({
-            "key": String(key), "kind": kind, "icon": icon, "label": label,
+            "key": String(key), "kind": kind, "icon": icon, "icon_texture": icon_texture,
+            "label": label,
             "rate": float(yld.get("rate", 0.0)),
             # The row's TRADE component (issue #337), 0 when the source pays none. Carried so the
             # inspector sentence states the same two products the row headline does.
@@ -1679,7 +1695,22 @@ func _build_quarry_row(band: Dictionary, herd: Dictionary) -> HBoxContainer:
         HudStyle.apply_button(pick, "primary")
     else:
         var name_text := SourceForecast.herd_display_name(herd)
-        pick.text = HudComposeVocab.COMPOSE_QUARRY_LABEL_FORMAT % [FoodIcons.for_herd(name_text), name_text]
+        # The picked quarry wears the species' bundled ART where there is any (issue #439). A Button
+        # takes an icon natively, so this is its `icon` PROPERTY rather than a glyph welded into the
+        # face — and only the emoji branch keeps the format string, so a species with art loses the
+        # leading glyph instead of carrying both. `icon_max_width` is what stops the 256px source
+        # setting the button's minimum and dragging the compose row wide; `expand_icon` then fits it
+        # to the button's own height. UNTINTED: `apply_button` sets no `icon_*_color`, and the stock
+        # theme's is opaque white, so the animal renders in its own colours like every other marker.
+        var quarry_sprite := FaunaSprites.for_herd(name_text)
+        if quarry_sprite != null:
+            pick.icon = quarry_sprite
+            pick.expand_icon = true
+            pick.add_theme_constant_override("icon_max_width",
+                HudComposeVocab.COMPOSE_QUARRY_ICON_MAX_WIDTH)
+            pick.text = name_text
+        else:
+            pick.text = HudComposeVocab.COMPOSE_QUARRY_LABEL_FORMAT % [FoodIcons.for_herd(name_text), name_text]
         pick.clip_text = true
         pick.tooltip_text = HudComposeVocab.COMPOSE_QUARRY_TOOLTIP_FORMAT % [
             name_text, int(herd.get("x", -1)), int(herd.get("y", -1)),
