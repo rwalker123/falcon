@@ -117,6 +117,13 @@ const QUARRY_FAR_Y := 18
 const QUARRY_NEAR_HERD_ID := "game_deer_79"
 const QUARRY_NEAR_X := 72
 const QUARRY_NEAR_Y := 18
+## **THE WALK OUT TO THE FAR QUARRY, stated from the fixture's own geometry.** The band stands at
+## (71, 18) and the boar at (75, 18) — the same row, so the odd-r hex distance is the bare column
+## delta, 4 — and `_band_fixture` moves 2 tiles a turn, so the party arrives on turn `ceil(4 / 2)` = 2.
+## The denial verdict adds it to both ends of the collapse band, because the sim's table counts only
+## the turns spent working the herd. Written out rather than asked of `outbound_travel_turns`: an
+## expectation re-derived through the code under test asserts nothing.
+const DENIAL_OUTBOUND_TRAVEL_TURNS := 2
 # The two disclosure keys of `_band_fixture()` (entity 904) — the `[url]` meta payload its Food /
 # Morale rows carry, i.e. what `DetailFormat.breakdown_key` builds for that band.
 const BAND_FIXTURE_DISCLOSURE_FOOD := "food:904"
@@ -3576,9 +3583,17 @@ func _assert_denial_viable() -> void:
 	# through the formatter under test asserts nothing.
 	var want := String(SourceForecast.DENIAL_VERDICTS[
 		SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY]["line"]) % quarry
+	# **THE RANGE IS FROM LAUNCH, SO BOTH ENDS CARRY THE WALK OUT.** The sim's table counts raiding
+	# turns; the party has to get there first, and the HUNT form on this same sheet has always
+	# headlined a round-trip total — so an unqualified collapse count read as the same span and was
+	# short by the outbound leg. The expectation is stated from the harness's side (the constant
+	# below, derived from this fixture's own geometry) so the two arrive at one string from opposite
+	# ends; re-deriving it through `outbound_travel_turns` would assert nothing.
 	want += SourceForecast.DENIAL_TURNS_CLAUSE_FORMAT % (
 		SourceForecast.DENIAL_TURNS_RANGE_FORMAT % [
-			DENIAL_LOW_ROW[DENIAL_PARTY - 1], DENIAL_HIGH_ROW[DENIAL_PARTY - 1]])
+			DENIAL_LOW_ROW[DENIAL_PARTY - 1] + DENIAL_OUTBOUND_TRAVEL_TURNS,
+			DENIAL_HIGH_ROW[DENIAL_PARTY - 1] + DENIAL_OUTBOUND_TRAVEL_TURNS])
+	want += SourceForecast.DENIAL_TRAVEL_SPLIT_FORMAT % DENIAL_OUTBOUND_TRAVEL_TURNS
 	_assert_band_panel("the denial form states the collapse verdict as a RANGE — \"%s\"" % want,
 		_rich_text_containing(_panel, want) == want)
 	# **THE WASTE IS STATED AND IS NOT DRESSED AS A WARNING.** On a hunt an unhauled kill wears

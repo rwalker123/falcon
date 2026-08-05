@@ -186,7 +186,9 @@ static func assign_preview_herd(id: String, species: String, phase: String, sust
 ##       `"<policy>:<party_workers>"` → `{turns_to_fill, delivers_food, delivers_trade, …}`. An
 ##       expedition's trip is NOT a rate division (on Surplus/Deplete the ceiling is a *stock* the party
 ##       strips in a turn or two, then it crawls at the regrowth trickle), so the client looks the answer
-##       up and does no math. `turns_to_fill == 0` → won't fill within the horizon; `delivers_food ==
+##       up and does no math. `turns_to_fill == 0` → the projection ran out with the raid still going,
+##       which is `TRIP_BOUND_HORIZON` and nothing else — a raid that ends by emptying the range
+##       reports the turn it ended on, like any other; `delivers_food ==
 ##       false` says the QUARRY IS INEDIBLE (#337), and only `delivers_food AND delivers_trade` both
 ##       false is a denial mission — the raid banks whichever half the species pays.
 ## **A ROW THAT DELIVERS NOTHING CANNOT WEAR A PARTY-SIDE BOUND.** `pack_full` and `fill_target` both
@@ -206,6 +208,17 @@ static func clean_raid_bound(animals: int, stance: String, delivering: String) -
 	return SourceForecast.TRIP_BOUND_FLOOR \
 		if float(BaseFx.LEGACY_STANCE_FLOORS.get(stance, 0.0)) > 0.0 \
 		else SourceForecast.TRIP_BOUND_HERD_LOST
+
+## **A STRIP-BARE RAID FINISHES BY EMPTYING THE RANGE, so it reports the turn it finished on.**
+##
+## The floor-`0` row used to carry `turns_to_fill == 0` beside `TRIP_BOUND_HORIZON`, i.e. the wire's
+## "still going when the projection ran out" — which the sheet then read on three surfaces at once as a
+## raid that never completes, for the one mission whose whole purpose is to finish. The sim reserves
+## that sentinel for `horizon` alone now: a raid that drives the herd under its extinction floor ends
+## on `herd_lost`, on a real turn, because the live arm's lost-herd guard turns the party for home in
+## that same turn. This is that turn — longer than the surplus raid on the same herd, since the party
+## keeps killing until there is nothing left rather than stopping at a floor.
+const STRIP_BARE_TRIP_TURNS := 11
 
 ## `trip_turns` is the simulated turns-to-fill for the 4-worker party these states dial in.
 static func forecast_herd(id: String, species: String, phase: String, sustain_ceiling: float,
@@ -285,15 +298,20 @@ static func forecast_herd(id: String, species: String, phase: String, sustain_ce
 			# Eradicate DELIVERS (issue #337): `delivers_food` says the quarry is EDIBLE, not that the
 			# rung is a denial mission, and an Eradicate raid banks the whole-stock windfall.
 			"eradicate:%d" % HUNT_FORECAST_PARTY: {
-				"turns_to_fill": 0, "delivers_food": true, "delivers_trade": true,
+				"turns_to_fill": STRIP_BARE_TRIP_TURNS,
+				"delivers_food": true, "delivers_trade": true,
 				"animals_taken": surplus_animals,
 				"delivered_food": surplus_delivered,
 				"delivered_trade": float(surplus_animals) * RAID_TRADE_PER_ANIMAL, "wasted_food": 0.0,
-				# `turns_to_fill == 0` IS the horizon case — the raid was still delivering when the
-				# projection ran out — and the pairing is the sim's own: the two must move together, or
-				# the verdict names a stop the turn count denies.
+				# **THE FLOOR-`0` ROW COMPLETES, and its turn count is what says so.** It used to pair
+				# `turns_to_fill == 0` with `TRIP_BOUND_HORIZON` — the wire's "still going when the
+				# projection ran out" — which the sheet read on three surfaces at once as a raid that
+				# never completes (`over many turns` / `still delivering at the end of the forecast` /
+				# `Send Anyway (long raid)`), for the one mission whose whole purpose is to finish.
+				# `herd_lost` beside a REAL turn is the sim's own pairing; the horizon pairing lives on
+				# `hunt.gd`'s `_horizon_raid_herd`, where it is genuinely what the projection found.
 				SourceForecast.TRIP_BOUND_KEY: clean_raid_bound(surplus_animals, "eradicate",
-					SourceForecast.TRIP_BOUND_HORIZON),
+					SourceForecast.TRIP_BOUND_HERD_LOST),
 			},
 		},
 	}

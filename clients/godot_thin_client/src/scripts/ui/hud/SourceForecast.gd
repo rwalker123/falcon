@@ -730,6 +730,28 @@ const HUNT_FORECAST_DELIVERS_FORMAT := "delivers ≈%d %s over ≈%d turns"
 # forecast horizon still delivering (a slow breeder a big party can neither fill nor exhaust). The
 # client has no horizon lever, so it words this "over many turns" rather than a bare number.
 const HUNT_FORECAST_LONG_RAID_FORMAT := "delivers ≈%d %s over many turns"
+# **THE WIRE'S "THE RAID HAD NOT FINISHED WHEN THE PROJECTION RAN OUT", AND IT NOW MEANS `horizon` AND
+# NOTHING ELSE.** `HuntTripForecast::turns_to_fill` is `Option<u32>`, `None` rendered as `0` here, and
+# the sim reserves `None` for [`HuntTripBound::Horizon`] alone: a raid that ends by driving the herd
+# extinct reports the turn it ended on like any other, because the live arm's lost-herd guard turns the
+# party for home that same turn.
+#
+# **THAT PAIRING IS THE WHOLE OF FIX #2, and it is the ONE test for the three "many turns" surfaces.**
+# A floor-`0` (`Take everything`) raid ends by emptying the range, so it used to publish this sentinel
+# and read on three surfaces at once as a trip that never completes — `delivers ≈12 Red Deer over many
+# turns`, `Away many turns — still delivering at the end of the forecast`, `Send Anyway (long raid)` —
+# for the one mission whose whole purpose is to finish. Reading the sentinel is therefore reading
+# "horizon", not "no answer": a `herd_lost` row carries a real turn count and takes the bounded branch,
+# where its `TRIP_BOUND_CLAUSES` line says the range is empty by the time the party is home. **Never
+# add a second `<= 0` test beside this one**, and never let a bound key reach the long branch.
+const RAID_TURNS_UNBOUNDED := 0
+
+## Did the sim's projection run its whole length with this raid still going? The ONE reading of
+## `RAID_TURNS_UNBOUNDED`, so the one-line form, the trip verdict and the Send button cannot answer it
+## three ways — and so a raid that COMPLETES by emptying the range (a real `turns_to_fill` beside a
+## `herd_lost` bound) can never take a "many turns" branch on any of them.
+static func raid_is_unbounded(hunt_turns: int) -> bool:
+    return hunt_turns <= RAID_TURNS_UNBOUNDED
 # The FOOD the delivered animals are worth, appended so the party-size tradeoff reads BOTH ways: a
 # bigger party takes more animals AND more food.
 const HUNT_FORECAST_FOOD_FORMAT := " · ~%d food"
@@ -1303,7 +1325,28 @@ static func round_trip_travel_turns(band: Dictionary, herd: Dictionary,
         grid_width, wrap_horizontal)
     if one_way < 0:
         return 0
-    return int(ceil(float(2 * one_way) / move_rate))
+    return int(ceil(float(TRAVEL_LEGS_PER_ROUND_TRIP * one_way) / move_rate))
+
+# A round trip is out and back. Named because `outbound_travel_turns` divides by it and a bare `2`
+# there would read as an unexplained halving rather than as "one of the two legs".
+const TRAVEL_LEGS_PER_ROUND_TRIP := 2
+
+## **THE OUTBOUND LEG ALONE — the walk OUT, taken from the round trip rather than measured again.**
+##
+## There is exactly ONE definition of travel in this client (`round_trip_travel_turns`, which mirrors
+## the server's launch feed), and this is a reading of it, not a second one: for an integer `n`,
+## `ceil(ceil(x)/n) == ceil(x/n)`, so `ceil(round_trip / 2)` is EXACTLY `ceil(one_way / move_rate)` —
+## the turn the party arrives. A second `hex_distance ÷ move_rate` here would be a second definition
+## free to drift from the one the hunt readout and the server both use.
+##
+## **WHO WANTS THE OUTBOUND LEG RATHER THAN THE ROUND TRIP:** a HUNT's payload only counts once it is
+## carried home, so its headline is the whole round trip. A DENIAL raid's verdict is about the HERD
+## crossing the point of no return — an event that happens on the range, the moment the party has
+## walked there and started killing — so the return leg falls outside the span the verdict is about.
+static func outbound_travel_turns(band: Dictionary, herd: Dictionary,
+        grid_width: int, wrap_horizontal: bool) -> int:
+    return int(ceil(float(round_trip_travel_turns(band, herd, grid_width, wrap_horizontal))
+        / float(TRAVEL_LEGS_PER_ROUND_TRIP)))
 
 ## **THE STOCK STANDING ABOVE `floor`, in biomass** — `max(0, B − floor·K)`, the client half of the
 ## one expression both take paths pay (`fauna::hunt_escapement_ceiling` /
@@ -1915,7 +1958,27 @@ const DENIAL_TURNS_ONE_FORMAT := "≈%d turns"
 const DENIAL_TURNS_GOOD_RUN_FORMAT := "≈%d turns on a good run"
 # The clause the turn phrase rides in, appended to the outcome sentence rather than baked into each
 # entry's format: an outcome that quotes no turns must still render its outcome (below).
-const DENIAL_TURNS_CLAUSE_FORMAT := " in %s"
+#
+# **THE SPAN IS NAMED IN THE SENTENCE, AND THAT IS THE WHOLE FIX** (reported from play). The collapse
+# table counts turns spent WORKING the herd; the party still has to walk there, and the hunt readout on
+# the same sheet has always added its round trip (`HUNT_FORECAST_TRAVEL_BREAKDOWN`). Two missions
+# quoting bare turn counts that meant different spans is the defect, so neither form is bare any more:
+# a pre-launch verdict states the total FROM LAUNCH, an in-flight one states turns OF RAIDING.
+const DENIAL_TURNS_CLAUSE_FORMAT := " in %s from launch"
+# The in-flight form. A launched party's remaining walk is not knowable from the drawer's inputs (the
+# sim publishes no per-party arrival for a denial mission), so this surface quotes the table's own span
+# and SAYS which one it is rather than inheriting a "from launch" it cannot honour.
+const DENIAL_TURNS_CLAUSE_AT_HERD_FORMAT := " in %s of raiding"
+# …and where there IS travel folded into that total, how much of it is the walk — the hunt line's
+# `(7 hunting + 3 travel)` split, in the one term a denial total actually adds. Rendered only when
+# there is travel to split off, exactly as the hunt breakdown is.
+const DENIAL_TRAVEL_SPLIT_FORMAT := " (%d of them travel)"
+# The forecast's own travel key, and the sentinel for "no band was supplied, so this forecast states
+# the AT-THE-HERD span". A real leg is never negative, so `-1` reads unambiguously as absent — the
+# `HUNT_RATE_UNAVAILABLE` idiom. It is NOT `0`: a band standing on its quarry has a real zero-turn
+# walk and must still read "from launch".
+const DENIAL_TRAVEL_KEY := "travel"
+const DENIAL_TRAVEL_UNKNOWN := -1
 # The caveat, in the panel's own hint register. It is what keeps the band from reading as a guarantee.
 const DENIAL_ESTIMATE_CAVEAT := "An estimate over many raids — the fight is chancy, so a lucky run finishes sooner."
 
@@ -3177,11 +3240,13 @@ static func hunt_trip_forecast(band: Dictionary, herd: Dictionary, floor: float,
     if delivered_food <= 0.0 and delivered_trade <= 0.0:
         return {"available": true, "denial": false, "empty": true, TRIP_BOUND_KEY: bound}
     var animals := int(estimate.get("animals_taken", 0))
-    # turns_to_fill == 0 = the raid ran the whole horizon still delivering (a long raid). A warn
-    # threshold of 0 means the server sent none — report the raid, judge nothing. `turns_to_fill` now
-    # counts HUNTING turns only; the band-relative round trip is added on top so the headline is honest.
-    var hunt_turns := int(estimate.get("turns_to_fill", 0))
-    var long_raid: bool = hunt_turns <= 0
+    # `turns_to_fill == RAID_TURNS_UNBOUNDED` = the raid ran the whole horizon still delivering (a long
+    # raid), and since the floor-0 fix that is `horizon` and nothing else — a `herd_lost` raid completes
+    # and reports its turn, so it lands on the bounded branch below. A warn threshold of 0 means the
+    # server sent none — report the raid, judge nothing. `turns_to_fill` counts HUNTING turns only; the
+    # band-relative round trip is added on top so the headline is honest.
+    var hunt_turns := int(estimate.get("turns_to_fill", RAID_TURNS_UNBOUNDED))
+    var long_raid: bool = raid_is_unbounded(hunt_turns)
     var travel := round_trip_travel_turns(band, herd, grid_width, wrap_horizontal)
     var total := hunt_turns + travel
     var warn_turns := int(band.get("expedition_viability_warn_turns", 0))
@@ -3260,7 +3325,7 @@ static func raid_target_turns(fill_target: int, untargeted_animals: int,
         untargeted_turns: int) -> int:
     if not raid_target_binds(fill_target, untargeted_animals):
         return RAID_TURNS_UNKNOWN
-    if untargeted_turns <= 0:
+    if raid_is_unbounded(untargeted_turns):
         return RAID_TURNS_UNKNOWN
     return maxi(1, ceili(float(fill_target) * float(untargeted_turns) / float(untargeted_animals)))
 
@@ -3488,38 +3553,67 @@ static func denial_estimate_row(rows: Array, workers: int) -> Dictionary:
             return row
     return {}
 
-## What `workers` from this band do to `herd` on a DENIAL raid — a PURE TABLE LOOKUP into the sim's
-## `denialEstimates`, with zero arithmetic on this side. Returns
-## `{available, outcome, turns, low, high, animals, food, trade, wasted}`.
+## What `workers` from this band do to `herd` on a DENIAL raid — a table lookup into the sim's
+## `denialEstimates` plus the ONE band-relative term the band-agnostic table cannot carry. Returns
+## `{available, outcome, turns, low, high, travel, animals, food, trade, wasted}`.
 ##
-## **THERE IS NO `travel` TERM AND NO ETA, DELIBERATELY.** A hunting raid's headline is a delivery, so
-## the client adds the band-relative round trip the band-agnostic table cannot carry. A denial party
-## delivers nothing worth waiting for; its verdict is about the HERD crossing the point of no return,
-## which is the sim's own integral over the engagement. Bolting a travel term onto it would re-frame
-## the mission as the errand it deliberately is not.
+## **THE TURN COUNTS ARE FROM LAUNCH, AND THE OUTBOUND WALK IS WHY** (reported from play). The sim's
+## `turns_to_collapse` counts turns of RAIDING — the party has to reach the herd before it can kill
+## anything — so a bare "≈5–8 turns" beside a hunt line that HAS always added its round trip made two
+## missions on one sheet quote turn counts meaning different things. Each bounded end therefore gains
+## the outbound leg, and `DENIAL_TURNS_CLAUSE_FORMAT` names the span out loud.
+##
+## **THE RETURN LEG IS DELIBERATELY NOT IN IT.** The verdict is about the HERD crossing the point of no
+## return, which happens on the range the moment the party is there and killing; the walk home comes
+## after the event and is not part of the span the sentence is about. A hunt is the opposite case — its
+## payload only counts once carried home — which is exactly why it adds the whole round trip.
+##
+## **NO `band` = NO TRAVEL TERM, AND THAT IS A STATED SPAN, NOT A DEFAULT.** A launched party's
+## remaining walk is unknowable here (the sim publishes no per-party arrival for a denial mission), so
+## the in-flight caller passes no band, the forecast carries `DENIAL_TRAVEL_UNKNOWN`, and the sentence
+## says "of raiding" instead of "from launch". Both surfaces name their span; neither is bare.
 ##
 ## `available == false` = the snapshot carries no denial row for this party size (a non-huntable herd,
 ## a party larger than the sim sampled) → the caller renders NO verdict at all rather than a blank.
-static func denial_forecast(herd: Dictionary, workers: int) -> Dictionary:
+static func denial_forecast(herd: Dictionary, workers: int, band: Dictionary = {},
+        grid_width: int = 0, wrap_horizontal: bool = false) -> Dictionary:
     var rows_variant: Variant = herd.get(HERD_DENIAL_ESTIMATES_KEY, [])
     if workers <= 0 or not (rows_variant is Array):
         return {"available": false}
     var row := denial_estimate_row(rows_variant as Array, workers)
     if row.is_empty():
         return {"available": false}
+    var travel := DENIAL_TRAVEL_UNKNOWN if band.is_empty() \
+        else outbound_travel_turns(band, herd, grid_width, wrap_horizontal)
     return {
         "available": true,
         # The sim's own key, carried through untouched — every branch below asks THIS, never the
         # numbers, because a `0` turn count is reachable from two unrelated outcomes.
         "outcome": String(row.get("outcome", DENIAL_OUTCOME_NONE)).strip_edges().to_lower(),
-        "turns": int(row.get("turns_to_collapse", DENIAL_TURNS_BEYOND_HORIZON)),
-        "low": int(row.get("turns_to_collapse_low", DENIAL_TURNS_BEYOND_HORIZON)),
-        "high": int(row.get("turns_to_collapse_high", DENIAL_TURNS_BEYOND_HORIZON)),
+        # Each end shifted onto the launch clock, and `0` (beyond the horizon on that end) left alone —
+        # see `_denial_turns_from_launch`.
+        "turns": _denial_turns_from_launch(
+            int(row.get("turns_to_collapse", DENIAL_TURNS_BEYOND_HORIZON)), travel),
+        "low": _denial_turns_from_launch(
+            int(row.get("turns_to_collapse_low", DENIAL_TURNS_BEYOND_HORIZON)), travel),
+        "high": _denial_turns_from_launch(
+            int(row.get("turns_to_collapse_high", DENIAL_TURNS_BEYOND_HORIZON)), travel),
+        DENIAL_TRAVEL_KEY: travel,
         "animals": int(row.get("animals_killed", 0)),
         "food": float(row.get("delivered_food", 0.0)),
         "trade": float(row.get("delivered_trade", 0.0)),
         "wasted": float(row.get("wasted_food", 0.0)),
     }
+
+## A collapse turn count moved onto the clock the player is actually on — the raiding turns plus the
+## walk out. **`DENIAL_TURNS_BEYOND_HORIZON` (`0`) is not a turn count and must not be shifted**: it
+## means the projection never bounded that end, and `travel` turns of walking do not bound it either.
+## An unknown travel term (`DENIAL_TRAVEL_UNKNOWN`, the in-flight caller) leaves the count as the sim
+## stated it, which is what the "of raiding" clause then says.
+static func _denial_turns_from_launch(turns: int, travel: int) -> int:
+    if turns <= DENIAL_TURNS_BEYOND_HORIZON or travel <= 0:
+        return turns
+    return turns + travel
 
 ## **THE ONE RESOLUTION OF THE OUTCOME KEY** — the `{line, turns, button, severity, reason}` entry
 ## every surface of the verdict is composed from, so the sentence, the Send button's face and the
@@ -3549,6 +3643,26 @@ static func denial_turns_phrase(forecast: Dictionary) -> String:
         return DENIAL_TURNS_ONE_FORMAT % turns
     return ""
 
+## **THE TURN CLAUSE, WHICH ALWAYS NAMES ITS SPAN** — `" in ≈8–11 turns from launch (2 of them
+## travel)"` where the caller supplied a band, `" in ≈5–8 turns of raiding"` where it did not. `""`
+## when the forecast has no number to quote, so the outcome sentence stands alone.
+##
+## A bare `" in ≈5–8 turns"` is the one form this must never produce again: the hunt readout on the
+## same sheet quotes a round-trip TOTAL, so an unqualified denial count read as the same span and was
+## short by the walk. The travel split renders only where there is travel to split off — a band
+## standing beside its quarry has none, and "(0 of them travel)" would be a term for nothing.
+static func denial_turns_clause(forecast: Dictionary) -> String:
+    var phrase := denial_turns_phrase(forecast)
+    if phrase == "":
+        return ""
+    var travel := int(forecast.get(DENIAL_TRAVEL_KEY, DENIAL_TRAVEL_UNKNOWN))
+    if travel == DENIAL_TRAVEL_UNKNOWN:
+        return DENIAL_TURNS_CLAUSE_AT_HERD_FORMAT % phrase
+    var clause := DENIAL_TURNS_CLAUSE_FORMAT % phrase
+    if travel > 0:
+        clause += DENIAL_TRAVEL_SPLIT_FORMAT % travel
+    return clause
+
 ## The verdict as one plain sentence — the OUTCOME always, the turn phrase only when that outcome has
 ## one to quote and the sim bounded it. **The outcome leads and the number is a clause on it**, which
 ## is the structural form of "never render a blank turn count without its outcome": there is no branch
@@ -3559,9 +3673,7 @@ static func denial_verdict_text(forecast: Dictionary, herd_name: String) -> Stri
     var entry := denial_verdict(forecast)
     var text := String(entry["line"]) % herd_name
     if bool(entry["turns"]):
-        var phrase := denial_turns_phrase(forecast)
-        if phrase != "":
-            text += DENIAL_TURNS_CLAUSE_FORMAT % phrase
+        text += denial_turns_clause(forecast)
     return text
 
 ## …and the same sentence tinted: SIGNAL cyan for a raid that gets there, WARN amber for one that does
@@ -3774,9 +3886,15 @@ static func expedition_policy_takes(band: Dictionary, herd: Dictionary,
             var cell := cell_variant as Dictionary
             if not is_equal_approx(float(cell.get(HUNT_ESTIMATE_FLOOR_KEY, 0.0)), sampled):
                 continue
-            var trip_turns := int(cell.get("turns_to_fill", 0)) + travel
-            if trip_turns <= 0:
+            # **AN UNBOUNDED RAID HAS NO LENGTH, AND ITS TRAVEL IS NOT ONE.** The skip used to test the
+            # SUM, so a horizon cell on a distant herd read `delivered ÷ travel` — a rate for a raid the
+            # sim says never finished, made entirely out of the walk. Under the old wire that was every
+            # floor-`0` cell, so the `Take everything` preset quoted a fabricated rate on a far herd and
+            # no rate at all on a near one. Ask the raid, not the total.
+            var cell_hunt_turns := int(cell.get("turns_to_fill", RAID_TURNS_UNBOUNDED))
+            if raid_is_unbounded(cell_hunt_turns):
                 continue
+            var trip_turns := cell_hunt_turns + travel
             # Each component gates on its OWN delivers flag: `delivers_food == false` now means the
             # quarry is inedible, so gating the whole row on it would blank a wolf's every preset.
             if bool(cell.get("delivers_food", false)):

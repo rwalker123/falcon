@@ -948,6 +948,38 @@ and for the same reason: three lookups are free to disagree.
   wears `≈`, and `DENIAL_ESTIMATE_CAVEAT` rides under any verdict that quotes a number — and under
   none that does not, since a caveat about an absent number reads as one that is there.
 
+### The verdict counts from LAUNCH, and the span is named in the sentence
+
+`turns_to_collapse` counts the turns the party spends **working the herd**. Reported from play: the
+verdict read *"Wild Boar past recovery in ≈5–8 turns"* beside a HUNT readout on the same sheet that
+had always added its round trip (`HUNT_FORECAST_TRAVEL_BREAKDOWN`) — two missions quoting bare turn
+counts that meant different spans, and the denial one short by the walk.
+
+**The OUTBOUND leg is in scope and the RETURN leg is not**, and the asymmetry with the hunt readout is
+the reason. A hunt's payload only counts once it is carried home, so its headline is the whole round
+trip. A denial verdict is about the **herd crossing a threshold** — an event that happens on the range
+the moment the party arrives and starts killing — so the walk home falls after the event the sentence
+is about and adding it would over-state the wait for the thing being promised.
+
+- **`SourceForecast.outbound_travel_turns` is a READING of the round trip, never a second measurement**:
+  `ceil(round_trip / TRAVEL_LEGS_PER_ROUND_TRIP)`, which is exactly `ceil(one_way / move_rate)` by the
+  nested-division identity `ceil(ceil(x)/n) == ceil(x/n)`. There is one definition of travel in this
+  client and it mirrors the server's launch feed; a fresh `hex_distance ÷ move_rate` here would be a
+  second one free to drift.
+- **`denial_forecast` shifts every BOUNDED end and leaves `DENIAL_TURNS_BEYOND_HORIZON` alone.** `0` is
+  not a turn count — it says the projection never bounded that end — and turns of walking do not bound
+  it either.
+- **BOTH SURFACES NAME THEIR SPAN; neither is bare.** The launch sheet passes the band and reads
+  *"…in ≈7–10 turns from launch (2 of them travel)"* (the split rendered only where there IS travel to
+  split off, the hunt breakdown's own rule); the in-flight drawer passes NO band, carries
+  `DENIAL_TRAVEL_UNKNOWN`, and reads *"…in ≈3–5 turns of raiding"*. The sentinel is `-1` rather than
+  `0` for the `HUNT_RATE_UNAVAILABLE` reason: a band standing on its quarry has a real zero-turn walk
+  and must still read *from launch*.
+- **The in-flight surface quotes the raiding span because it cannot honestly quote the other one.** A
+  denial mission publishes no `expeditionEtaTurns`, so the party's REMAINING walk is not on the wire,
+  and adding the leg from the HOME BAND's tile would quote a distance the party may have finished turns
+  ago. Closing that needs a per-party arrival on the wire — server-side work.
+
 ### The waste is STATED, and it is not dressed as a warning
 
 On a hunt an unhauled kill is an occasional overflow and wears `HUNT_FORECAST_WARN_GLYPH`'s `⚠`; on a

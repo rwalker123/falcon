@@ -659,10 +659,21 @@ func run(harness) -> void:
 	var party_high: int = HerdFx.DENIAL_COLLAPSE_HIGH[DENIAL_PARTY_SIZE - 1]
 	var deny_verdict: String = SourceForecast.DENIAL_VERDICTS[
 		SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY]["line"] % DENIAL_TARGET_QUARRY
-	deny_verdict += SourceForecast.DENIAL_TURNS_CLAUSE_FORMAT % (
+	# **AN IN-FLIGHT VERDICT QUOTES THE AT-THE-HERD SPAN, AND SAYS SO.** The launch sheet adds the
+	# outbound walk and reads "…from launch"; this party has already left and its remaining walk is not
+	# on the wire, so the drawer quotes the sim's own raiding turns UNSHIFTED under a clause that names
+	# them. Neither surface leaves the span to be inferred — that was the defect.
+	deny_verdict += SourceForecast.DENIAL_TURNS_CLAUSE_AT_HERD_FORMAT % (
 		SourceForecast.DENIAL_TURNS_RANGE_FORMAT % [party_low, party_high])
-	h._assert_hud("…and states the COLLAPSE VERDICT as a range — \"%s\"" % deny_verdict,
+	h._assert_hud("…and states the COLLAPSE VERDICT as a range over its RAIDING turns — \"%s\""
+			% deny_verdict,
 		deny_text.contains(deny_verdict))
+	# …and the launch-clock wording is nowhere on it: a party already out must not be told its collapse
+	# band starts when it leaves. Asserted as the pairing negative to the claim above, since a clause
+	# builder that emitted neither form would satisfy that one alone only by accident.
+	h._assert_hud("…and never the FROM-LAUNCH span, which is the launch sheet's",
+		not deny_text.contains(SourceForecast.DENIAL_TURNS_CLAUSE_FORMAT % (
+			SourceForecast.DENIAL_TURNS_RANGE_FORMAT % [party_low, party_high])))
 	# **THE THREE HUNT-ONLY READOUTS ARE ABSENT, and that is the mission's specification.** Its
 	# `expedition_floor` reads `0.0` and its `expedition_fill_target` `0` because it HAS no such
 	# orders; rendering either would put a lever on screen the command grammar cannot express.

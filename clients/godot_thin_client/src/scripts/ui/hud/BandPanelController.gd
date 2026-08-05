@@ -1789,8 +1789,12 @@ func _fill_denial_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: in
             _send_expedition_count = clampi(n, HudConst.WORKER_STEP, party_max)
             rerender()))
     sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.COMPOSE_OF_IDLE_FORMAT % idle))
-    # THE COLLAPSE VERDICT — a pure lookup into the sim's `denialEstimates` for this party size.
-    var forecast := SourceForecast.denial_forecast(herd, _send_expedition_count)
+    # THE COLLAPSE VERDICT — the sim's `denialEstimates` row for this party size, on the clock the
+    # player is on. **The band and the grid pair are passed for the OUTBOUND WALK**: the table counts
+    # raiding turns, and this sheet's hunt form has always headlined a round-trip total, so a verdict
+    # quoting bare raiding turns beside it named a shorter span in the same words.
+    var forecast := SourceForecast.denial_forecast(herd, _send_expedition_count, band,
+        _band_labor.grid_width(), _band_labor.wrap_horizontal())
     var quarry_name := SourceForecast.herd_display_name(herd)
     var verdict := SourceForecast.denial_verdict_bbcode(forecast, quarry_name)
     if verdict != "":

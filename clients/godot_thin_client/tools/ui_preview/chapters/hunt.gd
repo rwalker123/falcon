@@ -133,12 +133,43 @@ func _assert_trip_readout(state_name: String) -> void:
 				Readout.verdict_severity(sheet) == SourceForecast.VERDICT_SLOW
 					and Readout.verdict_text(sheet).contains(str(DEER_SUSTAIN_TRIP_TURNS)))
 		"herd_hunt_forecast_eradicate":
-			# `turns_to_fill == 0` — the raid ran the whole forecast horizon still delivering, so there
-			# is no total to quote and the verdict says so instead of printing a bare 0.
+			# **A STRIP-BARE RAID COMPLETES, AND THE SHEET MUST SAY WHEN.** This assertion used to pin
+			# the OPPOSITE — `an unbounded raid states no total, and still reads SLOW` — against a
+			# fixture whose floor-`0` row carried the wire's no-turn-count sentinel. That pairing was a
+			# sim defect, so the assertion was pinning a bug: a floor-`0` raid ends by emptying the
+			# range and comes home on a real turn. The claim it pinned lives on
+			# `herd_hunt_forecast_horizon`, where the projection genuinely does run out.
+			var strip_verdict := Readout.verdict_text(sheet)
+			h._assert_hud("a strip-bare raid quotes a REAL total, never the unbounded sentence",
+				strip_verdict.contains(str(HerdFx.STRIP_BARE_TRIP_TURNS))
+					and not strip_verdict.contains(SourceForecast.EXPEDITION_TRIP_LONG_VERDICT))
+			# The stop is what makes the total legible: the party comes home because the range is empty,
+			# not because its pack filled. Asserted BESIDE the total — a verdict quoting a turn count
+			# under the wrong stop is the same defect one clause along.
+			h._assert_hud("…and names the stop that ended it — the herd running out, not the clock",
+				strip_verdict.contains(SourceForecast.TRIP_BOUND_CLAUSES[
+					SourceForecast.TRIP_BOUND_HERD_LOST]))
+			# A raid the sim bounds inside the band's warn line is not a warning, and the Send says so:
+			# `Send Anyway (long raid)` was the third spelling of "never completes" on this frame.
+			var strip_send := Q.find_meta_node(sheet, HudWidgets.SEND_HUNT_CONFIRM_META) as Button
+			h._assert_hud("…and the Send is the ordinary one, not the long-raid warning",
+				strip_send != null and not strip_send.disabled
+					and strip_send.text == SourceForecast.SEND_HUNTING_EXPEDITION_BUTTON
+					and Readout.verdict_severity(sheet) == SourceForecast.VERDICT_OK)
+		"herd_hunt_forecast_horizon":
+			# `turns_to_fill == RAID_TURNS_UNBOUNDED` — the raid ran the whole forecast horizon still
+			# delivering, so there is no total to quote and the verdict says so instead of printing a
+			# bare 0. **The pairing half of the strip-bare claims above**: without a frame that still
+			# reaches this branch, "never says `many turns`" would pass on a client that could no longer
+			# say it at all.
 			h._assert_hud("an unbounded raid states no total, and still reads SLOW",
 				Readout.verdict_severity(sheet) == SourceForecast.VERDICT_SLOW
 					and Readout.verdict_text(sheet).contains(
 						SourceForecast.EXPEDITION_TRIP_LONG_VERDICT))
+			var horizon_send := Q.find_meta_node(sheet, HudWidgets.SEND_HUNT_CONFIRM_META) as Button
+			h._assert_hud("…and its Send names the long haul it cannot bound",
+				horizon_send != null
+					and horizon_send.text == SourceForecast.SEND_HUNT_LONG_RAID_BUTTON)
 		"herd_hunt_forecast_no_surplus":
 			# **A REFUSED RAID RENDERS NO BOX AT ALL.** It has no payload to lay out in rows, and an
 			# empty well would read as a raid delivering nothing measurable rather than one the panel
@@ -280,13 +311,41 @@ func _hunt_assign_forecast_states() -> Array:
 			# Eradicate DELIVERS (#337): every rung is paid the species' yield vector, so this row carries
 			# a real payload and the client must NOT read a denial off the policy string. A denial is a
 			# quarry that pays neither product — see `_pelt_only_wolf_raid_herd` for the inedible case.
+			# **AND IT COMPLETES.** A floor-`0` raid ends by emptying the range, so its row is
+			# `herd_lost` beside a real turn count — the frame the "never completes" fix is judged on.
 			"name": "herd_hunt_forecast_eradicate",
 			"floor": 0.0,
 			"herd": HerdFx.assign_preview_herd("game_deer_07", "Red Deer", "thriving", 0.30,
 				DEER_SUSTAIN_TRIP_TURNS, DEER_SURPLUS_TRIP_TURNS,
 				DEER_SUSTAIN_ANIMALS, DEER_SURPLUS_ANIMALS),
 		},
+		{
+			# **THE RAID THAT GENUINELY DOES NOT FINISH** — and it is a floor at the food PEAK, not a
+			# floor of 0. It is the pairing half of the state above: with the strip-bare row moved onto
+			# a real turn count, this is the corpus's only delivering `horizon` row, so without it the
+			# three "many turns" surfaces would have no fixture at all and a regression that spelled
+			# every raid as unbounded would render no frame differently.
+			"name": "herd_hunt_forecast_horizon",
+			"floor": SourceForecast.FLOOR_FOOD_PEAK,
+			"herd": _horizon_raid_herd(),
+		},
 	]
+
+## A slow breeder a big party can neither fill nor exhaust — the sim's own words for the ONE stop that
+## reports no turn count. Built from the shared forecast herd and then re-stamped at the PEAK floor's
+## cell, because `HerdFx.forecast_herd` pairs every delivering row with a stop that HAS a turn, which
+## is now true of its floor-`0` row too.
+func _horizon_raid_herd() -> Dictionary:
+	var herd := HerdFx.assign_preview_herd("game_bison_44", "Steppe Bison", "thriving", 0.30,
+		DEER_SUSTAIN_TRIP_TURNS, DEER_SURPLUS_TRIP_TURNS,
+		DEER_SUSTAIN_ANIMALS, DEER_SURPLUS_ANIMALS)
+	# The stance-keyed table has not been floorified yet (`_show_herd` does that), so the peak floor is
+	# still spelled `sustain` — `BaseFx.LEGACY_STANCE_FLOORS` maps it to `FLOOR_FOOD_PEAK`.
+	var cell: Dictionary = (herd["hunt_trip_estimates"] as Dictionary)[
+		"sustain:%d" % HerdFx.HUNT_FORECAST_PARTY]
+	cell["turns_to_fill"] = SourceForecast.RAID_TURNS_UNBOUNDED
+	cell[SourceForecast.TRIP_BOUND_KEY] = SourceForecast.TRIP_BOUND_HORIZON
+	return herd
 
 ## The partial-with-waste raid herd: a Thunder Mammoth (16 food/animal) whose standing surplus is ONE
 ## animal. Any fieldable party kills that 1 animal but cannot carry a whole mammoth — a party of `w` hauls
@@ -840,10 +899,15 @@ func run(harness) -> void:
 	#   3n never fills — a collapsing Wild Fowl flock: every cell is `turns_to_fill = 0` → red line +
 	#                    the DISABLED "Herd too lean to raid" button, exactly as 3r below (the HERD has
 	#                    nothing left to give, and no party size can fix a herd with no surplus).
-	#   3o eradicate   — a healthy Red Deer on Eradicate: it DELIVERS like every other rung (#337 pays each
-	#                    rung the species' yield vector), and its cell ran the whole horizon still
-	#                    delivering → amber LONG-RAID line + "Send Anyway (long raid)". NOT a denial:
-	#                    denial is now a property of the QUARRY (pays neither product), not of the rung.
+	#   3o eradicate   — a healthy Red Deer at the STRIP-BARE floor: it DELIVERS like every other rung
+	#                    (#337 pays each rung the species' yield vector) AND it COMPLETES — the raid ends
+	#                    by emptying the range on turn 11, so the line quotes a real total and the Send is
+	#                    the ordinary one. NOT a denial: denial is now a property of the QUARRY (pays
+	#                    neither product), not of the rung.
+	#   3o2 horizon    — a Steppe Bison at the food PEAK the party can neither fill nor exhaust: the one
+	#                    row whose projection genuinely ran out → amber LONG-RAID line + "Send Anyway
+	#                    (long raid)". It is the PAIR to 3o, since with the strip-bare row bounded this is
+	#                    the corpus's only delivering `horizon` cell.
 	# WARNED, not BLOCKED — and never a confirm dialog: a slow raid and a long one are real tradeoffs, so
 	# they read as a price tag and stay ENABLED. The ONE blocked case is 3n's, a herd with no surplus
 	# left: it would return empty at every party size, so there is no price to pay.

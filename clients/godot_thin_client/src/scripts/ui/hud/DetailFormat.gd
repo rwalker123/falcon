@@ -1488,6 +1488,13 @@ static func _expedition_delivery_tooltip_line(exp: Dictionary, mission: String, 
 ##
 ## The value carries its OWN `[color]`, the `_band_food_line` precedent: the verdict's severity is not
 ## a property of the row KEY, so it cannot come from `_value_hex`'s key registry.
+##
+## **IT PASSES NO BAND, SO THE VERDICT READS "…of raiding" RATHER THAN "…from launch"** — and that is
+## the honest span here, not an omission. The launch sheet adds the OUTBOUND WALK because it knows
+## where the party is starting from; this party has already left, its remaining walk is not on the wire
+## (a denial mission publishes no `expeditionEtaTurns`), and adding the walk from the HOME BAND's tile
+## would quote a leg the party may have finished turns ago. `denial_forecast` names the span it is
+## quoting either way, so the two surfaces cannot be read as the same clock.
 static func expedition_collapse_line(exp: Dictionary, target_herd: Dictionary) -> String:
     if target_herd.is_empty():
         return ""

@@ -207,6 +207,16 @@ assertions decorative: a row's `delivered_food` is what the PACK holds and every
 waste readout would have nothing to state), and a `repelled` table's kill counts are small but
 **non-zero** — a repelled party is outbred, not incapable.
 
+**The TWO SPANS are asserted on different harnesses, and each names its own.** `band_panel_compose_deny`
+expects the launch clock — both ends of the band plus `DENIAL_OUTBOUND_TRAVEL_TURNS`, then the travel
+split — with the leg stated as a constant derived from the fixture's OWN geometry (band (71, 18), boar
+(75, 18), 2 tiles a turn ⇒ `ceil(4 / 2)` = 2) rather than asked of `outbound_travel_turns`, which would
+re-derive the expectation through the code under test. `expedition_denial_panel` expects the at-the-herd
+clock UNSHIFTED **plus the negative that the launch wording appears nowhere on it** — a clause builder
+emitting neither form would satisfy the positive alone only by accident. Sabotage-verified on disjoint
+mutations: zeroing the outbound leg fails the launch claim and nothing in `ui_preview`; forcing the
+from-launch wording on both surfaces fails exactly the in-flight pair.
+
 The floor-absence claim matches its heading **upper-cased**, because `HudWidgets.alloc_section_label`
 upper-cases what it is given; the vocabulary const as written matches nothing, which is how that
 clause first shipped passing with a Policy row put back on the form.

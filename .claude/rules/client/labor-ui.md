@@ -1013,6 +1013,35 @@ by Rust's `f32` Display (`0`, not `0.0`), so a GDScript rebuild would have to re
 formatting and a near-miss finds nothing *silently*. The decoder therefore also inserts `floor` and
 `party_workers` as FIELDS on each row.
 
+#### `turnsToFill == 0` means `horizon` AND NOTHING ELSE
+
+`HuntTripForecast::turns_to_fill` is an `Option<u32>` rendered as `0` on the wire, and the sim reserves
+`None` for [`HuntTripBound::Horizon`] alone: a raid that ends by driving the herd extinct reports the
+turn it ended on like any other, because the live arm's lost-herd guard turns the party for home in
+that same turn. **`SourceForecast.RAID_TURNS_UNBOUNDED` + `raid_is_unbounded` are the ONE reading of
+that sentinel**, so the one-line form, the trip verdict and the Send button cannot answer it three
+ways — and a `herd_lost` row, which carries a real turn count, can never take a "many turns" branch on
+any of them.
+
+**A floor-`0` (`Take everything`) raid is exactly the row that used to publish it**, so a mission whose
+whole purpose is to finish by emptying the range read on three surfaces at once as a trip that never
+completes: `delivers ≈12 Red Deer over many turns`, `Away many turns — still delivering at the end of
+the forecast`, `Send Anyway (long raid)`. It now quotes a real total under
+`TRIP_BOUND_CLAUSES[herd_lost]` — *the herd is wiped out before the party's load is made up* — and the
+ordinary primary Send. Two consequences follow and both are correct rather than incidental: the FILL
+TARGET control appears (`raid_fill_target_model` needs a bounded length to price a step against), and
+the `Take everything` preset gains a rate in `expedition_policy_takes`.
+
+**That scan asks the RAID, not the total** (`raid_is_unbounded(cell_hunt_turns)`). Its skip used to
+test `turns_to_fill + travel <= 0`, so a horizon cell on a DISTANT herd read `delivered ÷ travel` — a
+rate for a raid the sim says never finished, made entirely out of the walk — while the same cell on a
+near herd correctly showed none.
+
+**Assert the two as a PAIR.** `herd_hunt_forecast_eradicate` (strip-bare, `herd_lost`, a real total)
+and `herd_hunt_forecast_horizon` (a slow breeder at the food peak the party can neither fill nor
+exhaust) are the corpus's only delivering rows on the two branches, so *"never says `many turns`"*
+would otherwise pass on a client that could no longer say it at all.
+
 ### §7.7: a zero belongs to an account the source actually pays
 
 The render-only-when-non-zero rule always kept ONE zero — a component that exists and paid nothing
