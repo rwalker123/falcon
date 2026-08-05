@@ -117,6 +117,42 @@ const QUARRY_FAR_Y := 18
 const QUARRY_NEAR_HERD_ID := "game_deer_79"
 const QUARRY_NEAR_X := 72
 const QUARRY_NEAR_Y := 18
+## **A HERD ON THE BAND'S OWN TILE** — the extreme of "within hunt reach", and the case a DENIAL raid
+## must still be allowed to name (reported from play: the warren beside camp could not be broken,
+## because the quarry rule was the hunt's). It stands at the band fixture's own coordinates, so its
+## outbound walk is exactly ZERO turns — which is also the only geometry that exercises the verdict's
+## no-travel-split branch, a herd even one tile out costing a turn.
+const QUARRY_HOME_HERD_ID := "game_rabbit_18"
+const QUARRY_HOME_SPECIES := "Rabbit Warren"
+const QUARRY_HOME_X := 71
+const QUARRY_HOME_Y := 18
+## Stated rather than re-derived, like `DENIAL_OUTBOUND_TRAVEL_TURNS`: the band and the warren share a
+## tile, so the odd-r distance is 0 and `ceil(0 / move_rate)` is 0 whatever the move rate.
+const QUARRY_HOME_OUTBOUND_TRAVEL_TURNS := 0
+## **TWO HERDS ON ONE HEX** — the reported pair. A tile can hold more than one herd and a map click
+## names only the TILE, so the pick resolves to whichever the snapshot lists first and re-clicking
+## resolves to the same one; the Quarry row's chooser is the way to the other. The pair is
+## deliberately a food quarry beside an INEDIBLE one: they differ in art, in name and in what the
+## raid brings home, so a chooser that offered one herd twice could not pass. Same row as the band
+## (71, 18) and seven columns out, i.e. far beyond `QUARRY_BAND_HUNT_REACH`.
+const SHARED_TILE_X := 78
+const SHARED_TILE_Y := 18
+const SHARED_TILE_FOOD_HERD_ID := "game_rabbit_11"
+const SHARED_TILE_FOOD_SPECIES := "Rabbit Warren"
+const SHARED_TILE_PELT_HERD_ID := "game_wolf_11"
+const SHARED_TILE_PELT_SPECIES := "Wolf Pack"
+## The fill target staged before the chooser is driven, so the switch can be seen to DROP it. Any
+## positive value does; it is a count of the OLD quarry's animals, which is the whole point.
+const SHARED_TILE_STALE_FILL_TARGET := 5
+## The shared hex's raid table: whole animals taken per party size 1..8, and the turns it takes. Flat
+## in the turns because nothing on this frame is judged on trip LENGTH — the claim is the chooser.
+const SHARED_TILE_RAID_ANIMALS_ROW := [4, 7, 9, 10, 10, 10, 10, 10]
+const SHARED_TILE_RAID_TURNS := 6
+## The two species' per-animal quanta. A rabbit is small and pays a little of both; a wolf pays pelts
+## alone, so it carries a TRADE quantum and no food one at all.
+const SHARED_TILE_FOOD_PER_ANIMAL := 1.5
+const SHARED_TILE_FOOD_TRADE_PER_ANIMAL := 0.2
+const SHARED_TILE_PELT_TRADE_PER_ANIMAL := 0.9
 ## **THE WALK OUT TO THE FAR QUARRY, stated from the fixture's own geometry.** The band stands at
 ## (71, 18) and the boar at (75, 18) — the same row, so the odd-r hex distance is the bare column
 ## delta, 4 — and `_band_fixture` moves 2 tiles a turn, so the party arrives on turn `ceil(4 / 2)` = 2.
@@ -1099,6 +1135,7 @@ func _ready() -> void:
 	_set_world_herds(_quarry_herd_fixtures())
 	_push_bands([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
 	_assert_quarry_eligibility()
+	_assert_denial_quarry_eligibility()
 	_panel.set_active_tab(&"parties")
 	_hud._bandpanel._party_compose_open = true
 	_hud._bandpanel._party_compose_mission = "hunt"
@@ -1123,6 +1160,12 @@ func _ready() -> void:
 	_assert_band_panel("…and names which stop ends the trip",
 		_has_label_containing(_panel, SourceForecast.TRIP_BOUND_CLAUSES[
 			SourceForecast.TRIP_BOUND_PACK_FULL]))
+	# **ONE QUARRY ON THE HEX GETS NO CHOOSER, and this frame is the whole guarantee that the common
+	# case did not grow chrome for the rare one.** The boar stands alone on (75, 18); the paired
+	# positive is `band_panel_compose_deny_two_quarries`, without which a chooser rendered on every
+	# sheet would satisfy every claim there.
+	_assert_band_panel("a lone quarry on the hex gets NO chooser on the Quarry row",
+		_find_meta_control(_panel, HudWidgets.QUARRY_CHOICES_META) == null)
 
 	# The same sheet on ERADICATE — the frame the EXPEDITION rung's hint is judged on (issue #337). The
 	# launch picker is the ONE surface that renders `SEND_HUNT_POLICY_HINTS` verbatim, and Eradicate's
@@ -1184,6 +1227,37 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 	_assert_denial_repelled()
 	_set_world_herds(_quarry_herd_fixtures())
+
+	# **TWO HERDS ON ONE HEX** — the reported gap. The map click names a TILE, so a warren sharing a
+	# hex with a wolf pack resolves to whichever the snapshot lists first and re-clicking resolves to
+	# the same one; the Quarry row's `⋯` chooser is the way to the other. Rendered on the DENIAL form
+	# because that is where it was reported, and the row is shared, so the hunt form gets the identical
+	# control from the identical builder. The pair reads differently on purpose — a warren pays meat,
+	# a wolf pays pelts alone — so the chooser is judged on two rows that could not be confused.
+	_set_world_herds(_shared_tile_quarry_fixtures())
+	_hud._compose.set_party_quarry(SHARED_TILE_FOOD_HERD_ID)
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_compose_deny_two_quarries")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_quarry_chooser()
+	_set_world_herds(_quarry_herd_fixtures())
+
+	# **THE SAME VIABLE FORM ON A QUARRY THE BAND IS CAMPED ON TOP OF** — the reported defect. Denial
+	# erases a herd rather than harvesting one, so a herd inside the band's hunt reach is a legal target
+	# (a HUNT of it still is not — `_assert_denial_quarry_eligibility` pins both halves). The walk out
+	# is ZERO here, which is the frame's other claim: the verdict must still name its span and must not
+	# append "(0 of them travel)".
+	_hud._compose.set_party_quarry(QUARRY_HOME_HERD_ID)
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_compose_deny_in_reach")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_denial_in_reach_verdict()
 
 	_hud._bandpanel._send_expedition_count = 1
 	_hud._bandpanel._party_compose_open = false
@@ -3517,7 +3591,92 @@ func _quarry_herd_fixtures(denial_rows: Array = []) -> Array:
 		"hunt_policy_trade_ceilings": {"sustain": 0.03, "surplus": 0.12, "deplete": 0.06, "eradicate": 0.0},
 		"hunt_trip_estimates": table.duplicate(true),
 	}
-	return [herd, near]
+	# A third huntable herd standing ON THE BAND'S TILE. A hunting party must still refuse it — there is
+	# no expedition to make of game you are camped on — but a DENIAL raid must take it, because denial
+	# erases a herd rather than harvesting one. It carries the same viable denial table as the boar, so
+	# the two frames differ only in the WALK, which is the term under test.
+	var home := {
+		"id": QUARRY_HOME_HERD_ID, "species": QUARRY_HOME_SPECIES,
+		"x": QUARRY_HOME_X, "y": QUARRY_HOME_Y,
+		"population": 260, "ecology_phase": "thriving", "huntable": true,
+		"per_worker_yield": 0.6, "food_per_animal": QUARRY_FOOD_PER_ANIMAL,
+		"hunt_policy_ceilings": {"sustain": 0.25, "surplus": 1.00, "deplete": 0.50, "eradicate": 0.0},
+		"per_worker_trade": 0.05, "trade_per_animal": QUARRY_TRADE_PER_ANIMAL,
+		"hunt_policy_trade_ceilings": {"sustain": 0.02, "surplus": 0.08, "deplete": 0.04, "eradicate": 0.0},
+		"denial_estimates": denial_rows if not denial_rows.is_empty() else _denial_viable_rows(),
+	}
+	return [herd, near, home]
+
+## **TWO ELIGIBLE QUARRIES ON ONE HEX** — the reported pair, both beyond the band's hunt reach so the
+## picker accepts either. Their ORDER is the fixture's claim as much as their contents: the compose
+## sheet is staged on the FIRST (the warren, what a tile click would resolve to), and reaching the
+## second is exactly what the chooser exists for.
+##
+## The wolf is INEDIBLE, which is why it is the second herd rather than a second rabbit: it pays
+## pelts and no meat, so the two rows read differently at every register a live server would produce
+## them at — and a denial raid on it hauls trade goods and leaves no food on the range.
+func _shared_tile_quarry_fixtures() -> Array:
+	var food_herd := {
+		"id": SHARED_TILE_FOOD_HERD_ID, "species": SHARED_TILE_FOOD_SPECIES,
+		"x": SHARED_TILE_X, "y": SHARED_TILE_Y,
+		"population": 320, "ecology_phase": "thriving", "huntable": true,
+		"per_worker_yield": 0.9, "food_per_animal": SHARED_TILE_FOOD_PER_ANIMAL,
+		"hunt_policy_ceilings": {"sustain": 0.40, "surplus": 1.40, "deplete": 0.70, "eradicate": 0.0},
+		"per_worker_trade": 0.04, "trade_per_animal": SHARED_TILE_FOOD_TRADE_PER_ANIMAL,
+		"hunt_policy_trade_ceilings": {
+			"sustain": 0.02, "surplus": 0.07, "deplete": 0.04, "eradicate": 0.0,
+		},
+		"hunt_trip_estimates": _shared_tile_raid_table(
+			SHARED_TILE_FOOD_PER_ANIMAL, SHARED_TILE_FOOD_TRADE_PER_ANIMAL),
+		"denial_estimates": _denial_viable_rows(),
+	}
+	var pelt_herd := {
+		"id": SHARED_TILE_PELT_HERD_ID, "species": SHARED_TILE_PELT_SPECIES,
+		"x": SHARED_TILE_X, "y": SHARED_TILE_Y,
+		"population": 40, "ecology_phase": "thriving", "huntable": true,
+		# No food account at all — an inedible quarry's provisions rate is a structural zero, not a
+		# reading, so the whole food half is absent rather than set to 0.0.
+		"per_worker_trade": 0.20, "trade_per_animal": SHARED_TILE_PELT_TRADE_PER_ANIMAL,
+		"hunt_policy_trade_ceilings": {
+			"sustain": 0.10, "surplus": 0.35, "deplete": 0.18, "eradicate": 0.0,
+		},
+		"hunt_trip_estimates": _shared_tile_raid_table(0.0, SHARED_TILE_PELT_TRADE_PER_ANIMAL),
+		"denial_estimates": _denial_trade_only_rows(),
+	}
+	return [food_herd, pelt_herd]
+
+## A compact raid table for the shared-hex pair: one row per (floor sample × party size), with the
+## payload derived from the species' own quanta. `food_per_animal == 0` is the INEDIBLE case — the
+## quarry delivers no food at any party size, which is what `delivers_food` states.
+func _shared_tile_raid_table(food_per_animal: float, trade_per_animal: float) -> Dictionary:
+	var table := {}
+	for i in SHARED_TILE_RAID_ANIMALS_ROW.size():
+		var party := i + 1
+		var animals := int(SHARED_TILE_RAID_ANIMALS_ROW[i])
+		for floor_key in ["sustain", "surplus", "deplete", "eradicate"]:
+			table["%s:%d" % [floor_key, party]] = {
+				"turns_to_fill": SHARED_TILE_RAID_TURNS,
+				"delivers_food": food_per_animal > 0.0,
+				"delivers_trade": true,
+				"animals_taken": animals,
+				"delivered_food": float(animals) * food_per_animal,
+				"delivered_trade": float(animals) * trade_per_animal,
+				"wasted_food": 0.0,
+				SourceForecast.TRIP_BOUND_KEY: SourceForecast.TRIP_BOUND_PACK_FULL,
+			}
+	return table
+
+## The viable denial table with its FOOD accounts struck out — the inedible quarry's version. A raid
+## on a wolf pack kills the same animals and hauls the same pelts; there is no meat to bring home and
+## none to leave rotting on the range, so both food halves are zero rather than the boar's numbers.
+func _denial_trade_only_rows() -> Array:
+	var rows: Array = []
+	for row_variant in _denial_viable_rows():
+		var row: Dictionary = (row_variant as Dictionary).duplicate(true)
+		row["delivered_food"] = 0.0
+		row["wasted_food"] = 0.0
+		rows.append(row)
+	return rows
 
 ## The DENIAL raid's pre-launch table — an ARRAY with ONE row per party size and no other axis, which
 ## is the whole shape difference from `hunt_trip_estimates` above: denial carries no floor and no fill
@@ -3631,6 +3790,27 @@ func _assert_denial_viable() -> void:
 			and send.text == String(SourceForecast.DENIAL_VERDICTS[
 				SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY]["button"]))
 
+## The IN-REACH form — the same viable verdict on a quarry the band is camped on top of. **Its claim
+## is the TRAVEL TERM**: the walk out is genuinely zero, so both ends of the collapse band are the
+## sim's own numbers unshifted, the sentence still names its span ("from launch", never bare), and the
+## breakdown clause is ABSENT rather than reading "(0 of them travel)" — a term for nothing.
+func _assert_denial_in_reach_verdict() -> void:
+	var want := String(SourceForecast.DENIAL_VERDICTS[
+		SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY]["line"]) % QUARRY_HOME_SPECIES
+	want += SourceForecast.DENIAL_TURNS_CLAUSE_FORMAT % (
+		SourceForecast.DENIAL_TURNS_RANGE_FORMAT % [
+			DENIAL_LOW_ROW[DENIAL_PARTY - 1] + QUARRY_HOME_OUTBOUND_TRAVEL_TURNS,
+			DENIAL_HIGH_ROW[DENIAL_PARTY - 1] + QUARRY_HOME_OUTBOUND_TRAVEL_TURNS])
+	# EQUALITY, so the absence rides in the same claim: a line that also appended a travel clause is a
+	# different string and fails here rather than passing a `contains`.
+	_assert_band_panel("a quarry inside hunt reach is raidable, and reads sensibly at zero travel — \"%s\"" % want,
+		_rich_text_containing(_panel, want) == want)
+	# …stated again on its own, because the equality above would also be satisfied by a form that lost
+	# the verdict entirely, and this is the clause the zero-travel case exists to keep out.
+	_assert_band_panel("…and appends no travel split, there being no travel to split off",
+		_rich_text_containing(_panel, SourceForecast.DENIAL_TRAVEL_SPLIT_FORMAT
+			% QUARRY_HOME_OUTBOUND_TRAVEL_TURNS) == "")
+
 ## The REPELLED form. **The verdict is about the PARTY, and the herd-side sentence must be absent** —
 ## this arc has already shipped a refusal that blamed the herd for the party's problem twice, and the
 ## negative half is what makes the positive one mean something.
@@ -3665,6 +3845,60 @@ func _assert_denial_repelled() -> void:
 		_has_label_containing(_panel, String(SourceForecast.DENIAL_VERDICTS[
 			SourceForecast.DENIAL_OUTCOME_REPELLED]["reason"]) % quarry))
 
+## **THE CHOOSER APPEARS ONLY WHERE THERE IS A CHOICE, AND CHOOSING RE-TARGETS.** Both halves are
+## behavioural: a PNG can show that a `⋯` is on the Quarry row, but not what its menu holds, not which
+## herd it marks as current, and not what a pick does. The frame under it is the picture; this is the
+## claim.
+##
+## The ABSENCE half rides `band_panel_compose_hunt` (one eligible quarry on the boar's hex, so no
+## chooser) — the pair is what makes either mean something, since a control rendered unconditionally
+## satisfies every assertion here on its own.
+func _assert_quarry_chooser() -> void:
+	var menu := _find_meta_control(_panel, HudWidgets.QUARRY_CHOICES_META) as MenuButton
+	_assert_band_panel("two herds on one hex put a chooser on the Quarry row", menu != null)
+	if menu == null:
+		return
+	var popup := menu.get_popup()
+	_assert_band_panel("…offering exactly the hex's two eligible quarries (found %d)"
+			% popup.item_count,
+		popup.item_count == 2)
+	# **EXACTLY ONE ITEM IS MARKED, and it is the composed one.** A menu of plain items could not say
+	# which herd the sheet is aimed at, which is the whole reason the entries are radio-check items;
+	# "some item is checked" would pass on a menu that marked both.
+	var checked: Array = []
+	for i in popup.item_count:
+		if popup.is_item_checked(i):
+			checked.append(popup.get_item_text(i))
+	_assert_band_panel("…marking exactly the composed quarry (%s)" % str(checked),
+		checked.size() == 1 and String(checked[0]).contains(SHARED_TILE_FOOD_SPECIES))
+	# **CHOOSING THE OTHER ONE RE-TARGETS**, driven through the REAL `id_pressed` wiring rather than by
+	# calling the entry's callback — the popup's own dispatch is part of what is being asserted. The
+	# stale fill target is staged first: it counts the WARREN's animals, so the switch must drop it
+	# rather than hand it to the wolf, where a target at or above capacity is a lever that does nothing.
+	_hud._compose.set_party_fill_target(SHARED_TILE_STALE_FILL_TARGET)
+	var other := -1
+	for i in popup.item_count:
+		if not popup.is_item_checked(i):
+			other = i
+	popup.id_pressed.emit(popup.get_item_id(other))
+	_assert_band_panel("…and choosing the other one re-targets the sheet (%s)"
+			% _hud._compose.party_quarry_id(),
+		_hud._compose.party_quarry_id() == SHARED_TILE_PELT_HERD_ID)
+	_assert_band_panel("…dropping the fill target, which counted the OTHER herd's animals (%d)"
+			% _hud._compose.party_fill_target(),
+		_hud._compose.party_fill_target() == SourceForecast.NO_FILL_TARGET)
+	# …and the sheet REBUILT against the new quarry: the chooser is a fresh node now, and it must mark
+	# the wolf. Reading the model back alone would pass on a switch that never re-rendered.
+	var after := _find_meta_control(_panel, HudWidgets.QUARRY_CHOICES_META) as MenuButton
+	var after_checked := ""
+	if after != null:
+		var after_popup := after.get_popup()
+		for i in after_popup.item_count:
+			if after_popup.is_item_checked(i):
+				after_checked = after_popup.get_item_text(i)
+	_assert_band_panel("…and the re-rendered row marks the herd now composed (%s)" % after_checked,
+		after_checked.contains(SHARED_TILE_PELT_SPECIES))
+
 ## The tile_info a map click on a herd's hex delivers (`TargetingController._huntable_herd_on_tile` reads `herds`).
 func _quarry_tile_info(herd: Dictionary) -> Dictionary:
 	return {"x": int(herd["x"]), "y": int(herd["y"]), "herds": [herd]}
@@ -3696,6 +3930,63 @@ func _assert_quarry_eligibility() -> void:
 	_hud._targeting._pending_pick_quarry = {}
 	_hud._compose.clear_party_quarry()
 	print("band_panel_preview: assert OK — quarry picker takes the far herd, refuses the near one")
+
+## **THE BEYOND-REACH RULE BELONGS TO THE HUNT, NOT TO THE EXPEDITION** (reported from play: deer and
+## rabbit a few tiles from camp were not offered as denial targets while herds further out were). A
+## denial raid is not a way of GETTING food, it is a way of ERASING a herd, so a quarry the band could
+## work from home is a coherent order — one hunting it at floor 0 cannot express, being carry-bounded
+## and stopping at the pack. Both halves are driven against the SAME herd, because the claim is a
+## DIFFERENCE between the missions: an assertion that only took the denial pick would be satisfied by
+## dropping the rule from the hunt as well, which is the regression this pins against.
+##
+## Behavioural, not pictorial — the accept and the refusal both happen at the click. The GLOW is
+## asserted here too (`min_distance`, the number MapView filters on): the halo must never promise a
+## target the pick refuses nor hide one it would take, and a mission-blind glow beside a mission-aware
+## pick is exactly that disagreement.
+func _assert_denial_quarry_eligibility() -> void:
+	var herds := _quarry_herd_fixtures()
+	var home: Dictionary = herds[2]
+	_set_world_herds(herds)
+	# DENY, on a herd standing on the band's own tile — the extreme of "in reach". Taken, and the pick
+	# ends targeting like any other.
+	_hud._compose.clear_party_quarry()
+	_hud._targeting._pending_pick_quarry = _pending_quarry_pick(HudComposeVocab.COMPOSE_MISSION_DENY)
+	_hud._targeting._try_pick_quarry(_quarry_tile_info(home))
+	assert(_hud._compose.party_quarry_id() == QUARRY_HOME_HERD_ID,
+		"band_panel_preview: a DENIAL raid refused a herd inside hunt reach (%s)" \
+		% _hud._compose.party_quarry_id())
+	assert(_hud._targeting._pending_pick_quarry.is_empty(),
+		"band_panel_preview: the accepted denial pick stayed armed instead of resolving")
+	# …and the SAME herd under HUNT: still refused, still armed. This is the pin that says the fix did
+	# not weaken the hunt's rule.
+	_hud._compose.clear_party_quarry()
+	_hud._targeting._pending_pick_quarry = _pending_quarry_pick(HudComposeVocab.COMPOSE_MISSION_HUNT)
+	_hud._targeting._try_pick_quarry(_quarry_tile_info(home))
+	assert(_hud._compose.party_quarry_id() == "",
+		"band_panel_preview: a HUNT expedition accepted a herd on the band's own tile (%s)" \
+		% _hud._compose.party_quarry_id())
+	assert(not _hud._targeting._pending_pick_quarry.is_empty(),
+		"band_panel_preview: the refused hunt pick dropped out of targeting instead of staying armed")
+	# The glow's own filter, read off the targeting descriptor MapView is handed.
+	var hunt_min := int(_hud._targeting._current_targeting_info().get("min_distance", -99))
+	assert(hunt_min == QUARRY_BAND_HUNT_REACH,
+		"band_panel_preview: a hunt pick glows at min_distance %d, not the band's hunt_reach %d" \
+		% [hunt_min, QUARRY_BAND_HUNT_REACH])
+	_hud._targeting._pending_pick_quarry = _pending_quarry_pick(HudComposeVocab.COMPOSE_MISSION_DENY)
+	var deny_min := int(_hud._targeting._current_targeting_info().get("min_distance", -99))
+	assert(deny_min == TargetingController.QUARRY_NO_REACH_BOUND,
+		"band_panel_preview: a denial pick glows at min_distance %d, not %d (every visible herd)" \
+		% [deny_min, TargetingController.QUARRY_NO_REACH_BOUND])
+	_hud._targeting._pending_pick_quarry = {}
+	_hud._compose.clear_party_quarry()
+	print("band_panel_preview: assert OK — denial takes the herd on the band's own tile, the hunt still refuses it, and both glows agree")
+
+## An armed quarry pick for `mission`, in the shape `TargetingController.begin_pick_quarry` builds.
+func _pending_quarry_pick(mission: String) -> Dictionary:
+	return {
+		"band": _band_fixture(),
+		TargetingController.PICK_QUARRY_MISSION_KEY: mission,
+	}
 
 ## Herds for the per-source-cap verify state: game_deer_07 carries the pre-commit forecast fields the
 ## Current-actions Hunt row reads via `HudBandLaborState.find_world_herd` + `SourceForecast.forecast_inputs` — `per_worker_yield`

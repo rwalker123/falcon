@@ -72,6 +72,14 @@ var _party_quarry_id: String = ""
 # The sheet's OWN autofill one-shot. Deliberately NOT `_hunt_autofill`: sharing it would let one
 # surface's floor click refill the other surface's stepper.
 var _party_autofill := false
+# **THE FILL TARGET LIVES WITH THE QUARRY IT COUNTS**, the party twin of `_hunt_fill_target`. It sat
+# on `BandPanelController` and was cleared BESIDE the quarry by a `_clear_party_quarry` that had to
+# remember to — so the one path that set a quarry WITHOUT going through it (a re-pick on the map)
+# carried the previous herd's target onto the new one, where the render's clamp folded it to a
+# plausible smaller number rather than dropping it. A target is a count of a SPECIFIC herd's animals,
+# so the pairing is now structural: both mutators below write both fields, and no caller can set one
+# without the other.
+var _party_fill_target: int = SourceForecast.NO_FILL_TARGET
 
 # ---- The open sheet's subject identity -----------------------------------------------------------
 var _kind: String = KIND_NONE
@@ -259,13 +267,27 @@ func clamp_hunt_fill_target(step: int, untargeted_animals: int) -> void:
 func party_quarry_id() -> String:
 	return _party_quarry_id
 
+## The quarry is now `herd_id` — a fresh pick, a re-pick on the map, or a switch between the herds
+## sharing one hex. **The fill target goes with it**: it counts a specific herd's animals, so handing
+## it to the next quarry offers a lever the raid silently ignores (`raid_load` returns the pack for a
+## target at or above capacity — the defect `docs/plan_hunt_through_combat.md` §5.2 exists to remove).
 func set_party_quarry(herd_id: String) -> void:
 	_party_quarry_id = herd_id
+	_party_fill_target = SourceForecast.NO_FILL_TARGET
 
 ## No quarry: a fresh compose act, a cancelled one, a quarry that left the snapshot or migrated into
 ## the band's hunt reach, or a panel-band swap (a quarry is chosen FOR a band).
 func clear_party_quarry() -> void:
 	_party_quarry_id = ""
+	_party_fill_target = SourceForecast.NO_FILL_TARGET
+
+## The whole animals the composed raid waits for, `SourceForecast.NO_FILL_TARGET` for the untargeted
+## one. Written back every render from the clamped axis the current party + floor offer.
+func party_fill_target() -> int:
+	return _party_fill_target
+
+func set_party_fill_target(target: int) -> void:
+	_party_fill_target = maxi(target, SourceForecast.NO_FILL_TARGET)
 
 func arm_party_autofill() -> void:
 	_party_autofill = true

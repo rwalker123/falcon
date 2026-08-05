@@ -482,9 +482,19 @@ static func zone_head(title: String, readout: String, menu: MenuButton = null, r
 ## has no members of; hence the key is tested with `has` rather than read with a `false` default.
 const MENU_ENTRY_CHECKED := "checked"
 
+## A `build_section_menu` entry's OPTIONAL `Texture2D` icon — the species/site ART where the client
+## has any. Also absent-is-not-empty: an entry without it is built with no icon at all rather than
+## with a null one, so every existing text-only menu is byte-identical. It exists because
+## **Unicode ships ONE deer** — the same reason `build_marker_icon` does — so a menu that could only
+## carry an emoji would render two roster species identically and defeat its own purpose as a
+## chooser. A caller that HAS no art for a species falls back to the emoji in the LABEL, which is
+## the `build_marker_icon` split read through a `PopupMenu`'s own item API.
+const MENU_ENTRY_ICON := "icon"
+
 ## The `⋯` section menu: a `MenuButton`, so its popup is a WINDOW and opening it cannot change any
 ## zone's layout height (the whole zone model depends on heights not moving). `entries` is an ordered
-## array of `{label, disabled, on_pick}` dictionaries, each optionally carrying `MENU_ENTRY_CHECKED`.
+## array of `{label, disabled, on_pick}` dictionaries, each optionally carrying `MENU_ENTRY_CHECKED`
+## and/or `MENU_ENTRY_ICON`.
 static func build_section_menu(entries: Array, tooltip: String) -> MenuButton:
     var button := MenuButton.new()
     button.text = HudWorkVocab.SECTION_MENU_GLYPH
@@ -500,11 +510,25 @@ static func build_section_menu(entries: Array, tooltip: String) -> MenuButton:
             continue
         var entry: Dictionary = entry_variant
         var index := picks.size()
+        var label := String(entry.get("label", ""))
+        var icon_variant: Variant = entry.get(MENU_ENTRY_ICON, null)
+        var icon: Texture2D = icon_variant as Texture2D if icon_variant is Texture2D else null
         if entry.has(MENU_ENTRY_CHECKED):
-            popup.add_radio_check_item(String(entry.get("label", "")), index)
+            if icon != null:
+                popup.add_icon_radio_check_item(icon, label, index)
+            else:
+                popup.add_radio_check_item(label, index)
             popup.set_item_checked(index, bool(entry[MENU_ENTRY_CHECKED]))
+        elif icon != null:
+            popup.add_icon_item(icon, label, index)
         else:
-            popup.add_item(String(entry.get("label", "")), index)
+            popup.add_item(label, index)
+        if icon != null:
+            # The bundled art is a 256px source; a `PopupMenu` draws an item icon at its native size
+            # and sizes the popup around it, so an uncapped mark would make a menu the width of the
+            # screen. Capped to the same width a species mark takes on any other TEXT ROW in this HUD
+            # (`build_marker_icon`'s callers), which is what a menu item is.
+            popup.set_item_icon_max_width(index, int(HudWorkVocab.WORK_ROW_ICON_WIDTH))
         popup.set_item_disabled(index, bool(entry.get("disabled", false)))
         var pick: Variant = entry.get("on_pick", null)
         picks.append(pick if pick is Callable else Callable())
@@ -529,6 +553,13 @@ static func build_party_stepper_row(count: int, party_max: int, on_change: Calla
 ## same pair as child Labels at two sizes), so a harness matching on `btn.text` breaks with every
 ## visual pass. `band_panel_preview._picker_rung_buttons` reads this.
 const POLICY_RUNG_META := "policy"
+
+## The compose sheet's QUARRY CHOOSER, as `MenuButton` meta — the control that appears only when a hex
+## holds more than one eligible quarry. It needs a handle of its own because the parties zone builds a
+## `⋯` `MenuButton` for its section menu too, so a node-type search finds both, and because the claim
+## the harness makes is an ABSENCE with one candidate: a search that could match the wrong menu would
+## report a chooser on a sheet that has none.
+const QUARRY_CHOICES_META := "quarry_choices"
 
 ## The floor CHART, as `HarvestFloorChart` meta — the same stable-handle reasoning, and needed more
 ## than most: the chart carries no text at all, so a harness has nothing else to find it by. (It

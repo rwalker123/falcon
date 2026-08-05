@@ -126,9 +126,10 @@ var _send_hunt_floor: float = SourceForecast.DEFAULT_HARVEST_FLOOR
 # waits for, `SourceForecast.NO_FILL_TARGET` for the untargeted raid. **This zone is the SECOND launch
 # site of `send_hunt_expedition`**, and the arc's standing rule is that the two entry points cannot
 # offer different orders — a lever present on one sheet and absent on the other is the same defect as
-# a lever that does nothing. Cleared with the quarry, for `ComposeState.seed_hunt`'s reason: a target
-# is a count of ONE herd's animals.
-var _send_hunt_fill_target: int = SourceForecast.NO_FILL_TARGET
+# a lever that does nothing. **It lives on `ComposeState` beside the quarry it counts**, not here: it
+# was a member of this controller cleared BESIDE the quarry by a `_clear_party_quarry` that had to
+# remember to, so the one path that set a quarry without going through it — a re-pick on the map —
+# carried the old herd's target onto the new one. Read through `_compose.party_fill_target()`.
 
 func _init(band_labor: HudBandLaborState, compose: ComposeState,
         selectioncard: SelectionCardController, disclosures: DisclosureController,
@@ -1700,17 +1701,17 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     # written straight back so the control, the forecast and the launch payload are one number.
     var fill_target_model := SourceForecast.raid_fill_target_model(band, herd, _send_hunt_floor,
         _send_expedition_count, _band_labor.grid_width(), _band_labor.wrap_horizontal(),
-        _send_hunt_fill_target)
-    _send_hunt_fill_target = int(fill_target_model.get("target", SourceForecast.NO_FILL_TARGET))
+        _compose.party_fill_target())
+    _compose.set_party_fill_target(int(fill_target_model.get("target", SourceForecast.NO_FILL_TARGET)))
     if bool(fill_target_model.get("available", false)):
         sheet.add_child(HudWidgets.build_fill_target_control(fill_target_model,
             func(new_target: int) -> void:
-                _send_hunt_fill_target = maxi(new_target, SourceForecast.NO_FILL_TARGET)
+                _compose.set_party_fill_target(new_target)
                 rerender()))
     # LIVE raid forecast for the quarry + floor + party + target now dialed — the same trip lookup and
     # the same one-line renderer the herd drawer uses.
     var trip := SourceForecast.hunt_trip_forecast(band, herd, _send_hunt_floor, _send_expedition_count,
-        _band_labor.grid_width(), _band_labor.wrap_horizontal(), _send_hunt_fill_target)
+        _band_labor.grid_width(), _band_labor.wrap_horizontal(), _compose.party_fill_target())
     var forecast_line := SourceForecast.hunt_forecast_line_bbcode(trip, SourceForecast.herd_display_name(herd))
     if forecast_line != "":
         sheet.add_child(HudWidgets.forecast_label(forecast_line))
@@ -1742,7 +1743,7 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
             "fauna_id": quarry_id,
             "fauna_label": SourceForecast.herd_display_name(herd),
             "floor": _send_hunt_floor,
-            "fill_target": _send_hunt_fill_target,
+            "fill_target": _compose.party_fill_target(),
         })
         _close_party_compose())
     sheet.add_child(confirm)
@@ -1755,14 +1756,22 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
 ## (`send_denial_raid`, closed at four tokens) cannot even carry. The player chooses a herd and a
 ## party size; everything else on this sheet is a READOUT.
 ##
-## The quarry row, its picker and the beyond-reach rule are the hunt form's, reused verbatim — a
-## denial raid is still an expedition, so a herd the band can work from home is still a local hunt.
+## The quarry row and its picker are the hunt form's, reused verbatim. **THE BEYOND-REACH RULE IS
+## NOT**, and this is the one place the two missions genuinely differ about what a quarry is
+## (`TargetingController.is_expedition_quarry`): a hunting party exists for game the band cannot work
+## from home, so a nearer herd is a local hunt — but denial is not a way of GETTING food, it is a way
+## of ERASING a herd, and hunting the warren next door at floor 0 cannot express that (a hunt is
+## carry-bounded and stops at the pack). A denial raid may therefore name any herd the band can see
+## and reach. It is still an EXPEDITION and deliberately not a labor assignment: the party detaches,
+## spends turns killing and comes back, and it has no floor and no rate to put on the assign dialog.
 func _fill_denial_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int) -> void:
-    # Re-resolved LIVE every render for the hunt form's reasons: a herd can be raided out or migrate
-    # into the band's reach while the sheet is open, and a form rendered against a stale id would
-    # forecast a collapse for a herd that is gone.
+    # Re-resolved LIVE every render for the hunt form's reasons: a herd can be raided out or leave the
+    # snapshot while the sheet is open, and a form rendered against a stale id would forecast a
+    # collapse for a herd that is gone. **A herd that MIGRATES INTO REACH no longer clears the form** —
+    # under denial that was never a reason to drop it.
     var herd := _band_labor.find_world_herd(_compose.party_quarry_id())
-    if herd.is_empty() or not _targeting.is_expedition_quarry(band, herd):
+    if herd.is_empty() or not _targeting.is_expedition_quarry(band, herd,
+            HudComposeVocab.COMPOSE_MISSION_DENY):
         herd = {}
         _clear_party_quarry()
     sheet.add_child(_build_quarry_row(band, herd))
@@ -1832,14 +1841,14 @@ func _fill_denial_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: in
         _close_party_compose())
     sheet.add_child(confirm)
 
-## Drop the composed quarry AND the fill target it was counted in. **They are one act**: a target is a
-## count of a SPECIFIC herd's animals, so a target outliving its quarry would be handed to the next
-## one, where `raid_load` answers a target at or above capacity by returning the pack — a lever that
-## silently does nothing, which is the defect §5.2 exists to remove. `ComposeState.seed_hunt` makes
-## the same pairing on the herd drawer's side.
+## Drop the composed quarry AND the fill target it was counted in. **They are one act** — a target is
+## a count of a SPECIFIC herd's animals, so a target outliving its quarry would be handed to the next
+## one, where `raid_load` answers a target at or above capacity by returning the pack — which is why
+## the pairing now lives inside `ComposeState.clear_party_quarry` rather than being spelled out here:
+## the map re-pick sets a quarry WITHOUT reaching this function, and did carry the stale target over.
+## `ComposeState.seed_hunt` makes the same pairing on the herd drawer's side.
 func _clear_party_quarry() -> void:
     _compose.clear_party_quarry()
-    _send_hunt_fill_target = SourceForecast.NO_FILL_TARGET
 
 ## The Quarry row — the Party row's shape, with a button instead of a stepper. Unpicked it invites
 ## (`Choose…`, primary); picked it states the herd and stays available for a re-pick (ghost).
@@ -1883,9 +1892,65 @@ func _build_quarry_row(band: Dictionary, herd: Dictionary) -> HBoxContainer:
             name_text, int(herd.get("x", -1)), int(herd.get("y", -1)),
         ]
         HudStyle.apply_button(pick, "ghost")
-    pick.pressed.connect(func() -> void: _targeting.begin_pick_quarry(band))
+    # **THE OPEN SHEET'S MISSION DECIDES WHAT COUNTS AS A QUARRY**, so it rides with the pick rather
+    # than being re-guessed at the click: a hunt's quarry must lie beyond the band's reach and a
+    # denial raid's need not (`TargetingController.is_expedition_quarry`).
+    var mission := _party_compose_mission
+    pick.pressed.connect(func() -> void: _targeting.begin_pick_quarry(band, mission))
     row.add_child(pick)
+    # **THE HEX MAY HOLD MORE THAN ONE HERD, AND THE MAP CANNOT SAY WHICH** — `try_dispatch` is handed
+    # a TILE, so a rabbit warren sharing a hex with a wolf pack resolves to whichever the snapshot
+    # lists first and re-clicking resolves to the same one. The chooser is the way to the others, and
+    # it lives HERE rather than at the click because the choice is made against the forecast: the
+    # collapse verdict, the raid payload and the useful party size are all functions of the herd, and
+    # they exist only once the form is rendered. Absent with one candidate, so the common case renders
+    # exactly as it did.
+    if not herd.is_empty():
+        var candidates := _targeting.eligible_quarries_on_tile(
+            band, int(herd.get("x", -1)), int(herd.get("y", -1)), mission)
+        if candidates.size() > 1:
+            row.add_child(_build_quarry_choices_menu(band, herd, candidates, mission))
+            # **THE CHOOSER'S WIDTH COMES OUT OF THE KEY, NOT OUT OF THE SPECIES' NAME.** The key and
+            # the pick both EXPAND, so a third control on the row costs the name half of what it takes
+            # — measured, `🐇 Rabbit Warren` came back clipped to `Rabbit Warre` on the very frame the
+            # chooser exists to serve. `Quarry` is a fixed word that needs no more room than it
+            # occupies, so it stops expanding whenever the row has three children; the pick, still the
+            # only expanding child, takes everything the chooser leaves. Confined to this branch, so
+            # the one-quarry row is untouched.
+            key.size_flags_horizontal = Control.SIZE_FILL
     return row
+
+## The quarry chooser: the `⋯` menu the zone heads already use, so the panel keeps ONE "there are
+## choices here" glyph, with the candidates as radio-check items — a menu of plain items could not say
+## which herd is the current one. A pick routes through `TargetingController.choose_quarry`, the SAME
+## adoption the map click makes, so switching herds here and picking one there leave the composition
+## in one state — which is also why `mission` is threaded down to it rather than defaulted: the
+## adoption re-runs the eligibility test, and under denial the candidates include herds a hunt's rule
+## would refuse.
+func _build_quarry_choices_menu(band: Dictionary, chosen: Dictionary,
+        candidates: Array, mission: String) -> MenuButton:
+    var chosen_id := String(chosen.get("id", ""))
+    var entries: Array = []
+    for candidate_variant in candidates:
+        var candidate: Dictionary = candidate_variant as Dictionary
+        var name_text := SourceForecast.herd_display_name(candidate)
+        # The item names the herd exactly as the picked-quarry button does — bundled ART where the
+        # species has any, the emoji only where it does not — so the row and the menu cannot describe
+        # one herd two ways, and two species sharing an emoji (Unicode ships ONE deer) stay apart.
+        var sprite := FaunaSprites.for_herd(name_text)
+        var entry := {
+            "label": name_text if sprite != null \
+                else HudComposeVocab.COMPOSE_QUARRY_LABEL_FORMAT % [FoodIcons.for_herd(name_text), name_text],
+            HudWidgets.MENU_ENTRY_CHECKED: String(candidate.get("id", "")) == chosen_id,
+            "on_pick": func() -> void: _targeting.choose_quarry(band, candidate, mission),
+        }
+        if sprite != null:
+            entry[HudWidgets.MENU_ENTRY_ICON] = sprite
+        entries.append(entry)
+    var menu := HudWidgets.build_section_menu(entries,
+        HudComposeVocab.COMPOSE_QUARRY_CHOICES_TOOLTIP)
+    menu.set_meta(HudWidgets.QUARRY_CHOICES_META, true)
+    return menu
 
 ## The party size the band can field at all: idle workers, capped by the server's party-size limit.
 func _scout_party_max(band: Dictionary, idle: int) -> int:

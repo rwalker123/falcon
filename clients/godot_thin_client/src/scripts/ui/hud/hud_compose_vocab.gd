@@ -664,6 +664,18 @@ const COMPOSE_QUARRY_LABEL_FORMAT := "%s %s"
 # than to be read on its own, the row already naming the herd in words beside it.
 const COMPOSE_QUARRY_ICON_MAX_WIDTH := 20
 
+## **A HEX CAN HOLD MORE THAN ONE HERD, AND THE MAP CLICK NAMES ONLY THE HEX.** `try_dispatch` is
+## handed a TILE, so a click on a tile carrying a rabbit warren and a wolf pack can resolve to just
+## one of them and re-clicking resolves to the same one — there was no way to reach the other. The
+## Quarry row therefore grows a chooser LISTING the tile's eligible quarries, and it appears ONLY
+## when there are two or more: one quarry is the common case and it renders exactly as before.
+## It is the `⋯` the zone heads already use, so the panel keeps ONE "there are choices here" glyph.
+## A chooser entry names the herd the same way the picked-quarry button does, so the row and the menu
+## cannot describe one herd differently: bundled ART where the species has any (as the item's own
+## icon), else the emoji through `COMPOSE_QUARRY_LABEL_FORMAT`. Unicode ships ONE deer, so two roster
+## species can share a glyph — which is exactly why the art branch exists in the menu too.
+const COMPOSE_QUARRY_CHOICES_TOOLTIP := "Another herd shares this hex — choose which one to raid."
+
 ## The refusal when the player picks a herd the band can already work from home. The hunt_reach split
 ## is a rule the map does not spell out, so the refusal is where it gets taught — it names the herd,
 ## the distance, the reach that binds and the local alternative.

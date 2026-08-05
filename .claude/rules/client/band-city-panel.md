@@ -489,8 +489,9 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   stepper (`Choose…` primary when empty, `🐗 Wild Boar` ghost once picked, either way opening the map
   quarry picker); with no quarry the sheet renders the hint plus a **visible, disabled** Send and nothing
   else. **A quarry must lie strictly BEYOND the band's `hunt_reach`** — a hunting party exists for game
-  the band cannot work from home, so a nearer herd is a local hunt. `_is_expedition_quarry` is the ONE
-  definition (`SourceForecast.band_tile` + `_hex_distance_wrapped`, the herd drawer's own split) and all three sites
+  the band cannot work from home, so a nearer herd is a local hunt (**this rule is the HUNT form's
+  alone** — the denial form relaxes it, see "DENIAL is a third MISSION" below).
+  `TargetingController.is_expedition_quarry` is the ONE definition (`SourceForecast.band_tile` + `_hex_distance_wrapped`, the herd drawer's own split) and all three sites
   route through it: MapView's glow rings only eligible herds (via `min_distance` — see Command
   Targeting), `_try_pick_quarry` REFUSES an in-reach herd and stays in targeting with a
   `QUARRY_WITHIN_REACH_FORMAT` nudge naming the herd, the distance, the reach and the local alternative
@@ -910,6 +911,33 @@ preset and no max-useful cap**. Each absence has its own reason and none is an o
   hands always break the herd sooner. `_scout_party_max` — idle workers and the server's party limit —
   is the whole ceiling.
 
+### The BEYOND-REACH rule is the hunt's, and denial does not inherit it
+
+Reported from play: deer and rabbit a few tiles from camp were not offered as denial targets while
+herds further out were. The quarry row, its picker and its chooser are the hunt form's reused
+verbatim — **the eligibility rule is not**. A hunting party exists for game the band cannot work from
+home, so a nearer herd is a local hunt and that split is correct for it. Denial is not a way of
+GETTING food: it is a way of ERASING a herd, and hunting the warren next door at `floor 0` cannot
+express that, a hunt being carry-bounded and stopping at the pack. So **a denial raid may name any
+herd the band can see and reach, in reach or not, and the hunt's rule is untouched.**
+
+- It stays an **EXPEDITION** and is deliberately not a labor assignment: the party detaches, spends
+  turns killing and comes home. That is a real cost in hunter-turns even at zero distance, and denial
+  has no floor and no rate to put on the assign dialog.
+- The mechanism is a per-mission parameter on the ONE rule, never a second rule —
+  `TargetingController.quarry_min_distance(band, mission)`, spec in `targeting.md` → "Command
+  Targeting". Every quarry question (`_fill_denial_compose_sheet`'s re-validation, `_build_quarry_row`'s
+  picker and tile chooser, the map pick, MapView's glow) passes the OPEN SHEET's
+  `_party_compose_mission` through it.
+- **The verdict already reads correctly at zero travel** and nothing had to change for it:
+  `_denial_turns_from_launch` leaves both ends unshifted at `travel <= 0`, and `denial_turns_clause`
+  appends `DENIAL_TRAVEL_SPLIT_FORMAT` only where there IS travel to split off — so a quarry on the
+  band's own tile reads *"Rabbit Warren past recovery in ≈5–8 turns from launch"*, never
+  *"(0 of them travel)"*. That is why the sentinel for "no band supplied" is `-1` and not `0`.
+- **The server gates none of this.** `handle_send_denial_raid` → `outfit_raiding_party` validates a
+  resident band, a live herd and a legal party size, and nothing else; the sim's only `hunt_reach`
+  test is on the LOCAL `LaborTarget::Hunt` assignment. An in-reach `send_denial_raid` is accepted.
+
 ### The readout is a COLLAPSE VERDICT, not a delivery
 
 Its goal is not to kill every animal: it is to push the herd below `ecology.collapse_fraction`, where
@@ -1000,7 +1028,10 @@ green food pip is a haul cue, and a denial party's haul is a rounding error it s
 ### Frames
 
 `band_panel_preview`: **`band_panel_compose_deny`** (a viable raid — the range verdict, the caveat,
-the quiet take line, the primary Send, and the three absent floor surfaces) and
+the quiet take line, the primary Send, and the three absent floor surfaces),
+**`band_panel_compose_deny_in_reach`** (the same viable form on a quarry standing ON THE BAND'S TILE:
+the reach rule relaxed, and the zero-travel verdict reading *"in ≈5–8 turns from launch"* with no
+travel split — the equality assertion carries that absence) and
 **`band_panel_compose_deny_repelled`** (the SAME herd with only the sim's answer changed, so a
 verdict table that answered one outcome for all four would satisfy either alone). Nine assertions ride
 them and each is sabotage-verified against a DISJOINT mutation — blanking the outcome line, resolving
@@ -1009,3 +1040,72 @@ disabled Send, the hunt's `⚠` on the take, a Policy heading, a floor picker, a
 caveat. The in-flight half is `ui_preview`'s `expedition_denial_panel`; `cargo xtask command-guard`
 parses the emitted `send_denial_raid` line with the real server parser, which is the only thing that
 can assert the four-token grammar.
+
+## A HEX CAN HOLD MORE THAN ONE HERD, AND THE MAP CLICK NAMES ONLY THE HEX
+
+Reported from play against the denial sheet: a tile holding a Rabbit warren **and** a Wolf pack picks
+one of them and offers no way to reach the other. The mechanism is structural, not a resolution bug —
+`TargetingController.try_dispatch` is handed a **`tile_info`**, so `_huntable_herd_on_tile` can only
+answer with the hex's first eligible herd, and re-clicking answers the same one. There was no input
+anywhere that named a herd within a tile.
+
+**The choice is made on the SHEET, not at the click**, and that follows from the ordering decision
+this arc already made. Which of two co-located herds to raid is a comparison of *forecasts* — the
+collapse verdict, the raid's payload, the useful party size, whether the quarry is even edible — and
+every one of those is a function of the herd that exists only once the form is rendered. Asking at the
+click asks before any of the numbers that answer it. It is also where the arc already put the quarry
+question ("the herd … cannot be the LAST question"), and a map-side chooser would be a second
+floating surface over the map during targeting, which §15 rules out for the compose sheet itself.
+
+- **The control is the `⋯` menu the zone heads already use** (`_build_quarry_choices_menu` →
+  `HudWidgets.build_section_menu`), so the panel keeps ONE "there are choices here" glyph. Its entries
+  are **radio-check items**: a menu of plain items could not say which herd the sheet is currently
+  aimed at, which is half of what the control is for.
+- **It appears only where there is a choice** — two or more ELIGIBLE quarries on the picked quarry's
+  own hex. One herd is the common case and its row is byte-identical to before, which the frame pair
+  `band_panel_compose_hunt` (absence) / `band_panel_compose_deny_two_quarries` (presence) is what
+  pins; either claim alone passes on a control rendered unconditionally.
+- **The row was ALREADY a live control and the report's "inert" premise is false** — the picked-quarry
+  button re-enters the map pick on both branches. What it could not do was reach a herd the map cannot
+  address, which is why the fix is a second control rather than a wiring repair.
+- **The chooser's width comes out of the KEY, not out of the species' name.** `Quarry` and the pick
+  both `EXPAND_FILL`, so a third child halves what the name gets — measured, `🐇 Rabbit Warren` came
+  back clipped to `Rabbit Warre` on the very frame the chooser exists to serve. The key drops to
+  `SIZE_FILL` in that branch only, leaving the pick the sole expanding child.
+- **`TargetingController.choose_quarry` is THE one adoption of a quarry**, shared by the map click and
+  the chooser: same eligibility test, same state, same re-render. `_try_pick_quarry` is written in
+  terms of it (it keeps only its two nudges and the pending teardown), so a second spelling cannot
+  drift. `eligible_quarries_on_tile` derives the candidate set **LIVE from `world_herds`**, never
+  stashed at the pick — herds migrate, and a captured set goes on offering a herd that has walked off
+  the tile. It reads the same snapshot array `tile_info.herds` is built from, so the click's own
+  resolution and the list cannot disagree about what is standing there.
+- **`HudWidgets.MENU_ENTRY_ICON`** is what lets an entry carry the species' bundled ART, absent-is-not-
+  empty like `MENU_ENTRY_CHECKED` beside it, capped at `HudWorkVocab.WORK_ROW_ICON_WIDTH` (a
+  `PopupMenu` sizes itself around an uncapped 256px source). It exists for `build_marker_icon`'s
+  reason: **Unicode ships ONE deer**, so an emoji-only menu would render two roster species
+  identically and defeat its own purpose as a chooser.
+
+### THE FILL TARGET MOVED ONTO `ComposeState` WITH THE QUARRY IT COUNTS
+
+`_send_hunt_fill_target` was a `BandPanelController` member cleared BESIDE the quarry by a
+`_clear_party_quarry` that had to remember to — so the one path that set a quarry **without** going
+through it, a re-pick on the map, carried the previous herd's target onto the new one, where the
+render's clamp folded it to a plausible smaller number rather than dropping it. That is exactly the
+"a lever that silently does nothing" defect §5.2 exists to remove, and the chooser makes re-picking
+easy, so it goes from obscure to reachable. It is `ComposeState._party_fill_target` now and **both**
+`set_party_quarry` and `clear_party_quarry` write it, so no caller can set one without the other.
+
+### Frames
+
+`band_panel_compose_deny_two_quarries` — a warren and a wolf pack on ONE hex beyond the band's reach,
+rendered on the DENIAL form because that is where it was reported (the row is shared, so the hunt form
+takes the identical control from the identical builder). The pair is deliberately a food quarry beside
+an **inedible** one: they differ in art, in name and in what the raid brings home, so a chooser that
+offered one herd twice could not pass. Six assertions ride it — the chooser exists, it lists exactly
+two, it marks exactly the composed one, driving the popup's REAL `id_pressed` re-targets the sheet,
+the switch drops the stale fill target, and the re-rendered row marks the herd now composed — plus the
+absence claim on `band_panel_compose_hunt`. Sabotage-verified on four DISJOINT mutations, each failing
+a different subset: rendering the chooser at one candidate fails the absence claim alone; keeping the
+fill target through `set_party_quarry` fails the target claim alone, naming the stale `5`; building
+the entries as plain items fails the two marking claims; and dropping `choose_quarry`'s re-render
+fails the re-rendered-row claim alone, naming the stale `Rabbit Warren`.
