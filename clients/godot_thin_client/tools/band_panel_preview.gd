@@ -1315,8 +1315,21 @@ func _ready() -> void:
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
 	_assert_denial_counted_refusal()
-	_set_world_herds(_quarry_herd_fixtures())
+
+	# **THE SAME QUARRY IN FRONT OF A BAND THAT CANNOT FIELD IT AT ALL** — the reference band's THREE
+	# idle workers against a requirement of 11. This is the one state in which the Send DISABLES: a
+	# party the player chose to under-size still launches (the frame above), but a band that cannot
+	# reach the requirement however it dials the stepper has no such choice to be trusted with. Only
+	# the band changes; the herds are the deep-party table still, so the pair differ in supply alone.
 	_push_bands([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_compose_deny_short_handed")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_denial_short_handed()
+	_set_world_herds(_quarry_herd_fixtures())
 
 	_hud._bandpanel._send_expedition_count = 1
 	_hud._bandpanel._party_compose_open = false
@@ -4015,6 +4028,41 @@ func _assert_denial_counted_refusal() -> void:
 		SourceForecast.DENIAL_OUTCOME_REPELLED]["reason"]) % quarry
 	_assert_band_panel("…and not the numberless sentence beside it",
 		not _has_label_containing(_panel, bare))
+	# **AND THE SEND IS STILL LIVE — the companion half of the disable rule.** This party is under-sized
+	# BY CHOICE (the band can field 12 and the player dialled 4), which is the warn-and-trust case:
+	# a raid that cannot break the herd keeps working it until recalled. Without this claim the
+	# short-handed assertion below would pass on a sheet that disabled the Send for every repelled row.
+	var send := _find_meta_control(_panel, HudWidgets.SEND_DENIAL_CONFIRM_META) as Button
+	_assert_band_panel("…and a party the PLAYER under-sized still launches",
+		send != null and not send.disabled
+			and send.text == String(SourceForecast.DENIAL_VERDICTS[
+				SourceForecast.DENIAL_OUTCOME_REPELLED]["button"]))
+
+## **THE ONE STATE IN WHICH THIS SHEET REFUSES.** The band cannot field the party the herd requires at
+## all — there is no stepper setting that reaches it — so the Send goes visible-and-disabled with its
+## reason, the sheet's no-quarry convention. Composed from the VOCABULARY, and read as a PAIR with
+## `_assert_denial_counted_refusal`'s live Send: a rule that disabled every repelled raid would pass
+## the disable claim alone.
+func _assert_denial_short_handed() -> void:
+	var quarry := "Wild Boar"
+	var idle := _hud._band_labor.effective_idle(_hud._band_labor.panel_band())
+	_assert_band_panel("the band can field %d of the %d hunters this herd needs — the precondition"
+			% [idle, DENIAL_DEEP_PARTY_NEEDED],
+		idle < DENIAL_DEEP_PARTY_NEEDED)
+	var send := _find_meta_control(_panel, HudWidgets.SEND_DENIAL_CONFIRM_META) as Button
+	_assert_band_panel("…so the Send is DISABLED and says which shortfall it is",
+		send != null and send.disabled
+			and send.text == SourceForecast.DENIAL_SHORT_HANDED_BUTTON)
+	var want := SourceForecast.DENIAL_SHORT_HANDED_REASON_FORMAT % [
+		quarry, DENIAL_DEEP_PARTY_NEEDED, idle]
+	_assert_band_panel("…and the reason beneath it names BOTH numbers — \"%s\"" % want,
+		_has_label_containing(_panel, want))
+	# …and it SUPERSEDES the repelled refusal rather than printing beside it: both name the party the
+	# sim quotes, so a sheet carrying the pair states the requirement twice.
+	var counted := String(SourceForecast.DENIAL_VERDICTS[
+		SourceForecast.DENIAL_OUTCOME_REPELLED]["reason_counted"]) % [quarry, DENIAL_DEEP_PARTY_NEEDED]
+	_assert_band_panel("…and the counted refusal is not printed beside it",
+		not _has_label_containing(_panel, counted))
 
 ## **THE CHOOSER APPEARS ONLY WHERE THERE IS A CHOICE, AND CHOOSING RE-TARGETS.** Both halves are
 ## behavioural: a PNG can show that a `⋯` is on the Quarry row, but not what its menu holds, not which

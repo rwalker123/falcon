@@ -912,13 +912,18 @@ preset and no max-useful cap**. Each absence has its own reason and none is an o
 
 ### The stepper's ceiling is the band's IDLE WORKERS, and its floor is the sim's own requirement
 
-**`max_expedition_party_size` is not a rules cap and this form does not apply it.** It is the wire echo
+**`max_expedition_party_size` is not a rules cap and NO launch form applies it.** It is the wire echo
 of `expedition_config.estimate_party_sizes` — the SAMPLING AXIS of the estimate tables — and the sim
-deleted the rules cap for all three launch verbs, so `_scout_party_max` was the last thing enforcing
-it: a band with 16 idle workers was clamped to 8 while the sheet's own refusal told it to send more
-hunters. `_fill_denial_compose_sheet` reads `idle` directly (`idle == 0` therefore behaves exactly as
-before, both spellings yielding 0). The hunt and scout forms still call `_scout_party_max`; only denial
-reads the supply alone.
+deleted the rules cap for all three launch verbs, so the client's own clamp was the last thing
+enforcing it: a band with 16 idle workers was clamped to 8 while the sheet's own refusal told it to
+send more hunters. All three forms read the band's idle workforce and nothing else — the denial sheet
+and the SCOUT branch take `idle` directly, and the hunt form's `assignable` is `idle` under
+`expedition_useful_cap`, which is the DEMAND side and is untouched (it is about what the raid can
+*use*, not what the rules *allow*). `idle == 0` behaves exactly as before, every spelling yielding 0.
+**The `_scout_party_max` helper is DELETED rather than left returning its argument** — a supply
+function that clamps nothing is an invitation to put the clamp back. `SourceForecast.expedition_party_cap`
+is the surviving named seam, for the herd drawer's expedition branch and the dock's hunt form
+(`labor-ui.md`).
 
 **The stepper SEEDS on `denialPartyNeeded`** — the smallest party the sim quotes whose kills outpace
 the herd's regrowth. Below it a raid accomplishes literally nothing however long it runs, and nothing
@@ -926,10 +931,15 @@ else on the sheet said which number crossed that line. Three invariants:
 
 - **Never seeded to `SourceForecast.DENIAL_PARTY_NEEDED_NONE`.** `0` means the sim quotes no party at
   all, not "send nobody", so the count stays where it was and the verdict line carries the answer.
-- **Seeded once per quarry selection**, through the hunt form's `arm_party_autofill` /
-  `consume_party_autofill` one-shot. `TargetingController.choose_quarry` — the ONE adoption of a
-  quarry, taken by both the map pick and the tile chooser — already arms it, so a manual `−`/`+` tick
-  survives every later rerender and there is no second mechanism.
+- **Seeded once per quarry selection AND once per sheet OPENING**, through the hunt form's
+  `arm_party_autofill` / `consume_party_autofill` one-shot — one mechanism, two arming sites, so a
+  manual `−`/`+` tick survives every later rerender. `TargetingController.choose_quarry` — the ONE
+  adoption of a quarry, taken by both the map pick and the tile chooser — arms it, and the footer's
+  `💀 Deny` button arms it too, so a sheet that came back up on a quarry it still remembered cannot
+  present whatever count the last composition left behind. **The open-site arm is currently a GUARD
+  rather than a behaviour**: the same handler calls `_clear_party_quarry()`, so a freshly opened sheet
+  has no quarry to seed against and the observable seed still comes from the adoption. It is what keeps
+  the invariant true if the open path ever stops clearing.
 - **Clamped into `[WORKER_STEP, idle]`.** A requirement above the band's idle workers opens on the most
   it can field, which is honest: the sheet shows both numbers and the verdict still says it is not
   enough.
@@ -990,10 +1000,21 @@ and for the same reason: three lookups are free to disagree.
   twice.** `repelled` is a verdict about the **PARTY** (its kills do not outpace the herd's regrowth,
   so no amount of waiting gets there — the remedy is HANDS); `horizon` is a verdict about the
   **CLOCK**. Rendering one for the other blames the herd for the party's problem.
-- **NEITHER BLOCKS THE SEND.** A raid that cannot get there keeps working the herd until it is
-  recalled (`plan_denial_raid.md` §6 Q2), so the launch verdict warns (`armed`) and the player is
-  trusted, exactly as a slow hunting raid is. `style_send_denial_button` sets `disabled = false`
-  unconditionally.
+- **NEITHER OUTCOME BLOCKS THE SEND, and the ONE case that does is not an outcome at all.** A raid
+  that cannot get there keeps working the herd until it is recalled (`plan_denial_raid.md` §6 Q2), so
+  the launch verdict warns (`armed`) and the player is trusted, exactly as a slow hunting raid is —
+  **including a party the player has deliberately stepped DOWN below the requirement**, which is the
+  `repelled` warn-and-trust case and keeps `Send Anyway (never collapses)`.
+  **`SourceForecast.denial_is_short_handed(herd, idle)` is the exception**: `denial_party_needed > idle`
+  with a `denial_party_needed > 0`, i.e. the band cannot field the party this herd REQUIRES however it
+  dials the stepper. That is a fact about the BAND rather than a choice, so there is no choice to trust
+  the player with; the Send goes visible-and-disabled-with-its-reason (`DENIAL_SHORT_HANDED_BUTTON`,
+  ghost), the same shape as the sheet's no-quarry branch. **`DENIAL_PARTY_NEEDED_NONE` never disables** —
+  `0` is not "not enough hunters" but "no quoted party drives this herd down", which covers a quarry
+  nothing can bring into contact (wariness ≥ 1) where more hands never help.
+  `denial_short_handed_reason` states BOTH numbers and **SUPERSEDES the repelled refusal rather than
+  joining it**: both name the party the sim quotes, off the one `denial_party_needed` reading, so
+  printing the pair would state the requirement twice.
 - **THE OUTCOME LEADS THE SENTENCE AND THE NUMBER IS A CLAUSE ON IT.** That is the structural form of
   *"never render a blank turn count without its outcome"*: there is no branch in which the number can
   render alone, and none in which its absence renders as silence. An outcome that quotes no turns
@@ -1059,7 +1080,12 @@ green food pip is a haul cue, and a denial party's haul is a rounding error it s
 
 ### Frames
 
-`band_panel_preview`: **`band_panel_compose_deny`** (a viable raid — the range verdict, the caveat,
+`band_panel_preview`: **`band_panel_compose_deny_short_handed`** (the ONE refusing frame — the
+reference band's 3 idle against the deep-party quarry's requirement of 11: the stepper sitting at the
+most it can field, the reason naming both numbers, and a disabled `Not Enough Hunters`. Its companion
+is `band_panel_compose_deny_short_party`'s live Send on a party the PLAYER under-sized — asserted as a
+pair, since a rule that disabled every repelled raid would pass the disable claim alone) ·
+**`band_panel_compose_deny`** (a viable raid — the range verdict, the caveat,
 the quiet take line, the primary Send, and the three absent floor surfaces),
 **`band_panel_compose_deny_in_reach`** (the same viable form on a quarry standing ON THE BAND'S TILE:
 the reach rule relaxed, and the zero-travel verdict reading *"in ≈5–8 turns from launch"* with no

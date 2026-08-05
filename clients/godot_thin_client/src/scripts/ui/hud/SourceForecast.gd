@@ -693,9 +693,6 @@ const MAX_USEFUL_CAPPED_TOOLTIP := "Fully staffed — this source can use at mos
 # not usefulness. Named in the "N of M" spirit (N = the labor cap you're at, M = the useful ceiling),
 # so a capped `+` reads as "fixable by reassigning labor" rather than as a silent bug.
 const LABOR_BOUND_NOTE_FORMAT := "%d of %d useful — free up idle workers to send more"
-# The expedition sub-case where freeing idle workers WOULD NOT help: the party-size cap binds
-# (idle >= max party), so the advice is wrong — say we're at the party limit instead.
-const PARTY_SIZE_BOUND_NOTE_FORMAT := "%d of %d useful — at the max party size"
 
 # **THE RAID TABLE IS THE ONE PLACE THE SIM STILL EXPORTS ROWS, and for the opposite reason to the
 # retired ceiling lists.** A resident band's ceiling has a closed form the client can evaluate at any
@@ -1938,6 +1935,13 @@ const HERD_DENIAL_PARTY_NEEDED_KEY := "denial_party_needed"
 # bound, a herd out-growing the whole table), all told apart by the rows' own `outcome` — so the
 # client renders the verdict, never seeds the stepper here, and never invents a figure for the copy.
 const DENIAL_PARTY_NEEDED_NONE := 0
+# **THE SHORT-HANDED FACE — the one state in which this sheet's Send is DISABLED.** Named for the
+# BAND's shortfall rather than for the raid's outcome, because that is what the player has to fix; the
+# `repelled` face beside it ("Send Anyway") would read as an offer the button is refusing to honour.
+const DENIAL_SHORT_HANDED_BUTTON := "Not Enough Hunters"
+# …and the reason beneath it, in the sheet's own hint register, stating BOTH numbers: what the herd
+# requires and what the band actually has. The stepper above it is already sitting at the second.
+const DENIAL_SHORT_HANDED_REASON_FORMAT := "%s needs %d hunters and this band has only %d idle. Free up workers before this raid can break the herd."
 # **`0` MEANS "NOT WITHIN THE HORIZON" ON THAT END, never "immediately".** `Low` is the FEWEST turns
 # — the optimistic draw, where more animals stay and more strikes land — so a positive `low` beside a
 # `0` `high` reads "only on a good run".
@@ -3751,11 +3755,45 @@ static func denial_refusal_reason(forecast: Dictionary, herd: Dictionary) -> Str
     var reason := String(entry["reason"])
     return "" if reason == "" else reason % herd_display_name(herd)
 
-## The denial Send button, off the SAME entry the verdict line came from. **It never disables** — a
-## raid that cannot break the herd still works it until recalled (§6 Q2), so the launch verdict warns
-## and the player is trusted, exactly as a slow hunting raid is. With no forecast at all (a party size
-## the sim did not sample) it takes the plain primary face rather than a warning it cannot justify.
-static func style_send_denial_button(button: Button, forecast: Dictionary) -> void:
+## **THE ONE CONDITION THAT DISABLES A DENIAL SEND: the band cannot field the party this herd
+## REQUIRES.** Not "the chosen party is too small" — that is the player's call to under-size a raid and
+## it is warned about, not blocked (see `style_send_denial_button`) — but "no party this band can put
+## in the field reaches the requirement at all", which is a fact about the BAND and not a choice.
+##
+## **`DENIAL_PARTY_NEEDED_NONE` IS NOT SHORT-HANDED.** `0` is not "not enough hunters": per
+## `snapshot.fbs` it also covers a quarry nothing can bring into contact (wariness ≥ 1), where more
+## hands never help, and a requirement past the sim's quoting bound. There is no number to compare, so
+## the verdict copy governs and the button behaves as it always has.
+static func denial_is_short_handed(herd: Dictionary, idle: int) -> bool:
+    var needed := denial_party_needed(herd)
+    return needed > DENIAL_PARTY_NEEDED_NONE and needed > idle
+
+## …and the sentence that says so, `""` when the band is not short-handed. Both numbers, off the SAME
+## `denial_party_needed` reading the stepper's seed and the repelled refusal use, so the sheet cannot
+## disable a Send over one figure while quoting another.
+static func denial_short_handed_reason(herd: Dictionary, idle: int) -> String:
+    if not denial_is_short_handed(herd, idle):
+        return ""
+    return DENIAL_SHORT_HANDED_REASON_FORMAT % [
+        herd_display_name(herd), denial_party_needed(herd), idle]
+
+## The denial Send button, off the SAME entry the verdict line came from. With no forecast at all (a
+## party size the sim did not sample) it takes the plain primary face rather than a warning it cannot
+## justify.
+##
+## **IT DISABLES IN EXACTLY ONE CASE, AND THE DISTINCTION IS THE WHOLE RULE.** A party the player has
+## CHOSEN to under-size still launches: a raid that cannot break the herd keeps working it until it is
+## recalled (§6 Q2), so a stepped-down `repelled` party warns and the player is trusted, exactly as a
+## slow hunting raid is. That reasoning does not carry to a band that cannot field the required party
+## AT ALL (`short_handed`) — there is no party to trust the player with, so the button goes
+## visible-and-disabled-with-its-reason, the same shape as the sheet's no-quarry branch.
+static func style_send_denial_button(button: Button, forecast: Dictionary,
+        short_handed: bool = false) -> void:
+    if short_handed:
+        button.disabled = true
+        button.text = DENIAL_SHORT_HANDED_BUTTON
+        HudStyle.apply_button(button, "ghost")
+        return
     button.disabled = false
     if not bool(forecast.get("available", false)):
         button.text = String(DENIAL_VERDICTS[DENIAL_OUTCOME_PAST_RECOVERY]["button"])
@@ -3766,14 +3804,18 @@ static func style_send_denial_button(button: Button, forecast: Dictionary) -> vo
     HudStyle.apply_button(button,
         "primary" if String(entry["severity"]) == VERDICT_OK else "armed")
 
-## Max party the band can detach as a hunting expedition: min(idle_workers, max_expedition_party_size),
-## falling back to idle when the cap is absent/0 (mirrors the compose sheet's `party_max`). The SUPPLY
-## side of the party stepper — what the band can spare; `expedition_useful_cap` below is the DEMAND
-## side (what the raid can use), and the stepper takes the tighter of the two.
+## **THE SUPPLY SIDE OF THE PARTY STEPPER — the band's IDLE WORKFORCE, and nothing else.** What the
+## band can spare is the only thing that bounds how many hunters may walk out of camp;
+## `expedition_useful_cap` below is the DEMAND side (what the raid can actually use at the kill), and
+## the stepper takes the tighter of the two. Kept as a named function rather than inlined because it is
+## the seam TWO entry points read — the herd drawer's expedition branch and the dock's hunt form.
+##
+## **`max_expedition_party_size` IS NOT A RULES CAP AND IS NOT READ HERE.** It is the wire echo of
+## `expedition_config.estimate_party_sizes`, i.e. the SAMPLING AXIS of the estimate tables, and the sim
+## deleted the rules cap for all three launch verbs — so this clamp was the client enforcing a limit
+## nothing on the server holds, and at 8 it sat below the party a common quarry actually needs.
 static func expedition_party_cap(band: Dictionary) -> int:
-    var idle := int(band.get("idle_workers", 0))
-    var cap := int(band.get("max_expedition_party_size", 0))
-    return mini(idle, cap) if cap > 0 else idle
+    return int(band.get("idle_workers", 0))
 
 ## **THE PARTY THAT CAN REACH THIS HERD'S STANDING SURPLUS** — `engage_workers` over the room above the
 ## floor, in the room's own BIOMASS units (the quotient is a ratio, so the units are free exactly as
@@ -3869,16 +3911,13 @@ static func expedition_useful_cap(band: Dictionary, herd: Dictionary, floor: flo
     var useful: int = mini(plateau, assignable)
     if useful >= assignable:
         # Labor-bound below the plateau: the party capped at what you can field, not at usefulness.
-        # `assignable = min(idle, max_party_size)`, so distinguish which constraint binds — freeing
-        # idle workers only helps when idle is the binder; if the party-size cap binds, say so.
+        # **THERE IS ONLY ONE SUPPLY CONSTRAINT NOW, so there is only one note.** `assignable` is the
+        # band's idle workforce (`expedition_party_cap`), so freeing idle workers is ALWAYS the remedy;
+        # the party-size twin that used to sit here described `max_expedition_party_size` binding
+        # instead, and that cap is gone — a branch that can never be taken is worse than no branch.
         var labor_note := ""
         if plateau > assignable:
-            var idle := int(band.get("idle_workers", 0))
-            var max_party := int(band.get("max_expedition_party_size", 0))
-            if max_party > 0 and idle >= max_party:
-                labor_note = PARTY_SIZE_BOUND_NOTE_FORMAT % [assignable, plateau]
-            else:
-                labor_note = LABOR_BOUND_NOTE_FORMAT % [assignable, plateau]
+            labor_note = LABOR_BOUND_NOTE_FORMAT % [assignable, plateau]
         return {"cap": assignable, "note": labor_note}
     var noun := MAX_USEFUL_NOUN_ONE if useful == 1 else MAX_USEFUL_NOUN_MANY
     return {"cap": useful, "note": MAX_USEFUL_NOTE_FORMAT % [useful, noun]}

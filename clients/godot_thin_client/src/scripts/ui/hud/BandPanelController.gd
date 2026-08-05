@@ -1582,6 +1582,13 @@ func _build_mission_launch_button(mission: String, label: String, hint: String,
         _party_compose_mission = mission
         # A fresh compose act starts with no quarry — never a herd left over from a cancelled one.
         _clear_party_quarry()
+        # **THE DENIAL SHEET ALWAYS OPENS ON THE PARTY THE SIM QUOTES**, so the seed is armed by the
+        # sheet OPENING as well as by a quarry being adopted — a sheet that came back up on a quarry
+        # it still remembered would otherwise present whatever count the last composition left behind.
+        # Same one-shot either way (`consume_party_autofill`), so a manual −/+ tick still survives
+        # every rerender while the sheet stays open, and it is still never seeded to 0.
+        if mission == HudComposeVocab.COMPOSE_MISSION_DENY:
+            _compose.arm_party_autofill()
         rerender())
     return btn
 
@@ -1618,7 +1625,10 @@ func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
         return sheet
     # SCOUT — a single input. Its only question is party size, and nothing about a scouting party
     # depends on where it is going, so the destination is still picked on the map after the send.
-    var party_max := _scout_party_max(band, idle)
+    # **THE CEILING IS THE BAND'S IDLE WORKERS**, as it is on all three launch verbs: the sim carries
+    # no rules cap on party size, and `max_expedition_party_size` is the wire echo of the estimate
+    # tables' sampling axis rather than a limit anyone may send under.
+    var party_max := idle
     _send_expedition_count = clampi(_send_expedition_count, HudConst.WORKER_STEP, party_max)
     sheet.add_child(HudWidgets.build_party_stepper_row(_send_expedition_count, party_max,
         func(n: int) -> void:
@@ -1680,8 +1690,10 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     sheet.add_child(HudWidgets.alloc_hint_label(
         HudFormat.floor_hint(_send_hunt_floor, SourceForecast.LABOR_KIND_HUNT, true)))
     # Party size, capped at the raid's max-useful plateau for THIS herd + floor (the herd drawer's
-    # own cap), so extra hunters can no longer be sent to stand idle at the kill.
-    var assignable := _scout_party_max(band, idle)
+    # own cap), so extra hunters can no longer be sent to stand idle at the kill. **The SUPPLY side is
+    # the band's idle workers alone** — `max_expedition_party_size` is a sampling axis, not a rules
+    # cap — and `expedition_useful_cap` is the DEMAND side the stepper takes the tighter of.
+    var assignable := idle
     var capped := SourceForecast.expedition_useful_cap(band, herd, _send_hunt_floor, assignable)
     var cap: int = maxi(int(capped["cap"]), HudConst.WORKER_STEP)
     if _compose.consume_party_autofill():
@@ -1795,9 +1807,9 @@ func _fill_denial_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: in
     # **`max_expedition_party_size` IS NOT A RULES CAP AND MUST NOT BE APPLIED HERE**
     # (`snapshot.fbs` → `denialEstimates`). It is the wire echo of `expedition_config.estimate_party_sizes`,
     # i.e. the SAMPLING AXIS of the estimate tables, and the sim deleted the rules cap for all three
-    # launch verbs — so `_scout_party_max` was the last thing enforcing it, and a band with 16 idle
-    # workers was clamped to 8 while this sheet told it to send more hunters. The hunt and scout
-    # forms still call that helper; only denial reads the supply directly.
+    # launch verbs — so the client's own clamp was the last thing enforcing it, and a band with 16 idle
+    # workers was clamped to 8 while this sheet told it to send more hunters. All three launch forms
+    # read the supply the same way now, which is why the `_scout_party_max` helper no longer exists.
     var party_max := idle
     # **SEEDED ON THE SIM'S OWN REQUIREMENT, ONCE PER QUARRY.** Below `denialPartyNeeded` a raid
     # accomplishes literally nothing however long it runs, and nothing else on the sheet said which
@@ -1841,14 +1853,21 @@ func _fill_denial_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: in
     var take := SourceForecast.denial_take_bbcode(forecast, quarry_name)
     if take != "":
         sheet.add_child(HudWidgets.forecast_label(take))
-    var reason := SourceForecast.denial_refusal_reason(forecast, herd)
+    # **THE SHORT-HANDED SENTENCE SUPERSEDES THE REFUSAL, it does not join it.** Both name the party the
+    # sim quotes (one reading, `denial_party_needed`), so printing the pair would state the requirement
+    # twice; the short-handed form is the one that also says what the band actually has.
+    var short_handed := SourceForecast.denial_is_short_handed(herd, idle)
+    var reason := SourceForecast.denial_short_handed_reason(herd, idle)
+    if reason == "":
+        reason = SourceForecast.denial_refusal_reason(forecast, herd)
     if reason != "":
         sheet.add_child(HudWidgets.alloc_hint_label(reason))
     var confirm := Button.new()
     confirm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    # The button carries the verdict and NEVER disables: a raid that cannot break the herd still
-    # works it until recalled, so the launch verdict warns and the player is trusted.
-    SourceForecast.style_send_denial_button(confirm, forecast)
+    # The button carries the verdict, and disables in EXACTLY ONE case — a band that cannot field the
+    # party this herd requires at all. A party the player CHOSE to under-size still launches: it works
+    # the herd until recalled, so that case warns and the player is trusted (`style_send_denial_button`).
+    SourceForecast.style_send_denial_button(confirm, forecast, short_handed)
     confirm.tooltip_text = reason if reason != "" else HudComposeVocab.SEND_DENIAL_RAID_HINT
     confirm.set_meta(HudWidgets.SEND_DENIAL_CONFIRM_META, true)
     var quarry_id := _compose.party_quarry_id()
@@ -1973,11 +1992,6 @@ func _build_quarry_choices_menu(band: Dictionary, chosen: Dictionary,
         HudComposeVocab.COMPOSE_QUARRY_CHOICES_TOOLTIP)
     menu.set_meta(HudWidgets.QUARRY_CHOICES_META, true)
     return menu
-
-## The party size the band can field at all: idle workers, capped by the server's party-size limit.
-func _scout_party_max(band: Dictionary, idle: int) -> int:
-    var cap := int(band.get("max_expedition_party_size", 0))
-    return mini(idle, cap) if cap > 0 else idle
 
 ## Leave the compose sheet — every flag together, so `open` / `mission` / `quarry` can never disagree.
 ## Also disarms any in-flight quarry pick: the ✕ can be pressed while a docked-sheet quarry pick is

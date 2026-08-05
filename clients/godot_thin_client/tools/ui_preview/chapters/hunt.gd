@@ -27,12 +27,16 @@ const LOCAL_HUNT_HUNTERS := 6
 ## for the player, so this — not 6 — is what a guard on those frames can assert.
 const LOCAL_HUNT_CAPPED_CREW := 3
 
-## The crews the two BOUND frames are composed at, and the numbers their steppers must SHOW: one
-## bound by the band's idle labor, one by the maximum party size. Named because each is asserted
-## against the rendered value, so the dial and the expectation are one number rather than two.
+## The crew the LABOR-BOUND frame is composed at, and the number its stepper must SHOW. Named because
+## it is asserted against the rendered value, so the dial and the expectation are one number rather
+## than two.
+##
+## **ITS PARTY-SIZE TWIN IS GONE, and that is the point of the pair having become a single.** The other
+## frame staged `idle 6 >= max party 2` so `PARTY_SIZE_BOUND_NOTE_FORMAT` would render — but
+## `max_expedition_party_size` is the estimate tables' SAMPLING AXIS and never was a rules cap, so
+## `expedition_party_cap` no longer reads it, that note has no reachable branch left, and a frame
+## staging a cap the client does not apply would render the max-useful note under a party-size name.
 const LABOR_BOUND_CREW := 3
-
-const PARTY_SIZE_BOUND_CREW := 2
 
 ## The crew the TWO-PRODUCT frames (issue #337) are composed with — the wolf's pelts-only pair and the
 ## oracle deer's food+trade control. Two hunters is the oracle's own no-waste point (food_per_animal
@@ -1054,22 +1058,10 @@ func run(harness) -> void:
 	h._compose_herd(bison)
 	await h._settle()
 	await h._save("herd_hunt_labor_bound_deplete")
-	#   3v Party-size-bound — the SUB-CASE where freeing idle workers would NOT help: idle 6 >= max party 2,
-	#              so the party-SIZE cap binds, not idle. The note reads "2 of 4 useful — at the max party
-	#              size" instead of the free-up-workers advice.
-	var party_capped: Dictionary = _hunt_preview_far_band().duplicate(true)
-	party_capped["idle_workers"] = 6
-	party_capped["max_expedition_party_size"] = 2
-	h._hud._band_labor._player_bands = [party_capped]
-	h._hud._band_labor._player_band = party_capped
-	h._hud._compose.reset_hunt_source()
-	h._hud._compose.set_hunt_band(-1)
-	h._show_herd(bison)
-	h._compose_herd(bison, PARTY_SIZE_BOUND_CREW, SourceForecast.FLOOR_FOOD_PEAK)
-	await h._settle()
-	await h._save("herd_hunt_party_size_bound")
-	h._assert_hud("the party-size-bound frame renders the 2-hunter crew the max party size caps it at",
-		Readout.stepper_value(h._hud._drawercompose._compose_sheet) == PARTY_SIZE_BOUND_CREW)
+	#   (The PARTY-SIZE-BOUND frame that stood here is DELETED with the cap it staged: a band with
+	#    `idle 6 >= max party 2` no longer binds on anything, because `expedition_party_cap` reads the
+	#    idle workforce alone. Its note had no reachable branch left, so the frame could only have
+	#    rendered the max-useful note under a party-size name.)
 	# Restore the far band + sustain for the states that follow.
 	h._hud._band_labor._player_bands = [_hunt_preview_far_band()]
 	h._hud._band_labor._player_band = h._hud._band_labor._player_bands[0]
