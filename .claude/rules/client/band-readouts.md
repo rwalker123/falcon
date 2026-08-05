@@ -541,3 +541,36 @@ happened.
 
 **Frames:** `herd_hunt_yield_range` / `herd_hunt_yield_point` (`chapters/hunt.gd`), judged as a PAIR —
 the second is the shipped case, and without it the first passes on a readout that decorates every row.
+
+## A launched DENIAL raid states a COLLAPSE, where a hunt party states a delivery
+
+`docs/plan_denial_raid.md` §3. `BandDetailLines.expedition_summary_lines` splits its raid branch in
+two: **`is_raid`** (hunt OR deny) gates the rows the two missions share — `Target:` with the target's
+live `(x, y)`, and `Carried:` — while **`is_hunt`** alone still gates `Leaves standing:`,
+`Fill target:`, `Next delivery:` and the trip-bound clause. That asymmetry IS the mission: a denial
+party's `expeditionFloor` reads `0.0` and its `expeditionFillTarget` `0` because it has no such
+orders, and it publishes no delivery projection at all, so rendering any of the four would put a lever
+on screen the command grammar cannot even express.
+
+What stands in the delivery's place is **`DetailFormat.expedition_collapse_line`** — a `Collapse:` row
+whose value is `SourceForecast.denial_verdict_bbcode`. The sim publishes **no per-party collapse
+field**, so the line reads the TARGET HERD's own `denialEstimates` row for the party's `size`: the
+same table, the same row and therefore the same sentence its launch sheet quoted, which is what stops
+the promise made at launch and the readout in flight from drifting. It renders `""` when the target is
+gone from telemetry — the `Target:` row above already says the herd is not there — or when the herd
+carries no row for that party size.
+
+- **The value carries its OWN `[color]`**, the `_band_food_line` precedent, because a verdict's
+  severity is a fact about the FORECAST and not about the row key, so it cannot come from
+  `_value_hex`'s key registry.
+- **The `Carried:` row is deliberately kept and reads near-empty**, which is the mission's own cost.
+  Suppressing it would hide the one number that says what a raid banks on the way home.
+- The row also rides the Active-parties row TOOLTIP (`DetailFormat.expedition_row_tooltip`), gated on
+  the deny mission alone, since a compact row cannot carry a sentence.
+
+Frame + assertions: `ui_preview`'s **`expedition_denial_panel`**, which asserts the mission label, the
+range verdict, the three ABSENT hunt readouts and the surviving `Carried:` row, beside three PNG-less
+claims about the verdict's structure (a `repelled` outcome carrying a full turn band still quotes no
+number; an unbounded `past_recovery` still names its outcome; and the two degenerate band forms). Each
+is sabotage-verified against a different mutation. The launch half and the vocabulary live in
+`band-city-panel.md` → "DENIAL is a third MISSION on the parties footer".

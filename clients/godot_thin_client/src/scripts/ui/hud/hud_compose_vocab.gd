@@ -614,9 +614,32 @@ const COMPOSE_MISSION_LABEL_SCOUT := "⚑ Scout"
 
 const COMPOSE_MISSION_LABEL_HUNT := "🏹 Hunt"
 
+## **THE THIRD VERB** (`docs/plan_denial_raid.md` §3). Denial is a MISSION rather than a preset on the
+## hunt form, because the thing it changes is a BOUND and not a number: the party never stops
+## engaging, so it carries no floor, no fill target and no crew preset — a herd and a party size, and
+## nothing else. `floor` must never appear anywhere in its UI.
+const COMPOSE_MISSION_DENY := "deny"
+
+## 💀 is the STRIP zone's own glyph (`FoodIcons.FLOOR_ZONE_ICONS`), and it is right here for the same
+## reason it is right there: leaving nothing standing. It cannot collide with a floor glyph on this
+## control — a denial form has no floor picker at all — and the three footer buttons name their
+## missions in words beside their marks.
+const COMPOSE_MISSION_LABEL_DENY := "💀 Deny"
+
 const COMPOSE_TITLE_SCOUT := "Setup a scouting party…"
 
 const COMPOSE_TITLE_HUNT := "Setup a hunting party…"
+
+const COMPOSE_TITLE_DENY := "Setup a denial raid…"
+
+## The footer button's hover text. It names the deal the whole mission is — kills without stopping,
+## brings almost nothing home — because that is the ONE thing a player must know before pressing it.
+const SEND_DENIAL_RAID_HINT := "Detach a party to break a herd. It never stops engaging, so it kills far more than it can carry and brings almost nothing home."
+
+## The denial form's own quarry hint. The hunt form's says the rest of the form follows from the
+## quarry; on this form the quarry and the party size ARE the whole form, so it says what the number
+## under it will answer instead.
+const COMPOSE_DENY_QUARRY_HINT := "Choose a herd to break — the collapse estimate follows from it."
 
 const COMPOSE_FIELD_PARTY := "Party"
 

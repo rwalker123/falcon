@@ -184,6 +184,18 @@ baskets with its sled untouched, so `hunt_carry_per_worker_biomass` and
 corrected sim-side. The golden gives every field a DISTINCT saturated value, which is what makes a
 swapped accessor visible in the diff rather than merely different.
 
+`herds_to_array` (`dict/subsistence.rs`) decodes the DENIAL raid's pre-launch table,
+`HerdTelemetryState.denialEstimates` (`docs/plan_denial_raid.md`), as **`denial_estimates` — a Godot
+ARRAY of row dictionaries, not a keyed dict like its `hunt_trip_estimates` sibling**. The hunt table
+needs a composite `"<floor>:<party>"` key because it is sampled on TWO axes, and that key is the
+source of the Rust-`f32`-Display trap its own comment records; denial carries no floor and no fill
+target, so party size is the only axis, a row's `party_workers` IS its identity, and an array cannot
+reproduce the trap. Each row carries `party_workers` / `turns_to_collapse` / `turns_to_collapse_low` /
+`turns_to_collapse_high` / `outcome` / `animals_killed` / `delivered_food` / `wasted_food` /
+`delivered_trade`. **A `0` on any turn field means "not within the horizon on that end", never
+"immediately"**, and `outcome` is what the client renders instead of a blank — decode all four
+together or the consumer cannot tell a repelled party from an expired clock.
+
 **The whole path is gated by `tools/decode_guard.gd`** (see its Key Scripts row) — the answer to
 "`VarDictionary` cannot be built outside a live engine", which is why the coverage here was a single
 `cohort_decode_tests` module for so long. Run it from the workspace root:

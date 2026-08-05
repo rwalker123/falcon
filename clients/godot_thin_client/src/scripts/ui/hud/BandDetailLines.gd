@@ -267,11 +267,19 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
     var lines: Array[String] = []
     var mission := String(unit_data.get("expedition_mission", ""))
     var is_hunt := mission == HudExpeditionVocab.EXPEDITION_MISSION_HUNT
-    # The party's OWN target, resolved once: the `Target:` row's live position and the delivery line's
-    # lost-vs-lean disambiguation are the same herd, so they must not be looked up twice.
-    var target_herd: Dictionary = _band_labor.expedition_target_herd(unit_data) if is_hunt else {}
+    # **A DENIAL RAID IS A RAID FOR THE ROWS IT SHARES AND NOT FOR ONE OF THE ORDERS**
+    # (`docs/plan_denial_raid.md`). It has a target herd, a party and a pack, so `is_raid` gates the
+    # Target and Carried rows; it has NO floor, NO fill target and NO delivery ETA — those read `0.0`
+    # / `0` / absent because the mission has no such lever — so they stay gated on `is_hunt` alone,
+    # and what a denial party shows in their place is its COLLAPSE VERDICT.
+    var is_deny := mission == HudExpeditionVocab.EXPEDITION_MISSION_DENY
+    var is_raid := is_hunt or is_deny
+    # The party's OWN target, resolved once: the `Target:` row's live position, the delivery line's
+    # lost-vs-lean disambiguation and the denial verdict's own lookup are the same herd, so they must
+    # not be looked up twice.
+    var target_herd: Dictionary = _band_labor.expedition_target_herd(unit_data) if is_raid else {}
     lines.append("Mission: %s" % DetailFormat.expedition_mission_label(mission))
-    if is_hunt:
+    if is_raid:
         # The migratory herd it follows (species label from the fauna_id, falling back to the id).
         # A hunt party's target MIGRATES and is often NOT the herd on the tile the player is looking
         # at, so when the target is still in the telemetry with a live position we append it — the
@@ -287,9 +295,13 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
                 if tx >= 0 and ty >= 0:
                     target_line += " (%d, %d)" % [tx, ty]
             lines.append(target_line)
+    if is_hunt:
         # The party's ORDERS — where the raid stops, as a fraction of the herd's capacity. Always on
         # the wire for a hunt party, and every value is meaningful (including `0`), so it is stated
         # unconditionally rather than gated on being non-empty as the retired policy string was.
+        # **A DENIAL PARTY IS NOT IN THIS BRANCH**: its `expeditionFloor` reads `0.0` and its
+        # `expeditionFillTarget` `0` because it HAS no such orders, so rendering either would put a
+        # lever on screen that the mission does not carry and the command grammar cannot express.
         lines.append("Leaves standing: %s" % (HudComposeVocab.FLOOR_VALUE_FORMAT
             % SourceForecast.floor_percent(float(unit_data.get("expedition_floor",
                 SourceForecast.DEFAULT_HARVEST_FLOOR)))))
@@ -310,27 +322,38 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
     var carried := 0
     var stores_variant: Variant = unit_data.get("stores", {})
     if stores_variant is Dictionary:
-        if is_hunt:
-            # The hunt party lives off its own kills; its store item key isn't fixed, so total it.
+        if is_raid:
+            # A raiding party lives off its own kills; its store item key isn't fixed, so total it.
             for qty in (stores_variant as Dictionary).values():
                 carried += int(round(float(qty)))
         else:
             carried = int(round(float((stores_variant as Dictionary).get(HudConst.STORE_ITEM_PROVISIONS, 0.0))))
-    if is_hunt:
+    if is_raid:
         # Carried X / cap + a FULL badge at the carry ceiling (the party heads home when full).
+        # **A DENIAL PARTY SHOWS THIS ROW AND IT READS NEAR-EMPTY, WHICH IS THE POINT** — it banks
+        # whatever it can haul on the way home, a rounding error against what it killed. Suppressing
+        # it would hide the mission's own cost.
         var cap := int(round(float(unit_data.get("expedition_carry_cap", 0.0))))
         if cap > 0:
             var full_badge := "  %s" % HUNT_FULL_BADGE if carried >= cap else ""
             lines.append("Carried: %d / %d  (%s)%s" % [carried, cap, DetailFormat.food_turns_text(turns), full_badge])
         else:
             lines.append("Carried: %d  (%s)" % [carried, DetailFormat.food_turns_text(turns)])
+        # **THE DENIAL PARTY'S OWN READOUT, IN PLACE OF A DELIVERY ETA.** The mission publishes none —
+        # its verdict is whether the herd goes past the point of no return — so this reads the target
+        # herd's `denialEstimates` row for THIS party's size, the same table the launch sheet quoted.
+        # Rendered before the hunt-only lines below so the two missions read in the same slot.
+        if is_deny:
+            var collapse_line := DetailFormat.expedition_collapse_line(unit_data, target_herd)
+            if collapse_line != "":
+                lines.append(collapse_line)
         # Next-delivery forecast (the in-flight twin of the pre-launch hunt trip estimate): ALWAYS
         # shown for a hunt party once the field is on the wire, because a projected 0 is a real,
         # decision-relevant answer ("this herd has no surplus to raid") that a `> 0` guard used to
         # hide. The gate is `has(...)`, not `> 0`: the native decoder always inserts the field now, so
         # present-and-0 is a genuine no-surplus; an ABSENT key (older build) renders nothing rather
         # than a false "none".
-        if unit_data.has("expedition_projected_delivery"):
+        if is_hunt and unit_data.has("expedition_projected_delivery"):
             lines.append(DetailFormat.expedition_next_delivery_line(unit_data, target_herd))
         # **WHICH STOP ENDS THE TRIP** — the sim's own answer for THIS party's real orders, off the
         # same in-flight forward simulation the ETA above comes from. A `""` bound (not raiding: a
@@ -339,7 +362,7 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
         var bound_line := DetailFormat.expedition_trip_bound_line(unit_data, mission)
         if bound_line != "":
             lines.append(bound_line)
-    else:
+    if not is_raid:
         lines.append("Provisions: %d  (%s)" % [carried, DetailFormat.food_turns_text(turns)])
     var pos_array: Array = Array(unit_data.get("pos", []))
     if pos_array.size() == 2:

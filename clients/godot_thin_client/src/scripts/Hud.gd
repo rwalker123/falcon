@@ -32,6 +32,12 @@ signal send_expedition_requested(payload: Dictionary)
 ## command-feed note must read — a feed line naming `game_deer_07` is a key leaking into the game UI.
 ## Main formats the `send_hunt_expedition …` command.
 signal send_hunt_expedition_requested(payload: Dictionary)
+## DENIAL raid (`docs/plan_denial_raid.md`) — the third mission, launched from the parties zone's own
+## compose sheet. Payload keys: { faction, band_id, party_workers, fauna_id, fauna_label } and
+## **nothing else**: the command grammar `send_denial_raid <faction> <band> <party> <fauna_id>` is
+## CLOSED at four tokens, so a floor or a fill target on this payload would be a hard parse error
+## rather than an ignored extra. Main formats the `send_denial_raid …` command.
+signal send_denial_raid_requested(payload: Dictionary)
 ## Emitted when the player recalls the selected in-flight expedition (folds it home). Payload
 ## keys: { faction, expedition }. Main formats the `recall_expedition …` command.
 signal recall_expedition_requested(payload: Dictionary)
@@ -400,6 +406,8 @@ func _ready() -> void:
         func(band: Dictionary, scope: String) -> void: cancel_order_requested.emit(band, scope))
     _bandpanel.send_hunt_expedition_requested.connect(
         func(payload: Dictionary) -> void: send_hunt_expedition_requested.emit(payload))
+    _bandpanel.send_denial_raid_requested.connect(
+        func(payload: Dictionary) -> void: send_denial_raid_requested.emit(payload))
     _bandpanel.recall_expedition_requested.connect(
         func(payload: Dictionary) -> void: recall_expedition_requested.emit(payload))
     _bandpanel.alert_focus_requested.connect(

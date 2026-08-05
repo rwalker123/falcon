@@ -83,6 +83,31 @@ const QUARRY_FOOD_PER_ANIMAL := 4.0
 const QUARRY_TRADE_PER_ANIMAL := 0.5
 ## The INEDIBLE quarry on the work board (issue #337): its hunt row pays trade goods and no food.
 const TRADE_ONLY_HERD_ID := "game_wolf_03"
+
+# ---- THE DENIAL RAID's fixture (`docs/plan_denial_raid.md`) --------------------------------------
+## The party the two denial frames compose, i.e. which row of the table below they render. It is the
+## reference band's whole IDLE workforce, because that is the only ceiling this form has: the denial
+## sheet deliberately carries NO max-useful cap (a raid has no payload to plateau), so it renders a
+## party the HUNT sheet beside it would have clamped to the boar's raid plateau of 2 — which is the
+## rendered difference between the two forms. Set it above `_band_fixture`'s idle count and the
+## stepper clamps, leaving every assertion below answering for a row the frame never shows.
+const DENIAL_PARTY := 3
+## The VIABLE table's rows for parties 1..8. **More hands break the herd sooner** — the mission's only
+## lever — so the counts fall monotonically; the band widens where the retreat is chanciest. Party 4
+## reads `3–5`, the plan's own worked example.
+const DENIAL_TURNS_ROW := [11, 8, 6, 4, 4, 3, 3, 2]
+const DENIAL_LOW_ROW := [9, 6, 5, 3, 3, 2, 2, 2]
+const DENIAL_HIGH_ROW := [14, 10, 8, 5, 5, 4, 4, 3]
+const DENIAL_KILLS_ROW := [26, 42, 55, 66, 74, 82, 88, 94]
+## The REPELLED table's kills — non-zero, and that is the claim. A repelled party is not one that
+## kills nothing; it is one whose kills do not outpace the herd's regrowth, so the take readout must
+## still have something to state while the verdict says the herd is never pushed past recovery. Its
+## turn rows are all `0`, the wire's "not within the horizon on that end".
+const DENIAL_REPELLED_KILLS_ROW := [3, 5, 7, 9, 10, 11, 12, 13]
+## Food ONE raider hauls home over the whole raid — tiny beside the kill, which IS the mission. A
+## fixture that hauled its whole kill would be a hunting raid wearing a denial outcome, and the waste
+## readout would have nothing to state.
+const DENIAL_CARRY_PER_WORKER := 2.0
 ## The quarry fixtures straddle the band's hunt reach: the Wild Boar is a party's job, the Roe Deer
 ## one tile out is a local hunt the picker must refuse.
 const QUARRY_BAND_HUNT_REACH := 2
@@ -1123,6 +1148,37 @@ func _ready() -> void:
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
+
+	# **THE DENIAL FORM — the third verb** (`docs/plan_denial_raid.md` §3). Quarry → party → the
+	# COLLAPSE VERDICT → the take → send. What is ABSENT is the specification: no floor picker, no
+	# floor hint, no fill target, no crew preset — a herd and a party size, and nothing else the
+	# `send_denial_raid` grammar (closed at four tokens) could even carry.
+	_hud._bandpanel._party_compose_mission = HudComposeVocab.COMPOSE_MISSION_DENY
+	_hud._compose.set_party_quarry(QUARRY_FAR_HERD_ID)
+	_hud._bandpanel._send_expedition_count = DENIAL_PARTY
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_compose_deny")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_denial_viable()
+
+	# The SAME form against a herd that outbreeds the party — the `repelled` verdict, which is a claim
+	# about the PARTY and not about the clock. It still LAUNCHES (a raid that cannot get there keeps
+	# working the herd until recalled), so the Send warns rather than blocking. Judged as a PAIR with
+	# the viable frame above: a table answering one verdict for every outcome satisfies either alone.
+	_set_world_herds(_quarry_herd_fixtures(_denial_repelled_rows()))
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_compose_deny_repelled")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_denial_repelled()
+	_set_world_herds(_quarry_herd_fixtures())
+
+	_hud._bandpanel._send_expedition_count = 1
 	_hud._bandpanel._party_compose_open = false
 	_hud._bandpanel._party_compose_mission = ""
 	_hud._compose.clear_party_quarry()
@@ -3393,7 +3449,11 @@ func _herd_fixtures() -> Array:
 ## metrics / max-useful party cap / trip forecast are all pure lookups into. Without the trip table the
 ## sheet renders bare rungs and no forecast, i.e. exactly the state the quarry-first flow exists to fix.
 ## It sits 4 tiles from the band at (71,18), so the round-trip travel term is exercised too.
-func _quarry_herd_fixtures() -> Array:
+## The two quarry herds the parties compose sheet is judged on. **`denial_rows` swaps the FAR herd's
+## denial table and nothing else** (`docs/plan_denial_raid.md`) — the viable and the repelled frames
+## must differ only in the sim's answer, or a "the verdict changed" assertion would be satisfied by
+## two different herds rather than by two different forecasts.
+func _quarry_herd_fixtures(denial_rows: Array = []) -> Array:
 	var herd := {
 		"id": QUARRY_FAR_HERD_ID, "species": "Wild Boar", "x": QUARRY_FAR_X, "y": QUARRY_FAR_Y,
 		"population": 140, "ecology_phase": "thriving", "huntable": true,
@@ -3438,6 +3498,7 @@ func _quarry_herd_fixtures() -> Array:
 				# hauls its whole kill is stopped by the PACK.
 				SourceForecast.TRIP_BOUND_KEY: SourceForecast.TRIP_BOUND_PACK_FULL}
 	herd["hunt_trip_estimates"] = table
+	herd["denial_estimates"] = denial_rows if not denial_rows.is_empty() else _denial_viable_rows()
 	# A second huntable herd INSIDE the band's hunt reach. It is not a party's job (the band can work
 	# it from home), so the picker must refuse it — the near half of the eligibility assertion.
 	var near := {
@@ -3450,6 +3511,144 @@ func _quarry_herd_fixtures() -> Array:
 		"hunt_trip_estimates": table.duplicate(true),
 	}
 	return [herd, near]
+
+## The DENIAL raid's pre-launch table — an ARRAY with ONE row per party size and no other axis, which
+## is the whole shape difference from `hunt_trip_estimates` above: denial carries no floor and no fill
+## target, so party size is the only thing there is to sample and a row's `party_workers` is its id.
+##
+## `outcome` is on every row because the client renders nothing numeric without it, and a `0` turn
+## count means "not within the horizon on that end" rather than "immediately".
+func _denial_rows(outcome: String, turns_row: Array, low_row: Array, high_row: Array,
+		kills_row: Array) -> Array:
+	var rows: Array = []
+	for i in kills_row.size():
+		var party := i + 1
+		var killed := int(kills_row[i])
+		var killed_food := float(killed) * QUARRY_FOOD_PER_ANIMAL
+		# What the pack holds, never what it killed: the raid banks a rounding error on the way home.
+		var hauled := minf(killed_food, float(party) * DENIAL_CARRY_PER_WORKER)
+		var hauled_share := (hauled / killed_food) if killed_food > 0.0 else 0.0
+		rows.append({
+			"party_workers": party,
+			"turns_to_collapse": int(turns_row[i]),
+			"turns_to_collapse_low": int(low_row[i]),
+			"turns_to_collapse_high": int(high_row[i]),
+			"outcome": outcome,
+			"animals_killed": killed,
+			"delivered_food": hauled,
+			"wasted_food": killed_food - hauled,
+			"delivered_trade": float(killed) * QUARRY_TRADE_PER_ANIMAL * hauled_share,
+		})
+	return rows
+
+## A raid that gets there: `past_recovery`, with a real turn band.
+func _denial_viable_rows() -> Array:
+	return _denial_rows(SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY,
+		DENIAL_TURNS_ROW, DENIAL_LOW_ROW, DENIAL_HIGH_ROW, DENIAL_KILLS_ROW)
+
+## A raid that never gets there: `repelled`, every turn row `0` (not within the horizon on either
+## end) and a small but NON-ZERO kill count — the party is outbred, not incapable.
+func _denial_repelled_rows() -> Array:
+	var zeroes := [0, 0, 0, 0, 0, 0, 0, 0]
+	return _denial_rows(SourceForecast.DENIAL_OUTCOME_REPELLED,
+		zeroes, zeroes, zeroes, DENIAL_REPELLED_KILLS_ROW)
+
+## The PARSED text of the first `RichTextLabel` under `node` containing `text`, or `""`. The verdict
+## and take lines are BBCode (`HudWidgets.forecast_label`), which `_has_label_containing` — a `Label`
+## walk — cannot see at all; and it returns the WHOLE line rather than a bool because the claims below
+## are about what the line does NOT also say, which a `contains` can never carry.
+func _rich_text_containing(node: Node, text: String) -> String:
+	if node is RichTextLabel:
+		var parsed := (node as RichTextLabel).get_parsed_text()
+		if parsed.contains(text):
+			return parsed
+	for child in node.get_children():
+		var found := _rich_text_containing(child, text)
+		if found != "":
+			return found
+	return ""
+
+## The VIABLE denial form. The ABSENCES are half the claims — what this mission does not carry IS its
+## specification, so a form that grew a floor picker would be as wrong as one that quoted no verdict.
+func _assert_denial_viable() -> void:
+	var quarry := "Wild Boar"
+	# Composed from the VOCABULARY, never from `denial_verdict_text` — an expectation re-derived
+	# through the formatter under test asserts nothing.
+	var want := String(SourceForecast.DENIAL_VERDICTS[
+		SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY]["line"]) % quarry
+	want += SourceForecast.DENIAL_TURNS_CLAUSE_FORMAT % (
+		SourceForecast.DENIAL_TURNS_RANGE_FORMAT % [
+			DENIAL_LOW_ROW[DENIAL_PARTY - 1], DENIAL_HIGH_ROW[DENIAL_PARTY - 1]])
+	_assert_band_panel("the denial form states the collapse verdict as a RANGE — \"%s\"" % want,
+		_rich_text_containing(_panel, want) == want)
+	# **THE WASTE IS STATED AND IS NOT DRESSED AS A WARNING.** On a hunt an unhauled kill wears
+	# `HUNT_FORECAST_WARN_GLYPH`; on a raid it IS the mission, so the line is quiet and factual. Both
+	# halves on ONE line — the take is there, and it carries no alarm — since a form that lost the
+	# line entirely would satisfy the negative on its own.
+	var killed: int = DENIAL_KILLS_ROW[DENIAL_PARTY - 1]
+	var killed_food := float(killed) * QUARRY_FOOD_PER_ANIMAL
+	var left := killed_food - minf(killed_food, float(DENIAL_PARTY) * DENIAL_CARRY_PER_WORKER)
+	var take_line := _rich_text_containing(_panel,
+		SourceForecast.DENIAL_TAKE_KILLS_FORMAT % [killed, quarry])
+	_assert_band_panel("…and states the take PLAINLY — kills %d, leaves %s on the range, no alarm"
+			% [killed, SourceForecast.format_magnitude(left)],
+		take_line.contains(SourceForecast.DENIAL_TAKE_LEFT_FORMAT
+				% SourceForecast.format_magnitude(left))
+			and not take_line.contains(SourceForecast.HUNT_FORECAST_WARN_GLYPH))
+	# NO FLOOR ANYWHERE — not a picker, not a fill target, not even the row heading. Three surfaces,
+	# one claim. **The heading is matched UPPER-CASED because `alloc_section_label` upper-cases what it
+	# is given**, so the vocabulary const as written matches nothing and that clause would be vacuous
+	# — which is exactly how it first shipped, passing with a Policy row put back on the form.
+	_assert_band_panel("…and offers NO floor picker, NO fill target and no Policy row",
+		_find_meta_control(_panel, HudWidgets.POLICY_RUNG_META) == null
+			and _find_meta_control(_panel, HudWidgets.FILL_TARGET_META) == null
+			and not _has_label_containing(_panel, HudComposeVocab.COMPOSE_FIELD_POLICY.to_upper()))
+	# **THE BAND IS AN ESTIMATE, NOT A PROMISE, AND THE PANEL SAYS SO** — `turns_to_collapse` is an
+	# integral over many stochastic retreat draws, so a lucky run really can finish sooner than the
+	# reported low. The caveat rides under every verdict that quotes a number (and, per the repelled
+	# frame, under none that does not).
+	_assert_band_panel("…and words the band as an estimate rather than a promise",
+		_has_label_containing(_panel, SourceForecast.DENIAL_ESTIMATE_CAVEAT))
+	# The Send is the plain primary one and is ENABLED — this raid works.
+	var send := _find_meta_control(_panel, HudWidgets.SEND_DENIAL_CONFIRM_META) as Button
+	_assert_band_panel("…and its Send is the plain primary one, enabled",
+		send != null and not send.disabled
+			and send.text == String(SourceForecast.DENIAL_VERDICTS[
+				SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY]["button"]))
+
+## The REPELLED form. **The verdict is about the PARTY, and the herd-side sentence must be absent** —
+## this arc has already shipped a refusal that blamed the herd for the party's problem twice, and the
+## negative half is what makes the positive one mean something.
+func _assert_denial_repelled() -> void:
+	var quarry := "Wild Boar"
+	var party_line := String(SourceForecast.DENIAL_VERDICTS[
+		SourceForecast.DENIAL_OUTCOME_REPELLED]["line"]) % quarry
+	var horizon_line := String(SourceForecast.DENIAL_VERDICTS[
+		SourceForecast.DENIAL_OUTCOME_HORIZON]["line"]) % quarry
+	# **AND THE WHOLE LINE IS THE OUTCOME, WITH NO TURN CLAUSE APPENDED.** Equality, not `contains`:
+	# the outcome LEADS the sentence and the number is a clause on it, so "never a blank turn count
+	# without its outcome" is only true if a forecast the sim bounded on neither end renders the
+	# outcome ALONE. A `contains` would pass on a line that also quoted a number.
+	_assert_band_panel("a repelled raid is refused in the PARTY's name, with no turn count — \"%s\""
+			% party_line,
+		_rich_text_containing(_panel, party_line) == party_line
+			and _rich_text_containing(_panel, horizon_line) == "")
+	# **AND NO CAVEAT, because there is no number to caveat.** `DENIAL_ESTIMATE_CAVEAT` qualifies a
+	# turn band; printed under a verdict that quotes none it reads as an estimate the player cannot
+	# see. Asserted as a PAIR with the viable frame, which requires it.
+	_assert_band_panel("…and prints no estimate caveat, having quoted no estimate",
+		not _has_label_containing(_panel, SourceForecast.DENIAL_ESTIMATE_CAVEAT))
+	# It STILL LAUNCHES: a raid that cannot get there keeps working the herd until it is recalled, so
+	# the launch verdict warns and the player is trusted — exactly as a slow hunting raid is.
+	var send := _find_meta_control(_panel, HudWidgets.SEND_DENIAL_CONFIRM_META) as Button
+	_assert_band_panel("…and the Send warns rather than blocking",
+		send != null and not send.disabled
+			and send.text == String(SourceForecast.DENIAL_VERDICTS[
+				SourceForecast.DENIAL_OUTCOME_REPELLED]["button"]))
+	# …and it says what to do about it, in the party's terms.
+	_assert_band_panel("…and the reason beside it sends the player to the PARTY",
+		_has_label_containing(_panel, String(SourceForecast.DENIAL_VERDICTS[
+			SourceForecast.DENIAL_OUTCOME_REPELLED]["reason"]) % quarry))
 
 ## The tile_info a map click on a herd's hex delivers (`TargetingController._huntable_herd_on_tile` reads `herds`).
 func _quarry_tile_info(herd: Dictionary) -> Dictionary:

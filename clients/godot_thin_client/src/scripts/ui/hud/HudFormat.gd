@@ -36,6 +36,9 @@ const PEOPLE_DEPENDENCY_HEAVY_TOOLTIP := "\nMore mouths than hands."
 ## (MapView EXPEDITION_GLYPH / EXPEDITION_HUNT_GLYPH).
 const PANEL_EXPEDITION_SCOUT_GLYPH := "⚑"
 const PANEL_EXPEDITION_HUNT_GLYPH := "🏹"
+## The DENIAL raid's mark (`docs/plan_denial_raid.md`) — the same 💀 its footer button and its map
+## marker wear, so the mission reads identically at every scale.
+const PANEL_EXPEDITION_DENY_GLYPH := "💀"
 ## Positional band names ("Band 1", "Band 2", …), matching the roster's numbering.
 const BAND_DISPLAY_NAME_FORMAT := "Band %d"
 ## The band's hex coordinates in the Band/City panel HEADER, beside its stage word — the header's
@@ -277,6 +280,12 @@ static func panel_expedition_summary(exp: Dictionary, herd_label_for_id: Callabl
         var herd := String(herd_label_for_id.call(String(exp.get("expedition_target_herd", "")).strip_edges()))
         return "%s %s%s%s" % [
             PANEL_EXPEDITION_HUNT_GLYPH, herd, floor_suffix, phase_suffix]
+    # DENIAL — the hunt row's shape with the mission's own mark and NO floor glyph. Its
+    # `expedition_floor` reads `0.0`, which is a real zone (`strip`), so borrowing the hunt branch's
+    # glyph would mark a raid with a pressure it never chose — the mission has no floor at all.
+    if mission == HudExpeditionVocab.EXPEDITION_MISSION_DENY:
+        var quarry := String(herd_label_for_id.call(String(exp.get("expedition_target_herd", "")).strip_edges()))
+        return "%s %s%s" % [PANEL_EXPEDITION_DENY_GLYPH, quarry, phase_suffix]
     var x := int(exp.get("current_x", -1))
     var y := int(exp.get("current_y", -1))
     return "%s → (%d, %d)%s%s" % [

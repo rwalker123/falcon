@@ -47,6 +47,11 @@ extends RefCounted
 signal cancel_order_requested(band: Dictionary, scope: String)
 # A hunting party was dispatched from the parties zone — relayed to HudLayer.send_hunt_expedition_requested.
 signal send_hunt_expedition_requested(payload: Dictionary)
+# A DENIAL raid was dispatched — relayed to HudLayer.send_denial_raid_requested. **Its own signal, not
+# a flag on the hunt one**, because its command grammar is closed at four tokens
+# (`send_denial_raid <faction> <band> <party_workers> <fauna_id>`) — a fifth is a hard parse error —
+# so a payload that could carry a floor or a fill target would be a payload the parser rejects.
+signal send_denial_raid_requested(payload: Dictionary)
 # A party was ordered home — relayed to HudLayer.recall_expedition_requested.
 signal recall_expedition_requested(payload: Dictionary)
 # Recenter + select a hex (a zone row / cycler jump) — relayed to HudLayer.alert_focus_requested.
@@ -1551,6 +1556,12 @@ func _build_party_footer(band: Dictionary) -> VBoxContainer:
         HudComposeVocab.COMPOSE_MISSION_LABEL_SCOUT, HudComposeVocab.SEND_EXPEDITION_HINT, idle))
     missions.add_child(_build_mission_launch_button(HudComposeVocab.COMPOSE_MISSION_HUNT,
         HudComposeVocab.COMPOSE_MISSION_LABEL_HUNT, HudComposeVocab.SEND_HUNT_EXPEDITION_HINT, idle))
+    # **THE THIRD VERB** (`docs/plan_denial_raid.md` §3). It sits beside the other two rather than
+    # inside the hunt form, because what it changes is a BOUND and not a number: `floor = 0` still
+    # only kills what the party can haul, so denial had to become a mission to have anything to
+    # unclamp. Same button, same idle gate — the difference is entirely in the form it opens.
+    missions.add_child(_build_mission_launch_button(HudComposeVocab.COMPOSE_MISSION_DENY,
+        HudComposeVocab.COMPOSE_MISSION_LABEL_DENY, HudComposeVocab.SEND_DENIAL_RAID_HINT, idle))
     foot.add_child(missions)
     if idle <= 0:
         foot.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.SEND_PARTY_NO_IDLE_REASON))
@@ -1578,10 +1589,15 @@ func _build_mission_launch_button(mission: String, label: String, hint: String,
 ## sit above the scouting button and read as if it modified it). `✕` is the only way back.
 func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
     var is_hunt := _party_compose_mission == HudComposeVocab.COMPOSE_MISSION_HUNT
+    var is_deny := _party_compose_mission == HudComposeVocab.COMPOSE_MISSION_DENY
     var sheet := HudWidgets.make_zone_block()
     var head := HBoxContainer.new()
     var title := Label.new()
-    title.text = HudComposeVocab.COMPOSE_TITLE_HUNT if is_hunt else HudComposeVocab.COMPOSE_TITLE_SCOUT
+    title.text = HudComposeVocab.COMPOSE_TITLE_SCOUT
+    if is_hunt:
+        title.text = HudComposeVocab.COMPOSE_TITLE_HUNT
+    elif is_deny:
+        title.text = HudComposeVocab.COMPOSE_TITLE_DENY
     title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     head.add_child(title)
     var cancel := Button.new()
@@ -1595,6 +1611,9 @@ func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
     sheet.add_child(head)
     if is_hunt:
         _fill_hunt_compose_sheet(sheet, band, idle)
+        return sheet
+    if is_deny:
+        _fill_denial_compose_sheet(sheet, band, idle)
         return sheet
     # SCOUT — a single input. Its only question is party size, and nothing about a scouting party
     # depends on where it is going, so the destination is still picked on the map after the send.
@@ -1724,6 +1743,87 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
             "fauna_label": SourceForecast.herd_display_name(herd),
             "floor": _send_hunt_floor,
             "fill_target": _send_hunt_fill_target,
+        })
+        _close_party_compose())
+    sheet.add_child(confirm)
+
+## The DENIAL form (`docs/plan_denial_raid.md` §3): QUARRY → PARTY → the collapse verdict → send.
+##
+## **WHAT IS ABSENT IS THE SPECIFICATION.** No floor picker, no floor hint, no fill target, no crew
+## preset, no max-useful cap — a denial party never stops engaging, so there is no escapement to dial
+## and no pack to fill, and any of those controls would be a lever the command grammar
+## (`send_denial_raid`, closed at four tokens) cannot even carry. The player chooses a herd and a
+## party size; everything else on this sheet is a READOUT.
+##
+## The quarry row, its picker and the beyond-reach rule are the hunt form's, reused verbatim — a
+## denial raid is still an expedition, so a herd the band can work from home is still a local hunt.
+func _fill_denial_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int) -> void:
+    # Re-resolved LIVE every render for the hunt form's reasons: a herd can be raided out or migrate
+    # into the band's reach while the sheet is open, and a form rendered against a stale id would
+    # forecast a collapse for a herd that is gone.
+    var herd := _band_labor.find_world_herd(_compose.party_quarry_id())
+    if herd.is_empty() or not _targeting.is_expedition_quarry(band, herd):
+        herd = {}
+        _clear_party_quarry()
+    sheet.add_child(_build_quarry_row(band, herd))
+    if _compose.party_quarry_id() == "":
+        # Visible-and-disabled-with-its-reason, the footer's own convention.
+        sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.COMPOSE_DENY_QUARRY_HINT))
+        var blocked := Button.new()
+        blocked.text = String(SourceForecast.DENIAL_VERDICTS[
+            SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY]["button"])
+        blocked.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        blocked.disabled = true
+        blocked.tooltip_text = HudComposeVocab.COMPOSE_DENY_QUARRY_HINT
+        HudStyle.apply_button(blocked, "ghost")
+        sheet.add_child(blocked)
+        return
+    # **THE PARTY IS CAPPED BY SUPPLY ALONE** — idle workers and the server's party-size limit. There
+    # is deliberately no `expedition_useful_cap` twin here: that cap exists because a hunting raid's
+    # delivered payload PLATEAUS once the herd's surplus binds, and a denial raid has no payload to
+    # plateau. More hands always break the herd sooner, which is the whole lever this form offers.
+    var party_max := _scout_party_max(band, idle)
+    _send_expedition_count = clampi(_send_expedition_count, HudConst.WORKER_STEP, party_max)
+    sheet.add_child(HudWidgets.build_party_stepper_row(_send_expedition_count, party_max,
+        func(n: int) -> void:
+            _send_expedition_count = clampi(n, HudConst.WORKER_STEP, party_max)
+            rerender()))
+    sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.COMPOSE_OF_IDLE_FORMAT % idle))
+    # THE COLLAPSE VERDICT — a pure lookup into the sim's `denialEstimates` for this party size.
+    var forecast := SourceForecast.denial_forecast(herd, _send_expedition_count)
+    var quarry_name := SourceForecast.herd_display_name(herd)
+    var verdict := SourceForecast.denial_verdict_bbcode(forecast, quarry_name)
+    if verdict != "":
+        sheet.add_child(HudWidgets.forecast_label(verdict))
+        # The caveat rides under the verdict WHENEVER THERE IS A NUMBER TO CAVEAT — the band is an
+        # integral over many stochastic draws and a lucky run really can finish sooner than the
+        # reported low. A verdict with no turn count (a repelled party, an unbounded horizon) has
+        # nothing for it to qualify, and a caveat about an absent number reads as one that is there.
+        if SourceForecast.denial_turns_phrase(forecast) != "":
+            sheet.add_child(HudWidgets.alloc_hint_label(SourceForecast.DENIAL_ESTIMATE_CAVEAT))
+    # …and the take beneath it: what the raid kills, what little it hauls, and what it leaves on the
+    # range. Quiet ink — the waste IS the mission, not a warning about it.
+    var take := SourceForecast.denial_take_bbcode(forecast, quarry_name)
+    if take != "":
+        sheet.add_child(HudWidgets.forecast_label(take))
+    var reason := SourceForecast.denial_refusal_reason(forecast, herd)
+    if reason != "":
+        sheet.add_child(HudWidgets.alloc_hint_label(reason))
+    var confirm := Button.new()
+    confirm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    # The button carries the verdict and NEVER disables: a raid that cannot break the herd still
+    # works it until recalled, so the launch verdict warns and the player is trusted.
+    SourceForecast.style_send_denial_button(confirm, forecast)
+    confirm.tooltip_text = reason if reason != "" else HudComposeVocab.SEND_DENIAL_RAID_HINT
+    confirm.set_meta(HudWidgets.SEND_DENIAL_CONFIRM_META, true)
+    var quarry_id := _compose.party_quarry_id()
+    confirm.pressed.connect(func() -> void:
+        emit_signal("send_denial_raid_requested", {
+            "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+            "band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+            "party_workers": _send_expedition_count,
+            "fauna_id": quarry_id,
+            "fauna_label": quarry_name,
         })
         _close_party_compose())
     sheet.add_child(confirm)

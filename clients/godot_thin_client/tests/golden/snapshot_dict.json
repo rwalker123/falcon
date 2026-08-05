@@ -656,6 +656,30 @@
       "corral_yield": 50.880001,
       "corralled": true,
       "defense": 77.480003,
+      "denial_estimates": [
+        {
+          "animals_killed": 170,
+          "delivered_food": 6.34,
+          "delivered_trade": 59.880001,
+          "outcome": "herds[0].denial_estimates[0].outcome",
+          "party_workers": 87,
+          "turns_to_collapse": 105,
+          "turns_to_collapse_high": 22,
+          "turns_to_collapse_low": 114,
+          "wasted_food": 31.969999
+        },
+        {
+          "animals_killed": 163,
+          "delivered_food": 23.23,
+          "delivered_trade": 49.32,
+          "outcome": "herds[0].denial_estimates[1].outcome",
+          "party_workers": 76,
+          "turns_to_collapse": 86,
+          "turns_to_collapse_high": 183,
+          "turns_to_collapse_low": 85,
+          "wasted_food": 73.800003
+        }
+      ],
       "domestication": 25.139999,
       "durability": 52.57,
       "ecology_phase": "herds[0].ecology_phase",
@@ -741,6 +765,30 @@
       "corral_yield": 35.5,
       "corralled": true,
       "defense": 11.55,
+      "denial_estimates": [
+        {
+          "animals_killed": 107,
+          "delivered_food": 0.83,
+          "delivered_trade": 22.16,
+          "outcome": "herds[1].denial_estimates[0].outcome",
+          "party_workers": 132,
+          "turns_to_collapse": 94,
+          "turns_to_collapse_high": 31,
+          "turns_to_collapse_low": 85,
+          "wasted_food": 21.559999
+        },
+        {
+          "animals_killed": 114,
+          "delivered_food": 110.279999,
+          "delivered_trade": 4.18,
+          "outcome": "herds[1].denial_estimates[1].outcome",
+          "party_workers": 183,
+          "turns_to_collapse": 17,
+          "turns_to_collapse_high": 150,
+          "turns_to_collapse_low": 162,
+          "wasted_food": 99.110001
+        }
+      ],
       "domestication": 102.790001,
       "durability": 53.200001,
       "ecology_phase": "herds[1].ecology_phase",

@@ -886,3 +886,94 @@ the `(kind, id)` contract that the panel's own land row and the map's select-the
 
 Frames: `band_panel_rung_ready` (a tended patch offers Sow, a tamed pen-ceiling Aurochs offers Corral,
 a wild-ceiling Roe Deer offers nothing — the CONTRAST is the point) and `band_panel_rung_ready_filter`.
+
+## DENIAL is a third MISSION on the parties footer, not a floor on the hunt form
+
+`docs/plan_denial_raid.md`, slice 2. The parties zone's footer offers **three** verbs now — `⚑ Scout`,
+`🏹 Hunt`, `💀 Deny` — and the third is a mission rather than a preset because **the thing it changes is
+a BOUND, not a number**: `fauna::quantise_animal_take` clamps a hunt's kill to what the party can
+carry, so `floor = 0` still only kills what it can haul and there was nothing for a floor to unclamp.
+`ExpeditionMission::Deny` drops that arm (`EngagementStop::Never`); the party never stops engaging.
+
+**WHAT THE FORM DOES NOT CARRY IS ITS SPECIFICATION.** `_fill_denial_compose_sheet` renders
+QUARRY → PARTY → verdict → take → send and **no floor picker, no floor hint, no fill target, no crew
+preset and no max-useful cap**. Each absence has its own reason and none is an oversight:
+
+- A floor or a fill target would be a control the **command grammar cannot express**.
+  `send_denial_raid <faction> <band> <party_workers> <fauna_id>` is closed at four tokens and a fifth
+  is a hard parse error, which is why `Main.format_send_denial_raid` is its own builder rather than a
+  branch of `format_send_hunt_expedition` (whose two optional tails that parser would reject) and why
+  the HUD carries a **separate `send_denial_raid_requested` signal** with a payload that has nowhere
+  to put one.
+- There is **no `expedition_useful_cap` twin**. That cap exists because a hunting raid's delivered
+  payload plateaus once the herd's surplus binds; a denial raid has no payload to plateau, and more
+  hands always break the herd sooner. `_scout_party_max` — idle workers and the server's party limit —
+  is the whole ceiling.
+
+### The readout is a COLLAPSE VERDICT, not a delivery
+
+Its goal is not to kill every animal: it is to push the herd below `ecology.collapse_fraction`, where
+growth zeroes and the decline is irreversible, and walk away. So a denial party deliberately publishes
+**no `expeditionProjectedDelivery` / `expeditionEtaTurns` / `expeditionTripBound` at all**, and its
+`expeditionFloor` (`0.0`) / `expeditionFillTarget` (`0`) are the mission reporting that it HAS no such
+lever — never values it chose. Every hunt-only readout is therefore gated on
+`HudExpeditionVocab.EXPEDITION_MISSION_HUNT` and not on "is a raid".
+
+`SourceForecast` holds the layer, a pure lookup into `HerdTelemetryState.denialEstimates`:
+`denial_forecast` → `denial_verdict` (the ONE resolution of the outcome key) →
+`denial_verdict_text` / `denial_verdict_bbcode` / `denial_take_bbcode` / `denial_refusal_reason` /
+`style_send_denial_button`. **`DENIAL_VERDICTS` holds all four faces of an outcome in one entry** —
+line, whether it quotes turns, the button, the severity, the reason — the `HUNT_EMPTY_REFUSALS` idiom,
+and for the same reason: three lookups are free to disagree.
+
+- **`repelled` and `horizon` are NOT interchangeable, and the arc has already shipped that confusion
+  twice.** `repelled` is a verdict about the **PARTY** (its kills do not outpace the herd's regrowth,
+  so no amount of waiting gets there — the remedy is HANDS); `horizon` is a verdict about the
+  **CLOCK**. Rendering one for the other blames the herd for the party's problem.
+- **NEITHER BLOCKS THE SEND.** A raid that cannot get there keeps working the herd until it is
+  recalled (`plan_denial_raid.md` §6 Q2), so the launch verdict warns (`armed`) and the player is
+  trusted, exactly as a slow hunting raid is. `style_send_denial_button` sets `disabled = false`
+  unconditionally.
+- **THE OUTCOME LEADS THE SENTENCE AND THE NUMBER IS A CLAUSE ON IT.** That is the structural form of
+  *"never render a blank turn count without its outcome"*: there is no branch in which the number can
+  render alone, and none in which its absence renders as silence. An outcome that quotes no turns
+  (`repelled`, `horizon`) carries `turns: false` in its entry and the clause is never appended.
+- **`0` ON A TURN FIELD MEANS "NOT WITHIN THE HORIZON" ON THAT END, never "immediately"**, and `low`
+  is the FEWEST turns. So `low > 0` beside `high == 0` reads *"≈3 turns on a good run"* rather than
+  promising the good draw; `low == high` collapses to one number; both zero falls back to the
+  expectation and then to no clause at all.
+- **THE BAND IS AN ESTIMATE, NOT A PROMISE, AND THE PANEL SAYS SO.** `turns_to_collapse` is an
+  integral over many stochastic retreat draws, so a lucky run really can finish sooner than the
+  reported low (measured: a seeded raid landed on turn 7 against a reported low of 8). Every form
+  wears `≈`, and `DENIAL_ESTIMATE_CAVEAT` rides under any verdict that quotes a number — and under
+  none that does not, since a caveat about an absent number reads as one that is there.
+
+### The waste is STATED, and it is not dressed as a warning
+
+On a hunt an unhauled kill is an occasional overflow and wears `HUNT_FORECAST_WARN_GLYPH`'s `⚠`; on a
+raid it is essentially the whole take and it is the **point** of the mission. `denial_take_bbcode` is
+therefore a quiet `INK_DIM` line — `kills ≈55 Wild Boar · brings home 6.00 food · ⇄ 0.75 trade goods ·
+leaves 214.00 on the range` — with each account rendered only when the quarry pays it (the
+render-only-when-non-zero rule), and no alarm glyph anywhere.
+
+### The mission's mark is `💀`, on all three surfaces
+
+`HudComposeVocab.COMPOSE_MISSION_LABEL_DENY` (the footer button), `HudFormat.PANEL_EXPEDITION_DENY_GLYPH`
+(the Active-parties row) and `MapView.EXPEDITION_DENY_GLYPH` (the map marker) are one glyph, so the
+mission reads the same at every scale. The parties row deliberately renders **no floor glyph** — its
+`expedition_floor` is `0.0`, which is a real zone (`strip`), so borrowing the hunt branch's mark would
+tag a raid with a pressure it never chose. The map marker likewise takes no phase decoration: the
+green food pip is a haul cue, and a denial party's haul is a rounding error it should not advertise.
+
+### Frames
+
+`band_panel_preview`: **`band_panel_compose_deny`** (a viable raid — the range verdict, the caveat,
+the quiet take line, the primary Send, and the three absent floor surfaces) and
+**`band_panel_compose_deny_repelled`** (the SAME herd with only the sim's answer changed, so a
+verdict table that answered one outcome for all four would satisfy either alone). Nine assertions ride
+them and each is sabotage-verified against a DISJOINT mutation — blanking the outcome line, resolving
+every outcome to `past_recovery`, ignoring the entry's `turns` flag, an always-primary Send, a
+disabled Send, the hunt's `⚠` on the take, a Policy heading, a floor picker, and an unconditional
+caveat. The in-flight half is `ui_preview`'s `expedition_denial_panel`; `cargo xtask command-guard`
+parses the emitted `send_denial_raid` line with the real server parser, which is the only thing that
+can assert the four-token grammar.

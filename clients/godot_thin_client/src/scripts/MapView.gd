@@ -378,6 +378,11 @@ const EXPEDITION_AWAITING_RING_WIDTH := 2.5
 # the scout's flag — so scout vs hunt parties are distinguishable at a glance.
 const EXPEDITION_HUNT_MISSION := "hunt"
 const EXPEDITION_HUNT_GLYPH := "🏹"              # bow motif = a hunting party following game
+# DENIAL raid (docs/plan_denial_raid.md) — a third mission, and a third marker: it engages like a hunt
+# party but brings nothing home, so wearing the bow would read as a hunt on the map. 💀 is the mark it
+# wears everywhere else (the footer button, the parties row), so the three surfaces agree.
+const EXPEDITION_DENY_MISSION := "deny"
+const EXPEDITION_DENY_GLYPH := "💀"
 # Hunt phase read: HUNTING (gathering at the herd) shows a small red "working" cue ring; DELIVERING
 # and RETURNING (hauling a haul home) show a green food pip. So gathering vs hauling read at a glance.
 const EXPEDITION_PHASE_HUNTING := "hunting"

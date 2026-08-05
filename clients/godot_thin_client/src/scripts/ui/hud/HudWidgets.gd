@@ -613,6 +613,13 @@ const HUNT_GATE_META := "hunt_gate"
 ## way to reach those two emit sites, whose payload-building lives in an inline `pressed` lambda.
 const SEND_HUNT_CONFIRM_META := "send_hunt_confirm"
 
+## The DENIAL raid's confirm button (`docs/plan_denial_raid.md`). **Its OWN meta, not the hunt one**,
+## and for the reason the two forms are separate at all: a harness that pressed "the send button" on a
+## parties compose sheet could not tell which MISSION it had just launched, and the two emit different
+## signals with different, non-interchangeable payloads (a denial payload carries no floor, and its
+## command grammar rejects one). Its face is the collapse verdict, so text is not matchable either.
+const SEND_DENIAL_CONFIRM_META := "send_denial_confirm"
+
 ## A compose sheet's COMMIT button, as `Button` meta — set by both sheets' builders. Its face is the
 ## thing under test whenever the crew noun moves (`Forage` / `Tend` / `Unassign` on the plant web,
 ## `Hunt Here` / the raid verdict on the animal one), so a harness that found it BY text could only

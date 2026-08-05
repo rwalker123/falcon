@@ -12,6 +12,14 @@ const EXPEDITION_MISSION_SCOUT := "scout"
 
 const EXPEDITION_MISSION_HUNT := "hunt"
 
+## The DENIAL raid (`docs/plan_denial_raid.md`) — the third mission, and the one whose readouts are
+## deliberately NOT the hunt's. A denial party publishes no `expeditionProjectedDelivery` /
+## `expeditionEtaTurns` / `expeditionTripBound`, and its `expeditionFloor` (`0.0`) /
+## `expeditionFillTarget` (`0`) are the mission saying it has no such lever — never values it chose.
+## Every hunt-only readout is therefore gated on `EXPEDITION_MISSION_HUNT` rather than on "is a raid",
+## and what a denial party shows instead is its COLLAPSE VERDICT.
+const EXPEDITION_MISSION_DENY := "deny"
+
 const EXPEDITION_PHASE_OUTBOUND := "outbound"
 
 # One source: the phase key `awaiting` is also the status-glyph key + the orb producer's key.
@@ -26,6 +34,7 @@ const EXPEDITION_PHASE_RETURNING := "returning"
 const EXPEDITION_MISSION_LABELS := {
 	"scout": "Scouting expedition",
 	"hunt": "Hunting expedition",
+	"deny": "Denial raid",
 }
 
 const EXPEDITION_PHASE_LABELS := {

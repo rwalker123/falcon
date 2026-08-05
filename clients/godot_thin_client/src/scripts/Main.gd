@@ -243,6 +243,8 @@ func _ready() -> void:
             hud.connect("send_expedition_requested", Callable(self, "_on_hud_send_expedition"))
         if hud.has_signal("send_hunt_expedition_requested") and not hud.is_connected("send_hunt_expedition_requested", Callable(self, "_on_hud_send_hunt_expedition")):
             hud.connect("send_hunt_expedition_requested", Callable(self, "_on_hud_send_hunt_expedition"))
+        if hud.has_signal("send_denial_raid_requested") and not hud.is_connected("send_denial_raid_requested", Callable(self, "_on_hud_send_denial_raid")):
+            hud.connect("send_denial_raid_requested", Callable(self, "_on_hud_send_denial_raid"))
         if hud.has_signal("recall_expedition_requested") and not hud.is_connected("recall_expedition_requested", Callable(self, "_on_hud_recall_expedition")):
             hud.connect("recall_expedition_requested", Callable(self, "_on_hud_recall_expedition"))
         if hud.has_signal("extend_pen_requested") and not hud.is_connected("extend_pen_requested", Callable(self, "_on_hud_extend_pen")):
@@ -907,6 +909,34 @@ static func format_send_hunt_expedition(payload: Dictionary) -> Dictionary:
             party_workers, orders, fauna_label],
     }
 
+## `send_denial_raid <faction_id> <band_id> <party_workers> <fauna_id>` (`docs/plan_denial_raid.md`).
+##
+## **THE GRAMMAR IS CLOSED AT FOUR TOKENS AND A FIFTH IS A HARD PARSE ERROR** — which is the command
+## layer saying what the mission says: denial carries no floor and no fill target, so there is no
+## optional trailing token to append and none may be invented. That is also why this is a builder of
+## its own rather than a branch of `format_send_hunt_expedition`, whose two optional tails would be
+## rejected here.
+static func format_send_denial_raid(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID:
+        return {}
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var party_workers := int(payload.get("party_workers", 0))
+    var fauna_id := String(payload.get("fauna_id", "")).strip_edges()
+    if party_workers <= 0 or fauna_id == "":
+        return {}
+    # The COMMAND addresses the herd by its database key; the FEED NOTE names the species, the
+    # `format_send_hunt_expedition` rule — `game_deer_07` must never reach a player-facing line.
+    var fauna_label := String(payload.get("fauna_label", "")).strip_edges()
+    if fauna_label == "":
+        fauna_label = fauna_id
+    return {
+        "line": "send_denial_raid %d %d %d %s" % [faction, band_id, party_workers, fauna_id],
+        # The receipt states the whole order, because the whole order is two things: a herd and a
+        # party. There is no third clause to quote and none to omit.
+        "message": "Send denial raid (%d) against %s." % [party_workers, fauna_label],
+    }
+
 ## `recall_expedition <faction_id> <expedition_band_id>` — a detached party is a band, addressed by
 ## the same durable id. Non-optional, unlike the `[band_id]` of `scout` / `cancel_order`.
 static func format_recall_expedition(payload: Dictionary) -> Dictionary:
@@ -1028,6 +1058,11 @@ func _on_hud_send_expedition(payload: Dictionary) -> void:
 ## and send it to follow a herd. The 4th arg is a herd id string, not tile coords.
 func _on_hud_send_hunt_expedition(payload: Dictionary) -> void:
     _send_formatted_command(format_send_hunt_expedition(payload))
+
+## Denial raid (`docs/plan_denial_raid.md`): outfit a party off a resident band and send it to break a
+## herd. Its own handler because its own command — see `format_send_denial_raid`.
+func _on_hud_send_denial_raid(payload: Dictionary) -> void:
+    _send_formatted_command(format_send_denial_raid(payload))
 
 ## Extend a built pen by one fenced ring (Grazing 2d-γ). The server works the ring off over ~25
 ## turns (rejecting at max radius / unowned / Herding-unknown with a feed message).

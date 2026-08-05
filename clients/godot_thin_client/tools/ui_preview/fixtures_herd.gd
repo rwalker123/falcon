@@ -25,6 +25,12 @@ const BOAR_FOOD_PER_ANIMAL := 4.0
 # percentage the readout prints, and two spellings of one quantum would drift.
 
 const RAID_TRADE_PER_ANIMAL := 0.5
+# **THE DENIAL RAID's carry** (`docs/plan_denial_raid.md`) — food ONE party member hauls home over the
+# whole raid. Deliberately tiny beside what the raid kills, because that ratio IS the mission: a party
+# that never stops engaging kills far more than its pack holds, so `delivered_food` is a rounding error
+# and `wasted_food` is the take. A fixture that hauled its whole kill would be a hunting raid wearing a
+# denial outcome, and the waste readout the mission exists to show would have nothing to state.
+const DENIAL_CARRY_PER_WORKER := 2.0
 # The DISTANCE frames' raid (`hunt_distance_herd`, the reference Red Deer at 2.0 food/animal): a party
 # of `i+1` lands `DISTANCE_RAID_ANIMALS[i]` animals in `DISTANCE_RAID_TURNS[i]` HUNTING turns. Those
 # frames open at the seeded party of 1, so the first cell is the one they render; the plateau at 3
@@ -362,8 +368,68 @@ static func set_managed_herders(fixture: Dictionary, needed: int) -> void:
 ## state swaps in its own list and must restore this one.
 static func world_herds_fixture() -> Array:
 	return [
-		{"id": "game_deer_07", "species": "Red Deer", "x": 68, "y": 15, "population": 120, "ecology_phase": "stressed", "food_per_animal": 2.0},
+		{
+			"id": "game_deer_07", "species": "Red Deer", "x": 68, "y": 15, "population": 120,
+			"ecology_phase": "stressed", "food_per_animal": 2.0,
+			# **THE DENIAL TABLE, so an IN-FLIGHT denial party has a verdict to read**
+			# (`docs/plan_denial_raid.md` §3). The sim publishes no per-party collapse field — its
+			# answer lives on the TARGET herd, one row per party size — so a launched raid resolves
+			# its own row out of this list exactly as its launch sheet did. A world-herd entry
+			# without one leaves the party's readout blank, which is the state no live server can be
+			# in and the one in which every claim about that line passes vacuously.
+			"denial_estimates": denial_estimate_table(SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY,
+				DENIAL_COLLAPSE_TURNS, DENIAL_COLLAPSE_LOW, DENIAL_COLLAPSE_HIGH,
+				DENIAL_COLLAPSE_KILLS, 2.0),
+		},
 	]
+
+# The in-flight denial party's own table — parties 1..8 against the reference Red Deer. **More hands
+# break the herd SOONER and that is the mission's only lever**, so the rows fall monotonically; the
+# band widens where the retreat is chanciest. The party the frames render is `HUNT_EXPEDITION_PARTY`
+# (5), whose row is `4` with a `3–5` band — the plan's own worked example.
+const DENIAL_COLLAPSE_TURNS := [12, 8, 6, 5, 4, 4, 3, 3]
+
+const DENIAL_COLLAPSE_LOW := [10, 7, 5, 4, 3, 3, 2, 2]
+
+const DENIAL_COLLAPSE_HIGH := [15, 10, 8, 6, 5, 5, 4, 4]
+
+const DENIAL_COLLAPSE_KILLS := [30, 48, 60, 70, 78, 86, 92, 98]
+
+## The DENIAL raid's pre-launch table (`docs/plan_denial_raid.md` §1.1) — an ARRAY with ONE row per
+## party size and **no other axis**, which is the whole shape difference from `raid_estimate_table`
+## above: denial carries no floor and no fill target, so party size is the only thing there is to
+## sample and a row's own `party_workers` is its identity.
+##
+## `outcome` is the sim's verdict and the client renders NOTHING numeric without it, so every row
+## carries one. A `repelled` / `horizon` table passes all-zero turn rows: `0` means "not within the
+## horizon on that end", never "immediately".
+static func denial_estimate_table(outcome: String, turns_row: Array, low_row: Array,
+		high_row: Array, kills_row: Array, fpa: float,
+		carry_per_worker: float = DENIAL_CARRY_PER_WORKER,
+		tpa: float = RAID_TRADE_PER_ANIMAL) -> Array:
+	var rows: Array = []
+	for i in kills_row.size():
+		var party := i + 1
+		var killed := int(kills_row[i])
+		var killed_food := float(killed) * fpa
+		# What the pack holds, never what it killed — the raid banks a rounding error on the way home
+		# and leaves the rest standing dead on the range.
+		var hauled := minf(killed_food, float(party) * carry_per_worker)
+		var hauled_share := (hauled / killed_food) if killed_food > 0.0 else 0.0
+		rows.append({
+			"party_workers": party,
+			"turns_to_collapse": int(turns_row[i]),
+			"turns_to_collapse_low": int(low_row[i]),
+			"turns_to_collapse_high": int(high_row[i]),
+			"outcome": outcome,
+			"animals_killed": killed,
+			"delivered_food": hauled,
+			"wasted_food": killed_food - hauled,
+			# The trade half rides the same carried biomass, so it scales with what came home rather
+			# than with what died.
+			"delivered_trade": float(killed) * tpa * hauled_share,
+		})
+	return rows
 
 static func herd_fixture() -> Dictionary:
 	return {

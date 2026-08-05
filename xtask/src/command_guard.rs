@@ -245,6 +245,7 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
         | CommandPayload::MoveBand { band_id, .. }
         | CommandPayload::ScoutArea { band_id, .. }
         | CommandPayload::SendExpedition { band_id, .. }
+        | CommandPayload::SendDenialRaid { band_id, .. }
         | CommandPayload::SendHuntExpedition { band_id, .. } => *band_id,
         CommandPayload::RecallExpedition {
             expedition_band_id, ..

@@ -1870,6 +1870,120 @@ const VERDICT_SETTLES_END := "."
 const VERDICT_AT_FLOOR_FORMAT := "Already at or below the floor. This crew takes nothing until it grows past %s."
 # No crew at all is its own reading and must not render as "reaches the floor in 0 turns".
 const VERDICT_NO_CREW := "No one assigned. Nothing is taken and it grows back on its own."
+
+# ---- THE DENIAL RAID — a MISSION, not a floor (`docs/plan_denial_raid.md`) -----------------------
+# **IT CARRIES NO FLOOR AND NO RATE, WHICH IS WHY NONE OF THE RAID VOCABULARY ABOVE APPLIES TO IT.**
+# A hunting raid's readout answers "what comes home, and when"; a denial party deliberately publishes
+# no `expeditionProjectedDelivery` / `expeditionEtaTurns` / `expeditionTripBound` at all, because its
+# goal is not a delivery — it is to push the herd BELOW `ecology.collapse_fraction`, where growth
+# zeroes and the decline is irreversible, and then walk away (§1.1). So its readout is a COLLAPSE
+# VERDICT, and `expeditionFloor` (`0.0`) / `expeditionFillTarget` (`0`) must never be rendered for it:
+# they are the mission reporting that it has no such lever, not values it chose.
+const HERD_DENIAL_ESTIMATES_KEY := "denial_estimates"
+# The table is an ARRAY with ONE axis — party size — so a row's own `party_workers` is its identity
+# and `denial_estimate_row` SCANS for it. (`huntTripEstimates` needs a composite key because it is
+# sampled on two axes; that key is where its Rust-float-Display trap comes from, and one axis is
+# exactly what makes the trap inexpressible here.)
+const DENIAL_ESTIMATE_PARTY_KEY := "party_workers"
+# **`0` MEANS "NOT WITHIN THE HORIZON" ON THAT END, never "immediately".** `Low` is the FEWEST turns
+# — the optimistic draw, where more animals stay and more strikes land — so a positive `low` beside a
+# `0` `high` reads "only on a good run".
+const DENIAL_TURNS_BEYOND_HORIZON := 0
+# The sim's own `DenialOutcome` keys. `repelled` and `horizon` are the pair this arc insists on, and
+# they are NOT interchangeable: `repelled` is a verdict about the PARTY (its kills do not outpace the
+# herd's regrowth, so no amount of waiting gets there), `horizon` is a verdict about the CLOCK (the
+# projection ran out). Rendering one for the other blames the herd for the party's problem, which
+# this arc has already shipped twice.
+const DENIAL_OUTCOME_PAST_RECOVERY := "past_recovery"
+const DENIAL_OUTCOME_HERD_LOST := "herd_lost"
+const DENIAL_OUTCOME_REPELLED := "repelled"
+const DENIAL_OUTCOME_HORIZON := "horizon"
+# The unattributed key — an estimate row that carries no outcome at all. It names NEITHER side, for
+# the reason `HUNT_EMPTY_REFUSALS`' own unattributed entry does: guessing is the defect.
+const DENIAL_OUTCOME_NONE := ""
+
+# **THE TURN COUNT IS AN ESTIMATE, AND EVERY FORM OF IT WEARS `≈`.** `turns_to_collapse` is an
+# integral over many stochastic retreat draws, so a lucky run really can finish sooner than the
+# reported low (measured: a seeded raid landed on turn 7 against a reported low of 8). The band is a
+# claim about the EXPECTATION, not a promise per run — hence `≈` on both ends and the caveat below.
+const DENIAL_TURNS_RANGE_FORMAT := "≈%d–%d turns"
+# Low and high agree: the distribution is degenerate and the client says ONE number, exactly as it
+# does for every other range on this wire.
+const DENIAL_TURNS_ONE_FORMAT := "≈%d turns"
+# A positive `low` beside a `0` `high` — it gets there on the optimistic draw and the pessimistic one
+# runs past the horizon. Stating the low alone would promise the good run as the answer.
+const DENIAL_TURNS_GOOD_RUN_FORMAT := "≈%d turns on a good run"
+# The clause the turn phrase rides in, appended to the outcome sentence rather than baked into each
+# entry's format: an outcome that quotes no turns must still render its outcome (below).
+const DENIAL_TURNS_CLAUSE_FORMAT := " in %s"
+# The caveat, in the panel's own hint register. It is what keeps the band from reading as a guarantee.
+const DENIAL_ESTIMATE_CAVEAT := "An estimate over many raids — the fight is chancy, so a lucky run finishes sooner."
+
+# **THE VERDICT TABLE — one entry per outcome, all four faces of it in ONE place** (the
+# `HUNT_EMPTY_REFUSALS` idiom, and for the same reason: the line, the button and the spelled-out
+# reason are three views of one answer, and three lookups are free to disagree).
+#
+# `turns` is whether THIS outcome has a turn count to quote at all. A `repelled` party never gets
+# there, so quoting a number would be a promise the sim did not make; the outcome word is the whole
+# answer. **That is also the structural guarantee behind "never render a blank turn count without its
+# outcome"** — the line IS the outcome, and the turn clause is only ever appended to it.
+const DENIAL_VERDICTS := {
+    # It works: the herd goes under the Allee threshold and cannot come back. The mission's own
+    # success condition, so the send is the plain primary one.
+    DENIAL_OUTCOME_PAST_RECOVERY: {
+        "line": "%s past recovery",
+        "turns": true,
+        "button": "Send Denial Raid",
+        "severity": VERDICT_OK,
+        "reason": "",
+    },
+    # It works HARDER than asked: the herd falls past its extinction floor and despawns entirely. Not
+    # a failure — a bigger version of the same success, and the copy must not read as a warning.
+    DENIAL_OUTCOME_HERD_LOST: {
+        "line": "%s wiped out",
+        "turns": true,
+        "button": "Send Denial Raid",
+        "severity": VERDICT_OK,
+        "reason": "",
+    },
+    # **A VERDICT ABOUT THE PARTY.** Its kills per turn sit at or below the herd's own regrowth, so
+    # the raid never gets there however long it works — the remedy is HANDS, and the herd is not the
+    # thing to fix. It still LAUNCHES (a raid that cannot get there keeps working the herd until it
+    # is recalled, §6 Q2), so this warns and never blocks.
+    DENIAL_OUTCOME_REPELLED: {
+        "line": "%s breeds back faster than this party kills — it is never pushed past recovery",
+        "turns": false,
+        "button": "Send Anyway (never collapses)",
+        "severity": VERDICT_SLOW,
+        "reason": "This party's kills do not outpace %s's regrowth. Send more hunters — the herd is not the problem.",
+    },
+    # **A VERDICT ABOUT THE CLOCK.** The projection ran its whole length; the party may well get there
+    # after it. Deliberately worded so it cannot be mistaken for the party being outmatched.
+    DENIAL_OUTCOME_HORIZON: {
+        "line": "%s is still standing when the forecast runs out",
+        "turns": false,
+        "button": "Send Anyway (no collapse in sight)",
+        "severity": VERDICT_SLOW,
+        "reason": "The forecast ran its whole length without %s going past recovery. A bigger party gets there sooner.",
+    },
+    DENIAL_OUTCOME_NONE: {
+        "line": "%s — the forecast does not say whether this raid breaks the herd",
+        "turns": false,
+        "button": "Send Denial Raid",
+        "severity": VERDICT_SLOW,
+        "reason": "This raid on %s has no stated outcome, so the forecast names neither the herd nor the party.",
+    },
+}
+
+# **THE WASTE READOUT — stated, never hidden, and never dressed as a warning** (§3). On a hunt
+# `wasted` is the occasional overflow of an animal too big to haul and wears `HUNT_WASTE_NOTE_FORMAT`'s
+# `⚠`; on a raid it is essentially the whole take, and it is the POINT of the mission. So it is a
+# quiet factual line — what the party kills, the little it hauls home, and what it leaves standing
+# dead on the range — in the aside's own ink rather than amber.
+const DENIAL_TAKE_KILLS_FORMAT := "kills ≈%d %s"
+const DENIAL_TAKE_FOOD_FORMAT := " · brings home %s food"
+const DENIAL_TAKE_TRADE_FORMAT := " · %s %s trade goods"
+const DENIAL_TAKE_LEFT_FORMAT := " · leaves %s on the range"
 # §7.2 — WORKERS ABOVE THE HOLD NUMBER ARE STILL NEVER RELEASED. At-the-floor is the most reversible
 # condition in the model (drop the floor, or let the season move the hold number, and they are wanted
 # again), and this repo only rewrites an assignment for PERMANENT conditions. What changed is that the
@@ -3359,6 +3473,151 @@ static func hunt_empty_refusal(forecast: Dictionary) -> Dictionary:
 ## a reason that names the wrong one is worse than no reason at all.
 static func hunt_empty_refusal_reason(forecast: Dictionary, herd: Dictionary) -> String:
     return String(hunt_empty_refusal(forecast)["reason"]) % herd_display_name(herd)
+
+# ---- THE DENIAL RAID's readout (`docs/plan_denial_raid.md` §1.1 / §3) ---------------------------
+
+## One denial row — the cell for `workers`, or `{}` when the table has no such party size. It SCANS,
+## like its hunting sibling, but for the opposite reason: the table has ONE axis, so a row's own
+## `party_workers` IS its identity and there is no key to rebuild in the first place.
+static func denial_estimate_row(rows: Array, workers: int) -> Dictionary:
+    for row_variant in rows:
+        if not (row_variant is Dictionary):
+            continue
+        var row := row_variant as Dictionary
+        if int(row.get(DENIAL_ESTIMATE_PARTY_KEY, 0)) == workers:
+            return row
+    return {}
+
+## What `workers` from this band do to `herd` on a DENIAL raid — a PURE TABLE LOOKUP into the sim's
+## `denialEstimates`, with zero arithmetic on this side. Returns
+## `{available, outcome, turns, low, high, animals, food, trade, wasted}`.
+##
+## **THERE IS NO `travel` TERM AND NO ETA, DELIBERATELY.** A hunting raid's headline is a delivery, so
+## the client adds the band-relative round trip the band-agnostic table cannot carry. A denial party
+## delivers nothing worth waiting for; its verdict is about the HERD crossing the point of no return,
+## which is the sim's own integral over the engagement. Bolting a travel term onto it would re-frame
+## the mission as the errand it deliberately is not.
+##
+## `available == false` = the snapshot carries no denial row for this party size (a non-huntable herd,
+## a party larger than the sim sampled) → the caller renders NO verdict at all rather than a blank.
+static func denial_forecast(herd: Dictionary, workers: int) -> Dictionary:
+    var rows_variant: Variant = herd.get(HERD_DENIAL_ESTIMATES_KEY, [])
+    if workers <= 0 or not (rows_variant is Array):
+        return {"available": false}
+    var row := denial_estimate_row(rows_variant as Array, workers)
+    if row.is_empty():
+        return {"available": false}
+    return {
+        "available": true,
+        # The sim's own key, carried through untouched — every branch below asks THIS, never the
+        # numbers, because a `0` turn count is reachable from two unrelated outcomes.
+        "outcome": String(row.get("outcome", DENIAL_OUTCOME_NONE)).strip_edges().to_lower(),
+        "turns": int(row.get("turns_to_collapse", DENIAL_TURNS_BEYOND_HORIZON)),
+        "low": int(row.get("turns_to_collapse_low", DENIAL_TURNS_BEYOND_HORIZON)),
+        "high": int(row.get("turns_to_collapse_high", DENIAL_TURNS_BEYOND_HORIZON)),
+        "animals": int(row.get("animals_killed", 0)),
+        "food": float(row.get("delivered_food", 0.0)),
+        "trade": float(row.get("delivered_trade", 0.0)),
+        "wasted": float(row.get("wasted_food", 0.0)),
+    }
+
+## **THE ONE RESOLUTION OF THE OUTCOME KEY** — the `{line, turns, button, severity, reason}` entry
+## every surface of the verdict is composed from, so the sentence, the Send button's face and the
+## spelled-out reason are three views of one answer. An outcome this table cannot explain falls to the
+## unattributed entry rather than to a guess (the `hunt_empty_refusal` rule).
+static func denial_verdict(forecast: Dictionary) -> Dictionary:
+    var outcome := String(forecast.get("outcome", DENIAL_OUTCOME_NONE))
+    return DENIAL_VERDICTS.get(outcome, DENIAL_VERDICTS[DENIAL_OUTCOME_NONE])
+
+## The collapse range as a phrase, or `""` when the forecast has no number to give.
+##
+## **`0` IS "BEYOND THE HORIZON" ON THAT END, NOT A TURN COUNT.** `low` is the FEWEST turns, so a
+## positive low beside a zero high is "only on a good run"; both zero means the projection bounded
+## neither end, and the expectation is the last thing left to quote. Every form wears `≈` — the band
+## is a claim about many draws, not a promise about this one.
+static func denial_turns_phrase(forecast: Dictionary) -> String:
+    var low := int(forecast.get("low", DENIAL_TURNS_BEYOND_HORIZON))
+    var high := int(forecast.get("high", DENIAL_TURNS_BEYOND_HORIZON))
+    if low > DENIAL_TURNS_BEYOND_HORIZON and high > DENIAL_TURNS_BEYOND_HORIZON:
+        if low == high:
+            return DENIAL_TURNS_ONE_FORMAT % low
+        return DENIAL_TURNS_RANGE_FORMAT % [low, high]
+    if low > DENIAL_TURNS_BEYOND_HORIZON:
+        return DENIAL_TURNS_GOOD_RUN_FORMAT % low
+    var turns := int(forecast.get("turns", DENIAL_TURNS_BEYOND_HORIZON))
+    if turns > DENIAL_TURNS_BEYOND_HORIZON:
+        return DENIAL_TURNS_ONE_FORMAT % turns
+    return ""
+
+## The verdict as one plain sentence — the OUTCOME always, the turn phrase only when that outcome has
+## one to quote and the sim bounded it. **The outcome leads and the number is a clause on it**, which
+## is the structural form of "never render a blank turn count without its outcome": there is no branch
+## in which the number can render alone, and none in which its absence renders as silence.
+static func denial_verdict_text(forecast: Dictionary, herd_name: String) -> String:
+    if not bool(forecast.get("available", false)):
+        return ""
+    var entry := denial_verdict(forecast)
+    var text := String(entry["line"]) % herd_name
+    if bool(entry["turns"]):
+        var phrase := denial_turns_phrase(forecast)
+        if phrase != "":
+            text += DENIAL_TURNS_CLAUSE_FORMAT % phrase
+    return text
+
+## …and the same sentence tinted: SIGNAL cyan for a raid that gets there, WARN amber for one that does
+## not. It never reads DANGER — a denial raid that cannot break the herd is a bad bargain, not a
+## refusal (it still launches and keeps working the herd until recalled).
+static func denial_verdict_bbcode(forecast: Dictionary, herd_name: String) -> String:
+    var text := denial_verdict_text(forecast, herd_name)
+    if text == "":
+        return ""
+    var hex := HudStyle.SIGNAL_HEX if String(denial_verdict(forecast)["severity"]) == VERDICT_OK \
+        else HudStyle.WARN_HEX
+    return "[color=#%s]%s[/color]" % [hex, text]
+
+## **THE WASTE, STATED AND NOT ALARMED ABOUT** — what the raid kills, the little it hauls home, and
+## what it leaves dead on the range. Quiet ink, no `⚠`: on a hunt an unhauled kill is a mistake, on a
+## raid it is the mission. `""` when the forecast has no take to describe.
+static func denial_take_bbcode(forecast: Dictionary, herd_name: String) -> String:
+    if not bool(forecast.get("available", false)):
+        return ""
+    var animals := int(forecast.get("animals", 0))
+    if animals <= 0:
+        return ""
+    var text := DENIAL_TAKE_KILLS_FORMAT % [animals, herd_name]
+    # Each account only when the quarry actually pays it — the render-only-when-non-zero rule, so an
+    # inedible quarry's raid quotes pelts alone rather than a false `0.00 food`.
+    var food := float(forecast.get("food", 0.0))
+    if has_component(food):
+        text += DENIAL_TAKE_FOOD_FORMAT % format_magnitude(food)
+    var trade := float(forecast.get("trade", 0.0))
+    if has_component(trade):
+        text += DENIAL_TAKE_TRADE_FORMAT % [FoodIcons.TRADE_GOODS_GLYPH, format_magnitude(trade)]
+    var wasted := float(forecast.get("wasted", 0.0))
+    if has_component(wasted):
+        text += DENIAL_TAKE_LEFT_FORMAT % format_magnitude(wasted)
+    return "[color=#%s]%s[/color]" % [HudStyle.INK_DIM_HEX, text]
+
+## The spelled-out reason a denial raid will not get there — `""` for the two outcomes that do, so the
+## sheet renders no line rather than an empty one.
+static func denial_refusal_reason(forecast: Dictionary, herd: Dictionary) -> String:
+    var reason := String(denial_verdict(forecast)["reason"])
+    return "" if reason == "" else reason % herd_display_name(herd)
+
+## The denial Send button, off the SAME entry the verdict line came from. **It never disables** — a
+## raid that cannot break the herd still works it until recalled (§6 Q2), so the launch verdict warns
+## and the player is trusted, exactly as a slow hunting raid is. With no forecast at all (a party size
+## the sim did not sample) it takes the plain primary face rather than a warning it cannot justify.
+static func style_send_denial_button(button: Button, forecast: Dictionary) -> void:
+    button.disabled = false
+    if not bool(forecast.get("available", false)):
+        button.text = String(DENIAL_VERDICTS[DENIAL_OUTCOME_PAST_RECOVERY]["button"])
+        HudStyle.apply_button(button, "primary")
+        return
+    var entry := denial_verdict(forecast)
+    button.text = String(entry["button"])
+    HudStyle.apply_button(button,
+        "primary" if String(entry["severity"]) == VERDICT_OK else "armed")
 
 ## Max party the band can detach as a hunting expedition: min(idle_workers, max_expedition_party_size),
 ## falling back to idle when the cap is absent/0 (mirrors the compose sheet's `party_max`). The SUPPLY

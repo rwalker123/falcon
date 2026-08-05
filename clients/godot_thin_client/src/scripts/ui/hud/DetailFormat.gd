@@ -336,6 +336,10 @@ const EXPEDITION_NEXT_DELIVERY_NO_SURPLUS := "Next delivery: none — its target
 const EXPEDITION_NEXT_DELIVERY_TARGET_LOST := "Next delivery: target herd lost — the party is returning home"
 # The click affordance on an Active-expeditions row (the whole row is the button there).
 const EXPEDITION_ROW_FOCUS_HINT := "Click to show this expedition on the map."
+# **THE DENIAL PARTY'S ROW KEY** (`docs/plan_denial_raid.md`), standing where `Next delivery:` stands
+# on a hunt party. One word, so `_split_kv` lays it out as a table row beside the others; the VALUE
+# carries its own tint, since a verdict's severity is a fact about the forecast and not about the key.
+const DENIAL_COLLAPSE_ROW := "Collapse:"
 
 # ---- The tile card's BASKET rows — what the `Foraging` stock above them is MADE OF (flora roster
 # F1/F5). Each realized plant reads on its OWN indented row: a role icon, the plant's display name,
@@ -1417,11 +1421,16 @@ static func expedition_row_tooltip(exp: Dictionary, phase: String, target_herd: 
         floor_hint = HudFormat.floor_hint(
             float(exp.get("expedition_floor", SourceForecast.DEFAULT_HARVEST_FLOOR)),
             SourceForecast.LABOR_KIND_HUNT, true)
+    # A DENIAL party's orders are just "this herd, these hands", so what its hover adds is the one
+    # thing the row cannot show: the collapse verdict. `join_tooltip_lines` drops the `""` a hunt or a
+    # scout answers here, so neither gains a line.
+    var collapse_line := expedition_collapse_line(exp, target_herd) \
+        if mission == HudExpeditionVocab.EXPEDITION_MISSION_DENY else ""
     return HudFormat.join_tooltip_lines([
         expedition_mission_label(mission), floor_hint,
         expedition_fill_target_line(exp, mission, target_herd),
         HudFormat.status_tooltip_line(phase), _expedition_delivery_tooltip_line(exp, mission, target_herd),
-        expedition_trip_bound_line(exp, mission),
+        expedition_trip_bound_line(exp, mission), collapse_line,
         EXPEDITION_ROW_FOCUS_HINT])
 
 ## **THE PARTY'S OTHER ORDER** (`docs/plan_hunt_through_combat.md` §5.2) — how many whole animals it
@@ -1465,6 +1474,29 @@ static func _expedition_delivery_tooltip_line(exp: Dictionary, mission: String, 
     if mission != HudExpeditionVocab.EXPEDITION_MISSION_HUNT or not exp.has("expedition_projected_delivery"):
         return ""
     return expedition_next_delivery_line(exp, target_herd)
+
+## **THE IN-FLIGHT DENIAL READOUT** (`docs/plan_denial_raid.md` §3) — the collapse verdict where a
+## hunt party shows `Next delivery`. A denial party publishes no `expeditionProjectedDelivery` /
+## `expeditionEtaTurns` / `expeditionTripBound` at all, deliberately: its question is not when food
+## arrives, it is whether the herd goes past the point of no return.
+##
+## **THE SIM PUBLISHES NO PER-PARTY COLLAPSE FIELD, so this reads the TARGET HERD's own
+## `denialEstimates` row for the party's size** — the same table, the same row and therefore the same
+## sentence the launch sheet quoted, which is what stops the promise made at launch and the readout in
+## flight from drifting. `""` when the target is gone from telemetry (the `Target:` row above already
+## says the herd is not there) or the herd carries no row for this party size.
+##
+## The value carries its OWN `[color]`, the `_band_food_line` precedent: the verdict's severity is not
+## a property of the row KEY, so it cannot come from `_value_hex`'s key registry.
+static func expedition_collapse_line(exp: Dictionary, target_herd: Dictionary) -> String:
+    if target_herd.is_empty():
+        return ""
+    # The party's own size is the table's only axis — `size` is the cohort's head count, which for a
+    # detached party IS its workers (the same reading `HudBandLaborState.band_party_workers` takes).
+    var forecast := SourceForecast.denial_forecast(target_herd, int(exp.get("size", 0)))
+    var verdict := SourceForecast.denial_verdict_bbcode(forecast,
+        SourceForecast.herd_display_name(target_herd))
+    return "" if verdict == "" else "%s %s" % [DENIAL_COLLAPSE_ROW, verdict]
 
 ## The robust "Next delivery: …" wording, shared by the parties inspector strip
 ## (`BandDetailLines.expedition_summary_lines`) and the row tooltip (`expedition_row_tooltip`) so the

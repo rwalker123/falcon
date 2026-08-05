@@ -68,6 +68,24 @@ const TARGETED_PARTY_QUARRY := "Red Deer"
 # assertions below fail naming the row they could not find.
 const FILL_TARGET_DETAIL_KEY := "Fill target"
 
+# ---- THE IN-FLIGHT DENIAL RAID (`docs/plan_denial_raid.md` §3) -----------------------------------
+# The party size the frame renders, and the row of `HerdFx`'s denial table it therefore reads. Named
+# so the expected sentence is composed from the SAME index the fixture is, rather than from a literal
+# that would drift the first time the table is re-tuned.
+const DENIAL_PARTY_SIZE := 5
+
+## The species the shared world-herd list names, i.e. what the verdict must be phrased about.
+const DENIAL_TARGET_QUARRY := "Red Deer"
+
+## The three row KEYS a denial party must NOT render, each because the mission has no such thing:
+## a floor it never chose, a fill target it cannot express, a delivery it is not making.
+const DENIAL_ABSENT_FLOOR_KEY := "Leaves standing"
+
+const DENIAL_ABSENT_DELIVERY_KEY := "Next delivery"
+
+## …and the one it MUST, near-empty: the little the raid banks on the way home.
+const DENIAL_CARRIED_DETAIL_KEY := "Carried"
+
 ## Find a Button by its face anywhere under `root` — the harness presses the REAL control the player
 ## presses, so an assertion covers the wiring and not just the handler it would have called.
 ## Drive a Food/Morale disclosure the way a CLICK does: emit `meta_clicked` on the live drawer label
@@ -205,6 +223,39 @@ func _concerning_food_band_fixture() -> Dictionary:
 ## A hunting expedition (PR 2, docs/plan_exploration_and_sites.md §2b): a detached party following a
 ## migratory herd. mission "hunt" + a target herd + carried food (its own kills). The drawer renders
 ## the hunt readout (target herd + carried food + phase) + Recall/Move.
+## A launched DENIAL raid, built off the hunt party so the only differences are the mission's own.
+##
+## **`expedition_floor` 0.0 AND `expedition_fill_target` 0 ARE ON IT DELIBERATELY** — they are what the
+## sim really publishes for this mission (it has no such levers), so a fixture omitting them would let
+## the two absent rows pass on a party that simply carried no fields. The delivery trio is absent
+## because a denial party genuinely publishes none.
+func _denial_expedition_fixture() -> Dictionary:
+	return {
+		"id": "Raiders 1",
+		"size": DENIAL_PARTY_SIZE,
+		"entity": 7104,
+		"faction": 0,
+		"pos": [67, 16],
+		"turns_of_food": 3.0,
+		# A rounding error against what it killed — the mission's own cost, stated rather than hidden.
+		"stores": {"provisions": 2.0},
+		"is_expedition": true,
+		"expedition_mission": "deny",
+		"expedition_phase": "hunting",
+		"expedition_target_herd": "game_deer_07",
+		"expedition_carry_cap": 16.0,
+		"expedition_floor": 0.0,
+		"expedition_fill_target": 0,
+		"tile_info": {
+			"x": 67, "y": 16,
+			"terrain_label": "Prairie Steppe",
+			"tags_text": "Fertile",
+			"visibility_state": "active",
+			"food_module": "",
+			"food_module_label": "None",
+		},
+	}
+
 func _hunt_expedition_fixture() -> Dictionary:
 	return {
 		"id": "Hunters 1",
@@ -588,6 +639,74 @@ func run(harness) -> void:
 				SourceForecast.TRIP_BOUND_PACK_FULL]))
 	h._assert_hud("…but still states its fill target ORDER, `none` being a real order",
 		Readout.detail_excerpt(h._hud.occupant_detail.text, FILL_TARGET_DETAIL_KEY).contains("none"))
+
+	# State 1j4 — **AN IN-FLIGHT DENIAL RAID** (`docs/plan_denial_raid.md` §3). The third mission, and
+	# its drawer is judged on what it does NOT say as much as on what it does: a denial party publishes
+	# no delivery ETA and has no floor and no fill target, so the two ORDER rows and the `Next delivery`
+	# line must all be absent, and the collapse verdict stands where the ETA stands on a hunt party.
+	var deny_party := _denial_expedition_fixture()
+	h._hud.show_unit_selection(deny_party)
+	await h._settle()
+	await h._save("expedition_denial_panel")
+	var deny_text: String = h._hud.occupant_detail.text
+	h._assert_hud("a denial party names its MISSION",
+		deny_text.contains(HudExpeditionVocab.EXPEDITION_MISSION_LABELS[
+			HudExpeditionVocab.EXPEDITION_MISSION_DENY]))
+	# **THE VERDICT, COMPOSED FROM THE FIXTURE'S OWN ROW** — the party of `DENIAL_PARTY_SIZE` reads the
+	# table's row for that size, so the expected sentence is stated from the harness's side and the two
+	# arrive at one string from opposite ends.
+	var party_low: int = HerdFx.DENIAL_COLLAPSE_LOW[DENIAL_PARTY_SIZE - 1]
+	var party_high: int = HerdFx.DENIAL_COLLAPSE_HIGH[DENIAL_PARTY_SIZE - 1]
+	var deny_verdict: String = SourceForecast.DENIAL_VERDICTS[
+		SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY]["line"] % DENIAL_TARGET_QUARRY
+	deny_verdict += SourceForecast.DENIAL_TURNS_CLAUSE_FORMAT % (
+		SourceForecast.DENIAL_TURNS_RANGE_FORMAT % [party_low, party_high])
+	h._assert_hud("…and states the COLLAPSE VERDICT as a range — \"%s\"" % deny_verdict,
+		deny_text.contains(deny_verdict))
+	# **THE THREE HUNT-ONLY READOUTS ARE ABSENT, and that is the mission's specification.** Its
+	# `expedition_floor` reads `0.0` and its `expedition_fill_target` `0` because it HAS no such
+	# orders; rendering either would put a lever on screen the command grammar cannot express.
+	h._assert_hud("…and renders NO floor, NO fill target and NO delivery ETA",
+		not deny_text.contains(DENIAL_ABSENT_FLOOR_KEY)
+			and not deny_text.contains(FILL_TARGET_DETAIL_KEY)
+			and not deny_text.contains(DENIAL_ABSENT_DELIVERY_KEY))
+	# It still states what it hauled home, which reads near-empty — the mission's own cost, and the
+	# row a suppression would have hidden.
+	h._assert_hud("…while still stating the little it carries",
+		deny_text.contains(DENIAL_CARRIED_DETAIL_KEY))
+
+	# **THE PNG-LESS HALF: the verdict's structure, driven directly.** None of these three can be seen
+	# in a frame — each is about a sentence the fixtures above never produce — and each fails on a
+	# DIFFERENT mutation.
+	#
+	# (a) A `repelled` outcome carrying a full turn band still quotes NO number. The party never gets
+	# there, so a turn count would be a promise the sim did not make.
+	var repelled := {
+		"available": true, "outcome": SourceForecast.DENIAL_OUTCOME_REPELLED,
+		"turns": 4, "low": 3, "high": 5, "animals": 0, "food": 0.0, "trade": 0.0, "wasted": 0.0,
+	}
+	h._assert_hud("a repelled verdict names the PARTY's problem and quotes no turn count",
+		SourceForecast.denial_verdict_text(repelled, DENIAL_TARGET_QUARRY)
+			== SourceForecast.DENIAL_VERDICTS[
+				SourceForecast.DENIAL_OUTCOME_REPELLED]["line"] % DENIAL_TARGET_QUARRY)
+	# (b) **A BLANK TURN COUNT NEVER RENDERS WITHOUT ITS OUTCOME.** A `past_recovery` row the
+	# projection bounded on neither end still names the outcome and simply appends no clause — the
+	# whole reason the outcome LEADS the sentence and the number is a clause on it.
+	var unbounded := {
+		"available": true, "outcome": SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY,
+		"turns": 0, "low": 0, "high": 0, "animals": 0, "food": 0.0, "trade": 0.0, "wasted": 0.0,
+	}
+	h._assert_hud("a collapse the forecast cannot bound still names its outcome, with no bare number",
+		SourceForecast.denial_verdict_text(unbounded, DENIAL_TARGET_QUARRY)
+			== SourceForecast.DENIAL_VERDICTS[
+				SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY]["line"] % DENIAL_TARGET_QUARRY)
+	# (c) The two degenerate bands the range must collapse: low == high reads as ONE number, and a
+	# positive low beside a `0` high reads "on a good run" rather than promising the good draw.
+	h._assert_hud("a degenerate band reads one number, and a half-bounded one says so",
+		SourceForecast.denial_turns_phrase({"low": 4, "high": 4, "turns": 4})
+				== SourceForecast.DENIAL_TURNS_ONE_FORMAT % 4
+			and SourceForecast.denial_turns_phrase({"low": 3, "high": 0, "turns": 0})
+				== SourceForecast.DENIAL_TURNS_GOOD_RUN_FORMAT % 3)
 
 	# State 1k — the hunt launch policy picker: an idle band (short allocation panel) showing the
 	# "Send expedition" outfit block — the party stepper, the scout + hunt send buttons, and the hunt

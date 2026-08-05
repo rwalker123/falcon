@@ -139,6 +139,7 @@ func _ready() -> void:
 	await _drive_recall_expedition()
 	await _drive_send_hunt_expedition_from_band_panel()
 	await _drive_send_hunt_expedition_from_herd_drawer()
+	await _drive_send_denial_raid()
 
 	_assert_every_command_emitted()
 	_write_emitted()
@@ -201,6 +202,25 @@ func _drive_send_hunt_expedition_from_band_panel() -> void:
 	_hud._bandpanel._party_compose_mission = ""
 	_hud._compose.clear_party_quarry()
 
+## `send_denial_raid` (`docs/plan_denial_raid.md`) — the parties compose sheet's THIRD mission. Its
+## own driver and its own confirm meta, because it is its own command: the grammar is CLOSED at four
+## tokens (`send_denial_raid <faction> <band> <party> <fauna_id>`) and a fifth is a hard parse error,
+## so a payload that picked up a floor or a fill target would be REJECTED by the real parser this
+## gate runs — which is exactly the assertion worth having, and one no client-side test can make.
+func _drive_send_denial_raid() -> void:
+	_hud._selection.clear()
+	_panel.set_active_tab(&"parties")
+	_hud._bandpanel._party_compose_open = true
+	_hud._bandpanel._party_compose_mission = HudComposeVocab.COMPOSE_MISSION_DENY
+	_hud._compose.set_party_quarry(FAR_HERD_ID)
+	_hud._bandpanel.rerender()
+	await _settle()
+	_press_meta_button(_panel, HudWidgets.SEND_DENIAL_CONFIRM_META, "band panel denial compose")
+	await _settle()
+	_hud._bandpanel._party_compose_open = false
+	_hud._bandpanel._party_compose_mission = ""
+	_hud._compose.clear_party_quarry()
+
 ## `send_hunt_expedition`, site 2 of 2 — the herd drawer's assign control, which flips to the
 ## expedition branch because the quarry lies beyond the band's `hunt_reach`.
 func _drive_send_hunt_expedition_from_herd_drawer() -> void:
@@ -235,20 +255,27 @@ func _select_band_marker_from_map() -> void:
 
 ## Press the meta-tagged "send hunting expedition" confirm somewhere under `root`.
 func _press_send_hunt_confirm(root: Node, where: String) -> void:
-	var button := _find_send_hunt_confirm(root)
+	_press_meta_button(root, HudWidgets.SEND_HUNT_CONFIRM_META, where)
+
+## Press a confirm found BY META, never by face — every launch button in this client wears its own
+## verdict as its text. **Each mission has its OWN meta**, and that is not tidiness: a search for
+## "the send button" on a parties compose sheet could not tell which MISSION it had just launched,
+## and the two emit different signals with non-interchangeable payloads.
+func _press_meta_button(root: Node, meta: String, where: String) -> void:
+	var button := _find_meta_button(root, meta)
 	if button == null:
-		_fail("no send-hunt confirm button found in the %s" % where)
+		_fail("no `%s` confirm button found in the %s" % [meta, where])
 		return
 	if button.disabled:
-		_fail("the %s's send-hunt confirm is disabled — the fixture raid must be viable" % where)
+		_fail("the %s's confirm is disabled — the fixture order must be launchable" % where)
 		return
 	button.pressed.emit()
 
-func _find_send_hunt_confirm(node: Node) -> Button:
-	if node is Button and node.has_meta(HudWidgets.SEND_HUNT_CONFIRM_META):
+func _find_meta_button(node: Node, meta: String) -> Button:
+	if node is Button and node.has_meta(meta):
 		return node
 	for child in node.get_children():
-		var found := _find_send_hunt_confirm(child)
+		var found := _find_meta_button(child, meta)
 		if found != null:
 			return found
 	return null
@@ -264,6 +291,8 @@ func _connect_recorders() -> void:
 		_record("send_expedition", p, MAIN_SCRIPT.format_send_expedition(p)))
 	_hud.send_hunt_expedition_requested.connect(func(p: Dictionary) -> void:
 		_record("send_hunt_expedition", p, MAIN_SCRIPT.format_send_hunt_expedition(p)))
+	_hud.send_denial_raid_requested.connect(func(p: Dictionary) -> void:
+		_record("send_denial_raid", p, MAIN_SCRIPT.format_send_denial_raid(p)))
 	_hud.recall_expedition_requested.connect(func(p: Dictionary) -> void:
 		_record("recall_expedition", p, MAIN_SCRIPT.format_recall_expedition(p)))
 	_hud.cancel_order_requested.connect(func(band: Dictionary, scope: String) -> void:
@@ -288,6 +317,8 @@ const EXPECTED_KINDS := {
 	# TWO — the Band panel's parties compose and the herd drawer's, which build their payloads
 	# independently and so can drift apart.
 	"send_hunt_expedition": 2,
+	# ONE — the parties compose sheet is the denial raid's only launch site.
+	"send_denial_raid": 1,
 }
 
 func _assert_every_command_emitted() -> void:

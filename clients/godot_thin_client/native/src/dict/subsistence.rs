@@ -216,6 +216,56 @@ pub(crate) fn herds_to_array(
             }
             let _ = dict.insert("hunt_trip_estimates", &estimate_dict);
         }
+        // **THE DENIAL RAID'S PRE-LAUNCH TABLE** (`docs/plan_denial_raid.md` §1.1) — one row per
+        // party size, and NO other axis. That is the whole shape difference from `huntTripEstimates`
+        // above: denial carries no floor and no fill target, so party size is the only thing the sim
+        // can sample and the only thing the player chooses.
+        //
+        // **AN ARRAY, NOT A KEYED DICTIONARY, and the one axis is why.** The hunt table needs a
+        // composite `"<floor>:<party>"` key because it is sampled on two, and that key is the source
+        // of the Rust-`f32`-Display trap its own comment records. With one axis a row's
+        // `party_workers` IS its identity, so an array needs no key at all and the trap cannot
+        // recur; `SourceForecast.denial_estimate_row` scans it exactly as it scans the hunt rows.
+        //
+        // Row contract (`SourceForecast` reads all of it):
+        //   turns_to_collapse            the EXPECTATION — turns until the herd is past recovery,
+        //                                which is also when the party comes home; 0 = never got
+        //                                there inside the sim's forecast horizon.
+        //   turns_to_collapse_low/_high  THE RANGE, because the retreat is stochastic. `low` is the
+        //                                FEWEST turns (the optimistic draw). `0` on EITHER end means
+        //                                "not within the horizon on that end", so a positive `low`
+        //                                beside a `0` `high` reads "only on a good run".
+        //   outcome                      "past_recovery" | "herd_lost" | "repelled" | "horizon".
+        //                                `repelled` is a verdict about the PARTY (its kills do not
+        //                                outpace the herd's regrowth); `horizon` is about the CLOCK.
+        //                                **A blank turn count is never rendered without this.**
+        //   animals_killed               what the mission is actually about.
+        //   delivered_food/_trade        small, and non-zero — the raid banks what it can haul home.
+        //   wasted_food                  killed and left on the range: the BULK of a raid's take,
+        //                                stated rather than hidden (§3).
+        if let Some(estimates) = herd.denialEstimates() {
+            let mut denial_rows = VarArray::new();
+            for estimate in estimates {
+                let mut entry = VarDictionary::new();
+                let _ = entry.insert("party_workers", i64::from(estimate.partyWorkers()));
+                let _ = entry.insert("turns_to_collapse", i64::from(estimate.turnsToCollapse()));
+                let _ = entry.insert(
+                    "turns_to_collapse_low",
+                    i64::from(estimate.turnsToCollapseLow()),
+                );
+                let _ = entry.insert(
+                    "turns_to_collapse_high",
+                    i64::from(estimate.turnsToCollapseHigh()),
+                );
+                let _ = entry.insert("outcome", estimate.outcome().unwrap_or(""));
+                let _ = entry.insert("animals_killed", i64::from(estimate.animalsKilled()));
+                let _ = entry.insert("delivered_food", f64::from(estimate.deliveredFood()));
+                let _ = entry.insert("wasted_food", f64::from(estimate.wastedFood()));
+                let _ = entry.insert("delivered_trade", f64::from(estimate.deliveredTrade()));
+                denial_rows.push(&entry.to_variant());
+            }
+            let _ = dict.insert("denial_estimates", &denial_rows);
+        }
         let _ = dict.insert("corralled", herd.corralled());
         // Pen-construction meter 0..1 accrued while a keeper band works this herd under the Corral
         // policy — the animal twin of `ForagePatchState.cultivationProgress`. Read by Hud's herd
