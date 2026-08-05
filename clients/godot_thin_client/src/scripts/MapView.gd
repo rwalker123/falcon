@@ -372,6 +372,19 @@ const EXPEDITION_PHASE_AWAITING := "awaiting"
 const EXPEDITION_AWAITING_RING_FACTOR := 1.35    # pulsing ring base radius, of marker radius
 const EXPEDITION_AWAITING_PULSE_AMPLITUDE := 0.22
 const EXPEDITION_AWAITING_PULSE_SPEED := 3.2
+
+# **THE MINIMAL TOE'S SIX BAND FIELDS, as ONE list rather than six literals** — see the copy in
+# `_rebuild_unit_markers`. A list is what lets the copy mirror PRESENCE (two readouts branch on the
+# absence of these keys) and lets `marker_field_guard` hold the same six on both of its lists without
+# a third hand-maintained spelling. Every one is continuous and is copied with `float(...)`.
+const TOE_MARKER_FLOAT_KEYS := [
+	"hunting_kit_durability",          # `Kit` row + `Kit ▸` popover — spears remaining
+	"sled_kit_durability",             # …the HUNT web's carry kit
+	"basket_kit_durability",           # …the FORAGE web's carry kit
+	"hunter_attack",                   # the ⚠ effective-attack gate (`SourceForecast.hunt_gate_model`)
+	"hunt_carry_per_worker_biomass",   # the tier a sled sets — NOT the forage one
+	"forage_carry_per_worker_biomass"  # the tier baskets set — NOT the hunt one
+]
 const EXPEDITION_AWAITING_RING_WIDTH := 2.5
 # --- Hunting-expedition marker (PR 2, docs/plan_exploration_and_sites.md §2b) ---
 # A hunt party (`expedition_mission == "hunt"`) reads as a bow disc — a clearly different motif from
@@ -2300,9 +2313,12 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			"expedition_eta_turns": int(entry.get("expedition_eta_turns", 0)),
 			"expedition_projected_delivery": float(entry.get("expedition_projected_delivery", 0.0)),
 			"expedition_recurring": bool(entry.get("expedition_recurring", false)),
-			# Hard party-size cap (from the expedition config); the resident-band outfit stepper
-			# clamps its max to min(idle_workers, this).
+			# The estimate tables' party SAMPLING AXIS (`expedition_config.estimate_party_sizes`),
+			# echoed on every cohort. **It is not a rules cap and no launch form clamps to it** — the
+			# stepper's ceiling is the band's own idle workers (`SourceForecast.expedition_party_cap`).
 			"max_expedition_party_size": int(entry.get("max_expedition_party_size", 0)),
+			# The MINIMAL TOE's six ride the marker too, copied below the literal — see
+			# `TOE_MARKER_FLOAT_KEYS`.
 				# Global expedition/labor config levers echoed on every cohort. They ride the marker
 				# because the targeting flow carries a copy of the band dict, and the pre-launch
 				# forecast reads its threshold + the local-hunt preview its take rate off it. Neither
@@ -2323,6 +2339,32 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 				"band_move_tiles_per_turn": float(entry.get("band_move_tiles_per_turn", 0.0)),
 			"labor_assignments": (entry.get("labor_assignments", []) as Array).duplicate(true) if entry.get("labor_assignments", []) is Array else [],
 		}
+		# **THE MINIMAL TOE'S SIX — and the THIRD leak of this exact class** (`hunt_mode`, then
+		# `working_age`/`idle_workers`, now these). A band reaches the Band panel by TWO paths and they
+		# must carry the same dict: the per-snapshot refresh hands over the decoder's cohort dict, a
+		# click on this marker hands over THIS copy. All six shipped decoded
+		# (`native/src/dict/population.rs`) and unlisted here, so clicking a band's icon on the map made
+		# its `Kit` row vanish — `DetailFormat.band_states_kit` is a bare `has()` on the spears key — and
+		# took the ⚠ zero-effective-attack warning with it, invisibly, a missing warning looking exactly
+		# like a hunt that is fine.
+		#
+		# **COPIED ONLY WHERE THE COHORT HAS THEM, because two readouts branch on ABSENCE.**
+		# `SourceForecast.hunt_gate_model` early-returns blank without `hunter_attack` precisely so a
+		# defaulted `attack 0` cannot refuse every hunt in the game, and `band_states_kit` is a bare
+		# `has()`. A `get(key, 0.0)` here would fabricate the key on a cohort that genuinely lacks it
+		# and turn "say nothing" into "every hunt is impossible" — reinstating on the marker path the
+		# bug the early-return exists to prevent. Mirroring presence keeps the two paths one dict in
+		# the only sense that matters.
+		#
+		# **ALL SIX ARE CONTINUOUS — `float(...)`, NEVER `int(...)`.** The durabilities are the
+		# `equipment.json` 0–100 scale (`0` = DRY, which steps that role down to the unequipped tier;
+		# performance is FLAT until expiry, so no readout scales by what is left) and the other three
+		# are resolved rates. An `int()` here is the `age_children` narrowing bug again, which a
+		# presence-only check cannot see — `marker_field_guard` holds both halves.
+		for toe_key in TOE_MARKER_FLOAT_KEYS:
+			if entry.has(toe_key):
+				marker[toe_key] = float(entry[toe_key])
+
 		var stores_variant: Variant = entry.get("stores", {})
 		if stores_variant is Dictionary:
 			marker["stores"] = (stores_variant as Dictionary).duplicate(true)

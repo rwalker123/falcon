@@ -919,6 +919,7 @@ func _ready() -> void:
 	await get_tree().process_frame
 	await _settle()
 	_assert_people_sum_matches_size(_hud._selection._selected_unit, "band_panel_people_map_path")
+	_assert_map_path_states_kit()
 	await _save("band_panel_people_map_path")
 	# Restore the snapshot-path band so the later states start from the same subject they always did.
 	_push_bands([_band_fixture()])
@@ -2223,6 +2224,45 @@ func _assert_people_sum_matches_size(band: Dictionary, state_name: String) -> vo
 			state_name, total, size, str(raw)])
 	else:
 		print("band_panel_preview: assert OK — %s PEOPLE brackets sum to the band's %d people" % [state_name, size])
+
+## **THE MAP-CLICK PATH CARRIES THE KIT, and it is this harness's THIRD instance of one bug class.**
+## The marker copy is a hand-listed allowlist, so a field the decoder ships and the panel reads goes
+## dark on the map path alone — `hunt_mode` first, then `working_age`/`idle_workers`, now the Minimal
+## TOE's six. Clicking a band's icon on the map made its `Kit` row simply vanish
+## (`DetailFormat.band_states_kit` is a bare `has()` on the spears key), and took the ⚠ zero-effective-
+## attack warning silently with it (`SourceForecast.hunt_gate_model` early-returns BLANK without
+## `hunter_attack`) — a missing warning looking exactly like a hunt that is fine.
+##
+## **BOTH HALVES, because either passes alone on a broken client.** The PAYLOAD half asks the selected
+## unit — the marker copy itself — since that is where the leak is and a panel that stopped rendering
+## the row for its own reasons would hide it. The RENDER half asks the frame, since a marker carrying
+## six keys nothing draws is not the fix either. The rendered value is read out of the vitals
+## `RichTextLabel` (the row is BBCode, which a `Label` walk cannot see at all).
+func _assert_map_path_states_kit() -> void:
+	var band: Dictionary = _hud._selection._selected_unit
+	var missing: Array[String] = []
+	for toe_key in MAP_VIEW_SCRIPT.TOE_MARKER_FLOAT_KEYS:
+		if not band.has(toe_key):
+			missing.append(String(toe_key))
+	_assert_band_panel("the map-click payload carries the Minimal TOE's six (missing %s)" % str(missing),
+		missing.is_empty())
+	# …and they arrive as the FLOATS the wire carries. Presence cannot see an `int()` narrowing, which
+	# is the second bug class `marker_field_guard` exists for and which is live-visible here: the
+	# marker IS the selection payload for a band clicked on the map.
+	var spears := float(_kit_band_fixture().get(DetailFormat.KIT_DURABILITY_KEY_SPEARS, 0.0))
+	_assert_band_panel("…un-narrowed, spears reading %s against the fixture's %s"
+			% [str(band.get(DetailFormat.KIT_DURABILITY_KEY_SPEARS, 0.0)), str(spears)],
+		is_equal_approx(float(band.get(DetailFormat.KIT_DURABILITY_KEY_SPEARS, 0.0)), spears))
+	# The RENDER half — the row the report was actually about. The needle carries the VALUE as well as
+	# the label, so it cannot be satisfied by a row that rendered the kit's name over a defaulted
+	# reading; and it is composed from the FIXTURE's number rather than asked of `kit_condition_face`,
+	# which would re-derive the expectation through the code under test. **`BAND_KIT_ROW_PREFIX` is NOT
+	# what appears on screen** — the vitals rows are DISCLOSURES, so the row's own label is the caret's
+	# (`Kit ▸`) and the prefix is consumed by that wrapping.
+	var want := "%s %s" % [DetailFormat.KIT_LABEL_SPEARS,
+		String.num(spears, DetailFormat.KIT_CONDITION_DECIMALS)]
+	_assert_band_panel("…so the Kit row renders on the map path — \"%s\"" % want,
+		_rich_text_containing(_panel, want) != "")
 
 ## GUARD: the zone model is NO-SCROLL by construction — a ScrollContainer anywhere in the panel would
 ## silently reintroduce the content-dependent sizing the rework removed.
@@ -4457,8 +4497,31 @@ func _map_path_snapshot() -> Dictionary:
 	return {
 		"grid": {"width": MAP_PATH_GRID_W, "height": MAP_PATH_GRID_H, "wrap_horizontal": false},
 		"overlays": {"terrain": terrain},
-		"populations": _stamp_band_ids([_band_fixture()]),
+		"populations": _stamp_band_ids([_kit_band_fixture()]),
 	}
+
+## **THE REFERENCE BAND WITH THE MINIMAL TOE'S SIX ON IT** — the six the decoder puts on EVERY cohort,
+## so this rather than `_band_fixture` is the shape a live server actually produces. It is a SEPARATE
+## fixture, and that is a finding rather than a preference: the `Kit` row costs 26px, the band zone
+## reads **299 of its 300px box** in a height-capped T/B dock (`band_panel_vitals_worst_case` prints
+## it), and putting these six on the shared fixture therefore overflows `Zone_band` by exactly 25px in
+## **13 states** — a live defect this file's kitless fixture was hiding, since every real band states
+## its kit. Which SHORT-tier row yields to make room is a design decision (`Kit` is documented as
+## surviving `compact`, unlike Trade), so it is reported rather than guessed at here.
+##
+## Used by the MAP-PATH state, which renders in the TALL left dock where the row fits. Spears
+## deliberately WEARING rather than round, so the row prints a real number and an `int()` narrowing is
+## visible; none dry, so the DANGER tint keeps its meaning; `hunter_attack` above a Wild Boar's
+## defense, so the ⚠ effective-attack gate stays quiet and its own coverage stays where it is.
+func _kit_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["hunting_kit_durability"] = 74.5
+	band["sled_kit_durability"] = 58.0
+	band["basket_kit_durability"] = 91.0
+	band["hunter_attack"] = 2.0
+	band["hunt_carry_per_worker_biomass"] = 2.5
+	band["forage_carry_per_worker_biomass"] = 1.75
+	return band
 
 ## Stamp a fixture cohort with the `band_id` the real wire carries, DELIBERATELY DIFFERENT from its
 ## `entity`. `band_id` is the durable handle every band-addressed command names

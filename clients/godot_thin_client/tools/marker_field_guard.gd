@@ -68,7 +68,23 @@ const PANEL_CONSUMED_KEYS := [
 	"is_expedition",       # expedition panel gating + distinct marker
 	"expedition_mission",  # expedition panel mission line
 	"expedition_phase",    # expedition marker awaiting state + panel phase line
-	"max_expedition_party_size", # outfit stepper max clamp
+	"max_expedition_party_size", # the estimate tables' party SAMPLING AXIS (not a cap — no form clamps to it)
+	# --- THE MINIMAL TOE'S SIX, and the THIRD instance of this guard's own bug class ------------
+	# All six shipped decoded and unlisted on the marker, so a click on the band's map icon dropped
+	# them. Each names the readout that goes dark without it. Every one is also in
+	# FRACTIONAL_ROUND_TRIP_KEYS: they are `float` end to end, and presence alone cannot see an
+	# `int()` narrowing a durability of 87.5 to 87.
+	"hunting_kit_durability",    # the `Kit` row + its `Kit ▸` popover — `band_has_kit` is a bare has()
+	"sled_kit_durability",       # …the HUNT web's carry kit, on the same row
+	"basket_kit_durability",     # …the FORAGE web's carry kit, on the same row
+	# **THE INVISIBLE HALF.** `SourceForecast.hunt_gate_model` early-returns BLANK without this, so
+	# the ⚠ warning that a party's effective attack is zero against a quarry's defense simply stopped
+	# rendering on the map-click path — and a missing warning looks exactly like a hunt that is fine.
+	"hunter_attack",
+	# The two resolved carry tiers. NOT two readings of one number (a band can be out of baskets with
+	# its sled untouched), so the Kit popover renders them on separate rows.
+	"hunt_carry_per_worker_biomass",
+	"forage_carry_per_worker_biomass",
 	"expedition_target_herd", # hunt expedition target herd (panel + marker)
 	"expedition_floor", # where a hunt raid stops, as a fraction of K (panel readout)
 	"expedition_carry_cap",   # hunt expedition carry ceiling (panel Carried X / cap)
@@ -134,6 +150,16 @@ const FRACTIONAL_ROUND_TRIP_KEYS := {
 	"hunt_per_worker_provisions": 0.8125,
 	"expedition_per_worker_carry": 4.375,
 	"band_move_tiles_per_turn": 3.5,
+	# The MINIMAL TOE's six — `float` in the schema end to end, so all six qualify under the rule
+	# above. The durabilities are the `equipment.json` 0–100 scale and deliberately carry a half:
+	# `87.5` copied through `int()` is 87, which is the exact shape this list exists to catch and
+	# which the presence half above cannot see. The other three are resolved rates.
+	"hunting_kit_durability": 87.5,
+	"sled_kit_durability": 62.25,
+	"basket_kit_durability": 41.75,
+	"hunter_attack": 1.6875,
+	"hunt_carry_per_worker_biomass": 2.3125,
+	"forage_carry_per_worker_biomass": 1.5625,
 }
 
 # Tolerance for the fractional round-trip. Loose enough for float32 wire fields widened to f64,

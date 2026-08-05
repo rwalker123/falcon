@@ -56,6 +56,18 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   answers `""` when neither resolves, so both paths produce the identical header. That split is
   exactly what the harness pair `band_panel_people` (snapshot path) / `band_panel_people_map_path`
   (map path) exists to keep separable — a fixture reached only one way cannot see it.
+  **THE MARKER COPY IS A HAND-MAINTAINED ALLOWLIST, AND IT HAS NOW LEAKED THREE TIMES** — `hunt_mode`,
+  then `working_age`/`idle_workers`, then the Minimal TOE's six (`MapView.TOE_MARKER_FLOAT_KEYS`).
+  Clicking the band's icon on the map made its **`Kit` row disappear** (`DetailFormat.band_states_kit`
+  is a bare `has()` on the spears key) and took the ⚠ zero-effective-attack warning silently with it,
+  `SourceForecast.hunt_gate_model` early-returning blank without `hunter_attack` — a missing warning
+  looks exactly like a hunt that is fine. **The six are copied only where the cohort HAS them.** A
+  `get(key, 0.0)` would fabricate the key on a cohort that genuinely lacks it and turn *"say nothing"*
+  into *"every hunt is impossible"*, reinstating on the marker path the very bug that early-return
+  exists to prevent; mirroring presence is what makes the two paths one dict in the sense that matters.
+  **Anything the panel newly reads off `_selected_unit` goes on that list AND in
+  `marker_field_guard.PANEL_CONSUMED_KEYS`** — and, if it is continuous, in
+  `FRACTIONAL_ROUND_TRIP_KEYS` too, since presence alone cannot see an `int()` narrowing.
 - **Header rows — no restated identity.** The panel's own chrome already states the band's **name +
   settlement stage**, so its summary grid does NOT repeat them: `_unit_summary_lines(unit, in_panel =
   true)` **drops the `Unit: <name>` row** (it was a third copy of the name) and **replaces `Size: <n>`**
@@ -572,7 +584,18 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   which re-resolves the brackets from the raw `populations` floats and therefore SELF-HEALS a
   truncating marker copy — so it structurally could not catch the `int()`-narrowed age brackets. This
   state ASSERTS the three PEOPLE brackets sum to the band's own `size`, and was verified to FAIL —
-  `sum to 29 but the band holds 30 (raw [9.0, 16.0, 4.0])` — with the narrowing put back) ·
+  `sum to 29 but the band holds 30 (raw [9.0, 16.0, 4.0])` — with the narrowing put back. **It also
+  carries the Minimal TOE's three Kit claims** (`_assert_map_path_states_kit`): the PAYLOAD holds all
+  six `TOE_MARKER_FLOAT_KEYS`, spears arrives un-narrowed, and the `Kit` row RENDERS — the payload
+  claim being where the leak is, and a marker carrying six keys nothing draws being no fix either. Its
+  band comes from **`_kit_band_fixture`, a SEPARATE fixture, and that separation is itself a finding**:
+  the `Kit` row costs 26px, the band zone already reads 299 of its 300px box in a height-capped T/B
+  dock, so putting the six on the shared `_band_fixture` overflows `Zone_band` by exactly 25px in **13
+  states**. Every live band states its kit, so that overflow is real and the kitless fixture was hiding
+  it; which SHORT-tier row yields is a design decision and is reported rather than guessed at. The
+  needle carries the VALUE (`Spears 74`) and is composed from the fixture's own number — **and it is
+  NOT `BAND_KIT_ROW_PREFIX`**, the vitals rows being disclosures, so what renders is the caret's own
+  `Kit ▸` and the prefix is consumed by that wrapping) ·
   `band_panel_work_page` (34 sources, narrow shell) · `band_panel_work_wide` (the same 34 in the
   bottom dock — 4 columns, column-major, `Page 1 / 2`, `1–28 of 34`) · `band_panel_inspector` (a row
   open, the board shrunk to 31 rows and a pager appearing to pay for it) · `band_panel_compose_hunt`
