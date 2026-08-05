@@ -266,6 +266,25 @@ pub(crate) fn herds_to_array(
             }
             let _ = dict.insert("denial_estimates", &denial_rows);
         }
+        // **THE PARTY THE DENIAL SHEET OPENS ON** — the smallest party in the table above whose raid
+        // is NOT `repelled`, i.e. the smallest one whose kills genuinely outpace this herd's
+        // regrowth. The stepper is otherwise a guessing game: below that requirement a raid
+        // accomplishes literally nothing however long it runs, and no row on the sheet named which
+        // number crossed the line.
+        //
+        // **`0` MEANS "NO QUOTED PARTY DRIVES THIS HERD DOWN", and it is never "send nobody".**
+        // Three honest situations reach it, all told apart by the rows' own `outcome`: a quarry
+        // nothing can bring into contact (wariness >= 1), a requirement past the sim's quoting bound
+        // (`deny.max_party_quoted`), and a herd whose regrowth out-runs the whole table. The client
+        // renders the verdict in that case and never seeds a stepper at 0.
+        //
+        // **It may legitimately EXCEED the band's idle workers** — that is the honest "you need more
+        // people than you have", and the sheet shows both numbers. So it is not a cap and must never
+        // be clamped here; only the stepper, which knows the band, clamps it.
+        //
+        // Inserted UNCONDITIONALLY, unlike `denial_estimates` above: it is a scalar with a real
+        // meaning at 0, so a herd with no table at all still answers the question.
+        let _ = dict.insert("denial_party_needed", i64::from(herd.denialPartyNeeded()));
         let _ = dict.insert("corralled", herd.corralled());
         // Pen-construction meter 0..1 accrued while a keeper band works this herd under the Corral
         // policy — the animal twin of `ForagePatchState.cultivationProgress`. Read by Hud's herd

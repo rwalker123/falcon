@@ -680,6 +680,7 @@
           "wasted_food": 73.800003
         }
       ],
+      "denial_party_needed": 16,
       "domestication": 25.139999,
       "durability": 52.57,
       "ecology_phase": "herds[0].ecology_phase",
@@ -789,6 +790,7 @@
           "wasted_food": 99.110001
         }
       ],
+      "denial_party_needed": 83,
       "domestication": 102.790001,
       "durability": 53.200001,
       "ecology_phase": "herds[1].ecology_phase",

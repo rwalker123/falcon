@@ -1928,6 +1928,16 @@ const HERD_DENIAL_ESTIMATES_KEY := "denial_estimates"
 # sampled on two axes; that key is where its Rust-float-Display trap comes from, and one axis is
 # exactly what makes the trap inexpressible here.)
 const DENIAL_ESTIMATE_PARTY_KEY := "party_workers"
+# **THE PARTY THE SHEET OPENS ON** — the sim's own `denialPartyNeeded`: the smallest party in the
+# table above whose raid is NOT `repelled`, i.e. the smallest one whose kills outpace this herd's
+# regrowth. It is what the stepper seeds to and what the repelled refusal names, and both read it
+# through `denial_party_needed` so the control and the sentence cannot quote different counts.
+const HERD_DENIAL_PARTY_NEEDED_KEY := "denial_party_needed"
+# **`0` IS "NO QUOTED PARTY DRIVES THIS HERD DOWN", and it is NEVER "send nobody".** Three honest
+# situations reach it (a quarry nothing can bring into contact, a requirement past the sim's quoting
+# bound, a herd out-growing the whole table), all told apart by the rows' own `outcome` — so the
+# client renders the verdict, never seeds the stepper here, and never invents a figure for the copy.
+const DENIAL_PARTY_NEEDED_NONE := 0
 # **`0` MEANS "NOT WITHIN THE HORIZON" ON THAT END, never "immediately".** `Low` is the FEWEST turns
 # — the optimistic draw, where more animals stay and more strikes land — so a positive `low` beside a
 # `0` `high` reads "only on a good run".
@@ -2013,12 +2023,19 @@ const DENIAL_VERDICTS := {
     # the raid never gets there however long it works — the remedy is HANDS, and the herd is not the
     # thing to fix. It still LAUNCHES (a raid that cannot get there keeps working the herd until it
     # is recalled, §6 Q2), so this warns and never blocks.
+    # **TWO REASONS, AND WHICH ONE RENDERS IS A FACT ABOUT THE SIM'S ANSWER, NOT ABOUT THE WORDING.**
+    # "Send more hunters" is correct on the merits and useless in hand: it prescribes hands without
+    # naming how many, while the sim has been shipping the exact figure (`denialPartyNeeded`) all
+    # along. So where there IS a number, `reason_counted` names it — `%s` the quarry, `%d` the party
+    # — and where there is not (`DENIAL_PARTY_NEEDED_NONE`), the bare `reason` stands verbatim,
+    # because inventing a figure there would be a promise the sim did not make.
     DENIAL_OUTCOME_REPELLED: {
         "line": "%s breeds back faster than this party kills — it is never pushed past recovery",
         "turns": false,
         "button": "Send Anyway (never collapses)",
         "severity": VERDICT_SLOW,
         "reason": "This party's kills do not outpace %s's regrowth. Send more hunters — the herd is not the problem.",
+        "reason_counted": "This party's kills do not outpace %s's regrowth. It takes %d hunters to push this herd past recovery — the herd is not the problem.",
     },
     # **A VERDICT ABOUT THE CLOCK.** The projection ran its whole length; the party may well get there
     # after it. Deliberately worded so it cannot be mistaken for the party being outmatched.
@@ -3710,10 +3727,28 @@ static func denial_take_bbcode(forecast: Dictionary, herd_name: String) -> Strin
         text += DENIAL_TAKE_LEFT_FORMAT % format_magnitude(wasted)
     return "[color=#%s]%s[/color]" % [HudStyle.INK_DIM_HEX, text]
 
+## **THE ONE READING OF `denialPartyNeeded`** — the smallest party the sim quotes that actually drives
+## this herd past recovery, `DENIAL_PARTY_NEEDED_NONE` when it quotes none. The stepper's seed and the
+## repelled refusal's count BOTH come through here, so the control and the sentence beside it cannot
+## disagree about the number. It is NOT a cap and may exceed the band's idle workers — that is the
+## honest "you need more people than you have", and only the stepper, which knows the band, clamps it.
+static func denial_party_needed(herd: Dictionary) -> int:
+    return int(herd.get(HERD_DENIAL_PARTY_NEEDED_KEY, DENIAL_PARTY_NEEDED_NONE))
+
 ## The spelled-out reason a denial raid will not get there — `""` for the two outcomes that do, so the
 ## sheet renders no line rather than an empty one.
+##
+## **THE REPELLED REFUSAL NAMES THE PARTY THE SIM QUOTES, WHENEVER IT QUOTES ONE.** Which of the
+## outcome's two reasons renders is decided by `denial_party_needed`, never by the wording: with a
+## figure the sentence carries `[quarry, needed]`, without one it falls back to the numberless form
+## that takes the quarry alone. An outcome with no counted variant (every other one) is unaffected.
 static func denial_refusal_reason(forecast: Dictionary, herd: Dictionary) -> String:
-    var reason := String(denial_verdict(forecast)["reason"])
+    var entry := denial_verdict(forecast)
+    var needed := denial_party_needed(herd)
+    var counted := String(entry.get("reason_counted", ""))
+    if counted != "" and needed > DENIAL_PARTY_NEEDED_NONE:
+        return counted % [herd_display_name(herd), needed]
+    var reason := String(entry["reason"])
     return "" if reason == "" else reason % herd_display_name(herd)
 
 ## The denial Send button, off the SAME entry the verdict line came from. **It never disables** — a

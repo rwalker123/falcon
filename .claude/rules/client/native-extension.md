@@ -196,6 +196,16 @@ reproduce the trap. Each row carries `party_workers` / `turns_to_collapse` / `tu
 "immediately"**, and `outcome` is what the client renders instead of a blank — decode all four
 together or the consumer cannot tell a repelled party from an expired clock.
 
+Beside the table it decodes `HerdTelemetryState.denialPartyNeeded` as **`denial_party_needed`**, the
+smallest party in that table whose raid is not `repelled` — the party the compose sheet's stepper opens
+on and the count its repelled refusal names. **Inserted UNCONDITIONALLY, unlike `denial_estimates`**:
+it is a scalar with a real meaning at `0`, so a herd carrying no table still answers the question.
+**`0` means no quoted party drives this herd down and is never "send nobody"** — three honest
+situations reach it (wariness ≥ 1, a requirement past `deny.max_party_quoted`, regrowth out-running the
+whole table), all told apart by the rows' own `outcome`. It may legitimately EXCEED the band's idle
+workers, so it is not a cap and is never clamped here; only the stepper, which knows the band, clamps
+it.
+
 **The whole path is gated by `tools/decode_guard.gd`** (see its Key Scripts row) — the answer to
 "`VarDictionary` cannot be built outside a live engine", which is why the coverage here was a single
 `cohort_decode_tests` module for so long. Run it from the workspace root:

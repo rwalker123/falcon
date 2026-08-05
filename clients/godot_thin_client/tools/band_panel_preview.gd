@@ -104,6 +104,27 @@ const DENIAL_KILLS_ROW := [26, 42, 55, 66, 74, 82, 88, 94]
 ## still have something to state while the verdict says the herd is never pushed past recovery. Its
 ## turn rows are all `0`, the wire's "not within the horizon on that end".
 const DENIAL_REPELLED_KILLS_ROW := [3, 5, 7, 9, 10, 11, 12, 13]
+## **THE BAND WHOSE IDLE WORKFORCE OUTRUNS `max_expedition_party_size`** (8, on `_band_fixture`). That
+## field is the wire echo of the sim's estimate-table SAMPLING AXIS, not a rules cap, so the denial
+## stepper's ceiling is the band's own idle workers — and this count is the only shape in which a
+## ceiling read off the wrong field is visible at all. Deliberately ABOVE `DENIAL_DEEP_PARTY_NEEDED`,
+## so the seed lands unclamped and the cap has somewhere further to go.
+const DENIAL_DEEP_PARTY_IDLE := 12
+## The party the sim quotes for that quarry (`denialPartyNeeded`): the smallest one whose kills outpace
+## the herd's regrowth. **Above 8**, which is the case the whole frame exists for — a requirement one
+## rung past the sampling axis, which the old stepper could not even be dialled to.
+const DENIAL_DEEP_PARTY_NEEDED := 11
+## …and the party the second frame steps BACK to, below that requirement, so its row is `repelled` and
+## the refusal beneath it has a count to name.
+const DENIAL_DEEP_PARTY_SHORT := 4
+## Whole animals ONE raider of that party kills over the raid. A repelled party is not one that kills
+## nothing — it is one the herd outbreeds — so the sub-requirement rows carry a real take.
+const DENIAL_DEEP_KILLS_PER_WORKER := 3
+## The collapse band quoted for a party at or above the requirement. One row of the table is ever
+## rendered, so a flat band states everything the frame needs and nothing it does not.
+const DENIAL_DEEP_TURNS := 6
+const DENIAL_DEEP_TURNS_LOW := 5
+const DENIAL_DEEP_TURNS_HIGH := 8
 ## Food ONE raider hauls home over the whole raid — tiny beside the kill, which IS the mission. A
 ## fixture that hauled its whole kill would be a hunting raid wearing a denial outcome, and the waste
 ## readout would have nothing to state.
@@ -1251,6 +1272,11 @@ func _ready() -> void:
 	# is ZERO here, which is the frame's other claim: the verdict must still name its span and must not
 	# append "(0 of them travel)".
 	_hud._compose.set_party_quarry(QUARRY_HOME_HERD_ID)
+	# **RE-PINNED, because adopting a quarry now SEEDS the party.** The chooser assertion above drives
+	# the real `choose_quarry`, which arms the autofill the denial sheet consumes — so the sheet came
+	# out of that block on the shared hex's requirement rather than on `DENIAL_PARTY`, and this frame's
+	# verdict is asserted against that row. Stating the party is what keeps the frame's claim its own.
+	_hud._bandpanel._send_expedition_count = DENIAL_PARTY
 	_hud._bandpanel.rerender()
 	await _settle()
 	await _save("band_panel_compose_deny_in_reach")
@@ -1258,6 +1284,39 @@ func _ready() -> void:
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
 	_assert_denial_in_reach_verdict()
+
+	# **A BAND WITH MORE IDLE WORKERS THAN `max_expedition_party_size`, ON A QUARRY THAT NEEDS MORE
+	# STILL.** That field is the wire echo of the estimate tables' sampling axis, not a rules cap, so
+	# the stepper's ceiling is the band's own idle workforce — and this quarry's requirement (11) sits
+	# one rung past the 8 the old cap enforced, i.e. past a party the sheet could not even be dialled
+	# to. The quarry is adopted through the REAL `choose_quarry` — the one adoption both the map pick
+	# and the chooser take — so the seed is exercised by the path that arms it rather than by writing
+	# the count.
+	_push_bands([_scout_expedition_fixture(), _deep_party_band_fixture(), _hunt_expedition_fixture()])
+	var deep_herds := _quarry_herd_fixtures(_denial_needs_deep_party_rows())
+	_set_world_herds(deep_herds)
+	_hud._compose.clear_party_quarry()
+	_hud._targeting.choose_quarry(_deep_party_band_fixture(), deep_herds[0],
+		HudComposeVocab.COMPOSE_MISSION_DENY)
+	await _settle()
+	await _save("band_panel_compose_deny_deep_party")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_denial_deep_party()
+
+	# The SAME sheet stepped back BELOW the requirement: that row is `repelled`, and its reason must
+	# now NAME the party the sim quotes instead of prescribing hands without a count.
+	_hud._bandpanel._send_expedition_count = DENIAL_DEEP_PARTY_SHORT
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_compose_deny_short_party")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_denial_counted_refusal()
+	_set_world_herds(_quarry_herd_fixtures())
+	_push_bands([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
 
 	_hud._bandpanel._send_expedition_count = 1
 	_hud._bandpanel._party_compose_open = false
@@ -3249,6 +3308,33 @@ func _many_sources_band_fixture() -> Dictionary:
 	band["labor_assignments"] = assignments
 	return band
 
+## **A BAND WHOSE IDLE WORKFORCE OUTRUNS `max_expedition_party_size`** (left at the reference band's 8).
+## The denial stepper's ceiling is supply — idle workers — and that field is the estimate tables'
+## SAMPLING AXIS rather than a rules cap, so this is the only band shape in which a stepper reading the
+## wrong one is visible at all. Same entity 904, so the expeditions still attach and the cycler reads 1/1.
+func _deep_party_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	# **THE WORKFORCE IS WHAT IS RAISED, NOT `idle_workers`.** `HudBandLaborState.effective_idle`
+	# derives idle as `working_age − assigned`, so writing the idle count alone would leave every
+	# surface — the stepper's cap included — still reading the reference band's 3.
+	var assigned := 0
+	for assignment_variant in (band["labor_assignments"] as Array):
+		assigned += int((assignment_variant as Dictionary).get("workers", 0))
+	var workers := assigned + DENIAL_DEEP_PARTY_IDLE
+	# Keep the age split in step with the enlarged workforce, `_many_sources_band_fixture`'s rule:
+	# `age_working` IS `working_age` and the three sum to `size`, or the PEOPLE bar renders as a bug on
+	# the very frame the parties zone is being judged on. SCALED off the reference band's own brackets
+	# rather than retyped, so the dependency ratio the bar is tinted by does not move either.
+	var scale := float(workers) / float(band["age_working"])
+	band["working_age"] = workers
+	band["idle_workers"] = DENIAL_DEEP_PARTY_IDLE
+	band["age_working"] = float(workers)
+	band["age_children"] = float(band["age_children"]) * scale
+	band["age_elders"] = float(band["age_elders"]) * scale
+	band["size"] = int(round(
+		float(workers) + float(band["age_children"]) + float(band["age_elders"])))
+	return band
+
 ## Every worker committed: the parties footer must still SHOW its button, disabled, with the reason.
 func _no_idle_band_fixture() -> Dictionary:
 	var band := _band_fixture()
@@ -3579,7 +3665,9 @@ func _quarry_herd_fixtures(denial_rows: Array = []) -> Array:
 				# hauls its whole kill is stopped by the PACK.
 				SourceForecast.TRIP_BOUND_KEY: SourceForecast.TRIP_BOUND_PACK_FULL}
 	herd["hunt_trip_estimates"] = table
-	herd["denial_estimates"] = denial_rows if not denial_rows.is_empty() else _denial_viable_rows()
+	var denial_table := denial_rows if not denial_rows.is_empty() else _denial_viable_rows()
+	herd["denial_estimates"] = denial_table
+	herd["denial_party_needed"] = _denial_party_needed_for(denial_table)
 	# A second huntable herd INSIDE the band's hunt reach. It is not a party's job (the band can work
 	# it from home), so the picker must refuse it — the near half of the eligibility assertion.
 	var near := {
@@ -3603,7 +3691,8 @@ func _quarry_herd_fixtures(denial_rows: Array = []) -> Array:
 		"hunt_policy_ceilings": {"sustain": 0.25, "surplus": 1.00, "deplete": 0.50, "eradicate": 0.0},
 		"per_worker_trade": 0.05, "trade_per_animal": QUARRY_TRADE_PER_ANIMAL,
 		"hunt_policy_trade_ceilings": {"sustain": 0.02, "surplus": 0.08, "deplete": 0.04, "eradicate": 0.0},
-		"denial_estimates": denial_rows if not denial_rows.is_empty() else _denial_viable_rows(),
+		"denial_estimates": denial_table,
+		"denial_party_needed": _denial_party_needed_for(denial_table),
 	}
 	return [herd, near, home]
 
@@ -3629,6 +3718,7 @@ func _shared_tile_quarry_fixtures() -> Array:
 		"hunt_trip_estimates": _shared_tile_raid_table(
 			SHARED_TILE_FOOD_PER_ANIMAL, SHARED_TILE_FOOD_TRADE_PER_ANIMAL),
 		"denial_estimates": _denial_viable_rows(),
+		"denial_party_needed": _denial_party_needed_for(_denial_viable_rows()),
 	}
 	var pelt_herd := {
 		"id": SHARED_TILE_PELT_HERD_ID, "species": SHARED_TILE_PELT_SPECIES,
@@ -3642,6 +3732,7 @@ func _shared_tile_quarry_fixtures() -> Array:
 		},
 		"hunt_trip_estimates": _shared_tile_raid_table(0.0, SHARED_TILE_PELT_TRADE_PER_ANIMAL),
 		"denial_estimates": _denial_trade_only_rows(),
+		"denial_party_needed": _denial_party_needed_for(_denial_trade_only_rows()),
 	}
 	return [food_herd, pelt_herd]
 
@@ -3718,6 +3809,44 @@ func _denial_repelled_rows() -> Array:
 	var zeroes := [0, 0, 0, 0, 0, 0, 0, 0]
 	return _denial_rows(SourceForecast.DENIAL_OUTCOME_REPELLED,
 		zeroes, zeroes, zeroes, DENIAL_REPELLED_KILLS_ROW)
+
+## **A TABLE WITH THE REQUIREMENT INSIDE IT** — every party below `DENIAL_DEEP_PARTY_NEEDED` is
+## `repelled`, that party and up are `past_recovery`. This is the shape the sim publishes for a herd
+## whose requirement outruns `maxExpeditionPartySize`: the party axis runs to whichever of that
+## ceiling and `denialPartyNeeded` is larger (`snapshot.fbs`), so the table STOPS at the requirement
+## rather than at 8 — which is also why a stepper dialled past it quotes no verdict at all.
+func _denial_needs_deep_party_rows() -> Array:
+	var kills: Array = []
+	var turns: Array = []
+	var low: Array = []
+	var high: Array = []
+	var zeroes: Array = []
+	for i in DENIAL_DEEP_PARTY_NEEDED:
+		kills.append((i + 1) * DENIAL_DEEP_KILLS_PER_WORKER)
+		turns.append(DENIAL_DEEP_TURNS)
+		low.append(DENIAL_DEEP_TURNS_LOW)
+		high.append(DENIAL_DEEP_TURNS_HIGH)
+		zeroes.append(0)
+	# Composed through `_denial_rows` twice rather than by hand, so both halves carry the payload
+	# arithmetic (what the pack holds, what is left on the range) the rest of this fixture set uses.
+	var repelled := _denial_rows(SourceForecast.DENIAL_OUTCOME_REPELLED, zeroes, zeroes, zeroes, kills)
+	var viable := _denial_rows(SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY, turns, low, high, kills)
+	var rows: Array = []
+	for i in kills.size():
+		rows.append(viable[i] if i + 1 >= DENIAL_DEEP_PARTY_NEEDED else repelled[i])
+	return rows
+
+## **`denialPartyNeeded`, DERIVED FROM THE TABLE RATHER THAN STATED BESIDE IT.** The field IS "the
+## smallest party in `denialEstimates` whose raid is not `repelled`", so a fixture that spelled it out
+## separately could quote a party its own rows contradict — and every one of these tables would then
+## have to be kept in step by hand. `DENIAL_PARTY_NEEDED_NONE` when every row is repelled, which is
+## exactly what the sim publishes for a herd no quoted party drives down.
+func _denial_party_needed_for(rows: Array) -> int:
+	for row_variant in rows:
+		var row: Dictionary = row_variant as Dictionary
+		if String(row.get("outcome", "")) != SourceForecast.DENIAL_OUTCOME_REPELLED:
+			return int(row.get(SourceForecast.DENIAL_ESTIMATE_PARTY_KEY, 0))
+	return SourceForecast.DENIAL_PARTY_NEEDED_NONE
 
 ## The PARSED text of the first `RichTextLabel` under `node` containing `text`, or `""`. The verdict
 ## and take lines are BBCode (`HudWidgets.forecast_label`), which `_has_label_containing` — a `Label`
@@ -3840,10 +3969,52 @@ func _assert_denial_repelled() -> void:
 		send != null and not send.disabled
 			and send.text == String(SourceForecast.DENIAL_VERDICTS[
 				SourceForecast.DENIAL_OUTCOME_REPELLED]["button"]))
-	# …and it says what to do about it, in the party's terms.
+	# …and it says what to do about it, in the party's terms. **The NUMBERLESS form is the right one
+	# HERE**: every row of this table is repelled, so the sim quotes no party at all
+	# (`DENIAL_PARTY_NEEDED_NONE`) and there is nothing honest to name — the counted twin rides
+	# `band_panel_compose_deny_short_party`, and the pair is what makes either mean anything.
 	_assert_band_panel("…and the reason beside it sends the player to the PARTY",
 		_has_label_containing(_panel, String(SourceForecast.DENIAL_VERDICTS[
 			SourceForecast.DENIAL_OUTCOME_REPELLED]["reason"]) % quarry))
+
+## **THE DEEP PARTY** — a band whose idle workforce outnumbers `max_expedition_party_size`, on a quarry
+## whose requirement outruns it too. Two claims, and neither is legible in the frame alone: the sheet
+## OPENS on the party the sim quotes, and the stepper's ceiling is the band's own idle workers rather
+## than the estimate tables' sampling axis.
+func _assert_denial_deep_party() -> void:
+	_assert_band_panel("the denial stepper opens on the party the sim quotes (%d, wanted %d)"
+			% [_hud._bandpanel._send_expedition_count, DENIAL_DEEP_PARTY_NEEDED],
+		_hud._bandpanel._send_expedition_count == DENIAL_DEEP_PARTY_NEEDED)
+	# …and it is a party the OLD cap could not even be dialled to, which is what makes the seed a
+	# change in what the form can express rather than a different default.
+	_assert_band_panel("…a party past `max_expedition_party_size` (%d)"
+			% int(_deep_party_band_fixture().get("max_expedition_party_size", 0)),
+		DENIAL_DEEP_PARTY_NEEDED > int(_deep_party_band_fixture().get("max_expedition_party_size", 0)))
+	# **THE CEILING IS THE BAND'S IDLE WORKFORCE**, driven through the render's OWN clamp rather than
+	# read off the stepper's face: under the retired cap a count of 12 came back as 8. This leaves the
+	# panel on a party the table quotes no row for — a real state, and the next frame re-renders anyway.
+	_hud._bandpanel._send_expedition_count = DENIAL_DEEP_PARTY_IDLE
+	_hud._bandpanel.rerender()
+	_assert_band_panel("…and the party may be dialled to the band's whole idle workforce (%d of %d)"
+			% [_hud._bandpanel._send_expedition_count, DENIAL_DEEP_PARTY_IDLE],
+		_hud._bandpanel._send_expedition_count == DENIAL_DEEP_PARTY_IDLE)
+
+## **A REPELLED RAID NAMES THE PARTY IT WOULD TAKE, WHENEVER THE SIM QUOTES ONE.** "Send more hunters"
+## is correct on the merits and useless in hand — it prescribes hands without saying how many — while
+## `denialPartyNeeded` has been on the wire all along. Composed from the VOCABULARY, never from
+## `denial_refusal_reason`: an expectation re-derived through the code under test asserts nothing.
+func _assert_denial_counted_refusal() -> void:
+	var quarry := "Wild Boar"
+	var want := String(SourceForecast.DENIAL_VERDICTS[
+		SourceForecast.DENIAL_OUTCOME_REPELLED]["reason_counted"]) % [quarry, DENIAL_DEEP_PARTY_NEEDED]
+	_assert_band_panel("a repelled raid's reason NAMES the party it takes — \"%s\"" % want,
+		_has_label_containing(_panel, want))
+	# …and the numberless sentence is GONE rather than printed beside it: with a figure in hand it is
+	# the sentence this replaces, and a sheet carrying both states the remedy twice.
+	var bare := String(SourceForecast.DENIAL_VERDICTS[
+		SourceForecast.DENIAL_OUTCOME_REPELLED]["reason"]) % quarry
+	_assert_band_panel("…and not the numberless sentence beside it",
+		not _has_label_containing(_panel, bare))
 
 ## **THE CHOOSER APPEARS ONLY WHERE THERE IS A CHOICE, AND CHOOSING RE-TARGETS.** Both halves are
 ## behavioural: a PNG can show that a `⋯` is on the Quarry row, but not what its menu holds, not which

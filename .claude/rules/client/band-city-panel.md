@@ -908,8 +908,40 @@ preset and no max-useful cap**. Each absence has its own reason and none is an o
   to put one.
 - There is **no `expedition_useful_cap` twin**. That cap exists because a hunting raid's delivered
   payload plateaus once the herd's surplus binds; a denial raid has no payload to plateau, and more
-  hands always break the herd sooner. `_scout_party_max` — idle workers and the server's party limit —
-  is the whole ceiling.
+  hands always break the herd sooner.
+
+### The stepper's ceiling is the band's IDLE WORKERS, and its floor is the sim's own requirement
+
+**`max_expedition_party_size` is not a rules cap and this form does not apply it.** It is the wire echo
+of `expedition_config.estimate_party_sizes` — the SAMPLING AXIS of the estimate tables — and the sim
+deleted the rules cap for all three launch verbs, so `_scout_party_max` was the last thing enforcing
+it: a band with 16 idle workers was clamped to 8 while the sheet's own refusal told it to send more
+hunters. `_fill_denial_compose_sheet` reads `idle` directly (`idle == 0` therefore behaves exactly as
+before, both spellings yielding 0). The hunt and scout forms still call `_scout_party_max`; only denial
+reads the supply alone.
+
+**The stepper SEEDS on `denialPartyNeeded`** — the smallest party the sim quotes whose kills outpace
+the herd's regrowth. Below it a raid accomplishes literally nothing however long it runs, and nothing
+else on the sheet said which number crossed that line. Three invariants:
+
+- **Never seeded to `SourceForecast.DENIAL_PARTY_NEEDED_NONE`.** `0` means the sim quotes no party at
+  all, not "send nobody", so the count stays where it was and the verdict line carries the answer.
+- **Seeded once per quarry selection**, through the hunt form's `arm_party_autofill` /
+  `consume_party_autofill` one-shot. `TargetingController.choose_quarry` — the ONE adoption of a
+  quarry, taken by both the map pick and the tile chooser — already arms it, so a manual `−`/`+` tick
+  survives every later rerender and there is no second mechanism.
+- **Clamped into `[WORKER_STEP, idle]`.** A requirement above the band's idle workers opens on the most
+  it can field, which is honest: the sheet shows both numbers and the verdict still says it is not
+  enough.
+
+**The `repelled` refusal names that party whenever there is one.** `DENIAL_VERDICTS`' repelled entry
+carries TWO reason strings and `denial_refusal_reason` picks between them on the herd's own
+`denial_party_needed`, never on the wording: `reason_counted` takes `[quarry, needed]` and states the
+count, and where the sim quotes none the numberless `reason` stands verbatim, because inventing a
+figure there would be a promise the sim did not make. `SourceForecast.denial_party_needed` is the ONE
+reading of the field, so the stepper's seed and the sentence beneath it cannot quote different numbers.
+`DENIAL_OUTCOME_HORIZON`'s reason is deliberately untouched — its remedy is a bigger party, but the
+quoted requirement is a fact about the repelled rows.
 
 ### The BEYOND-REACH rule is the hunt's, and denial does not inherit it
 

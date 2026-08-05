@@ -1787,11 +1787,33 @@ func _fill_denial_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: in
         HudStyle.apply_button(blocked, "ghost")
         sheet.add_child(blocked)
         return
-    # **THE PARTY IS CAPPED BY SUPPLY ALONE** — idle workers and the server's party-size limit. There
-    # is deliberately no `expedition_useful_cap` twin here: that cap exists because a hunting raid's
+    # **THE PARTY IS CAPPED BY THE BAND'S OWN IDLE WORKERS, AND BY NOTHING ELSE.** There is
+    # deliberately no `expedition_useful_cap` twin here: that cap exists because a hunting raid's
     # delivered payload PLATEAUS once the herd's surplus binds, and a denial raid has no payload to
     # plateau. More hands always break the herd sooner, which is the whole lever this form offers.
-    var party_max := _scout_party_max(band, idle)
+    #
+    # **`max_expedition_party_size` IS NOT A RULES CAP AND MUST NOT BE APPLIED HERE**
+    # (`snapshot.fbs` → `denialEstimates`). It is the wire echo of `expedition_config.estimate_party_sizes`,
+    # i.e. the SAMPLING AXIS of the estimate tables, and the sim deleted the rules cap for all three
+    # launch verbs — so `_scout_party_max` was the last thing enforcing it, and a band with 16 idle
+    # workers was clamped to 8 while this sheet told it to send more hunters. The hunt and scout
+    # forms still call that helper; only denial reads the supply directly.
+    var party_max := idle
+    # **SEEDED ON THE SIM'S OWN REQUIREMENT, ONCE PER QUARRY.** Below `denialPartyNeeded` a raid
+    # accomplishes literally nothing however long it runs, and nothing else on the sheet said which
+    # number crossed that line — so the stepper opens there rather than on a guess. The one-shot is
+    # the hunt form's `arm_party_autofill` (armed by `TargetingController.choose_quarry`, the ONE
+    # adoption of a quarry on either route), so a manual −/+ tick survives every later rerender.
+    #
+    # **NEVER SEEDED TO 0.** `DENIAL_PARTY_NEEDED_NONE` means the sim quotes no party that drives this
+    # herd down at all — it is not "send nobody" — so the count is left where it was and the verdict
+    # line carries the answer. And the clamp to `party_max` is deliberate: a requirement ABOVE the
+    # band's idle workers opens on the most it can field, which is honest, because the sheet shows
+    # both numbers and the verdict still says it is not enough.
+    if _compose.consume_party_autofill():
+        var needed := SourceForecast.denial_party_needed(herd)
+        if needed > SourceForecast.DENIAL_PARTY_NEEDED_NONE:
+            _send_expedition_count = clampi(needed, HudConst.WORKER_STEP, party_max)
     _send_expedition_count = clampi(_send_expedition_count, HudConst.WORKER_STEP, party_max)
     sheet.add_child(HudWidgets.build_party_stepper_row(_send_expedition_count, party_max,
         func(n: int) -> void:
