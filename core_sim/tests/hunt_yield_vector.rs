@@ -29,7 +29,7 @@ use core_sim::{
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
     MSY_BIOMASS_FRACTION, NO_BUILD_UNDERWAY_DIP, NO_FILL_TARGET, NO_IMPROVEMENT_UNDERWAY,
-    TRADE_GOODS,
+    STRIP_IT_BARE, TRADE_GOODS,
 };
 
 /// Four depths on the intensity dial. Every one of them must pay the species' product vector; none
@@ -1386,10 +1386,18 @@ fn spawn_raid_party(
         .id()
 }
 
-/// The **exported** pre-launch raid promise for `(policy, RAID_PARTY)` — the very row the client's
-/// "delivers ≈X over ≈N turns · ⇄ ~Y trade goods" line reads — as
-/// `(turns_to_fill, delivered_food, delivered_trade)`.
-fn exported_raid_promise(app: &App, id: &str, floor: f32) -> (u32, f32, f32) {
+/// One **exported** pre-launch raid row, field for field — the very row the client's outfit UI reads.
+struct ExportedRaid {
+    turns_to_fill: u32,
+    animals_taken: u32,
+    delivered_food: f32,
+    wasted_food: f32,
+    delivered_trade: f32,
+    bound: String,
+}
+
+/// The **exported** pre-launch raid row for `(floor, RAID_PARTY)`, read off the shipped snapshot.
+fn exported_raid_row(app: &App, id: &str, floor: f32) -> ExportedRaid {
     let snapshot = app
         .world
         .resource::<SnapshotHistory>()
@@ -1408,6 +1416,21 @@ fn exported_raid_promise(app: &App, id: &str, floor: f32) -> (u32, f32, f32) {
         .unwrap_or_else(|| {
             panic!("the herd exports a floor {floor} × {RAID_PARTY}-worker trip estimate")
         });
+    ExportedRaid {
+        turns_to_fill: row.turns_to_fill,
+        animals_taken: row.animals_taken,
+        delivered_food: row.delivered_food,
+        wasted_food: row.wasted_food,
+        delivered_trade: row.delivered_trade,
+        bound: row.bound.clone(),
+    }
+}
+
+/// The **exported** pre-launch raid promise for `(policy, RAID_PARTY)` — the very row the client's
+/// "delivers ≈X over ≈N turns · ⇄ ~Y trade goods" line reads — as
+/// `(turns_to_fill, delivered_food, delivered_trade)`.
+fn exported_raid_promise(app: &App, id: &str, floor: f32) -> (u32, f32, f32) {
+    let row = exported_raid_row(app, id, floor);
     (row.turns_to_fill, row.delivered_food, row.delivered_trade)
 }
 
@@ -1540,6 +1563,147 @@ fn an_inedible_raid_comes_home_with_pelts_and_no_food() {
     assert!(
         (banked_trade - promised_trade).abs() <= RAID_PAYLOAD_EPSILON,
         "and it banks exactly what the outfit UI promised"
+    );
+}
+
+/// **`turns_to_fill == 0` on the wire is "the raid never reported a homecoming turn"** — the horizon
+/// ran out, or the herd was lost under the party (which claims no completion turn either).
+const NEVER_COMPLETES: u32 = 0;
+
+/// **The waste is a sum over a whole raid, so its allowance is a raid's worth of quanta.** The
+/// forecast accumulates `Σ apply(wasted)` as raw `f32` while this test derives the same total from
+/// the herd's biomass ledger minus the pack's fixed-point contents — the same two-representation
+/// comparison [`RAID_PAYLOAD_EPSILON`] covers for a single load, over an order of magnitude more
+/// turns.
+const RAID_WASTE_EPSILON: f32 = 64.0 / core_sim::Scalar::SCALE as f32;
+
+/// **11b. A floor-`0` raid delivers, banks and WASTES exactly what its exported row promised.**
+///
+/// The floor-`0` raid used to pass `f32::INFINITY` as its carry room — "driving the herd extinct is
+/// the point, the meat is incidental" — which made `carried = killed × body_mass`. Two things were
+/// then false at once: its hunt report published `wasted_biomass = 0` for a raid that left a range of
+/// carcasses, and `Expedition::carried_trade` accrued pelts off the whole kill instead of off the
+/// load. Its **exported promise** carried the same lie: on a mammoth herd the row advertised the
+/// whole animal's 16 provisions and zero waste against a pack that holds 3.2.
+///
+/// *When* a party stops engaging (`fauna::EngagementStop`, which is what `Deny` changes) and *how
+/// much* it can haul are separate questions. This pins all four components of the answer — food,
+/// pelts, waste and the kill count — against a **real driven party**, on the shipped snapshot row a
+/// client reads, for the one floor no other test in this file covers.
+#[test]
+fn a_floor_zero_raid_delivers_and_wastes_what_its_exported_row_promised() {
+    let (mut app, id, pos) = headless_with_species(HEAVY_BODIED_SPECIES);
+    steady_quarry(&mut app, HEAVY_BODIED_SPECIES);
+    pin_quarry(&mut app, &id);
+    reveal_herd(&mut app, &id);
+    recapture_snapshot_in_place(&mut app.world);
+    let promised = exported_raid_row(&app, &id, STRIP_IT_BARE);
+    let quarry = {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        let registry = app.world.resource::<HerdRegistry>();
+        let herd = registry.find(&id).expect("the herd is on the map");
+        (core_sim::herd_hunt_yield(herd, &fauna), herd.body_mass)
+    };
+    let (yields, body_mass) = quarry;
+
+    // The raid, driven for real: the herd's ecology then the party's take, the order both the live
+    // arm and the projection run in.
+    let home = spawn_raid_home_band(&mut app, pos);
+    let party = spawn_raid_party(&mut app, home, pos, &id, STRIP_IT_BARE);
+    let horizon = app
+        .world
+        .resource::<core_sim::ExpeditionConfigHandle>()
+        .get()
+        .hunt
+        .forecast_horizon_turns;
+    let mut killed_biomass = 0.0_f32;
+    let mut herd_lost = false;
+    for _ in 1..=horizon {
+        app.world.run_system_once(advance_herds);
+        if app.world.resource::<HerdRegistry>().find(&id).is_none() {
+            herd_lost = true;
+            break;
+        }
+        let standing = herd_biomass(&app, &id);
+        app.world.run_system_once(advance_band_movement);
+        app.world.run_system_once(advance_expeditions);
+        killed_biomass += (standing - herd_biomass(&app, &id)).max(0.0);
+        if app.world.get::<Expedition>(party).map(|e| e.phase) != Some(ExpeditionPhase::Hunting) {
+            break;
+        }
+    }
+
+    // A floor-`0` raid never delivers mid-trip (`done`/`relaunch` are both false), so its whole haul
+    // is still in the pack — which is exactly why the pack must be the bound.
+    let carried_food = app
+        .world
+        .get::<PopulationCohort>(party)
+        .map(|c| c.stores.get(FOOD).to_f32())
+        .unwrap_or(0.0)
+        + larder(&app, home);
+    let banked_trade = app
+        .world
+        .get::<Expedition>(party)
+        .map(|e| e.carried_trade)
+        .unwrap_or(0.0)
+        + trade_goods(&app, home);
+    let carried_biomass = carried_food / yields.provisions_per_biomass;
+    let wasted_food = (killed_biomass - carried_biomass).max(0.0) * yields.provisions_per_biomass;
+
+    // **The liveness half, first** — every equality below would hold trivially on a raid that did
+    // nothing at all.
+    assert!(
+        carried_food > 0.0 && banked_trade > 0.0,
+        "a strip-it-bare raid banks the windfall it can carry: {carried_food} food, {banked_trade} \
+         trade"
+    );
+    assert!(
+        wasted_food > 0.0,
+        "…and leaves the rest of a {body_mass}-biomass body on the range: killed {killed_biomass}, \
+         carried {carried_biomass}"
+    );
+
+    // **The four components.**
+    assert!(
+        (promised.delivered_food - carried_food).abs() <= RAID_PAYLOAD_EPSILON,
+        "the exported row promised {} food, the party banked {carried_food}",
+        promised.delivered_food
+    );
+    assert!(
+        (promised.delivered_trade - banked_trade).abs() <= RAID_PAYLOAD_EPSILON,
+        "the exported row promised {} trade goods, the party banked {banked_trade}",
+        promised.delivered_trade
+    );
+    assert!(
+        (promised.wasted_food - wasted_food).abs() <= RAID_WASTE_EPSILON,
+        "the exported row promised {} wasted, the raid wasted {wasted_food}",
+        promised.wasted_food
+    );
+    assert_eq!(
+        promised.animals_taken,
+        (killed_biomass / body_mass).round() as u32,
+        "…and the kill count is the same raid's: {killed_biomass} biomass of {body_mass}-biomass \
+         animals"
+    );
+
+    // **The stop is the herd's, not the pack's.** A full pack does not end a floor-`0` raid — the
+    // live arm answers `(done, relaunch) = (false, false)` — so the projection must not claim a
+    // homecoming the party does not make. The wire's claim is paired here with the world fact that
+    // produced it.
+    assert_eq!(
+        promised.turns_to_fill, NEVER_COMPLETES,
+        "a floor-`0` raid reports no pack-full homecoming turn (bound {})",
+        promised.bound
+    );
+    assert_eq!(
+        promised.bound,
+        core_sim::HuntTripBound::HerdLost.as_str(),
+        "it ends by running the herd out, and the live raid did exactly that (herd lost: \
+         {herd_lost})"
+    );
+    assert!(
+        herd_lost,
+        "…and the driven party really did lose its herd, or the exported bound above is unpinned"
     );
 }
 

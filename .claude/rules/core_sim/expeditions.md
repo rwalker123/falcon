@@ -160,11 +160,15 @@ branches on mission:
 > the smaller of the two **plus which one bound**. The live `Hunting` arm and `hunt_trip_forecast` both
 > resolve it, so the raid cannot come home on a load different from the one it was quoted.
 >
-> **Wherever the pack is ignored, so is the target**, because it is the same stop under a player's
-> name. Two cases, and they are different kinds of fact: an **INEDIBLE** quarry (a *product* fact —
-> `provisions_per_biomass == 0`, so a converted target would read as an instantly-full pack, and the
-> food pack is already inert there) and **`STRIP_IT_BARE`** (an *intensity* fact — a floor-`0` raid
-> never consults the pack at all, `done`/`relaunch` both `false`). **Denial answered the question they
+> **Wherever the pack cannot END the trip, neither can the target**, because it is the same stop
+> under a player's name. Two cases, and they are different kinds of fact: an **INEDIBLE** quarry (a
+> *product* fact — `provisions_per_biomass == 0`, so a converted target would read as an
+> instantly-full pack, and the food pack is already inert there) and **`STRIP_IT_BARE`** (an
+> *intensity* fact — a floor-`0` raid's completion never consults the party-side stop at all,
+> `done`/`relaunch` both `false`). The floor-`0` pack is still a real **carry** bound — a different
+> question, and conflating the two is what let a floor-`0` raid report itself hauling home everything
+> it killed — so a target honoured there would silently shrink the haul instead of shortening the
+> trip. **Denial answered the question they
 > left open by deleting it**: `ExpeditionMission::Deny` carries **no `fill_target` field at all** (and
 > no floor), so a target on a raid that does not clamp to carry cannot be *expressed* rather than
 > being accepted and ignored — and the launch grammar refuses a trailing token rather than dropping
@@ -248,7 +252,11 @@ branches on mission:
   once the herd sits at that floor it comes home for good rather than trickle-churning.
   **At floor `0`** (`floor <= STRIP_IT_BARE`) — nothing to stop at: grinds the herd to extinction
   (→ lost-herd `Returning`), **banking the windfall it can carry** on the way (#337 — denial is the
-  end state, not an empty pack).
+  end state, not an empty pack). **Its pack does not end the trip but still bounds the haul**, so
+  `hunt_trip_forecast` gates the party-side completion on the same `floor > STRIP_IT_BARE` its
+  `surplus_spent` always carried, and a floor-`0` row projects through to `herd_lost` (or `horizon`)
+  reporting the raid's whole waste — rather than quoting a `pack_full` homecoming the live arm never
+  makes.
 - **The completion fix** (`ExpeditionPhase::Hunting`, load-bearing): `done = pack full OR standing
   surplus spent (herd within one body of the floor) OR herd lost`. Without the surplus-spent branch a
   raid that grabs its surplus and hits the floor would **hang, taking 0 every turn**. That list is
@@ -600,10 +608,20 @@ resolves both verbs through.
   (`CommandParseError::UnexpectedArgument`) rather than accepting a number and dropping it.
 - **`hunt_fill_target()` reports `NO_FILL_TARGET`, and cannot report anything else** — see the fill
   target's own callout above.
-- **A floor-`0` HUNT is still a different thing, deliberately.** It ignores the pack outright
-  (`carry_room_biomass = INFINITY`, an *intensity* fact) and grinds to extinction through the
-  lost-herd guard; denial keeps the pack as a **carry** bound and drops it only as an **engagement**
-  one, so its waste is real and reported. The `Hunting` arm states both cases side by side.
+- **A floor-`0` HUNT is still a different thing, and the difference is the ENGAGEMENT, never the
+  carry.** It grinds to extinction through the lost-herd guard, one `max(1, carryable)` animal a turn
+  once its pack is full; denial drops the pack as a bound on what it **engages** and kills everything
+  it brings down. **Both haul their real pack** — `carry_room_biomass` takes no floor argument and
+  `NO_CARRY_BOUND` means *inedible quarry* and nothing else. A floor-`0` hunt used to pass it, so
+  `carried = killed × body_mass`: the party was recorded hauling home everything it killed, its hunt
+  report published `wasted_biomass = 0` for a raid that left a range of carcasses, and
+  `carried_trade` accrued pelts off the whole kill — against the "both scale off what the party
+  carries, never what it killed" rule two sections above. On a 4-hunter mammoth raid the exported row
+  promised **16 food / 4 trade / 0 wasted** while the party banked 3.2 food and **36** trade; it now
+  promises 3.2 / 0.8 / 140.8 and pays exactly that. Pinned by
+  `denial_raid::{a_floor_zero_hunt_hauls_only_its_pack_and_reports_the_waste,
+  denial_and_a_floor_zero_hunt_account_carry_identically}` and
+  `hunt_yield_vector::a_floor_zero_raid_delivers_and_wastes_what_its_exported_row_promised`.
 - **An INEDIBLE quarry is a legitimate denial target** (a wolf). Nothing on the path divides by a
   food rate it has not established positive: the pack is inert there for the same *product* reason it
   is inert on a hunt, and the raid is paid in pelts.

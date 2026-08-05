@@ -17,13 +17,13 @@ use bevy::math::UVec2;
 
 use core_sim::{
     advance_expeditions, advance_herds, build_headless_app, denial_forecast, herd_capacity,
-    herd_ecology, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
-    BandEquipment, CombatConfigHandle, CommandEventLog, DenialOutcome, EquipmentConfigHandle,
-    Expedition, ExpeditionConfig, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase,
-    FactionId, FaunaConfigHandle, GenerationId, HerdRegistry, HerdTelemetry, HuntingParty,
-    LaborAllocation, LaborConfigHandle, LocalStore, MoraleCause, PopulationCohort, ResidentBand,
-    SimulationConfig, SnapshotHistory, StartingUnit, TileRegistry, VisibilityLedger, FOOD,
-    NO_FILL_TARGET,
+    herd_ecology, herd_hunt_yield, recapture_snapshot_in_place, scalar_from_f32, scalar_one,
+    scalar_zero, BandEquipment, CombatConfigHandle, CommandEventLog, DenialOutcome,
+    EquipmentConfigHandle, Expedition, ExpeditionConfig, ExpeditionConfigHandle, ExpeditionMission,
+    ExpeditionPhase, FactionId, FaunaConfigHandle, GenerationId, HerdRegistry, HerdTelemetry,
+    HuntingParty, LaborAllocation, LaborConfigHandle, LocalStore, MoraleCause, PopulationCohort,
+    ResidentBand, SimulationConfig, SnapshotHistory, StartingUnit, TileRegistry, VisibilityLedger,
+    FOOD, NO_FILL_TARGET, STRIP_IT_BARE,
 };
 
 /// The reference denial party — four people, the same crew every raid fixture in
@@ -540,12 +540,62 @@ fn wasted_is_the_bulk_of_a_raids_take_and_is_reported() {
     let party = spawn_party(&mut app, home, herd_pos, PARTY_WORKERS, deny(&id));
 
     let horizon = expedition_cfg(&app).hunt.forecast_horizon_turns;
-    let mut carried_biomass = 0.0_f32;
-    let mut wasted_biomass = 0.0_f32;
-    let mut reports = 0;
+    let ledger = drive_raid(&mut app, party, horizon);
+
+    assert!(
+        ledger.reports > 0,
+        "the raid must publish hunt reports at all"
+    );
+    // **The claim.** A raid kills far more than it can haul, and says so.
+    assert!(
+        ledger.wasted_biomass > ledger.carried_biomass,
+        "waste must be the bulk of a raid's take: carried {}, wasted {}",
+        ledger.carried_biomass,
+        ledger.wasted_biomass
+    );
+    // **The liveness half.** A raid that hauled nothing would satisfy the line above trivially; the
+    // whole design point is that it banks whatever it can on the way home.
+    assert!(
+        ledger.carried_biomass > 0.0,
+        "a raid still banks what it can carry — a zero here means the carry half broke, and the \
+         waste assertion above would pass anyway"
+    );
+    assert!(
+        carried_food(&app, party) > 0.0,
+        "and that haul is in the party's pack, not merely in a report"
+    );
+}
+
+/// What a driven raid actually did, summed off the sim's **own** per-turn hunt report
+/// (`CommandEventKind::HuntReport`, `docs/plan_hunt_through_combat.md` §6.6) rather than recomputed
+/// by the test — the shipped statement about the raid is the thing under test.
+struct RaidLedger {
+    /// Biomass hauled into the party's pack over the run.
+    carried_biomass: f32,
+    /// Biomass killed and left on the range.
+    wasted_biomass: f32,
+    /// How many turns published a report at all — the liveness guard against a ledger of zeros.
+    reports: u32,
+}
+
+impl RaidLedger {
+    /// Everything the party put on the ground: what it hauled **plus** what it left.
+    fn killed_biomass(&self) -> f32 {
+        self.carried_biomass + self.wasted_biomass
+    }
+}
+
+/// Drive `party`'s raid for at most `turns`, stopping early if it leaves `Hunting` (a delivery, a
+/// fold-back, or a lost herd), and sum the reports it published.
+fn drive_raid(app: &mut App, party: bevy::prelude::Entity, turns: u32) -> RaidLedger {
+    let mut ledger = RaidLedger {
+        carried_biomass: 0.0,
+        wasted_biomass: 0.0,
+        reports: 0,
+    };
     let mut read_through = 0_u64;
-    for _ in 1..=horizon {
-        drive_turn(&mut app);
+    for _ in 1..=turns {
+        drive_turn(app);
         // The log is a turn window and every entry carries a monotonic `seq`, so read forward from
         // where the last pass stopped rather than clearing it — the sim owns its retention.
         for entry in app.world.resource::<CommandEventLog>().iter() {
@@ -557,33 +607,15 @@ fn wasted_is_the_bulk_of_a_raids_take_and_is_reported() {
                 continue;
             }
             let detail = entry.detail.clone().unwrap_or_default();
-            carried_biomass += detail_value(&detail, "carried_biomass");
-            wasted_biomass += detail_value(&detail, "wasted_biomass");
-            reports += 1;
+            ledger.carried_biomass += detail_value(&detail, "carried_biomass");
+            ledger.wasted_biomass += detail_value(&detail, "wasted_biomass");
+            ledger.reports += 1;
         }
-        if phase(&app, party) != Some(ExpeditionPhase::Hunting) {
+        if phase(app, party) != Some(ExpeditionPhase::Hunting) {
             break;
         }
     }
-
-    assert!(reports > 0, "the raid must publish hunt reports at all");
-    // **The claim.** A raid kills far more than it can haul, and says so.
-    assert!(
-        wasted_biomass > carried_biomass,
-        "waste must be the bulk of a raid's take: carried {carried_biomass}, wasted \
-         {wasted_biomass}"
-    );
-    // **The liveness half.** A raid that hauled nothing would satisfy the line above trivially; the
-    // whole design point is that it banks whatever it can on the way home.
-    assert!(
-        carried_biomass > 0.0,
-        "a raid still banks what it can carry — a zero here means the carry half broke, and the \
-         waste assertion above would pass anyway"
-    );
-    assert!(
-        carried_food(&app, party) > 0.0,
-        "and that haul is in the party's pack, not merely in a report"
-    );
+    ledger
 }
 
 /// Read one `key=value` token off a feed entry's detail string.
@@ -593,6 +625,193 @@ fn detail_value(detail: &str, key: &str) -> f32 {
         .find_map(|token| token.strip_prefix(&format!("{key}=")))
         .and_then(|value| value.parse::<f32>().ok())
         .unwrap_or(0.0)
+}
+
+// ---------------------------------------------------------------------------------------------------
+// …and a floor-`0` HUNT hauls its pack, exactly like every other floor
+// ---------------------------------------------------------------------------------------------------
+
+/// **A body far heavier than one hunter's pack**, so the carry bound and the kill are impossible to
+/// confuse: a lone hunter's pack holds `hunt.per_worker_carry / provisions_per_biomass` = 40 biomass
+/// and one animal is [`HEAVY_BODIED_HERD`]'s `body_mass`, so ~80% of every kill has to be left.
+const HEAVY_BODIED_HERD: RaidQuarry = RaidQuarry {
+    body_mass: 200.0,
+    // Deep enough that the raid is still working a standing herd at the end of the horizon — the
+    // fixture is about the carry bound, not about running the quarry out.
+    carrying_capacity: 4000.0,
+    biomass_fraction: 1.0,
+    regrowth_rate: 0.10,
+};
+
+/// The party the pack bound is measured with: **one hunter**, the smallest legal party and the one
+/// whose pack is furthest below a heavy body.
+const SMALL_PARTY: u32 = LONE_HUNTER;
+
+/// The party's pack expressed in the units the carry bound is applied in — `workers ×
+/// hunt.per_worker_carry` provisions, inverted through the species' own `provisions_per_biomass`.
+fn pack_biomass(app: &App, id: &str, workers: u32) -> f32 {
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let registry = app.world.resource::<HerdRegistry>();
+    let herd = registry.find(id).expect("herd present");
+    let yields = herd_hunt_yield(herd, &fauna);
+    workers as f32 * expedition_cfg(app).hunt.per_worker_carry / yields.provisions_per_biomass
+}
+
+fn carried_trade(app: &App, party: bevy::prelude::Entity) -> f32 {
+    app.world
+        .get::<Expedition>(party)
+        .map(|e| e.carried_trade)
+        .unwrap_or(0.0)
+}
+
+/// **A floor-`0` hunt hauls its PACK and reports the rest as waste** — the defect this test exists
+/// for (`docs/plan_denial_raid.md` §1).
+///
+/// A floor-`0` raid used to pass `f32::INFINITY` as its carry room on the premise that driving a herd
+/// extinct makes the meat incidental. With an infinite pack `carried = killed × body_mass`, so the
+/// party was recorded hauling home **everything it killed**: its hunt report published
+/// `wasted_biomass = 0` for a raid that left a range of carcasses, and `Expedition::carried_trade`
+/// accrued pelts off the whole kill rather than off the load. *When* a party stops engaging and *how
+/// much* it can haul are separate questions — that is what [`ExpeditionMission::Deny`] is for — and
+/// carry is never unbounded for a real party.
+///
+/// Three claims, each paired with the liveness assertion that makes it mean something:
+/// 1. the raid reports **non-zero waste** — and still delivers something;
+/// 2. its total haul is bounded by the **pack** — and the pack is not empty;
+/// 3. its **trade accrues off `carried`, not off `killed`** — and it is non-zero.
+#[test]
+fn a_floor_zero_hunt_hauls_only_its_pack_and_reports_the_waste() {
+    let mut app = placid_world();
+    let (id, herd_pos) = pin_raid_herd(&mut app, HEAVY_BODIED_HERD);
+    let home = spawn_home_band(&mut app, herd_pos);
+    let party = spawn_party(
+        &mut app,
+        home,
+        herd_pos,
+        SMALL_PARTY,
+        hunt(&id, STRIP_IT_BARE),
+    );
+
+    let pack = pack_biomass(&app, &id, SMALL_PARTY);
+    let horizon = expedition_cfg(&app).hunt.forecast_horizon_turns;
+    let ledger = drive_raid(&mut app, party, horizon);
+
+    assert!(
+        ledger.reports > 0,
+        "the raid must publish hunt reports at all"
+    );
+    // 1. The waste is real and it is on the report.
+    assert!(
+        ledger.wasted_biomass > 0.0,
+        "a lone hunter on a {}-biomass body leaves most of every kill: killed {}, carried {}",
+        HEAVY_BODIED_HERD.body_mass,
+        ledger.killed_biomass(),
+        ledger.carried_biomass
+    );
+    // …and it delivers: a raid that engaged nothing would report zero waste too.
+    assert!(
+        carried_food(&app, party) > 0.0,
+        "the raid must still bank the windfall it CAN carry — a floor-`0` raid that came home empty \
+         would satisfy the waste claim above vacuously"
+    );
+
+    // 2. Everything it hauled fits in the pack. It never delivers at floor `0` (`done`/`relaunch`
+    //    are both false), so the whole run's carry is one packful.
+    assert!(
+        ledger.carried_biomass <= pack + CARRY_TOLERANCE_BIOMASS,
+        "a floor-`0` raid hauls its pack and no more: carried {} against a pack of {pack}",
+        ledger.carried_biomass
+    );
+    assert!(
+        ledger.killed_biomass() > pack,
+        "…and the fixture must actually exceed it, or the bound above is untested"
+    );
+
+    // 3. The pelts ride on what was CARRIED. Both products come out of one conversion of the same
+    //    carried biomass, so the trade banked is the carried biomass through the trade rate — and
+    //    strictly less than the whole kill's worth.
+    let trade_rate = {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        let registry = app.world.resource::<HerdRegistry>();
+        herd_hunt_yield(registry.find(&id).expect("herd present"), &fauna).trade_goods_per_biomass
+    };
+    let banked = carried_trade(&app, party);
+    assert!(
+        (banked - ledger.carried_biomass * trade_rate).abs() <= TRADE_TOLERANCE,
+        "trade accrues off the CARRIED biomass: banked {banked} against carried {} × {trade_rate}",
+        ledger.carried_biomass
+    );
+    assert!(
+        banked > 0.0 && banked < ledger.killed_biomass() * trade_rate,
+        "…and that is strictly less than the whole kill's worth ({}), which is what an unbounded \
+         carry used to pay",
+        ledger.killed_biomass() * trade_rate
+    );
+}
+
+/// A few `Scalar` quanta of the party's pack, inverted into biomass: the pack is fixed-point and the
+/// report's `carried_biomass` is an `f32` printed to 3 dp, so the two agree to about a quantum.
+const CARRY_TOLERANCE_BIOMASS: f32 = 1.0;
+
+/// The same allowance on the trade account, which is a bare `f32` accumulator against a sum of
+/// 3-dp-rounded report values.
+const TRADE_TOLERANCE: f32 = 0.01;
+
+/// **Denial is unchanged by the carry fix, and the two missions now differ only where they should.**
+///
+/// The carry arm was never the line denial changed (`docs/plan_denial_raid.md` §1: `carried =
+/// min(killed × body_mass, carry_room)` is *identical* for both), so a denial party and a floor-`0`
+/// hunting party of the same size on the same herd must haul the **same** load and bank the **same**
+/// pelts. Before the fix they did not — the hunt hauled its whole kill — and that difference was the
+/// bug, not the mission.
+///
+/// Paired with the liveness half: denial still kills **at least** as much as the hunt does, because
+/// the engagement bound is the line it really drops.
+#[test]
+fn denial_and_a_floor_zero_hunt_account_carry_identically() {
+    let ledger_for = |mission: &dyn Fn(&str) -> ExpeditionMission| {
+        let mut app = placid_world();
+        let (id, herd_pos) = pin_raid_herd(&mut app, HEAVY_BODIED_HERD);
+        let home = spawn_home_band(&mut app, herd_pos);
+        let party = spawn_party(&mut app, home, herd_pos, SMALL_PARTY, mission(&id));
+        let horizon = expedition_cfg(&app).hunt.forecast_horizon_turns;
+        let ledger = drive_raid(&mut app, party, horizon);
+        (
+            ledger,
+            carried_food(&app, party),
+            carried_trade(&app, party),
+        )
+    };
+
+    let (denial, denial_food, denial_trade) = ledger_for(&deny);
+    let (raid, raid_food, raid_trade) = ledger_for(&|id| hunt(id, STRIP_IT_BARE));
+
+    assert!(
+        denial_food > 0.0 && denial_trade > 0.0,
+        "the denial fixture must actually haul something ({denial_food} food, {denial_trade} trade)"
+    );
+    assert_eq!(
+        denial_food, raid_food,
+        "the pack is a carry bound for both missions: denial banks the same food a floor-`0` hunt \
+         does"
+    );
+    assert_eq!(
+        denial_trade, raid_trade,
+        "…and the same pelts, off the same carried biomass"
+    );
+    assert!(
+        (denial.carried_biomass - raid.carried_biomass).abs() <= CARRY_TOLERANCE_BIOMASS,
+        "…and their reports agree: denial carried {}, the raid {}",
+        denial.carried_biomass,
+        raid.carried_biomass
+    );
+    // The liveness half: the missions are still different where they are meant to be.
+    assert!(
+        denial.killed_biomass() >= raid.killed_biomass(),
+        "denial drops the ENGAGEMENT bound, so it never kills less than the hunt: denial {}, raid {}",
+        denial.killed_biomass(),
+        raid.killed_biomass()
+    );
 }
 
 // ---------------------------------------------------------------------------------------------------

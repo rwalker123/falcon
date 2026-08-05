@@ -595,7 +595,7 @@ table PopulationCohortState {
   // a PopulationCohort tagged `Expedition`; these fields are false/""/empty for a normal band.
   // Client-facing: distinct marker glyph/label + awaiting-orders marker state + a Recall affordance.
   isExpedition:bool = false;
-  expeditionMission:string;   // "scout" | "hunt"; empty for normal bands.
+  expeditionMission:string;   // "scout" | "hunt" | "deny"; empty for normal bands.
   expeditionPhase:string;     // "outbound"|"awaiting"|"returning"|"hunting"|"delivering"; empty for normal bands.
   // Persistence-only (rollback restores an in-flight expedition + its unreported findings):
   homeBandEntity:ulong = 0;   // the real band that outfitted this party (entity bits).

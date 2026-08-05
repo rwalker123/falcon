@@ -291,11 +291,7 @@ pub fn advance_expeditions(
                     // The **species'** food rate, not the global one: an inedible quarry never fills
                     // the pack, so the room converts to an unbounded biomass collection.
                     let scout_yield = herd_hunt_yield(&herds.herds[idx], &fauna);
-                    let carry_room_biomass = if scout_yield.edible() {
-                        room.to_f32() / scout_yield.provisions_per_biomass
-                    } else {
-                        f32::INFINITY
-                    };
+                    let carry_room = carry_room_biomass(room, &scout_yield);
                     // Composed BEFORE the mutable borrow — the seed reads the herd's id, and the
                     // take needs the herd mutably.
                     let seed = fauna::retreat_seed(
@@ -316,7 +312,7 @@ pub fn advance_expeditions(
                         &hunting_party,
                         &fauna,
                         &ladder,
-                        carry_room_biomass,
+                        carry_room,
                         fauna::HuntDraw::Seeded(seed),
                     );
                     let take = outcome.take;
@@ -497,31 +493,18 @@ pub fn advance_expeditions(
                         // `provisions_per_biomass`), so a nearly-full pack kills fewer animals rather
                         // than slaughtering one it cannot haul.
                         //
-                        // Two INDEPENDENT reasons the cap does not bite, and they are different kinds
-                        // of thing — keep them apart:
-                        // - an **inedible** species (a wolf) never fills a *food* pack, so there is no
-                        //   room to run out of. That is a **product** fact, and it is what keeps
-                        //   **nothing on the denial path dividing by a zero food rate** — a wolf is a
-                        //   legitimate denial target (`docs/plan_denial_raid.md`).
-                        // - a floor-`0` **hunt** ignores the pack entirely: driving the herd extinct
-                        //   is the point and the meat is incidental. That is an **intensity** fact,
-                        //   and it is deliberately NOT expressed as "denial delivers nothing" — since
-                        //   #337 a strip-it-bare raid banks the windfall it can carry.
-                        //
-                        // **A DENIAL raid is neither**, and that is the whole distinction §0 could not
-                        // draw with a number: it keeps the pack as a bound on what it **hauls** and
-                        // drops it only as a bound on what it **engages** (`stop`). So the room is
-                        // real for it, and the meat it cannot carry is reported as waste rather than
-                        // vanishing into an unbounded `carried`.
-                        let carry_room_biomass = if !quarry_yield.edible()
-                            || (floor <= STRIP_IT_BARE
-                                && stop == fauna::EngagementStop::WhenPackFull)
-                        {
-                            f32::INFINITY
-                        } else {
-                            (cap - cohort.stores.get(FOOD)).max(scalar_zero()).to_f32()
-                                / quarry_yield.provisions_per_biomass
-                        };
+                        // **EVERY mission passes its real pack** — the floor does not enter here at
+                        // all. A floor-`0` raid used to pass [`NO_CARRY_BOUND`] on the premise that
+                        // driving the herd extinct makes the meat incidental, which recorded the party
+                        // as hauling home everything it killed: `wasted_biomass = 0` on its hunt report
+                        // and pelts accrued off the whole kill. **How deep a raid draws the herd and
+                        // how much it can haul are separate questions**, and denial is what made the
+                        // separation explicit: it drops the pack as a bound on what it **engages**
+                        // (`stop`) and keeps it as a bound on what it **hauls**. Only an **inedible**
+                        // quarry is unbounded here, and that is a fact about the *product* — see
+                        // [`carry_room_biomass`].
+                        let carry_room =
+                            carry_room_biomass(cap - cohort.stores.get(FOOD), &quarry_yield);
                         // The quarry's engagement/retreat/fight dials, and the per-event seed —
                         // composed BEFORE the mutable borrow, exactly as the scout replenish does.
                         let engage_rate = fauna.engage_rate_for(&herds.herds[idx].species);
@@ -548,7 +531,7 @@ pub fn advance_expeditions(
                             herd_biomass_before,
                             carrying_capacity,
                             body_mass,
-                            carry_room_biomass,
+                            carry_room,
                             engage_rate,
                             wariness,
                             quarry_fight,
@@ -867,6 +850,40 @@ pub fn advance_expeditions(
 /// band, so it carries no morale/discontent output modifier (unlike the band Hunt arm, which passes
 /// `output_multiplier(cohort, ..)`). Named so the forecast and the take can't disagree.
 const EXPEDITION_OUTPUT_MULTIPLIER: f32 = 1.0;
+
+/// **No carry bound at all**, the sentinel [`fauna::quantise_animal_take`] reads as *"the pack cannot
+/// be the thing that stops this"*.
+///
+/// It has exactly **one** meaning on the expedition path — an **INEDIBLE** quarry, whose
+/// `provisions_per_biomass` is `0`, so there is no *food* pack to fill and nothing may divide through
+/// the rate (`YieldAccounts::ratio_axis`'s rule: never convert through a component you have not
+/// established is positive). That is a fact about the **product**.
+///
+/// **It is never an INTENSITY fact.** A floor-`0` raid used to pass it too, on the premise that
+/// driving a herd extinct makes the meat incidental — which recorded the party as hauling home
+/// *everything it killed*, so its hunt report published `wasted_biomass = 0` for a raid that left a
+/// range full of carcasses and its [`Expedition::carried_trade`] accrued pelts off the whole kill.
+/// **When a party stops engaging and how much it can haul are separate questions**
+/// ([`fauna::EngagementStop`], `docs/plan_denial_raid.md` §1): denial answers the first and leaves
+/// carry alone, and carry is never unbounded for a real party at any floor.
+const NO_CARRY_BOUND: f32 = f32::INFINITY;
+
+/// **The biomass a party still has room to haul home** — the one conversion from pack room to a
+/// carry bound, shared by every take on the expedition path (the scout's roadside kill, the live
+/// `Hunting` arm, and both forward simulations), so a forecast cannot bound the carry differently
+/// from the take it projects.
+///
+/// `room` is the pack's remaining **provisions**; the species' own `provisions_per_biomass` inverts
+/// it into the biomass that fits, so a nearly-full pack kills fewer animals rather than slaughtering
+/// one it cannot seat. An inedible quarry answers [`NO_CARRY_BOUND`] — see there for why that is the
+/// only case that does.
+fn carry_room_biomass(room: Scalar, hunt_yield: &HuntYield) -> f32 {
+    if hunt_yield.edible() {
+        room.max(scalar_zero()).to_f32() / hunt_yield.provisions_per_biomass
+    } else {
+        NO_CARRY_BOUND
+    }
+}
 
 /// Bank everything a party is carrying in [`Expedition::carried_trade`] into the **home band's**
 /// store and empty the pack, returning what was credited.
@@ -1438,9 +1455,12 @@ pub(crate) struct RaidLoad {
 ///   inert there for the same reason (a wolf never fills a *food* pack; its raid ends on the floor).
 ///   This is `YieldAccounts::ratio_axis`'s rule restated for a *cap*: never convert through a
 ///   component you have not established is positive.
-/// - **[`STRIP_IT_BARE`]** (an *intensity* fact): a floor-`0` raid grinds the herd to extinction and
-///   the `Hunting` arm never consults the pack at all (`done`/`relaunch` are both `false` there), so
-///   a target would stop a raid the live path does not stop.
+/// - **[`STRIP_IT_BARE`]** (an *intensity* fact): a floor-`0` raid grinds the herd to extinction, so
+///   its completion never consults the party-side stop at all (`done`/`relaunch` are both `false`
+///   there) and a target would end a raid the live path does not end. The pack is still a real
+///   **carry** bound for it — that is a different question, and conflating the two is what made a
+///   floor-`0` raid report itself hauling home everything it killed (see [`NO_CARRY_BOUND`]) — so a
+///   target honoured here would silently shrink the haul instead of shortening the trip.
 ///
 /// A fill target is therefore inert on both, and **denial** — the mission with the carry bound
 /// removed (`docs/plan_denial_raid.md`) — is where it will need a meaning of its own.
@@ -1742,16 +1762,13 @@ fn hunt_trip_forecast_seeded(
         }
 
         // Population: the `Hunting` arm's greedy take, through the same helper, bounded by the carry
-        // room left in the pack — converted back into biomass **exactly** as the arm converts it,
-        // including both of its unbounded cases, or the forecast would quote a different raid than
-        // the take: **Eradicate** ignores the pack (an intensity fact) and an **inedible** quarry
-        // never fills a *food* pack (a product fact). The second is stated rather than left to the
-        // `x / 0.0 = inf` the division would otherwise produce.
-        let carry_room_biomass = if floor <= STRIP_IT_BARE || !delivers_food {
-            f32::INFINITY
-        } else {
-            (cap - larder).max(scalar_zero()).to_f32() / hunt_yield.provisions_per_biomass
-        };
+        // room left in the pack — converted back into biomass through the **same**
+        // [`carry_room_biomass`] the arm converts it with, so the projection cannot bound the haul
+        // differently from the take it projects. The floor is not a term in it at any depth: a
+        // floor-`0` raid hauls its real pack like every other, and only an **inedible** quarry is
+        // unbounded (a *product* fact, stated rather than left to the `x / 0.0 = inf` the division
+        // would otherwise produce).
+        let carry_room = carry_room_biomass(cap - larder, &hunt_yield);
         let outcome = expedition_take_biomass(
             workers,
             labor.hunt.per_worker_biomass_capacity,
@@ -1759,7 +1776,7 @@ fn hunt_trip_forecast_seeded(
             quarry.biomass,
             capacity,
             quarry.body_mass,
-            carry_room_biomass,
+            carry_room,
             engage_rate,
             wariness,
             quarry_fight,
@@ -1816,16 +1833,26 @@ fn hunt_trip_forecast_seeded(
         // empty pack), never less, so this projection is a **lower bound** on a near-band raid. Before
         // issue #441 the same gate made Sustain/Surplus *end* the trip, so the forecast erred in the
         // unhelpful direction — quoting a trip that came home early with less than promised.
+        //
+        // **A floor-`0` raid has NO party-side stop**, which is what `raid_ends_on_its_pack` gates:
+        // the live arm answers `(done, relaunch) = (false, false)` there and grinds on until the
+        // lost-herd guard, so a projection that came home on a full pack would quote a homecoming
+        // the raid does not make — and, worse, would stop counting the moment the party stops
+        // *delivering*, hiding every carcass it goes on to leave on the range. The herd-side stop is
+        // gated on the same fact one line below, and always was.
+        let raid_ends_on_its_pack = floor > STRIP_IT_BARE;
         let food_per_animal = hunt_yield
             .apply(quarry.body_mass, EXPEDITION_OUTPUT_MULTIPLIER)
             .provisions;
-        let pack_cannot_seat_another =
-            larder > scalar_zero() && (cap - larder).to_f32() < food_per_animal;
+        let pack_full = raid_ends_on_its_pack && larder >= cap;
+        let pack_cannot_seat_another = raid_ends_on_its_pack
+            && larder > scalar_zero()
+            && (cap - larder).to_f32() < food_per_animal;
         // Mirrors the live arm's completion exactly: Eradicate's floor is `0`, so it has no standing
         // surplus to spend and ends via the herd-lost break above instead.
         let surplus_spent =
             floor > STRIP_IT_BARE && (quarry.biomass - floor_biomass) < quarry.body_mass;
-        if larder >= cap || pack_cannot_seat_another || surplus_spent {
+        if pack_full || pack_cannot_seat_another || surplus_spent {
             return HuntTripForecast {
                 turns_to_fill: Some(turn),
                 delivers_food,
@@ -2074,15 +2101,11 @@ fn denial_projection_at(
             };
         }
 
-        // The pack's remaining room, converted back into biomass exactly as the live arm converts
-        // it. **Never divided through a food rate that has not been established positive** — an
-        // inedible quarry is a legitimate denial target, and its food pack is inert rather than
-        // instantly full.
-        let carry_room_biomass = if hunt_yield.edible() {
-            (cap - larder).max(scalar_zero()).to_f32() / hunt_yield.provisions_per_biomass
-        } else {
-            f32::INFINITY
-        };
+        // The pack's remaining room, through the same [`carry_room_biomass`] the live arm and the
+        // hunt's projection use. **A denial party's pack is a real carry bound** — only its
+        // *engagement* is unbounded (`EngagementStop::Never` below) — so this is the ordinary
+        // conversion, and an inedible quarry is unbounded here for the ordinary *product* reason.
+        let carry_room = carry_room_biomass(cap - larder, &hunt_yield);
         let outcome = expedition_take_biomass(
             workers,
             labor.hunt.per_worker_biomass_capacity,
@@ -2091,7 +2114,7 @@ fn denial_projection_at(
             quarry.biomass,
             capacity,
             quarry.body_mass,
-            carry_room_biomass,
+            carry_room,
             engage_rate,
             wariness,
             quarry_fight,

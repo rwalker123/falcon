@@ -443,9 +443,12 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 > - **A floor-`0` take pays a WINDFALL**, and the retired `delivers_food` predicate is gone (not adjusted).
 >   Its premise — *"denial carries nothing home"* — is what the arc reverses: denial is the END STATE
 >   (the species is gone, for you and everyone else), not a promise the carcasses were thrown away.
->   Its readers now ask the **species** (`HuntYield::edible`); the two *intensity* facts it smuggled
->   (the strip case ignores the pack's carry cap, and has no escapement floor to spend) are stated as
->   `floor <= STRIP_IT_BARE` at their two sites in `systems::expeditions` — a number, not a variant.
+>   Its readers now ask the **species** (`HuntYield::edible`); the *intensity* fact it smuggled — the
+>   strip case has no escapement floor to spend, so no party-side stop ends its trip — is stated as
+>   `floor <= STRIP_IT_BARE` at the completion in `systems::expeditions` (the live arm and the
+>   projection alike), a number rather than a variant. **It never meant "ignores the pack's carry
+>   cap"**: a floor-`0` party hauls its real pack like every other, and the spell where it did not is
+>   why its waste read `0` — see `expeditions.md` → "Denial is a MISSION, not a floor".
 >   `FollowPolicy::Eradicate` is deleted, so the old `matches!(policy, Eradicate)` spelling this file
 >   carried would not compile.
 >
