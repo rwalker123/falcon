@@ -536,10 +536,15 @@ const WHOLE_UNIT_EPSILON: f32 = 1e-4;
 ///
 /// # The invariant that keeps it honest
 ///
-/// [`DamageLedger::pending`] is always **below one body's `durability`** and never above what the
-/// units actually standing there could soak: whole units are handed back the moment their damage is
-/// complete, and a blow struck at bodies that are not there falls on the ground rather than being
-/// banked and spent on the next thing that walks past.
+/// [`DamageLedger::pending`] is always **below one body's `durability`** — whole units are handed
+/// back the moment their damage is complete — and no turn may add more to it than the units actually
+/// standing there could soak, so a blow struck at bodies that are not there falls on the ground
+/// rather than being banked and spent on the next thing that walks past.
+///
+/// **The cap is on each turn's blow, not on the running bank**, and the difference is the whole
+/// mechanism: capping the bank at `standing × durability` would make a `standing` under one body a
+/// permanent zero rather than a slow kill (see [`DamageLedger::strike`]), which is the one shape this
+/// type exists to rule out.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct DamageLedger {
     /// Damage banked toward the next body, always `< durability`.
@@ -564,8 +569,27 @@ impl DamageLedger {
     ///
     /// Whole units, because the caller that needs an accumulator at all is the one that cannot spend
     /// a fraction — you cannot take half a mammoth home, and a fractional kill silently discarded
-    /// every turn is exactly the leak this type closes. Excess beyond what the `standing` units could
-    /// soak is dropped, the same clamp [`units_brought_down`] applies.
+    /// every turn is exactly the leak this type closes.
+    ///
+    /// # THIS TURN'S BLOW is clamped to what is standing there; the BANK is not
+    ///
+    /// A blow struck at bodies that are not there falls on the ground, so the incoming `damage` is
+    /// capped at `standing × durability` — the same clamp [`units_brought_down`] applies, so the two
+    /// still agree about a herd of one. What is **not** capped is `pending`, because clamping the
+    /// *running total* makes the remainder this method promises to keep unkeepable the moment
+    /// `standing` falls below one body: `standing × durability < durability` forces
+    /// `floor(total / durability) == 0` on **every** turn, whatever the damage and however long the
+    /// party keeps at it. The bank is then re-earned and re-discarded for ever, and the accumulator —
+    /// whose whole purpose is that a sub-threshold fight completes *eventually* — silently guarantees
+    /// that it never does.
+    ///
+    /// **A `standing` below one body is a FORECAST, not an impossible herd.** A live retreat draws
+    /// whole animals ([`crate::fauna::animals_that_stay`] under [`crate::fauna::HuntDraw::Seeded`]),
+    /// but a projection reads the same binomial's **mean** — so a party working three wary goats
+    /// presents `standing = 1.2` one turn and `0.8` the next. Banking across those turns is what
+    /// makes the projected kill rate equal the expectation the live take pays; clamping the total
+    /// made every such projection report a raid that kills nothing, for ever — a
+    /// `DenialOutcome::Repelled` on a herd a real party erases in two turns.
     pub fn strike(&mut self, damage: f32, profile: &CombatStats, standing: f32) -> f32 {
         let damage = damage.max(0.0);
         if damage > 0.0 {
@@ -573,7 +597,7 @@ impl DamageLedger {
         }
         let durability = profile.durability.max(DURABILITY_EPS);
         let soakable = standing.max(0.0) * durability;
-        let total = (self.pending + damage).min(soakable);
+        let total = self.pending + damage.min(soakable);
         let down = (total / durability * (1.0 + WHOLE_UNIT_EPSILON)).floor();
         self.pending = (total - down * durability).max(0.0);
         down
@@ -1176,6 +1200,50 @@ mod tests {
         let down = ledger.strike(MEGAFAUNA_DURABILITY * 50.0, &body, 1.0);
         assert_eq!(down, 1.0, "one animal standing, one animal down");
         assert_eq!(ledger.pending(), 0.0, "and nothing carried over");
+    }
+
+    /// **A FRACTIONAL standing count still completes a body, at the rate it implies.** The root
+    /// cause of the denial forecast reporting *"never collapses"* on a herd a real party erased in
+    /// two turns: a projection's retreat reads the binomial's **mean**, so it presents a `standing`
+    /// below one animal, and clamping the running bank to `standing × durability` put that bank
+    /// permanently under one body's worth — `down == 0` on every turn, for any damage, for ever.
+    ///
+    /// The rate is the assertion, not merely "it eventually kills something": at
+    /// `standing = 0.8` the party lands `0.8 × durability` of deliverable damage a turn, so it must
+    /// bring down **four** bodies in five turns, which is exactly the expectation a live seeded
+    /// retreat pays over the same five turns.
+    #[test]
+    fn a_ledger_completes_a_body_against_a_fractional_standing_count() {
+        const STANDING: f32 = 0.8;
+        /// Five turns is the smallest window over which `0.8` bodies a turn is a whole number of
+        /// bodies — so it is the shortest run that can assert a *rate* rather than an eventuality.
+        const TURNS: u32 = 5;
+        let body = CombatStats {
+            durability: MEGAFAUNA_DURABILITY,
+            ..CombatStats::default()
+        };
+        // Far more than the standing fraction can soak, so what is banked is the clamp, not the blow.
+        let overwhelming = MEGAFAUNA_DURABILITY * 50.0;
+        let mut ledger = DamageLedger::default();
+        // The first turn is the accumulator doing its job rather than a fraction rounded up to a
+        // body: nothing goes down, and the bank is real.
+        assert_eq!(
+            ledger.strike(overwhelming, &body, STANDING),
+            0.0,
+            "less than one body is standing there, so the first turn brings nothing down"
+        );
+        assert!(ledger.pending() > 0.0, "…but the bank it earned is real");
+        // The turn above contributed nothing, so the run below is the remaining `TURNS - 1`.
+        let mut down = 0.0_f32;
+        for _ in 1..TURNS {
+            down += ledger.strike(overwhelming, &body, STANDING);
+        }
+        assert_eq!(
+            down,
+            (STANDING * TURNS as f32).floor(),
+            "a fractional engagement brings down bodies at the rate it implies — not zero for ever, \
+             and not one a turn"
+        );
     }
 
     /// **Banking zero forever is still zero** — the gate is untouched by the accumulator, which is

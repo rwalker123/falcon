@@ -1406,10 +1406,14 @@ pub enum HuntTripBound {
     /// home with whatever it has.
     Floor,
     /// The herd was driven under its `extinction_floor` and is **gone**; there is nothing left to
-    /// raid.
+    /// raid. **It carries a completion turn like every other stop** — the live arm's lost-herd guard
+    /// turns the party for home in the same turn's Population stage that Logistics despawned the herd
+    /// in, so the raid *did* end, by emptying the range rather than by filling a pack. This is the
+    /// ordinary end of a floor-`0` raid, which has no party-side stop at all.
     HerdLost,
     /// **None of the above within `hunt.forecast_horizon_turns`** — the raid was still going when the
-    /// projection ran out, which is what a `turns_to_fill` of `None` means.
+    /// projection ran out. This is the **only** bound with no completion turn, and therefore exactly
+    /// what a `turns_to_fill` of `None` means.
     Horizon,
 }
 
@@ -1505,8 +1509,10 @@ pub struct HuntTripForecast {
     /// greedy raid ends when the pack fills **OR** the standing surplus is spent (the herd sits at the
     /// mission's floor) **OR** the herd is lost — whichever comes first — so this is *"turns until the
     /// party comes home"*, **not** *"turns until the pack is full"* (a full-herd Sustain raid for a big
-    /// party leaves `K/2` with a partial pack, and that is a *successful* short trip). `None` = the raid
-    /// never completed within `hunt.forecast_horizon_turns`; the caller distinguishes the honest cases
+    /// party leaves `K/2` with a partial pack, and that is a *successful* short trip). **A raid that
+    /// ends by driving the herd extinct reports its turn like any other** — see
+    /// [`HuntTripBound::HerdLost`]; `None` is reserved for the raid that was still going when the
+    /// horizon ran out, which is [`HuntTripBound::Horizon`] and nothing else. The caller distinguishes the honest cases
     /// via the other fields: it **brings home no food** (`delivers_food == false` — an *inedible*
     /// quarry, e.g. a wolf), the herd had **no surplus to take** (`animals_taken == 0` — at/below the
     /// mission's floor), or it only trickle-fills off regrowth (a slow breeder a big party can neither
@@ -1547,10 +1553,10 @@ pub struct HuntTripForecast {
     /// *when*: the two together are the readout the fill target turns on, because the same "4 turns"
     /// means "you got the animals you asked for" or "the herd ran out" depending on this.
     ///
-    /// [`HuntTripBound::Horizon`] is exactly the `turns_to_fill == None` case, save for
-    /// [`HuntTripBound::HerdLost`], which also reports no completion turn: the projection stops where
-    /// `advance_herds` would despawn the herd, and claims no homecoming turn the live path does not
-    /// produce either.
+    /// [`HuntTripBound::Horizon`] is **exactly** the `turns_to_fill == None` case, with no exception:
+    /// [`HuntTripBound::HerdLost`] reports the turn the herd went, because the live arm's lost-herd
+    /// guard turns the party for home on that same turn. A raid that finishes by emptying the range
+    /// finishes; only a raid that was still going when the projection ran out has no turn to give.
     pub bound: HuntTripBound,
 }
 
@@ -1750,6 +1756,11 @@ fn hunt_trip_forecast_seeded(
     // Which stop the projection ran into. It starts at the honest "still going when the projection
     // ran out" and is overwritten by whichever of the raid's stops fires first.
     let mut bound = HuntTripBound::Horizon;
+    // The turn the party comes home on, for the stop that `break`s out of the loop rather than
+    // returning from inside it. `None` until one fires — and it stays `None` for exactly one stop,
+    // [`HuntTripBound::Horizon`], which is what makes `turns_to_fill == None` and "ran out of
+    // horizon" the same statement.
+    let mut completed_on: Option<u32> = None;
 
     for turn in 1..=horizon {
         // Logistics: the herd's ecology moves first (regrowth, or the depensation decline), exactly
@@ -1757,7 +1768,18 @@ fn hunt_trip_forecast_seeded(
         fauna::regrow_biomass(&mut quarry, fauna);
         if quarry.biomass <= ecology.extinction_floor * capacity {
             // `advance_herds` would despawn it here — a lost herd ends the raid.
+            //
+            // **And it ends it ON THIS TURN, which is a completion like any other.** The live arm's
+            // lost-herd guard flips the party to `Returning` the moment `HerdRegistry::find` comes
+            // back empty, and that happens in the *same* turn's Population stage as the Logistics
+            // despawn — so the party does come home, and there is a turn to name. Reporting `None`
+            // here (as this branch used to) published the wire's "never completes" sentinel for the
+            // one raid whose whole purpose is to finish by emptying the range: a floor-`0` row read
+            // as a doomed trip while the sim ran it to a successful extinction. The denial twin
+            // ([`DenialOutcome::HerdLost`]) always reported its turn; this is the hunt saying the
+            // same thing.
             bound = HuntTripBound::HerdLost;
+            completed_on = Some(turn);
             break;
         }
 
@@ -1877,7 +1899,10 @@ fn hunt_trip_forecast_seeded(
     }
 
     HuntTripForecast {
-        turns_to_fill: None,
+        // `Some` when the loop broke on a **lost herd** (the party comes home on that turn), `None`
+        // when it simply ran out of horizon. `bound` names which, and the two can no longer be
+        // confused: `turns_to_fill == None` is now exactly [`HuntTripBound::Horizon`].
+        turns_to_fill: completed_on,
         delivers_food,
         delivers_trade,
         first_turn_provisions,
@@ -1885,8 +1910,6 @@ fn hunt_trip_forecast_seeded(
         delivered_food,
         wasted_food,
         delivered_trade,
-        // Either the loop ran out of horizon, or it broke on a lost herd — both leave
-        // `turns_to_fill` at `None`, and the bound is what tells them apart.
         bound,
     }
 }

@@ -16,9 +16,9 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 
 use core_sim::{
-    advance_expeditions, advance_herds, build_headless_app, denial_forecast, herd_capacity,
-    herd_ecology, herd_hunt_yield, recapture_snapshot_in_place, scalar_from_f32, scalar_one,
-    scalar_zero, BandEquipment, CombatConfigHandle, CommandEventLog, DenialOutcome,
+    advance_expeditions, advance_herds, advance_tick, build_headless_app, denial_forecast,
+    herd_capacity, herd_ecology, herd_hunt_yield, recapture_snapshot_in_place, scalar_from_f32,
+    scalar_one, scalar_zero, BandEquipment, CombatConfigHandle, CommandEventLog, DenialOutcome,
     EquipmentConfigHandle, Expedition, ExpeditionConfig, ExpeditionConfigHandle, ExpeditionMission,
     ExpeditionPhase, FactionId, FaunaConfigHandle, GenerationId, HerdRegistry, HerdTelemetry,
     HuntingParty, LaborAllocation, LaborConfigHandle, LocalStore, MoraleCause, PopulationCohort,
@@ -99,6 +99,45 @@ const BANDED_HERD: RaidQuarry = RaidQuarry {
     regrowth_rate: 0.04,
 };
 
+/// **The quarry of the tiny-`K` fixture, named rather than retagged** — `Crag Goats`
+/// (`wariness 0.60`, `engage_rate 1.5`, `durability 12`, `body_mass 6`). The defect it pins lives in
+/// the *retreat*, which is resolved off the species' display name, and it only appears where
+/// `engaged × (1 − wariness)` falls **below one animal** — so the species' own numbers are the
+/// fixture and [`HARMLESS_QUARRY`]'s cannot stand in for them.
+///
+/// It is still safe to measure a raid on: a goat's `attack × ferocity` is `0.12`, under a person's
+/// `defense 1`, so the gate zeroes it and the party takes **no fatalities** however long the raid
+/// runs (the baseline hazard is `wounded`-only). The head count is constant, so this measures the
+/// raid rather than attrition — the same property [`HARMLESS_QUARRY`] is chosen for.
+const WARY_TINY_QUARRY: &str = "Crag Goats";
+
+/// **The reported herd: three animals on barren range, so `K` IS the herd.** Not a scaled-down
+/// version of the fixtures above — the tiny-`K` regime is its own thing, and it is where the defect
+/// reached play instead of a test: at three animals a party's whole engagement is the herd, the
+/// retreat's expectation falls under one animal, and `collapse_fraction × K` (`2.7`) is under **half
+/// a body**, so reaching the line means killing essentially every goat.
+const BARREN_RANGE_HERD: RaidQuarry = RaidQuarry {
+    // Crag Goats' own body — three of them make the whole 18-biomass stock.
+    body_mass: 6.0,
+    carrying_capacity: 18.0,
+    biomass_fraction: 1.0,
+    // The species' own `r`. Near `K` this is under one biomass a turn — a sixth of a goat — which is
+    // the arithmetic that makes "breeds back faster than this party kills" the wrong verdict.
+    regrowth_rate: 0.22,
+};
+
+/// The party of the reported case — eight hunters, enough to engage every goat the herd holds every
+/// turn (`8 × engage_rate 1.5 = 12`, capped by the three that exist).
+const REPORTED_PARTY_WORKERS: u32 = 8;
+
+/// **How long a raid on [`BARREN_RANGE_HERD`] may take before it is stalled rather than grinding**,
+/// as a divisor of `hunt.forecast_horizon_turns`. A party that reaches every animal in the herd every
+/// turn and kills roughly one goat every other turn cannot need a quarter of the projection's whole
+/// length; anything past that is the projection failing to make progress, which is the shape of the
+/// defect. Expressed against the horizon rather than as a turn count so it tracks the one lever that
+/// sets the projection's length.
+const STALLED_HORIZON_DIVISOR: u32 = 4;
+
 /// **The whole crew** for the range fixture, because the reported band is a property of force size:
 /// the retreat is binomial, so a big party's draw is tight around its mean and a small party's is
 /// all-or-nothing (`docs/plan_hunt_through_combat.md` §4.7). A four-hunter party on this herd has a
@@ -134,6 +173,13 @@ fn wary_world() -> App {
 /// (`engage_rate`, `combat`, `wariness`) are resolved off the **display name**, while `body_mass`
 /// and `carrying_capacity` live on the herd — so this is the one place a fixture states all four.
 fn pin_raid_herd(app: &mut App, quarry: RaidQuarry) -> (String, UVec2) {
+    pin_raid_herd_of(app, HARMLESS_QUARRY, quarry)
+}
+
+/// [`pin_raid_herd`] for a **named** species — a fixture about the *retreat* has to say which animal
+/// it means, because `wariness` and `engage_rate` are resolved off the display name and no amount of
+/// per-herd tuning reaches them.
+fn pin_raid_herd_of(app: &mut App, species: &str, quarry: RaidQuarry) -> (String, UVec2) {
     let id = {
         let registry = app.world.resource::<HerdRegistry>();
         registry
@@ -153,7 +199,7 @@ fn pin_raid_herd(app: &mut App, quarry: RaidQuarry) -> (String, UVec2) {
     herd.id = PINNED_HERD_ID.to_string();
     herd.route = vec![herd.current_pos];
     herd.step_index = 0;
-    herd.species = HARMLESS_QUARRY.to_string();
+    herd.species = species.to_string();
     herd.body_mass = quarry.body_mass;
     herd.carrying_capacity = quarry.carrying_capacity;
     herd.biomass = quarry.carrying_capacity * quarry.biomass_fraction;
@@ -300,10 +346,19 @@ fn carried_food(app: &App, party: bevy::prelude::Entity) -> f32 {
 }
 
 /// One sim turn as the raid sees it: the herd's ecology (Logistics), then the party's take
-/// (Population) — the same pair, in the same order, that both forecasts simulate.
+/// (Population) — the same pair, in the same order, that both forecasts simulate — and then the
+/// tick, which `run_turn` advances in the Snapshot stage at the end of every turn.
+///
+/// **Advancing the tick is load-bearing on a WARY herd, not bookkeeping.** The live retreat draws
+/// from `fauna::retreat_seed(map_seed, tick, herd_id, workers)`, so a harness that leaves the tick
+/// frozen makes every turn re-draw the **same sample**: a party that lost the first roll loses it
+/// again for as many turns as the fixture runs. That is invisible on a big engagement (dozens of
+/// animals average out whatever the seed is) and total on a small one — on a three-animal herd the
+/// raid either erased it immediately or never touched it, purely by the map seed.
 fn drive_turn(app: &mut App) {
     app.world.run_system_once(advance_herds);
     app.world.run_system_once(advance_expeditions);
+    app.world.run_system_once(advance_tick);
 }
 
 fn expedition_cfg(app: &App) -> std::sync::Arc<ExpeditionConfig> {
@@ -519,6 +574,102 @@ fn a_wary_herd_resists_denial_and_the_forecast_says_so() {
         "a full party must still drive the wary herd past recovery ({:?}) — otherwise the repelled \
          reading above is denial being broken, not the herd resisting",
         overwhelming.outcome
+    );
+}
+
+/// **A TINY herd is not a small version of a big one, and the forecast used to break only there.**
+/// The reported case: eight hunters on three Crag Goats standing on barren range, told *"Crag Goats
+/// breeds back faster than this party kills — it is never pushed past recovery"* while a driven raid
+/// erased the herd in two turns.
+///
+/// The mechanism was the fight's cross-turn damage bank. A projection cannot draw the retreat, so it
+/// reads the binomial's **mean** — `3 engaged × (1 − 0.60) = 1.2` animals, and `0.8` once the herd is
+/// down to two — and `combat::DamageLedger::strike` clamped its running bank to
+/// `standing × durability`. Below one standing animal that ceiling sits under one body's durability,
+/// so the projection banked `0.8 × 12` damage and threw it away every turn, for sixty turns, and
+/// reported a party that reached every animal in the herd as **repelled by its regrowth**.
+///
+/// Three assertions, and the third is what stops the fix from being "delete the verdict":
+/// 1. the reported case reaches [`DenialOutcome::PastRecovery`] promptly, not at the horizon;
+/// 2. a **driven** raid on the same herd in the same world also drives it past recovery — the
+///    forecast is pinned to the sim, never the reverse;
+/// 3. a party that genuinely cannot outpace a herd's regrowth is **still** told
+///    [`DenialOutcome::Repelled`].
+#[test]
+fn a_tiny_wary_herd_is_erased_and_the_forecast_no_longer_calls_it_repelled() {
+    // 1. The forecast on the reported fixture.
+    let mut app = wary_world();
+    let (id, herd_pos) = pin_raid_herd_of(&mut app, WARY_TINY_QUARRY, BARREN_RANGE_HERD);
+    let line = point_of_no_return(&app, &id);
+    assert!(
+        line < BARREN_RANGE_HERD.body_mass,
+        "the fixture must be in the regime that reached play: the collapse line ({line}) is under \
+         ONE animal, so crossing it means killing essentially the whole herd"
+    );
+
+    let horizon = expedition_cfg(&app).hunt.forecast_horizon_turns;
+    let stalled_after = horizon / STALLED_HORIZON_DIVISOR;
+    let reported = forecast(&app, &id, REPORTED_PARTY_WORKERS);
+    assert!(
+        reported.outcome.succeeded(),
+        "eight hunters reach every goat this range holds — the verdict must not be {:?}",
+        reported.outcome
+    );
+    let turns = reported
+        .turns_to_collapse
+        .expect("a succeeding outcome names the turn the party comes home");
+    assert!(
+        turns <= stalled_after,
+        "the raid must be projected to finish in a handful of turns, not grind to the horizon \
+         (took {turns}, stalled past {stalled_after})"
+    );
+    assert!(
+        reported.animals_killed > 0,
+        "liveness — a projection that killed nothing would satisfy no reading of this mission"
+    );
+
+    // 2. The same herd, the same world, raided for real. The forecast answers for the sim.
+    let home = spawn_home_band(&mut app, herd_pos);
+    let party = spawn_party(&mut app, home, herd_pos, REPORTED_PARTY_WORKERS, deny(&id));
+    let mut driven = None;
+    for turn in 1..=horizon {
+        drive_turn(&mut app);
+        if herd_biomass(&app, &id).is_none_or(|biomass| biomass < line) {
+            driven = Some(turn);
+            break;
+        }
+    }
+    let driven = driven.unwrap_or_else(|| {
+        panic!(
+            "a driven raid must push this herd past recovery; it stood at {:?} after {horizon} turns",
+            herd_biomass(&app, &id)
+        )
+    });
+    assert_ne!(
+        phase(&app, party),
+        Some(ExpeditionPhase::Hunting),
+        "…and the party walks away on the turn it crosses the line (turn {driven})"
+    );
+    // **The two turn counts are deliberately NOT compared.** The projection makes no draw and
+    // reports the expectation; this is one seeded run, and on an engagement of three animals a
+    // single run is a *sample* with a long tail (measured: 2 to ~22 turns across map seeds). What
+    // has to agree — and is what the defect got wrong — is the KIND of answer: a raid that
+    // completes, against a raid reported never to.
+
+    // 3. The verdict still fires. A party that really cannot outpace a herd's regrowth is told so —
+    //    otherwise the fix above could have been "never say repelled".
+    let mut resisting = wary_world();
+    let (resisting_id, _) = pin_raid_herd(&mut resisting, RESISTING_HERD);
+    let repelled = forecast(&resisting, &resisting_id, LONE_HUNTER);
+    assert_eq!(
+        repelled.outcome,
+        DenialOutcome::Repelled,
+        "a lone hunter against a fast-breeding herd forty times this size is still repelled — the \
+         verdict must survive the fix, or the fix deleted it"
+    );
+    assert_eq!(
+        repelled.turns_to_collapse, None,
+        "and a repelled raid still names no collapse turn"
     );
 }
 

@@ -111,8 +111,22 @@ future TOE-vs-TOE battle bank a multi-turn fight the same way instead of each gr
   integral of a rate. *A stock must not bank; a rate must.* The long form lives on `DamageLedger`
   itself, because that is the objection a reader will raise at the state, not at a design doc.
 - **`strike(damage, profile, standing) -> whole units down`** — banks the damage, hands back only
-  **completed** bodies and keeps the remainder, clamped so a blow struck at bodies that are not there
-  cannot be banked and spent on the next thing that walks past. Invariant: `pending < durability`.
+  **completed** bodies and keeps the remainder. **THIS TURN'S BLOW is clamped to `standing ×
+  durability`, the BANK is not**, so a blow struck at bodies that are not there cannot be banked and
+  spent on the next thing that walks past, while the unfinished remainder still survives the turn.
+  Invariant: `pending < durability`.
+  - **Clamping the running total instead is a permanent zero below one standing body**, and that was
+    the denial forecast's *"breeds back faster than this party kills"* on a three-goat herd a real
+    party erased in two turns: `standing × durability < durability` forces
+    `floor(total / durability) == 0` on every turn whatever the damage, so the bank was re-earned and
+    re-discarded for sixty turns. **A `standing` below one animal is a FORECAST, not an impossible
+    herd** — a live retreat draws whole animals, a projection reads the same binomial's *mean*, so an
+    engagement of three wary goats presents `1.2` one turn and `0.8` the next. Banking across those
+    turns is what makes the projected kill rate the expectation the live take pays. Guard:
+    `combat::tests::a_ledger_completes_a_body_against_a_fractional_standing_count` (a *rate*
+    assertion — four bodies in five turns at `standing 0.8` — because "eventually kills something"
+    also passes for a ledger that rounds the fraction up) and
+    `denial_raid::a_tiny_wary_herd_is_erased_and_the_forecast_no_longer_calls_it_repelled`.
 - **`recover(rate, profile)`** runs in `advance_herds` (Logistics) and heals **only on a turn with no
   contact**; a struck turn merely clears the flag. Logistics precedes Population, so a party that
   keeps hunting never lets a turn of healing through and one that breaks off gets a single turn of

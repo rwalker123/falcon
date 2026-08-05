@@ -256,7 +256,8 @@ branches on mission:
   `hunt_trip_forecast` gates the party-side completion on the same `floor > STRIP_IT_BARE` its
   `surplus_spent` always carried, and a floor-`0` row projects through to `herd_lost` (or `horizon`)
   reporting the raid's whole waste — rather than quoting a `pack_full` homecoming the live arm never
-  makes.
+  makes. **`herd_lost` names the turn the party comes home**, so a floor-`0` row reads as a raid that
+  finishes rather than one that never does.
 - **The completion fix** (`ExpeditionPhase::Hunting`, load-bearing): `done = pack full OR standing
   surplus spent (herd within one body of the floor) OR herd lost`. Without the surplus-spent branch a
   raid that grabs its surplus and hits the floor would **hang, taking 0 every turn**. That list is
@@ -302,12 +303,20 @@ branches on mission:
     `"horizon"`. A trip *length* alone cannot tell the player's two levers apart — *"you come home on
     your fill target in 4 turns; the herd never reaches the floor"* and *"you reach the floor in 2
     turns with the pack a third full"* are different decisions carrying the same kind of number — so
-    the sim names it and the client composes nothing. `Horizon` is exactly the `turns_to_fill == None`
-    case except for `HerdLost`, which also reports no completion turn: the projection stops where
-    `advance_herds` would despawn the herd rather than claim a homecoming turn. **A tie goes to the
+    the sim names it and the client composes nothing. **`Horizon` is exactly the
+    `turns_to_fill == None` case, with no exception** — it is the only bound with no completion turn,
+    because it is the only one where the raid had not ended. **`HerdLost` reports the turn the herd
+    went**, like every other stop: the live arm's lost-herd guard turns the party for home in the same
+    turn's Population stage that Logistics despawned the herd in, so the raid *did* end — by emptying
+    the range rather than by filling a pack. It used to report `None`, which is the wire's
+    "never completes" sentinel, so a **floor-`0`** row (the raid whose *only* stop is that guard, since
+    it has no party-side stop at all) published a real `bound` beside a `turnsToFill` of `0` and left
+    the client nothing true to say about the one raid that reliably finishes. **A tie goes to the
     herd side** (`Floor` over the party-side stop), mirroring the live arm testing `done` before
     `relaunch`. Pinned against the raid the systems actually run by
-    `expedition_hunt::the_exported_bound_names_the_stop_that_ends_the_raid`.
+    `expedition_hunt::{the_exported_bound_names_the_stop_that_ends_the_raid,
+    a_floor_zero_raid_reports_the_turn_the_herd_runs_out}` — the latter paired with a `Horizon` case,
+    so "always name a turn" cannot pass by naming one for everything.
   - **Travel is not counted**; the herd is assumed stationary and in reach. `delivers_food == false`
     means an **INEDIBLE species** — never a denial *policy*: Eradicate banks its windfall like every
     other rung. Its sibling `deliversTrade` (appended last) is the other component.
@@ -503,7 +512,10 @@ lookup**:
   retired `(deprecated)` slot; the live discriminator is `floor:float`, so the client interpolates
   between marks rather than matching a name. **An improvement is not a floor** (issue #442), so a
   build-verb row is unrepresentable rather than merely omitted. **`turnsToFill`** is turns until the raid **completes** (comes home — pack full OR
-  surplus spent), **`0` = never completed** within `hunt.forecast_horizon_turns`. **`animalsTaken`**
+  surplus spent OR **the herd runs out**), **`0` = never completed** within
+  `hunt.forecast_horizon_turns`, which after the `HerdLost` repair means `bound == "horizon"` and
+  nothing else — so a **floor-`0`** row, whose only stop is the herd running out, now carries a real
+  turn instead of the never-completes sentinel. **`animalsTaken`**
   (append-only) is now a **KILL count** — a party too small to seat a whole animal kills one and wastes
   the rest (like the resident band), so the delivered payload is **`deliveredFood`** (`Σ
   HuntYield::apply(carried)`, appended strictly after `animalsTaken`), NOT `animalsTaken × foodPerAnimal`.
@@ -671,6 +683,24 @@ applied to a turn count instead of a biomass (`docs/plan_hunt_through_combat.md`
   quoted for a `HuntingParty` resolved once. A raid long enough to run its spears dry therefore
   outruns its own forecast — reachable only on a herd holding more animals than
   `hunting_kit.starting_durability / wear_per_kill`.
+- **A TINY `K` is its own regime, and it is where `Repelled` was wrong rather than merely coarse.**
+  The projection resolves the retreat at its expectation, so on a herd of three animals it presents a
+  *fractional* standing count to the fight (`3 × (1 − wariness 0.60) = 1.2`, then `0.8`) — and the
+  damage ledger used to clamp its cross-turn bank to `standing × durability`, which below one body is
+  a permanent zero. Eight hunters on three Crag Goats were therefore reported repelled by a regrowth
+  of under one biomass a turn, while a driven raid erased the herd in two turns. The repair is the
+  ledger's (see `combat.md` → "Damage carries between turns"); what belongs here is that **the tiny-`K`
+  regime is the one to test a raid readout in** — most fixtures hold herds of dozens, where the mean
+  engagement is comfortably above one animal and the stall cannot appear. Guard:
+  `denial_raid::a_tiny_wary_herd_is_erased_and_the_forecast_no_longer_calls_it_repelled`, paired in
+  the same test with a genuine `Repelled` case so the verdict cannot be fixed by deletion.
+- **Whole-animal quantisation still holds a tiny herd above the line, and that is the model, not a
+  bug.** With `collapse_fraction × K` under one `body_mass` — three 6-biomass goats give a line at
+  `2.7` — the raid cannot cross it by taking a fraction of a goat: it kills whole animals off a stock
+  that regrows continuously, so the crossing happens on whichever kill leaves a remainder under the
+  line, and a herd standing between the line and one body mass is simply waited out
+  (`animals_affordable == 0`, the take reports `HuntTakeBound::Floor`). It makes the projected turn
+  count lumpy on a herd of two or three, which is honest — a party cannot half-kill a goat.
 
 **Wire:** `HerdTelemetryState.denialEstimates` — one `DenialEstimate` per party size
 `1..=max_party_size`, with **no floor axis and no fill-target axis**, because the mission carries

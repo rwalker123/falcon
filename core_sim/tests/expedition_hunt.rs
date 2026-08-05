@@ -34,7 +34,7 @@ use core_sim::{
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, VisibilityConfig,
     VisibilityConfigHandle, VisibilityLedger, WellbeingConfigHandle, FOOD, NO_FILL_TARGET,
-    NO_IMPROVEMENT_UNDERWAY,
+    NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
 };
 
 /// Party size used by every trip test: 4 hunters (the design's reference party).
@@ -2424,10 +2424,6 @@ fn the_exported_bound_names_the_stop_that_ends_the_raid() {
     // (c) HORIZON: a lone hunter with an effectively unbounded pack on a fast-breeding warren whose
     // regrowth outruns what one party can reach. Neither stop is ever hit.
     {
-        const WARREN_BODY: f32 = 0.27;
-        const WARREN_K: f32 = 2000.0;
-        const WARREN_R: f32 = 0.05;
-        const LONE_HUNTER: u32 = 1;
         let mut app = deterministic_headless_app();
         app.update();
         app.world
@@ -2467,6 +2463,134 @@ fn the_exported_bound_names_the_stop_that_ends_the_raid() {
         );
     }
 }
+
+/// **A raid that ends by emptying the range ENDS, and reports the turn it ends on.**
+///
+/// [`HuntTripBound::HerdLost`] used to return `turns_to_fill = None`, which is the wire's
+/// *"never completes within the horizon"* sentinel — so a floor-`0` row (the raid whose **only**
+/// stop is the lost-herd guard, since it has no party-side stop at all) published a real bound
+/// beside a `0` turn count and the client had nothing true to say about it. The raid does complete;
+/// the live arm's lost-herd guard turns the party for home in the same turn's Population stage that
+/// Logistics despawned the herd in.
+///
+/// Pinned against the sim, not against another forecast: the projected turn is the turn the **driven
+/// party** actually stops hunting. Paired with the liveness half — a `Horizon` raid on the same seam
+/// must still report `None`, or "always name a turn" would pass by naming one for everything.
+#[test]
+fn a_floor_zero_raid_reports_the_turn_the_herd_runs_out() {
+    /// A herd small enough that a full party grinds it under its `extinction_floor` well inside the
+    /// projection horizon — the floor-`0` raid's one and only stop.
+    const DOOMED_K: f32 = 200.0;
+    /// Slow enough that regrowth cannot hold the stock up against the party — the raid is meant to
+    /// finish, and what is being pinned is *when it says* it finished.
+    const DOOMED_R: f32 = 0.02;
+
+    let mut app = deterministic_headless_app();
+    app.update();
+    let (id, herd_pos) = pin_frozen_herd(
+        &mut app,
+        "Wild Boar",
+        BOAR_BODY,
+        DOOMED_K,
+        DOOMED_K,
+        DOOMED_R,
+    );
+    let forecast = {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        let labor = app.world.resource::<LaborConfigHandle>().get();
+        let cfg = expedition_config(&app);
+        let registry = app.world.resource::<HerdRegistry>();
+        let herd = registry.find(&id).expect("the herd is alive");
+        hunt_trip_forecast(
+            PARTY_WORKERS,
+            herd,
+            STRIP_IT_BARE,
+            NO_FILL_TARGET,
+            &fauna,
+            &labor,
+            &cfg,
+            &hunting_party(),
+        )
+    };
+    assert_eq!(
+        forecast.bound,
+        HuntTripBound::HerdLost,
+        "a floor-0 raid on a small herd ends by emptying the range — it has no other stop"
+    );
+    let projected = forecast.turns_to_fill.expect(
+        "a raid that ends must report the turn it ends on, not the never-completes sentinel",
+    );
+    assert!(
+        forecast.animals_taken > 0,
+        "liveness — a projection that killed nothing would also 'end' when the herd was already gone"
+    );
+
+    let home = spawn_home_band_same_row(&mut app, herd_pos);
+    let party = spawn_hunt_party_targeting(
+        &mut app,
+        home,
+        herd_pos,
+        &id,
+        STRIP_IT_BARE,
+        PARTY_WORKERS,
+        NO_FILL_TARGET,
+    );
+    let horizon = expedition_config(&app).hunt.forecast_horizon_turns;
+    let left_on = drive_until_hunt_ends(&mut app, party, horizon)
+        .expect("the driven party comes home when its herd is gone");
+    assert_eq!(
+        left_on, projected,
+        "the projected completion turn must be the turn the real party stops hunting — fix the \
+         forecast, never the sim"
+    );
+
+    // Liveness: `None` still means something. A raid that neither fills nor exhausts inside the
+    // horizon reports no turn, so "HerdLost names a turn" is not "every raid names a turn".
+    let mut endless = deterministic_headless_app();
+    endless.update();
+    endless
+        .world
+        .insert_resource(ExpeditionConfigHandle::new(unbounded_carry_config()));
+    let (endless_id, _) = pin_frozen_herd(
+        &mut endless,
+        "Rabbit Warren",
+        WARREN_BODY,
+        WARREN_K,
+        WARREN_K,
+        WARREN_R,
+    );
+    let unfinished = {
+        let fauna = endless.world.resource::<FaunaConfigHandle>().get();
+        let labor = endless.world.resource::<LaborConfigHandle>().get();
+        let cfg = expedition_config(&endless);
+        let registry = endless.world.resource::<HerdRegistry>();
+        let herd = registry.find(&endless_id).expect("the warren is alive");
+        hunt_trip_forecast(
+            LONE_HUNTER,
+            herd,
+            PEAK_FLOOR,
+            NO_FILL_TARGET,
+            &fauna,
+            &labor,
+            &cfg,
+            &hunting_party(),
+        )
+    };
+    assert_eq!(
+        (unfinished.bound, unfinished.turns_to_fill),
+        (HuntTripBound::Horizon, None),
+        "the raid that was still going when the projection ran out is the ONLY one with no turn"
+    );
+}
+
+/// A warren whose regrowth outruns what one hunter can reach — the fixture for the one bound that
+/// legitimately has no completion turn. Shared with the `Horizon` case of
+/// [`the_exported_bound_names_the_stop_that_ends_the_raid`].
+const WARREN_BODY: f32 = 0.27;
+const WARREN_K: f32 = 2000.0;
+const WARREN_R: f32 = 0.05;
+/// One person — a party small enough that a fast-breeding warren is never exhausted.
+const LONE_HUNTER: u32 = 1;
 
 /// **Every pre-launch estimate row names its bound, and none of them names the fill target.**
 ///

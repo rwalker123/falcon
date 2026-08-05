@@ -1566,8 +1566,9 @@ fn an_inedible_raid_comes_home_with_pelts_and_no_food() {
     );
 }
 
-/// **`turns_to_fill == 0` on the wire is "the raid never reported a homecoming turn"** — the horizon
-/// ran out, or the herd was lost under the party (which claims no completion turn either).
+/// **`turns_to_fill == 0` on the wire is "the raid was still going when the projection ran out"** —
+/// `HuntTripBound::Horizon`, and nothing else. A lost herd is a *completion*: the party comes home on
+/// the turn the guard fires, so it names that turn like every other stop.
 const NEVER_COMPLETES: u32 = 0;
 
 /// **The waste is a sum over a whole raid, so its allowance is a raid's worth of quanta.** The
@@ -1617,11 +1618,13 @@ fn a_floor_zero_raid_delivers_and_wastes_what_its_exported_row_promised() {
         .hunt
         .forecast_horizon_turns;
     let mut killed_biomass = 0.0_f32;
-    let mut herd_lost = false;
-    for _ in 1..=horizon {
+    // The turn the herd went — which is the turn the party comes home, because the live arm's
+    // lost-herd guard flips it to `Returning` in the same turn's Population stage.
+    let mut lost_on = None;
+    for turn in 1..=horizon {
         app.world.run_system_once(advance_herds);
         if app.world.resource::<HerdRegistry>().find(&id).is_none() {
-            herd_lost = true;
+            lost_on = Some(turn);
             break;
         }
         let standing = herd_biomass(&app, &id);
@@ -1688,22 +1691,29 @@ fn a_floor_zero_raid_delivers_and_wastes_what_its_exported_row_promised() {
 
     // **The stop is the herd's, not the pack's.** A full pack does not end a floor-`0` raid — the
     // live arm answers `(done, relaunch) = (false, false)` — so the projection must not claim a
-    // homecoming the party does not make. The wire's claim is paired here with the world fact that
-    // produced it.
-    assert_eq!(
-        promised.turns_to_fill, NEVER_COMPLETES,
-        "a floor-`0` raid reports no pack-full homecoming turn (bound {})",
-        promised.bound
-    );
+    // pack-full homecoming the party does not make. The wire's claim is paired here with the world
+    // fact that produced it.
     assert_eq!(
         promised.bound,
         core_sim::HuntTripBound::HerdLost.as_str(),
-        "it ends by running the herd out, and the live raid did exactly that (herd lost: \
-         {herd_lost})"
+        "it ends by running the herd out, and the live raid did exactly that (herd lost on: \
+         {lost_on:?})"
     );
-    assert!(
-        herd_lost,
-        "…and the driven party really did lose its herd, or the exported bound above is unpinned"
+    let lost_on = lost_on
+        .expect("…and the driven party really did lose its herd, or the bound above is unpinned");
+    // **It ends, and the row says WHEN.** The floor-`0` raid's only stop is the lost-herd guard, so
+    // publishing `NEVER_COMPLETES` here published *"this raid never comes home"* for the one raid
+    // that reliably does — the client had a real `bound` beside a `0` turn count and nothing true to
+    // render. The turn is the sim's, not the projection's own: it is the turn the driven party lost
+    // the herd it was raiding.
+    assert_ne!(
+        promised.turns_to_fill, NEVER_COMPLETES,
+        "a raid that ends by emptying the range still ends — the never-completes sentinel is for a \
+         raid still going at the horizon"
+    );
+    assert_eq!(
+        promised.turns_to_fill, lost_on,
+        "…and the turn it names is the turn the real party's herd ran out"
     );
 }
 
