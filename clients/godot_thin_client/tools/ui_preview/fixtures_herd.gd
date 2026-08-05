@@ -183,6 +183,24 @@ static func assign_preview_herd(id: String, species: String, phase: String, sust
 ##       up and does no math. `turns_to_fill == 0` → won't fill within the horizon; `delivers_food ==
 ##       false` says the QUARRY IS INEDIBLE (#337), and only `delivers_food AND delivers_trade` both
 ##       false is a denial mission — the raid banks whichever half the species pays.
+## **A ROW THAT DELIVERS NOTHING CANNOT WEAR A PARTY-SIDE BOUND.** `pack_full` and `fill_target` both
+## require a LOAD, and a load is a delivery — so the sim never pairs either with an empty payload, and
+## a fixture that did would be a herd no live server can produce. It would also be invisible: the
+## sheet's empty-raid refusal is keyed off `bound`, so such a row falls to the UNATTRIBUTED entry and
+## every assertion about *which* refusal is rendered testifies about nothing.
+##
+## What a zero row in these families means is the herd standing AT ITS FLOOR — except at a floor of
+## `0`, where the sim's own `surplus_spent` test cannot fire (it is gated on `floor > 0`) and a raid
+## that lands nothing is one whose quarry dies out under it. **The party-side empty raid — a herd with
+## real surplus a party cannot kill — is a different fixture entirely** (`hunt.gd`'s
+## `_unkillable_aurochs_herd`), because it is a different fact about a different actor.
+static func clean_raid_bound(animals: int, stance: String, delivering: String) -> String:
+	if animals > 0:
+		return delivering
+	return SourceForecast.TRIP_BOUND_FLOOR \
+		if float(BaseFx.LEGACY_STANCE_FLOORS.get(stance, 0.0)) > 0.0 \
+		else SourceForecast.TRIP_BOUND_HERD_LOST
+
 ## `trip_turns` is the simulated turns-to-fill for the 4-worker party these states dial in.
 static func forecast_herd(id: String, species: String, phase: String, sustain_ceiling: float,
 		trip_turns: int = 0, surplus_trip_turns: int = 0,
@@ -239,21 +257,24 @@ static func forecast_herd(id: String, species: String, phase: String, sustain_ce
 				"animals_taken": sustain_animals,
 				"delivered_food": sustain_delivered,
 				"delivered_trade": float(sustain_animals) * RAID_TRADE_PER_ANIMAL, "wasted_food": 0.0,
-				SourceForecast.TRIP_BOUND_KEY: SourceForecast.TRIP_BOUND_PACK_FULL,
+				SourceForecast.TRIP_BOUND_KEY: clean_raid_bound(sustain_animals, "sustain",
+					SourceForecast.TRIP_BOUND_PACK_FULL),
 			},
 			"surplus:%d" % HUNT_FORECAST_PARTY: {
 				"turns_to_fill": surplus_trip_turns, "delivers_food": true, "delivers_trade": true,
 				"animals_taken": surplus_animals,
 				"delivered_food": surplus_delivered,
 				"delivered_trade": float(surplus_animals) * RAID_TRADE_PER_ANIMAL, "wasted_food": 0.0,
-				SourceForecast.TRIP_BOUND_KEY: SourceForecast.TRIP_BOUND_PACK_FULL,
+				SourceForecast.TRIP_BOUND_KEY: clean_raid_bound(surplus_animals, "surplus",
+					SourceForecast.TRIP_BOUND_PACK_FULL),
 			},
 			"deplete:%d" % HUNT_FORECAST_PARTY: {
 				"turns_to_fill": surplus_trip_turns, "delivers_food": true, "delivers_trade": true,
 				"animals_taken": surplus_animals,
 				"delivered_food": surplus_delivered,
 				"delivered_trade": float(surplus_animals) * RAID_TRADE_PER_ANIMAL, "wasted_food": 0.0,
-				SourceForecast.TRIP_BOUND_KEY: SourceForecast.TRIP_BOUND_PACK_FULL,
+				SourceForecast.TRIP_BOUND_KEY: clean_raid_bound(surplus_animals, "deplete",
+					SourceForecast.TRIP_BOUND_PACK_FULL),
 			},
 			# Eradicate DELIVERS (issue #337): `delivers_food` says the quarry is EDIBLE, not that the
 			# rung is a denial mission, and an Eradicate raid banks the whole-stock windfall.
@@ -265,7 +286,8 @@ static func forecast_herd(id: String, species: String, phase: String, sustain_ce
 				# `turns_to_fill == 0` IS the horizon case — the raid was still delivering when the
 				# projection ran out — and the pairing is the sim's own: the two must move together, or
 				# the verdict names a stop the turn count denies.
-				SourceForecast.TRIP_BOUND_KEY: SourceForecast.TRIP_BOUND_HORIZON,
+				SourceForecast.TRIP_BOUND_KEY: clean_raid_bound(surplus_animals, "eradicate",
+					SourceForecast.TRIP_BOUND_HORIZON),
 			},
 		},
 	}

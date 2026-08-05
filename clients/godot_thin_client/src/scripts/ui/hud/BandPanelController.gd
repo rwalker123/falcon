@@ -1702,15 +1702,17 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     var bound_clause := SourceForecast.trip_bound_clause(trip)
     if bound_clause != "":
         sheet.add_child(HudWidgets.alloc_hint_label(bound_clause))
-    var no_surplus := SourceForecast.hunt_trip_no_surplus(trip)
-    var reason := SourceForecast.hunt_no_surplus_reason(herd) if no_surplus else ""
+    # WHY an empty raid is empty comes off the sim's `bound`, so the reason takes the TRIP beside the
+    # herd — "wait for the herd to rebuild" and "send more hunters" are opposite instructions.
+    var returns_empty := SourceForecast.hunt_trip_returns_empty(trip)
+    var reason := SourceForecast.hunt_empty_refusal_reason(trip, herd) if returns_empty else ""
     var confirm := Button.new()
     confirm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     # The button carries the verdict: slow/long/denial raids stay ENABLED and warn-styled, and only a
     # herd with no surplus disables. `SourceForecast.style_send_hunt_button` owns the text in every branch.
     SourceForecast.style_send_hunt_button(confirm, trip, reason)
     confirm.set_meta(HudWidgets.SEND_HUNT_CONFIRM_META, true)
-    if no_surplus:
+    if returns_empty:
         sheet.add_child(HudWidgets.alloc_hint_label(reason))
     var quarry_id := _compose.party_quarry_id()
     confirm.pressed.connect(func() -> void:

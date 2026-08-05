@@ -24,7 +24,7 @@ paths:
 | `ui/hud/ComposeSheet.gd` | The selection card's **write state** — the floating **compose sheet** (`docs/plan_tile_panel_layout.md` §10-§15). Composing is MODAL BY NATURE (open, decide, commit, done), so the two ~270px compose blocks (`%ForageAssignControls` / `%HerdAssignControls`) left the drawer for a sheet that borrows space only while in use; the drawer keeps the detail rows, a one-line standing summary and an `Assign … ▸` button. **That button wears `primary` while ITS sheet is open and `ghost` at rest — never `armed`**: `armed` is the destructive/warned treatment (DANGER border), and "its sheet is open" is a LIVE state, which this HUD spells in SIGNAL cyan (the Sight chip, the selection accent, the turn orb's calm pulse). **Its card is an `AutoSizingPanel`, NOT a `DockScrollFit` card** — it floats against the VIEWPORT, which is the opposite of what the drawer above needs, and picking wrong misbehaves silently rather than failing (`.claude/rules/client/panel-framework.md`). **Its width is FITTED to its content like its height** — `CARD_WIDTH` is the nominal, not a cap; see "THE CARD IS AS WIDE AS ITS WIDEST ROW" below, and "THE HEIGHT CHROME IS THE HEADER **ROW**" beside it for the same measurement error on the other axis. **`_panel` is held as a member for the assertion, not for the layout** — the `PanelContainer` that draws the card is a real `Container` in a plain `Control`, so its minimum is the one honest measure of what the fit owes. **The node IS the full-screen dismiss catcher with the card as its CHILD**, reusing `NarrativeForkPanel`'s nesting exactly (siblings make the ordering ambiguous and the catcher eats the card's own clicks), pinned to the viewport EXPLICITLY via `_sync_to_viewport` — a hidden Control's anchors never settle, and the full-rect preset would also overwrite the size. **NO SCRIM, and that is the one deliberate departure from the fork panel:** a fork is a story beat demanding attention, an assignment is composed *against* the map (work-range ring, herd position, hunt reach are all live context), so the catcher dismisses without dimming. **And that is also why the catcher dismisses on a real CLICK only, never a wheel tick** (`DISMISS_BUTTONS`, an ALLOWLIST of left/right/middle so a future Godot wheel/extra index stays non-dismissing by default): the catcher is `MOUSE_FILTER_STOP` across the whole viewport, so an idle scroll over the un-scrimmed map lands on it, and dismissing there would throw away the composition mid-read. `NarrativeForkPanel` is deliberately left as-is — a modal scrimmed story beat has no such gesture — so the two diverge here on purpose; do NOT factor out a shared predicate for one differing call site. (**Not** a map-zoom passthrough: the catcher stops the wheel either way, so the map cannot zoom while a sheet is open, and a wheel over the card is absorbed by its own `ScrollContainer`.) Guarded by ui_preview's paired wheel-leaves-OPEN / left-click-CLOSES assertions. The sheet floats BESIDE the selection card (`_place_card`, falling back to the viewport margin) so the list + summary it is editing stay readable. It knows nothing about foraging or hunting: `open(eyebrow, title, subject_key, anchor)` returns the content VBox and the caller fills it. `subject_key` is what lets a per-snapshot refresh tell "the same source, restated" from "a different source, gone" |
 | `ui/hud/RungGates.gd` | **All-`static`, stateless** shared RUNG-GATE layer — the one answer to "may this source climb its next rung, and if not, why not?". Extracted from `DrawerComposeController` (issue #412) when the compose sheet stopped being the only surface asking: the Band panel's WORK board marks a source that can climb, and the MAP marks it on the source's own marker — and a renderer must not depend on the HUD's compose controller. Shared-layers-BEFORE-controllers, the same measurement that produced `SourceForecast` and `HudWidgets`. Holds `forage_gates` / `hunt_gates` / `sow_site_refusal_reason` (moved VERBATIM, so the compose sheet's greying is unchanged), **`forage_gates_from_patch`** (the BARE-keyed twin for a raw wire patch — the RAW wire patch carries its keys BARE while the `tile_info` cross-ref `patch_`-prefixes every one of them, and this adapter is the ONE place that mapping is written down. **The prefixing is UNIFORM now (#442)** — `is_cultivated`/`cultivation_progress` were the last unprefixed strays on the cross-ref and are stamped `patch_`-prefixed like their siblings, so there is no longer a mixed convention to remember; reading a `tile_info` key without the prefix silently answers nothing (`hud_compose_vocab.gd` → `BARE_FORECAST_PREFIX` carries the long form)), and **`next_rung_ready`** — the READY test all three surfaces mark from — plus **`knowledge_gate_unmet`** (with its `RUNG_KNOWLEDGE_TRACKS` map: is THIS rung blocked on knowledge specifically? — the same `track < KNOWLEDGE_COMPLETE` test the gate builders make, asked on its own so the compose sheet can suppress that reason **structurally instead of by matching its words**; one caller, for the reason the "A KNOWLEDGE gate renders NO improvement control" section gives). **`wild_fodder_reason` broadens the file's remit** from "may this source climb its next rung" to "…and will the work it is doing actually pay out" — the wild forage patch's fodder credit, which the sim refuses to a faction without Foddering; see "The FODDER account can be real and unbankable at once". **STATELESS IS THE INVARIANT**: the one impurity, faction knowledge, is threaded in as a `knowledge` PARAMETER (`TopBarReadouts.faction_tracks(faction)`, the whole `{track: progress}` row `faction_knowledge` reads one key out of), never reached for. `next_rung_ready` requires all three of OFFERED (husbandry ceiling / `can_cultivate`-`can_sow` + willing ground), UNGATED (the gate functions answer nothing), and NOT-ALREADY-RUNNING (a patch mid-Cultivate is progress, not an opportunity), **highest rung first**. **That ordering is load-bearing on the PLANT web only** and its assertion needed care: `is_cultivated` retires Cultivate, so on a TENDED patch the two rungs are mutually exclusive and an ordering test there passes with the branches swapped (measured). `Sow` needs no prior patch, so a WILD patch on sowable ground is the one shape that clears both gates at once. On the animal web the rungs are always mutually exclusive — Tame retires at a full meter, Corral requires one — so ordering is genuinely not load-bearing there. `TopBarReadouts.faction_knowledge` deliberately does NOT call `RungGates.track`: dependency DIRECTION outranks the one-definition rule for a `float(d.get(k, 0.0))` |
 | `ui/hud/HarvestFloorChart.gd` | The compose sheet's **floor instrument** (`docs/plan_harvest_floor.md` §7.3) — a custom-drawn `Control` (the `FoodOutlookChart` / `ArrivalStrip` idiom) putting the standing stock, the draggable floor line, the projection and the food peak on ONE y-axis of `B/K`, with the `learn_multiplier` gradient rail down the right edge. **IT DRAWS; IT DOES NOT MODEL** — every number comes from `SourceForecast.floor_chart_model`, the projection walks the sim's own `regrowthSamples`, the peak is the argmax of those samples rather than `FLOOR_FOOD_PEAK` restated beside them, and negative samples are carried through as decline. It emits ONE signal, `floor_changed(floor, committed)`, and the second argument is the whole contract: a committed change rebuilds the compose controls (which frees this node), a live one must not, or the drag in flight dies with it — see "THE CHART" below. Keyboard-accessible (`FOCUS_ALL`; arrows / Shift-arrows / Home / End), because the floor is the primary control of the panel. Palette through `HudStyle` only — plus `DetailFormat.ecology_tier_color` for the standing-stock band and the **phase zones** behind it (`_draw_phase_zones`, the furthest-back layer: the source's own `collapseFraction` / `stressedFraction` as horizontal Collapsing/Stressed/Thriving bands, so the floor is dragged against the ecology rather than against a remembered number) |
-| `ui/hud/SourceForecast.gd` | **All-`static`, stateless** shared forecast/estimate layer (HUD decomposition, phase 2c-2 precursor) — the pure "what will this source give me?" math THREE consumers ask for: the drawer's compose blocks, the Band panel's WORK zone, and its PARTIES zone. Three families: POST-HOC `source_yield_readout` (what a worked source actually produced, incl. the ⚠ overdraw + overstaff/wasted notes) · PRE-COMMIT `forecast_inputs` / `max_useful_workers` / **`source_worker_cap_state`** (the CONFIRMED-row twin of that cap: `(forecast, workers, idle, useful_floor = 0) → {can_add, note}`, beside the ceiling it reads so a worked row and a compose stepper can never gate differently — the trailing floor is what makes that true rather than merely stated, and `herd_crew_floor` is its one definition; the *hold it after* crew is a floor on BOTH twins and therefore lives inside `max_useful_workers`, carried on the forecast as `hold_crew`) / `expected_yield` / `hunt_policy_ceiling` · THE RAID `hunt_trip_forecast` → `hunt_forecast_line_bbcode` / `hunt_trip_no_surplus` / `hunt_no_surplus_reason` / `expedition_party_cap` / `expedition_useful_cap` / `expedition_policy_takes` / `style_send_hunt_button` (`style_send_hunt_button` styles a Button off the raid verdict, so it lives WITH the verdict). Plus the shared leaves those need — `format_magnitude`/`format_signed`/`format_yield`/`extractive_take`, `band_tile`/`hex_distance_wrapped`, `herd_display_name`, `is_managed_hunt_source`, and the two one-off leaks into the read-only detail layer, `flora_basket_entries` / `husbandry_ceiling`. **WHY ITS OWN FILE:** the next phase lifts a `DrawerComposeController` out of `Hud.gd`, but this layer is called by the work + parties zones too, so it cannot travel with the drawer; pure injection was measured at **54 Callables** and a `_hud` back-ref would weld an already-pure layer to the god object (and the band-panel extraction would then need a SECOND back-ref to the same place). All three consumers depend on THIS instead. **STATELESS IS THE INVARIANT** — no node, no `_hud`, no snapshot cache; if a new function needs HUD state, pass it in. The one non-plain-value is the grid-wrap pair (`grid_width`, `wrap_horizontal`), threaded as EXPLICIT PARAMETERS through `hex_distance_wrapped` → `round_trip_travel_turns` → `hunt_trip_forecast` / `expedition_policy_takes` so a stale grid can never be captured; `HudLayer._hex_distance_wrapped` is a one-line pass-through supplying the pair off `_band_labor`, so there is ONE hex implementation (`DrawerComposeController` calls the module directly with the same pair). The **forecast vocabulary constants moved here with the math** (`LABOR_KIND_*` / `LABOR_HUNT_POLICIES` / `DEFAULT_HUNT_POLICY` / `SOURCE_KIND_*` / `FORECAST_*` / `MAX_USEFUL_*` / `HUNT_FORECAST_*` / `SEND_HUNT_*` / `HUSBANDRY_CEILING_*` …) and `HudLayer` **re-exports the still-used ones as aliases** (`const X = SourceForecast.X`, one commented block) rather than redefining them — ONE definition, and every HudLayer call site reads unchanged |
+| `ui/hud/SourceForecast.gd` | **All-`static`, stateless** shared forecast/estimate layer (HUD decomposition, phase 2c-2 precursor) — the pure "what will this source give me?" math THREE consumers ask for: the drawer's compose blocks, the Band panel's WORK zone, and its PARTIES zone. Three families: POST-HOC `source_yield_readout` (what a worked source actually produced, incl. the ⚠ overdraw + overstaff/wasted notes) · PRE-COMMIT `forecast_inputs` / `max_useful_workers` / **`source_worker_cap_state`** (the CONFIRMED-row twin of that cap: `(forecast, workers, idle, useful_floor = 0) → {can_add, note}`, beside the ceiling it reads so a worked row and a compose stepper can never gate differently — the trailing floor is what makes that true rather than merely stated, and `herd_crew_floor` is its one definition; the *hold it after* crew is a floor on BOTH twins and therefore lives inside `max_useful_workers`, carried on the forecast as `hold_crew`) / `expected_yield` / `hunt_policy_ceiling` · THE RAID `hunt_trip_forecast` → `hunt_forecast_line_bbcode` / `hunt_trip_returns_empty` / `hunt_empty_refusal` / `hunt_empty_refusal_reason` / `expedition_party_cap` / `expedition_engage_crew` / `expedition_useful_cap` / `expedition_policy_takes` / `style_send_hunt_button` (`style_send_hunt_button` styles a Button off the raid verdict, so it lives WITH the verdict). Plus the shared leaves those need — `format_magnitude`/`format_signed`/`format_yield`/`extractive_take`, `band_tile`/`hex_distance_wrapped`, `herd_display_name`, `is_managed_hunt_source`, and the two one-off leaks into the read-only detail layer, `flora_basket_entries` / `husbandry_ceiling`. **WHY ITS OWN FILE:** the next phase lifts a `DrawerComposeController` out of `Hud.gd`, but this layer is called by the work + parties zones too, so it cannot travel with the drawer; pure injection was measured at **54 Callables** and a `_hud` back-ref would weld an already-pure layer to the god object (and the band-panel extraction would then need a SECOND back-ref to the same place). All three consumers depend on THIS instead. **STATELESS IS THE INVARIANT** — no node, no `_hud`, no snapshot cache; if a new function needs HUD state, pass it in. The one non-plain-value is the grid-wrap pair (`grid_width`, `wrap_horizontal`), threaded as EXPLICIT PARAMETERS through `hex_distance_wrapped` → `round_trip_travel_turns` → `hunt_trip_forecast` / `expedition_policy_takes` so a stale grid can never be captured; `HudLayer._hex_distance_wrapped` is a one-line pass-through supplying the pair off `_band_labor`, so there is ONE hex implementation (`DrawerComposeController` calls the module directly with the same pair). The **forecast vocabulary constants moved here with the math** (`LABOR_KIND_*` / `LABOR_HUNT_POLICIES` / `DEFAULT_HUNT_POLICY` / `SOURCE_KIND_*` / `FORECAST_*` / `MAX_USEFUL_*` / `HUNT_FORECAST_*` / `SEND_HUNT_*` / `HUSBANDRY_CEILING_*` …) and `HudLayer` **re-exports the still-used ones as aliases** (`const X = SourceForecast.X`, one commented block) rather than redefining them — ONE definition, and every HudLayer call site reads unchanged |
 
 ## THE HARVEST AXIS IS AN ESCAPEMENT FLOOR, NOT A STANCE (`docs/plan_harvest_floor.md`, issue #455)
 
@@ -3104,3 +3104,112 @@ to a mammoth. Each line carries its own meta (`HudWidgets.HUNTERS_PER_ANIMAL_MET
 `HUNT_GATE_META`, the latter valued `true` while the fight is unwinnable) because they are composed
 from disjoint wire terms and a single handle would let one break while an assertion on the other kept
 passing.
+
+---
+
+## AN EMPTY RAID IS EMPTY FOR ONE OF TWO REASONS (`docs/plan_hunt_through_combat.md` §4)
+
+**This section supersedes every passage above that calls the blocked raid "no surplus".** The
+arithmetic is unchanged — `delivered_food <= 0 and delivered_trade <= 0`, still the one blocked case,
+still not `animals_taken == 0` — and what changed is the SENTENCE it renders.
+
+That branch used to assert the herd was at its floor, and before the take resolved through the fight
+that was the only way to reach it. It is not any more: **a party that cannot bring one animal down
+inside the projection's horizon lands here too, with the herd's surplus standing untouched.** Reported
+from play on a THRIVING Wild Aurochs herd — ten of eleven animals, four affordable above a 50% floor —
+refused to a party of one as *"too lean to raid — its surplus is spent"*, two rows below the sheet's
+own line saying it takes several hunters to bring ONE aurochs into contact.
+
+**A wrong explanation is worse than a wrong number**: the remedies are opposites — wait for the herd
+to rebuild, against send more hunters — so one sentence cannot serve both, and the one that shipped
+sent the player to fix the thing that was not broken.
+
+### The sim already tells them apart, and the client never infers it from the numbers
+
+`HuntTripBound` names the stop that ended the projection, and exactly three of its five are reachable
+with nothing delivered. `PackFull` / `FillTarget` cannot be: both require a load, and a load is a
+delivery.
+
+| `bound` | what it means here | the line, the button, the remedy |
+|---|---|---|
+| `floor` | the standing surplus is spent | *"%s is too lean to raid — its surplus is spent"* · `Herd too lean to raid` · wait, lower the floor, hunt it locally |
+| `horizon` | the projection ran its length and the party never killed | *"%s stands above your floor — but this party cannot bring one down"* · `Party can't make the kill` · more hunters, better kit, smaller game |
+| `herd_lost` | the quarry dies out under a raid that never made up a load | *"%s is gone before the party can make up a load"* · `Nothing left to raid` · leave it standing, find another quarry |
+| anything else | unattributed | *"%s — the raid would return empty"* · `Raid returns empty` · names NEITHER side |
+
+**`HUNT_EMPTY_REFUSALS` holds all three faces of one refusal in ONE entry** — `line`, `button`,
+`reason` — and `hunt_empty_refusal` is the single resolution of the key. The button used to be a lone
+`const`, which is exactly how a face reading *"Herd too lean to raid"* could sit under a line naming
+the party: the same misattribution, one control further on. Adding a cause means adding all three.
+
+**The unattributed entry is not back-compat, it is a refusal to guess.** Every live estimate row
+carries a bound; a row that does not is a fixture bug, and it should read as unexplained rather than
+as somebody's fault. Guessing is how the defect happened.
+
+**`hunt_empty_refusal_reason` takes the FORECAST as well as the herd**, and `hunt_trip_no_surplus` is
+renamed **`hunt_trip_returns_empty`** — it says THAT, never WHY, and the two were one function only
+while there was one why.
+
+### The raid's max-useful party carries the engagement arm now
+
+`expedition_useful_cap` scans the sim's table for the party size at which the delivered payload stops
+rising. **A scan can only report a bind it watches the payload run into**, and neither half of that
+held on the reported herd:
+
+- **A payload flat at ZERO is not a plateau.** Every sampled size delivered nothing, and the
+  rise-then-break scan read that flatness as *"the first hunter was all that was useful"* — capping the
+  party at ONE and printing `max 1 worker useful here` beside `6 hunters bring one Wild Aurochs into
+  contact`. A size is useful when it lands something.
+- **The engagement crew is past the end of the table.** `SourceForecast.expedition_engage_crew` floors
+  the plateau on `engage_workers` over the room above the floor — the SAME primitive
+  `max_useful_workers` reaches through `take_workers`, which is the whole point: a second definition of
+  the engagement crew is what let the local sheet and the raid sheet drift. It is the **engage half
+  only**, deliberately: the haul half is sized on `perWorkerBiomass`, a RESIDENT crew's throughput,
+  while a raid hauls in its pack (`expedition.hunt.per_worker_carry`, not on the wire) — and the pack
+  side is precisely what the plateau scan already watches.
+
+It is a FLOOR on the demand side, never a cap: `assignable` still binds below it, so the note becomes
+the labor-bound *"6 of 20 useful — free up idle workers to send more"* rather than calling the missing
+hands idle. A detached party builds nothing, so the dip is `IMPROVEMENT_NONE`'s, resolved through
+`build_dip` rather than written as a bare `1.0`.
+
+**A herd with no engagement stage answers `0` and nothing moves** — a pen, the whole plant web, a
+species the roster cannot resolve — which is the byte-identity this arc holds each time the arm reaches
+a new consumer. Measured: of 271 `ui_preview` frames, exactly TWO move, and both are the flat-zero
+raids whose party the scan used to clamp to one.
+
+### Frames + assertions
+
+**`herd_hunt_party_cannot_kill`** (`chapters/hunt.gd`) is the reported case: a Thriving Wild Aurochs at
+`B/K` 0.91 with four animals affordable, `engageRate` 0.25, a speared party of ONE, and a table whose
+every cell is `horizon` with a zero payload. It asserts the line names the party AND not the herd, the
+disabled Send wears the same entry's face, the reason carries the party's remedies and none of the
+herd's, the ceiling is the engagement crew (20) and not `max 1 worker useful here`, and the reach line
+is unchanged beneath it.
+
+**Judge it as a PAIR with `herd_hunt_no_surplus`**, whose every cell is `floor` and which delivers the
+identical zero: without that half every claim above passes on a sheet that blames the party for
+everything. It carries the herd-side line and — publishing no `engageRate`, so nothing floors its
+ceiling — the zero-plateau claim.
+
+Sabotage-verified six ways, each failing a DISJOINT set: resolving every bound to the FLOOR entry
+(**the old misattribution, restored**) fails the line, the button and the reason; hard-coding the
+button's face fails the button alone; ignoring the forecast in the reason fails the reason alone;
+dropping the engagement floor fails the ceiling alone; treating a zero payload as a plateau fails the
+lean herd's claim alone; and resolving every bound to the PARTY entry fails the herd-side control.
+
+**The fixtures had to learn the rule too.** `HerdFx.clean_raid_bound` stamps a zero-payload row with
+the bound the sim would actually report — `floor` above a floor of 0, `herd_lost` at 0 — because a row
+carrying `pack_full` with an empty payload is a herd no live server can produce, and it would fall to
+the unattributed entry and make every assertion about *which* refusal is rendered testify about
+nothing.
+
+### STILL OPEN — the raid sheet's CHART is composed against the pre-fight model
+
+The expedition branch's escapement chart walks `project_stock`, whose per-turn take is
+`min(room, carry, engagement)` and carries **no combat term** — so on `herd_hunt_party_cannot_kill` it
+draws the herd being drawn down to the floor by a party the sheet's own refusal says kills nothing.
+It is the same gap "KNOWN GAP — the local per-turn readout does not carry the gate" records one
+section up, reaching the raid sheet through the chart the fill-target slice brought back, and it closes
+the same way: threading `hunterAttack` into the projection, which puts a band-scoped term into a
+source-scoped layer and ripples through `max_useful_workers`, both crew targets and the verdict.

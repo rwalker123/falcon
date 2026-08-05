@@ -748,10 +748,10 @@ const HUNT_FORECAST_TRAVEL_BREAKDOWN := " (%d hunting + %d travel)"
 # The long-raid line has no bounded hunting-turn count ("over many turns"), so travel rides as a trailing
 # "(+T travel)" rather than a two-part split.
 const HUNT_FORECAST_LONG_TRAVEL_SUFFIX := " (+%d travel)"
-# The ONE non-viable case under the raid model: the herd is at/below the policy's floor, so there is no
-# standing surplus to raid and the party would return empty. NOT a "won't fill" verdict (the raid always
-# completes); the herd simply has nothing to give this policy right now.
-const HUNT_FORECAST_NO_SURPLUS_FORMAT := "%s is too lean to raid — its surplus is spent"
+# The ONE non-viable case under the raid model: the party comes home with nothing in either currency.
+# The SENTENCE it renders is not one sentence — see `HUNT_EMPTY_REFUSALS`, which keys it off the sim's
+# own `bound`, because "the herd is spent" and "your party cannot kill it" are different facts with
+# opposite remedies.
 # A DENIAL mission is a raid with NO PAYLOAD IN EITHER CURRENCY, not a failed one. It is no longer
 # "Eradicate": since issue #337 `delivers_food` says the QUARRY IS INEDIBLE, Eradicate banks a
 # whole-stock windfall like every other rung, and an inedible quarry still pays pelts. The sim decides
@@ -811,6 +811,67 @@ const TRIP_BOUND_CLAUSES := {
     TRIP_BOUND_HORIZON: "",
 }
 
+# ---- WHY AN EMPTY RAID IS EMPTY, AND WHO THE PLAYER HAS TO FIX ---------------------------------
+# `delivered_food <= 0 and delivered_trade <= 0` is the arithmetic of "the party comes home with
+# nothing", and it is still exactly right. What it does NOT say is WHY — and it used to be read as
+# saying so, because before the take resolved through the fight (`docs/plan_hunt_through_combat.md`
+# §4) a raid could only come home empty by finding the herd already at its floor. It cannot any more:
+# a party that cannot bring one animal down inside the projection's horizon lands here too, with the
+# herd's surplus standing untouched. Reported from play on a THRIVING Wild Aurochs herd with four
+# animals affordable, refused as *"too lean to raid — its surplus is spent"* to a party of one.
+#
+# **A WRONG EXPLANATION IS WORSE THAN A WRONG NUMBER**: it sends the player to fix the wrong thing.
+# The remedies are opposites — wait for the herd to rebuild against send more hunters — so one
+# sentence cannot serve both.
+#
+# **THE SIM ALREADY TELLS THEM APART AND THE CLIENT NEVER INFERS IT FROM THE NUMBERS.** `HuntTripBound`
+# names the stop that ended the projection, and the three reachable-with-nothing-delivered ones are
+# distinct facts: `floor` is the herd-side stop (the standing surplus is spent), `horizon` is the
+# projection running out with the party still empty-handed (it never killed anything — had it killed,
+# it would have delivered and this branch would not be taken), and `herd_lost` is the quarry dying
+# under a raid that never made up a load. `pack_full` / `fill_target` CANNOT reach this branch: both
+# require a load, and a load is a delivery.
+#
+# Each entry carries the three faces of ONE refusal — the forecast LINE, the send button's face, and
+# the spelled-out REASON — so the button cannot say "too lean" over a line naming the party. Adding a
+# cause means adding all three at once, which is the point of one table rather than three.
+# `line` and `reason` take the quarry's name; `button` takes none.
+const HUNT_EMPTY_REFUSALS := {
+    # THE HERD-SIDE STOP — the original case, wording unchanged. Party size genuinely cannot fix it:
+    # standing surplus is a property of the herd.
+    TRIP_BOUND_FLOOR: {
+        "line": "%s is too lean to raid — its surplus is spent",
+        "button": "Herd too lean to raid",
+        "reason": "%s has nothing standing above this floor — the raid would return empty. Wait for the herd to rebuild, lower the floor, or hunt it locally.",
+    },
+    # THE PARTY-SIDE FAILURE. The herd is NOT at its floor — had it been, the projection would have
+    # stopped on `floor` — so the line says so out loud, because the sentence it replaces claimed the
+    # opposite. The three remedies are the three terms of the fight: headcount, kit, and the quarry's
+    # own defence (`hunt_gate_model`, two lines above this on the sheet, states the arithmetic).
+    TRIP_BOUND_HORIZON: {
+        "line": "%s stands above your floor — but this party cannot bring one down",
+        "button": "Party can't make the kill",
+        "reason": "%s has surplus standing; these hunters simply never bring one down in the time a raid allows, so the party returns empty. Send more hunters, arm them better, or pick smaller game.",
+    },
+    # THE QUARRY DIES UNDER THE RAID WITHOUT PAYING FOR IT — reachable at a floor of 0, where nothing
+    # stops the projection before the herd's extinction threshold. Neither the herd nor the party is
+    # the thing to change; the QUARRY is.
+    TRIP_BOUND_HERD_LOST: {
+        "line": "%s is gone before the party can make up a load",
+        "button": "Nothing left to raid",
+        "reason": "%s collapses before your party lands anything — the raid would return empty. Leave it standing and find another quarry.",
+    },
+    # THE UNATTRIBUTED REFUSAL, keyed on `TRIP_BOUND_NONE` and used for every bound this branch cannot
+    # explain — an estimate row carrying no bound at all, or one of the two party-side stops, which are
+    # unreachable here. It names NEITHER side on purpose: guessing is how the defect above happened,
+    # and a fixture that forgets its bound should read as unexplained rather than as somebody's fault.
+    TRIP_BOUND_NONE: {
+        "line": "%s — the raid would return empty",
+        "button": "Raid returns empty",
+        "reason": "This raid on %s brings nothing home, and the forecast does not say which of the herd and the party is the reason.",
+    },
+}
+
 # ---- THE FILL TARGET — the party-side twin of the floor (§5.2) ----------------------------------
 # **`0` = NO TARGET, i.e. fill the pack**, which is what every raid did before the lever existed. The
 # sentinel is the sim's own `NO_FILL_TARGET`, and it is what a target at or above the pack's capacity
@@ -855,12 +916,10 @@ const SEND_HUNT_ANYWAY_TURNS_FORMAT := "Send Anyway (≈%d turns)"
 # A LONG raid (`turnsToFill == 0`, ran the whole horizon still delivering) still lands animals — enabled,
 # but the button names it a long haul rather than quoting a turn count the client can't bound.
 const SEND_HUNT_LONG_RAID_BUTTON := "Send Anyway (long raid)"
-# The ONE blocked case: the herd has no surplus above the policy's floor. A raid that returns empty is a
-# mistake with no upside (unlike a slow-but-delivering one), so the button is DISABLED and says why +
-# the way out. Party size can't fix it — surplus is a property of the HERD, not the party — so the
-# reason names no alternative size.
-const SEND_HUNT_NO_SURPLUS_BUTTON := "Herd too lean to raid"
-const SEND_HUNT_NO_SURPLUS_REASON := "%s has nothing standing above this floor — the raid would return empty. Wait for the herd to rebuild, lower the floor, or hunt it locally."
+# The ONE blocked case: the raid comes home with nothing in either currency. That is a mistake with no
+# upside (unlike a slow-but-delivering raid), so the button is DISABLED and says why plus the way out —
+# and its FACE is keyed off the same `bound` the refusal line is, so the button can never contradict
+# the sentence above it. See `HUNT_EMPTY_REFUSALS`.
 # A denial raid's button states the deal rather than implying failure — the mission IS the point. It
 # is the quarry that decides this (pays neither product), not the rung: see HUNT_FORECAST_DENIAL_FORMAT.
 const SEND_HUNT_DENIAL_BUTTON := "Send (brings nothing home)"
@@ -2981,16 +3040,28 @@ static func hunt_trip_forecast(band: Dictionary, herd: Dictionary, floor: float,
     if not bool(estimate.get("delivers_food", false)) \
             and not bool(estimate.get("delivers_trade", false)):
         return {"available": true, "denial": true, "empty": false}
-    # Nothing delivered in EITHER currency = the herd is at/below the policy's floor: no standing
-    # surplus to raid, the party returns empty. The ONE non-viable case (the raid always completes;
-    # the herd has nothing). Reading food alone here would call every wolf raid "too lean".
+    # **WHICH STOP ENDS THIS SAMPLED TRIP**, off the row rather than inferred from the numbers here.
+    # No row ever reads `fill_target` (the table is band-agnostic); the target branch below is what
+    # puts that key on a forecast, which is exactly the sim's own division of labour.
+    #
+    # **IT IS READ BEFORE THE EMPTY BRANCH BECAUSE THE EMPTY BRANCH IS WHAT NEEDS IT MOST** — an empty
+    # raid is empty for one of three unrelated reasons and only the sim can tell them apart; see
+    # `HUNT_EMPTY_REFUSALS`.
+    var bound := String(estimate.get(TRIP_BOUND_KEY, TRIP_BOUND_NONE))
+    # Nothing delivered in EITHER currency = the party comes home with nothing, whatever the reason.
+    # The ONE non-viable case. Reading food alone here would call every wolf raid empty.
     # NOT `animals_taken == 0`: a party too small to carry a whole animal now KILLS one and hauls the
     # fraction its pack holds (mirroring the local hunt), so `animals_taken >= 1` whenever there's any
     # surplus — the delivered PAYLOAD (with waste) is the honest bind, not the whole-animal kill count.
+    #
+    # **THE ARITHMETIC IS STILL RIGHT; WHAT MOVED IS THE EXPLANATION.** This branch once asserted the
+    # herd was at its floor, because before the take resolved through the fight that was the only way
+    # to land here. It is not any more, so the `bound` travels out and `HUNT_EMPTY_REFUSALS` says which
+    # of the herd and the party the player has to fix.
     var delivered_food := float(estimate.get("delivered_food", 0.0))
     var delivered_trade := float(estimate.get("delivered_trade", 0.0))
     if delivered_food <= 0.0 and delivered_trade <= 0.0:
-        return {"available": true, "denial": false, "empty": true}
+        return {"available": true, "denial": false, "empty": true, TRIP_BOUND_KEY: bound}
     var animals := int(estimate.get("animals_taken", 0))
     # turns_to_fill == 0 = the raid ran the whole horizon still delivering (a long raid). A warn
     # threshold of 0 means the server sent none — report the raid, judge nothing. `turns_to_fill` now
@@ -3006,10 +3077,6 @@ static func hunt_trip_forecast(band: Dictionary, herd: Dictionary, floor: float,
     var wasted_food := float(estimate.get("wasted_food", 0.0))
     var killed := delivered_food + wasted_food
     var waste_pct := (wasted_food / killed) if killed > 0.0 else 0.0
-    # **WHICH STOP ENDS THIS SAMPLED TRIP**, off the row rather than inferred from the numbers here.
-    # No row ever reads `fill_target` (the table is band-agnostic); the target branch below is what
-    # puts that key on a forecast, which is exactly the sim's own division of labour.
-    var bound := String(estimate.get(TRIP_BOUND_KEY, TRIP_BOUND_NONE))
     # **THE TARGETED TRIP — a PROPORTION on the pair above, never a re-derivation of the take model.**
     # The target binds only where it asks for less than the untargeted raid brings home; at or above
     # that count `raid_load` hands the pack straight back, so the answer is the untargeted one and
@@ -3152,11 +3219,13 @@ static func hunt_forecast_line_bbcode(forecast: Dictionary, herd_name: String) -
         return "[color=#%s]%s[/color]" % [
             HudStyle.WARN_HEX, HUNT_FORECAST_DENIAL_FORMAT % herd_name,
         ]
-    # No surplus above the policy's floor → the raid returns empty. The ONE non-viable case (red).
+    # The raid comes home with nothing — the ONE non-viable case (red). WHICH refusal it is comes off
+    # the sim's `bound`, never off these numbers: the herd being spent and the party being unable to
+    # make the kill are the same zero with opposite remedies.
     if bool(forecast.get("empty", false)):
         return "[color=#%s]%s%s[/color]" % [
             HudStyle.DANGER_HEX, HUNT_FORECAST_WARN_GLYPH,
-            HUNT_FORECAST_NO_SURPLUS_FORMAT % herd_name,
+            String(hunt_empty_refusal(forecast)["line"]) % herd_name,
         ]
     # A real raid: headline the delivered PAYLOAD (the animal count over turns + what it LANDS), then
     # the waste. The payload is `delivered_food` and/or `delivered_trade`, each named only when the
@@ -3207,15 +3276,17 @@ static func _raid_payload_suffix(forecast: Dictionary) -> String:
         suffix += HUNT_FORECAST_TRADE_FORMAT % [FoodIcons.TRADE_GOODS_GLYPH, int(round(trade))]
     return suffix
 
-## The raid returns empty: the sim's estimate for THIS (policy, party size) says the herd has no surplus
-## above the policy's floor (`animals_taken == 0`). The single definition of the blocked case — both
-## entry points (panel button + targeting click) gate on it.
-static func hunt_trip_no_surplus(forecast: Dictionary) -> bool:
+## The raid returns empty: the sim's estimate for THIS (floor, party size) delivers nothing in either
+## currency. The single definition of the blocked case — both entry points (panel button + targeting
+## click) gate on it. **It says THAT, never WHY** — `hunt_empty_refusal` is what answers why, and the
+## two were one function for as long as there was only one why.
+static func hunt_trip_returns_empty(forecast: Dictionary) -> bool:
     return bool(forecast.get("available", false)) and bool(forecast.get("empty", false))
 
 ## **DOES THIS TRIP HAVE A PAYLOAD TO PUT IN A READOUT?** The three states that do NOT — no estimate
-## at all, a denial quarry that pays neither product, a herd stripped to its floor — each have exactly
-## one thing to say and say it as a sentence (`hunt_forecast_line_bbcode`); only a delivering raid has
+## at all, a denial quarry that pays neither product, and a raid that comes home empty (whether the
+## herd is spent or the party cannot make the kill) — each have exactly one thing to say and say it as
+## a sentence (`hunt_forecast_line_bbcode`); only a delivering raid has
 ## an animal count, a yield vector and a trip length to lay out as rows. The compose sheet branches on
 ## this so a non-viable raid can never render an empty box, which would read as a raid that delivers
 ## nothing measurable rather than one that is refused.
@@ -3269,12 +3340,25 @@ static func trip_bound_clause(forecast: Dictionary) -> String:
     return String(TRIP_BOUND_CLAUSES.get(
         String(forecast.get(TRIP_BOUND_KEY, TRIP_BOUND_NONE)), ""))
 
-## The ONE sentence spoken about a no-surplus raid — shared verbatim by the herd panel (reason line +
-## disabled-button tooltip) and the targeting-click command-feed refusal, so the two entry points can
-## never disagree. Under the raid model party size cannot fix it (surplus is a property of the HERD, not
-## the party), so — unlike the retired row scan — there is no alternative size to name.
-static func hunt_no_surplus_reason(herd: Dictionary) -> String:
-    return SEND_HUNT_NO_SURPLUS_REASON % herd_display_name(herd)
+## **WHY THIS RAID COMES HOME EMPTY** — the `HUNT_EMPTY_REFUSALS` entry for the sim's own `bound`, i.e.
+## the `{line, button, reason}` triple every surface of the refusal is composed from. THE ONE
+## resolution of that key, so the sentence, the button face and the spelled-out reason are three faces
+## of one answer rather than three lookups free to disagree.
+##
+## A bound the branch cannot explain — an estimate row that carries none, or one of the two party-side
+## stops, which structurally cannot land here (both require a delivered load) — falls to the
+## unattributed entry rather than to a guess. Guessing is the defect this exists to fix.
+static func hunt_empty_refusal(forecast: Dictionary) -> Dictionary:
+    var bound := String(forecast.get(TRIP_BOUND_KEY, TRIP_BOUND_NONE))
+    return HUNT_EMPTY_REFUSALS.get(bound, HUNT_EMPTY_REFUSALS[TRIP_BOUND_NONE])
+
+## The ONE sentence spoken about an empty raid — shared verbatim by the herd panel (reason line +
+## disabled-button tooltip) and the Band panel's dock sheet, so the two entry points can never
+## disagree. **It takes the FORECAST as well as the herd** because which sentence it is depends on the
+## sim's `bound`: "wait for the herd to rebuild" and "send more hunters" are opposite instructions and
+## a reason that names the wrong one is worse than no reason at all.
+static func hunt_empty_refusal_reason(forecast: Dictionary, herd: Dictionary) -> String:
+    return String(hunt_empty_refusal(forecast)["reason"]) % herd_display_name(herd)
 
 ## Max party the band can detach as a hunting expedition: min(idle_workers, max_expedition_party_size),
 ## falling back to idle when the cap is absent/0 (mirrors the compose sheet's `party_max`). The SUPPLY
@@ -3284,6 +3368,31 @@ static func expedition_party_cap(band: Dictionary) -> int:
     var idle := int(band.get("idle_workers", 0))
     var cap := int(band.get("max_expedition_party_size", 0))
     return mini(idle, cap) if cap > 0 else idle
+
+## **THE PARTY THAT CAN REACH THIS HERD'S STANDING SURPLUS** — `engage_workers` over the room above the
+## floor, in the room's own BIOMASS units (the quotient is a ratio, so the units are free exactly as
+## they are for the local cap's account-denominated call). The raid twin of the floor
+## `max_useful_workers` takes through `take_workers`, and it reuses the SAME primitive rather than
+## restating it: a second definition of the engagement crew is precisely what let the two sheets drift.
+##
+## **ONLY THE ENGAGE HALF OF `take_workers`, and that is deliberate.** The haul half is sized on
+## `perWorkerBiomass`, a RESIDENT crew's throughput; a raid hauls in its PACK
+## (`expedition.hunt.per_worker_carry`), which is not on the wire — and the pack side is exactly what
+## the plateau scan already watches the delivered payload run into. Engagement is the arm the scan
+## cannot see, so it is the arm this adds.
+##
+## **A DETACHED PARTY BUILDS NOTHING**, so the dip is `IMPROVEMENT_NONE`'s — resolved through
+## `build_dip` rather than written as a bare 1.0, so "not building" stays one value in one place.
+## `0` for a herd with no engagement stage (a pen; a species the roster cannot resolve) and for one
+## with no body to count, which is what leaves every raid predating this field byte-identical.
+static func expedition_engage_crew(herd: Dictionary, floor: float) -> int:
+    # A raw herd dict carries its forecast fields BARE — the `patch_` prefix belongs to the tile_info
+    # cross-ref, and this layer never reads the compose vocabulary that names it.
+    var prefix := ""
+    return engage_workers(escapement_room(herd, prefix, floor),
+        float(herd.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)),
+        float(herd.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)),
+        build_dip(herd, prefix, IMPROVEMENT_NONE))
 
 ## The max-useful party for a raid: `delivered_food` PLATEAUS with party size once the standing surplus
 ## (not the pack) binds, so beyond the plateau extra hunters raise the payload by nothing. Scan the
@@ -3330,9 +3439,25 @@ static func expedition_useful_cap(band: Dictionary, herd: Dictionary, floor: flo
             else float(cell.get("delivered_trade", 0.0))
         if delivered > prev_delivered:
             prev_delivered = delivered
-            plateau = workers   # the payload is still rising — this size is useful
+            # **A PAYLOAD THAT HAS NOT RISEN ABOVE ZERO IS NOT A PLATEAU.** A raid every sampled party
+            # size comes home empty from — a party too small to make the kill at all — is FLAT at zero,
+            # and the rise/break scan reads that flatness as "the first size was enough", capping at
+            # ONE. That is how the sheet came to read *"max 1 worker useful here"* about a party of one
+            # that kills nothing (reported from play). A size is useful when it lands something.
+            if delivered > 0.0:
+                plateau = workers   # the payload is still rising — this size is useful
         else:
             break               # the payload stopped rising — the previous size is the plateau
+    # **THE ENGAGEMENT ARM THE PLATEAU CANNOT SEE** (`docs/plan_hunt_through_combat.md` §2). The scan
+    # can only report a bind it can WATCH the payload run into, and the sampled party sizes stop long
+    # before the crew that brings this quarry into contact: a herd needing six hunters per animal with
+    # four animals standing wants ~30, so every sampled row delivers nothing and the scan has nothing
+    # to plateau on. The local sheet's cap has floored on this crew since the arm landed
+    # (`max_useful_workers` → `take_workers`); the raid's never did, which is how the sheet came to say
+    # *"max 1 worker useful here"* two lines above *"6 hunters bring one Wild Aurochs into contact"*.
+    # It is a FLOOR on the demand side, never a cap — `assignable` still binds below — so the note
+    # names the ceiling the player is working toward instead of calling the missing hands idle.
+    plateau = maxi(plateau, expedition_engage_crew(herd, floor))
     if plateau <= 0:
         return {"cap": assignable, "note": ""}
     var useful: int = mini(plateau, assignable)
@@ -3414,15 +3539,17 @@ static func expedition_policy_takes(band: Dictionary, herd: Dictionary,
 ##     promises). "primary" for a brisk raid; "armed" amber for a slow/long raid (`Send Anyway (≈54
 ##     turns)` / `Send Anyway (long raid)`) or a denial (`SEND_HUNT_DENIAL_BUTTON`) — ENABLED either
 ##     way: the player is told, then trusted.
-##   NO SURPLUS (`animals_taken == 0`) — the raid returns empty, a mistake with no upside. DISABLED,
-##     with the reason and the way out (party size can't fix it, so the reason names no alternative).
+##   RETURNS EMPTY (nothing delivered in either currency) — a mistake with no upside. DISABLED, with
+##     the reason and the way out, both keyed off the sim's `bound` so the face and the sentence above
+##     it name the SAME culprit.
 ## No confirm dialogs either way.
 static func style_send_hunt_button(button: Button, forecast: Dictionary, reason: String) -> void:
-    # NO SURPLUS — the one blocked case. Disabled, and it says WHY plus what to do instead (the button is
-    # the last thing the player looks at before clicking, so the reason belongs on it). Same words as the
-    # panel line and the targeting refusal, from the one helper.
-    if hunt_trip_no_surplus(forecast):
-        button.text = SEND_HUNT_NO_SURPLUS_BUTTON
+    # RETURNS EMPTY — the one blocked case. Disabled, and it says WHY plus what to do instead (the button
+    # is the last thing the player looks at before clicking, so the reason belongs on it). **Its FACE comes
+    # from the same `HUNT_EMPTY_REFUSALS` entry the line and the reason do**: a button reading "Herd too
+    # lean to raid" under a line naming the PARTY is the same misattribution one control further on.
+    if hunt_trip_returns_empty(forecast):
+        button.text = String(hunt_empty_refusal(forecast)["button"])
         button.disabled = true
         button.tooltip_text = reason
         HudStyle.apply_button(button, "ghost")

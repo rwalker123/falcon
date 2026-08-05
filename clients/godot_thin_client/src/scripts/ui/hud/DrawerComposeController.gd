@@ -1597,13 +1597,15 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
             var forecast_line := SourceForecast.hunt_forecast_line_bbcode(trip, _herd_label_for_id(herd_id))
             if forecast_line != "":
                 target.add_child(HudWidgets.forecast_label(forecast_line))
-        # The no-surplus refusal — computed ONCE and used for both the button tooltip and the reason
-        # line, and identical to what the targeting flow posts to the command feed.
-        var no_surplus := SourceForecast.hunt_trip_no_surplus(trip)
-        var reason := SourceForecast.hunt_no_surplus_reason(herd) if no_surplus else ""
+        # The empty-raid refusal — computed ONCE and used for both the button tooltip and the reason
+        # line, and identical to what the Band panel's dock sheet renders. It takes the TRIP as well as
+        # the herd: whether the culprit is the herd's spent surplus or a party that cannot make the
+        # kill comes off the sim's own `bound`, and the two remedies are opposites.
+        var returns_empty := SourceForecast.hunt_trip_returns_empty(trip)
+        var reason := SourceForecast.hunt_empty_refusal_reason(trip, herd) if returns_empty else ""
         SourceForecast.style_send_hunt_button(assign_btn, trip, reason)
         # The reason is spelled out beside the button too — a disabled control's tooltip is easy to miss.
-        if no_surplus:
+        if returns_empty:
             target.add_child(HudWidgets.alloc_hint_label(reason))
     else:
         # The averaging-window disclaimer USED TO STAND HERE, as a wrapped body line under the hint: the
@@ -1655,7 +1657,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         # positive party is the other precondition. (`or` — never clear a disable the style step set.)
         assign_btn.disabled = assign_btn.disabled or _compose.hunt_count() <= 0
         assign_btn.pressed.connect(func() -> void:
-            if _compose.hunt_count() <= 0 or SourceForecast.hunt_trip_no_surplus(
+            if _compose.hunt_count() <= 0 or SourceForecast.hunt_trip_returns_empty(
                     SourceForecast.hunt_trip_forecast(band, herd, _compose.hunt_floor(), _compose.hunt_count(),
             _band_labor.grid_width(), _band_labor.wrap_horizontal(), _compose.hunt_fill_target())):
                 return

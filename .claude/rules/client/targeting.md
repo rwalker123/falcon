@@ -142,7 +142,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   herd id in the sheet and re-renders. **The forecast, the max-useful cap, the ascending per-policy metrics
   and the no-surplus block therefore all live in the FORM**, from the SAME helpers the herd drawer's
   beyond-reach branch uses (`SourceForecast.expedition_policy_takes` · `SourceForecast.expedition_useful_cap` · `SourceForecast.hunt_trip_forecast` →
-  `SourceForecast.hunt_forecast_line_bbcode` · `SourceForecast.style_send_hunt_button` · `SourceForecast.hunt_no_surplus_reason`), so the two entry
+  `SourceForecast.hunt_forecast_line_bbcode` · `SourceForecast.style_send_hunt_button` · `SourceForecast.hunt_empty_refusal_reason`), so the two entry
   points structurally cannot quote different numbers. The line reads cyan
   `delivers ≈N <Herd> over ≈M turns · ~F food` (+ amber `· ⚠ P% wasted`) for a brisk raid, WARN-amber `⚠ … — a slow raid` past `expeditionViabilityWarnTurns` (or `delivers ≈N <Herd>
   over many turns … — a slow raid` for a **long** raid, `turnsToFill == 0`, that ran the whole horizon still
