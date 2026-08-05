@@ -2621,8 +2621,10 @@ fn handle_send_expedition(
         .unwrap_or_else(|| ("expedition".to_string(), Vec::new()));
 
     let distance = hex_distance_wrapped(band_pos, target, grid_width, wrap_horizontal);
-    let available = available_workers(band_working);
-    let max_party = available.min(cfg.max_party_size);
+    // **The band is the bound, and the only one** (`docs/plan_denial_raid.md` §3.1). The config's
+    // party lever is a *sampling* bound on the pre-launch estimate tables, never a rule about what
+    // may be sent: you cannot detach workers you do not have, and you may detach all the ones you do.
+    let max_party = available_workers(band_working);
     if party_workers < 1 || party_workers > max_party {
         emit_command_failure(
             app,
@@ -2777,11 +2779,9 @@ fn outfit_raiding_party(
         return None;
     };
 
-    let max_party = {
-        let cfg = app.world.resource::<ExpeditionConfigHandle>().get();
-        let band_working = app.world.get::<PopulationCohort>(band.entity)?.working;
-        available_workers(band_working).min(cfg.max_party_size)
-    };
+    // **The band is the bound, and the only one** — see `handle_send_expedition` above, and
+    // `ExpeditionConfig::estimate_party_sizes` for the lever that used to also live here.
+    let max_party = available_workers(app.world.get::<PopulationCohort>(band.entity)?.working);
     if party_workers < 1 || party_workers > max_party {
         emit_command_failure(
             app,
@@ -8840,6 +8840,166 @@ mod tests {
                 .is_some();
             assert!(!parties, "floor {bad}: no expedition may be spawned");
         }
+    }
+
+    /// **A raiding party is bounded by the BAND, and by nothing else** (`docs/plan_denial_raid.md`
+    /// §3.1).
+    ///
+    /// The reported defect was a party of **9** refused from a band holding **16** idle workers,
+    /// because the config's party lever read `8` and a Red Deer herd at 51 of 119 head needs nine
+    /// hunters to out-kill its regrowth. Two unrelated eights, and the config one won.
+    ///
+    /// That lever was doing two jobs under one name. The **sampling** job — how far the per-*herd*
+    /// estimate tables are quoted, on a table that cannot know which band is asking — is real and
+    /// survives as `estimate_party_sizes`. The **rules cap** on what a player may send had no design
+    /// behind it, and the honest bound is the one the band panel already displays.
+    ///
+    /// Three assertions, and the pairing is what makes them mean something:
+    /// 1. a denial raid past the sampling bound **launches**, with the party it asked for;
+    /// 2. so does a **hunt** — pinned deliberately, because a hunt's party sizing IS changed by this
+    ///    split and *"unchanged unless deliberate"* has to be recorded either way;
+    /// 3. a party past the **band** is still refused, on both verbs, so the bound moved rather than
+    ///    vanished.
+    #[test]
+    fn a_raiding_party_is_bounded_by_the_band_and_not_by_the_sampling_lever() {
+        let sampled = core_sim::ExpeditionConfig::builtin().estimate_party_sizes;
+        let past_the_sample = sampled + 1;
+
+        // 1 + 2. Both raiding verbs launch a party past the sampling bound.
+        for verb in [RaidVerb::Deny, RaidVerb::Hunt] {
+            let mut app = build_headless_app();
+            // Startup, so the world carries the tile registry every launch path resolves against.
+            app.update();
+            let faction = FactionId(0);
+            let herd_id = seed_herd(&mut app, UVec2::new(1, 1), None);
+            let band = spawn_addressable_band(&mut app, faction, &herd_id);
+            let pool = available_workers(
+                app.world
+                    .get::<PopulationCohort>(band)
+                    .expect("the fixture band exists")
+                    .working,
+            );
+            assert!(
+                pool > past_the_sample,
+                "{verb:?}: the fixture only means something while the band can actually spare the \
+                 party ({pool} workers vs {past_the_sample})"
+            );
+
+            verb.launch(&mut app, faction, past_the_sample, herd_id);
+            let launched: Vec<u32> = app
+                .world
+                .query::<(&Expedition, &PopulationCohort)>()
+                .iter(&app.world)
+                .map(|(_, cohort)| available_workers(cohort.working))
+                .collect();
+            assert_eq!(
+                launched,
+                vec![past_the_sample],
+                "{verb:?}: a party of {past_the_sample} must launch from a band of {pool} — the \
+                 sampling bound of {sampled} is not a rule about what may be sent"
+            );
+        }
+
+        // 3. The bound MOVED, it did not vanish: a party past the band is still refused, both verbs.
+        for verb in [RaidVerb::Deny, RaidVerb::Hunt] {
+            let mut app = build_headless_app();
+            app.update();
+            let faction = FactionId(0);
+            let herd_id = seed_herd(&mut app, UVec2::new(1, 1), None);
+            let band = spawn_addressable_band(&mut app, faction, &herd_id);
+            let pool = available_workers(
+                app.world
+                    .get::<PopulationCohort>(band)
+                    .expect("the fixture band exists")
+                    .working,
+            );
+            verb.launch(&mut app, faction, pool + 1, herd_id);
+            assert!(
+                expedition_failure_detail_contains(&app, "workers invalid"),
+                "{verb:?}: a party larger than the band itself must still be refused"
+            );
+            assert_eq!(
+                app.world.query::<&Expedition>().iter(&app.world).count(),
+                0,
+                "{verb:?}: …and no party may be spawned"
+            );
+        }
+    }
+
+    /// The two raiding verbs, so the party-bound fixture states its claim about **both** rather than
+    /// about whichever one it happened to call.
+    #[derive(Debug, Clone, Copy)]
+    enum RaidVerb {
+        Deny,
+        Hunt,
+    }
+
+    impl RaidVerb {
+        fn launch(
+            self,
+            app: &mut bevy::prelude::App,
+            faction: FactionId,
+            party_workers: u32,
+            fauna_id: String,
+        ) {
+            match self {
+                RaidVerb::Deny => {
+                    handle_send_denial_raid(
+                        app,
+                        faction,
+                        Some(FIXTURE_BAND_ID),
+                        party_workers,
+                        fauna_id,
+                    );
+                }
+                RaidVerb::Hunt => handle_send_hunt_expedition(
+                    app,
+                    faction,
+                    Some(FIXTURE_BAND_ID),
+                    party_workers,
+                    fauna_id,
+                    None,
+                    None,
+                ),
+            }
+        }
+    }
+
+    /// The [`BandId`] the party-size fixture addresses its band by. A launch command names a band by
+    /// its **`BandId`**, not by entity bits (a restore renumbers entities), so a fixture that wants a
+    /// band of its own choosing has to give it one — the worldgen bands the default picker would
+    /// otherwise grab carry a pool this test does not control.
+    const FIXTURE_BAND_ID: u64 = 90_001;
+
+    /// A resident band with a `BandId` this fixture can address, staffed on `herd_id` so it is a
+    /// realistic working band rather than an idle one.
+    fn spawn_addressable_band(
+        app: &mut bevy::prelude::App,
+        faction: FactionId,
+        herd_id: &str,
+    ) -> Entity {
+        let band = spawn_resident_working_band(
+            app,
+            faction,
+            LaborTarget::Hunt {
+                fauna_id: herd_id.to_string(),
+                floor: 0.5,
+            },
+        );
+        app.world.entity_mut(band).insert(BandId(FIXTURE_BAND_ID));
+        band
+    }
+
+    /// Did any `ExpeditionSent` event carry a failure naming `needle`? The launch handlers report
+    /// their refusals as feed entries, so this is how a command-level test reads a rejection.
+    fn expedition_failure_detail_contains(app: &bevy::prelude::App, needle: &str) -> bool {
+        app.world.resource::<CommandEventLog>().iter().any(|entry| {
+            matches!(entry.kind, CommandEventKind::ExpeditionSent)
+                && entry
+                    .detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains(needle))
+        })
     }
 
     /// **A deep floor beside a running build is LEGAL, and nothing gates it** (issue #442,

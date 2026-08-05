@@ -2239,7 +2239,7 @@ fn trip_length_responds_to_the_fill_target_but_not_to_party_size_without_one() {
     let mut baseline: Option<u32> = None;
     let mut smallest_payload = 0u32;
     let mut largest_payload = 0u32;
-    for workers in 2..=cfg.max_party_size {
+    for workers in 2..=cfg.estimate_party_sizes {
         let f = turns_for(workers, NO_FILL_TARGET);
         let turns = f
             .turns_to_fill

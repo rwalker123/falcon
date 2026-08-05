@@ -287,9 +287,18 @@ pub struct PopulationCohortState {
     /// for free in `stores`, so without this a rewind would drop the pelts and only the pelts).
     #[serde(default)]
     pub expedition_carried_trade: f32,
-    /// Server-side hard cap on an expedition party (`expedition_config.json` `max_party_size`). A
-    /// global config lever echoed per-cohort (same idiom as `work_range`) so the client outfit
-    /// stepper pre-clamps to `min(idle_workers, this)`. Populated for every cohort.
+    /// **How far the pre-launch estimate tables were sampled** (`expedition_config.json`
+    /// `estimate_party_sizes`) — the party axis of `HerdTelemetryState::hunt_trip_estimates`, and the
+    /// base of `denial_estimates`' own wider axis. A global config lever echoed per-cohort, same
+    /// idiom as `work_range`, populated for every cohort.
+    ///
+    /// **It is NOT a cap on the party, and the outfit stepper must not clamp to it**
+    /// (`docs/plan_denial_raid.md` §3.1): the legal bound is the band's own `idle_workers` and
+    /// nothing else. The field name predates that split and survives only because renaming a wire
+    /// slot costs a client decode change for no behaviour. What it is *for* is telling the client
+    /// where the quoted rows stop — a legal party past the last row has no pre-computed estimate, and
+    /// the client quotes the largest sampled row **with the size it was sampled for** rather than
+    /// composing one (the take is non-linear; see `yield-forecast.md`'s terms-vs-answers rule).
     #[serde(default)]
     pub max_expedition_party_size: u32,
     /// Hunt expedition only: the carry cap = `party_workers × expedition_config.hunt.per_worker_carry`

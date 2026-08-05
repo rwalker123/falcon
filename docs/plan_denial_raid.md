@@ -138,6 +138,157 @@ march. The TOE doc's own wording — "wears down with use" — already reads tha
   (`plan_hunt_through_combat.md` §6.4). A raid's verdict line inherits that: *"past recovery in 3–5
   turns."*
 
+### 3.1 A viable party must be REACHABLE, and the sheet opens on it
+
+Reported from play: **Red Deer, herd 51 of 119 head, band with 16 idle workers.** The party stepper
+capped at **8** and the verdict correctly read *"breeds back faster than this party kills"* at every
+size the player could reach.
+
+```text
+one hunter kills    engage_rate 1 × (1 − wariness 0.65) = 0.35 deer/turn
+the herd replaces   0.10 × 51 × (1 − 51/119)            = 2.91 deer/turn
+break-even          2.91 / 0.35                          = 8.3 hunters   ⇒  9 to decline
+the config lever                                         = 8
+```
+
+**Two unrelated eights.** The lever is a flat config number applying to any expedition; the 8.3 is
+this herd's requirement. The lever landed one below it, so denial on this quarry was unreachable —
+not because the band was too small, but because a lever said so.
+
+#### The lever was doing two jobs under one name, and only one is legitimate
+
+1. **A sampling bound, which is real.** `huntTripEstimates` and `denialEstimates` hang off
+   `HerdTelemetryState` — per **herd**, not per band — so the sim cannot know which band is asking or
+   how many workers it has. Those tables need a fixed axis, and the hunt table is already
+   `floors × party sizes`, so the row count is a genuine budget.
+2. **A rules cap on what the player may send, which has no justification.** No design note ever
+   backed it, and the honest bound is the one the panel already displays: **the band's own workers.**
+   You cannot send hunters you do not have; you can send all the ones you do.
+
+**So they are split.** `expedition_config.max_party_size` is renamed **`estimate_party_sizes`** and
+does job 1 only. Every launch verb — `send_expedition`, `send_hunt_expedition`, `send_denial_raid` —
+bounds a party by `available_workers` and nothing else. A party of 9, 12 or 16 is legal when the band
+has the people. Wary herds are therefore **expensive, not undeniable**, which is what wariness is for.
+
+> **This deliberately changes a HUNT's party sizing too.** A hunting party is no longer capped at 8
+> either. That is the ruling followed to its conclusion rather than an accident, and it is pinned as
+> such: `server::tests::a_raiding_party_is_bounded_by_the_band_and_not_by_the_sampling_lever` asserts
+> both verbs launch past the sampling bound **and** that both still refuse a party past the band.
+
+#### What the sheet shows for a party size that was not sampled
+
+A legal party can now run past the last quoted row. **The client must not compose the missing
+estimate**: the take passes through `fauna::quantise_animal_take`'s `floor()`, so it is non-linear,
+and `.claude/rules/core_sim/yield-forecast.md`'s terms-vs-answers rule says non-linear ships as an
+**answer**.
+
+**It quotes the largest sampled row, naming the party size it was sampled for** — *"at 8 hunters:
+≈14 food over ~6 turns"* beside a stepper reading 16. That is safe in the honest direction, because
+both tables are monotone in party size: the quoted row **under-states** a larger party's take and
+**over-states** its turn count, so the player is never promised more than they will get.
+
+`PopulationCohortState.maxExpeditionPartySize` is the field that says where the rows stop. Its **name
+is now wrong** and is kept only because renaming a wire slot costs a client decode change for no
+behaviour; both the schema comment and the Rust doc state emphatically that it is a sampling bound
+and that the stepper must clamp to `idleWorkers` instead.
+
+#### The sheet opens on `denialPartyNeeded`
+
+`HerdTelemetryState.denialPartyNeeded` (appended) is the smallest party in `denialEstimates` whose
+own row is **not** `repelled`. It is read off the rows rather than recomputed, so the sheet cannot
+open on a value whose verdict one line below says the herd out-breeds it.
+
+**It rounds UP, always.** 8.3 hunters is 9. `fauna::denial_party_needed` is `floor(x) + 1`, not
+`ceil(x)`: a party that exactly *ties* with the regrowth declines nothing, and `ceil` is wrong by one
+at precisely the round number a tuner is most likely to author. The requirement is measured against
+`fauna::herd_replacement_animals` — the **peak** regrowth on the path down, not the rate where the
+herd stands, because the logistic curve peaks at `K/2` and a party sized on a full herd's
+(instantaneous zero) regrowth would stall at the food peak forever.
+
+**Where there is no such number**, one sentinel (`denialPartyNeeded == 0`, *"no quoted party drives
+this herd down"* — never *"send nobody"*), and `repelled` keeps working on every row:
+
+| case | what the sim says |
+|---|---|
+| a quarry nothing brings into contact (`wariness >= 1`, `engage_rate 0`) | `0`; every row `repelled` |
+| a requirement past `expedition_config` `deny.max_party_quoted` (the readout's cost bound) | `0`; every row `repelled` |
+| a herd that declines but does not cross the line inside the horizon | the requirement, with the row reading `horizon` — a long raid, not a refused one |
+| a requirement larger than the band's idle workers | the requirement, honestly — *"you need more people than you have"*, and the panel already shows both numbers |
+
+**The denial table's axis is wider than the hunt table's**, deliberately: *what the herd needs +
+`estimate_party_sizes` of headroom*, capped by `deny.max_party_quoted` (**64**). The requirement's own
+row therefore always exists, which is the whole point — the seeded default can never be one of the
+unquoted sizes above. The headroom matters because the decision above the requirement is *how fast*:
+on the reported herd 9 hunters grind past the 60-turn horizon and 16 cross the line in 11 turns.
+
+**What the wider axis costs.** Measured on a fully-revealed 80×52 map (130 huntable herds, debug
+build): capture ran **~59 ms** against a **~49 ms** flat-`estimate_party_sizes` baseline — about
++20%, and only on the denial half. A **flat** `deny.max_party_quoted` axis (64 rows for every herd)
+cost **~104 ms**, which is why the axis is herd-sized rather than flat: snapshot capture is the hot
+half of a turn. The added rows are the cheap ones — a party past the requirement collapses the herd in
+a handful of turns, so its projection returns long before the horizon, while the sub-requirement rows
+are the ones that run it out.
+
+#### What this change did NOT do, and where the seam is
+
+**The sampled table survives, and it is priced for a band that may not exist.**
+`snapshot::subsistence` prices every field on `HerdTelemetryState` — `denialEstimates`,
+`huntTripEstimates`, `denialPartyNeeded` and the per-worker rates — with
+`equipment_config.hunter_profile(.., equipped = true)`, a hardcoded equipped tier
+(`snapshot/capture.rs`). A herd row is a fact about the *herd*, and the table has no band to ask.
+
+Since TOE landed that is no longer sufficient: the take resolves through the fight, so it depends on
+the band's own `hunterAttack` and its resolved carry tier, **both per band**. A band whose spears
+have run dry hunts at attack `1` against a Red Deer's defense `1.0` — effective attack `0`, so **no
+party of any size works** — and it is being quoted `9`.
+
+So the honest end state is a **per-band** denial answer: the minimum viable party priced for the
+asking band's actual kit, published instead of a sampled table across party sizes, with a dry band
+seeing a larger number or `repelled`. Three things stop that being part of this change:
+
+1. **It is a wire-shape decision, not a repricing.** A per-(band, herd) answer has nowhere to live
+   today: `HerdTelemetryState` is per herd and `PopulationCohortState` is per band, so it needs a new
+   repeated field on the cohort keyed by `faunaId` — and the retired `denialEstimates` becomes a
+   `(deprecated)` slot the sim stops writing, since `snapshot.fbs` is append-only.
+2. **It is also a UI decision.** The sheet has a party *stepper*, and the rows are what give a
+   stepped-off size any verdict at all. Publishing only the requirement's row means the stepper
+   either goes away (the sheet states one number) or loses its readout. That is a design call, not an
+   implementation detail.
+3. **It cannot be a straight repricing, because of what the tables cost.** Measured on a
+   fully-revealed 80×52 map, 132 huntable herds, debug build, over 5 captures:
+
+   | capture | per capture |
+   |---|---|
+   | both estimate tables | **57.5 ms** |
+   | hunt table only (denial stripped) | 22.5 ms |
+   | denial table only (hunt stripped) | 39.0 ms |
+   | neither table | **2.9 ms** |
+
+   The two tables are **~95% of snapshot capture** — the hunt table ≈ 18.5 ms, the denial table
+   ≈ 35 ms, against 2.9 ms for everything else. A per-(band, herd) answer multiplies that by the band
+   count, so three bands would put capture at **~165 ms per turn** on a path
+   `.claude/rules/core_sim/turn-profiling.md` already measures at 94% of turn time. Repricing
+   therefore *forces* one of two structural answers — collapse the axes so the cross product is
+   affordable, or move the estimates off the per-turn capture entirely (which the one-way command
+   channel does not support today) — and neither is a decision to take by reflex.
+4. **`huntTripEstimates` has the identical defect for the identical reason**, and the same cost
+   argument applies to it, but the two tables answer different questions: denial asks *"what party do
+   I need"* (one number) while a hunt asks *"what will I get"* at a floor **and** a party size, so
+   whether the hunt's axes survive a repricing is its own case to make.
+   `estimate_party_sizes` cannot be deleted until that table is dealt with, which is why the lever
+   survives — renamed to say what it does — rather than being removed here.
+
+**The clean line this change stops at:** the launch cap is gone (the reported defect), the minimum
+viable party is computed, rounded up, and published as an *answer*, and the sheet can open on it. The
+number is quoted at the equipped tier, stated as such on the field, on the schema and in the table
+below.
+
+**`estimate_party_sizes` was deliberately NOT raised from 8.** Raising it multiplies the *hunt* table
+by 5 (its axis is `floors × party sizes`), so 8 → 16 would double an already-large per-herd cost to
+buy rows the "quote the largest sampled row" rule already covers honestly. If play shows the quoted
+row is too far below typical party sizes to be useful, that is the lever to turn, and the cost is
+linear in it.
+
 ---
 
 ## 4. Slices
@@ -150,7 +301,12 @@ unclamp.
    `fauna::EngagementStop::Never`, which drops the quantiser's carry arm and leaves `carried`
    untouched. `DenialForecast::turns_to_collapse` reports as a range and rides the wire as
    `HerdTelemetry.denialEstimates`.
-2. **Client.** A third verb at launch; the collapse verdict line as a range; the waste readout.
+2. **Client.** A third verb at launch; the collapse verdict line as a range; the waste readout. Plus
+   the §3.1 half, which now applies to **all three** verbs: every outfit stepper caps at the band's
+   **idle workers** and never at `maxExpeditionPartySize`; the denial stepper *seeds* at
+   `denialPartyNeeded`, rendering the `0` sentinel as *"no party can"* rather than as a party size;
+   and a selected size past the last quoted row shows that row **with the size it was quoted for**,
+   never a client-composed estimate.
 
 ---
 
@@ -176,6 +332,7 @@ unclamp.
 | 1 | **Does a collapsing herd tell anyone?** | §2 settles that denial names no target faction. But a herd crossing `collapse_fraction` is visible ecology, and whether its *other* users are told — and how — is unresolved. |
 | 2 | ~~**Does a raid recur?**~~ | **SETTLED in slice 1: it does not.** A denial raid completes when the herd goes past recovery and never relaunches — there is nothing to come back for, and `raid_is_recurring` is a question about a *floor*, which the mission does not carry. A raid that cannot get there keeps working the herd until it is recalled; the launch verdict warns first (§3). |
 | 3 | **Is denial legible as distinct from a deep hunt?** | The mechanical difference is one clamp. If a player cannot feel why the raid is different from `floor = 0`, the mission has failed even if the sim is right. |
+| 4 | **Where does a PER-BAND raid estimate live on the wire?** | The whole of `HerdTelemetryState` is priced at the equipped tier (§3.1, "What this change did NOT do"), so a band with worn kit is quoted numbers it cannot reach — on `denialPartyNeeded` and on `huntTripEstimates` alike. A per-(band, herd) answer needs a new cohort-side field and a decision about whether the launch sheet keeps a party stepper at all. |
 
 ---
 

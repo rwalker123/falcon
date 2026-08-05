@@ -602,9 +602,22 @@ table PopulationCohortState {
   expeditionAnnounced:bool = false; // whether the arrival feed line has fired for this AwaitingOrders latch.
   pendingRevealX:[uint];      // observed-but-unreported tile coords (zipped with pendingRevealY).
   pendingRevealY:[uint];
-  // Server-side hard cap on an expedition party (expedition_config.json max_party_size). A global
-  // config lever echoed per-cohort (same idiom as workRange) so the client outfit stepper pre-clamps
-  // to min(idle_workers, this). Populated for every cohort (the stepper is on the resident-band panel).
+  // HOW FAR THE PRE-LAUNCH ESTIMATE TABLES WERE SAMPLED (expedition_config.json
+  // `estimate_party_sizes`) — the party axis of HerdTelemetryState.huntTripEstimates, and the base of
+  // denialEstimates' own (wider) axis. A global config lever echoed per-cohort, same idiom as
+  // workRange, populated for every cohort.
+  //
+  // *** IT IS NOT A CAP ON THE PARTY, AND THE STEPPER MUST NOT CLAMP TO IT. *** The legal bound is
+  // the band's own idleWorkers and nothing else (docs/plan_denial_raid.md §3.1): you cannot send
+  // workers you do not have, and you may send all the ones you do. The field name predates the split
+  // and is kept only because renaming a wire slot costs a client decode change for no behaviour.
+  //
+  // What it IS for: telling the client where the quoted rows stop. A legal party past the last row
+  // has no pre-computed estimate, and the client must NOT compose one — the take passes through the
+  // sim's whole-animal quantiser, so it is non-linear and ships as an ANSWER, never as terms (see
+  // .claude/rules/core_sim/yield-forecast.md, "THE BOUNDARY"). Quote the largest sampled row WITH
+  // the party size it was sampled for. That is safe in the honest direction: both tables are
+  // monotone in party size, so it under-states a larger party's take and over-states its turns.
   maxExpeditionPartySize:uint = 0;
   // The band's resolved settlement-progression stage (data-driven; see `SettlementStageView`).
   // The sim resolves it from the band's `size` against the ordered `settlement_stage_config.json`
@@ -2275,7 +2288,37 @@ table HerdTelemetryState {
   // The sim's pre-launch estimates for a DENIAL RAID against this herd — one entry per party size,
   // with no floor axis and no fill-target axis, because the mission carries neither. See
   // DenialEstimate. Empty for a non-huntable herd, exactly as huntTripEstimates is.
+  //
+  // THE TABLE'S PARTY AXIS IS NOT maxExpeditionPartySize. It runs to whichever is larger of that
+  // flat ceiling and `denialPartyNeeded` below, because a denial raid's outfit bound is the band's
+  // OWN IDLE WORKERS and not the ceiling (docs/plan_denial_raid.md §3.1). The stepper on this sheet
+  // therefore caps at `idleWorkers`, never at `maxExpeditionPartySize` — which is a hunt/scout
+  // lever and, at 8, sat one below a common quarry's requirement of 9.
   denialEstimates:[DenialEstimate];
+  // THE PARTY THIS SHEET OPENS ON — the smallest party in denialEstimates whose raid is NOT
+  // "repelled", i.e. the smallest one whose kills genuinely outpace this herd's regrowth.
+  //
+  // Seed the stepper here. The control is otherwise a guessing game: below the requirement a raid
+  // accomplishes literally nothing however long it runs, and nothing on the sheet told the player
+  // which number crossed the line.
+  //
+  // 0 = NO QUOTED PARTY DRIVES THIS HERD DOWN, and it is never "send nobody". Three situations
+  // reach it, all honest and all distinguishable by the rows' own `outcome`: a quarry nothing can
+  // bring into contact (wariness >= 1), a requirement past the sim's quoting bound
+  // (expedition_config `deny.max_party_quoted`), and a herd whose regrowth out-runs the whole
+  // table. Render the verdict, never a blank, and never a stepper seeded at 0.
+  //
+  // It may exceed the band's idle workers — that is the honest "you need more people than you
+  // have", and the panel already shows both numbers.
+  //
+  // *** IT IS QUOTED FOR THE EQUIPPED TIER, LIKE EVERY OTHER FIELD ON THIS TABLE. *** The capture
+  // prices the whole herd row with `hunter_profile(.., equipped = true)` — a herd row is a fact
+  // about the HERD, and this table has no band to ask. Since TOE landed the take depends on the
+  // band's own `hunterAttack` and carry tier, so a band whose spears have run dry is quoted a party
+  // it cannot achieve (at attack 1 against a Red Deer's defense 1 the effective attack is 0 and NO
+  // party works). That is a property of the whole table, not of this field; repricing it per band is
+  // its own arc. Appended last (append-only wire).
+  denialPartyNeeded:uint = 0;
 }
 
 table CommandEventState {

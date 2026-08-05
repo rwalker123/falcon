@@ -1153,7 +1153,7 @@ mod tests {
                 .per_worker_biomass_capacity,
         };
         let levers = ExpeditionLevers {
-            max_party_size: 0,
+            estimate_party_sizes: 0,
             hunt_per_worker_carry: 0.0,
             hunt_per_worker_provisions: 0.0,
             hunt_viability_warn_turns: 0,

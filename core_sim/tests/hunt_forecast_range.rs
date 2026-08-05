@@ -789,15 +789,53 @@ fn a_gather_reports_a_point_and_pays_it() {
     let mut app = build_headless_app();
     app.update();
 
-    // A live patch with standing crop, and the tile it sits on.
-    let coord = *app
-        .world
-        .resource::<core_sim::ForageRegistry>()
-        .patches
-        .iter()
-        .find(|(_, patch)| patch.biomass > 0.0)
-        .expect("the map seeded forage")
-        .0;
+    // A live patch with standing crop **that actually pays FOOD**, and the tile it sits on.
+    //
+    // **The food test is load-bearing, not belt-and-braces.** `map_seed` is entropy by default and
+    // `patches` is a hash map, so "the first patch with biomass" is a different tile every run —
+    // and since #433 a tile's yield comes from its own flora basket, which can be **cash-crop only**
+    // (flax, cotton, hay: `provisions_per_biomass == 0`, a real trade income and no gather at all).
+    // Landing on one made the liveness assertion at the foot of this test fail on an honest `0.0`
+    // beside a live `trade_yield`, at a low rate and with nothing in the message to say why. The
+    // fixture now states the property it needs instead of hoping the draw supplies it.
+    let coord = {
+        let flora = app.world.resource::<core_sim::FloraConfigHandle>().get();
+        let labor = app.world.resource::<LaborConfigHandle>().get();
+        let map_seed = app.world.resource::<core_sim::SimulationConfig>().map_seed;
+        let tiles = app.world.resource::<TileRegistry>();
+        let mut edible: Vec<_> = app
+            .world
+            .resource::<core_sim::ForageRegistry>()
+            .patches
+            .iter()
+            .filter(|(_, patch)| patch.biomass > 0.0)
+            .filter(|(coord, patch)| {
+                tiles
+                    .index(coord.x, coord.y)
+                    .and_then(|tile| app.world.get::<core_sim::Tile>(tile))
+                    .is_some_and(|ground| {
+                        let composition = core_sim::tile_flora_composition(
+                            &flora,
+                            &labor.forage,
+                            ground,
+                            map_seed,
+                        );
+                        core_sim::patch_provisions_per_biomass(
+                            patch,
+                            &composition,
+                            &flora,
+                            &labor.forage,
+                        ) > 0.0
+                    })
+            })
+            .map(|(coord, _)| *coord)
+            .collect();
+        // …and in a stable order, so a hash map's iteration order is not a second source of drift.
+        edible.sort_by_key(|coord| (coord.y, coord.x));
+        *edible
+            .first()
+            .expect("the map seeded a food-bearing forage patch")
+    };
     let tile = app
         .world
         .resource::<TileRegistry>()

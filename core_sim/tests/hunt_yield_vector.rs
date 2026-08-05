@@ -1192,7 +1192,7 @@ fn a_composed_ceiling_carries_the_windfall_at_floor_zero() {
 // B3 — the EXPEDITION arm: a raid PAYS both products it forecast
 // ---------------------------------------------------------------------------------------------------
 
-/// The reference raiding party (`≤ expedition_config.max_party_size`, so the pre-launch estimate
+/// The reference raiding party (`≤ expedition_config.estimate_party_sizes`, so the pre-launch estimate
 /// table carries a row for it).
 const RAID_PARTY: u32 = 4;
 
@@ -1263,7 +1263,7 @@ fn party_cohort(tile: bevy::prelude::Entity, workers: u32) -> PopulationCohort {
 ///   (`docs/plan_hunt_through_combat.md` §2) decides *how long a raid lasts*, which is a third
 ///   confound of exactly the same shape. An **inedible** quarry never fills its pack, so its raid can
 ///   only end when the standing surplus is spent; at the shipped wolf rate a legal party
-///   (`≤ max_party_size`) reaches 2 wolves a turn against a herd regrowing ~100 biomass a turn, so the
+///   (`≤ estimate_party_sizes`) reaches 2 wolves a turn against a herd regrowing ~100 biomass a turn, so the
 ///   raid never completes inside the forecast horizon and the row this test compares against
 ///   disappears. Neutralising reach leaves the take bounded by carry and the herd, which is the
 ///   regime the yield vector is measured in.

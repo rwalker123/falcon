@@ -567,7 +567,7 @@ fn a_wary_herd_resists_denial_and_the_forecast_says_so() {
 
     // 3. Liveness: a bigger party on the SAME wary herd does get there, so `Repelled` is a statement
     //    about the party rather than about the fixture.
-    let big_enough = expedition_cfg(&wary).max_party_size;
+    let big_enough = expedition_cfg(&wary).estimate_party_sizes;
     let overwhelming = forecast(&wary, &id, big_enough);
     assert!(
         overwhelming.outcome.succeeded() && overwhelming.turns_to_collapse.is_some(),
@@ -1238,4 +1238,281 @@ fn reveal_herd(app: &mut App, pos: UVec2) {
     let mut ledger = app.world.resource_mut::<VisibilityLedger>();
     let map = ledger.ensure_faction(viewer, grid.x, grid.y);
     map.mark_active(pos.x, pos.y, 0);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// THE REPORTED CASE — a viable party must be REACHABLE, and the sheet must open on it
+// ---------------------------------------------------------------------------------------------------
+
+/// **The reported quarry** — Red Deer, and the species is the fixture: `engage_rate 1` and
+/// `wariness 0.65` put one hunter at `1 × (1 − 0.65) = 0.35` animals a turn, which is the whole left
+/// side of the arithmetic this test exists for. Both dials are resolved off the display name, so
+/// naming the species is the only way to state them.
+const REPORTED_QUARRY: &str = "Red Deer";
+
+/// Red Deer's own `body_mass` (`fauna_config.json`). Stated here because the report counts the herd
+/// in **head** and the sim counts **biomass**, and this is the conversion between them.
+const RED_DEER_BODY_MASS: f32 = 15.0;
+
+/// **The reported herd: 51 of 119 head.** Its per-turn replacement is
+/// `0.10 × 51 × (1 − 51/119) = 2.91` animals, so out-killing it takes `2.91 / 0.35 = 8.3` hunters —
+/// and therefore **9**, one past the sampling bound of 8 that the stepper used to stop at.
+///
+/// It is seated **below** the food peak deliberately: that is where the report found it, and it is
+/// the regime where the raid accelerates as it works (regrowth falls with the stock), so a party
+/// that clears the line clears it decisively.
+const REPORTED_HERD: RaidQuarry = RaidQuarry {
+    body_mass: RED_DEER_BODY_MASS,
+    carrying_capacity: 119.0 * RED_DEER_BODY_MASS,
+    biomass_fraction: 51.0 / 119.0,
+    // The roster's ordinary big-game rate — deer's own `regrowth_rate`.
+    regrowth_rate: 0.10,
+};
+
+/// **The party the arithmetic demands: `ceil(8.3)` = 9.** Pinned as a literal, because rounding it
+/// the other way is the defect — `8` ties-or-loses against the herd's regrowth every turn while the
+/// sheet presents it as the answer.
+const REPORTED_PARTY_NEEDED: u32 = 9;
+
+/// The reported band's idle workers. It is **not** a bound the sim applies here — it is the number
+/// that made the flat ceiling absurd: the people were there, and a lever said no.
+const REPORTED_IDLE_WORKERS: u32 = 16;
+
+/// **Enough seeds to read a mean, few enough to stay quick.** The retreat is binomial and this herd
+/// is a near-run thing (9 hunters remove ~47 biomass a turn against ~44 of regrowth), so a single
+/// driven raid is a *sample*: measured over 400 runs it declines ~90% of the time. The claim below
+/// is therefore about where the runs live, in the shape
+/// [`the_exported_denial_band_brackets_the_seeded_raids_on_a_wary_herd`] already uses.
+const REPORTED_SWEEP_SEEDS: [u64; 6] = [3, 11, 29, 97, 613, 40009];
+
+/// **The reported defect, end to end** — *"a denial raid can be impossible to staff, and the sheet
+/// gives the player no number that works"* (`docs/plan_denial_raid.md` §3.1).
+///
+/// Red Deer at 51 of 119 head, a band holding 16 idle workers, and a stepper that stopped at 8:
+///
+/// ```text
+/// one hunter kills   1 × (1 − 0.65) = 0.35 deer/turn
+/// the herd replaces  0.10 × 51 × (1 − 51/119) = 2.91 deer/turn
+/// break-even         2.91 / 0.35 = 8.3 hunters   ⇒   9 to decline
+/// quoted axis        8   (`estimate_party_sizes`, and it also capped the launch)
+/// ```
+///
+/// Two unrelated eights, and the config one landed **one below** the requirement — so the verdict
+/// *"breeds back faster than this party kills"* was correct at every party size the player could
+/// reach, and denial on this quarry was unreachable because a lever said so.
+///
+/// Four claims, and the last two are a matched pair:
+/// 1. the sim **names** the party — `9`, and `8` is still repelled, which is the rounding pinned in
+///    the defect's own shape;
+/// 2. it is quoted **past the flat ceiling**, with headroom above it, so the sheet can open there
+///    and the player can still over-staff from the workers they hold;
+/// 3. driven for real, the seeded party **declines the herd** (the liveness half);
+/// 4. one hunter fewer does **not** (the ordering half) — so the boundary is real rather than the
+///    test measuring a raid that would have worked at any size.
+#[test]
+fn the_reported_red_deer_raid_is_staffable_and_its_seeded_party_declines_the_herd() {
+    let mut app = wary_world();
+    let (id, pos) = pin_raid_herd_of(&mut app, REPORTED_QUARRY, REPORTED_HERD);
+    reveal_herd(&mut app, pos);
+    recapture_snapshot_in_place(&mut app.world);
+    let sheet = exported_denial_sheet(&app, &id);
+    let sampled = expedition_cfg(&app).estimate_party_sizes;
+
+    // 1. The number, and the rounding. `8.3` hunters is NINE.
+    assert_eq!(
+        sheet.party_needed, REPORTED_PARTY_NEEDED,
+        "the sheet must open on the smallest party that works; 8.3 hunters rounds UP"
+    );
+    assert_eq!(
+        sheet.outcome_at(REPORTED_PARTY_NEEDED - 1),
+        Some(REPELLED),
+        "…and the party one smaller must still read repelled — a floor here would hand back a party \
+         that provably does not work"
+    );
+    assert_ne!(
+        sheet.outcome_at(REPORTED_PARTY_NEEDED),
+        Some(REPELLED),
+        "the seeded party's own row must not contradict the value the sheet opens on"
+    );
+
+    // 2. It is reachable at all — the defect was that this row did not exist.
+    assert!(
+        sheet.party_needed > sampled,
+        "this fixture only means something while the requirement ({}) is past the flat sampling \
+         bound ({sampled}) — that pairing IS the reported bug",
+        sheet.party_needed
+    );
+    assert!(
+        sheet.party_needed <= REPORTED_IDLE_WORKERS,
+        "the band held {REPORTED_IDLE_WORKERS} idle workers; a requirement past that would make \
+         this a fixture about a band too small, which is a different (and legitimate) refusal"
+    );
+    assert!(
+        sheet.rows() > sheet.party_needed,
+        "the table must quote headroom ABOVE the requirement, or a player holding more workers than \
+         the herd needs has no row to read for spending them (rows {}, needed {})",
+        sheet.rows(),
+        sheet.party_needed
+    );
+
+    // 3 + 4. Driven for real, over seeds, because the retreat is a draw and this herd is a near-run
+    //        thing. The projection is not re-read here — the sim is asked directly.
+    let opening = REPORTED_HERD.carrying_capacity * REPORTED_HERD.biomass_fraction;
+    let seeded = mean_biomass_after_raiding(sheet.party_needed);
+    let one_short = mean_biomass_after_raiding(sheet.party_needed - 1);
+    assert!(
+        seeded < opening,
+        "the seeded party must actually drive the herd down: {opening} -> {seeded} on average over \
+         {} seeds",
+        REPORTED_SWEEP_SEEDS.len()
+    );
+    assert!(
+        one_short > seeded,
+        "…and one hunter fewer must leave the herd standing higher ({one_short} vs {seeded}), or \
+         the requirement is not where the sheet says it is"
+    );
+}
+
+/// The wire key [`DenialOutcome::Repelled`] publishes — spelled once so a test cannot drift from the
+/// enum.
+const REPELLED: &str = "repelled";
+
+/// Drive a **real** denial raid on [`REPORTED_HERD`] with `workers` hunters, once per seed, and
+/// average the biomass left standing after a full forecast horizon. `0` for a herd the raid erased
+/// outright (the registry despawns it), which is the strongest form of "declined".
+///
+/// One world per seed: the retreat draws from `(map_seed, tick, herd, party)`, so the seed is what
+/// makes each run an independent sample rather than a repeat.
+fn mean_biomass_after_raiding(workers: u32) -> f32 {
+    let mut endings = Vec::new();
+    for seed in REPORTED_SWEEP_SEEDS {
+        let mut app = wary_world();
+        app.world.resource_mut::<SimulationConfig>().map_seed = seed;
+        let (id, pos) = pin_raid_herd_of(&mut app, REPORTED_QUARRY, REPORTED_HERD);
+        let home = spawn_home_band(&mut app, pos);
+        let party = spawn_party(&mut app, home, pos, workers, deny(&id));
+        let horizon = expedition_cfg(&app).hunt.forecast_horizon_turns;
+        for _ in 1..=horizon {
+            drive_turn(&mut app);
+            if phase(&app, party) != Some(ExpeditionPhase::Hunting) {
+                break;
+            }
+        }
+        endings.push(herd_biomass(&app, &id).unwrap_or(0.0));
+    }
+    endings.iter().sum::<f32>() / endings.len() as f32
+}
+
+/// **A herd whose replacement out-runs every party the sim will quote** — the same Red Deer, on
+/// range rich enough to hold 1,333 head. Its peak replacement is `0.10 × K/4 / body = 33` deer a
+/// turn against `0.35` per hunter, so the requirement is ~96 — past `deny.max_party_quoted`, which
+/// is the *no viable number* case the readout has to survive rather than paper over.
+const UNDENIABLE_HERD: RaidQuarry = RaidQuarry {
+    body_mass: RED_DEER_BODY_MASS,
+    // Seated at the food peak, where the logistic curve is at its most productive: the hardest
+    // point on the path, and the one `herd_replacement_animals` sizes the requirement against.
+    biomass_fraction: 0.5,
+    carrying_capacity: 20_000.0,
+    regrowth_rate: 0.10,
+};
+
+/// **When there is no viable number, the sheet says so — and `repelled` keeps working**
+/// (`docs/plan_denial_raid.md` §3.1).
+///
+/// Three situations reach *"no quoted party drives this herd down"* and this pins the one that is
+/// purely a **readout bound**: a requirement past `deny.max_party_quoted`. The other two — a herd
+/// already past recovery, and a quarry nothing can bring into contact — are covered by
+/// [`a_wary_herd_resists_denial_and_the_forecast_says_so`] and the fauna unit tests.
+///
+/// The pairing is what makes it an assertion rather than a tautology: the sentinel must appear
+/// **and** every row must still carry a real verdict, so a client has something to render. A sheet
+/// that answered `0` by emptying the table would satisfy the first half alone.
+#[test]
+fn a_herd_no_quoted_party_can_collapse_reports_no_viable_party_and_still_reads_repelled() {
+    let mut app = wary_world();
+    let (id, pos) = pin_raid_herd_of(&mut app, REPORTED_QUARRY, UNDENIABLE_HERD);
+    reveal_herd(&mut app, pos);
+    recapture_snapshot_in_place(&mut app.world);
+    let sheet = exported_denial_sheet(&app, &id);
+    let cfg = expedition_cfg(&app);
+
+    assert_eq!(
+        sheet.party_needed, NO_VIABLE_DENIAL_PARTY,
+        "no party this sim will quote outpaces the herd, so the requirement is the sentinel — \
+         never a number the player could send and watch fail"
+    );
+    // The table is still a table: capped at the quoting bound, and every row answers.
+    assert_eq!(
+        sheet.rows(),
+        cfg.deny.max_party_quoted,
+        "the axis must stop at the quoting bound rather than running away with the requirement"
+    );
+    assert!(
+        sheet.every_row_reads(REPELLED),
+        "…and every row must still name WHY, so the client renders a verdict instead of a blank"
+    );
+    // Liveness: the same species on an ordinary herd is deniable, so the sentinel above is a fact
+    // about this range and not about the export being broken.
+    let mut ordinary = wary_world();
+    let (ordinary_id, ordinary_pos) =
+        pin_raid_herd_of(&mut ordinary, REPORTED_QUARRY, REPORTED_HERD);
+    reveal_herd(&mut ordinary, ordinary_pos);
+    recapture_snapshot_in_place(&mut ordinary.world);
+    assert_ne!(
+        exported_denial_sheet(&ordinary, &ordinary_id).party_needed,
+        NO_VIABLE_DENIAL_PARTY,
+        "a normal herd of the same species must still name a party — otherwise the sentinel above \
+         is the export failing, not the range being too rich to deny"
+    );
+}
+
+/// The wire's *"no quoted party drives this herd down"* — `HerdTelemetryState::denial_party_needed`'s
+/// sentinel, spelled once here so the fixture states what it is asserting.
+const NO_VIABLE_DENIAL_PARTY: u32 = 0;
+
+/// The exported denial sheet for one herd: the rows the client looks up, and the party size it opens
+/// on. Read off the **wire**, never the in-process forecast, so a capture that dropped either fails
+/// here rather than at the client.
+struct ExportedDenialSheet {
+    party_needed: u32,
+    outcomes: Vec<(u32, String)>,
+}
+
+impl ExportedDenialSheet {
+    fn rows(&self) -> u32 {
+        self.outcomes.len() as u32
+    }
+
+    fn outcome_at(&self, party_workers: u32) -> Option<&str> {
+        self.outcomes
+            .iter()
+            .find(|(workers, _)| *workers == party_workers)
+            .map(|(_, outcome)| outcome.as_str())
+    }
+
+    fn every_row_reads(&self, outcome: &str) -> bool {
+        !self.outcomes.is_empty() && self.outcomes.iter().all(|(_, got)| got == outcome)
+    }
+}
+
+fn exported_denial_sheet(app: &App, id: &str) -> ExportedDenialSheet {
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let herd = snapshot
+        .herds
+        .iter()
+        .find(|h| h.id == id)
+        .expect("the herd is on the wire (its tile was revealed)");
+    ExportedDenialSheet {
+        party_needed: herd.denial_party_needed,
+        outcomes: herd
+            .denial_estimates
+            .iter()
+            .map(|row| (row.party_workers, row.outcome.clone()))
+            .collect(),
+    }
 }

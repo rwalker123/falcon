@@ -150,12 +150,13 @@ fn merged_arrival_schedule(allocation: Option<&LaborAllocation>) -> Vec<f32> {
 }
 
 /// The global expedition levers the snapshot echoes onto **every** cohort (resolved once per
-/// capture, not per band). `max_party_size` pre-clamps the client's outfit stepper; the other three
-/// are the linear constants the client's **pre-launch hunt forecast** multiplies against a herd's
-/// exported `hunt_policy_ceilings` — so the outfit UI never re-derives the ecology model. See
-/// `core_sim/CLAUDE.md` → Scouting & Hunting Expeditions → Snapshot.
+/// capture, not per band). `estimate_party_sizes` says **how far the pre-launch estimate tables were
+/// sampled** — it does *not* cap the outfit stepper, which clamps to the band's idle workers
+/// (`docs/plan_denial_raid.md` §3.1); the other three are the linear constants the client's
+/// **pre-launch hunt forecast** multiplies against a herd's exported `hunt_policy_ceilings` — so the
+/// outfit UI never re-derives the ecology model. See `.claude/rules/core_sim/expeditions.md`.
 pub(crate) struct ExpeditionLevers {
-    pub(crate) max_party_size: u32,
+    pub(crate) estimate_party_sizes: u32,
     pub(crate) hunt_per_worker_carry: f32,
     pub(crate) hunt_per_worker_provisions: f32,
     pub(crate) hunt_viability_warn_turns: u32,
@@ -439,7 +440,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         expedition_carried_trade,
         expedition_floor,
         expedition_fill_target,
-        max_expedition_party_size: expedition_levers.max_party_size,
+        max_expedition_party_size: expedition_levers.estimate_party_sizes,
         expedition_carry_cap,
         // Appended after every earlier-shipped field (append-only wire discipline; matches the
         // `.fbs` slot order for `expeditionTargetHerd`/`expeditionHuntPolicy`/`travelTargetX/Y`).
@@ -629,7 +630,7 @@ mod tests {
     fn levers() -> ExpeditionLevers {
         let cfg = ExpeditionConfig::builtin();
         ExpeditionLevers {
-            max_party_size: cfg.max_party_size,
+            estimate_party_sizes: cfg.estimate_party_sizes,
             hunt_per_worker_carry: cfg.hunt.per_worker_carry,
             hunt_per_worker_provisions: 0.0,
             hunt_viability_warn_turns: cfg.hunt.viability_warn_turns,

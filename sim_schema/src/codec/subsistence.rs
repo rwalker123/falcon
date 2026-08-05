@@ -258,6 +258,9 @@ fn create_herds<'a>(
                 durability: herd.durability,
                 // The denial raid's pre-launch table — appended last.
                 denialEstimates: denial_estimates,
+                // The party that table's sheet opens on — appended last, so the slot stays
+                // positional. `0` = no quoted party drives this herd down.
+                denialPartyNeeded: herd.denial_party_needed,
             },
         );
         entries.push(entry);

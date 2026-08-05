@@ -2024,7 +2024,7 @@ pub fn capture_snapshot(
         equipped_gather_rate: labor_config.forage.per_worker_biomass_capacity,
     };
     let expedition_levers = ExpeditionLevers {
-        max_party_size: expedition_cfg.max_party_size,
+        estimate_party_sizes: expedition_cfg.estimate_party_sizes,
         hunt_per_worker_carry: expedition_cfg.hunt.per_worker_carry,
         hunt_per_worker_provisions: hunt_per_worker_provisions(&labor_config, &fauna_config),
         hunt_viability_warn_turns: expedition_cfg.hunt.viability_warn_turns,

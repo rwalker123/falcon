@@ -32,9 +32,37 @@ pub const BUILTIN_EXPEDITION_CONFIG: &str = include_str!("data/expedition_config
 /// what is deliberately left free.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ExpeditionConfig {
-    /// Hard cap on the workers a single expedition party can carry (also clamped to the home band's
-    /// available workers at launch).
-    pub max_party_size: u32,
+    /// **How many party sizes the pre-launch estimate TABLES quote** — the axis `1..=this` on
+    /// `huntTripEstimates`, and the base (plus headroom) of the denial table's own axis. It is a
+    /// **sampling bound and nothing else.**
+    ///
+    /// # It is NOT a cap on what the player may send, and it used to be
+    ///
+    /// This lever was doing two jobs under one name (`max_party_size`), and only one of them had a
+    /// justification (`docs/plan_denial_raid.md` §3.1):
+    ///
+    /// - **A sampling bound, which is real.** `huntTripEstimates` / `denialEstimates` hang off
+    ///   `HerdTelemetryState` — per *herd*, not per band — so the sim cannot know which band is
+    ///   asking or how many workers it has. The tables need a fixed axis, and the hunt table is
+    ///   already `floors × party sizes`, so the row count is a genuine budget.
+    /// - **A rules cap on the legal party, which had none.** No design note ever backed it, and the
+    ///   honest bound is the one the band panel already displays: **the band's own workers.** You
+    ///   cannot send hunters you do not have; you can send all the ones you do. At `8` it refused a
+    ///   party of `9` from a band holding `16`, against a Red Deer herd that needed exactly nine —
+    ///   a lever deciding that a mission was impossible.
+    ///
+    /// So the two are split: this is the sampling bound, and `server::outfit_raiding_party` /
+    /// `handle_send_expedition` bound a party by `available_workers` alone, for **all three** verbs.
+    ///
+    /// # The consequence, and where it is answered
+    ///
+    /// A legal party larger than this axis has **no pre-computed row**. The client must not compose
+    /// one — the take passes through `fauna::quantise_animal_take`'s `floor()`, so it is non-linear,
+    /// and `.claude/rules/core_sim/yield-forecast.md`'s terms-vs-answers rule says non-linear ships
+    /// as an **answer**. What it shows instead is the largest quoted row *with the party size it was
+    /// quoted for*, which is safe in the honest direction: both tables are monotone in party size, so
+    /// that row under-states a larger party's take and over-states its turn count.
+    pub estimate_party_sizes: u32,
     /// Base communication range (tiles): the expedition only flushes its observed tiles to the
     /// faction map while within this hex distance of its home band. Early-game default is short so
     /// distant exploration reports back "as a lump on return".
@@ -55,6 +83,9 @@ pub struct ExpeditionConfig {
     pub provision_upkeep_per_worker: f32,
     /// Hunting-expedition (PR 2) tuning — how a party follows a herd, harvests, and delivers.
     pub hunt: HuntExpeditionConfig,
+    /// Denial-raid tuning (`docs/plan_denial_raid.md`) — the one lever the third verb needs, and it
+    /// is a readout bound rather than a rule about parties.
+    pub deny: DenyExpeditionConfig,
     /// Scout opportunistic-replenish (PR 2) tuning — when/where a scout tops up off passing game.
     pub replenish: ReplenishConfig,
 }
@@ -101,6 +132,37 @@ pub struct HuntExpeditionConfig {
     ///   (the floor is continuous, so the wire carries `RAID_FORECAST_FLOOR_SAMPLES` of it), so the
     ///   horizon bounds the per-snapshot work (`samples × max_party_size × this` turn-steps/herd).
     pub forecast_horizon_turns: u32,
+}
+
+/// Denial-raid levers (`docs/plan_denial_raid.md`).
+///
+/// **`max_party_size` is not among them, and that is the arc's one design decision.** A denial
+/// raid's party bound is the launching band's own **idle workers** — see
+/// [`ExpeditionConfig::max_party_size`] for why the flat ceiling is right for the two continuous
+/// verbs and wrong for this one.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DenyExpeditionConfig {
+    /// **The largest party the pre-launch denial table will quote**, and therefore the largest
+    /// requirement `HerdTelemetryState.denial_party_needed` will name.
+    ///
+    /// It is a **cost bound on a readout**, not a rule about what a band may outfit: the launch
+    /// command bounds a party by the band's idle workers and never consults this. What it buys is
+    /// that `snapshot::subsistence::denial_party_axis`, which runs to *what the herd needs plus
+    /// [`ExpeditionConfig::estimate_party_sizes`] of headroom*, cannot be handed an unbounded axis by a
+    /// pathological retune — a quarry at `wariness 0.999` would otherwise ask for millions of rows
+    /// at `3 × rows × hunt.forecast_horizon_turns` turn-steps each, every snapshot, on the hot half
+    /// of the turn.
+    ///
+    /// A herd needing more than this reports **no viable party at all**
+    /// (`denial_party_needed == 0`), which is the honest reading: the sim will not quote a raid it
+    /// declines to simulate. Shipped **64** — comfortably past the shipped roster's worst case (at
+    /// its full `K` a Rabbit Warren asks ~26 hunters and a Gazelle band ~32, so the widest axis the
+    /// roster produces is ~40), so a species retune has room before it meets the bound rather than
+    /// sitting on it.
+    ///
+    /// Validated `>= estimate_party_sizes`: below the base axis it could never bind, because the
+    /// denial axis already runs at least that far — a live-looking lever that does nothing.
+    pub max_party_quoted: u32,
 }
 
 /// Scout opportunistic-replenish levers: the scout's own use of the shared `hunt_take` primitive.
@@ -155,13 +217,19 @@ impl ExpeditionConfig {
     /// Deliberately **unbounded** (they have coherent meanings at their extremes, so bounding them
     /// would be inventing policy): `comm_range_tiles` (`0` = "the party must physically walk back
     /// into camp to report"), `hunt.drop_off_within_tiles` (`0` = no early drop-off; a full pack
-    /// still delivers), and the upper end of `max_party_size` / `hunt.forecast_horizon_turns` (both
-    /// only cost snapshot time — the estimate table is `O(policies × max_party_size × horizon)` per
-    /// herd — which is an operator's call, not an invariant).
+    /// still delivers), and the upper end of `estimate_party_sizes` / `hunt.forecast_horizon_turns`
+    /// (both only cost snapshot time — the hunt table is `O(floors × estimate_party_sizes × horizon)`
+    /// per herd — which is an operator's call, not an invariant).
     pub fn validate(&self) -> Result<(), ExpeditionConfigError> {
-        // A party of zero workers can never be outfitted: `send_expedition` requires
-        // `1 <= party_workers <= max_party_size`, so `0` refuses every launch.
-        require_at_least("max_party_size", self.max_party_size, MIN_COUNTED_LEVER)?;
+        // At `0` the estimate tables have no rows at all: every herd would publish an empty
+        // `huntTripEstimates` / `denialEstimates`, so the client's launch sheet could quote nothing
+        // for any party — a silently unadvisable feature, which is the class this validator exists
+        // for. It no longer refuses a *launch* (a party is bounded by the band), only a readout.
+        require_at_least(
+            "estimate_party_sizes",
+            self.estimate_party_sizes,
+            MIN_COUNTED_LEVER,
+        )?;
         // Negative/NaN would saturate to `0` in `effective_comm_range`'s `as u32` cast, silently
         // zeroing the comm range whatever `comm_range_tiles` says.
         require_positive_finite("comm_range_tech_factor", self.comm_range_tech_factor)?;
@@ -214,6 +282,23 @@ impl ExpeditionConfig {
             "hunt.forecast_horizon_turns",
             self.hunt.forecast_horizon_turns,
             self.hunt.viability_warn_turns,
+        )?;
+
+        // The denial table's party axis runs to `what the herd needs + estimate_party_sizes`, capped
+        // here. At `0` the cap would refuse every requirement, so `denial_party_needed` would read
+        // "no viable party" on every herd in the world and the third verb would silently become
+        // unadvisable — the same class of hole a `0` horizon opens for the hunt.
+        require_at_least(
+            "deny.max_party_quoted",
+            self.deny.max_party_quoted,
+            MIN_COUNTED_LEVER,
+        )?;
+        // Cross-field: a cap below the base axis could never bind, because the denial axis already
+        // runs at least `estimate_party_sizes` — the lever would read as live while unreachable.
+        require_at_least(
+            "deny.max_party_quoted",
+            self.deny.max_party_quoted,
+            self.estimate_party_sizes,
         )?;
 
         // Scouts top up below `party × upkeep × low_turns`; `0` never triggers, and a `0` reach
@@ -405,7 +490,7 @@ mod tests {
     #[test]
     fn builtin_config_parses() {
         let config = ExpeditionConfig::builtin();
-        assert_eq!(config.max_party_size, 8);
+        assert_eq!(config.estimate_party_sizes, 8);
         assert_eq!(config.comm_range_tiles, 2);
         assert_eq!(config.observe_sight_range, 6);
         assert!(config.provision_draw_per_worker_per_tile > 0.0);
@@ -424,6 +509,10 @@ mod tests {
         assert!(config.hunt.forecast_horizon_turns >= config.hunt.viability_warn_turns);
         assert!(config.replenish.low_turns >= 1);
         assert!(config.replenish.reach_tiles >= 1);
+        // The denial readout's cost bound must leave room above the flat ceiling, or the requirement
+        // it caps could never exceed a party the two continuous verbs already allow — which is the
+        // exact case the arc exists for.
+        assert!(config.deny.max_party_quoted > config.estimate_party_sizes);
     }
 
     /// **The regression this validator exists for.** A `0` forecast horizon used to be accepted
@@ -476,8 +565,8 @@ mod tests {
     #[test]
     fn levers_that_would_silently_disable_a_feature_are_rejected() {
         let cases: Vec<RejectionCase> = vec![
-            // No party can be outfitted at all.
-            ("max_party_size", |c| c.max_party_size = 0),
+            // The estimate tables would have no rows, so no launch sheet could quote anything.
+            ("estimate_party_sizes", |c| c.estimate_party_sizes = 0),
             // Saturates to a 0 comm range in the `as u32` cast, whatever comm_range_tiles says.
             ("comm_range_tech_factor", |c| c.comm_range_tech_factor = 0.0),
             ("comm_range_tech_factor", |c| {
@@ -509,6 +598,13 @@ mod tests {
             // 0 → every trip is flagged NOT VIABLE, so the signal carries nothing.
             ("hunt.viability_warn_turns", |c| {
                 c.hunt.viability_warn_turns = 0
+            }),
+            // 0 → every herd reports "no viable denial party", so the third verb is unadvisable.
+            ("deny.max_party_quoted", |c| c.deny.max_party_quoted = 0),
+            // Below the flat ceiling the cap can never bind — the denial table's axis already runs
+            // that far — so it would read as a live lever while doing nothing.
+            ("deny.max_party_quoted", |c| {
+                c.deny.max_party_quoted = c.estimate_party_sizes - 1
             }),
             // 0 → a scout never tops up / must stand on the herd's exact tile.
             ("replenish.low_turns", |c| c.replenish.low_turns = 0),

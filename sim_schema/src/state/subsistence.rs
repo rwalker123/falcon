@@ -33,7 +33,8 @@ pub struct HuntTripEstimateState {
     /// points rather than a formula. Appended (append-only).
     #[serde(default)]
     pub floor: f32,
-    /// Party size, `1 ..= expedition_config.max_party_size`.
+    /// Party size, `1 ..= expedition_config.estimate_party_sizes` — a **sampling** axis, not a cap
+    /// on what may be launched.
     pub party_workers: u32,
     /// Turns of hunting until the **raid completes** — the party comes home when the pack fills OR the
     /// standing surplus is spent (the herd is at the policy's floor) OR the herd is lost. **Not** "turns
@@ -97,7 +98,10 @@ pub struct HuntTripEstimateState {
 /// rest of it went.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct DenialEstimateState {
-    /// Party size, `1 ..= expedition_config.max_party_size`.
+    /// Party size. The axis runs `1 ..=` *this herd's own requirement + `estimate_party_sizes` of
+    /// headroom*, capped by `expedition_config` `deny.max_party_quoted` — **wider than the hunt
+    /// table's**, so the row the sheet opens on ([`HerdTelemetryState::denial_party_needed`]) always
+    /// exists. It is a **sampling** axis, not a cap on what may be launched.
     pub party_workers: u32,
     /// **Turns until the herd is past recovery** at the take's expectation — and therefore turns
     /// until the party comes home, because that is when a denial raid completes. **`0` = it never got
@@ -189,7 +193,7 @@ pub struct HerdTelemetryState {
     #[serde(default)]
     pub corral_trade: f32,
     /// The sim's **pre-launch trip estimates** for a hunting *expedition* against this herd — one
-    /// entry per (stance × party size `1..=max_party_size`), so the outfit UI is a **table lookup**
+    /// entry per (stance × party size `1..=estimate_party_sizes`), so the outfit UI is a **table lookup**
     /// and the client does no arithmetic at all. The improvements are place-bound band work an
     /// expedition cannot do — since issue #442 its mission cannot even name one — so there is nothing
     /// to exclude. Empty for a non-huntable herd. See [`HuntTripEstimateState`] for why the trip is
@@ -467,8 +471,33 @@ pub struct HerdTelemetryState {
     /// size, with no floor axis and no fill-target axis because the mission carries neither
     /// (`docs/plan_denial_raid.md`). The denial twin of [`Self::hunt_trip_estimates`]; empty for a
     /// non-huntable herd, exactly as that one is. Derived at capture. Appended last.
+    ///
+    /// **The party axis runs past `max_expedition_party_size`** where this herd needs it to — see
+    /// [`Self::denial_party_needed`], and `expeditions.md` → "Denial is a MISSION, not a floor" for
+    /// why a denial raid's outfit bound is the band's idle workers rather than that flat ceiling.
     #[serde(default)]
     pub denial_estimates: Vec<DenialEstimateState>,
+    /// **The party the launch sheet OPENS on** — the smallest row in [`Self::denial_estimates`]
+    /// whose raid is not `"repelled"`, and therefore the smallest party whose kills genuinely
+    /// outpace this herd's regrowth (`docs/plan_denial_raid.md` §3.1).
+    ///
+    /// A denial raid is a **step function** in party size: below the requirement it accomplishes
+    /// literally nothing however long it runs. Seeding the stepper here turns the control from a
+    /// guessing game into an adjustment.
+    ///
+    /// **`0` = no quoted party drives this herd down**, never *"send nobody"*. Reached by a quarry
+    /// nothing can bring into contact, by a requirement past the sim's quoting bound
+    /// (`expedition_config` `deny.max_party_quoted`), and by a herd whose regrowth out-runs the whole
+    /// table; the rows' own `outcome` says which. It may also legitimately exceed the launching
+    /// band's idle workers — *"you need more people than you have"* is an answer.
+    ///
+    /// **Quoted for the EQUIPPED tier, like every other field on this table.** A herd row is a fact
+    /// about the herd and has no band to ask, so the capture prices it with
+    /// `hunter_profile(.., equipped = true)`. Since TOE the take depends on the band's own attack and
+    /// carry tier, so a band whose kit has run dry is quoted a party it cannot achieve. That is a
+    /// property of the whole herd table rather than of this field. Appended last.
+    #[serde(default)]
+    pub denial_party_needed: u32,
 }
 
 impl Default for HerdTelemetryState {
@@ -535,6 +564,9 @@ impl Default for HerdTelemetryState {
             engage_rate: 0.0,
             durability: 0.0,
             denial_estimates: Vec::new(),
+            // A herd nothing has described quotes no party — the same "no viable party" reading the
+            // capture publishes for an unraidable one.
+            denial_party_needed: 0,
         }
     }
 }
