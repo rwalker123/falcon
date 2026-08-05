@@ -2439,6 +2439,9 @@ pub fn capture_snapshot(
             tuning: combat_config.tuning(),
             injury_damage_per_animal: combat_config.hunt_injury_damage_per_animal,
         },
+        // The denial estimate's reported band width — a readout lever, read from the same config the
+        // per-source yield range reads it from.
+        range_sigmas: combat_config.forecast_range_sigmas,
     });
     drop(herds_scope);
     let faction_inventory_state = snapshot_faction_inventory(&faction_inventory);

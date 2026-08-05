@@ -13,7 +13,7 @@ use sim_runtime::{
     CrisisGaugeState, CrisisMetricKind as SchemaCrisisMetricKind, CrisisOverlayState,
     CrisisSeverityBand as SchemaCrisisSeverityBand, CrisisTelemetryState,
     CrisisTrendSample as SchemaCrisisTrendSample, CultureLayerState, CultureTensionState,
-    CultureTraitEntry, DiscoveredSiteState as SchemaDiscoveredSiteState,
+    CultureTraitEntry, DenialEstimateState, DiscoveredSiteState as SchemaDiscoveredSiteState,
     DiscoveredSitesState as SchemaDiscoveredSitesState, DiscoveryProgressEntry,
     ElevationOverlayState, FactionInventoryEntryState as SchemaFactionInventoryEntryState,
     FactionInventoryState as SchemaFactionInventoryState, FloatRasterState, FloraShareInfo,
@@ -824,6 +824,7 @@ mod tests {
             viewer: VIEWER,
             fog_enabled,
             party: crate::fauna::HuntingParty::builtin_equipped(),
+            range_sigmas: crate::combat_config::CombatConfig::builtin().forecast_range_sigmas,
         })
     }
 

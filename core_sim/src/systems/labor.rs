@@ -1304,6 +1304,7 @@ pub fn advance_labor_allocation(
                                 collection,
                                 herd.body_mass,
                                 f32::INFINITY,
+                                fauna::EngagementStop::WhenPackFull,
                             );
                         herd.biomass -= take.killed_biomass();
                         // **The carry kit wears on what it HAULS, and a pen hauls** (the minimal

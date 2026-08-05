@@ -83,6 +83,49 @@ pub struct HuntTripEstimateState {
     pub bound: String,
 }
 
+/// The sim's **pre-launch denial-raid estimate** for one party size against one herd — the denial
+/// twin of [`HuntTripEstimateState`] (`docs/plan_denial_raid.md` §1.1).
+///
+/// **It carries neither a floor nor a fill target**, and that absence is the design rather than an
+/// omission: a denial mission has no floor and no rate — *"you choose a herd and a party size"* — so
+/// there is nothing to sample and the table has one axis.
+///
+/// **The headline is [`Self::turns_to_collapse`], not a food total.** Success is pushing the herd
+/// under `ecology.collapse_fraction`, the point of no return where the growth flow is zeroed and the
+/// herd declines irreversibly with the party gone — never killing every animal. What comes home is a
+/// rounding error against what was killed, which is the point, and [`Self::wasted_food`] is where the
+/// rest of it went.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct DenialEstimateState {
+    /// Party size, `1 ..= expedition_config.max_party_size`.
+    pub party_workers: u32,
+    /// **Turns until the herd is past recovery** at the take's expectation — and therefore turns
+    /// until the party comes home, because that is when a denial raid completes. **`0` = it never got
+    /// there** within `forecast_horizon_turns`; [`Self::outcome`] says which *kind* of never, and
+    /// must be rendered instead of a blank.
+    pub turns_to_collapse: u32,
+    /// The **optimistic** end of the range — the fewest turns
+    /// (`docs/plan_hunt_through_combat.md` §6.4). More animals staying and more strikes landing is
+    /// the good draw for a raid, and it drives the herd under sooner.
+    pub turns_to_collapse_low: u32,
+    /// The **pessimistic** end. `0` here beside a positive [`Self::turns_to_collapse`] is the honest
+    /// *"only on a good run"* — not an error.
+    pub turns_to_collapse_high: u32,
+    /// The `core_sim::DenialOutcome` key: `"past_recovery"` / `"herd_lost"` / `"repelled"` /
+    /// `"horizon"`. **`"repelled"` is the one the design insists on** — the party's kills per turn
+    /// are at or below the herd's own regrowth, so it *cannot* get there. That is a verdict about the
+    /// party; `"horizon"` is a statement about the clock.
+    pub outcome: String,
+    /// Whole animals the raid **kills** before it walks away.
+    pub animals_killed: u32,
+    /// Food landed in the pack over the raid — small, and non-zero.
+    pub delivered_food: f32,
+    /// Food killed and left on the range — **the bulk of a raid's take**, stated rather than hidden.
+    pub wasted_food: f32,
+    /// The trade half of the same carried biomass; the whole payload on an inedible quarry.
+    pub delivered_trade: f32,
+}
+
 /// A fully-fed pen — the neutral value of [`HerdTelemetryState::pen_fed_fraction`], so an un-penned
 /// (or older-snapshot) herd never reads as starving.
 fn pen_fully_fed() -> f32 {
@@ -420,6 +463,12 @@ pub struct HerdTelemetryState {
     /// [`Self::body_mass`]. `0` for a species the roster cannot resolve. Appended (append-only).
     #[serde(default)]
     pub durability: f32,
+    /// **The sim's pre-launch estimates for a DENIAL RAID against this herd** — one entry per party
+    /// size, with no floor axis and no fill-target axis because the mission carries neither
+    /// (`docs/plan_denial_raid.md`). The denial twin of [`Self::hunt_trip_estimates`]; empty for a
+    /// non-huntable herd, exactly as that one is. Derived at capture. Appended last.
+    #[serde(default)]
+    pub denial_estimates: Vec<DenialEstimateState>,
 }
 
 impl Default for HerdTelemetryState {
@@ -485,6 +534,7 @@ impl Default for HerdTelemetryState {
             // nothing has described.
             engage_rate: 0.0,
             durability: 0.0,
+            denial_estimates: Vec::new(),
         }
     }
 }

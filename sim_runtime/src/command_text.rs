@@ -202,6 +202,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
              [fill_target]",
     },
     CommandVerbHelp {
+        verb: "send_denial_raid",
+        aliases: &[],
+        summary: "Outfit a detached party to erase a herd — no floor, no fill target, near-zero return.",
+        usage: "send_denial_raid <faction_id> <band_id> <party_workers> <fauna_id>",
+    },
+    CommandVerbHelp {
         verb: "export_map",
         aliases: &["export"],
         summary: "Write the current world map (terrain + seed) to a JSON file for inspection and tests.",
@@ -263,6 +269,12 @@ pub enum CommandParseError {
          everything)"
     )]
     RetiredStanceToken(String),
+    /// **A trailing token on a verb whose grammar is closed.** `send_denial_raid` is the case it
+    /// exists for: the mission carries no floor and no fill target, so a fifth token is not a value
+    /// to ignore but a misunderstanding of the verb (`docs/plan_denial_raid.md` §1), and a silent
+    /// acceptance would teach the player that denial takes a number.
+    #[error("unexpected argument: {0}")]
+    UnexpectedArgument(String),
     #[error("invalid orders directive '{0}'")]
     InvalidDirective(String),
     #[error("invalid security policy '{0}'")]
@@ -1070,6 +1082,35 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 fill_target,
             })
         }
+        // **The denial raid's grammar is DELIBERATELY CLOSED** (`docs/plan_denial_raid.md` §1): it
+        // takes exactly four tokens and no optional trailing ones, because the mission carries no
+        // floor and no fill target. A trailing number is therefore not a value to ignore but a
+        // misunderstanding of the verb, and it is refused by the ordinary "unexpected argument"
+        // parse rather than silently accepted — the same fail-closed reading the floor's own
+        // validation takes.
+        "send_denial_raid" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            let workers_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("party_workers"))?;
+            let fauna_id = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("fauna_id"))?;
+            if let Some(extra) = parts.next() {
+                return Err(CommandParseError::UnexpectedArgument(extra.to_string()));
+            }
+            Ok(CommandPayload::SendDenialRaid {
+                faction_id: parse_u32(faction_str, "send_denial_raid faction")?,
+                band_id: Some(parse_u64(band_str, "send_denial_raid band_id")?),
+                party_workers: parse_u32(workers_str, "send_denial_raid party_workers")?,
+                fauna_id: fauna_id.to_string(),
+            })
+        }
         "resync" => Ok(CommandPayload::Resync),
         "export" | "export_map" => {
             // Remaining tokens (if any) form the destination path; join so
@@ -1277,6 +1318,34 @@ mod tests {
             parse_command_line("send_hunt_expedition 0 7 4 game_fowl_03 0.42 100").unwrap(),
             expected(Some(0.42), Some(100))
         );
+    }
+
+    /// **The denial raid's grammar is CLOSED, and that is the assertion**
+    /// (`docs/plan_denial_raid.md` §1): the mission carries no floor and no fill target, so a fifth
+    /// token is a misunderstanding of the verb rather than a value to ignore. Accepting it silently
+    /// would teach the player that denial takes a number — the one thing the mission exists to say
+    /// it does not.
+    #[test]
+    fn parse_send_denial_raid_takes_a_herd_and_a_party_and_nothing_else() {
+        assert_eq!(
+            parse_command_line("send_denial_raid 0 7 4 game_fowl_03").unwrap(),
+            CommandPayload::SendDenialRaid {
+                faction_id: 0,
+                band_id: Some(7),
+                party_workers: 4,
+                fauna_id: "game_fowl_03".to_string(),
+            }
+        );
+        // A floor — legal on `send_hunt_expedition`, meaningless here, and refused rather than
+        // dropped.
+        assert!(matches!(
+            parse_command_line("send_denial_raid 0 7 4 game_fowl_03 0.42"),
+            Err(CommandParseError::UnexpectedArgument(_))
+        ));
+        assert!(matches!(
+            parse_command_line("send_denial_raid 0 7 4"),
+            Err(CommandParseError::MissingArgument("fauna_id"))
+        ));
     }
 
     #[test]

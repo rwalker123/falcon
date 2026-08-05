@@ -128,6 +128,34 @@ fn create_herds<'a>(
                 .collect();
             Some(builder.create_vector(&entries))
         };
+        // The denial twin of the table above — one row per party size, no floor axis (the mission
+        // carries no floor). Absent when empty, the same convention.
+        let denial_estimates = if herd.denial_estimates.is_empty() {
+            None
+        } else {
+            let entries: Vec<_> = herd
+                .denial_estimates
+                .iter()
+                .map(|estimate| {
+                    let outcome = builder.create_string(estimate.outcome.as_str());
+                    fb::DenialEstimate::create(
+                        builder,
+                        &fb::DenialEstimateArgs {
+                            partyWorkers: estimate.party_workers,
+                            turnsToCollapse: estimate.turns_to_collapse,
+                            turnsToCollapseLow: estimate.turns_to_collapse_low,
+                            turnsToCollapseHigh: estimate.turns_to_collapse_high,
+                            outcome: Some(outcome),
+                            animalsKilled: estimate.animals_killed,
+                            deliveredFood: estimate.delivered_food,
+                            wastedFood: estimate.wasted_food,
+                            deliveredTrade: estimate.delivered_trade,
+                        },
+                    )
+                })
+                .collect();
+            Some(builder.create_vector(&entries))
+        };
         // **An EMPTY curve is absent, not a vector of zeros** — the `hunt_trip_estimates` convention
         // above, and the one that lets a client tell "this source published no curve" from "this
         // source does not grow", which are different facts.
@@ -228,6 +256,8 @@ fn create_herds<'a>(
                 engageRate: herd.engage_rate,
                 // The attrition denominator — appended last, so the slot stays positional.
                 durability: herd.durability,
+                // The denial raid's pre-launch table — appended last.
+                denialEstimates: denial_estimates,
             },
         );
         entries.push(entry);

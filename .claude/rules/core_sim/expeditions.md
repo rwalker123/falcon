@@ -164,9 +164,11 @@ branches on mission:
 > name. Two cases, and they are different kinds of fact: an **INEDIBLE** quarry (a *product* fact —
 > `provisions_per_biomass == 0`, so a converted target would read as an instantly-full pack, and the
 > food pack is already inert there) and **`STRIP_IT_BARE`** (an *intensity* fact — a floor-`0` raid
-> never consults the pack at all, `done`/`relaunch` both `false`). **Denial** — the mission with the
-> carry bound removed (`docs/plan_denial_raid.md`) — is where a target on those will need a meaning of
-> its own.
+> never consults the pack at all, `done`/`relaunch` both `false`). **Denial answered the question they
+> left open by deleting it**: `ExpeditionMission::Deny` carries **no `fill_target` field at all** (and
+> no floor), so a target on a raid that does not clamp to carry cannot be *expressed* rather than
+> being accepted and ignored — and the launch grammar refuses a trailing token rather than dropping
+> it. See "Denial is a MISSION, not a floor".
 >
 > Pinned by `expedition_hunt::{a_fill_target_below_capacity_shortens_the_trip_and_above_it_is_an_identity,
 > trip_length_responds_to_the_fill_target_but_not_to_party_size_without_one}` — the shortening, the
@@ -408,6 +410,14 @@ branches on mission:
   reason a wire is. The **floor fails closed** (out of `0.0..=1.0` → command failure, never clamped);
   the **fill target cannot fail** — every count is a legal order, and a target at or above the pack's
   capacity is simply the untargeted raid.
+- `send_denial_raid <faction> <band> <party_workers> <fauna_id>` — the **third verb**
+  (`SendDenialRaidCommand`, proto field **49**). Shares the whole outfit half with the hunt above —
+  `server::outfit_raiding_party` is the one seam for the resident-band gate, the live-herd lookup and
+  the party bound, so a third verb could not acquire its own copy of them — and differs only in the
+  mission it names and the verdict it quotes. **Its grammar is CLOSED at four tokens**: there is no
+  floor and no fill target to pass, so a fifth token is a hard parse error rather than a value to
+  ignore. Feed `ExpeditionSent`, whose detail carries `mission=deny outcome=… turns_to_collapse=…
+  low=… high=…` and **no `floor=`**. See "Denial is a MISSION, not a floor".
 - `recall_expedition <faction> <expedition_band_id>` — resolves the entity via
   `resolve_expedition_entity` (checks the `Expedition` component + faction), sets `phase = Returning`
   (works for both verbs). Feed `ExpeditionRecalled`.
@@ -418,7 +428,7 @@ branches on mission:
   reuse `Hunt`.
 
 **Snapshot.** `PopulationCohortState` gains client discriminators `isExpedition` / `expeditionMission`
-(`"scout"`|`"hunt"`) / `expeditionPhase` (`outbound`|`awaiting`|`returning`|`hunting`|`delivering`) /
+(`"scout"`|`"hunt"`|`"deny"`) / `expeditionPhase` (`outbound`|`awaiting`|`returning`|`hunting`|`delivering`) /
 `expeditionTargetHerd` (hunt fauna_id — a **string**, since herd ids are non-numeric) /
 **`expeditionFloor:float`** (the raid's escapement floor as a fraction of `K` — the live
 discriminator, defaulting to `1` so an absent floor reads "take nothing" rather than "take
@@ -555,8 +565,125 @@ readout, `expedition_hunt::exported_snapshot_fields_reproduce_band_hunt_take` do
 policies × a unit and a discontent-reduced output multiplier). If either readout ever drifts from the
 sim, those tests fail.
 
-See Also: `docs/plan_exploration_and_sites.md` §2 (design), "Wondrous Sites" (discovery rides the
-flushed tiles), "Visibility Systems" (the `Without<Expedition>` gate).
+## Denial is a MISSION, not a floor — and it changes ONE line
+
+`ExpeditionMission::Deny { fauna_id }`, wire key `"deny"`, launched by
+`send_denial_raid <faction> <band> <party_workers> <fauna_id>` (`SendDenialRaidCommand`, proto field
+**49**). Authoritative design: `docs/plan_denial_raid.md`, which rides on
+`docs/plan_hunt_through_combat.md`.
+
+**It carries no floor and no rate, and that is why it is a mission.** `floor = 0` could not do this
+job for a reason that has nothing to do with the number: `fauna::quantise_animal_take` bounded the
+kill by the party's **carry**, so at any floor a party still only killed what it could haul. That is
+the right model of subsistence hunting and exactly the wrong model of denial, whose premise is
+killing what you have no intention of using. A *bound* is not reachable by any value of a *number*.
+
+**The one line is `fauna::EngagementStop`**, carried on the mission
+(`ExpeditionMission::engagement_stop`) and read by the quantiser and `fauna::hunt_take_bound`
+together:
+
+```text
+hunt:    killed  = min(affordable, max(1, carryable), brought_down)   // WhenPackFull
+denial:  killed  = min(affordable,                    brought_down)   // Never
+both:    carried = min(killed × body_mass, carry_room)                // IDENTICAL
+```
+
+`carried` is untouched, so a raid still banks whatever it can haul on the way home — a rounding error
+against what it killed, which is the point, and the rest is `AnimalTake::wasted`. Nothing else
+changes: `ExpeditionPhase`, outfitting, travel, the `Hunting`/`Delivering`/`Returning` cycle and the
+whole take path are the hunt's. `ExpeditionMission::raid_orders` is the one seam the `Hunting` arm
+resolves both verbs through.
+
+- **`hunt_floor()` reports `STRIP_IT_BARE`** — the escapement ceiling is the herd's whole standing
+  stock. It is *derived*, never a lever, and **`floor` appears nowhere in the command, the feed line
+  or its detail**: the launch text takes four tokens and refuses a fifth
+  (`CommandParseError::UnexpectedArgument`) rather than accepting a number and dropping it.
+- **`hunt_fill_target()` reports `NO_FILL_TARGET`, and cannot report anything else** — see the fill
+  target's own callout above.
+- **A floor-`0` HUNT is still a different thing, deliberately.** It ignores the pack outright
+  (`carry_room_biomass = INFINITY`, an *intensity* fact) and grinds to extinction through the
+  lost-herd guard; denial keeps the pack as a **carry** bound and drops it only as an **engagement**
+  one, so its waste is real and reported. The `Hunting` arm states both cases side by side.
+- **An INEDIBLE quarry is a legitimate denial target** (a wolf). Nothing on the path divides by a
+  food rate it has not established positive: the pack is inert there for the same *product* reason it
+  is inert on a hunt, and the raid is paid in pelts.
+
+### Success is the point of no return, not zero
+
+`fauna::herd_past_recovery(biomass, K, ecology)` — biomass under `ecology.collapse_fraction × K`, read
+through the **same** `classify_ecology_phase` comparison the client's ecology band renders, so the
+raid's completion and the phase word cannot disagree about where the line is. Below it
+`net_biomass_delta` zeroes the growth flow and the herd declines irreversibly at `collapse_rate` with
+the party gone.
+
+So the `Hunting` arm's completion for a denial raid is `done = past_recovery`, `relaunch = false`:
+**the party pushes the herd under the line and walks away**, rather than killing every animal. It
+never delivers mid-trip and never relaunches — there is nothing to come back for, and
+`raid_is_recurring` is a question about a floor the mission does not carry. That settles
+`plan_denial_raid.md` §6's second open question.
+
+**Why ordinary hunting never does this by accident:** any escapement floor above `collapse_fraction`
+stops the take long before, by the arithmetic of `max(0, B − floor·K)`. Pinned by
+`denial_raid::a_denial_raid_reaches_collapse_where_a_hunt_does_not`, whose hunting half is given an
+*unbounded series* of trips and still cannot cross the line — the floor is what stops it, not the
+party's patience.
+
+### The forecast: `turns_to_collapse`, as a range
+
+`systems::denial_forecast` — the denial analogue of `hunt_trip_forecast`, and the same bounded forward
+simulation (`fauna::regrow_biomass` then `expedition_take_biomass`, in the live order) through the
+**same** helper, so a preview cannot quote a raid the sim does not run. It is evaluated at **three
+quantiles** (`±combat_config.forecast_range_sigmas` and the expectation), which is slice 6's shape
+applied to a turn count instead of a biomass (`docs/plan_hunt_through_combat.md` §6.4).
+
+- **`low` is the FEWEST turns** — more animals staying and more strikes landing is the *optimistic*
+  draw for a raid, so `+sigmas` produces the low end. Getting that backwards would report a band that
+  widened in the wrong direction on exactly the wary quarry it exists for.
+- **A `None` end is honest, not a gap.** `turns_to_collapse_high = None` beside a `Some` likely reads
+  *"only on a good run"*; on the wire both are the `0` sentinel and `outcome` is what disambiguates.
+- **`DenialOutcome`** (`"past_recovery"` / `"herd_lost"` / `"repelled"` / `"horizon"`) is why the
+  readout is never a blank (§3). **`Repelled`** is the one the design insists on — the party's kills
+  do not outpace the herd's regrowth, a verdict about the *party*; `Horizon` is a statement about the
+  *clock*. It is measured as **net progress against the herd over the projection's second half, in the
+  herd's own body mass**: a raid that could not take one more animal's worth off the standing stock in
+  half a horizon is not winning slowly, it is not winning. Read off one turn it would be undecidable —
+  at the equilibrium a repelled raid settles into, one turn's kills and one turn's regrowth are equal
+  by definition.
+- **The projection does not model kit wear**, exactly as `hunt_trip_forecast` does not: both are
+  quoted for a `HuntingParty` resolved once. A raid long enough to run its spears dry therefore
+  outruns its own forecast — reachable only on a herd holding more animals than
+  `hunting_kit.starting_durability / wear_per_kill`.
+
+**Wire:** `HerdTelemetryState.denialEstimates` — one `DenialEstimate` per party size
+`1..=max_party_size`, with **no floor axis and no fill-target axis**, because the mission carries
+neither. `snapshot::subsistence::denial_estimate_entries` builds it, gated on `huntable` exactly as
+`huntTripEstimates` is; cost is `3 × max_party_size × hunt.forecast_horizon_turns` turn-steps per
+huntable herd, the three being the reported band's quantiles.
+
+### What it costs, and the kit cost needed nothing new
+
+Travel, party exposure and a near-zero return are the listed costs. The fourth is the **kit**, and it
+holds for a denial party with no new mechanism: `advance_expeditions` already charges
+`wear_hunting(.., take.killed)` per animal **killed** and `wear_sled(.., take.carried)` per unit
+**hauled** — wear tracks *use*, never turns elapsed, which is what `plan_denial_raid.md` §1.2
+required. A denial raid is by construction the most kill-intensive act in the game, so it burns the
+most irreplaceable kit for no food return; a party that engaged nothing spends nothing. Pinned by
+`denial_raid::a_denial_raid_burns_more_kit_than_a_hunt_and_only_for_kills`.
+
+**Not in scope, settled rather than deferred:** no target faction (denial aims at a herd, not a
+player, so there is no nullable field nothing reads) and no plant twin (`reseed_floor_fraction`
+guarantees a stand returns and plants have no Allee term, so a herd can be erased permanently and a
+stand only set back).
+
+**The in-flight `expeditionProjectedDelivery` is `None` for a denial party**, deliberately: its
+readout is the collapse verdict, not a delivery ETA. Quoting "next delivery" for a raid whose whole
+point is that nothing comes home would be the food-only blindness the mission reverses. The client
+half — the third launch verb, the range verdict line, the waste readout and the in-flight collapse
+line — is slice 2.
+
+See Also: `docs/plan_exploration_and_sites.md` §2 (design), `docs/plan_denial_raid.md` (the third
+verb), "Wondrous Sites" (discovery rides the flushed tiles), "Visibility Systems" (the
+`Without<Expedition>` gate).
 
 ---
 

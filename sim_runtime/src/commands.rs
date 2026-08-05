@@ -219,6 +219,22 @@ pub enum CommandPayload {
         /// is nothing to reject: a target above what the pack holds is simply the untargeted raid.
         fill_target: Option<u32>,
     },
+    /// **Outfit and launch a DENIAL RAID** (`docs/plan_denial_raid.md`) — the third expedition verb,
+    /// beside Scout and Hunt. Proto field 49.
+    ///
+    /// **It carries no floor and no fill target, and cannot be given one.** A denial raid does not
+    /// clamp to carry, so a pack-fill stop is meaningless for it, and its escapement ceiling is the
+    /// herd's whole standing stock, so there is no floor to name — the order is *"this herd, this
+    /// many people"*. That is why it is its own payload rather than a flag on
+    /// [`Self::SendHuntExpedition`]: there is nothing here to validate and nothing to tune.
+    ///
+    /// **No target faction** — denial is aimed at a herd, not at a player.
+    SendDenialRaid {
+        faction_id: u32,
+        band_id: Option<u64>,
+        party_workers: u32,
+        fauna_id: String,
+    },
     ExportMap {
         path: Option<String>,
     },
@@ -724,6 +740,17 @@ impl CommandEnvelope {
                 floor: *floor,
                 fill_target: *fill_target,
             }),
+            CommandPayload::SendDenialRaid {
+                faction_id,
+                band_id,
+                party_workers,
+                fauna_id,
+            } => pb::command_envelope::Command::SendDenialRaid(pb::SendDenialRaidCommand {
+                faction_id: *faction_id,
+                band_id: *band_id,
+                party_workers: *party_workers,
+                fauna_id: fauna_id.clone(),
+            }),
             CommandPayload::ExportMap { path } => {
                 pb::command_envelope::Command::ExportMap(pb::ExportMapCommand {
                     path: path.clone(),
@@ -1000,6 +1027,12 @@ impl CommandEnvelope {
                     fill_target: cmd.fill_target,
                 }
             }
+            pb::command_envelope::Command::SendDenialRaid(cmd) => CommandPayload::SendDenialRaid {
+                faction_id: cmd.faction_id,
+                band_id: cmd.band_id,
+                party_workers: cmd.party_workers,
+                fauna_id: cmd.fauna_id,
+            },
             pb::command_envelope::Command::ExportMap(cmd) => {
                 CommandPayload::ExportMap { path: cmd.path }
             }

@@ -386,8 +386,15 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     .unwrap_or_default();
     // Hunt carry cap = party_workers × per_worker_carry (`0` for scouts + normal bands). The party's
     // worker count is its working-age head-count.
+    // **A denial party has a pack too** — it does not clamp to carry, but it still hauls home
+    // whatever it can (`docs/plan_denial_raid.md` §1), so its cap is the hunt's.
     let expedition_carry_cap = match expedition {
-        Some(exp) if matches!(exp.mission, ExpeditionMission::Hunt { .. }) => {
+        Some(exp)
+            if matches!(
+                exp.mission,
+                ExpeditionMission::Hunt { .. } | ExpeditionMission::Deny { .. }
+            ) =>
+        {
             working_age as f32 * expedition_levers.hunt_per_worker_carry
         }
         _ => 0.0,

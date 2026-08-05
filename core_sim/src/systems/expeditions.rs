@@ -1,4 +1,6 @@
 use super::*;
+use crate::combat;
+use crate::components::RaidOrders;
 use crate::fauna::AnimalTake;
 use crate::intensification::NO_BUILD_UNDERWAY_DIP;
 
@@ -194,9 +196,12 @@ pub fn advance_expeditions(
             .unwrap_or(false);
         let mission = expedition.mission.clone();
 
-        // A hunt party whose herd is lost/extinct flips to Returning (folds back via the shared
-        // arm below), with a feed line — knowledge/food it carries still comes home.
-        if let ExpeditionMission::Hunt { fauna_id, .. } = &mission {
+        // A raiding party whose herd is lost/extinct flips to Returning (folds back via the shared
+        // arm below), with a feed line — knowledge/food it carries still comes home. **A denial
+        // raid reaches this the same way a hunt does**, and for it a lost herd is the mission
+        // succeeding outright rather than the target slipping away.
+        if let Some(orders) = mission.raid_orders() {
+            let fauna_id = orders.fauna_id;
             if herds.find(fauna_id).is_none()
                 && !matches!(expedition.phase, ExpeditionPhase::Returning)
             {
@@ -429,20 +434,24 @@ pub fn advance_expeditions(
                 // carry cap. Then, per policy, decide whether the trip is complete. The
                 // trip-completion decision lives INSIDE the in-reach guard: a party still walking to
                 // its herd must never conclude the trip.
-                if let ExpeditionMission::Hunt {
-                    fauna_id,
-                    floor,
-                    fill_target,
-                } = &mission
-                {
+                if let Some(orders) = mission.raid_orders() {
+                    let fauna_id = orders.fauna_id;
                     if let Some(idx) = herds.herds.iter().position(|herd| herd.id == *fauna_id) {
-                        let floor = *floor;
-                        let fill_target = *fill_target;
+                        let RaidOrders {
+                            floor,
+                            fill_target,
+                            stop,
+                            ..
+                        } = orders;
                         let herd_pos = herds.herds[idx].position();
                         // The herd's OWN capacity — the single source of the husbandry ladder's
                         // rung → `K` mapping (`herd_capacity`); a party hunting a tamed or penned herd
                         // raids *its* stock, not a wild counterfactual's.
                         let carrying_capacity = herd_capacity(&herds.herds[idx], &fauna);
+                        // The herd's OWN ecology — the phase bands a denial raid aims to cross
+                        // (`fauna::herd_past_recovery`). Resolved here, beside the capacity it is
+                        // read against, so the completion below cannot re-derive either.
+                        let ecology = herd_ecology(&herds.herds[idx], &fauna);
                         // **The party-side stop**: the pack, or the mission's fill target where the
                         // player set one below it (`raid_load` — the same resolution the forecast
                         // runs, so the raid comes home on the load it was quoted). It replaces the
@@ -491,12 +500,22 @@ pub fn advance_expeditions(
                         // Two INDEPENDENT reasons the cap does not bite, and they are different kinds
                         // of thing — keep them apart:
                         // - an **inedible** species (a wolf) never fills a *food* pack, so there is no
-                        //   room to run out of. That is a **product** fact.
-                        // - **Eradicate** ignores the pack entirely: driving the herd extinct is the
-                        //   point and the meat is incidental. That is an **intensity** fact, and it is
-                        //   deliberately NOT expressed as "denial delivers nothing" — since #337 an
-                        //   Eradicate raid banks the windfall it can carry.
-                        let carry_room_biomass = if floor <= STRIP_IT_BARE || !quarry_yield.edible()
+                        //   room to run out of. That is a **product** fact, and it is what keeps
+                        //   **nothing on the denial path dividing by a zero food rate** — a wolf is a
+                        //   legitimate denial target (`docs/plan_denial_raid.md`).
+                        // - a floor-`0` **hunt** ignores the pack entirely: driving the herd extinct
+                        //   is the point and the meat is incidental. That is an **intensity** fact,
+                        //   and it is deliberately NOT expressed as "denial delivers nothing" — since
+                        //   #337 a strip-it-bare raid banks the windfall it can carry.
+                        //
+                        // **A DENIAL raid is neither**, and that is the whole distinction §0 could not
+                        // draw with a number: it keeps the pack as a bound on what it **hauls** and
+                        // drops it only as a bound on what it **engages** (`stop`). So the room is
+                        // real for it, and the meat it cannot carry is reported as waste rather than
+                        // vanishing into an unbounded `carried`.
+                        let carry_room_biomass = if !quarry_yield.edible()
+                            || (floor <= STRIP_IT_BARE
+                                && stop == fauna::EngagementStop::WhenPackFull)
                         {
                             f32::INFINITY
                         } else {
@@ -535,6 +554,7 @@ pub fn advance_expeditions(
                             quarry_fight,
                             &hunting_party,
                             fauna::HuntDraw::Seeded(seed),
+                            stop,
                             &mut herd.hunt_credit,
                         );
                         let take = outcome.take;
@@ -679,7 +699,22 @@ pub fn advance_expeditions(
                         // `surplus_spent` fires it comes home for good. Each drop-off cycle drains
                         // more of the standing surplus, so the loop converges on `surplus_spent` (or
                         // `full`, or the lost-herd guard).
-                        let (done, relaunch) = if floor <= STRIP_IT_BARE {
+                        //
+                        // **A DENIAL raid has a completion of its own, and it is not zero**
+                        // (`docs/plan_denial_raid.md` §1.1): the party works the herd until it is
+                        // **past the point of no return** — under `ecology.collapse_fraction`, where
+                        // `net_biomass_delta` zeroes the growth flow and the herd declines
+                        // irreversibly with no further pressure — and then walks away. It never
+                        // relaunches: there is nothing to come back for, and the pack it filled on
+                        // the way is what comes home.
+                        let past_recovery = fauna::herd_past_recovery(
+                            herd_biomass_after,
+                            carrying_capacity,
+                            &ecology,
+                        );
+                        let (done, relaunch) = if stop == fauna::EngagementStop::Never {
+                            (past_recovery, false)
+                        } else if floor <= STRIP_IT_BARE {
                             // **Floor `0` never delivers** — it grinds the herd to extinction and ends
                             // through the lost-herd guard. There is no surplus to "spend", because
                             // nothing is meant to be left standing.
@@ -703,7 +738,21 @@ pub fn advance_expeditions(
                             // would be exactly the food-only blindness this arc removes. The pelts
                             // are still banked on `carried_trade`; the `Returning` arm settles them.
                             let pelts = expedition.carried_trade;
-                            let (message, reason) = if carried > scalar_zero() || pelts > 0.0 {
+                            let (message, reason) = if stop == fauna::EngagementStop::Never {
+                                // **A denial raid reports the verdict, never a harvest** — it
+                                // succeeded when the herd went past recovery, and what it hauled
+                                // home is an aside. `floor` appears nowhere in its line
+                                // (`docs/plan_denial_raid.md` §1).
+                                (
+                                    format!(
+                                        "Denial raid drove the {} past recovery — returning home \
+                                         with {}",
+                                        fauna_id,
+                                        describe_haul(carried.to_i64_whole(), pelts)
+                                    ),
+                                    "past_recovery",
+                                )
+                            } else if carried > scalar_zero() || pelts > 0.0 {
                                 (
                                     format!(
                                         "Hunting expedition harvested {} — returning home",
@@ -728,17 +777,26 @@ pub fn advance_expeditions(
                                     "empty_no_take",
                                 )
                             };
+                            // **`floor` is omitted for a denial raid**, not printed as `0` — the
+                            // mission carries no floor, and a `0` on the line would read as a value
+                            // the player chose.
+                            let detail = match stop {
+                                fauna::EngagementStop::Never => {
+                                    format!("status={} expedition={}", reason, entity.to_bits())
+                                }
+                                fauna::EngagementStop::WhenPackFull => format!(
+                                    "status={} floor={} expedition={}",
+                                    reason,
+                                    floor,
+                                    entity.to_bits()
+                                ),
+                            };
                             event_log.push(CommandEventEntry::new(
                                 current_turn,
                                 CommandEventKind::Hunt,
                                 faction,
                                 message,
-                                Some(format!(
-                                    "status={} floor={} expedition={}",
-                                    reason,
-                                    floor,
-                                    entity.to_bits()
-                                )),
+                                Some(detail),
                             ));
                             if let Some(home) = home_pos {
                                 commands.entity(entity).insert(BandTravel { target: home });
@@ -951,6 +1009,10 @@ fn expedition_take_biomass(
     // outcomes and rollback would stop reproducing (§6.2); a forecast reads both off their own
     // binomials, because a projection has no tick to seed with (`fauna::HuntDraw`).
     draw: fauna::HuntDraw,
+    // **Does a full pack stop this party engaging?** — the one line a denial raid changes
+    // (`docs/plan_denial_raid.md` §1). It reaches only the quantiser and the bound reading; every
+    // other term above is the hunt's, unchanged.
+    stop: fauna::EngagementStop,
     credit: &mut f32,
 ) -> HuntOutcome {
     if !body_mass.is_finite() || body_mass <= 0.0 {
@@ -1003,7 +1065,7 @@ fn expedition_take_biomass(
     // seat one (`carryable == 0`) while the herd has banked one, the party still kills ONE and wastes
     // what it cannot haul, and with no banked animal it kills nothing and waits (the true no-surplus
     // case).
-    let take = fauna::quantise_animal_take(ceiling, room, body_mass, fight.brought_down);
+    let take = fauna::quantise_animal_take(ceiling, room, body_mass, fight.brought_down, stop);
     // Drain the bank by what was KILLED (carried + wasted), not merely carried — you cannot un-kill the
     // animal you could not haul. Cap at the surplus so it can't grow unbounded at the floor (surplus <
     // body ⇒ no kill ⇒ the bank would otherwise climb every turn). `0 ≤ credit ≤ surplus`.
@@ -1017,7 +1079,7 @@ fn expedition_take_biomass(
         fled: (engaged - stayed).max(NOTHING_ENGAGED),
         // Read off the very terms the quantiser above was handed, so the report cannot name a bound
         // the take did not hit.
-        bound: fauna::hunt_take_bound(ceiling, room, body_mass, stayed, fight.brought_down),
+        bound: fauna::hunt_take_bound(ceiling, room, body_mass, stayed, fight.brought_down, stop),
     }
 }
 
@@ -1063,6 +1125,9 @@ pub fn expedition_take_provisions(
         quarry,
         party,
         draw,
+        // **This readout is a HUNT's per-turn rate** — the client's per-herd preview, quoted for the
+        // hunting verb. A denial raid's readout is its own forecast (`denial_forecast`).
+        fauna::EngagementStop::WhenPackFull,
         &mut credit,
     );
     // Quantized onto the larder's `Scalar` grid, exactly as the real take lands there.
@@ -1272,7 +1337,15 @@ pub fn hunt_take(
     );
     // ...and the ledger goes straight back onto the herd, before anything can early-return past it.
     herd.wounds = fight.wounds;
-    let take = fauna::quantise_animal_take(ceiling, collection, herd.body_mass, fight.brought_down);
+    let take = fauna::quantise_animal_take(
+        ceiling,
+        collection,
+        herd.body_mass,
+        fight.brought_down,
+        // A resident band (and a scout's roadside kill) hunts: hunters do not kill what they cannot
+        // use. Denial removes exactly this clause, and it is a *mission*, so it never reaches here.
+        fauna::EngagementStop::WhenPackFull,
+    );
     // **The herd loses every animal KILLED, not merely what was carried** — you cannot un-kill the
     // mammoth you could not haul. That is the waste, and it is `take.wasted`.
     herd.biomass -= take.killed_biomass();
@@ -1289,6 +1362,7 @@ pub fn hunt_take(
             herd.body_mass,
             stayed,
             fight.brought_down,
+            fauna::EngagementStop::WhenPackFull,
         ),
     }
 }
@@ -1691,6 +1765,8 @@ fn hunt_trip_forecast_seeded(
             quarry_fight,
             party,
             RAID_FORECAST_DRAW,
+            // This is the **hunt's** projection; a denial raid is projected by [`denial_forecast`].
+            fauna::EngagementStop::WhenPackFull,
             &mut quarry.hunt_credit,
         );
         let take = outcome.take;
@@ -1788,9 +1864,295 @@ fn hunt_trip_forecast_seeded(
     }
 }
 
+/// **How a denial raid ended** — the denial twin of [`HuntTripBound`], and the reason
+/// `turns_to_collapse` is never a silent `None` (`docs/plan_denial_raid.md` §3): *"when the party
+/// cannot get there at all, it must say **that**, not show a blank."*
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DenialOutcome {
+    /// **The herd went past the point of no return** — under `ecology.collapse_fraction`, where the
+    /// growth flow is zeroed and it declines irreversibly at `collapse_rate` with the party gone.
+    /// This is the mission succeeding, and it is what `turns_to_collapse` counts to.
+    PastRecovery,
+    /// The herd was driven under its `extinction_floor` and **despawned** in the same projection —
+    /// the raid succeeding outright rather than walking away from a doomed remnant. It reports a
+    /// completion turn like [`Self::PastRecovery`], because the party comes home on it.
+    HerdLost,
+    /// **The party cannot get there** — at the end of the projection its kills per turn are at or
+    /// below the herd's own regrowth (§3), so the herd sits at an equilibrium the raid cannot push
+    /// past. A wary herd is the shipped way to reach this: the animals that break off before contact
+    /// cost the party hunter-turns and the herd nothing.
+    Repelled,
+    /// **Still grinding it down when the projection ran out** — the raid is winning (kills outpace
+    /// regrowth) but had not crossed `collapse_fraction` within `hunt.forecast_horizon_turns`.
+    /// Distinct from [`Self::Repelled`], which is a verdict about the party rather than about the
+    /// clock.
+    Horizon,
+}
+
+impl DenialOutcome {
+    /// Stable wire/snapshot key (client discriminator), the `as_str` convention every wire enum in
+    /// this crate uses.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DenialOutcome::PastRecovery => "past_recovery",
+            DenialOutcome::HerdLost => "herd_lost",
+            DenialOutcome::Repelled => "repelled",
+            DenialOutcome::Horizon => "horizon",
+        }
+    }
+
+    /// Did the raid achieve what it was sent to do? Both success readings answer the same question
+    /// the player asked, so no consumer has to enumerate them.
+    pub fn succeeded(self) -> bool {
+        matches!(self, DenialOutcome::PastRecovery | DenialOutcome::HerdLost)
+    }
+}
+
+/// **What a denial raid does to a herd, before it is launched** — the mission's readout and the
+/// denial analogue of [`HuntTripForecast`] (`docs/plan_denial_raid.md` §1.1). Produced by
+/// [`denial_forecast`], a bounded forward simulation on the *same* [`expedition_take_biomass`] the
+/// live raid resolves through, so the preview cannot quote a raid the sim does not run.
+///
+/// **The headline is `turns_to_collapse`, not a food total.** A raid delivers a rounding error and
+/// wastes the rest; what the player is deciding is whether this party can push this herd past
+/// recovery, and how long it takes.
+pub struct DenialForecast {
+    /// **Turns until the herd is past recovery** at the take's expectation — and therefore turns
+    /// until the party comes home, because that is when a denial raid completes. `None` = it never
+    /// got there within `hunt.forecast_horizon_turns`; [`Self::outcome`] says which kind of never.
+    pub turns_to_collapse: Option<u32>,
+    /// The **optimistic** end of the range — the take resolved `+forecast_range_sigmas`, so more
+    /// animals stay and more strikes land, and the herd falls **sooner**
+    /// (`docs/plan_hunt_through_combat.md` §6.4).
+    pub turns_to_collapse_low: Option<u32>,
+    /// The **pessimistic** end — `−forecast_range_sigmas`, fewer kills, later or never. A `None`
+    /// here beside a `Some` likely is the honest *"on a bad run this party does not get there"*.
+    pub turns_to_collapse_high: Option<u32>,
+    /// **Why the projection ended** — never a silent `None`.
+    pub outcome: DenialOutcome,
+    /// Whole animals the raid **kills** before it walks away. The number the mission is really
+    /// about.
+    pub animals_killed: u32,
+    /// Food the party lands in its pack over the raid — **small, and non-zero**: the raid banks
+    /// whatever it can haul on the way home.
+    pub delivered_food: f32,
+    /// Food killed and left on the range — **the bulk of a raid's take**, and stated rather than
+    /// hidden (§3).
+    pub wasted_food: f32,
+    /// The trade half of the same carried biomass. For an inedible quarry (a wolf — a legitimate
+    /// denial target) this is the whole payload.
+    pub delivered_trade: f32,
+}
+
+/// One quantile's worth of [`denial_forecast`]'s forward simulation.
+struct DenialProjection {
+    turns: Option<u32>,
+    outcome: DenialOutcome,
+    animals_killed: u32,
+    delivered_food: f32,
+    wasted_food: f32,
+    delivered_trade: f32,
+}
+
+/// **The pre-launch denial readout**, evaluated at three quantiles of the take's own distribution —
+/// the shape slice 6 established for every yield readout (`docs/plan_hunt_through_combat.md` §6.4),
+/// applied to a turn count instead of a biomass.
+///
+/// **`low` is the FEWEST turns.** More animals staying and more strikes landing is the *optimistic*
+/// draw for a raid, and it drives the herd under sooner — so the `+sigmas` run produces
+/// [`DenialForecast::turns_to_collapse_low`] and the `−sigmas` run the high end. Getting that
+/// backwards would report a range that widens in the wrong direction on a wary herd, which is
+/// exactly the quarry the range exists for.
+///
+/// **A range is a POINT when the three agree**, the same reading every other range on the wire asks
+/// for: at `wariness 0` and `hit_chance 1.0` every stage takes its exact identity and all three runs
+/// return the same turn.
+///
+/// `range_sigmas` is `combat_config.forecast_range_sigmas`, a **readout width** — nothing the sim
+/// resolves reads it, so widening the band cannot move an animal.
+pub fn denial_forecast(
+    workers: u32,
+    herd: &Herd,
+    fauna: &FaunaConfig,
+    labor: &LaborConfig,
+    expedition: &ExpeditionConfig,
+    // The party that would go — its per-hunter profile (kit composed in) and the tuning it fights
+    // at. A raid quoted for a bare-handed party must project the bare-handed slaughter, which on a
+    // defended quarry is none at all.
+    party: &fauna::HuntingParty,
+    range_sigmas: f32,
+) -> DenialForecast {
+    let at = |sigmas: f32| {
+        denial_projection_at(
+            workers,
+            herd,
+            fauna,
+            labor,
+            expedition,
+            party,
+            fauna::HuntDraw::Quantile { sigmas },
+        )
+    };
+    let likely = at(combat::EXPECTED_STRIKES);
+    DenialForecast {
+        turns_to_collapse: likely.turns,
+        turns_to_collapse_low: at(range_sigmas.abs()).turns,
+        turns_to_collapse_high: at(-range_sigmas.abs()).turns,
+        outcome: likely.outcome,
+        animals_killed: likely.animals_killed,
+        delivered_food: likely.delivered_food,
+        wasted_food: likely.wasted_food,
+        delivered_trade: likely.delivered_trade,
+    }
+}
+
+/// **How much of the projection the headway verdict is read over** — the second half
+/// (`forecast_horizon_turns / 2`). Expressed as a divisor of the horizon rather than as a turn count
+/// so it scales with the one lever that sets the projection's length, and wide enough that the
+/// float noise around a converged equilibrium cannot decide the verdict.
+const DENIAL_PROGRESS_WINDOW_DIVISOR: u32 = 2;
+
+/// One quantile of the denial projection — the `Logistics` regrowth then the `Population` take, turn
+/// by turn, exactly as [`hunt_trip_forecast_seeded`] does for a hunt, until the herd is **past
+/// recovery** or the horizon runs out.
+///
+/// **The pack does not short-circuit it.** A hunt's projection bails on an empty pack because a
+/// raid with nowhere to put the meat has no trip to project; a denial raid has no such dependence —
+/// the pack decides only what comes home, so a party that can carry nothing still erases the herd
+/// and simply wastes all of it.
+fn denial_projection_at(
+    workers: u32,
+    herd: &Herd,
+    fauna: &FaunaConfig,
+    labor: &LaborConfig,
+    expedition: &ExpeditionConfig,
+    party: &fauna::HuntingParty,
+    draw: fauna::HuntDraw,
+) -> DenialProjection {
+    let hunt_yield = fauna::herd_hunt_yield(herd, fauna);
+    // The party's pack — a **carry** bound only, never a stop. There is no fill target to resolve:
+    // a raid that does not clamp to carry has no pack-fill stop for one to replace.
+    let cap = scalar_from_f32(workers as f32 * expedition.hunt.per_worker_carry);
+    let horizon = expedition.hunt.forecast_horizon_turns;
+    // The projection runs on a private copy — the caller's live herd is never touched.
+    let mut quarry = herd.clone();
+    let ecology = herd_ecology(&quarry, fauna);
+    let capacity = herd_capacity(&quarry, fauna);
+    let engage_rate = fauna.engage_rate_for(&quarry.species);
+    let wariness = fauna.wariness_for(&quarry.species);
+    // The one term that changes every projected turn (§4.2) — a raid spanning turns wears the quarry
+    // down, and a projection that froze the wounds could not see a multi-turn kill at all.
+    let mut quarry_fight = fauna::herd_quarry_fight(&quarry, fauna);
+    let mut larder = scalar_zero();
+    let mut animals_killed = 0u32;
+    let mut delivered_food = 0.0_f32;
+    let mut delivered_trade = 0.0_f32;
+    let mut wasted_food = 0.0_f32;
+    // **The headway window** (§3's *"its kills per turn below the herd's regrowth"*): the herd's
+    // biomass halfway through the projection, so the verdict at the horizon is read over the whole
+    // second half rather than off one turn. A single turn cannot answer it — at the equilibrium a
+    // repelled raid settles into, one turn's kills and one turn's regrowth are equal by definition,
+    // and which side of the comparison the float lands on is noise.
+    let progress_window_opens = horizon / DENIAL_PROGRESS_WINDOW_DIVISOR;
+    let mut biomass_at_window_open = quarry.biomass;
+
+    for turn in 1..=horizon {
+        if turn == progress_window_opens {
+            biomass_at_window_open = quarry.biomass;
+        }
+        fauna::regrow_biomass(&mut quarry, fauna);
+        if quarry.biomass <= ecology.extinction_floor * capacity {
+            // `advance_herds` would despawn it here, and the live party's lost-herd guard turns it
+            // for home on the same turn.
+            return DenialProjection {
+                turns: Some(turn),
+                outcome: DenialOutcome::HerdLost,
+                animals_killed,
+                delivered_food,
+                wasted_food,
+                delivered_trade,
+            };
+        }
+
+        // The pack's remaining room, converted back into biomass exactly as the live arm converts
+        // it. **Never divided through a food rate that has not been established positive** — an
+        // inedible quarry is a legitimate denial target, and its food pack is inert rather than
+        // instantly full.
+        let carry_room_biomass = if hunt_yield.edible() {
+            (cap - larder).max(scalar_zero()).to_f32() / hunt_yield.provisions_per_biomass
+        } else {
+            f32::INFINITY
+        };
+        let outcome = expedition_take_biomass(
+            workers,
+            labor.hunt.per_worker_biomass_capacity,
+            // The escapement ceiling is the herd's whole standing stock.
+            STRIP_IT_BARE,
+            quarry.biomass,
+            capacity,
+            quarry.body_mass,
+            carry_room_biomass,
+            engage_rate,
+            wariness,
+            quarry_fight,
+            party,
+            draw,
+            fauna::EngagementStop::Never,
+            &mut quarry.hunt_credit,
+        );
+        let take = outcome.take;
+        quarry_fight = quarry_fight.with_wounds(outcome.fight.wounds);
+        quarry.biomass -= take.killed_biomass();
+        animals_killed += take.killed;
+        let landed = hunt_yield.apply(take.carried, EXPEDITION_OUTPUT_MULTIPLIER);
+        delivered_food += landed.provisions;
+        delivered_trade += landed.trade_goods;
+        wasted_food += hunt_yield
+            .apply(take.wasted, EXPEDITION_OUTPUT_MULTIPLIER)
+            .provisions;
+        let room = (cap - larder).max(scalar_zero());
+        larder += scalar_from_f32(landed.provisions).min(room);
+
+        if fauna::herd_past_recovery(quarry.biomass, capacity, &ecology) {
+            return DenialProjection {
+                turns: Some(turn),
+                outcome: DenialOutcome::PastRecovery,
+                animals_killed,
+                delivered_food,
+                wasted_food,
+                delivered_trade,
+            };
+        }
+    }
+
+    DenialProjection {
+        turns: None,
+        // §3's verdict, stated as the design states it: a party whose kills do not outpace the
+        // herd's regrowth is not slow, it is **repelled** — the herd sits at an equilibrium above the
+        // line and waiting longer changes nothing. Measured as *net progress against the herd over
+        // the projection's second half*, in the herd's own quantum: a raid that could not take even
+        // **one more animal's worth** off the standing stock in half a horizon is not winning
+        // slowly, it is not winning.
+        outcome: if biomass_at_window_open - quarry.biomass < quarry.body_mass {
+            DenialOutcome::Repelled
+        } else {
+            DenialOutcome::Horizon
+        },
+        animals_killed,
+        delivered_food,
+        wasted_food,
+        delivered_trade,
+    }
+}
+
 /// The in-flight delivery forecast for a live **hunting** party — the client's
 /// "Next delivery: ~X food in ~N turns" drawer line, the in-flight twin of the pre-launch
 /// `hunt_trip_forecast`/`huntTripEstimates`. Scouts deliver map data, not food, so they → `None`.
+///
+/// **A DENIAL party is `None` too, and that is a statement rather than a gap** — its readout is the
+/// collapse verdict, not a delivery ETA (`docs/plan_denial_raid.md` §3). Quoting *"next delivery"*
+/// for a raid whose whole point is that nothing comes home would be the food-only blindness the
+/// mission exists to reverse; the in-flight collapse line is the client slice's.
 ///
 /// `eta_turns` decomposes as remaining-travel-to-herd + hunting-turns-to-complete + walk-home; it is
 /// an APPROXIMATION (the home band is nomadic and may move, and the walk-home is measured from the
@@ -1833,7 +2195,9 @@ pub fn expedition_delivery(
         fill_target,
     } = &expedition.mission
     else {
-        return None; // Scouts deliver map data, not food.
+        // Scouts deliver map data, not food; a denial raid delivers a rounding error and is read by
+        // its collapse verdict instead.
+        return None;
     };
     let floor = *floor;
     let fill_target = *fill_target;

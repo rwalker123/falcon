@@ -292,6 +292,22 @@ message SendHuntExpeditionCommand {
   optional uint32 fill_target = 7;
 }
 
+// Outfit and launch a DENIAL RAID: draw party_workers off the home band and send a detached party to
+// erase the herd fauna_id (docs/plan_denial_raid.md).
+//
+// IT CARRIES NO FLOOR AND NO FILL TARGET, and that absence is the design. A denial raid does not clamp
+// to carry, so there is no pack-fill stop for a target to replace, and its escapement ceiling is the
+// herd's whole standing stock, so there is no floor to name. You choose a herd and a party size —
+// which is precisely why it is a separate command rather than a value on send_hunt_expedition.
+//
+// It aims at a HERD, never at a player: there is deliberately no target-faction field (§2).
+message SendDenialRaidCommand {
+  uint32 faction_id = 1;
+  optional uint64 band_id = 2;
+  uint32 party_workers = 3;
+  string fauna_id = 4;
+}
+
 // Ask the server to republish the world as a FULL snapshot.
 //
 // Client-initiated recovery for delta streaming: a client that cannot apply a delta (its
@@ -448,5 +464,7 @@ message CommandEnvelope {
     // 46 is held by `abandon_improvement`; the config-override pair takes 47 and 48.
     SetConfigOverrideCommand set_config_override = 47;
     ClearConfigOverridesCommand clear_config_overrides = 48;
+    // 48 is held by `clear_config_overrides`, so the denial raid takes 49 (append-only).
+    SendDenialRaidCommand send_denial_raid = 49;
   }
 }

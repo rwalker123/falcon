@@ -756,6 +756,10 @@ fn seed_snapshot() -> WorldSnapshot {
     s.herds = rows();
     for herd in &mut s.herds {
         herd.hunt_trip_estimates = rows();
+        // The denial raid's pre-launch table (`docs/plan_denial_raid.md`) — one row per party size,
+        // seeded for the same reason its hunting sibling above is: a repeated field the fixture
+        // leaves empty is a field the decode guard cannot exercise.
+        herd.denial_estimates = rows();
         // The sampled regrowth curve — a `[float]`, so it needs seeding like every other repeated
         // field or the decode guard cannot see it. Saturation overwrites the values; only the LENGTH
         // matters here, and it is the shipped one so the fixture exercises a real-shaped curve.

@@ -721,7 +721,13 @@ fn a_pen_has_no_fight_at_all() {
         .species_by_display(MAMMOTH)
         .expect("shipped species")
         .body_mass;
-    let take = quantise_animal_take(PRODUCTION, COLLECTION, body, penned.brought_down);
+    let take = quantise_animal_take(
+        PRODUCTION,
+        COLLECTION,
+        body,
+        penned.brought_down,
+        core_sim::EngagementStop::WhenPackFull,
+    );
     assert_eq!(take.killed, 1, "the keeper butchers what the pen produced");
     assert_eq!(take.carried, COLLECTION);
     assert_eq!(take.wasted, body - COLLECTION);

@@ -211,6 +211,67 @@ pub(crate) fn hunt_trip_estimate_entries(
     entries
 }
 
+/// The **pre-launch DENIAL-RAID estimates** for one herd — one entry per legal party size
+/// (`1..=expedition.max_party_size`), so the client's launch UI is a table lookup with zero
+/// arithmetic and zero ecology model (`docs/plan_denial_raid.md` §1.1).
+///
+/// **There is no floor axis and no fill-target axis, because the mission carries neither.** Where
+/// [`hunt_trip_estimate_entries`] samples a continuum of floors, this table has one dimension: you
+/// choose a herd and a party size. That is the whole reason denial is a mission rather than a preset.
+///
+/// Cost is `3 × max_party_size × hunt.forecast_horizon_turns` turn-steps per huntable herd — the
+/// factor of three is the reported range's three quantiles
+/// (`docs/plan_hunt_through_combat.md` §6.4), and it is bounded by the same horizon the hunt table
+/// is.
+fn denial_estimate_entries(
+    herd: &Herd,
+    fauna: &FaunaConfig,
+    labor: &LaborConfig,
+    expedition: &ExpeditionConfig,
+    // The party the table is quoted for — see [`HerdSnapshotInputs::party`] for why it is the
+    // equipped tier rather than any one band's.
+    party: &crate::fauna::HuntingParty,
+    // `combat_config.forecast_range_sigmas` — the reported band's width, a readout lever.
+    range_sigmas: f32,
+) -> Vec<DenialEstimateState> {
+    (1..=expedition.max_party_size)
+        .map(|party_workers| {
+            let forecast = crate::systems::denial_forecast(
+                party_workers,
+                herd,
+                fauna,
+                labor,
+                expedition,
+                party,
+                range_sigmas,
+            );
+            DenialEstimateState {
+                party_workers,
+                // `0` = never past recovery within `hunt.forecast_horizon_turns`; `outcome` says
+                // which kind of never, which is what the client renders instead of a blank.
+                turns_to_collapse: forecast.turns_to_collapse.unwrap_or(NEVER_PAST_RECOVERY),
+                turns_to_collapse_low: forecast
+                    .turns_to_collapse_low
+                    .unwrap_or(NEVER_PAST_RECOVERY),
+                turns_to_collapse_high: forecast
+                    .turns_to_collapse_high
+                    .unwrap_or(NEVER_PAST_RECOVERY),
+                outcome: forecast.outcome.as_str().to_string(),
+                animals_killed: forecast.animals_killed,
+                delivered_food: forecast.delivered_food,
+                wasted_food: forecast.wasted_food,
+                delivered_trade: forecast.delivered_trade,
+            }
+        })
+        .collect()
+}
+
+/// **The wire's "this party never gets there"** — the `0` sentinel on
+/// [`DenialEstimateState::turns_to_collapse`] and its two range ends. Named because a bare `0` beside
+/// a turn count reads as *"immediately"*, which is the opposite of what it means; the row's `outcome`
+/// carries the reason.
+const NEVER_PAST_RECOVERY: u32 = 0;
+
 /// Display herd telemetry for the client, plus each herd's **pre-commit yield forecast**
 /// (`fauna::hunt_forecast` — the same ceiling/conversion helpers `hunt_take` pays with, so
 /// forecast == actual) and its **pre-launch expedition trip estimates**. All three need the herd's
@@ -247,6 +308,10 @@ pub(crate) struct HerdSnapshotInputs<'a> {
     /// reason it already prices the haul at `labor.hunt.per_worker_biomass_capacity` rather than a
     /// band's own carry tier. A band's real, kit-resolved numbers ride its `SourceYield` row.
     pub(crate) party: crate::fauna::HuntingParty,
+    /// `combat_config.forecast_range_sigmas` — how wide a band the **denial** estimate reports around
+    /// its expected turns-to-collapse (`docs/plan_hunt_through_combat.md` §6.4). A **readout width**:
+    /// nothing the sim resolves reads it, so widening the band cannot move an animal.
+    pub(crate) range_sigmas: f32,
 }
 
 impl HerdSnapshotInputs<'_> {
@@ -290,6 +355,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
         grid_size,
         wrap_horizontal,
         party,
+        range_sigmas,
         ..
     } = inputs;
     let width = grid_size.x.max(1);
@@ -568,6 +634,22 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // the pair reads "nothing at risk" rather than a zero that means "shedding now".
                 has_neglect_grace: neglect_grace.is_some(),
                 neglect_grace_remaining: neglect_grace.unwrap_or(NO_NEGLECT_REMAINING),
+                // **The denial raid's pre-launch table** — one row per party size, no floor axis
+                // (`docs/plan_denial_raid.md`). Gated on `huntable` exactly as the hunt table is:
+                // denial is a way of working a herd, so a herd nobody can work is not a target.
+                denial_estimates: herd
+                    .filter(|_| entry.huntable)
+                    .map(|herd| {
+                        denial_estimate_entries(
+                            herd,
+                            fauna,
+                            labor,
+                            expedition,
+                            &party,
+                            range_sigmas,
+                        )
+                    })
+                    .unwrap_or_default(),
             }
         })
         .collect()

@@ -164,13 +164,13 @@ pub use fauna::{
     advance_herd_grazing, advance_herds, advance_husbandry, advance_predation, animals_affordable,
     animals_engaged, animals_that_stay, build_prey_index, carnivore_k_at, escapement_ceiling,
     forecast_expected_take, forecast_take_range, herd_capacity, herd_ecology, herd_herders_needed,
-    herd_hunt_yield, herd_quarry_fight, herded_fraction, herders_needed, hunt_engage_workers,
-    hunt_escapement_ceiling, hunt_haul_workers, hunt_source_yield_preview, hunt_take_bound,
-    hunt_take_workers, pen_upkeep, project_arrivals_hunt, project_realized_hunt,
+    herd_hunt_yield, herd_past_recovery, herd_quarry_fight, herded_fraction, herders_needed,
+    hunt_engage_workers, hunt_escapement_ceiling, hunt_haul_workers, hunt_source_yield_preview,
+    hunt_take_bound, hunt_take_workers, pen_upkeep, project_arrivals_hunt, project_realized_hunt,
     quantise_animal_take, repopulate_fauna, resolve_hunt_fight, retreat_seed, spawn_initial_herds,
-    species_requires_denial, AnimalTake, EcologyPhase, FightCasualties, Herd, HerdDensityMap,
-    HerdRegistry, HerdTelemetry, HerdTelemetryEntry, HuntDraw, HuntFight, HuntTakeBound,
-    HuntingParty, PreyDatum, QuarryFight, RoamState, SourceYieldForecast, TakeRange,
+    species_requires_denial, AnimalTake, EcologyPhase, EngagementStop, FightCasualties, Herd,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, HerdTelemetryEntry, HuntDraw, HuntFight,
+    HuntTakeBound, HuntingParty, PreyDatum, QuarryFight, RoamState, SourceYieldForecast, TakeRange,
     FODDERING_DISCOVERY_ID, FULLY_HERDED, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION,
     NO_DEATHS_TO_REPORT, PENNING_DISCOVERY_ID,
 };
@@ -317,9 +317,10 @@ pub use snapshot::{
 pub use systems::spawn_initial_world;
 pub use systems::{
     advance_band_movement, advance_expeditions, advance_labor_allocation, advance_predator_raids,
-    expedition_take_provisions, hunt_per_worker_provisions, hunt_report_event, hunt_take,
-    hunt_trip_forecast, output_multiplier, simulate_power, HuntOutcome, HuntTripBound,
-    HuntTripForecast, MigrationKnowledgeEvent, PowerSimParams, TradeDiffusionEvent,
+    denial_forecast, expedition_take_provisions, hunt_per_worker_provisions, hunt_report_event,
+    hunt_take, hunt_trip_forecast, output_multiplier, simulate_power, DenialForecast,
+    DenialOutcome, HuntOutcome, HuntTripBound, HuntTripForecast, MigrationKnowledgeEvent,
+    PowerSimParams, TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,

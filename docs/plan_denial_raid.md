@@ -1,6 +1,11 @@
 # Denial is a raid, not a harvest rate — the mission that does not clamp to carry
 
-**Status:** DESIGN. Nothing here is implemented. Issue #456.
+**Status:** **§4 slice 1 (the sim) has LANDED**; slice 2 (the client) is design. Issue #456.
+
+Landed: `ExpeditionMission::Deny`, the `send_denial_raid` command, `fauna::EngagementStop` and the one
+behavioural difference it carries, the collapse completion, `DenialForecast::turns_to_collapse` as a
+range, and the `denialEstimates` wire table. Engineering as-built:
+`.claude/rules/core_sim/expeditions.md` → "Denial is a MISSION, not a floor".
 
 **It rides on `docs/plan_hunt_through_combat.md`, which came out of this one.** Specifying denial
 surfaced the fact that the sim has no model of *killing* at all — the take is bounded by what the
@@ -140,9 +145,11 @@ march. The TOE doc's own wording — "wears down with use" — already reads tha
 Both land after `plan_hunt_through_combat.md` slice 3, which is what gives denial something to
 unclamp.
 
-1. **The mission.** `ExpeditionMission::Deny`, wire key, command text, checkpoint,
-   `hunt_floor() = 0`, and the one behavioural difference: the party does not stop engaging when its
-   pack is full. `DenialForecast::turns_to_collapse`.
+1. **The mission** — **LANDED**. `ExpeditionMission::Deny`, wire key `"deny"`, the
+   `send_denial_raid` command, `hunt_floor() = 0`, and the one behavioural difference:
+   `fauna::EngagementStop::Never`, which drops the quantiser's carry arm and leaves `carried`
+   untouched. `DenialForecast::turns_to_collapse` reports as a range and rides the wire as
+   `HerdTelemetry.denialEstimates`.
 2. **Client.** A third verb at launch; the collapse verdict line as a range; the waste readout.
 
 ---
@@ -167,7 +174,7 @@ unclamp.
 | # | Question | Notes |
 |---|---|---|
 | 1 | **Does a collapsing herd tell anyone?** | §2 settles that denial names no target faction. But a herd crossing `collapse_fraction` is visible ecology, and whether its *other* users are told — and how — is unresolved. |
-| 2 | **Does a raid recur?** | `raid_is_recurring(floor)` governs whether a hunt relaunches. A raid that reached collapse has nothing to return to; one that failed probably should not auto-relaunch into a loss. |
+| 2 | ~~**Does a raid recur?**~~ | **SETTLED in slice 1: it does not.** A denial raid completes when the herd goes past recovery and never relaunches — there is nothing to come back for, and `raid_is_recurring` is a question about a *floor*, which the mission does not carry. A raid that cannot get there keeps working the herd until it is recalled; the launch verdict warns first (§3). |
 | 3 | **Is denial legible as distinct from a deep hunt?** | The mechanical difference is one clamp. If a player cannot feel why the raid is different from `floor = 0`, the mission has failed even if the sim is right. |
 
 ---

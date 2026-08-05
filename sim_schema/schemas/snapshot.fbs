@@ -1836,6 +1836,47 @@ table HuntTripEstimate {
   bound:string;
 }
 
+// The sim's pre-launch estimate of a DENIAL RAID against this herd (docs/plan_denial_raid.md §1.1),
+// one entry per party size 1..=maxExpeditionPartySize. The denial twin of HuntTripEstimate, and it
+// carries NEITHER a floor NOR a fill target: the mission has no floor and no rate, which is the whole
+// reason it is a mission rather than a number on the assign dialog. There is nothing to sample.
+//
+// THE HEADLINE IS turnsToCollapse, NOT A FOOD TOTAL. A raid's goal is to push the herd under
+// ecology.collapse_fraction — the point of no return, where the growth flow is zeroed and the herd
+// declines irreversibly with the party gone — and then walk away. Success is that line, never zero;
+// the food that comes home is a rounding error against what was killed, and the client says so.
+table DenialEstimate {
+  partyWorkers:uint = 0;   // 1 ..= expedition_config.max_party_size
+  // Turns until the herd is past recovery, at the take's EXPECTATION — and therefore turns until the
+  // party comes home, because that is when a denial raid completes. 0 = it never got there within
+  // forecast_horizon_turns; `outcome` says which KIND of never, and must be rendered instead of a
+  // blank (docs/plan_denial_raid.md §3).
+  turnsToCollapse:uint = 0;
+  // THE RANGE (docs/plan_hunt_through_combat.md §6.4), reported because the retreat is stochastic and
+  // the roster's wariness is authored. `Low` is the FEWEST turns — the optimistic draw, where more
+  // animals stay and more strikes land, so the herd falls sooner. Render as "past recovery in 3-5
+  // turns"; when low == turnsToCollapse == high the distribution is degenerate and the client must say
+  // one number, exactly as it does for every other range on this wire. 0 = "not within the horizon" on
+  // that end, so a positive `low` beside a 0 `high` reads "only on a good run".
+  turnsToCollapseLow:uint = 0;
+  turnsToCollapseHigh:uint = 0;
+  // The core_sim DenialOutcome key: "past_recovery" | "herd_lost" | "repelled" | "horizon".
+  // "repelled" is the one the design insists on: the party's kills per turn are at or below the herd's
+  // own regrowth, so it CANNOT get there — a verdict about the party, not about the clock ("horizon"
+  // is the clock). Never show a blank turn count without this line.
+  outcome:string;
+  // Whole animals the raid KILLS before it walks away — the number the mission is really about.
+  animalsKilled:uint = 0;
+  // Food landed in the pack over the raid: SMALL, and non-zero. The raid banks what it can haul on the
+  // way home; `carried` is the hunt's formula unchanged.
+  deliveredFood:float = 0;
+  // Food killed and left on the range — THE BULK OF A RAID'S TAKE, and stated rather than hidden.
+  wastedFood:float = 0;
+  // The trade half of the same carried biomass. For an INEDIBLE quarry (a wolf is a legitimate denial
+  // target) this is the whole payload and deliveredFood is 0.
+  deliveredTrade:float = 0;
+}
+
 table HerdTelemetryState {
   id:string;
   label:string;
@@ -2230,6 +2271,11 @@ table HerdTelemetryState {
   // duration model reading a live accumulator would be a competing answer rather than a term.
   // 0 for a herd whose species the roster cannot resolve.
   durability:float = 0;
+  // --- THE DENIAL RAID (appended last, docs/plan_denial_raid.md slice 1) ------------------------
+  // The sim's pre-launch estimates for a DENIAL RAID against this herd — one entry per party size,
+  // with no floor axis and no fill-target axis, because the mission carries neither. See
+  // DenialEstimate. Empty for a non-huntable herd, exactly as huntTripEstimates is.
+  denialEstimates:[DenialEstimate];
 }
 
 table CommandEventState {

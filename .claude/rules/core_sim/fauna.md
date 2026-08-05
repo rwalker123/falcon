@@ -449,6 +449,15 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   `FollowPolicy::Eradicate` is deleted, so the old `matches!(policy, Eradicate)` spelling this file
 >   carried would not compile.
 >
+> **THE ONE CLAUSE A DENIAL RAID DROPS.** `quantise_animal_take` takes a `fauna::EngagementStop`:
+> a hunt bounds the kill by `max(1, carryable)` — *hunters do not kill what they cannot use* — and a
+> **denial raid** does not, which is the single line separating the two missions. `carried` is the
+> same expression under both, so a raid still banks what it can haul and the rest is `wasted`. The
+> escapement floor is a *number* and the pack is a *bound*, so no value of the first reaches the
+> second — which is why denial is a mission and not a floor preset. `fauna::herd_past_recovery` is
+> its win condition (`collapse_fraction · K`, read through `classify_ecology_phase`). Rationale:
+> `.claude/rules/core_sim/expeditions.md` → "Denial is a MISSION, not a floor".
+>
 > **Quantisation never divides by a food number it has not established is positive.** The old
 > "flooring in provisions and in biomass agree, a positive linear factor cancels" note is **false** for
 > an inedible species: `provisions_per_biomass == 0` makes `floor(food_ceiling / food_per_animal)` a

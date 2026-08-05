@@ -4446,8 +4446,13 @@ pub fn project_arrivals_hunt(
             // `advance_labor_allocation` does.
             let production = pen_yield_biomass(&quarry, fauna);
             // A penned animal is not stalked: no engagement bound.
-            let take =
-                quantise_animal_take(production, collection, quarry.body_mass, f32::INFINITY);
+            let take = quantise_animal_take(
+                production,
+                collection,
+                quarry.body_mass,
+                f32::INFINITY,
+                EngagementStop::WhenPackFull,
+            );
             quarry.biomass -= take.killed_biomass();
             take.carried
         } else {
@@ -4462,8 +4467,13 @@ pub fn project_arrivals_hunt(
                 HuntDraw::EXPECTED,
             );
             quarry_fight = quarry_fight.with_wounds(fight.wounds);
-            let take =
-                quantise_animal_take(ceiling, collection, quarry.body_mass, fight.brought_down);
+            let take = quantise_animal_take(
+                ceiling,
+                collection,
+                quarry.body_mass,
+                fight.brought_down,
+                EngagementStop::WhenPackFull,
+            );
             quarry.biomass -= take.killed_biomass();
             take.carried
         };
@@ -4555,6 +4565,7 @@ fn forecast_production_and_take_at(
                 collection.component(axis),
                 quantum.component(axis),
                 brought_down,
+                EngagementStop::WhenPackFull,
             );
             (
                 quantum.rescaled_to(axis, take.killed_biomass()),
@@ -4895,6 +4906,54 @@ impl AnimalTake {
     pub fn killed_biomass(&self) -> f32 {
         self.carried + self.wasted
     }
+}
+
+/// **Does the party's pack stop it engaging?** — the single line of behaviour that separates a
+/// denial raid from a hunt (`docs/plan_denial_raid.md` §1), carried as a type so the difference is
+/// stated once and read by [`quantise_animal_take`] and [`hunt_take_bound`] together.
+///
+/// ```text
+/// hunt:    carried = min(killed × body_mass, carry_capacity, carry_room)
+///          …and the party stops engaging once its pack is full
+///
+/// denial:  carried = min(killed × body_mass, carry_capacity, carry_room)   // identical
+///          …and the party never stops engaging
+/// ```
+///
+/// **It bounds the KILL, never the carry.** `carried` is the same expression under both, which is
+/// why a raid still banks whatever it can haul on the way home — a rounding error against what it
+/// killed, and the point of the mission. What denial removes is the clause that made
+/// *"hunters do not kill what they cannot use"* true, because killing what you have no intention of
+/// using is the entire premise.
+///
+/// **This is what `floor = 0` could never be** (§0). The escapement floor is a *number*; the pack is
+/// a *bound*, and no value of the number reaches it — which is why denial is a mission
+/// ([`crate::ExpeditionMission::Deny`]) rather than a preset on the assign dialog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EngagementStop {
+    /// **A hunt** — the pack is a bound on the kill as well as on the haul, so a nearly-full party
+    /// kills fewer animals rather than slaughtering one it has no room for
+    /// (`systems::hunt_take`'s original rule, and the right model of subsistence hunting).
+    WhenPackFull,
+    /// **A denial raid** — the pack bounds only what comes home. The party engages for as long as
+    /// the herd can spare an animal and the fight can put it down.
+    Never,
+}
+
+/// **Is this herd past the point of no return?** — biomass under `ecology.collapse_fraction × K`,
+/// where [`net_biomass_delta`] zeroes the growth flow and the herd instead declines irreversibly at
+/// `collapse_rate` with no further pressure on it (`docs/plan_denial_raid.md` §1.1).
+///
+/// **It is the denial raid's success condition, and that is why it is not "zero".** A raid's goal is
+/// to push the herd under this line and walk away, not to kill every animal — which is what lets a
+/// small party erase a large placid herd, and why ordinary subsistence hunting never does it by
+/// accident: any escapement floor above `collapse_fraction` stops the take long before.
+///
+/// Read against the **same** comparison [`classify_ecology_phase`] makes ([`EcologyPhase::Collapsing`]),
+/// so the raid's completion and the ecology band a client renders cannot disagree about where the
+/// line is. A herd with no capacity is already non-viable.
+pub fn herd_past_recovery(biomass: f32, carrying_capacity: f32, ecology: &EcologyConfig) -> bool {
+    classify_ecology_phase(biomass, carrying_capacity, ecology) == EcologyPhase::Collapsing
 }
 
 /// **How many animals a party can bring into contact this turn** — the engagement stage of
@@ -5499,6 +5558,7 @@ pub fn quantise_animal_take(
     collection: f32,
     body_mass: f32,
     brought_down: f32,
+    stop: EngagementStop,
 ) -> AnimalTake {
     if !body_mass.is_finite() || body_mass <= 0.0 {
         debug_assert!(
@@ -5523,9 +5583,17 @@ pub fn quantise_animal_take(
     // whole — [`resolve_hunt_fight`] floors it — so `killed` below stays integral and
     // `killed_biomass` cannot disagree with the reported count. A pen passes [`f32::INFINITY`]: a
     // penned animal is not stalked and not fought.
-    let killed = affordable
-        .min(carryable.max(1.0))
-        .min(brought_down.max(0.0));
+    //
+    // **The carry arm is the ONE thing a denial raid drops** ([`EngagementStop`],
+    // `docs/plan_denial_raid.md` §1): a hunting party stops engaging once its pack is full, a denial
+    // party never stops. The `carried` line below is untouched by the choice, so a raid still banks
+    // whatever it can haul and the rest becomes [`AnimalTake::wasted`].
+    let killed = match stop {
+        EngagementStop::WhenPackFull => affordable
+            .min(carryable.max(1.0))
+            .min(brought_down.max(0.0)),
+        EngagementStop::Never => affordable.min(brought_down.max(0.0)),
+    };
     let killed_biomass = killed * body_mass;
     let carried = killed_biomass.min(collection);
     AnimalTake {
@@ -5589,6 +5657,7 @@ pub fn hunt_take_bound(
     body_mass: f32,
     stayed: f32,
     brought_down: f32,
+    stop: EngagementStop,
 ) -> HuntTakeBound {
     if !body_mass.is_finite() || body_mass <= 0.0 {
         return HuntTakeBound::Floor;
@@ -5596,7 +5665,14 @@ pub fn hunt_take_bound(
     let affordable = whole_animals(policy_ceiling.max(0.0), body_mass);
     // The same `max(1.0)` the quantiser applies: a party that cannot carry a whole animal still takes
     // one, so carry does not *bind* below one body — it produces waste instead.
-    let carryable = whole_animals(collection.max(0.0), body_mass).max(1.0);
+    //
+    // **A denial raid can never be carry-bound**, because the quantiser's carry arm is exactly what
+    // [`EngagementStop::Never`] drops: the pack still decides what comes home, but it stops no kill,
+    // so reporting `Carry` here would name a bound the take did not hit.
+    let carryable = match stop {
+        EngagementStop::WhenPackFull => whole_animals(collection.max(0.0), body_mass).max(1.0),
+        EngagementStop::Never => f32::INFINITY,
+    };
     let brought_down = brought_down.max(0.0);
     if affordable <= carryable.min(brought_down) {
         HuntTakeBound::Floor
@@ -6940,23 +7016,48 @@ mod tests {
         ];
         for (ceiling, collection, stayed, brought_down, expected) in cases {
             assert_eq!(
-                hunt_take_bound(ceiling, collection, BODY, stayed, brought_down),
+                hunt_take_bound(
+                    ceiling,
+                    collection,
+                    BODY,
+                    stayed,
+                    brought_down,
+                    EngagementStop::WhenPackFull
+                ),
                 expected,
                 "({ceiling}, {collection}, {stayed}, {brought_down}) must name {expected:?}"
             );
-            let tight = quantise_animal_take(ceiling, collection, BODY, brought_down);
+            let tight = quantise_animal_take(
+                ceiling,
+                collection,
+                BODY,
+                brought_down,
+                EngagementStop::WhenPackFull,
+            );
             // **Liveness / the relation**: relaxing the named term raises the take. Without this the
             // table above would only be asserting against itself.
             let relaxed = match expected {
-                HuntTakeBound::Floor => {
-                    quantise_animal_take(ceiling * 2.0, collection, BODY, brought_down)
-                }
-                HuntTakeBound::Carry => {
-                    quantise_animal_take(ceiling, collection * 2.0, BODY, brought_down)
-                }
-                HuntTakeBound::Fight | HuntTakeBound::Engagement => {
-                    quantise_animal_take(ceiling, collection, BODY, brought_down * 2.0)
-                }
+                HuntTakeBound::Floor => quantise_animal_take(
+                    ceiling * 2.0,
+                    collection,
+                    BODY,
+                    brought_down,
+                    EngagementStop::WhenPackFull,
+                ),
+                HuntTakeBound::Carry => quantise_animal_take(
+                    ceiling,
+                    collection * 2.0,
+                    BODY,
+                    brought_down,
+                    EngagementStop::WhenPackFull,
+                ),
+                HuntTakeBound::Fight | HuntTakeBound::Engagement => quantise_animal_take(
+                    ceiling,
+                    collection,
+                    BODY,
+                    brought_down * 2.0,
+                    EngagementStop::WhenPackFull,
+                ),
             };
             assert!(
                 relaxed.killed > tight.killed,
@@ -6974,7 +7075,13 @@ mod tests {
     #[test]
     fn a_wait_turn_reports_the_floor_that_caused_it() {
         const BODY: f32 = 800.0;
-        let take = quantise_animal_take(BODY / 2.0, f32::INFINITY, BODY, f32::INFINITY);
+        let take = quantise_animal_take(
+            BODY / 2.0,
+            f32::INFINITY,
+            BODY,
+            f32::INFINITY,
+            EngagementStop::WhenPackFull,
+        );
         assert_eq!(take.killed, 0, "half a body cannot be taken");
         assert_eq!(
             hunt_take_bound(
@@ -6982,7 +7089,8 @@ mod tests {
                 f32::INFINITY,
                 BODY,
                 f32::INFINITY,
-                f32::INFINITY
+                f32::INFINITY,
+                EngagementStop::WhenPackFull,
             ),
             HuntTakeBound::Floor
         );
@@ -7110,10 +7218,22 @@ mod tests {
         let collection = HUNTERS as f32 * PER_WORKER_CARRY;
 
         let engaged = animals_engaged(HUNTERS, ONE_ANIMAL_PER_HUNTER, NO_BUILD_UNDERWAY_DIP);
-        let bounded = quantise_animal_take(AMPLE_CEILING, collection, BODY_MASS, engaged);
+        let bounded = quantise_animal_take(
+            AMPLE_CEILING,
+            collection,
+            BODY_MASS,
+            engaged,
+            EngagementStop::WhenPackFull,
+        );
         // `f32::INFINITY` is what a pen passes — no engagement stage — so this is the take as it was
         // before the bound existed.
-        let carry_bound = quantise_animal_take(AMPLE_CEILING, collection, BODY_MASS, f32::INFINITY);
+        let carry_bound = quantise_animal_take(
+            AMPLE_CEILING,
+            collection,
+            BODY_MASS,
+            f32::INFINITY,
+            EngagementStop::WhenPackFull,
+        );
 
         assert_eq!(bounded.killed, HUNTERS, "the party kills what it can reach");
         assert_eq!(

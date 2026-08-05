@@ -38,23 +38,24 @@ use core_sim::{
     NO_FORAGE_SEASON,
 };
 use core_sim::{
-    build_headless_app, clear_config_overrides, hunt_trip_forecast, install_config_override,
-    recapture_snapshot_in_place, run_turn, scalar_from_f32, AgentAssignment, BandId,
-    BandIdAllocator, CommandEventEntry, CommandEventKind, CommandEventLog, CounterIntelBudgets,
-    CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle, CrisisArchetypeCatalogMetadata,
-    CrisisModifierCatalog, CrisisModifierCatalogHandle, CrisisModifierCatalogMetadata,
-    CrisisTelemetry, CrisisTelemetryConfig, CrisisTelemetryConfigHandle,
-    CrisisTelemetryConfigMetadata, DiscoveryProgressLedger, EquipmentConfigHandle,
-    EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionKind,
-    EspionageMissionState, EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders,
-    FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle, FoodSiteRegistry, ForageRegistry,
-    FrameSink, HerdRegistry, Improvement, LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns,
-    PopulationCohort, QueueMissionError, QueueMissionParams, Scalar, SecurityPolicy, Settlement,
-    SimulationConfig, SimulationConfigMetadata, SimulationTick, SnapshotHistory,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
-    StartLocation, StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot,
-    SubmitError, SubmitOutcome, Tile, TileRegistry, TownCenter, TurnPipelineConfig,
-    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FOOD,
+    build_headless_app, clear_config_overrides, denial_forecast, hunt_trip_forecast,
+    install_config_override, recapture_snapshot_in_place, run_turn, scalar_from_f32,
+    AgentAssignment, BandId, BandIdAllocator, CommandEventEntry, CommandEventKind, CommandEventLog,
+    CounterIntelBudgets, CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle,
+    CrisisArchetypeCatalogMetadata, CrisisModifierCatalog, CrisisModifierCatalogHandle,
+    CrisisModifierCatalogMetadata, CrisisTelemetry, CrisisTelemetryConfig,
+    CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, DiscoveryProgressLedger,
+    EquipmentConfigHandle, EspionageAgentHandle, EspionageCatalog, EspionageMissionId,
+    EspionageMissionKind, EspionageMissionState, EspionageMissionTemplate, EspionageRoster,
+    FactionId, FactionOrders, FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle,
+    FoodSiteRegistry, ForageRegistry, FrameSink, HerdRegistry, Improvement, LaborConfigHandle,
+    MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError, QueueMissionParams,
+    Scalar, SecurityPolicy, Settlement, SimulationConfig, SimulationConfigMetadata, SimulationTick,
+    SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    SnapshotOverlaysConfigMetadata, StartLocation, StartProfileLookup, StartProfilesHandle,
+    StartingUnit, StoredSnapshot, SubmitError, SubmitOutcome, Tile, TileRegistry, TownCenter,
+    TurnPipelineConfig, TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue,
+    WorldEpoch, FOOD,
 };
 use sim_runtime::{
     commands::{
@@ -500,6 +501,14 @@ enum Command {
         fauna_id: String,
         floor: Option<f32>,
         fill_target: Option<u32>,
+    },
+    /// **The denial raid** (`docs/plan_denial_raid.md`) — no floor, no fill target, and no target
+    /// faction. It names a herd and a party size, and nothing else.
+    SendDenialRaid {
+        faction: FactionId,
+        band_id: Option<u64>,
+        party_workers: u32,
+        fauna_id: String,
     },
     FoundSettlement {
         faction: FactionId,
@@ -2704,11 +2713,220 @@ fn handle_send_expedition(
     );
 }
 
+/// **Everything outfitting a raiding party needs, once its orders are known to be legal** — the band
+/// it comes off, the herd it is aimed at, and the template it is cloned from.
+///
+/// Shared by the two raiding verbs, [`handle_send_hunt_expedition`] and [`handle_send_denial_raid`],
+/// which differ only in the mission they name, the numbers they validate and the verdict they quote
+/// — never in how a party is drawn off a band. Keeping that half in one place is what stops the third
+/// verb (`docs/plan_denial_raid.md` §3) from acquiring its own copy of the resident-band gate, the
+/// party-size bound and the herd lookup.
+struct OutfittedParty {
+    band: SelectedBand,
+    /// The herd's live tile, captured as the party's initial travel target.
+    herd_pos: UVec2,
+    /// The home band's cohort, cloned as the detached party's template.
+    cohort: PopulationCohort,
+    unit_kind: String,
+    unit_tags: Vec<String>,
+}
+
+/// Validate a raiding order and gather what launching it needs: a real **resident** band, a **live**
+/// herd, and a **legal party size**. Emits its own `ExpeditionSent` failure event and answers `None`
+/// on any refusal, so a caller holding a `Some` has nothing left to check.
+///
+/// `verb` names the command in the refusal text, so the two verbs read as themselves.
+fn outfit_raiding_party(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: Option<u64>,
+    party_workers: u32,
+    fauna_id: &str,
+    verb: &str,
+) -> Option<OutfittedParty> {
+    let band = select_starting_band(
+        app,
+        faction,
+        band_id,
+        verb,
+        CommandEventKind::ExpeditionSent,
+    )?;
+    // Same resident-band gate as `send_expedition`: a party can only be outfitted from a real band.
+    if app.world.get::<ResidentBand>(band.entity).is_none() {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            format!("{verb}: band is not a resident band."),
+        );
+        return None;
+    }
+
+    // The target must resolve to a live herd; capture its current tile as the initial travel target.
+    let herd_pos = {
+        let registry = app.world.resource::<HerdRegistry>();
+        registry.find(fauna_id).map(|herd| herd.position())
+    };
+    let Some(herd_pos) = herd_pos else {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            format!("{verb}: no live herd '{fauna_id}'."),
+        );
+        return None;
+    };
+
+    let max_party = {
+        let cfg = app.world.resource::<ExpeditionConfigHandle>().get();
+        let band_working = app.world.get::<PopulationCohort>(band.entity)?.working;
+        available_workers(band_working).min(cfg.max_party_size)
+    };
+    if party_workers < 1 || party_workers > max_party {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            format!(
+                "Party of {} workers invalid — {} can outfit 1..{} workers.",
+                party_workers, band.label, max_party
+            ),
+        );
+        return None;
+    }
+
+    let cohort = app.world.get::<PopulationCohort>(band.entity)?.clone();
+    let (unit_kind, unit_tags) = app
+        .world
+        .get::<StartingUnit>(band.entity)
+        .map(|unit| (unit.kind.clone(), unit.tags.clone()))
+        .unwrap_or_else(|| ("expedition".to_string(), Vec::new()));
+    Some(OutfittedParty {
+        band,
+        herd_pos,
+        cohort,
+        unit_kind,
+        unit_tags,
+    })
+}
+
+/// **The party a launch forecast is quoted for** — the **equipped** tier, because the party leaves
+/// outfitted ([`BandEquipment::default`] is a full kit) and that is the tier it will fight its first
+/// turns at. Wear is what moves it later, and the in-flight readouts re-quote against the party's
+/// live kit each turn.
+fn launch_forecast_party(app: &bevy::prelude::App) -> HuntingParty {
+    let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
+    let combat = app.world.resource::<CombatConfigHandle>().get();
+    HuntingParty {
+        hunter: equipment_cfg.hunter_profile(
+            app.world.resource::<CreaturesConfigHandle>().get().person(),
+            BandEquipment::default().hunting_equipped(&equipment_cfg),
+        ),
+        tuning: {
+            let mut tuning = combat.tuning();
+            tuning.lethality *= combat.expedition_danger_multiplier;
+            tuning
+        },
+        injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
+    }
+}
+
+/// **The round-trip walk**, in turns, from the launching band's tile out to the herd and back — the
+/// half of a trip's length the band-agnostic forecasts cannot see. `hunt_trip_forecast` /
+/// `denial_forecast` count only the turns spent working the herd once in reach, so the walk is added
+/// here, where the launching band's tile is known. (The per-herd snapshot tables are band-agnostic —
+/// one row serves every band — so the **client** adds this same travel from the selected band's tile.)
+fn round_trip_travel_turns(
+    app: &bevy::prelude::App,
+    band: bevy::prelude::Entity,
+    herd_pos: UVec2,
+) -> u32 {
+    let grid_width = app.world.resource::<TileRegistry>().width;
+    let wrap_horizontal = app
+        .world
+        .resource::<SimulationConfig>()
+        .map_topology
+        .wrap_horizontal;
+    let move_rate = app
+        .world
+        .resource::<LaborConfigHandle>()
+        .get()
+        .band_move_tiles_per_turn
+        .max(1);
+    app.world
+        .get::<PopulationCohort>(band)
+        .map(|c| c.current_tile)
+        .and_then(|t| app.world.get::<Tile>(t))
+        .map(|tile| {
+            let one_way =
+                hex_distance_wrapped(tile.position, herd_pos, grid_width, wrap_horizontal);
+            (2 * one_way).div_ceil(move_rate)
+        })
+        .unwrap_or(0)
+}
+
+/// Draw `party_workers` off the home band and spawn the detached party on `mission`, heading for the
+/// herd's live tile. Draws **no** provisions — a raiding party lives off its kills — and leaves
+/// **outfitted**, because a detached party is a band in its own right and carries the same full kit
+/// one spawns with (which `advance_expeditions` then wears per animal killed and per unit hauled).
+fn launch_detached_party(
+    app: &mut bevy::prelude::App,
+    outfit: OutfittedParty,
+    party_workers: u32,
+    mission: ExpeditionMission,
+) -> bevy::prelude::Entity {
+    let OutfittedParty {
+        band,
+        herd_pos,
+        mut cohort,
+        unit_kind,
+        unit_tags,
+    } = outfit;
+    // Remove the party from the band's pool — but draw NO provisions (it lives off its kills).
+    let party_scalar = Scalar::from_u32(party_workers);
+    {
+        let Some(mut band_cohort) = app.world.get_mut::<PopulationCohort>(band.entity) else {
+            return bevy::prelude::Entity::PLACEHOLDER;
+        };
+        band_cohort.working -= party_scalar;
+        band_cohort.sync_size();
+    }
+
+    // Retask the cloned cohort into a detached party co-located with the band, empty larder.
+    cohort.children = Scalar::from_i64(0);
+    cohort.working = party_scalar;
+    cohort.elders = Scalar::from_i64(0);
+    cohort.stores = LocalStore::new();
+    cohort.age_turns = 0;
+    cohort.migration = None;
+    cohort.grievance = Scalar::from_i64(0);
+    cohort.sync_size();
+
+    // A detached party is a band in its own right, so it takes its own durable id.
+    let expedition_band_id = app.world.resource_mut::<BandIdAllocator>().allocate();
+    app.world
+        .spawn((
+            cohort,
+            expedition_band_id,
+            LaborAllocation::default(),
+            BandEquipment::default(),
+            StartingUnit::new(unit_kind, unit_tags),
+            Expedition {
+                home_band: band.entity,
+                mission,
+                phase: ExpeditionPhase::Hunting,
+                announced: false,
+                pending_reveal: Vec::new(),
+                carried_trade: 0.0,
+            },
+            BandTravel { target: herd_pos },
+        ))
+        .id()
+}
+
 /// Outfit and launch a hunting expedition (PR 2): draw `party_workers` off the resolved home band
-/// and send a detached party to follow the herd `fauna_id` under `policy` (Sustain when omitted).
-/// Unlike the scouting expedition it draws **no** provisions (it lives off its kills) and starts in
-/// the `Hunting` phase heading for the herd's live tile. Text form:
-/// `send_hunt_expedition <faction> <band> <party_workers> <fauna_id> [floor] [fill_target]`.
+/// and send a detached party to follow the herd `fauna_id` at the escapement `floor` it names. Text
+/// form: `send_hunt_expedition <faction> <band> <party_workers> <fauna_id> [floor] [fill_target]`.
 fn handle_send_hunt_expedition(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -2743,99 +2961,28 @@ fn handle_send_hunt_expedition(
     // (`raid_load` takes the smaller of the two), and [`NO_FILL_TARGET`] is the honest reading of
     // "the player named none". There is nothing to reject here, so there is no rejection path.
     let fill_target = fill_target.unwrap_or(NO_FILL_TARGET);
-    let Some(band) = select_starting_band(
+    let Some(outfit) = outfit_raiding_party(
         app,
         faction,
         band_id,
+        party_workers,
+        &fauna_id,
         "send_hunt_expedition",
-        CommandEventKind::ExpeditionSent,
     ) else {
-        return;
-    };
-    // Same resident-band gate as `send_expedition`: a party can only be outfitted from a real band.
-    if app.world.get::<ResidentBand>(band.entity).is_none() {
-        emit_command_failure(
-            app,
-            CommandEventKind::ExpeditionSent,
-            faction,
-            "send_hunt_expedition: band is not a resident band.",
-        );
-        return;
-    }
-
-    // The target must resolve to a live herd; capture its current tile as the initial travel target.
-    let herd_pos = {
-        let registry = app.world.resource::<HerdRegistry>();
-        registry.find(&fauna_id).map(|herd| herd.position())
-    };
-    let Some(herd_pos) = herd_pos else {
-        emit_command_failure(
-            app,
-            CommandEventKind::ExpeditionSent,
-            faction,
-            format!("send_hunt_expedition: no live herd '{}'.", fauna_id),
-        );
         return;
     };
 
     let cfg = app.world.resource::<ExpeditionConfigHandle>().get();
-    let Some(band_cohort) = app.world.get::<PopulationCohort>(band.entity) else {
-        return;
-    };
-    let band_working = band_cohort.working;
-    let mut expedition_cohort = band_cohort.clone();
-    let (unit_kind, unit_tags) = app
-        .world
-        .get::<StartingUnit>(band.entity)
-        .map(|unit| (unit.kind.clone(), unit.tags.clone()))
-        .unwrap_or_else(|| ("expedition".to_string(), Vec::new()));
-
-    let available = available_workers(band_working);
-    let max_party = available.min(cfg.max_party_size);
-    if party_workers < 1 || party_workers > max_party {
-        emit_command_failure(
-            app,
-            CommandEventKind::ExpeditionSent,
-            faction,
-            format!(
-                "Party of {} workers invalid — {} can outfit 1..{} workers.",
-                party_workers, band.label, max_party
-            ),
-        );
-        return;
-    }
-
     // Launch-time viability forecast — a bounded forward SIMULATION of the trip (`hunt_trip_forecast`),
-    // not a division. A Sustain party skims the herd's Maximum Sustainable Yield (a *flow*), and a
-    // Surplus/Deplete party eats *stock* headroom and then falls back to the regrowth trickle once it
-    // is gone, so filling a carry cap off a small herd can genuinely take dozens of turns. That is
+    // not a division. A party at the food peak skims the herd's Maximum Sustainable Yield (a *flow*),
+    // and a deeper floor eats *stock* headroom and then falls back to the regrowth trickle once it is
+    // gone, so filling a carry cap off a small herd can genuinely take dozens of turns. That is
     // ecologically true, not a bug; the player must be told at launch rather than silently trapped,
     // so the forecast rides the `ExpeditionSent` feed entry (it still launches either way).
     let forecast = {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
         let labor = app.world.resource::<LaborConfigHandle>().get();
-        // **The party leaves outfitted** (`BandEquipment::default()` at the spawn below is a full
-        // kit), so the launch quote is priced at the equipped tier — the same tier the party will
-        // fight its first turns at. Wear is what moves it later, and the in-flight
-        // `expeditionProjectedDelivery` re-quotes against the party's live kit each turn.
-        let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
-        let party = HuntingParty {
-            hunter: equipment_cfg.hunter_profile(
-                app.world.resource::<CreaturesConfigHandle>().get().person(),
-                BandEquipment::default().hunting_equipped(&equipment_cfg),
-            ),
-            tuning: {
-                let combat = app.world.resource::<CombatConfigHandle>().get();
-                let mut tuning = combat.tuning();
-                tuning.lethality *= combat.expedition_danger_multiplier;
-                tuning
-            },
-            injury_damage_per_animal: app
-                .world
-                .resource::<CombatConfigHandle>()
-                .get()
-                .hunt_injury_damage_per_animal,
-        };
+        let party = launch_forecast_party(app);
         let registry = app.world.resource::<HerdRegistry>();
         registry.find(&fauna_id).map(|herd| {
             hunt_trip_forecast(
@@ -2850,42 +2997,14 @@ fn handle_send_hunt_expedition(
             )
         })
     };
-    // Round-trip TRAVEL is part of the honest trip length — the party walks out to the herd and back.
-    // `hunt_trip_forecast` counts only the HUNTING turns (once in reach), so add the walk here, where
-    // the launching band's tile is known. (The per-herd `huntTripEstimates` snapshot table is
-    // band-agnostic — one row serves every band — so the CLIENT adds this same travel to the pre-launch
-    // readout from the SELECTED band's tile + the exported `bandMoveTilesPerTurn`.)
-    let travel_turns: u32 = {
-        let grid_width = app.world.resource::<TileRegistry>().width;
-        let wrap_horizontal = app
-            .world
-            .resource::<SimulationConfig>()
-            .map_topology
-            .wrap_horizontal;
-        let move_rate = app
-            .world
-            .resource::<LaborConfigHandle>()
-            .get()
-            .band_move_tiles_per_turn
-            .max(1);
-        app.world
-            .get::<PopulationCohort>(band.entity)
-            .map(|c| c.current_tile)
-            .and_then(|t| app.world.get::<Tile>(t))
-            .map(|tile| {
-                let one_way =
-                    hex_distance_wrapped(tile.position, herd_pos, grid_width, wrap_horizontal);
-                (2 * one_way).div_ceil(move_rate)
-            })
-            .unwrap_or(0)
-    };
+    let travel_turns = round_trip_travel_turns(app, outfit.band.entity, outfit.herd_pos);
     // The raid always completes in bounded turns (grab the surplus, come home), so the only genuine
     // non-viable case is "no surplus to take" — the herd is at/below the policy's floor and delivers
     // NO animals. Otherwise headline the payload the raid actually lands, including the round trip.
     let (viability_note, viability_detail) = match &forecast {
         // An INEDIBLE quarry brings no food home — say what it *does* bring, no food ETA. This arm
         // used to fire for a denial *mission* (Eradicate); since #337 the policy is pure intensity
-        // and the species decides the product, so an Eradicate raid on a deer reports its windfall
+        // and the species decides the product, so a floor-`0` raid on a deer reports its windfall
         // like any other rung, and only a wolf lands here.
         Some(f) if !f.delivers_food => (
             if f.delivers_trade {
@@ -2907,8 +3026,7 @@ fn handle_send_hunt_expedition(
             format!(
                 " — the {} is too lean to raid: at its {} floor it has no surplus, the party would \
                  return empty",
-                fauna_id,
-                floor
+                fauna_id, floor
             ),
             " eta_turns=none viability=no_surplus".to_string(),
         ),
@@ -2962,56 +3080,17 @@ fn handle_send_hunt_expedition(
         None => (String::new(), String::new()),
     };
 
-    // Remove the party from the band's pool — but draw NO provisions (it lives off its kills).
-    let party_scalar = Scalar::from_u32(party_workers);
-    {
-        let Some(mut band_cohort) = app.world.get_mut::<PopulationCohort>(band.entity) else {
-            return;
-        };
-        band_cohort.working -= party_scalar;
-        band_cohort.sync_size();
-    }
-
-    // Retask the cloned cohort into a detached party co-located with the band, empty larder.
-    expedition_cohort.children = Scalar::from_i64(0);
-    expedition_cohort.working = party_scalar;
-    expedition_cohort.elders = Scalar::from_i64(0);
-    expedition_cohort.stores = LocalStore::new();
-    expedition_cohort.age_turns = 0;
-    expedition_cohort.migration = None;
-    expedition_cohort.grievance = Scalar::from_i64(0);
-    expedition_cohort.sync_size();
-
-    // A detached party is a band in its own right, so it takes its own durable id.
-    let expedition_band_id = app.world.resource_mut::<BandIdAllocator>().allocate();
-    let expedition_entity = app
-        .world
-        .spawn((
-            expedition_cohort,
-            expedition_band_id,
-            LaborAllocation::default(),
-            // **The party leaves OUTFITTED** — a detached party is a band in its own right, so it
-            // carries the same full kit a band spawns with. This slice does not *wear* an
-            // expedition's kit (`advance_expeditions` still prices its haul at the equipped rate);
-            // without the component the party would publish a dry kit beside an equipped haul rate,
-            // which is a contradiction on the wire.
-            BandEquipment::default(),
-            StartingUnit::new(unit_kind, unit_tags),
-            Expedition {
-                home_band: band.entity,
-                mission: ExpeditionMission::Hunt {
-                    fauna_id: fauna_id.clone(),
-                    floor,
-                    fill_target,
-                },
-                phase: ExpeditionPhase::Hunting,
-                announced: false,
-                pending_reveal: Vec::new(),
-                carried_trade: 0.0,
-            },
-            BandTravel { target: herd_pos },
-        ))
-        .id();
+    let band_label = outfit.band.label.clone();
+    let expedition_entity = launch_detached_party(
+        app,
+        outfit,
+        party_workers,
+        ExpeditionMission::Hunt {
+            fauna_id: fauna_id.clone(),
+            floor,
+            fill_target,
+        },
+    );
 
     let tick = app.world.resource::<SimulationTick>().0;
     push_command_event(
@@ -3021,7 +3100,7 @@ fn handle_send_hunt_expedition(
         faction,
         format!(
             "{} hunting expedition (floor {:.2}·K) -> herd {}{}",
-            band.label, floor, fauna_id, viability_note
+            band_label, floor, fauna_id, viability_note
         ),
         Some(format!(
             "status=applied mission=hunt floor={} fill_target={} workers={} herd={} expedition={}{}",
@@ -3033,6 +3112,172 @@ fn handle_send_hunt_expedition(
             viability_detail
         )),
     );
+}
+
+/// Outfit and launch a **denial raid** (`docs/plan_denial_raid.md`) — the third expedition verb,
+/// beside Scout and Hunt. Text form:
+/// `send_denial_raid <faction> <band> <party_workers> <fauna_id>`.
+///
+/// **There is no floor to validate and no fill target to default**, which is why this handler is
+/// shorter than its hunting sibling rather than a copy of it: the mission carries no numbers, so the
+/// order is *"this herd, this many people"* and the only refusals are the shared ones
+/// ([`outfit_raiding_party`]). `floor` appears nowhere in the command, the feed line or the detail.
+///
+/// **The verdict is `turns_to_collapse`, not a food total** (§1.1): a raid succeeds by pushing the
+/// herd under `ecology.collapse_fraction` — the point of no return — and walking away, and what it
+/// hauls home is a rounding error against what it killed. When the party cannot get there at all,
+/// the line **says so** rather than showing a blank (§3).
+fn handle_send_denial_raid(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: Option<u64>,
+    party_workers: u32,
+    fauna_id: String,
+) {
+    let Some(outfit) = outfit_raiding_party(
+        app,
+        faction,
+        band_id,
+        party_workers,
+        &fauna_id,
+        "send_denial_raid",
+    ) else {
+        return;
+    };
+
+    let cfg = app.world.resource::<ExpeditionConfigHandle>().get();
+    let forecast = {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        let labor = app.world.resource::<LaborConfigHandle>().get();
+        // The reported band's width (`combat_config.forecast_range_sigmas`) — a readout lever, so
+        // widening it cannot move an animal.
+        let range_sigmas = app
+            .world
+            .resource::<CombatConfigHandle>()
+            .get()
+            .forecast_range_sigmas;
+        let party = launch_forecast_party(app);
+        let registry = app.world.resource::<HerdRegistry>();
+        registry.find(&fauna_id).map(|herd| {
+            denial_forecast(
+                party_workers,
+                herd,
+                &fauna,
+                &labor,
+                &cfg,
+                &party,
+                range_sigmas,
+            )
+        })
+    };
+    let travel_turns = round_trip_travel_turns(app, outfit.band.entity, outfit.herd_pos);
+    let (verdict, verdict_detail) = match &forecast {
+        Some(f) => {
+            let waste = format!(
+                "~{:.1} food home, ~{:.1} left on the range",
+                f.delivered_food, f.wasted_food
+            );
+            match f.turns_to_collapse {
+                Some(turns) => (
+                    // **The range, not a promise** (`docs/plan_hunt_through_combat.md` §6.4) — the
+                    // retreat is stochastic, so the verdict is a band. It collapses to one number
+                    // when the distribution is degenerate, which the client reads by comparing the
+                    // three; here the prose does the same.
+                    format!(
+                        " — past recovery in {} ({} raiding + {} travel); {} animals killed, {}",
+                        describe_collapse_window(
+                            f.turns_to_collapse_low,
+                            turns,
+                            f.turns_to_collapse_high
+                        ),
+                        turns,
+                        travel_turns,
+                        f.animals_killed,
+                        waste
+                    ),
+                    format!(
+                        " outcome={} turns_to_collapse={} low={} high={} travel_turns={} \
+                         animals={} food={:.2} wasted={:.2}",
+                        f.outcome.as_str(),
+                        turns,
+                        f.turns_to_collapse_low.unwrap_or(0),
+                        f.turns_to_collapse_high.unwrap_or(0),
+                        travel_turns,
+                        f.animals_killed,
+                        f.delivered_food,
+                        f.wasted_food
+                    ),
+                ),
+                // **Never a blank** (§3). A party whose kills cannot outpace the herd's regrowth is
+                // told exactly that; one that is merely slow is told the horizon ran out.
+                None => (
+                    match f.outcome {
+                        core_sim::DenialOutcome::Repelled => format!(
+                            " — this party CANNOT drive the {} past recovery: its kills do not \
+                             outpace the herd's regrowth",
+                            fauna_id
+                        ),
+                        _ => format!(
+                            " — a long raid: the {} is not past recovery within {} turns",
+                            fauna_id, cfg.hunt.forecast_horizon_turns
+                        ),
+                    },
+                    format!(
+                        " outcome={} turns_to_collapse=none travel_turns={} animals={} \
+                         food={:.2} wasted={:.2}",
+                        f.outcome.as_str(),
+                        travel_turns,
+                        f.animals_killed,
+                        f.delivered_food,
+                        f.wasted_food
+                    ),
+                ),
+            }
+        }
+        None => (String::new(), String::new()),
+    };
+
+    let band_label = outfit.band.label.clone();
+    let expedition_entity = launch_detached_party(
+        app,
+        outfit,
+        party_workers,
+        ExpeditionMission::Deny {
+            fauna_id: fauna_id.clone(),
+        },
+    );
+
+    let tick = app.world.resource::<SimulationTick>().0;
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::ExpeditionSent,
+        faction,
+        format!("{} denial raid -> herd {}{}", band_label, fauna_id, verdict),
+        Some(format!(
+            "status=applied mission=deny workers={} herd={} expedition={}{}",
+            party_workers,
+            fauna_id,
+            expedition_entity.to_bits(),
+            verdict_detail
+        )),
+    );
+}
+
+/// The collapse verdict's turn window as prose — *"4 turns"* when the distribution is degenerate,
+/// *"3–5 turns"* when it is not, and *"3+ turns"* when the pessimistic end never gets there at all.
+///
+/// **A range that is a point must READ as a point** — the rule every range on this wire follows: the
+/// sim publishes three numbers and *"say 4, not 4–4"* is the reader's comparison, not a stored flag.
+fn describe_collapse_window(low: Option<u32>, likely: u32, high: Option<u32>) -> String {
+    match (low, high) {
+        (Some(low), Some(high)) if low == high => format!("{likely} turns"),
+        (Some(low), Some(high)) => format!("{low}–{high} turns"),
+        // The pessimistic draw never gets there inside the horizon — an honest open-ended window
+        // rather than a second number the projection did not produce.
+        (Some(low), None) => format!("{low}+ turns"),
+        _ => format!("{likely} turns"),
+    }
 }
 
 /// Order an expedition home: set its phase to `Returning` (it chases the home band's live tile and
@@ -4790,6 +5035,17 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             floor,
             fill_target,
         }),
+        ProtoCommandPayload::SendDenialRaid {
+            faction_id,
+            band_id,
+            party_workers,
+            fauna_id,
+        } => Some(Command::SendDenialRaid {
+            faction: FactionId(faction_id),
+            band_id,
+            party_workers,
+            fauna_id,
+        }),
         ProtoCommandPayload::FoundSettlement {
             faction_id,
             target_x,
@@ -5590,6 +5846,14 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
                 floor,
                 fill_target,
             );
+        }
+        Command::SendDenialRaid {
+            faction,
+            band_id,
+            party_workers,
+            fauna_id,
+        } => {
+            handle_send_denial_raid(app, faction, band_id, party_workers, fauna_id);
         }
         Command::FoundSettlement {
             faction,
