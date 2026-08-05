@@ -46,6 +46,9 @@ const MAP_VIEW_SCRIPT := preload("res://src/scripts/MapView.gd")
 ## `Main`'s command-text builders are pure statics precisely so they can be reached without standing
 ## up the app scene — the `escape_claimant` precedent.
 const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
+## The world's kit roster, shared with both preview harnesses — one roster, one set of ids, so the
+## `kit <id>` token this guard emits is the token those frames are read against.
+const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
 ## Scratch prefs, never the player's real ones (the `band_panel_preview` rule).
 const GUARD_PREFS_PATH := "user://command_guard_prefs.cfg"
@@ -130,6 +133,10 @@ func _ready() -> void:
 	_hud.set_grid_dimensions({"width": GRID_W, "height": GRID_H, "wrap_horizontal": false})
 	_hud.update_herds(_herd_fixtures())
 	_hud.update_band_alerts([_band_fixture(), _party_fixture()])
+	# The kit roster, so every compose sheet below resolves a real selection and the `kit <id>` tail
+	# is a token the REAL parser has to accept rather than one the client never emits.
+	_hud.update_kit_roster(BandFx.kit_roster_fixture(),
+		BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE)
 	await _settle()
 
 	await _drive_assign_labor()
@@ -140,6 +147,7 @@ func _ready() -> void:
 	await _drive_send_hunt_expedition_from_band_panel()
 	await _drive_send_hunt_expedition_from_herd_drawer()
 	await _drive_send_denial_raid()
+	await _drive_assign_labor_kits()
 
 	_assert_every_command_emitted()
 	_write_emitted()
@@ -194,6 +202,10 @@ func _drive_send_hunt_expedition_from_band_panel() -> void:
 	_hud._bandpanel._party_compose_open = true
 	_hud._bandpanel._party_compose_mission = "hunt"
 	_hud._compose.set_party_quarry(FAR_HERD_ID)
+	# **A NON-DEFAULT KIT, so the line carries the tail rather than omitting it.** `Main._kit_token`
+	# omits `kit <id>` when the selection equals the job default — which is the shipped case and is
+	# byte-identical to the pre-roster line — so composing the default here would test nothing new.
+	_hud._compose.set_party_kit_id(BandFx.KIT_ID_NONE)
 	_hud._bandpanel.rerender()
 	await _settle()
 	_press_send_hunt_confirm(_panel, "band panel parties compose")
@@ -213,6 +225,9 @@ func _drive_send_denial_raid() -> void:
 	_hud._bandpanel._party_compose_open = true
 	_hud._bandpanel._party_compose_mission = HudComposeVocab.COMPOSE_MISSION_DENY
 	_hud._compose.set_party_quarry(FAR_HERD_ID)
+	# The one order the closed four-token grammar still admits, and the reason this drive matters
+	# most: a `kit <id>` pair the parser refuses would be a hard parse error here.
+	_hud._compose.set_party_kit_id(BandFx.KIT_ID_NONE)
 	_hud._bandpanel.rerender()
 	await _settle()
 	_press_meta_button(_panel, HudWidgets.SEND_DENIAL_CONFIRM_META, "band panel denial compose")
@@ -229,9 +244,34 @@ func _drive_send_hunt_expedition_from_herd_drawer() -> void:
 	await _settle()
 	# `open_herd_compose` takes the herd it is composing for — it gates on `_herd_compose_available`
 	# and keys the compose state off `herd.id`, so the drawer's own selection is not enough.
+	# **BEFORE the open, not after.** The commit button's payload is captured in a `pressed` closure
+	# built during the render, so a selection written after the sheet exists is not the one the button
+	# carries — the line would come out untailed and the drive would silently assert nothing.
+	_hud._compose.set_hunt_kit_id(BandFx.KIT_ID_NONE)
 	_hud._drawercompose.open_herd_compose(herd)
 	await _settle()
 	_press_send_hunt_confirm(_hud, "herd drawer compose")
+	await _settle()
+
+## `assign_labor` with the KIT TAIL, on BOTH grammars (`docs/plan_denial_raid.md`). The quick-hunt
+## drive above emits the untailed line (it names no kit, so the job default stands and the token is
+## omitted); this one emits the tailed twin of each, which is what puts `kit <id>` in front of the
+## real parser on the forage grammar's two optional positionals as well as on the hunt grammar.
+##
+## It reaches `HudLayer._emit_assign_labor` DIRECTLY rather than through a compose sheet, and that is
+## deliberate: what is under test here is the LINE, and the two compose sheets' own kit plumbing is
+## asserted in the preview harnesses, where the picker can be read back. Standing up a tile card here
+## would buy a second copy of that coverage and a forage fixture this file has no other use for.
+func _drive_assign_labor_kits() -> void:
+	var band: Dictionary = _hud._band_labor.panel_band()
+	_hud._emit_assign_labor(band, SourceForecast.LABOR_KIND_HUNT, PARTY_WORKERS,
+		int(band.get("current_x", 0)), int(band.get("current_y", 0)), NEAR_HERD_ID,
+		SourceForecast.DEFAULT_HARVEST_FLOOR, "", SourceForecast.IMPROVEMENT_NONE,
+		BandFx.KIT_ID_NONE)
+	await _settle()
+	_hud._emit_assign_labor(band, SourceForecast.LABOR_KIND_FORAGE, PARTY_WORKERS,
+		TARGET_X, TARGET_Y, "", SourceForecast.DEFAULT_HARVEST_FLOOR, "",
+		SourceForecast.IMPROVEMENT_NONE, BandFx.KIT_ID_NONE)
 	await _settle()
 
 ## Push the band through a REAL MapView and click its hex, so the HUD's selected unit is the marker
@@ -309,7 +349,9 @@ func _record(kind: String, payload: Dictionary, formatted: Dictionary) -> void:
 ## The commands this guard must see. Missing one is a failure: a driver that quietly stopped
 ## reaching its emit site would otherwise turn this guard green by producing nothing to check.
 const EXPECTED_KINDS := {
-	"assign_labor": 1,
+	# THREE — the map's quick-hunt (which names no kit, so the line is the untailed one) plus the two
+	# `_drive_assign_labor_kits` emits that put `kit <id>` on both grammars.
+	"assign_labor": 3,
 	"cancel_order": 1,
 	"move_band": 1,
 	"send_expedition": 1,

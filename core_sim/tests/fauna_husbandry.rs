@@ -211,6 +211,7 @@ fn spawn_crew_of(
                     },
                     workers: hunters,
                     improvement,
+                    kit: None,
                 }],
                 ..Default::default()
             },

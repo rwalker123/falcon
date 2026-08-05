@@ -505,6 +505,22 @@ pub struct HerdTelemetryState {
     /// property of the whole herd table rather than of this field. Appended last.
     #[serde(default)]
     pub denial_party_needed: u32,
+    /// **The `equipment.json` roster id [`Self::hunt_trip_estimates`] was computed at** — the hunt
+    /// job's default kit (`"big_game"` as shipped), on every herd, always.
+    ///
+    /// **The table is NOT repriced per kit, and this field exists so a consumer can say so.** The
+    /// two estimate tables are ~95% of snapshot capture and a kit axis multiplies them — the same
+    /// structural cost question per-band repricing already faces. A client whose player has selected
+    /// another kit must therefore refuse to present these rows as an answer for that selection: the
+    /// kit moves the take through **both** the fight and the haul, and a `none` party's effective
+    /// attack against a defended quarry is zero, so the error is total rather than marginal.
+    #[serde(default)]
+    pub hunt_trip_estimates_kit_id: String,
+    /// The same, for [`Self::denial_estimates`]. **Two fields rather than one** because they are two
+    /// tables: if one is later repriced per kit and the other is not, a single field would lie about
+    /// whichever was left behind.
+    #[serde(default)]
+    pub denial_estimates_kit_id: String,
 }
 
 impl Default for HerdTelemetryState {
@@ -574,6 +590,8 @@ impl Default for HerdTelemetryState {
             // A herd nothing has described quotes no party — the same "no viable party" reading the
             // capture publishes for an unraidable one.
             denial_party_needed: 0,
+            hunt_trip_estimates_kit_id: String::new(),
+            denial_estimates_kit_id: String::new(),
         }
     }
 }
@@ -927,6 +945,38 @@ pub struct FoodModuleState {
     pub module: String,
     pub seasonal_weight: f32,
     pub kind: String,
+}
+
+/// **One named kit a party may be sent out with** (`equipment.json`'s `kits`) — a **mask** over the
+/// three consumable component blocks (spears / sled / baskets), published once per world so the
+/// client's picker renders real numbers without a second copy of the TOE table.
+///
+/// The three tiers are what this kit grants a party whose components are all **fresh**. What a given
+/// band's *wear* then does to them is that band's own row (`PopulationCohortState`'s
+/// `hunter_attack` / `hunt_carry_per_worker_biomass` / `forage_carry_per_worker_biomass`).
+///
+/// **`none` is an ordinary roster entry, not a sentinel**: it grants nothing, so its tiers are the
+/// unequipped ones throughout and a party sent with it spends no durability on any component. No
+/// consumer should special-case its id.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct KitOptionState {
+    pub id: String,
+    pub display_name: String,
+    /// Which verbs this kit may be sent on: `"hunt"` and/or `"forage"`. A kit named for a job outside
+    /// this list is a **command failure**, never a silent fall back to the default, so a picker must
+    /// filter by the job it is composing. No kit lists the band-wide roles — they consume no
+    /// component and have no kit axis.
+    pub jobs: Vec<String>,
+    /// A fresh-kit hunter's combat `attack` under this kit — what the gate
+    /// `max(0, attack − defense)` compares against a herd's `defense`. **Below a species' defense
+    /// that species cannot be hunted at all**, which is why `none` is a real decision rather than a
+    /// discount.
+    pub attack: f32,
+    /// Per-hunter HUNT haul rate (biomass/turn) under this kit — the sled's tier.
+    pub hunt_carry_per_worker_biomass: f32,
+    /// Per-gatherer throughput (biomass/turn, **before** the tile's seasonal weight) under this kit —
+    /// the baskets' tier.
+    pub forage_carry_per_worker_biomass: f32,
 }
 
 /// `TileState::graze_ecology_phase` — the biome carries no pasture at all (water, ice, bare rock).

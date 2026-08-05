@@ -247,6 +247,8 @@
       "timer": 196
     }
   ],
+  "default_forage_kit_id": "default_forage_kit_id",
+  "default_hunt_kit_id": "default_hunt_kit_id",
   "demographics": [
     {
       "children": 133,
@@ -680,6 +682,7 @@
           "wasted_food": 73.800003
         }
       ],
+      "denial_estimates_kit_id": "herds[0].denial_estimates_kit_id",
       "denial_party_needed": 16,
       "domestication": 25.139999,
       "durability": 52.57,
@@ -720,6 +723,7 @@
           "wasted_food": 56.849998
         }
       },
+      "hunt_trip_estimates_kit_id": "herds[0].hunt_trip_estimates_kit_id",
       "huntable": true,
       "husbandry_ceiling": "herds[0].husbandry_ceiling",
       "id": "herds[0].id",
@@ -790,6 +794,7 @@
           "wasted_food": 99.110001
         }
       ],
+      "denial_estimates_kit_id": "herds[1].denial_estimates_kit_id",
       "denial_party_needed": 83,
       "domestication": 102.790001,
       "durability": 53.200001,
@@ -830,6 +835,7 @@
           "wasted_food": 84.790001
         }
       },
+      "hunt_trip_estimates_kit_id": "herds[1].hunt_trip_estimates_kit_id",
       "huntable": true,
       "husbandry_ceiling": "herds[1].husbandry_ceiling",
       "id": "herds[1].id",
@@ -994,6 +1000,30 @@
       "herding": 37.700001,
       "penning": 54.32,
       "seed_selection": 14.35
+    }
+  ],
+  "kits": [
+    {
+      "attack": 8.2,
+      "display_name": "kits[0].display_name",
+      "forage_carry_per_worker_biomass": 88.019997,
+      "hunt_carry_per_worker_biomass": 30.709999,
+      "id": "kits[0].id",
+      "jobs": [
+        "kits[0].jobs[0]",
+        "kits[0].jobs[1]"
+      ]
+    },
+    {
+      "attack": 15.85,
+      "display_name": "kits[1].display_name",
+      "forage_carry_per_worker_biomass": 15.04,
+      "hunt_carry_per_worker_biomass": 39.080002,
+      "id": "kits[1].id",
+      "jobs": [
+        "kits[1].jobs[0]",
+        "kits[1].jobs[1]"
+      ]
     }
   ],
   "orders": [],
@@ -1455,6 +1485,7 @@
       "idle_workers": 54,
       "is_expedition": true,
       "is_traveling": true,
+      "kit_id": "populations[0].kit_id",
       "knowledge_fragments": [
         {
           "discovery": 18,
@@ -1479,6 +1510,7 @@
           "floor": 110.599998,
           "improvement": "populations[0].labor_assignments[0].improvement",
           "kind": "populations[0].labor_assignments[0].kind",
+          "kit_id": "populations[0].labor_assignments[0].kit_id",
           "overdraws": true,
           "realized_trade_yield": 22.299999,
           "realized_yield": 50.82,
@@ -1501,6 +1533,7 @@
           "floor": 48.369999,
           "improvement": "populations[0].labor_assignments[1].improvement",
           "kind": "populations[0].labor_assignments[1].kind",
+          "kit_id": "populations[0].labor_assignments[1].kit_id",
           "overdraws": true,
           "realized_trade_yield": 22.049999,
           "realized_yield": 67.830002,
@@ -1621,6 +1654,7 @@
       "idle_workers": 151,
       "is_expedition": true,
       "is_traveling": true,
+      "kit_id": "populations[1].kit_id",
       "knowledge_fragments": [
         {
           "discovery": 89,
@@ -1645,6 +1679,7 @@
           "floor": 71.43,
           "improvement": "populations[1].labor_assignments[0].improvement",
           "kind": "populations[1].labor_assignments[0].kind",
+          "kit_id": "populations[1].labor_assignments[0].kit_id",
           "overdraws": true,
           "realized_trade_yield": 106.169998,
           "realized_yield": 31.379999,
@@ -1667,6 +1702,7 @@
           "floor": 95.239998,
           "improvement": "populations[1].labor_assignments[1].improvement",
           "kind": "populations[1].labor_assignments[1].kind",
+          "kit_id": "populations[1].labor_assignments[1].kit_id",
           "overdraws": true,
           "realized_trade_yield": 35.52,
           "realized_yield": 16.93,

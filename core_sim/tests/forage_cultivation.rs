@@ -276,6 +276,7 @@ fn spawn_forager_at(
                     },
                     workers: foragers,
                     improvement,
+                    kit: None,
                 }],
                 ..Default::default()
             },

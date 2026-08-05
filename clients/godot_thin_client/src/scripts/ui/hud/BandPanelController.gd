@@ -167,8 +167,10 @@ func _player_knowledge() -> Dictionary:
 ## `effective_worker_map` then reads that "" back for the rest of the turn.
 func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y: int, herd_id: String,
         floor: float, species: String = "",
-        improvement: String = SourceForecast.IMPROVEMENT_NONE) -> void:
-    _emit_assign_labor_fn.call(band, kind, workers, x, y, herd_id, floor, species, improvement)
+        improvement: String = SourceForecast.IMPROVEMENT_NONE,
+        kit_id: String = KitRoster.NO_KIT_ID) -> void:
+    _emit_assign_labor_fn.call(band, kind, workers, x, y, herd_id, floor, species, improvement,
+        kit_id)
 
 ## A friendlier label for a herd id. Retained on HudLayer, which also feeds the targeting banner and
 ## the command feed from it.
@@ -1159,6 +1161,11 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "building_glyph": String(building.get("glyph", "")),
             "building_progress": float(building.get("progress", 0.0)),
             "floor": floor, "improvement": improvement, "x": x, "y": y, "herd_id": herd_id,
+            # **THE KIT THIS CREW IS ALREADY WORKING UNDER** (`LaborAssignment.kitId`, always a real
+            # roster id on a forage/hunt row). It rides the model for one reason: `_emit_work_assign`
+            # RESTATES it, so a `+`/`−` on the board cannot silently re-kit a crew back to the job
+            # default — the same rule, and the same failure, as the improvement axis beside it.
+            "kit_id": String(m.get("kit_id", KitRoster.NO_KIT_ID)),
             "can_add": bool(cap.get("can_add", idle > 0)),
             "schedule": HudBandLaborState.as_schedule(m.get("arrival_schedule", null)),
             "tooltip": HudFormat.join_tooltip_lines([String(yld.get("tooltip", "")),
@@ -1336,7 +1343,12 @@ func _emit_work_assign(band: Dictionary, model: Dictionary, workers: int,
     _emit_assign_labor(band, kind, workers, int(model.get("x", -1)), int(model.get("y", -1)),
         String(model.get("herd_id", "")),
         standing if floor == RESTATE_STANDING_FLOOR else floor,
-        "", String(model.get("improvement", "")))
+        "", String(model.get("improvement", "")),
+        # **THE KIT RIDES EVERY CREW EDIT, for the improvement's reason.** An omitted `kit <id>` token
+        # means "the job's default" to the parser, so a `+`/`−` that dropped it would re-kit a crew
+        # the player deliberately sent out bare-handed. Restated from the row model, which carries the
+        # assignment's own `kit_id`.
+        String(model.get("kit_id", KitRoster.NO_KIT_ID)))
 
 ## Jump the map to a worked source — a fixed forage tile, or a herd at its LIVE (migrated) tile.
 func _focus_work_source(model: Dictionary) -> void:
@@ -1675,26 +1687,52 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
         HudStyle.apply_button(blocked, "ghost")
         sheet.add_child(blocked)
         return
+    # **THE KIT, RESOLVED BEFORE ANYTHING IS QUOTED AND MOUNTED UNDER THE PARTY STEPPER.** Its
+    # selection decides whether the sim's `huntTripEstimates` table applies to this raid at all, and
+    # the picker's ROW belongs beneath the crew it describes — so the resolve is here and the mount is
+    # further down. `party_kit_id` is shared with the denial mission (one sheet, two missions, both on
+    # the `hunt` job) and re-validated every render.
+    var kits := _band_labor.kits()
+    var default_kit := _band_labor.default_kit_id(KitRoster.JOB_HUNT)
+    var kit_id := KitRoster.resolve_selection(kits, KitRoster.JOB_HUNT, default_kit,
+        _compose.party_kit_id())
+    _compose.set_party_kit_id(kit_id)
+    # **THE HONESTY GATE.** `huntTripEstimates` is quoted for ONE kit (the hunt job's default) and is
+    # not repriced per kit, so this sheet may present it as the answer only when the ids agree. Compare
+    # them — never assume the default is selected.
+    var trip_quoted := KitRoster.estimates_apply_to(herd, KitRoster.HERD_TRIP_ESTIMATES_KIT_KEY,
+        default_kit, kit_id)
     sheet.add_child(HudWidgets.alloc_section_label(HudComposeVocab.COMPOSE_FIELD_POLICY))
     # With a herd in hand the presets finally carry their metric — the same
     # `SourceForecast.expedition_policy_takes` the herd drawer feeds its picker. **NO SLIDER in this
     # zone**, for the reason the work inspector has none: a fixed-width dock strip is not where a
     # continuous dial belongs, and the herd drawer's own sheet has the room.
+    #
+    # **THE METRICS GO WITH THE TABLE THEY COME FROM.** `expedition_policy_takes` is a reading of
+    # `huntTripEstimates`, so under a kit the table is not quoted for it would put a fourth figure
+    # priced at a different kit on a sheet whose own note says none are. `{}` is the picker's supported
+    # degrade (a herd the wire does not describe), so the rungs render bare rather than wrong.
     sheet.add_child(HudWidgets.build_floor_picker(func(floor: float) -> void:
         _send_hunt_floor = floor
         # Auto-max on a floor click, exactly as the herd drawer does: "give me everything this herd
         # can spare" — zero waste, full rate. Consumed on the next rebuild, never set by a −/+ tick.
         _compose.arm_party_autofill()
         rerender(), _send_hunt_floor,
-        SourceForecast.expedition_policy_takes(band, herd, _band_labor.grid_width(), _band_labor.wrap_horizontal()), HudWorkVocab.ZONE_POLICY_PICKER_COLUMNS))
+        SourceForecast.expedition_policy_takes(band, herd, _band_labor.grid_width(), _band_labor.wrap_horizontal()) if trip_quoted else {},
+        HudWorkVocab.ZONE_POLICY_PICKER_COLUMNS))
     sheet.add_child(HudWidgets.alloc_hint_label(
         HudFormat.floor_hint(_send_hunt_floor, SourceForecast.LABOR_KIND_HUNT, true)))
     # Party size, capped at the raid's max-useful plateau for THIS herd + floor (the herd drawer's
     # own cap), so extra hunters can no longer be sent to stand idle at the kill. **The SUPPLY side is
     # the band's idle workers alone** — `max_expedition_party_size` is a sampling axis, not a rules
     # cap — and `expedition_useful_cap` is the DEMAND side the stepper takes the tighter of.
+    #
+    # **THE DEMAND SIDE IS ALSO A READING OF THE TABLE**, so under a kit mismatch the stepper falls
+    # back to supply alone: with no table for this kit the plateau is unknown, and clamping to another
+    # kit's plateau would refuse a party this one may well need.
     var assignable := idle
-    var capped := SourceForecast.expedition_useful_cap(band, herd, _send_hunt_floor, assignable)
+    var capped := SourceForecast.expedition_useful_cap(band, herd, _send_hunt_floor, assignable) \
+        if trip_quoted else {"cap": assignable, "note": ""}
     var cap: int = maxi(int(capped["cap"]), HudConst.WORKER_STEP)
     if _compose.consume_party_autofill():
         _send_expedition_count = cap
@@ -1707,46 +1745,64 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     var cap_note := String(capped["note"])
     if cap_note != "":
         sheet.add_child(HudWidgets.alloc_hint_label(cap_note))
-    # **THE FILL TARGET, under the party it is priced by** (§5.2) — the same control and the same
-    # composed axis the herd drawer's expedition branch renders, so neither entry point can offer
-    # orders the other cannot. Its axis comes off the UNTARGETED raid, and the clamped value is
-    # written straight back so the control, the forecast and the launch payload are one number.
-    var fill_target_model := SourceForecast.raid_fill_target_model(band, herd, _send_hunt_floor,
-        _send_expedition_count, _band_labor.grid_width(), _band_labor.wrap_horizontal(),
-        _compose.party_fill_target())
-    _compose.set_party_fill_target(int(fill_target_model.get("target", SourceForecast.NO_FILL_TARGET)))
-    if bool(fill_target_model.get("available", false)):
-        sheet.add_child(HudWidgets.build_fill_target_control(fill_target_model,
-            func(new_target: int) -> void:
-                _compose.set_party_fill_target(new_target)
-                rerender()))
-    # LIVE raid forecast for the quarry + floor + party + target now dialed — the same trip lookup and
-    # the same one-line renderer the herd drawer uses.
-    var trip := SourceForecast.hunt_trip_forecast(band, herd, _send_hunt_floor, _send_expedition_count,
-        _band_labor.grid_width(), _band_labor.wrap_horizontal(), _compose.party_fill_target())
-    var forecast_line := SourceForecast.hunt_forecast_line_bbcode(trip, SourceForecast.herd_display_name(herd))
-    if forecast_line != "":
-        sheet.add_child(HudWidgets.forecast_label(forecast_line))
-    # **WHICH STOP ENDS THE TRIP, as its own quiet line.** This zone's forecast is the ONE-LINE form,
-    # which is already dense with five facts; the herd drawer folds the same clause into its readout
-    # verdict instead. Both read `SourceForecast.trip_bound_clause`, so the two surfaces cannot
-    # describe one stop differently, and a forecast carrying no bound renders no line at all.
-    var bound_clause := SourceForecast.trip_bound_clause(trip)
-    if bound_clause != "":
-        sheet.add_child(HudWidgets.alloc_hint_label(bound_clause))
-    # WHY an empty raid is empty comes off the sim's `bound`, so the reason takes the TRIP beside the
-    # herd — "wait for the herd to rebuild" and "send more hunters" are opposite instructions.
-    var returns_empty := SourceForecast.hunt_trip_returns_empty(trip)
-    var reason := SourceForecast.hunt_empty_refusal_reason(trip, herd) if returns_empty else ""
+    _mount_kit_row(sheet, kits, KitRoster.JOB_HUNT, kit_id, default_kit, band,
+        func(picked: String) -> void:
+            _compose.set_party_kit_id(picked)
+            rerender())
+    var quarry_id := _compose.party_quarry_id()
     var confirm := Button.new()
     confirm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    # The button carries the verdict: slow/long/denial raids stay ENABLED and warn-styled, and only a
-    # herd with no surplus disables. `SourceForecast.style_send_hunt_button` owns the text in every branch.
-    SourceForecast.style_send_hunt_button(confirm, trip, reason)
     confirm.set_meta(HudWidgets.SEND_HUNT_CONFIRM_META, true)
-    if returns_empty:
-        sheet.add_child(HudWidgets.alloc_hint_label(reason))
-    var quarry_id := _compose.party_quarry_id()
+    if not trip_quoted:
+        # **THE KIT-MISMATCH SHEET.** The table is not an answer for this party, so nothing derived
+        # from it renders: no fill target (its axis is the untargeted raid's payload), no forecast
+        # line, no bound clause, no empty-raid refusal. What DOES render is honest for any kit — the
+        # combat gate, composed from wire terms — plus the sentence naming whose numbers were
+        # suppressed. The send stays live: the raid is perfectly launchable, we simply cannot quote
+        # its length.
+        _mount_kit_gate_line(sheet, kits, kit_id, band, herd,
+            SourceForecast.herd_display_name(herd))
+        sheet.add_child(HudWidgets.alloc_hint_label(KitRoster.estimates_quoted_note(kits, herd,
+            KitRoster.HERD_TRIP_ESTIMATES_KIT_KEY, default_kit, kit_id,
+            HudComposeVocab.KIT_TRIP_ESTIMATES_QUOTED_FORMAT)))
+        SourceForecast.style_send_hunt_button(confirm, {}, "")
+    else:
+        # **THE FILL TARGET, under the party it is priced by** (§5.2) — the same control and the same
+        # composed axis the herd drawer's expedition branch renders, so neither entry point can offer
+        # orders the other cannot. Its axis comes off the UNTARGETED raid, and the clamped value is
+        # written straight back so the control, the forecast and the launch payload are one number.
+        var fill_target_model := SourceForecast.raid_fill_target_model(band, herd, _send_hunt_floor,
+            _send_expedition_count, _band_labor.grid_width(), _band_labor.wrap_horizontal(),
+            _compose.party_fill_target())
+        _compose.set_party_fill_target(int(fill_target_model.get("target", SourceForecast.NO_FILL_TARGET)))
+        if bool(fill_target_model.get("available", false)):
+            sheet.add_child(HudWidgets.build_fill_target_control(fill_target_model,
+                func(new_target: int) -> void:
+                    _compose.set_party_fill_target(new_target)
+                    rerender()))
+        # LIVE raid forecast for the quarry + floor + party + target now dialed — the same trip lookup
+        # and the same one-line renderer the herd drawer uses.
+        var trip := SourceForecast.hunt_trip_forecast(band, herd, _send_hunt_floor, _send_expedition_count,
+            _band_labor.grid_width(), _band_labor.wrap_horizontal(), _compose.party_fill_target())
+        var forecast_line := SourceForecast.hunt_forecast_line_bbcode(trip, SourceForecast.herd_display_name(herd))
+        if forecast_line != "":
+            sheet.add_child(HudWidgets.forecast_label(forecast_line))
+        # **WHICH STOP ENDS THE TRIP, as its own quiet line.** This zone's forecast is the ONE-LINE
+        # form, which is already dense with five facts; the herd drawer folds the same clause into its
+        # readout verdict instead. Both read `SourceForecast.trip_bound_clause`, so the two surfaces
+        # cannot describe one stop differently, and a forecast carrying no bound renders no line.
+        var bound_clause := SourceForecast.trip_bound_clause(trip)
+        if bound_clause != "":
+            sheet.add_child(HudWidgets.alloc_hint_label(bound_clause))
+        # WHY an empty raid is empty comes off the sim's `bound`, so the reason takes the TRIP beside
+        # the herd — "wait for the herd to rebuild" and "send more hunters" are opposite instructions.
+        var returns_empty := SourceForecast.hunt_trip_returns_empty(trip)
+        var reason := SourceForecast.hunt_empty_refusal_reason(trip, herd) if returns_empty else ""
+        # The button carries the verdict: slow/long/denial raids stay ENABLED and warn-styled, and only
+        # a herd with no surplus disables. `style_send_hunt_button` owns the text in every branch.
+        SourceForecast.style_send_hunt_button(confirm, trip, reason)
+        if returns_empty:
+            sheet.add_child(HudWidgets.alloc_hint_label(reason))
     confirm.pressed.connect(func() -> void:
         emit_signal("send_hunt_expedition_requested", {
             "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
@@ -1756,9 +1812,39 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
             "fauna_label": SourceForecast.herd_display_name(herd),
             "floor": _send_hunt_floor,
             "fill_target": _compose.party_fill_target(),
+            # The kit the party walks out with, and the job default `Main` omits the token for.
+            "kit_id": kit_id,
+            "default_kit_id": default_kit,
         })
         _close_party_compose())
     sheet.add_child(confirm)
+
+## Mount the kit row where a sheet wants it — a no-op when the roster offers this job no kit at all,
+## so a sheet rendered before the first snapshot (or against a world whose roster does not cover the
+## verb) is byte-identical to what it was before the picker existed.
+func _mount_kit_row(sheet: VBoxContainer, kits: Array, job: String, kit_id: String,
+        default_kit: String, band: Dictionary, on_pick: Callable) -> void:
+    var row := KitRoster.build_kit_row(kits, job, kit_id, default_kit, band, on_pick)
+    if row != null:
+        sheet.add_child(row)
+
+## **THE ONE FORECAST THAT STAYS HONEST FOR EVERY KIT**, rendered where the estimate tables have been
+## suppressed. It is composed from wire terms — `max(0, attack − defense)` against the species'
+## durability — at the SELECTED kit's effective attack rather than at the band's default-kit tier, so
+## a bare-handed party against a defended species reads the plain refusal instead of a blank sheet.
+## Same ink and same meta as the herd drawer's gate line, so the two surfaces cannot state one fight
+## two ways.
+func _mount_kit_gate_line(sheet: VBoxContainer, kits: Array, kit_id: String, band: Dictionary,
+        herd: Dictionary, quarry: String) -> void:
+    var tiers := KitRoster.effective_tiers(kits, KitRoster.kit_by_id(kits, kit_id), band)
+    var gate := SourceForecast.hunt_gate_model_at(float(tiers["attack"]), herd, quarry)
+    if not bool(gate["stated"]):
+        return
+    var gate_label := HudWidgets.forecast_label("[color=#%s]%s[/color]" % [
+        HudStyle.DANGER_HEX if bool(gate["blocked"]) else HudStyle.INK_DIM_HEX,
+        String(gate["text"])])
+    gate_label.set_meta(HudWidgets.HUNT_GATE_META, bool(gate["blocked"]))
+    sheet.add_child(gate_label)
 
 ## The DENIAL form (`docs/plan_denial_raid.md` §3): QUARRY → PARTY → the collapse verdict → send.
 ##
@@ -1832,44 +1918,73 @@ func _fill_denial_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: in
             _send_expedition_count = clampi(n, HudConst.WORKER_STEP, party_max)
             rerender()))
     sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.COMPOSE_OF_IDLE_FORMAT % idle))
-    # THE COLLAPSE VERDICT — the sim's `denialEstimates` row for this party size, on the clock the
-    # player is on. **The band and the grid pair are passed for the OUTBOUND WALK**: the table counts
-    # raiding turns, and this sheet's hunt form has always headlined a round-trip total, so a verdict
-    # quoting bare raiding turns beside it named a shorter span in the same words.
-    var forecast := SourceForecast.denial_forecast(herd, _send_expedition_count, band,
-        _band_labor.grid_width(), _band_labor.wrap_horizontal())
     var quarry_name := SourceForecast.herd_display_name(herd)
-    var verdict := SourceForecast.denial_verdict_bbcode(forecast, quarry_name)
-    if verdict != "":
-        sheet.add_child(HudWidgets.forecast_label(verdict))
-        # The caveat rides under the verdict WHENEVER THERE IS A NUMBER TO CAVEAT — the band is an
-        # integral over many stochastic draws and a lucky run really can finish sooner than the
-        # reported low. A verdict with no turn count (a repelled party, an unbounded horizon) has
-        # nothing for it to qualify, and a caveat about an absent number reads as one that is there.
-        if SourceForecast.denial_turns_phrase(forecast) != "":
-            sheet.add_child(HudWidgets.alloc_hint_label(SourceForecast.DENIAL_ESTIMATE_CAVEAT))
-    # …and the take beneath it: what the raid kills, what little it hauls, and what it leaves on the
-    # range. Quiet ink — the waste IS the mission, not a warning about it.
-    var take := SourceForecast.denial_take_bbcode(forecast, quarry_name)
-    if take != "":
-        sheet.add_child(HudWidgets.forecast_label(take))
-    # **THE SHORT-HANDED SENTENCE SUPERSEDES THE REFUSAL, it does not join it.** Both name the party the
-    # sim quotes (one reading, `denial_party_needed`), so printing the pair would state the requirement
-    # twice; the short-handed form is the one that also says what the band actually has.
-    var short_handed := SourceForecast.denial_is_short_handed(herd, idle)
-    var reason := SourceForecast.denial_short_handed_reason(herd, idle)
-    if reason == "":
-        reason = SourceForecast.denial_refusal_reason(forecast, herd)
-    if reason != "":
-        sheet.add_child(HudWidgets.alloc_hint_label(reason))
+    # **THE KIT, DIRECTLY UNDER THE PARTY IT DESCRIBES.** It is the only order this closed-grammar
+    # mission still has to give besides the party size, and it moves every figure below it — a `none`
+    # raid against a defended species has an effective attack of ZERO and no party size works at all.
+    var kits := _band_labor.kits()
+    var default_kit := _band_labor.default_kit_id(KitRoster.JOB_HUNT)
+    var kit_id := KitRoster.resolve_selection(kits, KitRoster.JOB_HUNT, default_kit,
+        _compose.party_kit_id())
+    _compose.set_party_kit_id(kit_id)
+    _mount_kit_row(sheet, kits, KitRoster.JOB_HUNT, kit_id, default_kit, band,
+        func(picked: String) -> void:
+            _compose.set_party_kit_id(picked)
+            rerender())
+    # **THE HONESTY GATE — COMPARE THE IDS, NEVER ASSUME THE DEFAULT IS SELECTED.** `denialEstimates`
+    # is quoted for ONE kit and repricing it per kit was scoped out, so everything below that reads the
+    # table — the collapse verdict, its caveat, the take line, the repelled refusal, the short-handed
+    # disable — is suppressed rather than shown for a raid the player is not sending.
+    var quoted := KitRoster.estimates_apply_to(herd, KitRoster.HERD_DENIAL_ESTIMATES_KIT_KEY,
+        default_kit, kit_id)
     var confirm := Button.new()
     confirm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    # The button carries the verdict, and disables in EXACTLY ONE case — a band that cannot field the
-    # party this herd requires at all. A party the player CHOSE to under-size still launches: it works
-    # the herd until recalled, so that case warns and the player is trusted (`style_send_denial_button`).
-    SourceForecast.style_send_denial_button(confirm, forecast, short_handed)
-    confirm.tooltip_text = reason if reason != "" else HudComposeVocab.SEND_DENIAL_RAID_HINT
     confirm.set_meta(HudWidgets.SEND_DENIAL_CONFIRM_META, true)
+    var reason := ""
+    if not quoted:
+        # What survives is the combat GATE, which is composed from wire terms and is therefore honest
+        # for any kit, plus the sentence naming the kit whose numbers were withheld. The send stays
+        # live and plainly styled: the raid launches, we simply cannot say how long it takes.
+        _mount_kit_gate_line(sheet, kits, kit_id, band, herd, quarry_name)
+        sheet.add_child(HudWidgets.alloc_hint_label(KitRoster.estimates_quoted_note(kits, herd,
+            KitRoster.HERD_DENIAL_ESTIMATES_KIT_KEY, default_kit, kit_id,
+            HudComposeVocab.KIT_DENIAL_ESTIMATES_QUOTED_FORMAT)))
+        SourceForecast.style_send_denial_button(confirm, {}, false)
+    else:
+        # THE COLLAPSE VERDICT — the sim's `denialEstimates` row for this party size, on the clock the
+        # player is on. **The band and the grid pair are passed for the OUTBOUND WALK**: the table
+        # counts raiding turns, and this sheet's hunt form has always headlined a round-trip total, so
+        # a verdict quoting bare raiding turns beside it named a shorter span in the same words.
+        var forecast := SourceForecast.denial_forecast(herd, _send_expedition_count, band,
+            _band_labor.grid_width(), _band_labor.wrap_horizontal())
+        var verdict := SourceForecast.denial_verdict_bbcode(forecast, quarry_name)
+        if verdict != "":
+            sheet.add_child(HudWidgets.forecast_label(verdict))
+            # The caveat rides under the verdict WHENEVER THERE IS A NUMBER TO CAVEAT — the band is an
+            # integral over many stochastic draws and a lucky run really can finish sooner than the
+            # reported low. A verdict with no turn count (a repelled party, an unbounded horizon) has
+            # nothing for it to qualify, and a caveat about an absent number reads as one that is there.
+            if SourceForecast.denial_turns_phrase(forecast) != "":
+                sheet.add_child(HudWidgets.alloc_hint_label(SourceForecast.DENIAL_ESTIMATE_CAVEAT))
+        # …and the take beneath it: what the raid kills, what little it hauls, and what it leaves on
+        # the range. Quiet ink — the waste IS the mission, not a warning about it.
+        var take := SourceForecast.denial_take_bbcode(forecast, quarry_name)
+        if take != "":
+            sheet.add_child(HudWidgets.forecast_label(take))
+        # **THE SHORT-HANDED SENTENCE SUPERSEDES THE REFUSAL, it does not join it.** Both name the
+        # party the sim quotes (one reading, `denial_party_needed`), so printing the pair would state
+        # the requirement twice; the short-handed form also says what the band actually has.
+        var short_handed := SourceForecast.denial_is_short_handed(herd, idle)
+        reason = SourceForecast.denial_short_handed_reason(herd, idle)
+        if reason == "":
+            reason = SourceForecast.denial_refusal_reason(forecast, herd)
+        if reason != "":
+            sheet.add_child(HudWidgets.alloc_hint_label(reason))
+        # The button carries the verdict, and disables in EXACTLY ONE case — a band that cannot field
+        # the party this herd requires at all. A party the player CHOSE to under-size still launches:
+        # it works the herd until recalled, so that case warns and the player is trusted.
+        SourceForecast.style_send_denial_button(confirm, forecast, short_handed)
+    confirm.tooltip_text = reason if reason != "" else HudComposeVocab.SEND_DENIAL_RAID_HINT
     var quarry_id := _compose.party_quarry_id()
     confirm.pressed.connect(func() -> void:
         emit_signal("send_denial_raid_requested", {
@@ -1878,6 +1993,10 @@ func _fill_denial_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: in
             "party_workers": _send_expedition_count,
             "fauna_id": quarry_id,
             "fauna_label": quarry_name,
+            # The party's kit, and the job default `Main` omits the `kit <id>` token for — the only
+            # order the four-token grammar admits beyond the two it already carries.
+            "kit_id": kit_id,
+            "default_kit_id": default_kit,
         })
         _close_party_compose())
     sheet.add_child(confirm)

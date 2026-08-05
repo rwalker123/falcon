@@ -32,10 +32,10 @@ use core_sim::{
     tile_is_fresh_watered, ActiveStartProfile, BandEquipment, BandTravel, BeatCatalogHandle,
     BeatConfigHandle, BeatLedger, CampaignLabel, CombatConfigHandle, CreaturesConfigHandle,
     Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FloraConfigHandle,
-    FoodModuleTag, ForkAnswerError, HuntingParty, LaborAllocation, LaborTarget, LadderConfigHandle,
-    LocalStore, ResidentBand, RungKey, SiteRefusal, SpeciesRefusal, StartProfile,
-    StartProfileOverrides, WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR, NO_FILL_TARGET,
-    NO_FORAGE_SEASON,
+    FoodModuleTag, ForkAnswerError, HuntingParty, KitChoice, KitJob, LaborAllocation, LaborTarget,
+    LadderConfigHandle, LocalStore, ResidentBand, RungKey, SiteRefusal, SpeciesRefusal,
+    StartProfile, StartProfileOverrides, WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR,
+    NO_FILL_TARGET, NO_FORAGE_SEASON,
 };
 use core_sim::{
     build_headless_app, clear_config_overrides, denial_forecast, hunt_trip_forecast,
@@ -476,6 +476,10 @@ enum Command {
         /// ([`core_sim::DEFAULT_ESCAPEMENT_FLOOR`]); an out-of-range value is **rejected**, never
         /// clamped.
         floor: Option<f32>,
+        /// **The kit this crew works under** — an `equipment.json` roster id, or `None` for the
+        /// job's default. Rejected with a reason if unknown or wrong-job; ignored by the band-wide
+        /// roles.
+        kit_id: Option<String>,
     },
     MoveBand {
         faction: FactionId,
@@ -501,14 +505,19 @@ enum Command {
         fauna_id: String,
         floor: Option<f32>,
         fill_target: Option<u32>,
+        /// **The kit the party is sent out with**, resolved once at launch. `None` = the hunt job's
+        /// default; unknown or wrong-job is a command failure.
+        kit_id: Option<String>,
     },
     /// **The denial raid** (`docs/plan_denial_raid.md`) — no floor, no fill target, and no target
-    /// faction. It names a herd and a party size, and nothing else.
+    /// faction. It names a herd, a party size and the kit that party carries, and nothing else.
     SendDenialRaid {
         faction: FactionId,
         band_id: Option<u64>,
         party_workers: u32,
         fauna_id: String,
+        /// See [`Command::SendHuntExpedition::kit_id`]. The one order this mission still takes.
+        kit_id: Option<String>,
     },
     FoundSettlement {
         faction: FactionId,
@@ -1588,6 +1597,24 @@ fn seed_source_yield(
     {
         return;
     }
+    // **The kit this crew was assigned with, read off the assignment itself** — not off the band's
+    // stock. `set_assignment` has already stored it, so the seed and the turn resolve the identical
+    // tier through the identical seam, which is what `forecast == actual` rests on.
+    let crew_kit = {
+        let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
+        app.world
+            .get::<LaborAllocation>(band)
+            .and_then(|allocation| {
+                allocation
+                    .assignments
+                    .iter()
+                    .find(|assignment| assignment.target.same_source(target))
+                    .and_then(|assignment| assignment.kit_choice(&equipment_cfg))
+            })
+    };
+    let Some(crew_kit) = crew_kit else {
+        return;
+    };
     let Some(cohort) = app.world.get::<PopulationCohort>(band) else {
         return;
     };
@@ -1659,12 +1686,13 @@ fn seed_source_yield(
             // the same tier through the same seam, so a band-agnostic equipped rate here would
             // promise a bare-handed band a basketful (`yield-forecast.md`).
             let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
-            let basket_equipped = app
-                .world
-                .get::<BandEquipment>(band)
-                .copied()
-                .unwrap_or_default()
-                .basket_equipped(&equipment_cfg);
+            let basket_equipped = crew_kit.basket_equipped(
+                &app.world
+                    .get::<BandEquipment>(band)
+                    .copied()
+                    .unwrap_or_default(),
+                &equipment_cfg,
+            );
             let per_worker_biomass = equipment_cfg.forage_per_worker_biomass_capacity(
                 labor.forage.per_worker_biomass_capacity,
                 basket_equipped,
@@ -1703,12 +1731,12 @@ fn seed_source_yield(
             // `advance_labor_allocation` resolves the same tier through the same seam, so a
             // band-agnostic equipped rate here would promise a dry band a kitted haul.
             let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
-            let sled_equipped = app
+            let band_wear = app
                 .world
                 .get::<BandEquipment>(band)
                 .copied()
-                .unwrap_or_default()
-                .sled_equipped(&equipment_cfg);
+                .unwrap_or_default();
+            let sled_equipped = crew_kit.sled_equipped(&band_wear, &equipment_cfg);
             let per_worker_biomass = equipment_cfg.hunt_per_worker_biomass_capacity(
                 labor.hunt.per_worker_biomass_capacity,
                 sled_equipped,
@@ -1720,11 +1748,7 @@ fn seed_source_yield(
             let hunting_party = HuntingParty {
                 hunter: equipment_cfg.hunter_profile(
                     app.world.resource::<CreaturesConfigHandle>().get().person(),
-                    app.world
-                        .get::<BandEquipment>(band)
-                        .copied()
-                        .unwrap_or_default()
-                        .hunting_equipped(&equipment_cfg),
+                    crew_kit.hunting_equipped(&band_wear, &equipment_cfg),
                 ),
                 tuning: app.world.resource::<CombatConfigHandle>().get().tuning(),
                 injury_damage_per_animal: app
@@ -2353,6 +2377,7 @@ fn handle_assign_labor(
     fauna_id: Option<String>,
     species: Option<String>,
     floor: Option<f32>,
+    kit_id: Option<String>,
 ) {
     // **The floor FAILS CLOSED** (`docs/plan_harvest_floor.md` §4): absent means the default, but a
     // value outside `0.0..=1.0` is rejected with its own failure event rather than clamped. A clamp
@@ -2443,6 +2468,31 @@ fn handle_assign_labor(
         }
     }
 
+    // **The kit this crew works under, resolved at the command boundary and FAILING CLOSED.** An
+    // unknown id, or one whose `jobs` does not cover this role, is refused with a reason rather than
+    // quietly becoming the default: naming a kit is how the player compares tiers, so a silent
+    // substitution answers a different question than the one asked. The band-wide roles carry no
+    // kit at all — `kit_job()` is `None` for them, and a kit named there is ignored exactly as
+    // `species` and `floor` are.
+    let crew_kit = match target.kit_job() {
+        Some(job) => {
+            let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
+            match equipment_cfg.resolve_kit_for_job(kit_id.as_deref(), job) {
+                Ok(kit) => Some(kit),
+                Err(reason) => {
+                    emit_command_failure(
+                        app,
+                        event_kind,
+                        faction,
+                        format!("assign_labor: {reason}."),
+                    );
+                    return;
+                }
+            }
+        }
+        None => None,
+    };
+
     let Some(band) = select_starting_band(app, faction, band_id, "assign_labor", event_kind) else {
         return;
     };
@@ -2456,7 +2506,7 @@ fn handle_assign_labor(
     let kind_label = target.kind();
     let (applied, assigned_total, improvement) = {
         let mut allocation = band_allocation_mut(app, band.entity);
-        let applied = allocation.set_assignment(target.clone(), workers, available);
+        let applied = allocation.set_assignment(target.clone(), workers, available, crew_kit);
         // `set_assignment` carries any running improvement across, so the seed must price the dip
         // that is still in flight rather than the undipped stance.
         let improvement = allocation
@@ -2693,6 +2743,14 @@ fn handle_send_expedition(
                 // An outfitted party leaves with an empty trade pack — it earns its pelts in the
                 // field (`advance_expeditions`).
                 carried_trade: 0.0,
+                // **A scout carries the HUNT job's default kit.** `send_expedition` names no kit —
+                // scouting is not a kit job — but a scout's opportunistic roadside kill resolves
+                // through the very same hunt seams, so it needs a real mask rather than a hole.
+                kit: app
+                    .world
+                    .resource::<EquipmentConfigHandle>()
+                    .get()
+                    .default_kit(KitJob::Hunt),
             },
             BandTravel { target },
         ))
@@ -2810,17 +2868,20 @@ fn outfit_raiding_party(
     })
 }
 
-/// **The party a launch forecast is quoted for** — the **equipped** tier, because the party leaves
-/// outfitted ([`BandEquipment::default`] is a full kit) and that is the tier it will fight its first
-/// turns at. Wear is what moves it later, and the in-flight readouts re-quote against the party's
-/// live kit each turn.
-fn launch_forecast_party(app: &bevy::prelude::App) -> HuntingParty {
+/// **The party a launch forecast is quoted for** — the kit the player is sending it with, over a
+/// **fresh** set of components ([`BandEquipment::default`] is zero wear), because the party leaves
+/// outfitted and that is the tier it will fight its first turns at. Wear is what moves it later, and
+/// the in-flight readouts re-quote against the party's live kit each turn.
+///
+/// **Quoted at the CHOSEN kit, not at "equipped"** — a raid sent out bare-handed must be quoted
+/// bare-handed, or the launch line promises a slaughter the party cannot perform.
+fn launch_forecast_party(app: &bevy::prelude::App, kit: &KitChoice) -> HuntingParty {
     let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
     let combat = app.world.resource::<CombatConfigHandle>().get();
     HuntingParty {
         hunter: equipment_cfg.hunter_profile(
             app.world.resource::<CreaturesConfigHandle>().get().person(),
-            BandEquipment::default().hunting_equipped(&equipment_cfg),
+            kit.hunting_equipped(&BandEquipment::default(), &equipment_cfg),
         ),
         tuning: {
             let mut tuning = combat.tuning();
@@ -2828,6 +2889,55 @@ fn launch_forecast_party(app: &bevy::prelude::App) -> HuntingParty {
             tuning
         },
         injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
+    }
+}
+
+/// **The per-hunter haul rate the same launch forecast is quoted at** — the chosen kit's *sled*
+/// tier over a fresh set of components, the twin of [`launch_forecast_party`]'s attack tier. Both
+/// halves have to move together: quoting a bare-handed fight against a kitted haul would promise a
+/// party that kills nothing and drags it home fast.
+fn launch_forecast_haul(app: &bevy::prelude::App, kit: &KitChoice) -> f32 {
+    let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
+    let equipped_rate = app
+        .world
+        .resource::<LaborConfigHandle>()
+        .get()
+        .hunt
+        .per_worker_biomass_capacity;
+    equipment_cfg.hunt_per_worker_biomass_capacity(
+        equipped_rate,
+        kit.sled_equipped(&BandEquipment::default(), &equipment_cfg),
+    )
+}
+
+/// Resolve the kit a raiding verb was given, or refuse the launch with a reason.
+///
+/// **Fails closed, exactly as the floor does.** An unknown id, or one whose `jobs` does not cover
+/// `hunt`, is a command failure — never a silent fall back to the default, because a party quietly
+/// re-armed is the opposite of the comparison the player asked for. Absent = the hunt job's default,
+/// which is the pre-roster behaviour.
+fn resolve_raid_kit(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    verb: &str,
+    kit_id: Option<&str>,
+) -> Option<KitChoice> {
+    let resolved = app
+        .world
+        .resource::<EquipmentConfigHandle>()
+        .get()
+        .resolve_kit_for_job(kit_id, KitJob::Hunt);
+    match resolved {
+        Ok(kit) => Some(kit),
+        Err(reason) => {
+            emit_command_failure(
+                app,
+                CommandEventKind::ExpeditionSent,
+                faction,
+                format!("{verb}: {reason}."),
+            );
+            None
+        }
     }
 }
 
@@ -2874,6 +2984,10 @@ fn launch_detached_party(
     outfit: OutfittedParty,
     party_workers: u32,
     mission: ExpeditionMission,
+    // **The kit the party is sent out with, resolved ONCE here.** It rides the `Expedition` for the
+    // party's whole life and is never re-resolved against the home band's later stock — a party sent
+    // out bare would otherwise silently re-arm the moment the band's spears were counted again.
+    kit: KitChoice,
 ) -> bevy::prelude::Entity {
     let OutfittedParty {
         band,
@@ -2918,6 +3032,7 @@ fn launch_detached_party(
                 announced: false,
                 pending_reveal: Vec::new(),
                 carried_trade: 0.0,
+                kit,
             },
             BandTravel { target: herd_pos },
         ))
@@ -2926,7 +3041,9 @@ fn launch_detached_party(
 
 /// Outfit and launch a hunting expedition (PR 2): draw `party_workers` off the resolved home band
 /// and send a detached party to follow the herd `fauna_id` at the escapement `floor` it names. Text
-/// form: `send_hunt_expedition <faction> <band> <party_workers> <fauna_id> [floor] [fill_target]`.
+/// form:
+/// `send_hunt_expedition <faction> <band> <party_workers> <fauna_id> [floor] [fill_target] [kit <id>]`.
+#[allow(clippy::too_many_arguments)] // every launch order the verb accepts is a parameter
 fn handle_send_hunt_expedition(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -2935,6 +3052,7 @@ fn handle_send_hunt_expedition(
     fauna_id: String,
     floor: Option<f32>,
     fill_target: Option<u32>,
+    kit_id: Option<String>,
 ) {
     // **The raid's floor FAILS CLOSED**, exactly as `assign_labor`'s does: absent means the default
     // (the food peak, the conservative reading), and a value outside `0.0..=1.0` is refused with its
@@ -2961,6 +3079,12 @@ fn handle_send_hunt_expedition(
     // (`raid_load` takes the smaller of the two), and [`NO_FILL_TARGET`] is the honest reading of
     // "the player named none". There is nothing to reject here, so there is no rejection path.
     let fill_target = fill_target.unwrap_or(NO_FILL_TARGET);
+    // **The kit fails closed too** — resolved before the party is drawn off the band, so a bad kit
+    // id refuses the launch outright rather than sending a party at a tier nobody named.
+    let Some(kit) = resolve_raid_kit(app, faction, "send_hunt_expedition", kit_id.as_deref())
+    else {
+        return;
+    };
     let Some(outfit) = outfit_raiding_party(
         app,
         faction,
@@ -2981,8 +3105,10 @@ fn handle_send_hunt_expedition(
     // so the forecast rides the `ExpeditionSent` feed entry (it still launches either way).
     let forecast = {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
-        let labor = app.world.resource::<LaborConfigHandle>().get();
-        let party = launch_forecast_party(app);
+        // **Quoted at the kit the party is being sent with**, both halves: the fight through
+        // `party` and the haul through `per_worker_haul`.
+        let party = launch_forecast_party(app, &kit);
+        let per_worker_haul = launch_forecast_haul(app, &kit);
         let registry = app.world.resource::<HerdRegistry>();
         registry.find(&fauna_id).map(|herd| {
             hunt_trip_forecast(
@@ -2991,7 +3117,7 @@ fn handle_send_hunt_expedition(
                 floor,
                 fill_target,
                 &fauna,
-                &labor,
+                per_worker_haul,
                 &cfg,
                 &party,
             )
@@ -3090,6 +3216,7 @@ fn handle_send_hunt_expedition(
             floor,
             fill_target,
         },
+        kit.clone(),
     );
 
     let tick = app.world.resource::<SimulationTick>().0;
@@ -3133,7 +3260,13 @@ fn handle_send_denial_raid(
     band_id: Option<u64>,
     party_workers: u32,
     fauna_id: String,
+    kit_id: Option<String>,
 ) {
+    // **The one order this mission still takes, and it fails closed like the hunt's.** A denial raid
+    // carries no floor and no fill target, but the party still has to be sent with *something*.
+    let Some(kit) = resolve_raid_kit(app, faction, "send_denial_raid", kit_id.as_deref()) else {
+        return;
+    };
     let Some(outfit) = outfit_raiding_party(
         app,
         faction,
@@ -3148,7 +3281,6 @@ fn handle_send_denial_raid(
     let cfg = app.world.resource::<ExpeditionConfigHandle>().get();
     let forecast = {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
-        let labor = app.world.resource::<LaborConfigHandle>().get();
         // The reported band's width (`combat_config.forecast_range_sigmas`) — a readout lever, so
         // widening it cannot move an animal.
         let range_sigmas = app
@@ -3156,14 +3288,17 @@ fn handle_send_denial_raid(
             .resource::<CombatConfigHandle>()
             .get()
             .forecast_range_sigmas;
-        let party = launch_forecast_party(app);
+        // Quoted at the kit the raid is being sent with — the verdict rests on kills, which the
+        // fight owns, so a bare-handed raid is told it cannot do the job rather than promised it can.
+        let party = launch_forecast_party(app, &kit);
+        let per_worker_haul = launch_forecast_haul(app, &kit);
         let registry = app.world.resource::<HerdRegistry>();
         registry.find(&fauna_id).map(|herd| {
             denial_forecast(
                 party_workers,
                 herd,
                 &fauna,
-                &labor,
+                per_worker_haul,
                 &cfg,
                 &party,
                 range_sigmas,
@@ -3245,6 +3380,7 @@ fn handle_send_denial_raid(
         ExpeditionMission::Deny {
             fauna_id: fauna_id.clone(),
         },
+        kit.clone(),
     );
 
     let tick = app.world.resource::<SimulationTick>().0;
@@ -4978,6 +5114,7 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             policy: _,
             species,
             floor,
+            kit_id,
         } => Some(Command::AssignLabor {
             faction: FactionId(faction_id),
             band_id,
@@ -4988,6 +5125,7 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             fauna_id,
             species,
             floor,
+            kit_id,
         }),
         ProtoCommandPayload::MoveBand {
             faction_id,
@@ -5027,6 +5165,7 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             fauna_id,
             floor,
             fill_target,
+            kit_id,
         } => Some(Command::SendHuntExpedition {
             faction: FactionId(faction_id),
             band_id,
@@ -5034,17 +5173,20 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             fauna_id,
             floor,
             fill_target,
+            kit_id,
         }),
         ProtoCommandPayload::SendDenialRaid {
             faction_id,
             band_id,
             party_workers,
             fauna_id,
+            kit_id,
         } => Some(Command::SendDenialRaid {
             faction: FactionId(faction_id),
             band_id,
             party_workers,
             fauna_id,
+            kit_id,
         }),
         ProtoCommandPayload::FoundSettlement {
             faction_id,
@@ -5801,9 +5943,11 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
             fauna_id,
             species,
             floor,
+            kit_id,
         } => {
             handle_assign_labor(
                 app, faction, band_id, role, workers, target_x, target_y, fauna_id, species, floor,
+                kit_id,
             );
         }
         Command::MoveBand {
@@ -5836,6 +5980,7 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
             fauna_id,
             floor,
             fill_target,
+            kit_id,
         } => {
             handle_send_hunt_expedition(
                 app,
@@ -5845,6 +5990,7 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
                 fauna_id,
                 floor,
                 fill_target,
+                kit_id,
             );
         }
         Command::SendDenialRaid {
@@ -5852,8 +5998,9 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
             band_id,
             party_workers,
             fauna_id,
+            kit_id,
         } => {
-            handle_send_denial_raid(app, faction, band_id, party_workers, fauna_id);
+            handle_send_denial_raid(app, faction, band_id, party_workers, fauna_id, kit_id);
         }
         Command::FoundSettlement {
             faction,
@@ -6526,6 +6673,7 @@ mod tests {
                         target,
                         workers: BAND_WORKERS,
                         improvement: None,
+                        kit: None,
                     }],
                     ..Default::default()
                 },
@@ -6998,6 +7146,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         let allocation = app
             .world
@@ -7255,6 +7404,7 @@ mod tests {
             None,
             crop.map(str::to_string),
             None,
+            None,
         );
     }
 
@@ -7387,6 +7537,7 @@ mod tests {
                 announced: false,
                 pending_reveal: Vec::new(),
                 carried_trade: 0.0,
+                kit: core_sim::EquipmentConfig::builtin().default_kit(KitJob::Hunt),
             },
         ));
 
@@ -7452,6 +7603,7 @@ mod tests {
                 fauna_id: None,
                 floor: None,
                 species: None,
+                kit_id: None,
             };
             log_dispatched_command(&mut log, &command);
             apply_command(&mut app, command, &loopback_snapshot_server());
@@ -7516,6 +7668,7 @@ mod tests {
             fauna_id: None,
             floor: None,
             species: None,
+            kit_id: None,
         };
         log_dispatched_command(&mut log, &command);
         apply_command(&mut app, command, &loopback_snapshot_server());
@@ -8818,7 +8971,7 @@ mod tests {
             let faction = FactionId(0);
             let herd_id = seed_herd(&mut app, UVec2::new(1, 1), Some(faction));
 
-            handle_send_hunt_expedition(&mut app, faction, None, 1, herd_id, Some(bad), None);
+            handle_send_hunt_expedition(&mut app, faction, None, 1, herd_id, Some(bad), None, None);
 
             let rejected = app.world.resource::<CommandEventLog>().iter().any(|entry| {
                 matches!(entry.kind, CommandEventKind::ExpeditionSent)
@@ -8839,6 +8992,106 @@ mod tests {
                 .peek()
                 .is_some();
             assert!(!parties, "floor {bad}: no expedition may be spawned");
+        }
+    }
+
+    /// **A kit the roster does not carry, or one the verb's job is not on, REFUSES the launch** —
+    /// with a reason, and with no party spawned.
+    ///
+    /// The alternative — quietly sending the job's default — is the defect this whole arc exists to
+    /// prevent, and it is worse than a typo: naming a kit is how the player *compares* tiers, so a
+    /// silent substitution answers a different question than the one asked and looks exactly like an
+    /// answer. Swept over both raiding verbs, because the outfit half is shared and the refusal is
+    /// not.
+    #[test]
+    fn a_raiding_verb_refuses_an_unknown_or_wrong_job_kit_rather_than_defaulting() {
+        for bad_kit in ["spear_of_destiny", "gathering"] {
+            for verb in [RaidVerb::Hunt, RaidVerb::Deny] {
+                let mut app = build_headless_app();
+                let faction = FactionId(0);
+                let herd_id = seed_herd(&mut app, UVec2::new(1, 1), Some(faction));
+                match verb {
+                    RaidVerb::Hunt => handle_send_hunt_expedition(
+                        &mut app,
+                        faction,
+                        None,
+                        1,
+                        herd_id,
+                        None,
+                        None,
+                        Some(bad_kit.to_string()),
+                    ),
+                    RaidVerb::Deny => handle_send_denial_raid(
+                        &mut app,
+                        faction,
+                        None,
+                        1,
+                        herd_id,
+                        Some(bad_kit.to_string()),
+                    ),
+                }
+
+                let rejected = app.world.resource::<CommandEventLog>().iter().any(|entry| {
+                    matches!(entry.kind, CommandEventKind::ExpeditionSent)
+                        && entry.detail.as_deref().is_some_and(|detail| {
+                            detail.contains("unknown kit") || detail.contains("cannot be sent on")
+                        })
+                });
+                assert!(
+                    rejected,
+                    "{verb:?} with kit '{bad_kit}' must be refused with a reason naming the problem"
+                );
+                let parties = app
+                    .world
+                    .query::<&Expedition>()
+                    .iter(&app.world)
+                    .peekable()
+                    .peek()
+                    .is_some();
+                assert!(
+                    !parties,
+                    "{verb:?} with kit '{bad_kit}': no party may leave"
+                );
+            }
+        }
+    }
+
+    /// The launch half of the same rule for `assign_labor`, whose refusal path is its own.
+    #[test]
+    fn assign_labor_refuses_an_unknown_or_wrong_job_kit_rather_than_defaulting() {
+        for (role, bad_kit) in [("hunt", "gathering"), ("forage", "big_game")] {
+            let mut app = build_headless_app();
+            let faction = FactionId(0);
+            let herd_id = seed_herd(&mut app, UVec2::new(1, 1), Some(faction));
+            handle_assign_labor(
+                &mut app,
+                faction,
+                None,
+                role.to_string(),
+                1,
+                Some(1),
+                Some(1),
+                Some(herd_id),
+                None,
+                None,
+                Some(bad_kit.to_string()),
+            );
+            let rejected = app.world.resource::<CommandEventLog>().iter().any(|entry| {
+                entry
+                    .detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("cannot be sent on"))
+            });
+            assert!(
+                rejected,
+                "a {role} crew named the {bad_kit} kit — the command must fail with a reason"
+            );
+            let staffed = app
+                .world
+                .query::<&LaborAllocation>()
+                .iter(&app.world)
+                .any(|allocation| !allocation.assignments.is_empty());
+            assert!(!staffed, "a refused {role} assignment staffs nobody");
         }
     }
 
@@ -8950,6 +9203,7 @@ mod tests {
                         Some(FIXTURE_BAND_ID),
                         party_workers,
                         fauna_id,
+                        None,
                     );
                 }
                 RaidVerb::Hunt => handle_send_hunt_expedition(
@@ -8958,6 +9212,7 @@ mod tests {
                     Some(FIXTURE_BAND_ID),
                     party_workers,
                     fauna_id,
+                    None,
                     None,
                     None,
                 ),
@@ -9427,6 +9682,7 @@ mod tests {
             None,
             None,
             Some(floor),
+            None,
         );
     }
 
@@ -9448,6 +9704,7 @@ mod tests {
             Some(fauna_id.to_string()),
             None,
             Some(floor),
+            None,
         );
     }
 
@@ -9841,6 +10098,7 @@ mod tests {
             },
             CANCEL_FORAGE_WORKERS,
             available,
+            None,
         );
         allocation.set_assignment(
             LaborTarget::Hunt {
@@ -9849,9 +10107,15 @@ mod tests {
             },
             CANCEL_HUNT_WORKERS,
             available,
+            None,
         );
-        allocation.set_assignment(LaborTarget::Scout, CANCEL_SCOUT_WORKERS, available);
-        allocation.set_assignment(LaborTarget::Warrior, CANCEL_WARRIOR_WORKERS, available);
+        allocation.set_assignment(LaborTarget::Scout, CANCEL_SCOUT_WORKERS, available, None);
+        allocation.set_assignment(
+            LaborTarget::Warrior,
+            CANCEL_WARRIOR_WORKERS,
+            available,
+            None,
+        );
         app.world.entity_mut(band).insert(allocation);
         (band, coord)
     }
@@ -10002,6 +10266,7 @@ mod tests {
             },
             CANCEL_FORAGE_WORKERS,
             available,
+            None,
         );
         app.world.entity_mut(band).insert(allocation);
 

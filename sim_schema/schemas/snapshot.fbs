@@ -818,6 +818,15 @@ table PopulationCohortState {
   // equipment.json basket_kit.unequipped_per_worker_biomass_capacity (1.6). ForagePatchState's
   // perWorkerBiomass stays the EQUIPPED reference rate (a patch has no band to resolve against).
   forageCarryPerWorkerBiomass:float = 0;
+  // --- THE KIT THIS COHORT IS QUOTED AT (appended last) -----------------------------------------
+  // The `equipment.json` roster id the three tiers above are resolved through.
+  //   - AN IN-FLIGHT PARTY: the kit it was SENT OUT WITH, decided at launch and carried for its
+  //     whole life. This is the drawer's answer to "what did I send them with?" and it is the tier
+  //     the party really fights and hauls at — a party sent with "none" reads attack 1 here.
+  //   - A RESIDENT BAND: the JOB'S DEFAULT, because a band has one kit per assignment and this row
+  //     is per cohort. The per-crew truth is LaborAssignment.kitId beside that row's own yields.
+  // Never empty: it always names a real roster entry.
+  kitId:string;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).
@@ -961,6 +970,13 @@ table LaborAssignment {
   actualYieldHigh:float = 0;
   tradeYieldLow:float = 0;
   tradeYieldHigh:float = 0;
+  // --- THE KIT THIS CREW IS WORKING UNDER (appended last) ---------------------------------------
+  // The `equipment.json` roster id (SubsistenceSection.kits) the row's yields are priced at — what
+  // the player named on `assign_labor`, or the job's default when they named none, RESOLVED: the
+  // sim never publishes "unspecified", so this always names a real roster entry for a forage/hunt
+  // row. "" on a band-wide role (scout / warrior), which consumes no kit component and therefore has
+  // no kit axis to choose along — read that as "no selection to make", not as "no kit".
+  kitId:string;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
@@ -2326,6 +2342,23 @@ table HerdTelemetryState {
   // party works). That is a property of the whole table, not of this field; repricing it per band is
   // its own arc. Appended last (append-only wire).
   denialPartyNeeded:uint = 0;
+  // --- WHICH KIT THE TWO ESTIMATE TABLES ARE QUOTED FOR (appended last) -------------------------
+  // The `equipment.json` roster id of the kit `huntTripEstimates` / `denialEstimates` were computed
+  // at — the HUNT JOB'S DEFAULT ("big_game" as shipped), on every herd, always.
+  //
+  // NEITHER TABLE IS REPRICED PER KIT, and this field exists so a client can SAY SO. They are ~95%
+  // of snapshot capture (measured: 57.5 ms with both, 2.9 ms with neither, on a fully-revealed
+  // 80x52 map) and a kit axis multiplies them — the same structural cost question per-band
+  // repricing already faces. So when the player's selected kit differs from this id, the client must
+  // refuse to present the table as an answer for their selection rather than quoting a kitted raid's
+  // numbers to a bare-handed party. The kit changes the take through BOTH the fight (attack tier)
+  // and the haul (sled tier), so the error is not a small one: a `none` party against a Red Deer's
+  // defense 1 has an effective attack of ZERO and no party size works at all.
+  //
+  // Two fields rather than one because they are two tables: if one is later repriced per kit and the
+  // other is not, a single field would lie about whichever was left behind.
+  huntTripEstimatesKitId:string;
+  denialEstimatesKitId:string;
 }
 
 table CommandEventState {
@@ -2493,12 +2526,50 @@ table PopulationSection {
   removedGenerations:[ushort]; // delta-only
 }
 
+// --- THE KIT ROSTER (docs/plan_denial_raid.md, equipment.json `kits`) --------------------------
+// One named kit a party may be SENT OUT WITH. A kit is a MASK over the three consumable component
+// blocks (spears / sled / baskets): the tiers below are what THIS kit grants a party whose
+// components are all fresh, so the client renders real numbers without a second copy of the TOE
+// table. What a given band's WEAR does to those tiers is the band's own row
+// (PopulationCohortState.hunterAttack / huntCarryPerWorkerBiomass / forageCarryPerWorkerBiomass).
+//
+// "none" IS AN ORDINARY ROSTER ENTRY, not a sentinel: it grants nothing, so its tiers are the
+// unequipped ones throughout and a party sent with it spends no durability on any component.
+// Do not special-case its id.
+table KitOption {
+  // Stable roster id — what `assign_labor kit <id>` / `send_hunt_expedition kit <id>` name, and what
+  // LaborAssignment.kitId / PopulationCohortState.kitId / the estimate-table kit ids carry.
+  id:string;
+  displayName:string;
+  // Which verbs this kit may be sent on: "hunt" and/or "forage". A kit named for a job outside this
+  // list is a COMMAND FAILURE, never a silent fall back to the default — so the picker must filter
+  // by the job it is composing. The band-wide roles (scout/warrior) consume no component and have no
+  // kit axis, so no kit lists them.
+  jobs:[string];
+  // A fresh-kit hunter's combat `attack` under this kit — the number the combat gate
+  // max(0, attack - defense) compares against a herd's `defense`. Below a species' defense that
+  // species CANNOT BE HUNTED AT ALL, which is why "none" is a real decision and not a discount.
+  attack:float = 0;
+  // Per-hunter HUNT haul rate (biomass/turn) under this kit — the sled's tier.
+  huntCarryPerWorkerBiomass:float = 0;
+  // Per-gatherer throughput (biomass/turn, BEFORE the tile's seasonal weight) under this kit — the
+  // baskets' tier.
+  forageCarryPerWorkerBiomass:float = 0;
+}
+
 table SubsistenceSection {
   herds:[HerdTelemetryState];
   foragePatches:[ForagePatchState];
   sedentarization:[SedentarizationState];
   intensificationKnowledge:[IntensificationKnowledgeState];
   foodModules:[FoodModuleState];
+  // --- THE KIT ROSTER, once per world (appended last) -------------------------------------------
+  // Every kit a party may be sent out with, in `equipment.json` order — the picker's list, with the
+  // tiers each grants so the client needs no second copy of the TOE table.
+  kits:[KitOption];
+  // Which kit each verb uses when the player names none. Both always name a roster entry.
+  defaultHuntKitId:string;
+  defaultForageKitId:string;
 }
 
 table KnowledgeSection {

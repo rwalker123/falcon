@@ -167,6 +167,15 @@ pub struct LaborAssignmentState {
     /// a rewind restores a half-finished build's verb rather than dropping it.
     #[serde(default)]
     pub improvement: String,
+    /// **The `equipment.json` roster id this crew is working under** — what the player named on
+    /// `assign_labor`, or the job's default when they named none, **resolved**: the sim never
+    /// publishes "unspecified", so a forage/hunt row always names a real roster entry and the row's
+    /// yields are priced at exactly it.
+    ///
+    /// `""` on a band-wide role (scout / warrior), which consumes no kit component and therefore has
+    /// no kit axis — *"no selection to make"*, not *"no kit"*. Appended last.
+    #[serde(default)]
+    pub kit_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -582,6 +591,15 @@ pub struct PopulationCohortState {
     /// patch has no band. Appended (append-only).
     #[serde(default)]
     pub forage_carry_per_worker_biomass: f32,
+    /// **The `equipment.json` roster id the three kit tiers above are resolved through.**
+    ///
+    /// For an **in-flight party** it is the kit it was *sent out with*, decided at launch and carried
+    /// for the party's whole life — the drawer's answer to *"what did I send them with?"*, and the
+    /// tier it really fights and hauls at. For a **resident band** it is the job's **default**,
+    /// because a band holds one kit per assignment and this row is per cohort; the per-crew truth is
+    /// [`LaborAssignmentState::kit_id`] beside that row's own yields. Never empty. Appended last.
+    #[serde(default)]
+    pub kit_id: String,
 }
 
 /// Presentation view of a band's resolved settlement stage (mirror of the `SettlementStageView`

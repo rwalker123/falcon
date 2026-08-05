@@ -419,8 +419,8 @@ branches on mission:
   sampling bound, not a ceiling), draws `party × distance ×
   provision_draw_per_worker_per_tile` provisions from the band larder (partial OK), removes the
   workers from `band.working`, and spawns the detached `Expedition` cohort. Feed `ExpeditionSent`.
-- `send_hunt_expedition <faction> <band> <party_workers> <fauna_id> [floor] [fill_target]` — same
-  resident-band gate + party validation, validates `fauna_id` resolves to a live herd, draws **no**
+- `send_hunt_expedition <faction> <band> <party_workers> <fauna_id> [floor] [fill_target] [kit <id>]`
+  — same resident-band gate + party validation, validates `fauna_id` resolves to a live herd, draws **no**
   provisions, removes the workers, spawns a `Hunt`-mission party in `Hunting` phase heading for the
   herd. Feed `ExpeditionSent` (hunt flavor), whose detail carries `floor=… fill_target=… bound=…`.
   The two optional tokens are **positional in that order** (proto fields `floor = 6`,
@@ -428,13 +428,15 @@ branches on mission:
   reason a wire is. The **floor fails closed** (out of `0.0..=1.0` → command failure, never clamped);
   the **fill target cannot fail** — every count is a legal order, and a target at or above the pack's
   capacity is simply the untargeted raid.
-- `send_denial_raid <faction> <band> <party_workers> <fauna_id>` — the **third verb**
+- `send_denial_raid <faction> <band> <party_workers> <fauna_id> [kit <id>]` — the **third verb**
   (`SendDenialRaidCommand`, proto field **49**). Shares the whole outfit half with the hunt above —
   `server::outfit_raiding_party` is the one seam for the resident-band gate, the live-herd lookup and
   the party bound, so a third verb could not acquire its own copy of them — and differs only in the
-  mission it names and the verdict it quotes. **Its grammar is CLOSED at four tokens**: there is no
-  floor and no fill target to pass, so a fifth token is a hard parse error rather than a value to
-  ignore. Feed `ExpeditionSent`, whose detail carries `mission=deny outcome=… turns_to_collapse=…
+  mission it names and the verdict it quotes. **Its grammar is CLOSED except for the kit**: there is no floor
+  and no fill target to pass, so any other trailing token is a hard parse error rather than a value
+  to ignore. The one exception is the named `kit <id>` pair — a kit is a property of the **party**,
+  not of the mission, so it is the only order a raid carrying no numbers still has to give (see
+  `equipment.md` → "A kit is a MASK"). Feed `ExpeditionSent`, whose detail carries `mission=deny outcome=… turns_to_collapse=…
   low=… high=…` and **no `floor=`**. See "Denial is a MISSION, not a floor".
 - `recall_expedition <faction> <expedition_band_id>` — resolves the entity via
   `resolve_expedition_entity` (checks the `Expedition` component + faction), sets `phase = Returning`
@@ -620,8 +622,9 @@ resolves both verbs through.
 
 - **`hunt_floor()` reports `STRIP_IT_BARE`** — the escapement ceiling is the herd's whole standing
   stock. It is *derived*, never a lever, and **`floor` appears nowhere in the command, the feed line
-  or its detail**: the launch text takes four tokens and refuses a fifth
-  (`CommandParseError::UnexpectedArgument`) rather than accepting a number and dropping it.
+  or its detail**: the launch text takes four positional tokens plus an optional named `kit <id>`,
+  and refuses anything else (`CommandParseError::UnexpectedArgument`) rather than accepting a number
+  and dropping it.
 - **`hunt_fill_target()` reports `NO_FILL_TARGET`, and cannot report anything else** — see the fill
   target's own callout above.
 - **A floor-`0` HUNT is still a different thing, and the difference is the ENGAGEMENT, never the
@@ -746,10 +749,14 @@ guessing game into an adjustment.
   the sim would in fact vouch for. Widening the headroom is the lever if play says it matters; it
   costs `3 × rows × forecast_horizon_turns` turn-steps per huntable herd.
 
-**THE WHOLE HERD TABLE IS PRICED AT THE EQUIPPED TIER, AND SO IS THIS FIELD.**
-`snapshot/capture.rs` builds the `HerdSnapshotInputs::party` with
-`equipment_config.hunter_profile(.., equipped = true)`, hardcoded: a herd row is a fact about the
-*herd* and the table has no band to ask. Since TOE the take resolves through the fight, so it depends
+**THE WHOLE HERD TABLE IS PRICED AT THE HUNT JOB'S DEFAULT KIT, AND SO IS THIS FIELD.**
+`snapshot/capture.rs` builds the `HerdSnapshotInputs::party` from
+`EquipmentConfig::default_kit(KitJob::Hunt)` over a fresh set of components — bit-identical to the
+hardcoded `equipped = true` it replaced, because the shipped `big_game` default masks in exactly the
+two hunt components. A herd row is a fact about the *herd* and the table has no band to ask.
+**Which kit it is quoted at is now PUBLISHED** (`huntTripEstimatesKitId` / `denialEstimatesKitId`),
+so a client whose player has selected another kit can refuse to present the table as an answer for
+it — see `equipment.md` → "The two estimate tables are NOT repriced per kit". Since TOE the take resolves through the fight, so it depends
 on the band's own `hunterAttack` **and** its resolved carry tier — both per band. A band whose spears
 have run dry hunts at the intrinsic `attack 1`, which against a Red Deer's `defense 1.0` is an
 effective attack of **zero**, so no party of any size works while `denialPartyNeeded` quotes `9`. The

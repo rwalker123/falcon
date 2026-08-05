@@ -472,6 +472,61 @@ pub(crate) fn herds_to_array(
         // `body_mass`. `0` for a herd whose species the roster cannot resolve. It is the newest slot
         // on `HerdTelemetryState`, decoded beside the `engage_rate` it follows.
         let _ = dict.insert("durability", herd.durability());
+        // **WHICH KIT THE TWO ESTIMATE TABLES ABOVE ARE QUOTED FOR** (`docs/plan_denial_raid.md`) —
+        // the hunt job's DEFAULT roster id, on every herd, always. Neither table is repriced per kit
+        // (they are ~95% of snapshot capture), and these exist so the client can SAY SO: when the
+        // player's selected kit differs from the id here, the sheet must refuse to present the table
+        // as the answer for their selection rather than quoting a kitted raid's numbers to a
+        // bare-handed party. Two keys rather than one because they are two tables, and one may be
+        // repriced before the other.
+        let _ = dict.insert(
+            "hunt_trip_estimates_kit_id",
+            herd.huntTripEstimatesKitId().unwrap_or(""),
+        );
+        let _ = dict.insert(
+            "denial_estimates_kit_id",
+            herd.denialEstimatesKitId().unwrap_or(""),
+        );
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+/// The KIT ROSTER (`SubsistenceSection.kits`, `equipment.json` `kits`) — every kit a party may be
+/// sent out with, in roster order, each with the tiers it grants a party whose components are all
+/// FRESH. The client renders the picker off this rather than carrying a second copy of the TOE
+/// table.
+///
+/// **The tiers here are the FRESH-KIT ones and are not this band's numbers.** What a given band's
+/// WEAR does to them is the band's own row (`hunter_attack` / `hunt_carry_per_worker_biomass` /
+/// `forage_carry_per_worker_biomass` on the cohort), and a readout quoting these against a band with
+/// dry spears is a lie of the exact class this arc keeps correcting.
+///
+/// `"none"` is an ORDINARY roster entry — a kit that grants nothing, so its tiers are the unequipped
+/// ones throughout — and is deliberately NOT special-cased here.
+pub(crate) fn kits_to_array(kits: Vector<'_, ForwardsUOffset<fb::KitOption<'_>>>) -> VarArray {
+    let mut array = VarArray::new();
+    for kit in kits {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("id", kit.id().unwrap_or(""));
+        let _ = dict.insert("display_name", kit.displayName().unwrap_or(""));
+        // Which verbs this kit may be sent on ("hunt" and/or "forage"). A kit named for a job outside
+        // this list is a COMMAND FAILURE server-side, never a silent fall back to the default, so the
+        // picker filters by the job it is composing.
+        let jobs = kit
+            .jobs()
+            .map(crate::dict::strings_to_variant_array)
+            .unwrap_or_default();
+        let _ = dict.insert("jobs", &jobs);
+        let _ = dict.insert("attack", kit.attack() as f64);
+        let _ = dict.insert(
+            "hunt_carry_per_worker_biomass",
+            kit.huntCarryPerWorkerBiomass() as f64,
+        );
+        let _ = dict.insert(
+            "forage_carry_per_worker_biomass",
+            kit.forageCarryPerWorkerBiomass() as f64,
+        );
         array.push(&dict.to_variant());
     }
     array

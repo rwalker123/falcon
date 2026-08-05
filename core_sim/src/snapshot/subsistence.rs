@@ -174,11 +174,12 @@ fn herd_regrowth_samples(herd: &Herd, fauna: &FaunaConfig) -> Vec<f32> {
 pub(crate) fn hunt_trip_estimate_entries(
     herd: &Herd,
     fauna: &FaunaConfig,
-    labor: &LaborConfig,
     expedition: &ExpeditionConfig,
-    // The party the table is quoted for — see [`HerdSnapshotInputs::party`] for why it is the
-    // equipped tier rather than any one band's.
+    // The party the table is quoted for — see [`HerdSnapshotInputs::party`] for why it is the hunt
+    // job's DEFAULT kit rather than any one band's selection.
     party: &crate::fauna::HuntingParty,
+    // That same default kit's per-hunter haul tier — the sled half of what the table is quoted at.
+    per_worker_haul: f32,
 ) -> Vec<HuntTripEstimateState> {
     let denial_only = crate::fauna::species_requires_denial(fauna.hunt_yield_for(&herd.species));
     let sampled: &[f32] = if denial_only {
@@ -195,7 +196,7 @@ pub(crate) fn hunt_trip_estimate_entries(
                 floor,
                 NO_FILL_TARGET,
                 fauna,
-                labor,
+                per_worker_haul,
                 expedition,
                 party,
             );
@@ -328,11 +329,12 @@ const NO_VIABLE_DENIAL_PARTY: u32 = 0;
 fn denial_estimate_entries(
     herd: &Herd,
     fauna: &FaunaConfig,
-    labor: &LaborConfig,
     expedition: &ExpeditionConfig,
-    // The party the table is quoted for — see [`HerdSnapshotInputs::party`] for why it is the
-    // equipped tier rather than any one band's.
+    // The party the table is quoted for — see [`HerdSnapshotInputs::party`] for why it is the hunt
+    // job's DEFAULT kit rather than any one band's selection.
     party: &crate::fauna::HuntingParty,
+    // That same default kit's per-hunter haul tier.
+    per_worker_haul: f32,
     // `combat_config.forecast_range_sigmas` — the reported band's width, a readout lever.
     range_sigmas: f32,
 ) -> DenialTable {
@@ -342,7 +344,7 @@ fn denial_estimate_entries(
                 party_workers,
                 herd,
                 fauna,
-                labor,
+                per_worker_haul,
                 expedition,
                 party,
                 range_sigmas,
@@ -409,12 +411,21 @@ pub(crate) struct HerdSnapshotInputs<'a> {
     /// the filter below is a no-op, which is the ONLY way to reveal hidden fauna: unseen herds never
     /// reach the wire, so no client render flag could put them back.
     pub(crate) fog_enabled: bool,
-    /// **The party this per-herd estimate is priced for** — the equipped hunter profile and the base
-    /// resolver tuning (`docs/plan_hunt_through_combat.md` §4). The herd row is a fact about the
-    /// *herd*, not about any one band, so it quotes the **standard kitted tier** for exactly the
-    /// reason it already prices the haul at `labor.hunt.per_worker_biomass_capacity` rather than a
-    /// band's own carry tier. A band's real, kit-resolved numbers ride its `SourceYield` row.
+    /// **The party this per-herd estimate is priced for** — the hunter profile and the base resolver
+    /// tuning (`docs/plan_hunt_through_combat.md` §4), resolved at the **hunt job's DEFAULT kit**.
+    /// The herd row is a fact about the *herd*, not about any one band, and this table has no band
+    /// to ask; a band's real, kit-resolved numbers ride its `SourceYield` row.
+    ///
+    /// **Which kit it is quoted at is PUBLISHED** ([`HerdTelemetryState::hunt_trip_estimates_kit_id`]
+    /// / `denial_estimates_kit_id`) so a client can tell when the player's selection differs and
+    /// decline to present the table as an answer for a kit it was not computed for. Repricing the
+    /// two tables per kit is its own arc — they are ~95% of snapshot capture and a kit axis
+    /// multiplies them, the same structural cost question per-band repricing already faces.
     pub(crate) party: crate::fauna::HuntingParty,
+    /// The default kit's per-hunter **haul** tier, the sled half of what the two tables are quoted at.
+    pub(crate) quoted_per_worker_haul: f32,
+    /// The roster id of that default kit — published verbatim on both tables.
+    pub(crate) quoted_kit_id: String,
     /// `combat_config.forecast_range_sigmas` — how wide a band the **denial** estimate reports around
     /// its expected turns-to-collapse (`docs/plan_hunt_through_combat.md` §6.4). A **readout width**:
     /// nothing the sim resolves reads it, so widening the band cannot move an animal.
@@ -462,6 +473,8 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
         grid_size,
         wrap_horizontal,
         party,
+        quoted_per_worker_haul,
+        ref quoted_kit_id,
         range_sigmas,
         ..
     } = inputs;
@@ -517,7 +530,14 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
             let denial = herd
                 .filter(|_| entry.huntable)
                 .map(|herd| {
-                    denial_estimate_entries(herd, fauna, labor, expedition, &party, range_sigmas)
+                    denial_estimate_entries(
+                        herd,
+                        fauna,
+                        expedition,
+                        &party,
+                        quoted_per_worker_haul,
+                        range_sigmas,
+                    )
                 })
                 .unwrap_or_else(|| DenialTable {
                     entries: Vec::new(),
@@ -624,7 +644,15 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // Only a huntable herd can be the target of a trip — don't pay for the rest.
                 hunt_trip_estimates: herd
                     .filter(|_| entry.huntable)
-                    .map(|herd| hunt_trip_estimate_entries(herd, fauna, labor, expedition, &party))
+                    .map(|herd| {
+                        hunt_trip_estimate_entries(
+                            herd,
+                            fauna,
+                            expedition,
+                            &party,
+                            quoted_per_worker_haul,
+                        )
+                    })
                     .unwrap_or_default(),
                 // Grazing 2b-iii: the herd's live derived K, and the exact hex radius the sim
                 // grazes/derives K over (migratory `loiter_radius` resolved via `species_by_display`,
@@ -761,6 +789,12 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // `repelled`, so the control starts at a number that works instead of at an
                 // arbitrary default the player has to guess their way off.
                 denial_party_needed: denial.party_needed,
+                // **WHICH KIT EACH TABLE IS QUOTED FOR** — the hunt job's default, since neither is
+                // repriced per selection. Published so a client whose player has chosen another kit
+                // can say the table does not answer for it rather than presenting a kitted raid's
+                // numbers to a bare-handed party.
+                hunt_trip_estimates_kit_id: quoted_kit_id.clone(),
+                denial_estimates_kit_id: quoted_kit_id.clone(),
             }
         })
         .collect()

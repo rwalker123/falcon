@@ -229,6 +229,49 @@ const KIT_CONDITION_SLED := 54.0
 
 const KIT_CONDITION_BASKETS := 31.0
 
+# ---- THE KIT ROSTER (`docs/plan_denial_raid.md`, `SubsistenceSection.kits`) -----------------------
+# The ids the wire carries and the two job defaults. Named because the `kit <id>` COMMAND token is
+# asserted against them and because "which id is the default" is half of what the picker's frames
+# claim — a literal in two harnesses is how those two claims come apart.
+const KIT_ID_BIG_GAME := "big_game"
+const KIT_ID_GATHERING := "gathering"
+const KIT_ID_NONE := "none"
+const KIT_DEFAULT_HUNT := KIT_ID_BIG_GAME
+const KIT_DEFAULT_FORAGE := KIT_ID_GATHERING
+
+## The world's kit roster, in `equipment.json` order — the picker's list, and the ONE roster both
+## preview harnesses drive (`band_panel_preview` preloads this module for it, so the two cannot quote
+## different tiers or a different default).
+##
+## **EVERY ENTRY STATES ALL THREE TIERS, and the ones its kit does not use are the BARE ones.** That
+## is the wire's own shape and it is what `KitRoster.unequipped_tier` reads the bare-handed tier off:
+## the minimum across the roster on an axis IS that axis's unequipped tier, so a fixture that left an
+## unused axis at its equipped value would make the client's step-down silently unreachable.
+##
+## **`none` IS AN ORDINARY MEMBER AND IT IS AUTHORED LAST**, exactly as `equipment.json` authors it —
+## which is the whole of why the picker renders it last. The client sorts nothing.
+static func kit_roster_fixture() -> Array:
+	return [
+		{
+			"id": KIT_ID_BIG_GAME, "display_name": "Big-game kit", "jobs": ["hunt"],
+			"attack": KIT_ATTACK_EQUIPPED,
+			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_EQUIPPED,
+			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
+		},
+		{
+			"id": KIT_ID_GATHERING, "display_name": "Gathering kit", "jobs": ["forage"],
+			"attack": KIT_ATTACK_BARE,
+			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
+			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_EQUIPPED,
+		},
+		{
+			"id": KIT_ID_NONE, "display_name": "No kit", "jobs": ["hunt", "forage"],
+			"attack": KIT_ATTACK_BARE,
+			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
+			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
+		},
+	]
+
 ## A band carrying ALL THREE kits, each at its own condition and each role at its equipped tier.
 static func with_equipped_kit(band: Dictionary) -> Dictionary:
 	band["hunting_kit_durability"] = KIT_CONDITION_SPEARS

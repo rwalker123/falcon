@@ -166,16 +166,22 @@ pub fn advance_expeditions(
         // **This party's two kit tiers, resolved ONCE per party per turn** — the same discipline
         // `advance_labor_allocation` applies to a resident band, through the same
         // `EquipmentConfig` seams. An absent component reads as a full kit (wear, not stock).
-        let party_kit = party_equipment.as_deref().copied().unwrap_or_default();
-        let per_worker_biomass = equipment_cfg.hunt_per_worker_biomass_capacity(
-            equipped_haul_rate,
-            party_kit.sled_equipped(&equipment_cfg),
-        );
+        let party_wear = party_equipment.as_deref().copied().unwrap_or_default();
+        // **The kit this party was SENT OUT WITH** — stored on the `Expedition` at launch and read
+        // from there, never re-resolved against the home band's current stock. A party sent out with
+        // `none` stays bare-handed for its whole life; re-reading the band's spears each turn would
+        // silently re-arm it.
+        let party_kit = expedition.kit.clone();
+        // **The two effective predicates, resolved once per party per turn** — each decides a tier
+        // *and* gates that component's wear below, so a party using nothing spends nothing.
+        let sled_equipped = party_kit.sled_equipped(&party_wear, &equipment_cfg);
+        let hunting_equipped = party_kit.hunting_equipped(&party_wear, &equipment_cfg);
+        let per_worker_biomass =
+            equipment_cfg.hunt_per_worker_biomass_capacity(equipped_haul_rate, sled_equipped);
         // The hunting kit decides what the party can hurt at all (§4.2's gate), so it is resolved
         // here and not left at the intrinsic bare-handed tier.
         let hunting_party = fauna::HuntingParty {
-            hunter: equipment_cfg
-                .hunter_profile(person_profile, party_kit.hunting_equipped(&equipment_cfg)),
+            hunter: equipment_cfg.hunter_profile(person_profile, hunting_equipped),
             tuning: combat_tuning,
             injury_damage_per_animal: combat_config.hunt_injury_damage_per_animal,
         };
@@ -319,9 +325,15 @@ pub fn advance_expeditions(
                     // **A roadside kill wears the scout's kit like any other** — the hunting kit per
                     // animal killed, the SLED per biomass hauled (`docs/plan_denial_raid.md`
                     // §1.2: wear tracks USE, never turns elapsed). No baskets: nothing was gathered.
+                    // Each charge gated on the predicate that chose its own tier: a party using
+                    // no spears blunts none, and a party dragging by hand wears no sled.
                     if let Some(kit) = party_equipment.as_mut() {
-                        kit.wear_hunting(&equipment_cfg, take.killed)
-                            .wear_sled(&equipment_cfg, take.carried);
+                        if hunting_equipped {
+                            kit.wear_hunting(&equipment_cfg, take.killed);
+                        }
+                        if sled_equipped {
+                            kit.wear_sled(&equipment_cfg, take.carried);
+                        }
                     }
                     // A scout that picked a fight it could not win still pays for it. Gated on a
                     // **death**, like the resident band's line: the hunt's baseline injury risk
@@ -551,9 +563,15 @@ pub fn advance_expeditions(
                         // at all until the take became a fight. A party that marches all turn without
                         // engaging, or waits out a herd too thin to spare a body, spends nothing;
                         // one that slaughters pays per animal killed and per unit hauled home.
+                        // Each charge gated on the predicate that chose its own tier — a party
+                        // sent out with no kit spends no durability on any component.
                         if let Some(kit) = party_equipment.as_mut() {
-                            kit.wear_hunting(&equipment_cfg, take.killed)
-                                .wear_sled(&equipment_cfg, take.carried);
+                            if hunting_equipped {
+                                kit.wear_hunting(&equipment_cfg, take.killed);
+                            }
+                            if sled_equipped {
+                                kit.wear_sled(&equipment_cfg, take.carried);
+                            }
                         }
                         // **The fight already happened — inside the take** (§0.1). This path used
                         // to resolve the party's casualties in a *second* `resolve_fight` beside a
@@ -1651,7 +1669,12 @@ pub fn hunt_trip_forecast(
     floor: f32,
     fill_target: u32,
     fauna: &FaunaConfig,
-    labor: &LaborConfig,
+    // **The party's per-hunter HAUL rate** — its chosen kit's *sled* tier, resolved by the caller
+    // through `EquipmentConfig::hunt_per_worker_biomass_capacity`. It replaced the whole
+    // `LaborConfig` this projection used to take purely to read the **equipped** rate off it: a raid
+    // quoted for a sledless party must project the sledless haul, and this is the only term in the
+    // projection the kit moves that `party` does not already carry.
+    per_worker_haul: f32,
     expedition: &ExpeditionConfig,
     // The party that would go — its per-hunter profile and the tuning it fights at. The take resolves
     // through the fight (`docs/plan_hunt_through_combat.md` §4), so a raid quoted for a bare-handed
@@ -1666,7 +1689,7 @@ pub fn hunt_trip_forecast(
         floor,
         fill_target,
         fauna,
-        labor,
+        per_worker_haul,
         expedition,
         party,
         scalar_zero(),
@@ -1685,7 +1708,8 @@ fn hunt_trip_forecast_seeded(
     floor: f32,
     fill_target: u32,
     fauna: &FaunaConfig,
-    labor: &LaborConfig,
+    // The party's per-hunter haul rate — see `hunt_trip_forecast`.
+    per_worker_haul: f32,
     expedition: &ExpeditionConfig,
     party: &fauna::HuntingParty,
     initial_larder: Scalar,
@@ -1793,7 +1817,7 @@ fn hunt_trip_forecast_seeded(
         let carry_room = carry_room_biomass(cap - larder, &hunt_yield);
         let outcome = expedition_take_biomass(
             workers,
-            labor.hunt.per_worker_biomass_capacity,
+            per_worker_haul,
             floor,
             quarry.biomass,
             capacity,
@@ -2047,11 +2071,15 @@ struct DenialProjection {
 ///
 /// `range_sigmas` is `combat_config.forecast_range_sigmas`, a **readout width** — nothing the sim
 /// resolves reads it, so widening the band cannot move an animal.
+#[allow(clippy::too_many_arguments)] // every config the forward simulation reads is a lever
 pub fn denial_forecast(
     workers: u32,
     herd: &Herd,
     fauna: &FaunaConfig,
-    labor: &LaborConfig,
+    // The party's per-hunter haul rate — its kit's *sled* tier, in the slot the whole `LaborConfig`
+    // used to occupy purely to be read for it. It moves only what comes home (`delivered_food` /
+    // `wasted_food`); the verdict is decided by kills, which the fight owns.
+    per_worker_haul: f32,
     expedition: &ExpeditionConfig,
     // The party that would go — its per-hunter profile (kit composed in) and the tuning it fights
     // at. A raid quoted for a bare-handed party must project the bare-handed slaughter, which on a
@@ -2064,7 +2092,7 @@ pub fn denial_forecast(
             workers,
             herd,
             fauna,
-            labor,
+            per_worker_haul,
             expedition,
             party,
             fauna::HuntDraw::Quantile { sigmas },
@@ -2097,11 +2125,13 @@ const DENIAL_PROGRESS_WINDOW_DIVISOR: u32 = 2;
 /// raid with nowhere to put the meat has no trip to project; a denial raid has no such dependence —
 /// the pack decides only what comes home, so a party that can carry nothing still erases the herd
 /// and simply wastes all of it.
+#[allow(clippy::too_many_arguments)] // every config the forward simulation reads is a lever
 fn denial_projection_at(
     workers: u32,
     herd: &Herd,
     fauna: &FaunaConfig,
-    labor: &LaborConfig,
+    // The party's per-hunter haul rate — see `denial_forecast`.
+    per_worker_haul: f32,
     expedition: &ExpeditionConfig,
     party: &fauna::HuntingParty,
     draw: fauna::HuntDraw,
@@ -2158,7 +2188,7 @@ fn denial_projection_at(
         let carry_room = carry_room_biomass(cap - larder, &hunt_yield);
         let outcome = expedition_take_biomass(
             workers,
-            labor.hunt.per_worker_biomass_capacity,
+            per_worker_haul,
             // The escapement ceiling is the herd's whole standing stock.
             STRIP_IT_BARE,
             quarry.biomass,
@@ -2259,6 +2289,8 @@ pub fn expedition_delivery(
     // The in-flight party's own strength — kit resolved by the caller, so the ETA projects the take
     // this party can actually make (`docs/plan_hunt_through_combat.md` §4).
     party: &fauna::HuntingParty,
+    // And its per-hunter haul rate, on the same rule: the party's own kit decides what it drags home.
+    per_worker_haul: f32,
     grid_width: u32,
     wrap_horizontal: bool,
 ) -> Option<ExpeditionDelivery> {
@@ -2320,7 +2352,7 @@ pub fn expedition_delivery(
                 floor,
                 fill_target,
                 fauna,
-                labor,
+                per_worker_haul,
                 expedition_cfg,
                 party,
                 scalar_from_f32(carried),

@@ -1020,6 +1020,18 @@ pub struct Expedition {
     /// either end any more — the band's store is fixed-point — so the exact carried fraction settles
     /// and `forecast == actual` holds without a remainder being dropped per trip.
     pub carried_trade: f32,
+    /// **The kit this party was SENT OUT WITH**, resolved from the roster at launch and carried for
+    /// the party's whole life (`equipment.json`'s `kits`).
+    ///
+    /// **It is never re-resolved against the home band's stock.** A party sent out with `none` is
+    /// bare-handed until it folds back — re-reading the band's spears each turn would silently
+    /// re-arm it, and a bare-handed comparison that quietly re-arms is not a comparison. The party's
+    /// own [`BandEquipment`] wear still moves under it, so a `big_game` party still steps down when
+    /// its spears run out; what is fixed is *which components it reaches for*.
+    ///
+    /// A scouting party carries the hunt job's default: its roadside kills resolve through the same
+    /// hunt seams, and `send_expedition` names no kit.
+    pub kit: crate::equipment_config::KitChoice,
 }
 
 /// Permanent settlement seeded by a founding action.
@@ -1102,6 +1114,17 @@ impl LaborTarget {
         }
     }
 
+    /// **Which TOE job this target draws a tier from**, or `None` for a band-wide role that consumes
+    /// no component and therefore has no kit to choose. The one mapping between a labor role and
+    /// `equipment.json`'s `jobs` list, so the command's refusal and the turn's pricing agree.
+    pub fn kit_job(&self) -> Option<crate::equipment_config::KitJob> {
+        match self {
+            LaborTarget::Forage { .. } => Some(crate::equipment_config::KitJob::Forage),
+            LaborTarget::Hunt { .. } => Some(crate::equipment_config::KitJob::Hunt),
+            LaborTarget::Scout | LaborTarget::Warrior => None,
+        }
+    }
+
     /// Whether two targets name the **same source** (so re-assigning replaces rather than
     /// duplicates). Forage is keyed by tile and Hunt by herd id — for both, the **floor** is a
     /// mutable property of the same source (dragging the floor on the same tile/herd replaces the
@@ -1136,6 +1159,28 @@ pub struct LaborAssignment {
     /// **a crew change never touches it**, which is what makes a paused build re-staffable
     /// (`docs/plan_investment_rung_toggle.md` §6).
     pub improvement: Option<Improvement>,
+    /// **The kit this crew works under** (`equipment.json`'s roster), chosen at assign time and
+    /// re-resolved from *here* every turn — never from whatever the band happens to hold.
+    ///
+    /// `None` = **no kit was named**, which reads as the job's default
+    /// ([`crate::equipment_config::EquipmentConfig::default_kit`]) and is the only reading for the
+    /// band-wide roles: Scout and Warrior consume no component, so they have no kit axis to choose
+    /// along. `assign_labor` stores the *resolved* choice for a Forage/Hunt row, so a replayed
+    /// command lands on the kit it named rather than on whatever the default is today.
+    pub kit: Option<crate::equipment_config::KitChoice>,
+}
+
+impl LaborAssignment {
+    /// **The kit this row is priced at** — its own choice, or the job's default when it named none.
+    /// The one seam the resolved take, the assign-time seed and the wire all read, so a row cannot
+    /// be quoted at one tier and paid at another. `None` for a band-wide role, which has no job.
+    pub fn kit_choice(
+        &self,
+        config: &crate::equipment_config::EquipmentConfig,
+    ) -> Option<crate::equipment_config::KitChoice> {
+        let job = self.target.kit_job()?;
+        Some(self.kit.clone().unwrap_or_else(|| config.default_kit(job)))
+    }
 }
 
 /// Retained per-source food-yield telemetry for one labor assignment this turn (derived, not
@@ -1368,20 +1413,35 @@ pub struct BandEquipment {
 }
 
 impl BandEquipment {
-    /// Is the hunting kit still serving? **Strictly below** `starting_durability`, so a kit worn
-    /// exactly to its limit is spent — the cliff lands on the turn the last charge is used, not one
-    /// turn later.
-    pub fn hunting_equipped(&self, config: &crate::equipment_config::EquipmentConfig) -> bool {
+    /// **Does the band still have condition in its hunting kit?** — half of the effective predicate,
+    /// never the whole of it. **Strictly below** `starting_durability`, so a kit worn exactly to its
+    /// limit is spent: the cliff lands on the turn the last charge is used, not one turn later.
+    ///
+    /// **Crate-private on purpose.** Whether that condition is *serving* also depends on whether the
+    /// party's chosen kit reaches for this component at all, and
+    /// [`crate::equipment_config::KitChoice::hunting_equipped`] is the one place the two halves are
+    /// joined. A caller that could ask this directly would be a second way to ask the question — and
+    /// the one that silently re-arms a party sent out with no kit.
+    pub(crate) fn has_hunting_condition(
+        &self,
+        config: &crate::equipment_config::EquipmentConfig,
+    ) -> bool {
         self.hunting_wear < config.hunting_kit.starting_durability
     }
 
-    /// Is the sled still serving? Same rule as [`Self::hunting_equipped`].
-    pub fn sled_equipped(&self, config: &crate::equipment_config::EquipmentConfig) -> bool {
+    /// Condition left in the sled? Same rule and same privacy as [`Self::has_hunting_condition`].
+    pub(crate) fn has_sled_condition(
+        &self,
+        config: &crate::equipment_config::EquipmentConfig,
+    ) -> bool {
         self.sled_wear < config.sled_kit.starting_durability
     }
 
-    /// Are the baskets still serving? Same rule as [`Self::hunting_equipped`].
-    pub fn basket_equipped(&self, config: &crate::equipment_config::EquipmentConfig) -> bool {
+    /// Condition left in the baskets? Same rule and same privacy as [`Self::has_hunting_condition`].
+    pub(crate) fn has_basket_condition(
+        &self,
+        config: &crate::equipment_config::EquipmentConfig,
+    ) -> bool {
         self.basket_wear < config.basket_kit.starting_durability
     }
 
@@ -1554,7 +1614,13 @@ impl LaborAllocation {
     /// This is what makes a **paused** build re-staffable: adjusting its crew no longer re-issues the
     /// improvement through its start gate. `workers == 0` still drops the assignment and the
     /// improvement with it, which is the one deliberate way to abandon an investment.
-    pub fn set_assignment(&mut self, target: LaborTarget, workers: u32, available: u32) -> u32 {
+    pub fn set_assignment(
+        &mut self,
+        target: LaborTarget,
+        workers: u32,
+        available: u32,
+        kit: Option<crate::equipment_config::KitChoice>,
+    ) -> u32 {
         // Free headroom excludes any existing assignment on the same source (it is being replaced).
         let others: u32 = self
             .assignments
@@ -1583,6 +1649,11 @@ impl LaborAllocation {
                 target,
                 workers: applied,
                 improvement,
+                // **The kit is a property of the ORDER, so a re-assignment replaces it** — unlike
+                // `improvement`, which is carried across because it is a build in flight. Naming a
+                // kit is the whole of what this command decides about tier; silently keeping the
+                // previous one would make the selection unchangeable.
+                kit,
             });
             self.last_yields.push(SourceYield::ZERO);
         }
@@ -2148,8 +2219,8 @@ mod tests {
         assert_eq!(allocation.workers_on(&LaborTarget::Scout), 0);
 
         let available = 10;
-        allocation.set_assignment(LaborTarget::Scout, 3, available);
-        allocation.set_assignment(LaborTarget::Warrior, 2, available);
+        allocation.set_assignment(LaborTarget::Scout, 3, available, None);
+        allocation.set_assignment(LaborTarget::Warrior, 2, available, None);
         // Only the Scout assignment is counted (Warrior is a different singleton source).
         assert_eq!(allocation.workers_on(&LaborTarget::Scout), 3);
         assert_eq!(allocation.workers_on(&LaborTarget::Warrior), 2);
@@ -2184,8 +2255,8 @@ mod tests {
         // set_assignment on the same tile with a new floor replaces (no duplicate row) and updates
         // the stored floor.
         let mut allocation = LaborAllocation::default();
-        allocation.set_assignment(sustain, 4, 10);
-        allocation.set_assignment(deplete.clone(), 3, 10);
+        allocation.set_assignment(sustain, 4, 10, None);
+        allocation.set_assignment(deplete.clone(), 3, 10, None);
         assert_eq!(allocation.assignments.len(), 1, "a floor change replaces");
         assert_eq!(allocation.assignments[0].workers, 3);
         assert_eq!(allocation.assignments[0].target, deplete);
@@ -2204,11 +2275,11 @@ mod tests {
             species: None,
         };
         let mut allocation = LaborAllocation::default();
-        allocation.set_assignment(sustain.clone(), 4, 10);
+        allocation.set_assignment(sustain.clone(), 4, 10, None);
         assert!(allocation.set_improvement(&sustain, Some(Improvement::Cultivate)));
 
         // Re-staffing the same source: the improvement survives.
-        allocation.set_assignment(sustain.clone(), 2, 10);
+        allocation.set_assignment(sustain.clone(), 2, 10, None);
         assert_eq!(allocation.assignments[0].workers, 2);
         assert_eq!(
             allocation.assignments[0].improvement,
@@ -2222,7 +2293,7 @@ mod tests {
             floor: 0.15,
             species: None,
         };
-        allocation.set_assignment(deplete.clone(), 2, 10);
+        allocation.set_assignment(deplete.clone(), 2, 10, None);
         assert_eq!(allocation.assignments[0].target, deplete);
         assert_eq!(
             allocation.assignments[0].improvement,
@@ -2230,7 +2301,7 @@ mod tests {
         );
 
         // Unassigning drops the source, and the investment with it.
-        allocation.set_assignment(deplete.clone(), 0, 10);
+        allocation.set_assignment(deplete.clone(), 0, 10, None);
         assert!(allocation.assignments.is_empty());
         // Nothing to hang a verb on once the source is unstaffed.
         assert!(!allocation.set_improvement(&deplete, Some(Improvement::Cultivate)));

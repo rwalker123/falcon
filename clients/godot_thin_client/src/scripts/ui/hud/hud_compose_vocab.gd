@@ -683,6 +683,64 @@ const QUARRY_WITHIN_REACH_FORMAT := "%s is %d tiles away — inside %s's hunt re
 
 const COMPOSE_OF_IDLE_FORMAT := "of %d idle"
 
+# ---- THE KIT (`docs/plan_denial_raid.md`, `equipment.json` `kits`) -------------------------------
+## **A KIT DESCRIBES THE CREW, SO ITS ROW SITS DIRECTLY UNDER THE CREW STEPPER AND ABOVE EVERY
+## FORECAST** — it moves the fight (the attack tier) and the haul (the carry tier), so every figure
+## below it is a function of it. One row, four sheets: the hunting-party form, the denial form, the
+## herd drawer's assign-hunters block and the land drawer's assign-foragers block.
+const COMPOSE_FIELD_KIT := "Kit"
+
+## The picker's closed face: the job's glyph, the kit's own display name, and the caret that says the
+## control opens. **A PICKER BUTTON OPENING A CHECKED-RADIO MENU, not a pill row** — deliberately the
+## quarry chooser's idiom (`HudWidgets.build_section_menu`'s entries), because the roster grows toward
+## a dozen kits and a row of pills cannot hold that in a 354px dock column.
+const KIT_PICKER_FACE_FORMAT := "%s %s ⌄"
+
+## The glyph is keyed by the JOB THE SHEET IS COMPOSING, never by the kit's id: ids come from
+## `equipment.json` and a client-side table keyed on them goes stale the moment a kit is added. The
+## glyph says what the crew is walking out to do, which is the same for every kit on one sheet.
+const KIT_JOB_GLYPHS := {
+	"hunt": "🏹",
+	"forage": "🧺",
+}
+
+## The fallback face glyph for a job with no glyph of its own — the roster's `jobs` is wire data, so a
+## job this table has never heard of must still render a legible face rather than an empty one.
+const KIT_JOB_GLYPH_FALLBACK := "🎒"
+
+const KIT_PICKER_TOOLTIP := "What this crew carries. A kit decides what they can hurt and how much they can haul — the line beneath it is this band's own tier, after wear."
+
+## **THE JOB'S DEFAULT IS MARKED, NOT SEPARATED.** The player needs to know which kit the verb takes
+## when they name none; that is a note on an ordinary entry, and a divider would imply the roster has
+## two classes of member. `none` has none of that treatment either — it is an ordinary kit that grants
+## nothing, and it sorts last only because the roster authors it last.
+const KIT_DEFAULT_ENTRY_SUFFIX := "  (default)"
+
+# The hint line under the picker — `attack 20.0 · carry 40.0 per hunter · spears 74 · sled 58`.
+const KIT_HINT_SEPARATOR := " · "
+const KIT_HINT_ATTACK_FORMAT := "attack %s"
+const KIT_HINT_HUNT_CARRY_FORMAT := "carry %s per hunter"
+const KIT_HINT_FORAGE_CARRY_FORMAT := "carry %s per gatherer"
+## A component's remaining condition on `equipment.json`'s 0-100 scale, and the word for a spent one.
+## **Performance is FLAT until expiry** (durability and performance are orthogonal axes), so this
+## number never scales anything above it — it says how much longer the tier lasts, not how good it is.
+const KIT_HINT_CONDITION_FORMAT := "%s %d"
+const KIT_HINT_DRY_FORMAT := "%s dry"
+const KIT_COMPONENT_SPEARS := "spears"
+const KIT_COMPONENT_SLED := "sled"
+const KIT_COMPONENT_BASKETS := "baskets"
+## Tier decimals. The tiers span 1.0 (bare hands) to 40.0 (a sled), authored as small round numbers,
+## so one decimal states them without claiming a precision the roster does not have.
+const KIT_TIER_DECIMALS := 1
+
+## **THE HONESTY LINE.** `huntTripEstimates` / `denialEstimates` are quoted for the hunt job's DEFAULT
+## kit ONLY — repricing them per kit is scoped out (they are ~95% of snapshot capture) — so a sheet
+## whose selected kit differs from the id the table names must refuse to present the table as the
+## answer, and say whose numbers it was going to show. `%s` the kit the table IS priced for, `%s` the
+## kit the player selected.
+const KIT_DENIAL_ESTIMATES_QUOTED_FORMAT := "The collapse forecast is priced for %s, not for %s — so no turn count and no take are quoted here."
+const KIT_TRIP_ESTIMATES_QUOTED_FORMAT := "The raid forecast is priced for %s, not for %s — so no turn count and no payload are quoted here."
+
 const COMPOSE_CANCEL_TOOLTIP := "Cancel"
 
 const CANCEL_SCOPE_ALL := "all"

@@ -666,6 +666,13 @@ func update_herds(herds_variant: Variant) -> void:
 func update_food_modules(modules_variant: Variant) -> void:
     _band_labor.set_food_modules(modules_variant)
 
+## The world's KIT ROSTER and the two job defaults (`docs/plan_denial_raid.md`) — the four compose
+## sheets' picker list, ingested once per world onto `_band_labor` (`kits()` / `default_kit_id()`).
+## `Main` forwards the three wire keys together because they are one fact; a roster whose defaults
+## named kits it did not contain would open every picker on an entry it cannot show.
+func update_kit_roster(kits_variant: Variant, default_hunt: Variant, default_forage: Variant) -> void:
+    _band_labor.set_kit_roster(kits_variant, String(default_hunt), String(default_forage))
+
 ## Ingests the snapshot forage patches into the per-tile lookup the Current-actions Forage row reads
 ## to cap its worker stepper at max-useful, mirroring MapView's `forage_patch_lookup` ingest. The
 ## per-tile lookup lives on `_band_labor` (`forage_patch_lookup()`).
@@ -720,7 +727,8 @@ func _herd_label_for_id(herd_id: String) -> String:
 ## keeps showing the build the source is already doing instead of blanking it for a turn.
 func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y: int, herd_id: String,
         floor: float, species: String = "",
-        improvement: String = SourceForecast.IMPROVEMENT_NONE) -> void:
+        improvement: String = SourceForecast.IMPROVEMENT_NONE,
+        kit_id: String = KitRoster.NO_KIT_ID) -> void:
     # TWO handles, and they are not interchangeable. `band_id` is the DURABLE id the command names —
     # the sim resolves a band by it and by nothing else, because ECS entity bits are renumbered by a
     # rollback. `entity` is the CLIENT-LOCAL key the optimistic pending overlay is filed under (every
@@ -744,6 +752,12 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
         # emitter fails loudly rather than being silently reinterpreted.
         "floor": SourceForecast.clamp_floor(floor),
         "species": species,
+        # **THE CREW'S KIT, AND THE JOB DEFAULT IT IS MEASURED AGAINST** (`docs/plan_denial_raid.md`).
+        # Both travel, because `Main._kit_token` OMITS the token when the two agree — that is what
+        # keeps today's command lines byte-identical where the player named no kit, and the builder
+        # cannot know the default on its own (it is world data, not payload data).
+        "kit_id": kit_id,
+        "default_kit_id": _band_labor.default_kit_id(kind),
     })
     _band_labor.record_pending_assign(entity, kind, clamped, x, y, herd_id, floor, improvement)
     _after_pending_change()

@@ -173,7 +173,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         verb: "assign_labor",
         aliases: &[],
         summary: "Set the worker count for one labor target on a band (0 unassigns; clamps to idle).",
-        usage: "assign_labor <faction_id> <band> forage <x> <y> [floor] [species] <workers> | hunt <herd_id> [floor] <workers> | scout <workers> | warrior <workers>",
+        usage: "assign_labor <faction_id> <band> forage <x> <y> [floor] [species] <workers> [kit <id>] | hunt <herd_id> [floor] <workers> [kit <id>] | scout <workers> | warrior <workers>",
     },
     CommandVerbHelp {
         verb: "move_band",
@@ -199,13 +199,13 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         summary: "Outfit a detached hunting party that follows a herd, harvests food, and delivers it.",
         usage:
             "send_hunt_expedition <faction_id> <band_id> <party_workers> <fauna_id> [floor] \
-             [fill_target]",
+             [fill_target] [kit <id>]",
     },
     CommandVerbHelp {
         verb: "send_denial_raid",
         aliases: &[],
         summary: "Outfit a detached party to erase a herd — no floor, no fill target, near-zero return.",
-        usage: "send_denial_raid <faction_id> <band_id> <party_workers> <fauna_id>",
+        usage: "send_denial_raid <faction_id> <band_id> <party_workers> <fauna_id> [kit <id>]",
     },
     CommandVerbHelp {
         verb: "export_map",
@@ -877,6 +877,12 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 .to_ascii_lowercase();
             let faction_id = parse_u32(faction_str, "assign_labor faction")?;
             let band = parse_u64(band_str, "assign_labor band_id")?;
+            // **The kit is a NAMED token, lifted out of the tail before the role's own shape is
+            // read** — so it can sit anywhere after the role and none of the positional forms below
+            // has to make room for it. Absent = the job's default.
+            let mut tail: Vec<&str> = parts.collect();
+            let kit_id = take_named_token(&mut tail, "kit", "assign_labor kit id")?;
+            let mut parts = tail.into_iter();
             let (workers, target_x, target_y, fauna_id, floor, species) = match role.as_str() {
                 "forage" => {
                     let x = parts
@@ -983,6 +989,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 policy: None,
                 species,
                 floor,
+                kit_id,
             })
         }
         "move_band" => {
@@ -1057,6 +1064,11 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let fauna_id = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("fauna_id"))?;
+            // **The kit is a NAMED token** (`kit <id>`), lifted out before the two optional
+            // positional tails are read — a third positional would make `floor` un-omittable.
+            let mut tail: Vec<&str> = parts.collect();
+            let kit_id = take_named_token(&mut tail, "kit", "send_hunt_expedition kit id")?;
+            let mut parts = tail.into_iter();
             // Optional trailing FLOOR — where the raid stops, as a fraction of the herd's `K`.
             // Absent = the sim's default (the food peak). `parse_f32` carries the retired-stance
             // guard, so a stale client's `sustain` names the grammar that moved rather than failing
@@ -1080,6 +1092,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 fauna_id: fauna_id.to_string(),
                 floor,
                 fill_target,
+                kit_id,
             })
         }
         // **The denial raid's grammar is DELIBERATELY CLOSED** (`docs/plan_denial_raid.md` §1): it
@@ -1101,7 +1114,14 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let fauna_id = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("fauna_id"))?;
-            if let Some(extra) = parts.next() {
+            // **The ONE thing the closed grammar now admits, and it is not a number.** A kit is a
+            // property of the *party*, not of the mission, so it is the only order a raid carrying
+            // no floor and no fill target still has to give. Everything else stays refused: a
+            // trailing token that is not the named `kit <id>` pair is a misunderstanding of the
+            // verb, not a value to ignore.
+            let mut tail: Vec<&str> = parts.collect();
+            let kit_id = take_named_token(&mut tail, "kit", "send_denial_raid kit id")?;
+            if let Some(extra) = tail.first() {
                 return Err(CommandParseError::UnexpectedArgument(extra.to_string()));
             }
             Ok(CommandPayload::SendDenialRaid {
@@ -1109,6 +1129,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 band_id: Some(parse_u64(band_str, "send_denial_raid band_id")?),
                 party_workers: parse_u32(workers_str, "send_denial_raid party_workers")?,
                 fauna_id: fauna_id.to_string(),
+                kit_id,
             })
         }
         "resync" => Ok(CommandPayload::Resync),
@@ -1157,6 +1178,38 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
         "clear_config_overrides" => Ok(CommandPayload::ClearConfigOverrides),
         other => Err(CommandParseError::UnknownCommand(other.to_string())),
     }
+}
+
+/// The **named-token** form the kit selection uses: `kit <id>`, a name followed by its value.
+///
+/// That shape is the repo's existing one — `queue_espionage_mission … owner 1 target 2 tier 2` and
+/// `counterintel_budget … reserve 40` both read it — rather than an invented `kit=<id>`.
+///
+/// **Named rather than positional because the two raiding verbs already carry optional positional
+/// tails.** `send_hunt_expedition <faction> <band> <workers> <herd> [floor] [fill_target]` cannot
+/// take a third positional without the middle one becoming un-omittable, and `assign_labor`'s
+/// per-role tails already disambiguate by shape. A named token slots in anywhere in the tail, so it
+/// needs no ordering rule and extends cleanly.
+///
+/// Removes the pair from `tokens` and answers the value; `None` when the name is absent. A name with
+/// nothing after it is a missing argument, not a value to shrug at.
+fn take_named_token(
+    tokens: &mut Vec<&str>,
+    name: &'static str,
+    missing: &'static str,
+) -> Result<Option<String>, CommandParseError> {
+    let Some(index) = tokens
+        .iter()
+        .position(|token| token.eq_ignore_ascii_case(name))
+    else {
+        return Ok(None);
+    };
+    if index + 1 >= tokens.len() {
+        return Err(CommandParseError::MissingArgument(missing));
+    }
+    let value = tokens.remove(index + 1).to_string();
+    tokens.remove(index);
+    Ok(Some(value))
 }
 
 fn parse_u32(value: &str, context: &'static str) -> Result<u32, CommandParseError> {
@@ -1302,6 +1355,7 @@ mod tests {
             fauna_id: "game_fowl_03".to_string(),
             floor,
             fill_target,
+            kit_id: None,
         };
         // Neither: the sim's own defaults on both axes.
         assert_eq!(
@@ -1334,6 +1388,7 @@ mod tests {
                 band_id: Some(7),
                 party_workers: 4,
                 fauna_id: "game_fowl_03".to_string(),
+                kit_id: None,
             }
         );
         // A floor — legal on `send_hunt_expedition`, meaningless here, and refused rather than
@@ -1346,6 +1401,90 @@ mod tests {
             parse_command_line("send_denial_raid 0 7 4"),
             Err(CommandParseError::MissingArgument("fauna_id"))
         ));
+    }
+
+    /// **The kit is a NAMED token, and it is order-independent** — `kit <id>`, the same shape
+    /// `queue_espionage_mission`'s `owner 1 target 2` already uses. It has to be named rather than
+    /// positional because `send_hunt_expedition` already carries two optional positional tails: a
+    /// third would make `floor` un-omittable, so the two-token form is what lets a player name a kit
+    /// without also naming a floor they did not want to change.
+    #[test]
+    fn the_kit_token_is_named_and_can_sit_anywhere_in_the_tail() {
+        let with_kit = |floor, fill_target, kit: Option<&str>| CommandPayload::SendHuntExpedition {
+            faction_id: 0,
+            band_id: Some(7),
+            party_workers: 4,
+            fauna_id: "game_fowl_03".to_string(),
+            floor,
+            fill_target,
+            kit_id: kit.map(str::to_string),
+        };
+        // Named alone — the case a positional grammar could not express at all.
+        assert_eq!(
+            parse_command_line("send_hunt_expedition 0 7 4 game_fowl_03 kit none").unwrap(),
+            with_kit(None, None, Some("none"))
+        );
+        // Before the positional tail, and after it — same reading either way.
+        assert_eq!(
+            parse_command_line("send_hunt_expedition 0 7 4 game_fowl_03 kit none 0.42 3").unwrap(),
+            with_kit(Some(0.42), Some(3), Some("none"))
+        );
+        assert_eq!(
+            parse_command_line("send_hunt_expedition 0 7 4 game_fowl_03 0.42 3 kit none").unwrap(),
+            with_kit(Some(0.42), Some(3), Some("none"))
+        );
+        // The denial raid's grammar admits the kit and nothing else — a kit is a property of the
+        // party, a floor is a property of a mission this one does not have.
+        assert_eq!(
+            parse_command_line("send_denial_raid 0 7 4 game_fowl_03 kit none").unwrap(),
+            CommandPayload::SendDenialRaid {
+                faction_id: 0,
+                band_id: Some(7),
+                party_workers: 4,
+                fauna_id: "game_fowl_03".to_string(),
+                kit_id: Some("none".to_string()),
+            }
+        );
+        assert!(matches!(
+            parse_command_line("send_denial_raid 0 7 4 game_fowl_03 kit none 0.42"),
+            Err(CommandParseError::UnexpectedArgument(_))
+        ));
+        // A name with no value after it is a missing argument, not a token to shrug at.
+        assert!(matches!(
+            parse_command_line("send_denial_raid 0 7 4 game_fowl_03 kit"),
+            Err(CommandParseError::MissingArgument(_))
+        ));
+    }
+
+    /// The same token on `assign_labor`, on both kit-bearing roles — lifted out of the tail before
+    /// each role's own positional shape is read, so neither the forage floor/species pair nor the
+    /// hunt floor has to make room for it.
+    #[test]
+    fn assign_labor_takes_the_kit_token_on_either_kit_bearing_role() {
+        let CommandPayload::AssignLabor { kit_id, floor, .. } =
+            parse_command_line("assign_labor 0 7 forage 3 4 0.15 wild_emmer 6 kit none").unwrap()
+        else {
+            panic!("assign_labor payload");
+        };
+        assert_eq!(kit_id.as_deref(), Some("none"));
+        assert_eq!(floor, Some(0.15), "the floor is untouched by the kit token");
+
+        let CommandPayload::AssignLabor {
+            kit_id, workers, ..
+        } = parse_command_line("assign_labor 0 7 hunt game_fowl_03 kit big_game 0.3 5").unwrap()
+        else {
+            panic!("assign_labor payload");
+        };
+        assert_eq!(kit_id.as_deref(), Some("big_game"));
+        assert_eq!(workers, 5, "the worker count is still read last");
+
+        // Absent is absent — the server resolves the job's default, the parser invents nothing.
+        let CommandPayload::AssignLabor { kit_id, .. } =
+            parse_command_line("assign_labor 0 7 hunt game_fowl_03 5").unwrap()
+        else {
+            panic!("assign_labor payload");
+        };
+        assert_eq!(kit_id, None);
     }
 
     #[test]
@@ -1615,6 +1754,7 @@ mod tests {
                 policy: None,
                 species: None,
                 floor: None,
+                kit_id: None,
             }
         );
     }
@@ -1637,6 +1777,7 @@ mod tests {
                 policy: None,
                 species: None,
                 floor: Some(0.5),
+                kit_id: None,
             },
             "a numeric optional token is the FLOOR"
         );
@@ -1653,6 +1794,7 @@ mod tests {
                 policy: None,
                 species: Some("wild_emmer".to_string()),
                 floor: None,
+                kit_id: None,
             },
             "a non-numeric optional token is the SPECIES"
         );
@@ -1742,6 +1884,7 @@ mod tests {
                 policy: None,
                 species: Some("wild_emmer".to_string()),
                 floor: Some(0.15),
+                kit_id: None,
             }
         );
         // A fourth token is a typo, not a longer form — fail closed rather than silently drop it.
@@ -1780,6 +1923,7 @@ mod tests {
                 policy: None,
                 species: None,
                 floor: None,
+                kit_id: None,
             },
             "one tail token is the worker count; the floor defaults"
         );
@@ -1798,6 +1942,7 @@ mod tests {
                     policy: None,
                     species: None,
                     floor: Some(floor),
+                    kit_id: None,
                 },
                 "hunt floor {floor} should round-trip"
             );
@@ -1830,6 +1975,7 @@ mod tests {
                 policy: None,
                 species: None,
                 floor: None,
+                kit_id: None,
             }
         );
         assert_eq!(
@@ -1845,6 +1991,7 @@ mod tests {
                 policy: None,
                 species: None,
                 floor: None,
+                kit_id: None,
             }
         );
     }

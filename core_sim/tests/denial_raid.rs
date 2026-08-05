@@ -315,6 +315,7 @@ fn spawn_party(
                 announced: false,
                 pending_reveal: Vec::new(),
                 carried_trade: 0.0,
+                kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Hunt),
             },
         ))
         .id()
@@ -385,7 +386,7 @@ fn forecast(app: &App, id: &str, workers: u32) -> core_sim::DenialForecast {
         workers,
         herd,
         &fauna,
-        &labor,
+        labor.hunt.per_worker_biomass_capacity,
         &cfg,
         &party_profile(),
         sigmas,

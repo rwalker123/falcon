@@ -271,6 +271,7 @@ fn spawn_forager_with_workers(
                     },
                     workers,
                     improvement: None,
+                    kit: None,
                 }],
                 ..Default::default()
             },

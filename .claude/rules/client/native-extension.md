@@ -207,6 +207,39 @@ whole table), all told apart by the rows' own `outcome`. It may legitimately EXC
 workers, so it is not a cap and is never clamped here; only the stepper, which knows the band, clamps
 it.
 
+## THE KIT ROSTER — six additions, three homes (`docs/plan_denial_raid.md`)
+
+Kit selection lands as one roster plus five per-row ids, and they are decoded in the module that owns
+each one's section:
+
+| wire | key | module |
+|---|---|---|
+| `SubsistenceSection.kits:[KitOption]` | `kits` (array of `{id, display_name, jobs, attack, hunt_carry_per_worker_biomass, forage_carry_per_worker_biomass}`) | `dict/subsistence.rs` → `kits_to_array` |
+| `SubsistenceSection.defaultHuntKitId` / `defaultForageKitId` | `default_hunt_kit_id` / `default_forage_kit_id` | `snapshot/mod.rs` + `bridge/decoder.rs` |
+| `PopulationCohortState.kitId` | `kit_id` on the band dict | `dict/population.rs` |
+| `LaborAssignment.kitId` | `kit_id` on the assignment entry | `dict/population.rs` |
+| `HerdTelemetryState.huntTripEstimatesKitId` / `denialEstimatesKitId` | `hunt_trip_estimates_kit_id` / `denial_estimates_kit_id` | `dict/subsistence.rs` → `herds_to_array` |
+
+**The roster and its two defaults are WHOLE-SECTION fields, so they are decoded on BOTH paths** —
+`snapshot_to_dict` and `decode_delta_against` — which is the rule the `food_modules` /
+`faction_inventory` staleness above records. A whole-section field read only on the full path
+republishes the baseline's value for the life of the world.
+
+**`KitOption`'s three tiers are the FRESH-kit ones, and they are not any band's numbers.** What a
+given band's wear does to them is the band's own cohort row (`hunter_attack` /
+`hunt_carry_per_worker_biomass` / `forage_carry_per_worker_biomass`), and the client composes the
+effective tier from the two (`KitRoster.effective_tiers`). A readout quoting the roster's number to a
+band with dry spears is the defect class this arc keeps correcting.
+
+**`none` is an ORDINARY roster entry and nothing here special-cases its id** — it grants nothing, so
+its tiers are the unequipped ones throughout. It is authored last in `equipment.json` and the decode
+preserves that order, which is the whole of why it sorts last in the picker.
+
+**The two herd ids exist so the client can say the tables are not repriced.** Both name the hunt
+job's default on every herd; when the player's selection differs, the sheet must refuse to present
+`huntTripEstimates` / `denialEstimates` as the answer rather than quoting a kitted raid's numbers to
+a bare-handed party.
+
 **The whole path is gated by `tools/decode_guard.gd`** (see its Key Scripts row) — the answer to
 "`VarDictionary` cannot be built outside a live engine", which is why the coverage here was a single
 `cohort_decode_tests` module for so long. Run it from the workspace root:

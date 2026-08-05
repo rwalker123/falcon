@@ -3,6 +3,7 @@ paths:
   - "core_sim/src/{equipment_config,creatures_config}.rs"
   - "core_sim/src/data/{equipment,creatures}.json"
   - "integration_tests/tests/equipment_toe.rs"
+  - "core_sim/tests/kit_selection.rs"
 ---
 
 # TOE — the band's consumable equipment
@@ -43,7 +44,7 @@ back" below.
 
 | File | Purpose |
 |---|---|
-| `src/data/equipment.json` | **The TOE kit table** (loader `equipment_config.rs`, env override `EQUIPMENT_CONFIG_PATH`, validated inside `from_json_str` so every load path is covered). Three blocks: **`hunting_kit`** — `equipped_attack` (**20.0**), `starting_durability` (**100.0**), `wear_per_kill` (**0.4** → 250 kills); **`sled_kit`** — `unequipped_per_worker_biomass_capacity` (**12.0**), `starting_durability` (**100.0**), `wear_per_biomass_hauled` (**0.02** → 5000 biomass); **`basket_kit`** — `unequipped_per_worker_biomass_capacity` (**1.6**), `starting_durability` (**100.0**), `wear_per_biomass_gathered` (**0.04** → 2500 biomass). `validate` rejects any of the nine as non-finite or `<= 0`: a kit with **no wear rate is not consumable** and one with no durability is **born dry**. A missing *block* is a parse error, so a file that forgot `basket_kit` cannot silently leave the forage web unkitted again. |
+| `src/data/equipment.json` | **The TOE kit table** (loader `equipment_config.rs`, env override `EQUIPMENT_CONFIG_PATH`, validated inside `from_json_str` so every load path is covered). Three blocks: **`hunting_kit`** — `equipped_attack` (**20.0**), `starting_durability` (**100.0**), `wear_per_kill` (**0.4** → 250 kills); **`sled_kit`** — `unequipped_per_worker_biomass_capacity` (**12.0**), `starting_durability` (**100.0**), `wear_per_biomass_hauled` (**0.02** → 5000 biomass); **`basket_kit`** — `unequipped_per_worker_biomass_capacity` (**1.6**), `starting_durability` (**100.0**), `wear_per_biomass_gathered` (**0.04** → 2500 biomass). `validate` rejects any of the nine as non-finite or `<= 0`: a kit with **no wear rate is not consumable** and one with no durability is **born dry**. A missing *block* is a parse error, so a file that forgot `basket_kit` cannot silently leave the forage web unkitted again. **Plus the KIT ROSTER**: `kits` — a list of `{ id, display_name, jobs, uses }`, where `uses` names the component blocks above and `jobs` is `hunt` / `forage`; and `default_kits` — `{ hunt, forage }`, what each verb runs on when the player names none. Shipped: **`big_game`** (`hunt`; `hunting_kit` + `sled_kit`), **`gathering`** (`forage`; `basket_kit`), **`none`** (both jobs; nothing). `validate` rejects a duplicate id, a kit listing no jobs, a default naming no roster entry, and a default whose `jobs` omit its own job; a `uses` entry naming a component block that does not exist fails to **deserialize**, because `KitComponent`'s variants *are* the block keys. See "A kit is a MASK". |
 | `src/data/creatures.json` | The creatures roster — intrinsic `CombatStats` for non-fauna units. `person.combat.attack` (**1.0**) is the hunting kit's **unequipped** tier. See `combat.md` for the roster's role in the fight. |
 
 **Only the unequipped side lives in `equipment.json`, and that is one-home-per-fact, not an
@@ -164,6 +165,99 @@ party that never engaged.
   binds on deer — while a Wild Horse's is `20.0`, which is why
   `both_hunt_carry_tiers_are_live_and_a_sledless_party_hauls_less` measures horses.
 
+## A kit is a MASK over the three predicates — nothing else
+
+A party is **sent out with a named kit** from the roster rather than implicitly using whatever the
+band owns. The whole mechanism is one line:
+
+```text
+effective_equipped(component) = kit_uses(component) AND band_has_condition(component)
+```
+
+- **`big_game`** uses `hunting_kit` + `sled_kit` — the pair every hunt path used to consult
+  unconditionally, so it is **bit-identical** to the pre-roster game.
+- **`gathering`** uses `basket_kit` — likewise for every gather path.
+- **`none`** uses nothing, so every predicate reads false and the party runs at the three
+  *unequipped* tiers throughout.
+
+`KitChoice` (`equipment_config.rs`) is the id plus that mask, and its three predicates
+`hunting_equipped` / `sled_equipped` / `basket_equipped` take `(&BandEquipment, &EquipmentConfig)`.
+**They are the only way anything asks the question**: `BandEquipment`'s own condition tests are
+`pub(crate)` and renamed `has_*_condition`, so the *condition* half cannot be read alone by a caller
+that has forgotten to consult the mask — which is exactly the reading that silently re-arms a party
+sent out bare.
+
+**`none` is an ORDINARY roster member, not a sentinel.** Nothing branches on its id anywhere; it is a
+kit whose `uses` list is empty, and every behaviour attributed to it falls out of that. A future
+`fishing` kit with an empty `uses` would behave identically, which is the test of whether it has been
+special-cased.
+
+### Wear rides the SAME predicate that chose the tier
+
+Every wear site is gated on the effective predicate its own tier came from — the three in
+`systems/labor.rs` (baskets on the gather, the sled on a pen harvest, both on a wild hunt) and the
+two in `systems/expeditions.rs` (the raid's take and the scout's roadside kill). So a party using no
+component spends no durability on any of them.
+
+**This pairing is the whole reason the bare-handed option is usable.** If it were not gated, running
+the comparison would consume the very kit it is being compared against — the player would pay for the
+experiment they ran in order to decide *not* to. A kitted party's charges are still independent of
+each other: a kit with spears but no sled blunts spears only.
+
+### Resolved ONCE for a party, per turn for a crew
+
+An `Expedition` stores its `KitChoice` at launch and prices its whole life from it, **never
+re-resolving against the home band's current stock** — a party sent with `none` would otherwise
+silently re-arm the moment the band's spears were counted again. Its own `BandEquipment` wear still
+moves it, so a `big_game` party still steps down when its spears run out; what is fixed is *which
+components it reaches for*.
+
+A `LaborAssignment` carries `kit: Option<KitChoice>` and re-resolves from **there** each turn, not
+from the band. `None` reads as the job's default and is the only reading for the band-wide roles
+(Scout / Warrior), which consume no component and have no kit axis at all. `assign_labor` stores the
+*resolved* choice, so a replayed command lands on the kit it named rather than on whatever the
+default is today.
+
+The **wear** snapshot is still taken once per band per turn (`advance_labor_allocation`'s
+`band_kit`), so a kit that expires part-way through the assignment loop cannot pay two different
+rates to two herds in the same turn; only the *mask* varies per assignment.
+
+### The commands, and how they fail
+
+| verb | grammar |
+|---|---|
+| `assign_labor` | `… forage <x> <y> [floor] [species] <workers> [kit <id>]` / `… hunt <herd> [floor] <workers> [kit <id>]` |
+| `send_hunt_expedition` | `… <party_workers> <fauna_id> [floor] [fill_target] [kit <id>]` |
+| `send_denial_raid` | `… <party_workers> <fauna_id> [kit <id>]` |
+
+**`kit <id>` is a NAMED token, order-independent within the tail.** Named rather than positional
+because `send_hunt_expedition` already carries two optional positional tails and a third would make
+`floor` un-omittable; the space-separated `name value` shape is the repo's existing one
+(`queue_espionage_mission … owner 1 target 2 tier 2`, `counterintel_budget … reserve 40`) rather than
+an invented `kit=<id>`. It is also **the one token the denial raid's otherwise closed grammar
+admits** — a kit is a property of the *party*, not of the mission, so it is the only order a raid
+carrying no floor and no fill target still has to give.
+
+**An unknown id, or one whose `jobs` does not cover the verb, is a command failure with a reason.**
+Never a silent fall back to the default: naming a kit is how the player *compares* tiers, so a quiet
+substitution answers a different question than the one asked and looks exactly like an answer. Absent
+is the job's default, which is the pre-roster behaviour.
+
+### The two estimate tables are NOT repriced per kit — and they say so
+
+`huntTripEstimates` and `denialEstimates` stay quoted at the **hunt job's default kit**, and publish
+which (`huntTripEstimatesKitId` / `denialEstimatesKitId`). They are ~95% of snapshot capture and a
+kit axis multiplies them — the same structural cost question per-band repricing already faces (see
+`expeditions.md` → "THE WHOLE HERD TABLE IS PRICED AT THE EQUIPPED TIER"). The field exists so a
+client whose player has selected another kit can **refuse to present the table as an answer** for
+that selection rather than quoting a kitted raid's numbers to a bare-handed party. Two fields rather
+than one because they are two tables: if one is later repriced and the other is not, a single field
+would lie about whichever was left behind.
+
+Everything the player *does* commit to is priced at the chosen kit: the launch feed line
+(`launch_forecast_party` + `launch_forecast_haul`), the in-flight delivery ETA, and both assign-time
+compose seeds (`hunt_source_yield_preview` / `forage_source_yield_preview`).
+
 ## On the wire
 
 `PopulationCohortState` carries six append-only kit fields (`sim_schema/schemas/snapshot.fbs`,
@@ -183,6 +277,16 @@ one place):
 a client that rendered one on the other web's row would be repeating the defect the split corrected.
 `HerdTelemetryState.perWorkerBiomass` and `ForagePatchState.perWorkerBiomass` both stay the *equipped
 reference* rate: neither a herd nor a patch has a band to resolve a tier against.
+
+The kit selection adds five more slots, all append-only:
+
+| Field | Meaning |
+|---|---|
+| `SubsistenceSection.kits:[KitOption]` | **The roster, once per world** — `id`, `displayName`, `jobs`, and the three tiers each kit grants a party whose components are **fresh** (`attack`, `huntCarryPerWorkerBiomass`, `forageCarryPerWorkerBiomass`), so the picker renders real numbers without a second copy of the TOE table |
+| `SubsistenceSection.defaultHuntKitId` / `defaultForageKitId:string` | What each verb runs on when the player names none |
+| `PopulationCohortState.kitId:string` | Which kit the six fields above are quoted at — an in-flight party's **own** kit, a resident band's **job default** (a band has one kit per assignment and this row is per cohort) |
+| `LaborAssignment.kitId:string` | The kit that row's yields are priced at, **resolved** — never "unspecified". `""` on a band-wide role, which has no kit axis |
+| `HerdTelemetryState.huntTripEstimatesKitId` / `denialEstimatesKitId:string` | Which kit each estimate table was computed at — see above |
 
 ## Balance
 
@@ -206,6 +310,10 @@ band, one turn:
 `Wild Fowl` (10 engaged per hunter, 160 kills a turn) burns the same hunting kit in under two turns
 where the deer party gets ~15. The lever if that proves to wreck pacing is a per-species use cost,
 never a turn clock.
+
+**The roster is a per-world constant**, so it diffs out on every frame after the first
+(`Whole<Vec<KitOptionState>>` in `snapshot/capture.rs`) and is re-sent only when the world is rebuilt
+on new tuning.
 
 See Also: `combat.md` (the resolver and the `person` roster row the attack tier composes onto),
 `yield-forecast.md` (the forecast-equals-actual invariant both seed arms preserve),

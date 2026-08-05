@@ -185,6 +185,7 @@ fn spawn_hunter(
                     },
                     workers: HUNT_WORKERS,
                     improvement: None,
+                    kit: None,
                 }],
                 ..Default::default()
             },

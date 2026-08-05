@@ -123,8 +123,10 @@ func _herd_label_for_id(herd_id: String) -> String:
 ## than becoming a third signal on this controller.
 func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y: int, herd_id: String,
         floor: float, species: String = "",
-        improvement: String = SourceForecast.IMPROVEMENT_NONE) -> void:
-    _emit_assign_labor_fn.call(band, kind, workers, x, y, herd_id, floor, species, improvement)
+        improvement: String = SourceForecast.IMPROVEMENT_NONE,
+        kit_id: String = KitRoster.NO_KIT_ID) -> void:
+    _emit_assign_labor_fn.call(band, kind, workers, x, y, herd_id, floor, species, improvement,
+        kit_id)
 
 ## Send the improvement command when the composed second axis differs from what the source is already
 ## building — the SET verb (`cultivate` / `sow` / `tame` / `corral`) when one is composed, and
@@ -1344,6 +1346,21 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     var is_expedition := distance >= 0 and distance > reach
     # Local hunt caps at the band's assignable hunt workers; an expedition caps at the party ceiling.
     var assignable := SourceForecast.expedition_party_cap(band) if is_expedition else _band_labor.assignable_hunt_workers(band, herd_id)
+    # **THE KIT, RESOLVED HERE AND MOUNTED UNDER THE CREW ROW.** Its selection decides whether the
+    # sim's `huntTripEstimates` table applies to this raid at all, and every reading below is priced
+    # against that answer — so the resolve leads and the ROW lands beside the crew it describes.
+    var kits := _band_labor.kits()
+    var default_kit := _band_labor.default_kit_id(KitRoster.JOB_HUNT)
+    var kit_id := KitRoster.resolve_selection(kits, KitRoster.JOB_HUNT, default_kit,
+        _compose.hunt_kit_id())
+    _compose.set_hunt_kit_id(kit_id)
+    # **THE HONESTY GATE, EXPEDITION BRANCH ONLY.** A LOCAL hunt is priced from the herd's own
+    # per-biomass vector and the band's ceilings — no estimate table, so no kit mismatch to have. The
+    # raid's every figure is a lookup into `huntTripEstimates`, which is quoted for ONE kit; where the
+    # selection differs the sheet must not present that table as the answer. Compare the ids — never
+    # assume the default is selected.
+    var trip_quoted := not is_expedition or KitRoster.estimates_apply_to(herd,
+        KitRoster.HERD_TRIP_ESTIMATES_KIT_KEY, default_kit, kit_id)
     # **THE HARVEST ROW IS THE SAME CONTROL ON BOTH BRANCHES** — three floor presets plus the slider
     # between them, since a floor is a number and there is no per-branch option list left to differ
     # about. Corral being local-only is still true: it is an IMPROVEMENT, and the improvement control
@@ -1381,8 +1398,14 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # It reads the IMPROVEMENT axis to pick the ownership-gated vs would-be crew field; the rationale
     # for that split lives on the helper. The expedition party has no herding crew, so
     # `SourceForecast.expedition_useful_cap` is left alone.
-    var capped := SourceForecast.expedition_useful_cap(band, herd, _compose.hunt_floor(), assignable) if is_expedition \
-        else _forecast_worker_cap(forecast, assignable, SourceForecast.herd_crew_floor(
+    # **THE DEMAND-SIDE CAP IS A READING OF THE TABLE TOO**, so under a kit mismatch the party falls
+    # back to supply alone: with no table for this kit the payload's plateau is unknown, and clamping
+    # to another kit's plateau would refuse a party this one may well need.
+    var capped := {"cap": assignable, "note": ""}
+    if is_expedition and trip_quoted:
+        capped = SourceForecast.expedition_useful_cap(band, herd, _compose.hunt_floor(), assignable)
+    elif not is_expedition:
+        capped = _forecast_worker_cap(forecast, assignable, SourceForecast.herd_crew_floor(
             herd, composed_improvement != SourceForecast.IMPROVEMENT_NONE))
     var cap := int(capped["cap"])
     # Auto-max on a FLOOR click — "give me everything this herd can spare at this floor": the
@@ -1400,8 +1423,17 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # "up to X/turn" button metric, DESCENDING as the floor rises (take everything > best harvest >
     # learn from it). Worker-independent on both branches (the expedition's is the max over party sizes
     # of delivered / trip_turns, so it never changes as the Party stepper steps).
-    var floor_takes := SourceForecast.expedition_policy_takes(band, herd, _band_labor.grid_width(), _band_labor.wrap_horizontal()) if is_expedition \
-        else _hunt_floor_takes(herd, composed_improvement)
+    # **THE PRESET METRICS GO WITH THE TABLE THEY COME FROM.** `expedition_policy_takes` is a reading
+    # of `huntTripEstimates`, so under a kit mismatch it would put a figure priced at another kit on a
+    # sheet whose own note says none are quoted. `{}` is the picker's supported degrade (a herd the
+    # wire does not describe), so the rungs render bare rather than wrong.
+    var floor_takes := {}
+    if is_expedition:
+        if trip_quoted:
+            floor_takes = SourceForecast.expedition_policy_takes(band, herd,
+                _band_labor.grid_width(), _band_labor.wrap_horizontal())
+    else:
+        floor_takes = _hunt_floor_takes(herd, composed_improvement)
     # **THE FLOOR FIRST, THEN THE CREW — the SAME vertical grammar the forage sheet reads in.** You
     # choose how hard to pull, then staff it. The cap is recomputed from the composed floor before the
     # stepper renders (a preset click re-renders and may auto-fill the crew) and the forecast below
@@ -1474,6 +1506,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         target.add_child(HudWidgets.alloc_hint_label(
             "%s is %d tiles away — beyond this band's hunt reach (%d). Detach a party to follow it." \
             % [_herd_label_for_id(herd_id), distance, reach]))
+    if is_expedition and trip_quoted:
         # **THE TARGET IS FOLDED BACK ONTO ITS AXIS BEFORE THE TRIP IS LOOKED UP.** The axis is a
         # function of the party and the floor, both of which the player has just been moving, so a
         # target held from a bigger party could otherwise ask for more animals than this raid brings
@@ -1519,6 +1552,14 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     var cap_note := String(capped["note"])
     if cap_note != "":
         target.add_child(HudWidgets.alloc_hint_label(cap_note))
+    # **THE KIT ROW, directly under the crew stepper and above every forecast** — a kit describes the
+    # crew, and it moves the fight (the attack tier) and the haul (the carry tier) alike. Both branches
+    # get it: a local hunt sends `assign_labor … kit <id>` exactly as a raid sends
+    # `send_hunt_expedition … kit <id>`.
+    _mount_kit_row(target, kits, KitRoster.JOB_HUNT, kit_id, default_kit, band,
+        func(picked: String) -> void:
+            _compose.set_hunt_kit_id(picked)
+            _build_herd_assign_controls(_live_herd(herd_id, herd), target))
     # **THE FIGHT, STATED BEFORE THE PARTY LEAVES** (`docs/plan_hunt_through_combat.md` §2.1 / §6.5),
     # directly under the crew that will fight it — both lines answer "is this crew the right size, and
     # can it win at all", which is what the stepper one row up has just posed.
@@ -1546,7 +1587,12 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         # still takes casualties, which reads as a bug unexplained. The refusal is DANGER-inked; above
         # the gate the same line states the effort instead, so the sheet always says what the fight
         # costs rather than only when it is hopeless.
-        var gate := SourceForecast.hunt_gate_model(band, herd, quarry)
+        #
+        # **IT IS ASKED AT THE SELECTED KIT'S EFFECTIVE ATTACK, NOT THE BAND'S DEFAULT-KIT TIER.** The
+        # picker one row up decides what these hunters carry, so a gate quoting the band's default kit
+        # would refuse — or clear — a fight the composed party is not having.
+        var gate_tiers := KitRoster.effective_tiers(kits, KitRoster.kit_by_id(kits, kit_id), band)
+        var gate := SourceForecast.hunt_gate_model_at(float(gate_tiers["attack"]), herd, quarry)
         if bool(gate["stated"]):
             var gate_label := HudWidgets.forecast_label("[color=#%s]%s[/color]" % [
                 HudStyle.DANGER_HEX if bool(gate["blocked"]) else HudStyle.INK_DIM_HEX,
@@ -1578,7 +1624,18 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     var is_noop := not is_expedition and _compose.hunt_count() <= 0 and current <= 0
     var assign_btn := Button.new()
     assign_btn.set_meta(HudWidgets.COMPOSE_COMMIT_META, true)
-    if is_expedition:
+    if is_expedition and not trip_quoted:
+        # **THE KIT-MISMATCH RAID.** The table is not an answer for this party, so nothing derived from
+        # it renders — no trip readout, no one-line verdict, no refusal. The combat gate two rows above
+        # already stated what this kit can and cannot hurt (it is composed from wire terms and stays
+        # honest at any tier), so what is added here is the sentence naming whose numbers were
+        # withheld. The send stays live and plainly styled: the raid launches, we simply cannot quote
+        # its length.
+        target.add_child(HudWidgets.alloc_hint_label(KitRoster.estimates_quoted_note(kits, herd,
+            KitRoster.HERD_TRIP_ESTIMATES_KIT_KEY, default_kit, kit_id,
+            HudComposeVocab.KIT_TRIP_ESTIMATES_QUOTED_FORMAT)))
+        SourceForecast.style_send_hunt_button(assign_btn, {}, "")
+    elif is_expedition:
         # **THE TRIP READOUT** — the raid's answer in the SAME bounded box the local sheet uses, so a
         # player moving between the two branches reads one layout: the payload as a yields row, the
         # trip's length as the verdict, the floor's meaning as the aside. It re-renders with this
@@ -1657,7 +1714,12 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         # positive party is the other precondition. (`or` — never clear a disable the style step set.)
         assign_btn.disabled = assign_btn.disabled or _compose.hunt_count() <= 0
         assign_btn.pressed.connect(func() -> void:
-            if _compose.hunt_count() <= 0 or SourceForecast.hunt_trip_returns_empty(
+            if _compose.hunt_count() <= 0:
+                return
+            # **THE EMPTY-RAID GUARD IS ALSO A READING OF THE TABLE**, so it is skipped where the table
+            # is not quoted for this kit: refusing a launch on another kit's projection would be the
+            # same lie as quoting one, cast as a silent no-op.
+            if trip_quoted and SourceForecast.hunt_trip_returns_empty(
                     SourceForecast.hunt_trip_forecast(band, herd, _compose.hunt_floor(), _compose.hunt_count(),
             _band_labor.grid_width(), _band_labor.wrap_horizontal(), _compose.hunt_fill_target())):
                 return
@@ -1674,6 +1736,9 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
                 # for. `NO_FILL_TARGET` = fill the pack, which is what the command sent before this
                 # lever existed and what `Main` omits the token for.
                 "fill_target": _compose.hunt_fill_target(),
+                # The kit the party walks out with, and the job default `Main` omits the token for.
+                "kit_id": kit_id,
+                "default_kit_id": default_kit,
             })
             # Committing is the end of the compose act — return to the read state (§15).
             close_compose_sheet())
@@ -1683,11 +1748,22 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
             # improvement commands act on the bands ALREADY WORKING the source, so a verb sent to an
             # unstaffed herd is rejected outright — the crew has to land first.
             _emit_assign_labor(band, SourceForecast.LABOR_KIND_HUNT, _compose.hunt_count(),
-                herd_x, herd_y, herd_id, _compose.hunt_floor(), "", composed_improvement)
+                herd_x, herd_y, herd_id, _compose.hunt_floor(), "", composed_improvement, kit_id)
             _emit_improvement(band, SourceForecast.LABOR_KIND_HUNT, composed_improvement,
                 standing_improvement, herd_x, herd_y, herd_id)
             close_compose_sheet())
     target.add_child(assign_btn)
+
+## Mount the kit row where a sheet wants it — a no-op when the roster offers this job no kit at all,
+## so a sheet rendered before the first snapshot (or against a world whose roster does not cover the
+## verb) is byte-identical to what it was before the picker existed. The Band panel's dock sheets keep
+## the identical helper; the two controllers share no base, and one Callable to reach the other's copy
+## would be an injection that buys nothing.
+func _mount_kit_row(target: VBoxContainer, kits: Array, job: String, kit_id: String,
+        default_kit: String, band: Dictionary, on_pick: Callable) -> void:
+    var row := KitRoster.build_kit_row(kits, job, kit_id, default_kit, band, on_pick)
+    if row != null:
+        target.add_child(row)
 
 
 
@@ -2181,6 +2257,20 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     var cap_note := String(capped["note"])
     if cap_note != "":
         target.add_child(HudWidgets.alloc_hint_label(cap_note))
+    # **THE KIT ROW, directly under the crew stepper and above the readout** — the forage web's half of
+    # the picker. There is no honesty gate here: the plant web has no estimate table quoted at one kit,
+    # so the readout below is composed from the patch's own terms at any selection. What the kit DOES
+    # move is the gatherer's carry tier, which the hint line under the picker states at this band's
+    # real basket condition rather than at the roster's fresh number.
+    var forage_kits := _band_labor.kits()
+    var forage_default_kit := _band_labor.default_kit_id(KitRoster.JOB_FORAGE)
+    var forage_kit_id := KitRoster.resolve_selection(forage_kits, KitRoster.JOB_FORAGE,
+        forage_default_kit, _compose.forage_kit_id())
+    _compose.set_forage_kit_id(forage_kit_id)
+    _mount_kit_row(target, forage_kits, KitRoster.JOB_FORAGE, forage_kit_id, forage_default_kit, band,
+        func(picked: String) -> void:
+            _compose.set_forage_kit_id(picked)
+            _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target))
     # WOULD THIS SUBMIT CHANGE ANYTHING? `current` is the pending-aware standing staffing on this tile
     # for THIS band, so the two zero-worker cases are DIFFERENT SUBMITS, and the block below —
     # forecast line and button TOGETHER — has to read coherently for each:
@@ -2258,7 +2348,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         # second. The sim's improvement commands act on the bands ALREADY WORKING the tile, so a verb
         # sent to an unworked patch is rejected outright — the crew has to land first.
         _emit_assign_labor(band, SourceForecast.LABOR_KIND_FORAGE, _compose.forage_count(), x, y, "",
-            _compose.forage_floor(), _compose.forage_species(), composed_improvement)
+            _compose.forage_floor(), _compose.forage_species(), composed_improvement, forage_kit_id)
         _emit_improvement(band, SourceForecast.LABOR_KIND_FORAGE, composed_improvement,
             standing_improvement, x, y, "")
         close_compose_sheet())

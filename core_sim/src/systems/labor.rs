@@ -233,29 +233,6 @@ pub fn advance_labor_allocation(
         // kit that expires part-way through the loop must not pay two different rates to two herds in
         // the same turn.
         let band_kit = band_equipment.as_deref().copied().unwrap_or_default();
-        let hunt_per_worker_biomass = equipment_cfg.hunt_per_worker_biomass_capacity(
-            equipped_haul_rate,
-            band_kit.sled_equipped(&equipment_cfg),
-        );
-        // **And this band's BASKET tier, on the same rule** — the forage web's carry, which before
-        // §4.8's "one kit, one job" correction had no kit at all. It is the undipped, pre-seasonal
-        // per-gatherer throughput every `forage_take`, gather forecast and staffing inversion below
-        // is capped by; the sled is never consulted for it.
-        let forage_per_worker_capacity = equipment_cfg.forage_per_worker_biomass_capacity(
-            equipped_gather_rate,
-            band_kit.basket_equipped(&equipment_cfg),
-        );
-        // **And this band's FIGHTING tier, on the same one-kit-state-per-turn rule**
-        // (`docs/plan_hunt_through_combat.md` §4). The hunting kit swaps the whole `attack` tier
-        // (`1` bare-handed, `20` speared), which is the gate every take now resolves through — so a
-        // band whose spears ran dry stops being able to hurt anything with a `defense`, and the
-        // forecast it is seeded from says so on the same tier.
-        let hunting_party = fauna::HuntingParty {
-            hunter: equipment_cfg
-                .hunter_profile(person_profile, band_kit.hunting_equipped(&equipment_cfg)),
-            tuning: combat_tuning,
-            injury_damage_per_animal: hunt_injury_damage,
-        };
         // Normalize each turn: if `working` shrank, trim assignments so Σ ≤ available.
         let available = available_workers(cohort.working);
         let faction = cohort.faction;
@@ -320,6 +297,48 @@ pub fn advance_labor_allocation(
             // it is pulling. `None` = a pure harvest. It dips the take ceiling, drives the build
             // meter, and is the thing completion clears — `policy` is never written by this system.
             let improvement = assignment.improvement;
+            // **THE KIT THIS CREW WAS SENT OUT WITH** (`equipment.json`'s roster) — the mask that
+            // decides which of the three components serve it at all, re-resolved from the
+            // *assignment* every turn and never from what the band happens to hold. `None` = the
+            // crew named no kit, which is its job's default: the two shipped working kits reach for
+            // exactly the components this loop used to consult unconditionally, so a crew that named
+            // nothing is priced bit-for-bit as it was before the roster existed.
+            //
+            // **The WEAR half is still resolved once per band** (`band_kit` above), so a kit that
+            // expires part-way through the loop cannot pay two different rates to two herds in the
+            // same turn; only the *mask* varies per assignment.
+            let crew_kit = assignment.kit_choice(&equipment_cfg);
+            // **The three EFFECTIVE predicates, resolved once for this crew.** Each one decides a
+            // tier *and* gates that component's wear below — one value, both answers, because a crew
+            // that is not using a component must not be charged for it. Get that split wrong and a
+            // bare-handed comparison consumes the very kit it is being compared against.
+            let hunting_equipped = crew_kit
+                .as_ref()
+                .is_some_and(|kit| kit.hunting_equipped(&band_kit, &equipment_cfg));
+            let sled_equipped = crew_kit
+                .as_ref()
+                .is_some_and(|kit| kit.sled_equipped(&band_kit, &equipment_cfg));
+            let basket_equipped = crew_kit
+                .as_ref()
+                .is_some_and(|kit| kit.basket_equipped(&band_kit, &equipment_cfg));
+            // This crew's HUNT haul tier — the **sled**, if its kit carries one.
+            let hunt_per_worker_biomass =
+                equipment_cfg.hunt_per_worker_biomass_capacity(equipped_haul_rate, sled_equipped);
+            // **And its BASKET tier** — the forage web's carry, which before §4.8's "one kit, one
+            // job" correction had no kit at all. It is the undipped, pre-seasonal per-gatherer
+            // throughput every `forage_take`, gather forecast and staffing inversion below is capped
+            // by; the sled is never consulted for it.
+            let forage_per_worker_capacity = equipment_cfg
+                .forage_per_worker_biomass_capacity(equipped_gather_rate, basket_equipped);
+            // **And its FIGHTING tier** (`docs/plan_hunt_through_combat.md` §4). The hunting kit
+            // swaps the whole `attack` tier (`1` bare-handed, `20` speared), which is the gate every
+            // take resolves through — so a crew sent out with no spears stops being able to hurt
+            // anything with a `defense`, and the seed it was assigned on says so on the same tier.
+            let hunting_party = fauna::HuntingParty {
+                hunter: equipment_cfg.hunter_profile(person_profile, hunting_equipped),
+                tuning: combat_tuning,
+                injury_damage_per_animal: hunt_injury_damage,
+            };
             match &assignment.target {
                 LaborTarget::Forage {
                     tile,
@@ -761,8 +780,13 @@ pub fn advance_labor_allocation(
                     // **after** the take, the accrue-after-take ordering every rung's build meter
                     // uses: the turn is paid at the tier it was priced with and the cliff lands on
                     // the next turn.
-                    if let Some(kit) = band_equipment.as_mut() {
-                        kit.wear_baskets(&equipment_cfg, take);
+                    //
+                    // **Gated on the SAME predicate that chose the tier** — a crew whose kit carries
+                    // no baskets gathered by hand, so there is nothing to wear out.
+                    if basket_equipped {
+                        if let Some(kit) = band_equipment.as_mut() {
+                            kit.wear_baskets(&equipment_cfg, take);
+                        }
                     }
                     // **THE earn path, rungs 1–2** — the drawn-down half of the split above. A crew
                     // with nothing standing above its floor is watching the stand, not practising on
@@ -1311,8 +1335,12 @@ pub fn advance_labor_allocation(
                         // TOE). The *hunting* kit is untouched here: a penned beast is slaughtered,
                         // not stalked, so there is no fight and no spear to blunt — which is the
                         // same reason this branch passes no engagement bound to the quantiser.
-                        if let Some(kit) = band_equipment.as_mut() {
-                            kit.wear_sled(&equipment_cfg, take.carried);
+                        // Gated on the same predicate that chose the haul tier: a keeper with no
+                        // sled dragged the carcass by hand and wore nothing out doing it.
+                        if sled_equipped {
+                            if let Some(kit) = band_equipment.as_mut() {
+                                kit.wear_sled(&equipment_cfg, take.carried);
+                            }
                         }
                         // **A pen changes the INTENSITY, never the PRODUCT** — the keeper is paid
                         // this herd's own species vector, so a penned wolf yields pelts and no meat
@@ -1472,9 +1500,16 @@ pub fn advance_labor_allocation(
                     // Charged AFTER the take, so this turn's take is paid at the tier the take was
                     // priced with and the cliff lands on the *next* turn. That is the same
                     // accrue-after-take ordering every rung's build meter uses.
+                    //
+                    // **Each charge is gated on the predicate that chose its own tier**, and the two
+                    // are independent: a kit with spears but no sled blunts spears only.
                     if let Some(kit) = band_equipment.as_mut() {
-                        kit.wear_hunting(&equipment_cfg, take.killed)
-                            .wear_sled(&equipment_cfg, take.carried);
+                        if hunting_equipped {
+                            kit.wear_hunting(&equipment_cfg, take.killed);
+                        }
+                        if sled_equipped {
+                            kit.wear_sled(&equipment_cfg, take.carried);
+                        }
                     }
                     // **THE earn path, rungs 1–2** — the drawn-down half of the split above, and the
                     // heart of the ladder: the same hunt teaches **Herding** on a wild herd and
@@ -2729,6 +2764,7 @@ mod labor_yield_tests {
                     },
                     workers: WORKERS,
                     improvement: None,
+                    kit: None,
                 },
                 LaborAssignment {
                     target: LaborTarget::Hunt {
@@ -2737,6 +2773,7 @@ mod labor_yield_tests {
                     },
                     workers: WORKERS,
                     improvement: None,
+                    kit: None,
                 },
             ],
         );
@@ -2808,6 +2845,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
         let fauna = world.resource::<FaunaConfigHandle>().get();
@@ -2848,6 +2886,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
         let fauna = world.resource::<FaunaConfigHandle>().get();
@@ -2983,6 +3022,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -3013,6 +3053,7 @@ mod labor_yield_tests {
                 },
                 workers: assigned,
                 improvement: None,
+                kit: None,
             }],
         );
 
@@ -3078,6 +3119,7 @@ mod labor_yield_tests {
                 },
                 workers: assigned,
                 improvement: None,
+                kit: None,
             }],
         );
 
@@ -3151,6 +3193,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
         let keeper = spawn_band(
@@ -3163,6 +3206,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
 
@@ -3348,6 +3392,7 @@ mod labor_yield_tests {
                 },
                 workers: crew,
                 improvement: Some(Improvement::Tame),
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -3492,6 +3537,7 @@ mod labor_yield_tests {
                 },
                 workers: crew,
                 improvement: Some(Improvement::Cultivate),
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -3590,6 +3636,7 @@ mod labor_yield_tests {
                 },
                 workers,
                 improvement: Some(Improvement::Cultivate),
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -3659,6 +3706,7 @@ mod labor_yield_tests {
                     },
                     workers: WORKERS,
                     improvement,
+                    kit: None,
                 }],
             );
             world.run_system_once(advance_labor_allocation);
@@ -3776,6 +3824,7 @@ mod labor_yield_tests {
                 },
                 workers,
                 improvement: None,
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -3797,6 +3846,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -3987,6 +4037,7 @@ mod labor_yield_tests {
                 },
                 workers: assigned,
                 improvement: None,
+                kit: None,
             }],
         );
         // The sim's expectation: one crew, `max(herders, steady_haul)` — taken on the **pre-take**
@@ -4183,6 +4234,7 @@ mod labor_yield_tests {
                             },
                             workers,
                             improvement,
+                            kit: None,
                         }],
                     );
                     world.run_system_once(advance_labor_allocation);
@@ -4270,6 +4322,7 @@ mod labor_yield_tests {
                                 },
                                 workers,
                                 improvement,
+                                kit: None,
                             }],
                         );
                         world.run_system_once(advance_labor_allocation);
@@ -4437,6 +4490,7 @@ mod labor_yield_tests {
                 },
                 workers: field_workers_needed,
                 improvement: None,
+                kit: None,
             }],
         );
         let short_handed = spawn_band(
@@ -4449,6 +4503,7 @@ mod labor_yield_tests {
                 },
                 workers: 1,
                 improvement: None,
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -4548,6 +4603,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
 
@@ -4625,6 +4681,7 @@ mod labor_yield_tests {
                     },
                     workers: WORKERS,
                     improvement: None,
+                    kit: None,
                 }],
             );
             world.run_system_once(advance_labor_allocation);
@@ -4705,6 +4762,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
         // Band B (same faction) forages the neighbor tile (1,0), which has no food module/patch →
@@ -4721,6 +4779,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
 
@@ -4766,6 +4825,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
 
@@ -4864,6 +4924,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -4892,6 +4953,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: Some(Improvement::Cultivate),
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -4980,6 +5042,7 @@ mod labor_yield_tests {
                     },
                     workers: SOLE_FORAGER,
                     improvement,
+                    kit: None,
                 }],
             );
             world.run_system_once(advance_labor_allocation);
@@ -5065,6 +5128,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -5097,6 +5161,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: Some(Improvement::Corral),
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -5162,6 +5227,7 @@ mod labor_yield_tests {
                     },
                     workers: SOLE_HUNTER,
                     improvement,
+                    kit: None,
                 }],
             );
             world.run_system_once(advance_labor_allocation);
@@ -5327,6 +5393,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: Some(Improvement::Cultivate),
+                kit: None,
             }],
         );
 
@@ -5474,6 +5541,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: Some(Improvement::Tame),
+                kit: None,
             }],
         );
 
@@ -5555,6 +5623,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: Some(Improvement::Corral),
+                kit: None,
             }],
         );
 
@@ -5618,6 +5687,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: Some(Improvement::Cultivate),
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -5642,6 +5712,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: Some(Improvement::Corral),
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -5669,6 +5740,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: Some(Improvement::Corral),
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -5710,6 +5782,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -5728,6 +5801,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);

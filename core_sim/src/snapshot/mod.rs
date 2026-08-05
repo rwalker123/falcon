@@ -20,12 +20,13 @@ use sim_runtime::{
     FoodModuleState, ForagePatchState, ForkChoiceState, GenerationState, GlossEntryState,
     GreatDiscoveryDefinitionState, GreatDiscoveryProgressState, GreatDiscoveryState,
     GreatDiscoveryTelemetryState, HerdTelemetryState, HuntTripEstimateState,
-    InfluentialIndividualState, IntensificationKnowledgeState, KnowledgeLedgerEntryState,
-    KnowledgeMetricsState, KnowledgeTimelineEventState, LaborAssignmentState, LogisticsLinkState,
-    MountainKind, PendingForkState, PendingForksState, PendingMigrationState,
-    PopulationCohortState, PopulationDemographicsState as SchemaPopulationDemographicsState,
-    PowerIncidentSeverity, PowerIncidentState, PowerNodeState, PowerTelemetryState,
-    ScalarRasterState, SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
+    InfluentialIndividualState, IntensificationKnowledgeState, KitOptionState,
+    KnowledgeLedgerEntryState, KnowledgeMetricsState, KnowledgeTimelineEventState,
+    LaborAssignmentState, LogisticsLinkState, MountainKind, PendingForkState, PendingForksState,
+    PendingMigrationState, PopulationCohortState,
+    PopulationDemographicsState as SchemaPopulationDemographicsState, PowerIncidentSeverity,
+    PowerIncidentState, PowerNodeState, PowerTelemetryState, ScalarRasterState,
+    SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
     SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
     SettlementStageViewState, SnapshotHeader, StanceAxisState, StanceState, StartMarkerState,
     TerrainOverlayState, TerrainSample, TileState, TradeLinkKnowledge, TradeLinkState,
@@ -824,6 +825,10 @@ mod tests {
             viewer: VIEWER,
             fog_enabled,
             party: crate::fauna::HuntingParty::builtin_equipped(),
+            quoted_per_worker_haul: labor.hunt.per_worker_biomass_capacity,
+            quoted_kit_id: crate::equipment_config::EquipmentConfig::builtin()
+                .default_kit_id(crate::equipment_config::KitJob::Hunt)
+                .to_string(),
             range_sigmas: crate::combat_config::CombatConfig::builtin().forecast_range_sigmas,
         })
     }
@@ -919,6 +924,9 @@ mod tests {
         let header = SnapshotHeader::new(tick, tiles.len(), 0, 0, 0, 0, 0);
         WorldSnapshot {
             header,
+            kits: Vec::new(),
+            default_hunt_kit_id: String::new(),
+            default_forage_kit_id: String::new(),
             tiles,
             logistics: Vec::new(),
             trade_links: Vec::new(),
@@ -982,6 +990,9 @@ mod tests {
         let header = SnapshotHeader::new(tick, 0, 0, 0, 0, 0, 0);
         WorldSnapshot {
             header,
+            kits: Vec::new(),
+            default_hunt_kit_id: String::new(),
+            default_forage_kit_id: String::new(),
             tiles: Vec::new(),
             logistics: Vec::new(),
             trade_links: Vec::new(),
@@ -1040,6 +1051,9 @@ mod tests {
         let header = SnapshotHeader::new(tick, 0, 0, 0, 0, 0, 0);
         WorldSnapshot {
             header,
+            kits: Vec::new(),
+            default_hunt_kit_id: String::new(),
+            default_forage_kit_id: String::new(),
             tiles: Vec::new(),
             logistics: Vec::new(),
             trade_links: Vec::new(),
@@ -1201,6 +1215,7 @@ mod tests {
                     },
                     workers: 10,
                     improvement: None,
+                    kit: None,
                 },
                 LaborAssignment {
                     target: LaborTarget::Hunt {
@@ -1209,6 +1224,7 @@ mod tests {
                     },
                     workers: 5,
                     improvement: None,
+                    kit: None,
                 },
             ],
             last_yields: vec![
@@ -1300,6 +1316,7 @@ mod tests {
                 },
                 workers: 10,
                 improvement: None,
+                kit: None,
             }],
             last_yields: Vec::new(),
             last_pen_feed_upkeep: 0.0,
@@ -1338,8 +1355,13 @@ mod tests {
             target,
             workers: 6,
             improvement: None,
+            kit: None,
         };
-        let state = labor_assignment_to_state(&assignment, &SourceYield::ZERO);
+        let state = labor_assignment_to_state(
+            &assignment,
+            &SourceYield::ZERO,
+            &crate::equipment_config::EquipmentConfig::builtin(),
+        );
         assert_eq!(state.floor, UNNAMED_FLOOR, "the floor crosses verbatim");
         // Only the outbound leg is asserted now. `labor_allocation_from_state` was the decoder,
         // and it existed solely for `restore_world_from_snapshot` — the server never reads labor
@@ -1362,8 +1384,13 @@ mod tests {
             },
             workers: 6,
             improvement: Some(Improvement::Cultivate),
+            kit: None,
         };
-        let state = labor_assignment_to_state(&assignment, &SourceYield::ZERO);
+        let state = labor_assignment_to_state(
+            &assignment,
+            &SourceYield::ZERO,
+            &crate::equipment_config::EquipmentConfig::builtin(),
+        );
         assert_eq!(state.floor, 0.15, "the pressure rides `floor`");
         assert_eq!(
             state.improvement, "cultivate",
@@ -1375,7 +1402,11 @@ mod tests {
             improvement: None,
             ..assignment
         };
-        let state = labor_assignment_to_state(&harvesting, &SourceYield::ZERO);
+        let state = labor_assignment_to_state(
+            &harvesting,
+            &SourceYield::ZERO,
+            &crate::equipment_config::EquipmentConfig::builtin(),
+        );
         assert_eq!(
             state.floor, 0.15,
             "…and the floor is untouched by the build axis"

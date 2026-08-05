@@ -1144,7 +1144,40 @@ mission reads the same at every scale. The parties row deliberately renders **no
 tag a raid with a pressure it never chose. The map marker likewise takes no phase decoration: the
 green food pip is a haul cue, and a denial party's haul is a rounding error it should not advertise.
 
+### The KIT row rides both dock sheets, and the denial one carries the honesty rule
+
+Both the hunting-party form and the denial form mount `KitRoster.build_kit_row` **directly under the
+party stepper (and its `of N idle` / cap notes) and above everything the kit moves** — the spec, the
+effective-tier rule and the command token all live in `labor-ui.md` → "THE KIT IS CHOSEN ON THE
+SHEET". Two consequences are this sheet's own:
+
+- **The denial form's payload gains `kit_id` + `default_kit_id`** and nothing else; the four-token
+  grammar admits the named `kit <id>` pair and no positional. `_mount_kit_row` /
+  `_mount_kit_gate_line` are `BandPanelController`'s two small helpers for it, shared by both forms.
+- **When the selection differs from `denial_estimates_kit_id`, the sheet renders the COMBAT GATE and
+  the quoted-kit sentence and NOTHING ELSE below the kit hint** — no verdict, no caveat, no take
+  line, no counted refusal, no short-handed disable, every one of them being a figure priced for a
+  raid the player is not sending. The Send stays live and plainly styled: the raid launches, only its
+  length is unquotable. The hunt form takes the same treatment against
+  `hunt_trip_estimates_kit_id`, additionally dropping the fill target, the floor picker's metrics and
+  the demand-side party cap.
+
 ### Frames
+
+`band_panel_preview`: **`band_panel_compose_deny_kit`** (the picker CLOSED, on a band whose SLED has
+run dry — so the hint reads `attack 20.0 · carry 12.0 per hunter · spears 74 · sled dry` and a hint
+quoting the roster's fresh 40 fails there and nowhere else; the attack stays EQUIPPED on the same
+line, which is what stops "quote the bare tier for everything" passing instead) ·
+**`band_panel_compose_deny_kit_open`** (the popup — an embedded subwindow, so it lands in the capture;
+the structural claims ride the assertion, a screenshot being unable to say which item carries the
+radio dot: this verb's kits and only those, the default TAGGED, `none` LAST, exactly one marked) ·
+**`band_panel_compose_deny_kit_mismatch`** (`none` against tables quoted for `big_game`, asserted **by
+EQUALITY** over the sheet's lines below the kit hint, because half the claim is what the sheet must
+NOT say). Sabotage-verified on two DISJOINT mutations: rendering the table regardless of the kit id
+fails the equality assertion alone, naming the verdict, the caveat and the take line it found;
+quoting the FRESH tier fails the hint assertion alone. `cargo xtask command-guard` carries the token's
+half — it composes a non-default kit on all four grammars and parses every line with the real server
+parser.
 
 `band_panel_preview`: **`band_panel_compose_deny_short_handed`** (the ONE refusing frame — the
 reference band's 3 idle against the deep-party quarry's requirement of 11: the stepper sitting at the

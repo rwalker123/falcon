@@ -280,6 +280,7 @@ fn spawn_hunters(app: &mut App, pos: UVec2, fauna_id: &str, floor: f32) -> bevy:
                     },
                     workers: CREW,
                     improvement: NO_IMPROVEMENT_UNDERWAY,
+                    kit: None,
                 }],
                 ..Default::default()
             },

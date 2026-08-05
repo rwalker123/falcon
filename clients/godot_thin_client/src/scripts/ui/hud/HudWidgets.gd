@@ -503,7 +503,32 @@ static func build_section_menu(entries: Array, tooltip: String) -> MenuButton:
     button.custom_minimum_size = Vector2(HudWorkVocab.SECTION_MENU_WIDTH, 0.0)
     HudStyle.apply_button(button, "ghost")
     compact(button, HudWorkVocab.ZONE_HEAD_FONT_SIZE, HudWorkVocab.ZONE_MENU_PADDING_V)
-    var popup := button.get_popup()
+    _fill_menu_popup(button.get_popup(), entries)
+    return button
+
+## **THE SAME MENU BEHIND A NAMED FACE** — a `MenuButton` whose face states the CURRENT choice instead
+## of the `⋯` glyph, for a control that is a chooser in its own right rather than an overflow on a
+## section head (the kit picker). It shares `build_section_menu`'s entry contract and its popup fill
+## exactly, so the two cannot come to disagree about what a checked entry or a disabled one means, and
+## it is a `MenuButton` for the same reason: the popup is a WINDOW, so opening it moves no layout.
+##
+## `EXPAND_FILL` + `clip_text` are load-bearing together, the picked-quarry button's rule: `clip_text`
+## drops the minimum width to ~0, so without the expand the control collapses to a sliver beside an
+## expanding key label — and without the clip a long kit name widens the row past the dock column.
+static func build_picker_menu(entries: Array, face: String, tooltip: String) -> MenuButton:
+    var button := MenuButton.new()
+    button.text = face
+    button.tooltip_text = tooltip
+    button.focus_mode = Control.FOCUS_NONE
+    button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    button.clip_text = true
+    HudStyle.apply_button(button, "ghost")
+    _fill_menu_popup(button.get_popup(), entries)
+    return button
+
+## The shared popup fill for both menu faces above — one implementation of the entry contract
+## (`{label, disabled, on_pick}` + the optional `MENU_ENTRY_CHECKED` / `MENU_ENTRY_ICON`).
+static func _fill_menu_popup(popup: PopupMenu, entries: Array) -> void:
     var picks: Array[Callable] = []
     for entry_variant in entries:
         if not (entry_variant is Dictionary):
@@ -535,7 +560,6 @@ static func build_section_menu(entries: Array, tooltip: String) -> MenuButton:
     popup.id_pressed.connect(func(id: int) -> void:
         if id >= 0 and id < picks.size() and picks[id].is_valid():
             picks[id].call())
-    return button
 
 ## The party stepper row, shared by both missions so they cannot drift apart in shape.
 static func build_party_stepper_row(count: int, party_max: int, on_change: Callable) -> HBoxContainer:

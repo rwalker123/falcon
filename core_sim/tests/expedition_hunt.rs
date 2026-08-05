@@ -290,6 +290,7 @@ fn spawn_hunt_party_targeting(
                 announced: false,
                 pending_reveal: Vec::new(),
                 carried_trade: 0.0,
+                kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Hunt),
             },
         ))
         .id()
@@ -483,7 +484,7 @@ fn a_raid_and_a_resident_band_reach_the_same_animals() {
         PEAK_FLOOR,
         NO_FILL_TARGET,
         &fauna,
-        &labor,
+        labor.hunt.per_worker_biomass_capacity,
         &cfg,
         &hunting_party(),
     );
@@ -547,7 +548,7 @@ fn more_hunters_raid_the_surplus_faster() {
             0.5,
             NO_FILL_TARGET,
             &fauna,
-            &labor,
+            labor.hunt.per_worker_biomass_capacity,
             &cfg,
             &hunting_party(),
         );
@@ -570,7 +571,7 @@ fn more_hunters_raid_the_surplus_faster() {
         0.5,
         NO_FILL_TARGET,
         &fauna,
-        &labor,
+        labor.hunt.per_worker_biomass_capacity,
         &cfg,
         &hunting_party(),
     );
@@ -580,7 +581,7 @@ fn more_hunters_raid_the_surplus_faster() {
         0.5,
         NO_FILL_TARGET,
         &fauna,
-        &labor,
+        labor.hunt.per_worker_biomass_capacity,
         &cfg,
         &hunting_party(),
     );
@@ -612,7 +613,7 @@ fn a_second_hunter_raids_more_animals_no_slower() {
             0.5,
             NO_FILL_TARGET,
             &fauna,
-            &labor,
+            labor.hunt.per_worker_biomass_capacity,
             &cfg,
             &hunting_party(),
         );
@@ -628,7 +629,7 @@ fn a_second_hunter_raids_more_animals_no_slower() {
         0.5,
         NO_FILL_TARGET,
         &fauna,
-        &labor,
+        labor.hunt.per_worker_biomass_capacity,
         &cfg,
         &hunting_party(),
     );
@@ -638,7 +639,7 @@ fn a_second_hunter_raids_more_animals_no_slower() {
         0.5,
         NO_FILL_TARGET,
         &fauna,
-        &labor,
+        labor.hunt.per_worker_biomass_capacity,
         &cfg,
         &hunting_party(),
     );
@@ -684,7 +685,7 @@ fn animals_delivered_scale_with_the_pack_and_never_over_kill() {
             0.5,
             NO_FILL_TARGET,
             &fauna,
-            &labor,
+            labor.hunt.per_worker_biomass_capacity,
             &cfg,
             &hunting_party(),
         );
@@ -719,7 +720,7 @@ fn a_sustain_raid_leaves_about_half_k() {
         0.5,
         NO_FILL_TARGET,
         &fauna,
-        &labor,
+        labor.hunt.per_worker_biomass_capacity,
         &cfg,
         &hunting_party(),
     );
@@ -772,7 +773,7 @@ fn deeper_policies_raid_deeper() {
             p,
             NO_FILL_TARGET,
             &fauna,
-            &labor,
+            labor.hunt.per_worker_biomass_capacity,
             &cfg,
             &hunting_party(),
         )
@@ -813,7 +814,7 @@ fn the_standing_surplus_caps_the_raid() {
         0.5,
         NO_FILL_TARGET,
         &fauna,
-        &labor,
+        labor.hunt.per_worker_biomass_capacity,
         &cfg,
         &hunting_party(),
     );
@@ -823,7 +824,7 @@ fn the_standing_surplus_caps_the_raid() {
         0.5,
         NO_FILL_TARGET,
         &fauna,
-        &labor,
+        labor.hunt.per_worker_biomass_capacity,
         &cfg,
         &hunting_party(),
     );
@@ -858,7 +859,7 @@ fn a_herd_at_its_floor_has_no_surplus() {
         0.5,
         NO_FILL_TARGET,
         &fauna,
-        &labor,
+        labor.hunt.per_worker_biomass_capacity,
         &cfg,
         &hunting_party(),
     );
@@ -879,7 +880,7 @@ fn a_herd_at_its_floor_has_no_surplus() {
         0.5,
         NO_FILL_TARGET,
         &fauna,
-        &labor,
+        labor.hunt.per_worker_biomass_capacity,
         &cfg,
         &hunting_party(),
     );
@@ -934,7 +935,7 @@ fn a_small_party_on_a_big_animal_delivers_a_partial_with_waste() {
         0.5,
         NO_FILL_TARGET,
         &fauna,
-        &labor,
+        labor.hunt.per_worker_biomass_capacity,
         &cfg,
         &hunting_party(),
     );
@@ -973,7 +974,7 @@ fn a_small_party_on_a_big_animal_delivers_a_partial_with_waste() {
         0.5,
         NO_FILL_TARGET,
         &fauna,
-        &labor,
+        labor.hunt.per_worker_biomass_capacity,
         &cfg,
         &hunting_party(),
     );
@@ -1057,7 +1058,7 @@ fn the_raid_forecast_matches_a_real_party_run() {
                     policy,
                     NO_FILL_TARGET,
                     &fauna,
-                    &labor,
+                    labor.hunt.per_worker_biomass_capacity,
                     &cfg,
                     &hunting_party(),
                 )
@@ -2110,7 +2111,7 @@ fn a_fill_target_below_capacity_shortens_the_trip_and_above_it_is_an_identity() 
         PEAK_FLOOR,
         NO_FILL_TARGET,
         &fauna,
-        &labor,
+        labor.hunt.per_worker_biomass_capacity,
         &cfg,
         &hunting_party(),
     );
@@ -2137,7 +2138,7 @@ fn a_fill_target_below_capacity_shortens_the_trip_and_above_it_is_an_identity() 
         PEAK_FLOOR,
         SHORT_FILL_TARGET,
         &fauna,
-        &labor,
+        labor.hunt.per_worker_biomass_capacity,
         &cfg,
         &hunting_party(),
     );
@@ -2164,7 +2165,7 @@ fn a_fill_target_below_capacity_shortens_the_trip_and_above_it_is_an_identity() 
         PEAK_FLOOR,
         FILL_TARGET_ABOVE_ANY_PACK,
         &fauna,
-        &labor,
+        labor.hunt.per_worker_biomass_capacity,
         &cfg,
         &hunting_party(),
     );
@@ -2211,7 +2212,7 @@ fn trip_length_responds_to_the_fill_target_but_not_to_party_size_without_one() {
             PEAK_FLOOR,
             target,
             &fauna,
-            &labor,
+            labor.hunt.per_worker_biomass_capacity,
             &cfg,
             &hunting_party(),
         )
@@ -2507,7 +2508,7 @@ fn a_floor_zero_raid_reports_the_turn_the_herd_runs_out() {
             STRIP_IT_BARE,
             NO_FILL_TARGET,
             &fauna,
-            &labor,
+            labor.hunt.per_worker_biomass_capacity,
             &cfg,
             &hunting_party(),
         )
@@ -2571,7 +2572,7 @@ fn a_floor_zero_raid_reports_the_turn_the_herd_runs_out() {
             PEAK_FLOOR,
             NO_FILL_TARGET,
             &fauna,
-            &labor,
+            labor.hunt.per_worker_biomass_capacity,
             &cfg,
             &hunting_party(),
         )

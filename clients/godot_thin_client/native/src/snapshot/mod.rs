@@ -33,7 +33,7 @@ use crate::dict::map::{terrain_label_from_id, tiles_to_array, TERRAIN_TAG_LABELS
 use crate::dict::population::{demographics_to_array, generations_to_array, populations_to_array};
 use crate::dict::subsistence::{
     food_modules_to_array, forage_patches_to_array, herds_to_array,
-    intensification_knowledge_to_array, sedentarization_to_array,
+    intensification_knowledge_to_array, kits_to_array, sedentarization_to_array,
 };
 use crate::snapshot::cache::RasterCache;
 use crate::snapshot::delta::CrisisAnnotationRecord;
@@ -1426,6 +1426,20 @@ pub(crate) fn snapshot_to_dict(
 
     if let Some(forage_patches) = snapshot.subsistence().and_then(|s| s.foragePatches()) {
         let _ = dict.insert("forage_patches", &forage_patches_to_array(forage_patches));
+    }
+
+    // **THE KIT ROSTER, once per world** (`docs/plan_denial_raid.md`) — the picker's list plus the
+    // two job defaults. Whole-section fields, so they must be decoded on BOTH this path and
+    // `decode_delta_against`: the delta path having its own list of sections is exactly how
+    // `food_modules` and `faction_inventory` went stale for the life of a world.
+    if let Some(kits) = snapshot.subsistence().and_then(|s| s.kits()) {
+        let _ = dict.insert("kits", &kits_to_array(kits));
+    }
+    if let Some(default_hunt_kit) = snapshot.subsistence().and_then(|s| s.defaultHuntKitId()) {
+        let _ = dict.insert("default_hunt_kit_id", default_hunt_kit);
+    }
+    if let Some(default_forage_kit) = snapshot.subsistence().and_then(|s| s.defaultForageKitId()) {
+        let _ = dict.insert("default_forage_kit_id", default_forage_kit);
     }
 
     if let Some(intensification) = snapshot

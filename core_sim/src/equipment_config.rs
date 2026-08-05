@@ -135,15 +135,147 @@ pub struct BasketKitConfig {
     pub wear_per_biomass_gathered: f32,
 }
 
-/// Root TOE configuration: one block per shipped kit. **One kit, one job** — nothing here composes
-/// two roles onto one block, which is what makes the cross-checks in this module's tests (baskets do
-/// not touch the hunt; the sled does not touch foraging) statements about the *type*, not about a
-/// convention someone has to remember.
+/// **One of the three consumable component blocks a kit may draw on.** The variant names *are* the
+/// JSON block keys, so a roster entry naming a component that has no block cannot deserialize —
+/// "every `uses` entry names a real component block" is enforced by the type rather than by a
+/// validation pass someone has to remember to extend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KitComponent {
+    HuntingKit,
+    SledKit,
+    BasketKit,
+}
+
+/// **A job a kit may be sent out on** — the two verbs that resolve a tier off the TOE. The scouting
+/// and warrior roles are deliberately absent: they consume no component, so there is no kit axis to
+/// choose along and no default to name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KitJob {
+    Hunt,
+    Forage,
+}
+
+impl KitJob {
+    /// The wire/command token for this job — the same string `assign_labor`'s role token uses, so a
+    /// kit's `jobs` list and a labor role are compared in one language.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            KitJob::Hunt => "hunt",
+            KitJob::Forage => "forage",
+        }
+    }
+}
+
+/// One roster entry: a **named mask** over the component blocks above.
+#[derive(Debug, Clone, Deserialize)]
+pub struct KitDefinition {
+    /// Stable id — what a command names and what the wire carries. Unique across the roster.
+    pub id: String,
+    /// Player-facing label. The sim never branches on it.
+    pub display_name: String,
+    /// Which verbs this kit may be sent on. A kit named for a job outside this list is a **command
+    /// failure**, never a silent fall back to the job's default.
+    pub jobs: Vec<KitJob>,
+    /// The components this kit actually puts in the party's hands. **Empty is an ordinary roster
+    /// entry** (the shipped `none`), not a sentinel: it grants nothing, so every predicate reads
+    /// false and — because wear rides the same predicate — nothing is spent either.
+    pub uses: Vec<KitComponent>,
+}
+
+/// The kit each verb reaches for when the player names none. Validated to name a real roster entry
+/// whose `jobs` covers that verb, so [`EquipmentConfig::default_kit`] cannot fail after load.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DefaultKitsConfig {
+    pub hunt: String,
+    pub forage: String,
+}
+
+/// **A chosen kit, resolved once against the roster** — an id plus the component mask it stands for.
+///
+/// It is the **only** way anything asks "is this gear serving?": the three predicates below are
+/// `kit uses the component AND the band still has condition in it`, and
+/// [`crate::components::BandEquipment`]'s own condition tests are crate-private so a second reading
+/// cannot appear beside them. The two shipped working kits mask in exactly the components every call
+/// site used to consult unconditionally, which is what makes the roster a **no-op** for them.
+///
+/// **Resolved once, then carried.** A detached party stores its choice at launch and prices its
+/// whole life from it — re-resolving against the band's current stock would silently re-arm a party
+/// sent out bare the moment the band's spears were counted again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KitChoice {
+    id: Arc<str>,
+    uses_hunting: bool,
+    uses_sled: bool,
+    uses_basket: bool,
+}
+
+impl KitChoice {
+    /// The roster id this choice was resolved from — what the command named and what the wire carries.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// **Is the hunting kit serving this party?** The mask, and then the band's condition — a kit
+    /// that does not carry spears is bare-handed however fresh the band's are, and a kit that does
+    /// still steps down when they wear out.
+    pub fn hunting_equipped(
+        &self,
+        wear: &crate::components::BandEquipment,
+        config: &EquipmentConfig,
+    ) -> bool {
+        self.uses_hunting && wear.has_hunting_condition(config)
+    }
+
+    /// Is the sled serving this party? Same rule as [`Self::hunting_equipped`].
+    pub fn sled_equipped(
+        &self,
+        wear: &crate::components::BandEquipment,
+        config: &EquipmentConfig,
+    ) -> bool {
+        self.uses_sled && wear.has_sled_condition(config)
+    }
+
+    /// Are the baskets serving this party? Same rule as [`Self::hunting_equipped`].
+    pub fn basket_equipped(
+        &self,
+        wear: &crate::components::BandEquipment,
+        config: &EquipmentConfig,
+    ) -> bool {
+        self.uses_basket && wear.has_basket_condition(config)
+    }
+}
+
+/// Why a named kit cannot be sent on a verb. Both readings are **command failures with a reason** —
+/// a bad selection must never quietly become the default, because the whole point of naming a kit is
+/// that the player is comparing tiers.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum KitSelectionError {
+    #[error("unknown kit '{id}' — the roster offers {available}")]
+    Unknown { id: String, available: String },
+    #[error("the {display_name} cannot be sent on a {job} — it is a {jobs} kit")]
+    WrongJob {
+        display_name: String,
+        job: &'static str,
+        jobs: String,
+    },
+}
+
+/// Root TOE configuration: one block per shipped **component**, plus the **roster** of named kits
+/// that mask over them. **One kit, one job** — nothing here composes two roles onto one block, which
+/// is what makes the cross-checks in this module's tests (baskets do not touch the hunt; the sled
+/// does not touch foraging) statements about the *type*, not about a convention someone has to
+/// remember.
 #[derive(Debug, Clone, Deserialize)]
 pub struct EquipmentConfig {
     pub hunting_kit: HuntingKitConfig,
     pub sled_kit: SledKitConfig,
     pub basket_kit: BasketKitConfig,
+    /// The named kits a party may be sent out with. See [`KitDefinition`].
+    pub kits: Vec<KitDefinition>,
+    /// What each verb reaches for when the player names none.
+    pub default_kits: DefaultKitsConfig,
 }
 
 impl EquipmentConfig {
@@ -166,6 +298,87 @@ impl EquipmentConfig {
             source,
         })?;
         EquipmentConfig::from_json_str(&contents)
+    }
+
+    /// Every roster entry, in file order — the client's picker list.
+    pub fn kits(&self) -> &[KitDefinition] {
+        &self.kits
+    }
+
+    /// The roster entry with this id, or `None`.
+    pub fn kit_definition(&self, id: &str) -> Option<&KitDefinition> {
+        self.kits.iter().find(|kit| kit.id == id)
+    }
+
+    /// Resolve a roster id into the mask it stands for. `None` for an id the roster does not carry.
+    pub fn kit(&self, id: &str) -> Option<KitChoice> {
+        self.kit_definition(id).map(Self::choice_from)
+    }
+
+    fn choice_from(definition: &KitDefinition) -> KitChoice {
+        KitChoice {
+            id: Arc::from(definition.id.as_str()),
+            uses_hunting: definition.uses.contains(&KitComponent::HuntingKit),
+            uses_sled: definition.uses.contains(&KitComponent::SledKit),
+            uses_basket: definition.uses.contains(&KitComponent::BasketKit),
+        }
+    }
+
+    /// The id this verb's default kit carries.
+    pub fn default_kit_id(&self, job: KitJob) -> &str {
+        match job {
+            KitJob::Hunt => &self.default_kits.hunt,
+            KitJob::Forage => &self.default_kits.forage,
+        }
+    }
+
+    /// **What a verb runs on when the player names no kit.** Infallible after load: `validate`
+    /// rejects a default that is not a real roster entry covering its own job, so a broken roster is
+    /// a boot panic rather than a resolution that has to be handled at every call site.
+    pub fn default_kit(&self, job: KitJob) -> KitChoice {
+        self.kit(self.default_kit_id(job))
+            .expect("validate guarantees every default kit names a roster entry")
+    }
+
+    /// **The command boundary's one resolution.** `None` = the player named no kit, which is the
+    /// job's default; a named kit must exist *and* list this job, and anything else is an error the
+    /// caller reports rather than a quiet fall back to the default.
+    pub fn resolve_kit_for_job(
+        &self,
+        id: Option<&str>,
+        job: KitJob,
+    ) -> Result<KitChoice, KitSelectionError> {
+        let Some(id) = id else {
+            return Ok(self.default_kit(job));
+        };
+        let Some(definition) = self.kit_definition(id) else {
+            return Err(KitSelectionError::Unknown {
+                id: id.to_string(),
+                available: self.kit_ids_for_message(),
+            });
+        };
+        if !definition.jobs.contains(&job) {
+            return Err(KitSelectionError::WrongJob {
+                display_name: definition.display_name.clone(),
+                job: job.as_str(),
+                jobs: definition
+                    .jobs
+                    .iter()
+                    .map(|job| job.as_str())
+                    .collect::<Vec<_>>()
+                    .join("/"),
+            });
+        }
+        Ok(Self::choice_from(definition))
+    }
+
+    /// The roster's ids, for a refusal message — a player who mistypes a kit is told what there is.
+    fn kit_ids_for_message(&self) -> String {
+        self.kits
+            .iter()
+            .map(|kit| kit.id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     /// **A hunter's per-unit combat profile, kit composed in** — `intrinsic ⊕ loadout`, the
@@ -266,6 +479,60 @@ impl EquipmentConfig {
                 });
             }
         }
+        self.validate_roster()
+    }
+
+    /// **The roster's own invariants.** A broken roster is a boot panic
+    /// (`.claude/rules/core_sim/config-loading.md`), because every one of these breakages ends with
+    /// a party priced at a tier nobody chose:
+    ///
+    /// - **ids are unique** — otherwise `kit_definition` silently picks the first of two, and which
+    ///   one a command got would depend on file order.
+    /// - **a kit lists at least one job** — a kit that can be sent on nothing is dead config, and
+    ///   the roster is the client's picker list.
+    /// - **each default names a real kit** — [`Self::default_kit`] is infallible by construction, so
+    ///   this is what makes that `expect` a statement rather than a hope.
+    /// - **each default covers its own job** — a `forage` default the forage verb would itself
+    ///   refuse would fail every gather assignment at the command boundary.
+    ///
+    /// "Every `uses` entry names a real component block" is not checked here: [`KitComponent`]'s
+    /// variants *are* the block keys, so a bad name fails to deserialize — which is the same boot
+    /// panic, one layer earlier.
+    fn validate_roster(&self) -> Result<(), EquipmentConfigError> {
+        for (index, kit) in self.kits.iter().enumerate() {
+            if self.kits[..index].iter().any(|prior| prior.id == kit.id) {
+                return Err(EquipmentConfigError::InvalidRoster {
+                    reason: format!("duplicate kit id '{}'", kit.id),
+                });
+            }
+            if kit.jobs.is_empty() {
+                return Err(EquipmentConfigError::InvalidRoster {
+                    reason: format!("kit '{}' lists no jobs — it can be sent on nothing", kit.id),
+                });
+            }
+        }
+        for job in [KitJob::Hunt, KitJob::Forage] {
+            let id = self.default_kit_id(job);
+            let Some(definition) = self.kit_definition(id) else {
+                return Err(EquipmentConfigError::InvalidRoster {
+                    reason: format!(
+                        "default_kits.{} names '{}', which is not in the roster",
+                        job.as_str(),
+                        id
+                    ),
+                });
+            };
+            if !definition.jobs.contains(&job) {
+                return Err(EquipmentConfigError::InvalidRoster {
+                    reason: format!(
+                        "default_kits.{} names '{}', whose jobs do not include {}",
+                        job.as_str(),
+                        id,
+                        job.as_str()
+                    ),
+                });
+            }
+        }
         Ok(())
     }
 }
@@ -286,6 +553,10 @@ pub enum EquipmentConfigError {
         constraint: String,
         value: String,
     },
+    /// A roster the sim cannot resolve a kit through — see [`EquipmentConfig::validate_roster`].
+    /// Carries the same weight as [`Self::Invalid`]: a file that is there and wrong.
+    #[error("invalid equipment kit roster: {reason}")]
+    InvalidRoster { reason: String },
 }
 
 impl ConfigLoadError for EquipmentConfigError {
@@ -559,8 +830,225 @@ mod tests {
             r#"{{
             "hunting_kit": {{ "equipped_attack": 20.0, "starting_durability": 100.0, {hunting_wear} }},
             "sled_kit": {{ "unequipped_per_worker_biomass_capacity": 12.0, "starting_durability": 100.0, {sled_wear} }},
-            "basket_kit": {{ "unequipped_per_worker_biomass_capacity": 1.6, {basket_durability}, "wear_per_biomass_gathered": 0.04 }}
+            "basket_kit": {{ "unequipped_per_worker_biomass_capacity": 1.6, {basket_durability}, "wear_per_biomass_gathered": 0.04 }},
+            {ROSTER_JSON}
         }}"#
         )
     }
+
+    // -----------------------------------------------------------------------------------------
+    // THE KIT ROSTER
+    // -----------------------------------------------------------------------------------------
+
+    /// **The two working kits mask in exactly what every call site used to consult
+    /// unconditionally** — which is the whole load-bearing claim of the roster arc. If this fails,
+    /// choosing a shipped kit is not the no-op the design rests on and every number in the game has
+    /// moved.
+    #[test]
+    fn the_two_shipped_kits_reproduce_the_pre_roster_predicates() {
+        let equipment = EquipmentConfig::builtin();
+        let fresh = crate::components::BandEquipment::default();
+        let big_game = equipment
+            .kit("big_game")
+            .expect("the roster ships big_game");
+        let gathering = equipment
+            .kit("gathering")
+            .expect("the roster ships gathering");
+
+        // The hunt job's kit reaches for the hunt's two components and nothing else.
+        assert!(big_game.hunting_equipped(&fresh, &equipment));
+        assert!(big_game.sled_equipped(&fresh, &equipment));
+        assert!(
+            !big_game.basket_equipped(&fresh, &equipment),
+            "one kit, one job — a spear-and-sled party carries no baskets"
+        );
+        // And the forage job's reaches for the basket and nothing else.
+        assert!(gathering.basket_equipped(&fresh, &equipment));
+        assert!(!gathering.hunting_equipped(&fresh, &equipment));
+        assert!(!gathering.sled_equipped(&fresh, &equipment));
+
+        // **The tiers those masks resolve to are the shipped equipped ones, bit for bit.**
+        let labor = crate::labor_config::LaborConfig::builtin();
+        let intrinsic = CreaturesConfig::builtin().person();
+        assert_eq!(
+            equipment
+                .hunter_profile(intrinsic, big_game.hunting_equipped(&fresh, &equipment))
+                .attack,
+            equipment.hunting_kit.equipped_attack
+        );
+        assert_eq!(
+            equipment.hunt_per_worker_biomass_capacity(
+                labor.hunt.per_worker_biomass_capacity,
+                big_game.sled_equipped(&fresh, &equipment)
+            ),
+            labor.hunt.per_worker_biomass_capacity
+        );
+        assert_eq!(
+            equipment.forage_per_worker_biomass_capacity(
+                labor.forage.per_worker_biomass_capacity,
+                gathering.basket_equipped(&fresh, &equipment)
+            ),
+            labor.forage.per_worker_biomass_capacity
+        );
+    }
+
+    /// **A kit that uses nothing reads false everywhere, however fresh the band's gear is** — and
+    /// the tiers it resolves to are the three unequipped ones. `none` is an ordinary roster member,
+    /// so this is a statement about an empty `uses` list rather than about a sentinel id.
+    #[test]
+    fn a_kit_that_uses_nothing_runs_at_every_unequipped_tier() {
+        let equipment = EquipmentConfig::builtin();
+        let fresh = crate::components::BandEquipment::default();
+        let none = equipment.kit("none").expect("the roster ships none");
+        assert!(!none.hunting_equipped(&fresh, &equipment));
+        assert!(!none.sled_equipped(&fresh, &equipment));
+        assert!(!none.basket_equipped(&fresh, &equipment));
+
+        let labor = crate::labor_config::LaborConfig::builtin();
+        let intrinsic = CreaturesConfig::builtin().person();
+        assert_eq!(
+            equipment
+                .hunter_profile(intrinsic, none.hunting_equipped(&fresh, &equipment))
+                .attack,
+            intrinsic.attack,
+            "a party carrying no spears fights bare-handed"
+        );
+        assert_eq!(
+            equipment.hunt_per_worker_biomass_capacity(
+                labor.hunt.per_worker_biomass_capacity,
+                none.sled_equipped(&fresh, &equipment)
+            ),
+            equipment.sled_kit.unequipped_per_worker_biomass_capacity
+        );
+        assert_eq!(
+            equipment.forage_per_worker_biomass_capacity(
+                labor.forage.per_worker_biomass_capacity,
+                none.basket_equipped(&fresh, &equipment)
+            ),
+            equipment.basket_kit.unequipped_per_worker_biomass_capacity
+        );
+    }
+
+    /// **A wrong-job kit is refused, and an unknown one too** — never a quiet fall back to the
+    /// default. Both readings are the same defect from the player's side: they asked to compare
+    /// tiers and were answered about a different one.
+    #[test]
+    fn a_kit_is_refused_for_a_job_it_does_not_list_and_for_an_id_that_is_not_there() {
+        let equipment = EquipmentConfig::builtin();
+        assert!(matches!(
+            equipment.resolve_kit_for_job(Some("gathering"), KitJob::Hunt),
+            Err(KitSelectionError::WrongJob { .. })
+        ));
+        assert!(matches!(
+            equipment.resolve_kit_for_job(Some("big_game"), KitJob::Forage),
+            Err(KitSelectionError::WrongJob { .. })
+        ));
+        assert!(matches!(
+            equipment.resolve_kit_for_job(Some("spear_of_destiny"), KitJob::Hunt),
+            Err(KitSelectionError::Unknown { .. })
+        ));
+        // `none` covers both jobs, so it resolves on either.
+        assert!(equipment
+            .resolve_kit_for_job(Some("none"), KitJob::Hunt)
+            .is_ok());
+        assert!(equipment
+            .resolve_kit_for_job(Some("none"), KitJob::Forage)
+            .is_ok());
+        // Naming none at all is the job's default, which is not an error.
+        assert_eq!(
+            equipment
+                .resolve_kit_for_job(None, KitJob::Hunt)
+                .expect("no selection resolves to the default")
+                .id(),
+            equipment.default_kit_id(KitJob::Hunt)
+        );
+    }
+
+    /// **Every broken roster shape is rejected at load**, which under
+    /// `.claude/rules/core_sim/config-loading.md` makes it a boot panic rather than a sim quietly
+    /// running a kit table nobody authored. Swept rather than asserted one at a time so a new
+    /// invariant has an obvious place to join.
+    #[test]
+    fn validate_rejects_every_broken_roster_shape() {
+        let cases: [(&str, &str); 4] = [
+            (
+                "duplicate ids",
+                r#""kits": [
+                    { "id": "big_game", "display_name": "A", "jobs": ["hunt"], "uses": [] },
+                    { "id": "big_game", "display_name": "B", "jobs": ["hunt"], "uses": [] }
+                ],
+                "default_kits": { "hunt": "big_game", "forage": "big_game" }"#,
+            ),
+            (
+                "a kit that can be sent on nothing",
+                r#""kits": [
+                    { "id": "big_game", "display_name": "A", "jobs": [], "uses": [] }
+                ],
+                "default_kits": { "hunt": "big_game", "forage": "big_game" }"#,
+            ),
+            (
+                "a default naming no roster entry",
+                r#""kits": [
+                    { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": [] }
+                ],
+                "default_kits": { "hunt": "ghost", "forage": "big_game" }"#,
+            ),
+            (
+                "a default whose jobs do not cover its own job",
+                r#""kits": [
+                    { "id": "big_game", "display_name": "A", "jobs": ["hunt"], "uses": [] },
+                    { "id": "gathering", "display_name": "B", "jobs": ["forage"], "uses": [] }
+                ],
+                "default_kits": { "hunt": "gathering", "forage": "gathering" }"#,
+            ),
+        ];
+        for (what, roster) in cases {
+            let err = EquipmentConfig::from_json_str(&component_json(roster))
+                .expect_err(&format!("{what} must be rejected"));
+            assert!(
+                matches!(err, EquipmentConfigError::InvalidRoster { .. }),
+                "{what}: unexpected error: {err}"
+            );
+        }
+    }
+
+    /// **A `uses` entry naming a component block that does not exist fails to DESERIALIZE**, which
+    /// is the same boot panic one layer earlier — the variant names of [`KitComponent`] *are* the
+    /// block keys, so this invariant is carried by the type rather than by a validation pass.
+    #[test]
+    fn a_kit_using_a_component_that_does_not_exist_fails_to_parse() {
+        let err = EquipmentConfig::from_json_str(&component_json(
+            r#""kits": [
+                { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": ["net_kit"] }
+            ],
+            "default_kits": { "hunt": "big_game", "forage": "big_game" }"#,
+        ))
+        .expect_err("a component block that does not exist is invalid");
+        assert!(
+            matches!(err, EquipmentConfigError::Parse(_)),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// The three shipped **component** blocks at their shipped values, with the roster left to the
+    /// caller — the mirror of [`kit_json`], for fixtures that break the roster instead of a dial.
+    fn component_json(roster: &str) -> String {
+        format!(
+            r#"{{
+            "hunting_kit": {{ "equipped_attack": 20.0, "starting_durability": 100.0, "wear_per_kill": 0.4 }},
+            "sled_kit": {{ "unequipped_per_worker_biomass_capacity": 12.0, "starting_durability": 100.0, "wear_per_biomass_hauled": 0.02 }},
+            "basket_kit": {{ "unequipped_per_worker_biomass_capacity": 1.6, "starting_durability": 100.0, "wear_per_biomass_gathered": 0.04 }},
+            {roster}
+        }}"#
+        )
+    }
+
+    /// A minimal **valid** roster, so a fixture testing one of the three *component* blocks does not
+    /// have to restate the shipped kit list to get past the roster's own validation.
+    const ROSTER_JSON: &str = r#""kits": [
+                { "id": "big_game", "display_name": "Big-game kit", "jobs": ["hunt"], "uses": ["hunting_kit", "sled_kit"] },
+                { "id": "gathering", "display_name": "Gathering kit", "jobs": ["forage"], "uses": ["basket_kit"] },
+                { "id": "none", "display_name": "No kit", "jobs": ["hunt", "forage"], "uses": [] }
+            ],
+            "default_kits": { "hunt": "big_game", "forage": "gathering" }"#;
 }

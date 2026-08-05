@@ -14,6 +14,7 @@ pub(crate) fn pending_migration_to_state(migration: &PendingMigration) -> Pendin
 pub(crate) fn labor_assignment_to_state(
     assignment: &LaborAssignment,
     yields: &SourceYield,
+    equipment: &crate::equipment_config::EquipmentConfig,
 ) -> LaborAssignmentState {
     let mut state = LaborAssignmentState {
         kind: assignment.target.kind().to_string(),
@@ -42,6 +43,13 @@ pub(crate) fn labor_assignment_to_state(
         improvement: assignment
             .improvement
             .map(|improvement| improvement.as_str().to_string())
+            .unwrap_or_default(),
+        // **The kit this crew works under**, RESOLVED — the row's yields are priced at exactly it,
+        // so the wire states the kit rather than "the player named none". `""` on a band-wide role,
+        // which has no kit axis at all.
+        kit_id: assignment
+            .kit_choice(equipment)
+            .map(|kit| kit.id().to_string())
             .unwrap_or_default(),
         ..Default::default()
     };
@@ -239,7 +247,22 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // says nothing about the basket's, so they are published as separate fields rather than one
     // "carry" number the client would have to guess the job of.
     let kit = equipment.copied().unwrap_or_default();
-    let hunting_equipped = kit.hunting_equipped(kit_levers.config);
+    // **WHICH kit these tiers are quoted for.** A detached party has one, decided at launch, so its
+    // row states the tier it will actually fight and haul at. A **resident band** has one per
+    // assignment, and this row is per *cohort* — so it is quoted at the job's **default** kit, the
+    // same reading the per-herd estimate tables take. The per-assignment truth rides
+    // `LaborAssignmentState::kit_id` and that row's own yields.
+    let hunt_choice = expedition.map(|exp| exp.kit.clone()).unwrap_or_else(|| {
+        kit_levers
+            .config
+            .default_kit(crate::equipment_config::KitJob::Hunt)
+    });
+    let forage_choice = expedition.map(|exp| exp.kit.clone()).unwrap_or_else(|| {
+        kit_levers
+            .config
+            .default_kit(crate::equipment_config::KitJob::Forage)
+    });
+    let hunting_equipped = hunt_choice.hunting_equipped(&kit, kit_levers.config);
     let hunting_kit_durability = kit.hunting_remaining(kit_levers.config);
     let sled_kit_durability = kit.sled_remaining(kit_levers.config);
     let basket_kit_durability = kit.basket_remaining(kit_levers.config);
@@ -249,11 +272,11 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         .attack;
     let hunt_carry_per_worker_biomass = kit_levers.config.hunt_per_worker_biomass_capacity(
         kit_levers.equipped_haul_rate,
-        kit.sled_equipped(kit_levers.config),
+        hunt_choice.sled_equipped(&kit, kit_levers.config),
     );
     let forage_carry_per_worker_biomass = kit_levers.config.forage_per_worker_biomass_capacity(
         kit_levers.equipped_gather_rate,
-        kit.basket_equipped(kit_levers.config),
+        forage_choice.basket_equipped(&kit, kit_levers.config),
     );
     let migration = cohort.migration.as_ref().map(pending_migration_to_state);
     let (travel_target_x, travel_target_y) = travel_target.map(|t| (t.x, t.y)).unwrap_or((0, 0));
@@ -276,7 +299,11 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 .iter()
                 .enumerate()
                 .map(|(i, assignment)| {
-                    labor_assignment_to_state(assignment, a.last_yields.get(i).unwrap_or(&NO_YIELD))
+                    labor_assignment_to_state(
+                        assignment,
+                        a.last_yields.get(i).unwrap_or(&NO_YIELD),
+                        kit_levers.config,
+                    )
                 })
                 .collect()
         })
@@ -529,6 +556,11 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         hunter_attack,
         hunt_carry_per_worker_biomass,
         forage_carry_per_worker_biomass,
+        // **Which roster kit the three tiers above are quoted at** — the party's own for an
+        // expedition, the job's default for a resident band. The hunt job's is named because the two
+        // hunt tiers are the ones a player compares; a resident band's forage tier is the forage
+        // default by the same rule, and its per-crew truth is the assignment row's `kit_id`.
+        kit_id: hunt_choice.id().to_string(),
     }
 }
 
@@ -732,6 +764,7 @@ mod tests {
                 },
                 workers: 4,
                 improvement: None,
+                kit: None,
             }],
             last_yields: vec![SourceYield {
                 arrivals,
@@ -793,6 +826,8 @@ mod tests {
             announced: false,
             pending_reveal: Vec::new(),
             carried_trade: 0.0,
+            kit: crate::equipment_config::EquipmentConfig::builtin()
+                .default_kit(crate::equipment_config::KitJob::Hunt),
         };
         let runway = captured_runway(&cohort, None, Some(&expedition));
         let historical = TEST_LARDER / demand_of(&cohort);
@@ -858,6 +893,7 @@ mod tests {
                 target: LaborTarget::Scout,
                 workers: 4,
                 improvement: None,
+                kit: None,
             }],
             last_yields: vec![SourceYield::ZERO],
             ..Default::default()

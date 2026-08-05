@@ -146,6 +146,7 @@ fn resident_band(app: &mut App, tile: Entity, working: u32, warriors: u32) -> En
             target: LaborTarget::Warrior,
             workers: warriors,
             improvement: None,
+            kit: None,
         }]
     } else {
         Vec::new()

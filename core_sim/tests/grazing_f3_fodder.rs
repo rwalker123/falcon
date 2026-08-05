@@ -217,6 +217,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2, policy: f32) -> Entit
                     },
                     workers: KEEPER_WORKERS,
                     improvement: None,
+                    kit: None,
                 }],
                 ..Default::default()
             },

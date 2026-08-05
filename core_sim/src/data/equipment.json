@@ -16,5 +16,30 @@
     "unequipped_per_worker_biomass_capacity": 1.6,
     "starting_durability": 100.0,
     "wear_per_biomass_gathered": 0.04
+  },
+  "_comment_kits": "THE KIT ROSTER - what a party is SENT OUT WITH, chosen by name instead of implicitly using whatever the band owns. A kit is a MASK over the three component blocks above: effective_equipped(component) = kit uses it AND the band still has condition in it. The two working kits reproduce the pre-roster behaviour exactly - `big_game` uses the hunting and sled components (every hunt path asked for both), `gathering` uses the basket (every gather path asked for that) - so choosing them is bit-for-bit the shipped game. `none` is an ORDINARY ROSTER MEMBER and NOT a sentinel: it simply uses nothing, so every predicate reads false and the party runs at the unequipped tiers throughout - and, because wear rides the same predicate, spends no durability on any component. That is what makes a bare-handed comparison free to run: it must not consume the very kit it is being compared against. `jobs` is what a kit may be sent on; a kit named for a job it does not list is a COMMAND FAILURE, never a silent fall back to the default. `default_kits` is what each verb uses when the player names none.",
+  "kits": [
+    {
+      "id": "big_game",
+      "display_name": "Big-game kit",
+      "jobs": ["hunt"],
+      "uses": ["hunting_kit", "sled_kit"]
+    },
+    {
+      "id": "gathering",
+      "display_name": "Gathering kit",
+      "jobs": ["forage"],
+      "uses": ["basket_kit"]
+    },
+    {
+      "id": "none",
+      "display_name": "No kit",
+      "jobs": ["hunt", "forage"],
+      "uses": []
+    }
+  ],
+  "default_kits": {
+    "hunt": "big_game",
+    "forage": "gathering"
   }
 }

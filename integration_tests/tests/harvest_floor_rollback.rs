@@ -138,6 +138,7 @@ fn spawn_band_with_floors(app: &mut bevy::prelude::App, floor: f32) -> Entity {
                         },
                         workers: 2,
                         improvement: None,
+                        kit: None,
                     },
                     LaborAssignment {
                         target: LaborTarget::Hunt {
@@ -146,6 +147,7 @@ fn spawn_band_with_floors(app: &mut bevy::prelude::App, floor: f32) -> Entity {
                         },
                         workers: 2,
                         improvement: None,
+                        kit: None,
                     },
                 ],
                 ..Default::default()
@@ -276,6 +278,7 @@ fn an_expedition_floor_round_trips_through_the_mission_and_the_rollback() {
                 announced: false,
                 pending_reveal: Vec::new(),
                 carried_trade: 0.0,
+                kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Hunt),
             },
         ))
         .id();

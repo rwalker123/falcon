@@ -1132,11 +1132,25 @@ const HUNT_GATE_SCALAR_DECIMALS := 0
 ## `hunt_source_yield_preview`; this line is arithmetic over the exported terms. A failure in either
 ## still leaves the player warned, which is the whole point of not exporting a verdict.
 static func hunt_gate_model(band: Dictionary, herd: Dictionary, quarry: String) -> Dictionary:
+    if not band.has(BAND_HUNTER_ATTACK_KEY):
+        return {"stated": false, "blocked": false, "effective_attack": 0.0,
+            "hunter_turns": 0.0, "text": ""}
+    return hunt_gate_model_at(float(band.get(BAND_HUNTER_ATTACK_KEY, 0.0)), herd, quarry)
+
+## **THE GATE AT AN ARBITRARY ATTACK TIER** — the same arithmetic over the same two herd terms, asked
+## about a party whose own kit has already resolved its effective attack (`KitRoster.effective_tiers`)
+## rather than about the band's default-kit tier.
+##
+## It exists because the gate is the ONE forecast that stays honest for every kit: it is composed from
+## wire terms rather than looked up in a table quoted for one kit, so a sheet that has to suppress the
+## estimate tables can still say what this party can and cannot hurt. For 15 of 20 roster species a
+## bare-handed party's effective attack is 0, and the line says so plainly.
+##
+## `hunt_gate_model` is exactly this asked at the band's own tier, so the two can never disagree about
+## what a gate is; only about whose attack it is.
+static func hunt_gate_model_at(attack: float, herd: Dictionary, quarry: String) -> Dictionary:
     var blank := {"stated": false, "blocked": false, "effective_attack": 0.0,
         "hunter_turns": 0.0, "text": ""}
-    if not band.has(BAND_HUNTER_ATTACK_KEY):
-        return blank
-    var attack := float(band.get(BAND_HUNTER_ATTACK_KEY, 0.0))
     var defense := float(herd.get(HERD_DEFENSE_KEY, 0.0))
     var durability := float(herd.get(HERD_DURABILITY_KEY, 0.0))
     if durability <= 0.0:

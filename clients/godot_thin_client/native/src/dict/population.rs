@@ -212,6 +212,13 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "forage_carry_per_worker_biomass",
         cohort.forageCarryPerWorkerBiomass() as f64,
     );
+    // **THE KIT THE THREE TIERS ABOVE ARE RESOLVED THROUGH** (`docs/plan_denial_raid.md`). For an
+    // IN-FLIGHT PARTY it is the kit it was SENT OUT WITH, decided at launch and carried for the
+    // party's whole life — the drawer's answer to "what did I send them with?", and the tier the
+    // party really fights and hauls at. For a RESIDENT BAND it is the JOB'S DEFAULT, because a band
+    // has one kit per assignment and this row is per cohort; the per-crew truth is the labor
+    // assignment's own `kit_id` beside that row's yields. Never empty on the wire.
+    let _ = dict.insert("kit_id", cohort.kitId().unwrap_or(""));
     // Data-driven settlement stage (id/label/icon are opaque pass-through strings resolved
     // by the sim from `settlement_stage_config.json`). Missing/pre-stage snapshots yield
     // `None` → empty strings, which the client renders as a neutral non-circular fallback
@@ -368,6 +375,13 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // inserted (as "" when the string is absent) so the entry shape is stable and no consumer
             // has to distinguish "not building" from "older snapshot" — the two mean the same thing.
             let _ = entry.insert("improvement", assignment.improvement().unwrap_or_default());
+            // **THE KIT THIS CREW IS WORKING UNDER** (`docs/plan_denial_raid.md`) — the roster id the
+            // row's yields are priced at: what the player named on `assign_labor`, or the job's
+            // default when they named none, already RESOLVED (the sim never publishes
+            // "unspecified"). `""` on a band-wide role (scout / warrior), which consumes no kit
+            // component and so has no kit axis — read that as "no selection to make", never as "no
+            // kit". Always inserted so the entry shape is stable.
+            let _ = entry.insert("kit_id", assignment.kitId().unwrap_or_default());
             array.push(&entry.to_variant());
         }
     }

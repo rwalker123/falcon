@@ -1438,6 +1438,7 @@ mod food_flow_tests {
             },
             workers: 4,
             improvement: None,
+            kit: None,
         }
     }
 

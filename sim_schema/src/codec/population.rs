@@ -201,6 +201,15 @@ fn create_populations<'a>(
                         } else {
                             Some(builder.create_vector(&assignment.arrival_schedule))
                         };
+                        // The kit this crew works under. Absent rather than `""` on a band-wide
+                        // role, matching how `improvement`/`faunaId` treat an empty value — the
+                        // FlatBuffers default for an absent string is `""`, so the two readings
+                        // coincide for a consumer.
+                        let kit_id = if assignment.kit_id.is_empty() {
+                            None
+                        } else {
+                            Some(builder.create_string(&assignment.kit_id))
+                        };
                         fb::LaborAssignment::create(
                             builder,
                             &fb::LaborAssignmentArgs {
@@ -229,12 +238,18 @@ fn create_populations<'a>(
                                 // THE HARVEST FLOOR — where this crew stops, as a fraction of `K`.
                                 // The authority `policy` is a label for; appended last.
                                 floor: assignment.floor,
+                                // THE KIT this crew is working under — appended last.
+                                kitId: kit_id,
                             },
                         )
                     })
                     .collect();
                 Some(builder.create_vector(&entries))
             };
+            // Always written: this cohort's tiers are always quoted at *some* roster kit, and a
+            // consumer comparing a selection against an absent string would read every band as a
+            // mismatch.
+            let kit_id = builder.create_string(&cohort.kit_id);
             let expedition_mission = if cohort.expedition_mission.is_empty() {
                 None
             } else {
@@ -377,6 +392,8 @@ fn create_populations<'a>(
                     hunterAttack: cohort.hunter_attack,
                     huntCarryPerWorkerBiomass: cohort.hunt_carry_per_worker_biomass,
                     forageCarryPerWorkerBiomass: cohort.forage_carry_per_worker_biomass,
+                    // The kit the three tiers above are resolved through — appended last.
+                    kitId: Some(kit_id),
                 },
             )
         })

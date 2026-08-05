@@ -62,6 +62,15 @@ var _prev_band_sizes: Dictionary = {}
 var _forage_patch_lookup: Dictionary = {}
 # Snapshot food modules keyed by tile (a Forage row's resource glyph, matching the map marker).
 var _food_module_by_tile: Dictionary = {}
+# ---- THE KIT ROSTER (`docs/plan_denial_raid.md`) --------------------------------------------------
+# The world's kit roster in `equipment.json` order, and the kit each verb uses when the player names
+# none. WORLD-level data rather than band-level: one roster serves every band and every sheet, so it
+# sits beside the grid scalars rather than being re-read per compose. The ORDER is the wire's and is
+# preserved — `equipment.json` authors the null choice (`none`) last, which is what puts it at the
+# bottom of every picker without this model knowing which entry is null.
+var _kits: Array = []
+var _default_hunt_kit_id: String = KitRoster.NO_KIT_ID
+var _default_forage_kit_id: String = KitRoster.NO_KIT_ID
 
 # ---- Read accessors (backing value returned by reference — no deep copy) --------------------------
 
@@ -104,6 +113,18 @@ func forage_patch_lookup() -> Dictionary:
 
 func food_module_by_tile() -> Dictionary:
 	return _food_module_by_tile
+
+## The world's kit roster, in wire order.
+func kits() -> Array:
+	return _kits
+
+## The kit a verb uses when the player names none — the token the command builders OMIT for, so a
+## composition that never touched the picker emits the line it emitted before the picker existed.
+## `""` for a job the wire has not named a default for.
+func default_kit_id(job: String) -> String:
+	if job == KitRoster.JOB_FORAGE:
+		return _default_forage_kit_id
+	return _default_hunt_kit_id
 
 # ---- Snapshot lookups (derived reads over the ingested tables) -----------------------------------
 
@@ -185,6 +206,19 @@ func set_grid(width: int, height: int, wrap_horizontal_flag: bool) -> void:
 func set_world_herds(herds: Array) -> void:
 	_world_herds = herds
 	changed.emit(&"world_herds")
+
+## Ingest the world's kit roster and the two job defaults. **The three ride ONE call**, because they
+## are one fact: a roster whose defaults name kits it does not contain would let every picker open on
+## an entry it cannot show. A non-Array roster is ignored (the last value stands), matching the
+## `set_food_modules` / `set_forage_patches` ingest — a delta carries a section only when it changed,
+## so absence means unchanged and never "the world has no kits".
+func set_kit_roster(kits_variant: Variant, default_hunt: String, default_forage: String) -> void:
+	if not (kits_variant is Array):
+		return
+	_kits = kits_variant
+	_default_hunt_kit_id = default_hunt
+	_default_forage_kit_id = default_forage
+	changed.emit(&"kits")
 
 func set_panel_band(band: Dictionary) -> void:
 	_panel_band = band

@@ -1060,6 +1060,7 @@ fn spawn_forager(
                     },
                     workers: FORAGE_WORKERS,
                     improvement: None,
+                    kit: None,
                 }],
                 ..Default::default()
             },

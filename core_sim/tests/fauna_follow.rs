@@ -147,6 +147,7 @@ fn spawn_hunter(app: &mut App, herd_id: &str, policy: f32) -> bevy::prelude::Ent
                     },
                     workers: HUNT_WORKERS,
                     improvement: None,
+                    kit: None,
                 }],
                 ..Default::default()
             },

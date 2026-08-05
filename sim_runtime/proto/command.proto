@@ -244,6 +244,12 @@ message AssignLaborCommand {
   // failure unless finite and within 0.0..=1.0 — never clamped, because a clamp turns a typo into a
   // quiet policy change. Appended (append-only).
   optional float floor = 10;
+  // THE KIT this crew works under (equipment.json `kits`). Absent = the job's default. An unknown
+  // id, or one whose `jobs` does not cover this role, is a COMMAND FAILURE with a reason — never a
+  // silent fall back to the default, because naming a kit is how the player compares tiers.
+  // Ignored by the band-wide roles (scout/warrior), which consume no kit component.
+  // Appended (append-only).
+  optional string kit_id = 11;
 }
 
 // Travel a band toward a target tile at band_move_tiles_per_turn/turn.
@@ -290,6 +296,11 @@ message SendHuntExpeditionCommand {
   // existing completion, so a target at or above what the pack holds is exactly the untargeted raid.
   // Appended (append-only).
   optional uint32 fill_target = 7;
+  // THE KIT the party is SENT OUT WITH — resolved ONCE at launch and carried for the party's whole
+  // life, never re-resolved against the band's later stock. Absent = the hunt job's default. An
+  // unknown id, or one whose `jobs` does not include `hunt`, is a command failure with a reason.
+  // Appended (append-only).
+  optional string kit_id = 8;
 }
 
 // Outfit and launch a DENIAL RAID: draw party_workers off the home band and send a detached party to
@@ -306,6 +317,11 @@ message SendDenialRaidCommand {
   optional uint64 band_id = 2;
   uint32 party_workers = 3;
   string fauna_id = 4;
+  // THE KIT the raid is sent out with — same rule as SendHuntExpeditionCommand.kit_id. This is the
+  // one place the denial raid's grammar is NOT closed: a kit is a property of the party, not of the
+  // mission, so it is the one thing there is to say about a raid that carries no floor and no fill
+  // target. Appended (append-only).
+  optional string kit_id = 5;
 }
 
 // Ask the server to republish the world as a FULL snapshot.

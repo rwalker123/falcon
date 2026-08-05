@@ -134,6 +134,7 @@ fn forage_alloc_policy(tile: UVec2, workers: u32, policy: f32) -> LaborAllocatio
             },
             workers,
             improvement: None,
+            kit: None,
         }],
         ..Default::default()
     }
@@ -272,6 +273,7 @@ fn sustain_hunt_below_regrowth_lets_herd_grow() {
                 },
                 workers: 1,
                 improvement: None,
+                kit: None,
             }],
             ..Default::default()
         },
@@ -352,6 +354,7 @@ fn a_hunt_actual_pulses_while_realized_holds_the_steady_average() {
                 },
                 workers: 2,
                 improvement: None,
+                kit: None,
             }],
             ..Default::default()
         },
@@ -478,6 +481,7 @@ fn a_drawn_down_hunt_realized_drifts_smoothly_never_sawtooths() {
                 },
                 workers: 4,
                 improvement: None,
+                kit: None,
             }],
             ..Default::default()
         },
@@ -551,6 +555,7 @@ fn hunt_lapses_beyond_leash() {
                 },
                 workers: 3,
                 improvement: None,
+                kit: None,
             }],
             ..Default::default()
         },
@@ -647,11 +652,12 @@ fn assignment_sum_clamps_to_working_age() {
         },
         3,
         available,
+        None,
     );
     assert_eq!(applied, 3);
 
     // Scout 4 workers requested, but only 2 headroom left → clamped to 2.
-    let applied = alloc.set_assignment(LaborTarget::Scout, 4, available);
+    let applied = alloc.set_assignment(LaborTarget::Scout, 4, available, None);
     assert_eq!(applied, 2, "over-budget assignment clamps to free headroom");
     assert_eq!(alloc.assigned_total(), available);
 
@@ -664,12 +670,13 @@ fn assignment_sum_clamps_to_working_age() {
         },
         0,
         available,
+        None,
     );
     assert_eq!(applied, 0);
     assert_eq!(alloc.assigned_total(), 2);
 
     // Normalize down when working-age shrinks below the assigned total.
-    alloc.set_assignment(LaborTarget::Warrior, 2, 4);
+    alloc.set_assignment(LaborTarget::Warrior, 2, 4, None);
     assert_eq!(alloc.assigned_total(), 4);
     let dropped = alloc.normalize(3);
     assert!(
@@ -896,6 +903,7 @@ fn stage_hunt(
                 },
                 workers,
                 improvement: None,
+                kit: None,
             }],
             ..Default::default()
         },
@@ -1120,6 +1128,7 @@ fn a_trimmed_assignment_is_announced_and_names_the_lost_build() {
         },
         workers: 3,
         improvement: Some(core_sim::Improvement::Tame),
+        kit: None,
     });
     let band = spawn_band(&mut app, patch_tile, 3, allocation);
 

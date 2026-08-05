@@ -113,6 +113,7 @@ fn hunting_world_of(
                 },
                 workers: crew.unwrap_or(workers).max(1),
                 improvement: None,
+                kit: None,
             }],
             ..Default::default()
         },
@@ -144,6 +145,7 @@ fn gathering_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
                 },
                 workers: workers.max(1),
                 improvement: None,
+                kit: None,
             }],
             ..Default::default()
         },
@@ -162,6 +164,7 @@ fn scouting_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
             target: LaborTarget::Scout,
             workers: workers.max(1),
             improvement: None,
+            kit: None,
         }],
         ..Default::default()
     });
@@ -346,10 +349,15 @@ fn both_hunt_carry_tiers_are_live_and_a_sledless_party_hauls_less() {
     // exactly `wear_per_biomass_hauled × carried`, so it inverts to the haul with no arithmetic of
     // our own. (The herd's raw biomass delta cannot be used: its ecological `K` is recomputed from
     // the range every turn, so most of the movement is the clamp, not the hunt.)
+    //
+    // **The trick works on the KITTED arm only, and that is a property of the model rather than of
+    // the fixture.** Since kit selection, wear is gated on the *same* effective predicate that chose
+    // the tier (`equipment.md` → "Wear rides the SAME predicate"), so a band whose sled is spent is
+    // dragging by hand and is charged nothing more: its `sled_wear` sits at the limit forever. The
+    // dry arm's haul is therefore read off `food_income`, which is `carried × provisions_per_biomass
+    // × output_multiplier` — strictly monotone in the haul, so the ordering below is the same claim.
     let per_biomass = equipment().sled_kit.wear_per_biomass_hauled;
     let kitted_haul = kit_of(&kitted, kitted_band).sled_wear / per_biomass;
-    // The dry band started at its limit, so only the wear ADDED this turn is its haul.
-    let dry_haul = (kit_of(&dry, dry_band).sled_wear - dry_sled().sled_wear) / per_biomass;
 
     assert!(
         kitted_haul > 0.0 && kitted_row.food_income > 0.0,
@@ -357,18 +365,21 @@ fn both_hunt_carry_tiers_are_live_and_a_sledless_party_hauls_less() {
         kitted_row.food_income
     );
     assert!(
-        dry_haul > 0.0 && dry_row.food_income > 0.0,
+        dry_row.food_income > 0.0,
         "the UNEQUIPPED tier must STILL bring game home — a sledless band is a worse hauler, not a \
-         non-hunter (haul={dry_haul}, income={})",
+         non-hunter (income={})",
         dry_row.food_income
     );
-    assert!(
-        dry_haul < kitted_haul,
-        "a sledless party must haul strictly less biomass: dry={dry_haul} vs kitted={kitted_haul}"
+    assert_eq!(
+        kit_of(&dry, dry_band).sled_wear,
+        dry_sled().sled_wear,
+        "a spent sled is not dragged, so it is not charged either — the wear gate is the same \
+         predicate that put this band on the unequipped tier"
     );
     assert!(
         dry_row.food_income < kitted_row.food_income,
-        "...and the player sees it as less food: dry={} vs kitted={}",
+        "a sledless party hauls strictly less, and the player sees it as less food: dry={} vs \
+         kitted={}",
         dry_row.food_income,
         kitted_row.food_income
     );
@@ -458,12 +469,10 @@ fn both_gather_tiers_are_live_and_bare_hands_gather_less() {
     let kitted_row = exported(&kitted, kitted_band);
     let bare_row = exported(&bare, bare_band);
     // The biomass actually gathered, inverted from the basket kit's own wear — the same trick the
-    // sled test uses, and for the same reason (the patch regrows within the turn, so its biomass
-    // delta is not the take).
+    // sled test uses, with the same restriction to the kitted arm and for the same reason: a crew
+    // with no baskets left is gathering by hand and is charged nothing more.
     let per_biomass = equipment().basket_kit.wear_per_biomass_gathered;
     let kitted_take = kit_of(&kitted, kitted_band).basket_wear / per_biomass;
-    let bare_take =
-        (kit_of(&bare, bare_band).basket_wear - dry_baskets().basket_wear) / per_biomass;
 
     assert!(
         kitted_take > 0.0 && kitted_row.food_income > 0.0,
@@ -471,18 +480,19 @@ fn both_gather_tiers_are_live_and_bare_hands_gather_less() {
         kitted_row.food_income
     );
     assert!(
-        bare_take > 0.0 && bare_row.food_income > 0.0,
-        "the UNEQUIPPED tier must STILL gather — bare hands is a handful, not nothing \
-         (take={bare_take}, income={})",
+        bare_row.food_income > 0.0,
+        "the UNEQUIPPED tier must STILL gather — bare hands is a handful, not nothing (income={})",
         bare_row.food_income
     );
-    assert!(
-        bare_take < kitted_take,
-        "a bare-handed crew must gather strictly less: bare={bare_take} vs kitted={kitted_take}"
+    assert_eq!(
+        kit_of(&bare, bare_band).basket_wear,
+        dry_baskets().basket_wear,
+        "spent baskets are not carried, so they are not charged either"
     );
     assert!(
         bare_row.food_income < kitted_row.food_income,
-        "...and the player sees it as less food: bare={} vs kitted={}",
+        "a bare-handed crew gathers strictly less, and the player sees it as less food: bare={} vs \
+         kitted={}",
         bare_row.food_income,
         kitted_row.food_income
     );

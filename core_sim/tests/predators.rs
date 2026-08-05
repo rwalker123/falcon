@@ -128,6 +128,7 @@ fn hunting_band(
         },
         workers: hunters,
         improvement: None,
+        kit: None,
     }];
     app.world
         .spawn((

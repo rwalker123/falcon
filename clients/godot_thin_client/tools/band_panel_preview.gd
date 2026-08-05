@@ -37,6 +37,11 @@ const PREVIEW_DOCK_PREFS_PATH := "user://band_panel_preview_dock.cfg"
 const BAND_PANEL_SCENE := preload("res://src/ui/BandCityPanel.tscn")
 ## The real MapView, for the map-selection path state (see `band_panel_people_map_path`).
 const MAP_VIEW_SCRIPT := preload("res://src/scripts/MapView.gd")
+## **THE KIT ROSTER IS SHARED WITH `ui_preview`, and deliberately so.** It is world config the sim
+## publishes once (`SubsistenceSection.kits`), not a per-harness prop: two copies could quote
+## different tiers or a different job default, and the `kit <id>` command token asserted here is the
+## same token that harness's frames are read against. This is the ONE cross-harness fixture preload.
+const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 ## The hex `_band_fixture()` stands on — the tile the map-path state clicks.
 const MAP_PATH_TILE := Vector2i(71, 18)
 ## A grid just large enough to hold MAP_PATH_TILE, and one flat terrain id to fill it with.
@@ -83,6 +88,15 @@ const QUARRY_FOOD_PER_ANIMAL := 4.0
 const QUARRY_TRADE_PER_ANIMAL := 0.5
 ## The INEDIBLE quarry on the work board (issue #337): its hunt row pays trade goods and no food.
 const TRADE_ONLY_HERD_ID := "game_wolf_03"
+
+# ---- THE COMBAT GATE's two herd terms on the quarry (`docs/plan_hunt_through_combat.md` §4.2) -----
+## `defense` is whether a hit counts at all — deliberately ABOVE the roster's bare-handed `attack`
+## (1.0) and far below the big-game kit's (20.0), so the gate's verdict FLIPS with the kit and the
+## kit-mismatch frame's line is a discriminator rather than a decoration.
+const QUARRY_DEFENSE := 2.0
+## …and `durability` is how many counting hits it takes. A round number well above the effective
+## attack, so the effort figure reads as a real several-hunter-turns rather than a rounding.
+const QUARRY_DURABILITY := 60.0
 
 # ---- THE DENIAL RAID's fixture (`docs/plan_denial_raid.md`) --------------------------------------
 ## The party the two denial frames compose, i.e. which row of the table below they render. It is the
@@ -651,6 +665,11 @@ func _ready() -> void:
 	_hud.update_food_modules([
 		{"x": 71, "y": 18, "module": "savanna_grassland", "kind": "gather"},
 	])
+	# The world's KIT ROSTER (Main pushes snapshot["kits"] + the two job defaults): the compose
+	# sheets' Kit picker is built from it. World setup rather than per-state, exactly as the herds and
+	# food modules above are — a roster seeded per frame would give one sheet a picker and the next none.
+	_hud.update_kit_roster(BandFx.kit_roster_fixture(),
+		BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE)
 	_push_bands([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
 	print("band_panel_preview: cycler split — player_bands=%d (expect 1), player_expeditions=%d (expect 2)" % [
 		_hud._band_labor._player_bands.size(), _hud._band_labor._player_expeditions.size()])
@@ -1248,6 +1267,63 @@ func _ready() -> void:
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
 	_assert_denial_viable()
+
+	# ---- THE KIT PICKER, on the sheet the roster was designed against ----------------------------
+	# **CLOSED.** The row sits directly under the party stepper and above the verdict, because a kit
+	# describes the crew and moves every figure below it. The band is re-pushed carrying real component
+	# CONDITIONS, so the hint line under the picker states this band's EFFECTIVE tier — the fresh-kit
+	# numbers on `KitOption` are not what a band with worn spears actually gets, and quoting them would
+	# be the defect class this branch has spent four commits removing.
+	_push_bands([_scout_expedition_fixture(), _kit_worn_band_fixture(), _hunt_expedition_fixture()])
+	_hud._compose.set_party_kit_id(BandFx.KIT_DEFAULT_HUNT)
+	_hud._bandpanel._send_expedition_count = DENIAL_PARTY
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_compose_deny_kit")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_kit_picker_closed()
+
+	# **OPEN.** The roster grows toward a dozen kits and a pill row cannot hold that in a 354px column,
+	# so the control is a picker button opening a CHECKED-RADIO menu — the quarry chooser's idiom. The
+	# popup is an embedded subwindow, so it lands in the capture; the structural claims (which entries,
+	# which one is marked, which one is tagged the default, and `none` LAST) ride the assertion, since
+	# a screenshot cannot say which item carries the radio dot.
+	var kit_menu := _find_meta_control(_panel, KitRoster.KIT_PICKER_META) as MenuButton
+	if kit_menu != null:
+		# Placed by hand under the button. `MenuButton.show_popup()` would do it, but it also grabs
+		# input and can move focus mid-run; the popup is an EMBEDDED subwindow, so positioning it and
+		# calling `popup()` renders it into the same viewport the capture reads.
+		var below := kit_menu.get_screen_position() + Vector2(0.0, kit_menu.size.y)
+		kit_menu.get_popup().position = Vector2i(below)
+		kit_menu.get_popup().popup()
+	await _settle()
+	await _save("band_panel_compose_deny_kit_open")
+	_assert_kit_picker_open(kit_menu)
+	if kit_menu != null:
+		kit_menu.get_popup().hide()
+
+	# **THE KIT-MISMATCH STATE** — `none` selected against a table quoted for `big_game`. This is the
+	# frame the honesty rule is judged on, and it is judged largely on what the sheet must NOT say: no
+	# collapse verdict, no estimate caveat, no take line, no counted refusal. What it MUST say is the
+	# combat gate — composed from wire terms, honest at any tier — plus the sentence naming the kit
+	# those withheld numbers belonged to. Driven through the popup's REAL `id_pressed`, so the pick
+	# path is exercised rather than the model being written.
+	_pick_kit(KitRoster.NO_KIT_ID if kit_menu == null else BandFx.KIT_ID_NONE)
+	await _settle()
+	await _save("band_panel_compose_deny_kit_mismatch")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_kit_mismatch_suppresses_estimates()
+	# Restore: the frames below are read against the DEFAULT kit and the reference band, and a
+	# selection left on `none` would suppress every verdict they assert.
+	_hud._compose.set_party_kit_id(BandFx.KIT_DEFAULT_HUNT)
+	_push_bands([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
+	_hud._bandpanel._send_expedition_count = DENIAL_PARTY
+	_hud._bandpanel.rerender()
+	await _settle()
 
 	# The SAME form against a herd that outbreeds the party — the `repelled` verdict, which is a claim
 	# about the PARTY and not about the clock. It still LAUNCHES (a raid that cannot get there keeps
@@ -3766,6 +3842,19 @@ func _quarry_herd_fixtures(denial_rows: Array = []) -> Array:
 	var denial_table := denial_rows if not denial_rows.is_empty() else _denial_viable_rows()
 	herd["denial_estimates"] = denial_table
 	herd["denial_party_needed"] = _denial_party_needed_for(denial_table)
+	# **WHICH KIT BOTH TABLES ARE QUOTED FOR.** The sim writes the hunt job's default on every herd,
+	# always, so a fixture leaving them blank would exercise only the client's fall-back reading and
+	# the STATED path — the one live data takes — would go untested. Stamped on all three herds below
+	# through `_stamp_estimate_kits`.
+	_stamp_estimate_kits(herd)
+	# The COMBAT GATE's two herd terms (`docs/plan_hunt_through_combat.md` §4.2). They exist here for
+	# the kit-mismatch frame, which suppresses the estimate tables and renders the gate in their place:
+	# without them the gate answers `stated == false` and the frame would show a sheet that says
+	# nothing at all. Chosen so the gate DISCRIMINATES between the kits — at the big-game tier (20) the
+	# effective attack is 18 and the line states the effort, bare-handed (1) it is 0 and the line
+	# refuses outright, which is exactly the `none` party's honest verdict.
+	herd["defense"] = QUARRY_DEFENSE
+	herd["durability"] = QUARRY_DURABILITY
 	# A second huntable herd INSIDE the band's hunt reach. It is not a party's job (the band can work
 	# it from home), so the picker must refuse it — the near half of the eligibility assertion.
 	var near := {
@@ -3792,7 +3881,16 @@ func _quarry_herd_fixtures(denial_rows: Array = []) -> Array:
 		"denial_estimates": denial_table,
 		"denial_party_needed": _denial_party_needed_for(denial_table),
 	}
+	_stamp_estimate_kits(near)
+	_stamp_estimate_kits(home)
 	return [herd, near, home]
+
+## Stamp a herd with the kit id its two pre-launch estimate tables are quoted for — the HUNT job's
+## default, which is what the sim writes on every herd whether or not it publishes either table.
+## Mutates in place and returns nothing: every caller is building the dict it hands over.
+static func _stamp_estimate_kits(herd: Dictionary) -> void:
+	herd[KitRoster.HERD_TRIP_ESTIMATES_KIT_KEY] = BandFx.KIT_DEFAULT_HUNT
+	herd[KitRoster.HERD_DENIAL_ESTIMATES_KIT_KEY] = BandFx.KIT_DEFAULT_HUNT
 
 ## **TWO ELIGIBLE QUARRIES ON ONE HEX** — the reported pair, both beyond the band's hunt reach so the
 ## picker accepts either. Their ORDER is the fixture's claim as much as their contents: the compose
@@ -4030,6 +4128,138 @@ func _rich_text_containing(node: Node, text: String) -> String:
 		if found != "":
 			return found
 	return ""
+
+# ---- THE KIT PICKER (`docs/plan_denial_raid.md`) -------------------------------------------------
+
+## Every rendered text line under `node`, in tree order — a `Label`'s `text` and a `RichTextLabel`'s
+## PARSED text (BBCode stripped), skipping hidden nodes and blanks. It exists for the kit-mismatch
+## claim, which is partly about what the sheet must NOT say: a `contains` search can only ever testify
+## that something IS there, so the absence half needs the WHOLE list to compare against.
+func _text_lines(node: Node) -> Array[String]:
+	var lines: Array[String] = []
+	if node is Control and not (node as Control).visible:
+		return lines
+	if node is RichTextLabel:
+		var parsed := (node as RichTextLabel).get_parsed_text().strip_edges()
+		if parsed != "":
+			lines.append(parsed)
+	elif node is Label:
+		var text := (node as Label).text.strip_edges()
+		if text != "":
+			lines.append(text)
+	for child in node.get_children():
+		lines.append_array(_text_lines(child))
+	return lines
+
+## Drive the kit picker's popup through its REAL `id_pressed` dispatch, choosing the entry whose label
+## begins with this kit's display name. By the POPUP, never by writing `ComposeState` — the pick path
+## (menu → callback → `set_party_kit_id` → rerender) is half of what the frames claim.
+func _pick_kit(kit_id: String) -> void:
+	var menu := _find_meta_control(_panel, KitRoster.KIT_PICKER_META) as MenuButton
+	if menu == null:
+		_assert_band_panel("picking a kit needs the picker to exist", false)
+		return
+	var want := KitRoster.display_name_for_id(_hud._band_labor.kits(), kit_id)
+	var popup := menu.get_popup()
+	for i in popup.item_count:
+		if popup.get_item_text(i).begins_with(want):
+			popup.id_pressed.emit(popup.get_item_id(i))
+			return
+	_assert_band_panel("picking a kit needs an entry named %s (found %d entries)"
+		% [want, popup.item_count], false)
+
+## The picker CLOSED: it exists, its face names the selected kit, and the hint beneath it states this
+## band's EFFECTIVE tier.
+##
+## **THE HINT IS THE CLAIM, and it is composed from the fixture's own numbers rather than through
+## `KitRoster.tier_hint`** — an expectation re-derived through the function under test asserts
+## nothing. The carry is the BARE tier while the roster publishes 40 for this kit, so a hint quoting
+## the fresh number fails here and nowhere else; the attack is the EQUIPPED one on the same line,
+## which is what stops "quote the bare tier for everything" passing instead.
+func _assert_kit_picker_closed() -> void:
+	var menu := _find_meta_control(_panel, KitRoster.KIT_PICKER_META) as MenuButton
+	_assert_band_panel("the denial sheet carries a Kit picker", menu != null)
+	if menu == null:
+		return
+	var face := HudComposeVocab.KIT_PICKER_FACE_FORMAT % [
+		String(HudComposeVocab.KIT_JOB_GLYPHS[KitRoster.JOB_HUNT]), "Big-game kit"]
+	_assert_band_panel("…whose face names the selected kit (\"%s\")" % menu.text,
+		menu.text == face)
+	var hint := HudComposeVocab.KIT_HINT_SEPARATOR.join([
+		HudComposeVocab.KIT_HINT_ATTACK_FORMAT % String.num(BandFx.KIT_ATTACK_EQUIPPED,
+			HudComposeVocab.KIT_TIER_DECIMALS),
+		HudComposeVocab.KIT_HINT_HUNT_CARRY_FORMAT % String.num(BandFx.KIT_HUNT_CARRY_BARE,
+			HudComposeVocab.KIT_TIER_DECIMALS),
+		HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [HudComposeVocab.KIT_COMPONENT_SPEARS,
+			int(KIT_FRAME_SPEARS_CONDITION)],
+		HudComposeVocab.KIT_HINT_DRY_FORMAT % HudComposeVocab.KIT_COMPONENT_SLED,
+	])
+	var rendered := _find_meta_control(_panel, KitRoster.KIT_HINT_META) as Label
+	_assert_band_panel("…over a hint stating the EFFECTIVE tier, not the fresh one — \"%s\"" % hint,
+		rendered != null and rendered.text == hint)
+
+## The picker OPEN. A screenshot cannot say which entry carries the radio dot, so the structure rides
+## here: the roster's hunt kits and only those, the composed one marked, the job default TAGGED, and
+## `none` LAST — which it is because the ROSTER authors it last and this client sorts nothing.
+func _assert_kit_picker_open(menu: MenuButton) -> void:
+	_assert_band_panel("the Kit picker opens a menu", menu != null)
+	if menu == null:
+		return
+	var popup := menu.get_popup()
+	var labels: Array[String] = []
+	for i in popup.item_count:
+		labels.append(popup.get_item_text(i))
+	# The GATHERING kit lists `forage` alone, so its absence is the filter working rather than a
+	# roster that happens to hold two entries.
+	var want_labels: Array[String] = [
+		"Big-game kit" + HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX, "No kit"]
+	_assert_band_panel("…listing exactly this verb's kits, the default tagged, `none` last — %s"
+			% str(labels),
+		labels == want_labels)
+	var checked: Array[String] = []
+	for i in popup.item_count:
+		if popup.is_item_checked(i):
+			checked.append(popup.get_item_text(i))
+	_assert_band_panel("…marking exactly the composed kit (%s)" % str(checked),
+		checked.size() == 1 and String(checked[0]).begins_with("Big-game kit"))
+
+## **THE KIT-MISMATCH STATE, ASSERTED BY EQUALITY** — `none` composed against tables quoted for
+## `big_game`.
+##
+## The claim is half an ABSENCE (no collapse verdict, no estimate caveat, no take line, no counted
+## refusal — every one of them a figure computed for a raid the player is not sending) and a
+## `contains` search can only testify that something IS present. So the sheet's lines BELOW the kit
+## hint are compared to the exact expected list: the combat gate, which is composed from wire terms
+## and is honest at any tier, then the sentence naming the kit whose numbers were withheld. A verdict
+## put back fails this, and so does a gate line dropped.
+func _assert_kit_mismatch_suppresses_estimates() -> void:
+	var hint := _find_meta_control(_panel, KitRoster.KIT_HINT_META) as Label
+	_assert_band_panel("the kit-mismatch sheet still states the picked kit's tier", hint != null)
+	if hint == null:
+		return
+	var lines := _text_lines(_panel)
+	var at := lines.find(hint.text)
+	_assert_band_panel("…and that hint is on the sheet the assertion walks", at >= 0)
+	if at < 0:
+		return
+	var tail := lines.slice(at + 1)
+	# The gate at the BARE-handed tier against this quarry's defense: the effective attack is 0, so it
+	# refuses outright — the honest verdict for a party carrying nothing, and the one thing this sheet
+	# can still say. Composed from the vocabulary, never through `hunt_gate_model_at`.
+	var gate := SourceForecast.HUNT_GATE_BLOCKED_FORMAT % [
+		SourceForecast.HUNT_FORECAST_WARN_GLYPH, "Wild Boar",
+		String.num(BandFx.KIT_ATTACK_BARE, SourceForecast.HUNT_GATE_SCALAR_DECIMALS),
+		String.num(QUARRY_DEFENSE, SourceForecast.HUNT_GATE_SCALAR_DECIMALS)]
+	var note := HudComposeVocab.KIT_DENIAL_ESTIMATES_QUOTED_FORMAT % ["Big-game kit", "No kit"]
+	var want: Array[String] = [gate, note]
+	_assert_band_panel(("…and below it says EXACTLY the gate and the quoted-kit note — "
+			+ "no verdict, no caveat, no take, no refusal. Got %s") % str(tail),
+		tail == want)
+	# The send stays LIVE: the raid is perfectly launchable, we simply cannot quote its length. A
+	# disabled button here would read as the kit being illegal, which it is not.
+	var confirm := _find_meta_control(_panel, HudWidgets.SEND_DENIAL_CONFIRM_META) as Button
+	_assert_band_panel("…while the Send stays live — the raid launches, only its length is unquotable",
+		confirm != null and not confirm.disabled)
 
 ## The VIABLE denial form. The ABSENCES are half the claims — what this mission does not carry IS its
 ## specification, so a form that grew a floor picker would be as wrong as one that quoted no verdict.
@@ -4539,6 +4769,41 @@ func _kit_band_fixture() -> Dictionary:
 	band["hunter_attack"] = 2.0
 	band["hunt_carry_per_worker_biomass"] = 2.5
 	band["forage_carry_per_worker_biomass"] = 1.75
+	return band
+
+# ---- THE KIT PICKER's band (`docs/plan_denial_raid.md`) ------------------------------------------
+## Condition on the two hunt components, and the whole point of the pair is that they DISAGREE.
+## Spears are worn but live; the SLED has run dry, so the big-game kit's carry has stepped down to the
+## bare-handed tier while its attack has not. That is what makes the picker's hint line assertable as
+## the EFFECTIVE tier rather than the roster's fresh one: `KitOption` publishes carry 40 for this kit
+## and the band gets 12, and a hint quoting 40 to this band would be a lie of exactly the class this
+## branch exists to remove.
+const KIT_FRAME_SPEARS_CONDITION := 74.5
+const KIT_FRAME_SLED_DRY := 0.0
+## The baskets are irrelevant to a hunt sheet and are left healthy, so nothing on these frames can
+## pass by reading the forage component on the hunt's row — the defect the three-kit split corrected.
+const KIT_FRAME_BASKETS_CONDITION := 91.0
+
+## The band the three Kit frames render against: the reference band plus a real, UNEVEN set of
+## component conditions.
+##
+## **A SEPARATE FIXTURE, and the separation is load-bearing.** `_band_fixture` states no kit at all,
+## and `DetailFormat.band_states_kit` is a bare `has()` on the spears key — so folding these onto it
+## would light the `Kit` vitals row in 13 other states and overflow `Zone_band` by 25px, which is what
+## `_kit_band_fixture`'s own note records. This one is that fixture's twin with the SLED run dry, kept
+## apart from it because the map-path state asserts a live `Sled 58` row.
+func _kit_worn_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["hunting_kit_durability"] = KIT_FRAME_SPEARS_CONDITION
+	band["sled_kit_durability"] = KIT_FRAME_SLED_DRY
+	band["basket_kit_durability"] = KIT_FRAME_BASKETS_CONDITION
+	# The band's OWN resolved tiers, i.e. what it gets under the JOB DEFAULT. They are the cohort's
+	# statement and the `Kit` row reads them; the picker does NOT — it resolves the SELECTED kit's
+	# tiers off the roster — so they are set consistently with the conditions above rather than being
+	# what the picker's assertions read.
+	band["hunter_attack"] = BandFx.KIT_ATTACK_EQUIPPED
+	band["hunt_carry_per_worker_biomass"] = BandFx.KIT_HUNT_CARRY_BARE
+	band["forage_carry_per_worker_biomass"] = BandFx.KIT_FORAGE_CARRY_EQUIPPED
 	return band
 
 ## Stamp a fixture cohort with the `band_id` the real wire carries, DELIBERATELY DIFFERENT from its

@@ -766,6 +766,12 @@ fn seed_snapshot() -> WorldSnapshot {
         herd.regrowth_samples = vec![0.0; REGROWTH_CURVE_SAMPLES];
     }
     s.food_modules = rows();
+    // **The kit roster**, and each entry's `jobs` — a repeated field inside a repeated field, so both
+    // levels need elements or the decode guard never exercises the inner one.
+    s.kits = rows();
+    for option in &mut s.kits {
+        option.jobs = vec![String::new(); ROWS];
+    }
     s.sedentarization = rows();
     s.forage_patches = rows();
     for patch in &mut s.forage_patches {

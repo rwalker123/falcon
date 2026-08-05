@@ -27,7 +27,7 @@ use crate::dict::map::tiles_to_array;
 use crate::dict::population::{demographics_to_array, generations_to_array, populations_to_array};
 use crate::dict::subsistence::{
     food_modules_to_array, forage_patches_to_array, herds_to_array,
-    intensification_knowledge_to_array, sedentarization_to_array,
+    intensification_knowledge_to_array, kits_to_array, sedentarization_to_array,
 };
 use crate::dict::{
     u16_vector_to_packed_int32, u32_vector_to_packed_int32, u64_vector_to_packed_int64,
@@ -659,6 +659,19 @@ fn decode_delta_against(
 
     if let Some(forage_patches) = delta.subsistence().and_then(|s| s.foragePatches()) {
         frame.insert_changed("forage_patches", &forage_patches_to_array(forage_patches));
+    }
+
+    // The KIT ROSTER and the two job defaults — whole-section fields, decoded here as well as in
+    // `snapshot_to_dict` for the reason the block below records: a whole-section field read only on
+    // the full path republishes the BASELINE's value for the life of the world.
+    if let Some(kits) = delta.subsistence().and_then(|s| s.kits()) {
+        frame.insert_changed("kits", &kits_to_array(kits));
+    }
+    if let Some(default_hunt_kit) = delta.subsistence().and_then(|s| s.defaultHuntKitId()) {
+        frame.insert_changed("default_hunt_kit_id", default_hunt_kit);
+    }
+    if let Some(default_forage_kit) = delta.subsistence().and_then(|s| s.defaultForageKitId()) {
+        frame.insert_changed("default_forage_kit_id", default_forage_kit);
     }
 
     // These two were decoded on the full-snapshot path only — `decode_delta_against` passed `None`

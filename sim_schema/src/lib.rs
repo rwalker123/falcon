@@ -34,6 +34,84 @@ mod tests {
         }
     }
 
+    /// **The kit roster, the per-row kit ids and the estimate tables' quoted kit survive the wire.**
+    ///
+    /// Encode → decode through the generated reader, because a field appended behind an existing one
+    /// is exactly the shape that silently fails to serialize — and the estimate-table ids are the
+    /// field a client uses to *refuse* to present a table for a kit it was not computed for, so an
+    /// absent one reads as "quoted for nothing" and the refusal never fires.
+    #[test]
+    fn the_kit_roster_and_every_kit_id_ride_the_wire() {
+        const BARE_HUNT_CARRY: f32 = 12.0;
+        const BARE_FORAGE_CARRY: f32 = 1.6;
+        const BARE_ATTACK: f32 = 1.0;
+
+        let snapshot = WorldSnapshot {
+            kits: vec![KitOptionState {
+                id: "none".to_string(),
+                display_name: "No kit".to_string(),
+                jobs: vec!["hunt".to_string(), "forage".to_string()],
+                attack: BARE_ATTACK,
+                hunt_carry_per_worker_biomass: BARE_HUNT_CARRY,
+                forage_carry_per_worker_biomass: BARE_FORAGE_CARRY,
+            }],
+            default_hunt_kit_id: "big_game".to_string(),
+            default_forage_kit_id: "gathering".to_string(),
+            herds: vec![HerdTelemetryState {
+                id: "herd_wild".to_string(),
+                hunt_trip_estimates_kit_id: "big_game".to_string(),
+                denial_estimates_kit_id: "big_game".to_string(),
+                ..Default::default()
+            }],
+            populations: vec![PopulationCohortState {
+                kit_id: "none".to_string(),
+                labor_assignments: vec![LaborAssignmentState {
+                    kind: "hunt".to_string(),
+                    kit_id: "big_game".to_string(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("snapshot decodes");
+        let payload = envelope.payload_as_snapshot().expect("snapshot payload");
+
+        let subsistence = payload.subsistence().expect("subsistence section present");
+        assert_eq!(subsistence.defaultHuntKitId(), Some("big_game"));
+        assert_eq!(subsistence.defaultForageKitId(), Some("gathering"));
+        let option = subsistence.kits().expect("the roster is published").get(0);
+        assert_eq!(option.id(), Some("none"));
+        assert_eq!(option.displayName(), Some("No kit"));
+        assert_eq!(option.attack(), BARE_ATTACK);
+        assert_eq!(option.huntCarryPerWorkerBiomass(), BARE_HUNT_CARRY);
+        assert_eq!(option.forageCarryPerWorkerBiomass(), BARE_FORAGE_CARRY);
+        let jobs = option
+            .jobs()
+            .expect("a kit states the jobs it may be sent on");
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(jobs.get(0), "hunt");
+
+        let herd = subsistence.herds().expect("herds present").get(0);
+        assert_eq!(herd.huntTripEstimatesKitId(), Some("big_game"));
+        assert_eq!(herd.denialEstimatesKitId(), Some("big_game"));
+
+        let cohort = payload
+            .population()
+            .expect("population section present")
+            .populations()
+            .expect("populations present")
+            .get(0);
+        assert_eq!(cohort.kitId(), Some("none"));
+        let row = cohort
+            .laborAssignments()
+            .expect("labor rows present")
+            .get(0);
+        assert_eq!(row.kitId(), Some("big_game"));
+    }
+
     /// **The pen-as-a-managed-population fields survive the wire.** `penUpkeep` (what the pen eats
     /// each turn) and `penFedFraction` (`< 1` = starving) are appended to `HerdTelemetryState`
     /// (append-only discipline), and the client renders the feed as a negative row against the

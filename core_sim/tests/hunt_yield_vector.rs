@@ -226,6 +226,7 @@ fn spawn_hunters(
                     },
                     workers,
                     improvement: NO_IMPROVEMENT_UNDERWAY,
+                    kit: None,
                 }],
                 ..Default::default()
             },
@@ -623,6 +624,7 @@ fn spawn_resident_crew(
                     },
                     workers,
                     improvement,
+                    kit: None,
                 }],
                 ..Default::default()
             },
@@ -1381,6 +1383,7 @@ fn spawn_raid_party(
                 announced: false,
                 pending_reveal: Vec::new(),
                 carried_trade: 0.0,
+                kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Hunt),
             },
         ))
         .id()
