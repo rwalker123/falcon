@@ -2240,12 +2240,30 @@ func _assert_people_sum_matches_size(band: Dictionary, state_name: String) -> vo
 ## `RichTextLabel` (the row is BBCode, which a `Label` walk cannot see at all).
 func _assert_map_path_states_kit() -> void:
 	var band: Dictionary = _hud._selection._selected_unit
+	# **THE SIX ARE NAMED FROM THE READOUTS' OWN CONSTANTS, not from a list on MapView.** Since the
+	# marker became a structural copy there IS no key list there to borrow — and borrowing one would
+	# have asserted that the copy copies what the copy copies. These are the keys `DetailFormat` and
+	# `SourceForecast` actually read, so the claim is "what the panel asks for arrived".
 	var missing: Array[String] = []
-	for toe_key in MAP_VIEW_SCRIPT.TOE_MARKER_FLOAT_KEYS:
+	for toe_key in [
+		DetailFormat.KIT_DURABILITY_KEY_SPEARS, DetailFormat.KIT_DURABILITY_KEY_SLED,
+		DetailFormat.KIT_DURABILITY_KEY_BASKETS, DetailFormat.KIT_TIER_KEY_HUNT_CARRY,
+		DetailFormat.KIT_TIER_KEY_FORAGE_CARRY, SourceForecast.BAND_HUNTER_ATTACK_KEY,
+	]:
 		if not band.has(toe_key):
 			missing.append(String(toe_key))
 	_assert_band_panel("the map-click payload carries the Minimal TOE's six (missing %s)" % str(missing),
 		missing.is_empty())
+	# …and the payload is the WHOLE cohort, which is the invariant that stops a fourth leak: the marker
+	# is `entry.duplicate()` plus declared stamps, so every key the fixture cohort carries is here.
+	# `marker_field_guard` owns the exhaustive form of this against a realistic cohort; this is the
+	# same claim at the END of the chain the report came from — map click → marker → selection → panel.
+	var dropped: Array[String] = []
+	for source_key in _kit_band_fixture():
+		if not band.has(source_key):
+			dropped.append(String(source_key))
+	_assert_band_panel("…and the map-click payload is the WHOLE cohort (dropped %s)" % str(dropped),
+		dropped.is_empty())
 	# …and they arrive as the FLOATS the wire carries. Presence cannot see an `int()` narrowing, which
 	# is the second bug class `marker_field_guard` exists for and which is live-visible here: the
 	# marker IS the selection payload for a band clicked on the map.

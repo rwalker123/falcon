@@ -56,18 +56,35 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   answers `""` when neither resolves, so both paths produce the identical header. That split is
   exactly what the harness pair `band_panel_people` (snapshot path) / `band_panel_people_map_path`
   (map path) exists to keep separable — a fixture reached only one way cannot see it.
-  **THE MARKER COPY IS A HAND-MAINTAINED ALLOWLIST, AND IT HAS NOW LEAKED THREE TIMES** — `hunt_mode`,
-  then `working_age`/`idle_workers`, then the Minimal TOE's six (`MapView.TOE_MARKER_FLOAT_KEYS`).
-  Clicking the band's icon on the map made its **`Kit` row disappear** (`DetailFormat.band_states_kit`
-  is a bare `has()` on the spears key) and took the ⚠ zero-effective-attack warning silently with it,
-  `SourceForecast.hunt_gate_model` early-returning blank without `hunter_attack` — a missing warning
-  looks exactly like a hunt that is fine. **The six are copied only where the cohort HAS them.** A
-  `get(key, 0.0)` would fabricate the key on a cohort that genuinely lacks it and turn *"say nothing"*
-  into *"every hunt is impossible"*, reinstating on the marker path the very bug that early-return
-  exists to prevent; mirroring presence is what makes the two paths one dict in the sense that matters.
-  **Anything the panel newly reads off `_selected_unit` goes on that list AND in
-  `marker_field_guard.PANEL_CONSUMED_KEYS`** — and, if it is continuous, in
-  `FRACTIONAL_ROUND_TRIP_KEYS` too, since presence alone cannot see an `int()` narrowing.
+  **THE MARKER IS A STRUCTURAL COPY OF THE COHORT — `entry.duplicate()` plus declared stamps.** It was
+  a hand-listed literal naming 56 of the cohort's keys, and it leaked THREE times: `hunt_mode`, then
+  `working_age`/`idle_workers`, then the Minimal TOE's six, which made a band's **`Kit` row disappear**
+  when you clicked its map icon (`DetailFormat.band_states_kit` is a bare `has()` on the spears key)
+  and took the ⚠ zero-effective-attack warning silently with it. Every leak had one shape — the decoder
+  grew a field, the panel read it, nobody remembered the list — and **enumerating what to KEEP cannot
+  be made safe by care, while enumerating what to ADD can**, the addition being the thing being
+  written. Measured at the changeover, the list was already missing 13 more keys off a live cohort,
+  four of them read by the panel today (`fodder_store`, `raid_forfeit`, `expedition_fill_target`,
+  `expedition_trip_bound`) — leaks four through seven, unreported and waiting.
+  - **The copy is SHALLOW, and that is the correct depth.** `duplicate(true)` would re-allocate
+    `labor_assignments` / `stores` / `harvest` / `scout` per band per frame, the per-turn cost
+    `turn-profiling.md` spent a pass removing. Those four sub-trees are re-stamped with their own deep
+    copies exactly as before, so nested aliasing is unchanged and `snapshot_alias_guard`'s "MapView
+    must not write into the decoder's cached world" is untouched — every stamp lands in the copy's own
+    top level.
+  - **It PRESERVES ABSENCE, which is why `band_states_kit` and `hunt_gate_model` keep their `has()`
+    tests unchanged.** `duplicate()` reproduces the cohort's key set exactly: present stays present,
+    absent stays absent. It was the hand list that destroyed absence semantics, by dropping keys the
+    cohort had. Neither test may become a `> 0` — `0` durability means DRY and must render in DANGER
+    ink, and a defaulted `attack 0` would refuse every hunt in the game.
+  - **No coercions ride the copy.** The literal wrapped every field in `int()`/`float()`/`String()`,
+    which is where the `age_children` narrowing bug lived; a duplicate carries the decoder's own types.
+    The surviving coercions are on the STAMPS, and they defend against a hand-built FIXTURE rather than
+    the decoder: `pos` from the resolved `current_x`/`current_y` ints, and `dest_x`/`dest_y`/
+    `travel_task_kind` out of the `harvest`/`scout` sub-dicts.
+  - **A new map-only stamp goes in `marker_field_guard.MARKER_STAMPED_KEYS`**, which asserts the
+    partition `marker.keys() == entry.keys() ∪ stamps − omissions` in both directions. Nothing has to
+    be remembered for a new *decoder* field: it is covered the day it exists.
 - **Header rows — no restated identity.** The panel's own chrome already states the band's **name +
   settlement stage**, so its summary grid does NOT repeat them: `_unit_summary_lines(unit, in_panel =
   true)` **drops the `Unit: <name>` row** (it was a third copy of the name) and **replaces `Size: <n>`**
@@ -585,8 +602,10 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   truncating marker copy — so it structurally could not catch the `int()`-narrowed age brackets. This
   state ASSERTS the three PEOPLE brackets sum to the band's own `size`, and was verified to FAIL —
   `sum to 29 but the band holds 30 (raw [9.0, 16.0, 4.0])` — with the narrowing put back. **It also
-  carries the Minimal TOE's three Kit claims** (`_assert_map_path_states_kit`): the PAYLOAD holds all
-  six `TOE_MARKER_FLOAT_KEYS`, spears arrives un-narrowed, and the `Kit` row RENDERS — the payload
+  carries the Minimal TOE's Kit claims** (`_assert_map_path_states_kit`): the PAYLOAD holds all six kit
+  keys — named from `DetailFormat`'s and `SourceForecast`'s OWN constants, since the structural copy
+  leaves no key list on MapView to borrow and borrowing one would assert that the copy copies what the
+  copy copies — the payload is the WHOLE cohort, spears arrives un-narrowed, and the `Kit` row RENDERS — the payload
   claim being where the leak is, and a marker carrying six keys nothing draws being no fix either. Its
   band comes from **`_kit_band_fixture`, a SEPARATE fixture, and that separation is itself a finding**:
   the `Kit` row costs 26px, the band zone already reads 299 of its 300px box in a height-capped T/B
