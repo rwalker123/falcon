@@ -925,8 +925,11 @@ function that clamps nothing is an invitation to put the clamp back. `SourceFore
 is the surviving named seam, for the herd drawer's expedition branch and the dock's hunt form
 (`labor-ui.md`).
 
-**The stepper SEEDS on `denialPartyNeeded`** — the smallest party the sim quotes whose kills outpace
-the herd's regrowth. Below it a raid accomplishes literally nothing however long it runs, and nothing
+**The stepper SEEDS on `denialPartyNeeded`** — the smallest party the sim quotes whose raid
+SUCCEEDS, i.e. whose kills outpace the herd's regrowth. **`horizon` is not a success and not
+`repelled`**, so "the first row that is not `repelled`" is the wrong test and shipped as one:
+`SourceForecast.denial_outcome_succeeds` over `DENIAL_SUCCESS_OUTCOMES` is the client's ONE spelling
+of the set, and `band_panel_preview` pins it against the verdict table's own `VERDICT_OK` entries. Below it a raid accomplishes literally nothing however long it runs, and nothing
 else on the sheet said which number crossed that line. Three invariants:
 
 - **Never seeded to `SourceForecast.DENIAL_PARTY_NEEDED_NONE`.** `0` means the sim quotes no party at

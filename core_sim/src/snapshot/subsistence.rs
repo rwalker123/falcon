@@ -275,23 +275,35 @@ fn denial_party_axis(herd: &Herd, fauna: &FaunaConfig, expedition: &ExpeditionCo
         .min(expedition.deny.max_party_quoted)
 }
 
-/// **The party size the launch sheet opens on** — the smallest quoted party whose *own row* does not
-/// read [`crate::DenialOutcome::Repelled`], and therefore the smallest one that genuinely drives the
-/// herd down (`docs/plan_denial_raid.md` §3.1).
+/// **The party size the launch sheet opens on** — the smallest quoted party whose *own row*
+/// **succeeded** ([`crate::DenialOutcome::succeeded`]: `past_recovery` or `herd_lost`), and
+/// therefore the smallest one that genuinely drives the herd past recovery
+/// (`docs/plan_denial_raid.md` §3.1).
+///
+/// **The test is success, not "not [`crate::DenialOutcome::Repelled`]".** Those read the same on
+/// three of the four verdicts and differ on the one that matters: a
+/// [`crate::DenialOutcome::Horizon`] row is a raid the projection ran to its whole length with the
+/// herd still standing, so it demonstrates nothing the sim will vouch for. Seeding there quoted a
+/// Wild Aurochs party of 5 under the verdict *"still standing when the forecast runs out"* — a
+/// number presented as the answer, one short of one.
 ///
 /// **It is read off the rows rather than recomputed**, which is the whole point: the sheet cannot
-/// open on a value whose verdict, one line below it, says the herd breeds back faster than the party
-/// kills. The closed form sized the axis; the forward simulation — quantiser, fight and engagement
-/// floor included — decides.
+/// open on a value whose verdict, one line below it, refuses to say the herd goes down. The closed
+/// form sized the axis; the forward simulation — quantiser, fight and engagement floor included —
+/// decides.
 ///
-/// [`NO_VIABLE_DENIAL_PARTY`] when **no** quoted party gets there. Three different situations reach
-/// it and all three are honest: a quarry nothing can engage (`wariness >= 1`), a requirement past
-/// `deny.max_party_quoted`, and a herd whose regrowth simply out-runs the whole table. The rows keep
-/// saying `repelled`, which is what the client renders.
+/// [`NO_VIABLE_DENIAL_PARTY`] when **no** quoted party gets there. Four situations reach it and all
+/// four are honest: a quarry nothing can engage (`wariness >= 1`), a requirement past
+/// `deny.max_party_quoted`, a herd whose regrowth simply out-runs the whole table, and a herd whose
+/// quoted axis never reaches a success row — every party either repelled or still grinding at the
+/// horizon. The rows keep carrying their own verdict, which is what the client renders.
 fn seeded_denial_party(entries: &[DenialEstimateState]) -> u32 {
     entries
         .iter()
-        .find(|row| row.outcome != crate::DenialOutcome::Repelled.as_str())
+        .find(|row| {
+            crate::DenialOutcome::from_wire(&row.outcome)
+                .is_some_and(crate::DenialOutcome::succeeded)
+        })
         .map(|row| row.party_workers)
         .unwrap_or(NO_VIABLE_DENIAL_PARTY)
 }
@@ -1239,5 +1251,82 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A quoted row for `party_workers` carrying `outcome`'s verdict. Every other field is inert
+    /// here — [`seeded_denial_party`] reads the verdict and the party size and nothing else — so
+    /// they are left at the wire's own zeroes rather than given fixture values that could be
+    /// mistaken for inputs.
+    fn denial_row(party_workers: u32, outcome: crate::DenialOutcome) -> DenialEstimateState {
+        DenialEstimateState {
+            party_workers,
+            outcome: outcome.as_str().to_string(),
+            ..DenialEstimateState::default()
+        }
+    }
+
+    /// **The sheet opens on the smallest party that SUCCEEDS, not on the smallest that is merely not
+    /// `repelled`** — the reported Wild Aurochs defect (`docs/plan_denial_raid.md` §3.1).
+    ///
+    /// A `horizon` row is a raid the projection ran its whole length without the herd going down,
+    /// so it proves nothing the sim will vouch for. The old `!= repelled` predicate seeded there,
+    /// and the sheet quoted that party under its own verdict line *"still standing when the forecast
+    /// runs out"* — a number offered as the answer while being one short of one.
+    ///
+    /// The fixture puts the two side by side, because the bug is only visible where a `horizon` row
+    /// sits **below** a real success row: with either predicate an axis of successes alone opens on
+    /// the same party.
+    #[test]
+    fn the_seeded_party_is_the_smallest_row_whose_raid_succeeded() {
+        let axis = [
+            denial_row(1, crate::DenialOutcome::Repelled),
+            denial_row(2, crate::DenialOutcome::Repelled),
+            denial_row(3, crate::DenialOutcome::Horizon),
+            denial_row(4, crate::DenialOutcome::Horizon),
+            denial_row(5, crate::DenialOutcome::PastRecovery),
+            denial_row(6, crate::DenialOutcome::HerdLost),
+        ];
+
+        assert_eq!(
+            seeded_denial_party(&axis),
+            5,
+            "the seed must name the smallest party that drove the herd past recovery — a `horizon` \
+             row is a raid the forecast never saw finish"
+        );
+    }
+
+    /// **An axis that never reaches a success row seeds the sentinel**, from both directions it can
+    /// fail: a party the herd out-breeds at every size (`repelled` throughout — the case that has
+    /// always read `0`), and a party that is winning slowly at every size but never crosses the line
+    /// inside `hunt.forecast_horizon_turns` (`horizon` throughout — which used to seed its **first**
+    /// row and now reads *"no quoted party drives this herd down"*).
+    ///
+    /// Paired deliberately: answering `0` for everything would satisfy either half alone, and the
+    /// test above is what stops that.
+    #[test]
+    fn an_axis_with_no_success_row_seeds_no_viable_party() {
+        let repelled: Vec<DenialEstimateState> = (1..=6)
+            .map(|party| denial_row(party, crate::DenialOutcome::Repelled))
+            .collect();
+        assert_eq!(
+            seeded_denial_party(&repelled),
+            NO_VIABLE_DENIAL_PARTY,
+            "a herd whose regrowth out-runs every quoted party has no party to open on"
+        );
+
+        let horizon: Vec<DenialEstimateState> = (1..=6)
+            .map(|party| denial_row(party, crate::DenialOutcome::Horizon))
+            .collect();
+        assert_eq!(
+            seeded_denial_party(&horizon),
+            NO_VIABLE_DENIAL_PARTY,
+            "an axis that tops out at `horizon` quotes no party the sim will vouch for either"
+        );
+
+        assert_eq!(
+            seeded_denial_party(&[]),
+            NO_VIABLE_DENIAL_PARTY,
+            "…and a herd with no quoted rows at all (non-huntable) reads the same sentinel"
+        );
     }
 }

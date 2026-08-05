@@ -1272,6 +1272,13 @@ const REPORTED_HERD: RaidQuarry = RaidQuarry {
 /// **The party the arithmetic demands: `ceil(8.3)` = 9.** Pinned as a literal, because rounding it
 /// the other way is the defect — `8` ties-or-loses against the herd's regrowth every turn while the
 /// sheet presents it as the answer.
+///
+/// **The sheet opens at or ABOVE this, not on it.** The arithmetic is a bound on the search: a party
+/// that only just out-kills the regrowth declines the herd so slowly that the projection runs out of
+/// `hunt.forecast_horizon_turns` before it crosses `collapse_fraction`, so row 9 reads `horizon` and
+/// the smallest row that actually **succeeds** is 10. That is why the assertion below is an
+/// inequality against the arithmetic plus a `succeeded` test on the seed's own row, rather than an
+/// equality with this constant.
 const REPORTED_PARTY_NEEDED: u32 = 9;
 
 /// The reported band's idle workers. It is **not** a bound the sim applies here — it is the number
@@ -1302,8 +1309,9 @@ const REPORTED_SWEEP_SEEDS: [u64; 6] = [3, 11, 29, 97, 613, 40009];
 /// reach, and denial on this quarry was unreachable because a lever said so.
 ///
 /// Four claims, and the last two are a matched pair:
-/// 1. the sim **names** the party — `9`, and `8` is still repelled, which is the rounding pinned in
-///    the defect's own shape;
+/// 1. the sim **names** a party — never below the arithmetic's `9`, with `8` still repelled (the
+///    rounding, in the defect's own shape) and the named row's own verdict a **success** rather than
+///    merely *not repelled*;
 /// 2. it is quoted **past the flat ceiling**, with headroom above it, so the sheet can open there
 ///    and the player can still over-staff from the workers they hold;
 /// 3. driven for real, the seeded party **declines the herd** (the liveness half);
@@ -1318,21 +1326,29 @@ fn the_reported_red_deer_raid_is_staffable_and_its_seeded_party_declines_the_her
     let sheet = exported_denial_sheet(&app, &id);
     let sampled = expedition_cfg(&app).estimate_party_sizes;
 
-    // 1. The number, and the rounding. `8.3` hunters is NINE.
-    assert_eq!(
-        sheet.party_needed, REPORTED_PARTY_NEEDED,
-        "the sheet must open on the smallest party that works; 8.3 hunters rounds UP"
+    // 1. The number, and the rounding. `8.3` hunters is NINE — and the sheet never opens BELOW it.
+    assert!(
+        sheet.party_needed >= REPORTED_PARTY_NEEDED,
+        "the sheet must never open below the arithmetic requirement; 8.3 hunters rounds UP \
+         (opened on {}, requirement {REPORTED_PARTY_NEEDED})",
+        sheet.party_needed
     );
     assert_eq!(
         sheet.outcome_at(REPORTED_PARTY_NEEDED - 1),
         Some(REPELLED),
-        "…and the party one smaller must still read repelled — a floor here would hand back a party \
-         that provably does not work"
+        "…and the party one below the requirement must still read repelled — a floor here would \
+         hand back a party that provably ties-or-loses against the regrowth"
     );
-    assert_ne!(
-        sheet.outcome_at(REPORTED_PARTY_NEEDED),
-        Some(REPELLED),
-        "the seeded party's own row must not contradict the value the sheet opens on"
+    assert!(
+        sheet.succeeded_at(sheet.party_needed),
+        "the seeded party's own row must say the raid SUCCEEDED — `past_recovery` / `herd_lost`, \
+         never merely 'not repelled': a `horizon` row is a raid the projection never saw finish, \
+         and opening there quotes a party under the verdict \"still standing when the forecast runs \
+         out\""
+    );
+    assert!(
+        !sheet.succeeded_at(sheet.party_needed - 1),
+        "…and the row below the seed must NOT have succeeded, or the sheet skipped a party that works"
     );
 
     // 2. It is reachable at all — the defect was that this row did not exist.
@@ -1492,6 +1508,15 @@ impl ExportedDenialSheet {
 
     fn every_row_reads(&self, outcome: &str) -> bool {
         !self.outcomes.is_empty() && self.outcomes.iter().all(|(_, got)| got == outcome)
+    }
+
+    /// Did the row for `party_workers` say the raid **succeeded** — the exact test the sheet's
+    /// seed applies (`DenialOutcome::succeeded`), asked through the enum rather than against a
+    /// hand-written list of keys, because a second list is the drift the seed's own fix removed.
+    fn succeeded_at(&self, party_workers: u32) -> bool {
+        self.outcome_at(party_workers)
+            .and_then(DenialOutcome::from_wire)
+            .is_some_and(DenialOutcome::succeeded)
     }
 }
 

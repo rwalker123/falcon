@@ -1926,8 +1926,9 @@ const HERD_DENIAL_ESTIMATES_KEY := "denial_estimates"
 # exactly what makes the trap inexpressible here.)
 const DENIAL_ESTIMATE_PARTY_KEY := "party_workers"
 # **THE PARTY THE SHEET OPENS ON** — the sim's own `denialPartyNeeded`: the smallest party in the
-# table above whose raid is NOT `repelled`, i.e. the smallest one whose kills outpace this herd's
-# regrowth. It is what the stepper seeds to and what the repelled refusal names, and both read it
+# table above whose raid SUCCEEDED (`DENIAL_SUCCESS_OUTCOMES`), i.e. the smallest one whose kills
+# outpace this herd's regrowth. **NOT "the first row that is not `repelled`"** — that reading quotes a
+# `horizon` row, whose projection merely ran out, as the party that breaks the herd. It is what the stepper seeds to and what the repelled refusal names, and both read it
 # through `denial_party_needed` so the control and the sentence cannot quote different counts.
 const HERD_DENIAL_PARTY_NEEDED_KEY := "denial_party_needed"
 # **`0` IS "NO QUOTED PARTY DRIVES THIS HERD DOWN", and it is NEVER "send nobody".** Three honest
@@ -1958,6 +1959,20 @@ const DENIAL_OUTCOME_HORIZON := "horizon"
 # The unattributed key — an estimate row that carries no outcome at all. It names NEITHER side, for
 # the reason `HUNT_EMPTY_REFUSALS`' own unattributed entry does: guessing is the defect.
 const DENIAL_OUTCOME_NONE := ""
+# **THE TWO OUTCOMES IN WHICH THE RAID ACTUALLY WORKED** — the herd goes under the Allee threshold
+# and cannot come back, or falls past its extinction floor and despawns. Everything else is a raid
+# that did NOT get there, and the reason to name the set rather than to spell "not repelled" at each
+# reader is that those are DIFFERENT SETS: **`horizon` is not `repelled` and it is not a success
+# either.** A horizon row means the projection ran its whole length with the herd still standing —
+# the party may well get there after it, and it may not — so quoting one as the party that breaks
+# this herd promises an outcome the sim declined to state. That is exactly the defect this constant
+# exists to make unexpressible; it shipped as "the first row that is not `repelled`" and opened a
+# Wild Aurochs sheet on a party of 5 under the verdict *"still standing when the forecast runs out"*.
+#
+# **It is the same set the table below marks `VERDICT_OK`**, and must stay so: severity there is the
+# raid's verdict and not a tint choice — `denial_outcome_succeeds` and the Send button's primary face
+# are two readings of one question. `band_panel_preview` asserts the two agree entry by entry.
+const DENIAL_SUCCESS_OUTCOMES := [DENIAL_OUTCOME_PAST_RECOVERY, DENIAL_OUTCOME_HERD_LOST]
 
 # **THE TURN COUNT IS AN ESTIMATE, AND EVERY FORM OF IT WEARS `≈`.** `turns_to_collapse` is an
 # integral over many stochastic retreat draws, so a lucky run really can finish sooner than the
@@ -3644,6 +3659,13 @@ static func denial_verdict(forecast: Dictionary) -> Dictionary:
     var outcome := String(forecast.get("outcome", DENIAL_OUTCOME_NONE))
     return DENIAL_VERDICTS.get(outcome, DENIAL_VERDICTS[DENIAL_OUTCOME_NONE])
 
+## **DID THIS PARTY'S RAID GET THERE?** — the ONE test over `DENIAL_SUCCESS_OUTCOMES`, so no reader
+## has to spell the set and none can spell it as "not `repelled`". `horizon` answers FALSE: a
+## projection that ran out is not a raid that worked, and treating it as one is what quoted a party
+## that never breaks the herd as the party that does.
+static func denial_outcome_succeeds(outcome: String) -> bool:
+    return DENIAL_SUCCESS_OUTCOMES.has(outcome)
+
 ## The collapse range as a phrase, or `""` when the forecast has no number to give.
 ##
 ## **`0` IS "BEYOND THE HORIZON" ON THAT END, NOT A TURN COUNT.** `low` is the FEWEST turns, so a
@@ -3731,8 +3753,9 @@ static func denial_take_bbcode(forecast: Dictionary, herd_name: String) -> Strin
         text += DENIAL_TAKE_LEFT_FORMAT % format_magnitude(wasted)
     return "[color=#%s]%s[/color]" % [HudStyle.INK_DIM_HEX, text]
 
-## **THE ONE READING OF `denialPartyNeeded`** — the smallest party the sim quotes that actually drives
-## this herd past recovery, `DENIAL_PARTY_NEEDED_NONE` when it quotes none. The stepper's seed and the
+## **THE ONE READING OF `denialPartyNeeded`** — the smallest party the sim quotes whose raid actually
+## SUCCEEDS in driving this herd past recovery (never a `horizon` row, which only means the projection
+## ran out), `DENIAL_PARTY_NEEDED_NONE` when it quotes none. The stepper's seed and the
 ## repelled refusal's count BOTH come through here, so the control and the sentence beside it cannot
 ## disagree about the number. It is NOT a cap and may exceed the band's idle workers — that is the
 ## honest "you need more people than you have", and only the stepper, which knows the band, clamps it.

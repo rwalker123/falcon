@@ -197,7 +197,8 @@ reproduce the trap. Each row carries `party_workers` / `turns_to_collapse` / `tu
 together or the consumer cannot tell a repelled party from an expired clock.
 
 Beside the table it decodes `HerdTelemetryState.denialPartyNeeded` as **`denial_party_needed`**, the
-smallest party in that table whose raid is not `repelled` — the party the compose sheet's stepper opens
+smallest party in that table whose raid SUCCEEDED (`past_recovery` / `herd_lost`, never `horizon`,
+whose projection merely ran out) — the party the compose sheet's stepper opens
 on and the count its repelled refusal names. **Inserted UNCONDITIONALLY, unlike `denial_estimates`**:
 it is a scalar with a real meaning at `0`, so a herd carrying no table still answers the question.
 **`0` means no quoted party drives this herd down and is never "send nobody"** — three honest

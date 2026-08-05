@@ -267,8 +267,10 @@ pub(crate) fn herds_to_array(
             let _ = dict.insert("denial_estimates", &denial_rows);
         }
         // **THE PARTY THE DENIAL SHEET OPENS ON** — the smallest party in the table above whose raid
-        // is NOT `repelled`, i.e. the smallest one whose kills genuinely outpace this herd's
-        // regrowth. The stepper is otherwise a guessing game: below that requirement a raid
+        // SUCCEEDED (`past_recovery` or `herd_lost`), i.e. the smallest one whose kills genuinely
+        // outpace this herd's regrowth. **A `horizon` row is NOT a success**: its projection ran its
+        // whole length with the herd still standing, so quoting one names a party that may never get
+        // there at all. The stepper is otherwise a guessing game: below that requirement a raid
         // accomplishes literally nothing however long it runs, and no row on the sheet named which
         // number crossed the line.
         //

@@ -478,8 +478,13 @@ pub struct HerdTelemetryState {
     #[serde(default)]
     pub denial_estimates: Vec<DenialEstimateState>,
     /// **The party the launch sheet OPENS on** — the smallest row in [`Self::denial_estimates`]
-    /// whose raid is not `"repelled"`, and therefore the smallest party whose kills genuinely
-    /// outpace this herd's regrowth (`docs/plan_denial_raid.md` §3.1).
+    /// whose raid **succeeded** (`"past_recovery"` or `"herd_lost"`), and therefore the smallest
+    /// party whose kills genuinely outpace this herd's regrowth (`docs/plan_denial_raid.md` §3.1).
+    ///
+    /// **Not *"the smallest row that is not `repelled`"*.** A `"horizon"` row is a raid the
+    /// projection ran its whole length with the herd still standing, so it proves nothing the sim
+    /// will vouch for; seeding there quoted a party under its own verdict line *"still standing when
+    /// the forecast runs out"*.
     ///
     /// A denial raid is a **step function** in party size: below the requirement it accomplishes
     /// literally nothing however long it runs. Seeding the stepper here turns the control from a
@@ -487,9 +492,11 @@ pub struct HerdTelemetryState {
     ///
     /// **`0` = no quoted party drives this herd down**, never *"send nobody"*. Reached by a quarry
     /// nothing can bring into contact, by a requirement past the sim's quoting bound
-    /// (`expedition_config` `deny.max_party_quoted`), and by a herd whose regrowth out-runs the whole
-    /// table; the rows' own `outcome` says which. It may also legitimately exceed the launching
-    /// band's idle workers — *"you need more people than you have"* is an answer.
+    /// (`expedition_config` `deny.max_party_quoted`), by a herd whose regrowth out-runs the whole
+    /// table, and by a quoted axis that never reaches a success row (every party either repelled or
+    /// still grinding at the horizon); the rows' own `outcome` says which. It may also legitimately
+    /// exceed the launching band's idle workers — *"you need more people than you have"* is an
+    /// answer.
     ///
     /// **Quoted for the EQUIPPED tier, like every other field on this table.** A herd row is a fact
     /// about the herd and has no band to ask, so the capture prices it with

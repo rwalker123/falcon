@@ -195,8 +195,16 @@ and that the stepper must clamp to `idleWorkers` instead.
 #### The sheet opens on `denialPartyNeeded`
 
 `HerdTelemetryState.denialPartyNeeded` (appended) is the smallest party in `denialEstimates` whose
-own row is **not** `repelled`. It is read off the rows rather than recomputed, so the sheet cannot
-open on a value whose verdict one line below says the herd out-breeds it.
+own row **succeeded** — `past_recovery` or `herd_lost`, the `DenialOutcome::succeeded` test. It is
+read off the rows rather than recomputed, so the sheet cannot open on a value whose verdict one line
+below refuses to say the herd goes down.
+
+**It is not *"the smallest row that is not `repelled`"*, and the difference is `horizon`.** That row
+is a raid the projection ran its whole length with the herd still standing — it demonstrates nothing
+the sim will vouch for. Seeding there quoted a Wild Aurochs party of 5 under its own verdict line
+*"still standing when the forecast runs out"*, and in play it was one short; across the shipped
+roster the distance between the first non-repelled row and the first row that actually crosses the
+line reaches **21 hunters**.
 
 **It rounds UP, always.** 8.3 hunters is 9. `fauna::denial_party_needed` is `floor(x) + 1`, not
 `ceil(x)`: a party that exactly *ties* with the regrowth declines nothing, and `ceil` is wrong by one
@@ -212,14 +220,21 @@ this herd down"* — never *"send nobody"*), and `repelled` keeps working on eve
 |---|---|
 | a quarry nothing brings into contact (`wariness >= 1`, `engage_rate 0`) | `0`; every row `repelled` |
 | a requirement past `expedition_config` `deny.max_party_quoted` (the readout's cost bound) | `0`; every row `repelled` |
-| a herd that declines but does not cross the line inside the horizon | the requirement, with the row reading `horizon` — a long raid, not a refused one |
+| a herd that declines but does not cross the line inside the horizon **at any quoted size** | `0`; the rows read `horizon` — a raid nobody quoted finishes, not a refused one |
 | a requirement larger than the band's idle workers | the requirement, honestly — *"you need more people than you have"*, and the panel already shows both numbers |
 
 **The denial table's axis is wider than the hunt table's**, deliberately: *what the herd needs +
-`estimate_party_sizes` of headroom*, capped by `deny.max_party_quoted` (**64**). The requirement's own
-row therefore always exists, which is the whole point — the seeded default can never be one of the
-unquoted sizes above. The headroom matters because the decision above the requirement is *how fast*:
-on the reported herd 9 hunters grind past the 60-turn horizon and 16 cross the line in 11 turns.
+`estimate_party_sizes` of headroom*, capped by `deny.max_party_quoted` (**64**). The closed-form
+requirement's own row therefore always exists. The headroom matters because the decision above the
+requirement is *how fast*: on the reported herd 9 hunters grind past the 60-turn horizon and 16 cross
+the line in 11 turns.
+
+**The axis is sized by the closed form, so it does not guarantee a SUCCESS row.** The closed form is
+blind to the quantiser, the fight and `animals_engaged`'s `max(1)` floor, so the simulated
+requirement can sit above it: swept over the shipped roster (~670 herd × stock-fraction samples per
+map), 0–5 rows per map have their first success 1–4 parties above the axis, and a Thunder Mammoth at
+full `K` sat **9** above (closed form 4, simulated 21). Those herds report the `0` sentinel. Widening
+`estimate_party_sizes` — or sizing the headroom off the simulation instead — is the open lever.
 
 **What the wider axis costs.** Measured on a fully-revealed 80×52 map (130 huntable herds, debug
 build): capture ran **~59 ms** against a **~49 ms** flat-`estimate_party_sizes` baseline — about

@@ -1157,6 +1157,7 @@ func _ready() -> void:
 	_push_bands([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
 	_assert_quarry_eligibility()
 	_assert_denial_quarry_eligibility()
+	_assert_denial_party_needed_skips_horizon()
 	_panel.set_active_tab(&"parties")
 	_hud._bandpanel._party_compose_open = true
 	_hud._bandpanel._party_compose_mission = "hunt"
@@ -3850,14 +3851,67 @@ func _denial_needs_deep_party_rows() -> Array:
 	return rows
 
 ## **`denialPartyNeeded`, DERIVED FROM THE TABLE RATHER THAN STATED BESIDE IT.** The field IS "the
-## smallest party in `denialEstimates` whose raid is not `repelled`", so a fixture that spelled it out
+## smallest party in `denialEstimates` whose raid SUCCEEDED", so a fixture that spelled it out
 ## separately could quote a party its own rows contradict — and every one of these tables would then
-## have to be kept in step by hand. `DENIAL_PARTY_NEEDED_NONE` when every row is repelled, which is
-## exactly what the sim publishes for a herd no quoted party drives down.
+## have to be kept in step by hand. `DENIAL_PARTY_NEEDED_NONE` when no row succeeds, which is exactly
+## what the sim publishes for a herd no quoted party drives down.
+##
+## **THE TEST IS `denial_outcome_succeeds`, NOT "is not `repelled`"**, and the difference is a shipped
+## defect: `horizon` is neither, so the looser test quoted a row whose projection merely RAN OUT as the
+## party that breaks the herd — a Wild Aurochs sheet opened at 5 under the verdict *"still standing when
+## the forecast runs out"*. The success set lives in `SourceForecast` for the reason every other outcome
+## key does: the client renders verdicts off these keys, and a second copy of "which outcomes count as
+## success" is what let the two diverge.
+## **THE `horizon` GUARD — the one shape no fixture in this file stages, and the one that shipped
+## wrong.** Every denial table here is built from `past_recovery` and `repelled` alone, so "the first
+## row that is not `repelled`" and "the first row that SUCCEEDED" agree on all four of them and the
+## defect is invisible to every frame. This drives `_denial_party_needed_for` over a table whose first
+## non-repelled row is a `horizon` — the projection ran its whole length with the herd still standing —
+## and requires the derivation to walk PAST it to the row that actually breaks the herd.
+##
+## PNG-less on purpose: a table's quoted party is a number, not a picture, and the sheet renders the
+## same plausible stepper whichever row it came from. Asserted directly over constructed rows, since
+## the answer is a pure function and a fixture would only re-state it.
+func _assert_denial_party_needed_skips_horizon() -> void:
+	var outcomes := [
+		SourceForecast.DENIAL_OUTCOME_REPELLED,
+		SourceForecast.DENIAL_OUTCOME_HORIZON,
+		SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY,
+	]
+	var rows: Array = []
+	for i in outcomes.size():
+		rows.append({
+			SourceForecast.DENIAL_ESTIMATE_PARTY_KEY: i + 1,
+			"outcome": String(outcomes[i]),
+		})
+	var horizon_party := 2
+	var success_party := 3
+	_assert_band_panel("a `horizon` row is NOT the party that breaks the herd (derived %d, wanted %d)"
+			% [_denial_party_needed_for(rows), success_party],
+		_denial_party_needed_for(rows) == success_party)
+	# …and the negative half, or the claim above also passes on a derivation that simply took the LAST
+	# row: a table whose only non-repelled row is a horizon quotes NO party at all.
+	var no_success := rows.slice(0, horizon_party)
+	_assert_band_panel("…and a table that never succeeds quotes no party at all (derived %d)"
+			% _denial_party_needed_for(no_success),
+		_denial_party_needed_for(no_success) == SourceForecast.DENIAL_PARTY_NEEDED_NONE)
+	# **THE SUCCESS SET AND THE VERDICT TABLE'S `VERDICT_OK` SEVERITIES ARE ONE ANSWER**, stated twice
+	# in `SourceForecast` twenty lines apart. `denial_outcome_succeeds` decides which party the sheet
+	# opens on and the severity decides whether the Send wears the primary face; the two disagreeing
+	# would offer a party under a warning face, or warn about one it had just recommended.
+	var agree := true
+	for outcome_variant in SourceForecast.DENIAL_VERDICTS:
+		var outcome := String(outcome_variant)
+		var severity_ok := String(SourceForecast.DENIAL_VERDICTS[outcome]["severity"]) \
+			== SourceForecast.VERDICT_OK
+		if SourceForecast.denial_outcome_succeeds(outcome) != severity_ok:
+			agree = false
+	_assert_band_panel("…and the success set is exactly the verdict table's VERDICT_OK entries", agree)
+
 func _denial_party_needed_for(rows: Array) -> int:
 	for row_variant in rows:
 		var row: Dictionary = row_variant as Dictionary
-		if String(row.get("outcome", "")) != SourceForecast.DENIAL_OUTCOME_REPELLED:
+		if SourceForecast.denial_outcome_succeeds(String(row.get("outcome", ""))):
 			return int(row.get(SourceForecast.DENIAL_ESTIMATE_PARTY_KEY, 0))
 	return SourceForecast.DENIAL_PARTY_NEEDED_NONE
 

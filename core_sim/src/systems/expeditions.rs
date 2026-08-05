@@ -1940,6 +1940,16 @@ pub enum DenialOutcome {
 }
 
 impl DenialOutcome {
+    /// **Every variant**, and therefore the list [`Self::from_wire`] parses against. It is the one
+    /// place the set is enumerated: `as_str` is an exhaustive `match`, so a new variant must be
+    /// given a key to compile, and adding it here is what makes that key *readable* again.
+    pub const ALL: [DenialOutcome; 4] = [
+        DenialOutcome::PastRecovery,
+        DenialOutcome::HerdLost,
+        DenialOutcome::Repelled,
+        DenialOutcome::Horizon,
+    ];
+
     /// Stable wire/snapshot key (client discriminator), the `as_str` convention every wire enum in
     /// this crate uses.
     pub fn as_str(self) -> &'static str {
@@ -1949,6 +1959,23 @@ impl DenialOutcome {
             DenialOutcome::Repelled => "repelled",
             DenialOutcome::Horizon => "horizon",
         }
+    }
+
+    /// **The inverse of [`Self::as_str`]** — `None` for a key no variant publishes.
+    ///
+    /// It exists so a consumer holding the wire `String` (a `DenialEstimateState::outcome` row) can
+    /// ask the enum's own questions — [`Self::succeeded`] above all — instead of hand-writing a
+    /// second list of keys at the call site. That second list is exactly how the two directions
+    /// drift: `snapshot::subsistence::seeded_denial_party` once tested `!= "repelled"`, which
+    /// silently counted a [`Self::Horizon`] row (a raid the projection never saw finish) as a party
+    /// that works, and the launch sheet opened on it.
+    ///
+    /// **It reads [`Self::ALL`] rather than matching the strings**, so the round trip is total by
+    /// construction and no key is spelled twice.
+    pub fn from_wire(key: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|outcome| outcome.as_str() == key)
     }
 
     /// Did the raid achieve what it was sent to do? Both success readings answer the same question
@@ -2311,5 +2338,63 @@ pub fn expedition_delivery(
                 trip_bound: Some(fc.bound),
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod denial_outcome_tests {
+    //! The wire round trip of [`DenialOutcome`] — the enum a denial row publishes as a `String` and
+    //! that a consumer has to get *back* to in order to ask [`DenialOutcome::succeeded`].
+
+    use super::DenialOutcome;
+
+    /// **Every variant survives the round trip, and the keys are distinct.**
+    ///
+    /// The failure this guards is one-directional drift: a fifth verdict added to
+    /// [`DenialOutcome::as_str`] (which the compiler forces) but left out of
+    /// [`DenialOutcome::ALL`] (which it does not) would publish a key nothing can parse, and every
+    /// consumer asking `succeeded` about that row would quietly read *"it did not"*. The sweep runs
+    /// over `ALL`, so it also states that `ALL` is what `from_wire` searches.
+    #[test]
+    fn every_denial_outcome_round_trips_through_its_wire_key() {
+        for outcome in DenialOutcome::ALL {
+            assert_eq!(
+                DenialOutcome::from_wire(outcome.as_str()),
+                Some(outcome),
+                "{outcome:?} publishes `{}`, which must parse back to it",
+                outcome.as_str()
+            );
+        }
+
+        let mut keys: Vec<&'static str> = DenialOutcome::ALL.iter().map(|o| o.as_str()).collect();
+        keys.sort_unstable();
+        let distinct = keys.len();
+        keys.dedup();
+        assert_eq!(
+            keys.len(),
+            distinct,
+            "two verdicts sharing a wire key make the round trip lossy: {keys:?}"
+        );
+
+        assert_eq!(
+            DenialOutcome::from_wire("collapsed"),
+            None,
+            "a key no variant publishes is `None`, never a plausible-looking default"
+        );
+    }
+
+    /// **Success is `past_recovery` or `herd_lost`, and `horizon` is NOT success** — the distinction
+    /// the launch sheet's seed turns on (`snapshot::subsistence::seeded_denial_party`). `Horizon`
+    /// says the projection ran its whole length with the herd still standing, which is the *absence*
+    /// of a verdict about the party, not a win.
+    #[test]
+    fn only_a_finished_raid_counts_as_success() {
+        assert!(DenialOutcome::PastRecovery.succeeded());
+        assert!(DenialOutcome::HerdLost.succeeded());
+        assert!(!DenialOutcome::Repelled.succeeded());
+        assert!(
+            !DenialOutcome::Horizon.succeeded(),
+            "a raid still grinding when the forecast ran out has not driven the herd down"
+        );
     }
 }

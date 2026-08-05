@@ -683,9 +683,23 @@ linear in it.
 ### `denialPartyNeeded` — the party the sheet OPENS on
 
 `HerdTelemetryState.denialPartyNeeded` (appended last) is the **smallest row in `denialEstimates`
-whose outcome is not `"repelled"`**, read off the rows rather than recomputed — so the sheet cannot
-open on a value whose verdict one line below says the herd out-breeds it. The stepper seeds there
-instead of at an arbitrary default, which turns the control from a guessing game into an adjustment.
+whose outcome `succeeded`** — `past_recovery` or `herd_lost` — read off the rows rather than
+recomputed, so the sheet cannot open on a value whose verdict one line below refuses to say the herd
+goes down. The stepper seeds there instead of at an arbitrary default, which turns the control from a
+guessing game into an adjustment.
+
+- **The test is `DenialOutcome::succeeded`, NOT "not `repelled`"**, and the two differ on exactly one
+  verdict: `horizon`, a raid the projection ran its whole length with the herd still standing. A
+  `!= repelled` seed quoted a Wild Aurochs party of **5** under its own verdict line *"Wild Aurochs is
+  still standing when the forecast runs out"* — a horizon row presented as the party that works, and
+  in play it was short. The gap is not one row: measured over the shipped roster it runs to **21
+  hunters** between the first non-repelled row and the first row that actually crosses the line (Wild
+  Boar / Grey Wolf Pack at full `K`).
+- **The wire `String` gets back to the enum through `DenialOutcome::from_wire`, never through a
+  second list of keys at the call site.** `from_wire` searches `DenialOutcome::ALL` by `as_str`, so
+  the round trip is total by construction and no key is spelled twice — which is the drift that
+  produced the bug in the first place. Pinned by
+  `systems::expeditions::denial_outcome_tests::every_denial_outcome_round_trips_through_its_wire_key`.
 
 - **The requirement rounds UP, always.** `fauna::denial_party_needed(replacement, engage_rate,
   wariness)` is `floor(replacement / (engage_rate × (1 − wariness))) + 1` — **not `ceil`**, because a
@@ -707,13 +721,15 @@ instead of at an arbitrary default, which turns the control from a guessing game
   floor (which lets a lone hunter reach one mammoth where the arithmetic reads `0.05`). Its job is to
   size `snapshot::subsistence::denial_party_axis`; which of those rows *actually* declines the herd
   is the forward simulation's.
-- **`0` = no quoted party drives this herd down**, and it is never *"send nobody"*. Three situations
-  reach it — an unreachable quarry, a requirement past `deny.max_party_quoted`, and a herd whose
-  regrowth out-runs the whole table — and the rows' own `outcome` says which. A requirement larger
-  than the band's idle workers is **not** one of them: that is reported honestly as the number, and
-  the panel already shows both.
+- **`0` = no quoted party drives this herd down**, and it is never *"send nobody"*. **Four**
+  situations reach it — an unreachable quarry, a requirement past `deny.max_party_quoted`, a herd
+  whose regrowth out-runs the whole table, and a quoted axis whose rows never reach a **success**
+  (every party either repelled or still grinding at the horizon) — and the rows' own `outcome` says
+  which. The fourth is the one the `succeeded` test added, and it is the honest reading of a sheet
+  that holds no row the sim will vouch for. A requirement larger than the band's idle workers is
+  **not** one of them: that is reported honestly as the number, and the panel already shows both.
 - **The table's axis is `requirement + estimate_party_sizes` of headroom** — wider than the hunt
-  table's, so the seeded default's own row always exists — capped by
+  table's — capped by
   `deny.max_party_quoted`, because the decision *above* the requirement is **how fast** (measured on
   the reported herd: 9 hunters grind past the horizon, 16 cross the line in 11 turns). The added rows
   are the cheap ones — a party past the requirement collapses the herd in a handful of turns, so its
@@ -722,6 +738,13 @@ instead of at an arbitrary default, which turns the control from a guessing game
   ~49 ms flat-`estimate_party_sizes` baseline (≈ +20%, and only on the denial half), where a **flat**
   `deny.max_party_quoted` axis cost ~104 ms.
   Snapshot capture is the hot half of a turn, which is why the axis is herd-sized rather than flat.
+- **The axis does not guarantee a success row, because it is sized by the closed form.** Swept over
+  the shipped roster (every generated herd × five stock fractions, ~670 samples per map), **0–5 rows
+  per map** hold a first-success party **1–4 above** the axis, and a Thunder Mammoth herd at full `K`
+  ran **9** above it (the closed form asks 4 where the simulation needs 21 — a heavy body is where
+  the quantiser and the fight diverge from it hardest). Those herds report `0` rather than a party
+  the sim would in fact vouch for. Widening the headroom is the lever if play says it matters; it
+  costs `3 × rows × forecast_horizon_turns` turn-steps per huntable herd.
 
 **THE WHOLE HERD TABLE IS PRICED AT THE EQUIPPED TIER, AND SO IS THIS FIELD.**
 `snapshot/capture.rs` builds the `HerdSnapshotInputs::party` with
@@ -748,7 +771,13 @@ projection (the retreat is a draw and this herd is a near-run thing), paired wit
 that one hunter fewer leaves the herd standing higher; the second pairs the sentinel with the
 requirement that every row still carries a verdict, so answering `0` by emptying the table would not
 pass. The rounding itself is pinned on the pure helper by
-`fauna::tests::a_requirement_of_eight_point_three_hunters_is_nine_and_a_tie_is_never_enough`.
+`fauna::tests::a_requirement_of_eight_point_three_hunters_is_nine_and_a_tie_is_never_enough`. The
+**predicate** is pinned on the pure seed by
+`snapshot::subsistence::tests::{the_seeded_party_is_the_smallest_row_whose_raid_succeeded,
+an_axis_with_no_success_row_seeds_no_viable_party}` — the first puts a `horizon` row *below* a
+`past_recovery` one, which is the only shape where `succeeded` and `!= repelled` disagree; the second
+pairs an all-`repelled` axis with an all-`horizon` one so the sentinel cannot be reached by answering
+`0` for everything.
 
 **Client-side (slice 2):** every outfit stepper caps at the band's **`idleWorkers`**, never at
 `maxExpeditionPartySize`; the denial stepper additionally *seeds* at `denialPartyNeeded`, rendering
