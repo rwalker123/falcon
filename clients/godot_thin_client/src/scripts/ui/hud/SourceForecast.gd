@@ -1978,26 +1978,34 @@ const DENIAL_SUCCESS_OUTCOMES := [DENIAL_OUTCOME_PAST_RECOVERY, DENIAL_OUTCOME_H
 # integral over many stochastic retreat draws, so a lucky run really can finish sooner than the
 # reported low (measured: a seeded raid landed on turn 7 against a reported low of 8). The band is a
 # claim about the EXPECTATION, not a promise per run — hence `≈` on both ends and the caveat below.
-const DENIAL_TURNS_RANGE_FORMAT := "≈%d–%d turns"
-# Low and high agree: the distribution is degenerate and the client says ONE number, exactly as it
-# does for every other range on this wire.
+# **THE LEAD FIGURE, AND IT IS THE EXPECTATION WHEREVER THE SIM BOUNDED ONE.** Every other number on
+# this sheet — the kill count, the food hauled, the waste left on the range — is priced at
+# `turns_to_collapse`, so a sentence leading with any other draw describes a different raid from the
+# take line beneath it. Reported from play: a Red Deer raid read *"≈12 turns on a good run"* over a
+# take of 180 kills, which is the forty-seven-turn expectation's take. The old rule dropped the
+# expectation entirely whenever `high` was unbounded — the one number that matched the rest of the
+# sheet was the one never printed.
 const DENIAL_TURNS_ONE_FORMAT := "≈%d turns"
-# A positive `low` beside a `0` `high` — it gets there on the optimistic draw and the pessimistic one
-# runs past the horizon. Stating the low alone would promise the good run as the answer.
-const DENIAL_TURNS_GOOD_RUN_FORMAT := "≈%d turns on a good run"
-# The clause the turn phrase rides in, appended to the outcome sentence rather than baked into each
+# **WHICH SPAN THE FIGURE IS IN, and neither surface may leave it to be inferred** (reported from play).
+# The collapse table counts turns spent WORKING the herd; the party still has to walk there, and the
+# hunt readout on the same sheet has always added its round trip. A pre-launch verdict states the total
+# FROM LAUNCH; an in-flight one quotes the table's own raiding turns, a launched party's remaining walk
+# not being knowable from the drawer's inputs.
+const DENIAL_SPAN_FROM_LAUNCH := " from launch"
+const DENIAL_SPAN_OF_RAIDING := " of raiding"
+# The clause the lead figure rides in, appended to the outcome sentence rather than baked into each
 # entry's format: an outcome that quotes no turns must still render its outcome (below).
-#
-# **THE SPAN IS NAMED IN THE SENTENCE, AND THAT IS THE WHOLE FIX** (reported from play). The collapse
-# table counts turns spent WORKING the herd; the party still has to walk there, and the hunt readout on
-# the same sheet has always added its round trip (`HUNT_FORECAST_TRAVEL_BREAKDOWN`). Two missions
-# quoting bare turn counts that meant different spans is the defect, so neither form is bare any more:
-# a pre-launch verdict states the total FROM LAUNCH, an in-flight one states turns OF RAIDING.
-const DENIAL_TURNS_CLAUSE_FORMAT := " in %s from launch"
-# The in-flight form. A launched party's remaining walk is not knowable from the drawer's inputs (the
-# sim publishes no per-party arrival for a denial mission), so this surface quotes the table's own span
-# and SAYS which one it is rather than inheriting a "from launch" it cannot honour.
-const DENIAL_TURNS_CLAUSE_AT_HERD_FORMAT := " in %s of raiding"
+const DENIAL_TURNS_LEAD_FORMAT := " in %s%s"
+# **THE EXPECTATION ITSELF RAN PAST THE HORIZON, so only luck gets there at all.** This is the one
+# place "on a good run" is the right words — and it must still say outright that the raid is not
+# expected to finish, or a lone optimistic number reads as the answer.
+const DENIAL_ONLY_GOOD_RUN_LEAD_FORMAT := " only on a good run — %s%s"
+const DENIAL_SPREAD_NOT_EXPECTED := ", and the raid is not expected to finish inside the forecast"
+# **THE SPREAD, STATED AFTER THE EXPECTATION RATHER THAN INSTEAD OF IT.** The ordinary case names both
+# ends; the reported case names the good end and says the bad one is unbounded. An unbounded end is
+# always SAID to be unbounded — silently dropping it is what let a lucky-run figure stand alone.
+const DENIAL_SPREAD_RANGE_FORMAT := " — between %d and %d depending on the run"
+const DENIAL_SPREAD_OPEN_HIGH_FORMAT := " — as few as %d on a good run, and a bad one may not finish"
 # …and where there IS travel folded into that total, how much of it is the walk — the hunt line's
 # `(7 hunting + 3 travel)` split, in the one term a denial total actually adds. Rendered only when
 # there is travel to split off, exactly as the hunt breakdown is.
@@ -3597,7 +3605,7 @@ static func denial_estimate_row(rows: Array, workers: int) -> Dictionary:
 ## `turns_to_collapse` counts turns of RAIDING — the party has to reach the herd before it can kill
 ## anything — so a bare "≈5–8 turns" beside a hunt line that HAS always added its round trip made two
 ## missions on one sheet quote turn counts meaning different things. Each bounded end therefore gains
-## the outbound leg, and `DENIAL_TURNS_CLAUSE_FORMAT` names the span out loud.
+## the outbound leg, and `DENIAL_SPAN_FROM_LAUNCH` names the span out loud.
 ##
 ## **THE RETURN LEG IS DELIBERATELY NOT IN IT.** The verdict is about the HERD crossing the point of no
 ## return, which happens on the range the moment the party is there and killing; the walk home comes
@@ -3666,42 +3674,75 @@ static func denial_verdict(forecast: Dictionary) -> Dictionary:
 static func denial_outcome_succeeds(outcome: String) -> bool:
     return DENIAL_SUCCESS_OUTCOMES.has(outcome)
 
-## The collapse range as a phrase, or `""` when the forecast has no number to give.
-##
-## **`0` IS "BEYOND THE HORIZON" ON THAT END, NOT A TURN COUNT.** `low` is the FEWEST turns, so a
-## positive low beside a zero high is "only on a good run"; both zero means the projection bounded
-## neither end, and the expectation is the last thing left to quote. Every form wears `≈` — the band
-## is a claim about many draws, not a promise about this one.
-static func denial_turns_phrase(forecast: Dictionary) -> String:
-    var low := int(forecast.get("low", DENIAL_TURNS_BEYOND_HORIZON))
-    var high := int(forecast.get("high", DENIAL_TURNS_BEYOND_HORIZON))
-    if low > DENIAL_TURNS_BEYOND_HORIZON and high > DENIAL_TURNS_BEYOND_HORIZON:
-        if low == high:
-            return DENIAL_TURNS_ONE_FORMAT % low
-        return DENIAL_TURNS_RANGE_FORMAT % [low, high]
-    if low > DENIAL_TURNS_BEYOND_HORIZON:
-        return DENIAL_TURNS_GOOD_RUN_FORMAT % low
+## **THE FIGURE THE SENTENCE LEADS ON — the EXPECTATION where the sim bounded it, the good run only
+## where it did not.** `0` is "beyond the horizon" on that end and never a turn count, so an unbounded
+## expectation falls through to `low`; both unbounded means the projection bounded nothing and there is
+## nothing to lead with.
+static func _denial_lead_turns(forecast: Dictionary) -> int:
     var turns := int(forecast.get("turns", DENIAL_TURNS_BEYOND_HORIZON))
     if turns > DENIAL_TURNS_BEYOND_HORIZON:
-        return DENIAL_TURNS_ONE_FORMAT % turns
-    return ""
+        return turns
+    return int(forecast.get("low", DENIAL_TURNS_BEYOND_HORIZON))
 
-## **THE TURN CLAUSE, WHICH ALWAYS NAMES ITS SPAN** — `" in ≈8–11 turns from launch (2 of them
-## travel)"` where the caller supplied a band, `" in ≈5–8 turns of raiding"` where it did not. `""`
-## when the forecast has no number to quote, so the outcome sentence stands alone.
+## That figure as a phrase, or `""` when the forecast has no number to give — which is also the gate
+## every caller uses to decide whether a verdict quotes a number at all (`DENIAL_ESTIMATE_CAVEAT`
+## qualifies a figure, so it must not print where there is none). It wears `≈` because the band is a
+## claim about many draws, not a promise about this one.
 ##
-## A bare `" in ≈5–8 turns"` is the one form this must never produce again: the hunt readout on the
-## same sheet quotes a round-trip TOTAL, so an unqualified denial count read as the same span and was
-## short by the walk. The travel split renders only where there is travel to split off — a band
-## standing beside its quarry has none, and "(0 of them travel)" would be a term for nothing.
+## **IT IS THE LEAD ALONE, NOT THE WHOLE RANGE.** The spread rides `denial_turns_clause`, which is what
+## keeps "which number leads" from being answerable in two places.
+static func denial_turns_phrase(forecast: Dictionary) -> String:
+    var lead := _denial_lead_turns(forecast)
+    if lead <= DENIAL_TURNS_BEYOND_HORIZON:
+        return ""
+    return DENIAL_TURNS_ONE_FORMAT % lead
+
+## **THE TURN CLAUSE — the EXPECTATION, its SPAN, then the spread.** `""` when the forecast has no
+## number to quote, so the outcome sentence stands alone. Five shapes, and the `0`-means-unbounded
+## convention holds on every end:
+##
+## 1. all three bounded — `" in ≈20 turns from launch — between 12 and 31 depending on the run"`
+## 2. `high` unbounded — `" in ≈47 turns from launch — as few as 12 on a good run, and a bad one may
+##    not finish"`
+## 3. the EXPECTATION unbounded — `" only on a good run — ≈12 turns from launch, and the raid is not
+##    expected to finish inside the forecast"`
+## 4. `low == high` — the distribution is degenerate, so the lead figure IS the whole answer and no
+##    spread renders
+## 5. nothing bounded — no clause at all
+##
+## **THE EXPECTATION LEADS WHEREVER IT EXISTS**, because every other number on the sheet is priced at
+## it; leading with the lucky end described a different raid from the take line two rows down (reported
+## from play). **AN UNBOUNDED END IS STATED, NEVER DROPPED** — the rule this replaced quoted `low`
+## alone whenever `high` ran past the horizon, which is how a lone optimistic figure came to read as
+## the answer. And no branch can produce a bare count: the span rides the lead figure in every one, the
+## hunt readout on the same sheet quoting a round-trip TOTAL that an unqualified denial count read as.
+##
+## The travel split renders only where there is travel to split off — a band standing beside its quarry
+## has none, and "(0 of them travel)" would be a term for nothing.
 static func denial_turns_clause(forecast: Dictionary) -> String:
     var phrase := denial_turns_phrase(forecast)
     if phrase == "":
         return ""
     var travel := int(forecast.get(DENIAL_TRAVEL_KEY, DENIAL_TRAVEL_UNKNOWN))
-    if travel == DENIAL_TRAVEL_UNKNOWN:
-        return DENIAL_TURNS_CLAUSE_AT_HERD_FORMAT % phrase
-    var clause := DENIAL_TURNS_CLAUSE_FORMAT % phrase
+    var span := DENIAL_SPAN_OF_RAIDING if travel == DENIAL_TRAVEL_UNKNOWN \
+        else DENIAL_SPAN_FROM_LAUNCH
+    var turns := int(forecast.get("turns", DENIAL_TURNS_BEYOND_HORIZON))
+    var low := int(forecast.get("low", DENIAL_TURNS_BEYOND_HORIZON))
+    var high := int(forecast.get("high", DENIAL_TURNS_BEYOND_HORIZON))
+    var clause := ""
+    if turns <= DENIAL_TURNS_BEYOND_HORIZON:
+        # The lead figure is the GOOD RUN (`_denial_lead_turns` fell through), so the sentence says so
+        # and says the raid is not expected to finish — never the bare optimistic number.
+        clause = DENIAL_ONLY_GOOD_RUN_LEAD_FORMAT % [phrase, span] + DENIAL_SPREAD_NOT_EXPECTED
+    else:
+        clause = DENIAL_TURNS_LEAD_FORMAT % [phrase, span]
+        if low > DENIAL_TURNS_BEYOND_HORIZON and high > DENIAL_TURNS_BEYOND_HORIZON:
+            # `low == high` is the degenerate distribution: the lead already IS both ends, and
+            # "between 8 and 8" would be a spread for nothing.
+            if low != high:
+                clause += DENIAL_SPREAD_RANGE_FORMAT % [low, high]
+        elif low > DENIAL_TURNS_BEYOND_HORIZON:
+            clause += DENIAL_SPREAD_OPEN_HIGH_FORMAT % low
     if travel > 0:
         clause += DENIAL_TRAVEL_SPLIT_FORMAT % travel
     return clause

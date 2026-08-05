@@ -663,17 +663,19 @@ func run(harness) -> void:
 	# outbound walk and reads "…from launch"; this party has already left and its remaining walk is not
 	# on the wire, so the drawer quotes the sim's own raiding turns UNSHIFTED under a clause that names
 	# them. Neither surface leaves the span to be inferred — that was the defect.
-	deny_verdict += SourceForecast.DENIAL_TURNS_CLAUSE_AT_HERD_FORMAT % (
-		SourceForecast.DENIAL_TURNS_RANGE_FORMAT % [party_low, party_high])
-	h._assert_hud("…and states the COLLAPSE VERDICT as a range over its RAIDING turns — \"%s\""
+	var party_turns: int = HerdFx.DENIAL_COLLAPSE_TURNS[DENIAL_PARTY_SIZE - 1]
+	deny_verdict += SourceForecast.DENIAL_TURNS_LEAD_FORMAT % [
+		SourceForecast.DENIAL_TURNS_ONE_FORMAT % party_turns,
+		SourceForecast.DENIAL_SPAN_OF_RAIDING]
+	deny_verdict += SourceForecast.DENIAL_SPREAD_RANGE_FORMAT % [party_low, party_high]
+	h._assert_hud("…and states the COLLAPSE VERDICT over its RAIDING turns, expectation first — \"%s\""
 			% deny_verdict,
 		deny_text.contains(deny_verdict))
 	# …and the launch-clock wording is nowhere on it: a party already out must not be told its collapse
 	# band starts when it leaves. Asserted as the pairing negative to the claim above, since a clause
-	# builder that emitted neither form would satisfy that one alone only by accident.
+	# builder that emitted neither span would satisfy that one alone only by accident.
 	h._assert_hud("…and never the FROM-LAUNCH span, which is the launch sheet's",
-		not deny_text.contains(SourceForecast.DENIAL_TURNS_CLAUSE_FORMAT % (
-			SourceForecast.DENIAL_TURNS_RANGE_FORMAT % [party_low, party_high])))
+		not deny_text.contains(SourceForecast.DENIAL_SPAN_FROM_LAUNCH))
 	# **THE THREE HUNT-ONLY READOUTS ARE ABSENT, and that is the mission's specification.** Its
 	# `expedition_floor` reads `0.0` and its `expedition_fill_target` `0` because it HAS no such
 	# orders; rendering either would put a lever on screen the command grammar cannot express.
@@ -713,11 +715,11 @@ func run(harness) -> void:
 				SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY]["line"] % DENIAL_TARGET_QUARRY)
 	# (c) The two degenerate bands the range must collapse: low == high reads as ONE number, and a
 	# positive low beside a `0` high reads "on a good run" rather than promising the good draw.
-	h._assert_hud("a degenerate band reads one number, and a half-bounded one says so",
+	h._assert_hud("a degenerate band reads one number, and an unbounded expectation falls to the good run",
 		SourceForecast.denial_turns_phrase({"low": 4, "high": 4, "turns": 4})
 				== SourceForecast.DENIAL_TURNS_ONE_FORMAT % 4
 			and SourceForecast.denial_turns_phrase({"low": 3, "high": 0, "turns": 0})
-				== SourceForecast.DENIAL_TURNS_GOOD_RUN_FORMAT % 3)
+				== SourceForecast.DENIAL_TURNS_ONE_FORMAT % 3)
 
 	# State 1k — the hunt launch policy picker: an idle band (short allocation panel) showing the
 	# "Send expedition" outfit block — the party stepper, the scout + hunt send buttons, and the hunt

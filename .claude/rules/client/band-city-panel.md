@@ -1023,9 +1023,30 @@ and for the same reason: three lookups are free to disagree.
   render alone, and none in which its absence renders as silence. An outcome that quotes no turns
   (`repelled`, `horizon`) carries `turns: false` in its entry and the clause is never appended.
 - **`0` ON A TURN FIELD MEANS "NOT WITHIN THE HORIZON" ON THAT END, never "immediately"**, and `low`
-  is the FEWEST turns. So `low > 0` beside `high == 0` reads *"≈3 turns on a good run"* rather than
-  promising the good draw; `low == high` collapses to one number; both zero falls back to the
-  expectation and then to no clause at all.
+  is the FEWEST turns.
+- **THE EXPECTATION LEADS THE SENTENCE WHEREVER THE SIM BOUNDED ONE, and the spread follows it.**
+  Every other number on this sheet — the kill count, the food hauled, the waste left on the range — is
+  priced at `turns_to_collapse`, so a verdict leading with any other draw describes a different raid
+  from the take line two rows beneath it. Reported from play: a Red Deer raid read *"≈12 turns on a
+  good run"* over a take of 180 kills, which is the FORTY-SEVEN-turn expectation's take. Both numbers
+  were individually true, which is why nothing caught it.
+- **AN UNBOUNDED END IS STATED AS UNBOUNDED, NEVER DROPPED.** The rule this replaced quoted `low`
+  alone whenever `high` ran past the horizon and printed no expectation at all — the one figure that
+  matched the rest of the sheet was the one never rendered. `denial_turns_clause` has five shapes and
+  no branch of it can print a lone optimistic number as though it were the answer:
+
+  | shape | reads |
+  |---|---|
+  | all three bounded | `in ≈20 turns from launch — between 12 and 31 depending on the run` |
+  | `high` unbounded | `in ≈47 turns from launch — as few as 12 on a good run, and a bad one may not finish` |
+  | the EXPECTATION unbounded | `only on a good run — ≈12 turns from launch, and the raid is not expected to finish inside the forecast` |
+  | `low == high` | the lead figure alone — a degenerate distribution, so `between 8 and 8` would be a spread for nothing |
+  | nothing bounded | no clause; the outcome word stands alone |
+
+  "On a good run" is the right words in the THIRD row and nowhere else — there the expectation itself
+  ran past the horizon, so luck genuinely is the only way there, and the clause says so outright.
+  `denial_turns_phrase` is the LEAD figure alone (and the gate the caveat rides on); the spread lives
+  in the clause, so "which number leads" is answerable in exactly one place.
 - **THE BAND IS AN ESTIMATE, NOT A PROMISE, AND THE PANEL SAYS SO.** `turns_to_collapse` is an
   integral over many stochastic retreat draws, so a lucky run really can finish sooner than the
   reported low (measured: a seeded raid landed on turn 7 against a reported low of 8). Every form

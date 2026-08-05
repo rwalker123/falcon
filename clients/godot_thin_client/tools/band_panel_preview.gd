@@ -117,6 +117,17 @@ const DENIAL_DEEP_PARTY_NEEDED := 11
 ## …and the party the second frame steps BACK to, below that requirement, so its row is `repelled` and
 ## the refusal beneath it has a count to name.
 const DENIAL_DEEP_PARTY_SHORT := 4
+## **THE REPORTED SHAPE — a bounded expectation, a bounded good run, and a BAD run that never
+## finishes.** `high == 0` is the wire's "not within the horizon on that end", and no other denial
+## fixture in this file stages it: every table above bounds all three, so the frames could not show
+## what the old rule did here — it dropped the expectation entirely and quoted the LUCKY end alone,
+## beside a take line priced at the expectation. The spread between the two is deliberately wide,
+## because a low sitting near the expectation would render a defensible-looking sentence either way.
+const DENIAL_OPEN_HIGH_TURNS := 47
+const DENIAL_OPEN_HIGH_LOW := 12
+## The party this frame composes. Inside the reference band's idle workforce, so the stepper renders
+## it unclamped and the frame is judged on the sentence rather than on a cap.
+const DENIAL_OPEN_HIGH_PARTY := 2
 ## Whole animals ONE raider of that party kills over the raid. A repelled party is not one that kills
 ## nothing — it is one the herd outbreeds — so the sub-requirement rows carry a real take.
 const DENIAL_DEEP_KILLS_PER_WORKER := 3
@@ -1158,6 +1169,7 @@ func _ready() -> void:
 	_assert_quarry_eligibility()
 	_assert_denial_quarry_eligibility()
 	_assert_denial_party_needed_skips_horizon()
+	_assert_denial_turn_clause_shapes()
 	_panel.set_active_tab(&"parties")
 	_hud._bandpanel._party_compose_open = true
 	_hud._bandpanel._party_compose_mission = "hunt"
@@ -1330,6 +1342,20 @@ func _ready() -> void:
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
 	_assert_denial_short_handed()
+
+	# **THE REPORTED VERDICT SHAPE — a bounded expectation over an UNBOUNDED bad run.** No other denial
+	# table in this file leaves an end open, so no frame could show what the old rule did with one: it
+	# dropped the expectation and quoted the lucky end alone, under a take line priced at the
+	# expectation. Back on the reference band, so the sentence is what differs from the frames above.
+	_set_world_herds(_quarry_herd_fixtures(_denial_open_high_rows()))
+	_hud._bandpanel._send_expedition_count = DENIAL_OPEN_HIGH_PARTY
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_compose_deny_open_high")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_denial_open_high_verdict()
 	_set_world_herds(_quarry_herd_fixtures())
 
 	_hud._bandpanel._send_expedition_count = 1
@@ -3824,6 +3850,23 @@ func _denial_repelled_rows() -> Array:
 	return _denial_rows(SourceForecast.DENIAL_OUTCOME_REPELLED,
 		zeroes, zeroes, zeroes, DENIAL_REPELLED_KILLS_ROW)
 
+## **THE OPEN-HIGH TABLE — every row bounded on the expectation and the good run, unbounded on the
+## bad one.** `high == 0` is the wire's own "not within the horizon on that end"; the sim really does
+## publish this shape (a raid whose unlucky draws run past the 60-turn projection), and it is the shape
+## the verdict copy shipped wrong. Flat across party sizes, since the claim is the SENTENCE and a
+## descending table would only invite an assertion about which row was read.
+func _denial_open_high_rows() -> Array:
+	var kills: Array = []
+	var turns: Array = []
+	var low: Array = []
+	var zeroes: Array = []
+	for i in DENIAL_KILLS_ROW.size():
+		kills.append(int(DENIAL_KILLS_ROW[i]))
+		turns.append(DENIAL_OPEN_HIGH_TURNS)
+		low.append(DENIAL_OPEN_HIGH_LOW)
+		zeroes.append(0)
+	return _denial_rows(SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY, turns, low, zeroes, kills)
+
 ## **A TABLE WITH THE REQUIREMENT INSIDE IT** — every party below `DENIAL_DEEP_PARTY_NEEDED` is
 ## `repelled`, that party and up are `past_recovery`. This is the shape the sim publishes for a herd
 ## whose requirement outruns `maxExpeditionPartySize`: the party axis runs to whichever of that
@@ -3944,12 +3987,18 @@ func _assert_denial_viable() -> void:
 	# short by the outbound leg. The expectation is stated from the harness's side (the constant
 	# below, derived from this fixture's own geometry) so the two arrive at one string from opposite
 	# ends; re-deriving it through `outbound_travel_turns` would assert nothing.
-	want += SourceForecast.DENIAL_TURNS_CLAUSE_FORMAT % (
-		SourceForecast.DENIAL_TURNS_RANGE_FORMAT % [
-			DENIAL_LOW_ROW[DENIAL_PARTY - 1] + DENIAL_OUTBOUND_TRAVEL_TURNS,
-			DENIAL_HIGH_ROW[DENIAL_PARTY - 1] + DENIAL_OUTBOUND_TRAVEL_TURNS])
+	# **THE EXPECTATION LEADS AND THE SPREAD FOLLOWS IT**, because the take line under this sentence is
+	# priced at the expectation: a verdict leading with the lucky end describes a different raid from
+	# the kill count two rows down.
+	want += SourceForecast.DENIAL_TURNS_LEAD_FORMAT % [
+		SourceForecast.DENIAL_TURNS_ONE_FORMAT % (
+			DENIAL_TURNS_ROW[DENIAL_PARTY - 1] + DENIAL_OUTBOUND_TRAVEL_TURNS),
+		SourceForecast.DENIAL_SPAN_FROM_LAUNCH]
+	want += SourceForecast.DENIAL_SPREAD_RANGE_FORMAT % [
+		DENIAL_LOW_ROW[DENIAL_PARTY - 1] + DENIAL_OUTBOUND_TRAVEL_TURNS,
+		DENIAL_HIGH_ROW[DENIAL_PARTY - 1] + DENIAL_OUTBOUND_TRAVEL_TURNS]
 	want += SourceForecast.DENIAL_TRAVEL_SPLIT_FORMAT % DENIAL_OUTBOUND_TRAVEL_TURNS
-	_assert_band_panel("the denial form states the collapse verdict as a RANGE — \"%s\"" % want,
+	_assert_band_panel("the denial form leads with the EXPECTATION and states the spread — \"%s\"" % want,
 		_rich_text_containing(_panel, want) == want)
 	# **THE WASTE IS STATED AND IS NOT DRESSED AS A WARNING.** On a hunt an unhauled kill wears
 	# `HUNT_FORECAST_WARN_GLYPH`; on a raid it IS the mission, so the line is quiet and factual. Both
@@ -3993,10 +4042,13 @@ func _assert_denial_viable() -> void:
 func _assert_denial_in_reach_verdict() -> void:
 	var want := String(SourceForecast.DENIAL_VERDICTS[
 		SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY]["line"]) % QUARRY_HOME_SPECIES
-	want += SourceForecast.DENIAL_TURNS_CLAUSE_FORMAT % (
-		SourceForecast.DENIAL_TURNS_RANGE_FORMAT % [
-			DENIAL_LOW_ROW[DENIAL_PARTY - 1] + QUARRY_HOME_OUTBOUND_TRAVEL_TURNS,
-			DENIAL_HIGH_ROW[DENIAL_PARTY - 1] + QUARRY_HOME_OUTBOUND_TRAVEL_TURNS])
+	want += SourceForecast.DENIAL_TURNS_LEAD_FORMAT % [
+		SourceForecast.DENIAL_TURNS_ONE_FORMAT % (
+			DENIAL_TURNS_ROW[DENIAL_PARTY - 1] + QUARRY_HOME_OUTBOUND_TRAVEL_TURNS),
+		SourceForecast.DENIAL_SPAN_FROM_LAUNCH]
+	want += SourceForecast.DENIAL_SPREAD_RANGE_FORMAT % [
+		DENIAL_LOW_ROW[DENIAL_PARTY - 1] + QUARRY_HOME_OUTBOUND_TRAVEL_TURNS,
+		DENIAL_HIGH_ROW[DENIAL_PARTY - 1] + QUARRY_HOME_OUTBOUND_TRAVEL_TURNS]
 	# EQUALITY, so the absence rides in the same claim: a line that also appended a travel clause is a
 	# different string and fails here rather than passing a `contains`.
 	_assert_band_panel("a quarry inside hunt reach is raidable, and reads sensibly at zero travel — \"%s\"" % want,
@@ -4043,6 +4095,79 @@ func _assert_denial_repelled() -> void:
 	_assert_band_panel("…and the reason beside it sends the player to the PARTY",
 		_has_label_containing(_panel, String(SourceForecast.DENIAL_VERDICTS[
 			SourceForecast.DENIAL_OUTCOME_REPELLED]["reason"]) % quarry))
+
+## **THE REPORTED VERDICT — a bounded expectation over an unbounded bad run.** Two claims in one
+## EQUALITY, which is why it is an equality and not a `contains`: the sentence must LEAD with the
+## expectation (the figure the take line beneath it is priced at), and it must SAY the bad run may not
+## finish rather than dropping that end. A `contains` on the expectation alone would pass on a line
+## that also quoted the lucky end as the answer, which is the defect.
+func _assert_denial_open_high_verdict() -> void:
+	var quarry := "Wild Boar"
+	var want := String(SourceForecast.DENIAL_VERDICTS[
+		SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY]["line"]) % quarry
+	want += SourceForecast.DENIAL_TURNS_LEAD_FORMAT % [
+		SourceForecast.DENIAL_TURNS_ONE_FORMAT % (
+			DENIAL_OPEN_HIGH_TURNS + DENIAL_OUTBOUND_TRAVEL_TURNS),
+		SourceForecast.DENIAL_SPAN_FROM_LAUNCH]
+	want += SourceForecast.DENIAL_SPREAD_OPEN_HIGH_FORMAT % (
+		DENIAL_OPEN_HIGH_LOW + DENIAL_OUTBOUND_TRAVEL_TURNS)
+	want += SourceForecast.DENIAL_TRAVEL_SPLIT_FORMAT % DENIAL_OUTBOUND_TRAVEL_TURNS
+	_assert_band_panel("an unbounded bad run still leads with the expectation — \"%s\"" % want,
+		_rich_text_containing(_panel, want) == want)
+	# **AND THE CAVEAT STILL RIDES UNDER IT**, this verdict quoting numbers. The caveat is gated on
+	# `denial_turns_phrase`, which the rewrite re-pointed at the lead figure — a gate that answered
+	# `""` here would silently drop the caveat from exactly the shape that most needs qualifying.
+	_assert_band_panel("…and the estimate caveat rides under it, a number having been quoted",
+		_has_label_containing(_panel, SourceForecast.DENIAL_ESTIMATE_CAVEAT))
+
+## **THE FIVE CLAUSE SHAPES, DRIVEN DIRECTLY.** Only two of them are reachable from a rendered frame
+## (the ordinary range and the open high), and the other three are exactly the ends where a lone
+## optimistic number could reappear. PNG-less for the reason the horizon guard is: a turn clause is a
+## string, and the sheet renders a plausible-looking sentence whichever draw it led with.
+func _assert_denial_turn_clause_shapes() -> void:
+	var travel := 1
+	var of_raiding := SourceForecast.DENIAL_TRAVEL_UNKNOWN
+	# 1 — all three bounded: the expectation leads, the spread follows, the split closes.
+	var ordinary := SourceForecast.denial_turns_clause({
+		"turns": 20, "low": 12, "high": 31, SourceForecast.DENIAL_TRAVEL_KEY: travel})
+	var want_ordinary := SourceForecast.DENIAL_TURNS_LEAD_FORMAT % [
+			SourceForecast.DENIAL_TURNS_ONE_FORMAT % 20, SourceForecast.DENIAL_SPAN_FROM_LAUNCH] \
+		+ SourceForecast.DENIAL_SPREAD_RANGE_FORMAT % [12, 31] \
+		+ SourceForecast.DENIAL_TRAVEL_SPLIT_FORMAT % travel
+	_assert_band_panel("a bounded band leads with the expectation — \"%s\"" % ordinary,
+		ordinary == want_ordinary)
+	# 3 — the EXPECTATION itself is unbounded, so only luck gets there. This is the one shape whose
+	# lead is the good run, and it must SAY the raid is not expected to finish.
+	var lucky := SourceForecast.denial_turns_clause({
+		"turns": 0, "low": 12, "high": 0, SourceForecast.DENIAL_TRAVEL_KEY: travel})
+	var want_lucky := SourceForecast.DENIAL_ONLY_GOOD_RUN_LEAD_FORMAT % [
+			SourceForecast.DENIAL_TURNS_ONE_FORMAT % 12, SourceForecast.DENIAL_SPAN_FROM_LAUNCH] \
+		+ SourceForecast.DENIAL_SPREAD_NOT_EXPECTED \
+		+ SourceForecast.DENIAL_TRAVEL_SPLIT_FORMAT % travel
+	_assert_band_panel("an unbounded expectation says the raid is not expected to finish — \"%s\"" % lucky,
+		lucky == want_lucky)
+	# 4 — `low == high`: the distribution is degenerate, so the lead IS the whole answer and no spread
+	# renders. "between 8 and 8 depending on the run" is a spread for nothing.
+	var degenerate := SourceForecast.denial_turns_clause({
+		"turns": 8, "low": 8, "high": 8, SourceForecast.DENIAL_TRAVEL_KEY: 0})
+	_assert_band_panel("a degenerate band renders no spread — \"%s\"" % degenerate,
+		degenerate == SourceForecast.DENIAL_TURNS_LEAD_FORMAT % [
+			SourceForecast.DENIAL_TURNS_ONE_FORMAT % 8, SourceForecast.DENIAL_SPAN_FROM_LAUNCH])
+	# 5 — nothing bounded: no clause at all, so the outcome word stands alone. The structural half of
+	# "never a blank turn count without its outcome".
+	_assert_band_panel("a forecast bounded on no end renders no clause",
+		SourceForecast.denial_turns_clause({
+			"turns": 0, "low": 0, "high": 0, SourceForecast.DENIAL_TRAVEL_KEY: travel}) == "")
+	# **THE IN-FLIGHT SPAN IS THE OTHER HALF OF EVERY SHAPE**, and it is asserted here rather than left
+	# to the drawer's own frame: the span is chosen once for the whole clause, so a rewrite that named
+	# it per branch would leave the launch sheet right and the drawer quietly telling a party already
+	# out that its band starts when it leaves.
+	var in_flight := SourceForecast.denial_turns_clause({
+		"turns": 20, "low": 12, "high": 31, SourceForecast.DENIAL_TRAVEL_KEY: of_raiding})
+	_assert_band_panel("…and a bandless forecast names the RAIDING span, never the launch one",
+		in_flight.contains(SourceForecast.DENIAL_SPAN_OF_RAIDING)
+			and not in_flight.contains(SourceForecast.DENIAL_SPAN_FROM_LAUNCH)
+			and not in_flight.contains(SourceForecast.DENIAL_TRAVEL_SPLIT_FORMAT % 0))
 
 ## **THE DEEP PARTY** — a band whose idle workforce outnumbers `max_expedition_party_size`, on a quarry
 ## whose requirement outruns it too. Two claims, and neither is legible in the frame alone: the sheet
