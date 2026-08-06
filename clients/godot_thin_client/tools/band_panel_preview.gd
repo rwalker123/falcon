@@ -319,6 +319,22 @@ const HUNT_LOST_ENTITY := 954
 # A party still standing in its home band's camp with no map report owed — the one shape a recall
 # CANCELS on the spot rather than walking home (`HudBandLaborState.party_cancels_in_camp`).
 const HUNT_IN_CAMP_ENTITY := 955
+# **THE TALLEST PARTY THE INSPECTOR STRIP CAN BE ASKED TO HOLD** — every optional line of
+# `BandDetailLines.expedition_summary_lines` live at once. See `_worst_case_party_fixture`.
+const HUNT_WORST_CASE_ENTITY := 956
+# Its two pack numbers. The fill target is what makes the `Orders:` row name the quarry instead of
+# reading "fills the pack"; the carried figure EQUALS the cap so the `Carried:` row takes its longest
+# form — `N / cap` plus the `· FULL` badge — rather than the bare count a capless party gets.
+const WORST_CASE_FILL_TARGET := 12
+# Its quarry, one of `_herd_fixtures()`. Named so the fixture and the assertion's needles resolve the
+# SAME herd — the assertion reads the herd's live position and species back off `_world_herds` rather
+# than restating them.
+const WORST_CASE_TARGET_HERD_ID := "game_deer_79"
+const WORST_CASE_CARRY_CAP := 18
+# How many detail lines that party's strip must render. Stated here rather than counted from the render
+# so the state FAILS on a producer that quietly stops emitting one — a shorter strip fits its box, so
+# the extent report would go green on a fixture that had stopped being the worst case.
+const WORST_CASE_DETAIL_LINES := 7
 # A 21:9 monitor — comfortably past the wide shell's content cap, which is the whole point of the state.
 const ULTRAWIDE_WIDTH := 3440
 const ULTRAWIDE_HEIGHT := 900
@@ -1571,7 +1587,38 @@ func _ready() -> void:
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
+	_report_zone_content_extent("band_panel_parties_inspector_wide")
 	_hud._bandpanel._toggle_parties_inspector(str(HUNT_DELIVERING_ENTITY))   # close before the next state
+
+	# (a2) THE WORST-CASE PARTY — the same height-capped bottom dock, the same open strip, and a party
+	# carrying EVERY optional line of `BandDetailLines.expedition_summary_lines` at once (see
+	# `_worst_case_party_fixture` for the seven and their gates). The state above is NOT the worst case:
+	# its party carries no fill target, no carry cap and no trip bound, and it still overran its box —
+	# which is the `band_panel_vitals_worst_case` lesson exactly. Every fixture carried SOME of the
+	# optional lines and none carried them all, so the assertions were green on a strip nobody had ever
+	# asked to hold the whole set.
+	#
+	# ONE party, not two: a second row costs the zone another 48px for a structural reason that has
+	# nothing to do with the strip's own height, and mixing the two would leave the reported number
+	# unattributable.
+	#
+	# It REPORTS its extent as well as asserting the fit — a near-miss and a comfortable fit are the
+	# same green line otherwise, and this zone has now been at the edge twice.
+	_push_bands([_many_sources_band_fixture(), _worst_case_party_fixture()])
+	_hud._bandpanel._toggle_parties_inspector(str(HUNT_WORST_CASE_ENTITY))
+	await _settle()
+	await _save("band_panel_worst_case_party")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_worst_case_party_lines()
+	_report_zone_content_extent("band_panel_worst_case_party")
+	_hud._bandpanel._toggle_parties_inspector(str(HUNT_WORST_CASE_ENTITY))
+	# PUT THE PREVIOUS ROSTER BACK. `update_band_alerts` keeps a losing-population diff against the LAST
+	# roster pushed, so a state inserted here must leave the walk exactly where it found it or every
+	# following state diffs against a roster it never saw.
+	_push_bands([_many_sources_band_fixture(), _hunt_expedition_fixture()])
+	await _settle()
 
 	# (b) NARROW shell (left dock, Parties tab): the tall L/R parties zone holds both parties + the strip
 	# with room to spare. Inspect the NO-SURPLUS party → the invisible-line bug the strip fixes:
@@ -2360,6 +2407,80 @@ func _check_line(label: String, got: String, want: String) -> void:
 		print("band_panel_preview: assert OK — %s renders '%s'" % [label, got])
 	else:
 		push_error("band_panel_preview: %s expected '%s' but got '%s'" % [label, want, got])
+
+## The parties zone's host in the WIDE shell — the one the worst-case party state renders into. (The
+## NARROW shell swaps in `NarrowZoneHost`, which is why the band zone's own extent report carries a
+## two-name list; this state is bottom-docked, so it is always this one.)
+const PARTIES_ZONE_HOST_NAME := "Zone_parties"
+
+## GUARD: the worst-case party's strip must really be rendering EVERY optional line. The extent this
+## state reports is only a worst case while it is — a strip that quietly stopped emitting a line is
+## SHORTER, so it fits its box and both the bounds assertion and `_assert_zone_content_fits` go green
+## on a state that has stopped measuring what it exists to measure. The same trap
+## `band_panel_vitals_worst_case` carries one zone over.
+##
+## Asserted on the RENDER, not on `expedition_summary_lines`' return value: the producer answering
+## seven lines says nothing about the strip building seven Labels out of them.
+func _assert_worst_case_party_lines() -> void:
+	var lines := _parties_inspector_lines()
+	_assert_band_panel("worst-case party — the strip renders all %d detail lines (got %d: %s)" % [
+		WORST_CASE_DETAIL_LINES, lines.size(), ", ".join(lines)],
+		lines.size() == WORST_CASE_DETAIL_LINES)
+	# …and that each optional line is the one it is supposed to be, by the LONGEST form of its own
+	# gate — a strip rendering seven lines of which two are the wrong ones would pass a bare count.
+	# Each needle is composed from the fixture's own numbers or from the producer's own vocabulary, so
+	# a re-tune of either cannot leave the claim quietly matching nothing.
+	# The TARGET is read back out of the live herd list rather than restated, so the needles and the
+	# fixture cannot drift: a herd that migrated, was renamed or dropped out fails here instead of
+	# quietly matching nothing.
+	var target: Dictionary = _hud._band_labor.find_world_herd(WORST_CASE_TARGET_HERD_ID)
+	_assert_band_panel("worst-case party — its target herd is in the telemetry (else the Target row" \
+		+ " carries no position and this is not the worst case)", not target.is_empty())
+	var joined := "\n".join(lines)
+	for needle in [
+		# The Target row's LIVE position, which needs the herd to still be in `_world_herds`.
+		"(%d, %d)" % [int(target.get("x", -1)), int(target.get("y", -1))],
+		# The merged Orders row, naming the quarry rather than the pack.
+		SourceForecast.FILL_TARGET_ORDERS_CLAUSE_FORMAT % [
+			WORST_CASE_FILL_TARGET, SourceForecast.herd_display_name(target)],
+		# The Carried row at its ceiling, hence the FULL badge.
+		BandDetailLines.HUNT_FULL_BADGE,
+		# The recurring delivery's own suffix.
+		DetailFormat.EXPEDITION_RECURRING_GLYPH,
+		# The sim's answer for which stop ends the trip.
+		SourceForecast.TRIP_BOUND_CLAUSES[SourceForecast.TRIP_BOUND_FILL_TARGET],
+	]:
+		_assert_band_panel("worst-case party — the strip states `%s`" % needle, joined.contains(needle))
+
+## The detail-line texts the parties inspector strip is rendering right now, in order.
+## `_build_parties_inspector` gives the strip ONE `PanelContainer` holding a column of: a head HBox, one
+## Label per detail line, and a links HBox — so the column's direct Label children ARE the detail lines.
+## Scoped to the parties zone rather than to the panel, since the WORK inspector is a `PanelContainer`
+## of the same shape.
+func _parties_inspector_lines() -> Array[String]:
+	var lines: Array[String] = []
+	for host_variant in _find_zone_hosts(_panel):
+		var host: Control = host_variant
+		if String(host.name) != PARTIES_ZONE_HOST_NAME:
+			continue
+		var strip := _find_first_of_type(host, "PanelContainer")
+		if strip == null:
+			return lines
+		for column in strip.get_children():
+			for child in column.get_children():
+				if child is Label:
+					lines.append((child as Label).text)
+	return lines
+
+## The first descendant of `node` whose class is `type_name`, depth-first, or `null`.
+func _find_first_of_type(node: Node, type_name: String) -> Node:
+	for child in node.get_children():
+		if child.is_class(type_name):
+			return child
+		var found := _find_first_of_type(child, type_name)
+		if found != null:
+			return found
+	return null
 
 ## **THE VERB AND THE CEREMONY FOLLOW THE SIM, AND THE CLAIM IS THE PAIR.** Recalling a party still
 ## standing in its home band's camp with no map report owed CANCELS it on the spot
@@ -5994,3 +6115,67 @@ func _lost_hunt_expedition_fixture() -> Dictionary:
 		"expedition_projected_delivery": 0.0,
 		"expedition_recurring": false,
 	}
+
+## **THE WORST CASE FOR THE PARTIES INSPECTOR STRIP — every optional line live at once.**
+##
+## The strip is the party's detail panel and it lives in a `clip_contents` zone capped at ~300px on a
+## horizontal dock, so what it costs is decided by how many of `BandDetailLines.expedition_summary_lines`'
+## conditional lines a single party can light up. No fixture in this file had ever lit them all: the
+## delivering party `band_panel_parties_inspector_wide` opens carries no fill target, no carry cap and
+## no trip bound, and it read 310px of a 300px box on its own. This is the band-zone lesson
+## (`band_panel_vitals_worst_case`) applied one zone over — a state built from the PRODUCER's gates
+## rather than from the shape an existing fixture happens to have.
+##
+## The seven lines, each with the gate that lights it:
+##  1. `Mission`        — unconditional
+##  2. `Target`         — `is_raid` + a non-empty `expedition_target_herd`; the live `(x, y)` needs the
+##                        herd to still be in `_world_herds`, hence `game_deer_79` from `_herd_fixtures`
+##  3. `Orders`         — `is_hunt`; the fill target is > 0 so it names the quarry rather than the pack
+##  4. `Phase`          — a non-empty `expedition_phase`
+##  5. `Carried`        — `is_raid`; the carry cap is > 0 AND met, which is the LONGEST form (`/ cap`
+##                        plus the `· FULL` badge)
+##  6. `Next delivery`  — `is_hunt` + `has("expedition_projected_delivery")`; `expedition_recurring`
+##                        appends the `↻`, the longest form again
+##  7. trip bound       — a non-empty `expedition_trip_bound`
+##
+## **A DENIAL PARTY IS STRICTLY SHORTER, so the hunt is the worst case.** It renders Mission · Target ·
+## Phase · Carried · Collapse — five — and the quoted-party note a between-rungs party earns rides the
+## `Collapse:` row as a CLAUSE (`DetailFormat.DENIAL_COLLAPSE_QUOTED_PARTY_FORMAT`) rather than as a
+## line of its own, which is exactly the choice this strip's height budget forces.
+##
+## **`Position` IS ABSENT AND THAT IS NOT AN OMISSION.** `expedition_summary_lines` renders it from
+## `pos`, which is the MAP MARKER's stamp — `MapView._rebuild_unit_markers` writes it — while the
+## parties zone reads the raw cohort dicts `update_band_alerts` pushed, and the native decoder emits no
+## `pos` key at all (`current_x`/`current_y` instead). Staging one here would inflate this zone's
+## requirement with a row it can never be handed, and the merge or the cut that paid for it would be
+## paid for nothing. The row is live in the OTHER host — the Occupants drawer, reached through the
+## marker — which is why the producer keeps it.
+func _worst_case_party_fixture() -> Dictionary:
+	return {
+		"id": "Hunters 4",
+		"entity": HUNT_WORST_CASE_ENTITY,
+		"faction": 0,
+		"size": 6,
+		"current_x": 65,
+		"current_y": 12,
+		"turns_of_food": 5.0,
+		"is_expedition": true,
+		"expedition_mission": "hunt",
+		"expedition_phase": "delivering",
+		# In `_herd_fixtures()`, so the Target row carries its live position.
+		"expedition_target_herd": WORST_CASE_TARGET_HERD_ID,
+		"expedition_floor": 0.3,
+		"home_band_entity": 904,
+		"expedition_eta_turns": 6,
+		"expedition_projected_delivery": 14.0,
+		# The `↻` suffix — a recurring party's delivery line is the longer of the two.
+		"expedition_recurring": true,
+		# A fill target, so the Orders row names the quarry instead of reading "fills the pack".
+		"expedition_fill_target": WORST_CASE_FILL_TARGET,
+		# The pack is FULL, which is the Carried row's longest form (`N / cap` + the `· FULL` badge).
+		"expedition_carry_cap": float(WORST_CASE_CARRY_CAP),
+		"stores": {"provisions": float(WORST_CASE_CARRY_CAP)},
+		# …and the sim's own answer for which stop ends the trip, which is a line of its own.
+		"expedition_trip_bound": SourceForecast.TRIP_BOUND_FILL_TARGET,
+	}
+

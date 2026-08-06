@@ -627,10 +627,18 @@ const PARTY_RECALL_ONE_CONFIRM_OK := "Recall"
 ## expedition party?" (the full mission label) reads doubled; a hunt party fills its herd name.
 const PARTY_RECALL_SCOUT_LABEL := "scouting"
 
-## The parties inspector strip is DENSER than the work inspector (up to 6 detail lines vs ~1), and the
-## T/B parties zone is height-capped at ~300px, so its detail lines are tightened a touch below
-## HudWorkVocab.ZONE_BLOCK_SEPARATION to keep the strip + a party row + the bottom-pinned footer inside the box.
-const PARTIES_INSPECTOR_LINE_SEPARATION := 4
+## The parties inspector strip is DENSER than the work inspector (up to SEVEN detail lines vs ~1), and
+## the T/B parties zone is height-capped at ~300px and CLIPS, so its detail lines are tightened well
+## below HudWorkVocab.ZONE_BLOCK_SEPARATION to keep the strip + a party row + the bottom-pinned footer
+## inside the box.
+##
+## **IT WAS 4, AND THE WORST CASE IS WHAT MOVED IT.** A hunt party carrying every optional line at once
+## — the one `band_panel_worst_case_party` stages — needs 9 gaps in that column, so each pixel here
+## costs the zone nine: at 4 the strip alone measured 218px of a 300px box that also owes a 20px head,
+## a 42px party row, a 42px footer and four 6px block gaps. Two pixels is the whole of what padding
+## could pay (going lower closes the gap between two 14px lines to nothing); the rest came from merging
+## the two ORDERS lines into one — see `DetailFormat.expedition_orders_line`.
+const PARTIES_INSPECTOR_LINE_SEPARATION := 2
 
 const SEND_PARTY_NO_IDLE_REASON := "No idle workers to spare. Free some from Work."
 

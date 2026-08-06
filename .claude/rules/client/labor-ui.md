@@ -3195,7 +3195,7 @@ a target arriving beside a mystery would have been one dial and one blank.
 |---|---|---|
 | compose sheet (drawer + dock) | `HudWidgets.build_fill_target_control` off `SourceForecast.raid_fill_target_model` | the client's PROPORTION on the sim's untargeted pair |
 | trip readout / one-line banner | the bound clause off `HuntTripEstimate.bound` | the sim, per sampled (floor × party) |
-| launched-party drawer + row tooltip | `Fill target:` + the clause off `PopulationCohortState.expeditionTripBound` | **the sim, for this party's REAL orders** |
+| launched-party drawer + row tooltip | the `Orders:` row's fill-target clause + the bound clause off `PopulationCohortState.expeditionTripBound` | **the sim, for this party's REAL orders** |
 
 **The sim cannot preview a TARGETED trip, and that is a design constraint rather than a gap.**
 `huntTripEstimates` samples floor × party size only; a third axis would multiply an already
@@ -3296,8 +3296,10 @@ describes a mission the player did not order.
 pack clause to the target clause and the payload shrinking with it) · **`fill_target_three_turns`**
 (three steps up, three hunting turns) · **`fill_target_floor_bound`** (identical numbers, the OTHER
 stop — the frame that makes the bound a discriminator rather than a decoration) ·
-**`expedition_hunt_targeted`** (the launched party: `Fill target: 50 Red Deer` beside `Leaves
-standing`, and the sim's own clause under `Next delivery`). `herd_hunt_expedition` gained the chart,
+**`expedition_hunt_targeted`** (the launched party: `Orders: 50% left standing · fills 50 Red Deer` —
+the floor and the target are ONE row, `DetailFormat.expedition_orders_line`, because they are one
+sentence and the parties strip that also renders them is height-capped — and the sim's own clause under
+`Next delivery`). `herd_hunt_expedition` gained the chart,
 the control and the pack clause. The PNG-less blocks are where the arithmetic lives —
 `_assert_fill_target_arithmetic` (the exact-`k` walk, the at-capacity identity, the clamp) and
 `_assert_fill_target_command` (the token appended, and the untargeted line unchanged).

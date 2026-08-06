@@ -487,9 +487,12 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   **The row BODY opens an inspector strip** (`_toggle_parties_inspector(str(entity))` → `_party_open_key`
   → `BandPanelController.rerender`, the exact `_work_open_key`/`_build_work_inspector` pattern): a bottom
   `PanelContainer` (reusing `HudStyle.work_inspector_stylebox`) with a titled header + close `✕`, the full
-  `_expedition_summary_lines` detail as dim status parts (Mission / Target / Policy / Phase / Carried /
-  **Next delivery** / Position — so the strip IS the detail panel), and `Jump to party` (INK) / `Recall`
-  (DANGER) inline links. The **"Next delivery" line** (`_expedition_next_delivery_line`, shared by the
+  `_expedition_summary_lines` detail as dim status parts (Mission / Target / **Orders** / Phase /
+  Carried / **Next delivery** / the trip-bound clause — so the strip IS the detail panel), and
+  `Jump to party` (INK) / `Recall` (DANGER) inline links. **`Position` is in the producer and never
+  reaches THIS host**: it renders off `pos`, which is the map marker's stamp, and the parties zone reads
+  the raw cohort dicts, which carry `current_x`/`current_y` and no `pos` at all. It is live in the
+  Occupants drawer, which is reached through the marker. The **"Next delivery" line** (`_expedition_next_delivery_line`, shared by the
   strip, the Occupants drawer, and the row tooltip) is ALWAYS shown for a hunt party once the field is on
   the wire (`has("expedition_projected_delivery")`): `Next delivery: ~N food in M turns` when projecting
   (`↻` appended for a recurring/Deplete party), `~N food (raid underway)` when the ETA is unknown, and —
@@ -507,7 +510,9 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   `head → rows → inspector(if open) → EXPAND_FILL spacer → footer`, so the Scout/Hunt footer stays
   bottom-pinned with the strip under the clicked row; the strip's detail-line separation is tightened to
   `PARTIES_INSPECTOR_LINE_SEPARATION` to keep row + strip + pinned footer inside the height-capped T/B
-  zone. The footer offers the two missions **DIRECTLY** — `⚑ Scout` and `🏹 Hunt`, side by side —
+  zone. **That box is ~300px and it CLIPS, so the strip's height is a budget and both halves of it have
+  now been spent** — see "The parties strip's SEVEN lines" below.
+  The footer offers the two missions **DIRECTLY** — `⚑ Scout` and `🏹 Hunt`, side by side —
   and **both stay VISIBLE and DISABLED with their reason when idle == 0** (the section vanishing is
   what made expeditions look removed from the game). Pressing one swaps in the **compose sheet already
   on that mission**, titled `Setup a scouting/hunting party…`, with the `✕` as the only way back. The
@@ -595,6 +600,10 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   so the state also PRINTS its per-zone extent (`_report_zone_content_extent`): a near-miss and a
   comfortable fit are the same green line otherwise. Sabotage-verified — putting the `Output:` row
   back takes the run from 0 errors to 25, `short by 25`.
+  **The PARTIES zone needed the same state and for the same reason** — `band_panel_worst_case_party`,
+  the party carrying every optional detail line at once. See "The parties strip's SEVEN lines" below;
+  the lesson generalises, so a zone that clips and a producer with conditional lines want one of these
+  before the count is trusted.
 - **The no-dock fallback renders the SAME three builders**, stacked into `%AllocationPanel`
   (`_build_allocation_panel`) — there is no second layout to maintain. It passes `with_vitals = false`,
   since the Occupants card's own drawer already prints those rows above it.
@@ -736,6 +745,75 @@ command center**: shown whenever ≥1 player band exists, always displaying a
 
 
 ---
+
+## The parties strip's SEVEN lines, and the two things that paid for them
+
+The parties inspector strip IS the detail panel for a launched party, and on a horizontal dock it lives
+in a `clip_contents` zone of ~300px that also owes a head, at least one party row and a bottom-pinned
+footer. Its whole budget is therefore what `BandDetailLines.expedition_summary_lines` can light up at
+once, and for a long time nobody had counted: the strip overran that box by **10px** on the ONE fixture
+that opened it (`band_panel_parties_inspector_wide`, reported twice per run — once by the recursive
+bounds assertion, once by `_assert_zone_content_fits`) and was the harness's last standing error.
+
+**THE FIXTURE WAS NOT THE WORST CASE, and that is the part that mattered.** That party carries no fill
+target, no carry cap and no trip bound. A hunt party carrying every optional line at once needs
+**SEVEN**:
+
+| line | its gate |
+|---|---|
+| `Mission` | unconditional |
+| `Target` + the target's live `(x, y)` | `is_raid`, a non-empty `expedition_target_herd`, the herd still in telemetry |
+| `Orders` | `is_hunt` |
+| `Phase` | a non-empty `expedition_phase` |
+| `Carried` (`N / cap` + the `· FULL` badge) | `is_raid`, and a carry cap that is > 0 and met |
+| `Next delivery` (`↻` for a recurring party) | `is_hunt` + `has("expedition_projected_delivery")` |
+| the trip-bound clause | a non-empty `expedition_trip_bound` |
+
+That party measured **328px of the 300px box**. A DENIAL party is strictly shorter (five lines), and the
+quoted-party note a between-rungs party earns rides the `Collapse:` ROW as a clause rather than as a
+line — which is this budget's rule already being followed.
+
+**`Position` IS IN THE PRODUCER AND CANNOT REACH THIS HOST.** It renders off `pos`, the MAP MARKER's
+own stamp; the parties zone reads the raw cohort dicts `update_band_alerts` pushes, and the decoder
+emits `current_x`/`current_y` and no `pos` at all. Staging one in the worst case would inflate this
+zone's requirement with a row it can never be handed, and whatever was cut to pay for it would be cut
+for nothing. The row is live in the Occupants drawer, which is reached through the marker.
+
+**Two changes closed the 28px, in the order this panel's own rules put them, and NEITHER was enough
+alone:**
+
+1. **`PARTIES_INSPECTOR_LINE_SEPARATION` 4 → 2.** Padding is the cheapest fix available — nothing is
+   lost, only density — and the strip already carries a dedicated constant for exactly this. Nine gaps
+   at the worst case, so it pays 18px. It could not pay 28: at 0 the lines touch.
+2. **The two ORDERS lines merged into one** (`DetailFormat.expedition_orders_line`) —
+   `Orders: 30% left standing · fills 12 Roe Deer`, where `Leaves standing:` and `Fill target:` used to
+   be two rows. This is the band zone's SHORT-tier idiom (Morale + Growth, the Food row's hay clause)
+   and it is what that tier chooses over dropping a line: nothing is lost, and two facts that read as
+   one sentence cost one row. The producer's own docstring already called them one sentence.
+
+**Neither cut a line, which is the ordering the fix was required to follow** — the strip is the thing
+the row above it exists to open, so `Mission:` and `Phase:` (both restated as glyphs by the strip's own
+header) stayed the last resort and were not reached.
+
+**The merge is UNCONDITIONAL, unlike the band zone's.** The Occupants drawer has room, but it has no
+reason to spend two rows on one sentence, and one spelling is what stops the two hosts wording the
+orders differently. It also removed a wart: the old row read `Leaves standing: 30% left standing`.
+
+**Measured after: the worst case reads 294px of the 300px box**, and the frame that pins it is
+`band_panel_worst_case_party` — which REPORTS its extent beside asserting the fit, the
+`band_panel_vitals_worst_case` rule, because this zone has now been at the edge twice. It also asserts
+the strip really renders all seven lines: a strip that quietly stopped emitting one is SHORTER, so it
+fits, and every assertion would go green on a state that had stopped measuring what it exists to
+measure.
+
+**ONE party row, deliberately.** A second costs the zone another 48px for a structural reason that has
+nothing to do with the strip's own height, and mixing the two would leave the reported number
+unattributable.
+
+**A SECOND PARTY STILL OVERRUNS THE BOX, and that is measured rather than reasoned: 342px of 300 with
+two parties out and the strip open.** It is a different problem with a different answer — the row LIST
+needs paging, the way the work board pages against `work_zone_size()` — and no amount of line-budget
+work in the strip reaches it. Nothing in this arc addressed it.
 
 ## The wide shell's flanks are never narrower than the narrow shell's zone (issue #374)
 

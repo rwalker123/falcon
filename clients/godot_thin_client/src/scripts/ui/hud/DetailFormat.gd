@@ -336,6 +336,12 @@ const EXPEDITION_NEXT_DELIVERY_NO_SURPLUS := "Next delivery: none — its target
 const EXPEDITION_NEXT_DELIVERY_TARGET_LOST := "Next delivery: target herd lost — the party is returning home"
 # The click affordance on an Active-expeditions row (the whole row is the button there).
 const EXPEDITION_ROW_FOCUS_HINT := "Click to show this expedition on the map."
+# **THE HUNT PARTY'S ORDERS ROW** — the floor and the fill target as ONE row, `%s` the floor's own
+# `HudComposeVocab.FLOOR_VALUE_FORMAT` value and `%s` the fill-target clause. See
+# `expedition_orders_line` for why they are one row and not two. The separator is the `· ` the merged
+# Food and Morale rows already join their clauses with, so a merged line reads the same wherever the
+# client makes one.
+const EXPEDITION_ORDERS_ROW_FORMAT := "Orders: %s · %s"
 # **THE DENIAL PARTY'S ROW KEY** (`docs/plan_denial_raid.md`), standing where `Next delivery:` stands
 # on a hunt party. One word, so `_split_kv` lays it out as a table row beside the others; the VALUE
 # carries its own tint, since a verdict's severity is a fact about the forecast and not about the key.
@@ -1462,29 +1468,41 @@ static func expedition_row_tooltip(exp: Dictionary, phase: String, target_herd: 
         if mission == HudExpeditionVocab.EXPEDITION_MISSION_DENY else ""
     return HudFormat.join_tooltip_lines([
         expedition_mission_label(mission), floor_hint,
-        expedition_fill_target_line(exp, mission, target_herd),
+        expedition_orders_line(exp, mission, target_herd),
         HudFormat.status_tooltip_line(phase), _expedition_delivery_tooltip_line(exp, mission, target_herd),
         expedition_trip_bound_line(exp, mission), collapse_line,
         EXPEDITION_ROW_FOCUS_HINT])
 
-## **THE PARTY'S OTHER ORDER** (`docs/plan_hunt_through_combat.md` §5.2) — how many whole animals it
-## waits for, beside the floor that says how deep to draw the herd. The two are one sentence, so a
-## readout quoting only the floor describes a raid the player did not order.
+## **THE PARTY'S TWO ORDERS, ON ONE ROW** (`docs/plan_hunt_through_combat.md` §5.2) — how deep to draw
+## the herd, and how long to wait: *"Orders: 30% left standing · fills the pack"*. They were two rows
+## (`Leaves standing:` and `Fill target:`) and this producer's own docstring already said they are one
+## sentence, so a reader quoting only the floor described a raid the player did not order.
 ##
-## Named in the QUARRY's own units where the target herd is still in telemetry; a party whose target
-## was lost keeps the bare count rather than inventing a species for it. `NO_FILL_TARGET` states
-## "none — fills the pack" rather than nothing at all: on a hunt party that is a real order, and the
-## silence would read as a field the client failed to show. `""` for a scout or a resident band, both
-## of which report `0` for a stop they never evaluate.
-static func expedition_fill_target_line(exp: Dictionary, mission: String,
+## **THE MERGE IS THE PARTIES INSPECTOR STRIP PAYING FOR ITS HEIGHT.** That strip is the detail panel
+## for a launched party, it lives in a `clip_contents` zone capped at ~300px on a horizontal dock, and a
+## hunt party carrying every optional line at once overran it. Merging is the band zone's own SHORT-tier
+## idiom (Morale+Growth, the Food row's hay clause) and is what that tier chooses over dropping a line:
+## nothing is lost, and two facts that read as one sentence cost one row. Unlike the band zone's, this
+## merge is UNCONDITIONAL — the drawer host has room but has no reason to spend two rows on one
+## sentence, and one spelling means the two hosts cannot word the orders differently.
+##
+## The fill target is named in the QUARRY's own units where the target herd is still in telemetry; a
+## party whose target was lost keeps the bare count rather than inventing a species for it.
+## `NO_FILL_TARGET` reads "fills the pack" rather than nothing at all: on a hunt party that is a real
+## order, and the silence would read as a field the client failed to show. `""` for a scout, a denial
+## party or a resident band — none of them evaluates either stop.
+static func expedition_orders_line(exp: Dictionary, mission: String,
         target_herd: Dictionary) -> String:
     if mission != HudExpeditionVocab.EXPEDITION_MISSION_HUNT:
         return ""
+    var floor_value: String = HudComposeVocab.FLOOR_VALUE_FORMAT % SourceForecast.floor_percent(
+        float(exp.get("expedition_floor", SourceForecast.DEFAULT_HARVEST_FLOOR)))
     var fill_target := int(exp.get("expedition_fill_target", SourceForecast.NO_FILL_TARGET))
-    if fill_target <= SourceForecast.NO_FILL_TARGET:
-        return SourceForecast.FILL_TARGET_ORDERS_NONE
-    return SourceForecast.FILL_TARGET_ORDERS_FORMAT % [
-        fill_target, SourceForecast.herd_display_name(target_herd)]
+    var fill_clause := SourceForecast.FILL_TARGET_ORDERS_CLAUSE_NONE \
+        if fill_target <= SourceForecast.NO_FILL_TARGET \
+        else SourceForecast.FILL_TARGET_ORDERS_CLAUSE_FORMAT % [
+            fill_target, SourceForecast.herd_display_name(target_herd)]
+    return EXPEDITION_ORDERS_ROW_FORMAT % [floor_value, fill_clause]
 
 ## **WHICH STOP WILL END THIS PARTY'S RAID**, in the same words the pre-launch readout uses
 ## (`SourceForecast.TRIP_BOUND_CLAUSES`) — one table, so what the sheet promised and what the party

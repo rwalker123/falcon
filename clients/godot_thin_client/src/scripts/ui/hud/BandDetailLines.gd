@@ -333,20 +333,16 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
                     target_line += " (%d, %d)" % [tx, ty]
             lines.append(target_line)
     if is_hunt:
-        # The party's ORDERS — where the raid stops, as a fraction of the herd's capacity. Always on
-        # the wire for a hunt party, and every value is meaningful (including `0`), so it is stated
-        # unconditionally rather than gated on being non-empty as the retired policy string was.
+        # The party's ORDERS on ONE row — where the raid stops as a fraction of the herd's capacity,
+        # and how many animals it waits for. Always on the wire for a hunt party, and every value is
+        # meaningful (including `0`), so the row is stated unconditionally rather than gated on being
+        # non-empty as the retired policy string was. **They were two rows and are one because they are
+        # one sentence, and because this producer's output lands in the parties zone's height-capped,
+        # clipping inspector strip** — see `DetailFormat.expedition_orders_line`.
         # **A DENIAL PARTY IS NOT IN THIS BRANCH**: its `expeditionFloor` reads `0.0` and its
         # `expeditionFillTarget` `0` because it HAS no such orders, so rendering either would put a
         # lever on screen that the mission does not carry and the command grammar cannot express.
-        lines.append("Leaves standing: %s" % (HudComposeVocab.FLOOR_VALUE_FORMAT
-            % SourceForecast.floor_percent(float(unit_data.get("expedition_floor",
-                SourceForecast.DEFAULT_HARVEST_FLOOR)))))
-        # …and its PARTY-SIDE twin (`docs/plan_hunt_through_combat.md` §5.2), directly beneath, because
-        # the two are one sentence: how deep to draw the herd, and how long to wait. Stated
-        # unconditionally for the same reason the floor is — `NO_FILL_TARGET` is a real order ("fill
-        # the pack"), not a missing field.
-        lines.append(DetailFormat.expedition_fill_target_line(unit_data, mission, target_herd))
+        lines.append(DetailFormat.expedition_orders_line(unit_data, mission, target_herd))
     var phase := String(unit_data.get("expedition_phase", "")).strip_edges()
     if phase != "":
         lines.append("Phase: %s" % HudFormat.expedition_phase_label(phase))

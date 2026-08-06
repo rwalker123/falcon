@@ -915,9 +915,14 @@ const FILL_TARGET_TURNS_FORMAT := "≈%d turns hunting"
 # A raid the sim already bounds at one hunting turn has no shorter trip to ask for, so the control is
 # rendered DISABLED WITH ITS REASON rather than silently dropped — a dead control is always explained.
 const FILL_TARGET_NO_ROOM_NOTE := "This raid already comes home after one turn of hunting — there is no shorter trip to ask for."
-# The launched party's orders, on its drawer/tooltip rows beside `Leaves standing:`.
-const FILL_TARGET_ORDERS_FORMAT := "Fill target: %d %s"
-const FILL_TARGET_ORDERS_NONE := "Fill target: none — fills the pack"
+# The launched party's fill-target order, as a CLAUSE. It rides the merged `Orders:` row beside the
+# floor it is one sentence with (`BandDetailLines.EXPEDITION_ORDERS_ROW_FORMAT`) rather than standing
+# as a `Fill target:` row of its own: the parties inspector strip is height-capped and CLIPS, so half a
+# sentence must not cost a whole row there. `NO_FILL_TARGET` states "fills the pack" rather than
+# nothing at all — on a hunt party that is a real order, and the silence would read as a field the
+# client failed to show.
+const FILL_TARGET_ORDERS_CLAUSE_FORMAT := "fills %d %s"
+const FILL_TARGET_ORDERS_CLAUSE_NONE := "fills the pack"
 # **THE PRE-LAUNCH TURN COUNT THE SIM CANNOT GIVE.** `huntTripEstimates` is band-agnostic and samples
 # floor × party size only, so no row is ever a TARGETED trip; a third sampled axis would multiply an
 # already 40-row-per-herd table. The client therefore takes a PROPORTION on the sim's own untargeted

@@ -63,10 +63,15 @@ const TARGETED_PARTY_FILL_TARGET := 50
 const TARGETED_PARTY_QUARRY := "Red Deer"
 
 # The detail row's KEY, which is what `Readout.detail_excerpt` seeks: the leading half of
-# `SourceForecast.FILL_TARGET_ORDERS_FORMAT`, restated here only because a `const` cannot split one.
+# `DetailFormat.EXPEDITION_ORDERS_ROW_FORMAT`, restated here only because a `const` cannot split one.
 # A reworded row does not pass quietly — the excerpt answers `DETAIL_EXCERPT_ABSENT` and both
 # assertions below fail naming the row they could not find.
-const FILL_TARGET_DETAIL_KEY := "Fill target"
+#
+# **IT WAS `Fill target`, AND IT IS THE SAME ROW.** The floor and the fill target are one sentence and
+# now share one `Orders:` row, so the fill target's own key no longer exists to seek — see
+# `DetailFormat.expedition_orders_line` for why the parties inspector strip could not pay two rows for
+# it. The value assertions below are unchanged: both halves are in this row's value cell.
+const EXPEDITION_ORDERS_DETAIL_KEY := "Orders"
 
 # ---- THE IN-FLIGHT DENIAL RAID (`docs/plan_denial_raid.md` §3) -----------------------------------
 # The party size the frame renders, and the row of `HerdFx`'s denial table it therefore reads. Named
@@ -77,9 +82,10 @@ const DENIAL_PARTY_SIZE := 5
 ## The species the shared world-herd list names, i.e. what the verdict must be phrased about.
 const DENIAL_TARGET_QUARRY := "Red Deer"
 
-## The three row KEYS a denial party must NOT render, each because the mission has no such thing:
-## a floor it never chose, a fill target it cannot express, a delivery it is not making.
-const DENIAL_ABSENT_FLOOR_KEY := "Leaves standing"
+## The two row KEYS a denial party must NOT render, each because the mission has no such thing: the
+## hunt party's ORDERS row — a floor it never chose and a fill target it cannot express, which since
+## the merge are one row — and a delivery it is not making.
+const DENIAL_ABSENT_ORDERS_KEY := EXPEDITION_ORDERS_DETAIL_KEY
 
 const DENIAL_ABSENT_DELIVERY_KEY := "Next delivery"
 
@@ -619,7 +625,8 @@ func run(harness) -> void:
 	# splits a `Key: value` line into two spans, so the rendered source never contains the line
 	# contiguously — and the bare number would be no better a needle, `50` appearing in
 	# `Leaves standing: 50%` two rows up. Excerpt from the KEY and assert the VALUE is what follows it.
-	var fill_target_row := Readout.detail_excerpt(h._hud.occupant_detail.text, FILL_TARGET_DETAIL_KEY)
+	var fill_target_row := Readout.detail_excerpt(h._hud.occupant_detail.text,
+		EXPEDITION_ORDERS_DETAIL_KEY)
 	h._assert_hud("a launched party states the fill target it was given, in the quarry's own units",
 		fill_target_row.contains("%d %s" % [TARGETED_PARTY_FILL_TARGET, TARGETED_PARTY_QUARRY]))
 	h._assert_hud("…and the sim's own answer for which stop will end its raid",
@@ -637,13 +644,18 @@ func run(harness) -> void:
 				SourceForecast.TRIP_BOUND_FILL_TARGET])
 			and not h._hud.occupant_detail.text.contains(SourceForecast.TRIP_BOUND_CLAUSES[
 				SourceForecast.TRIP_BOUND_PACK_FULL]))
-	h._assert_hud("…but still states its fill target ORDER, `none` being a real order",
-		Readout.detail_excerpt(h._hud.occupant_detail.text, FILL_TARGET_DETAIL_KEY).contains("none"))
+	# **THE NEEDLE IS THE CLAUSE, NOT THE WORD `none`.** The order used to read `none — fills the pack`
+	# as a row of its own; merged onto the floor it is the bare clause, since `Orders: 30% left standing
+	# · none — fills the pack` states the absence of an order the row is in the middle of stating.
+	h._assert_hud("…but still states its fill target ORDER, filling the pack being a real order",
+		Readout.detail_excerpt(h._hud.occupant_detail.text, EXPEDITION_ORDERS_DETAIL_KEY).contains(
+			SourceForecast.FILL_TARGET_ORDERS_CLAUSE_NONE))
 
 	# State 1j4 — **AN IN-FLIGHT DENIAL RAID** (`docs/plan_denial_raid.md` §3). The third mission, and
 	# its drawer is judged on what it does NOT say as much as on what it does: a denial party publishes
-	# no delivery ETA and has no floor and no fill target, so the two ORDER rows and the `Next delivery`
-	# line must all be absent, and the collapse verdict stands where the ETA stands on a hunt party.
+	# no delivery ETA and has no floor and no fill target, so the `Orders:` row (which carries both) and
+	# the `Next delivery` line must both be absent, and the collapse verdict stands where the ETA stands
+	# on a hunt party.
 	var deny_party := _denial_expedition_fixture()
 	h._hud.show_unit_selection(deny_party)
 	await h._settle()
@@ -676,12 +688,11 @@ func run(harness) -> void:
 	# builder that emitted neither span would satisfy that one alone only by accident.
 	h._assert_hud("…and never the FROM-LAUNCH span, which is the launch sheet's",
 		not deny_text.contains(SourceForecast.DENIAL_SPAN_FROM_LAUNCH))
-	# **THE THREE HUNT-ONLY READOUTS ARE ABSENT, and that is the mission's specification.** Its
+	# **THE HUNT-ONLY READOUTS ARE ABSENT, and that is the mission's specification.** Its
 	# `expedition_floor` reads `0.0` and its `expedition_fill_target` `0` because it HAS no such
 	# orders; rendering either would put a lever on screen the command grammar cannot express.
-	h._assert_hud("…and renders NO floor, NO fill target and NO delivery ETA",
-		not deny_text.contains(DENIAL_ABSENT_FLOOR_KEY)
-			and not deny_text.contains(FILL_TARGET_DETAIL_KEY)
+	h._assert_hud("…and renders NO orders row (no floor, no fill target) and NO delivery ETA",
+		not deny_text.contains(DENIAL_ABSENT_ORDERS_KEY)
 			and not deny_text.contains(DENIAL_ABSENT_DELIVERY_KEY))
 	# It still states what it hauled home, which reads near-empty — the mission's own cost, and the
 	# row a suppression would have hidden.
