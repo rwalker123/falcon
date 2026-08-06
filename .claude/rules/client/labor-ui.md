@@ -1260,12 +1260,28 @@ the herd drawer's assign-hunters block and the land drawer's assign-foragers blo
 the crew, which is why it sits with the crew; every number under it is a function of it, which is why
 it sits above them.
 
-**The control is a picker BUTTON opening a CHECKED-RADIO MENU** — `HudWidgets.build_picker_menu`,
-which shares `build_section_menu`'s entry contract and its popup fill exactly (one `_fill_menu_popup`,
-so the two cannot come to disagree about what a checked or disabled entry means). Deliberately the
-quarry chooser's idiom rather than a pill row: the roster grows toward a dozen kits and a row of pills
-cannot hold that in a 354px dock column. No `MENU_ENTRY_ICON` — the client ships no per-kit art, and
-repeating ONE job glyph down every row is noise rather than a distinction.
+**The control is a native `OptionButton`** — `HudWidgets.build_option_picker` — not a pill row, the
+roster growing toward a dozen kits that a row of pills cannot hold in a 354px dock column. No
+per-entry art: the client ships none per kit, and repeating ONE job glyph down every row is noise
+rather than a distinction.
+
+**IT WAS A `MenuButton` WEARING A `⌄` IN ITS OWN TEXT, AND THE CARET IS WHY IT CHANGED.** A
+`MenuButton` draws no arrow, so the affordance had to be baked into the face — where `clip_text` eats
+it the moment the label reaches the button's edge. `Gathering kit` does, so the FORAGE sheet showed no
+caret at all (in the string, never drawn), while the hunt sheet's rendered as a small low-baseline mark
+that read as a stray comma beside the themed arrow the `Band:` picker one row above already drew: one
+cause, two symptoms, and two mechanisms that were never going to match. An `OptionButton` reserves the
+arrow's width as an internal right margin, so the icon is drawn OUTSIDE the text's clip rect and no
+face can push it off — **and a glyph in `KIT_PICKER_FACE_FORMAT` would now be a second affordance
+saying the same thing, the one that clips.** It also marks the current entry NATIVELY (its popup items
+are radio-check items and it checks the selected one itself), which is the behaviour
+`HudWidgets._fill_menu_popup` hand-rolls through `MENU_ENTRY_CHECKED` for the `⋯` menus that still
+need it.
+
+**The FACE is stated separately from the LIST, and that is not decoration.** `select()` writes the
+item's own text into `text`, so the builder takes a `face` it applies afterwards — because the two are
+different sentences: the list tags the job default with a suffix that must not appear on the face, and
+the face carries the job glyph the list deliberately omits.
 
 - **The menu lists only kits whose `jobs` covers the sheet's verb.** A kit named for a job outside its
   own list is a COMMAND FAILURE server-side, never a silent fall back to the default.
@@ -1280,6 +1296,36 @@ repeating ONE job glyph down every row is noise rather than a distinction.
 - **There is deliberately NO disabled/unavailable state.** Every kit in today's roster is always
   selectable; a worn component degrades the tier rather than removing the kit, and the wire carries no
   availability field to invent one from.
+
+### The compose sheet's FIELD ROWS are one family — `Band:` · `Kit` · `Quarry`
+
+Three rows, three widget TYPES, three different modules building them: the band picker
+(`DrawerComposeController._build_band_picker`), the kit picker (`KitRoster.build_kit_row`) and the
+Band panel's quarry button (`BandPanelController._build_quarry_row`). They read as one stack because
+all three go through **`HudWidgets.build_field_key`** for the label and take
+**`HudStyle.apply_button(…, "ghost")`** for the box — which is what makes the height ONE number
+(42px, the stylebox's own content margins, identical for a `Button` and an `OptionButton`) rather than
+a constant somebody has to keep in step.
+
+**The KEY takes a DECLARED width (`HudComposeVocab.COMPOSE_FIELD_KEY_WIDTH`) and does not expand**, so
+the value control is the row's only expanding child. Both obvious alternatives were measured and both
+lose: a natural-width key starts each control against its own word (`Kit` 22px, `Quarry` 55) — the
+ragged edge this removes — and an `EXPAND_FILL` key splits the row 50/50, which on a ~245px sheet
+leaves the control ~119px, too narrow for `🧺 Gathering kit` plus its arrow. That was the shipped
+shape, and it is also why the quarry row used to drop its key to `SIZE_FILL` in the three-child branch
+alone: with a declared width the chooser simply takes its width out of the pick's share and the
+special case is gone.
+
+**THE QUARRY ROW IS PRESENTED AS ONE OF THE FAMILY AND IS NOT ONE OF THEIR KIND.** Pressing it ARMS A
+MAP PICK — quarries are chosen spatially (glow rings, the targeting banner, the in-reach refusal
+nudge) and the eligible herds are scattered across the map rather than enumerable in a sensible list —
+so it takes the family's key width, chrome, height and left-aligned face and **must never take
+dropdown chrome**. An arrow there would promise a list that does not open, which is worse than the
+inconsistency it would paper over. The one list it does offer is the `⋯` chooser at the end, and only
+where a hex genuinely holds more than one eligible quarry.
+
+**The PARTY stepper row is deliberately not in the family.** It is a control you operate rather than a
+value box, so its key still expands and its `−/+` sits at the row's trailing edge.
 
 ### The hint states the EFFECTIVE tier, never the fresh one
 

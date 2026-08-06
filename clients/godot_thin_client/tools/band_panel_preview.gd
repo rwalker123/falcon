@@ -1322,23 +1322,23 @@ func _ready() -> void:
 	_assert_kit_picker_closed()
 
 	# **OPEN.** The roster grows toward a dozen kits and a pill row cannot hold that in a 354px column,
-	# so the control is a picker button opening a CHECKED-RADIO menu — the quarry chooser's idiom. The
-	# popup is an embedded subwindow, so it lands in the capture; the structural claims (which entries,
-	# which one is marked, which one is tagged the default, and `none` LAST) ride the assertion, since
-	# a screenshot cannot say which item carries the radio dot.
-	var kit_menu := _find_meta_control(_panel, KitRoster.KIT_PICKER_META) as MenuButton
-	if kit_menu != null:
-		# Placed by hand under the button. `MenuButton.show_popup()` would do it, but it also grabs
-		# input and can move focus mid-run; the popup is an EMBEDDED subwindow, so positioning it and
-		# calling `popup()` renders it into the same viewport the capture reads.
-		var below := kit_menu.get_screen_position() + Vector2(0.0, kit_menu.size.y)
-		kit_menu.get_popup().position = Vector2i(below)
-		kit_menu.get_popup().popup()
+	# so the control is an `OptionButton` — a native selector, which also MARKS the current entry
+	# itself. The popup is an embedded subwindow, so it lands in the capture; the structural claims
+	# (which entries, which one is marked, which one is tagged the default, and `none` LAST) ride the
+	# assertion, since a screenshot cannot say which item carries the radio dot.
+	var kit_picker := _find_meta_control(_panel, KitRoster.KIT_PICKER_META) as OptionButton
+	if kit_picker != null:
+		# Placed by hand under the button. `show_popup()` would do it, but it also grabs input and can
+		# move focus mid-run; the popup is an EMBEDDED subwindow, so positioning it and calling
+		# `popup()` renders it into the same viewport the capture reads.
+		var below := kit_picker.get_screen_position() + Vector2(0.0, kit_picker.size.y)
+		kit_picker.get_popup().position = Vector2i(below)
+		kit_picker.get_popup().popup()
 	await _settle()
 	await _save("band_panel_compose_deny_kit_open")
-	_assert_kit_picker_open(kit_menu)
-	if kit_menu != null:
-		kit_menu.get_popup().hide()
+	_assert_kit_picker_open(kit_picker)
+	if kit_picker != null:
+		kit_picker.get_popup().hide()
 
 	# **THE KIT-MISMATCH STATE** — `none` selected against a table quoted for `big_game`. This is the
 	# frame the honesty rule is judged on, and it is judged largely on what the sheet must NOT say: no
@@ -1346,7 +1346,7 @@ func _ready() -> void:
 	# combat gate — composed from wire terms, honest at any tier — plus the sentence naming the kit
 	# those withheld numbers belonged to. Driven through the popup's REAL `id_pressed`, so the pick
 	# path is exercised rather than the model being written.
-	_pick_kit(KitRoster.NO_KIT_ID if kit_menu == null else BandFx.KIT_ID_NONE)
+	_pick_kit(KitRoster.NO_KIT_ID if kit_picker == null else BandFx.KIT_ID_NONE)
 	await _settle()
 	await _save("band_panel_compose_deny_kit_mismatch")
 	_assert_zones_within_bounds()
@@ -4534,19 +4534,25 @@ func _text_lines(node: Node) -> Array[String]:
 		lines.append_array(_text_lines(child))
 	return lines
 
-## Drive the kit picker's popup through its REAL `id_pressed` dispatch, choosing the entry whose label
-## begins with this kit's display name. By the POPUP, never by writing `ComposeState` — the pick path
-## (menu → callback → `set_party_kit_id` → rerender) is half of what the frames claim.
+## Drive the kit picker through its REAL popup dispatch, choosing the entry whose label begins with
+## this kit's display name. By the POPUP, never by writing `ComposeState` — the pick path (popup →
+## `OptionButton._selected` → `item_selected` → callback → `set_party_kit_id` → rerender) is half of
+## what the frames claim.
+##
+## **`index_pressed`, NOT `id_pressed`.** An `OptionButton` connects its popup's `index_pressed` and
+## nothing else, so emitting `id_pressed` would run no handler, change no selection and leave the
+## sheet exactly as it was — silently, which on the mismatch frame reads as the honesty rule failing
+## rather than as the harness never having picked anything.
 func _pick_kit(kit_id: String) -> void:
-	var menu := _find_meta_control(_panel, KitRoster.KIT_PICKER_META) as MenuButton
-	if menu == null:
+	var picker := _find_meta_control(_panel, KitRoster.KIT_PICKER_META) as OptionButton
+	if picker == null:
 		_assert_band_panel("picking a kit needs the picker to exist", false)
 		return
 	var want := KitRoster.display_name_for_id(_hud._band_labor.kits(), kit_id)
-	var popup := menu.get_popup()
+	var popup := picker.get_popup()
 	for i in popup.item_count:
 		if popup.get_item_text(i).begins_with(want):
-			popup.id_pressed.emit(popup.get_item_id(i))
+			popup.index_pressed.emit(i)
 			return
 	_assert_band_panel("picking a kit needs an entry named %s (found %d entries)"
 		% [want, popup.item_count], false)
@@ -4560,14 +4566,17 @@ func _pick_kit(kit_id: String) -> void:
 ## the fresh number fails here and nowhere else; the attack is the EQUIPPED one on the same line,
 ## which is what stops "quote the bare tier for everything" passing instead.
 func _assert_kit_picker_closed() -> void:
-	var menu := _find_meta_control(_panel, KitRoster.KIT_PICKER_META) as MenuButton
-	_assert_band_panel("the denial sheet carries a Kit picker", menu != null)
-	if menu == null:
+	var picker := _find_meta_control(_panel, KitRoster.KIT_PICKER_META) as OptionButton
+	_assert_band_panel("the denial sheet carries a Kit picker", picker != null)
+	if picker == null:
 		return
+	# **THE FACE CARRIES NO `(default)` SUFFIX AND NO CARET**, which is the whole of what the
+	# `OptionButton` conversion has to get right: `select()` writes the item's own text into `text`,
+	# so a face equal to the LIST entry means the override never ran, and the equality catches it.
 	var face := HudComposeVocab.KIT_PICKER_FACE_FORMAT % [
 		String(HudComposeVocab.KIT_JOB_GLYPHS[KitRoster.JOB_HUNT]), "Big-game kit"]
-	_assert_band_panel("…whose face names the selected kit (\"%s\")" % menu.text,
-		menu.text == face)
+	_assert_band_panel("…whose face names the selected kit (\"%s\")" % picker.text,
+		picker.text == face)
 	var hint := HudComposeVocab.KIT_HINT_SEPARATOR.join([
 		HudComposeVocab.KIT_HINT_ATTACK_FORMAT % String.num(BandFx.KIT_ATTACK_EQUIPPED,
 			HudComposeVocab.KIT_TIER_DECIMALS),
@@ -4584,11 +4593,15 @@ func _assert_kit_picker_closed() -> void:
 ## The picker OPEN. A screenshot cannot say which entry carries the radio dot, so the structure rides
 ## here: the roster's hunt kits and only those, the composed one marked, the job default TAGGED, and
 ## `none` LAST — which it is because the ROSTER authors it last and this client sorts nothing.
-func _assert_kit_picker_open(menu: MenuButton) -> void:
-	_assert_band_panel("the Kit picker opens a menu", menu != null)
-	if menu == null:
+##
+## **The MARK is now the `OptionButton`'s own**, not a hand-rolled `MENU_ENTRY_CHECKED` — the control
+## builds radio-check items and checks the selected one itself — so this reads `is_item_checked` to
+## assert that the SELECTED INDEX handed to the builder reached the popup.
+func _assert_kit_picker_open(picker: OptionButton) -> void:
+	_assert_band_panel("the Kit picker opens a menu", picker != null)
+	if picker == null:
 		return
-	var popup := menu.get_popup()
+	var popup := picker.get_popup()
 	var labels: Array[String] = []
 	for i in popup.item_count:
 		labels.append(popup.get_item_text(i))

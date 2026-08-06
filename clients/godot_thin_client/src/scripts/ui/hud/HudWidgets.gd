@@ -506,27 +506,78 @@ static func build_section_menu(entries: Array, tooltip: String) -> MenuButton:
     _fill_menu_popup(button.get_popup(), entries)
     return button
 
-## **THE SAME MENU BEHIND A NAMED FACE** — a `MenuButton` whose face states the CURRENT choice instead
-## of the `⋯` glyph, for a control that is a chooser in its own right rather than an overflow on a
-## section head (the kit picker). It shares `build_section_menu`'s entry contract and its popup fill
-## exactly, so the two cannot come to disagree about what a checked entry or a disabled one means, and
-## it is a `MenuButton` for the same reason: the popup is a WINDOW, so opening it moves no layout.
+## **A COMPOSE-SHEET FIELD ROW'S KEY LABEL** — `Band:`, `Kit`, `Quarry`. Its whole job is the ONE
+## declared width (`HudComposeVocab.COMPOSE_FIELD_KEY_WIDTH`) that makes three rows built by three
+## different modules line their value controls up; the reasoning is on that constant. `SIZE_FILL`, not
+## `EXPAND` — the key takes exactly its declared width and the CONTROL is the row's only expanding
+## child, so a third widget on the row (the quarry chooser) comes out of the value's share rather than
+## out of the key's, and a row with two children and a row with three still start their value at the
+## same x.
+static func build_field_key(text: String) -> Label:
+    var key := Label.new()
+    key.text = text
+    key.custom_minimum_size = Vector2(HudComposeVocab.COMPOSE_FIELD_KEY_WIDTH, 0.0)
+    key.size_flags_horizontal = Control.SIZE_FILL
+    key.add_theme_color_override("font_color", HudStyle.INK)
+    return key
+
+## **THE CHOICE AS A NATIVE SELECTOR** — an `OptionButton` whose face states the CURRENT choice, for a
+## control that is a chooser in its own right rather than an overflow on a section head (the kit
+## picker, and the compose sheets' `Band:` picker).
+##
+## **IT REPLACED A `MenuButton` WHOSE FACE CARRIED A `⌄` GLYPH, AND THE MECHANISM IS THE WHOLE POINT.**
+## A `MenuButton` draws no arrow, so the affordance had to be baked into `text` — where `clip_text`
+## eats it the moment the label reaches the button's edge (`Gathering kit` did, so the forage sheet's
+## kit picker showed no caret at all) and where it renders as a small low-baseline mark rather than as
+## the themed arrow the `Band:` picker one row above already drew. An `OptionButton` reserves the
+## arrow's width as an internal right margin, so the icon is drawn OUTSIDE the text's clip rect and no
+## face can push it off. It also CHECKS the current entry natively — its popup items are radio-check
+## items and it marks the selected one itself — which is the behaviour `_fill_menu_popup` hand-rolls
+## through `MENU_ENTRY_CHECKED`.
+##
+## `entries` is an ordered array of `{label, on_pick}` — `build_section_menu`'s contract minus
+## `MENU_ENTRY_CHECKED`, which a native selector OWNS: `selected_index` is both the entry the face
+## opens on and the one the popup marks, and passing a second, hand-rolled mark would let the two
+## disagree. (No `MENU_ENTRY_ICON` either: neither caller has per-entry art, and repeating ONE glyph
+## down every row is noise rather than a distinction.)
+##
+## **`face` OVERRIDES the closed face, and the two are deliberately not the same sentence.** A list
+## entry may carry a marker that belongs only in the list (the kit roster tags its job default) and
+## the face may carry a glyph the list deliberately omits. `select()` writes the item's own text into
+## `text`, so the override is applied AFTER it; every caller rebuilds the whole row on a pick, so the
+## next selection's write is never the thing left on screen.
 ##
 ## `EXPAND_FILL` + `clip_text` are load-bearing together, the picked-quarry button's rule: `clip_text`
-## drops the minimum width to ~0, so without the expand the control collapses to a sliver beside an
-## expanding key label — and without the clip a long kit name widens the row past the dock column.
-static func build_picker_menu(entries: Array, face: String, tooltip: String) -> MenuButton:
-    var button := MenuButton.new()
-    button.text = face
+## drops the minimum width to ~0, so without the expand the control collapses to a sliver beside its
+## key label — and without the clip a long entry name widens the row past the dock column.
+## `fit_to_longest_item` is OFF for that same reason: it sets the minimum width from the widest ENTRY,
+## which is exactly the dock-widening `clip_text` is here to prevent.
+static func build_option_picker(entries: Array, selected_index: int, face: String,
+        tooltip: String) -> OptionButton:
+    var button := OptionButton.new()
     button.tooltip_text = tooltip
     button.focus_mode = Control.FOCUS_NONE
     button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     button.clip_text = true
+    button.fit_to_longest_item = false
     HudStyle.apply_button(button, "ghost")
-    _fill_menu_popup(button.get_popup(), entries)
+    var picks: Array[Callable] = []
+    for entry_variant in entries:
+        if not (entry_variant is Dictionary):
+            continue
+        var entry: Dictionary = entry_variant
+        button.add_item(String(entry.get("label", "")), picks.size())
+        var pick: Variant = entry.get("on_pick", null)
+        picks.append(pick if pick is Callable else Callable())
+    if selected_index >= 0 and selected_index < picks.size():
+        button.select(selected_index)
+    button.text = face
+    button.item_selected.connect(func(index: int) -> void:
+        if index >= 0 and index < picks.size() and picks[index].is_valid():
+            picks[index].call())
     return button
 
-## The shared popup fill for both menu faces above — one implementation of the entry contract
+## The shared popup fill for the `⋯` menu face above — one implementation of the entry contract
 ## (`{label, disabled, on_pick}` + the optional `MENU_ENTRY_CHECKED` / `MENU_ENTRY_ICON`).
 static func _fill_menu_popup(popup: PopupMenu, entries: Array) -> void:
     var picks: Array[Callable] = []

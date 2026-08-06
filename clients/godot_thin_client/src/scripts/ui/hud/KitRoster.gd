@@ -66,9 +66,10 @@ const HERD_DENIAL_ESTIMATES_KIT_KEY := "denial_estimates_kit_id"
 const JOB_HUNT := SourceForecast.LABOR_KIND_HUNT
 const JOB_FORAGE := SourceForecast.LABOR_KIND_FORAGE
 
-## The `MenuButton` the kit row mounts, as meta — the stable handle for the preview harnesses. A
-## node-type search finds the quarry chooser and the zone `⋯` menus too, so the control needs a
-## handle of its own exactly as `QUARRY_CHOICES_META` does.
+## The `OptionButton` the kit row mounts, as meta — the stable handle for the preview harnesses. A
+## node-type search finds the compose sheets' `Band:` picker too (and, before the control became an
+## `OptionButton`, the quarry chooser and the zone `⋯` menus), so it needs a handle of its own exactly
+## as `QUARRY_CHOICES_META` does.
 const KIT_PICKER_META := "kit_picker"
 
 ## The hint label beneath it, as meta: the claim a harness makes about the effective tier is about
@@ -287,9 +288,14 @@ static func estimates_quoted_note(kits: Array, herd: Dictionary, table_key: Stri
 
 # ---- the control --------------------------------------------------------------------------------
 
-## **THE KIT ROW: a key label, a picker button opening a checked-radio menu, and the effective-tier
-## hint beneath it.** Mounted directly under the party/crew stepper and above the forecast on all four
+## **THE KIT ROW: a key label, an `OptionButton` naming the current kit, and the effective-tier hint
+## beneath it.** Mounted directly under the party/crew stepper and above the forecast on all four
 ## compose sheets, because a kit describes the crew and moves every figure below it.
+##
+## **It is the SAME family of control as the `Band:` picker above it and the `Quarry` button beside
+## it** — one declared key width (`HudWidgets.build_field_key`), one ghost chrome, one height — so the
+## sheet's field rows read as one form. The affordance is the control's own themed arrow, never a
+## glyph in the face: see `HudComposeVocab.KIT_PICKER_FACE_FORMAT`.
 ##
 ## There is deliberately **NO disabled/unavailable state**: every kit in the roster is always
 ## selectable — a worn component degrades the tier rather than removing the kit — and the wire carries
@@ -306,29 +312,30 @@ static func build_kit_row(kits: Array, job: String, selected_id: String, default
 	var block := VBoxContainer.new()
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-	var key := Label.new()
-	key.text = HudComposeVocab.COMPOSE_FIELD_KIT
-	key.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(key)
+	row.add_child(HudWidgets.build_field_key(HudComposeVocab.COMPOSE_FIELD_KIT))
 	var glyph := String(HudComposeVocab.KIT_JOB_GLYPHS.get(job,
 		HudComposeVocab.KIT_JOB_GLYPH_FALLBACK))
 	var entries: Array = []
+	# **THE SELECTION IS AN INDEX, because an `OptionButton` marks the current entry itself.** The
+	# roster order IS the list order (this layer sorts nothing), so the index of the resolved kit is
+	# the whole of what the control needs to open on it and to draw its radio dot.
+	var selected_index := -1
 	for kit_variant in offered:
 		var kit: Dictionary = kit_variant
 		var kit_id := String(kit.get(KIT_ID_KEY, ""))
 		var label := kit_display_name(kit)
 		if kit_id == default_id:
 			label += HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX
+		if kit_id == selected_id:
+			selected_index = entries.size()
 		entries.append({
 			"label": label,
-			# A radio check, not a plain item: the entries are a mutually exclusive SET and a menu of
-			# plain items structurally cannot say which member is active. No `MENU_ENTRY_ICON` — the
-			# client ships no per-kit art, and repeating ONE job glyph down every row would be noise
-			# rather than a distinction.
-			HudWidgets.MENU_ENTRY_CHECKED: kit_id == selected_id,
 			"on_pick": func() -> void: on_pick.call(kit_id),
 		})
-	var picker := HudWidgets.build_picker_menu(entries,
+	# The face carries the JOB GLYPH and no default suffix, which is why it is stated separately from
+	# the list: the glyph says what this crew is walking out to do (one per sheet, so repeating it down
+	# every row would be noise), and `(default)` is a note about an entry rather than about the choice.
+	var picker := HudWidgets.build_option_picker(entries, selected_index,
 		HudComposeVocab.KIT_PICKER_FACE_FORMAT % [glyph, kit_display_name(selected)],
 		HudComposeVocab.KIT_PICKER_TOOLTIP)
 	picker.set_meta(KIT_PICKER_META, true)

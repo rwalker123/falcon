@@ -2110,21 +2110,34 @@ func _fill_denial_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: in
 func _clear_party_quarry() -> void:
     _compose.clear_party_quarry()
 
-## The Quarry row — the Party row's shape, with a button instead of a stepper. Unpicked it invites
-## (`Choose…`, primary); picked it states the herd and stays available for a re-pick (ghost).
+## The Quarry row — the Band and Kit rows' shape, with a button instead of a picker. Unpicked it
+## invites (`Choose…`, primary); picked it states the herd and stays available for a re-pick (ghost).
+##
+## **IT IS PRESENTED AS ONE OF THAT FAMILY AND IT IS NOT ONE OF THEIR KIND, and both halves of that
+## are deliberate.** It takes the shared key label (`HudWidgets.build_field_key`, one declared width),
+## the same ghost chrome and therefore the same height and the same left-aligned face — so the three
+## field rows on a sheet read as one stack rather than three different-looking widgets. What it must
+## NEVER take is dropdown chrome: pressing it ARMS A MAP PICK. Quarries are chosen spatially — glow
+## rings on the eligible herds, the targeting banner, the in-reach refusal nudge — and the candidates
+## are scattered across the map rather than enumerable in a sensible list, so an arrow here would
+## promise a list that never opens, which is worse than the inconsistency it would paper over. The one
+## list this row does offer is the `⋯` chooser at the end, and it appears only where a hex genuinely
+## holds more than one eligible quarry.
 func _build_quarry_row(band: Dictionary, herd: Dictionary) -> HBoxContainer:
     var row := HBoxContainer.new()
     row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    var key := Label.new()
-    key.text = HudComposeVocab.COMPOSE_FIELD_QUARRY
-    key.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    row.add_child(key)
+    row.add_child(HudWidgets.build_field_key(HudComposeVocab.COMPOSE_FIELD_QUARRY))
     var pick := Button.new()
     pick.focus_mode = Control.FOCUS_NONE
     # EXPAND_FILL is load-bearing on the picked branch: `clip_text` drops the button's minimum width
-    # to ~0, so beside an EXPAND_FILL key label it collapses to a sliver. Both branches take it so the
-    # row does not resize as a quarry is chosen.
+    # to ~0, so beside the key label it collapses to a sliver. Both branches take it so the row does
+    # not resize as a quarry is chosen.
     pick.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    # LEFT, the alignment an `OptionButton` takes for itself — a `Button`'s stock CENTER would put the
+    # quarry's name in the middle of its box beside two pickers whose values start hard against the
+    # box's leading edge. It also puts the species ART immediately before the name it belongs to
+    # rather than at the far end of the button.
+    pick.alignment = HORIZONTAL_ALIGNMENT_LEFT
     if herd.is_empty():
         pick.text = HudComposeVocab.COMPOSE_QUARRY_CHOOSE
         pick.tooltip_text = HudComposeVocab.SEND_HUNT_EXPEDITION_HINT
@@ -2168,16 +2181,15 @@ func _build_quarry_row(band: Dictionary, herd: Dictionary) -> HBoxContainer:
     if not herd.is_empty():
         var candidates := _targeting.eligible_quarries_on_tile(
             band, int(herd.get("x", -1)), int(herd.get("y", -1)), mission)
+        # **THE CHOOSER'S WIDTH COMES OUT OF THE PICK, NOT OUT OF THE KEY**, and that is structural
+        # now rather than a per-branch override. `build_field_key` takes a DECLARED width and does not
+        # expand, so the pick is the row's only expanding child whether the row has two children or
+        # three — the chooser simply takes its own width out of the pick's share. The defect this
+        # replaced was the key EXPANDING too, which halved the name's room the moment a third control
+        # appeared: `🐇 Rabbit Warren` came back clipped to `Rabbit Warre` on the very frame the
+        # chooser exists to serve, and the cure was a `SIZE_FILL` written into this branch alone.
         if candidates.size() > 1:
             row.add_child(_build_quarry_choices_menu(band, herd, candidates, mission))
-            # **THE CHOOSER'S WIDTH COMES OUT OF THE KEY, NOT OUT OF THE SPECIES' NAME.** The key and
-            # the pick both EXPAND, so a third control on the row costs the name half of what it takes
-            # — measured, `🐇 Rabbit Warren` came back clipped to `Rabbit Warre` on the very frame the
-            # chooser exists to serve. `Quarry` is a fixed word that needs no more room than it
-            # occupies, so it stops expanding whenever the row has three children; the pick, still the
-            # only expanding child, takes everything the chooser leaves. Confined to this branch, so
-            # the one-quarry row is untouched.
-            key.size_flags_horizontal = Control.SIZE_FILL
     return row
 
 ## The quarry chooser: the `⋯` menu the zone heads already use, so the panel keeps ONE "there are

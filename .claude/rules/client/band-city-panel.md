@@ -1358,10 +1358,15 @@ floating surface over the map during targeting, which §15 rules out for the com
 - **The row was ALREADY a live control and the report's "inert" premise is false** — the picked-quarry
   button re-enters the map pick on both branches. What it could not do was reach a herd the map cannot
   address, which is why the fix is a second control rather than a wiring repair.
-- **The chooser's width comes out of the KEY, not out of the species' name.** `Quarry` and the pick
-  both `EXPAND_FILL`, so a third child halves what the name gets — measured, `🐇 Rabbit Warren` came
-  back clipped to `Rabbit Warre` on the very frame the chooser exists to serve. The key drops to
-  `SIZE_FILL` in that branch only, leaving the pick the sole expanding child.
+- **The chooser's width comes out of the PICK, not out of the key.** `Quarry` and the pick both used
+  to `EXPAND_FILL`, so a third child halved what the name got — measured, `🐇 Rabbit Warren` came back
+  clipped to `Rabbit Warre` on the very frame the chooser exists to serve — and the cure was a
+  `SIZE_FILL` written into that branch alone. That special case is **gone**: the key is
+  `HudWidgets.build_field_key` now, which takes a DECLARED width and never expands, so the pick is the
+  row's only expanding child whether the row has two children or three. The whole field-row family
+  (`Band:` · `Kit` · `Quarry`) is specified in `labor-ui.md` → "The compose sheet's FIELD ROWS are one
+  family", **including the rule that this row takes the family's chrome and must never take its
+  ARROW** — pressing it arms a map pick, and an arrow would promise a list that does not open.
 - **`TargetingController.choose_quarry` is THE one adoption of a quarry**, shared by the map click and
   the chooser: same eligibility test, same state, same re-render. `_try_pick_quarry` is written in
   terms of it (it keeps only its two nudges and the pending teardown), so a second spelling cannot

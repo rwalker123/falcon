@@ -665,6 +665,24 @@ const SEND_DENIAL_RAID_HINT := "Detach a party to break a herd. It never stops e
 ## under it will answer instead.
 const COMPOSE_DENY_QUARRY_HINT := "Choose a herd to break — the collapse estimate follows from it."
 
+## **THE WIDTH EVERY FIELD ROW'S KEY LABEL RESERVES, so the three controls line up as one stack.**
+## `Band:`, `Kit` and `Quarry` are three different words in front of three different widget types
+## (two `OptionButton`s and a `Button`), and each row is built by a different module — so without one
+## declared width the value controls start at three different x positions and the sheet reads as
+## three unrelated widgets rather than one form.
+##
+## **The two obvious alternatives were both measured and both lose.** A key at its natural width puts
+## each control against its own word (`Kit` is 22px, `Quarry` 55), which is the ragged edge this
+## exists to remove. A key at `SIZE_EXPAND_FILL` splits the row 50/50 — the shape the Kit and Quarry
+## rows shipped with — and on a ~245px sheet that leaves the control ~119px, which `🧺 Gathering kit`
+## plus a themed arrow does not fit: the fix for a clipped affordance would have clipped the name
+## instead. A declared floor gives the key exactly what the longest key needs and hands the whole
+## remainder to the control, which is the axis that has something to lose.
+##
+## 64 is the widest key on any of the four sheets — `Quarry`, measured at 55px against this client's
+## unthemed default font — plus a gutter, so no key can push its own row's control out of line.
+const COMPOSE_FIELD_KEY_WIDTH := 64.0
+
 const COMPOSE_FIELD_PARTY := "Party"
 
 const COMPOSE_FIELD_POLICY := "Policy"
@@ -714,11 +732,20 @@ const COMPOSE_OF_IDLE_FORMAT := "of %d idle"
 ## herd drawer's assign-hunters block and the land drawer's assign-foragers block.
 const COMPOSE_FIELD_KIT := "Kit"
 
-## The picker's closed face: the job's glyph, the kit's own display name, and the caret that says the
-## control opens. **A PICKER BUTTON OPENING A CHECKED-RADIO MENU, not a pill row** — deliberately the
-## quarry chooser's idiom (`HudWidgets.build_section_menu`'s entries), because the roster grows toward
-## a dozen kits and a row of pills cannot hold that in a 354px dock column.
-const KIT_PICKER_FACE_FORMAT := "%s %s ⌄"
+## The picker's closed face: the job's glyph and the kit's own display name. **A NATIVE `OptionButton`,
+## not a pill row and no longer a `MenuButton`** (`HudWidgets.build_option_picker`) — the roster grows
+## toward a dozen kits and a row of pills cannot hold that in a 354px dock column, and a control that
+## draws its own arrow is the only kind whose affordance a long kit name cannot push off the edge.
+##
+## **THE CARET IS NOT IN THIS STRING, AND PUTTING ONE BACK RE-CREATES THE DEFECT IT WAS TAKEN OUT
+## FOR.** The face used to end in a `⌄` text glyph, because a `MenuButton` draws no arrow of its own.
+## `Gathering kit` is long enough to reach the button's edge, so on the forage sheet the caret was
+## clipped away entirely — present in the string, never drawn — while on the hunt sheet it rendered as
+## a small low-baseline mark that read as a stray comma beside the `Band:` picker's themed arrow one
+## row above. An `OptionButton` draws the arrow as an ICON in reserved right-hand margin that
+## `clip_text` cannot eat, so a glyph here would now be a SECOND affordance saying the same thing —
+## and the one that clips.
+const KIT_PICKER_FACE_FORMAT := "%s %s"
 
 ## The glyph is keyed by the JOB THE SHEET IS COMPOSING, never by the kit's id: ids come from
 ## `equipment.json` and a client-side table keyed on them goes stale the moment a kit is added. The

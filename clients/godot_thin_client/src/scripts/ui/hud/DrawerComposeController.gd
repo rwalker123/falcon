@@ -681,29 +681,39 @@ func _yield_preview_bbcode(model: Dictionary, overdraw_suffix: String) -> String
 ## dropdown). NOTE: lists ALL player bands; in-range filtering (Forage within work_range / Hunt
 ## within work_range + leash) is deferred to the multi-band slice (needs the hunt-leash reach in
 ## the snapshot, and can't be exercised until a 2nd band can exist).
+##
+## **It goes through the SHARED field-row builders** (`HudWidgets.build_field_key` /
+## `build_option_picker`), which is what makes it, the Kit row beneath it and the Band panel's Quarry
+## row one family: one declared key width, one ghost chrome, one height. It used to be a bare
+## `OptionButton` on a natural-width label — the only off-palette control on the sheet, and the one
+## whose value box started at a different x from every other row's.
 func _build_band_picker(selected_band: Dictionary, on_pick: Callable) -> HBoxContainer:
     var row := HBoxContainer.new()
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    var name_label := Label.new()
-    name_label.text = HudWorkVocab.BAND_PICKER_LABEL
-    name_label.add_theme_color_override("font_color", HudStyle.INK)
-    row.add_child(name_label)
-    var picker := OptionButton.new()
-    picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.add_child(HudWidgets.build_field_key(HudWorkVocab.BAND_PICKER_LABEL))
     var bands := _band_labor.current_player_bands()
     var selected_entity := int(selected_band.get("entity", -1))
-    var selected_idx := 0
+    var selected_index := 0
+    var entries: Array = []
     for i in bands.size():
-        var b: Dictionary = bands[i]
-        picker.add_item(HudFormat.band_display_name(b, i + 1))
-        picker.set_item_metadata(i, int(b.get("entity", -1)))
-        if int(b.get("entity", -1)) == selected_entity:
-            selected_idx = i
-    picker.select(selected_idx)
-    picker.item_selected.connect(func(idx: int) -> void:
-        on_pick.call(_band_labor.player_band_by_entity(int(picker.get_item_metadata(idx)))))
-    row.add_child(picker)
+        var band: Dictionary = bands[i]
+        var entity := int(band.get("entity", -1))
+        if entity == selected_entity:
+            selected_index = i
+        entries.append({
+            "label": HudFormat.band_display_name(band, i + 1),
+            # Resolved through the labor model at PRESS time rather than captured: the picker outlives
+            # a snapshot, and the band dict this row was built from is a copy of a stale turn's.
+            "on_pick": func() -> void: on_pick.call(_band_labor.player_band_by_entity(entity)),
+        })
+    # The face is the selected entry's own label — there is no glyph and no marker to hold apart here,
+    # unlike the Kit row — so it is stated from the same list rather than composed.
+    var face := "" if entries.is_empty() \
+        else String((entries[selected_index] as Dictionary).get("label", ""))
+    # No tooltip: the row's own `Band:` key says what the control is, and this picker has never
+    # carried one. Inventing copy here would be a change of content behind a change of chrome.
+    row.add_child(HudWidgets.build_option_picker(entries, selected_index, face, ""))
     return row
 
 ## Cap the worker stepper at what the source can absorb: min(the band's assignable workers,
