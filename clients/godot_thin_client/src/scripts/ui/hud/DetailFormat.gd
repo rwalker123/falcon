@@ -340,6 +340,13 @@ const EXPEDITION_ROW_FOCUS_HINT := "Click to show this expedition on the map."
 # on a hunt party. One word, so `_split_kv` lays it out as a table row beside the others; the VALUE
 # carries its own tint, since a verdict's severity is a fact about the forecast and not about the key.
 const DENIAL_COLLAPSE_ROW := "Collapse:"
+# **THE QUOTED-PARTY CLAUSE — the compose sheets' `quoted_party_note` in a detail row's clothing.**
+# `denialEstimates` samples the party axis on a LADDER, and a LAUNCHED party's size is bounded by the
+# band alone, so an in-flight party very often falls between two rungs; the row then quotes the nearest
+# one and must SAY so, because the collapse timeline scales with party size. It is a CLAUSE rather than
+# a row of its own: this producer's output lands in the parties zone's clipped inspector strip, where a
+# second row costs height the tier has already budgeted. `%d` the party quoted, `%d` this party's.
+const DENIAL_COLLAPSE_QUOTED_PARTY_FORMAT := " — priced for a party of %d, not this party's %d"
 
 # ---- The tile card's BASKET rows — what the `Foraging` stock above them is MADE OF (flora roster
 # F1/F5). Each realized plant reads on its OWN indented row: a role icon, the plant's display name,
@@ -1527,10 +1534,19 @@ static func expedition_collapse_line(exp: Dictionary, target_herd: Dictionary) -
         return ""
     # The party's own size is the table's only axis — `size` is the cohort's head count, which for a
     # detached party IS its workers (the same reading `HudBandLaborState.band_party_workers` takes).
-    var forecast := SourceForecast.denial_forecast(target_herd, int(exp.get("size", 0)))
+    var party := int(exp.get("size", 0))
+    var forecast := SourceForecast.denial_forecast(target_herd, party)
     var verdict := SourceForecast.denial_verdict_bbcode(forecast,
         SourceForecast.herd_display_name(target_herd))
-    return "" if verdict == "" else "%s %s" % [DENIAL_COLLAPSE_ROW, verdict]
+    if verdict == "":
+        return ""
+    # …and WHICH party the sim costed it for, whenever the ladder rounded this one. The note is the
+    # compose sheets' rule reaching the launched party: a nearby row is a real answer to a nearby
+    # question, never an exact one, and this surface is where a between-rungs party is most likely
+    # (a launch is bounded by the band's idle workers and by nothing else).
+    var party_note := SourceForecast.quoted_party_note(forecast, party,
+        DENIAL_COLLAPSE_QUOTED_PARTY_FORMAT)
+    return "%s %s%s" % [DENIAL_COLLAPSE_ROW, verdict, party_note]
 
 ## The robust "Next delivery: …" wording, shared by the parties inspector strip
 ## (`BandDetailLines.expedition_summary_lines`) and the row tooltip (`expedition_row_tooltip`) so the

@@ -568,7 +568,7 @@ fn a_wary_herd_resists_denial_and_the_forecast_says_so() {
 
     // 3. Liveness: a bigger party on the SAME wary herd does get there, so `Repelled` is a statement
     //    about the party rather than about the fixture.
-    let big_enough = expedition_cfg(&wary).estimate_party_sizes;
+    let big_enough = expedition_cfg(&wary).max_estimated_party();
     let overwhelming = forecast(&wary, &id, big_enough);
     assert!(
         overwhelming.outcome.succeeded() && overwhelming.turns_to_collapse.is_some(),
@@ -1302,7 +1302,7 @@ const REPORTED_SWEEP_SEEDS: [u64; 6] = [3, 11, 29, 97, 613, 40009];
 /// one hunter kills   1 × (1 − 0.65) = 0.35 deer/turn
 /// the herd replaces  0.10 × 51 × (1 − 51/119) = 2.91 deer/turn
 /// break-even         2.91 / 0.35 = 8.3 hunters   ⇒   9 to decline
-/// quoted axis        8   (`estimate_party_sizes`, and it also capped the launch)
+/// quoted axis        1..=8   (`estimate_party_sizes` as a COUNT, and it also capped the launch)
 /// ```
 ///
 /// Two unrelated eights, and the config one landed **one below** the requirement — so the verdict
@@ -1325,7 +1325,7 @@ fn the_reported_red_deer_raid_is_staffable_and_its_seeded_party_declines_the_her
     reveal_herd(&mut app, pos);
     recapture_snapshot_in_place(&mut app.world);
     let sheet = exported_denial_sheet(&app, &id);
-    let sampled = expedition_cfg(&app).estimate_party_sizes;
+    let ladder = expedition_cfg(&app).estimate_party_sizes.clone();
 
     // 1. The number, and the rounding. `8.3` hunters is NINE — and the sheet never opens BELOW it.
     assert!(
@@ -1347,16 +1347,24 @@ fn the_reported_red_deer_raid_is_staffable_and_its_seeded_party_declines_the_her
          and opening there quotes a party under the verdict \"still standing when the forecast runs \
          out\""
     );
+    let below = sheet
+        .row_below(sheet.party_needed)
+        .expect("the seed is never the sheet's first row on this herd");
     assert!(
-        !sheet.succeeded_at(sheet.party_needed - 1),
-        "…and the row below the seed must NOT have succeeded, or the sheet skipped a party that works"
+        !sheet.succeeded_at(below),
+        "…and the sampled row below the seed ({below}) must NOT have succeeded, or the sheet \
+         skipped a party that works"
     );
 
-    // 2. It is reachable at all — the defect was that this row did not exist.
+    // 2. It is reachable at all — the defect was that this row did not exist. The requirement is
+    //    not a rung of the shared ladder; it is on the sheet only because the denial axis samples a
+    //    contiguous run at the herd's OWN requirement, which is what keeps the seed off a rung the
+    //    player cannot justify.
     assert!(
-        sheet.party_needed > sampled,
-        "this fixture only means something while the requirement ({}) is past the flat sampling \
-         bound ({sampled}) — that pairing IS the reported bug",
+        !ladder.contains(&sheet.party_needed),
+        "this fixture only means something while the requirement ({}) falls BETWEEN the ladder's \
+         rungs ({ladder:?}) — a requirement that happened to land on one would pass without the \
+         requirement run existing at all",
         sheet.party_needed
     );
     assert!(
@@ -1364,11 +1372,30 @@ fn the_reported_red_deer_raid_is_staffable_and_its_seeded_party_declines_the_her
         "the band held {REPORTED_IDLE_WORKERS} idle workers; a requirement past that would make \
          this a fixture about a band too small, which is a different (and legitimate) refusal"
     );
+    // …and the LADDER did not round it up. The requirement run is the whole reason the seed can
+    // land between two rungs; without it the sheet would open on the next rung above (16 here),
+    // which is a party the player has no reason to believe in.
+    let next_rung_above = *ladder
+        .iter()
+        .find(|rung| **rung > sheet.party_needed)
+        .expect("the ladder reaches past this requirement");
     assert!(
-        sheet.rows() > sheet.party_needed,
+        sheet.party_needed < next_rung_above,
+        "the seed ({}) must not be inflated to a ladder rung ({next_rung_above})",
+        sheet.party_needed
+    );
+    // The sampled sheet costs no more rows than the retired contiguous `1..=requirement + 8` axis.
+    assert!(
+        sheet.rows() <= RETIRED_CONTIGUOUS_END,
+        "the sampled axis spent {} rows where the contiguous one spent {RETIRED_CONTIGUOUS_END}",
+        sheet.rows()
+    );
+
+    assert!(
+        sheet.largest_party() > sheet.party_needed,
         "the table must quote headroom ABOVE the requirement, or a player holding more workers than \
-         the herd needs has no row to read for spending them (rows {}, needed {})",
-        sheet.rows(),
+         the herd needs has no row to read for spending them (largest row {}, needed {})",
+        sheet.largest_party(),
         sheet.party_needed
     );
 
@@ -1377,6 +1404,8 @@ fn the_reported_red_deer_raid_is_staffable_and_its_seeded_party_declines_the_her
     let opening = REPORTED_HERD.carrying_capacity * REPORTED_HERD.biomass_fraction;
     let seeded = mean_biomass_after_raiding(sheet.party_needed);
     let one_short = mean_biomass_after_raiding(sheet.party_needed - 1);
+    // (`party_needed - 1` rather than `below`: the ordering claim is about ONE hunter fewer, which
+    // is the boundary the requirement names — not about the previous sampled row.)
     assert!(
         seeded < opening,
         "the seeded party must actually drive the herd down: {opening} -> {seeded} on average over \
@@ -1388,6 +1417,78 @@ fn the_reported_red_deer_raid_is_staffable_and_its_seeded_party_declines_the_her
         "…and one hunter fewer must leave the herd standing higher ({one_short} vs {seeded}), or \
          the requirement is not where the sheet says it is"
     );
+}
+
+/// **The largest party the retired CONTIGUOUS axes reached on this herd.** The hunt table walked
+/// `1..=8` (`estimate_party_sizes` as a count) and the denial table `1..=requirement + 8`, so on the
+/// reported Red Deer this is the higher of the two, `9 + 8`.
+const RETIRED_CONTIGUOUS_END: u32 = REPORTED_PARTY_NEEDED + 8;
+
+/// **A party past where the contiguous axes stopped now finds a row — on BOTH tables.**
+///
+/// This is the defect the ladder exists for. Both tables sampled their party axis contiguously from
+/// `1` and the client's lookup demanded an *exact* match, while the compose sheet's stepper caps at
+/// the band's **idle workers** — an unrelated number. A band with more idle workers than the axis
+/// was long therefore had a stepper it could not read: every raid readout on the sheet went blank —
+/// no verdict, no range, no take, no turn count.
+///
+/// The claim is deliberately made on the **exported wire** and against a party well past the retired
+/// end, on both tables at once: the hunt table's axis is the shorter of the two, so a fix applied to
+/// the denial half alone would still leave the compose sheet dark.
+///
+/// The pairing that makes it an assertion rather than a tautology: every rung of the shipped ladder
+/// must be present on both tables, so "there is a row up there somewhere" cannot pass by the axis
+/// having quietly become one enormous row.
+#[test]
+fn a_party_past_the_retired_contiguous_axis_finds_a_row_on_both_tables() {
+    let mut app = wary_world();
+    let (id, pos) = pin_raid_herd_of(&mut app, REPORTED_QUARRY, REPORTED_HERD);
+    reveal_herd(&mut app, pos);
+    recapture_snapshot_in_place(&mut app.world);
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let herd = snapshot
+        .herds
+        .iter()
+        .find(|h| h.id == id)
+        .expect("the herd is on the wire (its tile was revealed)");
+
+    let ladder = expedition_cfg(&app).estimate_party_sizes.clone();
+    let past_the_end = *ladder
+        .iter()
+        .find(|rung| **rung > RETIRED_CONTIGUOUS_END)
+        .expect("the ladder must reach past where the contiguous axes stopped");
+
+    let denial_parties: Vec<u32> = herd
+        .denial_estimates
+        .iter()
+        .map(|row| row.party_workers)
+        .collect();
+    let hunt_parties: Vec<u32> = herd
+        .hunt_trip_estimates
+        .iter()
+        .map(|row| row.party_workers)
+        .collect();
+
+    for (table, parties) in [("denial", &denial_parties), ("hunt", &hunt_parties)] {
+        assert!(
+            parties.contains(&past_the_end),
+            "{table}: a party of {past_the_end} is past the retired axis's \
+             {RETIRED_CONTIGUOUS_END} and must still resolve to an exact row — that gap is what \
+             blanked the whole sheet"
+        );
+        for rung in &ladder {
+            assert!(
+                parties.contains(rung),
+                "{table}: the ladder's rung {rung} is missing, so the axis is not the ladder"
+            );
+        }
+    }
 }
 
 /// The wire key [`DenialOutcome::Repelled`] publishes — spelled once so a test cannot drift from the
@@ -1422,8 +1523,8 @@ fn mean_biomass_after_raiding(workers: u32) -> f32 {
 
 /// **A herd whose replacement out-runs every party the sim will quote** — the same Red Deer, on
 /// range rich enough to hold 1,333 head. Its peak replacement is `0.10 × K/4 / body = 33` deer a
-/// turn against `0.35` per hunter, so the requirement is ~96 — past `deny.max_party_quoted`, which
-/// is the *no viable number* case the readout has to survive rather than paper over.
+/// turn against `0.35` per hunter, so the requirement is ~96 — past the party ladder's last rung,
+/// which is the *no viable number* case the readout has to survive rather than paper over.
 const UNDENIABLE_HERD: RaidQuarry = RaidQuarry {
     body_mass: RED_DEER_BODY_MASS,
     // Seated at the food peak, where the logistic curve is at its most productive: the hardest
@@ -1437,7 +1538,7 @@ const UNDENIABLE_HERD: RaidQuarry = RaidQuarry {
 /// (`docs/plan_denial_raid.md` §3.1).
 ///
 /// Three situations reach *"no quoted party drives this herd down"* and this pins the one that is
-/// purely a **readout bound**: a requirement past `deny.max_party_quoted`. The other two — a herd
+/// purely a **readout bound**: a requirement past the ladder's last rung. The other two — a herd
 /// already past recovery, and a quarry nothing can bring into contact — are covered by
 /// [`a_wary_herd_resists_denial_and_the_forecast_says_so`] and the fauna unit tests.
 ///
@@ -1460,9 +1561,10 @@ fn a_herd_no_quoted_party_can_collapse_reports_no_viable_party_and_still_reads_r
     );
     // The table is still a table: capped at the quoting bound, and every row answers.
     assert_eq!(
-        sheet.rows(),
-        cfg.deny.max_party_quoted,
-        "the axis must stop at the quoting bound rather than running away with the requirement"
+        sheet.parties(),
+        cfg.estimate_party_sizes,
+        "a requirement past the ladder's last rung contributes NO rows, so the axis is the bare \
+         ladder — it must not run away with the requirement"
     );
     assert!(
         sheet.every_row_reads(REPELLED),
@@ -1498,6 +1600,27 @@ struct ExportedDenialSheet {
 impl ExportedDenialSheet {
     fn rows(&self) -> u32 {
         self.outcomes.len() as u32
+    }
+
+    /// The party sizes the sheet actually quotes, ascending. The axis is **sampled**, not
+    /// contiguous, so a fixture that wants "the row below X" has to ask for it rather than assume
+    /// `X - 1` exists.
+    fn parties(&self) -> Vec<u32> {
+        let mut parties: Vec<u32> = self.outcomes.iter().map(|(workers, _)| *workers).collect();
+        parties.sort_unstable();
+        parties
+    }
+
+    /// The largest party the sheet quotes.
+    fn largest_party(&self) -> u32 {
+        self.parties().last().copied().unwrap_or(0)
+    }
+
+    /// The sampled row immediately **below** `party_workers`, or `None` if it is the first row.
+    fn row_below(&self, party_workers: u32) -> Option<u32> {
+        self.parties()
+            .into_iter()
+            .rfind(|workers| *workers < party_workers)
     }
 
     fn outcome_at(&self, party_workers: u32) -> Option<&str> {

@@ -32,16 +32,35 @@ pub const BUILTIN_EXPEDITION_CONFIG: &str = include_str!("data/expedition_config
 /// what is deliberately left free.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ExpeditionConfig {
-    /// **How many party sizes the pre-launch estimate TABLES quote** — the axis `1..=this` on
-    /// `huntTripEstimates`, and the base (plus headroom) of the denial table's own axis. It is a
-    /// **sampling bound and nothing else.**
+    /// **The party sizes the pre-launch estimate TABLES are sampled at** — an explicit **ascending
+    /// ladder**, and the party-axis twin of `snapshot::RAID_FORECAST_FLOOR_SAMPLES`. It is a
+    /// **sampling axis and nothing else.**
+    ///
+    /// # Marks on a dial, not a contiguous run
+    ///
+    /// It used to be a *count* (`8`), and both tables walked `1..=count` contiguously. That is what
+    /// made a party past the last row **unquotable**: the client's lookup wants a row for the party
+    /// the stepper is showing, the stepper caps at the band's **idle workers**, and those two numbers
+    /// are unrelated — a band with 16 idle raiding a herd needing 1 got rows for 1–9 and a stepper
+    /// that reached 16, so everything above 9 rendered blank.
+    ///
+    /// The floor axis never had that problem, because it is sampled: nobody computes every floor, the
+    /// client takes the **nearest** mark and names which one it was computed for. The same treatment
+    /// here costs *less* than the contiguous run it replaces — a sparse ladder spans the whole
+    /// dialable range in fewer rows than `1..=8` spans a ninth of it. Dense at the low end, where one
+    /// hunter is a large proportional change, and sparse at the top, where it is not.
+    ///
+    /// **The client must not compose a row of its own** for a party between two rungs. The take
+    /// passes through `fauna::quantise_animal_take`'s `floor()`, so it is non-linear, and
+    /// `.claude/rules/core_sim/yield-forecast.md`'s terms-vs-answers rule says non-linear ships as an
+    /// **answer**. It shows the nearest sampled row *with the party size it was sampled for*.
     ///
     /// # It is NOT a cap on what the player may send, and it used to be
     ///
-    /// This lever was doing two jobs under one name (`max_party_size`), and only one of them had a
+    /// The lever was doing two jobs under one name (`max_party_size`), and only one of them had a
     /// justification (`docs/plan_denial_raid.md` §3.1):
     ///
-    /// - **A sampling bound, which is real.** `huntTripEstimates` / `denialEstimates` hang off
+    /// - **A sampling axis, which is real.** `huntTripEstimates` / `denialEstimates` hang off
     ///   `HerdTelemetryState` — per *herd*, not per band — so the sim cannot know which band is
     ///   asking or how many workers it has. The tables need a fixed axis, and the hunt table is
     ///   already `floors × party sizes`, so the row count is a genuine budget.
@@ -51,18 +70,15 @@ pub struct ExpeditionConfig {
     ///   party of `9` from a band holding `16`, against a Red Deer herd that needed exactly nine —
     ///   a lever deciding that a mission was impossible.
     ///
-    /// So the two are split: this is the sampling bound, and `server::outfit_raiding_party` /
+    /// So the two are split: this is the sampling axis, and `server::outfit_raiding_party` /
     /// `handle_send_expedition` bound a party by `available_workers` alone, for **all three** verbs.
     ///
-    /// # The consequence, and where it is answered
+    /// # The last rung is the ONLY quoting bound
     ///
-    /// A legal party larger than this axis has **no pre-computed row**. The client must not compose
-    /// one — the take passes through `fauna::quantise_animal_take`'s `floor()`, so it is non-linear,
-    /// and `.claude/rules/core_sim/yield-forecast.md`'s terms-vs-answers rule says non-linear ships
-    /// as an **answer**. What it shows instead is the largest quoted row *with the party size it was
-    /// quoted for*, which is safe in the honest direction: both tables are monotone in party size, so
-    /// that row under-states a larger party's take and over-states its turn count.
-    pub estimate_party_sizes: u32,
+    /// It absorbed the retired `deny.max_party_quoted`: two numbers naming the same bound could
+    /// disagree, and the ladder already states where the rows stop. See
+    /// [`ExpeditionConfig::max_estimated_party`].
+    pub estimate_party_sizes: Vec<u32>,
     /// Base communication range (tiles): the expedition only flushes its observed tiles to the
     /// faction map while within this hex distance of its home band. Early-game default is short so
     /// distant exploration reports back "as a lump on return".
@@ -138,31 +154,36 @@ pub struct HuntExpeditionConfig {
 ///
 /// **`max_party_size` is not among them, and that is the arc's one design decision.** A denial
 /// raid's party bound is the launching band's own **idle workers** — see
-/// [`ExpeditionConfig::max_party_size`] for why the flat ceiling is right for the two continuous
+/// [`ExpeditionConfig::estimate_party_sizes`] for why a flat ceiling is right for the two continuous
 /// verbs and wrong for this one.
 #[derive(Debug, Clone, Deserialize)]
 pub struct DenyExpeditionConfig {
-    /// **The largest party the pre-launch denial table will quote**, and therefore the largest
-    /// requirement `HerdTelemetryState.denial_party_needed` will name.
+    /// **How many CONTIGUOUS rows the denial table samples starting at the herd's own closed-form
+    /// requirement** (`fauna::denial_party_needed`), on top of the shared
+    /// [`ExpeditionConfig::estimate_party_sizes`] ladder.
     ///
-    /// It is a **cost bound on a readout**, not a rule about what a band may outfit: the launch
-    /// command bounds a party by the band's idle workers and never consults this. What it buys is
-    /// that `snapshot::subsistence::denial_party_axis`, which runs to *what the herd needs plus
-    /// [`ExpeditionConfig::estimate_party_sizes`] of headroom*, cannot be handed an unbounded axis by a
-    /// pathological retune — a quarry at `wariness 0.999` would otherwise ask for millions of rows
-    /// at `3 × rows × hunt.forecast_horizon_turns` turn-steps each, every snapshot, on the hot half
-    /// of the turn.
+    /// It exists because `HerdTelemetryState.denial_party_needed` is defined as *the smallest
+    /// sampled row whose raid **succeeded***, read off the forward simulation rather than off the
+    /// closed form. The closed form is only a **bound on the search**: it is linear in the party and
+    /// therefore blind to the whole-animal quantiser, to the fight, and to `fauna::animals_engaged`'s
+    /// `max(1)` floor, so the row that actually declines the herd sits at the requirement *or a
+    /// little above it* (measured over the shipped roster: `+0` to `+4`, with one heavy-bodied
+    /// outlier further out). A sparse ladder alone would round that answer up to the next rung, and
+    /// a sheet that opens on a party the player cannot justify is the defect this arc removed.
     ///
-    /// A herd needing more than this reports **no viable party at all**
-    /// (`denial_party_needed == 0`), which is the honest reading: the sim will not quote a raid it
-    /// declines to simulate. Shipped **64** — comfortably past the shipped roster's worst case (at
-    /// its full `K` a Rabbit Warren asks ~26 hunters and a Gazelle band ~32, so the widest axis the
-    /// roster produces is ~40), so a species retune has room before it meets the bound rather than
-    /// sitting on it.
+    /// So the axis is `ladder ∪ requirement..=requirement + this − 1`, clamped to
+    /// [`ExpeditionConfig::max_estimated_party`]. At the shipped **5** the union is never larger than
+    /// the contiguous `requirement + 8` axis it replaced, and is dramatically smaller on the wary,
+    /// expensive herds — those are exactly the ones whose sub-requirement rows run the whole
+    /// forecast horizon.
     ///
-    /// Validated `>= estimate_party_sizes`: below the base axis it could never bind, because the
-    /// denial axis already runs at least that far — a live-looking lever that does nothing.
-    pub max_party_quoted: u32,
+    /// A requirement past the ladder's last rung contributes **nothing**: the herd reports **no
+    /// viable party** (`denial_party_needed == 0`), which is the honest reading — the sim will not
+    /// quote a raid it declines to simulate.
+    ///
+    /// Validated `>= 1`: at `0` the requirement itself is not sampled, which is the whole point of
+    /// the lever.
+    pub requirement_rows: u32,
 }
 
 /// Scout opportunistic-replenish levers: the scout's own use of the shared `hunt_take` primitive.
@@ -186,6 +207,17 @@ const MIN_COUNTED_LEVER: u32 = 1;
 /// `hunt.min_deliver_fraction`, a fraction of the carry cap): a gate above a full pack could never
 /// open.
 const MAX_FRACTION: f32 = 1.0;
+
+/// **The rung every sampling ladder has to start on.** One hunter is the smallest party that can be
+/// outfitted, so a ladder that omits it cannot quote the cheapest raid a player can send — and the
+/// client, taking the *nearest* rung, would answer a party of one with a row computed for several.
+const LONE_HUNTER: u32 = 1;
+
+/// **What [`ExpeditionConfig::max_estimated_party`] reports for a ladder with no rungs at all.**
+/// Unreachable through any load path ([`ExpeditionConfig::validate`] refuses an empty ladder); it is
+/// the honest reading of "nothing is quoted" for a hand-built config in a test, rather than a panic
+/// inside a snapshot capture.
+const NOTHING_QUOTED: u32 = 0;
 
 impl ExpeditionConfig {
     pub fn builtin() -> Arc<Self> {
@@ -217,19 +249,19 @@ impl ExpeditionConfig {
     /// Deliberately **unbounded** (they have coherent meanings at their extremes, so bounding them
     /// would be inventing policy): `comm_range_tiles` (`0` = "the party must physically walk back
     /// into camp to report"), `hunt.drop_off_within_tiles` (`0` = no early drop-off; a full pack
-    /// still delivers), and the upper end of `estimate_party_sizes` / `hunt.forecast_horizon_turns`
-    /// (both only cost snapshot time — the hunt table is `O(floors × estimate_party_sizes × horizon)`
-    /// per herd — which is an operator's call, not an invariant).
+    /// still delivers), and the **length** of `estimate_party_sizes` / the upper end of
+    /// `hunt.forecast_horizon_turns` (both only cost snapshot time — the hunt table is
+    /// `O(floors × ladder rungs × horizon)` per herd — which is an operator's call, not an
+    /// invariant).
     pub fn validate(&self) -> Result<(), ExpeditionConfigError> {
-        // At `0` the estimate tables have no rows at all: every herd would publish an empty
-        // `huntTripEstimates` / `denialEstimates`, so the client's launch sheet could quote nothing
-        // for any party — a silently unadvisable feature, which is the class this validator exists
-        // for. It no longer refuses a *launch* (a party is bounded by the band), only a readout.
-        require_at_least(
-            "estimate_party_sizes",
-            self.estimate_party_sizes,
-            MIN_COUNTED_LEVER,
-        )?;
+        // An empty ladder leaves the estimate tables with no rows at all: every herd would publish
+        // an empty `huntTripEstimates` / `denialEstimates`, so the client's launch sheet could quote
+        // nothing for any party — a silently unadvisable feature, which is the class this validator
+        // exists for. It no longer refuses a *launch* (a party is bounded by the band), only a
+        // readout. Ascending-and-unique because the client resolves a party by taking the NEAREST
+        // rung, which is only well-defined on a sorted ladder, and because a repeated rung is a
+        // duplicated forward simulation per herd per snapshot for no extra information.
+        require_party_ladder("estimate_party_sizes", &self.estimate_party_sizes)?;
         // Negative/NaN would saturate to `0` in `effective_comm_range`'s `as u32` cast, silently
         // zeroing the comm range whatever `comm_range_tiles` says.
         require_positive_finite("comm_range_tech_factor", self.comm_range_tech_factor)?;
@@ -284,21 +316,13 @@ impl ExpeditionConfig {
             self.hunt.viability_warn_turns,
         )?;
 
-        // The denial table's party axis runs to `what the herd needs + estimate_party_sizes`, capped
-        // here. At `0` the cap would refuse every requirement, so `denial_party_needed` would read
-        // "no viable party" on every herd in the world and the third verb would silently become
-        // unadvisable — the same class of hole a `0` horizon opens for the hunt.
+        // At `0` the herd's own requirement is never sampled, so `denial_party_needed` would be
+        // rounded up to whichever ladder rung happens to sit above it — the sheet opening on a party
+        // larger than the one that works, which is the readout defect this lever exists to prevent.
         require_at_least(
-            "deny.max_party_quoted",
-            self.deny.max_party_quoted,
+            "deny.requirement_rows",
+            self.deny.requirement_rows,
             MIN_COUNTED_LEVER,
-        )?;
-        // Cross-field: a cap below the base axis could never bind, because the denial axis already
-        // runs at least `estimate_party_sizes` — the lever would read as live while unreachable.
-        require_at_least(
-            "deny.max_party_quoted",
-            self.deny.max_party_quoted,
-            self.estimate_party_sizes,
         )?;
 
         // Scouts top up below `party × upkeep × low_turns`; `0` never triggers, and a `0` reach
@@ -321,6 +345,42 @@ impl ExpeditionConfig {
     pub fn effective_comm_range(&self) -> u32 {
         (self.comm_range_tiles as f32 * self.comm_range_tech_factor).round() as u32
     }
+
+    /// **The largest party either estimate table will quote** — the ladder's last rung, and the
+    /// *only* bound on the denial axis.
+    ///
+    /// It replaced the retired `deny.max_party_quoted`, which named the same bound a second time and
+    /// could therefore disagree with the axis it was capping. What that lever bought is unchanged: a
+    /// pathological retune (a quarry at `wariness 0.999`, whose closed-form requirement runs into the
+    /// millions) cannot hand `snapshot::subsistence::denial_party_axis` an unbounded axis, because
+    /// the requirement rows are clamped here and the ladder is finite by construction.
+    pub fn max_estimated_party(&self) -> u32 {
+        self.estimate_party_sizes
+            .last()
+            .copied()
+            .unwrap_or(NOTHING_QUOTED)
+    }
+}
+
+/// A sampling ladder must be **non-empty, start at [`LONE_HUNTER`], and strictly ascend**. Each
+/// failure is its own kind of silent wrongness — no rows at all, no cheapest raid, or an axis whose
+/// "nearest rung" is undefined — so the error names which one broke.
+fn require_party_ladder(field: &'static str, ladder: &[u32]) -> Result<(), ExpeditionConfigError> {
+    let invalid = |constraint: &str| ExpeditionConfigError::Invalid {
+        field,
+        constraint: constraint.to_string(),
+        value: format!("{ladder:?}"),
+    };
+    let Some(&first) = ladder.first() else {
+        return Err(invalid("hold at least one party size"));
+    };
+    if first != LONE_HUNTER {
+        return Err(invalid(&format!("start at {LONE_HUNTER}")));
+    }
+    if ladder.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err(invalid("ascend strictly (sorted, no repeats)"));
+    }
+    Ok(())
 }
 
 fn require_at_least(
@@ -490,7 +550,10 @@ mod tests {
     #[test]
     fn builtin_config_parses() {
         let config = ExpeditionConfig::builtin();
-        assert_eq!(config.estimate_party_sizes, 8);
+        // The shipped ladder: dense through the small parties, doubling above them, and the last
+        // rung is the only quoting bound there is.
+        assert_eq!(config.estimate_party_sizes, vec![1, 2, 3, 4, 8, 16, 32, 64]);
+        assert_eq!(config.max_estimated_party(), 64);
         assert_eq!(config.comm_range_tiles, 2);
         assert_eq!(config.observe_sight_range, 6);
         assert!(config.provision_draw_per_worker_per_tile > 0.0);
@@ -509,10 +572,9 @@ mod tests {
         assert!(config.hunt.forecast_horizon_turns >= config.hunt.viability_warn_turns);
         assert!(config.replenish.low_turns >= 1);
         assert!(config.replenish.reach_tiles >= 1);
-        // The denial readout's cost bound must leave room above the flat ceiling, or the requirement
-        // it caps could never exceed a party the two continuous verbs already allow — which is the
-        // exact case the arc exists for.
-        assert!(config.deny.max_party_quoted > config.estimate_party_sizes);
+        // The denial table must sample the herd's own requirement, or the party the sheet opens on
+        // is rounded up to whichever ladder rung happens to sit above it.
+        assert!(config.deny.requirement_rows >= 1);
     }
 
     /// **The regression this validator exists for.** A `0` forecast horizon used to be accepted
@@ -547,6 +609,39 @@ mod tests {
         }
     }
 
+    /// **A broken party ladder is refused at LOAD, not tolerated at capture** — the boot rule in
+    /// `.claude/rules/core_sim/config-loading.md`, exercised through the real JSON path rather than
+    /// on a hand-mutated struct, because the ladder is the one lever whose broken shapes are all
+    /// *authorable in the file*: a typo'd sort order, a duplicated rung, a `[]` left behind by an
+    /// edit, or a ladder that starts at 2 because someone "removed the useless one-hunter row".
+    ///
+    /// Each fails differently and silently: an unsorted ladder makes the client's nearest-rung
+    /// lookup pick an arbitrary row, a repeat runs the same forward simulation twice per herd per
+    /// snapshot and puts two rows on the sheet for one party, an empty ladder publishes empty tables
+    /// on every herd, and a missing `1` answers a lone hunter with a row computed for several.
+    #[test]
+    fn a_broken_party_ladder_is_rejected_at_load() {
+        const SHIPPED: &str = "\"estimate_party_sizes\": [1, 2, 3, 4, 8, 16, 32, 64]";
+        for broken in [
+            "\"estimate_party_sizes\": []",
+            "\"estimate_party_sizes\": [2, 4, 8]",
+            "\"estimate_party_sizes\": [1, 8, 4]",
+            "\"estimate_party_sizes\": [1, 4, 4, 8]",
+        ] {
+            let json = BUILTIN_EXPEDITION_CONFIG.replace(SHIPPED, broken);
+            assert!(
+                json != BUILTIN_EXPEDITION_CONFIG,
+                "the builtin's ladder moved — update this test's patch"
+            );
+            match ExpeditionConfig::from_json_str(&json) {
+                Err(ExpeditionConfigError::Invalid { field, .. }) => {
+                    assert_eq!(field, "estimate_party_sizes");
+                }
+                other => panic!("`{broken}` must be rejected at load, got {other:?}"),
+            }
+        }
+    }
+
     /// A horizon shorter than the viability threshold is incoherent: every trip the player would be
     /// told is viable lies beyond the point the simulation stops looking.
     #[test]
@@ -566,7 +661,23 @@ mod tests {
     fn levers_that_would_silently_disable_a_feature_are_rejected() {
         let cases: Vec<RejectionCase> = vec![
             // The estimate tables would have no rows, so no launch sheet could quote anything.
-            ("estimate_party_sizes", |c| c.estimate_party_sizes = 0),
+            ("estimate_party_sizes", |c| {
+                c.estimate_party_sizes = Vec::new()
+            }),
+            // A ladder that skips the lone hunter cannot quote the cheapest raid a player can send,
+            // and the client's nearest-rung lookup would answer a party of one with a bigger row.
+            ("estimate_party_sizes", |c| {
+                c.estimate_party_sizes = vec![2, 4, 8]
+            }),
+            // "Nearest rung" is only defined on a sorted ladder.
+            ("estimate_party_sizes", |c| {
+                c.estimate_party_sizes = vec![1, 8, 4]
+            }),
+            // A repeated rung is a duplicated forward simulation per herd per snapshot, for no extra
+            // information — and it would put two rows on the sheet for one party size.
+            ("estimate_party_sizes", |c| {
+                c.estimate_party_sizes = vec![1, 4, 4, 8]
+            }),
             // Saturates to a 0 comm range in the `as u32` cast, whatever comm_range_tiles says.
             ("comm_range_tech_factor", |c| c.comm_range_tech_factor = 0.0),
             ("comm_range_tech_factor", |c| {
@@ -599,13 +710,9 @@ mod tests {
             ("hunt.viability_warn_turns", |c| {
                 c.hunt.viability_warn_turns = 0
             }),
-            // 0 → every herd reports "no viable denial party", so the third verb is unadvisable.
-            ("deny.max_party_quoted", |c| c.deny.max_party_quoted = 0),
-            // Below the flat ceiling the cap can never bind — the denial table's axis already runs
-            // that far — so it would read as a live lever while doing nothing.
-            ("deny.max_party_quoted", |c| {
-                c.deny.max_party_quoted = c.estimate_party_sizes - 1
-            }),
+            // 0 → the herd's own requirement is never sampled, so the sheet opens on whichever
+            // ladder rung sits above it rather than on the party that works.
+            ("deny.requirement_rows", |c| c.deny.requirement_rows = 0),
             // 0 → a scout never tops up / must stand on the herd's exact tile.
             ("replenish.low_turns", |c| c.replenish.low_turns = 0),
             ("replenish.reach_tiles", |c| c.replenish.reach_tiles = 0),

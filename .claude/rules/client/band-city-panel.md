@@ -961,10 +961,12 @@ preset and no max-useful cap**. Each absence has its own reason and none is an o
 ### The stepper's ceiling is the band's IDLE WORKERS, and its floor is the sim's own requirement
 
 **`max_expedition_party_size` is not a rules cap and NO launch form applies it.** It is the wire echo
-of `expedition_config.estimate_party_sizes` — the SAMPLING AXIS of the estimate tables — and the sim
-deleted the rules cap for all three launch verbs, so the client's own clamp was the last thing
-enforcing it: a band with 16 idle workers was clamped to 8 while the sheet's own refusal told it to
-send more hunters. All three forms read the band's idle workforce and nothing else — the denial sheet
+of the LAST RUNG of `expedition_config.estimate_party_sizes` — the top of the estimate tables' SAMPLED
+party axis, and the only quoting bound there is, having absorbed the retired `deny.max_party_quoted` —
+and the sim deleted the rules cap for all three launch verbs, so the client's own clamp was the last
+thing enforcing it: a band with 16 idle workers was clamped to 8 while the sheet's own refusal told it
+to send more hunters. A party past the top rung is **quoted at that rung, with a note naming it**
+(below), never refused. All three forms read the band's idle workforce and nothing else — the denial sheet
 and the SCOUT branch take `idle` directly, and the hunt form's `assignable` is `idle` under
 `expedition_useful_cap`, which is the DEMAND side and is untouched (it is about what the raid can
 *use*, not what the rules *allow*). `idle == 0` behaves exactly as before, every spelling yielding 0.
@@ -1251,31 +1253,56 @@ zone, that the zone holds what is left, that the float fits the VIEWPORT and hol
 and that it clears the panel card, plus the paired negative on `band_panel_compose_hunt` that a dock
 with room keeps its sheet. See `test-harnesses.md` for the assertion set and its sabotage results.
 
-### WHY THE DOCK SHEET RENDERED NOTHING FOR A WILD FOWL FLOCK
+### BOTH ESTIMATE AXES ARE SAMPLED, AND THE SHEET NAMES THE PARTY IT QUOTES
 
-Reported from playtest: the drawer laid out a full readout and the dock rendered **nothing at all**
-for the same herd. **The shared box did not fix it and was never going to** — both readouts gate on
-the same `available` — so it is named here and guarded by
-`band_panel_preview._assert_unsampled_party_has_no_forecast`.
+Reported from playtest: on a Wild Fowl flock the drawer laid out a full readout and the dock rendered
+**nothing at all** for the same herd. **The shared box did not fix it and was never going to** — both
+readouts gate on the same `available`.
 
-`huntTripEstimates` is a table SAMPLED on two axes, and the client knows that about only one:
-`hunt_estimate_row` reads the NEAREST sampled FLOOR and then demands an **exact** party-size match.
-A party above the largest sampled size therefore finds no row at all, `hunt_trip_forecast` answers
-`available == false`, and every raid readout goes silent.
+`huntTripEstimates` is sampled on two axes and the client knew that about only one:
+`hunt_estimate_row` read the nearest sampled FLOOR and then demanded an **exact** party-size match, so
+a party above the largest sampled size found no row and every raid readout went silent. The dock
+reached such a party and the drawer did not — the dock's stepper **auto-fills to
+`expedition_useful_cap`**, whose engagement arm (`expedition_engage_crew`) is deliberately not bounded
+by the sampled sizes, while the drawer's count is seeded from the standing staffing (1 on an unworked
+herd), which always was.
 
-The dock reached such a party and the drawer did not. The dock's stepper **auto-fills to
-`expedition_useful_cap`** the moment a quarry is adopted, and that cap's engagement arm
-(`expedition_engage_crew`) is deliberately not bounded by the sampled sizes — its own note says so,
-because a quarry needing six hunters per animal wants a crew the table never samples. The drawer's
-count is seeded from the standing staffing (1 on an unworked herd), which is always sampled. On a
-Wild Fowl flock the crew that brings the standing birds into contact runs to the hundreds, so the
-dock sat far past the table.
+**The sim's sampled party LADDER is what settled it.** `expedition_config.estimate_party_sizes` is now
+`[1, 2, 3, 4, 8, 16, 32, 64]` — dense where one hunter is a large proportional change, sparse where it
+is not — plus a short contiguous run at the herd's own requirement on the DENIAL table. Against a
+requirement of 1 that denial axis is `{1,2,3,4,5,8,16,32,64}`, so a party of **6** had a row under the
+old contiguous axis and finds none under the ladder: an exact match is now strictly worse than it was.
 
-**The fix is a design call and was not made here**: giving the PARTY axis the nearest-sample fallback
-the FLOOR axis already has would quote party 8's row to a party of 12 (defensible — the launch
-command still sends the exact party, and the floor precedent says a sampled dial may be read at its
-nearest mark), but it changes what several existing frames quote. The guard pins the current
-behaviour and names the asymmetry.
+So **both lookups read the nearest sampled party**, exactly as the floor axis already does.
+`SourceForecast.nearest_estimate_party` is the party axis's own named seam beside
+`nearest_estimate_floor`, and `_row_for_nearest_party` is the one resolution both tables share. **On a
+tie the LOWER rung wins** — over-quoting a party's take is the more misleading direction, and the rule
+also makes the answer independent of iteration order.
+
+**A nearby row is never presented as though it were exact.** Where the quoted rung is not the selected
+party, the sheet renders a quiet line naming both — `SourceForecast.quoted_party_note` over
+`HudComposeVocab.PARTY_TRIP_ESTIMATES_QUOTED_FORMAT` / `PARTY_DENIAL_ESTIMATES_QUOTED_FORMAT`, the kit
+line's idiom and its reason. It differs from the kit line in one way that matters: the figures still
+RENDER, because they are a real answer to a nearby question rather than another kit's numbers. Where
+the selected party IS a rung — which the ladder's dense low end and the requirement run make the
+common case — no note renders and nothing changes.
+
+The party rides out on BOTH raid forecasts as `SourceForecast.QUOTED_PARTY_KEY`, so the note and the
+figures it qualifies come from one lookup rather than two free to disagree. **Four surfaces, one
+rule**: the dock's hunt form, the dock's denial form, the herd drawer's expedition branch, and the
+in-flight `Collapse:` row (`DetailFormat.expedition_collapse_line`, where the clause rides the row
+rather than a line of its own — that producer's output lands in the parties zone's clipped inspector
+strip). A launched party is the surface where a between-rungs size is MOST likely, being bounded by
+the band's idle workforce and nothing else.
+
+**`expedition_useful_cap`'s plateau scan walks the sampled rungs, not `1..=largest`.** It used to step
+every integer and `continue` past the sizes the table did not carry; with the nearest-rung fallback no
+size is ever missing, so an unsampled 5 would answer rung 4's row, read as "the payload stopped
+rising" and break the scan one rung in.
+
+Guarded by `band_panel_preview._assert_party_past_the_rungs_is_quoted` (the inverted form of the guard
+that used to pin the exact match), `_assert_party_ladder_rounding` and
+`_assert_denial_quoted_party_note`.
 
 ### The KIT row rides both dock sheets, and the denial one carries the honesty rule
 

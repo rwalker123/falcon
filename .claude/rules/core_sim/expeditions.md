@@ -18,7 +18,7 @@ paths:
 | File | Purpose |
 |------|---------|
 | `src/data/sites_config.json` | Wondrous Sites catalog (`catalog`: per-`site_id` `category`/`display_name`/`glyph`/`placement_rule`/`discovery_reward.morale_bonus`) + `placement` rules (per-rule `max_sites`, `min_spacing`, and the union of rule inputs: `min_relief`, `max_habitability_pressure`, `min_food_weight`). Loader `sites_config.rs`, env override `SITES_CONFIG_PATH`. Not wired into the `reload_config` hot-reload path (mirrors `fauna_config.json`) |
-| `src/data/expedition_config.json` | Expedition tuning. Scout: **`estimate_party_sizes`** (**a SAMPLING bound, never a cap on a party** — the axis `1..=this` of `huntTripEstimates`, and the base+headroom of the denial table's own wider axis. It is the renamed `max_party_size`, which was doing two jobs under one name; the *rules cap* half is deleted and **every** launch verb now bounds a party by the band's own `available_workers` — see "A raiding party is bounded by the BAND"), `comm_range_tiles` (discovery-report range), `comm_range_tech_factor` (stubbed 1.0 tech hook), `observe_sight_range` (per-turn LOS radius, matches band base sight), `provision_draw_per_worker_per_tile` (launch larder draw = party × distance × this), `provision_upkeep_per_worker` (per-turn drain = party × this, scouts only). Hunt (PR 2) `hunt` block: `per_worker_carry` (carry cap = party × this), `reach_tiles` (how close to the herd to take), `drop_off_within_tiles` (herd-near-band delivery gate), `min_deliver_fraction` (herd-near-band early delivery needs carried ≥ this × cap), `viability_warn_turns` (**20** — a client display threshold on `turnsToFill`; = 4× the throughput-implied trip length `per_worker_carry / (per_worker_biomass_capacity × provisions_per_biomass)` = 5 turns), `forecast_horizon_turns` (**60** — how far `hunt_trip_forecast` simulates the raid before giving up on completion; a raid is short — grab the surplus, come home — so simulating each to completion is cheap). The retired `sustain_floor_fraction` is **gone**: a hunting expedition is a **greedy raid** — it grabs the herd's standing surplus above the mission's **floor**. See "Scouting & Hunting Expeditions". The floor is **not** a config lever — it is chosen at launch via the optional trailing arg of `send_hunt_expedition` (any fraction of `K` in `0.0..=1.0`; default `DEFAULT_ESCAPEMENT_FLOOR`, the food peak). Denial `deny` block: **`max_party_quoted`** (**64** — the largest party the pre-launch denial table will quote, and therefore the largest requirement `denialPartyNeeded` will name. A **cost bound on a readout**, never a rule about what a band may outfit: `denial_party_axis` runs to *the herd's own requirement + `estimate_party_sizes` of headroom*, so without a cap a `wariness 0.999` retune would ask for millions of rows at `3 × rows × hunt.forecast_horizon_turns` turn-steps each, every snapshot, on the hot half of the turn. Past it a herd reports **no viable party** (`denialPartyNeeded == 0`) — the sim will not quote a raid it declines to simulate. Sized well clear of the shipped roster's worst case: at full `K` a Rabbit Warren asks ~26 hunters and a Gazelle band ~32, so the widest axis the roster produces is ~40). Scout replenish `replenish` block: `low_turns` (top up below party × upkeep × this), `reach_tiles`. Loader `expedition_config.rs`, env override `EXPEDITION_CONFIG_PATH`. Not on the `reload_config` hot-reload path (mirrors `sites_config.json`). **Validated** — `ExpeditionConfig::validate()` runs inside `from_json_str`, so *every* load path (builtin, default file, `EXPEDITION_CONFIG_PATH` override) is covered, following the `crisis_config.rs` convention; a broken invariant is logged at **error** level (`expedition_config.invalid_rejected`) and the config is refused, falling back to the known-good builtin rather than silently disabling a feature. Enforced: `estimate_party_sizes ≥ 1` (at `0` every herd publishes empty estimate tables and no launch sheet can quote anything — a silently unadvisable feature; it no longer refuses a *launch*, only a readout), **`deny.max_party_quoted ≥ max(1, estimate_party_sizes)`** (at `0` every herd in the world would report "no viable denial party" and the third verb would silently become unadvisable; below the flat ceiling the lever could never bind, because the axis already runs that far — a live-looking dial that does nothing), `comm_range_tech_factor` finite & `> 0`, `observe_sight_range ≥ 1`, `provision_draw_per_worker_per_tile`/`provision_upkeep_per_worker` finite & `≥ 0`, `hunt.per_worker_carry` finite & `> 0`, `hunt.reach_tiles ≥ 1`, `0 < hunt.min_deliver_fraction ≤ 1`, `hunt.viability_warn_turns ≥ 1`, **`hunt.forecast_horizon_turns ≥ max(1, hunt.viability_warn_turns)`** (at `0` the forecast's `1..=horizon` loop runs zero turns and *every* hunting expedition silently reports "won't fill"; below the warn threshold, a trip the player would be told is viable can never be discovered), `replenish.low_turns ≥ 1`, `replenish.reach_tiles ≥ 1`. Deliberately **left free**: `comm_range_tiles` (`0` = "walk back into camp to report"), `hunt.drop_off_within_tiles` (`0` = no early drop-off; a full pack still delivers), and the *upper* end of `estimate_party_sizes`/`forecast_horizon_turns` (they only cost snapshot time — the estimate table is `O(floors × estimate_party_sizes × horizon)` per herd — an operator's call, not an invariant) |
+| `src/data/expedition_config.json` | Expedition tuning. Scout: **`estimate_party_sizes`** (**an ascending LADDER of sampled party sizes, never a cap on a party** — shipped `[1, 2, 3, 4, 8, 16, 32, 64]`. It is the party axis of `huntTripEstimates` and the base of the denial table's own axis, and it is *marks on a dial* exactly as `RAID_FORECAST_FLOOR_SAMPLES` is: dense at the low end where one hunter is a large proportional change, sparse at the top where it is not. Its **last rung is the only quoting bound there is** — it absorbed the retired `deny.max_party_quoted`. It is the renamed `max_party_size`, which was doing two jobs under one name; the *rules cap* half is deleted and **every** launch verb now bounds a party by the band's own `available_workers` — see "A raiding party is bounded by the BAND" and "The party axis is SAMPLED"), `comm_range_tiles` (discovery-report range), `comm_range_tech_factor` (stubbed 1.0 tech hook), `observe_sight_range` (per-turn LOS radius, matches band base sight), `provision_draw_per_worker_per_tile` (launch larder draw = party × distance × this), `provision_upkeep_per_worker` (per-turn drain = party × this, scouts only). Hunt (PR 2) `hunt` block: `per_worker_carry` (carry cap = party × this), `reach_tiles` (how close to the herd to take), `drop_off_within_tiles` (herd-near-band delivery gate), `min_deliver_fraction` (herd-near-band early delivery needs carried ≥ this × cap), `viability_warn_turns` (**20** — a client display threshold on `turnsToFill`; = 4× the throughput-implied trip length `per_worker_carry / (per_worker_biomass_capacity × provisions_per_biomass)` = 5 turns), `forecast_horizon_turns` (**60** — how far `hunt_trip_forecast` simulates the raid before giving up on completion; a raid is short — grab the surplus, come home — so simulating each to completion is cheap). The retired `sustain_floor_fraction` is **gone**: a hunting expedition is a **greedy raid** — it grabs the herd's standing surplus above the mission's **floor**. See "Scouting & Hunting Expeditions". The floor is **not** a config lever — it is chosen at launch via the optional trailing arg of `send_hunt_expedition` (any fraction of `K` in `0.0..=1.0`; default `DEFAULT_ESCAPEMENT_FLOOR`, the food peak). Denial `deny` block: **`requirement_rows`** (**5** — how many *contiguous* rows the denial table samples starting at the herd's own closed-form requirement, on top of the shared ladder. It exists because `denialPartyNeeded` is read off the **forward simulation**, which lands at the requirement or a little above it, so a sparse ladder alone would round the sheet's opening party up to its next rung. The retired **`max_party_quoted`** is gone: the ladder's last rung already names the quoting bound, and two numbers for one bound can disagree. A requirement past that rung contributes no rows and the herd reports **no viable party** (`denialPartyNeeded == 0`) — the sim will not quote a raid it declines to simulate; the shipped roster's worst case is ~32–35 hunters, comfortably inside 64). Scout replenish `replenish` block: `low_turns` (top up below party × upkeep × this), `reach_tiles`. Loader `expedition_config.rs`, env override `EXPEDITION_CONFIG_PATH`. Not on the `reload_config` hot-reload path (mirrors `sites_config.json`). **Validated** — `ExpeditionConfig::validate()` runs inside `from_json_str`, so *every* load path (builtin, default file, `EXPEDITION_CONFIG_PATH` override) is covered, following the `crisis_config.rs` convention; a broken invariant is logged at **error** level (`expedition_config.invalid_rejected`) and the config is refused, falling back to the known-good builtin rather than silently disabling a feature. Enforced: **`estimate_party_sizes` is non-empty, starts at `1`, and ascends strictly** (empty → every herd publishes empty estimate tables and no launch sheet can quote anything; missing `1` → a lone hunter is answered with a row computed for several; unsorted → "nearest rung" is undefined; repeated → the same forward simulation runs twice per herd per snapshot and two rows carry one party size — all four are authorable in the file and all four fail silently), **`deny.requirement_rows ≥ 1`** (at `0` the herd's own requirement is never sampled, so `denialPartyNeeded` is rounded up to whichever ladder rung sits above it), `comm_range_tech_factor` finite & `> 0`, `observe_sight_range ≥ 1`, `provision_draw_per_worker_per_tile`/`provision_upkeep_per_worker` finite & `≥ 0`, `hunt.per_worker_carry` finite & `> 0`, `hunt.reach_tiles ≥ 1`, `0 < hunt.min_deliver_fraction ≤ 1`, `hunt.viability_warn_turns ≥ 1`, **`hunt.forecast_horizon_turns ≥ max(1, hunt.viability_warn_turns)`** (at `0` the forecast's `1..=horizon` loop runs zero turns and *every* hunting expedition silently reports "won't fill"; below the warn threshold, a trip the player would be told is viable can never be discovered), `replenish.low_turns ≥ 1`, `replenish.reach_tiles ≥ 1`. Deliberately **left free**: `comm_range_tiles` (`0` = "walk back into camp to report"), `hunt.drop_off_within_tiles` (`0` = no early drop-off; a full pack still delivers), and the *length* of `estimate_party_sizes` / the upper end of `forecast_horizon_turns` (they only cost snapshot time — the hunt table is `O(floors × ladder rungs × horizon)` per herd — an operator's call, not an invariant) |
 ## Wondrous Sites
 
 Data-driven catalog of notable map features tiles can hold, hidden under fog until a faction's
@@ -416,7 +416,7 @@ branches on mission:
 **Commands** (full proto/runtime/text/server plumbing, mirroring `move_band`):
 - `send_expedition <faction> <band> <party_workers> <x> <y>` — validates land target + `1 ≤
   party_workers ≤ available_workers` (the band, and nothing else — `estimate_party_sizes` is a
-  sampling bound, not a ceiling), draws `party × distance ×
+  sampling ladder, not a ceiling), draws `party × distance ×
   provision_draw_per_worker_per_tile` provisions from the band larder (partial OK), removes the
   workers from `band.working`, and spawns the detached `Expedition` cohort. Feed `ExpeditionSent`.
 - `send_hunt_expedition <faction> <band> <party_workers> <fauna_id> [floor] [fill_target] [kit <id>]`
@@ -467,9 +467,11 @@ different statement from `"horizon"`) / `expeditionCarryCap` (hunt carry cap =
 `home_band` from `homeBandEntity` via the cohort entity-remap; missing home band → log + skip) and
 re-attaches `ResidentBand` to every non-expedition cohort so the `With<ResidentBand>` systems keep
 running after a rollback. `PopulationCohortState` also echoes `maxExpeditionPartySize` per cohort
-(from `expedition_config.estimate_party_sizes`, same idiom as `workRange` — a global lever surfaced
-per-band, populated for every cohort). **It is NOT a stepper cap**: the stepper clamps to
-`idle_workers` alone, and this says only where the quoted estimate rows stop. See "A raiding party is
+(the **last rung** of `expedition_config.estimate_party_sizes`, same idiom as `workRange` — a global
+lever surfaced per-band, populated for every cohort). **It is NOT a stepper cap**: the stepper clamps
+to `idle_workers` alone, and this says only where the quoted estimate rows stop. The rows below it
+are a **ladder**, not a contiguous run, so a client resolves a party against the herd's own table
+rather than assuming every size under this has a row. See "A raiding party is
 bounded by the BAND"; the field name predates that split and is kept because renaming a wire slot
 costs a client decode change for no behaviour.
 
@@ -512,9 +514,11 @@ lookup**:
   turnsToFill:uint, deliversFood:bool, animalsTaken:uint, deliveredFood:float, wastedFood:float }]` —
   per **huntable** herd, one entry per **sampled floor** (`snapshot::RAID_FORECAST_FLOOR_SAMPLES`,
   **5 samples** `[0.0, 0.15, 0.30, 0.50, 0.80]` — marks on a continuum, NOT a set of options: the
-  launch command takes any floor) × every legal party size
-  (`1..=expedition_config.estimate_party_sizes`, so **5 × 8 = 40 rows/herd**; a legal party may run
-  past the last row — see "A raiding party is bounded by the BAND" for what the sheet shows then). The row's `policy:string` is a
+  launch command takes any floor) × every **sampled party size** (`expedition_config
+  .estimate_party_sizes`, the ladder `[1, 2, 3, 4, 8, 16, 32, 64]`, so **5 × 8 = 40 rows/herd** — the
+  same budget the retired contiguous `1..=8` axis spent, now spanning eight times the range). **Both
+  axes are marks on a dial**: a party between two rungs, or past the last one, reads the nearest row
+  — see "The party axis is SAMPLED" and "A raiding party is bounded by the BAND". The row's `policy:string` is a
   retired `(deprecated)` slot; the live discriminator is `floor:float`, so the client interpolates
   between marks rather than matching a name. **An improvement is not a floor** (issue #442), so a
   build-verb row is unrepresentable rather than merely omitted. **`turnsToFill`** is turns until the raid **completes** (comes home — pack full OR
@@ -670,18 +674,44 @@ either; that is the ruling followed to its conclusion, not an accident. Pinned b
 **Wary herds are therefore expensive, not undeniable.** Wariness raises the requirement; nothing
 caps it below what the band can field.
 
-**A legal party past the last quoted row has no pre-computed estimate, and the client must not
-compose one.** The take passes through `fauna::quantise_animal_take`'s `floor()`, so it is non-linear
-and ships as an **answer** (`yield-forecast.md` → "THE BOUNDARY"). The sheet quotes the **largest
-sampled row, naming the party size it was sampled for**, which is safe in the honest direction: both
-tables are monotone in party size, so that row under-states a larger party's take and over-states its
-turn count. `PopulationCohortState.maxExpeditionPartySize` is where the rows stop; **its name is now
-wrong** and survives only because renaming a wire slot costs a client decode change for no behaviour.
+**A party between two rungs has no pre-computed estimate, and the client must not compose one.** The
+take passes through `fauna::quantise_animal_take`'s `floor()`, so it is non-linear and ships as an
+**answer** (`yield-forecast.md` → "THE BOUNDARY"). The sheet quotes the **nearest sampled row, naming
+the party size it was sampled for**. `PopulationCohortState.maxExpeditionPartySize` is where the rows
+stop; **its name is now wrong** and survives only because renaming a wire slot costs a client decode
+change for no behaviour.
 
-**`estimate_party_sizes` stays at 8 rather than being raised to cover typical bands.** Raising it
-multiplies the *hunt* table by 5 (its axis is `floors × party sizes`), and the quote-the-largest-row
-rule already covers the gap honestly. It is the lever to turn if play says otherwise; the cost is
-linear in it.
+### The party axis is SAMPLED, and that is what fixed the blank sheet
+
+**Both estimate tables used to walk their party axis contiguously from `1`, and the client's lookup
+demanded an exact match.** A party past the last row therefore found nothing and *every* readout on
+that sheet went silent — no verdict, no range, no take, no turn count. It was easy to reach: the
+denial axis was `closed_form_requirement + 8`, while the compose sheet's stepper caps at the band's
+**idle workers**, and those two numbers are unrelated. A band holding 16 idle, raiding a herd whose
+requirement is 1, got rows for 1–9 and a stepper that reached 16.
+
+**The floor axis never had that problem, and its own comment says why: the samples are marks on a
+dial.** Nobody computes every floor; the client takes the nearest mark. `estimate_party_sizes` is now
+the same shape — an explicit ascending list rather than a count — and the cost objection dissolves
+with it, because a *sparse* ladder spans the whole dialable range in **fewer** rows than the
+contiguous run spent on a ninth of it.
+
+- **The shipped ladder is `[1, 2, 3, 4, 8, 16, 32, 64]`.** Unit steps through 4, where one hunter is
+  a +100% / +50% / +33% / +25% change; doubling above it, where it is not. It ends on **64**, the
+  bound the retired `deny.max_party_quoted` named, so no herd lost a quote it used to have.
+- **The hunt table is the binding budget**, because its axis is `floors × parties`: eight rungs × the
+  five floor samples is 40 rows/herd, exactly what `1..=8` cost. Adding a ninth rung costs five rows
+  per herd, not one — trim before extending.
+- **`1` is always sampled**, and validation enforces it: the client resolves by *nearest*, so a
+  ladder starting at 2 would answer a lone hunter with a row computed for two.
+- **The denial axis additionally samples a contiguous run at the herd's own requirement**
+  (`deny.requirement_rows`, 5) — see "`denialPartyNeeded` — the party the sheet OPENS on".
+- **Measured on a fresh 80×52 map (133 huntable herds, debug).** Hunt rows **5,320 → 5,320**
+  (unchanged, 40/herd). Denial rows **2,354 → 1,530** (−35%; per herd 9–40 → 9–13). Timing the denial
+  half over the two axes on the same herds: **39.9 ms → 26.2 ms**. Whole-capture ≈ **50 ms/frame**,
+  against the ~59 ms the contiguous herd-sized axis measured at.
+- **A broken ladder is a boot panic** (`config-loading.md`): empty, missing `1`, unsorted or repeated.
+  All four are authorable in the file and all four fail silently at runtime.
 
 ### `denialPartyNeeded` — the party the sheet OPENS on
 
@@ -725,21 +755,23 @@ guessing game into an adjustment.
   size `snapshot::subsistence::denial_party_axis`; which of those rows *actually* declines the herd
   is the forward simulation's.
 - **`0` = no quoted party drives this herd down**, and it is never *"send nobody"*. **Four**
-  situations reach it — an unreachable quarry, a requirement past `deny.max_party_quoted`, a herd
+  situations reach it — an unreachable quarry, a requirement past the ladder's last rung, a herd
   whose regrowth out-runs the whole table, and a quoted axis whose rows never reach a **success**
   (every party either repelled or still grinding at the horizon) — and the rows' own `outcome` says
   which. The fourth is the one the `succeeded` test added, and it is the honest reading of a sheet
   that holds no row the sim will vouch for. A requirement larger than the band's idle workers is
   **not** one of them: that is reported honestly as the number, and the panel already shows both.
-- **The table's axis is `requirement + estimate_party_sizes` of headroom** — wider than the hunt
-  table's — capped by
-  `deny.max_party_quoted`, because the decision *above* the requirement is **how fast** (measured on
-  the reported herd: 9 hunters grind past the horizon, 16 cross the line in 11 turns). The added rows
-  are the cheap ones — a party past the requirement collapses the herd in a handful of turns, so its
-  projection returns long before the horizon, while the sub-requirement rows are the ones that run it
-  out. Measured on a fully-revealed 80×52 map (130 huntable herds, debug): capture ~59 ms against a
-  ~49 ms flat-`estimate_party_sizes` baseline (≈ +20%, and only on the denial half), where a **flat**
-  `deny.max_party_quoted` axis cost ~104 ms.
+- **The table's axis is the shared ladder PLUS a contiguous run of `deny.requirement_rows` (5)
+  starting at the herd's own requirement**, bounded by the ladder's last rung. The run is what keeps
+  the seed off a rung: the closed form is only a bound on the search, so the row that actually
+  declines the herd sits at the requirement or a little above it, and a sparse ladder alone would
+  round the sheet's opening party up. Everything *above* the run is the **how fast** decision
+  (measured on the reported herd: 9 hunters grind past the horizon, 16 cross the line in 11 turns),
+  and a sparse rung answers that perfectly well.
+  The retired contiguous `1..=requirement + 8` axis spent its rows on the **expensive** end — every
+  sub-requirement party is a raid that gets repelled and therefore runs the whole forecast horizon,
+  and there was one per hunter. Measured on a fresh 80×52 map (133 huntable herds, debug): denial
+  rows **2,354 → 1,530**, and the denial half of capture **39.9 ms → 26.2 ms** over the same herds.
   Snapshot capture is the hot half of a turn, which is why the axis is herd-sized rather than flat.
 - **The axis does not guarantee a success row, because it is sized by the closed form.** Swept over
   the shipped roster (every generated herd × five stock fractions, ~670 samples per map), **0–5 rows
@@ -788,8 +820,10 @@ pairs an all-`repelled` axis with an all-`horizon` one so the sentinel cannot be
 
 **Client-side (slice 2):** every outfit stepper caps at the band's **`idleWorkers`**, never at
 `maxExpeditionPartySize`; the denial stepper additionally *seeds* at `denialPartyNeeded`, rendering
-`0` as *"no party can"* rather than as a party size; and a selected size past the last quoted row
-shows that row **with the size it was quoted for**.
+`0` as *"no party can"* rather than as a party size; and a selected size with **no exact row** —
+between two rungs, or past the last one — shows the **nearest** row **with the size it was quoted
+for**, on both tables. An exact-match lookup is what blanked the sheet; see "The party axis is
+SAMPLED".
 
 ### Success is the point of no return, not zero
 
@@ -859,8 +893,9 @@ applied to a turn count instead of a biomass (`docs/plan_hunt_through_combat.md`
 `snapshot::subsistence::denial_party_axis`, with **no floor axis and no fill-target axis**, because
 the mission carries neither. `denial_estimate_entries` builds it beside `denialPartyNeeded` (they are
 one struct, `DenialTable`, because the second is read off the first), gated on `huntable` exactly as
-`huntTripEstimates` is; cost is `3 × axis × hunt.forecast_horizon_turns` turn-steps per huntable
-herd, the three being the reported band's quantiles. **The axis is NOT `estimate_party_sizes`** — see
+`huntTripEstimates` is; cost is `3 × axis rows × hunt.forecast_horizon_turns` turn-steps per huntable
+herd, the three being the reported band's quantiles. **The axis is not the bare
+`estimate_party_sizes` ladder** — it carries a run at the herd's own requirement on top of it; see
 "`denialPartyNeeded` — the party the sheet OPENS on".
 
 ### What it costs, and the kit cost needed nothing new

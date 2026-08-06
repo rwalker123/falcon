@@ -296,10 +296,14 @@ pub struct PopulationCohortState {
     /// for free in `stores`, so without this a rewind would drop the pelts and only the pelts).
     #[serde(default)]
     pub expedition_carried_trade: f32,
-    /// **How far the pre-launch estimate tables were sampled** (`expedition_config.json`
-    /// `estimate_party_sizes`) — the party axis of `HerdTelemetryState::hunt_trip_estimates`, and the
-    /// base of `denial_estimates`' own wider axis. A global config lever echoed per-cohort, same
+    /// **Where the pre-launch estimate tables stop** — the last rung of `expedition_config.json`
+    /// `estimate_party_sizes`, which is the party axis of `HerdTelemetryState::hunt_trip_estimates`
+    /// and the base of `denial_estimates`' own axis. A global config lever echoed per-cohort, same
     /// idiom as `work_range`, populated for every cohort.
+    ///
+    /// **The axis it bounds is SAMPLED, not contiguous.** The rows between `1` and this are a ladder
+    /// of chosen party sizes, so a client resolves the party it is showing to the **nearest** row on
+    /// the herd's own table rather than assuming every size below this has one.
     ///
     /// **It is NOT a cap on the party, and the outfit stepper must not clamp to it**
     /// (`docs/plan_denial_raid.md` §3.1): the legal bound is the band's own `idle_workers` and

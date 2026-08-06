@@ -1892,6 +1892,13 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
                 SourceForecast.herd_display_name(herd))
             if forecast_line != "":
                 sheet.add_child(HudWidgets.forecast_label(forecast_line))
+        # **WHICH PARTY THE FIGURES ABOVE WERE COSTED FOR**, whenever the ladder rounded the selected
+        # one to a neighbouring rung. The take scales with party size, so a row read against a party it
+        # was not computed for misstates it; the kit line's idiom, for the kit line's reason.
+        var party_note := SourceForecast.quoted_party_note(trip, _send_expedition_count,
+            HudComposeVocab.PARTY_TRIP_ESTIMATES_QUOTED_FORMAT)
+        if party_note != "":
+            sheet.add_child(HudWidgets.alloc_hint_label(party_note))
         # WHY an empty raid is empty comes off the sim's `bound`, so the reason takes the TRIP beside
         # the herd — "wait for the herd to rebuild" and "send more hunters" are opposite instructions.
         var returns_empty := SourceForecast.hunt_trip_returns_empty(trip)
@@ -1991,9 +1998,11 @@ func _fill_denial_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: in
     # plateau. More hands always break the herd sooner, which is the whole lever this form offers.
     #
     # **`max_expedition_party_size` IS NOT A RULES CAP AND MUST NOT BE APPLIED HERE**
-    # (`snapshot.fbs` → `denialEstimates`). It is the wire echo of `expedition_config.estimate_party_sizes`,
-    # i.e. the SAMPLING AXIS of the estimate tables, and the sim deleted the rules cap for all three
-    # launch verbs — so the client's own clamp was the last thing enforcing it, and a band with 16 idle
+    # (`snapshot.fbs` → `denialEstimates`). It is the wire echo of the LAST RUNG of
+    # `expedition_config.estimate_party_sizes` — the top of the estimate tables' SAMPLED party axis, and
+    # the sole quoting bound (it absorbed the retired `deny.max_party_quoted`) — and the sim deleted the
+    # rules cap for all three launch verbs, so the client's own clamp was the last thing enforcing it. A
+    # party past the top rung is quoted at that rung with a note naming it, never refused; and a band with 16 idle
     # workers was clamped to 8 while this sheet told it to send more hunters. All three launch forms
     # read the supply the same way now, which is why the `_scout_party_max` helper no longer exists.
     var party_max := idle
@@ -2071,6 +2080,14 @@ func _fill_denial_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: in
         var take := SourceForecast.denial_take_bbcode(forecast, quarry_name)
         if take != "":
             sheet.add_child(HudWidgets.forecast_label(take))
+        # **WHICH PARTY THE VERDICT AND THE TAKE WERE COSTED FOR**, when the denial axis rounded the
+        # stepper's count to a neighbouring rung. It rides ABOVE the refusal below it deliberately:
+        # the refusal names the party the HERD requires, and this names the party the FIGURES describe
+        # — two different numbers, and the one qualifying what is on screen comes first.
+        var party_note := SourceForecast.quoted_party_note(forecast, _send_expedition_count,
+            HudComposeVocab.PARTY_DENIAL_ESTIMATES_QUOTED_FORMAT)
+        if party_note != "":
+            sheet.add_child(HudWidgets.alloc_hint_label(party_note))
         # **THE SHORT-HANDED SENTENCE SUPERSEDES THE REFUSAL, it does not join it.** Both name the
         # party the sim quotes (one reading, `denial_party_needed`), so printing the pair would state
         # the requirement twice; the short-handed form also says what the band actually has.

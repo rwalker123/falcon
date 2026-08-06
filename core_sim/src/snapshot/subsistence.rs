@@ -147,18 +147,19 @@ fn herd_regrowth_samples(herd: &Herd, fauna: &FaunaConfig) -> Vec<f32> {
 }
 
 /// The **pre-launch hunt-trip estimate table** for one herd: [`hunt_trip_forecast`] run for every
-/// sampled floor ([`RAID_FORECAST_FLOOR_SAMPLES`]) × every **quoted** party size
-/// (`1..=expedition.estimate_party_sizes`), so the client's outfit UI is a **table lookup** — zero
+/// sampled floor ([`RAID_FORECAST_FLOOR_SAMPLES`]) × every sampled party size
+/// (`expedition.estimate_party_sizes`), so the client's outfit UI is a **table lookup** — zero
 /// arithmetic, zero ecology model. Each row carries both `turns_to_fill` (turns until the raid
 /// completes) and `animals_taken` (the payload the client headlines).
 ///
-/// **The axis is a SAMPLING bound, not a cap on the party.** A band may outfit every worker it has
-/// (`docs/plan_denial_raid.md` §3.1), so a legal party can run past the last row; the table is
-/// monotone in party size, so the largest row under-states such a party's take and over-states its
-/// trip length, and the client quotes it *with the size it was quoted for* rather than composing an
-/// estimate of its own.
+/// **BOTH axes are sampled, and neither caps the party.** A band may outfit every worker it has
+/// (`docs/plan_denial_raid.md` §3.1). The party ladder is marks on a dial exactly as the floor
+/// samples beside it are: the client resolves a party to the **nearest rung** and quotes that row
+/// *with the size it was sampled for*, rather than composing an estimate of its own. That is what
+/// lets a sparse ladder span the whole dialable range for fewer rows than a contiguous `1..=8` run
+/// spent on a ninth of it — and a party past the last rung reads the last rung, never a blank.
 ///
-/// Cost is bounded by construction: `samples × estimate_party_sizes × hunt.forecast_horizon_turns`
+/// Cost is bounded by construction: `floor samples × ladder rungs × hunt.forecast_horizon_turns`
 /// turn-steps per herd, and only **huntable** herds are estimated. In practice a raid is **short** —
 /// it grabs the surplus and terminates — so a snapshot's worth of raids simulates cheaply.
 ///
@@ -187,9 +188,9 @@ pub(crate) fn hunt_trip_estimate_entries(
     } else {
         &RAID_FORECAST_FLOOR_SAMPLES
     };
-    let mut entries = Vec::with_capacity(sampled.len() * expedition.estimate_party_sizes as usize);
+    let mut entries = Vec::with_capacity(sampled.len() * expedition.estimate_party_sizes.len());
     for &floor in sampled {
-        for party_workers in 1..=expedition.estimate_party_sizes {
+        for &party_workers in &expedition.estimate_party_sizes {
             let forecast = hunt_trip_forecast(
                 party_workers,
                 herd,
@@ -221,43 +222,46 @@ pub(crate) fn hunt_trip_estimate_entries(
 /// The **pre-launch DENIAL-RAID table** for one herd: the rows the client's launch sheet looks up,
 /// and the party size it **opens on**.
 pub(crate) struct DenialTable {
-    /// One entry per party size `1..=`[`denial_party_axis`], so the sheet is a table lookup with
-    /// zero arithmetic and zero ecology model (`docs/plan_denial_raid.md` §1.1).
+    /// One entry per party size on [`denial_party_axis`], ascending, so the sheet is a table lookup
+    /// with zero arithmetic and zero ecology model (`docs/plan_denial_raid.md` §1.1). The axis is
+    /// **sampled, not contiguous** — the client resolves a party to the nearest row and names the
+    /// size that row was computed for.
     pub(crate) entries: Vec<DenialEstimateState>,
     /// **The party the sheet opens on** — see [`seeded_denial_party`].
     pub(crate) party_needed: u32,
 }
 
-/// **How far the denial table's party axis runs** — *what this herd needs, plus
-/// `estimate_party_sizes` of headroom*, capped by `deny.max_party_quoted`
-/// (`docs/plan_denial_raid.md` §3.1).
+/// **Which party sizes the denial table quotes** — the shared `estimate_party_sizes` ladder, plus a
+/// short contiguous run starting at *this herd's own* closed-form requirement
+/// (`docs/plan_denial_raid.md` §3.1). Ascending and unique, so [`seeded_denial_party`] can read the
+/// first success straight off it.
 ///
-/// The axis used to be the flat sampling bound and **nothing else**, which is the defect: that bound
-/// is **8**, a Red Deer herd standing at 51 of 119 head needs **9**, and the one row that answered
-/// the player's question was the one row the table did not have. The sheet could not open on a party
-/// that works because no such row existed — and, before the split, could not *send* one either.
+/// The axis used to be a contiguous `1..=requirement + 8`, which was two defects in one shape. It
+/// **stopped**, so a party past the last row found nothing and every readout on the sheet went
+/// blank; and it was **dense where it was expensive**, spending a row on every sub-requirement party
+/// — precisely the raids that get repelled and therefore run the whole forecast horizon.
 ///
-/// # Three terms, and each is doing a different job
+/// # Two terms, and each is doing a different job
 ///
-/// - **The requirement** ([`crate::fauna::denial_party_needed`]) is a *bound on the search*, not the
+/// - **The ladder** is the sampling axis both tables share, so a party the player dials resolves to
+///   a rung by the same rule on both sheets. Its last rung is the only quoting bound (it absorbed
+///   the retired `deny.max_party_quoted`), which is what keeps a `wariness 0.999` retune from asking
+///   for millions of rows at `3 × rows × hunt.forecast_horizon_turns` turn-steps each, every
+///   snapshot, on the hot half of the turn.
+/// - **The requirement run** ([`crate::fauna::denial_party_needed`], widened by
+///   `deny.requirement_rows`) is there because the closed form is a *bound on the search*, not the
 ///   answer: it is linear in the party and therefore blind to the whole-animal quantiser, to the
 ///   fight, and to [`crate::fauna::animals_engaged`]'s `max(1)` floor (which lets a lone hunter
 ///   reach one mammoth where the arithmetic reads `0.05`). Which row actually declines the herd is
-///   [`seeded_denial_party`]'s answer, off the forward simulation itself.
-/// - **The headroom is `estimate_party_sizes`**, the same sampling width the hunt table uses, so the
-///   two tables quote comparable depth. The decision above the requirement is *how fast*
-///   (measured on the reported herd: 9 hunters grind past the horizon, 16 cross the line in 11
-///   turns), so a sheet that stopped dead at the requirement would refuse to quote the very
-///   over-staffing the band's idle workers make possible. It costs +8 of the **cheap** rows: a party
-///   past the requirement collapses the herd in a handful of turns and its projection returns long
-///   before the horizon, while the sub-requirement rows are the ones that run it out.
-/// - **The cap** is `deny.max_party_quoted` — the readout's cost bound, so a pathological retune
-///   cannot hand this an unbounded axis.
+///   [`seeded_denial_party`]'s answer, off the forward simulation — and it lands at the requirement
+///   or a little above, so the rows around the requirement are the ones the seed cannot be rounded
+///   off. Everything above is the *how fast* decision (on the reported herd: 9 hunters grind past
+///   the horizon, 16 cross the line in 11 turns), and a sparse rung answers that perfectly well.
 ///
-/// Measured on a fully-revealed 80×52 map (130 huntable herds, debug): capture ran ~59 ms against a
-/// ~49 ms flat-`estimate_party_sizes` baseline, where a flat `deny.max_party_quoted` axis ran ~104 ms.
-/// Snapshot capture is the hot half of a turn, which is why the axis is herd-sized rather than flat.
-fn denial_party_axis(herd: &Herd, fauna: &FaunaConfig, expedition: &ExpeditionConfig) -> u32 {
+/// **The row count strictly improves, per herd.** Against the retired `min(requirement + 8, 64)`:
+/// equal at the cheapest herds (a requirement of 1 gives 9 rows either way) and far smaller
+/// everywhere the old axis was expensive — a requirement of 26 cost 34 rows and now costs 13.
+fn denial_party_axis(herd: &Herd, fauna: &FaunaConfig, expedition: &ExpeditionConfig) -> Vec<u32> {
     let ecology = herd_ecology(herd, fauna);
     let replacement = crate::fauna::herd_replacement_animals(
         herd.biomass,
@@ -271,9 +275,31 @@ fn denial_party_axis(herd: &Herd, fauna: &FaunaConfig, expedition: &ExpeditionCo
         fauna.wariness_for(&herd.species),
     )
     .unwrap_or(NO_VIABLE_DENIAL_PARTY);
-    needed
-        .saturating_add(expedition.estimate_party_sizes)
-        .min(expedition.deny.max_party_quoted)
+
+    merge_requirement_run(
+        &expedition.estimate_party_sizes,
+        needed,
+        expedition.deny.requirement_rows,
+    )
+}
+
+/// The pure half of [`denial_party_axis`]: the ladder, plus `rows` contiguous party sizes starting
+/// at `needed`, clamped to the ladder's last rung — ascending and unique, which is what lets
+/// [`seeded_denial_party`] read the first success straight off it.
+///
+/// [`NO_VIABLE_DENIAL_PARTY`] as `needed` contributes nothing (there is no requirement to sample
+/// around), and neither does a requirement past the last rung: the herd then reports the sentinel,
+/// which is the honest reading — the sim will not quote a raid it declines to simulate.
+fn merge_requirement_run(ladder: &[u32], needed: u32, rows: u32) -> Vec<u32> {
+    let mut axis = ladder.to_vec();
+    let ceiling = ladder.last().copied().unwrap_or(NO_VIABLE_DENIAL_PARTY);
+    if needed != NO_VIABLE_DENIAL_PARTY && rows > 0 {
+        let last_row = needed.saturating_add(rows - 1);
+        axis.extend((needed..=last_row).filter(|party| *party <= ceiling));
+    }
+    axis.sort_unstable();
+    axis.dedup();
+    axis
 }
 
 /// **The party size the launch sheet opens on** — the smallest quoted party whose *own row*
@@ -294,10 +320,11 @@ fn denial_party_axis(herd: &Herd, fauna: &FaunaConfig, expedition: &ExpeditionCo
 /// decides.
 ///
 /// [`NO_VIABLE_DENIAL_PARTY`] when **no** quoted party gets there. Four situations reach it and all
-/// four are honest: a quarry nothing can engage (`wariness >= 1`), a requirement past
-/// `deny.max_party_quoted`, a herd whose regrowth simply out-runs the whole table, and a herd whose
-/// quoted axis never reaches a success row — every party either repelled or still grinding at the
-/// horizon. The rows keep carrying their own verdict, which is what the client renders.
+/// four are honest: a quarry nothing can engage (`wariness >= 1`), a requirement past the ladder's
+/// last rung ([`ExpeditionConfig::max_estimated_party`]), a herd whose regrowth simply out-runs the
+/// whole table, and a herd whose quoted axis never reaches a success row — every party either
+/// repelled or still grinding at the horizon. The rows keep carrying their own verdict, which is
+/// what the client renders.
 fn seeded_denial_party(entries: &[DenialEstimateState]) -> u32 {
     entries
         .iter()
@@ -321,11 +348,11 @@ const NO_VIABLE_DENIAL_PARTY: u32 = 0;
 /// [`hunt_trip_estimate_entries`] samples a continuum of floors, this table has one dimension: you
 /// choose a herd and a party size. That is the whole reason denial is a mission rather than a preset.
 ///
-/// Cost is `3 × axis × hunt.forecast_horizon_turns` turn-steps per huntable herd — the factor of
-/// three is the reported range's three quantiles (`docs/plan_hunt_through_combat.md` §6.4), and the
-/// axis is bounded by `deny.max_party_quoted`. The rows the axis *added* are the cheap ones: a party
-/// large enough to be needed collapses the herd in a handful of turns, so its projection returns long
-/// before the horizon, while it is the small repelled parties that run it out.
+/// Cost is `3 × axis rows × hunt.forecast_horizon_turns` turn-steps per huntable herd — the factor
+/// of three is the reported range's three quantiles (`docs/plan_hunt_through_combat.md` §6.4), and
+/// the axis is bounded by the ladder's last rung. Sampling is what makes it cheap where it used to
+/// be dear: the expensive rows are the small **repelled** parties, which run the whole horizon, and
+/// a sparse ladder spends a handful of rows on them instead of one per hunter.
 fn denial_estimate_entries(
     herd: &Herd,
     fauna: &FaunaConfig,
@@ -338,7 +365,8 @@ fn denial_estimate_entries(
     // `combat_config.forecast_range_sigmas` — the reported band's width, a readout lever.
     range_sigmas: f32,
 ) -> DenialTable {
-    let entries: Vec<DenialEstimateState> = (1..=denial_party_axis(herd, fauna, expedition))
+    let entries: Vec<DenialEstimateState> = denial_party_axis(herd, fauna, expedition)
+        .into_iter()
         .map(|party_workers| {
             let forecast = crate::systems::denial_forecast(
                 party_workers,
@@ -1361,6 +1389,109 @@ mod tests {
             seeded_denial_party(&[]),
             NO_VIABLE_DENIAL_PARTY,
             "…and a herd with no quoted rows at all (non-huntable) reads the same sentinel"
+        );
+    }
+
+    /// **The denial axis is the ladder plus a contiguous run at the herd's own requirement**, and
+    /// each of the four shapes below is a different thing the sheet has to get right.
+    ///
+    /// The run exists because the seed is read off the *forward simulation*, which lands at the
+    /// closed-form requirement or a little above it. Without it a sparse ladder would round the
+    /// answer up to its next rung — the sheet opening on a party larger than the one that works.
+    #[test]
+    fn the_denial_axis_samples_the_requirement_on_top_of_the_ladder() {
+        let ladder = [1, 2, 3, 4, 8, 16, 32, 64];
+
+        // A requirement in a gap brings its own contiguous run with it.
+        assert_eq!(
+            merge_requirement_run(&ladder, 9, 5),
+            vec![1, 2, 3, 4, 8, 9, 10, 11, 12, 13, 16, 32, 64],
+            "the run must sit ON the axis, in order, with the ladder's rungs still present"
+        );
+
+        // A requirement that lands on a rung adds only what the ladder did not already hold.
+        assert_eq!(
+            merge_requirement_run(&ladder, 4, 5),
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 16, 32, 64],
+            "a requirement on a rung must not duplicate it — the axis is unique by construction"
+        );
+
+        // Past the last rung the run contributes nothing: the herd reports the sentinel instead of
+        // the axis running away with a requirement the sim declines to simulate.
+        assert_eq!(
+            merge_requirement_run(&ladder, 96, 5),
+            ladder.to_vec(),
+            "a requirement past the ladder's last rung must not widen the axis at all"
+        );
+
+        // …and so does the sentinel, which is "no party of any size brings this quarry into contact".
+        assert_eq!(
+            merge_requirement_run(&ladder, NO_VIABLE_DENIAL_PARTY, 5),
+            ladder.to_vec(),
+            "there is no requirement to sample around, so the axis is the bare ladder"
+        );
+    }
+
+    /// **The retired contiguous axis, restated as arithmetic** — `1..=requirement + 8`, capped at
+    /// `deny.max_party_quoted`'s `64`. It exists only so the budget test below can compare against
+    /// the thing that shipped, rather than against a number typed into an assertion.
+    fn retired_contiguous_axis_rows(needed: u32) -> u32 {
+        const RETIRED_HEADROOM: u32 = 8;
+        const RETIRED_MAX_PARTY_QUOTED: u32 = 64;
+        needed
+            .saturating_add(RETIRED_HEADROOM)
+            .min(RETIRED_MAX_PARTY_QUOTED)
+    }
+
+    /// **The sampled axis never costs more rows than the contiguous one it replaced** — the budget
+    /// this arc had to pay for itself out of, swept over every requirement the retired axis could
+    /// quote.
+    ///
+    /// Snapshot capture is the hot half of a turn and the two estimate tables are ~95% of it, so a
+    /// wider readout is not free. It pays because the rows the old axis spent were the **expensive**
+    /// ones: every sub-requirement party is a raid that gets repelled and therefore runs the whole
+    /// forecast horizon, and there was one per hunter. The liveness half is the other assertion —
+    /// on the wary herds the saving is large, not marginal, so this cannot pass by the axis having
+    /// quietly become the ladder alone.
+    #[test]
+    fn the_sampled_axis_never_costs_more_rows_than_the_contiguous_one() {
+        let expedition = ExpeditionConfig::builtin();
+        let ladder = &expedition.estimate_party_sizes;
+        let rows = expedition.deny.requirement_rows;
+        let mut biggest_saving = 0u32;
+
+        for needed in NO_VIABLE_DENIAL_PARTY..=expedition.max_estimated_party() {
+            let sampled = merge_requirement_run(ladder, needed, rows).len() as u32;
+            let contiguous = retired_contiguous_axis_rows(needed);
+            assert!(
+                sampled <= contiguous,
+                "a requirement of {needed} costs {sampled} sampled rows against the retired \
+                 axis's {contiguous} — the ladder has to pay for itself"
+            );
+            biggest_saving = biggest_saving.max(contiguous - sampled);
+        }
+
+        assert!(
+            biggest_saving > 0,
+            "…and the saving must be real somewhere, or the axis is only as good as what it replaced"
+        );
+    }
+
+    /// **The hunt table's budget**, which is the tighter of the two: its axis is
+    /// `floors × party sizes`, so every rung added costs one row per sampled floor.
+    #[test]
+    fn the_hunt_tables_row_count_still_fits_the_contiguous_axis_it_replaced() {
+        /// The retired contiguous party axis, `1..=8`.
+        const RETIRED_PARTY_SIZES: usize = 8;
+
+        let ladder = ExpeditionConfig::builtin().estimate_party_sizes.len();
+        assert!(
+            ladder <= RETIRED_PARTY_SIZES,
+            "the hunt table is sampled at {} floors, so {ladder} rungs is {} rows against the \
+             retired {}",
+            RAID_FORECAST_FLOOR_SAMPLES.len(),
+            ladder * RAID_FORECAST_FLOOR_SAMPLES.len(),
+            RETIRED_PARTY_SIZES * RAID_FORECAST_FLOOR_SAMPLES.len()
         );
     }
 }

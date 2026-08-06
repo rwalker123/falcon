@@ -1805,7 +1805,10 @@ table HuntTripEstimate {
   // RETIRED by the harvest floor arc (docs/plan_harvest_floor.md): a raid names a FLOOR, not a
   // stance. Stopped being written; the slot stays (append-only discipline). Read `floor` below.
   policy:string (deprecated);
-  partyWorkers:uint = 0;   // 1 ..= expedition_config.max_party_size
+  // A SAMPLED party size — one rung of the expedition_config.estimate_party_sizes ladder, exactly as
+  // `floor` below is one of RAID_FORECAST_FLOOR_SAMPLES. Resolve a party to the NEAREST row and name
+  // the size it was computed for; never a cap on what may be launched.
+  partyWorkers:uint = 0;
   // Turns of hunting until the RAID COMPLETES — the party comes home when the pack fills OR the
   // standing surplus is spent (herd at the policy's floor) OR the herd is lost. NOT "turns to fill
   // the pack": a big party on a full herd leaves a partial pack once it strips the surplus, and that
@@ -1875,7 +1878,10 @@ table HuntTripEstimate {
 // declines irreversibly with the party gone — and then walk away. Success is that line, never zero;
 // the food that comes home is a rounding error against what was killed, and the client says so.
 table DenialEstimate {
-  partyWorkers:uint = 0;   // 1 ..= expedition_config.max_party_size
+  // A SAMPLED party size — the expedition_config.estimate_party_sizes ladder PLUS a short contiguous
+  // run at this herd's own closed-form requirement, so `denialPartyNeeded` names an exact party
+  // rather than the next rung above it. Resolve a party to the NEAREST row.
+  partyWorkers:uint = 0;
   // Turns until the herd is past recovery, at the take's EXPECTATION — and therefore turns until the
   // party comes home, because that is when a denial raid completes. 0 = it never got there within
   // forecast_horizon_turns; `outcome` says which KIND of never, and must be rendered instead of a

@@ -792,6 +792,17 @@ const KIT_TIER_DECIMALS := 1
 const KIT_DENIAL_ESTIMATES_QUOTED_FORMAT := "The collapse forecast is priced for %s, not for %s — so no turn count and no take are quoted here."
 const KIT_TRIP_ESTIMATES_QUOTED_FORMAT := "The raid forecast is priced for %s, not for %s — so no turn count and no payload are quoted here."
 
+## **THE HONESTY LINE'S PARTY-AXIS TWIN.** Both estimate tables sample the party axis on a LADDER
+## (`expedition_config.estimate_party_sizes`), so a selected party usually falls between two rungs and
+## the sheet quotes the nearest one (`SourceForecast.nearest_estimate_party`). The take SCALES with
+## party size, so a row computed for 8 read against a party of 12 misstates it — the sheet must NAME
+## the party the figures belong to rather than present a nearby row as exact. Unlike the kit line
+## above, the figures still RENDER: they are a real answer to a nearby question, not another kit's
+## numbers. `%d` the party quoted, `%d` the party selected. `""` where they agree, which the ladder's
+## dense low end and the denial table's requirement run make the common case.
+const PARTY_DENIAL_ESTIMATES_QUOTED_FORMAT := "The collapse forecast is priced for a party of %d — the nearest size the scouts costed — not for your %d."
+const PARTY_TRIP_ESTIMATES_QUOTED_FORMAT := "The raid forecast is priced for a party of %d — the nearest size the scouts costed — not for your %d."
+
 const COMPOSE_CANCEL_TOOLTIP := "Cancel"
 
 const CANCEL_SCOPE_ALL := "all"

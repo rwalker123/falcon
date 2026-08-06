@@ -1608,6 +1608,13 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
             var forecast_line := SourceForecast.hunt_forecast_line_bbcode(trip, _herd_label_for_id(herd_id))
             if forecast_line != "":
                 target.add_child(HudWidgets.forecast_label(forecast_line))
+        # **WHICH PARTY THE FIGURES ABOVE WERE COSTED FOR**, whenever the sampled party ladder rounded
+        # the composed count to a neighbouring rung — the dock sheet's line, verbatim, so the two entry
+        # points cannot name different parties for one raid.
+        var party_note := SourceForecast.quoted_party_note(trip, _compose.hunt_count(),
+            HudComposeVocab.PARTY_TRIP_ESTIMATES_QUOTED_FORMAT)
+        if party_note != "":
+            target.add_child(HudWidgets.alloc_hint_label(party_note))
         # The empty-raid refusal — computed ONCE and used for both the button tooltip and the reason
         # line, and identical to what the Band panel's dock sheet renders. It takes the TRIP as well as
         # the herd: whether the culprit is the herd's spent surplus or a party that cannot make the

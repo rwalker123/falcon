@@ -277,8 +277,10 @@ pub(crate) fn herds_to_array(
         // **`0` MEANS "NO QUOTED PARTY DRIVES THIS HERD DOWN", and it is never "send nobody".**
         // Three honest situations reach it, all told apart by the rows' own `outcome`: a quarry
         // nothing can bring into contact (wariness >= 1), a requirement past the sim's quoting bound
-        // (`deny.max_party_quoted`), and a herd whose regrowth out-runs the whole table. The client
-        // renders the verdict in that case and never seeds a stepper at 0.
+        // (the LAST RUNG of `expedition_config.estimate_party_sizes`, which absorbed the retired
+        // `deny.max_party_quoted` — two numbers naming one bound could disagree), and a herd whose
+        // regrowth out-runs the whole table. The client renders the verdict in that case and never
+        // seeds a stepper at 0.
         //
         // **It may legitimately EXCEED the band's idle workers** — that is the honest "you need more
         // people than you have", and the sheet shows both numbers. So it is not a cap and must never

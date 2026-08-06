@@ -9107,18 +9107,24 @@ mod tests {
     /// survives as `estimate_party_sizes`. The **rules cap** on what a player may send had no design
     /// behind it, and the honest bound is the one the band panel already displays.
     ///
+    /// Since the sampling axis became an explicit **ladder**, "past the bound" is restated as *"a
+    /// party size the ladder does not quote"* — the honest form of the same claim, because the
+    /// estimate tables now stop being able to answer for a party at the first gap between rungs
+    /// rather than at a flat ceiling.
+    ///
     /// Three assertions, and the pairing is what makes them mean something:
-    /// 1. a denial raid past the sampling bound **launches**, with the party it asked for;
+    /// 1. a denial raid the tables cannot quote **launches**, with the party it asked for;
     /// 2. so does a **hunt** — pinned deliberately, because a hunt's party sizing IS changed by this
     ///    split and *"unchanged unless deliberate"* has to be recorded either way;
     /// 3. a party past the **band** is still refused, on both verbs, so the bound moved rather than
     ///    vanished.
     #[test]
     fn a_raiding_party_is_bounded_by_the_band_and_not_by_the_sampling_lever() {
-        let sampled = core_sim::ExpeditionConfig::builtin().estimate_party_sizes;
-        let past_the_sample = sampled + 1;
+        let ladder = core_sim::ExpeditionConfig::builtin()
+            .estimate_party_sizes
+            .clone();
 
-        // 1 + 2. Both raiding verbs launch a party past the sampling bound.
+        // 1 + 2. Both raiding verbs launch a party the estimate tables do not quote.
         for verb in [RaidVerb::Deny, RaidVerb::Hunt] {
             let mut app = build_headless_app();
             // Startup, so the world carries the tile registry every launch path resolves against.
@@ -9132,13 +9138,19 @@ mod tests {
                     .expect("the fixture band exists")
                     .working,
             );
+            // The largest party this band could actually field that the ladder does NOT sample —
+            // there is no pre-computed row for it, and it must launch anyway.
+            let unquoted_party = (1..=pool)
+                .rev()
+                .find(|party| !ladder.contains(party))
+                .expect("some party the band can field falls between the ladder's rungs");
             assert!(
-                pool > past_the_sample,
-                "{verb:?}: the fixture only means something while the band can actually spare the \
-                 party ({pool} workers vs {past_the_sample})"
+                unquoted_party > 1,
+                "{verb:?}: the fixture only means something while the band can spare a real party \
+                 ({pool} workers)"
             );
 
-            verb.launch(&mut app, faction, past_the_sample, herd_id);
+            verb.launch(&mut app, faction, unquoted_party, herd_id);
             let launched: Vec<u32> = app
                 .world
                 .query::<(&Expedition, &PopulationCohort)>()
@@ -9147,9 +9159,9 @@ mod tests {
                 .collect();
             assert_eq!(
                 launched,
-                vec![past_the_sample],
-                "{verb:?}: a party of {past_the_sample} must launch from a band of {pool} — the \
-                 sampling bound of {sampled} is not a rule about what may be sent"
+                vec![unquoted_party],
+                "{verb:?}: a party of {unquoted_party} must launch from a band of {pool} — the \
+                 sampling ladder {ladder:?} is not a rule about what may be sent"
             );
         }
 

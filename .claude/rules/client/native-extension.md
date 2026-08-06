@@ -202,8 +202,10 @@ whose projection merely ran out) — the party the compose sheet's stepper opens
 on and the count its repelled refusal names. **Inserted UNCONDITIONALLY, unlike `denial_estimates`**:
 it is a scalar with a real meaning at `0`, so a herd carrying no table still answers the question.
 **`0` means no quoted party drives this herd down and is never "send nobody"** — three honest
-situations reach it (wariness ≥ 1, a requirement past `deny.max_party_quoted`, regrowth out-running the
-whole table), all told apart by the rows' own `outcome`. It may legitimately EXCEED the band's idle
+situations reach it (wariness ≥ 1, a requirement past the LAST RUNG of
+`expedition_config.estimate_party_sizes` — the sole quoting bound, having absorbed the retired
+`deny.max_party_quoted` — and regrowth out-running the whole table), all told apart by the rows' own
+`outcome`. It may legitimately EXCEED the band's idle
 workers, so it is not a cap and is never clamped here; only the stepper, which knows the band, clamps
 it.
 

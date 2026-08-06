@@ -33,8 +33,11 @@ pub struct HuntTripEstimateState {
     /// points rather than a formula. Appended (append-only).
     #[serde(default)]
     pub floor: f32,
-    /// Party size, `1 ..= expedition_config.estimate_party_sizes` — a **sampling** axis, not a cap
-    /// on what may be launched.
+    /// Party size — one of `expedition_config.estimate_party_sizes`, an explicit ascending
+    /// **ladder**. Like [`Self::floor`] beside it, this is a **mark on a dial**: the table samples
+    /// party sizes rather than enumerating them, so a client resolves the party it is showing to the
+    /// **nearest** row and names the size that row was computed for. It is a sampling axis, not a cap
+    /// on what may be launched — the legal bound is the band's own idle workers.
     pub party_workers: u32,
     /// Turns of hunting until the **raid completes** — the party comes home when the pack fills OR the
     /// standing surplus is spent (the herd is at the policy's floor) OR the herd is lost. **Not** "turns
@@ -98,10 +101,11 @@ pub struct HuntTripEstimateState {
 /// rest of it went.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct DenialEstimateState {
-    /// Party size. The axis runs `1 ..=` *this herd's own requirement + `estimate_party_sizes` of
-    /// headroom*, capped by `expedition_config` `deny.max_party_quoted` — **wider than the hunt
-    /// table's**, so the row the sheet opens on ([`HerdTelemetryState::denial_party_needed`]) always
-    /// exists. It is a **sampling** axis, not a cap on what may be launched.
+    /// Party size — the shared `expedition_config.estimate_party_sizes` ladder **plus a short
+    /// contiguous run at this herd's own closed-form requirement**, so the row the sheet opens on
+    /// ([`HerdTelemetryState::denial_party_needed`]) is an exact party rather than the next rung
+    /// above it. Ascending and unique. Like the hunt table's twin it is a **sampling** axis — resolve
+    /// a party to the nearest row — and not a cap on what may be launched.
     pub party_workers: u32,
     /// **Turns until the herd is past recovery** at the take's expectation — and therefore turns
     /// until the party comes home, because that is when a denial raid completes. **`0` = it never got
@@ -193,7 +197,7 @@ pub struct HerdTelemetryState {
     #[serde(default)]
     pub corral_trade: f32,
     /// The sim's **pre-launch trip estimates** for a hunting *expedition* against this herd — one
-    /// entry per (stance × party size `1..=estimate_party_sizes`), so the outfit UI is a **table lookup**
+    /// entry per (sampled floor × sampled party size, `estimate_party_sizes`), so the outfit UI is a **table lookup**
     /// and the client does no arithmetic at all. The improvements are place-bound band work an
     /// expedition cannot do — since issue #442 its mission cannot even name one — so there is nothing
     /// to exclude. Empty for a non-huntable herd. See [`HuntTripEstimateState`] for why the trip is
@@ -492,7 +496,7 @@ pub struct HerdTelemetryState {
     ///
     /// **`0` = no quoted party drives this herd down**, never *"send nobody"*. Reached by a quarry
     /// nothing can bring into contact, by a requirement past the sim's quoting bound
-    /// (`expedition_config` `deny.max_party_quoted`), by a herd whose regrowth out-runs the whole
+    /// (the last rung of `expedition_config` `estimate_party_sizes`), by a herd whose regrowth out-runs the whole
     /// table, and by a quoted axis that never reaches a success row (every party either repelled or
     /// still grinding at the horizon); the rows' own `outcome` says which. It may also legitimately
     /// exceed the launching band's idle workers — *"you need more people than you have"* is an

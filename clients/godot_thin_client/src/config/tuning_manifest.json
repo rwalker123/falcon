@@ -222,15 +222,15 @@
       "env_var": "EXPEDITION_CONFIG_PATH",
       "params": [
         {
-          "pointer": "/estimate_party_sizes",
-          "label": "Quoted party sizes",
+          "pointer": "/deny/requirement_rows",
+          "label": "Denial requirement rows",
           "type": "int",
           "min": 1,
-          "max": 40,
+          "max": 16,
           "step": 1,
-          "default": 8,
-          "unit": "workers",
-          "hint": "How many party sizes the pre-launch raid estimates quote. Not a cap \u2014 a party is bounded by the band's own workers."
+          "default": 5,
+          "unit": "rows",
+          "hint": "How many rows the denial sheet samples starting at a herd's own requirement, so the party it opens on is not rounded up to the next sampled rung."
         },
         {
           "pointer": "/observe_sight_range",
