@@ -29,6 +29,15 @@ const LABOR_KIND_HUNT := "hunt"
 # the value lives in exactly one place.
 const DEFAULT_HARVEST_FLOOR := SourceForecast.DEFAULT_HARVEST_FLOOR
 
+# `home_band_entity` on a cohort no band detached — the decoder's own "0 for a normal band".
+const NO_HOME_BAND_ENTITY := 0
+
+# The tile a cohort stands on when the snapshot did not state one. **The party's and the home band's
+# sentinels DIFFER on purpose**: `party_cancels_in_camp` compares the two positions, and one shared
+# sentinel would make two silent absences read as "standing in the same camp".
+const PARTY_POSITION_UNKNOWN := -1
+const HOME_POSITION_UNKNOWN := -2
+
 # The food-module `kind` that marks a HUNTING site rather than a gathering one — the split
 # `FoodIcons.for_site` needs to pick a quarry glyph over a forage sprig. Lives here with
 # `food_module_icon`, its only reader.
@@ -183,6 +192,41 @@ func band_parties(band: Dictionary) -> Array:
 		if exp_variant is Dictionary and int((exp_variant as Dictionary).get("home_band_entity", 0)) == band_entity:
 			rows.append(exp_variant)
 	return rows
+
+## **WOULD RECALLING THIS PARTY CANCEL IT ON THE SPOT?** The client-side reading of the sim's
+## `cancel_party_standing_in_camp`: a party standing in its home band's camp with no map report owed is
+## folded back by `handle_recall_expedition` the instant the command lands, so the order is a CANCEL of
+## something that never took effect rather than an errand home. `false` = the ordinary recall, which
+## walks the party back over turns.
+##
+## **THE FOUR TERMS ARE THE SIM'S, MATCHED EXACTLY.** A looser client test — say "the phase is hunting
+## and it carries nothing" — would print *Cancel* over a party that really does walk home, which is the
+## same lie the wrong way round. In particular: co-location is EXACT, never comm range (the sim folds a
+## `Returning` party back within 2 tiles, but doing that on a recall would teleport workers home rather
+## than cancel an order); and the pack is NOT a term (a full larder does not force a round trip).
+##
+## Every single-party recall surface reads this one function — the parties row ✕, the parties inspector
+## link, the Occupants drawer's button — so the verb they show and the confirm they raise cannot
+## disagree about what the sim will do. Lives on this model because it is a question about the snapshot
+## (the party, and the home band it is grouped under), not about any one panel.
+func party_cancels_in_camp(exp: Dictionary) -> bool:
+	if not bool(exp.get("is_expedition", false)):
+		return false
+	# "Nothing to deliver" is about the MAP, not the pack: flushing `pending_reveal` to the faction map
+	# is the one thing an out-of-band fold-back cannot do, so it is what gates the sim. The decoder
+	# projects the wire's coordinate pair to this count for exactly this question.
+	if int(exp.get("pending_reveal_count", 0)) > 0:
+		return false
+	var home := player_band_by_entity(int(exp.get("home_band_entity", NO_HOME_BAND_ENTITY)))
+	if home.is_empty():
+		return false
+	# Absent coordinates on either side must not read as a match, so the two defaults DIFFER — a party
+	# whose position the snapshot never stated is in no camp.
+	var party_x := int(exp.get("current_x", PARTY_POSITION_UNKNOWN))
+	var party_y := int(exp.get("current_y", PARTY_POSITION_UNKNOWN))
+	var home_x := int(home.get("current_x", HOME_POSITION_UNKNOWN))
+	var home_y := int(home.get("current_y", HOME_POSITION_UNKNOWN))
+	return party_x == home_x and party_y == home_y
 
 ## Workers currently out with this band's parties — the Workforce bar's Parties segment.
 func band_party_workers(band: Dictionary) -> int:

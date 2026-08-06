@@ -574,10 +574,9 @@ const STANDING_SUMMARY_FORMAT := "%s %d %s"
 
 const STANDING_SUMMARY_SEPARATOR := " ·"
 
-## The parties inspector strip's two inline links (mirrors the work inspector's Jump/Unassign).
+## The parties inspector strip's two inline links (mirrors the work inspector's Jump/Unassign). The
+## second one's face is the VERB PAIR below, since which verb the sim will honour is not fixed.
 const PARTY_INSPECT_JUMP := "Jump to party"
-
-const PARTY_INSPECT_RECALL := "Recall"
 
 ## PARTIES zone.
 const PARTIES_HEADER_FORMAT := "%d out · %d workers"
@@ -588,7 +587,22 @@ const PARTY_MENU_TOOLTIP := "Bulk actions for parties in the field."
 
 const PARTY_RECALL_GLYPH := "✕"
 
+## **THE VERB FOLLOWS THE SIM, and these two words are the whole of the fork.** A party still standing
+## in its home band's camp with no map report owed folds back the instant the command lands
+## (`core_sim` `cancel_party_standing_in_camp`), so the order is a CANCEL of something that never took
+## effect; one in the field walks home over turns, which is a RECALL. Every single-party surface — the
+## row ✕'s tooltip, the parties inspector link, the Occupants drawer's button — reads the ONE predicate
+## `HudBandLaborState.party_cancels_in_camp` and picks a side here, so no two of them can promise
+## different things about the same press.
+const PARTY_RECALL_VERB := "Recall"
+
+const PARTY_CANCEL_VERB := "Cancel"
+
 const PARTY_RECALL_TOOLTIP := "Recall — the party walks home"
+
+## The cancel branch's tooltip names WHY it is instant, since "Cancel" alone reads as if it might be
+## the same round trip under a friendlier word.
+const PARTY_CANCEL_TOOLTIP := "Cancel — the party never left camp, so it folds back at once"
 
 const PARTY_RECALL_WIDTH := 24.0
 
@@ -649,6 +663,15 @@ const COMPOSE_MISSION_LABEL_DENY := "💀 Deny"
 ## sheet the zone holds. It is deliberately not a design margin — a sheet two pixels too tall for a
 ## `clip_contents` host is two pixels sliced, and it floats.
 const COMPOSE_FLOAT_SLACK := 1.0
+
+## **THE NARROWEST PARTIES COLUMN A COMPOSE MEASUREMENT MAY BE BELIEVED AT**
+## (`BandPanelController._party_compose_measurable`). The measurement's whole premise is that the
+## container has SORTED the column, so the sheet's autowrap labels shape at a real wrap width; a column
+## narrower than this has not been laid out, and every wrapping label in it reports one word per line —
+## hundreds of px of phantom requirement, latched into a high-water mark that then floats a sheet the
+## dock holds easily. It is a NOT-YET-LAID-OUT test rather than a design minimum: the shipped zone
+## columns are ~354px (side dock flank) and wider, so no real column is anywhere near it.
+const COMPOSE_MEASURE_MIN_COLUMN_WIDTH := 1.0
 
 const COMPOSE_TITLE_SCOUT := "Setup a scouting party…"
 

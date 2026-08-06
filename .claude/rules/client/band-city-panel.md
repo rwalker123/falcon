@@ -478,11 +478,12 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   behind the same confirm), one row per party (mission glyph · subject · phase · a **DANGER-red**
   recall `✕` — steady, full-opacity, reading as a destructive control like the Work inspector's
   Unassign), an **inspector strip** the row body opens, and the footer.
-  **The row `✕` CONFIRMS before recalling** — `BandPanelController.confirm_recall_expedition(exp)` names the party
-  (`_herd_label_for_id` for a hunt, "scouting" for a scout) through the shared `_confirm_destructive`,
-  and every SINGLE-recall entry point (the row `✕`, the strip's Recall link, the Occupants drawer's
-  Recall button) routes through it; `_on_recall_expedition_pressed` stays the RAW emit, so "Recall all"
-  loops it under its OWN one confirm and never pops N prompts.
+  **A REAL RECALL CONFIRMS; A CANCEL DOES NOT** — see "THE RECALL VERB FOLLOWS THE SIM" below.
+  `BandPanelController.confirm_recall_expedition(exp)` names the party (`_herd_label_for_id` for a hunt,
+  "scouting" for a scout) through the shared `_confirm_destructive` on the recall branch and acts
+  straight off the press on the cancel one, and every SINGLE-recall entry point (the row `✕`, the
+  strip's link, the Occupants drawer's button) routes through it; `_on_recall_expedition_pressed` stays
+  the RAW emit, so "Recall all" loops it under its OWN one confirm and never pops N prompts.
   **The row BODY opens an inspector strip** (`_toggle_parties_inspector(str(entity))` → `_party_open_key`
   → `BandPanelController.rerender`, the exact `_work_open_key`/`_build_work_inspector` pattern): a bottom
   `PanelContainer` (reusing `HudStyle.work_inspector_stylebox`) with a titled header + close `✕`, the full
@@ -1243,6 +1244,30 @@ columns makes a THIRD layout of a form two recent passes made identical across i
 - **A PANEL-BAND CHANGE CLOSES THE WHOLE COMPOSING ACT**, not just the quarry. The quarry already
   cleared there (its travel time and useful party size are band-relative); the mission, the party size
   and the measured requirement belong to that band too.
+- **AN UNKNOWN BOX MEANS INLINE, NEVER FLOAT — and a guessed box is an unknown box.**
+  `BandCityPanel.parties_zone_size()` answers `Vector2.ZERO` while the panel is collapsed, hidden, or
+  simply not laid out yet, and `_parties_zone_box()` substitutes `ZONE_FALLBACK_SIZE` (340×360) there —
+  a sane LAYOUT guess for the no-dock host and nothing like the ~1055px a tall side dock really offers.
+  Deciding the fork against it turns *"I do not know yet"* into *"this overflows"*, and the high-water
+  mark then latches it ON for the rest of the composing act: reported from play as an EMPTY hunt sheet
+  (`Quarry: Choose…`, a hint, a disabled Send) floating out of a left dock that holds it four times
+  over. `_party_compose_floats` reads **`_parties_zone_box_known()`**, which states the absence, and
+  answers `false` there. **The asymmetry is the point** — floating is the drastic, instantly-visible
+  branch and must be positively justified, where the worst case of staying inline is one clipped frame,
+  which is what shipped for months.
+- **A MEASUREMENT TAKEN BEFORE THE COLUMN IS LAID OUT IS NOT RECORDED AT ALL.** The mark never falls
+  during a composing act, so ONE bad reading latches until the sheet closes — which is what made the
+  defect above stick rather than self-correct on the next frame. `_party_compose_measurable` is the
+  guard, and both of its terms are about whether a number taken now could be honest: the panel must be
+  able to state the box the mark will be compared against, and the parties column must have a
+  laid-out rect (`COMPOSE_MEASURE_MIN_COLUMN_WIDTH` — a zero/degenerate width shapes every autowrap
+  `Label` at wrap width 0, the same hundreds-of-px over-report the frame wait exists to avoid).
+  Skipping the frame costs one more `process_frame`; latching costs the rest of the composition.
+- **THE MARK BELONGS TO ONE BOX, AND A BOX CHANGE DROPS IT.** `_party_compose_measured_box` records
+  which column the requirement was measured against, and `_note_parties_zone_box` — called from the
+  ZONE BUILDER, i.e. every render, so no path can forget it — clears the mark when the box moves. A
+  dock move, a collapse or a window resize asks a different question, and the previous answer would
+  keep a sheet floating in a column it was never measured in.
 
 **`band_panel_compose_hunt_short` ASSERTS the fit now, and it asserts it in three places at once.**
 It used to REPORT its extent, because asserting would have failed on the defect it existed to
@@ -1252,6 +1277,46 @@ would look exactly like a fix. The state therefore asserts that the sheet is rea
 zone, that the zone holds what is left, that the float fits the VIEWPORT and holds its own content,
 and that it clears the panel card, plus the paired negative on `band_panel_compose_hunt` that a dock
 with room keeps its sheet. See `test-harnesses.md` for the assertion set and its sabotage results.
+
+### THE RECALL VERB FOLLOWS THE SIM, AND A CANCEL ASKS NOTHING
+
+`core_sim::handle_recall_expedition` folds a party back **on the spot** when
+`cancel_party_standing_in_camp` holds — it is an expedition, its `home_band_entity` resolves, it stands
+on that band's own tile, and `pending_reveal` is empty. Anything else takes the ordinary `Returning`
+walk home. So the single-recall path is TWO different orders, and the control has to say which:
+recalling a party composed and launched in the same turn *"would just go away as if I never created
+it"*, and offering it as **Recall** described a round trip that never happens.
+
+- **ONE READING OF THE PREDICATE, in `HudBandLaborState.party_cancels_in_camp`.** All three surfaces —
+  the parties-zone row `✕`, the parties inspector strip's link, the Occupants drawer's button — read it
+  through `BandPanelController.recall_verb` / `recall_tooltip`, so the verb they show and the ceremony
+  the press gets cannot disagree. It lives on the labor MODEL because it is a question about the
+  snapshot (the party, and the home band it is already grouped under by `band_parties`), not about a
+  panel.
+- **THE FOUR TERMS ARE MATCHED EXACTLY**, in the sim's own order. A looser test — say *"the phase is
+  hunting and it carries nothing"* — prints **Cancel** over a party that really does walk home, which is
+  the same lie in the other direction. Co-location is EXACT and not comm range (the sim's `Returning`
+  arm folds back within 2 tiles; doing that on a *recall* would teleport workers home rather than
+  cancel an order that had not taken effect), and the pack is NOT a term — "nothing to deliver" is
+  about the MAP, `pending_reveal` being the one thing an out-of-band fold-back cannot flush.
+- **THE CANCEL BRANCH SKIPS `_confirm_destructive` ENTIRELY.** That dialog exists for an action that
+  LOSES something: the work board's unassign-all, or a real recall abandoning a trip in progress. A
+  party still in camp has spent no travel and abandoned no haul, and re-launching it is one press of
+  the same footer button — so a modal there is ceremony over a decision the player can simply re-make.
+  **`Recall all parties (n)` keeps its single confirm and is otherwise untouched**: it acts over a
+  MIXED set, and the prompt is the only place that whole scope is stated.
+- **The GLYPH does not fork.** A `✕` removes the row on both branches; only the tooltip and the two
+  worded controls change (`HudComposeVocab.PARTY_{RECALL,CANCEL}_VERB` / `_TOOLTIP`).
+- **`pending_reveal_count` is a DECODER PROJECTION, not the wire field** — see
+  `native-extension.md`. The client only ever asks whether a report is owed; the coordinates are a
+  scout's accumulated reveals and would be hundreds of tiles per cohort per frame to answer a boolean.
+
+**Judged as a PAIR, and neither half is a claim alone** — a rule that showed one verb everywhere would
+satisfy either. `band_panel_preview`'s `_assert_row_recall_confirms` drives the REAL row builder and the
+REAL `pressed` handler over three fixtures differing only in the terms under test: a field party
+(Recall + dialog + no emit), a camped one (Cancel + emit + no dialog), and a camped one that still owes
+a map report (Recall again — the case that separates the predicate from *"is it on the band's tile"*).
+Sabotage results are in `test-harnesses.md`.
 
 ### BOTH ESTIMATE AXES ARE SAMPLED, AND THE SHEET NAMES THE PARTY IT QUOTES
 

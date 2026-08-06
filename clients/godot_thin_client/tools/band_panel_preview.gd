@@ -316,6 +316,9 @@ const HUNT_DELIVERING_ENTITY := 952
 const HUNT_LEAN_ENTITY := 953
 # A hunt party whose target herd has DROPPED OUT of `_world_herds` (lost/replaced), projecting 0.
 const HUNT_LOST_ENTITY := 954
+# A party still standing in its home band's camp with no map report owed — the one shape a recall
+# CANCELS on the spot rather than walking home (`HudBandLaborState.party_cancels_in_camp`).
+const HUNT_IN_CAMP_ENTITY := 955
 # A 21:9 monitor — comfortably past the wide shell's content cap, which is the whole point of the state.
 const ULTRAWIDE_WIDTH := 3440
 const ULTRAWIDE_HEIGHT := 900
@@ -1265,8 +1268,15 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 	_assert_compose_float("band_panel_compose_hunt_short")
 	await _assert_float_leaves_the_map_clickable("band_panel_compose_hunt_short")
+	# **AN UNKNOWN ZONE BOX MUST NOT FLOAT.** Taken HERE, with the mark latched at the short dock's
+	# genuine 641px, because that is the only configuration in which the two possible answers differ.
+	_assert_unknown_zone_box_does_not_float("band_panel_compose_hunt_short")
+	# **AND A MARK LATCHED IN THE SHORT DOCK MUST NOT SURVIVE THE MOVE TO THE TALL ONE.** Staged here,
+	# judged after the real `set_dock` → render below.
+	var staged_mark := _stage_impossible_compose_mark()
 	_panel.set_dock(SIDE_LEFT)
 	await _settle()
+	_assert_mark_dropped_on_dock_change("band_panel_compose_hunt", staged_mark)
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
@@ -2351,29 +2361,76 @@ func _check_line(label: String, got: String, want: String) -> void:
 	else:
 		push_error("band_panel_preview: %s expected '%s' but got '%s'" % [label, want, got])
 
-## GUARD: the row ✕ (single-party recall) must route through the CONFIRM dialog, not fire the recall
-## emit immediately — mirroring "Recall all". Build a real party row, press its recall Button, and
-## assert a ConfirmationDialog appeared on the HUD while `recall_expedition_requested` did NOT fire.
-## Verified to FAIL with the ✕ wired straight to `_on_recall_expedition_pressed`.
+## **THE VERB AND THE CEREMONY FOLLOW THE SIM, AND THE CLAIM IS THE PAIR.** Recalling a party still
+## standing in its home band's camp with no map report owed CANCELS it on the spot
+## (`core_sim::cancel_party_standing_in_camp`); one in the field walks home over turns. So the single
+## recall path is two different orders and the control must say which: `Cancel`, acting straight off
+## the press, against `Recall` behind the confirm that names the trip being abandoned.
+##
+## **A rule that showed one verb everywhere would satisfy either half alone**, which is why both are
+## driven here, through the REAL row builder and the REAL `pressed` handler rather than by calling
+## `confirm_recall_expedition` directly — the row's own ✕ is where a caller could drift.
+##
+## The two fixtures differ in POSITION and nothing else, so what is being judged is the predicate.
+## Sabotage-verified in both directions: forcing the predicate true makes the FIELD party offer Cancel
+## and skip the dialog; forcing it false makes the camped one raise one.
 func _assert_row_recall_confirms() -> void:
+	# The bands must be the roster the predicate resolves the home band out of — `party_cancels_in_camp`
+	# reads `player_band_by_entity(home_band_entity)`, so a camped party whose band is not listed would
+	# answer "in the field" for the wrong reason.
+	_push_bands([_band_fixture(), _in_field_expedition_fixture(), _in_camp_expedition_fixture()])
+	_assert_recall_press("field party", _in_field_expedition_fixture(),
+		HudComposeVocab.PARTY_RECALL_VERB, HudComposeVocab.PARTY_RECALL_TOOLTIP, true)
+	_assert_recall_press("camped party", _in_camp_expedition_fixture(),
+		HudComposeVocab.PARTY_CANCEL_VERB, HudComposeVocab.PARTY_CANCEL_TOOLTIP, false)
+	# THE TERM THAT IS NOT ABOUT POSITION: a party standing in camp that still owes a map report is
+	# walked home by the sim, so the client must say `Recall` and ask. Without it, every claim above is
+	# satisfied by a client testing "is it on the band's tile".
+	_push_bands([_band_fixture(), _in_camp_with_report_owed_fixture()])
+	_assert_recall_press("camped party owing a report", _in_camp_with_report_owed_fixture(),
+		HudComposeVocab.PARTY_RECALL_VERB, HudComposeVocab.PARTY_RECALL_TOOLTIP, true)
+	_push_bands([_band_fixture(), _hunt_expedition_fixture(), _lean_hunt_expedition_fixture(),
+		_lost_hunt_expedition_fixture()])
+
+## One half of the pair above: check the verb `BandPanelController.recall_verb` hands the parties
+## inspector link and the Occupants drawer's button, build `exp`'s real party row and check its ✕'s
+## tooltip, then PRESS that ✕ and require the ceremony `wants_confirm` names — a dialog and no emit,
+## or an emit and no dialog.
+func _assert_recall_press(label: String, exp: Dictionary, want_verb: String, want_tooltip: String,
+		wants_confirm: bool) -> void:
+	_assert_band_panel("recall verb — %s reads '%s'" % [label, want_verb],
+		_hud._bandpanel.recall_verb(exp) == want_verb)
+	var row: HBoxContainer = _hud._bandpanel._build_party_row(exp)
+	var recall: Button = row.get_child(row.get_child_count() - 1)   # ✕ is the row's last child
+	_assert_band_panel("recall tooltip — %s reads '%s' (got '%s')" % [label, want_tooltip, recall.tooltip_text],
+		recall.tooltip_text == want_tooltip)
 	var fired := [false]
 	var sink := func(_payload: Dictionary) -> void: fired[0] = true
 	_hud.recall_expedition_requested.connect(sink)
-	var row: HBoxContainer = _hud._bandpanel._build_party_row(_hunt_expedition_fixture())
-	var recall: Button = row.get_child(row.get_child_count() - 1)   # ✕ is the row's last child
+	# **COUNT THE DIALOGS, DO NOT LOOK FOR ONE.** `_dismiss_dialogs` frees with `queue_free`, which is
+	# deferred, so the PREVIOUS half of this pair is still a child of the HUD when this half runs — a
+	# presence test therefore reports the camped party as having confirmed. (Measured: it did.)
+	var before := _hud_dialog_count()
 	recall.pressed.emit()
-	var dialog_shown := false
-	for child in _hud.get_children():
-		if child is ConfirmationDialog:
-			dialog_shown = true
+	var dialog_shown := _hud_dialog_count() > before
 	_hud.recall_expedition_requested.disconnect(sink)
-	if dialog_shown and not fired[0]:
-		print("band_panel_preview: assert OK — row ✕ recall confirms first (no immediate emit)")
+	if wants_confirm:
+		_assert_band_panel("recall ceremony — %s confirms first, no immediate emit (dialog=%s, emitted=%s)" % [
+			label, dialog_shown, fired[0]], dialog_shown and not fired[0])
 	else:
-		push_error("band_panel_preview: row ✕ recall did NOT confirm (dialog=%s, emitted=%s)" % [
-			dialog_shown, fired[0]])
+		_assert_band_panel("recall ceremony — %s acts on the press, no dialog (dialog=%s, emitted=%s)" % [
+			label, dialog_shown, fired[0]], fired[0] and not dialog_shown)
 	_dismiss_dialogs()
 	row.queue_free()
+
+## Confirmation dialogs parented on the HUD right now, freed-but-not-yet-collected ones included —
+## which is exactly why `_assert_recall_press` compares two readings rather than testing presence.
+func _hud_dialog_count() -> int:
+	var count := 0
+	for child in _hud.get_children():
+		if child is ConfirmationDialog:
+			count += 1
+	return count
 
 ## GUARD: whenever the WIDE shell is active, the work zone must be at least one readable board column
 ## (`ZONE_WORK_MIN_WIDTH`) — otherwise Hud's `_work_board_capacity` clamps to a single column too
@@ -3089,6 +3146,62 @@ func _assert_compose_in_zone(state_name: String) -> void:
 		not _hud._bandpanel.compose_is_floating()
 			and _find_meta_control(_panel, HudWidgets.SEND_HUNT_CONFIRM_META) != null)
 
+## **AN UNKNOWN ZONE BOX MUST NOT FLOAT — and no picture can carry this.** Reported from play: the
+## sheet floated in a TALL left dock, where the zone offers ~1055px and the empty form wanted a couple
+## of hundred. `BandCityPanel.parties_zone_size()` answers `Vector2.ZERO` whenever the panel is
+## collapsed, hidden, or simply has not laid out yet, and the predicate used to fall back to
+## `ZONE_FALLBACK_SIZE` (340×360) — so "I do not know yet" decided as "this overflows", and the
+## high-water mark latched it ON for the rest of the composing act.
+##
+## Driven through the REAL predicate with the mark left exactly where the short dock measured it, and
+## the box made unknown the way the live client makes it unknown (a collapsed panel). The precondition
+## is the whole point: with the mark below the fallback's 360 the two answers coincide and the claim
+## would be vacuous.
+func _assert_unknown_zone_box_does_not_float(state_name: String) -> void:
+	var needed: float = _hud._bandpanel._party_compose_needed
+	if needed <= HudWorkVocab.ZONE_FALLBACK_SIZE.y:
+		push_error(("band_panel_preview: %s — VACUOUS: the latched requirement is %.0fpx, under the "
+			+ "%.0fpx fallback box, so an unknown box answers 'no float' either way") % [
+			state_name, needed, HudWorkVocab.ZONE_FALLBACK_SIZE.y])
+		return
+	var was_collapsed: bool = _panel.is_collapsed()
+	_panel.set_collapsed(true)
+	var box: Vector2 = _hud._bandpanel._parties_zone_box_known()
+	_assert_band_panel("%s — precondition: a collapsed panel answers no parties-zone box" % state_name,
+		box == Vector2.ZERO)
+	_assert_band_panel(("%s — an UNKNOWN zone box does not float (mark %.0fpx, which WOULD float "
+		+ "against the %.0fpx fallback)") % [state_name, needed, HudWorkVocab.ZONE_FALLBACK_SIZE.y],
+		not _hud._bandpanel._party_compose_floats())
+	_panel.set_collapsed(was_collapsed)
+
+## Stage a latched requirement no zone box in this client can hold, while the panel is still in the
+## SHORT dock. **The mark is the INPUT to the rule under test, not the rule** — the rule is "a change of
+## zone box drops the mark", and no fixture here produces a mark that naturally overflows the TALL dock
+## (that dock holds this sheet comfortably, which is exactly what `_assert_compose_in_zone` asserts one
+## state earlier), so a staged one is the only way the two answers can differ at all.
+func _stage_impossible_compose_mark() -> float:
+	var staged: float = get_viewport().get_visible_rect().size.y * IMPOSSIBLE_MARK_VIEWPORTS
+	_hud._bandpanel._party_compose_needed = staged
+	return staged
+
+## **A MARK LATCHED IN ONE BOX MUST NOT SURVIVE A MOVE TO ANOTHER.** The requirement is a high-water
+## mark that never falls during a composing act — which is right, since a mark tracking every shrink
+## would hop the sheet back into the zone as a field cleared — so a mark CARRIED ACROSS a dock change
+## keeps a sheet floating in a column that was never measured. Read right after a real `set_dock` +
+## render, so what it judges is the shipped path's outcome.
+func _assert_mark_dropped_on_dock_change(state_name: String, staged: float) -> void:
+	var box: Vector2 = _hud._bandpanel._parties_zone_box_known()
+	_assert_band_panel("%s — precondition: the new dock states a box (%s)" % [state_name, box],
+		box != Vector2.ZERO)
+	_assert_band_panel(("%s — precondition: the staged mark (%.0fpx) WOULD float in this %.0fpx "
+		+ "box, so dropping it is what decides the fork") % [state_name, staged, box.y], staged > box.y)
+	_assert_band_panel("%s — the mark from the SHORT dock did not survive the move (now %.0fpx)" % [
+		state_name, _hud._bandpanel._party_compose_needed],
+		_hud._bandpanel._party_compose_needed < staged)
+	_assert_band_panel("%s — …so the tall dock keeps its sheet in the zone" % state_name,
+		not _hud._bandpanel.compose_is_floating()
+			and _find_meta_control(_panel, HudWidgets.SEND_HUNT_CONFIRM_META) != null)
+
 ## **THE MAP STILL TAKES THE PRESSES BESIDE THE FLOAT.** `BandComposeFloat` is deliberately the card
 ## and NOTHING more — no full-screen catcher — because the dock's sheet stays open through a map pick
 ## and a catcher would eat the very click the quarry picker needs. That is a behavioural claim and a
@@ -3135,6 +3248,11 @@ func _assert_float_leaves_the_map_clickable(state_name: String) -> void:
 ## since the claim is about the float's own rect and not about some comfortable distance from it.
 const FLOAT_PROBE_GAP := 8.0
 const FLOAT_EDGE_PROBE_OFFSET := 3.0
+
+## How many viewport heights `_stage_impossible_compose_mark` asks for. Any multiple above 1 is past
+## every box a dock can offer (a zone box is a fraction of the window); 4 leaves the claim legible in
+## the printed numbers rather than sitting a pixel over the line.
+const IMPOSSIBLE_MARK_VIEWPORTS := 4.0
 
 ## GUARD: the dock hunt sheet's floor CHART is gated on the zone having room — present at TALL, absent
 ## at SHORT, where the parties zone is height-capped and clips. **Both halves are asserted**: a gate
@@ -5776,6 +5894,37 @@ func _arrivals_starving_band_fixture() -> Dictionary:
 		{"kind": "scout", "workers": 1},
 	]
 	return band
+
+## A party outfitted by band 904 that HAS NOT LEFT: it stands on the band's own tile (71, 18) and owes
+## it no map report, which is the sim's `cancel_party_standing_in_camp` exactly — so a recall folds it
+## back the instant the command lands. It is the fixture the CANCEL branch of every single-party recall
+## surface is judged on, and it differs from `_hunt_expedition_fixture` in its POSITION alone (plus the
+## explicit zero report), so the pair is a controlled A/B on the predicate rather than on the party.
+func _in_camp_expedition_fixture() -> Dictionary:
+	var exp := _hunt_expedition_fixture()
+	exp["id"] = "Hunters 4"
+	exp["entity"] = HUNT_IN_CAMP_ENTITY
+	exp["current_x"] = 71
+	exp["current_y"] = 18
+	# Stated, never left to the reader's default: "nothing owed" is a TERM of the predicate, and a
+	# fixture silent on it would pass whether the client asked the question or not.
+	exp["pending_reveal_count"] = 0
+	return exp
+
+## The same party in the FIELD — `_hunt_expedition_fixture` with the one term that is not about
+## position made explicit, so the Recall half of the A/B states all four terms too.
+func _in_field_expedition_fixture() -> Dictionary:
+	var exp := _hunt_expedition_fixture()
+	exp["pending_reveal_count"] = 0
+	return exp
+
+## A party standing in camp that still OWES ITS HOME BAND A MAP REPORT. The sim walks this one home —
+## flushing `pending_reveal` to the faction map is the one thing an out-of-band fold-back cannot do —
+## so it is the case that separates the real predicate from the tempting "is it on the band's tile".
+func _in_camp_with_report_owed_fixture() -> Dictionary:
+	var exp := _in_camp_expedition_fixture()
+	exp["pending_reveal_count"] = 12
+	return exp
 
 ## A detached HUNT expedition outfitted by band 904, following game_deer_79 under a Surplus policy.
 func _hunt_expedition_fixture() -> Dictionary:

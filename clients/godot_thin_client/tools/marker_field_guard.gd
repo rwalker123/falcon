@@ -168,6 +168,11 @@ const FIXTURE_ENTRY := {
 	"expedition_eta_turns": 6,       # int count → presence + _expect_int
 	"expedition_recurring": true,    # bool → presence + explicit check
 	"home_band_entity": 7777,
+	# The decoder's PROJECTION of `pendingReveal{X,Y}` — how many tiles this party still owes its home
+	# band, never the coordinates. It is a term of the cancel-in-camp predicate the Occupants drawer's
+	# Recall/Cancel button reads OFF THE MARKER (`_selected_unit` is the map-click payload), so it has
+	# to survive the copy like every other panel-consumed field.
+	"pending_reveal_count": 3,
 	# Pre-launch hunt-trip forecast levers (global config echoed on every cohort).
 	"expedition_viability_warn_turns": 20,
 }
@@ -238,6 +243,7 @@ func _ready() -> void:
 	_expect_str(marker, "expedition_target_herd", "game_deer_07")
 	_expect_float(marker, "expedition_floor", 0.3)
 	_expect_int(marker, "home_band_entity", 7777)
+	_expect_int(marker, "pending_reveal_count", 3)
 	_expect_int(marker, "expedition_viability_warn_turns", 20)
 	_expect_int(marker, "expedition_eta_turns", 6)
 	if not bool(marker.get("is_expedition", false)):

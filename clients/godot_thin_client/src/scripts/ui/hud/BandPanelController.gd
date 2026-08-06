@@ -148,7 +148,14 @@ var _party_compose_sheet: Control = null
 ## the form is answered (a picked quarry adds the policy rungs, the party stepper, the kit row and the
 ## forecast), and a mark that tracked every shrink would hop the sheet back into the zone the moment a
 ## field cleared, which is a layout change under the player's hands.
+##
+## **AND IT BELONGS TO ONE BOX**, which is what `_party_compose_measured_box` records beside it. The
+## mark answers "what did this sheet demand of THAT column"; a dock move from a 265px bottom strip to a
+## 1055px side dock asks a different question, so the answer is dropped rather than carried into it.
 var _party_compose_needed: float = 0.0
+## The parties-zone box `_party_compose_needed` was measured against — `Vector2.ZERO` for "no mark".
+## Compared every render by `_note_parties_zone_box`, which is what drops a mark the dock outgrew.
+var _party_compose_measured_box: Vector2 = Vector2.ZERO
 ## One deferred measurement in flight at a time.
 var _party_compose_measuring: bool = false
 ## The compose sheet floated off the zone (see `BandComposeFloat`). A node, so it hangs off `_host` —
@@ -296,11 +303,24 @@ func _zone_box() -> Vector2:
 ## height — but the wide shell's parties flank is a FIXED width where the work board's column expands,
 ## and the compose sheet is authored for, measured in and floated at THIS column, not that one.
 func _parties_zone_box() -> Vector2:
-    if _panel != null:
-        var box: Vector2 = _panel.parties_zone_size()
-        if box.x > 0.0 and box.y > 0.0:
-            return box
-    return HudWorkVocab.ZONE_FALLBACK_SIZE
+    var box := _parties_zone_box_known()
+    return box if box != Vector2.ZERO else HudWorkVocab.ZONE_FALLBACK_SIZE
+
+## The parties zone's box **or `Vector2.ZERO` meaning "the panel cannot answer yet"** — the honest
+## reading its guessed-fallback twin above cannot give. `BandCityPanel.parties_zone_size()` returns
+## ZERO while the panel is collapsed, hidden, or simply has not laid out yet, which is every frame
+## before the first layout pass.
+##
+## **THE FLOAT DECISION MUST READ THIS ONE, NEVER THE FALLBACK.** `ZONE_FALLBACK_SIZE` is 340×360 —
+## fine as a layout guess for a no-dock host, and nothing at all like the ~1055px a tall side dock
+## really offers — so deciding against it turns "I do not know yet" into "this sheet overflows", and
+## the float latches (see `_party_compose_needed`). Reported from play: an EMPTY compose sheet, a
+## couple of hundred px tall, floated out of a left dock that held it four times over.
+func _parties_zone_box_known() -> Vector2:
+    if _panel == null:
+        return Vector2.ZERO
+    var box: Vector2 = _panel.parties_zone_size()
+    return box if box.x > 0.0 and box.y > 0.0 else Vector2.ZERO
 
 ## Ask before a destructive bulk action. A `ConfirmationDialog` is a Window — like the section menu,
 ## it cannot disturb any zone's height. The body names what is SPARED, so "unassign all" never reads
@@ -1452,6 +1472,8 @@ func _emit_cancel_order(band: Dictionary, scope: String) -> void:
 
 ## Zone `parties`: head + `⋯` menu · one row per party in the field · the compose footer.
 func build_parties_zone(band: Dictionary) -> VBoxContainer:
+    # BEFORE anything reads the latched float requirement below: a box change invalidates the mark.
+    _note_parties_zone_box()
     var col := HudWidgets.make_zone_column()
     col.add_theme_constant_override("separation", HudWorkVocab.ZONE_BLOCK_SEPARATION)
     # Held for the deferred compose-sheet measurement, which needs the zone's own laid-out rect to
@@ -1541,7 +1563,7 @@ func _build_parties_inspector(exp: Dictionary) -> PanelContainer:
     links.add_theme_constant_override("separation", HudWorkVocab.COMPOSITION_KEY_SEPARATION)
     links.add_child(HudWidgets.build_inline_link(HudComposeVocab.PARTY_INSPECT_JUMP, HudStyle.INK, func() -> void:
         select_expedition(entity, x, y)))
-    links.add_child(HudWidgets.build_inline_link(HudComposeVocab.PARTY_INSPECT_RECALL, HudStyle.DANGER, func() -> void:
+    links.add_child(HudWidgets.build_inline_link(recall_verb(exp), HudStyle.DANGER, func() -> void:
         confirm_recall_expedition(exp)))
     col.add_child(links)
     return strip
@@ -1571,7 +1593,9 @@ func _build_party_row(exp: Dictionary) -> HBoxContainer:
     var recall := Button.new()
     recall.text = HudComposeVocab.PARTY_RECALL_GLYPH
     recall.focus_mode = Control.FOCUS_NONE
-    recall.tooltip_text = HudComposeVocab.PARTY_RECALL_TOOLTIP
+    # The GLYPH is the same either way (a ✕ removes the row on both branches); the tooltip is what says
+    # whether the press cancels an order that never took effect or sends the party on a walk home.
+    recall.tooltip_text = recall_tooltip(exp)
     recall.custom_minimum_size = Vector2(HudComposeVocab.PARTY_RECALL_WIDTH, 0.0)
     HudStyle.apply_button(recall, "ghost")
     # DANGER-red like the Work inspector's destructive "Unassign" link — it removes a party. The steady
@@ -1582,10 +1606,32 @@ func _build_party_row(exp: Dictionary) -> HBoxContainer:
     row.add_child(recall)
     return row
 
-## Confirm a SINGLE party's recall, then emit. Wraps the button handlers (row ✕, inspector Recall,
-## drawer Recall) — NOT the shared `_on_recall_expedition_pressed` emit, which "Recall all" loops under
-## its own one confirm. The prompt names the party (hunt → its herd, scout → the mission word).
+## The verb a single-party recall control wears for `exp` — `Cancel` where the sim will fold the party
+## back on the spot, `Recall` where it will walk home. The row ✕, the parties inspector link and the
+## Occupants drawer's button all read THIS, so they cannot promise different things about one press.
+func recall_verb(exp: Dictionary) -> String:
+    return HudComposeVocab.PARTY_CANCEL_VERB if _band_labor.party_cancels_in_camp(exp) \
+        else HudComposeVocab.PARTY_RECALL_VERB
+
+## The tooltip that goes with `recall_verb` — same fork, same one reading of the predicate.
+func recall_tooltip(exp: Dictionary) -> String:
+    return HudComposeVocab.PARTY_CANCEL_TOOLTIP if _band_labor.party_cancels_in_camp(exp) \
+        else HudComposeVocab.PARTY_RECALL_TOOLTIP
+
+## Act on a SINGLE party's recall. Wraps the button handlers (row ✕, inspector link, drawer button) —
+## NOT the shared `_on_recall_expedition_pressed` emit, which "Recall all" loops under its own one
+## confirm. The prompt names the party (hunt → its herd, scout → the mission word).
+##
+## **A CANCEL ASKS NOTHING AND FIRES ON THE PRESS.** `_confirm_destructive` is for an action that LOSES
+## something — the work board's unassign-all, a real recall abandoning a trip in progress. A party still
+## standing in its home band's camp has spent no travel and abandoned no haul, and re-launching it is
+## one press of the same footer button, so a modal there is ceremony over a decision the player can
+## simply re-make. The bulk `Recall all` keeps its single confirm regardless: it acts over a MIXED set,
+## where the prompt is the only place the whole scope is stated.
 func confirm_recall_expedition(exp: Dictionary) -> void:
+    if _band_labor.party_cancels_in_camp(exp):
+        _on_recall_expedition_pressed(exp)
+        return
     var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
     var label := _herd_label_for_id(String(exp.get("expedition_target_herd", "")).strip_edges()) \
         if mission == HudExpeditionVocab.EXPEDITION_MISSION_HUNT \
@@ -2254,6 +2300,7 @@ func _close_party_compose() -> void:
     # The measured requirement belongs to ONE composing act — see `_party_compose_needed`. Carrying a
     # closed form's high-water mark into the next one would float a sheet that has not been measured.
     _party_compose_needed = 0.0
+    _party_compose_measured_box = Vector2.ZERO
     # Explicitly, as well as through the render below: `rerender()` is a no-op with no panel or no
     # panel band, and a float outliving its sheet is the worst outcome available here.
     _party_compose_sheet = null
@@ -2265,8 +2312,17 @@ func _close_party_compose() -> void:
 ## Does the composed sheet have to leave the zone? **A MEASUREMENT, never a dock-edge test** —
 ## `_party_compose_needed` is what the parties column demanded the last time the zone actually held the
 ## sheet; the box is the zone the panel currently offers.
+##
+## **AN UNKNOWN BOX ANSWERS `false`, and that asymmetry is deliberate.** Floating is the drastic,
+## instantly-visible branch, so it has to be POSITIVELY justified — never taken on a guessed
+## `ZONE_FALLBACK_SIZE` that stands in for a box the panel has not laid out yet. The worst case of
+## staying inline is one clipped frame, which is what shipped for months and is strictly better than a
+## sheet leaping onto the map.
 func _party_compose_floats() -> bool:
-    return _party_compose_needed > _parties_zone_box().y + HudComposeVocab.COMPOSE_FLOAT_SLACK
+    var box := _parties_zone_box_known()
+    if box == Vector2.ZERO:
+        return false
+    return _party_compose_needed > box.y + HudComposeVocab.COMPOSE_FLOAT_SLACK
 
 ## Float `sheet` beside the panel card. Builds the float on first use — a session whose sheets always
 ## fit never makes one — and parents it on the HUD `CanvasLayer`, since a `RefCounted` cannot.
@@ -2303,6 +2359,14 @@ func compose_float() -> BandComposeFloat:
 ## and hand the sheet back into a box that then clips it — the oscillation this narrow rule removes.
 ## While floating, the latched requirement stands and the fork is re-decided against the live box, so a
 ## zone that GROWS (a dock change, a taller window) takes its sheet back on the very next render.
+##
+## **A READING TAKEN BEFORE THE COLUMN IS LAID OUT IS NOT RECORDED AT ALL.** The mark is a high-water
+## mark for one composing act (it must be, or the sheet hops back into the zone as a field clears —
+## a layout change under the player's hands), so a single bad reading latches until the sheet closes.
+## The two ways to take one are the two guards below: a zone box the panel cannot state yet, and a
+## column with no honest rect — a degenerate width shapes every autowrap `Label` at wrap width ZERO,
+## which is the same over-report by hundreds of px this function's own frame wait exists to avoid.
+## Skipping the frame costs one more `process_frame`; latching costs the rest of the composition.
 func _measure_party_compose() -> void:
     if _party_compose_measuring or _host == null:
         return
@@ -2316,12 +2380,36 @@ func _measure_party_compose() -> void:
     if not _party_compose_sheet.is_inside_tree() or _parties_zone_col == null \
             or not is_instance_valid(_parties_zone_col) or not _parties_zone_col.is_inside_tree():
         return
+    if not _party_compose_measurable():
+        return
     var needed: float = _parties_zone_col.get_combined_minimum_size().y
     if needed <= _party_compose_needed:
         return
     _party_compose_needed = needed
+    _party_compose_measured_box = _parties_zone_box_known()
     if _party_compose_floats():
         rerender()
+
+## May the deferred measurement be RECORDED this frame? Both terms are about whether a number taken now
+## could be honest at all, never about its size: the panel must be able to state the box the mark will
+## be compared against, and the parties column must have a laid-out rect (a zero/degenerate width is a
+## column the container has not sorted, which shapes autowrap labels at wrap width 0).
+func _party_compose_measurable() -> bool:
+    if _parties_zone_box_known() == Vector2.ZERO:
+        return false
+    return _parties_zone_col.size.x >= HudComposeVocab.COMPOSE_MEASURE_MIN_COLUMN_WIDTH
+
+## Drop the latched requirement when the parties zone's BOX changes — a dock move, a collapse, a window
+## resize. The mark answers "what did this sheet demand of THAT column", so carried across a box change
+## it is an answer to a question nobody asked: a mark latched in a 265px bottom dock would keep the
+## sheet floating in the 1055px left dock it was just moved into. Called from the zone builder, i.e.
+## every render, so it cannot be missed by a path that forgot to call it.
+func _note_parties_zone_box() -> void:
+    var box := _parties_zone_box_known()
+    if box == Vector2.ZERO or box == _party_compose_measured_box:
+        return
+    _party_compose_needed = 0.0
+    _party_compose_measured_box = box
 
 # ---- badges -----------------------------------------------------------------
 
@@ -2373,6 +2461,7 @@ func render_band(unit: Dictionary) -> void:
         _party_compose_open = false
         _party_compose_mission = ""
         _party_compose_needed = 0.0
+        _party_compose_measured_box = Vector2.ZERO
     # DEEP-COPY the subject: the panel band must NOT alias the selection's unit dict (the
     # selection path passes it in). The panel persists across selection changes, so it needs its
     # own stable copy — a later selection swap (or an in-place edit of the selection's unit dict)
@@ -2496,6 +2585,7 @@ func refresh_snapshot() -> void:
         _party_compose_open = false
         _party_compose_mission = ""
         _party_compose_needed = 0.0
+        _party_compose_measured_box = Vector2.ZERO
         _party_compose_sheet = null
         _dismiss_compose_float()
         return

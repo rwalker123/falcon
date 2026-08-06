@@ -624,13 +624,16 @@ func _build_expedition_panel(expedition: Dictionary) -> void:
     move_btn.pressed.connect(_targeting.begin_move_band)
     actions.add_child(move_btn)
     # Already homeward-bound: the button reads its state ("Returning", disabled) rather than a
-    # mysterious grayed-out "Recall". Otherwise it's an enabled "Recall" that folds the party home.
+    # mysterious grayed-out "Recall". Otherwise it takes the verb the SIM will honour — `Cancel` for a
+    # party still standing in its home camp, `Recall` for one in the field — off the same
+    # `BandPanelController.recall_verb`/`recall_tooltip` pair the parties zone's row and inspector read,
+    # so the three surfaces cannot disagree about one press.
     var returning := phase == HudExpeditionVocab.EXPEDITION_PHASE_RETURNING
     var recall_btn := Button.new()
-    recall_btn.text = "Returning" if returning else "Recall"
+    recall_btn.text = "Returning" if returning else _bandpanel.recall_verb(expedition)
     HudStyle.apply_button(recall_btn, "primary")
     recall_btn.tooltip_text = "Heading home — folds workers + provisions back on arrival." if returning \
-        else "Order the expedition home (folds workers + provisions back on arrival)."
+        else _bandpanel.recall_tooltip(expedition)
     recall_btn.disabled = returning
     recall_btn.pressed.connect(func() -> void: _bandpanel.confirm_recall_expedition(expedition))
     actions.add_child(recall_btn)

@@ -159,6 +159,24 @@ a delta carries only the newly appended rows, a full snapshot the whole retained
 accumulation belongs to the CONSUMERS (`EventDockPanel`, `TellingPanel`), each with its own retention
 and de-duplication. `WorldCache` must not grow a ring for it.
 
+## `pending_reveal_count` — the one field this decoder PROJECTS rather than copies
+
+`PopulationCohortState.pendingRevealX` / `pendingRevealY` are the tiles a party has observed and not
+yet reported. `population_to_dict` emits **their LENGTH, as `pending_reveal_count`, and neither
+array**.
+
+The client's only question of them is *"does this party still owe its home band a map report"* — the
+fourth term of the sim's cancel-in-camp test (`cancel_party_standing_in_camp` → `party_owes_a_report`,
+itself just `!pending_reveal.is_empty()`), which decides whether a recall reads **Cancel** or **Recall**
+(`band-city-panel.md`). The coordinates are a scout's ACCUMULATED reveals — hundreds of tiles per
+cohort per frame, every frame until it reports — so marshalling them into GDScript would carry that
+whole payload to answer a boolean.
+
+**A decoder that projects needs its reason written at the site**, which is why the comment sits with
+`is_expedition` / `home_band_entity` rather than here alone: the next reader's instinct on finding no
+`pending_reveal` key is to add the arrays. `0` is the honest reading for a resident band and for a
+party with nothing left to deliver.
+
 `population_to_dict` decodes two **Predators Phase 3** cohort keys (appended after `fodderStore` in
 the schema): `raid_radius` ← `cohort.raidRadius()` (a plain `uint` reach, `as i64` — like `work_range`,
 NOT a Scalar), the odd-r hex distance within which an aggressive carnivore herd raids this band's

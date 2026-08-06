@@ -413,7 +413,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // Scouting expedition (docs/plan_exploration_and_sites.md §2): a detached party is a
     // PopulationCohort tagged Expedition that flows through this same populations[] array as a
     // resident band, carrying discriminator fields. Default to false/"" so resident-band
-    // markers are unaffected. (The persistence-only pending-reveal fields stay undecoded.)
+    // markers are unaffected.
     let _ = dict.insert("is_expedition", cohort.isExpedition());
     let _ = dict.insert(
         "expedition_mission",
@@ -425,6 +425,18 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // cycler excludes expeditions. Bit-reinterpreted as i64 like `entity` above so the comparison
     // matches. Empty/0 for resident bands.
     let _ = dict.insert("home_band_entity", cohort.homeBandEntity() as i64);
+    // **THE LENGTH OF `pendingReveal{X,Y}`, NOT THE ARRAYS — this decoder PROJECTS here, and the
+    // reason is the payload.** The only question the client ever asks of those coordinates is "does
+    // this party still owe its home band a map report", the fourth term of the sim's cancel-in-camp
+    // test (`core_sim` `cancel_party_standing_in_camp` → `party_owes_a_report`, which is itself just
+    // `!pending_reveal.is_empty()`). The coordinates themselves are a scout's ACCUMULATED reveals —
+    // hundreds of tiles per cohort per frame, every frame until it reports — so marshalling them into
+    // GDScript would be that whole payload carried to answer a boolean. `0` for a resident band and
+    // for a party with nothing left to deliver.
+    let _ = dict.insert(
+        "pending_reveal_count",
+        cohort.pendingRevealX().map_or(0, |coords| coords.len()) as i64,
+    );
     // Hunt expedition (PR 2, docs/plan_exploration_and_sites.md §2b): the herd a hunt party
     // follows (fauna_id string like "game_deer_57", mirrors LaborAssignment.faunaId); "" for a
     // scout expedition / normal band. `expedition_mission` also takes "hunt", `expedition_phase`
