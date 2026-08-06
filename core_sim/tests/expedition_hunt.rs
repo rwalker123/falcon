@@ -2645,3 +2645,46 @@ fn every_pre_launch_estimate_row_names_an_untargeted_bound() {
         );
     }
 }
+
+/// **A returning party whose home band cannot be resolved folds back where it stands, instead of
+/// haunting the map forever.**
+///
+/// The `Returning` arm branched on `near_home` alone, and `near_home` is `false` whenever the home
+/// band's live tile cannot be read — so an orphaned party failed the fold-back test **and** the
+/// `else if let Some(home)` retarget below it, leaving a live cohort parked on its tile for the rest
+/// of the game with its workers, pack and pelts held out of the economy. This is the exact shape a
+/// playtester reported: a recalled party that never folded back and whose marker never moved.
+///
+/// The arm's own comment already said what should happen — "no home band left to receive them means
+/// the haul is simply lost, exactly as the carried food is" — it was merely unreachable. `near_home`
+/// asks *"am I close enough to hand things over?"*; whether there is anyone to hand them **to** is a
+/// different question and now has its own answer.
+#[test]
+fn a_returning_party_with_no_home_band_left_does_not_haunt_the_map() {
+    /// Long enough that any plausible walk home would have finished — a party that is still here is
+    /// stuck, not travelling.
+    const TURNS_A_WALK_HOME_COULD_NEED: u32 = 12;
+
+    let mut app = deterministic_headless_app();
+    app.update();
+    let (herd_id, herd_pos) = pin_frozen_full_big_herd(&mut app);
+    // A home band that is not a band at all: the party's `home_band` resolves to nothing, which is
+    // what makes both `home_pos` and `near_home` unanswerable.
+    let orphaned_home = app.world.spawn_empty().id();
+    let party = spawn_hunt_party(&mut app, orphaned_home, herd_pos, &herd_id, PEAK_FLOOR);
+    app.world
+        .get_mut::<Expedition>(party)
+        .expect("the party exists")
+        .phase = ExpeditionPhase::Returning;
+
+    for _ in 0..TURNS_A_WALK_HOME_COULD_NEED {
+        drive_expedition_turn(&mut app);
+        if !app.world.entities().contains(party) {
+            return;
+        }
+    }
+    panic!(
+        "an orphaned Returning party is still on the map after {TURNS_A_WALK_HOME_COULD_NEED} \
+         turns — it has no home to walk to, so it must fold back where it stands"
+    );
+}

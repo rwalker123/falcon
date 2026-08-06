@@ -93,9 +93,10 @@ pub fn advance_band_movement(
 ///   larder, the trade goods onto `Expedition::carried_trade` and into the **home band's** store at
 ///   the next drop-off/fold-back. See [`settle_carried_trade`].
 /// - **Phase transitions**: `Outbound` + arrived (no `BandTravel`) → `AwaitingOrders` + a one-shot
-///   arrival feed line; `Returning` → chase the home band's live tile and, once within comm range,
-///   fold workers + leftover provisions back into the band and despawn (fold-back happens after the
-///   flush so the final findings report); `AwaitingOrders` waits (relaunched by `move_band`).
+///   arrival feed line; `Returning` → chase the home band's live tile and, once within comm range
+///   (or the moment that band cannot be resolved at all), fold back through
+///   [`fold_party_into_band`] and despawn (fold-back happens after the flush so the final findings
+///   report); `AwaitingOrders` waits (relaunched by `move_band`).
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn advance_expeditions(
     mut commands: Commands,
@@ -398,7 +399,16 @@ pub fn advance_expeditions(
                 // Wait — a `move_band` order flips the party back to Outbound (server-side hook).
             }
             ExpeditionPhase::Returning => {
-                if near_home {
+                // **There is nowhere left to walk to when the home band cannot be resolved**, so an
+                // orphan folds back where it stands rather than waiting for a rendezvous that can
+                // never happen. `near_home` answers "am I close enough to hand things over?" and
+                // `home_pos` answers "is there anyone to hand them to?"; reading only the first left
+                // an orphan permanently `false` on the fold-back **and** on the retarget below,
+                // stranding a live party on the map for the rest of the game with its workers,
+                // pack and pelts held out of the economy. The fold-back already handles a missing
+                // home (the haul is simply lost, exactly as its carried food is) — it was merely
+                // unreachable.
+                if near_home || home_pos.is_none() {
                     // Close enough to run home: fold workers + carried food back in (after the scout
                     // flush above, so the final findings reported), then despawn.
                     // **The other half of the haul settles into the SAME store as the meat.** Trade
@@ -408,27 +418,14 @@ pub fn advance_expeditions(
                     // the haul is simply lost, exactly as the carried food is.
                     let mut banked_trade = scalar_zero();
                     if let Ok(mut home) = bands.get_mut(expedition.home_band) {
-                        home.working += cohort.working;
-                        let leftover = cohort.stores.get(FOOD);
-                        if leftover > scalar_zero() {
-                            home.stores.add(FOOD, leftover);
-                        }
-                        banked_trade = settle_carried_trade(&mut expedition, &mut home);
-                        home.sync_size();
+                        banked_trade = fold_party_into_band(&cohort, &mut expedition, &mut home);
                     }
-                    event_log.push(CommandEventEntry::new(
+                    event_log.push(expedition_returned_event(
                         current_turn,
-                        CommandEventKind::ExpeditionReturned,
                         faction,
-                        format!(
-                            "Expedition folded back into the band at ({}, {})",
-                            exp_pos.x, exp_pos.y
-                        ),
-                        Some(format!(
-                            "status=returned trade_goods={:.2} expedition={}",
-                            banked_trade.to_f32(),
-                            entity.to_bits()
-                        )),
+                        exp_pos,
+                        banked_trade,
+                        entity,
                     ));
                     commands.entity(entity).despawn();
                 } else if let Some(home) = home_pos {
@@ -922,6 +919,78 @@ fn settle_carried_trade(expedition: &mut Expedition, home: &mut PopulationCohort
         home.stores.add(TRADE_GOODS, banked);
     }
     banked
+}
+
+/// **THE fold-back — the one settlement routine for a party that has come home**, shared by the
+/// `Returning` arm of [`advance_expeditions`] and by an at-home `recall_expedition`, which cancels a
+/// party where it stands rather than sending it on a round trip it never started.
+///
+/// Everything the party holds goes back into the band it was drawn from: its `working` returns to
+/// the band's pool, the leftover pack lands in the band's larder, and the trade half settles through
+/// [`settle_carried_trade`] into that **same** store. Returns what was banked in trade goods, for the
+/// feed line.
+///
+/// `party` is read, never written: the caller despawns it immediately after, so writing the pack back
+/// to zero would only be bookkeeping for a corpse. **Two call sites, one routine** — the two paths
+/// differ only in *when* they fire, never in what a homecoming pays.
+pub fn fold_party_into_band(
+    party: &PopulationCohort,
+    expedition: &mut Expedition,
+    home: &mut PopulationCohort,
+) -> Scalar {
+    home.working += party.working;
+    let leftover = party.stores.get(FOOD);
+    if leftover > scalar_zero() {
+        home.stores.add(FOOD, leftover);
+    }
+    let banked_trade = settle_carried_trade(expedition, home);
+    home.sync_size();
+    banked_trade
+}
+
+/// The `ExpeditionReturned` feed line a fold-back publishes, built in one place so the two call
+/// sites of [`fold_party_into_band`] cannot describe the same event differently.
+///
+/// **Its detail stays `status=returned` for a cancel too.** Nothing about the *world* differs
+/// between a cancel and a homecoming — the same workers, pack and pelts land in the same band — so a
+/// second status word here would encode *how the fold-back was triggered* into a field that
+/// otherwise reports *what happened*, and every reader would then have to know both. The cancel is
+/// named where it belongs, on the `ExpeditionRecalled` **ack** that answers the button press
+/// (`status=cancelled`), which is a fact about the order rather than about the world.
+pub fn expedition_returned_event(
+    turn: u64,
+    faction: FactionId,
+    at: UVec2,
+    banked_trade: Scalar,
+    entity: Entity,
+) -> CommandEventEntry {
+    CommandEventEntry::new(
+        turn,
+        CommandEventKind::ExpeditionReturned,
+        faction,
+        format!(
+            "Expedition folded back into the band at ({}, {})",
+            at.x, at.y
+        ),
+        Some(format!(
+            "status=returned trade_goods={:.2} expedition={}",
+            banked_trade.to_f32(),
+            entity.to_bits()
+        )),
+    )
+}
+
+/// **Whether this party still owes its band a report.** The one thing an out-of-band fold-back cannot
+/// do is flush the private [`Expedition::pending_reveal`] buffer to the faction map — that promotion
+/// lives inside [`advance_expeditions`], where the visibility ledger and the elevation field are in
+/// scope — so a party still holding observed tiles must take the ordinary `Returning` path, which
+/// flushes and *then* folds.
+///
+/// Food and trade are deliberately **not** part of this test: [`fold_party_into_band`] settles both
+/// exactly as the `Returning` arm does, so making a party standing in camp with a full pack wait a
+/// turn would reintroduce the round trip a cancel exists to remove.
+pub fn party_owes_a_report(expedition: &Expedition) -> bool {
+    !expedition.pending_reveal.is_empty()
 }
 
 /// A haul as feed-line prose — *"12 provisions"*, *"4.00 trade goods"*, or *"12 provisions and 4.00

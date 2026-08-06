@@ -38,24 +38,24 @@ use core_sim::{
     NO_FILL_TARGET, NO_FORAGE_SEASON,
 };
 use core_sim::{
-    build_headless_app, clear_config_overrides, denial_forecast, hunt_trip_forecast,
-    install_config_override, recapture_snapshot_in_place, run_turn, scalar_from_f32,
-    AgentAssignment, BandId, BandIdAllocator, CommandEventEntry, CommandEventKind, CommandEventLog,
-    CounterIntelBudgets, CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle,
-    CrisisArchetypeCatalogMetadata, CrisisModifierCatalog, CrisisModifierCatalogHandle,
-    CrisisModifierCatalogMetadata, CrisisTelemetry, CrisisTelemetryConfig,
-    CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, DiscoveryProgressLedger,
-    EquipmentConfigHandle, EspionageAgentHandle, EspionageCatalog, EspionageMissionId,
-    EspionageMissionKind, EspionageMissionState, EspionageMissionTemplate, EspionageRoster,
-    FactionId, FactionOrders, FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle,
-    FoodSiteRegistry, ForageRegistry, FrameSink, HerdRegistry, Improvement, LaborConfigHandle,
-    MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError, QueueMissionParams,
-    Scalar, SecurityPolicy, Settlement, SimulationConfig, SimulationConfigMetadata, SimulationTick,
-    SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    SnapshotOverlaysConfigMetadata, StartLocation, StartProfileLookup, StartProfilesHandle,
-    StartingUnit, StoredSnapshot, SubmitError, SubmitOutcome, Tile, TileRegistry, TownCenter,
-    TurnPipelineConfig, TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue,
-    WorldEpoch, FOOD,
+    build_headless_app, clear_config_overrides, denial_forecast, expedition_returned_event,
+    fold_party_into_band, hunt_trip_forecast, install_config_override, party_owes_a_report,
+    recapture_snapshot_in_place, run_turn, scalar_from_f32, AgentAssignment, BandId,
+    BandIdAllocator, CommandEventEntry, CommandEventKind, CommandEventLog, CounterIntelBudgets,
+    CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle, CrisisArchetypeCatalogMetadata,
+    CrisisModifierCatalog, CrisisModifierCatalogHandle, CrisisModifierCatalogMetadata,
+    CrisisTelemetry, CrisisTelemetryConfig, CrisisTelemetryConfigHandle,
+    CrisisTelemetryConfigMetadata, DiscoveryProgressLedger, EquipmentConfigHandle,
+    EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionKind,
+    EspionageMissionState, EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders,
+    FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle, FoodSiteRegistry, ForageRegistry,
+    FrameSink, HerdRegistry, Improvement, LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns,
+    PopulationCohort, QueueMissionError, QueueMissionParams, Scalar, SecurityPolicy, Settlement,
+    SimulationConfig, SimulationConfigMetadata, SimulationTick, SnapshotHistory,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
+    StartLocation, StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot,
+    SubmitError, SubmitOutcome, Tile, TileRegistry, TownCenter, TurnPipelineConfig,
+    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FOOD,
 };
 use sim_runtime::{
     commands::{
@@ -3419,6 +3419,13 @@ fn describe_collapse_window(low: Option<u32>, likely: u32, high: Option<u32>) ->
 /// Order an expedition home: set its phase to `Returning` (it chases the home band's live tile and
 /// folds its workers + leftover provisions back on arrival). Text form:
 /// `recall_expedition <faction> <expedition_band_id>`.
+///
+/// **A party standing in its home band's camp is CANCELLED, not sent on a round trip.** Recalling one
+/// that has not left used to publish `Returning` and then make the player wait a turn for
+/// `advance_expeditions` to fold back a party that had gone nowhere — the order read as a no-op right
+/// when the player was most sure it should be instant. The condition is positional and state-based,
+/// never "turn 0": the party is on the band's own tile and owes it no report
+/// ([`party_owes_a_report`]), which also covers a party recalled the moment it walks back into camp.
 fn handle_recall_expedition(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -3438,6 +3445,22 @@ fn handle_recall_expedition(
         expedition.phase = ExpeditionPhase::Returning;
     }
     let tick = app.world.resource::<SimulationTick>().0;
+    if let Some(at) = cancel_party_standing_in_camp(app, entity) {
+        push_command_event(
+            app,
+            tick,
+            CommandEventKind::ExpeditionRecalled,
+            faction,
+            format!("{} cancelled — the party never left camp", label),
+            Some(format!("status=cancelled expedition={}", entity.to_bits())),
+        );
+        // The world event beside the command ack: the fold-back is what actually happened, and it is
+        // the same line the `Returning` arm publishes when a party walks home.
+        let event = expedition_returned_event(tick, faction, at.position, at.banked_trade, entity);
+        app.world.resource_mut::<CommandEventLog>().push(event);
+        app.world.despawn(entity);
+        return;
+    }
     push_command_event(
         app,
         tick,
@@ -3446,6 +3469,48 @@ fn handle_recall_expedition(
         format!("{} recalled — returning home", label),
         Some(format!("status=returning expedition={}", entity.to_bits())),
     );
+}
+
+/// Where a cancelled party folded back, and what its pack was worth — the two things the feed line
+/// needs from a fold-back that happened outside the turn loop.
+struct CancelledInCamp {
+    position: UVec2,
+    banked_trade: Scalar,
+}
+
+/// Settle `entity` into its home band **now** if it is standing on that band's tile with nothing left
+/// to report, returning where it stood. `None` = it is in the field (or owes a report) and must take
+/// the ordinary `Returning` walk home.
+///
+/// **"At home" is exact co-location, not the comm range** the `Returning` arm folds back within: a
+/// party two tiles out is genuinely away, and folding it back from there would teleport its workers
+/// home rather than cancel an order that had not taken effect.
+fn cancel_party_standing_in_camp(
+    app: &mut bevy::prelude::App,
+    entity: Entity,
+) -> Option<CancelledInCamp> {
+    let mut expedition = app.world.get::<Expedition>(entity)?.clone();
+    if party_owes_a_report(&expedition) {
+        return None;
+    }
+    let party = app.world.get::<PopulationCohort>(entity)?.clone();
+    let position = app.world.get::<Tile>(party.current_tile)?.position;
+    let home_tile = app
+        .world
+        .get::<PopulationCohort>(expedition.home_band)?
+        .current_tile;
+    let home_position = app.world.get::<Tile>(home_tile)?.position;
+    if position != home_position {
+        return None;
+    }
+    let mut home = app
+        .world
+        .get_mut::<PopulationCohort>(expedition.home_band)?;
+    let banked_trade = fold_party_into_band(&party, &mut expedition, &mut home);
+    Some(CancelledInCamp {
+        position,
+        banked_trade,
+    })
 }
 
 /// Resolve a [`BandId`] to a faction's own [`Expedition`] (mirrors [`resolve_starting_unit_entity`]
@@ -7553,6 +7618,167 @@ mod tests {
             ExpeditionPhase::Returning,
             "recall_expedition must resolve the BandId the client sends and flip the phase; \
              reading it as entity bits resolves nothing and returns silently"
+        );
+    }
+
+    /// Launch a hunting party of `PARTY_ON_A_RECALLED_RAID` off the world's first resident band at
+    /// the first live herd, returning `(band, party, the band's working count before the launch)` —
+    /// the shared opening of both recall fixtures below, so the "cancelled in camp" and "walked home"
+    /// cases cannot diverge in how the party was raised.
+    fn launch_a_hunting_party(
+        app: &mut bevy::prelude::App,
+        faction: FactionId,
+    ) -> (Entity, Entity, Scalar) {
+        let band = {
+            let mut query = app
+                .world
+                .query_filtered::<Entity, (With<PopulationCohort>, With<ResidentBand>)>();
+            query
+                .iter(&app.world)
+                .next()
+                .expect("worldgen spawned a resident band")
+        };
+        let working_before = app
+            .world
+            .get::<PopulationCohort>(band)
+            .expect("the band has a cohort")
+            .working;
+        let herd_id = app
+            .world
+            .resource::<HerdRegistry>()
+            .herds
+            .first()
+            .expect("worldgen seeded a herd")
+            .id
+            .clone();
+        handle_send_hunt_expedition(
+            app,
+            faction,
+            None,
+            PARTY_ON_A_RECALLED_RAID,
+            herd_id,
+            None,
+            None,
+            None,
+        );
+        let party = {
+            let mut query = app.world.query_filtered::<Entity, With<Expedition>>();
+            query
+                .iter(&app.world)
+                .next()
+                .expect("the launch spawned a detached party")
+        };
+        (band, party, working_before)
+    }
+
+    /// A party small enough for any starting band to outfit, and large enough that its workers going
+    /// missing is visible in the band's `working` count.
+    const PARTY_ON_A_RECALLED_RAID: u32 = 2;
+
+    /// **Cancelling a party that has not left is a CANCEL, not a round trip.**
+    ///
+    /// The playtest report: launch a hunting expedition, press the party row's ✕ before advancing a
+    /// single turn, confirm — and nothing observable happens, because the recall only set
+    /// `Returning` and the fold-back waited on the next turn's `advance_expeditions`. A party
+    /// standing in its home band's own camp has gone nowhere, so the order that cancels it has
+    /// nothing to wait for.
+    ///
+    /// Asserted **without advancing a turn**, which is the whole claim: the party is gone and its
+    /// workers are back in the band the instant the command lands.
+    #[test]
+    fn a_party_recalled_in_camp_folds_back_without_waiting_a_turn() {
+        let mut app = build_world_app();
+        app.world
+            .insert_resource(CommandSenderResource(unbounded::<Command>().0));
+        let faction = FactionId(0);
+        let (band, party, working_before) = launch_a_hunting_party(&mut app, faction);
+        let party_band_id = *app
+            .world
+            .get::<BandId>(party)
+            .expect("a detached party is a band and carries a BandId");
+
+        handle_recall_expedition(&mut app, faction, party_band_id.0);
+
+        assert!(
+            !app.world.entities().contains(party),
+            "a party recalled where it stands must fold back at once, not next turn"
+        );
+        assert_eq!(
+            app.world
+                .get::<PopulationCohort>(band)
+                .expect("the band survives")
+                .working,
+            working_before,
+            "the cancelled party's workers must be exactly the ones drawn off at launch"
+        );
+        assert!(
+            app.world
+                .resource::<CommandEventLog>()
+                .iter()
+                .any(|entry| entry.kind == CommandEventKind::ExpeditionReturned),
+            "the fold-back publishes the same ExpeditionReturned line a party walking home does"
+        );
+    }
+
+    /// **A party recalled in the FIELD still walks home and folds back** — the cancel above must not
+    /// have become the only way a recall ever completes. Its workers rejoin the band on arrival, so
+    /// the two paths differ in when they settle and in nothing else.
+    #[test]
+    fn a_party_recalled_in_the_field_walks_home_and_folds_back() {
+        const TILES_FROM_CAMP: u32 = 5;
+        const TURNS_TO_WALK_HOME: u32 = 20;
+
+        let mut app = build_world_app();
+        app.world
+            .insert_resource(CommandSenderResource(unbounded::<Command>().0));
+        let faction = FactionId(0);
+        let (band, party, working_before) = launch_a_hunting_party(&mut app, faction);
+
+        // Put the party out on the map, past the comm range its fold-back needs.
+        let camp = app
+            .world
+            .get::<PopulationCohort>(party)
+            .expect("the party has a cohort")
+            .current_tile;
+        let camp = app
+            .world
+            .get::<Tile>(camp)
+            .expect("camp is a tile")
+            .position;
+        let out_there = app
+            .world
+            .resource::<TileRegistry>()
+            .index(camp.x + TILES_FROM_CAMP, camp.y)
+            .expect("a tile that many steps east of camp");
+        app.world
+            .get_mut::<PopulationCohort>(party)
+            .expect("the party has a cohort")
+            .current_tile = out_there;
+
+        let party_band_id = *app.world.get::<BandId>(party).expect("party BandId");
+        handle_recall_expedition(&mut app, faction, party_band_id.0);
+        assert!(
+            app.world.entities().contains(party),
+            "a party out in the field has a walk home to make first"
+        );
+
+        for _ in 0..TURNS_TO_WALK_HOME {
+            resolve_turn_with_auto_orders(&mut app);
+            if !app.world.entities().contains(party) {
+                break;
+            }
+        }
+        assert!(
+            !app.world.entities().contains(party),
+            "a recalled party must reach its band and fold back"
+        );
+        assert!(
+            app.world
+                .get::<PopulationCohort>(band)
+                .expect("the band survives")
+                .working
+                >= working_before,
+            "the returned party's workers rejoin the band's pool"
         );
     }
 

@@ -117,9 +117,9 @@ lump on return** (for a hunt party, at each `Delivering` drop-off / `Returning` 
 provisions** drain by `party × provision_upkeep_per_worker` (hunt lives off its kills; non-fatal at
 zero in v1) + opportunistic replenish; **(d) phase transitions** — `Outbound` + arrived (no `BandTravel`) →
 `AwaitingOrders` + one-shot `ExpeditionArrived` feed; `Returning` → chase the home band's live tile
-(refresh `BandTravel`) and, once within comm range, fold workers + leftover provisions back into the
-band + despawn (`ExpeditionReturned`, after the flush so the final findings report); `AwaitingOrders`
-waits.
+(refresh `BandTravel`) and, once within comm range **or the moment that band cannot be resolved at
+all**, fold workers + leftover provisions back into the band + despawn (`ExpeditionReturned`, after
+the flush so the final findings report — see "One fold-back, two moments"); `AwaitingOrders` waits.
 
 **Hunt verb (PR 2)** — `ExpeditionMission::Hunt { fauna_id, floor: f32, fill_target: u32 }` on the
 same party; **both numbers are chosen at launch** (`send_hunt_expedition <faction> <band>
@@ -440,7 +440,9 @@ branches on mission:
   low=… high=…` and **no `floor=`**. See "Denial is a MISSION, not a floor".
 - `recall_expedition <faction> <expedition_band_id>` — resolves the entity via
   `resolve_expedition_entity` (checks the `Expedition` component + faction), sets `phase = Returning`
-  (works for both verbs). Feed `ExpeditionRecalled`.
+  (works for both verbs). Feed `ExpeditionRecalled`. **A party standing in its home band's own camp
+  is CANCELLED on the spot** rather than sent on a round trip — see "One fold-back, two moments"
+  below.
 - **Retargeting a scout waypoint is just `move_band` on the expedition entity** — `handle_move_band`
   has a hook that re-arms a moved expedition to `Outbound` + `announced = false`.
 - New `CommandEventKind` variants: `ExpeditionSent`, `ExpeditionArrived`, `ExpeditionRecalled`,
@@ -918,6 +920,49 @@ readout is the collapse verdict, not a delivery ETA. Quoting "next delivery" for
 point is that nothing comes home would be the food-only blindness the mission reverses. The client
 half — the third launch verb, the range verdict line, the waste readout and the in-flight collapse
 line — is slice 2.
+
+## One fold-back, two moments
+
+`systems::expeditions::fold_party_into_band` is **the** settlement routine for a party that has come
+home: `working` back into the band's pool, the leftover pack into its larder, the trade half through
+`settle_carried_trade` into that same store, `sync_size`. Its companion
+`expedition_returned_event` builds the `ExpeditionReturned` line. Two callers, one routine:
+
+- **`advance_expeditions`'s `Returning` arm**, for a party that walked home; and
+- **`handle_recall_expedition`**, for a party recalled while standing on its home band's own tile.
+
+**The recall's condition is positional and state-based, never "turn 0"**: exact co-location with the
+band plus `party_owes_a_report(expedition) == false`. Recalling a party that had not moved used to
+publish `Returning` and then make the player wait a turn for a fold-back of a party that had gone
+nowhere, which read as the order doing nothing.
+
+- **"At home" is exact co-location, not the comm range** the `Returning` arm folds back within. A
+  party two tiles out is genuinely away, and settling it from there would *teleport* its workers home
+  rather than cancel an order that had not taken effect.
+- **"Owes a report" is about the map, not the pack.** The one thing an out-of-band fold-back cannot
+  do is promote `Expedition::pending_reveal` to the faction map — that flush needs the visibility
+  ledger and the elevation field, which only the system has — so a party still holding observed tiles
+  takes the ordinary `Returning` path, which flushes and *then* folds. Food and trade are deliberately
+  **not** part of the test: the shared routine settles both identically, so making a party standing in
+  camp with a full pack wait a turn would reintroduce the round trip the cancel removes.
+- **The cancel emits both the `ExpeditionRecalled` ack and the `ExpeditionReturned` line** — the ack
+  answers the button press (`status=cancelled`), the fold-back line reports what happened to the
+  world. The `ExpeditionReturned` detail stays `status=returned` in **both** cases: nothing about the
+  world differs between a cancel and a homecoming, so encoding *how the fold-back was triggered* into
+  a field that otherwise reports *what happened* would force every reader to know both.
+
+**An orphaned party folds back where it stands.** The `Returning` arm now tests
+`near_home || home_pos.is_none()`. `near_home` answers *"am I close enough to hand things over?"*;
+whether there is anyone to hand them **to** is a different question, and conflating them left a party
+whose `home_band` could not be resolved permanently `false` on the fold-back **and** on the
+`else if let Some(home)` retarget below it — a live cohort parked on its tile for the rest of the
+game, workers, pack and pelts held out of the economy. The arm's own comment already stated the
+intent ("no home band left to receive them means the haul is simply lost, exactly as the carried food
+is"); it was merely unreachable. Guards:
+`server::tests::{a_party_recalled_in_camp_folds_back_without_waiting_a_turn,
+a_party_recalled_in_the_field_walks_home_and_folds_back}` — the pair, so "cancel at once" cannot
+become the only way a recall ever completes — and
+`expedition_hunt::a_returning_party_with_no_home_band_left_does_not_haunt_the_map`.
 
 See Also: `docs/plan_exploration_and_sites.md` §2 (design), `docs/plan_denial_raid.md` (the third
 verb), "Wondrous Sites" (discovery rides the flushed tiles), "Visibility Systems" (the
