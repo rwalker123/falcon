@@ -1208,6 +1208,9 @@ func _ready() -> void:
 	await _save("band_panel_compose_hunt")
 	_report_compose_widths("band_panel_compose_hunt")
 	_assert_hunt_sheet_chart(true, "band_panel_compose_hunt")
+	# The tall side dock is where the sheet must NOT leave the zone — the other half of the fork the
+	# height-capped state below asserts. See `_assert_compose_in_zone`.
+	_assert_compose_in_zone("band_panel_compose_hunt")
 	_assert_unsampled_party_has_no_forecast()
 
 	# **THE SAME SHEET IN THE HEIGHT-CAPPED TOP DOCK** — the tier gate on the chart, and the only
@@ -1218,17 +1221,19 @@ func _ready() -> void:
 	_panel.set_dock(SIDE_TOP)
 	await _settle()
 	await _save("band_panel_compose_hunt_short")
-	# **THE FIT IS REPORTED HERE, NOT ASSERTED, and the measurement is why.** An OPEN parties compose
-	# sheet does not fit a height-capped horizontal dock at all: measured at 593px of a 265px box
-	# WITHOUT the chart — quarry row, presets, floor hint, party stepper, kit row, forecast and send,
-	# none of which this tier drops. That is a pre-existing property of opening the sheet in a T/B
-	# dock (no frame had ever rendered it there) and not the chart's doing; gating the chart is
-	# necessary and nowhere near sufficient. Asserting the fit here would fail on a defect this state
-	# exists to document, and skipping the assertion silently would hide it — so the extent is printed
-	# with the frame beside it.
+	# **THE FIT IS ASSERTED HERE NOW, AND IT IS ASSERTED IN THREE PLACES AT ONCE.** An open parties
+	# compose sheet does not fit a height-capped horizontal dock at all — measured at 641px of a 265px
+	# box WITHOUT the chart (quarry row, presets, floor hint, party stepper, kit row, forecast and
+	# send, none of which this tier drops), which is why this state used to REPORT its extent instead
+	# of asserting it. The sheet renders in `BandComposeFloat` there now, so the claim can be made —
+	# but only as a set: `_assert_zone_content_fits` alone passes TRIVIALLY once the sheet leaves the
+	# zone, and a float is only a fix if the overflow landed somewhere that is itself measured.
 	_report_zone_content_extent("band_panel_compose_hunt_short")
 	_report_compose_widths("band_panel_compose_hunt_short")
 	_assert_hunt_sheet_chart(false, "band_panel_compose_hunt_short")
+	_assert_zone_content_fits()
+	_assert_compose_float("band_panel_compose_hunt_short")
+	await _assert_float_leaves_the_map_clickable("band_panel_compose_hunt_short")
 	_panel.set_dock(SIDE_LEFT)
 	await _settle()
 	_assert_zones_within_bounds()
@@ -2827,12 +2832,137 @@ func _assert_unsampled_party_has_no_forecast() -> void:
 		not SourceForecast.hunt_trip_delivers(beyond)
 			and SourceForecast.hunt_forecast_line_bbcode(beyond, "Wild Boar") == "")
 
+## **WHERE THE COMPOSE SHEET CURRENTLY LIVES.** The sheet the parties zone cannot hold is rendered in
+## `BandComposeFloat` instead (a card on the HUD `CanvasLayer`, beside the panel), so every assertion
+## and measurement about that sheet has to follow it there. Pointed at `_panel` they would all go
+## VACUOUS the moment the float works — which is exactly the failure `_assert_compose_float` below
+## exists to make impossible for the fit claim, and this helper makes impossible for the rest.
+func _compose_surface() -> Node:
+	var float_card := _hud._bandpanel.compose_float()
+	if float_card != null and _hud._bandpanel.compose_is_floating():
+		return float_card
+	return _panel
+
+## **THE FIT CLAIM DOES NOT DISAPPEAR WITH THE SHEET.** `_assert_zone_content_fits` passes TRIVIALLY
+## once the compose sheet leaves the zone — an empty box fits anything — so a float that moved the
+## overflow somewhere unmeasured would look exactly like a fix. This is the other half: the sheet is
+## really gone from the zone, the zone really fits what is left, and the float itself fits the VIEWPORT
+## and clears the panel card it came from.
+##
+## Both rect claims are made in the `event_dock` inset idiom, negative control included: a
+## non-overlap test on two rects that never share a band is not a claim, so the vacuity guard fires on
+## the axis the two are NOT stacked along, and a live control first shows the very same `intersects`
+## test firing on these very rects when one is moved onto the other.
+func _assert_compose_float(state_name: String) -> void:
+	var floater: BandComposeFloat = _hud._bandpanel.compose_float()
+	if floater == null or not _hud._bandpanel.compose_is_floating():
+		push_error("band_panel_preview: %s — the compose sheet did NOT float, so nothing below is a claim" % state_name)
+		return
+	# (1) IT REALLY LEFT THE ZONE. Asked of the Send button's own meta, which every branch of this
+	# sheet renders and nothing else in the panel carries.
+	_assert_band_panel("%s — the composed sheet is GONE from the parties zone" % state_name,
+		_find_meta_control(_panel, HudWidgets.SEND_HUNT_CONFIRM_META) == null)
+	_assert_band_panel("%s — …and it is in the float, whole (its Send is there)" % state_name,
+		_find_meta_control(floater, HudWidgets.SEND_HUNT_CONFIRM_META) != null)
+	# (2) THE ZONE FITS WHAT IS LEFT — the same walk `_assert_zone_content_fits` makes, restated here
+	# with its number so a zone that merely stopped overflowing by luck is visible.
+	for host_variant in _find_zone_hosts(_panel):
+		var host: Control = host_variant
+		var extent := _zone_content_extent(host, host)
+		if extent <= 0.0:
+			continue
+		_assert_band_panel("%s — zone %s holds its remaining content (%.0fpx of a %.0fpx box)" % [
+			state_name, host.name, extent, host.size.y], extent <= host.size.y + ZONE_BOUNDS_TOLERANCE)
+	# (3) THE FLOAT FITS THE VIEWPORT. This is where the overflow went, so this is where it is measured.
+	var view := get_viewport().get_visible_rect()
+	var card := _panel.card_rect()
+	var box := floater.get_global_rect()
+	var over := _rect_overflow(box, view)
+	_assert_band_panel("%s — the float fits the viewport (float %s in %s, worst overflow %.0fpx)" % [
+		state_name, box, view, maxf(over.x, over.y)], over.x <= ZONE_BOUNDS_TOLERANCE and over.y <= ZONE_BOUNDS_TOLERANCE)
+	# …and it is holding its content rather than growing out of itself, the `AutoSizingPanel` lie
+	# `panel-framework.md` records: a card fitted too short still DRAWS at its content's size.
+	_assert_band_panel("%s — the float's card fits the float (%.0fpx of %.0fpx)" % [
+		state_name, floater.card().get_combined_minimum_size().y, box.size.y],
+		floater.card().get_combined_minimum_size().y <= box.size.y + ZONE_BOUNDS_TOLERANCE
+			or floater.card().get_combined_minimum_size().y > view.size.y)
+	# (4) IT NEVER OVERLAPS THE CARD IT CAME FROM — with the vacuity guard on the axis the two are not
+	# stacked along, and a live negative control on the same two rects.
+	var stacked_vertically: bool = box.position.y >= card.end.y or card.position.y >= box.end.y
+	var shares_other_axis: bool = box.position.x < card.end.x and card.position.x < box.end.x \
+		if stacked_vertically else box.position.y < card.end.y and card.position.y < box.end.y
+	if not shares_other_axis:
+		push_error(("band_panel_preview: %s — VACUOUS: the float and the panel card share no band on "
+			+ "either axis, so 'they do not overlap' claims nothing") % state_name)
+		return
+	var moved_onto_card := Rect2(card.position, box.size)
+	_assert_band_panel("%s — negative control: the SAME test fires with the float moved onto the card" % state_name,
+		moved_onto_card.intersects(card))
+	_assert_band_panel("%s — the float clears the panel card (float %s vs card %s)" % [
+		state_name, box, card], not box.intersects(card))
+
+## **THE PAIRED NEGATIVE, and without it the fork is only ever asserted in one direction.** A trigger
+## stuck ON is as wrong as one stuck off and every claim in `_assert_compose_float` would still pass
+## under it — the sheet would be whole, in a float, clear of the card, in a dock that has ample room
+## for it in the zone. This is the state that says the zone keeps the sheet it CAN hold.
+func _assert_compose_in_zone(state_name: String) -> void:
+	_assert_band_panel("%s — the zone HOLDS the sheet it has room for (no float)" % state_name,
+		not _hud._bandpanel.compose_is_floating()
+			and _find_meta_control(_panel, HudWidgets.SEND_HUNT_CONFIRM_META) != null)
+
+## **THE MAP STILL TAKES THE PRESSES BESIDE THE FLOAT.** `BandComposeFloat` is deliberately the card
+## and NOTHING more — no full-screen catcher — because the dock's sheet stays open through a map pick
+## and a catcher would eat the very click the quarry picker needs. That is a behavioural claim and a
+## PNG is pixel-identical either way, so it is driven through the real dispatch with `Viewport.push_input`,
+## exactly as `_assert_open_strip_reaches_the_map` drives the open strip. Reading the float's
+## `mouse_filter` back would only say what the node was configured as, not what the Viewport does with it.
+func _assert_float_leaves_the_map_clickable(state_name: String) -> void:
+	var floater: BandComposeFloat = _hud._bandpanel.compose_float()
+	if floater == null or not _hud._bandpanel.compose_is_floating():
+		push_error("band_panel_preview: %s — no float, so the click-through probe proves nothing" % state_name)
+		return
+	var box := floater.get_global_rect()
+	var failures: Array[String] = []
+	# PRECONDITION: the probe fires at all. The bare canvas beside the float — a full float width
+	# outboard of it, on the float's own rows — is map in the live client and decoration here.
+	var open_ground := Rect2(Vector2(box.end.x + FLOAT_PROBE_GAP, box.position.y),
+		Vector2(get_viewport().get_visible_rect().size.x - box.end.x - FLOAT_PROBE_GAP, box.size.y))
+	var reached := 0
+	for point in _rect_probe_points(open_ground):
+		if await _press_reaches_map(_canvas_to_window(point)):
+			reached += 1
+	if reached == 0:
+		failures.append("no press in the %s band beside the float reached _unhandled_input, so this probe proves nothing" % str(open_ground))
+	# THE CLAIM: the float eats its OWN rect and only its own.
+	for point in _rect_ring_probe_points(box):
+		if await _press_reaches_map(_canvas_to_window(point)):
+			failures.append("a press at %s on the float itself fell through to the map's input path" % point)
+			break
+	# …and one canvas pixel outboard of its leading edge is already map again.
+	for row in [box.position.y + PROBE_RECT_INSET, box.get_center().y, box.end.y - PROBE_RECT_INSET]:
+		var just_outside := Vector2(box.end.x + FLOAT_EDGE_PROBE_OFFSET, row)
+		if not await _press_reaches_map(_canvas_to_window(just_outside)):
+			failures.append("a press at %s, just outboard of the float, never reached the map's input path" % just_outside)
+			break
+	if failures.is_empty():
+		print("band_panel_preview: assert OK — %s the float eats its own rect and nothing else (%d/%d open-ground presses reached the map)" % [
+			state_name, reached, _rect_probe_points(open_ground).size()])
+		return
+	for failure in failures:
+		push_error("band_panel_preview: %s — %s" % [state_name, failure])
+
+## How far outboard of the float the open-ground probe band starts, and where the "one pixel out is
+## already map" samples sit. Both in canvas px; the second is deliberately just past the float's edge,
+## since the claim is about the float's own rect and not about some comfortable distance from it.
+const FLOAT_PROBE_GAP := 8.0
+const FLOAT_EDGE_PROBE_OFFSET := 3.0
+
 ## GUARD: the dock hunt sheet's floor CHART is gated on the zone having room — present at TALL, absent
 ## at SHORT, where the parties zone is height-capped and clips. **Both halves are asserted**: a gate
 ## that never fires and a gate stuck on are both green to the bounds assertion, since a clipped chart
 ## still sits inside the zone rect.
 func _assert_hunt_sheet_chart(want: bool, state_name: String) -> void:
-	var chart := _find_meta_control(_panel, HudWidgets.FLOOR_CHART_META)
+	var chart := _find_meta_control(_compose_surface(), HudWidgets.FLOOR_CHART_META)
 	var tier := _band_zone_tier_name()
 	if want and chart == null:
 		push_error("band_panel_preview: %s (%s tier) renders NO floor chart — the tier gate is stuck off" % [
@@ -2852,7 +2982,8 @@ func _assert_hunt_sheet_chart(want: bool, state_name: String) -> void:
 ## where it is clipped. A green bounds assertion says neither happened; only the numbers say by how
 ## much, which is what decides whether a shortened face was enough.
 func _report_compose_widths(state_name: String) -> void:
-	var picker := _find_meta_control(_panel, HudWidgets.POLICY_RUNG_META)
+	var surface := _compose_surface()
+	var picker := _find_meta_control(surface, HudWidgets.POLICY_RUNG_META)
 	# The rung's own meta rides the BUTTON; the grid that lays the three of them out is its
 	# grandparent (button → cell `MarginContainer` → grid), and the GRID is what can wrap.
 	var grid: Control = picker.get_parent().get_parent() as Control if picker != null else null
@@ -2861,7 +2992,7 @@ func _report_compose_widths(state_name: String) -> void:
 			state_name, grid.get_combined_minimum_size().x, grid.size.x,
 			(grid as GridContainer).columns if grid is GridContainer else -1,
 			grid.get_child_count()])
-	var chart := _find_meta_control(_panel, HudWidgets.FLOOR_CHART_META)
+	var chart := _find_meta_control(surface, HudWidgets.FLOOR_CHART_META)
 	if chart == null:
 		print("band_panel_preview: %s — no floor chart in this zone" % state_name)
 		return

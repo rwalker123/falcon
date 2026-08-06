@@ -42,6 +42,13 @@ collapsing onto its widest child. `NarrativeForkPanel` is that caller — 660px 
 a 169px content minimum, because its prose wraps — while `ComposeSheet` is the one that
 needed it (see `labor-ui.md` → "THE CARD IS AS WIDE AS ITS WIDEST ROW").
 
+**A caller that mounts fresh content must apply its nominal width BEFORE the frame it measures in.**
+`fit_width(0, 0)` is how: with no content measurement it can only resolve to `target_width`. The
+height a later `fit_to_content` reads is a function of the width the content was laid out at, so a
+card that spent that frame at its previous width (zero, on a first mount) reports the wrapping of a
+column that no longer exists — measured on `BandComposeFloat` as a card left 100px taller than its
+own content, which is the same lie as a card fitted too short, upside down.
+
 `_fitted_width` is why the two fits cannot disagree: `fit_to_content` re-asserts the card's
 width every pass, and re-asserting `target_width` there would silently undo `fit_width` on
 the next height fit.
@@ -63,7 +70,7 @@ assertions that pin it are in `labor-ui.md` → "THE HEIGHT CHROME IS THE HEADER
 
 | Script | Purpose |
 |--------|---------|
-| `ui/AutoSizingPanel.gd` | Shared helper for panels that expand to fit content — `fit_to_content` (height, ceiling `max_height`) and `fit_width` (width, ceiling `max_width`), both against the viewport |
+| `ui/AutoSizingPanel.gd` | Shared helper for panels that expand to fit content — `fit_to_content` (height, ceiling `max_height`) and `fit_width` (width, ceiling `max_width`), both against the viewport. Callers: the Inspector and `ui/hud/BandComposeFloat.gd` |
 ## HUD Panel Framework (Docked PanelCards)
 
 The HUD (`HudLayer.tscn`) owns the screen regions with one layout authority — a
@@ -231,7 +238,12 @@ when the stack actually overflows.
 `AutoSizingPanel` height math and the legend's absolute `PRESET_TOP_RIGHT`
 positioning that used to overlap the Victory panel). `StockpilePanel` and
 `VictoryPanel` are still plain `PanelContainer`s (correctly container-sized, but
-not yet cards). `AutoSizingPanel.gd` remains only for the Inspector.
+not yet cards). `AutoSizingPanel.gd` has **two** callers: the Inspector, and
+`ui/hud/BandComposeFloat.gd` — the parties compose sheet floated off the Band
+panel when its zone cannot hold it (`band-city-panel.md`). The float is the
+free-floating case by the test at the top of this file: its ceiling is the
+VIEWPORT, not a dock's remaining height, so `PanelCard` + `DockScrollFit` there
+would fight a container that does not exist.
 
 ---
 

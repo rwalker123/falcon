@@ -117,6 +117,44 @@ var _band_zone_tier: int = HudWorkVocab.BAND_ZONE_TIER_TALL
 ## keeps the party size / floor / forecast fields hidden until the mission decides them).
 var _party_compose_open: bool = false
 var _party_compose_mission: String = ""
+## The live PARTIES zone column, the parties twin of `_work_zone_host` — held so the deferred
+## measurement below can read what the zone's content demands off the REAL laid-out tree rather than
+## off a detached one. `HudWidgets.wrap_zone` anchors this column full-rect into the panel's zone host,
+## so what it demands is exactly what the host must hold.
+var _parties_zone_col: VBoxContainer = null
+## The compose sheet built by the current render, held so the measurement a frame later can tell that
+## the sheet it is measuring is still the one in the zone.
+var _party_compose_sheet: Control = null
+## **THE FLOAT'S TRIGGER, AND IT IS A MEASUREMENT — never the dock edge.** What the parties zone's
+## whole column demanded — head, party rows, open inspector strip AND the composed sheet — the last
+## time the sheet was rendered INSIDE it: the column's own combined minimum height. A short vertical
+## dock and a small window hit the same wall as a horizontal one, and an edge test misses both.
+##
+## **IT IS THE COLUMN'S MINIMUM, NOT THE SHEET'S OFFSET PLUS ITS MINIMUM, and the difference is not
+## cosmetic.** The footer is bottom-pinned by an `EXPAND_FILL` spacer, so the spacer absorbs exactly
+## the slack and `sheet_top + sheet_minimum == box height` holds BY CONSTRUCTION whenever the content
+## fits — the positional read is degenerate at the boundary and answered "2px over" on a column with
+## room to spare. A container's combined minimum has no such feedback: it is the sum the layout would
+## need, spacer contributing nothing.
+##
+## **IT IS MEASURED LIVE AND ONE FRAME LATE, because Godot has no synchronous layout.** A detached
+## control tree reports an autowrap `Label`'s minimum at a wrap width of ZERO — every word on its own
+## line — so a build-time measurement of this sheet over-reports by hundreds of pixels and would float
+## it in a side dock that holds it comfortably. `_measure_party_compose` therefore waits one
+## `process_frame` and reads the column the panel actually laid out.
+##
+## **IT IS A HIGH-WATER MARK for one composing act**, and it is reset by every path that ends that act
+## — `_close_party_compose`, a panel-band change, the panel losing its last band. The sheet grows as
+## the form is answered (a picked quarry adds the policy rungs, the party stepper, the kit row and the
+## forecast), and a mark that tracked every shrink would hop the sheet back into the zone the moment a
+## field cleared, which is a layout change under the player's hands.
+var _party_compose_needed: float = 0.0
+## One deferred measurement in flight at a time.
+var _party_compose_measuring: bool = false
+## The compose sheet floated off the zone (see `BandComposeFloat`). A node, so it hangs off `_host` —
+## a `RefCounted` cannot parent, the same reason `_confirm_destructive` parents its dialog there.
+## Built lazily on the first render that needs it, so a session that never overflows never makes one.
+var _compose_float: BandComposeFloat = null
 # Compose state for the send-expedition party stepper (workers to detach), preserved across the
 # resident band's per-snapshot allocation-panel re-renders.
 var _send_expedition_count: int = HudConst.WORKER_STEP
@@ -250,6 +288,16 @@ func _make_alloc_block() -> VBoxContainer:
 func _zone_box() -> Vector2:
     if _panel != null:
         var box: Vector2 = _panel.work_zone_size()
+        if box.x > 0.0 and box.y > 0.0:
+            return box
+    return HudWorkVocab.ZONE_FALLBACK_SIZE
+
+## The PARTIES zone's own box. Its HEIGHT is `_zone_box()`'s — every zone shares the card's one body
+## height — but the wide shell's parties flank is a FIXED width where the work board's column expands,
+## and the compose sheet is authored for, measured in and floated at THIS column, not that one.
+func _parties_zone_box() -> Vector2:
+    if _panel != null:
+        var box: Vector2 = _panel.parties_zone_size()
         if box.x > 0.0 and box.y > 0.0:
             return box
     return HudWorkVocab.ZONE_FALLBACK_SIZE
@@ -1406,6 +1454,9 @@ func _emit_cancel_order(band: Dictionary, scope: String) -> void:
 func build_parties_zone(band: Dictionary) -> VBoxContainer:
     var col := HudWidgets.make_zone_column()
     col.add_theme_constant_override("separation", HudWorkVocab.ZONE_BLOCK_SEPARATION)
+    # Held for the deferred compose-sheet measurement, which needs the zone's own laid-out rect to
+    # know where the footer ended up inside it (see `_party_compose_needed`).
+    _parties_zone_col = col
     var parties := _band_labor.band_parties(band)
     var menu := HudWidgets.build_section_menu([
         {"label": HudComposeVocab.PARTY_RECALL_ALL_FORMAT % parties.size(), "disabled": parties.is_empty(),
@@ -1560,8 +1611,23 @@ func _build_party_footer(band: Dictionary) -> VBoxContainer:
     var idle := _band_labor.effective_idle(band)
     var foot := HudWidgets.make_zone_block()
     if _party_compose_open and _party_compose_mission != "" and idle > 0:
-        foot.add_child(_build_compose_sheet(band, idle))
+        var sheet := _build_compose_sheet(band, idle)
+        _party_compose_sheet = sheet
+        # **THE ONE FORK, AND IT IS DECIDED BY A MEASUREMENT** (`_party_compose_needed` carries the
+        # whole rationale): the sheet the zone cannot hold is the SAME sheet, from the same builders in
+        # the same order, rendered in a card floated beside the panel instead of sliced by a
+        # `clip_contents` host. Nothing about the form changes — only which node it is parented into.
+        if _party_compose_floats():
+            _mount_compose_float(sheet)
+        else:
+            _dismiss_compose_float()
+            foot.add_child(sheet)
         return foot
+    # No sheet open (or no idle workers to compose one with) ⇒ no float. Every teardown path — the ✕,
+    # a cancel, a send, a panel-band change, the last idle worker leaving — reaches the footer builder,
+    # so the float dies here rather than on a list of conditionals that can miss one.
+    _party_compose_sheet = null
+    _dismiss_compose_float()
     var missions := HBoxContainer.new()
     missions.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     missions.add_child(_build_mission_launch_button(HudComposeVocab.COMPOSE_MISSION_SCOUT,
@@ -2156,7 +2222,77 @@ func _close_party_compose() -> void:
     _party_compose_mission = ""
     _clear_party_quarry()
     _targeting.cancel_pick_quarry()
+    # The measured requirement belongs to ONE composing act — see `_party_compose_needed`. Carrying a
+    # closed form's high-water mark into the next one would float a sheet that has not been measured.
+    _party_compose_needed = 0.0
+    # Explicitly, as well as through the render below: `rerender()` is a no-op with no panel or no
+    # panel band, and a float outliving its sheet is the worst outcome available here.
+    _party_compose_sheet = null
+    _dismiss_compose_float()
     rerender()
+
+# ---- the compose sheet's FLOAT (see `ui/hud/BandComposeFloat.gd`) --------------------------------
+
+## Does the composed sheet have to leave the zone? **A MEASUREMENT, never a dock-edge test** —
+## `_party_compose_needed` is what the parties column demanded the last time the zone actually held the
+## sheet; the box is the zone the panel currently offers.
+func _party_compose_floats() -> bool:
+    return _party_compose_needed > _parties_zone_box().y + HudComposeVocab.COMPOSE_FLOAT_SLACK
+
+## Float `sheet` beside the panel card. Builds the float on first use — a session whose sheets always
+## fit never makes one — and parents it on the HUD `CanvasLayer`, since a `RefCounted` cannot.
+func _mount_compose_float(sheet: Control) -> void:
+    if _host == null or _panel == null:
+        return
+    if _compose_float == null or not is_instance_valid(_compose_float):
+        _compose_float = BandComposeFloat.new()
+        _host.add_child(_compose_float)
+    _compose_float.mount(sheet, _panel.card_rect(),
+        BandComposeFloat.map_facing_side(_panel.get_dock()), _parties_zone_box().x)
+
+func _dismiss_compose_float() -> void:
+    if _compose_float != null and is_instance_valid(_compose_float):
+        _compose_float.dismiss()
+
+## Is the compose sheet currently floated? Read by `band_panel_preview`, which has to assert BOTH that
+## the sheet left the zone and that it fits the viewport beside the card.
+func compose_is_floating() -> bool:
+    return _compose_float != null and is_instance_valid(_compose_float) and _compose_float.is_floating()
+
+## The float node, or `null` if one was never needed. For the harness's rect assertions.
+func compose_float() -> BandComposeFloat:
+    return _compose_float
+
+## **MEASURE THE SHEET WHERE THE PANEL ACTUALLY PUT IT, ONE FRAME LATER.** Godot lays out through the
+## message queue, so nothing built during a render has a rect (or, for an autowrap `Label`, an honest
+## minimum height — a detached one shapes at a wrap width of ZERO and reports every word on its own
+## line). One `process_frame` is all it takes: by then the zone column has been sorted, the sheet has
+## its real width, and `get_combined_minimum_size()` re-shapes against it.
+##
+## Only the IN-ZONE render is measured. A floated sheet is measured at the float's own column, which is
+## never narrower than the zone's, so trusting it could report a height the zone would not reproduce
+## and hand the sheet back into a box that then clips it — the oscillation this narrow rule removes.
+## While floating, the latched requirement stands and the fork is re-decided against the live box, so a
+## zone that GROWS (a dock change, a taller window) takes its sheet back on the very next render.
+func _measure_party_compose() -> void:
+    if _party_compose_measuring or _host == null:
+        return
+    _party_compose_measuring = true
+    await _host.get_tree().process_frame
+    _party_compose_measuring = false
+    if not _party_compose_open or compose_is_floating():
+        return
+    if _party_compose_sheet == null or not is_instance_valid(_party_compose_sheet):
+        return
+    if not _party_compose_sheet.is_inside_tree() or _parties_zone_col == null \
+            or not is_instance_valid(_parties_zone_col) or not _parties_zone_col.is_inside_tree():
+        return
+    var needed: float = _parties_zone_col.get_combined_minimum_size().y
+    if needed <= _party_compose_needed:
+        return
+    _party_compose_needed = needed
+    if _party_compose_floats():
+        rerender()
 
 # ---- badges -----------------------------------------------------------------
 
@@ -2199,9 +2335,15 @@ func render_band(unit: Dictionary) -> void:
     if _panel == null or unit.is_empty():
         return
     # A quarry is chosen FOR a band (its travel time and useful party size are band-relative), so the
-    # cycler swapping the panel subject must not carry one across.
+    # cycler swapping the panel subject must not carry one across — and neither may the rest of the
+    # composing act: the party size, the mission and the MEASURED requirement that floated the sheet
+    # all belong to the band that was being composed for. Closed inline rather than through
+    # `_close_party_compose`, which re-renders, and this IS the render.
     if int(unit.get("entity", -1)) != int(_band_labor.panel_band().get("entity", -1)):
         _clear_party_quarry()
+        _party_compose_open = false
+        _party_compose_mission = ""
+        _party_compose_needed = 0.0
     # DEEP-COPY the subject: the panel band must NOT alias the selection's unit dict (the
     # selection path passes it in). The panel persists across selection changes, so it needs its
     # own stable copy — a later selection swap (or an in-place edit of the selection's unit dict)
@@ -2229,6 +2371,10 @@ func render_band(unit: Dictionary) -> void:
     _panel.set_cycler(index, _band_labor.player_bands().size())
     # `set_zones` above already flipped the panel to band-present; just make sure it is shown.
     _panel.set_shown(true)
+    # THE TRIGGER'S MEASUREMENT, taken a frame from now against the tree this render just handed over
+    # — see `_party_compose_needed`. Armed unconditionally: it costs one awaited frame and answers
+    # immediately when no sheet is open.
+    _measure_party_compose()
 
 ## The band's hex coordinates for the panel header — the ONE place they are resolved, because the two
 ## paths that reach this panel spell them DIFFERENTLY and used to render differently because of it.
@@ -2316,6 +2462,13 @@ func refresh_snapshot() -> void:
         _band_labor.set_panel_band({})
         _panel.set_band_present(false)
         _panel.set_shown(false)
+        # No band ⇒ no zones are rebuilt, so the footer builder's teardown never runs. The float is
+        # the one piece of this panel that lives OUTSIDE it, and it must go down with the panel.
+        _party_compose_open = false
+        _party_compose_mission = ""
+        _party_compose_needed = 0.0
+        _party_compose_sheet = null
+        _dismiss_compose_float()
         return
     render_band(_resolve_panel_band())
 

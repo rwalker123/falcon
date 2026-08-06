@@ -642,6 +642,14 @@ const COMPOSE_MISSION_DENY := "deny"
 ## missions in words beside their marks.
 const COMPOSE_MISSION_LABEL_DENY := "💀 Deny"
 
+## **HOW MUCH THE COMPOSE SHEET MAY OVERSHOOT THE PARTIES ZONE BEFORE IT LEAVES IT** (see
+## `BandComposeFloat` and `BandPanelController._party_compose_floats`). The requirement is summed from
+## per-control minimum sizes while the box is a laid-out rect, so the two can differ by a subpixel on a
+## sheet that genuinely fits exactly; one pixel of slack keeps a rounding difference from floating a
+## sheet the zone holds. It is deliberately not a design margin — a sheet two pixels too tall for a
+## `clip_contents` host is two pixels sliced, and it floats.
+const COMPOSE_FLOAT_SLACK := 1.0
+
 const COMPOSE_TITLE_SCOUT := "Setup a scouting party…"
 
 const COMPOSE_TITLE_HUNT := "Setup a hunting party…"
