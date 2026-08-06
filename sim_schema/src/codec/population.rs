@@ -305,9 +305,8 @@ fn create_populations<'a>(
                     bandId: cohort.band_id,
                     // THE RAID'S FLOOR — replaces the retired `expeditionHuntPolicy`.
                     expeditionFloor: cohort.expedition_floor,
-                    // THE RAID'S FILL TARGET, in whole animals (`0` = fill the pack), and which stop
-                    // the in-flight projection says will end this party's raid.
-                    expeditionFillTarget: cohort.expedition_fill_target,
+                    // WHICH STOP the in-flight projection says will end this party's raid.
+                    // (`expeditionFillTarget` is a retired `(deprecated)` slot — see `snapshot.fbs`.)
                     expeditionTripBound: expedition_trip_bound,
                     entity: cohort.entity,
                     home: cohort.home,

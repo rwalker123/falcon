@@ -810,10 +810,10 @@ const EXPEDITION_TRIP_LONG_VERDICT := "Away many turns — still delivering at t
 const EXPEDITION_TRIP_LONG_VERDICT_TRAVEL_FORMAT := "Away many turns — still delivering at the end of the forecast, after %d turns of travel."
 
 # ---- WHICH STOP ENDS THE TRIP (`docs/plan_hunt_through_combat.md` §5.2) -------------------------
-# A trip LENGTH alone cannot tell the player's two levers apart — "you come home on your fill target
-# in 4 turns" and "you reach the floor in 2 turns with the pack a third full" are different decisions
-# carrying the same kind of number — so the SIM names the bound and this layer only renders it. These
-# are `core_sim::HuntTripBound::as_str` keys, and the client never infers one from the numbers.
+# A trip LENGTH alone cannot say WHY the party turned for home — "the pack filled in 4 turns" and "you
+# reach the floor in 2 turns with the pack a third full" are different situations carrying the same
+# kind of number — so the SIM names the bound and this layer only renders it. These are
+# `core_sim::HuntTripBound::as_str` keys, and the client never infers one from the numbers.
 const TRIP_BOUND_KEY := "bound"
 # **`""` IS "NOT STATED", AND IT IS NOT `TRIP_BOUND_HORIZON`.** On a launched party it means *not
 # raiding* (a resident band, a scout, a party already walking a load home); on an estimate row it
@@ -821,7 +821,6 @@ const TRIP_BOUND_KEY := "bound"
 # `horizon`, by contrast, is the projection having run and found no stop.
 const TRIP_BOUND_NONE := ""
 const TRIP_BOUND_PACK_FULL := "pack_full"
-const TRIP_BOUND_FILL_TARGET := "fill_target"
 const TRIP_BOUND_FLOOR := "floor"
 const TRIP_BOUND_HERD_LOST := "herd_lost"
 const TRIP_BOUND_HORIZON := "horizon"
@@ -830,7 +829,6 @@ const TRIP_BOUND_HORIZON := "horizon"
 # second spelling of it beside the first would be the same fact twice.
 const TRIP_BOUND_CLAUSES := {
     TRIP_BOUND_PACK_FULL: "The pack fills; the herd never reaches your floor.",
-    TRIP_BOUND_FILL_TARGET: "You come home on your fill target; the herd never reaches your floor.",
     TRIP_BOUND_FLOOR: "The herd reaches your floor first — the party comes home part-loaded.",
     TRIP_BOUND_HERD_LOST: "The herd is wiped out before the party's load is made up.",
     TRIP_BOUND_HORIZON: "",
@@ -854,8 +852,8 @@ const TRIP_BOUND_CLAUSES := {
 # distinct facts: `floor` is the herd-side stop (the standing surplus is spent), `horizon` is the
 # projection running out with the party still empty-handed (it never killed anything — had it killed,
 # it would have delivered and this branch would not be taken), and `herd_lost` is the quarry dying
-# under a raid that never made up a load. `pack_full` / `fill_target` CANNOT reach this branch: both
-# require a load, and a load is a delivery.
+# under a raid that never made up a load. `pack_full` CANNOT reach this branch: it requires a load,
+# and a load is a delivery.
 #
 # Each entry carries the three faces of ONE refusal — the forecast LINE, the send button's face, and
 # the spelled-out REASON — so the button cannot say "too lean" over a line naming the party. Adding a
@@ -897,40 +895,14 @@ const HUNT_EMPTY_REFUSALS := {
     },
 }
 
-# ---- THE FILL TARGET — the party-side twin of the floor (§5.2) ----------------------------------
-# **`0` = NO TARGET, i.e. fill the pack**, which is what every raid did before the lever existed. The
-# sentinel is the sim's own `NO_FILL_TARGET`, and it is what a target at or above the pack's capacity
-# collapses to here: `raid_load` returns the untargeted pack in that case, so quoting a target the
-# raid would ignore would be a control that looks like a lever and is not — precisely the defect §5.1
-# is about.
-const NO_FILL_TARGET := 0
-# The floor says how deep to draw the herd; the fill target says how long you will wait.
-const FILL_TARGET_CONTROL_LABEL := "Bring home"
-const FILL_TARGET_OFF_LABEL := "Fill the pack"
-const FILL_TARGET_ON_LABEL := "Come home with"
-# The trailing note on each of the two states — the cost of the choice, in the unit the choice is
-# about. `≈` because the pre-launch turn count is a PROPORTION on the sim's own answer, not the sim's
-# answer itself (see `raid_target_turns`).
-const FILL_TARGET_TURNS_FORMAT := "≈%d turns hunting"
-# A raid the sim already bounds at one hunting turn has no shorter trip to ask for, so the control is
-# rendered DISABLED WITH ITS REASON rather than silently dropped — a dead control is always explained.
-const FILL_TARGET_NO_ROOM_NOTE := "This raid already comes home after one turn of hunting — there is no shorter trip to ask for."
-# The launched party's fill-target order, as a CLAUSE. It rides the merged `Orders:` row beside the
-# floor it is one sentence with (`BandDetailLines.EXPEDITION_ORDERS_ROW_FORMAT`) rather than standing
-# as a `Fill target:` row of its own: the parties inspector strip is height-capped and CLIPS, so half a
-# sentence must not cost a whole row there. `NO_FILL_TARGET` states "fills the pack" rather than
-# nothing at all — on a hunt party that is a real order, and the silence would read as a field the
-# client failed to show.
-const FILL_TARGET_ORDERS_CLAUSE_FORMAT := "fills %d %s"
-const FILL_TARGET_ORDERS_CLAUSE_NONE := "fills the pack"
-# **THE PRE-LAUNCH TURN COUNT THE SIM CANNOT GIVE.** `huntTripEstimates` is band-agnostic and samples
-# floor × party size only, so no row is ever a TARGETED trip; a third sampled axis would multiply an
-# already 40-row-per-herd table. The client therefore takes a PROPORTION on the sim's own untargeted
-# pair (`animals_taken` over `turns_to_fill`) rather than re-deriving the take model — see
-# `raid_target_turns` for why that is exact where it is used and conservative where it is not.
-# `RAID_TURNS_UNKNOWN` is the one case it refuses to answer: a horizon raid, which carries no turn
-# count to take a proportion of.
-const RAID_TURNS_UNKNOWN := 0
+# ---- RETIRED: the fill target, the party-side twin of the floor (§5.2) ---------------------------
+# A player-set "come home with N animals" stop shipped here and is GONE, sim and client alike (issue
+# #491). Trip length is `carry ÷ (engage_rate × stay_chance × body_mass)` — **party size cancels** —
+# so it is a species-and-kit constant, and this lever was the only thing that moved it. It existed to
+# escape the trips nobody wants (Wild Fowl 88 turns against Mammoth 1.1); that spread is a TUNING
+# problem and is tracked as one on #491, not a second dial for the player to hold. Every raid is now
+# the untargeted raid — the default the whole control collapsed to — so `send_hunt_expedition` closes
+# after the floor and the trip's bound can only be `pack_full` / `floor` / `herd_lost` / `horizon`.
 
 # THE SEND BUTTON'S FOUR FACES, owned by `style_send_hunt_button`. A trip that is a trap names the cost
 # (amber "armed") but is NEVER gated behind a confirm — the player is told, then trusted. Only the
@@ -3314,14 +3286,8 @@ static func quoted_party_note(forecast: Dictionary, workers: int, format: String
 ## (`hunt_estimate_row`); the launch command sends the player's exact one. Returns {available, denial,
 ## empty, animals, turns, food, long_raid, slow}: `available` false = the snapshot carries no estimate
 ## for this party size (a non-huntable herd, an older server → the caller shows no forecast at all).
-##
-## **`fill_target` IS THE PARTY-SIDE STOP** (§5.2), in whole animals, `NO_FILL_TARGET` for the
-## untargeted raid every caller sent before the lever existed. It is applied HERE and nowhere else, so
-## the readout box, the one-line banner, the Send button's face and the launch gate all describe the
-## SAME trip; every consumer that does not pass one gets a byte-identical answer to before.
 static func hunt_trip_forecast(band: Dictionary, herd: Dictionary, floor: float, workers: int,
-        grid_width: int, wrap_horizontal: bool,
-        fill_target: int = NO_FILL_TARGET) -> Dictionary:
+        grid_width: int, wrap_horizontal: bool) -> Dictionary:
     var estimates_variant: Variant = herd.get(HERD_TRIP_ESTIMATES_KEY, {})
     if workers <= 0 or not (estimates_variant is Dictionary):
         return {"available": false}
@@ -3342,8 +3308,6 @@ static func hunt_trip_forecast(band: Dictionary, herd: Dictionary, floor: float,
             and not bool(estimate.get("delivers_trade", false)):
         return {"available": true, "denial": true, "empty": false, QUOTED_PARTY_KEY: quoted_party}
     # **WHICH STOP ENDS THIS SAMPLED TRIP**, off the row rather than inferred from the numbers here.
-    # No row ever reads `fill_target` (the table is band-agnostic); the target branch below is what
-    # puts that key on a forecast, which is exactly the sim's own division of labour.
     #
     # **IT IS READ BEFORE THE EMPTY BRANCH BECAUSE THE EMPTY BRANCH IS WHAT NEEDS IT MOST** — an empty
     # raid is empty for one of three unrelated reasons and only the sim can tell them apart; see
@@ -3381,37 +3345,11 @@ static func hunt_trip_forecast(band: Dictionary, herd: Dictionary, floor: float,
     var wasted_food := float(estimate.get("wasted_food", 0.0))
     var killed := delivered_food + wasted_food
     var waste_pct := (wasted_food / killed) if killed > 0.0 else 0.0
-    # **THE TARGETED TRIP — a PROPORTION on the pair above, never a re-derivation of the take model.**
-    # The target binds only where it asks for less than the untargeted raid brings home; at or above
-    # that count `raid_load` hands the pack straight back, so the answer is the untargeted one and
-    # every reading below is byte-identical to a raid launched without a target.
-    var target_turns := raid_target_turns(fill_target, animals, hunt_turns)
-    if raid_target_binds(fill_target, animals):
-        # The payload scales with the count for the same reason the turns do: both are proportions of
-        # one greedy raid whose per-turn take is flat until the herd's own room starts to bind — and
-        # where the room binds first, the trip ends on the FLOOR and this branch is not taken.
-        var share := float(fill_target) / float(animals)
-        delivered_food *= share
-        delivered_trade *= share
-        animals = fill_target
-        bound = TRIP_BOUND_FILL_TARGET
-        # A horizon raid carries no turn count to take a proportion of, so the target shortens a trip
-        # whose length stays unquantified: `long_raid` survives and the verdict says so in words.
-        if target_turns != RAID_TURNS_UNKNOWN:
-            hunt_turns = target_turns
-            long_raid = false
-            total = hunt_turns + travel
-            slow = warn_turns > 0 and total > warn_turns
     return {
         "available": true, "denial": false, "empty": false,
         QUOTED_PARTY_KEY: quoted_party,
         "animals": animals, "turns": total, "hunt_turns": hunt_turns, "travel": travel,
         "long_raid": long_raid, "slow": slow, TRIP_BOUND_KEY: bound,
-        # **THE COMPOSED TARGET IS DELIBERATELY NOT CARRIED HERE.** `bound` already says whether it
-        # bound, which is the only thing any reader asks; echoing the raw number back would make a
-        # target at or above the haul produce a forecast that DIFFERS from the untargeted one in a
-        # field nobody reads — and that identity, held whole, is what makes the slice safe to land
-        # (§5.2). It is asserted as a whole-dictionary comparison for exactly that reason.
         # The delivered PAYLOAD in food — what the party actually LANDS (a partial for a small party),
         # straight from the sim's forward-simulated raid, NOT animals × food_per_animal (which counts the
         # whole kill and overstates a partial). It may be 0 on an inedible quarry, whose whole payload
@@ -3419,96 +3357,6 @@ static func hunt_trip_forecast(band: Dictionary, herd: Dictionary, floor: float,
         # is rendered only when it is.
         "food": delivered_food, "trade": delivered_trade, "waste_pct": waste_pct,
     }
-
-## **DOES THIS TARGET ACTUALLY SHORTEN THE TRIP?** A target at or above what the untargeted raid
-## brings home is `raid_load`'s pack branch — *exactly* the untargeted raid — so it must read as no
-## target at all rather than as a lever that did nothing. `NO_FILL_TARGET` and a herd that hands back
-## no animals are the other two ways of asking for nothing.
-static func raid_target_binds(fill_target: int, untargeted_animals: int) -> bool:
-    return fill_target > NO_FILL_TARGET and untargeted_animals > 0 \
-        and fill_target < untargeted_animals
-
-
-## **THE HUNTING TURNS A TARGETED RAID SPENDS — a proportion on the sim's own untargeted pair.**
-##
-## The sim cannot preview a targeted trip: `huntTripEstimates` samples floor × party size only, and a
-## third axis would multiply an already 40-row-per-herd table. So the estimate row's `animals_taken`
-## over `turns_to_fill` IS the raid's average whole-animal rate, and `ceil(target ÷ rate)` is the
-## turns to reach the target — arithmetic on the sim's answer, never a second copy of the take model
-## (which is what four fixes this arc were spent undoing).
-##
-## **IT IS EXACT WHERE IT IS USED AND CONSERVATIVE WHERE IT IS NOT.** The raid's per-turn take is
-## `min(room above the floor, what the party carries, what it engages)`; the last two do not move as
-## the herd draws down, so while the room is not the binding arm the rate is FLAT and the average
-## equals it. Where the room does bind, the raid ends on the FLOOR before any target could fire —
-## `raid_target_binds` is false there — and the only residue is the last, partial turn of a floor-
-## bound raid, which drags the average DOWN and so can only over-state a target's turns. It never
-## promises a trip shorter than the one the sim will run.
-##
-## `RAID_TURNS_UNKNOWN` for a horizon raid: `turns_to_fill == 0` is "still delivering when the
-## projection ran out", which is not a length and cannot be divided.
-static func raid_target_turns(fill_target: int, untargeted_animals: int,
-        untargeted_turns: int) -> int:
-    if not raid_target_binds(fill_target, untargeted_animals):
-        return RAID_TURNS_UNKNOWN
-    if raid_is_unbounded(untargeted_turns):
-        return RAID_TURNS_UNKNOWN
-    return maxi(1, ceili(float(fill_target) * float(untargeted_turns) / float(untargeted_animals)))
-
-
-## **ONE HUNTING TURN'S ANIMALS**, and the step the fill-target control moves by — because the choice
-## the target expresses is *how long you will wait*, so a press of `+` is one more turn of hunting.
-## Same proportion as `raid_target_turns`, read the other way round; at least one animal, since a step
-## of zero is a control that cannot move.
-static func raid_animals_per_turn(untargeted_animals: int, untargeted_turns: int) -> int:
-    if untargeted_animals <= 0 or untargeted_turns <= 0:
-        return 0
-    return maxi(1, ceili(float(untargeted_animals) / float(untargeted_turns)))
-
-
-## Everything the fill-target control needs, composed from the UNTARGETED estimate row so the axis
-## does not move as the player drags along it: `{available, target, step, max, turns, quarry}`.
-## `available` false = there is no axis to offer (a raid with no priceable rate — a horizon raid, or
-## one the wire states no estimate for); `max <= step` is a raid the sim already bounds at one hunting
-## turn, which the control renders disabled-with-its-reason rather than dropping.
-##
-## **IT IS COMPOSED FROM THE UNTARGETED TRIP, NEVER THE TARGETED ONE.** `hunt_trip_forecast` rewrites
-## `animals`/`hunt_turns` once a target binds, so feeding it back here would shrink the axis under the
-## handle every time the player pressed `+`.
-static func raid_fill_target_model(band: Dictionary, herd: Dictionary, floor: float, workers: int,
-        grid_width: int, wrap_horizontal: bool, fill_target: int) -> Dictionary:
-    var untargeted := hunt_trip_forecast(band, herd, floor, workers, grid_width, wrap_horizontal)
-    if not hunt_trip_delivers(untargeted):
-        return {"available": false}
-    var animals := int(untargeted.get("animals", 0))
-    var turns := int(untargeted.get("hunt_turns", 0))
-    var step := raid_animals_per_turn(animals, turns)
-    if step <= 0:
-        return {"available": false}
-    var target := clamp_fill_target(fill_target, step, animals)
-    return {
-        "available": true,
-        "target": target,
-        "step": step,
-        "max": animals,
-        # The turns THIS row's state costs: the target's own count when one is set, else the whole
-        # untargeted raid's — so the two states of the control are priced in one unit.
-        "turns": raid_target_turns(target, animals, turns) if target != NO_FILL_TARGET else turns,
-        "quarry": herd_display_name(herd),
-    }
-
-
-## Fold a composed target back onto the axis the current party and floor actually offer. A target at
-## or above the untargeted haul IS the untargeted raid, so it collapses to `NO_FILL_TARGET` rather
-## than sitting there as a number the sim will ignore; below one step it rises to one hunting turn,
-## the shortest trip there is.
-static func clamp_fill_target(fill_target: int, step: int, untargeted_animals: int) -> int:
-    if fill_target <= NO_FILL_TARGET or untargeted_animals <= 0:
-        return NO_FILL_TARGET
-    if fill_target >= untargeted_animals:
-        return NO_FILL_TARGET
-    return maxi(fill_target, step)
-
 
 ## Render a `hunt_trip_forecast` result as its one-line BBCode readout — the three states in their
 ## three colors (cyan viable / amber too-slow / red returns-empty), or "" when the forecast isn't

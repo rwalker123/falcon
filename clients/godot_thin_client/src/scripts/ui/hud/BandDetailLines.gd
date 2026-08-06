@@ -333,16 +333,15 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
                     target_line += " (%d, %d)" % [tx, ty]
             lines.append(target_line)
     if is_hunt:
-        # The party's ORDERS on ONE row — where the raid stops as a fraction of the herd's capacity,
-        # and how many animals it waits for. Always on the wire for a hunt party, and every value is
-        # meaningful (including `0`), so the row is stated unconditionally rather than gated on being
-        # non-empty as the retired policy string was. **They were two rows and are one because they are
-        # one sentence, and because this producer's output lands in the parties zone's height-capped,
-        # clipping inspector strip** — see `DetailFormat.expedition_orders_line`.
-        # **A DENIAL PARTY IS NOT IN THIS BRANCH**: its `expeditionFloor` reads `0.0` and its
-        # `expeditionFillTarget` `0` because it HAS no such orders, so rendering either would put a
-        # lever on screen that the mission does not carry and the command grammar cannot express.
-        lines.append(DetailFormat.expedition_orders_line(unit_data, mission, target_herd))
+        # The party's ORDERS row — where the raid stops as a fraction of the herd's capacity. Always
+        # on the wire for a hunt party, and every value is meaningful (including `0`), so the row is
+        # stated unconditionally rather than gated on being non-empty as the retired policy string was.
+        # **It stays ONE row whatever it carries, because this producer's output lands in the parties
+        # zone's height-capped, clipping inspector strip** — see `DetailFormat.expedition_orders_line`.
+        # **A DENIAL PARTY IS NOT IN THIS BRANCH**: its `expeditionFloor` reads `0.0` because it HAS no
+        # such orders, so rendering the row would put a lever on screen that the mission does not carry
+        # and the command grammar cannot express.
+        lines.append(DetailFormat.expedition_orders_line(unit_data, mission))
     var phase := String(unit_data.get("expedition_phase", "")).strip_edges()
     if phase != "":
         lines.append("Phase: %s" % HudFormat.expedition_phase_label(phase))

@@ -65,8 +65,9 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   grew a field, the panel read it, nobody remembered the list — and **enumerating what to KEEP cannot
   be made safe by care, while enumerating what to ADD can**, the addition being the thing being
   written. Measured at the changeover, the list was already missing 13 more keys off a live cohort,
-  four of them read by the panel today (`fodder_store`, `raid_forfeit`, `expedition_fill_target`,
-  `expedition_trip_bound`) — leaks four through seven, unreported and waiting.
+  four of them read by the panel at the time (`fodder_store`, `raid_forfeit`,
+  `expedition_fill_target` — since retired with its lever, issue #491 — and `expedition_trip_bound`)
+  — leaks four through seven, unreported and waiting.
   - **The copy is SHALLOW, and that is the correct depth.** `duplicate(true)` would re-allocate
     `labor_assignments` / `stores` / `harvest` / `scout` per band per frame, the per-turn cost
     `turn-profiling.md` spent a pass removing. Those four sub-trees are re-stamped with their own deep
@@ -541,19 +542,15 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   it rather than forecasting a stale id) and cleared on open, cancel, send, and a panel-band change.
   **SCOUT is unchanged** — its only input is party size and nothing about it depends on the destination,
   so it has no ordering problem to fix and still picks its target tile on the map after the send.
-  **The HUNT form gained the FILL TARGET** (`docs/plan_hunt_through_combat.md` §5.2), under the party
-  stepper it is priced by, plus the trip's BOUND clause as its own quiet line beneath the one-line
-  forecast. **This zone is the SECOND launch site of `send_hunt_expedition`, and the arc's standing
+  **The HUNT form states the trip's BOUND** (`docs/plan_hunt_through_combat.md` §5.2) as its own quiet
+  line beneath the one-line forecast, rather than folded into it: THAT form is the one-liner already
+  carrying five facts, where the drawer's boxed readout folds the identical clause into its verdict —
+  both through `SourceForecast.trip_bound_clause`, so the two surfaces cannot phrase one stop
+  differently. **This zone is the SECOND launch site of `send_hunt_expedition`, and the arc's standing
   rule is that the two entry points cannot offer different orders** — a lever present on the herd
-  drawer's sheet and absent here would be the same defect as a lever that does nothing. It is the SAME
-  `HudWidgets.build_fill_target_control` over the same `SourceForecast.raid_fill_target_model`, so the
-  two sheets cannot quote different turn counts. The bound rides its own line rather than the forecast
-  line because THAT form is the one-liner already carrying five facts; the drawer's readout folds the
-  identical clause into its verdict instead, both through `SourceForecast.trip_bound_clause`.
-  `_send_hunt_fill_target` clears WITH the quarry (`_clear_party_quarry`, the pairing
-  `ComposeState.seed_hunt` makes on the other side): a target is a count of ONE herd's animals, and a
-  target outliving its quarry is one the next raid silently ignores. The design and the arithmetic
-  live in `labor-ui.md` → "The FILL TARGET".
+  drawer's sheet and absent here would be the same defect as a lever that does nothing. Since issue
+  #491 the FLOOR is the only order either sheet composes; the fill target that used to sit under the
+  party stepper here is retired, and why is in `labor-ui.md` → "RETIRED — the FILL TARGET".
 - **Destructive bulk actions ASK, and name what is SPARED** (`_confirm_destructive`, a
   `ConfirmationDialog` — a Window, like the `⋯` `MenuButton`'s popup, so opening either cannot move a
   zone's height). `Unassign all work` sends **`cancel_order <faction> <band> work`** — the signal
@@ -1024,15 +1021,16 @@ carry, so `floor = 0` still only kills what it can haul and there was nothing fo
 `ExpeditionMission::Deny` drops that arm (`EngagementStop::Never`); the party never stops engaging.
 
 **WHAT THE FORM DOES NOT CARRY IS ITS SPECIFICATION.** `_fill_denial_compose_sheet` renders
-QUARRY → PARTY → verdict → take → send and **no floor picker, no floor hint, no fill target, no crew
-preset and no max-useful cap**. Each absence has its own reason and none is an oversight:
+QUARRY → PARTY → verdict → take → send and **no floor picker, no floor hint, no crew preset and no
+max-useful cap**. Each absence has its own reason and none is an oversight:
 
-- A floor or a fill target would be a control the **command grammar cannot express**.
+- A floor would be a control the **command grammar cannot express**.
   `send_denial_raid <faction> <band> <party_workers> <fauna_id>` is closed at four tokens and a fifth
   is a hard parse error, which is why `Main.format_send_denial_raid` is its own builder rather than a
-  branch of `format_send_hunt_expedition` (whose two optional tails that parser would reject) and why
+  branch of `format_send_hunt_expedition` (whose optional floor tail that parser would reject) and why
   the HUD carries a **separate `send_denial_raid_requested` signal** with a payload that has nowhere
-  to put one.
+  to put one. (The hunt grammar is closed after its floor now too — see `labor-ui.md` → "RETIRED —
+  the FILL TARGET" — so the two differ by that one optional token rather than by two.)
 - There is **no `expedition_useful_cap` twin**. That cap exists because a hunting raid's delivered
   payload plateaus once the herd's surplus binds; a denial raid has no payload to plateau, and more
   hands always break the herd sooner.
@@ -1117,8 +1115,8 @@ herd the band can see and reach, in reach or not, and the hunt's rule is untouch
 Its goal is not to kill every animal: it is to push the herd below `ecology.collapse_fraction`, where
 growth zeroes and the decline is irreversible, and walk away. So a denial party deliberately publishes
 **no `expeditionProjectedDelivery` / `expeditionEtaTurns` / `expeditionTripBound` at all**, and its
-`expeditionFloor` (`0.0`) / `expeditionFillTarget` (`0`) are the mission reporting that it HAS no such
-lever — never values it chose. Every hunt-only readout is therefore gated on
+`expeditionFloor` (`0.0`) is the mission reporting that it HAS no such lever — never a value it
+chose. Every hunt-only readout is therefore gated on
 `HudExpeditionVocab.EXPEDITION_MISSION_HUNT` and not on "is a raid".
 
 `SourceForecast` holds the layer, a pure lookup into `HerdTelemetryState.denialEstimates`:
@@ -1462,8 +1460,8 @@ SHEET". Two consequences are this sheet's own:
   line, no counted refusal, no short-handed disable, every one of them being a figure priced for a
   raid the player is not sending. The Send stays live and plainly styled: the raid launches, only its
   length is unquotable. The hunt form takes the same treatment against
-  `hunt_trip_estimates_kit_id`, additionally dropping the fill target, the floor picker's metrics and
-  the demand-side party cap.
+  `hunt_trip_estimates_kit_id`, additionally dropping the floor picker's metrics and the demand-side
+  party cap.
 
 ### Frames
 
@@ -1550,15 +1548,15 @@ floating surface over the map during targeting, which §15 rules out for the com
   reason: **Unicode ships ONE deer**, so an emoji-only menu would render two roster species
   identically and defeat its own purpose as a chooser.
 
-### THE FILL TARGET MOVED ONTO `ComposeState` WITH THE QUARRY IT COUNTS
+### RETIRED — the per-quarry state the chooser used to have to clear
 
-`_send_hunt_fill_target` was a `BandPanelController` member cleared BESIDE the quarry by a
-`_clear_party_quarry` that had to remember to — so the one path that set a quarry **without** going
-through it, a re-pick on the map, carried the previous herd's target onto the new one, where the
-render's clamp folded it to a plausible smaller number rather than dropping it. That is exactly the
-"a lever that silently does nothing" defect §5.2 exists to remove, and the chooser makes re-picking
-easy, so it goes from obscure to reachable. It is `ComposeState._party_fill_target` now and **both**
-`set_party_quarry` and `clear_party_quarry` write it, so no caller can set one without the other.
+The quarry chooser landed beside a FILL TARGET, and that lever's own count was per-herd state
+`set_party_quarry` / `clear_party_quarry` had to drop on every re-pick or the next raid would silently
+ignore it. The lever is gone (issue #491), so those two mutators write the quarry alone. **The rule
+that put it on `ComposeState` in the first place stands and is why this is recorded**: per-quarry
+compose state belongs BESIDE the quarry on the model, not on `BandPanelController`, where a
+`_clear_party_quarry` had to remember to clear it and the one path that set a quarry without going
+through it — a re-pick on the map — carried the previous herd's value onto the new one.
 
 ### Frames
 
@@ -1568,9 +1566,9 @@ takes the identical control from the identical builder). The pair is deliberatel
 an **inedible** one: they differ in art, in name and in what the raid brings home, so a chooser that
 offered one herd twice could not pass. Six assertions ride it — the chooser exists, it lists exactly
 two, it marks exactly the composed one, driving the popup's REAL `id_pressed` re-targets the sheet,
-the switch drops the stale fill target, and the re-rendered row marks the herd now composed — plus the
-absence claim on `band_panel_compose_hunt`. Sabotage-verified on four DISJOINT mutations, each failing
-a different subset: rendering the chooser at one candidate fails the absence claim alone; keeping the
-fill target through `set_party_quarry` fails the target claim alone, naming the stale `5`; building
-the entries as plain items fails the two marking claims; and dropping `choose_quarry`'s re-render
-fails the re-rendered-row claim alone, naming the stale `Rabbit Warren`.
+and the re-rendered row marks the herd now composed — plus the absence claim on
+`band_panel_compose_hunt`. (A sixth assertion pinned the stale FILL TARGET being dropped on the
+switch; it went with the lever.) Sabotage-verified on three DISJOINT mutations, each failing a
+different subset: rendering the chooser at one candidate fails the absence claim alone; building the
+entries as plain items fails the two marking claims; and dropping `choose_quarry`'s re-render fails
+the re-rendered-row claim alone, naming the stale `Rabbit Warren`.

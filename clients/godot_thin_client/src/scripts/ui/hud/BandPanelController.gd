@@ -165,16 +165,12 @@ var _compose_float: BandComposeFloat = null
 # Compose state for the send-expedition party stepper (workers to detach), preserved across the
 # resident band's per-snapshot allocation-panel re-renders.
 var _send_expedition_count: int = HudConst.WORKER_STEP
-# Compose state for the hunt-expedition launch FLOOR — where the raid stops, `0.0..=1.0`.
+# Compose state for the hunt-expedition launch FLOOR — where the raid stops, `0.0..=1.0`. **This zone
+# is the SECOND launch site of `send_hunt_expedition`**, and the arc's standing rule is that the two
+# entry points cannot offer different orders: a lever present on one sheet and absent on the other is
+# the same defect as a lever that does nothing. The floor is the ONLY order a raid now carries — the
+# fill target that used to ride beside it is retired (issue #491) — so this is the whole of that state.
 var _send_hunt_floor: float = SourceForecast.DEFAULT_HARVEST_FLOOR
-# …and its party-side twin (`docs/plan_hunt_through_combat.md` §5.2): the whole animals the party
-# waits for, `SourceForecast.NO_FILL_TARGET` for the untargeted raid. **This zone is the SECOND launch
-# site of `send_hunt_expedition`**, and the arc's standing rule is that the two entry points cannot
-# offer different orders — a lever present on one sheet and absent on the other is the same defect as
-# a lever that does nothing. **It lives on `ComposeState` beside the quarry it counts**, not here: it
-# was a member of this controller cleared BESIDE the quarry by a `_clear_party_quarry` that had to
-# remember to, so the one path that set a quarry without going through it — a re-pick on the map —
-# carried the old herd's target onto the new one. Read through `_compose.party_fill_target()`.
 
 func _init(band_labor: HudBandLaborState, compose: ComposeState,
         selectioncard: SelectionCardController, disclosures: DisclosureController,
@@ -1894,8 +1890,8 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     confirm.set_meta(HudWidgets.SEND_HUNT_CONFIRM_META, true)
     if not trip_quoted:
         # **THE KIT-MISMATCH SHEET.** The table is not an answer for this party, so nothing derived
-        # from it renders: no fill target (its axis is the untargeted raid's payload), no forecast
-        # line, no bound clause, no empty-raid refusal. What DOES render is honest for any kit — the
+        # from it renders: no forecast line, no bound clause, no empty-raid refusal. What DOES render
+        # is honest for any kit — the
         # combat gate, composed from wire terms — plus the sentence naming whose numbers were
         # suppressed. The send stays live: the raid is perfectly launchable, we simply cannot quote
         # its length.
@@ -1906,19 +1902,6 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
             HudComposeVocab.KIT_TRIP_ESTIMATES_QUOTED_FORMAT)))
         SourceForecast.style_send_hunt_button(confirm, {}, "")
     else:
-        # **THE FILL TARGET, under the party it is priced by** (§5.2) — the same control and the same
-        # composed axis the herd drawer's expedition branch renders, so neither entry point can offer
-        # orders the other cannot. Its axis comes off the UNTARGETED raid, and the clamped value is
-        # written straight back so the control, the forecast and the launch payload are one number.
-        var fill_target_model := SourceForecast.raid_fill_target_model(band, herd, _send_hunt_floor,
-            _send_expedition_count, _band_labor.grid_width(), _band_labor.wrap_horizontal(),
-            _compose.party_fill_target())
-        _compose.set_party_fill_target(int(fill_target_model.get("target", SourceForecast.NO_FILL_TARGET)))
-        if bool(fill_target_model.get("available", false)):
-            sheet.add_child(HudWidgets.build_fill_target_control(fill_target_model,
-                func(new_target: int) -> void:
-                    _compose.set_party_fill_target(new_target)
-                    rerender()))
         # **THE TRIP READOUT — the herd drawer's boxed section, from the shared builder.** This zone
         # answered with a one-line bbcode sentence and a standalone bound clause beside it, which is
         # what let the two entry points drift: on a Wild Fowl flock the drawer laid out a full box
@@ -1926,7 +1909,7 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
         # in (`SourceForecast.hunt_trip_verdict`), so the standalone line went with the sentence —
         # keeping both would have printed one fact twice.
         var trip := SourceForecast.hunt_trip_forecast(band, herd, _send_hunt_floor, _send_expedition_count,
-            _band_labor.grid_width(), _band_labor.wrap_horizontal(), _compose.party_fill_target())
+            _band_labor.grid_width(), _band_labor.wrap_horizontal())
         if SourceForecast.hunt_trip_delivers(trip):
             HudWidgets.mount_trip_readout(sheet, trip, SourceForecast.herd_display_name(herd),
                 _send_hunt_floor)
@@ -1962,7 +1945,6 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
             "fauna_id": quarry_id,
             "fauna_label": SourceForecast.herd_display_name(herd),
             "floor": _send_hunt_floor,
-            "fill_target": _compose.party_fill_target(),
             # The kit the party walks out with, and the job default `Main` omits the token for.
             "kit_id": kit_id,
             "default_kit_id": default_kit,

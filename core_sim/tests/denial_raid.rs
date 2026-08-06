@@ -23,7 +23,7 @@ use core_sim::{
     ExpeditionPhase, FactionId, FaunaConfigHandle, GenerationId, HerdRegistry, HerdTelemetry,
     HuntingParty, LaborAllocation, LaborConfigHandle, LocalStore, MoraleCause, PopulationCohort,
     ResidentBand, SimulationConfig, SnapshotHistory, StartingUnit, TileRegistry, VisibilityLedger,
-    FOOD, NO_FILL_TARGET, STRIP_IT_BARE,
+    FOOD, STRIP_IT_BARE,
 };
 
 /// The reference denial party — four people, the same crew every raid fixture in
@@ -331,7 +331,6 @@ fn hunt(fauna_id: &str, floor: f32) -> ExpeditionMission {
     ExpeditionMission::Hunt {
         fauna_id: fauna_id.to_string(),
         floor,
-        fill_target: NO_FILL_TARGET,
     }
 }
 

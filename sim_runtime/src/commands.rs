@@ -219,11 +219,6 @@ pub enum CommandPayload {
         /// sim's default (`components::DEFAULT_ESCAPEMENT_FLOOR`); validated `0.0..=1.0` at the
         /// server boundary and **rejected**, never clamped.
         floor: Option<f32>,
-        /// **How many whole ANIMALS the party waits for** before turning for camp — the party-side
-        /// twin of `floor`. `None` (or `0`) = `components::NO_FILL_TARGET`, "fill the pack", which is
-        /// what the raid did before this field existed. Every count is legal, so unlike `floor` there
-        /// is nothing to reject: a target above what the pack holds is simply the untargeted raid.
-        fill_target: Option<u32>,
         /// **The kit the party is SENT OUT WITH** — an `equipment.json` roster id, resolved **once**
         /// at launch and carried for the party's whole life. `None` = the hunt job's default; an
         /// unknown id, or one whose `jobs` does not include `hunt`, fails the command with a reason.
@@ -232,9 +227,8 @@ pub enum CommandPayload {
     /// **Outfit and launch a DENIAL RAID** (`docs/plan_denial_raid.md`) — the third expedition verb,
     /// beside Scout and Hunt. Proto field 49.
     ///
-    /// **It carries no floor and no fill target, and cannot be given one.** A denial raid does not
-    /// clamp to carry, so a pack-fill stop is meaningless for it, and its escapement ceiling is the
-    /// herd's whole standing stock, so there is no floor to name — the order is *"this herd, this
+    /// **It carries no floor, and cannot be given one.** Its escapement ceiling is the herd's whole
+    /// standing stock, so there is no floor to name — the order is *"this herd, this
     /// many people"*. That is why it is its own payload rather than a flag on
     /// [`Self::SendHuntExpedition`]: there is nothing here to validate and nothing to tune.
     ///
@@ -245,8 +239,8 @@ pub enum CommandPayload {
         party_workers: u32,
         fauna_id: String,
         /// **The kit the raid is sent out with** — the one thing there *is* to say about a mission
-        /// that carries no floor and no fill target, because a kit is a property of the **party**
-        /// rather than of the mission. Same rule as [`Self::SendHuntExpedition::kit_id`].
+        /// that carries no floor, because a kit is a property of the **party** rather than of the
+        /// mission. Same rule as [`Self::SendHuntExpedition::kit_id`].
         kit_id: Option<String>,
     },
     ExportMap {
@@ -745,7 +739,6 @@ impl CommandEnvelope {
                 party_workers,
                 fauna_id,
                 floor,
-                fill_target,
                 kit_id,
             } => pb::command_envelope::Command::SendHuntExpedition(pb::SendHuntExpeditionCommand {
                 faction_id: *faction_id,
@@ -755,7 +748,9 @@ impl CommandEnvelope {
                 // Retired by the harvest floor arc; the number is immutable, the value unread.
                 policy: None,
                 floor: *floor,
-                fill_target: *fill_target,
+                // Retired with the fill target itself; same rule — the field number is immutable and
+                // the value is never written.
+                fill_target: None,
                 kit_id: kit_id.clone(),
             }),
             CommandPayload::SendDenialRaid {
@@ -1045,7 +1040,6 @@ impl CommandEnvelope {
                     party_workers: cmd.party_workers,
                     fauna_id: cmd.fauna_id,
                     floor: cmd.floor,
-                    fill_target: cmd.fill_target,
                     kit_id: cmd.kit_id,
                 }
             }

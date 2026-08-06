@@ -764,21 +764,22 @@ table PopulationCohortState {
   // hold, so the party runs repeated trips). 1.0 on a Scout party — it harvests nothing, and an
   // absent floor must NOT read as "take everything". Replaces the retired `expeditionHuntPolicy`.
   expeditionFloor:float = 1;
-  // --- THE RAID'S FILL TARGET (appended, docs/plan_hunt_through_combat.md §5.2) ------------------
-  // Hunt-mission expeditions only: HOW MANY WHOLE ANIMALS the party will wait for before turning for
-  // camp — the party-side twin of expeditionFloor. 0 = NO TARGET (fill the pack), which is what a
-  // Scout party and a resident band report and what the raid did before this field existed.
+  // --- THE RAID'S FILL TARGET: RETIRED (docs/plan_hunt_through_combat.md §5.2) -------------------
+  // It carried a player-set count of whole animals to come home with, below the pack's capacity.
+  // RETIRED because it was a control asking the player to work around a tuning error: a trip's
+  // length is `carry / (engage_rate × stay_chance × body_mass)`, in which PARTY SIZE CANCELS, so it
+  // was the only lever on what is otherwise a species-and-kit constant. The unplayably long trips it
+  // existed to escape (Wild Fowl 88 turns, Grey Wolf 76) are a TUNING problem — issue #491 — and
+  // once tuned there is nothing to escape.
   //
-  // It REPLACES the pack's capacity in the completion the raid already evaluates rather than adding
-  // a stop of its own, so a target at or above what the pack holds is exactly the untargeted raid.
-  // It exists because a raid's length was otherwise a species constant with no lever: the pack is
-  // measured in carry and the take in reach, so party size cancelled out of the trip length
-  // (8 hunters and 4 hunters both spent 31 turns on a Wild Fowl flock).
-  expeditionFillTarget:uint = 0;
-  // WHICH STOP WILL END THIS PARTY'S RAID — the core_sim HuntTripBound key ("pack_full" |
-  // "fill_target" | "floor" | "herd_lost" | "horizon"), off the same in-flight forward simulation
-  // expeditionEtaTurns comes from, so it answers for the party's REAL orders (its own floor and fill
-  // target) rather than for the band-agnostic pre-launch huntTripEstimates table.
+  // Kept as (deprecated) rather than deleted so the field id/slot stays reserved: a FlatBuffers
+  // vtable slot is positional, so deleting a field shifts every later one and silently re-points a
+  // client's decode (the fogMode / fogRaster precedent). The sim never writes it.
+  expeditionFillTarget:uint = 0 (deprecated);
+  // WHICH STOP WILL END THIS PARTY'S RAID — the core_sim HuntTripBound key ("pack_full" | "floor" |
+  // "herd_lost" | "horizon"), off the same in-flight forward simulation expeditionEtaTurns comes
+  // from, so it answers for the party's REAL orders (its own floor, against the herd's live stock)
+  // rather than for the band-agnostic pre-launch huntTripEstimates table.
   //
   // "" = not raiding: a resident band, a scout, or a party already walking a load home. That is a
   // different statement from "horizon", which means the projection ran and found no stop.
@@ -1855,22 +1856,20 @@ table HuntTripEstimate {
   // and the client interpolates between them for the outfit preview. Read these as marks on a dial,
   // never as the options on offer: the launch command accepts ANY floor in 0.0..=1.0.
   floor:float = 0;
-  // --- WHICH STOP ENDS THE TRIP (appended, docs/plan_hunt_through_combat.md §5.2) ---------------
-  // The core_sim HuntTripBound key: "pack_full" | "fill_target" | "floor" | "herd_lost" | "horizon".
-  // A trip LENGTH alone cannot tell the player's two levers apart — "you come home on your fill
-  // target in 4 turns" and "you reach the floor in 2 turns with the pack a third full" are different
-  // decisions carrying the same kind of number — so the sim names the bound and the client renders
-  // it. "horizon" is exactly the turnsToFill == 0 case; "herd_lost" also reports no completion turn.
+  // --- WHICH STOP ENDS THE TRIP (appended) ------------------------------------------------------
+  // The core_sim HuntTripBound key: "pack_full" | "floor" | "herd_lost" | "horizon".
+  // A trip LENGTH alone cannot say which bound it was — "you fill the pack in 4 turns" and "you
+  // reach the floor in 2 turns with the pack a third full" are different decisions carrying the same
+  // kind of number — so the sim names the bound and the client renders it. "horizon" is exactly the
+  // turnsToFill == 0 case; "herd_lost" also reports no completion turn.
   //
-  // EVERY ROW HERE IS THE UNTARGETED RAID, so no row reads "fill_target": a fill target is chosen at
-  // launch and this table is band-agnostic, sampling floor × party size only. A launched party's own
-  // bound is PopulationCohortState.expeditionTripBound.
+  // A launched party's own bound is PopulationCohortState.expeditionTripBound.
   bound:string;
 }
 
 // The sim's pre-launch estimate of a DENIAL RAID against this herd (docs/plan_denial_raid.md §1.1),
 // one entry per party size 1..=maxExpeditionPartySize. The denial twin of HuntTripEstimate, and it
-// carries NEITHER a floor NOR a fill target: the mission has no floor and no rate, which is the whole
+// carries NO floor: the mission has no floor and no rate, which is the whole
 // reason it is a mission rather than a number on the assign dialog. There is nothing to sample.
 //
 // THE HEADLINE IS turnsToCollapse, NOT A FOOD TOTAL. A raid's goal is to push the herd under

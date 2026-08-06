@@ -25,7 +25,7 @@ paths:
 | `ui/hud/RungGates.gd` | **All-`static`, stateless** shared RUNG-GATE layer — the one answer to "may this source climb its next rung, and if not, why not?". Extracted from `DrawerComposeController` (issue #412) when the compose sheet stopped being the only surface asking: the Band panel's WORK board marks a source that can climb, and the MAP marks it on the source's own marker — and a renderer must not depend on the HUD's compose controller. Shared-layers-BEFORE-controllers, the same measurement that produced `SourceForecast` and `HudWidgets`. Holds `forage_gates` / `hunt_gates` / `sow_site_refusal_reason` (moved VERBATIM, so the compose sheet's greying is unchanged), **`forage_gates_from_patch`** (the BARE-keyed twin for a raw wire patch — the RAW wire patch carries its keys BARE while the `tile_info` cross-ref `patch_`-prefixes every one of them, and this adapter is the ONE place that mapping is written down. **The prefixing is UNIFORM now (#442)** — `is_cultivated`/`cultivation_progress` were the last unprefixed strays on the cross-ref and are stamped `patch_`-prefixed like their siblings, so there is no longer a mixed convention to remember; reading a `tile_info` key without the prefix silently answers nothing (`hud_compose_vocab.gd` → `BARE_FORECAST_PREFIX` carries the long form)), and **`next_rung_ready`** — the READY test all three surfaces mark from — plus **`knowledge_gate_unmet`** (with its `RUNG_KNOWLEDGE_TRACKS` map: is THIS rung blocked on knowledge specifically? — the same `track < KNOWLEDGE_COMPLETE` test the gate builders make, asked on its own so the compose sheet can suppress that reason **structurally instead of by matching its words**; one caller, for the reason the "A KNOWLEDGE gate renders NO improvement control" section gives). **`wild_fodder_reason` broadens the file's remit** from "may this source climb its next rung" to "…and will the work it is doing actually pay out" — the wild forage patch's fodder credit, which the sim refuses to a faction without Foddering; see "The FODDER account can be real and unbankable at once". **STATELESS IS THE INVARIANT**: the one impurity, faction knowledge, is threaded in as a `knowledge` PARAMETER (`TopBarReadouts.faction_tracks(faction)`, the whole `{track: progress}` row `faction_knowledge` reads one key out of), never reached for. `next_rung_ready` requires all three of OFFERED (husbandry ceiling / `can_cultivate`-`can_sow` + willing ground), UNGATED (the gate functions answer nothing), and NOT-ALREADY-RUNNING (a patch mid-Cultivate is progress, not an opportunity), **highest rung first**. **That ordering is load-bearing on the PLANT web only** and its assertion needed care: `is_cultivated` retires Cultivate, so on a TENDED patch the two rungs are mutually exclusive and an ordering test there passes with the branches swapped (measured). `Sow` needs no prior patch, so a WILD patch on sowable ground is the one shape that clears both gates at once. On the animal web the rungs are always mutually exclusive — Tame retires at a full meter, Corral requires one — so ordering is genuinely not load-bearing there. `TopBarReadouts.faction_knowledge` deliberately does NOT call `RungGates.track`: dependency DIRECTION outranks the one-definition rule for a `float(d.get(k, 0.0))` |
 | `ui/hud/HarvestFloorChart.gd` | The compose sheet's **floor instrument** (`docs/plan_harvest_floor.md` §7.3) — a custom-drawn `Control` (the `FoodOutlookChart` / `ArrivalStrip` idiom) putting the standing stock, the draggable floor line, the projection and the food peak on ONE y-axis of `B/K`, with the `learn_multiplier` gradient rail down the right edge. **IT DRAWS; IT DOES NOT MODEL** — every number comes from `SourceForecast.floor_chart_model`, the projection walks the sim's own `regrowthSamples`, the peak is the argmax of those samples rather than `FLOOR_FOOD_PEAK` restated beside them, and negative samples are carried through as decline. It emits ONE signal, `floor_changed(floor, committed)`, and the second argument is the whole contract: a committed change rebuilds the compose controls (which frees this node), a live one must not, or the drag in flight dies with it — see "THE CHART" below. Keyboard-accessible (`FOCUS_ALL`; arrows / Shift-arrows / Home / End), because the floor is the primary control of the panel. Palette through `HudStyle` only — plus `DetailFormat.ecology_tier_color` for the standing-stock band and the **phase zones** behind it (`_draw_phase_zones`, the furthest-back layer: the source's own `collapseFraction` / `stressedFraction` as horizontal Collapsing/Stressed/Thriving bands, so the floor is dragged against the ecology rather than against a remembered number) |
 | `ui/hud/KitRoster.gd` | **All-`static`, stateless** shared KIT layer (`docs/plan_denial_raid.md`) — the read over `SubsistenceSection.kits` (`kits_for_job` / `kit_by_id` / `kit_display_name` / `display_name_for_id` / `resolve_selection`), the EFFECTIVE tier a given band gets under a given kit (`unequipped_tier` / `effective_tiers` / `kit_uses` / `condition_of` / `tier_hint`), the honesty test against the estimate tables' own kit ids (`estimates_quoted_kit` / `estimates_apply_to` / `estimates_quoted_note`), and the picker ROW itself (`build_kit_row`). **Its own file because the control appears on FOUR sheets across TWO controllers** — the Band panel's hunting-party and denial forms, the herd drawer's assign-hunters block, the land drawer's assign-foragers block — and a row that has to read identically in four places must have one implementation; the same measurement that produced `SourceForecast` and `HudWidgets`. The ROSTER is snapshot data and lives on `HudBandLaborState` (`kits()` / `default_kit_id(job)`, ingested by `Hud.update_kit_roster` off `Main`'s `kits` + the two default keys), threaded in as a parameter — this layer holds nothing. **Dependency direction: it reads `SourceForecast` / `HudWidgets` / `HudStyle` / the vocab leaves and none of them may read it back** (a `const` cycle between two `class_name`d scripts fails to load the whole client) |
-| `ui/hud/SourceForecast.gd` | **All-`static`, stateless** shared forecast/estimate layer (HUD decomposition, phase 2c-2 precursor) — the pure "what will this source give me?" math THREE consumers ask for: the drawer's compose blocks, the Band panel's WORK zone, and its PARTIES zone. Three families: POST-HOC `source_yield_readout` (what a worked source actually produced, incl. the ⚠ overdraw + overstaff/wasted notes) · PRE-COMMIT `forecast_inputs` / `max_useful_workers` / **`source_worker_cap_state`** (the CONFIRMED-row twin of that cap: `(forecast, workers, idle, useful_floor = 0) → {can_add, note}`, beside the ceiling it reads so a worked row and a compose stepper can never gate differently — the trailing floor is what makes that true rather than merely stated, and `herd_crew_floor` is its one definition; the *hold it after* crew is a floor on BOTH twins and therefore lives inside `max_useful_workers`, carried on the forecast as `hold_crew`) / `expected_yield` / `hunt_policy_ceiling` · THE RAID `hunt_trip_forecast` → `hunt_forecast_line_bbcode` / `hunt_trip_returns_empty` / `hunt_empty_refusal` / `hunt_empty_refusal_reason` / `expedition_party_cap` (the SUPPLY side — the band's idle workforce, and NOT `max_expedition_party_size`, which is the LAST RUNG of the estimate tables' sampled party axis rather than a rules cap) / `expedition_engage_crew` / `expedition_useful_cap` (the DEMAND side, untouched) / `expedition_policy_takes` / `style_send_hunt_button` (`style_send_hunt_button` styles a Button off the raid verdict, so it lives WITH the verdict). Plus **THE DENIAL RAID's own layer** (`docs/plan_denial_raid.md`) — `denial_estimate_row` (which, like `hunt_estimate_row`, reads the NEAREST sampled party through the shared `nearest_estimate_party` / `_row_for_nearest_party` pair, and carries `QUOTED_PARTY_KEY` out so `quoted_party_note` can name it) / `denial_forecast` / `denial_verdict` / `denial_turns_phrase` / `denial_verdict_text` / `denial_verdict_bbcode` / `denial_take_bbcode` / `denial_party_needed` / `denial_refusal_reason` / `denial_is_short_handed` / `denial_short_handed_reason` / `style_send_denial_button`, over the `DENIAL_VERDICTS` table — which is a lookup into `denialEstimates` and shares NONE of the raid vocabulary above: denial carries no floor, no fill target and no delivery ETA, so its readout is a collapse verdict and its Send disables in exactly one case (`denial_is_short_handed` / `denial_short_handed_reason` — the band cannot field the party the herd REQUIRES; a party the player under-sized still launches). The rationale lives in `band-city-panel.md` → "DENIAL is a third MISSION on the parties footer". Plus the shared leaves those need — `format_magnitude`/`format_signed`/`format_yield`/`extractive_take`, `band_tile`/`hex_distance_wrapped`, `herd_display_name`, `is_managed_hunt_source`, and the two one-off leaks into the read-only detail layer, `flora_basket_entries` / `husbandry_ceiling`. **WHY ITS OWN FILE:** the next phase lifts a `DrawerComposeController` out of `Hud.gd`, but this layer is called by the work + parties zones too, so it cannot travel with the drawer; pure injection was measured at **54 Callables** and a `_hud` back-ref would weld an already-pure layer to the god object (and the band-panel extraction would then need a SECOND back-ref to the same place). All three consumers depend on THIS instead. **STATELESS IS THE INVARIANT** — no node, no `_hud`, no snapshot cache; if a new function needs HUD state, pass it in. The one non-plain-value is the grid-wrap pair (`grid_width`, `wrap_horizontal`), threaded as EXPLICIT PARAMETERS through `hex_distance_wrapped` → `round_trip_travel_turns` → `hunt_trip_forecast` / `expedition_policy_takes` so a stale grid can never be captured; `HudLayer._hex_distance_wrapped` is a one-line pass-through supplying the pair off `_band_labor`, so there is ONE hex implementation (`DrawerComposeController` calls the module directly with the same pair). The **forecast vocabulary constants moved here with the math** (`LABOR_KIND_*` / `LABOR_HUNT_POLICIES` / `DEFAULT_HUNT_POLICY` / `SOURCE_KIND_*` / `FORECAST_*` / `MAX_USEFUL_*` / `HUNT_FORECAST_*` / `SEND_HUNT_*` / `HUSBANDRY_CEILING_*` …) and `HudLayer` **re-exports the still-used ones as aliases** (`const X = SourceForecast.X`, one commented block) rather than redefining them — ONE definition, and every HudLayer call site reads unchanged |
+| `ui/hud/SourceForecast.gd` | **All-`static`, stateless** shared forecast/estimate layer (HUD decomposition, phase 2c-2 precursor) — the pure "what will this source give me?" math THREE consumers ask for: the drawer's compose blocks, the Band panel's WORK zone, and its PARTIES zone. Three families: POST-HOC `source_yield_readout` (what a worked source actually produced, incl. the ⚠ overdraw + overstaff/wasted notes) · PRE-COMMIT `forecast_inputs` / `max_useful_workers` / **`source_worker_cap_state`** (the CONFIRMED-row twin of that cap: `(forecast, workers, idle, useful_floor = 0) → {can_add, note}`, beside the ceiling it reads so a worked row and a compose stepper can never gate differently — the trailing floor is what makes that true rather than merely stated, and `herd_crew_floor` is its one definition; the *hold it after* crew is a floor on BOTH twins and therefore lives inside `max_useful_workers`, carried on the forecast as `hold_crew`) / `expected_yield` / `hunt_policy_ceiling` · THE RAID `hunt_trip_forecast` → `hunt_forecast_line_bbcode` / `hunt_trip_returns_empty` / `hunt_empty_refusal` / `hunt_empty_refusal_reason` / `expedition_party_cap` (the SUPPLY side — the band's idle workforce, and NOT `max_expedition_party_size`, which is the LAST RUNG of the estimate tables' sampled party axis rather than a rules cap) / `expedition_engage_crew` / `expedition_useful_cap` (the DEMAND side, untouched) / `expedition_policy_takes` / `style_send_hunt_button` (`style_send_hunt_button` styles a Button off the raid verdict, so it lives WITH the verdict). Plus **THE DENIAL RAID's own layer** (`docs/plan_denial_raid.md`) — `denial_estimate_row` (which, like `hunt_estimate_row`, reads the NEAREST sampled party through the shared `nearest_estimate_party` / `_row_for_nearest_party` pair, and carries `QUOTED_PARTY_KEY` out so `quoted_party_note` can name it) / `denial_forecast` / `denial_verdict` / `denial_turns_phrase` / `denial_verdict_text` / `denial_verdict_bbcode` / `denial_take_bbcode` / `denial_party_needed` / `denial_refusal_reason` / `denial_is_short_handed` / `denial_short_handed_reason` / `style_send_denial_button`, over the `DENIAL_VERDICTS` table — which is a lookup into `denialEstimates` and shares NONE of the raid vocabulary above: denial carries no floor and no delivery ETA, so its readout is a collapse verdict and its Send disables in exactly one case (`denial_is_short_handed` / `denial_short_handed_reason` — the band cannot field the party the herd REQUIRES; a party the player under-sized still launches). The rationale lives in `band-city-panel.md` → "DENIAL is a third MISSION on the parties footer". Plus the shared leaves those need — `format_magnitude`/`format_signed`/`format_yield`/`extractive_take`, `band_tile`/`hex_distance_wrapped`, `herd_display_name`, `is_managed_hunt_source`, and the two one-off leaks into the read-only detail layer, `flora_basket_entries` / `husbandry_ceiling`. **WHY ITS OWN FILE:** the next phase lifts a `DrawerComposeController` out of `Hud.gd`, but this layer is called by the work + parties zones too, so it cannot travel with the drawer; pure injection was measured at **54 Callables** and a `_hud` back-ref would weld an already-pure layer to the god object (and the band-panel extraction would then need a SECOND back-ref to the same place). All three consumers depend on THIS instead. **STATELESS IS THE INVARIANT** — no node, no `_hud`, no snapshot cache; if a new function needs HUD state, pass it in. The one non-plain-value is the grid-wrap pair (`grid_width`, `wrap_horizontal`), threaded as EXPLICIT PARAMETERS through `hex_distance_wrapped` → `round_trip_travel_turns` → `hunt_trip_forecast` / `expedition_policy_takes` so a stale grid can never be captured; `HudLayer._hex_distance_wrapped` is a one-line pass-through supplying the pair off `_band_labor`, so there is ONE hex implementation (`DrawerComposeController` calls the module directly with the same pair). The **forecast vocabulary constants moved here with the math** (`LABOR_KIND_*` / `LABOR_HUNT_POLICIES` / `DEFAULT_HUNT_POLICY` / `SOURCE_KIND_*` / `FORECAST_*` / `MAX_USEFUL_*` / `HUNT_FORECAST_*` / `SEND_HUNT_*` / `HUSBANDRY_CEILING_*` …) and `HudLayer` **re-exports the still-used ones as aliases** (`const X = SourceForecast.X`, one commented block) rather than redefining them — ONE definition, and every HudLayer call site reads unchanged |
 
 ## THE HARVEST AXIS IS AN ESCAPEMENT FLOOR, NOT A STANCE (`docs/plan_harvest_floor.md`, issue #455)
 
@@ -1037,9 +1037,10 @@ whole purpose is to finish by emptying the range read on three surfaces at once 
 completes: `delivers ≈12 Red Deer over many turns`, `Away many turns — still delivering at the end of
 the forecast`, `Send Anyway (long raid)`. It now quotes a real total under
 `TRIP_BOUND_CLAUSES[herd_lost]` — *the herd is wiped out before the party's load is made up* — and the
-ordinary primary Send. Two consequences follow and both are correct rather than incidental: the FILL
-TARGET control appears (`raid_fill_target_model` needs a bounded length to price a step against), and
-the `Take everything` preset gains a rate in `expedition_policy_takes`.
+ordinary primary Send. The consequence that follows is correct rather than incidental: the
+`Take everything` preset gains a rate in `expedition_policy_takes`. (It also used to bring the FILL
+TARGET control back, that lever needing a bounded length to price a step against; the lever is retired
+— see "RETIRED — the FILL TARGET".)
 
 **That scan asks the RAID, not the total** (`raid_is_unbounded(cell_hunt_turns)`). Its skip used to
 test `turns_to_fill + travel <= 0`, so a horizon cell on a DISTANT herd read `delivered ÷ travel` — a
@@ -1390,7 +1391,6 @@ figure computed for a raid the player is not sending:
 | the take line / the payload rows | the row's `animals_killed` / `delivered_*` |
 | the repelled refusal, the short-handed disable | `denialPartyNeeded`, derived from those rows |
 | the trip's bound clause, the empty-raid refusal | the row's `bound` |
-| the FILL TARGET control | its axis is the untargeted raid's payload |
 | the floor picker's per-preset metrics | `expedition_policy_takes` is a reading of the same table |
 | the DEMAND-side party cap (`expedition_useful_cap`) | the payload's plateau is unknown for this kit |
 
@@ -1413,7 +1413,7 @@ a property of the PARTY rather than of the mission.
 
 **It is omitted when the choice equals the job default**, which is also what absent means to the
 parser — so a composition that never touched the picker emits the byte-identical line it emitted
-before the picker existed, exactly as `NO_FILL_TARGET` does. Both the choice and the default therefore
+before the picker existed. Both the choice and the default therefore
 ride the payload: the builder cannot know the default on its own (it is world data), and
 `HudLayer._emit_assign_labor` supplies it from `_band_labor.default_kit_id(kind)`.
 
@@ -3170,141 +3170,58 @@ patches were pushed into those frames at all.
 
 ---
 
-## The FILL TARGET — the party-side twin of the floor (`docs/plan_hunt_through_combat.md` §5.2)
+## RETIRED — the FILL TARGET, the party-side twin of the floor (issue #491)
 
-**A raid's length was a species constant with no lever, and it was reported from PLAY.** Eight hunters
-after a Wild Fowl flock read *"away ≈43 turns — 31 hunting, 12 travel"*, with no control that moved
-the number. The mechanism (§5.1): a raid ends when its pack fills, the pack is measured in **carry**
-and the take is measured in **reach**, so
+**A raid's length is a species-and-kit constant, and the lever that moved it is GONE.** This section
+records why it existed and why it is not coming back; the arc's other §5.2 half — the trip's BOUND —
+is live and is documented where it renders (`SourceForecast.TRIP_BOUND_CLAUSES`, the trip readout's
+verdict, `DetailFormat.expedition_trip_bound_line`).
+
+Reported from PLAY: eight hunters after a Wild Fowl flock read *"away ≈43 turns — 31 hunting, 12
+travel"*, with no control that moved the number. The mechanism (§5.1) is that a raid ends when its
+pack fills, the pack is measured in **carry** and the take in **reach**, so
 
 ```text
-turns_to_fill = per_worker_carry / (engage_rate × body_mass)
+turns_to_fill = carry / (engage_rate × stay_chance × body_mass)
 ```
 
-and **party size cancels out** — both the pack and the rate scale linearly with hunters. Four hunters
-and sixteen spend the same number of turns. The party stepper was not a weak lever here, it was
-**structurally not one**, which is why the fix is a new control rather than a re-tune.
+and **party size cancels out** — both the pack and the rate scale linearly with hunters. The party
+stepper was not a weak lever there, it was **structurally not one**.
 
-**The floor says how deep to draw the herd; the fill target says how long you will wait.** The two are
-one sentence, and that is why the escapement graph came BACK to the expedition sheet in the same pass:
-a target arriving beside a mystery would have been one dial and one blank.
+**The fix shipped was a second dial and the fix that stands is a re-tune.** The fill target ("come
+home with N animals") was the only player lever on that quotient, and what it was reaching for was an
+escape from the trips nobody wants — Wild Fowl at 88 turns against Mammoth at 1.1. That spread is a
+**tuning** problem in the species-and-kit terms above, and it is tracked as one on issue #491. Asking
+the player to hold a second dial to work around a config spread is the kind of lever this arc spent
+four fixes removing elsewhere.
 
-### The three surfaces, and what each one is authoritative for
+**What went, in one list:** `ComposeState._party_fill_target` / `_hunt_fill_target` and their
+accessors · `HudWidgets.build_fill_target_control` (+ `FILL_TARGET_META` / `_VALUE_META` /
+`_TURNS_META`) · `SourceForecast.raid_fill_target_model` / `clamp_fill_target` / `raid_target_binds` /
+`raid_target_turns` / `raid_animals_per_turn` / `NO_FILL_TARGET` / `RAID_TURNS_UNKNOWN` and the
+`FILL_TARGET_*` label vocabulary · `TRIP_BOUND_FILL_TARGET` and its clause (the sim retired the
+`HuntTripBound::FillTarget` variant with the lever, so no live row can carry it) · both compose
+sheets' `BRING HOME` block · the `fill_target` argument to `SourceForecast.hunt_trip_forecast` and to
+`Main.format_send_hunt_expedition`, and the `fill_target` key on the
+`send_hunt_expedition_requested` payload.
 
-| Surface | What it renders | Authority |
-|---|---|---|
-| compose sheet (drawer + dock) | `HudWidgets.build_fill_target_control` off `SourceForecast.raid_fill_target_model` | the client's PROPORTION on the sim's untargeted pair |
-| trip readout / one-line banner | the bound clause off `HuntTripEstimate.bound` | the sim, per sampled (floor × party) |
-| launched-party drawer + row tooltip | the `Orders:` row's fill-target clause + the bound clause off `PopulationCohortState.expeditionTripBound` | **the sim, for this party's REAL orders** |
+**`send_hunt_expedition <faction> <band> <party> <fauna_id> [floor]` is CLOSED after the floor**, like
+`send_denial_raid`'s four-token grammar: a second positional is an `UnexpectedArgument` parse error
+rather than an ignored token, so a stale emitter fails loudly. `cargo xtask command-guard` parses both
+launch sites' emitted lines with the real server parser, which is the only thing that can assert it.
 
-**The sim cannot preview a TARGETED trip, and that is a design constraint rather than a gap.**
-`huntTripEstimates` samples floor × party size only; a third axis would multiply an already
-40-row-per-herd table. So the client composes the pre-launch turn count as
-`ceil(target × turns_to_fill ÷ animals_taken)` — **a proportion on the sim's own answer, never a
-second copy of the take model.** That is the whole discipline: four fixes this arc were spent undoing
-client-composed numbers that disagreed with the sim, and this one takes the sim's numbers as its
-input rather than re-deriving them.
+**`DetailFormat.expedition_orders_line` KEPT ITS ROW and lost its target clause.** That row was merged
+out of two lines to buy the parties inspector strip 18px of its ~300px budget; it stays merged and now
+states the floor alone, because the budget is what forced the merge and a second orders row must not
+come back for the next order a party learns to carry. See `band-city-panel.md` → "The parties strip's
+SEVEN lines"; the worst-case strip still measures **294px of the 300px box** (the row count is
+unchanged — only the row's width fell).
 
-**It is exact where it is used and conservative where it is not, and both halves matter:**
-
-- the raid's per-turn take is `min(room above the floor, what the party carries, what it engages)`,
-  and the last two do **not** move as the herd draws down — so while the room is not the binding arm
-  the rate is FLAT and the average IS it;
-- where the room does bind, the raid ends on the **floor** before any target could fire, so
-  `raid_target_binds` is false and the proportion is never consulted;
-- the only residue is the last, partial turn of a floor-bound raid, which drags the average DOWN and
-  can therefore only OVER-state a target's turns. **It never promises a trip shorter than the sim
-  will run.**
-
-`ui_preview`'s `_assert_fill_target_arithmetic` pins the exact half directly — on a fixture whose rate
-divides evenly, asking for `k` turns' animals answers exactly `k` for every reachable `k`.
-
-**A HORIZON raid gets no control at all** (`turns_to_fill == 0` — still delivering when the projection
-ran out). That is not a length, so there is no rate to take a proportion of and no step to denominate
-the axis in; `raid_fill_target_model` answers `available: false` and the sheet renders nothing rather
-than a stepper it cannot price.
-
-### The identity is what makes it safe to land, and it is held WHOLE
-
-A target at or above what the raid already brings home **is** the untargeted raid — the sim's
-`raid_load` hands the pack straight back. So `hunt_trip_forecast` must answer with the *very same
-forecast*, not a nearly-equal one: `clamp_fill_target` folds such a target back to `NO_FILL_TARGET`
-on the control, and the forecast deliberately **does not carry the composed target on its result
-dict**, because echoing it back would make the two answers differ in a field nobody reads. The
-assertion is a whole-dictionary comparison for exactly that reason.
-
-### The control is a CHECKBOX plus a stepper, and the step is one HUNTING TURN
-
-"Do I set a target at all?" is a CHOICE with a real default (`NO_FILL_TARGET` — fill the pack, which
-is what every raid did before), so it wears the improvement control's `CheckBox`; "how many animals"
-is a value you operate, so it wears the sheet's stepper. **Folding them into one stepper whose zero
-read as a word would put the LONGEST trip at the low end of an ascending axis** — a dial that reverses
-on its last step.
-
-**The step is `SourceForecast.raid_animals_per_turn`, not one animal.** The roster spans a mammoth
-(one animal is most of a trip) and a fowl flock (thousands), so a ±1 stepper is unusable at one end
-and meaningless at the other, while a press that buys exactly one more turn of hunting is the same
-size of decision on every species — and it is the decision the control is FOR. The count still travels
-and still reads in whole animals, the unit the chart's own floor flag speaks.
-
-**`HudStyle.apply_checkbox` is not optional** — the stock CheckBox art is drawn for a light surface and
-vanishes against this console's. This control shipped one preview frame as a bare phrase with a gap
-where the box should be; the improvement control makes the same call for the same reason.
-
-### The escapement graph is BACK on the expedition sheet, and the crew targets are NOT
-
-The note that used to stand in `_build_herd_assign_controls` — *"an EXPEDITION gets no chart, a raid's
-trip is a forward simulation, not a per-turn drawdown"* — was written before the party had a stop of
-its own, and it is wrong on its own terms: a party's per-turn take is the same
-`min(room, carry, engagement)` a resident crew's is, so the curve IS the raid's. What the picture
-cannot show is where the trip ENDS, which is now the fill target's and the bound clause's job.
-
-**The crew targets stay off.** They answer *clear it now* and *hold it after*, and the second is a
-promise about a crew that STAYS — a detached party leaves. `_mount_crew_row` is handed an empty model
-on the expedition branch, which also correctly drops the build-dip note (a party builds nothing).
-
-**`live_hosts` stays empty on that branch, deliberately.** A raid's numbers are a lookup into a table
-sampled at five floors, so most of a drag moves nothing and the release rebuilds against the sample
-the player landed on. The drag itself still survives the live callback, which is the whole contract.
-
-### `""` on a bound is NOT `horizon`
-
-`expeditionTripBound` reads `""` for **not raiding** — a resident band, a scout, or a party already
-walking a load home — and that is a different statement from `"horizon"`, which means the projection
-ran and found no stop. Both render no clause, for reasons that are not interchangeable. On an estimate
-row `""` additionally means a snapshot that predates the field, which is why every raid fixture in
-`ui_preview` now carries a bound: a fixture omitting it is a herd no live server can produce, and
-every bound assertion would pass vacuously against it.
-
-**No estimate row ever reads `"fill_target"`** — the table is band-agnostic, so every row is the
-UNTARGETED raid. `hunt_trip_forecast`'s own target branch is what puts that key on a forecast, which
-mirrors the sim's division of labour exactly.
-
-### The command grammar is positional and append-only
-
-`send_hunt_expedition <faction> <band> <party> <fauna_id> [floor] [fill_target]`. The target rides
-AFTER the floor because the floor shipped first; the client always sends the floor, so the target
-never has to be padded past a missing one. **`NO_FILL_TARGET` OMITS the token**, so an untargeted raid
-emits the byte-identical line it emitted before the lever existed — the command-layer half of the
-identity above. The feed receipt names BOTH orders when both were given, because a receipt quoting one
-describes a mission the player did not order.
-
-### Frames
-
-`ui_preview`: **`fill_target_off`** (the control offered and clear — the untargeted raid's own turns) ·
-**`fill_target_one_turn`** (ticked, seeded at the shortest real trip, the verdict flipping from the
-pack clause to the target clause and the payload shrinking with it) · **`fill_target_three_turns`**
-(three steps up, three hunting turns) · **`fill_target_floor_bound`** (identical numbers, the OTHER
-stop — the frame that makes the bound a discriminator rather than a decoration) ·
-**`expedition_hunt_targeted`** (the launched party: `Orders: 50% left standing · fills 50 Red Deer` —
-the floor and the target are ONE row, `DetailFormat.expedition_orders_line`, because they are one
-sentence and the parties strip that also renders them is height-capped — and the sim's own clause under
-`Next delivery`). `herd_hunt_expedition` gained the chart,
-the control and the pack clause. The PNG-less blocks are where the arithmetic lives —
-`_assert_fill_target_arithmetic` (the exact-`k` walk, the at-capacity identity, the clamp) and
-`_assert_fill_target_command` (the token appended, and the untargeted line unchanged).
-
----
+**The escapement graph STAYS on the expedition sheet**, and the crew targets stay off it. The note
+that used to justify its absence — *"a raid's trip is a forward simulation, not a per-turn
+drawdown"* — was wrong on its own terms: a party's per-turn take is the same `min(room, carry,
+engagement)` a resident crew's is, so the curve IS the raid's. What the picture cannot show is where
+the trip ENDS, which is the bound clause's job alone now.
 
 ## The FIGHT is stated before the party leaves (`docs/plan_hunt_through_combat.md` §2.1 / §6.5)
 

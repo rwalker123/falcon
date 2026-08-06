@@ -361,7 +361,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         expedition_phase,
         expedition_target_herd,
         expedition_floor,
-        expedition_fill_target,
         home_band_entity,
         expedition_announced,
         pending_reveal_x,
@@ -374,7 +373,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             exp.phase.as_str().to_string(),
             exp.mission.target_herd().to_string(),
             exp.mission.hunt_floor(),
-            exp.mission.hunt_fill_target(),
             exp.home_band.to_bits(),
             exp.announced,
             exp.pending_reveal.iter().map(|p| p.x).collect(),
@@ -389,9 +387,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             // A resident band raids nothing, so it reports the floor that takes nothing — never `0`,
             // which would read as "take everything" if anything ever acted on it.
             NO_RAID_FLOOR,
-            // A band that raids nothing waits for no animals — `NO_FILL_TARGET` is "fill the pack",
-            // which is also the honest reading for a party that has no pack.
-            NO_FILL_TARGET,
             0,
             false,
             Vec::new(),
@@ -467,7 +462,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         pending_reveal_y,
         expedition_carried_trade,
         expedition_floor,
-        expedition_fill_target,
         max_expedition_party_size: expedition_levers.max_estimated_party,
         expedition_carry_cap,
         // Appended after every earlier-shipped field (append-only wire discipline; matches the

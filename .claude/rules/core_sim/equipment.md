@@ -227,16 +227,16 @@ rates to two herds in the same turn; only the *mask* varies per assignment.
 | verb | grammar |
 |---|---|
 | `assign_labor` | `… forage <x> <y> [floor] [species] <workers> [kit <id>]` / `… hunt <herd> [floor] <workers> [kit <id>]` |
-| `send_hunt_expedition` | `… <party_workers> <fauna_id> [floor] [fill_target] [kit <id>]` |
+| `send_hunt_expedition` | `… <party_workers> <fauna_id> [floor] [kit <id>]` |
 | `send_denial_raid` | `… <party_workers> <fauna_id> [kit <id>]` |
 
 **`kit <id>` is a NAMED token, order-independent within the tail.** Named rather than positional
-because `send_hunt_expedition` already carries two optional positional tails and a third would make
+because `send_hunt_expedition` already carries an optional positional tail and a second would make
 `floor` un-omittable; the space-separated `name value` shape is the repo's existing one
 (`queue_espionage_mission … owner 1 target 2 tier 2`, `counterintel_budget … reserve 40`) rather than
 an invented `kit=<id>`. It is also **the one token the denial raid's otherwise closed grammar
 admits** — a kit is a property of the *party*, not of the mission, so it is the only order a raid
-carrying no floor and no fill target still has to give.
+carrying no floor still has to give.
 
 **An unknown id, or one whose `jobs` does not cover the verb, is a command failure with a reason.**
 Never a silent fall back to the default: naming a kit is how the player *compares* tiers, so a quiet

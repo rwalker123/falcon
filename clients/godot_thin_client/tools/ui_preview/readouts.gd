@@ -206,24 +206,6 @@ static func detail_excerpt(bbcode: String, key: String) -> String:
 		return DETAIL_EXCERPT_ABSENT
 	return bbcode.substr(at, DETAIL_EXCERPT_CHARS)
 
-## **THE FILL TARGET the sheet is holding, in whole animals** — read off `FILL_TARGET_VALUE_META`, not
-## off any face. The control's value Label is `str(target)` and its checkbox's own TEXT flips between
-## the two states, so a text match would find one state and pass vacuously in the other; and the
-## Label does not exist at all while the box is clear, which is exactly what makes its absence the
-## honest reading of `NO_FILL_TARGET` rather than a lookup that failed.
-static func fill_target_value(root: Node) -> int:
-	var node := Q.find_meta_node(root, HudWidgets.FILL_TARGET_VALUE_META)
-	return int((node as Control).get_meta(HudWidgets.FILL_TARGET_VALUE_META,
-		SourceForecast.NO_FILL_TARGET)) if node != null else SourceForecast.NO_FILL_TARGET
-
-## The HUNTING TURNS the control prices its current state at — the untargeted raid's when no target is
-## set, the target's own when one is. `SourceForecast.RAID_TURNS_UNKNOWN` when the note is absent (a
-## horizon raid, which has no length to take a proportion of).
-static func fill_target_turns(root: Node) -> int:
-	var node := Q.find_meta_node(root, HudWidgets.FILL_TARGET_TURNS_META)
-	return int((node as Control).get_meta(HudWidgets.FILL_TARGET_TURNS_META,
-		SourceForecast.RAID_TURNS_UNKNOWN)) if node != null else SourceForecast.RAID_TURNS_UNKNOWN
-
 ## **THE PRE-LAUNCH FIGHT'S TWO LINES** (`docs/plan_hunt_through_combat.md` §2.1 / §6.5), each read by
 ## its OWN meta. Two readers rather than one, because the lines are composed from disjoint wire terms
 ## — `engageRate` against `hunterAttack` / `defense` / `durability` — so a single handle would let one

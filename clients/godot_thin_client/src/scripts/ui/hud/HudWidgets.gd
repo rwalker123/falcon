@@ -652,17 +652,6 @@ const CREW_TARGET_HOLD := "hold"
 ## meta-as-handle idiom exists to prevent.
 const CREW_TARGET_COUNT_META := "crew_target_count"
 
-## The FILL TARGET control (`docs/plan_hunt_through_combat.md` §5.2), as `Control` meta — the same
-## stable-handle reasoning: it is a checkbox whose own text FLIPS between its two states, so a harness
-## matching either face would find the control in one state and pass vacuously in the other.
-const FILL_TARGET_META := "fill_target"
-## …and the two live numbers on it, each as its own meta on the Label carrying it: the target in whole
-## animals, and the hunting turns that target costs. Both are read by `ui_preview`'s fill-target
-## assertions, and both are numbers inside a `str()`ed face — the exact shape `CREW_TARGET_COUNT_META`
-## exists for.
-const FILL_TARGET_VALUE_META := "fill_target_value"
-const FILL_TARGET_TURNS_META := "fill_target_turns"
-
 ## The READOUT's yields row, as `Control` meta — the same stable-handle reasoning as the three above.
 ## Its face is a flow of Labels at three sizes carrying live numbers, so there is no single `text` to
 ## match and a needle search would find whichever Label happened to hold it.
@@ -1095,117 +1084,6 @@ static func _trip_yield_rows(trip: Dictionary, quarry: String) -> Array[Dictiona
         float(trip.get("food", 0.0)), float(trip.get("trade", 0.0)), 0.0,
         SourceForecast.YIELD_ACCOUNT_NONE))
     return rows
-
-## **THE FILL TARGET — the party-side twin of the floor** (`docs/plan_hunt_through_combat.md` §5.2).
-## The floor says how deep to draw the herd; this says how long you will wait. It exists because a
-## raid's length was otherwise a species constant with NO lever: the pack is measured in carry and the
-## take in reach, so party size cancelled clean out of the trip length (§5.1).
-##
-## **A CHECKBOX PLUS A STEPPER, and the two shapes are load-bearing.** "Do I set a target at all?" is
-## a CHOICE with a real default (`SourceForecast.NO_FILL_TARGET` — fill the pack, which is what every
-## raid did before this control existed), so it wears the same `CheckBox` the improvement control
-## wears for the same kind of question; "how many animals" is a value you operate, so it wears the
-## sheet's own stepper. Folding them into one stepper whose zero read as a word would put the LONGEST
-## trip at the low end of an axis that otherwise ascends — a dial that reverses on its last step.
-##
-## **THE STEP IS ONE HUNTING TURN, NOT ONE ANIMAL** (`SourceForecast.raid_animals_per_turn`). The
-## roster spans a mammoth (one animal is most of a trip) and a wild fowl flock (thousands), so a ±1
-## stepper is unusable at one end and meaningless at the other, while a press that buys exactly one
-## more turn of hunting is the same size of decision on every species — and it is the decision this
-## control is FOR. The count still travels and still reads in whole animals: the unit the chart's own
-## floor flag speaks, so both levers read in one language.
-##
-## `model` is `SourceForecast.raid_fill_target_model`; `on_change` fires with the new target in whole
-## animals (`NO_FILL_TARGET` when the box is cleared).
-static func build_fill_target_control(model: Dictionary, on_change: Callable) -> VBoxContainer:
-    var block := VBoxContainer.new()
-    block.add_theme_constant_override("separation", HudComposeVocab.CREW_ROW_LABEL_SEPARATION)
-    block.set_meta(FILL_TARGET_META, true)
-    block.add_child(alloc_section_label(SourceForecast.FILL_TARGET_CONTROL_LABEL))
-    var target := int(model.get("target", SourceForecast.NO_FILL_TARGET))
-    var step := int(model.get("step", 0))
-    var ceiling := int(model.get("max", 0))
-    # A raid the sim already bounds at one hunting turn has no shorter trip to ask for. Disabled WITH
-    # ITS REASON rather than absent: a control that vanishes teaches nothing, and this one's absence
-    # would read as "this raid has no target lever" on a species where it plainly should.
-    var no_room := ceiling <= step
-    var line := HFlowContainer.new()
-    line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    line.add_theme_constant_override("h_separation", HudComposeVocab.CREW_ROW_SEPARATION)
-    line.add_theme_constant_override("v_separation", HudComposeVocab.CREW_ROW_SEPARATION)
-    var box := CheckBox.new()
-    box.button_pressed = target != SourceForecast.NO_FILL_TARGET
-    box.disabled = no_room
-    box.text = SourceForecast.FILL_TARGET_ON_LABEL if box.button_pressed \
-        else SourceForecast.FILL_TARGET_OFF_LABEL
-    # **WITHOUT THIS THE BOX IS NOT THERE** — the stock CheckBox art is drawn for a light surface and
-    # disappears against this console's, so the row renders as a bare phrase with a gap where the
-    # control should be. `HudStyle.apply_checkbox` has the autopsy; the improvement control makes the
-    # same call for the same reason, and this control shipped one frame without it.
-    HudStyle.apply_checkbox(box)
-    box.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
-    # Ticking it seeds the SHORTEST real trip — one turn of hunting — so the first press states the
-    # axis's own unit rather than landing on a number nothing chose.
-    box.toggled.connect(func(pressed: bool) -> void:
-        on_change.call(step if pressed else SourceForecast.NO_FILL_TARGET))
-    line.add_child(box)
-    if box.button_pressed:
-        var stepper := HBoxContainer.new()
-        stepper.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-        stepper.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-        _add_fill_target_stepper(stepper, target, step, ceiling, on_change)
-        line.add_child(stepper)
-        var quarry := Label.new()
-        quarry.text = String(model.get("quarry", ""))
-        quarry.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-        quarry.add_theme_color_override("font_color", HudStyle.INK_DIM)
-        quarry.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
-        line.add_child(quarry)
-    block.add_child(line)
-    if no_room:
-        block.add_child(alloc_hint_label(SourceForecast.FILL_TARGET_NO_ROOM_NOTE))
-        return block
-    # THE PRICE OF THE STATE THE CONTROL IS IN, in the unit the control is about — the untargeted
-    # raid's hunting turns when the box is clear, the target's own when it is ticked. `≈` because
-    # pre-launch this is a proportion on the sim's answer and not the sim's answer (the launched
-    # party's own bound is the authority); `RAID_TURNS_UNKNOWN` is a horizon raid, which has no turn
-    # count to quote and says nothing rather than a zero.
-    var turns := int(model.get("turns", SourceForecast.RAID_TURNS_UNKNOWN))
-    if turns != SourceForecast.RAID_TURNS_UNKNOWN:
-        var note := alloc_hint_label(SourceForecast.FILL_TARGET_TURNS_FORMAT % turns)
-        note.set_meta(FILL_TARGET_TURNS_META, turns)
-        block.add_child(note)
-    return block
-
-## The fill target's −/+ pair. It cannot reuse `add_stepper_controls`: that one steps by
-## `HudConst.WORKER_STEP` (people, always one) and this steps by one hunting turn's animals, and its
-## `−` bottoms out at 0 where this one bottoms out at a single turn — clearing the target is the
-## CHECKBOX's job, not a step off the end of the axis.
-static func _add_fill_target_stepper(row: HBoxContainer, target: int, step: int, ceiling: int,
-        on_change: Callable) -> void:
-    var minus := Button.new()
-    minus.text = "−"
-    minus.custom_minimum_size = Vector2(HudWorkVocab.WORKER_STEPPER_BUTTON_WIDTH, 0)
-    HudStyle.apply_button(minus, "ghost")
-    minus.disabled = target <= step
-    minus.pressed.connect(func() -> void: on_change.call(target - step))
-    row.add_child(minus)
-    var value := Label.new()
-    value.text = str(target)
-    value.set_meta(FILL_TARGET_VALUE_META, target)
-    value.custom_minimum_size = Vector2(HudWorkVocab.WORKER_STEPPER_VALUE_WIDTH, 0)
-    value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-    value.add_theme_color_override("font_color", HudStyle.INK)
-    row.add_child(value)
-    var plus := Button.new()
-    plus.text = "+"
-    plus.custom_minimum_size = Vector2(HudWorkVocab.WORKER_STEPPER_BUTTON_WIDTH, 0)
-    HudStyle.apply_button(plus, "ghost")
-    # The last reachable target is one step under the untargeted haul: at or above it `raid_load`
-    # hands the pack straight back, so a `+` past here would set a number the raid ignores.
-    plus.disabled = target + step >= ceiling
-    plus.pressed.connect(func() -> void: on_change.call(target + step))
-    row.add_child(plus)
 
 ## **THE TWO CREW TARGETS** (`docs/plan_harvest_floor.md` §7.6) — the distinction the rate model never
 ## had. A floor and a crew are independent statements, so there are two different worker numbers and

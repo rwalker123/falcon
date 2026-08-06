@@ -1443,28 +1443,13 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # renders (the cap clamp is already done above, and nothing between here and the button moves it),
     # so the readout at the bottom and the floor hint at the top branch on ONE lookup rather than two.
     var trip: Dictionary = {}
-    # The fill target's axis, composed from the UNTARGETED raid so it does not move under the handle.
-    # Empty on the local branch: a resident crew works a source turn after turn and has no trip to end.
-    var fill_target_model: Dictionary = {}
     if is_expedition:
         target.add_child(HudWidgets.alloc_hint_label(
             "%s is %d tiles away — beyond this band's hunt reach (%d). Detach a party to follow it." \
             % [_herd_label_for_id(herd_id), distance, reach]))
     if is_expedition and trip_quoted:
-        # **THE TARGET IS FOLDED BACK ONTO ITS AXIS BEFORE THE TRIP IS LOOKED UP.** The axis is a
-        # function of the party and the floor, both of which the player has just been moving, so a
-        # target held from a bigger party could otherwise ask for more animals than this raid brings
-        # home — which `raid_load` answers by handing the pack back, i.e. a lever that silently does
-        # nothing. `raid_fill_target_model` returns the clamped value; writing it straight back is what
-        # makes the control, the readout and the launch payload one number.
-        fill_target_model = SourceForecast.raid_fill_target_model(band, herd, _compose.hunt_floor(),
-            _compose.hunt_count(), _band_labor.grid_width(), _band_labor.wrap_horizontal(),
-            _compose.hunt_fill_target())
-        _compose.set_hunt_fill_target(int(fill_target_model.get(
-            "target", SourceForecast.NO_FILL_TARGET)))
         trip = SourceForecast.hunt_trip_forecast(band, herd, _compose.hunt_floor(),
-            _compose.hunt_count(), _band_labor.grid_width(), _band_labor.wrap_horizontal(),
-            _compose.hunt_fill_target())
+            _compose.hunt_count(), _band_labor.grid_width(), _band_labor.wrap_horizontal())
         # **THE FLOOR HINT TRAVELS INTO THE TRIP READOUT'S ASIDE**, where the local sheet keeps its
         # own — the two branches now read alike. It stays HERE only for the raids that get no readout
         # box (no estimate, a denial quarry, a herd with nothing above the floor): those state one
@@ -1552,15 +1537,6 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
                 HudStyle.DANGER_HEX, String(gate["text"])])
             gate_label.set_meta(HudWidgets.HUNT_GATE_META, true)
             target.add_child(gate_label)
-    # **THE FILL TARGET, DIRECTLY UNDER THE PARTY IT IS PRICED BY** (§5.2). It reads *how long you will
-    # wait*, and both terms of that — the animals and the turns they cost — are functions of the party
-    # size one row up, so the two controls belong adjacent and in that order. Only a DELIVERING raid
-    # gets one: a refused trip has no length to shorten.
-    if is_expedition and bool(fill_target_model.get("available", false)):
-        target.add_child(HudWidgets.build_fill_target_control(fill_target_model,
-            func(new_target: int) -> void:
-                _compose.set_hunt_fill_target(new_target)
-                _build_herd_assign_controls(_live_herd(herd_id, herd), target)))
     # WOULD THIS SUBMIT CHANGE ANYTHING? — the forage sheet's rule, on the hunt web, because
     # `workers == 0` means the SAME two different things here (the sim's `assign_labor` skips validation
     # entirely at 0, so the unassign is always legal). `current` is the pending-aware standing crew on
@@ -1682,7 +1658,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
             # same lie as quoting one, cast as a silent no-op.
             if trip_quoted and SourceForecast.hunt_trip_returns_empty(
                     SourceForecast.hunt_trip_forecast(band, herd, _compose.hunt_floor(), _compose.hunt_count(),
-            _band_labor.grid_width(), _band_labor.wrap_horizontal(), _compose.hunt_fill_target())):
+            _band_labor.grid_width(), _band_labor.wrap_horizontal())):
                 return
             emit_signal("send_hunt_expedition_requested", {
                 "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
@@ -1693,10 +1669,6 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
                 # THE PARTY'S ORDERS: where the raid stops, as a fraction of the herd's capacity.
                 # `send_hunt_expedition` takes it as its optional trailing token.
                 "floor": _compose.hunt_floor(),
-                # …and the party-side half of the same sentence (§5.2): the whole animals it waits
-                # for. `NO_FILL_TARGET` = fill the pack, which is what the command sent before this
-                # lever existed and what `Main` omits the token for.
-                "fill_target": _compose.hunt_fill_target(),
                 # The kit the party walks out with, and the job default `Main` omits the token for.
                 "kit_id": kit_id,
                 "default_kit_id": default_kit,

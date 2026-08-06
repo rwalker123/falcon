@@ -789,24 +789,11 @@ pub enum ExpeditionMission {
         /// take is still bounded by what the party can **carry**, so erasing a herd this way is as
         /// slow and as crew-hungry as eating it. Denial is a mission of its own with the carry bound
         /// removed, at which point this field means only "how deep a harvest".
+        ///
+        /// **The floor is the ONLY number a hunt carries.** A party-side `fill_target` ("take ≈50
+        /// and come home") shipped beside it and was retired — see
+        /// `docs/plan_hunt_through_combat.md` §5.2, marked retired in place.
         floor: f32,
-        /// **HOW MUCH THE PARTY WILL WAIT FOR, in whole ANIMALS** — the party-side twin of `floor`,
-        /// chosen at launch (`docs/plan_hunt_through_combat.md` §5.2). The floor says how deep to
-        /// draw the herd; this says how long you will wait for the load.
-        ///
-        /// It **replaces the pack's capacity** in the completion the raid already evaluates rather
-        /// than adding a stop of its own — see `systems::expeditions::raid_load`. A target at or
-        /// above what the pack can hold is therefore *exactly* the untargeted raid.
-        ///
-        /// **[`NO_FILL_TARGET`] (`0`) means "fill the pack"** — the pre-target behaviour, and the
-        /// default when the player names none.
-        ///
-        /// It exists because a raid's length was otherwise a **species constant with no lever**
-        /// (§5.1): the pack is measured in carry and the take in reach, so
-        /// `turns_to_fill = per_worker_carry / (engage_rate × body_mass)` and party size cancels
-        /// out. Eight hunters on a Wild Fowl flock took 31 hunting turns, and so did four, and so
-        /// did sixteen.
-        fill_target: u32,
     },
     /// **Erase the herd `fauna_id`** — the denial raid (`docs/plan_denial_raid.md` §1). The party
     /// works the herd until it is past the point of no return
@@ -824,12 +811,6 @@ pub enum ExpeditionMission {
     /// [`ExpeditionPhase`], party outfitting, travel, and
     /// [`crate::fauna::AnimalTake`], which already models kill ≠ carry.
     ///
-    /// **There is deliberately no `fill_target`** (§1): a raid that does not clamp to carry has no
-    /// pack-fill stop for a target to replace, so the order cannot be *expressed* rather than being
-    /// accepted and ignored. That is the resolution of the note
-    /// [`crate::systems::raid_load`] left — a target on a floor-`0` or inedible raid is inert, and
-    /// denial is where killing past the pack acquired a meaning of its own, needing no number.
-    ///
     /// **No target faction** (§2). Denial is aimed at a herd, not at a player.
     Deny { fauna_id: String },
 }
@@ -843,18 +824,9 @@ pub struct RaidOrders<'a> {
     pub fauna_id: &'a str,
     /// Where the raid stops, as a fraction of `K`. [`STRIP_IT_BARE`] for a denial raid.
     pub floor: f32,
-    /// Whole animals the party waits for. [`NO_FILL_TARGET`] for a denial raid, which has no
-    /// pack-fill stop for a target to replace.
-    pub fill_target: u32,
     /// **The one line that differs** — whether a full pack stops the party engaging.
     pub stop: crate::fauna::EngagementStop,
 }
-
-/// **No fill target — "fill the pack."** The `0` sentinel on
-/// [`ExpeditionMission::Hunt::fill_target`], matching the `NO_ENGAGEMENT_STAGE` convention this arc
-/// already put on the wire: a count of `0` is not a raid anyone could order, so it is free to mean
-/// *unset*. Named because a bare `0` at a comparison site reads as "come home with nothing".
-pub const NO_FILL_TARGET: u32 = 0;
 
 impl ExpeditionMission {
     /// Stable wire/snapshot key for the mission (client discriminator).
@@ -867,15 +839,14 @@ impl ExpeditionMission {
     }
 
     /// Parse a mission from its wire keys (snapshot restore). `"hunt"` reconstructs
-    /// `Hunt { fauna_id, floor, fill_target }` from `target_herd` + `floor` + `fill_target`;
-    /// `"deny"` reconstructs `Deny { fauna_id }` from `target_herd` alone — it carries neither
-    /// number; anything else is `Scout`.
-    pub fn from_wire(kind: &str, target_herd: &str, floor: f32, fill_target: u32) -> Self {
+    /// `Hunt { fauna_id, floor }` from `target_herd` + `floor`; `"deny"` reconstructs
+    /// `Deny { fauna_id }` from `target_herd` alone — it carries no number; anything else is
+    /// `Scout`.
+    pub fn from_wire(kind: &str, target_herd: &str, floor: f32) -> Self {
         match kind {
             "hunt" => ExpeditionMission::Hunt {
                 fauna_id: target_herd.to_string(),
                 floor,
-                fill_target,
             },
             "deny" => ExpeditionMission::Deny {
                 fauna_id: target_herd.to_string(),
@@ -911,18 +882,6 @@ impl ExpeditionMission {
         }
     }
 
-    /// The raid's **fill target** in whole animals for a `Hunt` mission — the snapshot
-    /// `expeditionFillTarget`. A `Scout` party fills no pack, so it reports [`NO_FILL_TARGET`].
-    ///
-    /// **A `Deny` mission reports [`NO_FILL_TARGET`] too, and cannot report anything else**: it does
-    /// not clamp to carry, so there is no pack-fill stop for a target to replace.
-    pub fn hunt_fill_target(&self) -> u32 {
-        match self {
-            ExpeditionMission::Hunt { fill_target, .. } => *fill_target,
-            ExpeditionMission::Deny { .. } | ExpeditionMission::Scout => NO_FILL_TARGET,
-        }
-    }
-
     /// **Does a full pack stop this party engaging?** — the one line of behaviour a denial raid
     /// changes (`docs/plan_denial_raid.md` §1), stated here so every take and forecast path reads it
     /// from the mission rather than re-deriving it from a floor.
@@ -944,7 +903,6 @@ impl ExpeditionMission {
             _ => Some(RaidOrders {
                 fauna_id: self.target_herd(),
                 floor: self.hunt_floor(),
-                fill_target: self.hunt_fill_target(),
                 stop: self.engagement_stop(),
             }),
         }

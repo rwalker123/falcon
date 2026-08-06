@@ -801,7 +801,7 @@ static func _floor_percent_text(payload: Dictionary) -> String:
 ##
 ## **IT IS OMITTED WHEN THE CHOICE EQUALS THE JOB DEFAULT**, which is also what absent means to the
 ## parser — so a composition that never touched the picker emits the byte-identical line it emitted
-## before the picker existed, exactly as the fill target's `NO_FILL_TARGET` does. `""` on either side
+## before the picker existed. `""` on either side
 ## (a sheet composed before a roster landed, a role with no kit axis) likewise emits nothing.
 static func _kit_token(payload: Dictionary) -> String:
     var kit_id := String(payload.get("kit_id", "")).strip_edges()
@@ -893,16 +893,13 @@ static func format_send_expedition(payload: Dictionary) -> Dictionary:
         "message": "Send scouting expedition (%d) to (%d, %d)." % [party_workers, x, y],
     }
 
-## `send_hunt_expedition <faction_id> <band_id> <party_workers> <fauna_id> [floor] [fill_target]`
+## `send_hunt_expedition <faction_id> <band_id> <party_workers> <fauna_id> [floor]`
 ## The trailing floor is optional and is a NUMBER in `0.0..=1.0` — the four stance words are rejected
 ## by name at parse. The server defaults the food peak when it is omitted; the client always sends it.
 ##
-## **THE FILL TARGET IS THE SECOND POSITIONAL OPTIONAL** (`docs/plan_hunt_through_combat.md` §5.2) —
-## whole animals the party waits for, the party-side twin of the floor. It rides AFTER the floor
-## because the floor shipped first and a positional grammar is append-only for the same reason a wire
-## is; the client always sends the floor, so the target never has to be padded past a missing one.
-## `SourceForecast.NO_FILL_TARGET` is "fill the pack" and the token is OMITTED for it, so a raid with
-## no target emits the byte-identical line it emitted before the lever existed.
+## **THE GRAMMAR IS CLOSED AFTER THE FLOOR**, like `send_denial_raid`'s. A second positional (the
+## retired fill target, issue #491) is now an `UnexpectedArgument` parse error rather than an ignored
+## token, so a token appended here fails the command outright instead of degrading quietly.
 static func format_send_hunt_expedition(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
@@ -914,11 +911,7 @@ static func format_send_hunt_expedition(payload: Dictionary) -> Dictionary:
         return {}
     var line := "send_hunt_expedition %d %d %d %s %s" % [
         faction, band_id, party_workers, fauna_id, _format_floor(payload)]
-    var fill_target := maxi(int(payload.get("fill_target", SourceForecast.NO_FILL_TARGET)),
-        SourceForecast.NO_FILL_TARGET)
-    if fill_target != SourceForecast.NO_FILL_TARGET:
-        line += " %d" % fill_target
-    # …and the kit LAST, as a named pair. It has to come after both positionals: the parser lifts it
+    # …and the kit LAST, as a named pair. It has to come after the positionals: the parser lifts it
     # out of the tail before reading them, but a human reading the log should see the positional
     # grammar unbroken.
     line += _kit_token(payload)
@@ -929,12 +922,8 @@ static func format_send_hunt_expedition(payload: Dictionary) -> Dictionary:
     var fauna_label := String(payload.get("fauna_label", "")).strip_edges()
     if fauna_label == "":
         fauna_label = fauna_id
-    # The feed names BOTH orders when both were given — "how deep to draw the herd" and "how long
-    # you will wait" are one sentence, and a receipt quoting only the first would describe a raid the
-    # player did not order. No target = the untargeted wording, unchanged.
+    # The receipt names the one order a raid carries — how deep to draw the herd.
     var orders := "leaving %s standing" % _floor_percent_text(payload)
-    if fill_target != SourceForecast.NO_FILL_TARGET:
-        orders += ", home with %d" % fill_target
     return {
         "line": line,
         "message": "Send hunting expedition (%d, %s) after %s." % [

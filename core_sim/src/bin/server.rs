@@ -35,7 +35,7 @@ use core_sim::{
     FoodModuleTag, ForkAnswerError, HuntingParty, KitChoice, KitJob, LaborAllocation, LaborTarget,
     LadderConfigHandle, LocalStore, ResidentBand, RungKey, SiteRefusal, SpeciesRefusal,
     StartProfile, StartProfileOverrides, WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR,
-    NO_FILL_TARGET, NO_FORAGE_SEASON,
+    NO_FORAGE_SEASON,
 };
 use core_sim::{
     build_headless_app, clear_config_overrides, denial_forecast, expedition_returned_event,
@@ -504,7 +504,6 @@ enum Command {
         party_workers: u32,
         fauna_id: String,
         floor: Option<f32>,
-        fill_target: Option<u32>,
         /// **The kit the party is sent out with**, resolved once at launch. `None` = the hunt job's
         /// default; unknown or wrong-job is a command failure.
         kit_id: Option<String>,
@@ -3042,7 +3041,7 @@ fn launch_detached_party(
 /// Outfit and launch a hunting expedition (PR 2): draw `party_workers` off the resolved home band
 /// and send a detached party to follow the herd `fauna_id` at the escapement `floor` it names. Text
 /// form:
-/// `send_hunt_expedition <faction> <band> <party_workers> <fauna_id> [floor] [fill_target] [kit <id>]`.
+/// `send_hunt_expedition <faction> <band> <party_workers> <fauna_id> [floor] [kit <id>]`.
 #[allow(clippy::too_many_arguments)] // every launch order the verb accepts is a parameter
 fn handle_send_hunt_expedition(
     app: &mut bevy::prelude::App,
@@ -3051,7 +3050,6 @@ fn handle_send_hunt_expedition(
     party_workers: u32,
     fauna_id: String,
     floor: Option<f32>,
-    fill_target: Option<u32>,
     kit_id: Option<String>,
 ) {
     // **The raid's floor FAILS CLOSED**, exactly as `assign_labor`'s does: absent means the default
@@ -3074,11 +3072,6 @@ fn handle_send_hunt_expedition(
             return;
         }
     };
-    // **The fill target does NOT fail closed, because it cannot fail.** Unlike the floor, every count
-    // is a legal order: a target at or above what the pack holds is simply the untargeted raid
-    // (`raid_load` takes the smaller of the two), and [`NO_FILL_TARGET`] is the honest reading of
-    // "the player named none". There is nothing to reject here, so there is no rejection path.
-    let fill_target = fill_target.unwrap_or(NO_FILL_TARGET);
     // **The kit fails closed too** — resolved before the party is drawn off the band, so a bad kit
     // id refuses the launch outright rather than sending a party at a tier nobody named.
     let Some(kit) = resolve_raid_kit(app, faction, "send_hunt_expedition", kit_id.as_deref())
@@ -3115,7 +3108,6 @@ fn handle_send_hunt_expedition(
                 party_workers,
                 herd,
                 floor,
-                fill_target,
                 &fauna,
                 per_worker_haul,
                 &cfg,
@@ -3214,7 +3206,6 @@ fn handle_send_hunt_expedition(
         ExpeditionMission::Hunt {
             fauna_id: fauna_id.clone(),
             floor,
-            fill_target,
         },
         kit.clone(),
     );
@@ -3230,9 +3221,8 @@ fn handle_send_hunt_expedition(
             band_label, floor, fauna_id, viability_note
         ),
         Some(format!(
-            "status=applied mission=hunt floor={} fill_target={} workers={} herd={} expedition={}{}",
+            "status=applied mission=hunt floor={} workers={} herd={} expedition={}{}",
             floor,
-            fill_target,
             party_workers,
             fauna_id,
             expedition_entity.to_bits(),
@@ -5229,7 +5219,6 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             party_workers,
             fauna_id,
             floor,
-            fill_target,
             kit_id,
         } => Some(Command::SendHuntExpedition {
             faction: FactionId(faction_id),
@@ -5237,7 +5226,6 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             party_workers,
             fauna_id,
             floor,
-            fill_target,
             kit_id,
         }),
         ProtoCommandPayload::SendDenialRaid {
@@ -6044,7 +6032,6 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
             party_workers,
             fauna_id,
             floor,
-            fill_target,
             kit_id,
         } => {
             handle_send_hunt_expedition(
@@ -6054,7 +6041,6 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
                 party_workers,
                 fauna_id,
                 floor,
-                fill_target,
                 kit_id,
             );
         }
@@ -7659,7 +7645,6 @@ mod tests {
             herd_id,
             None,
             None,
-            None,
         );
         let party = {
             let mut query = app.world.query_filtered::<Entity, With<Expedition>>();
@@ -9197,7 +9182,7 @@ mod tests {
             let faction = FactionId(0);
             let herd_id = seed_herd(&mut app, UVec2::new(1, 1), Some(faction));
 
-            handle_send_hunt_expedition(&mut app, faction, None, 1, herd_id, Some(bad), None, None);
+            handle_send_hunt_expedition(&mut app, faction, None, 1, herd_id, Some(bad), None);
 
             let rejected = app.world.resource::<CommandEventLog>().iter().any(|entry| {
                 matches!(entry.kind, CommandEventKind::ExpeditionSent)
@@ -9243,7 +9228,6 @@ mod tests {
                         None,
                         1,
                         herd_id,
-                        None,
                         None,
                         Some(bad_kit.to_string()),
                     ),
@@ -9450,7 +9434,6 @@ mod tests {
                     Some(FIXTURE_BAND_ID),
                     party_workers,
                     fauna_id,
-                    None,
                     None,
                     None,
                 ),

@@ -73,15 +73,12 @@ pub struct HuntTripEstimateState {
     /// `delivers_food == false`.
     #[serde(default)]
     pub delivered_trade: f32,
-    /// **WHICH stop ends this trip** (appended, `docs/plan_hunt_through_combat.md` §5.2) — the
-    /// `core_sim::HuntTripBound` key: `"pack_full"`, `"fill_target"`, `"floor"`, `"herd_lost"` or
-    /// `"horizon"`. A trip length alone cannot tell the player's two levers apart — *"you come home
-    /// on your fill target in 4 turns"* and *"you reach the floor in 2 turns with the pack a third
-    /// full"* are different decisions and the same kind of number — so the sim names the bound and
-    /// the client composes nothing.
+    /// **WHICH stop ends this trip** (appended) — the `core_sim::HuntTripBound` key:
+    /// `"pack_full"`, `"floor"`, `"herd_lost"` or `"horizon"`. A trip length alone cannot say which
+    /// bound it was — *"you fill the pack in 4 turns"* and *"you reach the floor in 2 turns with the
+    /// pack a third full"* are different decisions and the same kind of number — so the sim names
+    /// the bound and the client composes nothing.
     ///
-    /// **Every row here is the UNTARGETED raid**, so it reads `"fill_target"` for no row: a fill
-    /// target is chosen at launch, and this band-agnostic table samples floor × party size only.
     /// A launched party's own bound is `PopulationCohortState::expedition_trip_bound`.
     #[serde(default)]
     pub bound: String,
@@ -90,9 +87,9 @@ pub struct HuntTripEstimateState {
 /// The sim's **pre-launch denial-raid estimate** for one party size against one herd — the denial
 /// twin of [`HuntTripEstimateState`] (`docs/plan_denial_raid.md` §1.1).
 ///
-/// **It carries neither a floor nor a fill target**, and that absence is the design rather than an
-/// omission: a denial mission has no floor and no rate — *"you choose a herd and a party size"* — so
-/// there is nothing to sample and the table has one axis.
+/// **It carries no floor**, and that absence is the design rather than an omission: a denial
+/// mission has no floor and no rate — *"you choose a herd and a party size"* — so there is nothing
+/// to sample and the table has one axis.
 ///
 /// **The headline is [`Self::turns_to_collapse`], not a food total.** Success is pushing the herd
 /// under `ecology.collapse_fraction`, the point of no return where the growth flow is zeroed and the

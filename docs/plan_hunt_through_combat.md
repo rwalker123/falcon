@@ -503,7 +503,7 @@ load-bearing. That makes a minimal TOE part of this arc rather than a dependency
 - **spears** — `attack 20` against an unequipped `1`. **SETTLED**, and the number that opens the gate;
 - **a sled** (travois, drag harness) — the **hunt's** carry, §5. **A flat per-hunter multiplier, and
   it needs no pullers** — SETTLED. Modelling a crew cost would make the hunt's carry non-linear in
-  party size, and `hunt_haul_workers`, the fill target's arithmetic and §5.1's trip length all assume
+  party size, and `hunt_haul_workers` and §5.1's trip length both assume
   that linearity; the ripple is not worth what the realism buys;
 - **baskets** — the **forage** web's carry and yield, `plan_early_game_labor`'s other role.
 
@@ -535,8 +535,9 @@ the prize" gets two gates rather than one.
 
 **A sled does not shorten a raid — it lengthens it.** Trip length is
 `carry / (engage_rate × body_mass)` (§5.1), so a bigger pack takes *longer* to fill. The sled buys
-more meat per trip; the **fill target** (§5.2) is the lever for trip length. They are complementary
-and it is easy to assume otherwise.
+more meat per trip; it is easy to assume otherwise. **There is no player lever on trip length** — the
+fill target was one and is retired (§5.2), so trip length is a species-and-kit constant and moving it
+is a **tuning** decision (issue #491).
 
 The crafting economy that replenishes kit stays deferred. What ships is enough to make `attack` a
 real number and the equipped/unequipped distinction visible.
@@ -611,7 +612,29 @@ The *ordering* is the design working — a mammoth raid is one hunting turn plus
 "megafauna is the prize" should feel like. The small end is not merely unattractive, it is
 **unusable**, and that is the defect.
 
-### 5.2 The fill target is the party-side twin of the floor
+### 5.2 The fill target is the party-side twin of the floor — **RETIRED**
+
+> **RETIRED, and removed from the sim.** The section is kept as the arc's design record; what
+> follows is the proposal as it shipped, then the reason it went.
+>
+> **Why it went.** Trip length to fill a pack is `carry ÷ (engage_rate × stay_chance × body_mass)` —
+> **party size cancels**, because the pack and the kill rate both scale with the workers. So trip
+> length is a species-and-kit constant, and the fill target was the only player lever on it. It
+> existed to escape trips nobody wants (Wild Fowl 88 turns, Grey Wolf 76, Rabbit 59 against Mammoth
+> 1.1) — and those are a **tuning** problem, tracked on **issue #491**. With the tuning fixed there
+> is nothing to escape, and what is left is a control that asks the player to work around a config
+> error. `NO_FILL_TARGET` ("fill the pack") was always the default, so removing it is the removal of
+> an unused-by-default path: every sim number is bit-identical.
+>
+> **What went with it:** `ExpeditionMission::Hunt::fill_target`, `RaidOrders::fill_target`,
+> `NO_FILL_TARGET`, `HuntTripBound::FillTarget` (the raid's stops are now pack-full, floor,
+> herd-lost, horizon), the `send_hunt_expedition` grammar's second positional tail, and the
+> `fill_target` parameters on `hunt_trip_forecast` / `expedition_delivery`. The wire slots
+> (`snapshot.fbs`'s `expeditionFillTarget`, `command.proto`'s `fill_target = 7`) are **deprecated in
+> place, never deleted** — a shipped slot is immutable.
+>
+> **What survives from §10's validation list:** the party-size invariance (it is now the *reason*
+> rather than the thing being escaped) and the bound-naming cases for the four remaining stops.
 
 The termination condition already has a party-side term — the pack — but it is **a physical constant
 nobody chose**. Make it a number the player sets, below capacity:
@@ -821,9 +844,11 @@ Each lands on its own PR.
 2. **`CombatProfile::wariness`** + the retreat stage, seeded per event; wariness `0` everywhere, so
    this slice is a provable identity.
 3. **The fill target** (§5.2) — a player-set stop below the pack's capacity, the escapement graph
-   restored on the expedition sheet, and a forecast that names which bound ends the trip. **Next,
-   and blocking**: without it a raid's length is a species constant with no lever (§5.1), and every
-   later slice would be tuned against that.
+   restored on the expedition sheet, and a forecast that names which bound ends the trip. **The fill
+   target itself has since been RETIRED** (§5.2): it was the only lever on a trip length party size
+   cancels out of, which makes the unplayable trips a *tuning* problem (issue #491) rather than a
+   missing control. What the slice landed and kept is the forecast's **bound naming** — four stops,
+   pack-full / floor / herd-lost / horizon.
 4. **The take resolves through `resolve_fight`.** `quantise_animal_take`'s kill arm is replaced by
    the resolver's enemy losses; the herd-as-`Force` mapping and the one-sided fast path land here.
    Carry, waste and `max(1, carryable)` are untouched.
@@ -901,16 +926,14 @@ review can be about the seam rather than about balance. Slices 1, 3 and 4 all mo
 - **Distribution over seeds, with liveness.** Non-zero wariness produces a spread whose mean tracks
   the retreat probability, asserted across many seeds; paired with an assertion that takes are
   non-zero, because a dead retreat stage and a dead engagement stage both "pass" a range check.
-- **A fill target below capacity shortens the trip; a target at or above it is an exact identity**
-  (§5.2). Both halves are the assertion — the second is what makes the slice safe to land, and a
-  target that silently did nothing would pass the first alone.
-- **Trip length responds to the target.** Pinned directly, because §5.1's defect is precisely a
-  number that looked like a lever and was not: assert that two different fill targets give two
-  different trip lengths, and pair it with the invariance that caused the bug — with **no** target
-  set, `turns_to_fill` is unchanged by party size.
+- ~~**A fill target below capacity shortens the trip; a target at or above it is an exact
+  identity.**~~ **RETIRED with the lever** (§5.2).
+- **Trip length does NOT respond to party size**, and the payload does. This was the *paired*
+  invariance under the retired fill-target assertion; with the lever gone it stands alone, as the
+  pinned statement of §5.1's arithmetic that the tuning pass on **issue #491** has to move.
 - **The forecast names which bound ends the trip**, and its answer matches which one actually did.
-  A raid that comes home on its fill target and a raid that comes home on the floor must be
-  distinguishable in the readout, not merely in the turn count.
+  A raid that comes home on a full pack and a raid that comes home on the floor must be
+  distinguishable in the readout, not merely in the turn count. Four stops, not five — see §5.2.
 - **The pen is untouched** — a corral-tend take is byte-identical before and after slice 4. Penned
   animals are not engaged, not fought, and not wary.
 
@@ -924,7 +947,7 @@ Every value is settled (§2.1, §4.2, §4.3, §4.8). What remains is what only p
 |---|---|---|
 | 1 | **Do the roster values hold up in play?** | The risk they carry is specific: for most species the escapement floor binds long before engagement does, so an `engage_rate` set too low silently becomes a *second* floor. §6.6's hunt report is what makes that visible rather than mysterious. |
 | 2 | **Is a coastal start too strong?** | Seal's ceiling of 24 is second only to megafauna, because seals are helpless on a haul-out. Historically right; possibly a start-position imbalance. Known, not discovered. |
-| 3 | **What the fill target measures.** | **SETTLED as ANIMALS** — it matches the escapement graph's own units, so both levers speak one language. But it measures what comes **home**, not what dies: it caps a carry quantity, so a party too small to haul a whole animal kills more than the number typed. *"Take ≈50"* reads as *"bring home 50 worth"*. A kill target needs trip-scoped kill state and is a different change. |
+| 3 | ~~**What the fill target measures.**~~ | **MOOT — the lever is retired** (§5.2). It had settled as ANIMALS, measuring what comes **home** rather than what dies. The question it was really asking — how long a raid takes — is now answered by tuning, on issue #491. |
 | 4 | **Does the food economy settle after the body-mass correction?** | §4.3 cuts mid-game hunting yield to roughly a third and is deliberately uncompensated, on the reasoning that tuning around still-moving numbers bakes in a fix for a problem that may not survive them. |
 
 ---

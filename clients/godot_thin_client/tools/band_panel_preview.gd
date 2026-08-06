@@ -217,9 +217,6 @@ const SHARED_TILE_FOOD_HERD_ID := "game_rabbit_11"
 const SHARED_TILE_FOOD_SPECIES := "Rabbit Warren"
 const SHARED_TILE_PELT_HERD_ID := "game_wolf_11"
 const SHARED_TILE_PELT_SPECIES := "Wolf Pack"
-## The fill target staged before the chooser is driven, so the switch can be seen to DROP it. Any
-## positive value does; it is a count of the OLD quarry's animals, which is the whole point.
-const SHARED_TILE_STALE_FILL_TARGET := 5
 ## The shared hex's raid table: whole animals taken per party size 1..8, and the turns it takes. Flat
 ## in the turns because nothing on this frame is judged on trip LENGTH — the claim is the chooser.
 const SHARED_TILE_RAID_ANIMALS_ROW := [4, 7, 9, 10, 10, 10, 10, 10]
@@ -322,10 +319,11 @@ const HUNT_IN_CAMP_ENTITY := 955
 # **THE TALLEST PARTY THE INSPECTOR STRIP CAN BE ASKED TO HOLD** — every optional line of
 # `BandDetailLines.expedition_summary_lines` live at once. See `_worst_case_party_fixture`.
 const HUNT_WORST_CASE_ENTITY := 956
-# Its two pack numbers. The fill target is what makes the `Orders:` row name the quarry instead of
-# reading "fills the pack"; the carried figure EQUALS the cap so the `Carried:` row takes its longest
-# form — `N / cap` plus the `· FULL` badge — rather than the bare count a capless party gets.
-const WORST_CASE_FILL_TARGET := 12
+# Its pack number: the carried figure EQUALS the cap so the `Carried:` row takes its longest form —
+# `N / cap` plus the `· FULL` badge — rather than the bare count a capless party gets.
+# The floor it was launched with, deliberately NOT the default — the Orders row is asserted against
+# it, so a fixture at the default would match a row the producer had stopped composing from the party.
+const WORST_CASE_FLOOR := 0.3
 # Its quarry, one of `_herd_fixtures()`. Named so the fixture and the assertion's needles resolve the
 # SAME herd — the assertion reads the herd's live position and species back off `_world_herds` rather
 # than restating them.
@@ -1297,14 +1295,13 @@ func _ready() -> void:
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
 	# **THE DOCK IS THE SECOND LAUNCH SITE, AND IT MUST OFFER THE SAME ORDERS** (§5.2). A lever on the
-	# herd drawer's sheet and absent here is the same defect as a lever that does nothing, so both
-	# halves are asserted: the fill-target control is present, and the trip's BOUND is named. The bound
-	# rides its own quiet line here (this zone's forecast is the one-LINE form, already dense with five
-	# facts) where the drawer folds the identical clause into its readout verdict — one table, so the
-	# two surfaces cannot describe one stop differently.
-	_assert_band_panel("the dock's hunt sheet offers a fill target, like the herd drawer's",
-		_find_meta_control(_panel, HudWidgets.FILL_TARGET_META) != null)
-	_assert_band_panel("…and names which stop ends the trip",
+	# herd drawer's sheet and absent here is the same defect as a lever that does nothing. The FLOOR is
+	# now the whole of what a raid is ordered with (the fill target is retired, issue #491), and what
+	# this sheet must still state is the trip's BOUND: it rides its own quiet line here (this zone's
+	# forecast is the one-LINE form, already dense with five facts) where the drawer folds the identical
+	# clause into its readout verdict — one table, so the two surfaces cannot describe one stop
+	# differently.
+	_assert_band_panel("the dock's hunt sheet names which stop ends the trip",
 		_has_label_containing(_panel, SourceForecast.TRIP_BOUND_CLAUSES[
 			SourceForecast.TRIP_BOUND_PACK_FULL]))
 	# **ONE QUARRY ON THE HEX GETS NO CHOOSER, and this frame is the whole guarantee that the common
@@ -2440,15 +2437,14 @@ func _assert_worst_case_party_lines() -> void:
 	for needle in [
 		# The Target row's LIVE position, which needs the herd to still be in `_world_herds`.
 		"(%d, %d)" % [int(target.get("x", -1)), int(target.get("y", -1))],
-		# The merged Orders row, naming the quarry rather than the pack.
-		SourceForecast.FILL_TARGET_ORDERS_CLAUSE_FORMAT % [
-			WORST_CASE_FILL_TARGET, SourceForecast.herd_display_name(target)],
+		# The Orders row, at the floor this party was launched with rather than at the default.
+		HudComposeVocab.FLOOR_VALUE_FORMAT % SourceForecast.floor_percent(WORST_CASE_FLOOR),
 		# The Carried row at its ceiling, hence the FULL badge.
 		BandDetailLines.HUNT_FULL_BADGE,
 		# The recurring delivery's own suffix.
 		DetailFormat.EXPEDITION_RECURRING_GLYPH,
 		# The sim's answer for which stop ends the trip.
-		SourceForecast.TRIP_BOUND_CLAUSES[SourceForecast.TRIP_BOUND_FILL_TARGET],
+		SourceForecast.TRIP_BOUND_CLAUSES[SourceForecast.TRIP_BOUND_PACK_FULL],
 	]:
 		_assert_band_panel("worst-case party — the strip states `%s`" % needle, joined.contains(needle))
 
@@ -5140,13 +5136,12 @@ func _assert_denial_viable() -> void:
 		take_line.contains(SourceForecast.DENIAL_TAKE_LEFT_FORMAT
 				% SourceForecast.format_magnitude(left))
 			and not take_line.contains(SourceForecast.HUNT_FORECAST_WARN_GLYPH))
-	# NO FLOOR ANYWHERE — not a picker, not a fill target, not even the row heading. Three surfaces,
+	# NO FLOOR ANYWHERE — not a picker, not even the row heading. Two surfaces,
 	# one claim. **The heading is matched UPPER-CASED because `alloc_section_label` upper-cases what it
 	# is given**, so the vocabulary const as written matches nothing and that clause would be vacuous
 	# — which is exactly how it first shipped, passing with a Policy row put back on the form.
-	_assert_band_panel("…and offers NO floor picker, NO fill target and no Policy row",
+	_assert_band_panel("…and offers NO floor picker and no Policy row",
 		_find_meta_control(_panel, HudWidgets.POLICY_RUNG_META) == null
-			and _find_meta_control(_panel, HudWidgets.FILL_TARGET_META) == null
 			and not _has_label_containing(_panel, HudComposeVocab.COMPOSE_FIELD_POLICY.to_upper()))
 	# **THE BAND IS AN ESTIMATE, NOT A PROMISE, AND THE PANEL SAYS SO** — `turns_to_collapse` is an
 	# integral over many stochastic retreat draws, so a lucky run really can finish sooner than the
@@ -5396,10 +5391,7 @@ func _assert_quarry_chooser() -> void:
 	_assert_band_panel("…marking exactly the composed quarry (%s)" % str(checked),
 		checked.size() == 1 and String(checked[0]).contains(SHARED_TILE_FOOD_SPECIES))
 	# **CHOOSING THE OTHER ONE RE-TARGETS**, driven through the REAL `id_pressed` wiring rather than by
-	# calling the entry's callback — the popup's own dispatch is part of what is being asserted. The
-	# stale fill target is staged first: it counts the WARREN's animals, so the switch must drop it
-	# rather than hand it to the wolf, where a target at or above capacity is a lever that does nothing.
-	_hud._compose.set_party_fill_target(SHARED_TILE_STALE_FILL_TARGET)
+	# calling the entry's callback — the popup's own dispatch is part of what is being asserted.
 	var other := -1
 	for i in popup.item_count:
 		if not popup.is_item_checked(i):
@@ -5408,9 +5400,6 @@ func _assert_quarry_chooser() -> void:
 	_assert_band_panel("…and choosing the other one re-targets the sheet (%s)"
 			% _hud._compose.party_quarry_id(),
 		_hud._compose.party_quarry_id() == SHARED_TILE_PELT_HERD_ID)
-	_assert_band_panel("…dropping the fill target, which counted the OTHER herd's animals (%d)"
-			% _hud._compose.party_fill_target(),
-		_hud._compose.party_fill_target() == SourceForecast.NO_FILL_TARGET)
 	# …and the sheet REBUILT against the new quarry: the chooser is a fresh node now, and it must mark
 	# the wolf. Reading the model back alone would pass on a switch that never re-rendered.
 	var after := _find_meta_control(_panel, HudWidgets.QUARRY_CHOICES_META) as MenuButton
@@ -6164,18 +6153,18 @@ func _worst_case_party_fixture() -> Dictionary:
 		"expedition_phase": "delivering",
 		# In `_herd_fixtures()`, so the Target row carries its live position.
 		"expedition_target_herd": WORST_CASE_TARGET_HERD_ID,
-		"expedition_floor": 0.3,
+		"expedition_floor": WORST_CASE_FLOOR,
 		"home_band_entity": 904,
 		"expedition_eta_turns": 6,
 		"expedition_projected_delivery": 14.0,
 		# The `↻` suffix — a recurring party's delivery line is the longer of the two.
 		"expedition_recurring": true,
-		# A fill target, so the Orders row names the quarry instead of reading "fills the pack".
-		"expedition_fill_target": WORST_CASE_FILL_TARGET,
 		# The pack is FULL, which is the Carried row's longest form (`N / cap` + the `· FULL` badge).
 		"expedition_carry_cap": float(WORST_CASE_CARRY_CAP),
 		"stores": {"provisions": float(WORST_CASE_CARRY_CAP)},
-		# …and the sim's own answer for which stop ends the trip, which is a line of its own.
-		"expedition_trip_bound": SourceForecast.TRIP_BOUND_FILL_TARGET,
+		# …and the sim's own answer for which stop ends the trip, which is a line of its own. It reads
+		# `pack_full` because this party's pack IS full, and because `fill_target` — the bound this
+		# fixture used to carry — is retired with the lever that named it (issue #491).
+		"expedition_trip_bound": SourceForecast.TRIP_BOUND_PACK_FULL,
 	}
 

@@ -191,8 +191,8 @@ static func assign_preview_herd(id: String, species: String, phase: String, sust
 ##       reports the turn it ended on, like any other; `delivers_food ==
 ##       false` says the QUARRY IS INEDIBLE (#337), and only `delivers_food AND delivers_trade` both
 ##       false is a denial mission — the raid banks whichever half the species pays.
-## **A ROW THAT DELIVERS NOTHING CANNOT WEAR A PARTY-SIDE BOUND.** `pack_full` and `fill_target` both
-## require a LOAD, and a load is a delivery — so the sim never pairs either with an empty payload, and
+## **A ROW THAT DELIVERS NOTHING CANNOT WEAR A PARTY-SIDE BOUND.** `pack_full` requires a LOAD, and a
+## load is a delivery — so the sim never pairs it with an empty payload, and
 ## a fixture that did would be a herd no live server can produce. It would also be invisible: the
 ## sheet's empty-raid refusal is keyed off `bound`, so such a row falls to the UNATTRIBUTED entry and
 ## every assertion about *which* refusal is rendered testifies about nothing.

@@ -32,45 +32,16 @@ const BAND_DISCLOSURE_GROWTH := "growth:904"
 # The collapsed-growth band is `_concerning_food_band_fixture`'s entity (905), not 904.
 const BAND_DISCLOSURE_GROWTH_COLLAPSED := "growth:905"
 
-# ---- THE FILL TARGET's fixture (`docs/plan_hunt_through_combat.md` §5.2) ------------------------
-# **THE RATE HAS TO DIVIDE EXACTLY, and that is the whole design of this fixture.** The pre-launch
-# turn count for a target is a PROPORTION on the sim's own `animals_taken ÷ turns_to_fill`, so on a
-# row whose quotient is not whole every assertion below would have to be a range — and a range check
-# passes on an arithmetic that is merely close, which is precisely the divergence these states exist
-# to bound. A party of `w` lands `w × FILL_TARGET_RAID_RATE / FILL_TARGET_RAID_PARTY` animals a turn
-# for `FILL_TARGET_RAID_TURNS` turns, so the party of 4 the frames compose lands exactly 20 a turn and
-# the party of 2 exactly 10 — which is what makes "halving the party doubles the wait" an equality.
-const FILL_TARGET_RAID_PARTY := 4
-
-const FILL_TARGET_RAID_TURNS := 6
-
-const FILL_TARGET_RAID_RATE := 20
-
-const FILL_TARGET_RAID_ANIMALS := FILL_TARGET_RAID_TURNS * FILL_TARGET_RAID_RATE
-
-# The animals-taken row keeps RISING with party size, deliberately: a plateau would let
-# `SourceForecast.expedition_useful_cap` cap the stepper below the party these states compose, and
-# every turn count would then be answered for a row the frames never render.
-const FILL_TARGET_RAID_ANIMALS_ROW := [30, 60, 90, 120, 150, 180, 210, 240]
-
-const FILL_TARGET_RAID_TURNS_ROW := [6, 6, 6, 6, 6, 6, 6, 6]
-
-# The LAUNCHED party's own orders (`expedition_hunt_targeted`): the whole animals it is waiting for,
-# and the species those animals are — the drawer names the target in the QUARRY's units, so the
-# assertion has to know both halves to build a needle no other row can satisfy.
-const TARGETED_PARTY_FILL_TARGET := 50
-
-const TARGETED_PARTY_QUARRY := "Red Deer"
-
+# ---- THE LAUNCHED HUNT PARTY'S ORDERS ROW --------------------------------------------------------
 # The detail row's KEY, which is what `Readout.detail_excerpt` seeks: the leading half of
 # `DetailFormat.EXPEDITION_ORDERS_ROW_FORMAT`, restated here only because a `const` cannot split one.
-# A reworded row does not pass quietly — the excerpt answers `DETAIL_EXCERPT_ABSENT` and both
-# assertions below fail naming the row they could not find.
+# A reworded row does not pass quietly — the excerpt answers `DETAIL_EXCERPT_ABSENT` and every
+# assertion below fails naming the row it could not find.
 #
-# **IT WAS `Fill target`, AND IT IS THE SAME ROW.** The floor and the fill target are one sentence and
-# now share one `Orders:` row, so the fill target's own key no longer exists to seek — see
-# `DetailFormat.expedition_orders_line` for why the parties inspector strip could not pay two rows for
-# it. The value assertions below are unchanged: both halves are in this row's value cell.
+# **IT WAS `Leaves standing`, THEN A MERGED TWO-CLAUSE ROW, AND IT IS THE SAME ROW.** The fill target
+# that shared it is retired (issue #491), so the row states the floor alone; it stays a merged-shaped
+# `Orders:` row because the parties inspector strip budgeted for ONE row here — see
+# `DetailFormat.expedition_orders_line`.
 const EXPEDITION_ORDERS_DETAIL_KEY := "Orders"
 
 # ---- THE IN-FLIGHT DENIAL RAID (`docs/plan_denial_raid.md` §3) -----------------------------------
@@ -83,8 +54,7 @@ const DENIAL_PARTY_SIZE := 5
 const DENIAL_TARGET_QUARRY := "Red Deer"
 
 ## The two row KEYS a denial party must NOT render, each because the mission has no such thing: the
-## hunt party's ORDERS row — a floor it never chose and a fill target it cannot express, which since
-## the merge are one row — and a delivery it is not making.
+## hunt party's ORDERS row — a floor it never chose — and a delivery it is not making.
 const DENIAL_ABSENT_ORDERS_KEY := EXPEDITION_ORDERS_DETAIL_KEY
 
 const DENIAL_ABSENT_DELIVERY_KEY := "Next delivery"
@@ -231,10 +201,10 @@ func _concerning_food_band_fixture() -> Dictionary:
 ## the hunt readout (target herd + carried food + phase) + Recall/Move.
 ## A launched DENIAL raid, built off the hunt party so the only differences are the mission's own.
 ##
-## **`expedition_floor` 0.0 AND `expedition_fill_target` 0 ARE ON IT DELIBERATELY** — they are what the
-## sim really publishes for this mission (it has no such levers), so a fixture omitting them would let
-## the two absent rows pass on a party that simply carried no fields. The delivery trio is absent
-## because a denial party genuinely publishes none.
+## **`expedition_floor` 0.0 IS ON IT DELIBERATELY** — it is what the sim really publishes for this
+## mission (which has no such lever), so a fixture omitting it would let the absent `Orders:` row pass
+## on a party that simply carried no field. The delivery trio is absent because a denial party
+## genuinely publishes none.
 func _denial_expedition_fixture() -> Dictionary:
 	return {
 		"id": "Raiders 1",
@@ -251,7 +221,6 @@ func _denial_expedition_fixture() -> Dictionary:
 		"expedition_target_herd": "game_deer_07",
 		"expedition_carry_cap": 16.0,
 		"expedition_floor": 0.0,
-		"expedition_fill_target": 0,
 		"tile_info": {
 			"x": 67, "y": 16,
 			"terrain_label": "Prairie Steppe",
@@ -608,48 +577,45 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("expedition_hunt_recurring")
 
-	# State 1j3 — **A LAUNCHED PARTY UNDER A FILL TARGET** (`docs/plan_hunt_through_combat.md` §5.2).
-	# The two rows this adds are the in-flight twins of the sheet's two controls: the ORDER it was
-	# given (`Fill target: 50 Red Deer`, beside `Leaves standing`) and the sim's own answer for that
-	# order (the bound clause). **`expeditionTripBound` is the AUTHORITY once a party is out** — the
-	# pre-launch turn count is a proportion the client composes, this is the sim's forward simulation
-	# of the party's REAL orders — which is why it is rendered rather than the sheet's estimate being
-	# remembered.
-	var targeted_hunt := _hunt_expedition_fixture()
-	targeted_hunt["expedition_fill_target"] = TARGETED_PARTY_FILL_TARGET
-	targeted_hunt["expedition_trip_bound"] = SourceForecast.TRIP_BOUND_FILL_TARGET
-	h._hud.show_unit_selection(targeted_hunt)
+	# State 1j3 — **A LAUNCHED PARTY UNDER A STATED TRIP BOUND.** The row this adds is the sim's own
+	# answer for which stop will end the raid, in the same words the pre-launch readout uses.
+	# **`expeditionTripBound` is the AUTHORITY once a party is out** — the sheet's estimate is a
+	# projection over a SAMPLED party and floor, this is the sim's forward simulation of the party's
+	# REAL orders — which is why it is rendered rather than the sheet's estimate being remembered.
+	# The frame staged a FILL TARGET until issue #491 retired that lever; the bound is what is left of
+	# it, and `pack_full` is the stop the raid it staged would really have reached.
+	var bounded_hunt := _hunt_expedition_fixture()
+	bounded_hunt["expedition_trip_bound"] = SourceForecast.TRIP_BOUND_PACK_FULL
+	h._hud.show_unit_selection(bounded_hunt)
 	await h._settle()
-	await h._save("expedition_hunt_targeted")
+	await h._save("expedition_hunt_bounded")
 	# **THE ROW IS READ THROUGH `Readout.detail_excerpt`, not searched for whole.** `detail_bbcode`
 	# splits a `Key: value` line into two spans, so the rendered source never contains the line
-	# contiguously — and the bare number would be no better a needle, `50` appearing in
-	# `Leaves standing: 50%` two rows up. Excerpt from the KEY and assert the VALUE is what follows it.
-	var fill_target_row := Readout.detail_excerpt(h._hud.occupant_detail.text,
+	# contiguously. Excerpt from the KEY and assert the VALUE is what follows it.
+	var orders_row := Readout.detail_excerpt(h._hud.occupant_detail.text,
 		EXPEDITION_ORDERS_DETAIL_KEY)
-	h._assert_hud("a launched party states the fill target it was given, in the quarry's own units",
-		fill_target_row.contains("%d %s" % [TARGETED_PARTY_FILL_TARGET, TARGETED_PARTY_QUARRY]))
+	h._assert_hud("a launched party states the ONE order it carries — the floor it was given",
+		orders_row.contains(HudComposeVocab.FLOOR_VALUE_FORMAT % SourceForecast.floor_percent(
+			SourceForecast.DEFAULT_HARVEST_FLOOR)))
 	h._assert_hud("…and the sim's own answer for which stop will end its raid",
 		h._hud.occupant_detail.text.contains(SourceForecast.TRIP_BOUND_CLAUSES[
-			SourceForecast.TRIP_BOUND_FILL_TARGET]))
+			SourceForecast.TRIP_BOUND_PACK_FULL]))
 	# **THE `""` BOUND IS NOT `horizon`, AND IT RENDERS NOTHING.** A party already walking a load home
 	# is not raiding toward a stop, so the row must be ABSENT rather than reading a stop it does not
-	# have — and `expedition_hunt_panel` above is the frame that shows the absence, which is only a
-	# claim because this state shows the presence.
-	var untargeted_hunt := _hunt_expedition_fixture()
-	h._hud.show_unit_selection(untargeted_hunt)
+	# have — and this negative is only a claim because the state above shows the presence.
+	var unbounded_hunt := _hunt_expedition_fixture()
+	h._hud.show_unit_selection(unbounded_hunt)
 	await h._settle()
 	h._assert_hud("a party the sim states no bound for says nothing about a stop",
 		not h._hud.occupant_detail.text.contains(SourceForecast.TRIP_BOUND_CLAUSES[
-				SourceForecast.TRIP_BOUND_FILL_TARGET])
+				SourceForecast.TRIP_BOUND_FLOOR])
 			and not h._hud.occupant_detail.text.contains(SourceForecast.TRIP_BOUND_CLAUSES[
 				SourceForecast.TRIP_BOUND_PACK_FULL]))
-	# **THE NEEDLE IS THE CLAUSE, NOT THE WORD `none`.** The order used to read `none — fills the pack`
-	# as a row of its own; merged onto the floor it is the bare clause, since `Orders: 30% left standing
-	# · none — fills the pack` states the absence of an order the row is in the middle of stating.
-	h._assert_hud("…but still states its fill target ORDER, filling the pack being a real order",
+	# …and it still states its ORDERS row, the floor being an order every hunt party carries.
+	h._assert_hud("…but still states the floor it is holding",
 		Readout.detail_excerpt(h._hud.occupant_detail.text, EXPEDITION_ORDERS_DETAIL_KEY).contains(
-			SourceForecast.FILL_TARGET_ORDERS_CLAUSE_NONE))
+			HudComposeVocab.FLOOR_VALUE_FORMAT % SourceForecast.floor_percent(
+				SourceForecast.DEFAULT_HARVEST_FLOOR)))
 
 	# State 1j4 — **AN IN-FLIGHT DENIAL RAID** (`docs/plan_denial_raid.md` §3). The third mission, and
 	# its drawer is judged on what it does NOT say as much as on what it does: a denial party publishes
@@ -689,9 +655,9 @@ func run(harness) -> void:
 	h._assert_hud("…and never the FROM-LAUNCH span, which is the launch sheet's",
 		not deny_text.contains(SourceForecast.DENIAL_SPAN_FROM_LAUNCH))
 	# **THE HUNT-ONLY READOUTS ARE ABSENT, and that is the mission's specification.** Its
-	# `expedition_floor` reads `0.0` and its `expedition_fill_target` `0` because it HAS no such
-	# orders; rendering either would put a lever on screen the command grammar cannot express.
-	h._assert_hud("…and renders NO orders row (no floor, no fill target) and NO delivery ETA",
+	# `expedition_floor` reads `0.0` because it HAS no such order; rendering the row would put a lever
+	# on screen the command grammar cannot express.
+	h._assert_hud("…and renders NO orders row (no floor) and NO delivery ETA",
 		not deny_text.contains(DENIAL_ABSENT_ORDERS_KEY)
 			and not deny_text.contains(DENIAL_ABSENT_DELIVERY_KEY))
 	# It still states what it hauled home, which reads near-empty — the mission's own cost, and the
@@ -807,16 +773,17 @@ func run(harness) -> void:
 	_click_disclosure(BAND_DISCLOSURE_FOOD)
 	h._set_world_herds(HerdFx.world_herds_fixture())   # restore the shared world-herd list
 
-	# ---- THE FILL TARGET (`docs/plan_hunt_through_combat.md` §5.2) ------------------------------
-	# **The defect these states close was found in PLAY, not in review**: a raid ends when its pack
-	# fills, the pack is measured in carry and the take in reach, so `turns_to_fill` reduced to
-	# `per_worker_carry / (engage_rate × body_mass)` and PARTY SIZE CANCELLED OUT. Eight hunters after
-	# a Wild Fowl flock reported "away ≈43 turns" and four would have reported the same — the stepper
-	# was not a weak lever, it was structurally not one.
-	#
-	# The fixture's rate divides EXACTLY (a party of 4 lands 20 animals a turn for 6 turns), which is
-	# what lets the turn counts below be asserted as equalities rather than as ranges.
-	await _fill_target_states()
+	# **HAND THE REFERENCE BAND BACK, exactly as the retired FILL-TARGET block did on its way out.**
+	# Four raid frames stood here until issue #491 removed the lever they showed, and their tail put
+	# `_player_band` / `_player_bands` back where the rest of this chapter's walk expects them. Every
+	# state that follows renders into the SAME long-lived `HudLayer`, and `update_band_alerts` keeps a
+	# losing-population diff against the last roster pushed — so deleting the block without its restore
+	# moves frames in later chapters for a reason that has nothing to do with the lever. Measured: it
+	# moved the three `band_kit_*` frames, which come back byte-identical with this restore in place.
+	h._hud._compose.reset_hunt_source()
+	h._hud._band_labor._player_bands = []
+	h._hud._band_labor._player_band = BandFx.band_fixture()
+	await h._settle()
 
 	# ---- THE THREE KITS (`docs/plan_hunt_through_combat.md` §4.8) --------------------------------
 	await _kit_states()
@@ -827,257 +794,6 @@ func run(harness) -> void:
 	h._hud._band_labor._player_bands = []
 	h._hud._compose.reset_forage_source()
 	h._hud._compose.set_forage_band(-1)
-
-
-## **THE FILL TARGET** (`docs/plan_hunt_through_combat.md` §5.2) — the party-side twin of the harvest
-## floor, and the client half of the fix for a raid whose length was a species constant with no lever.
-##
-## Four frames plus two PNG-less blocks, and the split is deliberate: a PICTURE can show that a
-## control exists and what it reads, but only an ASSERTION can show that the numbers on it agree with
-## the sim's, and only a byte-comparison can show that the untargeted raid is *unchanged*.
-func _fill_target_states() -> void:
-	var band: Dictionary = BandFx.hunt_distance_bands()[1]      # the FAR band — beyond hunt reach
-	h._hud._band_labor._player_bands = [band]
-	h._hud._band_labor._player_band = band
-	h._hud._compose.reset_hunt_source()
-	h._hud._compose.set_hunt_band(-1)
-	var herd := _fill_target_raid_herd()
-	h._show_herd(herd)
-	h._compose_herd(herd, FILL_TARGET_RAID_PARTY, SourceForecast.FLOOR_FOOD_PEAK)
-	await h._settle()
-	await h._save("fill_target_off")
-	var sheet: Control = h._hud._drawercompose._compose_sheet
-	# **PRECONDITION, not decoration.** Every claim below is about a control on THIS sheet, and a
-	# fixture whose party or floor lands on a different estimate row would make all of them vacuous.
-	h._assert_hud("the fill-target fixture composes the party its rate is stated for",
-		h._hud._compose.hunt_count() == FILL_TARGET_RAID_PARTY)
-	h._assert_hud("the untargeted raid runs the turns the fixture states",
-		Readout.fill_target_turns(sheet) == FILL_TARGET_RAID_TURNS)
-	h._assert_hud("…with no target set, so the pack is what fills",
-		Readout.fill_target_value(sheet) == SourceForecast.NO_FILL_TARGET
-			and h._hud._compose.hunt_fill_target() == SourceForecast.NO_FILL_TARGET)
-	h._assert_hud("…and the verdict names the PACK as the stop",
-		Readout.verdict_text(sheet).contains(
-			SourceForecast.TRIP_BOUND_CLAUSES[SourceForecast.TRIP_BOUND_PACK_FULL]))
-
-	# TICK IT. The checkbox is the only way in or out of a target — the stepper bottoms out at one
-	# hunting turn — and it seeds the SHORTEST real trip, which is what makes the first press state
-	# the axis's own unit instead of a number nothing chose.
-	h._assert_hud("the fill-target checkbox is reachable", _toggle_fill_target(sheet))
-	await h._settle()
-	sheet = h._hud._drawercompose._compose_sheet
-	await h._save("fill_target_one_turn")
-	h._assert_hud("ticking the box asks for ONE turn's animals",
-		Readout.fill_target_value(sheet) == FILL_TARGET_RAID_RATE)
-	h._assert_hud("…so the trip is one hunting turn, not six",
-		Readout.fill_target_turns(sheet) == 1)
-	# **THE POINT OF THE WHOLE SLICE**: the readout no longer merely reports a shorter number, it says
-	# WHICH stop produced it — and the pack clause must be GONE, or the two stops are indistinguishable
-	# in exactly the way §5.2 says they must not be.
-	h._assert_hud("…and the verdict now names the FILL TARGET, not the pack",
-		Readout.verdict_text(sheet).contains(
-				SourceForecast.TRIP_BOUND_CLAUSES[SourceForecast.TRIP_BOUND_FILL_TARGET])
-			and not Readout.verdict_text(sheet).contains(
-				SourceForecast.TRIP_BOUND_CLAUSES[SourceForecast.TRIP_BOUND_PACK_FULL]))
-	# The PAYLOAD follows the target: a raid that comes home early brings home less. Asserted because a
-	# target that shortened the trip while still promising the full haul would be the most attractive
-	# possible reading and a straightforwardly false one.
-	h._assert_hud("…and the payload is the targeted haul, not the untargeted one",
-		Readout.yields_text(sheet).contains("≈%d" % FILL_TARGET_RAID_RATE)
-			and not Readout.yields_text(sheet).contains("≈%d" % FILL_TARGET_RAID_ANIMALS))
-
-	# STEP UP TWICE — each press buys exactly one more turn of hunting, which is the unit the control
-	# is denominated in and the reason its step is not one animal.
-	h._hud._compose.set_hunt_fill_target(FILL_TARGET_RAID_RATE * 3)
-	h._compose_herd(herd)
-	await h._settle()
-	sheet = h._hud._drawercompose._compose_sheet
-	await h._save("fill_target_three_turns")
-	h._assert_hud("three turns' animals cost three hunting turns",
-		Readout.fill_target_value(sheet) == FILL_TARGET_RAID_RATE * 3
-			and Readout.fill_target_turns(sheet) == 3)
-
-	# **THE PARTY STEPPER IS A TRIP-LENGTH LEVER AGAIN**, which is the defect §5.1 reports. Hold ONE
-	# target and HALVE the party: the rate halves, so the trip doubles. Under the old model this
-	# assertion was unwritable — party size cancelled out of `turns_to_fill` exactly, so four hunters
-	# and sixteen both reported 31 turns on a Wild Fowl flock.
-	#
-	# **The target is TWO turns' animals at the full party, not three**, and the reason is the identity
-	# itself: at half the party the untargeted raid brings home exactly `RATE × 3`, so a target of that
-	# size is at capacity and folds back to NO TARGET — the assertion would be measuring the untargeted
-	# trip in both halves and passing on nothing.
-	h._hud._compose.set_hunt_fill_target(FILL_TARGET_RAID_RATE * 2)
-	h._compose_herd(herd)
-	await h._settle()
-	sheet = h._hud._drawercompose._compose_sheet
-	h._assert_hud("two turns' animals cost two turns at the full party",
-		Readout.fill_target_value(sheet) == FILL_TARGET_RAID_RATE * 2
-			and Readout.fill_target_turns(sheet) == 2)
-	h._hud._compose.set_hunt_count(FILL_TARGET_RAID_PARTY / 2)
-	h._compose_herd(herd)
-	await h._settle()
-	sheet = h._hud._drawercompose._compose_sheet
-	h._assert_hud("…and halving the party doubles that wait — the stepper is a trip-length lever again",
-		Readout.fill_target_value(sheet) == FILL_TARGET_RAID_RATE * 2
-			and Readout.fill_target_turns(sheet) == 4)
-	h._hud._compose.set_hunt_count(FILL_TARGET_RAID_PARTY)
-
-	# A FLOOR-BOUND RAID — the OTHER sentence §5.2 asks for, and the reason the bound is a
-	# discriminator rather than a decoration: the same control, the same kind of turn count, a
-	# different stop. Its clause must be the floor's and NOT the pack's.
-	var floor_bound := _floor_bound_raid_herd()
-	h._show_herd(floor_bound)
-	h._compose_herd(floor_bound, FILL_TARGET_RAID_PARTY, SourceForecast.FLOOR_FOOD_PEAK)
-	await h._settle()
-	sheet = h._hud._drawercompose._compose_sheet
-	await h._save("fill_target_floor_bound")
-	h._assert_hud("a floor-bound raid says the HERD ran out, not the pack",
-		Readout.verdict_text(sheet).contains(
-				SourceForecast.TRIP_BOUND_CLAUSES[SourceForecast.TRIP_BOUND_FLOOR])
-			and not Readout.verdict_text(sheet).contains(
-				SourceForecast.TRIP_BOUND_CLAUSES[SourceForecast.TRIP_BOUND_PACK_FULL]))
-
-	_assert_fill_target_arithmetic(band, herd)
-	_assert_fill_target_command()
-
-	# Leave the compose state as the block found it, so nothing downstream inherits a target.
-	h._hud._drawercompose.close_compose_sheet()
-	h._hud._compose.reset_hunt_source()
-	h._hud._band_labor._player_bands = []
-	h._hud._band_labor._player_band = BandFx.band_fixture()
-	await h._settle()
-
-
-## **THE PRE-LAUNCH TURN COUNT IS A PROPORTION ON THE SIM'S OWN ANSWER, AND THIS BOUNDS ITS ERROR.**
-##
-## The sim cannot preview a TARGETED trip — `huntTripEstimates` samples floor × party size only — so
-## the client divides the row's own `animals_taken` over `turns_to_fill`. That is exact while the
-## raid's per-turn take is flat (engagement and carry do not move as the herd draws down) and it is
-## simply not consulted where the take is NOT flat, because there the herd hits the FLOOR first and
-## the trip ends on the other bound. This block pins the exact half: on a fixture whose rate divides
-## evenly, asking for `k` turns' animals must answer exactly `k` for EVERY k the raid can reach — so
-## the client's arithmetic reproduces the sim's own pair rather than merely approximating it.
-##
-## A picture cannot carry any of this, which is why it is PNG-less.
-func _assert_fill_target_arithmetic(band: Dictionary, herd: Dictionary) -> void:
-	var exact := true
-	for k in range(1, FILL_TARGET_RAID_TURNS):
-		if SourceForecast.raid_target_turns(FILL_TARGET_RAID_RATE * k,
-				FILL_TARGET_RAID_ANIMALS, FILL_TARGET_RAID_TURNS) != k:
-			exact = false
-	h._assert_hud("k turns' animals cost exactly k turns at a constant rate (k = 1..%d)"
-		% (FILL_TARGET_RAID_TURNS - 1), exact)
-	# **THE IDENTITY THAT MAKES THE SLICE SAFE TO LAND** (§5.2): a target at or above what the raid
-	# already brings home IS the untargeted raid — the sim's `raid_load` hands the pack straight back —
-	# so the client must answer with the very same forecast rather than with a second, nearly-equal
-	# one. Compared as whole dictionaries, not field by field: a field-wise check would silently miss
-	# whichever field the target branch grew next.
-	var untargeted := SourceForecast.hunt_trip_forecast(band, ForageFx.floorify(herd.duplicate(true)),
-		SourceForecast.FLOOR_FOOD_PEAK, FILL_TARGET_RAID_PARTY,
-		h._hud._band_labor.grid_width(), h._hud._band_labor.wrap_horizontal(),
-		SourceForecast.NO_FILL_TARGET)
-	var at_capacity := SourceForecast.hunt_trip_forecast(band, ForageFx.floorify(herd.duplicate(true)),
-		SourceForecast.FLOOR_FOOD_PEAK, FILL_TARGET_RAID_PARTY,
-		h._hud._band_labor.grid_width(), h._hud._band_labor.wrap_horizontal(),
-		FILL_TARGET_RAID_ANIMALS)
-	h._assert_hud("a target AT the untargeted haul is the untargeted raid, exactly",
-		_forecast_matches(untargeted, at_capacity))
-	var above := SourceForecast.hunt_trip_forecast(band, ForageFx.floorify(herd.duplicate(true)),
-		SourceForecast.FLOOR_FOOD_PEAK, FILL_TARGET_RAID_PARTY,
-		h._hud._band_labor.grid_width(), h._hud._band_labor.wrap_horizontal(),
-		FILL_TARGET_RAID_ANIMALS * 2)
-	h._assert_hud("…and so is a target ABOVE it", _forecast_matches(untargeted, above))
-	# The clamp says the same thing about the CONTROL: a target the raid would ignore must not sit on
-	# the sheet as a number, or the lever looks set and is not — the §5.1 defect in miniature.
-	h._assert_hud("a target at or above the haul folds back to NO TARGET on the control",
-		SourceForecast.clamp_fill_target(FILL_TARGET_RAID_ANIMALS, FILL_TARGET_RAID_RATE,
-				FILL_TARGET_RAID_ANIMALS) == SourceForecast.NO_FILL_TARGET
-			and SourceForecast.clamp_fill_target(FILL_TARGET_RAID_ANIMALS + 1,
-				FILL_TARGET_RAID_RATE, FILL_TARGET_RAID_ANIMALS) == SourceForecast.NO_FILL_TARGET)
-
-
-## **THE COMMAND CARRIES THE TARGET, AND OMITS IT WHEN THERE IS NONE.** `send_hunt_expedition`'s
-## grammar is positional (`… <fauna_id> [floor] [fill_target]`), so both halves are the claim: a
-## targeted launch must append the token, and an untargeted one must emit the line it emitted before
-## the lever existed — the byte-identity half of §5.2, at the command layer.
-func _assert_fill_target_command() -> void:
-	var payload := {
-		"faction": HudConst.PLAYER_FACTION_ID, "band_id": 812, "party_workers": 4,
-		"fauna_id": "game_deer_07", "fauna_label": "Red Deer",
-		"floor": SourceForecast.FLOOR_FOOD_PEAK,
-	}
-	var untargeted := String(h.MAIN_SCRIPT.format_send_hunt_expedition(payload).get("line", ""))
-	payload["fill_target"] = SourceForecast.NO_FILL_TARGET
-	h._assert_hud("a fill target of 0 emits the untargeted line, token and all",
-		String(h.MAIN_SCRIPT.format_send_hunt_expedition(payload).get("line", "")) == untargeted)
-	payload["fill_target"] = FILL_TARGET_RAID_RATE
-	var targeted: Dictionary = h.MAIN_SCRIPT.format_send_hunt_expedition(payload)
-	h._assert_hud("…and a real target rides as the trailing token",
-		String(targeted.get("line", "")) == "%s %d" % [untargeted, FILL_TARGET_RAID_RATE])
-	# The feed receipt names BOTH orders, because a raid is ordered with both and a receipt quoting
-	# one describes a mission the player did not give.
-	h._assert_hud("…with the command feed naming the target beside the floor",
-		String(targeted.get("message", "")).contains(str(FILL_TARGET_RAID_RATE)))
-
-
-## Two `hunt_trip_forecast` answers, compared WHOLE. `==` on a Dictionary is identity in GDScript, so
-## the comparison has to walk the keys — and it walks BOTH key sets, since a branch that ADDED a key
-## would otherwise pass a one-directional scan.
-func _forecast_matches(a: Dictionary, b: Dictionary) -> bool:
-	if a.size() != b.size():
-		return false
-	for key in a:
-		if not b.has(key) or a[key] != b[key]:
-			return false
-	return true
-
-
-## **THE FILL TARGET's quarry** — the distance herd's shape with a raid table whose per-turn rate is a
-## whole number (see `FILL_TARGET_RAID_RATE`), so the targeted trip lengths the states assert are
-## equalities rather than ranges. `pack_full` is its bound: nothing about the herd runs out, the party
-## simply cannot carry more — which is the contrast the floor-bound twin below exists against.
-func _fill_target_raid_herd() -> Dictionary:
-	var herd := HerdFx.herd_fixture()
-	herd["tile_info"] = HerdFx.plain_herd_tile_info()
-	herd["hunt_trip_estimates"] = HerdFx.raid_estimate_table(
-		FILL_TARGET_RAID_TURNS_ROW, FILL_TARGET_RAID_ANIMALS_ROW, float(herd["food_per_animal"]))
-	return herd
-
-
-## The SAME raid, stopped by the HERD instead of by the party — the other sentence §5.2 asks the
-## readout to be able to say. Only the bound differs from `_fill_target_raid_herd`, and that is the
-## point: the two frames carry identical numbers and must still read as different decisions, which is
-## the claim a turn count alone structurally cannot make.
-func _floor_bound_raid_herd() -> Dictionary:
-	var herd := HerdFx.herd_fixture()
-	herd["id"] = "game_deer_08"
-	herd["tile_info"] = HerdFx.plain_herd_tile_info()
-	herd["hunt_trip_estimates"] = HerdFx.raid_estimate_table(
-		FILL_TARGET_RAID_TURNS_ROW, FILL_TARGET_RAID_ANIMALS_ROW, float(herd["food_per_animal"]),
-		HerdFx.RAID_TRADE_PER_ANIMAL, SourceForecast.TRIP_BOUND_FLOOR)
-	return herd
-
-
-## Press the fill-target control's checkbox — the ONLY way to set or clear a target, since its stepper
-## bottoms out at one hunting turn rather than at zero. Returns false when the control is absent.
-func _toggle_fill_target(root: Node) -> bool:
-	var block := Q.find_meta_node(root, HudWidgets.FILL_TARGET_META)
-	if block == null:
-		return false
-	var box := _find_first_checkbox(block)
-	if box == null:
-		return false
-	box.button_pressed = not box.button_pressed
-	return true
-
-func _find_first_checkbox(root: Node) -> CheckBox:
-	if root is CheckBox:
-		return root as CheckBox
-	for child in root.get_children():
-		var found := _find_first_checkbox(child)
-		if found != null:
-			return found
-	return null
 
 
 # ---- THE THREE KITS (`docs/plan_hunt_through_combat.md` §4.8) ------------------------------------

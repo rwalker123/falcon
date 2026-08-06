@@ -58,11 +58,6 @@ var _hunt_improvement: String = ""
 # The hunt twin of `_forage_autofill` — same one-shot contract.
 var _hunt_autofill := false
 var _hunt_band: int = -1
-# **THE FILL TARGET** (`docs/plan_hunt_through_combat.md` §5.2) — whole animals the composed EXPEDITION
-# will wait for, `SourceForecast.NO_FILL_TARGET` for the untargeted raid. It has no forage twin: a
-# resident crew works a source turn after turn and has no trip to end, so the party-side stop exists
-# only on the branch that detaches a party.
-var _hunt_fill_target: int = SourceForecast.NO_FILL_TARGET
 
 # ---- Party compose (the Band panel's PARTIES zone — NOT drawer state) ----------------------------
 # The quarry the party compose sheet is aimed at (a world herd id), "" until one is picked. It is the
@@ -72,15 +67,6 @@ var _party_quarry_id: String = ""
 # The sheet's OWN autofill one-shot. Deliberately NOT `_hunt_autofill`: sharing it would let one
 # surface's floor click refill the other surface's stepper.
 var _party_autofill := false
-# **THE FILL TARGET LIVES WITH THE QUARRY IT COUNTS**, the party twin of `_hunt_fill_target`. It sat
-# on `BandPanelController` and was cleared BESIDE the quarry by a `_clear_party_quarry` that had to
-# remember to — so the one path that set a quarry WITHOUT going through it (a re-pick on the map)
-# carried the previous herd's target onto the new one, where the render's clamp folded it to a
-# plausible smaller number rather than dropping it. A target is a count of a SPECIFIC herd's animals,
-# so the pairing is now structural: both mutators below write both fields, and no caller can set one
-# without the other.
-var _party_fill_target: int = SourceForecast.NO_FILL_TARGET
-
 # ---- THE KIT each group is composing (`docs/plan_denial_raid.md`) ---------------------------------
 # The roster id the crew will be sent out with, per compose group — `KitRoster.NO_KIT_ID` until the
 # first render resolves one.
@@ -214,12 +200,6 @@ func hunt_band() -> int:
 func hunt_improvement() -> String:
 	return _hunt_improvement
 
-## The whole animals the composed EXPEDITION will wait for — `SourceForecast.NO_FILL_TARGET` for the
-## untargeted raid. Read by the launch payload as well as the sheet, so the number the control shows
-## and the number the command carries are one value.
-func hunt_fill_target() -> int:
-	return _hunt_fill_target
-
 # ---- Hunt mutators -------------------------------------------------------------------------------
 
 ## A DIFFERENT herd is being composed — the hunt twin of `begin_forage_source` (same two-step reason).
@@ -229,15 +209,10 @@ func begin_hunt_source(key: String, band_entity: int) -> void:
 
 ## Re-seed the composed count + stance + improvement from the newly-resolved band's staffing on the
 ## new herd — the hunt twin of `seed_forage`.
-## **THE FILL TARGET RESETS WITH THE SOURCE, and it must.** It is a count of a SPECIFIC herd's
-## animals, so carrying "160" from a fowl flock onto a mammoth herd would be a target the next raid
-## silently ignores (`raid_load` hands the pack back at or above capacity) — the exact class of
-## dead-lever defect §5.1 is about.
 func seed_hunt(count: int, floor: float, improvement: String) -> void:
 	_hunt_count = count
 	_hunt_floor = SourceForecast.clamp_floor(floor)
 	_hunt_improvement = improvement
-	_hunt_fill_target = SourceForecast.NO_FILL_TARGET
 
 ## The hunt twin of `reset_forage_source` — forget the herd so the next render re-seeds.
 func reset_hunt_source() -> void:
@@ -255,9 +230,6 @@ func set_hunt_improvement(improvement: String) -> void:
 func set_hunt_count(count: int) -> void:
 	_hunt_count = count
 
-func set_hunt_fill_target(target: int) -> void:
-	_hunt_fill_target = maxi(target, SourceForecast.NO_FILL_TARGET)
-
 func arm_hunt_autofill() -> void:
 	_hunt_autofill = true
 
@@ -270,38 +242,20 @@ func consume_hunt_autofill() -> bool:
 func clamp_hunt_count(cap: int) -> void:
 	_hunt_count = clampi(_hunt_count, 0, cap)
 
-## Fold the held target back onto the axis the CURRENT party and floor offer (the whole animals a
-## raid this size brings home changes with both), through the one definition of that rule. The same
-## read-modify-write-kept-off-the-call-site shape as `clamp_hunt_count`.
-func clamp_hunt_fill_target(step: int, untargeted_animals: int) -> void:
-	_hunt_fill_target = SourceForecast.clamp_fill_target(_hunt_fill_target, step, untargeted_animals)
-
 # ---- Party compose (parties zone) ----------------------------------------------------------------
 
 func party_quarry_id() -> String:
 	return _party_quarry_id
 
 ## The quarry is now `herd_id` — a fresh pick, a re-pick on the map, or a switch between the herds
-## sharing one hex. **The fill target goes with it**: it counts a specific herd's animals, so handing
-## it to the next quarry offers a lever the raid silently ignores (`raid_load` returns the pack for a
-## target at or above capacity — the defect `docs/plan_hunt_through_combat.md` §5.2 exists to remove).
+## sharing one hex.
 func set_party_quarry(herd_id: String) -> void:
 	_party_quarry_id = herd_id
-	_party_fill_target = SourceForecast.NO_FILL_TARGET
 
 ## No quarry: a fresh compose act, a cancelled one, a quarry that left the snapshot or migrated into
 ## the band's hunt reach, or a panel-band swap (a quarry is chosen FOR a band).
 func clear_party_quarry() -> void:
 	_party_quarry_id = ""
-	_party_fill_target = SourceForecast.NO_FILL_TARGET
-
-## The whole animals the composed raid waits for, `SourceForecast.NO_FILL_TARGET` for the untargeted
-## one. Written back every render from the clamped axis the current party + floor offer.
-func party_fill_target() -> int:
-	return _party_fill_target
-
-func set_party_fill_target(target: int) -> void:
-	_party_fill_target = maxi(target, SourceForecast.NO_FILL_TARGET)
 
 func arm_party_autofill() -> void:
 	_party_autofill = true

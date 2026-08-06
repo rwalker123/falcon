@@ -22,7 +22,7 @@ use core_sim::{
     FactionId, FaunaConfigHandle, GenerationId, HerdRegistry, HerdTelemetry, KitChoice, KitJob,
     LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MoraleCause, PopulationCohort,
     ResidentBand, SimulationConfig, SnapshotHistory, SourceYield, StartingUnit, TileRegistry,
-    DEFAULT_ESCAPEMENT_FLOOR, NO_FILL_TARGET,
+    DEFAULT_ESCAPEMENT_FLOOR,
 };
 
 /// The crew every fixture in this file staffs, so two arms are only ever comparable to each other.
@@ -181,7 +181,6 @@ fn spawn_party(
                 mission: ExpeditionMission::Hunt {
                     fauna_id: fauna_id.to_string(),
                     floor: DEFAULT_ESCAPEMENT_FLOOR,
-                    fill_target: NO_FILL_TARGET,
                 },
                 phase: ExpeditionPhase::Hunting,
                 announced: false,

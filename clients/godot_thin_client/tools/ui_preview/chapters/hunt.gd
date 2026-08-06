@@ -834,17 +834,13 @@ func run(harness) -> void:
 				HudWidgets.CREW_TARGET_CLEAR) == null
 			and Q.find_crew_target(h._hud._drawercompose._compose_sheet,
 				HudWidgets.CREW_TARGET_HOLD) == null)
-	# **THE PARTY-SIDE HALF: the fill target, offered and OFF.** Its two states are one glance apart
-	# (an unticked box beside a ticked one), so the state is read off the control rather than off the
-	# frame: no value Label exists while the box is clear, and the turns note prices the WHOLE
-	# untargeted raid — the same `turnsToFill` the verdict above quotes.
 	var expedition_sheet: Control = h._hud._drawercompose._compose_sheet
-	h._assert_hud("the expedition sheet offers a fill target — the party-side half of the pair",
-		Q.find_meta_node(expedition_sheet, HudWidgets.FILL_TARGET_META) != null)
-	h._assert_hud("…and it opens with NO target set: the pack is what the raid fills",
-		Readout.fill_target_value(expedition_sheet) == SourceForecast.NO_FILL_TARGET)
-	h._assert_hud("…so its turns note prices the untargeted raid, not a target",
-		Readout.fill_target_turns(expedition_sheet) == HerdFx.DISTANCE_RAID_TURNS[0])
+	# **THERE IS NO PARTY-SIDE LEVER ON THE TRIP'S LENGTH, and that absence is deliberate.** A fill
+	# target ("come home with N animals") was offered here and is retired (issue #491): trip length is
+	# `carry ÷ (engage_rate × stay_chance × body_mass)`, in which PARTY SIZE CANCELS, so the control
+	# moved a species-and-kit constant and the spread it existed to escape is a TUNING problem. What the
+	# readout quotes is the sim's own untargeted raid, and the verdict below is the whole of what the
+	# sheet says about the trip's end.
 	# **THE VERDICT NAMES WHICH STOP ENDS THE TRIP** — the point of §5.2, and the thing a turn count
 	# alone cannot say. This raid fills its pack, so it must read the pack clause and NOT the floor
 	# one; asserting only "some clause is present" would pass on the wrong stop.

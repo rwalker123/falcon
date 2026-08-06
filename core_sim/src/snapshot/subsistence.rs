@@ -167,9 +167,8 @@ fn herd_regrowth_samples(herd: &Herd, fauna: &FaunaConfig) -> Vec<f32> {
 /// one floor it can legally be worked at: there is no point quoting a sustainable raid on a quarry
 /// with no product.
 ///
-/// **Every row is the UNTARGETED raid** ([`NO_FILL_TARGET`]) — the party fills its pack. The fill
-/// target is a *launch* parameter, so quoting it here would need a third sampled axis on a table
-/// that is already `floors × party sizes` per herd; the in-flight
+/// **Every row's party-side stop is the pack** — a raid carries no count-of-animals target, so the
+/// table's two axes (`floors × party sizes`) are the whole of what a launch can vary. The in-flight
 /// `PopulationCohortState.expeditionTripBound` answers for a party's real orders once it is sent,
 /// and the launch feed line answers at the moment of the commit.
 pub(crate) fn hunt_trip_estimate_entries(
@@ -195,7 +194,6 @@ pub(crate) fn hunt_trip_estimate_entries(
                 party_workers,
                 herd,
                 floor,
-                NO_FILL_TARGET,
                 fauna,
                 per_worker_haul,
                 expedition,

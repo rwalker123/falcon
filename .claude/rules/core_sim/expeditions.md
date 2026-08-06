@@ -121,9 +121,9 @@ zero in v1) + opportunistic replenish; **(d) phase transitions** — `Outbound` 
 all**, fold workers + leftover provisions back into the band + despawn (`ExpeditionReturned`, after
 the flush so the final findings report — see "One fold-back, two moments"); `AwaitingOrders` waits.
 
-**Hunt verb (PR 2)** — `ExpeditionMission::Hunt { fauna_id, floor: f32, fill_target: u32 }` on the
-same party; **both numbers are chosen at launch** (`send_hunt_expedition <faction> <band>
-<party_workers> <fauna_id> [floor] [fill_target]`) and neither is a config lever. The floor is a
+**Hunt verb (PR 2)** — `ExpeditionMission::Hunt { fauna_id, floor: f32 }` on the
+same party; **the floor is chosen at launch** (`send_hunt_expedition <faction> <band>
+<party_workers> <fauna_id> [floor]`) and is not a config lever. It is a
 `0.0..=1.0` fraction of `K`, default `DEFAULT_ESCAPEMENT_FLOOR`. **The floor token is a NUMBER**: the
 four stance words are refused at parse with `CommandParseError::RetiredStanceToken`, so a `… sustain`
 copied from this file's older wording is a hard error rather than a default. `advance_expeditions`
@@ -137,47 +137,32 @@ branches on mission:
   carried ≥ hunt.min_deliver_fraction × cap` (the empty-larder flip-flop fix). The near-band case is a
   **drop-off, not a trip end** — the party delivers and resumes hunting (issue #441). An empty pack at
   completion reports **why** (no sustainable take / no take possible), never a cheerful zero.
-> #### The FILL TARGET is the party-side twin of the floor (`docs/plan_hunt_through_combat.md` §5.2)
+> #### A RAID'S LENGTH IS A SPECIES-AND-KIT CONSTANT, and there is no player lever on it
 >
-> **The floor says how deep to draw the herd; the fill target says how long you will wait.** It is a
-> count of **whole animals** on `ExpeditionMission::Hunt`, and [`components::NO_FILL_TARGET`] (`0`)
-> means *"fill the pack"* — the pre-target behaviour, and what the launch command uses when the player
-> names none. Any count is legal, so unlike the floor there is **no validation and no rejection path**:
-> a target at or above what the pack holds is simply the untargeted raid.
+> The pack is measured in **carry** and the take, since the engagement stage, in **reach** — so
+> `turns_to_fill = per_worker_carry / (engage_rate × stay_chance × body_mass × provisions_per_biomass)`
+> and **party size cancels out entirely**. Eight hunters after Wild Fowl reported *"away ≈43 turns —
+> 31 hunting, 12 travel"*; four hunters take 31 turns and sixteen take 31 turns. §4.6's ceiling table
+> is silently also the trip-length table.
 >
-> **It exists because a raid's length was otherwise a species constant with no lever** (§5.1). The pack
-> is measured in **carry** and the take, since the engagement stage, in **reach** — so
-> `turns_to_fill = per_worker_carry / (engage_rate × body_mass × provisions_per_biomass)` and **party
-> size cancels out entirely**. Eight hunters after Wild Fowl reported *"away ≈43 turns — 31 hunting, 12
-> travel"*; four hunters take 31 turns and sixteen take 31 turns. §4.6's ceiling table was silently
-> also the trip-length table, and the small end of it was not merely unattractive but unusable.
+> **A player-set `fill_target` ("take ≈50 and come home") shipped as the one lever on that constant
+> and was RETIRED** (`docs/plan_hunt_through_combat.md` §5.2, marked retired in place). It replaced
+> the pack's capacity in the completion the raid already evaluates, so `NO_FILL_TARGET` ("fill the
+> pack") was always the default and its removal is bit-identical to that default. It went because the
+> unplayably long trips it existed to escape (Wild Fowl 88 turns, Grey Wolf 76, Rabbit 59 against
+> Mammoth 1.1) are a **tuning** problem — **issue #491** — and a control that asks the player to work
+> around a config error is not a decision. Removed with it: `RaidOrders::fill_target`,
+> `NO_FILL_TARGET`, `HuntTripBound::FillTarget`, `systems::expeditions::raid_load`/`RaidLoad`, the
+> grammar's second positional tail, and the `fill_target` parameters on `hunt_trip_forecast` /
+> `expedition_delivery`. **The wire slots are deprecated in place, never deleted** —
+> `snapshot.fbs`'s `expeditionFillTarget` (a FlatBuffers vtable slot is positional) and
+> `command.proto`'s `fill_target = 7` (a shipped field number is immutable).
 >
-> **It adds NO termination logic — it replaces the pack's capacity in a condition the raid already
-> evaluates.** `systems::expeditions::raid_load` is the one seam: it takes the party's pack cap
-> (`workers × hunt.per_worker_carry`) and the target converted **once**, through the species' own
-> `HuntYield::apply(fill_target × body_mass)` — the same call the completion's `food_per_animal` uses,
-> so `fill_target` animals of room and the target cap are the same number by construction — and returns
-> the smaller of the two **plus which one bound**. The live `Hunting` arm and `hunt_trip_forecast` both
-> resolve it, so the raid cannot come home on a load different from the one it was quoted.
->
-> **Wherever the pack cannot END the trip, neither can the target**, because it is the same stop
-> under a player's name. Two cases, and they are different kinds of fact: an **INEDIBLE** quarry (a
-> *product* fact — `provisions_per_biomass == 0`, so a converted target would read as an
-> instantly-full pack, and the food pack is already inert there) and **`STRIP_IT_BARE`** (an
-> *intensity* fact — a floor-`0` raid's completion never consults the party-side stop at all,
-> `done`/`relaunch` both `false`). The floor-`0` pack is still a real **carry** bound — a different
-> question, and conflating the two is what let a floor-`0` raid report itself hauling home everything
-> it killed — so a target honoured there would silently shrink the haul instead of shortening the
-> trip. **Denial answered the question they
-> left open by deleting it**: `ExpeditionMission::Deny` carries **no `fill_target` field at all** (and
-> no floor), so a target on a raid that does not clamp to carry cannot be *expressed* rather than
-> being accepted and ignored — and the launch grammar refuses a trailing token rather than dropping
-> it. See "Denial is a MISSION, not a floor".
->
-> Pinned by `expedition_hunt::{a_fill_target_below_capacity_shortens_the_trip_and_above_it_is_an_identity,
-> trip_length_responds_to_the_fill_target_but_not_to_party_size_without_one}` — the shortening, the
-> exact identity at/above capacity, and, deliberately beside them, the party-size invariance that
-> *caused* the defect and is still true.
+> The invariance itself is pinned by
+> `expedition_hunt::a_raids_length_is_invariant_in_party_size_while_its_payload_is_not` — deliberately
+> paired with the payload half, so it cannot read as "party size does nothing", and carrying the
+> `PackFull` bound-naming assertion the retired tests also held. It is the statement the tuning pass
+> on #491 has to move.
 
 > #### A hunting expedition is a GREEDY RAID, not a resident band's throttled skim (playtest fix)
 >
@@ -298,12 +283,13 @@ branches on mission:
     zeroed `animals_taken` and `delivered_trade` — the client quoted `⇄ ~0` on a wolf while the sim
     banked real pelts. Only an **empty party** (`cap <= 0`) short-circuits now; a wolf raid gets a real
     ETA (it ends when the standing surplus is spent) and its food fields fall out at `0` on their own.
-  - **`bound`** (`HuntTripBound`) — **WHICH stop ended the trip**: `PackFull` / `FillTarget` / `Floor`
-    / `HerdLost` / `Horizon`, wire keys `"pack_full"` / `"fill_target"` / `"floor"` / `"herd_lost"` /
-    `"horizon"`. A trip *length* alone cannot tell the player's two levers apart — *"you come home on
-    your fill target in 4 turns; the herd never reaches the floor"* and *"you reach the floor in 2
-    turns with the pack a third full"* are different decisions carrying the same kind of number — so
-    the sim names it and the client composes nothing. **`Horizon` is exactly the
+  - **`bound`** (`HuntTripBound`) — **WHICH stop ended the trip**: `PackFull` / `Floor` / `HerdLost`
+    / `Horizon`, wire keys `"pack_full"` / `"floor"` / `"herd_lost"` / `"horizon"`. **Four, not
+    five** — the retired `FillTarget` went with the lever it named (see the callout above). A trip
+    *length* alone cannot say which bound it was — *"you fill the pack in 31 turns; the herd never
+    reaches the floor"* and *"you reach the floor in 2 turns with the pack a third full"* are
+    different decisions carrying the same kind of number — so the sim names it and the client
+    composes nothing. **`Horizon` is exactly the
     `turns_to_fill == None` case, with no exception** — it is the only bound with no completion turn,
     because it is the only one where the raid had not ended. **`HerdLost` reports the turn the herd
     went**, like every other stop: the live arm's lost-herd guard turns the party for home in the same
@@ -419,21 +405,20 @@ branches on mission:
   sampling ladder, not a ceiling), draws `party × distance ×
   provision_draw_per_worker_per_tile` provisions from the band larder (partial OK), removes the
   workers from `band.working`, and spawns the detached `Expedition` cohort. Feed `ExpeditionSent`.
-- `send_hunt_expedition <faction> <band> <party_workers> <fauna_id> [floor] [fill_target] [kit <id>]`
+- `send_hunt_expedition <faction> <band> <party_workers> <fauna_id> [floor] [kit <id>]`
   — same resident-band gate + party validation, validates `fauna_id` resolves to a live herd, draws **no**
   provisions, removes the workers, spawns a `Hunt`-mission party in `Hunting` phase heading for the
-  herd. Feed `ExpeditionSent` (hunt flavor), whose detail carries `floor=… fill_target=… bound=…`.
-  The two optional tokens are **positional in that order** (proto fields `floor = 6`,
-  `fill_target = 7`) — the floor shipped first, and a positional grammar is append-only for the same
-  reason a wire is. The **floor fails closed** (out of `0.0..=1.0` → command failure, never clamped);
-  the **fill target cannot fail** — every count is a legal order, and a target at or above the pack's
-  capacity is simply the untargeted raid.
+  herd. Feed `ExpeditionSent` (hunt flavor), whose detail carries `floor=… bound=…`.
+  The **floor is the ONE optional positional token** (proto field `floor = 6`) and it **fails
+  closed** — out of `0.0..=1.0` → command failure, never clamped. **Anything after it is refused**
+  (`CommandParseError::UnexpectedArgument`): the retired fill target sat in that slot, so a stale
+  caller's second number must fail rather than be silently dropped.
 - `send_denial_raid <faction> <band> <party_workers> <fauna_id> [kit <id>]` — the **third verb**
   (`SendDenialRaidCommand`, proto field **49**). Shares the whole outfit half with the hunt above —
   `server::outfit_raiding_party` is the one seam for the resident-band gate, the live-herd lookup and
   the party bound, so a third verb could not acquire its own copy of them — and differs only in the
   mission it names and the verdict it quotes. **Its grammar is CLOSED except for the kit**: there is no floor
-  and no fill target to pass, so any other trailing token is a hard parse error rather than a value
+  to pass, so any other trailing token is a hard parse error rather than a value
   to ignore. The one exception is the named `kit <id>` pair — a kit is a property of the **party**,
   not of the mission, so it is the only order a raid carrying no numbers still has to give (see
   `equipment.md` → "A kit is a MASK"). Feed `ExpeditionSent`, whose detail carries `mission=deny outcome=… turns_to_collapse=…
@@ -455,9 +440,8 @@ branches on mission:
 **`expeditionFloor:float`** (the raid's escapement floor as a fraction of `K` — the live
 discriminator, defaulting to `1` so an absent floor reads "take nothing" rather than "take
 everything"; `expeditionHuntPolicy` is the retired `(deprecated)` slot it replaced and has no
-accessor) / **`expeditionFillTarget:uint`** (the raid's fill target in **whole animals** — the
-party-side twin of the floor; `0` = [`NO_FILL_TARGET`], "fill the pack", which is what a scout and a
-resident band report) / **`expeditionTripBound:string`** (which stop will end *this* party's raid —
+accessor; `expeditionFillTarget` is the other retired `(deprecated)` slot, from the fill target —
+the sim never writes it) / **`expeditionTripBound:string`** (which stop will end *this* party's raid —
 the `HuntTripBound` key, off the same in-flight forward simulation `expeditionEtaTurns` comes from,
 so it answers for the party's **real** orders rather than for the band-agnostic pre-launch table;
 `""` = not raiding — a resident band, a scout, or a party already walking a load home, which is a
@@ -536,9 +520,10 @@ lookup**:
   size); a herd at/below its floor reads `0` on all three. Because the take is bounded by the standing
   surplus, `deliveredFood`/`animalsTaken` **plateau** with `partyWorkers` once the surplus binds — that
   plateau is the max-useful party size (`ceil(surplus_food / per_worker_carry)`) the stepper caps at.
-  **`bound:string`** (appended) names WHICH stop ended the sampled trip — the `HuntTripBound` key.
-  **Every row here is the UNTARGETED raid**, so no row reads `"fill_target"`: a fill target is chosen
-  at launch and this table is band-agnostic, sampling floor × party size only. A launched party's own
+  **`bound:string`** (appended) names WHICH stop ended the sampled trip — the `HuntTripBound` key,
+  one of the raid's **four** stops. Pinned by
+  `expedition_hunt::every_pre_launch_estimate_row_names_one_of_the_raids_four_stops`, which holds the
+  live key set in one place so a fifth cannot appear without a client clause. A launched party's own
   bound is `PopulationCohortState.expeditionTripBound`.
   `deliversFood == false` means the **species** is inedible (a wolf), not that the policy denies — such
   a row still carries a real `turnsToFill` and a `deliveredTrade` payload. **Travel is excluded** — the
@@ -631,8 +616,6 @@ resolves both verbs through.
   or its detail**: the launch text takes four positional tokens plus an optional named `kit <id>`,
   and refuses anything else (`CommandParseError::UnexpectedArgument`) rather than accepting a number
   and dropping it.
-- **`hunt_fill_target()` reports `NO_FILL_TARGET`, and cannot report anything else** — see the fill
-  target's own callout above.
 - **A floor-`0` HUNT is still a different thing, and the difference is the ENGAGEMENT, never the
   carry.** It grinds to extinction through the lost-herd guard, one `max(1, carryable)` animal a turn
   once its pack is full; denial drops the pack as a bound on what it **engages** and kills everything
@@ -892,8 +875,8 @@ applied to a turn count instead of a biomass (`docs/plan_hunt_through_combat.md`
   count lumpy on a herd of two or three, which is honest — a party cannot half-kill a goat.
 
 **Wire:** `HerdTelemetryState.denialEstimates` — one `DenialEstimate` per party size on
-`snapshot::subsistence::denial_party_axis`, with **no floor axis and no fill-target axis**, because
-the mission carries neither. `denial_estimate_entries` builds it beside `denialPartyNeeded` (they are
+`snapshot::subsistence::denial_party_axis`, with **no floor axis**, because
+the mission carries none. `denial_estimate_entries` builds it beside `denialPartyNeeded` (they are
 one struct, `DenialTable`, because the second is read off the first), gated on `huntable` exactly as
 `huntTripEstimates` is; cost is `3 × axis rows × hunt.forecast_horizon_turns` turn-steps per huntable
 herd, the three being the reported band's quantiles. **The axis is not the bare

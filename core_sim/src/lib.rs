@@ -105,8 +105,8 @@ pub use components::{
     ExpeditionPhase, Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget,
     LocalStore, LogisticsLink, MoraleCause, PendingMigration, PopulationCohort, PowerNode,
     ResidentBand, Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink, YieldRange,
-    DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_FILL_TARGET, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR,
-    STRIP_IT_BARE, TRADE_GOODS,
+    DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE,
+    TRADE_GOODS,
 };
 pub use config_load::ConfigLoadError;
 pub use config_override::{
