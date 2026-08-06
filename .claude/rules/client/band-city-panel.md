@@ -1217,8 +1217,30 @@ is about and adding it would over-state the wait for the thing being promised.
 On a hunt an unhauled kill is an occasional overflow and wears `HUNT_FORECAST_WARN_GLYPH`'s `⚠`; on a
 raid it is essentially the whole take and it is the **point** of the mission. `denial_take_bbcode` is
 therefore a quiet `INK_DIM` line — `kills ≈55 Wild Boar · brings home 6.00 food · ⇄ 0.75 trade goods ·
-leaves 214.00 on the range` — with each account rendered only when the quarry pays it (the
-render-only-when-non-zero rule), and no alarm glyph anywhere.
+leaves 214.00 and ⇄ 26.75 trade goods on the range` — with each account rendered only when the quarry
+pays it (the render-only-when-non-zero rule), and no alarm glyph anywhere.
+
+**THE WASTE IS A PAIR, AND IT IS ONE CLAUSE.** The sim publishes `wastedFood` **and `wastedTrade`**
+out of one `HuntYield::apply` over the same wasted biomass, so a kill left on the range takes its
+hides with it; stated food-only, a raid whose quarry pays in pelts reported its waste as zero.
+`SourceForecast.denial_waste_face` is the ONE spelling of "what was left on the range", so a second
+surface that ever states a raid's waste states it in these words:
+
+- **Food leads and renders BARE; trade carries the glyph and the words.** An edible quarry with no
+  trade therefore reads exactly as it did before the pair existed, and the bare figure can never be
+  mistaken for the trade one — which it could, silently, the moment a second number joined it.
+- **The two are joined by `DENIAL_TAKE_LEFT_JOIN` (` and `), NOT by `TRADE_COMPONENT_SEPARATOR`.**
+  ` · ` is what separates this line's own CLAUSES, so nesting it inside one clause's subject would
+  read as a fourth clause beginning at the trade figure and ending "on the range".
+- **A quarry that wastes nothing renders NO clause, not two zeros.** An inedible quarry is exactly
+  that case and it is a fact about the PRODUCT: `carry_room_biomass` answers `NO_CARRY_BOUND` for a
+  species paying no provisions, the pack never binds, and the party hauls every pelt. So the fixture
+  that proves this pair has to be an EDIBLE quarry, where the pack binds hard — a wolf fixture would
+  assert nothing.
+
+**The IN-FLIGHT surface states no waste at all and needed no change.**
+`DetailFormat.expedition_collapse_line` renders the collapse verdict and the quoted-party note and
+stops there, so there is no second spelling of the waste to keep in step.
 
 ### The mission's mark is `💀`, on all three surfaces
 

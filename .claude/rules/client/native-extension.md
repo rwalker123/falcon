@@ -210,9 +210,16 @@ source of the Rust-`f32`-Display trap its own comment records; denial carries no
 target, so party size is the only axis, a row's `party_workers` IS its identity, and an array cannot
 reproduce the trap. Each row carries `party_workers` / `turns_to_collapse` / `turns_to_collapse_low` /
 `turns_to_collapse_high` / `outcome` / `animals_killed` / `delivered_food` / `wasted_food` /
-`delivered_trade`. **A `0` on any turn field means "not within the horizon on that end", never
-"immediately"**, and `outcome` is what the client renders instead of a blank — decode all four
-together or the consumer cannot tell a repelled party from an expired clock.
+`delivered_trade` / `wasted_trade`. **A `0` on any turn field means "not within the horizon on that
+end", never "immediately"**, and `outcome` is what the client renders instead of a blank — decode all
+four together or the consumer cannot tell a repelled party from an expired clock.
+
+**THE WASTE IS A PAIR, AND BOTH HALVES ARE DECODED** — `wastedTrade` is appended last on the table
+and is the twin `deliveredTrade` already had. The sim prices both out of ONE `HuntYield::apply` over
+the wasted biomass, so a kill left on the range takes its hides with it; decoding the food half alone
+reported a raid whose quarry pays pelts as wasting nothing, on the one mission whose entire readout is
+what it destroys and does not bring home. It is the appended-field drop this file records for its own
+sake, and the same food-only blindness issue #337 removed elsewhere.
 
 Beside the table it decodes `HerdTelemetryState.denialPartyNeeded` as **`denial_party_needed`**, the
 smallest party in that table whose raid SUCCEEDED (`past_recovery` / `herd_lost`, never `horizon`,

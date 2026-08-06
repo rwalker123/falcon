@@ -1200,6 +1200,8 @@ struct ExportedDenialRow {
     animals_killed: u32,
     delivered_food: f32,
     wasted_food: f32,
+    delivered_trade: f32,
+    wasted_trade: f32,
 }
 
 fn exported_denial_row(app: &App, id: &str, party_workers: u32) -> ExportedDenialRow {
@@ -1227,6 +1229,8 @@ fn exported_denial_row(app: &App, id: &str, party_workers: u32) -> ExportedDenia
         animals_killed: row.animals_killed,
         delivered_food: row.delivered_food,
         wasted_food: row.wasted_food,
+        delivered_trade: row.delivered_trade,
+        wasted_trade: row.wasted_trade,
     }
 }
 
@@ -1664,3 +1668,212 @@ fn exported_denial_sheet(app: &App, id: &str) -> ExportedDenialSheet {
             .collect(),
     }
 }
+
+// ---------------------------------------------------------------------------------------------------
+// A LOST HERD IS THE MISSION SUCCEEDING, and the line has to say so
+// ---------------------------------------------------------------------------------------------------
+
+/// **The floor a HUNT fixture raids to** — the food peak, so the hunting half of the pairing below is
+/// an ordinary raid rather than a strip.
+const HUNT_AT_THE_FOOD_PEAK: f32 = 0.5;
+
+/// **Erase the herd from the registry**, which is exactly the state `advance_herds` leaves behind
+/// when a group falls under its `extinction_floor` and is despawned — and the state the lost-herd
+/// guard exists to answer. Reached here directly rather than by grinding a herd out, because *which*
+/// party reads the empty range is the thing under test, not how it emptied.
+fn erase_herd(app: &mut App, id: &str) {
+    app.world
+        .resource_mut::<HerdRegistry>()
+        .herds
+        .retain(|herd| herd.id != id);
+}
+
+/// The `status=returning` line a party publishes on the turn it finds its quarry gone — `(label,
+/// reason)`, off the sim's own feed rather than recomposed here.
+fn returning_line(app: &App) -> (String, String) {
+    let entry = app
+        .world
+        .resource::<CommandEventLog>()
+        .iter()
+        .filter(|entry| {
+            entry
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("status=returning"))
+        })
+        .last()
+        .expect("a party whose herd is gone publishes a returning line");
+    let reason = entry
+        .detail
+        .as_deref()
+        .unwrap_or_default()
+        .split_whitespace()
+        .find_map(|token| token.strip_prefix("reason="))
+        .expect("the returning line names a reason")
+        .to_string();
+    (entry.label.clone(), reason)
+}
+
+/// **A DENIAL RAID'S LOST HERD IS A WIN, AND THE FEED LINE MUST NOT CALL IT A FAILED HUNT**
+/// (`docs/plan_denial_raid.md` §1).
+///
+/// `DenialOutcome::HerdLost` is one of the two verdicts [`DenialOutcome::succeeded`] returns true
+/// for, and the launch sheet quotes it as a win — so the exit that *realises* it cannot report
+/// *"Hunting expedition lost the …"* with `reason=herd_gone`. Both missions reach this guard the
+/// same way and read it in opposite directions, which is why they are asserted **as a pair**: a
+/// denial-only assertion would pass just as well if the hunt's line had been reworded into denial's
+/// register too, and the hunt's *is* a failure.
+///
+/// The reason token is pinned to `DenialOutcome::HerdLost`'s own wire key rather than to a literal,
+/// so the exit and the pre-launch verdict cannot spell the same outcome two ways.
+#[test]
+fn a_denial_raid_that_loses_its_herd_reports_a_win_and_a_hunt_reports_a_loss() {
+    let mut denial = placid_world();
+    let (denial_id, denial_pos) = pin_raid_herd(&mut denial, PLACID_HERD);
+    let denial_home = spawn_home_band(&mut denial, denial_pos);
+    let denial_party = spawn_party(
+        &mut denial,
+        denial_home,
+        denial_pos,
+        PARTY_WORKERS,
+        deny(&denial_id),
+    );
+    erase_herd(&mut denial, &denial_id);
+    drive_turn(&mut denial);
+
+    // Liveness: the guard is what turned this party for home, so the line below is that guard's.
+    assert_eq!(
+        phase(&denial, denial_party),
+        Some(ExpeditionPhase::Returning),
+        "the lost-herd guard must be the thing under test — the party has to have turned for home"
+    );
+    let (denial_label, denial_reason) = returning_line(&denial);
+    assert_eq!(
+        denial_reason,
+        DenialOutcome::HerdLost.as_str(),
+        "a denial raid's empty range is `herd_lost`, the verdict the launch sheet calls a win: \
+         got {denial_reason} on {denial_label:?}"
+    );
+    assert!(
+        denial_label.starts_with("Denial raid"),
+        "…and the line reads as the raid's verdict, in the register the `done` arm uses: \
+         {denial_label:?}"
+    );
+
+    // The other half of the pairing: for a HUNT the same exit really is the quarry slipping away.
+    let mut hunt_world = placid_world();
+    let (hunt_id, hunt_pos) = pin_raid_herd(&mut hunt_world, PLACID_HERD);
+    let hunt_home = spawn_home_band(&mut hunt_world, hunt_pos);
+    let hunt_party = spawn_party(
+        &mut hunt_world,
+        hunt_home,
+        hunt_pos,
+        PARTY_WORKERS,
+        hunt(&hunt_id, HUNT_AT_THE_FOOD_PEAK),
+    );
+    erase_herd(&mut hunt_world, &hunt_id);
+    drive_turn(&mut hunt_world);
+
+    assert_eq!(
+        phase(&hunt_world, hunt_party),
+        Some(ExpeditionPhase::Returning),
+        "the hunting party reaches the same guard"
+    );
+    let (hunt_label, hunt_reason) = returning_line(&hunt_world);
+    assert_ne!(
+        hunt_reason,
+        DenialOutcome::HerdLost.as_str(),
+        "a hunt losing its quarry is not a denial verdict: {hunt_label:?}"
+    );
+    assert!(
+        hunt_label.starts_with("Hunting expedition lost"),
+        "…and it keeps the failure phrasing, which is honest for a hunt: {hunt_label:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------------
+// THE WASTE IS REPORTED IN BOTH PRODUCTS
+// ---------------------------------------------------------------------------------------------------
+
+/// **The party the waste is measured with** — small enough that its pack binds hard against a herd
+/// standing at full stock, which is the regime where a denial raid's waste is the bulk of its take.
+const WASTEFUL_PARTY_WORKERS: u32 = PARTY_WORKERS;
+
+/// **A DENIAL RAID'S WASTE IS PUBLISHED IN BOTH PRODUCTS, OFF ONE CONVERSION OF ONE BIOMASS**
+/// (issue #337, `docs/plan_denial_raid.md` §3).
+///
+/// The waste line is denial's entire readout — what the raid destroys and does not bring home — and
+/// the projection accumulated only the **food** half of it. Every carcass the party leaves on the
+/// range is a pelt it also did not take, and the wire never said so.
+///
+/// **The third assertion is the one that makes this a regression guard rather than a tautology**: it
+/// ties the exported `wastedTrade` to the exported `wastedFood` through the species' own
+/// [`core_sim::HuntYield`], so the two components must be one conversion of one wasted biomass. An
+/// accumulator that summed a different quantity would still be positive and would fail here.
+///
+/// **Note for anyone reaching for a wolf here** — an inedible quarry is the wrong fixture for this,
+/// and not for the obvious reason: `carry_room_biomass` answers `NO_CARRY_BOUND` for a species that
+/// pays no provisions, so a wolf raid's pack cannot bind, it hauls every pelt it takes, and its
+/// waste is honestly `0` in **both** products. The blindness this closes lives on an **edible**
+/// quarry, where the pack binds hard and the meat left behind takes the hides with it.
+#[test]
+fn a_denial_raids_waste_is_reported_in_both_products() {
+    let mut app = placid_world();
+    let (id, herd_pos) = pin_raid_herd(&mut app, PLACID_HERD);
+    reveal_herd(&mut app, herd_pos);
+    recapture_snapshot_in_place(&mut app.world);
+
+    let row = exported_denial_row(&app, &id, WASTEFUL_PARTY_WORKERS);
+
+    // Liveness — a raid that killed nothing, or one whose pack never bound, would satisfy every
+    // comparison below without exercising the waste at all.
+    assert!(
+        row.animals_killed > 0 && row.wasted_food > 0.0,
+        "liveness: the fixture must be in the regime where the pack binds (killed {}, wasted food \
+         {})",
+        row.animals_killed,
+        row.wasted_food
+    );
+
+    // **THE CLAIM.** The pelts left on the range are on the wire.
+    assert!(
+        row.wasted_trade > 0.0,
+        "the raid wasted {} of food and reported no wasted trade at all — a carcass left on the \
+         range takes its hide with it",
+        row.wasted_food
+    );
+
+    // The pack still banks the hides of what it *did* haul, and the waste is the bulk of it — the
+    // same shape the food pair reports, which is the point of stating the waste per product.
+    assert!(
+        row.delivered_trade > 0.0,
+        "a raid banks the hides of what it carries home; a zero here means the carry half broke"
+    );
+    assert!(
+        row.wasted_trade > row.delivered_trade,
+        "waste is the bulk of a raid's take in trade as in food: {} wasted vs {} delivered",
+        row.wasted_trade,
+        row.delivered_trade
+    );
+
+    // **…and it is the SAME biomass, through the species' own vector.** Both components come out of
+    // one `HuntYield::apply`, so their ratio is the vector's ratio and nothing else.
+    let vector = {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        let registry = app.world.resource::<HerdRegistry>();
+        herd_hunt_yield(registry.find(&id).expect("the herd is on the map"), &fauna)
+    };
+    let expected = row.wasted_food / vector.provisions_per_biomass * vector.trade_goods_per_biomass;
+    assert!(
+        (row.wasted_trade - expected).abs() <= expected * WASTE_VECTOR_TOLERANCE,
+        "the two waste components must be one conversion of one biomass: wire {} vs the vector's \
+         {expected}",
+        row.wasted_trade
+    );
+}
+
+/// **The relative slack the waste-vector identity allows.** Both sides are `f32` sums accumulated
+/// over the projection's turns and then divided and re-multiplied by two per-biomass rates, so they
+/// take a handful of roundings each; a thousandth is orders of magnitude below any real disagreement
+/// (a mis-accumulated component would be off by a whole term, not by a rounding).
+const WASTE_VECTOR_TOLERANCE: f32 = 1e-3;

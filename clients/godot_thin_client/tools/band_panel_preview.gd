@@ -4753,12 +4753,21 @@ func _shared_tile_raid_table(food_per_animal: float, trade_per_animal: float) ->
 ## The viable denial table with its FOOD accounts struck out — the inedible quarry's version. A raid
 ## on a wolf pack kills the same animals and hauls the same pelts; there is no meat to bring home and
 ## none to leave rotting on the range, so both food halves are zero rather than the boar's numbers.
+##
+## **AND IT WASTES NOTHING, WHICH IS A FACT ABOUT THE PRODUCT RATHER THAN ABOUT THE PARTY.**
+## `carry_room_biomass` answers `NO_CARRY_BOUND` for a species paying no provisions — the pack is
+## measured in provisions, so a quarry that pays none never fills it — and the sim's own take then
+## carries every kill (`take.wasted` is empty). So the party hauls the WHOLE pelt yield and both
+## waste halves are zero; inheriting the boar's food-bound carry share here would have quoted a wolf
+## pack losing three quarters of its hides to a pack it cannot fill.
 func _denial_trade_only_rows() -> Array:
 	var rows: Array = []
 	for row_variant in _denial_viable_rows():
 		var row: Dictionary = (row_variant as Dictionary).duplicate(true)
 		row["delivered_food"] = 0.0
 		row["wasted_food"] = 0.0
+		row["delivered_trade"] = float(int(row.get("animals_killed", 0))) * QUARRY_TRADE_PER_ANIMAL
+		row["wasted_trade"] = 0.0
 		rows.append(row)
 	return rows
 
@@ -4781,6 +4790,13 @@ func _denial_rows(outcome: String, turns_row: Array, low_row: Array, high_row: A
 		# What the pack holds, never what it killed: the raid banks a rounding error on the way home.
 		var hauled := minf(killed_food, float(party) * DENIAL_CARRY_PER_WORKER)
 		var hauled_share := (hauled / killed_food) if killed_food > 0.0 else 0.0
+		# **BOTH PRODUCTS COME OFF ONE CONVERSION OF THE SAME BIOMASS**, which is what the sim does
+		# (`hunt_yield.apply(take.carried)` beside `hunt_yield.apply(take.wasted)`): the pelts ride
+		# whichever share of the kill the pack held, and the rest is left on the range with the meat.
+		# A fixture stating a wasted_trade of 0 beside a large wasted_food would be a herd no live
+		# server can produce, and the waste readout's trade half would have nothing to state.
+		var killed_trade := float(killed) * QUARRY_TRADE_PER_ANIMAL
+		var hauled_trade := killed_trade * hauled_share
 		rows.append({
 			"party_workers": party,
 			"turns_to_collapse": int(turns_row[i]),
@@ -4790,7 +4806,8 @@ func _denial_rows(outcome: String, turns_row: Array, low_row: Array, high_row: A
 			"animals_killed": killed,
 			"delivered_food": hauled,
 			"wasted_food": killed_food - hauled,
-			"delivered_trade": float(killed) * QUARRY_TRADE_PER_ANIMAL * hauled_share,
+			"delivered_trade": hauled_trade,
+			"wasted_trade": killed_trade - hauled_trade,
 		})
 	return rows
 
@@ -5122,19 +5139,37 @@ func _assert_denial_viable() -> void:
 	want += SourceForecast.DENIAL_TRAVEL_SPLIT_FORMAT % DENIAL_OUTBOUND_TRAVEL_TURNS
 	_assert_band_panel("the denial form leads with the EXPECTATION and states the spread — \"%s\"" % want,
 		_rich_text_containing(_panel, want) == want)
-	# **THE WASTE IS STATED AND IS NOT DRESSED AS A WARNING.** On a hunt an unhauled kill wears
-	# `HUNT_FORECAST_WARN_GLYPH`; on a raid it IS the mission, so the line is quiet and factual. Both
-	# halves on ONE line — the take is there, and it carries no alarm — since a form that lost the
-	# line entirely would satisfy the negative on its own.
+	# **THE WASTE IS STATED, IN EVERY PRODUCT IT IS WASTED IN, AND IS NOT DRESSED AS A WARNING.** On a
+	# hunt an unhauled kill wears `HUNT_FORECAST_WARN_GLYPH`; on a raid it IS the mission, so the line
+	# is quiet and factual. The whole line is asserted BY EQUALITY rather than by `contains`, because
+	# half the claim is what the sentence must not also say: a waste stated food-only would satisfy
+	# every containment test while dropping the 26.75 of hides this boar leaves rotting beside the
+	# meat, which is the food-only blindness this pair of figures exists to remove. The expectation is
+	# composed from the VOCABULARY and from this fixture's own arithmetic, never through
+	# `denial_take_bbcode` — re-deriving it through the formatter under test asserts nothing.
 	var killed: int = DENIAL_KILLS_ROW[DENIAL_PARTY - 1]
 	var killed_food := float(killed) * QUARRY_FOOD_PER_ANIMAL
-	var left := killed_food - minf(killed_food, float(DENIAL_PARTY) * DENIAL_CARRY_PER_WORKER)
+	var hauled_food := minf(killed_food, float(DENIAL_PARTY) * DENIAL_CARRY_PER_WORKER)
+	var left := killed_food - hauled_food
+	# The pelts ride the same carried share the meat does (`_denial_rows`' one conversion), so this
+	# boar's raid wastes BOTH products and neither figure can be a fabricated zero.
+	var killed_trade := float(killed) * QUARRY_TRADE_PER_ANIMAL
+	var hauled_trade := killed_trade * (hauled_food / killed_food)
+	var left_trade := killed_trade - hauled_trade
+	var want_take := SourceForecast.DENIAL_TAKE_KILLS_FORMAT % [killed, quarry]
+	want_take += SourceForecast.DENIAL_TAKE_FOOD_FORMAT % SourceForecast.format_magnitude(hauled_food)
+	want_take += SourceForecast.DENIAL_TAKE_TRADE_FORMAT % [
+		FoodIcons.TRADE_GOODS_GLYPH, SourceForecast.format_magnitude(hauled_trade)]
+	want_take += SourceForecast.DENIAL_TAKE_LEFT_FORMAT % SourceForecast.DENIAL_TAKE_LEFT_JOIN.join([
+		SourceForecast.format_magnitude(left),
+		SourceForecast.DENIAL_TAKE_LEFT_TRADE_FORMAT % [
+			FoodIcons.TRADE_GOODS_GLYPH, SourceForecast.format_magnitude(left_trade)],
+	])
 	var take_line := _rich_text_containing(_panel,
 		SourceForecast.DENIAL_TAKE_KILLS_FORMAT % [killed, quarry])
-	_assert_band_panel("…and states the take PLAINLY — kills %d, leaves %s on the range, no alarm"
-			% [killed, SourceForecast.format_magnitude(left)],
-		take_line.contains(SourceForecast.DENIAL_TAKE_LEFT_FORMAT
-				% SourceForecast.format_magnitude(left))
+	_assert_band_panel("…and states the take PLAINLY, waste in BOTH products — wanted \"%s\", got \"%s\""
+			% [want_take, take_line],
+		take_line == want_take
 			and not take_line.contains(SourceForecast.HUNT_FORECAST_WARN_GLYPH))
 	# NO FLOOR ANYWHERE — not a picker, not even the row heading. Two surfaces,
 	# one claim. **The heading is matched UPPER-CASED because `alloc_section_label` upper-cases what it

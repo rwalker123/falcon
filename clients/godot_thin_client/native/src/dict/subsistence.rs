@@ -241,8 +241,13 @@ pub(crate) fn herds_to_array(
         //                                **A blank turn count is never rendered without this.**
         //   animals_killed               what the mission is actually about.
         //   delivered_food/_trade        small, and non-zero — the raid banks what it can haul home.
-        //   wasted_food                  killed and left on the range: the BULK of a raid's take,
-        //                                stated rather than hidden (§3).
+        //   wasted_food/_trade           killed and left on the range: the BULK of a raid's take,
+        //                                stated rather than hidden (§3). **A PAIR, for the same
+        //                                reason the delivered figures are** — the sim runs one
+        //                                `HuntYield::apply` over the wasted biomass, so a raid whose
+        //                                quarry pays pelts wastes pelts. Read food-only and a raid
+        //                                whose kill is priced in hides reports its waste as zero on
+        //                                the one mission whose whole readout is what it destroys.
         if let Some(estimates) = herd.denialEstimates() {
             let mut denial_rows = VarArray::new();
             for estimate in estimates {
@@ -262,6 +267,7 @@ pub(crate) fn herds_to_array(
                 let _ = entry.insert("delivered_food", f64::from(estimate.deliveredFood()));
                 let _ = entry.insert("wasted_food", f64::from(estimate.wastedFood()));
                 let _ = entry.insert("delivered_trade", f64::from(estimate.deliveredTrade()));
+                let _ = entry.insert("wasted_trade", f64::from(estimate.wastedTrade()));
                 denial_rows.push(&entry.to_variant());
             }
             let _ = dict.insert("denial_estimates", &denial_rows);

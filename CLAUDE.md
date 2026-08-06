@@ -83,18 +83,22 @@ duplication: anyone who can break the invariant loads the rule anyway. Adding a 
 adding a **row to the routing table**, not a section to the hub. If the rationale genuinely has no
 owning rule file, create one with `paths:` frontmatter rather than parking it in the hub.
 
-> #### ⛔ THE ROUTING TABLE AND THE BANNER ARE GENERATED — edit the SOURCE, not the hub
+> #### ⛔ A ROUTING ROW GOES IN **TWO** FILES, VERBATIM — the source AND the hub
 >
-> A hub's banner and its routing blurb are emitted into `core_sim/CLAUDE.md` and
-> `clients/godot_thin_client/CLAUDE.md` by `scripts/split_claude_md.sh`. **Add your row to
-> `scripts/hub_blurb_core_sim.md` / `scripts/hub_blurb_client.md`**, never to the hub itself — an
-> edit made only in the hub is reverted by the next re-run, and `split_claude_md.sh --check` fails
-> the build in the meantime.
+> A hub's banner and its routing blurb live in `scripts/hub_blurb_core_sim.md` /
+> `hub_blurb_client.md` and are also present, character-for-character, inside `core_sim/CLAUDE.md`
+> and `clients/godot_thin_client/CLAUDE.md`. **Adding an arc means writing the identical row into
+> the source file and the hub.**
 >
-> Each generated region already carries an HTML comment saying so, immediately above it. That
-> comment has been read past **twice**, which is why the check is a pre-commit hook now and not
-> only a CI job: the sentence one line above this one is what sends you to the routing table, so it
-> is the one that has to name the file. Verify with `scripts/split_claude_md.sh --check`.
+> **Both, not either.** `scripts/split_claude_md.sh --check` compares the two **verbatim** and is a
+> pre-commit hook, so a row added to only one of them blocks the commit. And the regeneration that
+> would propagate a source-only edit is deliberately unavailable: the full script refuses to run
+> without `SPLIT_CLAUDE_MD_ACK_REVERT=1`, because a re-run reverts every post-split edit to the hub
+> bodies and the rule files. There is no supported "edit the source and regenerate" path.
+>
+> The HTML comment above each generated region says "edit the source file", which is where the
+> region *came from* — it is not the whole instruction, and reading it as one produces a commit the
+> hook rejects. Verify with `scripts/split_claude_md.sh --check` before committing.
 
 ### Cross-linking Convention
 - Define authoritative specs in the **rule file** that owns the arc (or the hub, for genuinely

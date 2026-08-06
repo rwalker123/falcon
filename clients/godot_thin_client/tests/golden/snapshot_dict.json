@@ -668,7 +668,8 @@
           "turns_to_collapse": 105,
           "turns_to_collapse_high": 22,
           "turns_to_collapse_low": 114,
-          "wasted_food": 31.969999
+          "wasted_food": 31.969999,
+          "wasted_trade": 15.41
         },
         {
           "animals_killed": 163,
@@ -679,7 +680,8 @@
           "turns_to_collapse": 86,
           "turns_to_collapse_high": 183,
           "turns_to_collapse_low": 85,
-          "wasted_food": 73.800003
+          "wasted_food": 73.800003,
+          "wasted_trade": 81.949997
         }
       ],
       "denial_estimates_kit_id": "herds[0].denial_estimates_kit_id",
@@ -780,7 +782,8 @@
           "turns_to_collapse": 94,
           "turns_to_collapse_high": 31,
           "turns_to_collapse_low": 85,
-          "wasted_food": 21.559999
+          "wasted_food": 21.559999,
+          "wasted_trade": 21.709999
         },
         {
           "animals_killed": 114,
@@ -791,7 +794,8 @@
           "turns_to_collapse": 17,
           "turns_to_collapse_high": 150,
           "turns_to_collapse_low": 162,
-          "wasted_food": 99.110001
+          "wasted_food": 99.110001,
+          "wasted_trade": 50.029999
         }
       ],
       "denial_estimates_kit_id": "herds[1].denial_estimates_kit_id",

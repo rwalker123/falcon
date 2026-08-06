@@ -4261,27 +4261,19 @@ pub fn project_realized_hunt(
     // **The build dip rides the CREW** (`docs/plan_harvest_floor.md` §3.1) — the same term
     // `systems::hunt_take` applies, so the projection and the take stay one model.
     let collection = workers as f32 * per_worker_biomass_capacity * ladder.build_dip(improvement);
-    // **The engagement bound, in animals** — how many the party can bring into contact each projected
-    // turn (`docs/plan_hunt_through_combat.md` §2). Constant for the run: the crew does not change
-    // size mid-projection and the quarry is never re-speciated. A **pen** has no engagement stage at
-    // all (a penned animal is not stalked), so it is unbounded there — the same exemption
-    // `project_arrivals_hunt` states by passing `f32::INFINITY` to the quantiser on its corral branch.
-    // **Engagement, then the retreat's EXPECTATION** — a projection cannot draw the retreat the take
-    // will draw (see [`HuntDraw`]), so it reads the same binomial's mean. At the shipped
-    // `wariness 0` that is an exact identity and this line is inert.
-    let engaged = if corralled {
-        f32::INFINITY
-    } else {
-        animals_that_stay(
-            animals_engaged(
-                workers,
-                fauna.engage_rate_for(&quarry.species),
-                ladder.build_dip(improvement),
-            ),
-            fauna.wariness_for(&quarry.species),
-            HuntDraw::EXPECTED,
-        )
-    };
+    // **The party's REACH, in animals** — how many it can bring into contact each projected turn
+    // (`docs/plan_hunt_through_combat.md` §2). Constant for the run: the crew does not change size
+    // mid-projection and the quarry is never re-speciated. What the herd can *spare* is not constant,
+    // so the escapement clamp and the retreat that follows it live inside the loop below. A **pen**
+    // has no engagement stage at all (a penned animal is not stalked), so it is unbounded there — the
+    // same exemption `project_arrivals_hunt` states by passing `f32::INFINITY` to the quantiser on
+    // its corral branch.
+    let reach = animals_engaged(
+        workers,
+        fauna.engage_rate_for(&quarry.species),
+        ladder.build_dip(improvement),
+    );
+    let wariness = fauna.wariness_for(&quarry.species);
     // **The FIGHT is resolved INSIDE the loop, and it is the wounds that force that** (§4.2). It used
     // to be hoisted out as a constant, which was right for a stateless resolver and is now wrong: a
     // sub-threshold party brings down nothing for several turns and then a whole animal, and a
@@ -4318,6 +4310,17 @@ pub fn project_realized_hunt(
         let engagement_biomass = if corralled {
             f32::INFINITY
         } else {
+            // **Engagement, then the retreat's EXPECTATION, then the fight** — the take's three
+            // stages in the take's order. The reach is clamped by what the herd can spare *before*
+            // the retreat ([`animals_affordable`]), because the retreat keeps a fraction of whatever
+            // it is handed: clamping afterwards would retreat a bigger party than the take does and
+            // over-quote every turn the escapement room binds. A projection cannot *draw* the
+            // retreat the take will draw (see [`HuntDraw`]), so it reads the same binomial's mean.
+            let engaged = animals_that_stay(
+                reach.min(animals_affordable(rate, quarry.body_mass)),
+                wariness,
+                HuntDraw::EXPECTED,
+            );
             let fight = resolve_hunt_fight(
                 engaged,
                 workers as f32 * ladder.build_dip(improvement),
@@ -4406,18 +4409,16 @@ pub fn project_arrivals_hunt(
     let capacity = herd_capacity(&quarry, fauna);
     // The species' yield vector — resolved once; the quarry is never re-speciated mid-projection.
     let hunt_yield = herd_hunt_yield(&quarry, fauna);
-    // How many the party can bring into contact each projected turn — constant for the run, since
-    // the crew does not change size mid-projection and the quarry is never re-speciated.
-    // Engagement, then the retreat's **expectation** — see the twin in `project_realized_hunt`.
-    let engaged = animals_that_stay(
-        animals_engaged(
-            workers,
-            fauna.engage_rate_for(&quarry.species),
-            ladder.build_dip(improvement),
-        ),
-        fauna.wariness_for(&quarry.species),
-        HuntDraw::EXPECTED,
+    // The party's **reach** — constant for the run, since the crew does not change size
+    // mid-projection and the quarry is never re-speciated. The escapement clamp and the retreat that
+    // follows it are not constant, so they sit in the loop below — see the twin in
+    // `project_realized_hunt`.
+    let reach = animals_engaged(
+        workers,
+        fauna.engage_rate_for(&quarry.species),
+        ladder.build_dip(improvement),
     );
+    let wariness = fauna.wariness_for(&quarry.species);
     // **The fight is resolved PER TURN, not once for the run**, because its wounds accumulate
     // (§4.2): a sub-threshold party lands nothing for several turns and then a whole animal, and that
     // pulse is exactly what this schedule exists to draw. Only the quarry's *body* is constant.
@@ -4459,6 +4460,15 @@ pub fn project_arrivals_hunt(
             // A wild/pastoral herd hands over the stock standing above its stance's floor, rounded to
             // whole animals — the `systems::hunt_take` sequence, helper for helper.
             let ceiling = hunt_escapement_ceiling(floor, quarry.biomass, capacity);
+            // Engagement clamped by what the herd can spare, **then** the retreat's expectation,
+            // then the fight — the take's order, because the retreat keeps a fraction of whatever
+            // it is handed and clamping after it would quote a take off a bigger party than the
+            // one the sim sends ([`animals_affordable`]).
+            let engaged = animals_that_stay(
+                reach.min(animals_affordable(ceiling, quarry.body_mass)),
+                wariness,
+                HuntDraw::EXPECTED,
+            );
             let fight = resolve_hunt_fight(
                 engaged,
                 workers as f32 * ladder.build_dip(improvement),
@@ -4537,7 +4547,17 @@ fn forecast_production_and_take_at(
                 workers,
                 forecast.engage_rate,
                 forecast.build_dips.of(improvement),
-            );
+            )
+            // **Restraint is free, and the forecast has to say so too** — the escapement floor
+            // bounds what the party *goes after*, exactly as `systems::hunt_take` bounds it
+            // (`docs/plan_hunt_through_combat.md` §1). Clamping here rather than leaving it to the
+            // quantiser is what keeps the retreat below running on the same population the take
+            // retreats; see [`animals_affordable`]. Both terms are read on `axis`, and an animal
+            // count is a ratio, so the currency cancels.
+            .min(animals_affordable(
+                ceiling.component(axis),
+                quantum.component(axis),
+            ));
             // **Engagement, then retreat, then the fight** — the same three stages in the same order
             // `systems::hunt_take` runs (`docs/plan_hunt_through_combat.md` §1), through the same
             // helpers. The forecast cannot *draw* the retreat or the attack rolls, so it reads them
@@ -5531,10 +5551,16 @@ const ANIMAL_COUNT_EPSILON: f32 = 1e-6;
 /// its floor engage normally, take casualties, wear its kit, and then decline to kill what it had
 /// already fought — and killing without taking is denial, not restraint.
 ///
-/// **It is deliberately not applied on the forecast paths, and that costs nothing**: the quantiser
-/// clamps the kill by this same `affordable` whatever the engagement was, so trimming the engagement
-/// cannot move the *take* by a single animal — only the casualties and the kit wear, neither of which
-/// a yield forecast models. `forecast == actual` is unaffected.
+/// **EVERY path applies it, forecast paths included, and the retreat is why.** It used to be
+/// live-only, on the argument that the quantiser re-clamps the kill by this same `affordable`
+/// whatever the engagement was — true while [`animals_that_stay`] was the identity at `wariness 0`,
+/// and **false the moment the roster authored a real wariness** (`docs/plan_hunt_through_combat.md`
+/// §3.1). The retreat is a *fraction* of whatever it is handed, so a forecast that retreats the
+/// party's full reach and clamps afterwards runs the retreat on a **different population** than the
+/// take does, and over-quotes whenever the escapement room binds below that reach — the steady state
+/// of an ordinary hunt. 20 hunters on a Rabbit Warren with room for 37: the take engages 37, keeps
+/// ~9 and kills ~9; a forecast engaging 200 keeps 50 and quotes the whole 37. So the clamp belongs
+/// **before** the retreat on the forecast paths too, which is exactly where the take applies it.
 ///
 /// A non-finite `body_mass` (never reachable — `FaunaConfig::validate` pins it finite-positive) is
 /// answered `0`, matching [`quantise_animal_take`]'s own guard.

@@ -883,6 +883,35 @@ herd, the three being the reported band's quantiles. **The axis is not the bare
 `estimate_party_sizes` ladder** — it carries a run at the herd's own requirement on top of it; see
 "`denialPartyNeeded` — the party the sheet OPENS on".
 
+**The waste is a PAIR, not a food scalar** — `wastedFood` **and `wastedTrade`** (appended last;
+`DenialForecast::wasted_trade`), both out of one `HuntYield::apply` of the same wasted biomass,
+exactly as `deliveredFood`/`deliveredTrade` already were. Denial's whole readout is what it destroys
+and does not bring home, and a food-only waste line states half of it: a carcass left on the range
+takes its hide with it, so on any tradeable quarry the raid's real waste was under-reported by the
+whole trade component. Same widening as issue #337 everywhere else — see `yield-forecast.md` → "THE
+FORECAST IS A PAIR". The launch line's prose and its `detail` carry both too (`trade=` /
+`wasted_trade=`, and `server::describe_denial_ledger`, which **omits a zero component rather than
+printing `~0.0`** — the `describe_haul` rule).
+
+> **An INEDIBLE quarry is the wrong place to look for this, and not for the obvious reason.**
+> `carry_room_biomass` answers `NO_CARRY_BOUND` for a species paying no provisions, so a wolf raid's
+> pack **cannot bind**: it hauls every pelt it takes and its waste is honestly `0` in *both*
+> components. The blindness lives on an **edible** quarry, where the pack binds hard. Pinned by
+> `denial_raid::a_denial_raids_waste_is_reported_in_both_products`, whose third assertion ties the
+> two exported components to one conversion of one biomass through the species' own `HuntYield` — so
+> an accumulator summing some other quantity would still be positive and would still fail.
+
+**A LOST HERD IS ONE OF DENIAL'S TWO WINS, and the guard's line says so.** The lost-herd guard is
+shared by both raid verbs and read in opposite directions, so it branches on `RaidOrders::stop` for
+its message exactly as the `done` arm does: a hunt reports *"Hunting expedition lost the … "* with
+`reason=herd_gone` (its quarry slipped away), a denial raid reports *"Denial raid wiped out the …"*
+with `reason=` **`DenialOutcome::HerdLost`'s own wire key** — the verdict `DenialOutcome::succeeded`
+returns true for and the launch sheet quotes as a win. The reason token is read off the enum rather
+than spelled, so the exit and the pre-launch verdict cannot name the outcome two ways. Pinned as a
+**pair** by `denial_raid::a_denial_raid_that_loses_its_herd_reports_a_win_and_a_hunt_reports_a_loss`
+— a denial-only assertion would pass just as well if the hunt's line had been reworded too, and the
+hunt's really is a failure.
+
 ### What it costs, and the kit cost needed nothing new
 
 Travel, party exposure and a near-zero return are the listed costs. The fourth is the **kit**, and it

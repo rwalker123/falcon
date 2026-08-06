@@ -31,12 +31,13 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 
 use core_sim::{
-    build_headless_app, herd_hunt_yield, hunt_take, recapture_snapshot_in_place, retreat_seed,
-    scalar_from_f32, scalar_one, scalar_zero, spawn_initial_herds, CombatConfig,
-    CombatConfigHandle, FactionId, FaunaConfig, FaunaConfigHandle, GenerationId, Herd,
-    HerdRegistry, HuntDraw, HuntingParty, LaborAllocation, LaborAssignment, LaborConfigHandle,
-    LaborTarget, LadderConfigHandle, LocalStore, MoraleCause, PopulationCohort, ResidentBand,
-    SnapshotHistory, TileRegistry, NO_IMPROVEMENT_UNDERWAY, NO_RETREAT,
+    animals_affordable, animals_engaged, build_headless_app, herd_capacity, herd_hunt_yield,
+    hunt_escapement_ceiling, hunt_take, recapture_snapshot_in_place, retreat_seed, scalar_from_f32,
+    scalar_one, scalar_zero, spawn_initial_herds, CombatConfig, CombatConfigHandle, FactionId,
+    FaunaConfig, FaunaConfigHandle, GenerationId, Herd, HerdRegistry, HuntDraw, HuntingParty,
+    LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle,
+    LocalStore, MoraleCause, PopulationCohort, ResidentBand, SnapshotHistory, TileRegistry,
+    NO_IMPROVEMENT_UNDERWAY, NO_RETREAT,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -710,5 +711,142 @@ fn a_zero_wariness_species_is_an_exact_identity_at_every_seed() {
         (reported.actual_yield_low, reported.actual_yield_high),
         (reported.actual_yield, reported.actual_yield),
         "with nothing stochastic left the exported band must be a point, bit-for-bit: {reported:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// §1 + §6.4 — THE FORECAST IS THE TAKE **WHERE THE ESCAPEMENT FLOOR BINDS**
+// ---------------------------------------------------------------------------------------------
+
+/// **The room the binding-regime fixture leaves standing, in whole animals.** Far below the crew's
+/// reach ([`CREW`] × the warren's `engage_rate 10` = 200 rabbits) so the herd — not the party —
+/// decides how many animals are engaged, and far above one body so the take is a real number rather
+/// than a wait turn. Every other fixture in this file stands at [`TEST_CAPACITY`], where the room is
+/// thousands of animals and this regime is unreachable.
+const BINDING_ROOM_ANIMALS: f32 = 37.0;
+
+/// **Stand the herd `room` whole animals above its [`FOOD_PEAK`] floor** — the ordinary steady state
+/// of a worked herd, and the one regime the rest of this file deliberately excludes.
+///
+/// `biomass_before_regrowth` moves with `biomass` because they describe the same herd; only the MSY
+/// reference line reads it, and a stale value there would report a `sustainable` for a herd that no
+/// longer exists.
+fn stand_at_the_floor(app: &mut App, id: &str, room_animals: f32) {
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    let herd = registry
+        .herds
+        .iter_mut()
+        .find(|h| h.id == id)
+        .expect("the herd is on the map");
+    let standing = FOOD_PEAK * TEST_CAPACITY + room_animals * herd.body_mass;
+    herd.biomass = standing;
+    herd.biomass_before_regrowth = standing;
+}
+
+/// **THE EXPORTED FORECAST IS THE TAKE WHEN THE ESCAPEMENT ROOM — NOT THE PARTY — BINDS.**
+///
+/// `forecast == actual` is a claim about the wire, and the take path bounds its engagement by what
+/// the herd can spare **before** the retreat runs (`docs/plan_hunt_through_combat.md` §1). While the
+/// roster shipped `wariness 0` the forecast could skip that clamp for free, because the retreat was
+/// the identity and the quantiser re-clamped the kill either way. With a real wariness the two paths
+/// retreat **different populations**: the take keeps a fraction of the 37 animals the herd can spare,
+/// a forecast that engaged the party's full 200 keeps a fraction of *that*, and the quantiser then
+/// trims it back to the 37 — a four-fold over-promise on `actualYield`.
+///
+/// The sibling `the_exported_range_contains_the_take_across_many_seeds_at_the_authored_wariness`
+/// cannot see this: it stands the herd at [`TEST_CAPACITY`] *so that the escapement floor never
+/// binds*, which excludes exactly this regime. This is that assertion in it.
+///
+/// Three liveness checks ride along, because each headline assertion is otherwise satisfiable by a
+/// dead fixture: the room really is below the party's reach (or nothing is being clamped), the live
+/// take genuinely varies (or containment is vacuous), and the take is non-zero (or every bound holds
+/// trivially).
+#[test]
+fn the_exported_forecast_is_the_take_when_the_escapement_floor_binds() {
+    let (mut app, id, pos) = headless_with_species(FRAIL_WARY_SPECIES);
+    stand_at_the_floor(&mut app, &id, BINDING_ROOM_ANIMALS);
+    reveal(&mut app, pos);
+
+    // **Liveness 1 — the regime is the binding one.** Read off the same helpers the take path uses,
+    // so this cannot drift from the thing under test.
+    let (room_animals, reach) = {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        let herd = herd_of(&app, &id);
+        let ceiling =
+            hunt_escapement_ceiling(FOOD_PEAK, herd.biomass, herd_capacity(&herd, &fauna));
+        (
+            animals_affordable(ceiling, herd.body_mass),
+            animals_engaged(CREW, fauna.engage_rate_for(&herd.species), 1.0),
+        )
+    };
+    assert!(
+        room_animals >= 1.0 && room_animals < reach,
+        "liveness: the herd must be able to spare fewer animals ({room_animals}) than the party can \
+         reach ({reach}), or the clamp under test does nothing"
+    );
+
+    let band = spawn_hunters(&mut app, pos, &id, FOOD_PEAK);
+    seed_the_forecast(&mut app, band, &id, FOOD_PEAK);
+    recapture_snapshot_in_place(&mut app.world);
+    let reported = exported_row(&app, band);
+
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let herd = herd_of(&app, &id);
+    let hunt_yield = herd_hunt_yield(&herd, &fauna);
+    let takes: Vec<f32> = (0..CONTAINMENT_SEEDS)
+        .map(|seed| {
+            let outcome = take_at(&app, &herd, u64::from(seed));
+            hunt_yield
+                .apply(outcome.take.carried, CONTENT_BAND_OUTPUT_MULTIPLIER)
+                .provisions
+        })
+        .collect();
+    let highest = takes.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let lowest = takes.iter().cloned().fold(f32::INFINITY, f32::min);
+
+    // **Liveness 2 and 3** — a real, varying take to be right about.
+    assert!(
+        lowest > 0.0,
+        "liveness: every live take must be real, not a wait turn: {takes:?}"
+    );
+    assert!(
+        highest > lowest,
+        "liveness: the live take must genuinely vary across seeds, or containment is vacuous"
+    );
+
+    // **THE HEADLINE — the preview may not promise food no draw of the take ever pays.** The
+    // over-quote this pins is systematic, not a tail: before the engagement clamp reached the
+    // forecast, the reported figure was the whole escapement room while the live take was ~a quarter
+    // of it, so it sat above *every* one of the seeds below.
+    assert!(
+        reported.actual_yield <= highest,
+        "the exported forecast {} exceeds the BEST of {CONTAINMENT_SEEDS} live takes ({highest}) — \
+         a promise the sim never pays at any draw",
+        reported.actual_yield
+    );
+
+    // …and it is the take's EXPECTATION, not merely inside its span: compared against the band's own
+    // half-width, so the tolerance is a property of the distribution rather than a chosen number.
+    let mean = takes.iter().sum::<f32>() / takes.len() as f32;
+    let half_width = (reported.actual_yield_high - reported.actual_yield_low) / 2.0;
+    assert!(
+        (mean - reported.actual_yield).abs() <= half_width,
+        "the mean take {mean} must track the reported likely {} (band half-width {half_width})",
+        reported.actual_yield
+    );
+
+    // **The exported RANGE still contains the take here too** — §6.4's contract holds in the regime
+    // its own suite excluded, and it is the band the client draws.
+    let contained = takes
+        .iter()
+        .filter(|take| **take >= reported.actual_yield_low && **take <= reported.actual_yield_high)
+        .count();
+    let coverage = contained as f64 / takes.len() as f64;
+    assert!(
+        coverage >= RANGE_COVERAGE_FLOOR,
+        "the reported band must contain the take it is a band around: {coverage:.3} of \
+         {CONTAINMENT_SEEDS} seeds fell inside [{}, {}]",
+        reported.actual_yield_low,
+        reported.actual_yield_high
     );
 }

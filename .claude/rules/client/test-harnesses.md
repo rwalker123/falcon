@@ -252,11 +252,27 @@ frame alone.
 `Label`-scoped assertion on either would find nothing and pass vacuously. It returns the whole PARSED
 line rather than a bool for the equality claim above.
 
-**Two fixture rules the denial tables must follow**, both because a fixture that breaks them makes the
+**Three fixture rules the denial tables must follow**, all because a fixture that breaks one makes the
 assertions decorative: a row's `delivered_food` is what the PACK holds and everything else killed is
 `wasted_food` (a raid that hauled its whole kill is a hunting raid wearing a denial outcome, and the
-waste readout would have nothing to state), and a `repelled` table's kill counts are small but
-**non-zero** — a repelled party is outbred, not incapable.
+waste readout would have nothing to state); **BOTH products come off ONE conversion of that same
+split**, so `delivered_trade` rides the carried share and `wasted_trade` the rest (the sim runs
+`hunt_yield.apply(take.wasted)` beside `hunt_yield.apply(take.carried)`, so a table stating a zero
+`wasted_trade` beside a large `wasted_food` is a herd no live server can produce); and a `repelled`
+table's kill counts are small but **non-zero** — a repelled party is outbred, not incapable.
+
+**The INEDIBLE table is the exception to the second rule and states the exception's own reason.**
+`_denial_trade_only_rows` hauls the WHOLE pelt yield and wastes nothing, because `carry_room_biomass`
+answers `NO_CARRY_BOUND` for a species paying no provisions — the pack is measured in provisions, so a
+quarry that pays none never fills it. Inheriting the boar's food-bound carry share there quoted a wolf
+pack losing three quarters of its hides to a pack it cannot fill. **The consequence for the waste pair
+is that a wolf fixture asserts nothing about it** — zero is honest there in both products — so
+`band_panel_compose_deny`'s EDIBLE boar, where the pack binds hard, is where the pair is proved.
+
+**`_assert_denial_viable`'s take claim is an EQUALITY over the whole line**, not a `contains`: half
+the claim is what the sentence must not also say, and a waste stated food-only satisfies every
+containment test while silently dropping the hides. Sabotage-verified by dropping the trade half of
+`denial_waste_face`, which fails exactly that one assertion and prints both lines side by side.
 
 **The TWO SPANS are asserted on different harnesses, and each names its own.** `band_panel_compose_deny`
 expects the launch clock — both ends of the band plus `DENIAL_OUTBOUND_TRAVEL_TURNS`, then the travel

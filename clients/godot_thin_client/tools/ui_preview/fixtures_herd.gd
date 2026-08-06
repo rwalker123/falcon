@@ -444,8 +444,12 @@ static func denial_estimate_table(outcome: String, turns_row: Array, low_row: Ar
 			"delivered_food": hauled,
 			"wasted_food": killed_food - hauled,
 			# The trade half rides the same carried biomass, so it scales with what came home rather
-			# than with what died.
+			# than with what died — and its WASTE is the rest of the same conversion. The sim runs one
+			# `HuntYield::apply` over `take.wasted`, so a kill left on the range takes its hides with
+			# it; a table stating `wasted_trade` as 0 beside a large `wasted_food` would be a herd no
+			# live server can produce.
 			"delivered_trade": float(killed) * tpa * hauled_share,
+			"wasted_trade": float(killed) * tpa * (1.0 - hauled_share),
 		})
 	return rows
 

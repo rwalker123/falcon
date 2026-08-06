@@ -267,8 +267,23 @@ ferocity alone — frail, still costs you people"*. `fauna::hunt_injuries` adds 
     and not wary.
   - **Restraint is free**: the escapement floor bounds **`engaged`**, not `killed`
     (`fauna::animals_affordable`), so a crew at its floor does not engage, take casualties and wear
-    its kit for animals it was never going to keep. It cannot move the take — the quantiser clamps by
-    the same `affordable` regardless — which is why the forecast paths omit it.
+    its kit for animals it was never going to keep.
+  - **EVERY path applies that clamp, the three forecast paths included, and the retreat is why.** It
+    used to be live-only, on the argument that the quantiser re-clamps the kill by the same
+    `affordable` whatever the engagement was — which held only while `animals_that_stay` was the
+    identity at `wariness 0`. **The retreat keeps a FRACTION of whatever it is handed**, so once the
+    roster authored a real wariness (§3.1) a forecast that retreated the party's full reach and
+    clamped afterwards was retreating a *different population* than the take, and over-quoted
+    whenever the escapement room bound below that reach — the steady state of an ordinary hunt, not
+    an edge. Measured: 20 hunters on a Rabbit Warren with room for 37 animals, `forecast_expected_take`
+    quoted **36** rabbits against a live take of **~9** (4×, and above the best of 400 seeded draws).
+    Repaired in `fauna::forecast_production_and_take_at`, `project_realized_hunt` and
+    `project_arrivals_hunt`; in the two projections the clamp is **inside the loop**, because the
+    room changes every projected turn while the party's reach does not. Pinned on the exported
+    snapshot — `forecast == actual` is a wire claim — by
+    `hunt_wariness::the_exported_forecast_is_the_take_when_the_escapement_floor_binds`, which stands
+    the herd **at** its floor: the sibling containment test explicitly holds `TEST_CAPACITY` high *so
+    that the escapement floor never binds*, and so excluded the whole regime.
   - **A detached party fights at the `expedition_danger_multiplier`-scaled lethality** (that rides
     `HuntingParty::tuning`), and **now wears its own kit**: `advance_expeditions` queries
     `&mut BandEquipment`, resolves both tiers through the same `EquipmentConfig` seams a resident band

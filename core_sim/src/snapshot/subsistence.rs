@@ -391,6 +391,7 @@ fn denial_estimate_entries(
                 delivered_food: forecast.delivered_food,
                 wasted_food: forecast.wasted_food,
                 delivered_trade: forecast.delivered_trade,
+                wasted_trade: forecast.wasted_trade,
             }
         })
         .collect();

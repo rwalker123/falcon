@@ -296,6 +296,13 @@ fn sustain_hunt_below_regrowth_lets_herd_grow() {
     );
 }
 
+/// **The slack the whole-animal wobble bound allows.** Its two sides are the same quantum reached by
+/// different arithmetic — one a difference of two horizon-length averages, the other a single
+/// division — so they agree to a few `f32` ULPs rather than bit-for-bit. A thousandth is orders of
+/// magnitude below the gap any real regression opens: the biomass sawtooth this guard exists to
+/// exclude is the full kill spike, ~40× wider.
+const PULSE_WOBBLE_SLACK: f32 = 1.001;
+
 /// **The lumpy `actual` pulses; the forward-projected `realized` reads FLAT.** A whole-animal Sustain
 /// hunt on a slow breeder (MSY ≪ `body_mass`) pays nothing for several turns then a whole animal at
 /// once — so `actual` swings 0 → spike → 0 — while `realized` (the average food/turn projected over the
@@ -401,17 +408,30 @@ fn a_hunt_actual_pulses_while_realized_holds_the_steady_average() {
     );
 
     // `realized` is FLAT — a settled Sustain herd sits above K/2, where the projected policy rate is
-    // MSY every simulated turn regardless of the biomass sawtooth, so the headline barely moves. Its
-    // turn-to-turn change is a tiny fraction of the steady rate (NOT the sawtooth the instantaneous
-    // rate would show), and it never reaches the kill spike.
+    // MSY every simulated turn regardless of the biomass sawtooth, so the headline barely moves. It
+    // never reaches the kill spike, and its turn-to-turn change is bounded by the **one wobble a
+    // whole-animal projection cannot avoid**: as the herd's pulse phase shifts under the window, the
+    // horizon catches one more or one fewer body, moving the average by exactly *one animal spread
+    // over the window*. On this fixture a kill turn lands exactly one body (the crew out-carries a
+    // body and the room above `K/2` never holds two), so `actual_max` **is** one animal's provisions
+    // and the quantum can be read straight off the sawtooth this guard exists to exclude — which is
+    // ~40× wider. Stating the bound as the quantum rather than as a fraction of the mean says what
+    // the wobble IS, and does not have to be re-tuned when the fixture's herd changes.
+    let realized_horizon = app
+        .world
+        .resource::<LaborConfigHandle>()
+        .get()
+        .yield_average_horizon_turns as f32;
+    let pulse_wobble = actual_max / realized_horizon;
     let max_delta_realized = realized
         .windows(2)
         .map(|w| (w[1] - w[0]).abs())
         .fold(0.0_f32, f32::max);
     assert!(
-        max_delta_realized < 0.05 * realized_mean,
-        "realized must read flat turn-to-turn (max Δrealized {max_delta_realized}, \
-         steady {realized_mean}): {realized:?}"
+        max_delta_realized <= pulse_wobble * PULSE_WOBBLE_SLACK,
+        "realized must read flat turn-to-turn — at most one animal per window \
+         ({pulse_wobble}) — but moved by {max_delta_realized} (steady {realized_mean}): \
+         {realized:?}"
     );
     assert!(
         realized_max < 0.7 * actual_max,

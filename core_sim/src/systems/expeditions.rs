@@ -4,6 +4,13 @@ use crate::components::RaidOrders;
 use crate::fauna::AnimalTake;
 use crate::intensification::NO_BUILD_UNDERWAY_DIP;
 
+/// **The reason token for a HUNTING party whose quarry vanished under it** — the herd went extinct,
+/// or dispersed, while the party was still working it, so the trip ends with nothing left to take.
+/// A denial raid reaching the same exit reports [`DenialOutcome::HerdLost`] instead, because for it
+/// the empty range is the mission accomplished; keeping the hunt's own token distinct is what lets a
+/// reader tell the failure from the success.
+const HERD_GONE_MID_HUNT: &str = "herd_gone";
+
 /// **Everything one detached party is, as a query tuple.** Named because the tuple grew past the
 /// point of readability when the party's own kit joined it: **a detached party carries its OWN kit**
 /// (`docs/plan_denial_raid.md` §1.2). It leaves outfitted (`BandEquipment::default()` is zero wear)
@@ -213,13 +220,31 @@ pub fn advance_expeditions(
                 && !matches!(expedition.phase, ExpeditionPhase::Returning)
             {
                 expedition.phase = ExpeditionPhase::Returning;
+                // **The two missions read the same exit in opposite directions**, so they cannot
+                // share a line. `DenialOutcome::HerdLost` is one of the two verdicts
+                // `DenialOutcome::succeeded` returns true for and the launch sheet quotes it as a
+                // win, so a raid reporting a *lost quarry* here would tell the player their raid
+                // failed on one of its two success paths. The `done` arm below states the same
+                // split for the other one (`past_recovery`); the reasons are the `DenialOutcome`
+                // keys, so the exit and the pre-launch verdict spell the outcome the same way.
+                let (message, reason) = match orders.stop {
+                    fauna::EngagementStop::Never => (
+                        format!("Denial raid wiped out the {} — returning home", fauna_id),
+                        DenialOutcome::HerdLost.as_str(),
+                    ),
+                    fauna::EngagementStop::WhenPackFull => (
+                        format!("Hunting expedition lost the {} — returning home", fauna_id),
+                        HERD_GONE_MID_HUNT,
+                    ),
+                };
                 event_log.push(CommandEventEntry::new(
                     current_turn,
                     CommandEventKind::Hunt,
                     faction,
-                    format!("Hunting expedition lost the {} — returning home", fauna_id),
+                    message,
                     Some(format!(
-                        "status=returning reason=herd_gone expedition={}",
+                        "status=returning reason={} expedition={}",
+                        reason,
                         entity.to_bits()
                     )),
                 ));
@@ -2017,6 +2042,15 @@ pub struct DenialForecast {
     /// The trade half of the same carried biomass. For an inedible quarry (a wolf — a legitimate
     /// denial target) this is the whole payload.
     pub delivered_trade: f32,
+    /// **Trade goods killed and left on the range** — the twin of [`Self::wasted_food`], and on an
+    /// **inedible** quarry the only one of the two that can be non-zero.
+    ///
+    /// It is what makes the readout honest on the target the mission is clearest about: a Grey Wolf
+    /// Pack pays `provisions_per_biomass == 0`, so a food-only waste line reports `0` beside a large
+    /// [`Self::animals_killed`] on a raid whose waste is *total*. Denial's whole readout is what it
+    /// destroys and does not bring home (`docs/plan_denial_raid.md` §3), so it has to be stated per
+    /// **product** — the same widening issue #337 made everywhere else.
+    pub wasted_trade: f32,
 }
 
 /// One quantile's worth of [`denial_forecast`]'s forward simulation.
@@ -2027,6 +2061,7 @@ struct DenialProjection {
     delivered_food: f32,
     wasted_food: f32,
     delivered_trade: f32,
+    wasted_trade: f32,
 }
 
 /// **The pre-launch denial readout**, evaluated at three quantiles of the take's own distribution —
@@ -2082,6 +2117,7 @@ pub fn denial_forecast(
         delivered_food: likely.delivered_food,
         wasted_food: likely.wasted_food,
         delivered_trade: likely.delivered_trade,
+        wasted_trade: likely.wasted_trade,
     }
 }
 
@@ -2129,6 +2165,7 @@ fn denial_projection_at(
     let mut delivered_food = 0.0_f32;
     let mut delivered_trade = 0.0_f32;
     let mut wasted_food = 0.0_f32;
+    let mut wasted_trade = 0.0_f32;
     // **The headway window** (§3's *"its kills per turn below the herd's regrowth"*): the herd's
     // biomass halfway through the projection, so the verdict at the horizon is read over the whole
     // second half rather than off one turn. A single turn cannot answer it — at the equilibrium a
@@ -2152,6 +2189,7 @@ fn denial_projection_at(
                 delivered_food,
                 wasted_food,
                 delivered_trade,
+                wasted_trade,
             };
         }
 
@@ -2184,9 +2222,12 @@ fn denial_projection_at(
         let landed = hunt_yield.apply(take.carried, EXPEDITION_OUTPUT_MULTIPLIER);
         delivered_food += landed.provisions;
         delivered_trade += landed.trade_goods;
-        wasted_food += hunt_yield
-            .apply(take.wasted, EXPEDITION_OUTPUT_MULTIPLIER)
-            .provisions;
+        // **BOTH products of the wasted biomass, off ONE conversion** — the rule the delivered pair
+        // above already follows. A food-only waste line reports `0` on an inedible quarry, which is
+        // exactly the raid whose waste is total.
+        let left_on_the_range = hunt_yield.apply(take.wasted, EXPEDITION_OUTPUT_MULTIPLIER);
+        wasted_food += left_on_the_range.provisions;
+        wasted_trade += left_on_the_range.trade_goods;
         let room = (cap - larder).max(scalar_zero());
         larder += scalar_from_f32(landed.provisions).min(room);
 
@@ -2198,6 +2239,7 @@ fn denial_projection_at(
                 delivered_food,
                 wasted_food,
                 delivered_trade,
+                wasted_trade,
             };
         }
     }
@@ -2219,6 +2261,7 @@ fn denial_projection_at(
         delivered_food,
         wasted_food,
         delivered_trade,
+        wasted_trade,
     }
 }
 

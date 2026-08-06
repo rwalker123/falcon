@@ -2945,6 +2945,46 @@ fn resolve_raid_kit(
 /// `denial_forecast` count only the turns spent working the herd once in reach, so the walk is added
 /// here, where the launching band's tile is known. (The per-herd snapshot tables are band-agnostic —
 /// one row serves every band — so the **client** adds this same travel from the selected band's tile.)
+/// Decimal places the denial launch line prints its payload and waste to — one, because the sheet is
+/// quoting an approximation ("~") of a whole raid and a second digit would read as precision the
+/// projection does not have. The `detail` twin keeps the finer `{:.2}` a machine reader wants.
+const DENIAL_LEDGER_DECIMALS: usize = 1;
+
+/// **What a denial raid brings home and what it leaves — PER PRODUCT** (issue #337).
+///
+/// A Grey Wolf Pack pays `provisions_per_biomass == 0`, so the food-only line this replaced read
+/// *"~0.0 food home, ~0.0 left on the range"* on exactly the raid whose waste is total — while the
+/// same projection carried a large trade waste. **A component with nothing on either side of it is
+/// omitted rather than printed as `~0.0`**, the `describe_haul` rule: a zero there is a fact about
+/// the species, not about this raid.
+fn describe_denial_ledger(forecast: &core_sim::DenialForecast) -> String {
+    let mut ledger = Vec::new();
+    if forecast.delivered_food > 0.0 || forecast.wasted_food > 0.0 {
+        ledger.push(format!(
+            "~{:.*} food home, ~{:.*} left on the range",
+            DENIAL_LEDGER_DECIMALS,
+            forecast.delivered_food,
+            DENIAL_LEDGER_DECIMALS,
+            forecast.wasted_food
+        ));
+    }
+    if forecast.delivered_trade > 0.0 || forecast.wasted_trade > 0.0 {
+        ledger.push(format!(
+            "~{:.*} trade goods home, ~{:.*} left on the range",
+            DENIAL_LEDGER_DECIMALS,
+            forecast.delivered_trade,
+            DENIAL_LEDGER_DECIMALS,
+            forecast.wasted_trade
+        ));
+    }
+    if ledger.is_empty() {
+        // Neither meat nor pelts — the raid destroys animals and brings back nothing at all, which
+        // is a statement rather than an empty clause.
+        return "nothing worth hauling from this quarry".to_string();
+    }
+    ledger.join("; ")
+}
+
 fn round_trip_travel_turns(
     app: &bevy::prelude::App,
     band: bevy::prelude::Entity,
@@ -3298,10 +3338,7 @@ fn handle_send_denial_raid(
     let travel_turns = round_trip_travel_turns(app, outfit.band.entity, outfit.herd_pos);
     let (verdict, verdict_detail) = match &forecast {
         Some(f) => {
-            let waste = format!(
-                "~{:.1} food home, ~{:.1} left on the range",
-                f.delivered_food, f.wasted_food
-            );
+            let waste = describe_denial_ledger(f);
             match f.turns_to_collapse {
                 Some(turns) => (
                     // **The range, not a promise** (`docs/plan_hunt_through_combat.md` §6.4) — the
@@ -3322,7 +3359,7 @@ fn handle_send_denial_raid(
                     ),
                     format!(
                         " outcome={} turns_to_collapse={} low={} high={} travel_turns={} \
-                         animals={} food={:.2} wasted={:.2}",
+                         animals={} food={:.2} wasted={:.2} trade={:.2} wasted_trade={:.2}",
                         f.outcome.as_str(),
                         turns,
                         f.turns_to_collapse_low.unwrap_or(0),
@@ -3330,7 +3367,9 @@ fn handle_send_denial_raid(
                         travel_turns,
                         f.animals_killed,
                         f.delivered_food,
-                        f.wasted_food
+                        f.wasted_food,
+                        f.delivered_trade,
+                        f.wasted_trade
                     ),
                 ),
                 // **Never a blank** (§3). A party whose kills cannot outpace the herd's regrowth is
@@ -3349,12 +3388,14 @@ fn handle_send_denial_raid(
                     },
                     format!(
                         " outcome={} turns_to_collapse=none travel_turns={} animals={} \
-                         food={:.2} wasted={:.2}",
+                         food={:.2} wasted={:.2} trade={:.2} wasted_trade={:.2}",
                         f.outcome.as_str(),
                         travel_turns,
                         f.animals_killed,
                         f.delivered_food,
-                        f.wasted_food
+                        f.wasted_food,
+                        f.delivered_trade,
+                        f.wasted_trade
                     ),
                 ),
             }

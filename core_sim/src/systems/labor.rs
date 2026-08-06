@@ -3859,17 +3859,39 @@ mod labor_yield_tests {
     /// MSY even under Sustain), which is why `overdraws` exists. The forward-projected `realized` IS
     /// comparable, and it is ordered by how deep the stance's floor is.
     ///
-    /// **A Sustain projection sits ABOVE MSY, and that is honest, not an overdraw.** The window opens
-    /// on a herd standing above `K/2`, so the first projected turn draws that accumulated surplus down
-    /// to the floor and the rest of the horizon pays the regrowth — an average between the two. What
-    /// makes Sustain sustainable is its floor, not its being under a line.
+    /// **A Sustain projection TRACKS MSY to within one animal per window — it does not sit above it,
+    /// and the difference is the quantiser.** The window opens on a herd standing above `K/2`, so the
+    /// projection draws that accumulated surplus down to the floor and then lives on the regrowth;
+    /// what makes Sustain sustainable is its floor, not its being under a line. But on a **slow
+    /// breeder** the payout is a *pulse train* — the room above the floor is lighter than one body for
+    /// several turns, then clears it — so the window's average lands wherever the last pulse fell
+    /// relative to the window's edge, which is a **half-open interval around MSY**, not a floor under
+    /// it. (Here: one 80-unit body per window against 40 turns × MSY 5 = 1.25 bodies' worth.)
+    ///
+    /// It read as a floor while `project_realized_hunt` let the smooth escapement rate flow on turns
+    /// the herd could not spare a whole animal — the party's engagement was bounded by its own reach
+    /// alone, so the projection quoted a trickle the take never pays. Bounding the engagement by what
+    /// the herd can spare (`fauna::animals_affordable`, the clamp the live path always applied) is
+    /// what put the pulse into the average, and it is what makes this row agree with the **arrivals
+    /// schedule beside it** — two exported projections of the same herd that previously disagreed by
+    /// the whole quantisation. So the tolerance below is *one animal spread over the window*, read off
+    /// the arrivals pulse rather than restated here, and it is a **tighter** claim than the `>=` it
+    /// replaced.
     ///
     /// **The decline is visible as `realized < actual` on Surplus**: the opening turn draws the stock
     /// down to `0.30·K` and the horizon that follows pays only the trickle back, so the steady
-    /// headline lands well below the turn the player just watched. **Deplete cannot be read that way**
-    /// — it leaves the herd *at* the Allee brink, where the projection terminates (nothing more to
-    /// take), so its average is the strip rate over the turns it actually delivered, exactly like
-    /// Eradicate's. That termination rule is what keeps it from being diluted toward zero.
+    /// headline lands well below the turn the player just watched.
+    ///
+    /// **Deplete does NOT terminate on a slow breeder, and that is the quantiser rather than a
+    /// dilution bug.** Whole animals cannot strip a herd to *exactly* `0.15·K` — the take stops on the
+    /// last whole body standing above the brink — so the herd survives a little above it and goes on
+    /// offering a sub-body trickle, which the loop correctly counts as wait turns. Its average is
+    /// therefore the honest long-run rate under that floor: ordered above Surplus and above Sustain,
+    /// but nowhere near a one-turn strip. **The divide-by-turns-simulated rule this used to pin lives
+    /// on the one policy that really does spend its source in a turn** —
+    /// `eradicate_realized_reads_the_strip_rate_not_a_diluted_average`, whose floor of `0` leaves
+    /// nothing standing to round against. (It read as a strip here only while the smooth projection
+    /// took `2.25` animals where the take pays `2`.)
     #[test]
     fn realized_reads_the_honest_overhunting_rate() {
         let sustain = slow_breeder_hunt_at(0.5);
@@ -3882,11 +3904,26 @@ mod labor_yield_tests {
                 && (sustain.sustainable - deplete.sustainable).abs() < 1e-6,
             "sustainable is the policy-independent MSY reference: {sustain:?} {surplus:?} {deplete:?}"
         );
-        // Sustain projects at or above its sustainable MSY — the opening drawdown to `K/2` plus a
-        // horizon of regrowth — and never below it: a Sustain hunt is not an under-draw either.
+        // **One whole animal's provisions**, read off the projection's own arrivals schedule — whose
+        // non-zero slots on this slow breeder ARE single-animal pulses — so the tolerance is the
+        // sim's own quantum rather than one restated here and left to drift from the fixture.
+        let one_animal = sustain.arrivals.iter().cloned().fold(0.0_f32, f32::max);
         assert!(
-            sustain.realized >= sustain.sustainable - 1e-5,
-            "a Sustain hunt projects at least its sustainable MSY: {sustain:?}"
+            one_animal > 0.0,
+            "liveness: the projection must land at least one animal in the window, or the quantum \
+             below is zero and the assertion is vacuous: {sustain:?}"
+        );
+        let window_quantum = one_animal
+            / LaborConfigHandle::default()
+                .get()
+                .yield_average_horizon_turns as f32;
+        // Sustain tracks its sustainable MSY to within that one animal — above it when the window
+        // catches an extra pulse, a shade under when it catches one fewer. Either way it is the MSY
+        // the herd can pay, delivered in whole bodies.
+        assert!(
+            (sustain.realized - sustain.sustainable).abs() <= window_quantum,
+            "a Sustain hunt projects its sustainable MSY to within one animal per window \
+             ({window_quantum}): {sustain:?}"
         );
         assert!(
             sustain.realized > 0.0,
@@ -3909,11 +3946,13 @@ mod labor_yield_tests {
             surplus.realized > 0.0 && surplus.realized < surplus.actual,
             "Surplus projects well below its opening draw (sees the decline): {surplus:?}"
         );
-        // Deplete leaves the herd at the Allee brink with nothing standing above it, so its projection
-        // terminates and reports the strip it delivered rather than a horizon-diluted average.
+        // Deplete leaves the herd just above the Allee brink — the last whole body it could not take
+        // without crossing — so the projection runs on and reports the long-run rate that floor
+        // sustains. Ordered above Sustain's, which leaves twice as much standing.
         assert!(
-            deplete.realized > 10.0 * deplete.sustainable,
-            "Deplete reads the strip it delivered, not a diluted average: {deplete:?}"
+            deplete.realized > sustain.realized,
+            "a deeper floor must project a higher steady rate than Sustain's: {deplete:?} vs \
+             {sustain:?}"
         );
     }
 

@@ -1,16 +1,20 @@
 # The hunt is a fight — resolving the take through the combat system
 
-**Status:** §9 slices **1–5 have landed**, including the minimal TOE of §4.8 and its three-kit split; slices 6–7 are design. §4.8's kit split (slice 5) was a **correction to shipped behaviour** — this doc
-pointed baskets at the hunt's carry, and the implementation faithfully built that. Issue #456, repurposed: the
-denial raid that issue asks for turns out to need this first, and becomes small once it exists
-(`docs/plan_denial_raid.md`).
+**Status:** §9 slices **1–7 have landed** — see that section for what each one turned on. Issue #456,
+repurposed: the denial raid that issue asks for turns out to need this first, and becomes small once
+it exists (`docs/plan_denial_raid.md`).
 
-Landed: the §4.3 body-mass correction, `SpeciesDef::engage_rate` with the engagement bound in
-`fauna::quantise_animal_take`, and `CombatStats::wariness` with the seeded retreat stage
-(`fauna::animals_that_stay` / `retreat_seed`), inert at `0` until slice 4 authors values. **Not**
-landed: the take resolving through `resolve_fight`, durability, the attack/defense gate, TOE, and
-the range forecast — so §4.2's `turns_to_kill` and §4.8's `attack 20` describe a model the sim does
-not yet run.
+So the model this doc describes is the model the sim runs: the take resolves through
+`combat::resolve_fight`, `durability` and the `max(0, attack − defense)` gate decide what a party can
+bring down at all, the minimal TOE of §4.8 ships with its three-kit split, and the forecast reports a
+real range because §3.1's wariness is authored across the roster. §4.2's `turns_to_kill` and §4.8's
+`attack 20` are live numbers, not a sketch.
+
+**Two things here are NOT the shipped design, and both say so where they are written.** §5.2's fill
+target was built and then **retired** — trip length turns out to be invariant in party size, so the
+lever was answering a question the player cannot ask; the tuning it existed to work around is issue
+**#491**. And the kit split of §4.8 (slice 5) was a **correction to shipped behaviour**: this doc
+pointed baskets at the hunt's carry and the implementation faithfully built that.
 
 **This is not a new subsystem.** `core_sim/src/combat/mod.rs` opens by saying it: *"A predator
 encounter, a dangerous hunt, and (one day) a TOE-vs-TOE battle are all just a fight."* The hunt

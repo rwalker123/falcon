@@ -2063,10 +2063,26 @@ const DENIAL_VERDICTS := {
 # `⚠`; on a raid it is essentially the whole take, and it is the POINT of the mission. So it is a
 # quiet factual line — what the party kills, the little it hauls home, and what it leaves standing
 # dead on the range — in the aside's own ink rather than amber.
+#
+# **THE WASTE IS A PAIR, exactly as the delivered payload is** — the sim runs ONE `HuntYield::apply`
+# over the wasted biomass, so a kill priced in hides wastes hides. Stated food-only, a raid on an
+# edible quarry reported the meat left rotting and silently dropped the pelts that went with it, on
+# the one mission whose entire readout is what it destroys and does not bring home. The two
+# components share ONE clause (`DENIAL_TAKE_LEFT_FORMAT`'s subject) rather than becoming a second
+# `·` clause: "on the range" is where BOTH ended up, and a trailing trade clause after it would read
+# as more of what came home.
 const DENIAL_TAKE_KILLS_FORMAT := "kills ≈%d %s"
 const DENIAL_TAKE_FOOD_FORMAT := " · brings home %s food"
 const DENIAL_TAKE_TRADE_FORMAT := " · %s %s trade goods"
 const DENIAL_TAKE_LEFT_FORMAT := " · leaves %s on the range"
+# The waste's TRADE half, glyph + words — the delivered line's own spelling of a trade quantity. The
+# FOOD half stays a bare magnitude, so an edible quarry with no trade renders exactly the sentence it
+# rendered before the pair existed.
+const DENIAL_TAKE_LEFT_TRADE_FORMAT := "%s %s trade goods"
+# …and what joins them when both are real. NOT `TRADE_COMPONENT_SEPARATOR` (` · `), which is what
+# separates the take line's own clauses — nesting it inside one clause's subject would read as a
+# fourth clause beginning at the trade figure and ending "on the range".
+const DENIAL_TAKE_LEFT_JOIN := " and "
 # §7.2 — WORKERS ABOVE THE HOLD NUMBER ARE STILL NEVER RELEASED. At-the-floor is the most reversible
 # condition in the model (drop the floor, or let the season move the hold number, and they are wanted
 # again), and this repo only rewrites an assignment for PERMANENT conditions. What changed is that the
@@ -3579,7 +3595,11 @@ static func denial_forecast(herd: Dictionary, workers: int, band: Dictionary = {
         "animals": int(row.get("animals_killed", 0)),
         "food": float(row.get("delivered_food", 0.0)),
         "trade": float(row.get("delivered_trade", 0.0)),
+        # BOTH products of the wasted biomass, carried through the same way the delivered pair is —
+        # the sim prices them off one conversion, so a consumer reading only `wasted` reports a raid
+        # on a pelt-bearing quarry as wasting nothing at all.
         "wasted": float(row.get("wasted_food", 0.0)),
+        "wasted_trade": float(row.get("wasted_trade", 0.0)),
     }
 
 ## A collapse turn count moved onto the clock the player is actually on — the raiding turns plus the
@@ -3722,10 +3742,34 @@ static func denial_take_bbcode(forecast: Dictionary, herd_name: String) -> Strin
     var trade := float(forecast.get("trade", 0.0))
     if has_component(trade):
         text += DENIAL_TAKE_TRADE_FORMAT % [FoodIcons.TRADE_GOODS_GLYPH, format_magnitude(trade)]
-    var wasted := float(forecast.get("wasted", 0.0))
-    if has_component(wasted):
-        text += DENIAL_TAKE_LEFT_FORMAT % format_magnitude(wasted)
+    # …and the waste in BOTH products, under the same rule: what the quarry does not pay is not
+    # stated, so nothing here can render a fabricated `0.00`.
+    var wasted := denial_waste_face(forecast)
+    if wasted != "":
+        text += DENIAL_TAKE_LEFT_FORMAT % wasted
     return "[color=#%s]%s[/color]" % [HudStyle.INK_DIM_HEX, text]
+
+## **WHAT THE RAID LEAVES ON THE RANGE, IN EVERY PRODUCT IT LEAVES IT IN** — the subject of the take
+## line's waste clause, and the ONE spelling of it, so any second surface that states a raid's waste
+## states it in the same words. `""` when the forecast wastes nothing measurable in either account,
+## which is the caller's signal to render no clause at all rather than an empty one.
+##
+## Food leads and renders BARE (the take line's own order, and the reading an edible quarry has always
+## had); trade carries the glyph and the words, because a bare second number in one clause could not
+## say which account it belonged to. Neither is printed at zero — the render-only-when-non-zero rule
+## the delivered pair one line above already follows — so a food-only quarry's waste reads exactly as
+## it did before trade joined it, and a wolf pack (which binds no carry and therefore wastes nothing)
+## renders no clause instead of two honest-looking zeros.
+static func denial_waste_face(forecast: Dictionary) -> String:
+    var parts: Array[String] = []
+    var food := float(forecast.get("wasted", 0.0))
+    if has_component(food):
+        parts.append(format_magnitude(food))
+    var trade := float(forecast.get("wasted_trade", 0.0))
+    if has_component(trade):
+        parts.append(DENIAL_TAKE_LEFT_TRADE_FORMAT % [
+            FoodIcons.TRADE_GOODS_GLYPH, format_magnitude(trade)])
+    return DENIAL_TAKE_LEFT_JOIN.join(parts)
 
 ## **THE ONE READING OF `denialPartyNeeded`** — the smallest party the sim quotes whose raid actually
 ## SUCCEEDS in driving this herd past recovery (never a `horizon` row, which only means the projection

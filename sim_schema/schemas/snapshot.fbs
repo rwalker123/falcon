@@ -1909,6 +1909,12 @@ table DenialEstimate {
   // The trade half of the same carried biomass. For an INEDIBLE quarry (a wolf is a legitimate denial
   // target) this is the whole payload and deliveredFood is 0.
   deliveredTrade:float = 0;
+  // Trade goods killed and left on the range — the twin of wastedFood, appended last (slots are
+  // positional). On an INEDIBLE quarry this is the ONLY non-zero waste there is: a wolf pays no
+  // provisions, so a food-only waste line reads 0 beside a large animalsKilled on the very raid
+  // whose waste is total. Render the waste per product, and the trade line only when it is > 0
+  // (the same rule deliveredTrade follows).
+  wastedTrade:float = 0;
 }
 
 table HerdTelemetryState {

@@ -129,6 +129,11 @@ pub struct DenialEstimateState {
     pub wasted_food: f32,
     /// The trade half of the same carried biomass; the whole payload on an inedible quarry.
     pub delivered_trade: f32,
+    /// **Trade goods killed and left on the range** — the twin of [`Self::wasted_food`], and on an
+    /// **inedible** quarry the only non-zero waste there is: a wolf pays no provisions, so a
+    /// food-only waste line reads `0` beside a large [`Self::animals_killed`] on the raid whose
+    /// waste is total.
+    pub wasted_trade: f32,
 }
 
 /// A fully-fed pen — the neutral value of [`HerdTelemetryState::pen_fed_fraction`], so an un-penned

@@ -210,6 +210,7 @@ fn create_herds<'a>(
                             deliveredFood: estimate.delivered_food,
                             wastedFood: estimate.wasted_food,
                             deliveredTrade: estimate.delivered_trade,
+                            wastedTrade: estimate.wasted_trade,
                         },
                     )
                 })
