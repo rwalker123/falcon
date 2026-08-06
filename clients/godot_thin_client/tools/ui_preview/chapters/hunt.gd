@@ -1675,15 +1675,12 @@ func _combat_gate_pen() -> Dictionary:
 func _combat_gate_states() -> void:
 	var quarry := String(HerdFx.deadly_herd_fixture()["species"])
 	var mammoth := _combat_gate_mammoth()
-	# **THE HUNTERS-PER-ANIMAL FIGURE, COMPOSED FROM THE OTHER SIDE OF THE QUOTIENT.** The sheet
-	# divides `1` by `engageRate`; the harness multiplies back up, so the two agree only if the
-	# readout really is the inverse rather than a number that happens to look right.
-	var hunters_per_animal := ceili(1.0 / GATE_MAMMOTH_ENGAGE_RATE)
-	var reach_line: String = SourceForecast.HUNTERS_PER_ANIMAL_FORMAT % [hunters_per_animal, quarry]
-
-	# State gate-a — A SPEARED PARTY, above the gate. The sheet states what the fight COSTS rather
-	# than only whether it is hopeless: `durability / (attack − defense)` hunter-turns per kill, which
-	# is what makes a mammoth (62.5) and a rabbit comparable at all.
+	# State gate-a — A SPEARED PARTY, above the gate. **THE SHEET SAYS NOTHING ABOUT THE FIGHT**, and
+	# that is the claim: both pre-launch lines this state used to carry are retired (reported from
+	# playtest). The hunters-per-animal figure and the hunter-turns effort figure were species
+	# constants that never moved with anything the player was dialling, printed between the kit they
+	# had just chosen and the forecast that already prices the whole trip. What survives is the
+	# REFUSAL, asserted in gate-b.
 	var speared := BandFx.with_equipped_kit(BandFx.hunt_preview_local_band())
 	h._hud._band_labor._player_bands = [speared]
 	h._hud._band_labor._player_band = speared
@@ -1694,18 +1691,13 @@ func _combat_gate_states() -> void:
 	await h._settle()
 	await h._save("herd_hunt_gate_effort")
 	var speared_sheet: Control = h._hud._drawercompose._compose_sheet
-	h._assert_hud("twenty hunters reach one mammoth — \"%s\"" % reach_line,
-		Readout.hunters_per_animal_line(speared_sheet) == reach_line)
-	# **THE EFFORT FIGURE IS NOT DIVIDED BY THE PARTY**, deliberately: the herd's accumulated wounds
-	# are not exported, so a per-party turn count here would be a second duration model competing
-	# with the sim's own `huntTripEstimates`. It is hunter-turns for ONE hunter, and it is what turns
-	# a bare refusal into something a player can plan against.
-	var hunter_turns := GATE_MAMMOTH_DURABILITY / (BandFx.KIT_ATTACK_EQUIPPED - GATE_MAMMOTH_DEFENSE)
-	h._assert_hud("a party above the gate is quoted the EFFORT (%s hunter-turns), not a refusal"
-		% String.num(hunter_turns, SourceForecast.HUNT_GATE_EFFORT_DECIMALS),
-		Readout.hunt_gate_blocked(speared_sheet) == Readout.HUNT_GATE_WINNABLE
-			and Readout.hunt_gate_line(speared_sheet).contains(
-				String.num(hunter_turns, SourceForecast.HUNT_GATE_EFFORT_DECIMALS)))
+	# **`HUNT_GATE_ABSENT`, NOT `HUNT_GATE_WINNABLE`.** The two are different findings — "the sheet
+	# says the fight is winnable" and "the sheet says nothing about the fight" — and the whole point of
+	# the removal is that a winnable fight now renders NO line, so the winnable state no longer exists
+	# on screen. Asserting the absence is what stops the effort face creeping back.
+	h._assert_hud("a party above the gate is told nothing about the fight — no line at all",
+		Readout.hunt_gate_blocked(speared_sheet) == Readout.HUNT_GATE_ABSENT
+			and Readout.hunt_gate_line(speared_sheet) == "")
 
 	# State gate-b — THE SAME MAMMOTH, THE SAME PARTY SIZE, BARE HANDS. `max(0, 1 − 12)` is zero, so
 	# no headcount kills anything and the party takes casualties for nothing. **The only thing that
@@ -1728,26 +1720,21 @@ func _combat_gate_states() -> void:
 				String.num(BandFx.KIT_ATTACK_BARE, SourceForecast.HUNT_GATE_SCALAR_DECIMALS))
 			and Readout.hunt_gate_line(bare_sheet).contains(
 				String.num(GATE_MAMMOTH_DEFENSE, SourceForecast.HUNT_GATE_SCALAR_DECIMALS)))
-	# **CONTACT IS NOT THE GATE** (§2.1): twenty bare-handed hunters DO walk up to a mammoth, and the
-	# fight is where they fail. So the reach line must be unchanged by the kit — a sheet that hid it
-	# alongside the refusal would teach that the party cannot find the animal.
-	h._assert_hud("…while the engagement figure is untouched — contact is not the gate",
-		Readout.hunters_per_animal_line(bare_sheet) == reach_line)
-
 	# **THE NEGATIVE, AND IT IS THE HALF THE ARC KEEPS BREAKING.** A PEN publishes no engagement
-	# stage, so neither line may render on one — and this fixture carries a real `defense` and
+	# stage, so the refusal may not render on one — and this fixture carries a real `defense` and
 	# `durability`, so the silence is the ENGAGEMENT GATE's doing rather than a fixture that omitted
-	# the terms. PNG-less: the claim is an absence, which a picture states only by not showing
-	# something, and the frame set's byte-diff is where a regression would actually surface.
+	# the terms. **That gate is the reason `has_engagement_stage` survives the removal above**: a
+	# penned animal is not fought, and without it a pen would wear the refusal. PNG-less: the claim is
+	# an absence, which a picture states only by not showing something, and the frame set's byte-diff
+	# is where a regression would actually surface.
 	var pen := _combat_gate_pen()
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(pen)
 	h._compose_herd(pen, LOCAL_HUNT_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
 	await h._settle()
 	var pen_sheet: Control = h._hud._drawercompose._compose_sheet
-	h._assert_hud("a PEN is not stalked and not fought — neither pre-launch line renders on one",
-		Readout.hunters_per_animal_line(pen_sheet) == ""
-			and Readout.hunt_gate_blocked(pen_sheet) == Readout.HUNT_GATE_ABSENT)
+	h._assert_hud("a PEN is not stalked and not fought — the refusal does not render on one",
+		Readout.hunt_gate_blocked(pen_sheet) == Readout.HUNT_GATE_ABSENT)
 
 	# Reset for whatever renders next.
 	h._hud._band_labor._player_bands = []
@@ -1983,14 +1970,13 @@ func _unkillable_quarry_states() -> void:
 		Q.has_label_containing(sheet, expected_note)
 			and not Q.has_label_containing(sheet, idle_note))
 
-	# **THE CONTRADICTION ITSELF, as a relation between two RENDERED lines.** The reach line and the
-	# ceiling are the two numbers that disagreed; the ceiling must be at least the crew one animal
-	# takes, or the panel is arguing with itself again.
-	var reach_line: String = SourceForecast.HUNTERS_PER_ANIMAL_FORMAT % [
-		AUROCHS_HUNTERS_PER_ANIMAL, quarry]
-	h._assert_hud("…and it can no longer sit BELOW the hunters one animal takes — \"%s\"" % reach_line,
-		Readout.hunters_per_animal_line(sheet) == reach_line
-			and AUROCHS_ENGAGE_CREW >= AUROCHS_HUNTERS_PER_ANIMAL)
+	# **THE CONTRADICTION ITSELF.** It was a relation between two RENDERED lines — the reach line and
+	# the ceiling — until the reach line was retired; the ceiling is still the half that has to hold,
+	# and it must be at least the crew one animal takes or the cap is back below the engagement arm
+	# that floors it.
+	h._assert_hud("…and the ceiling can no longer sit BELOW the hunters one animal takes (%d >= %d)"
+			% [AUROCHS_ENGAGE_CREW, AUROCHS_HUNTERS_PER_ANIMAL],
+		AUROCHS_ENGAGE_CREW >= AUROCHS_HUNTERS_PER_ANIMAL)
 
 	# Reset for whatever renders next.
 	h._hud._band_labor._player_bands = []

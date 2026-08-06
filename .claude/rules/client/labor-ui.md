@@ -1198,6 +1198,55 @@ correct.
 
 ---
 
+## THE PRE-LAUNCH FIGHT IS DOWN TO ONE LINE, AND IT ONLY EVER REFUSES
+
+Two lines used to sit between the kit row and the forecast on the herd sheet, and both are retired
+(reported from playtest — they were noise between the control the player had just used and the
+numbers they were reading):
+
+- **`One hunter brings 10 Wild Fowl into contact.`** — `SourceForecast.hunters_per_animal_face`. A
+  fact about the SPECIES that never moved with anything being dialled. The reach it stated is already
+  spent where it is actionable: the crew targets and `expedition_engage_crew` divide by the same
+  quotient, so the number reaches the player as a party ceiling rather than as an announcement. Gone
+  with `HUNTERS_PER_ANIMAL_FORMAT`, `ANIMALS_PER_HUNTER_FORMAT`, `HudWidgets.HUNTERS_PER_ANIMAL_META`
+  and `Readout.hunters_per_animal_line` — the whole chain had exactly one render site.
+- **`0.1 hunter-turns to bring one Wild Fowl down (attack 20 against defense 0).`** — the WINNABLE
+  face of `hunt_gate_model_at`. Same argument: a species constant printed above a forecast that
+  already prices the whole trip. `HUNT_GATE_EFFORT_FORMAT`, `HUNT_GATE_EFFORT_DECIMALS` and the
+  model's `hunter_turns` field went with it.
+
+**`HUNT_GATE_BLOCKED_FORMAT` STAYS, and the gate now renders only when `blocked`.** The refusal — *"⚠
+Your hunters cannot hurt X — attack N against its defense M. No party size changes that"* — is the
+one thing here a player cannot get anywhere else, and since the kit picker landed it is also the
+**honesty mechanism for the `none` kit**: with the estimate tables suppressed for a kit they were not
+quoted at, this is what still answers what the party can and cannot hurt.
+`band_panel_compose_deny_kit_mismatch` asserts on it **by equality**, so removing the wrong face
+fails there loudly.
+
+**`has_engagement_stage` SURVIVES, and it is not an oversight.** It still gates the block: a PEN
+publishes `NO_ENGAGEMENT_STAGE` — a penned animal is not stalked and not fought — and without the
+gate a pen would wear the refusal on a fixture that carries real `defense` and `durability`. The
+harness pins that (`hunt.gd`'s pen negative).
+
+The model's remaining shape is `{stated, blocked, effective_attack, text}`, and **`text` is non-empty
+only when `blocked`**. `durability` is still the STATED-ness test even though no surviving face
+quotes it: a species the roster cannot resolve reads `0`, and answering `blocked` about one whose
+defence could not be looked up would refuse a hunt over a gap in the data.
+
+## THE RAID'S READOUT IS ONE BUILDER, IN THE SHARED WIDGET LAYER
+
+`HudWidgets.mount_trip_readout` (+ `_trip_yield_rows`) is the boxed `THIS TRIP` section — the payload
+as a yields row, the trip's length as the verdict, the floor's meaning as the aside. It was private
+to `DrawerComposeController` while the Band panel's dock sheet answered the same question with a
+one-line bbcode sentence, and the two drifted exactly as a copied control does. Both sheets call it
+now; everything it needs (`trip`, the quarry's name, the composed floor) arrives as a PARAMETER,
+which is what let it move at all.
+
+Only a DELIVERING trip reaches it (`SourceForecast.hunt_trip_delivers`); the refused states keep the
+one-line form on **both** sheets, an empty box being worse than the sentence it would replace.
+
+---
+
 ## THE KIT IS CHOSEN ON THE SHEET, and it moves every figure below it (`docs/plan_denial_raid.md`)
 
 A crew is sent out with a **named kit** from a roster the sim publishes once per world

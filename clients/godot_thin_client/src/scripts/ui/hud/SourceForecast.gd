@@ -1086,42 +1086,24 @@ static func yield_range_clause(m: Dictionary) -> String:
 static func has_engagement_stage(engage_rate: float, dip: float) -> bool:
     return not is_inf(engagement_per_worker(engage_rate, dip))
 
-## **HOW MANY HUNTERS ONE ANIMAL TAKES, IN WORDS** — `""` where there is no engagement stage.
-##
-## Two phrasings, because the roster spans two orders of magnitude and one of them would read as
-## nonsense at the other end: a mammoth is `20 hunters` (reach below one animal), a rabbit warren is
-## `1 hunter reaches 10` (reach above one). The pivot is the reach itself, and both sentences are the
-## same quotient read from its two sides — `2.1`'s own "reads as" column.
-static func hunters_per_animal_face(engage_rate: float, dip: float, quarry: String) -> String:
-    var reach := engagement_per_worker(engage_rate, dip)
-    if is_inf(reach):
-        return ""
-    if reach < ENGAGED_AT_LEAST:
-        return HUNTERS_PER_ANIMAL_FORMAT % [ceili(ENGAGED_AT_LEAST / reach), quarry]
-    return ANIMALS_PER_HUNTER_FORMAT % [floori(reach), quarry]
-
-# The two readings of `1 / (engageRate × dip)`. The threshold between them is `ENGAGED_AT_LEAST` —
-# the sim's own `max(1.0)` on `animals_engaged` — so the sentence flips at exactly the point the
-# engagement floor does rather than at a display constant of its own.
-const HUNTERS_PER_ANIMAL_FORMAT := "%d hunters bring one %s into contact."
-const ANIMALS_PER_HUNTER_FORMAT := "One hunter brings %d %s into contact."
-
-# THE GATE's two verdicts. The refusal names both terms, because "you cannot" without the arithmetic
-# is a tooltip the player has no way to act on: knowing it is the WEAPON and not the headcount is the
-# whole lesson (`4.8` — the first spear should feel like a different game).
+# THE GATE's ONE verdict. It names both terms, because "you cannot" without the arithmetic is a
+# tooltip the player has no way to act on: knowing it is the WEAPON and not the headcount is the whole
+# lesson (`4.8` — the first spear should feel like a different game). It is also the honesty line the
+# `none` kit depends on (`docs/plan_denial_raid.md`): with the estimate tables suppressed for a kit
+# they are not quoted at, this is what still answers what the party can and cannot hurt.
+#
+# **THE WINNABLE BRANCH'S FACE IS RETIRED** (reported from playtest). `0.1 hunter-turns to bring one
+# Wild Fowl down` was a species constant that never moved with anything the player was dialling,
+# printed directly above a forecast that already prices the whole trip. The MODEL still answers
+# `blocked` / `effective_attack`; what went is the sentence for the case that needs none.
 const HUNT_GATE_BLOCKED_FORMAT := "%sYour hunters cannot hurt %s — attack %s against its defense %s. No party size changes that: they would take casualties and kill nothing."
-const HUNT_GATE_EFFORT_FORMAT := "%s hunter-turns to bring one %s down (attack %s against defense %s)."
-# The effort figure's own rounding. Hunter-turns span 0.1 (a rabbit) to 62 (a mammoth), so a whole
-# number would print `0` for a third of the roster and claim a free kill; one decimal is the coarsest
-# rule that keeps the small end honest.
-const HUNT_GATE_EFFORT_DECIMALS := 1
 # What `attack`/`defense`/`durability` are printed with. They are open-ended strength scalars on a
 # human anchor of 1, authored as small whole-ish numbers, so a rate's two decimals would be false
 # precision — `attack 20.00` claims a resolution the roster does not have.
 const HUNT_GATE_SCALAR_DECIMALS := 0
 
 ## **THE COMBAT GATE, COMPOSED CLIENT-SIDE FROM THREE TERMS ALREADY ON THE WIRE** —
-## `{stated, blocked, effective_attack, hunter_turns, text}`.
+## `{stated, blocked, effective_attack, text}` — and `text` is non-empty only when `blocked`.
 ##
 ## `stated` is false when the band or the herd is silent about its half: a snapshot that predates the
 ## fields, or a species the roster cannot resolve (`durability == 0`). Absent terms must render NO
@@ -1133,8 +1115,7 @@ const HUNT_GATE_SCALAR_DECIMALS := 0
 ## still leaves the player warned, which is the whole point of not exporting a verdict.
 static func hunt_gate_model(band: Dictionary, herd: Dictionary, quarry: String) -> Dictionary:
     if not band.has(BAND_HUNTER_ATTACK_KEY):
-        return {"stated": false, "blocked": false, "effective_attack": 0.0,
-            "hunter_turns": 0.0, "text": ""}
+        return {"stated": false, "blocked": false, "effective_attack": 0.0, "text": ""}
     return hunt_gate_model_at(float(band.get(BAND_HUNTER_ATTACK_KEY, 0.0)), herd, quarry)
 
 ## **THE GATE AT AN ARBITRARY ATTACK TIER** — the same arithmetic over the same two herd terms, asked
@@ -1149,25 +1130,23 @@ static func hunt_gate_model(band: Dictionary, herd: Dictionary, quarry: String) 
 ## `hunt_gate_model` is exactly this asked at the band's own tier, so the two can never disagree about
 ## what a gate is; only about whose attack it is.
 static func hunt_gate_model_at(attack: float, herd: Dictionary, quarry: String) -> Dictionary:
-    var blank := {"stated": false, "blocked": false, "effective_attack": 0.0,
-        "hunter_turns": 0.0, "text": ""}
+    var blank := {"stated": false, "blocked": false, "effective_attack": 0.0, "text": ""}
     var defense := float(herd.get(HERD_DEFENSE_KEY, 0.0))
-    var durability := float(herd.get(HERD_DURABILITY_KEY, 0.0))
-    if durability <= 0.0:
+    # `durability` is still the STATED-ness test even though no surviving face quotes it: a species
+    # the roster cannot resolve reads `0`, and answering `blocked` about one whose defence we could
+    # not look up would refuse a hunt on a gap in the data.
+    if float(herd.get(HERD_DURABILITY_KEY, 0.0)) <= 0.0:
         return blank
     var effective := maxf(attack - defense, 0.0)
-    var attack_face := String.num(attack, HUNT_GATE_SCALAR_DECIMALS)
-    var defense_face := String.num(defense, HUNT_GATE_SCALAR_DECIMALS)
-    if effective <= 0.0:
-        return {"stated": true, "blocked": true, "effective_attack": 0.0, "hunter_turns": INF,
-            "text": HUNT_GATE_BLOCKED_FORMAT % [
-                HUNT_FORECAST_WARN_GLYPH, quarry, attack_face, defense_face]}
-    var hunter_turns := durability / effective
-    return {"stated": true, "blocked": false, "effective_attack": effective,
-        "hunter_turns": hunter_turns,
-        "text": HUNT_GATE_EFFORT_FORMAT % [
-            String.num(hunter_turns, HUNT_GATE_EFFORT_DECIMALS), quarry,
-            attack_face, defense_face]}
+    if effective > 0.0:
+        # **A WINNABLE FIGHT SAYS NOTHING, and `text` is empty rather than absent.** The reading the
+        # caller acts on is `blocked`; `effective_attack` stays for anyone composing on the margin.
+        return {"stated": true, "blocked": false, "effective_attack": effective, "text": ""}
+    return {"stated": true, "blocked": true, "effective_attack": 0.0,
+        "text": HUNT_GATE_BLOCKED_FORMAT % [
+            HUNT_FORECAST_WARN_GLYPH, quarry,
+            String.num(attack, HUNT_GATE_SCALAR_DECIMALS),
+            String.num(defense, HUNT_GATE_SCALAR_DECIMALS)]}
 
 # The three wire terms the gate is composed from — the BAND's resolved per-hunter attack (1 bare-
 # handed, 20 speared) and the HERD's two defensive axes. `defense` is whether a hit counts at all,

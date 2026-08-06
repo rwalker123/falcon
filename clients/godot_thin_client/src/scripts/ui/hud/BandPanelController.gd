@@ -1807,20 +1807,25 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
                 func(new_target: int) -> void:
                     _compose.set_party_fill_target(new_target)
                     rerender()))
-        # LIVE raid forecast for the quarry + floor + party + target now dialed — the same trip lookup
-        # and the same one-line renderer the herd drawer uses.
+        # **THE TRIP READOUT — the herd drawer's boxed section, from the shared builder.** This zone
+        # answered with a one-line bbcode sentence and a standalone bound clause beside it, which is
+        # what let the two entry points drift: on a Wild Fowl flock the drawer laid out a full box
+        # here and this sheet rendered nothing at all. The box's own VERDICT folds the bound clause
+        # in (`SourceForecast.hunt_trip_verdict`), so the standalone line went with the sentence —
+        # keeping both would have printed one fact twice.
         var trip := SourceForecast.hunt_trip_forecast(band, herd, _send_hunt_floor, _send_expedition_count,
             _band_labor.grid_width(), _band_labor.wrap_horizontal(), _compose.party_fill_target())
-        var forecast_line := SourceForecast.hunt_forecast_line_bbcode(trip, SourceForecast.herd_display_name(herd))
-        if forecast_line != "":
-            sheet.add_child(HudWidgets.forecast_label(forecast_line))
-        # **WHICH STOP ENDS THE TRIP, as its own quiet line.** This zone's forecast is the ONE-LINE
-        # form, which is already dense with five facts; the herd drawer folds the same clause into its
-        # readout verdict instead. Both read `SourceForecast.trip_bound_clause`, so the two surfaces
-        # cannot describe one stop differently, and a forecast carrying no bound renders no line.
-        var bound_clause := SourceForecast.trip_bound_clause(trip)
-        if bound_clause != "":
-            sheet.add_child(HudWidgets.alloc_hint_label(bound_clause))
+        if SourceForecast.hunt_trip_delivers(trip):
+            HudWidgets.mount_trip_readout(sheet, trip, SourceForecast.herd_display_name(herd),
+                _send_hunt_floor)
+        else:
+            # A raid with nothing to lay out in rows — no estimate, a denial quarry, a herd at its
+            # floor — keeps the ONE-LINE form, exactly as the drawer's branch does. An empty box is
+            # worse than the sentence it would replace.
+            var forecast_line := SourceForecast.hunt_forecast_line_bbcode(trip,
+                SourceForecast.herd_display_name(herd))
+            if forecast_line != "":
+                sheet.add_child(HudWidgets.forecast_label(forecast_line))
         # WHY an empty raid is empty comes off the sim's `bound`, so the reason takes the TRIP beside
         # the herd — "wait for the herd to rebuild" and "send more hunters" are opposite instructions.
         var returns_empty := SourceForecast.hunt_trip_returns_empty(trip)
@@ -1865,12 +1870,14 @@ func _mount_kit_gate_line(sheet: VBoxContainer, kits: Array, kit_id: String, ban
         herd: Dictionary, quarry: String) -> void:
     var tiers := KitRoster.effective_tiers(kits, KitRoster.kit_by_id(kits, kit_id), band)
     var gate := SourceForecast.hunt_gate_model_at(float(tiers["attack"]), herd, quarry)
-    if not bool(gate["stated"]):
+    # **ONLY THE REFUSAL RENDERS.** The winnable branch used to state the effort in hunter-turns; that
+    # face is retired (a species constant beside a forecast that already prices the trip), so a fight
+    # this party CAN take says nothing here and the sheet's remaining lines are the answer.
+    if not bool(gate["blocked"]):
         return
     var gate_label := HudWidgets.forecast_label("[color=#%s]%s[/color]" % [
-        HudStyle.DANGER_HEX if bool(gate["blocked"]) else HudStyle.INK_DIM_HEX,
-        String(gate["text"])])
-    gate_label.set_meta(HudWidgets.HUNT_GATE_META, bool(gate["blocked"]))
+        HudStyle.DANGER_HEX, String(gate["text"])])
+    gate_label.set_meta(HudWidgets.HUNT_GATE_META, true)
     sheet.add_child(gate_label)
 
 ## The DENIAL form (`docs/plan_denial_raid.md` §3): QUARRY → PARTY → the collapse verdict → send.

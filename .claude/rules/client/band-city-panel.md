@@ -1175,17 +1175,52 @@ Party / Kit / forecast / Send** — off the same builders.
   — `Hunters` / `Foragers` / `Herders`, so a managed herd's keepers never read as a hunting party — and
   the crew targets that hang off that heading are a resident crew's controls anyway.
 
+- **The dock sheet took the drawer's boxed `THIS TRIP` readout**, and the builder moved to the
+  shared widget layer to make that possible: `HudWidgets.mount_trip_readout` (+ its `_trip_yield_rows`
+  helper), lifted out of `DrawerComposeController` where it was private. Both sheets call the one
+  builder now. **The dock's one-line sentence and its standalone bound clause went with it** — the
+  box's own verdict folds the bound clause in (`SourceForecast.hunt_trip_verdict`), so keeping both
+  printed one fact twice. `hunt_forecast_line_bbcode` survives as BOTH sheets' refused-state fallback
+  (an empty box is worse than the sentence it replaces); `trip_bound_clause` keeps its `DetailFormat`
+  reader and the verdict's own.
+
 **Frames:** `band_panel_compose_hunt` (TALL — the chart present, the presets one row across) and
 **`band_panel_compose_hunt_short`** (the tier gate, the only state that renders it: chart absent).
 `_assert_hunt_sheet_chart` asserts BOTH halves, since a gate stuck on and a gate that never fires are
 equally green to the bounds assertion — a clipped chart still reports a rect inside its host.
 
 **MEASURED AND LEFT UNFIXED:** an OPEN parties compose sheet does not fit a height-capped horizontal
-dock at all — **593px of a 265px box WITHOUT the chart** (quarry row, presets, floor hint, party
+dock at all — **641px of a 265px box WITHOUT the chart** (593px before it took the boxed readout) (quarry row, presets, floor hint, party
 stepper, kit row, forecast and send, none of which the SHORT tier drops). No frame had ever rendered
 the sheet in a T/B dock. Gating the chart is necessary and nowhere near sufficient, so
 `band_panel_compose_hunt_short` REPORTS its extent rather than asserting the fit: asserting would fail
 on a defect that state exists to document, and skipping it silently would hide it.
+
+### WHY THE DOCK SHEET RENDERED NOTHING FOR A WILD FOWL FLOCK
+
+Reported from playtest: the drawer laid out a full readout and the dock rendered **nothing at all**
+for the same herd. **The shared box did not fix it and was never going to** — both readouts gate on
+the same `available` — so it is named here and guarded by
+`band_panel_preview._assert_unsampled_party_has_no_forecast`.
+
+`huntTripEstimates` is a table SAMPLED on two axes, and the client knows that about only one:
+`hunt_estimate_row` reads the NEAREST sampled FLOOR and then demands an **exact** party-size match.
+A party above the largest sampled size therefore finds no row at all, `hunt_trip_forecast` answers
+`available == false`, and every raid readout goes silent.
+
+The dock reached such a party and the drawer did not. The dock's stepper **auto-fills to
+`expedition_useful_cap`** the moment a quarry is adopted, and that cap's engagement arm
+(`expedition_engage_crew`) is deliberately not bounded by the sampled sizes — its own note says so,
+because a quarry needing six hunters per animal wants a crew the table never samples. The drawer's
+count is seeded from the standing staffing (1 on an unworked herd), which is always sampled. On a
+Wild Fowl flock the crew that brings the standing birds into contact runs to the hundreds, so the
+dock sat far past the table.
+
+**The fix is a design call and was not made here**: giving the PARTY axis the nearest-sample fallback
+the FLOOR axis already has would quote party 8's row to a party of 12 (defensible — the launch
+command still sends the exact party, and the floor precedent says a sampled dial may be read at its
+nearest mark), but it changes what several existing frames quote. The guard pins the current
+behaviour and names the asymmetry.
 
 ### The KIT row rides both dock sheets, and the denial one carries the honesty rule
 

@@ -232,10 +232,6 @@ static func fill_target_turns(root: Node) -> int:
 ## `""` when the line is absent, which is a REAL reading and half of what each is asserted on: a pen
 ## and the whole plant web must render neither, and a `contains` assertion fails on `""` rather than
 ## being satisfied by it.
-static func hunters_per_animal_line(root: Node) -> String:
-	var node := Q.find_meta_node(root, HudWidgets.HUNTERS_PER_ANIMAL_META)
-	return (node as Label).text if node is Label else ""
-
 static func hunt_gate_line(root: Node) -> String:
 	var node := Q.find_meta_node(root, HudWidgets.HUNT_GATE_META)
 	return (node as RichTextLabel).get_parsed_text() if node is RichTextLabel else ""

@@ -1208,6 +1208,7 @@ func _ready() -> void:
 	await _save("band_panel_compose_hunt")
 	_report_compose_widths("band_panel_compose_hunt")
 	_assert_hunt_sheet_chart(true, "band_panel_compose_hunt")
+	_assert_unsampled_party_has_no_forecast()
 
 	# **THE SAME SHEET IN THE HEIGHT-CAPPED TOP DOCK** — the tier gate on the chart, and the only
 	# state that renders it. The parties zone CLIPS there, and the chart is ~150px of a ~300px box, so
@@ -2781,6 +2782,50 @@ func _collect_zone_overflow(node: Node, bounds: Rect2, failures: Array[String]) 
 					content.name, content.get_class(), maxf(over_x, 0.0), maxf(over_y, 0.0)])
 				continue   # one report per subtree — its children overflow by construction
 		_collect_zone_overflow(content, bounds, failures)
+
+## **WHY THE DOCK RENDERED NOTHING FOR WILD FOWL, as an assertion rather than a story.**
+##
+## `hunt_trip_estimates` is a table SAMPLED on two axes, and the client knows that about only one of
+## them: `hunt_estimate_row` reads the NEAREST sampled FLOOR (`nearest_estimate_floor`, whose own note
+## says the samples are marks on a dial) and then demands an EXACT party-size match. So a party above
+## the largest sampled size finds no row, `hunt_trip_forecast` answers `available == false`, and every
+## raid readout — the one-line sentence AND the boxed section — renders nothing at all.
+##
+## The dock reached that party and the drawer did not: the dock's stepper AUTO-FILLS to
+## `expedition_useful_cap` the moment a quarry is adopted, and that cap's engagement arm
+## (`expedition_engage_crew`) is deliberately NOT bounded by the sampled sizes — its own note says so
+## — while the drawer's count is seeded from the standing staffing (1 on an unworked herd), which is
+## always sampled. On a Wild Fowl flock the crew that brings the standing birds into contact is in the
+## hundreds, so the dock sat far past the table and quoted nothing while the drawer, at 1, laid out a
+## full box for the same herd.
+##
+## **THE SHARED BOX DOES NOT FIX THIS** — both readouts gate on the same `available`. It is a separate
+## defect, and this is the assertion that names it and would catch a party-axis fallback landing.
+func _assert_unsampled_party_has_no_forecast() -> void:
+	# **THE LIVE HERD THE HUD HOLDS, not the raw builder's output.** `_set_world_herds` runs every
+	# fixture through `_floorify_estimates`, which is what puts `floor` / `party_workers` ON the rows —
+	# a raw `_quarry_herd_fixtures()` table encodes the party in its KEY alone, so reading the axis off
+	# it finds 0 everywhere and the claim collapses into a tautology.
+	var herd: Dictionary = _hud._band_labor.find_world_herd(QUARRY_FAR_HERD_ID)
+	# The fixture's own axis, read off the table rather than restated: `_quarry_herd_fixtures` samples
+	# parties 1..N, and hardcoding N here would pass on a table that had since narrowed.
+	var sampled_max := 0
+	for key in (herd["hunt_trip_estimates"] as Dictionary):
+		var row: Dictionary = (herd["hunt_trip_estimates"] as Dictionary)[key]
+		sampled_max = maxi(sampled_max, int(row.get(SourceForecast.HUNT_ESTIMATE_PARTY_KEY, 0)))
+	var band := _band_fixture()
+	var inside := SourceForecast.hunt_trip_forecast(band, herd,
+		SourceForecast.DEFAULT_HARVEST_FLOOR, sampled_max, MAP_PATH_GRID_W, false)
+	var beyond := SourceForecast.hunt_trip_forecast(band, herd,
+		SourceForecast.DEFAULT_HARVEST_FLOOR, sampled_max + 1, MAP_PATH_GRID_W, false)
+	_assert_band_panel(("a party at the largest sampled size (%d) is quoted, one past it (%d) is not — "
+			+ "the party axis has no nearest-sample fallback the FLOOR axis has") % [
+			sampled_max, sampled_max + 1],
+		bool(inside.get("available", false)) and not bool(beyond.get("available", false)))
+	# …and BOTH readouts go silent there, which is the half that says the shared box was never the fix.
+	_assert_band_panel("…and both raid readouts render nothing for it — the box no more than the line",
+		not SourceForecast.hunt_trip_delivers(beyond)
+			and SourceForecast.hunt_forecast_line_bbcode(beyond, "Wild Boar") == "")
 
 ## GUARD: the dock hunt sheet's floor CHART is gated on the zone having room — present at TALL, absent
 ## at SHORT, where the parties zone is height-capped and clips. **Both halves are asserted**: a gate

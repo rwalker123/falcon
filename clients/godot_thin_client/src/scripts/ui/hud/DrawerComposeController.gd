@@ -1220,72 +1220,6 @@ func _fill_yields_host(host: Container, model: Dictionary, labor_kind: String) -
         HudStyle.WARN if overdraws else HudStyle.HEALTHY,
         String(model[YIELD_MODEL_WASTE])))
 
-## **THE EXPEDITION'S READOUT — the same box, the same three registers, a different question.** The
-## branch used to answer with one wrapped bbcode sentence carrying five facts (the animals, the
-## turns, the split, the food, the trade and the waste), beside a local sheet that laid the same
-## kinds of fact out in a bounded well. Two sheets on one panel, reading nothing alike.
-##
-## What must NOT carry over is the local readout's PER-TURN framing: the header
-## (`EXPEDITION_TRIP_ROW_HEADER`), the absent `now → after` on every row, and a verdict about the
-## trip's length rather than about which of the crew and the floor binds — all three because a raid
-## is one bounded errand, not a rate a resident crew settles into.
-##
-## Only a DELIVERING trip reaches here (`SourceForecast.hunt_trip_delivers`); the refused states keep
-## their sentence, an empty box being worse than the line it replaced.
-func _mount_trip_readout(parent: VBoxContainer, trip: Dictionary, quarry: String,
-        floor_value: float) -> void:
-    var column := HudWidgets.build_readout_box(parent)
-    # The waste rides the yields row's own `waste` slot, exactly as the local hunt's does — a kill the
-    # party could not haul is the animal web's concern on both branches, and it is amber either way.
-    var waste_pct := float(trip.get("waste_pct", 0.0))
-    column.add_child(HudWidgets.build_yields_row(
-        _trip_yield_rows(trip, quarry),
-        HudStyle.INK,
-        "",
-        HudStyle.HEALTHY,
-        SourceForecast.HUNT_WASTE_NOTE_FORMAT % int(round(waste_pct * 100.0)) \
-            if waste_pct > 0.0 else "",
-        SourceForecast.EXPEDITION_TRIP_ROW_HEADER))
-    column.add_child(HudWidgets.build_verdict_line(SourceForecast.hunt_trip_verdict(trip)))
-    # THE ASIDE IS THE FLOOR HINT AND NOTHING ELSE. The local readout's other line — the live teaching
-    # rate — has no counterpart here: an expedition accrues no husbandry (the gap
-    # `FLOOR_LEARNING_HINT_EXPEDITION` already names in the learning zone), so a teaching line would
-    # quote a multiplier this party never earns. A zone with nothing to say renders no aside at all,
-    # rather than a dashed rule over empty space.
-    # The COMPOSED floor, not the estimate row's nearest sample: the hint explains the preset the
-    # player is holding, and the sampling is a fact about the forecast table rather than about them.
-    var hint := HudFormat.floor_hint(floor_value, SourceForecast.LABOR_KIND_HUNT, true)
-    if hint != "":
-        column.add_child(HudWidgets.build_readout_aside(
-            [HudWidgets.readout_aside_line(hint)]))
-
-## The trip's payload as yields rows: the ANIMALS the party brings back, then whatever accounts those
-## bodies pay.
-##
-## **THE ANIMAL COUNT LEADS, IN THE LOCAL HUNT ROW'S OWN IDIOM** — its `YIELD_ROW_NUMBER` /
-## `YIELD_ROW_UNIT` overrides, the quarry as the unit and `YIELD_ACCOUNT_NONE` as the account,
-## because a body is not an account. It borrows the `≈` FACE vocabulary and deliberately not the
-## `/turn` UNIT one: this is a whole-trip count, and the header above already says so.
-##
-## The food and trade rows go through `SourceForecast.yield_rows`, so the render-only-where-the-
-## vector-pays rule keeps one definition — a wolf raid states pelts and no `0 food`, an edible quarry
-## with no trade states food alone. `YIELD_ACCOUNT_NONE` as the zero account means NO row is
-## synthesised when both are empty; that state cannot arrive here anyway (it is `empty`, and the
-## caller took the sentence branch), so a fabricated zero would be a reading of nothing.
-##
-## No `after` on any row: a trip has no holding state to arrow toward.
-func _trip_yield_rows(trip: Dictionary, quarry: String) -> Array[Dictionary]:
-    var animals := int(trip.get("animals", 0))
-    var rows: Array[Dictionary] = [{
-        SourceForecast.YIELD_ROW_ACCOUNT: SourceForecast.YIELD_ACCOUNT_NONE,
-        SourceForecast.YIELD_ROW_VALUE: float(animals),
-        HudWidgets.YIELD_ROW_NUMBER: HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT % animals,
-        HudWidgets.YIELD_ROW_UNIT: quarry,
-    }]
-    rows.append_array(SourceForecast.yield_rows(
-        float(trip.get("food", 0.0)), float(trip.get("trade", 0.0)), 0.0,
-        SourceForecast.YIELD_ACCOUNT_NONE))
-    return rows
 
 ## The herd "Assign hunters" controls (compose a count + policy, then Assign). Shown
 ## only for a huntable herd while a player band exists to staff it.
@@ -1584,30 +1518,29 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         SourceForecast.NO_ENGAGEMENT_STAGE))
     var engage_dip := SourceForecast.build_dip(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
         composed_improvement)
+    #
+    # **THE HUNTERS-PER-ANIMAL LINE IS GONE** (reported from playtest). `One hunter brings 10 Wild Fowl
+    # into contact.` is a fact about the SPECIES that never moved with anything the player was
+    # dialling, sitting between the kit they had just chosen and the forecast they were reading; the
+    # crew targets and the party cap already divide by the same reach, so the number it stated is
+    # spent where it is actionable rather than announced where it is not.
+    #
+    # **AND THE GATE NOW RENDERS ONLY WHEN IT REFUSES.** `0.1 hunter-turns to bring one Wild Fowl
+    # down` is the same removal: above the gate the effort figure is a species constant beside a
+    # forecast that already prices the trip. The REFUSAL stays and is the whole point of keeping the
+    # helper — a sub-gate party kills nothing at any headcount and still takes casualties, which reads
+    # as a bug unexplained, and it is the honesty line a `none` kit depends on.
     if SourceForecast.has_engagement_stage(engage_rate, engage_dip):
         var quarry := _herd_label_for_id(herd_id)
-        # HOW MANY HUNTERS ONE ANIMAL TAKES — `1 / engageRate`, off the SAME `engagement_per_worker`
-        # every crew target divides by. "Twenty hunters to take a mammoth" is a number a player can
-        # size a party against; `0.05` is not.
-        var reach_label := HudWidgets.alloc_hint_label(
-            SourceForecast.hunters_per_animal_face(engage_rate, engage_dip, quarry))
-        reach_label.set_meta(HudWidgets.HUNTERS_PER_ANIMAL_META, true)
-        target.add_child(reach_label)
-        # …AND WHETHER THEY CAN HURT IT AT ALL. A sub-gate party kills nothing at any headcount and
-        # still takes casualties, which reads as a bug unexplained. The refusal is DANGER-inked; above
-        # the gate the same line states the effort instead, so the sheet always says what the fight
-        # costs rather than only when it is hopeless.
-        #
         # **IT IS ASKED AT THE SELECTED KIT'S EFFECTIVE ATTACK, NOT THE BAND'S DEFAULT-KIT TIER.** The
         # picker one row up decides what these hunters carry, so a gate quoting the band's default kit
         # would refuse — or clear — a fight the composed party is not having.
         var gate_tiers := KitRoster.effective_tiers(kits, KitRoster.kit_by_id(kits, kit_id), band)
         var gate := SourceForecast.hunt_gate_model_at(float(gate_tiers["attack"]), herd, quarry)
-        if bool(gate["stated"]):
+        if bool(gate["blocked"]):
             var gate_label := HudWidgets.forecast_label("[color=#%s]%s[/color]" % [
-                HudStyle.DANGER_HEX if bool(gate["blocked"]) else HudStyle.INK_DIM_HEX,
-                String(gate["text"])])
-            gate_label.set_meta(HudWidgets.HUNT_GATE_META, bool(gate["blocked"]))
+                HudStyle.DANGER_HEX, String(gate["text"])])
+            gate_label.set_meta(HudWidgets.HUNT_GATE_META, true)
             target.add_child(gate_label)
     # **THE FILL TARGET, DIRECTLY UNDER THE PARTY IT IS PRICED BY** (§5.2). It reads *how long you will
     # wait*, and both terms of that — the animals and the turns they cost — are functions of the party
@@ -1656,7 +1589,8 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         # (client arithmetic over the BAND flow ceiling). This one is the sim's forward-simulated TRIP
         # estimate — a pure table lookup, zero client arithmetic. The two must never be confused.
         if SourceForecast.hunt_trip_delivers(trip):
-            _mount_trip_readout(target, trip, _herd_label_for_id(herd_id), _compose.hunt_floor())
+            HudWidgets.mount_trip_readout(target, trip, _herd_label_for_id(herd_id),
+                _compose.hunt_floor())
         else:
             # A raid with nothing to lay out in rows — no estimate, a denial quarry, a herd at its
             # floor — keeps the ONE-LINE form, which is also the send-hunt banner's, so the two entry
