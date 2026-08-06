@@ -362,6 +362,16 @@ const FLORA_COMPOSITION_SUBLINE_FORMAT := "%s%s %s"
 # deltas: these factors combine by product, and three percentages that refuse to sum to the headline
 # would invite arithmetic they cannot support. See `fertility_breakdown_row`.
 const GROWTH_ROW_FORMAT := "Growth: %d%% of normal"
+# The same reading with the anchor DROPPED, for the SHORT band-zone tier's MERGED Morale+Growth line
+# (`BandDetailLines.BAND_MORALE_GROWTH_CLAUSE_FORMAT`). The anchor is what makes a standalone `150%`
+# legible, and it is exactly what a merged line cannot afford: the vitals label is `AUTOWRAP_WORD`, so
+# a run too wide for the column WRAPS and costs back the very row the merge bought. The suffix is
+# recoverable — the Growth disclosure the clause still opens restates the factors in full — and the
+# `%` is unambiguous beside a `%` morale reading on the same line.
+const GROWTH_VALUE_SHORT_FORMAT := "%d%%"
+# The anchor itself, so a reader asserting that the TALL/COMPACT tiers KEPT the full row has a needle
+# that cannot drift from the format above.
+const GROWTH_ROW_ANCHOR_SUFFIX := " of normal"
 const FERTILITY_BREAKDOWN_ROW_FORMAT := "%s%s ×%.2f  %s"
 # The three factor labels, in the display order of `docs/plan_population_growth_model.md` §2:
 # hunger (the gate) → reserve (stock) → trend (flow). `hunger` is only ever ≤ 1 and `reserve` only
@@ -528,6 +538,23 @@ static func _value_hex(key: String, value: String, ctx: Context) -> String:
         return pen_feed_value_hex(value)
     return HudStyle.INK_HEX
 
+## The BBCode a clickable disclosure run OPENS with. Named because it is the needle that tells a
+## disclosure rendered as its OWN table row (`detail_bbcode` emits `[cell]` immediately before it)
+## from one MERGED into another row's value cell (where a separator precedes it) — a structural
+## difference the parsed text cannot show, and the only thing that can catch a tier merge leaking into
+## the tier above it.
+const DISCLOSURE_URL_OPEN := "[url="
+
+## **THE SAME CLICKABLE RUN, FOR A ROW MERGED INTO ANOTHER ROW'S VALUE CELL.** A merged row is still a
+## disclosure — the vitals block is ONE `RichTextLabel`, so both `[url]` metas live on the same label
+## and both popovers keep working — and it must wear the identical label + caret + tint a standalone
+## row wears, so this delegates rather than re-spelling the run. `""` when the row registered no
+## disclosure, which is the caller's cue to state the label plainly.
+static func inline_disclosure_label(key: String, ctx: Context) -> String:
+    if ctx == null or not ctx.disclosures.has(key):
+        return ""
+    return _key_cell(key, ctx)
+
 ## A disclosure row (Food/Morale) renders its key as a clickable `[url]` + ▸/▾ caret, which opens its
 ## breakdown in the shared POPOVER via `meta_clicked` → `DisclosureController` (never inline — see the
 ## BREAKDOWN_* consts). The caret is ▾ only while THIS row's popover is up. A CONCERNING row wears the
@@ -539,7 +566,7 @@ static func _key_cell(key: String, ctx: Context) -> String:
     var st: Dictionary = ctx.disclosures[key]
     var caret := BREAKDOWN_CARET_OPEN if bool(st.get("open", false)) else BREAKDOWN_CARET_CLOSED
     var caret_hex := HudStyle.WARN_HEX if bool(st.get("concerning", false)) else HudStyle.SIGNAL_HEX
-    return "[url=%s%s][color=#%s]%s %s[/color][/url]" % [
+    return DISCLOSURE_URL_OPEN + "%s%s][color=#%s]%s %s[/color][/url]" % [
         HudDisclosureVocab.BREAKDOWN_TOGGLE_META_PREFIX, String(st.get("key", "")),
         caret_hex, key, caret,
     ]

@@ -71,7 +71,23 @@ const FLOOR_LEARNING_HINT_EXPEDITION := "Above the food peak — the party takes
 # `SourceForecast.FLOOR_PRESET_*`. **Naming is not settled** (`docs/plan_harvest_floor.md` §10 Q2);
 # they live here precisely so a rename is one edit rather than a sweep. Each names the INTENT, not the
 # number: the number is on the slider beside them and in `FLOOR_VALUE_FORMAT`.
+# **ONE WORD EACH, BECAUSE THREE PRESETS MUST FIT ONE ROW IN A 354px DOCK COLUMN.** The long forms
+# below wrapped the picker onto two rows there — `💀 Take everything` and `♻ Best harvest` on the
+# first, `↑ Learn from it` orphaned on a second — which is what forced the zone's own 2-column
+# constant. Nothing is lost: the long form leads every preset's TOOLTIP (`FLOOR_PRESET_LONG_LABELS`
+# below), each face keeps its zone glyph, and the sentence that actually explains the choice is the
+# floor hint under the picker, which never shortened.
 const FLOOR_PRESET_LABELS := {
+	"strip": "Everything",
+	"peak": "Best",
+	"learn": "Learning",
+}
+
+# …and the phrase each is short FOR, which leads the preset's tooltip beside the number it stands
+# for. It is a separate table rather than a suffix so the two can be worded independently: a face is
+# a name and a tooltip is a sentence's opening, and folding them cost the long form the moment the
+# face shortened.
+const FLOOR_PRESET_LONG_LABELS := {
 	"strip": "Take everything",
 	"peak": "Best harvest",
 	"learn": "Learn from it",

@@ -11,6 +11,66 @@ paths:
 
 # Band readouts — demographics, food, morale, wellbeing, tile facts
 
+
+## THE SHORT BAND-ZONE TIER MERGES ROWS RATHER THAN DROPPING THEM
+
+A horizontal (T/B) dock's band zone is height-capped and **CLIPS** rather than scrolling, while having
+a whole screen of width. `BandDetailLines.unit_summary_lines`' `compact` flag is that tier saying so,
+and it now buys three rows in three different ways — the differences are the rule:
+
+| row | what the SHORT tier does | why |
+|---|---|---|
+| `Trade` | **DROPPED** | the rate is still stated by the WORK zone's head `⇄` total, so nothing is lost |
+| `Fodder` | **MERGED** onto Food as a hay clause | a hay stock has no other home in the client |
+| `Growth` | **MERGED** onto Morale as a clause | the fertility breakdown has no other home either |
+| `Kit` | **KEPT, at every tier** | a spent kit is stated NOWHERE else and is not recoverable |
+
+**The `Kit` row is what forced the third merge.** Every live cohort states its kit
+(`DetailFormat.band_states_kit` is a bare `has()` on the spears key), so the row is shipped behaviour
+— and the band zone was already measured at 299 of its 300px box, so one more 26px vitals row put it
+25px over in 13 states. Dropping a row was not available: `Trade` is already the one this tier drops,
+and `Kit` is the row that cannot be.
+
+**Morale and Growth are the right pair to join.** Both are player-band health scalars, both already
+carry disclosure carets, and they read naturally together.
+
+**BOTH `[url]` METAS SURVIVE, which is why a merge beats a drop.** The vitals block is ONE
+`RichTextLabel`, so a row is a line and merging two is joining two strings: the Growth clause carries
+the identical clickable run a standalone row wears (`DetailFormat.inline_disclosure_label`, which
+delegates to the same `_key_cell`), on the same label — so both popovers keep working. The clause
+carries its OWN tint rather than inheriting the morale value cell's, exactly as the hay clause does.
+
+**The carets have to be read from the CONTROLLER, not from the context, and that is a real trap.**
+Every other disclosure is drawn by `detail_bbcode` from a context this producer fills on its LAST
+line, so a clause built mid-producer sees an empty `disclosures` and silently falls back to the plain
+word — losing the caret and the click with it (measured: the merged line rendered `Growth 188%`).
+`_band_growth_clause` assigns `ctx.disclosures = _disclosures.state()` before building the run.
+
+### The width trap, and what pays for it
+
+The vitals label is `AUTOWRAP_WORD`. **A merged line that does not fit WRAPS, and costs back the very
+row the merge saved** — a fix that measures as no fix, with nothing failing: a wrapped line still sits
+inside the zone rect, so the bounds assertion passes and the frame is silently one row taller. So:
+
+- **the morale CAUSE clause is dropped at SHORT.** `— harsh terrain (Karst Cavern Mouth)` is the
+  longest run this row can carry; with it the merged line measures 500px in a 380px column and the
+  zone goes 22px over. The trend GLYPH stays, so the row still says morale is falling, and the cause is
+  recoverable from the popover this row's own caret opens.
+- **Growth drops its `of normal` anchor at SHORT** (`DetailFormat.GROWTH_VALUE_SHORT_FORMAT`). The
+  anchor is what makes a standalone `150%` legible; beside a `%` morale reading on the same line the
+  bare percentage is unambiguous, and the disclosure restates the factors in full.
+
+Measured after: the merged Morale+Growth run is **251px of a 380px column** and the zone's worst case
+is back to **299px of its 300px box**. `band_panel_preview._assert_merged_morale_growth_fits` is what
+holds that — the Food row's twin, and the only assertion that can see a wrap.
+
+**TALL and COMPACT keep both rows and the cause clause**, asserted by
+`_assert_growth_row_not_merged` at each: structurally, off the BBCode, since `detail_bbcode` opens
+every row with `[cell]` and a merged clause is preceded by the clause separator instead
+(`DetailFormat.DISCLOSURE_URL_OPEN` is that needle). The COMPACT probe is PNG-less — the tier needs a
+435-515px canvas and this band's COMPACT content overruns that box by ~143px whatever the vitals do,
+which is a property of the tier and not of the merge.
+
 ## Key scripts
 
 | Script | Purpose |

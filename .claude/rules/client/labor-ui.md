@@ -2037,9 +2037,9 @@ discard is precisely what this axis split removed.
     forage picker already had got SHORTER, since each row costs one 13px line instead of a 16px one). The
     lone rung is **not** stretched across the row: a GridContainer gives it its COLUMN's width, so it sits
     under the first cell above at exactly that cell's width, which reads deliberate rather than orphaned.
-    **`ZONE_POLICY_PICKER_COLUMNS` (2) is the one picker that does not follow** — see
-    `band-city-panel.md`; measured at 3 it overruns the L/R dock's ~354px zone by ~90px and the frame comes
-    back sliced. Each `*_policy_takes` helper emits a **`{compact, full}` pair** per policy: the
+    **EVERY picker follows it now**, including the Band panel's two: the zone's own 2-column clamp is
+    retired (see `band-city-panel.md`). It existed because the long faces overran the L/R dock's ~354px
+    zone at 3 abreast; the faces are one word each now and the grid measures 234px of a 356px column. Each `*_policy_takes` helper emits a **`{compact, full}` pair** per policy: the
     compact string is the face's SECOND LINE, the verbose full string moves to the tooltip. Extractive rungs →
     compact `0.96 food` (`SourceForecast.picker_products(ceiling, trade)`, fed by `_forage_policy_takes` off `SourceForecast.forecast_inputs`),
     full `up to +0.96/turn` (`POLICY_CAP_FORMAT` — the tooltip keeps the sign and the unit, being the one

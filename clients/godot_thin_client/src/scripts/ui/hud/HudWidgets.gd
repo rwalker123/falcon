@@ -919,8 +919,12 @@ static func build_floor_picker(
         # Tooltip carries the VERBOSE metric the face compacts, led by the preset's own label and the
         # NUMBER it stands for — the one place the two spellings of a floor sit together, so a player
         # can learn that "Best harvest" is 50% left standing without dragging the slider to find out.
+        # **THE TOOLTIP CARRIES THE LONG FORM THE FACE SHORTENED.** The faces are one word each so
+        # three presets fit a 354px dock column; the phrase each stands for is the first thing this
+        # tooltip says, beside the number, so nothing the shortening took is unreachable.
         var preset_name := "%s (%s)" % [
-            HudComposeVocab.FLOOR_PRESET_LABELS.get(preset, preset),
+            HudComposeVocab.FLOOR_PRESET_LONG_LABELS.get(preset,
+                HudComposeVocab.FLOOR_PRESET_LABELS.get(preset, preset)),
             HudComposeVocab.FLOOR_VALUE_FORMAT % SourceForecast.floor_percent(floor_value)]
         var name_line := HudComposeVocab.POLICY_TOOLTIP_NAME_FORMAT % [preset_name, full] \
             if full != "" else preset_name

@@ -49,6 +49,29 @@ const BAND_FODDER_ROW_FORMAT := "Fodder: %.1f"
 # sets the precedent for a self-tinted run inside that value cell.
 const BAND_FOOD_HAY_CLAUSE_FORMAT := " · [color=#%s]%.1f hay[/color]"
 
+# ---- THE GROWTH ROW AS A CLAUSE ON THE MORALE LINE, for the `compact` (SHORT band-zone tier) host —
+# the second merge this tier makes, and the same trade for the same reason as the hay clause above:
+# HEIGHT is what is scarce in a height-capped horizontal dock, and it has a whole screen of width.
+#
+# **MORALE AND GROWTH ARE THE RIGHT PAIR.** Both are player-band health scalars, both already carry
+# disclosure carets, and they read naturally together. The alternative — dropping a row — is not
+# available here: `Kit` is the row the tier gained and it is NOT droppable (a spent kit is stated
+# nowhere else in the client and is not recoverable from any other surface), and `Trade` is already
+# the row this tier drops.
+#
+# **BOTH `[url]` METAS SURVIVE, which is the whole reason a merge beats a drop.** The vitals block is
+# ONE `RichTextLabel`, so a row is a line and merging two is joining two strings: the Growth clause
+# carries the identical clickable run a standalone Growth row wears
+# (`DetailFormat.inline_disclosure_label`), on the same label, so both popovers keep working and
+# neither breakdown is lost. It carries its OWN tint rather than inheriting the morale value cell's,
+# exactly as the hay clause does — a falling band's growth is not itself a red reading.
+#
+# **THE SEPARATOR IS LOAD-BEARING BEYOND ITS LOOK.** Followed directly by `DISCLOSURE_URL_OPEN` it is
+# what tells a merged clause from a standalone row structurally, which is the only assertion that can
+# catch this tier's layout leaking into the tier above it.
+const BAND_MORALE_GROWTH_CLAUSE_SEPARATOR := " · "
+const BAND_MORALE_GROWTH_CLAUSE_FORMAT := BAND_MORALE_GROWTH_CLAUSE_SEPARATOR + "%s [color=#%s]%s[/color]"
+
 # ---- The band's TRADE row (issue #381): what THIS band HOLDS and what it earns per turn in the
 # second product, in the Food row's shape — `Trade: 12.0 · +0.04 /turn`. The stock carries ONE decimal,
 # like the Fodder row above and for the same reason: sub-unit trade income accumulates in the sim
@@ -211,7 +234,12 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
     # to see); morale drives productivity + migration (a harsh tile erodes it until
     # people begin leaving), while deaths stay starvation/cold-driven.
     if _is_player_unit(unit_data):
-        lines.append(_band_morale_line(unit_data, terrain_label, context))
+        # **BUILT, THEN REGISTERED, THEN APPENDED — in that order, because the merge needs all three.**
+        # The SHORT tier joins Growth onto this line, and the clause carries Growth's own clickable
+        # run, which does not exist until `register` has recorded its caret state. So the morale line
+        # is held rather than appended, both disclosures are registered, and only then does the tier
+        # decide whether this is one line or two.
+        var morale_line := _band_morale_line(unit_data, terrain_label, context, compact)
         # **NO `Output:` ROW.** Productivity ties visibly to morale, but the multiplier's CONSEQUENCE
         # is the work board: every rate the WORK zone shows is already scaled by it. So it renders as
         # an item of that zone's head (`BandPanelController._build_work_head`), under the same
@@ -229,9 +257,18 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
         # be the very "no data read as famine" mistake the sim guards against on its own side.
         var growth_line := _band_growth_line(unit_data, context)
         if growth_line != "":
-            lines.append(growth_line)
             _disclosures.register(HudDisclosureVocab.DETAIL_ROW_GROWTH, HudDisclosureVocab.BREAKDOWN_KIND_GROWTH,
                 unit_data, _fertility_breakdown_lines(unit_data))
+        # THE TIER DECIDES: two rows, or one line carrying both. `compact` is the SHORT band-zone
+        # tier — see `BAND_MORALE_GROWTH_CLAUSE_FORMAT` for why this pair and why a merge rather than
+        # a drop. A band with no published growth reading merges nothing and keeps its bare Morale
+        # row, in every tier.
+        if compact and growth_line != "":
+            lines.append(morale_line + _band_growth_clause(unit_data, context))
+        else:
+            lines.append(morale_line)
+            if growth_line != "":
+                lines.append(growth_line)
     if with_position:
         var pos_array: Array = Array(unit_data.get("pos", []))
         if pos_array.size() == 2:
@@ -481,7 +518,8 @@ func _band_kit_line(unit_data: Dictionary) -> String:
 ## already stripped by the caller). A rehydrated save reports delta 0 / cause None for one turn, so
 ## the row degrades to a bare percentage.
 ## Stashes morale on the render context so `DetailFormat.detail_bbcode` tints the value.
-func _band_morale_line(unit_data: Dictionary, terrain_label: String, ctx: DetailFormat.Context) -> String:
+func _band_morale_line(unit_data: Dictionary, terrain_label: String, ctx: DetailFormat.Context,
+        compact: bool = false) -> String:
     var morale: float = float(unit_data.get("morale", 1.0))
     ctx.morale = morale
     var text := "Morale: %d%%" % int(round(morale * 100.0))
@@ -491,7 +529,14 @@ func _band_morale_line(unit_data: Dictionary, terrain_label: String, ctx: Detail
         # Name the cause only when morale is actually concerning — a healthy band
         # drifting slowly (nearly every tile bleeds a little today) shouldn't be
         # branded "harsh climate/terrain". Below the warn threshold, spell it out.
-        if morale < BandFoodStatus.warn_morale():
+        #
+        # **NOT IN THE `compact` TIER, where the Growth clause shares this line.** The cause is the
+        # longest run this row can carry (`harsh terrain (Karst Cavern Mouth)`), the label is
+        # `AUTOWRAP_WORD`, and a merged line that wraps costs back the very row the merge bought — a
+        # fix that measures as no fix, with nothing failing. The trend GLYPH stays, so the row still
+        # says morale is falling; the cause is recoverable from the disclosure popover this row's
+        # caret opens, which is what makes it the clause that yields rather than the merge.
+        if morale < BandFoodStatus.warn_morale() and not compact:
             var cause := int(unit_data.get("morale_cause", DetailFormat.MORALE_CAUSE_NONE))
             var cause_label := DetailFormat.morale_cause_label(cause)
             if cause_label != "":
@@ -518,6 +563,32 @@ func _band_growth_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> Stri
     var fertility := DetailFormat.band_fertility(unit_data)
     ctx.fertility = fertility
     return DetailFormat.GROWTH_ROW_FORMAT % int(round(fertility * 100.0))
+
+## The Growth row rendered as a CLAUSE on the Morale line, for the SHORT band-zone tier — the pair to
+## `_band_growth_line`, and the only place the two can differ is the anchor suffix, which a merged
+## line cannot afford (`DetailFormat.GROWTH_VALUE_SHORT_FORMAT`).
+##
+## It reads `ctx.fertility`, which `_band_growth_line` has already stashed, and tints from the SAME
+## `BandFoodStatus.hex_for_fertility` buckets `DetailFormat._value_hex` would have given a standalone
+## row — so the merge changes where the number sits and nothing about what it says. The label is the
+## identical clickable run a standalone row wears, so the fertility popover survives the merge; a
+## Growth row that registered no disclosure (an empty breakdown) falls back to the plain word, which
+## is what keeps the reading legible rather than unlabelled.
+func _band_growth_clause(unit_data: Dictionary, ctx: DetailFormat.Context) -> String:
+    var fertility := DetailFormat.band_fertility(unit_data)
+    # **THE CARETS HAVE TO BE ON THE CONTEXT BEFORE THIS RUN IS BUILT, and they are not yet.** Every
+    # other disclosure is drawn by `detail_bbcode` from a context this producer fills on its LAST
+    # line — so a clause built mid-producer reads an empty `disclosures` and silently falls back to
+    # the plain word, losing the caret and the click with it (measured: the merged line rendered
+    # `Growth 188%`). Reading the controller's live state here is the fix, and the same assignment
+    # runs again at the end: it is idempotent, and this is the one row rendered before its turn.
+    ctx.disclosures = _disclosures.state()
+    var label := DetailFormat.inline_disclosure_label(HudDisclosureVocab.DETAIL_ROW_GROWTH, ctx)
+    if label == "":
+        label = HudDisclosureVocab.DETAIL_ROW_GROWTH
+    return BAND_MORALE_GROWTH_CLAUSE_FORMAT % [
+        label, BandFoodStatus.hex_for_fertility(fertility),
+        DetailFormat.GROWTH_VALUE_SHORT_FORMAT % int(round(fertility * 100.0))]
 
 ## Itemized fertility breakdown: the three named factors as indented sub-lines, each rendered as a
 ## MULTIPLIER — `    ▼ ×0.60  short rations` — because they combine by product, so reading down the

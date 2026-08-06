@@ -814,6 +814,11 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 	_report_zone_content_extent("band_panel_vitals_worst_case")
 	_assert_merged_food_row_fits()
+	# The SHORT tier's SECOND merge, and the one the `Kit` row is paid for with. Measured in the same
+	# frame as the Food merge because this is the frame that carries every optional row at once — the
+	# only state in which the zone is asked to hold the full set.
+	_assert_merged_morale_growth_fits()
+
 
 	# (c) CONCERNING food (net negative + low runway): the breakdown AUTO-shows (no click) under a red net.
 	_push_bands([_concerning_food_band_fixture()])
@@ -852,6 +857,7 @@ func _ready() -> void:
 		await _settle()
 		await _settle()   # extra frame: let the deferred fit_content re-pack + reservation settle
 		await _save(state["name"])
+		_report_zone_content_extent(String(state["name"]))
 
 	# PER-SOURCE MAX-USEFUL CAP on the Current-actions rows. Push a band with idle workers to spare and
 	# three staffed sources: a Forage row staffed AT its patch's max-useful (3), a Forage row BELOW its
@@ -1200,6 +1206,30 @@ func _ready() -> void:
 	_hud._bandpanel.rerender()
 	await _settle()
 	await _save("band_panel_compose_hunt")
+	_report_compose_widths("band_panel_compose_hunt")
+	_assert_hunt_sheet_chart(true, "band_panel_compose_hunt")
+
+	# **THE SAME SHEET IN THE HEIGHT-CAPPED TOP DOCK** — the tier gate on the chart, and the only
+	# state that renders it. The parties zone CLIPS there, and the chart is ~150px of a ~300px box, so
+	# the SHORT tier keeps the presets alone exactly as the band zone's outlook chart is kept out. The
+	# frame is judged on the ABSENCE plus the fit: a gate that never fired and a chart clipped off the
+	# bottom of the zone are the same picture.
+	_panel.set_dock(SIDE_TOP)
+	await _settle()
+	await _save("band_panel_compose_hunt_short")
+	# **THE FIT IS REPORTED HERE, NOT ASSERTED, and the measurement is why.** An OPEN parties compose
+	# sheet does not fit a height-capped horizontal dock at all: measured at 593px of a 265px box
+	# WITHOUT the chart — quarry row, presets, floor hint, party stepper, kit row, forecast and send,
+	# none of which this tier drops. That is a pre-existing property of opening the sheet in a T/B
+	# dock (no frame had ever rendered it there) and not the chart's doing; gating the chart is
+	# necessary and nowhere near sufficient. Asserting the fit here would fail on a defect this state
+	# exists to document, and skipping the assertion silently would hide it — so the extent is printed
+	# with the frame beside it.
+	_report_zone_content_extent("band_panel_compose_hunt_short")
+	_report_compose_widths("band_panel_compose_hunt_short")
+	_assert_hunt_sheet_chart(false, "band_panel_compose_hunt_short")
+	_panel.set_dock(SIDE_LEFT)
+	await _settle()
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
@@ -1576,6 +1606,38 @@ func _ready() -> void:
 	_assert_shell_is_wide(true, "band_panel_shell_at_threshold")
 
 	await _render_dock_row_states()
+
+	# ---- THE BAND-ZONE TIERS, LAST, AND DELIBERATELY SO ------------------------------------------
+	# The SHORT tier merges Growth onto the Morale line; TALL and COMPACT must not. Both probes RESIZE
+	# THE CANVAS and re-dock, and a panel left in another shell silently re-renders every state after
+	# it in the wrong one (measured: run mid-file, they flipped `band_panel_arrivals_top` from its
+	# 300px `Zone_band` into a 265px `NarrowZoneHost` and overflowed it). So they run after the last
+	# frame, where there is nothing left to perturb.
+	_push_bands([_vitals_worst_case_band_fixture()])
+	# The BAND tab, explicitly: the narrow shell renders ONE zone into `NarrowZoneHost`, and the run
+	# above leaves whichever tab its last state selected — so without this the probes measure the WORK
+	# board and find no vitals label to read at all.
+	_panel.set_active_tab(&"band")
+	# …and THE SAME BAND IN THE TALL DOCK, which must NOT have merged: Morale and Growth are separate
+	# rows there, with the morale cause clause intact. Without this the merge could quietly become the
+	# layout everywhere and every frame above would still be green.
+	_panel.set_dock(SIDE_LEFT)
+	await _settle()
+	_report_zone_content_extent("band_panel_vitals_worst_case_tall")
+	_assert_growth_row_not_merged("band_panel_vitals_worst_case_tall")
+	# …and the COMPACT tier between them, which must not have merged either. **PNG-LESS, and that is
+	# the honest shape of it**: the tier is reachable only on a short canvas (the narrow shell's zone
+	# box is the canvas minus ~95px, so COMPACT's 340-420px band needs a 435-515px window), and this
+	# band's COMPACT content measures 528px — it overflows that box by ~143px whatever the vitals do.
+	# That is a pre-existing property of the tier and not this merge's business, so the ROWS are
+	# asserted and the fit deliberately is not. Without this the merge could leak into COMPACT and
+	# every rendered frame would still be green, since no frame renders at that tier.
+	await _pin_canvas(Vector2i(PREVIEW_SIZE.x, COMPACT_TIER_PROBE_HEIGHT))
+	_panel.set_dock(SIDE_LEFT)
+	await _settle()
+	_report_zone_content_extent("compact_tier_probe")
+	_assert_growth_row_not_merged("compact_tier_probe")
+	await _pin_canvas(PREVIEW_SIZE)
 
 	_assert_herd_field_pairs()
 	_finish()
@@ -2442,6 +2504,27 @@ func _assert_trade_row_absent_in_short_tier() -> void:
 		return
 	print("band_panel_preview: assert OK — SHORT tier drops the Trade row (Food row still present)")
 
+## The hosts the band zone can render into — its own zone box in the WIDE shell, and the single
+## swapped host in the NARROW one. The tier note is appended to their extent lines alone.
+const BAND_ZONE_HOST_NAMES := ["Zone_band", "NarrowZoneHost"]
+const BAND_ZONE_TIER_NOTE_FORMAT := " [%s tier]"
+## The three tiers by name, indexed by `HudWorkVocab.BAND_ZONE_TIER_*` (SHORT 0, COMPACT 1, TALL 2).
+const BAND_ZONE_TIER_NAMES := ["SHORT", "COMPACT", "TALL"]
+
+## The canvas height that lands the LEFT dock's band zone in the COMPACT tier. The narrow shell's zone
+## box is the canvas minus ~95px of chrome, and COMPACT is `[BAND_ZONE_CHART_MIN_HEIGHT,
+## BAND_ZONE_TALL_MIN_HEIGHT)` = [340, 420) — so 480 gives a 385px box, mid-band rather than on either
+## edge, where a few pixels of chrome drift cannot silently move the probe into a neighbouring tier.
+const COMPACT_TIER_PROBE_HEIGHT := 480
+
+## Which content tier the band zone is rendering at RIGHT NOW — read off the controller rather than
+## re-derived from the zone height, so the reported tier is the one that actually built the rows.
+func _band_zone_tier_name() -> String:
+	var tier: int = _hud._bandpanel._band_zone_tier
+	if tier < 0 or tier >= BAND_ZONE_TIER_NAMES.size():
+		return "?"
+	return String(BAND_ZONE_TIER_NAMES[tier])
+
 ## MEASUREMENT (not an assertion — `_assert_zone_content_fits` is the assertion): print how tall each
 ## zone's content actually came out against the box it was given, so a state that PASSES still says by
 ## how much. A near-miss and a comfortable fit are the same green line otherwise, and the whole point
@@ -2454,8 +2537,13 @@ func _report_zone_content_extent(state_name: String) -> void:
 		var extent := _zone_content_extent(host, host)
 		if extent <= 0.0:
 			continue
-		print("band_panel_preview: %s — zone %s content %.0fpx of a %.0fpx box (%.0f spare)" % [
-			state_name, host.name, extent, host.size.y, host.size.y - extent])
+		print("band_panel_preview: %s — zone %s content %.0fpx of a %.0fpx box (%.0f spare)%s" % [
+			state_name, host.name, extent, host.size.y, host.size.y - extent,
+			# The band zone's TIER, beside its extent: the SHORT tier renders two fewer rows than the
+			# TALL one (Trade dropped, Fodder and Growth merged), so an extent quoted without it is a
+			# number whose content nobody can reconstruct.
+			BAND_ZONE_TIER_NOTE_FORMAT % _band_zone_tier_name() \
+				if BAND_ZONE_HOST_NAMES.has(String(host.name)) else ""])
 
 ## The deepest point any measurable control in this zone reaches, relative to the zone's own top.
 func _zone_content_extent(node: Node, host: Control) -> float:
@@ -2498,24 +2586,101 @@ func _assert_merged_food_row_fits() -> void:
 	if text.contains(FODDER_ROW_NEEDLE):
 		push_error("band_panel_preview: the SHORT tier still renders a standalone Fodder row beside the merged Food line")
 		return
-	var next_row := text.find(HudDisclosureVocab.DETAIL_ROW_MORALE)
-	if next_row <= 0:
-		push_error("band_panel_preview: merged-food-row assert cannot find the Morale row that bounds the Food one (got: %s)" % text)
+	# **THE ROW IS BOUNDED BY THE ROW THAT FOLLOWS IT, AND THAT ROW IS NOW `Kit`.** This read to
+	# `Morale` while Food and Morale were adjacent; the Kit row landed between them and the cut then
+	# measured TWO rows as one, reporting a 624px wrap on a line that fits comfortably. A bound naming
+	# the row that actually follows is the only kind that survives an insertion, so it takes whichever
+	# of the candidates comes FIRST rather than one fixed name.
+	var food_run := _vitals_run(text, HudDisclosureVocab.DETAIL_ROW_FOOD,
+		[HudDisclosureVocab.DETAIL_ROW_KIT, HudDisclosureVocab.DETAIL_ROW_MORALE])
+	if food_run == "":
+		push_error("band_panel_preview: merged-food-row assert cannot find the Food row (got: %s)" % text)
 		return
-	var food_run := text.substr(0, next_row)
+	_assert_vitals_run_fits("merged Food", food_run, vitals)
+
+## GUARD: the SHORT tier's OTHER merge — Growth joined onto the Morale line to pay for the `Kit` row
+## every live band states (`BandDetailLines.BAND_MORALE_GROWTH_CLAUSE_FORMAT`). Same trap and the same
+## measurement as the Food row above: the label is `AUTOWRAP_WORD`, so a merged line too wide for the
+## column WRAPS and costs back the very row the merge bought — a fix that measures as no fix, with
+## nothing failing. **The bounds assertion cannot see this**: a wrapped line still sits inside the zone
+## rect, so `_assert_zone_content_fits` passes and the frame is silently one row taller.
+##
+## It is also what makes the DROPPED morale cause clause load-bearing rather than cosmetic: put the
+## cause back at this tier (`— harsh terrain (Karst Cavern Mouth)`) and this is the assertion that
+## fails, naming the overflow.
+func _assert_merged_morale_growth_fits() -> void:
+	var vitals := _find_vitals_label(_panel)
+	if vitals == null:
+		push_error("band_panel_preview: merged-morale-row assert found no vitals label")
+		return
+	var text: String = vitals.get_parsed_text()
+	if not text.contains(HudDisclosureVocab.DETAIL_ROW_GROWTH):
+		push_error("band_panel_preview: the SHORT tier's Morale line carries no Growth clause — the merge is off (got: %s)" % text)
+		return
+	# Nothing follows Morale in the dock's vitals block (the Position row is the drawer host's), so the
+	# run reaches the end of the label — stated as an EMPTY bound list rather than left implicit.
+	var morale_run := _vitals_run(text, HudDisclosureVocab.DETAIL_ROW_MORALE, [])
+	if morale_run == "":
+		push_error("band_panel_preview: merged-morale-row assert cannot find the Morale row (got: %s)" % text)
+		return
+	_assert_vitals_run_fits("merged Morale+Growth", morale_run, vitals)
+
+## GUARD: **the merge is the SHORT tier's layout and nobody else's.** Morale and Growth stay separate
+## rows at TALL and COMPACT, with the morale cause clause intact — so a merge leaking upward would
+## quietly cost every tier a reading it has the room for.
+##
+## Structural, off the BBCode rather than the parsed text: `detail_bbcode` opens every table row with
+## `[cell]`, so a standalone Growth row's clickable run is preceded by one while the merged clause's is
+## preceded by the clause SEPARATOR. The parsed text strips both, which is why the visible half — the
+## `of normal` anchor, which only a standalone row spends the width on — is asserted beside it rather
+## than instead of it.
+func _assert_growth_row_not_merged(state_name: String) -> void:
+	var vitals := _find_vitals_label(_panel)
+	if vitals == null:
+		push_error("band_panel_preview: growth-row tier assert found no vitals label (%s)" % state_name)
+		return
+	var merged_needle := BandDetailLines.BAND_MORALE_GROWTH_CLAUSE_SEPARATOR \
+		+ DetailFormat.DISCLOSURE_URL_OPEN
+	if vitals.text.contains(merged_needle):
+		push_error("band_panel_preview: %s merged Growth onto the Morale line — that is the SHORT tier's layout only" % state_name)
+		return
+	if not vitals.get_parsed_text().contains(DetailFormat.GROWTH_ROW_ANCHOR_SUFFIX):
+		push_error("band_panel_preview: %s dropped the Growth row's `of normal` anchor — the SHORT tier's short form leaked up" % state_name)
+		return
+	print("band_panel_preview: assert OK — %s keeps Growth as its own row, anchor intact" % state_name)
+
+## One vitals ROW cut out of the parsed block. **`[table]` rows carry NO line break into
+## `get_parsed_text()`** — the whole block comes back concatenated into one string — so a row is cut by
+## the KEY of whichever row follows it, and an empty `bounds` list means "this row runs to the end of
+## the block". Returns "" when `key` is not in the text at all.
+func _vitals_run(text: String, key: String, bounds: Array) -> String:
+	var start := text.find(key)
+	if start < 0:
+		return ""
+	var stop := text.length()
+	for bound_variant in bounds:
+		var at := text.find(String(bound_variant), start + key.length())
+		if at > start:
+			stop = mini(stop, at)
+	return text.substr(start, stop - start)
+
+## Measure one vitals row's NATURAL (unwrapped) run against the width the label was actually given — in
+## the label's OWN font at its OWN size, plus the gutter the `[table=2]` spends between its key and
+## value cells, so the figure is the whole ROW rather than one cell.
+func _assert_vitals_run_fits(label: String, run: String, vitals: RichTextLabel) -> void:
 	var font := vitals.get_theme_font(VITALS_FONT_THEME_KEY)
 	var font_size := vitals.get_theme_font_size(VITALS_FONT_SIZE_THEME_KEY)
 	var table_gap := float(vitals.get_theme_constant(VITALS_TABLE_SEPARATION_THEME_KEY))
-	var needed: float = font.get_string_size(food_run, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x + table_gap
+	var needed: float = font.get_string_size(run, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x + table_gap
 	var available := vitals.size.x
-	print("band_panel_preview: merged Food row — \"%s\" measures %.0fpx of a %.0fpx column" % [
-		food_run, needed, available])
+	print("band_panel_preview: %s row — \"%s\" measures %.0fpx of a %.0fpx column" % [
+		label, run, needed, available])
 	if needed > available:
-		push_error("band_panel_preview: the merged Food line WRAPS — %.0fpx of run in a %.0fpx column" % [
-			needed, available])
+		push_error("band_panel_preview: the %s line WRAPS — %.0fpx of run in a %.0fpx column" % [
+			label, needed, available])
 	else:
-		print("band_panel_preview: assert OK — the merged Food line fits its column (%.0f spare)" % [
-			available - needed])
+		print("band_panel_preview: assert OK — the %s line fits its column (%.0f spare)" % [
+			label, available - needed])
 
 ## **THE FORAGE-TRADE REGRESSION.** A forage source ships `realized_trade_yield == 0` (the documented
 ## not-yet-projected sentinel) beside a real `trade_yield`, and the decoder always inserts the key — so
@@ -2616,6 +2781,48 @@ func _collect_zone_overflow(node: Node, bounds: Rect2, failures: Array[String]) 
 					content.name, content.get_class(), maxf(over_x, 0.0), maxf(over_y, 0.0)])
 				continue   # one report per subtree — its children overflow by construction
 		_collect_zone_overflow(content, bounds, failures)
+
+## GUARD: the dock hunt sheet's floor CHART is gated on the zone having room — present at TALL, absent
+## at SHORT, where the parties zone is height-capped and clips. **Both halves are asserted**: a gate
+## that never fires and a gate stuck on are both green to the bounds assertion, since a clipped chart
+## still sits inside the zone rect.
+func _assert_hunt_sheet_chart(want: bool, state_name: String) -> void:
+	var chart := _find_meta_control(_panel, HudWidgets.FLOOR_CHART_META)
+	var tier := _band_zone_tier_name()
+	if want and chart == null:
+		push_error("band_panel_preview: %s (%s tier) renders NO floor chart — the tier gate is stuck off" % [
+			state_name, tier])
+		return
+	if not want and chart != null:
+		push_error("band_panel_preview: %s (%s tier) renders a floor chart — the tier gate is stuck on" % [
+			state_name, tier])
+		return
+	print("band_panel_preview: assert OK — %s (%s tier) %s the floor chart" % [
+		state_name, tier, "carries" if want else "keeps out"])
+
+## MEASUREMENT: the compose sheet's floor PICKER and its CHART against the column they render in.
+## Both are widgets the herd drawer sized in a ~400px sheet and the dock hosts in a ~354px zone, and
+## both fail SILENTLY when they do not fit — the picker WRAPS onto a second row (the reason the zone
+## once clamped itself to 2 columns) and the chart raises the zone's minimum width past its host,
+## where it is clipped. A green bounds assertion says neither happened; only the numbers say by how
+## much, which is what decides whether a shortened face was enough.
+func _report_compose_widths(state_name: String) -> void:
+	var picker := _find_meta_control(_panel, HudWidgets.POLICY_RUNG_META)
+	# The rung's own meta rides the BUTTON; the grid that lays the three of them out is its
+	# grandparent (button → cell `MarginContainer` → grid), and the GRID is what can wrap.
+	var grid: Control = picker.get_parent().get_parent() as Control if picker != null else null
+	if grid != null:
+		print("band_panel_preview: %s — floor picker grid needs %.0fpx of a %.0fpx column (%d columns, %d rungs)" % [
+			state_name, grid.get_combined_minimum_size().x, grid.size.x,
+			(grid as GridContainer).columns if grid is GridContainer else -1,
+			grid.get_child_count()])
+	var chart := _find_meta_control(_panel, HudWidgets.FLOOR_CHART_META)
+	if chart == null:
+		print("band_panel_preview: %s — no floor chart in this zone" % state_name)
+		return
+	print("band_panel_preview: %s — floor chart needs %.0f x %.0fpx, drawn at %.0f x %.0fpx" % [
+		state_name, chart.get_combined_minimum_size().x, chart.get_combined_minimum_size().y,
+		chart.size.x, chart.size.y])
 
 ## The panel's fixed-size zone hosts (BandCityPanel names them `Zone_<key>` / `NarrowZoneHost`).
 func _find_zone_hosts(node: Node) -> Array:
@@ -4752,10 +4959,11 @@ func _map_path_snapshot() -> Dictionary:
 ## so this rather than `_band_fixture` is the shape a live server actually produces. It is a SEPARATE
 ## fixture, and that is a finding rather than a preference: the `Kit` row costs 26px, the band zone
 ## reads **299 of its 300px box** in a height-capped T/B dock (`band_panel_vitals_worst_case` prints
-## it), and putting these six on the shared fixture therefore overflows `Zone_band` by exactly 25px in
-## **13 states** — a live defect this file's kitless fixture was hiding, since every real band states
-## its kit. Which SHORT-tier row yields to make room is a design decision (`Kit` is documented as
-## surviving `compact`, unlike Trade), so it is reported rather than guessed at here.
+## it). **The six fields now ride the SHARED fixture** — every live cohort states its kit, so a
+## harness measuring a band without one was measuring a zone a whole row short of what it renders
+## against a real server. The 25px that cost `Zone_band` in 13 states is paid for by the SHORT tier
+## merging Growth onto the Morale line (`BandDetailLines`' `BAND_MORALE_GROWTH_CLAUSE_FORMAT`), the
+## same trade the Fodder row already makes onto Food.
 ##
 ## Used by the MAP-PATH state, which renders in the TALL left dock where the row fits. Spears
 ## deliberately WEARING rather than round, so the row prints a real number and an `int()` narrowing is
@@ -4770,6 +4978,15 @@ func _kit_band_fixture() -> Dictionary:
 	band["hunt_carry_per_worker_biomass"] = 2.5
 	band["forage_carry_per_worker_biomass"] = 1.75
 	return band
+
+# ---- THE SHARED FIXTURE's kit condition (`docs/plan_hunt_through_combat.md` §4.8) ----------------
+## The three components' remaining condition on `_band_fixture`, on `equipment.json`'s 0-100 scale.
+## **THREE DIFFERENT NUMBERS, deliberately** — a fixture giving two components one value would pass
+## every assertion with their accessors swapped, which is the defect class this arc keeps reproducing.
+## Spears WEARING rather than round, so the row prints a real number and an `int()` narrowing shows.
+const KIT_SHARED_SPEARS_CONDITION := 74.5
+const KIT_SHARED_SLED_CONDITION := 58.0
+const KIT_SHARED_BASKETS_CONDITION := 91.0
 
 # ---- THE KIT PICKER's band (`docs/plan_denial_raid.md`) ------------------------------------------
 ## Condition on the two hunt components, and the whole point of the pair is that they DISAGREE.
@@ -4869,6 +5086,23 @@ func _band_fixture() -> Dictionary:
 		"age_working": 16.5375,
 		"age_elders": 4.6425,
 		"max_expedition_party_size": 8,
+		# **THE BAND'S KIT, ON THE SHARED FIXTURE BECAUSE EVERY LIVE COHORT CARRIES IT**
+		# (`docs/plan_hunt_through_combat.md` §4.8). `DetailFormat.band_states_kit` is a bare `has()`
+		# on the spears key, so a fixture that omits these renders no `Kit` vitals row — and the band
+		# zone was then being measured a whole row short of what it renders against a real server.
+		# Three DIFFERENT conditions on the 0-100 scale, so an assertion cannot pass with two
+		# accessors swapped; none dry, so the row's DANGER tint keeps its meaning and the frames that
+		# judge a spent kit stay the ones that state one.
+		"hunting_kit_durability": KIT_SHARED_SPEARS_CONDITION,
+		"sled_kit_durability": KIT_SHARED_SLED_CONDITION,
+		"basket_kit_durability": KIT_SHARED_BASKETS_CONDITION,
+		# The RESOLVED tiers the sim publishes beside them. Equipped throughout, matching the
+		# conditions above — `hunter_attack` well clear of `QUARRY_DEFENSE`, so no compose sheet on
+		# this band reads the combat gate's refusal and the frames that judge that refusal stay the
+		# ones that compose a bare-handed kit.
+		"hunter_attack": BandFx.KIT_ATTACK_EQUIPPED,
+		"hunt_carry_per_worker_biomass": BandFx.KIT_HUNT_CARRY_EQUIPPED,
+		"forage_carry_per_worker_biomass": BandFx.KIT_FORAGE_CARRY_EQUIPPED,
 		# The raid-forecast levers the sim echoes on every cohort: the slow-raid warn line and the
 		# move rate the client adds round-trip travel from. Without them the compose sheet's forecast
 		# degrades to hunting turns only and can never read "slow" — i.e. it would prove less.

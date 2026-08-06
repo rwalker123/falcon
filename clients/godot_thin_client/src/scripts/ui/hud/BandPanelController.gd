@@ -982,8 +982,7 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
         # the forecast that would justify a 5% move renders beside it.
         col.add_child(HudWidgets.build_floor_picker(func(floor: float) -> void:
             _commit_work_floor(band, model, floor),
-            float(model.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR)), {},
-            HudWorkVocab.ZONE_POLICY_PICKER_COLUMNS))
+            float(model.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR)), {}))
     return strip
 
 func _commit_work_floor(band: Dictionary, model: Dictionary, floor: float) -> void:
@@ -1704,22 +1703,50 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
         default_kit, kit_id)
     sheet.add_child(HudWidgets.alloc_section_label(HudComposeVocab.COMPOSE_FIELD_POLICY))
     # With a herd in hand the presets finally carry their metric — the same
-    # `SourceForecast.expedition_policy_takes` the herd drawer feeds its picker. **NO SLIDER in this
-    # zone**, for the reason the work inspector has none: a fixed-width dock strip is not where a
-    # continuous dial belongs, and the herd drawer's own sheet has the room.
+    # `SourceForecast.expedition_policy_takes` the herd drawer feeds its picker.
     #
     # **THE METRICS GO WITH THE TABLE THEY COME FROM.** `expedition_policy_takes` is a reading of
     # `huntTripEstimates`, so under a kit the table is not quoted for it would put a fourth figure
     # priced at a different kit on a sheet whose own note says none are. `{}` is the picker's supported
     # degrade (a herd the wire does not describe), so the rungs render bare rather than wrong.
+    #
+    # **THREE ACROSS, the shared default** — the zone's own 2-column clamp is retired. It existed
+    # because the long preset faces (`💀 Take everything`) could not fit three in a 354px column and
+    # wrapped `↑ Learn from it` onto a second row; the faces are one word each now
+    # (`HudComposeVocab.FLOOR_PRESET_LABELS`), so the picker reads as one row here and in the drawer.
     sheet.add_child(HudWidgets.build_floor_picker(func(floor: float) -> void:
         _send_hunt_floor = floor
         # Auto-max on a floor click, exactly as the herd drawer does: "give me everything this herd
         # can spare" — zero waste, full rate. Consumed on the next rebuild, never set by a −/+ tick.
         _compose.arm_party_autofill()
         rerender(), _send_hunt_floor,
-        SourceForecast.expedition_policy_takes(band, herd, _band_labor.grid_width(), _band_labor.wrap_horizontal()) if trip_quoted else {},
-        HudWorkVocab.ZONE_POLICY_PICKER_COLUMNS))
+        SourceForecast.expedition_policy_takes(band, herd, _band_labor.grid_width(), _band_labor.wrap_horizontal()) if trip_quoted else {}))
+    # **THE CHART AND ITS DRAGGABLE FLOOR — the same builder and the same model the herd drawer's raid
+    # uses**, because the two entry points compose one decision and had no business presenting it two
+    # ways. `improvement` is `IMPROVEMENT_NONE` and the crew noun is the party's: a detached party
+    # builds nothing, exactly as the drawer's expedition branch already assumes.
+    #
+    # **GATED ON THE ZONE HAVING ROOM, the `_build_food_outlook_block` idiom.** A horizontal dock's
+    # parties zone is height-capped and CLIPS, and the chart is ~150px of it — so the SHORT tier keeps
+    # the presets alone, exactly as it keeps the band zone's outlook chart out. The drag goes with it:
+    # since slice 4b there is no plain-slider control left to keep, the chart's own floor flag IS the
+    # dial (see `HudWidgets.build_floor_chart`).
+    var chart_model := SourceForecast.floor_chart_model(herd, SourceForecast.SOURCE_KIND_HERD,
+        HudComposeVocab.BARE_FORECAST_PREFIX, _send_hunt_floor, _send_expedition_count,
+        SourceForecast.IMPROVEMENT_NONE, HudComposeVocab.COMPOSE_FIELD_PARTY.to_lower(),
+        SourceForecast.rung_lesson_known(SourceForecast.SOURCE_KIND_HERD, herd,
+            HudComposeVocab.BARE_FORECAST_PREFIX, _player_knowledge()))
+    if bool(chart_model.get("known", false)) and _band_zone_tier != HudWorkVocab.BAND_ZONE_TIER_SHORT:
+        sheet.add_child(HudWidgets.build_floor_chart(chart_model,
+            func(floor: float, committed: bool) -> void:
+                _send_hunt_floor = floor
+                # **ONLY A COMMITTED CHANGE REBUILDS**, the drawer's expedition rule: a rebuild frees
+                # the chart and the drag in flight dies with it, and this sheet has no live-refresh
+                # registry to update in place (the raid's numbers are a lookup into a table sampled at
+                # five floors, so most of a drag moves nothing anyway).
+                if committed:
+                    _compose.arm_party_autofill()
+                    rerender()))
     sheet.add_child(HudWidgets.alloc_hint_label(
         HudFormat.floor_hint(_send_hunt_floor, SourceForecast.LABOR_KIND_HUNT, true)))
     # Party size, capped at the raid's max-useful plateau for THIS herd + floor (the herd drawer's

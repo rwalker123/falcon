@@ -1539,16 +1539,26 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # *clear it now* and *hold it after*, and the second is a promise about a crew that STAYS — a
     # detached party leaves. So the crew row is handed an empty model there (which is also what drops
     # the build-dip note, correctly: a party builds nothing).
-    _mount_crew_row(target, live_hosts,
-        HudComposeVocab.COMPOSE_FIELD_PARTY if is_expedition else crew_label,
-        _compose.hunt_count(), _compose.hunt_count() < cap,
-        func(n: int) -> void:
-            _compose.set_hunt_count(clampi(n, 0, cap))
-            _build_herd_assign_controls(_live_herd(herd_id, herd), target),
-        {} if is_expedition else chart_model,
-        func(count: int) -> void:
-            _compose.set_hunt_count(clampi(count, 0, cap))
-            _build_herd_assign_controls(_live_herd(herd_id, herd), target))
+    var on_crew_change := func(n: int) -> void:
+        _compose.set_hunt_count(clampi(n, 0, cap))
+        _build_herd_assign_controls(_live_herd(herd_id, herd), target)
+    if is_expedition:
+        # **THE EXPEDITION BRANCH TAKES THE INLINE `Party` ROW, the dock sheet's own control.** The
+        # two hunting-party entry points were the same decision in two shapes — a `PARTY` section
+        # heading with the stepper beneath it here, an inline labelled row there — so the herd
+        # drawer's raid now reads Quarry / Party / Kit as one stack of labelled rows exactly as the
+        # dock's does. **The LOCAL branches keep the section heading and their own crew NOUNS**
+        # (`Hunters` / `Foragers` / `Herders`): that split is deliberate, so a managed herd's keepers
+        # never read as a hunting party, and the crew targets that hang off the heading are a
+        # resident crew's controls anyway.
+        target.add_child(HudWidgets.build_party_stepper_row(_compose.hunt_count(), cap,
+            on_crew_change))
+    else:
+        _mount_crew_row(target, live_hosts, crew_label,
+            _compose.hunt_count(), _compose.hunt_count() < cap, on_crew_change, chart_model,
+            func(count: int) -> void:
+                _compose.set_hunt_count(clampi(count, 0, cap))
+                _build_herd_assign_controls(_live_herd(herd_id, herd), target))
     var cap_note := String(capped["note"])
     if cap_note != "":
         target.add_child(HudWidgets.alloc_hint_label(cap_note))

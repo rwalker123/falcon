@@ -559,14 +559,19 @@ command center**: shown whenever ≥1 player band exists, always displaying a
 - **A zone must FIT its zone.** The hosts clip, so overflow is invisible in a frame — and a zone
   content whose *minimum* size exceeds the zone (four policy rungs abreast in a 380px dock) does worse:
   it drags the whole zone column out past its host, taking the section menu beside it off the edge.
-  Hence `ZONE_POLICY_PICKER_COLUMNS` and `band_panel_preview`'s **recursive zone-bounds assertion**,
-  which is the only thing that catches either.
-  **`ZONE_POLICY_PICKER_COLUMNS` (2) is deliberately BELOW the shared `POLICY_PICKER_COLUMNS` (3), so the
-  Band panel's launch picker reads 2 + 2 where every free-floating picker reads 3 + 1.** That
-  inconsistency is bought, not overlooked: at 3 the four two-line rungs need ~444px against the ~354px
-  the L/R dock's zone gives, and the measured frame comes back with `⇊ Deplete` cut in half, the Quarry
-  button clipped and the hint text sliced — plus two extra `_assert_zone_content_fits` failures. Closing
-  the gap needs a WIDER parties zone (or a narrower metric line), never a bigger number here.
+  Hence `band_panel_preview`'s **recursive zone-bounds assertion**, which is the only thing that
+  catches either.
+  **THE ZONE'S OWN 2-COLUMN CLAMP IS RETIRED, and the constant with it.** `ZONE_POLICY_PICKER_COLUMNS`
+  (2) existed because the picker's long faces could not fit three abreast here — at 3 the rungs
+  overran the ~354px zone and the measured frame came back with a face cut in half, the Quarry button
+  clipped and two extra `_assert_zone_content_fits` failures. **The faces were the problem, not the
+  column count**: they are one word each now (`Everything` / `Best` / `Learning`,
+  `HudComposeVocab.FLOOR_PRESET_LABELS`, with the phrase each stands for leading its tooltip), and the
+  grid measures **234px of a 356px column** at the shared `POLICY_PICKER_COLUMNS` (3). So both this
+  zone's pickers — the parties launch sheet and the work inspector's — take the shared default and the
+  Band panel's picker is no longer a different creature from the free-floating one. **The horizontal
+  padding was NOT cut**: the shortened faces alone left 122px spare, so trimming `POLICY_PICKER_PADDING_H`
+  would have been chrome spent on nothing.
   **CONTAINMENT IS NOT COMPLETENESS, and that distinction is a second assertion.** Content the box
   cannot hold gets CLIPPED, and clipped content still reports a rect *inside* its host — so the
   bounds assertion passes on a frame that is visibly sliced (the Food/Morale inline breakdown cut the
@@ -739,9 +744,9 @@ to spend was giving the same rows LESS width than the layout squeezed into a sid
 zone CLIPS rather than scrolls, so the missing width came straight off its vitals rows as wraps.
 
 - **The parties zone takes exactly the narrow shell's zone width, and that is the floor the rule
-  states**: no wide-shell zone may be narrower than the side dock's. Its four-rung compose picker is
-  already 2×2 at that width (`ZONE_POLICY_PICKER_COLUMNS`), so it is the width that control was
-  tuned against.
+  states**: no wide-shell zone may be narrower than the side dock's. Its compose picker measures 234px
+  of that width with three rungs abreast, and its floor chart 300px of it, so it is the width both
+  controls are tuned against.
 - **The band zone takes the full `PANEL_WIDTH`** because it is the zone whose rows are widest — the
   merged Food line measures 353px — and it is the number this file already uses for "one readable
   column".
@@ -1143,6 +1148,44 @@ mission reads the same at every scale. The parties row deliberately renders **no
 `expedition_floor` is `0.0`, which is a real zone (`strip`), so borrowing the hunt branch's mark would
 tag a raid with a pressure it never chose. The map marker likewise takes no phase decoration: the
 green food pip is a haul cue, and a denial party's haul is a rounding error it should not advertise.
+
+### The two hunting-party entry points present ONE decision surface
+
+The dock's parties-zone hunt sheet (`BandPanelController._fill_hunt_compose_sheet`) and the herd
+drawer's expedition branch (`DrawerComposeController._build_herd_assign_controls`) compose the same
+raid. They had drifted into two shapes; they now read as one stack — **Quarry / Policy + chart /
+Party / Kit / forecast / Send** — off the same builders.
+
+- **The dock sheet gained the FLOOR CHART and its draggable floor**, from `HudWidgets.build_floor_chart`
+  against `SourceForecast.floor_chart_model` — the drawer's own builder and model, never a second
+  implementation. **This REVERSES the rule that used to stand here** ("NO SLIDER in this zone… a
+  fixed-width dock strip is not where a continuous dial belongs"): the two entry points presenting one
+  decision outranks keeping the dock strip spare, and the measurement backs it — the chart needs
+  **300 × 132px** and the parties zone gives it 356. `improvement` is `IMPROVEMENT_NONE` and the crew
+  noun is the party's: a detached party builds nothing.
+- **The chart is GATED ON THE ZONE HAVING ROOM** (`_band_zone_tier != BAND_ZONE_TIER_SHORT`), the
+  established `_build_food_outlook_block` idiom. A horizontal dock's parties zone is height-capped and
+  CLIPS, and the chart is ~150px of it. **The drag goes with it, and that is a consequence rather than
+  a choice**: since slice 4b there is no plain-slider control left to keep — the chart's own floor flag
+  IS the dial — so gating the chart necessarily gates the drag, and the SHORT tier keeps the presets
+  alone. Only a COMMITTED drag rebuilds the sheet (a rebuild frees the chart and the drag dies with
+  it), which is the drawer's expedition rule.
+- **The drawer's expedition branch took the dock's inline `Party` row** (`HudWidgets.build_party_stepper_row`)
+  in place of its `PARTY` section heading. **The LOCAL branches keep the heading and their crew NOUNS**
+  — `Hunters` / `Foragers` / `Herders`, so a managed herd's keepers never read as a hunting party — and
+  the crew targets that hang off that heading are a resident crew's controls anyway.
+
+**Frames:** `band_panel_compose_hunt` (TALL — the chart present, the presets one row across) and
+**`band_panel_compose_hunt_short`** (the tier gate, the only state that renders it: chart absent).
+`_assert_hunt_sheet_chart` asserts BOTH halves, since a gate stuck on and a gate that never fires are
+equally green to the bounds assertion — a clipped chart still reports a rect inside its host.
+
+**MEASURED AND LEFT UNFIXED:** an OPEN parties compose sheet does not fit a height-capped horizontal
+dock at all — **593px of a 265px box WITHOUT the chart** (quarry row, presets, floor hint, party
+stepper, kit row, forecast and send, none of which the SHORT tier drops). No frame had ever rendered
+the sheet in a T/B dock. Gating the chart is necessary and nowhere near sufficient, so
+`band_panel_compose_hunt_short` REPORTS its extent rather than asserting the fit: asserting would fail
+on a defect that state exists to document, and skipping it silently would hide it.
 
 ### The KIT row rides both dock sheets, and the denial one carries the honesty rule
 
