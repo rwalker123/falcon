@@ -107,5 +107,5 @@ and always emits it — but the failure mode if that stops holding is silent and
 absent key means *unchanged*, not *fog on*, so taking the `true` default would strobe the fog back
 on every turn.
 
-**Verify the Options row** with `godot --path clients/godot_thin_client res://tools/menu_preview.tscn`
+**Verify the Options row** with `scripts/preview.sh res://tools/menu_preview.tscn`
 → `ui_preview_out/menu_options.png`.

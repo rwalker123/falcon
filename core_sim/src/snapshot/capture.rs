@@ -252,6 +252,10 @@ pub(crate) struct PublishState {
     kits: Whole<Vec<KitOptionState>>,
     default_hunt_kit_id: Whole<String>,
     default_forage_kit_id: Whole<String>,
+    /// The serialized TOE config the Workbench's designer pages print — a per-world constant like
+    /// the roster above, and diffed for the same reason: it is the largest string on the section
+    /// and nothing about it changes between world rebuilds.
+    equipment_config_json: Whole<String>,
     history: VecDeque<StoredSnapshot>,
 }
 
@@ -611,6 +615,7 @@ struct SubsistenceParts {
     kits: Option<Vec<KitOptionState>>,
     default_hunt_kit_id: Option<String>,
     default_forage_kit_id: Option<String>,
+    equipment_config_json: Option<String>,
 }
 
 /// Fauna and flora: the herd roster, the forage patches, and the food-module map.
@@ -622,6 +627,7 @@ fn diff_subsistence(
     kits: &mut Whole<Vec<KitOptionState>>,
     default_hunt_kit_id: &mut Whole<String>,
     default_forage_kit_id: &mut Whole<String>,
+    equipment_config_json: &mut Whole<String>,
     snapshot: &WorldSnapshot,
     write: Baseline,
 ) -> SubsistenceParts {
@@ -634,6 +640,11 @@ fn diff_subsistence(
         default_forage_kit_id: diff_whole(
             default_forage_kit_id,
             &snapshot.default_forage_kit_id,
+            write,
+        ),
+        equipment_config_json: diff_whole(
+            equipment_config_json,
+            &snapshot.equipment_config_json,
             write,
         ),
     }
@@ -791,6 +802,7 @@ impl PublishState {
             kits: Whole::default(),
             default_hunt_kit_id: Whole::default(),
             default_forage_kit_id: Whole::default(),
+            equipment_config_json: Whole::default(),
             history: VecDeque::new(),
         }
     }
@@ -911,6 +923,7 @@ impl PublishState {
             kits,
             default_hunt_kit_id,
             default_forage_kit_id,
+            equipment_config_json,
             logistics,
             trade_links,
             populations,
@@ -1019,6 +1032,7 @@ impl PublishState {
                         kits,
                         default_hunt_kit_id,
                         default_forage_kit_id,
+                        equipment_config_json,
                         captured,
                         write,
                     )
@@ -1102,6 +1116,7 @@ impl PublishState {
             kits: subsistence_parts.kits,
             default_hunt_kit_id: subsistence_parts.default_hunt_kit_id,
             default_forage_kit_id: subsistence_parts.default_forage_kit_id,
+            equipment_config_json: subsistence_parts.equipment_config_json,
             logistics: people_parts.logistics,
             removed_logistics: people_parts.removed_logistics,
             trade_links: people_parts.trade_links,
@@ -1307,6 +1322,8 @@ impl PublishState {
             .reset(entry.snapshot.default_hunt_kit_id.clone());
         self.default_forage_kit_id
             .reset(entry.snapshot.default_forage_kit_id.clone());
+        self.equipment_config_json
+            .reset(entry.snapshot.equipment_config_json.clone());
         self.great_discoveries.reset(
             entry
                 .snapshot
@@ -1463,6 +1480,7 @@ impl PublishState {
             kits: None,
             default_hunt_kit_id: None,
             default_forage_kit_id: None,
+            equipment_config_json: None,
             faction_inventory: None,
             sedentarization: None,
             discovered_sites: None,
@@ -1595,6 +1613,7 @@ impl PublishState {
             kits: None,
             default_hunt_kit_id: None,
             default_forage_kit_id: None,
+            equipment_config_json: None,
             faction_inventory: None,
             sedentarization: None,
             discovered_sites: None,
@@ -1711,6 +1730,7 @@ impl PublishState {
             kits: None,
             default_hunt_kit_id: None,
             default_forage_kit_id: None,
+            equipment_config_json: None,
             faction_inventory: None,
             sedentarization: None,
             discovered_sites: None,
@@ -1831,6 +1851,29 @@ fn kit_roster_states(
             }
         })
         .collect()
+}
+
+/// **The effective TOE config as one JSON string** — the Workbench designer surface's read-only
+/// catalogue, and the one place this schema ships a blob instead of typed fields.
+///
+/// Serializing the **struct**, never the file, is what makes it honest twice over: it states what
+/// the sim is actually running (an `EQUIPMENT_CONFIG_PATH` override included), and the file's
+/// `_comment*` keys are not struct fields so they never reach the wire.
+///
+/// A designer page must not be able to fail a frame, so a serialization error publishes the empty
+/// string and warns — the client renders "no catalogue" and every other section still ships.
+fn serialize_equipment_config(equipment: &crate::equipment_config::EquipmentConfig) -> String {
+    match serde_json::to_string(equipment) {
+        Ok(json) => json,
+        Err(error) => {
+            tracing::warn!(
+                target: "core_sim::snapshot",
+                %error,
+                "equipment config could not be serialized for the designer surface"
+            );
+            String::new()
+        }
+    }
 }
 
 pub(crate) type PopulationSnapshotQuery<'w, 's> = Query<
@@ -2619,9 +2662,11 @@ pub fn capture_snapshot(
     // client renders real numbers without a second copy of the TOE table. A per-world constant, so
     // it diffs out on every frame after the first.
     let kit_states = kit_roster_states(&equipment_config, &labor_config, &kit_levers);
+    let equipment_config_json = serialize_equipment_config(&equipment_config);
     let assembled = WorldSnapshot {
         header,
         kits: kit_states,
+        equipment_config_json,
         default_hunt_kit_id: equipment_config
             .default_kit_id(crate::equipment_config::KitJob::Hunt)
             .to_string(),

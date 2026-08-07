@@ -117,8 +117,9 @@ keyed sections, and their base keys are rebuilt and republished on EVERY frame o
 they survive even a merge that re-bases the frame dictionary. Whole-section fields (`demographics`,
 `herds`, `sedentarization`, …) do not: each lands in the merged dict once, on the frame that carries
 it, and stays only because the next merge starts from that frame. So the chained fixture probes both
-— the keyed sections for a section cache that stops advancing, and `demographics` (carried by delta
-1, absent from delta 2) for the frame dictionary.
+— the keyed sections for a section cache that stops advancing, and two whole-section witnesses for
+the frame dictionary, each carried by delta 1 and absent from delta 2: `demographics` (a repeated
+section) and `equipment_config_json` (a bare `Option<String>`, see THE KIT ROSTER below).
 
 **The delta path is guarded by a CHAIN, not a single frame** (`snapshot_delta_envelope.bin` +
 `snapshot_delta2_envelope.bin`, moving deliberately disjoint rows). One delta only exercises
@@ -253,14 +254,39 @@ each one's section:
 |---|---|---|
 | `SubsistenceSection.kits:[KitOption]` | `kits` (array of `{id, display_name, jobs, attack, hunt_carry_per_worker_biomass, forage_carry_per_worker_biomass}`) | `dict/subsistence.rs` → `kits_to_array` |
 | `SubsistenceSection.defaultHuntKitId` / `defaultForageKitId` | `default_hunt_kit_id` / `default_forage_kit_id` | `snapshot/mod.rs` + `bridge/decoder.rs` |
+| `SubsistenceSection.equipmentConfigJson` | `equipment_config_json` — the whole effective `EquipmentConfig`, `serde_json`-serialized | `snapshot/mod.rs` + `bridge/decoder.rs` |
 | `PopulationCohortState.kitId` | `kit_id` on the band dict | `dict/population.rs` |
 | `LaborAssignment.kitId` | `kit_id` on the assignment entry | `dict/population.rs` |
 | `HerdTelemetryState.huntTripEstimatesKitId` / `denialEstimatesKitId` | `hunt_trip_estimates_kit_id` / `denial_estimates_kit_id` | `dict/subsistence.rs` → `herds_to_array` |
 
-**The roster and its two defaults are WHOLE-SECTION fields, so they are decoded on BOTH paths** —
-`snapshot_to_dict` and `decode_delta_against` — which is the rule the `food_modules` /
-`faction_inventory` staleness above records. A whole-section field read only on the full path
-republishes the baseline's value for the life of the world.
+**The roster, its two defaults and the serialized config are WHOLE-SECTION fields, so they are
+decoded on BOTH paths** — `snapshot_to_dict` and `decode_delta_against` — which is the rule the
+`food_modules` / `faction_inventory` staleness above records. A whole-section field read only on the
+full path republishes the baseline's value for the life of the world. The sim diffs each of them as a
+`Whole<_>`, so it rides a delta ONLY when it moved: presence on the delta IS the change signal there,
+which is why all four go through `insert_changed` and not `insert_always`.
+
+**`equipmentConfigJson` is republished as ONE OPAQUE STRING and is deliberately never parsed here.**
+The Workbench's Equipment and Kits pages parse it themselves and walk it blind, which is what lets a
+field added to `equipment.json` reach the surface with no client edit (`workbench.md` → "The two
+config pages PRINT the config"). A decoder that unpacked it into typed keys would put the hardcoded
+field list back, one layer lower down where nothing on the GDScript side would catch it.
+
+**`equipment_config_json` rides the delta CHAIN as a whole-section witness; the other three do
+not.** Delta 1 restates it as `{"fixture":"delta.equipment_config_json"}` — deliberately unequal to
+the baseline's saturated `"equipment_config_json"`, because a decoder that ignored the delta and
+republished the baseline would otherwise satisfy the guard — and delta 2 leaves it absent, so the
+merged frame keeps it only because each delta merges into the frame before it. It is the scalar twin
+of `demographics`: a delta path that handled the repeated whole sections and forgot the bare
+`Option<String>`s is exactly what it catches. The seeding and both properties live in
+`xtask/src/decode_fixture.rs` (`WholeSectionWitnesses`, `DELTA_EQUIPMENT_CONFIG_JSON`), whose own
+CI-reachable test asserts delta 1's value differs from the baseline's and that delta 2 carries none —
+without that, a fixture drifting back to the baseline's value would make the guard's assertion
+vacuous while nothing went red.
+
+`kits`, `defaultHuntKitId` and `defaultForageKitId` are still full-path-only: the golden gains their
+line and the chain assertions never see them. That is not an argument that their delta half is
+optional; it is the reason it has to be written by rule rather than by the guard going red.
 
 **`KitOption`'s three tiers are the FRESH-kit ones, and they are not any band's numbers.** What a
 given band's wear does to them is the band's own cohort row (`hunter_attack` /

@@ -2615,6 +2615,24 @@ table SubsistenceSection {
   // Which kit each verb uses when the player names none. Both always name a roster entry.
   defaultHuntKitId:string;
   defaultForageKitId:string;
+  // --- THE WHOLE TOE CONFIG, AS ONE JSON BLOB (appended last) -----------------------------------
+  // The effective `EquipmentConfig` — the struct the sim is RUNNING, `serde_json`-serialized. Not
+  // the file: an `EQUIPMENT_CONFIG_PATH` override is reflected here, and `equipment.json`'s
+  // `_comment*` keys are not struct fields so they never reach the wire.
+  //
+  // A JSON blob rather than typed fields BY DESIGN, and this is the one place in this schema that
+  // is true. The Workbench's designer surface prints the configuration AS IT IS, key by key, so
+  // adding a dial to `equipment.json` must make it appear with no client edit and no schema edit —
+  // which is exactly what a typed field per key cannot do.
+  //
+  // ONLY THE WORKBENCH MAY CONSUME IT. It is a read-only catalogue with no gameplay consumer:
+  // nothing in the HUD or the sim reads it back, and nothing branches on it. A gameplay readout
+  // that needs one of these numbers gets a TYPED FIELD OF ITS OWN — reaching into this string to
+  // avoid a schema change is how a blob becomes a second, untyped wire contract.
+  //
+  // A per-world constant, so it is diffed like `kits` and re-sent only on a world rebuild. Empty
+  // string = serialization failed (logged sim-side); the snapshot never fails for a designer page.
+  equipmentConfigJson:string;
 }
 
 table KnowledgeSection {

@@ -6,9 +6,9 @@ extends Node
 ## reservation onto the HUD (mirroring Main's `_apply_reservation` fan-out for the
 ## `hud` surface), then docks the panel to each edge (+ collapsed) and dumps one
 ## PNG per state so the chrome + the HUD reflow can be eyeballed without a server.
-## The full MAP reflow/clip is only exercised in the running client.
+## The full MAP reflow/clip is only exercised in the running client. FROM THE REPO ROOT:
 ##
-##   godot --path . res://tools/band_panel_preview.tscn
+##   scripts/preview.sh res://tools/band_panel_preview.tscn
 ##
 ## then read ui_preview_out/band_panel_*.png.
 
@@ -665,7 +665,7 @@ func _ready() -> void:
 	# time term; `Main` / `LogsPanel` / `ScriptHostManager` are not instanced. `_settle` waits on
 	# `process_frame`, which still fires at `time_scale` 0.
 	Engine.time_scale = 0.0
-	# PIN THE WINDOW. `project.godot` opens MAXIMIZED and macOS applies — and re-applies — that
+	# PIN THE WINDOW. macOS applies — and re-applies — a window mode/size change
 	# asynchronously, so a bare `size =` is a race the harness does not stay winning: every frame then
 	# renders at monitor size instead of PREVIEW_SIZE, silently changing what each state proves (a
 	# 3440-wide "bottom dock" frame is testing the ultrawide cap, not the ordinary wide shell). Same
@@ -5373,8 +5373,8 @@ func _pin_window(size: Vector2i) -> void:
 ## Settle the window ONCE, in `_ready`, before any state renders — and take the maximize DELIBERATELY
 ## on the way, which is what closes the last of the drift.
 ##
-## `project.godot` opens the window MAXIMIZED and macOS applies that asynchronously, so whether a run
-## ever passed through the monitor-sized window was a COIN FLIP — and it is a coin flip the pixels
+## Whether a run passes through a monitor-sized window is a COIN FLIP — the window's mode and size are
+## applied asynchronously by the WM — and it is a coin flip the pixels
 ## remember: `window/stretch` is `canvas_items` with an `expand` aspect, so the stretch scale swings
 ## across a maximize and the rasterized-glyph coverage state does not come back bit-identical. It is
 ## also a LAYOUT flip, not merely a pixel one — a run that loses the race renders the "bottom dock"
