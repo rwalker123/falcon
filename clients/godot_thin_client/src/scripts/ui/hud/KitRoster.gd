@@ -178,14 +178,24 @@ static func unequipped_tier(kits: Array, axis_key: String) -> float:
 		lowest = minf(lowest, float((entry_variant as Dictionary).get(axis_key, 0.0)))
 	return lowest
 
-## The wire keys this repricing substitutes. The per-worker family is one throughput in four
-## currencies, so they scale together or the sheet quotes a food rate off one kit and a trade rate off
-## another.
-const SOURCE_PER_WORKER_BIOMASS := "per_worker_biomass"
+## The wire keys this repricing substitutes — **taken from `SourceForecast`'s own constants, never
+## typed out here.**
+##
+## Spelling them by hand is how the first version shipped broken: it scaled `"per_worker"`, and the
+## key food actually reads is `per_worker_yield`. Trade repriced, food did not, and the sheet quoted
+## a five-fold trade change beside an unmoved food line. A literal cannot be wrong in a way the
+## compiler or a rename would catch; a constant reference can.
+##
+## **`per_worker_biomass` carries more than its own account.** On the forage web `forecast_inputs`
+## DERIVES trade and fodder from it (`carry × <account>_per_biomass`), so scaling it reprices those
+## two for free; on the hunt web trade is published in its own right and needs its own entry.
 const SOURCE_PER_WORKER_KEYS := [
-	"per_worker_biomass", "per_worker", "per_worker_trade", "per_worker_fodder",
+	SourceForecast.FORECAST_PER_WORKER_BIOMASS_KEY,
+	SourceForecast.FORECAST_PER_WORKER_KEY,
+	SourceForecast.FORECAST_PER_WORKER_TRADE_KEY,
 ]
-const SOURCE_ENGAGE_RATE := "engage_rate"
+const SOURCE_PER_WORKER_BIOMASS := SourceForecast.FORECAST_PER_WORKER_BIOMASS_KEY
+const SOURCE_ENGAGE_RATE := SourceForecast.FORECAST_ENGAGE_RATE_KEY
 ## `1 − wariness` — the fraction of what a party reaches that stays to be fought. Absent on a source
 ## with no retreat stage (a pen, the whole plant web), which reads as "nothing breaks off".
 const SOURCE_STAY_FRACTION := "stay_fraction"
@@ -227,13 +237,23 @@ static func repriced_source(src: Dictionary, prefix: String, carry: float,
 			var full: String = prefix + String(key)
 			if out.has(full):
 				out[full] = float(out[full]) * ratio
-	# The retreat. Absent = no retreat stage, and a neutral dispersion leaves it alone, so both cases
-	# skip without a special branch.
-	if out.has(SOURCE_STAY_FRACTION) and not is_equal_approx(dispersion, 1.0):
+	# **THE RETREAT, APPLIED OUTRIGHT — the published `engage_rate` has none of it folded in.**
+	#
+	# The first version scaled by `effective / stay`, which assumes the wire's reach already carries
+	# the species' own retreat. It does not: `engageRate` is how many animals one hunter BRINGS INTO
+	# CONTACT, before any of them bolt. So that version left a spear party quoting every animal it
+	# touched, and then multiplied a trapping party ABOVE its own reach — a take of more animals than
+	# the party ever met.
+	#
+	# Applying the effective fraction outright is what the sim does (`animals_that_stay`), and it
+	# corrects a pre-existing over-quote on every wild hunt at the same time: a neutral kit now
+	# quotes `reach × (1 - wariness)` where it used to quote the whole reach.
+	#
+	# Absent = no retreat stage (a patch, a pen), which skips without a special branch.
+	if out.has(SOURCE_STAY_FRACTION) and out.has(SOURCE_ENGAGE_RATE):
 		var stay := clampf(float(out[SOURCE_STAY_FRACTION]), 0.0, 1.0)
 		var effective := clampf(1.0 - (1.0 - stay) * maxf(dispersion, 0.0), 0.0, 1.0)
-		if out.has(SOURCE_ENGAGE_RATE) and stay > 0.0:
-			out[SOURCE_ENGAGE_RATE] = float(out[SOURCE_ENGAGE_RATE]) * (effective / stay)
+		out[SOURCE_ENGAGE_RATE] = float(out[SOURCE_ENGAGE_RATE]) * effective
 		out[SOURCE_STAY_FRACTION] = effective
 	return out
 

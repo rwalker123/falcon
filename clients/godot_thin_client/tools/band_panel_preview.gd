@@ -5171,68 +5171,82 @@ func _pick_kit(kit_id: String) -> void:
 ## nothing. The carry is the BARE tier while the roster publishes 40 for this kit, so a hint quoting
 ## the fresh number fails here and nowhere else; the attack is the EQUIPPED one on the same line,
 ## which is what stops "quote the bare tier for everything" passing instead.
-## **SWITCHING KITS MOVES THE SHEET'S NUMBERS** — the substitution the whole compose readout rides on,
-## asserted as arithmetic on a synthetic source rather than through a rendered panel, because what has
-## to be right is the math and a screenshot cannot say whether it was.
+## **SWITCHING KITS MOVES THE SHEET'S NUMBERS** — the substitution the whole compose readout rides on.
 ##
-## Reported from play: picking the Trapping kit changed nothing on the hunt sheet. The preview read
-## the HERD's own terms — which are the equipped REFERENCE rates, since a herd has no band to resolve
-## a tier against — and never the crew's chosen kit.
+## Reported from play, twice, and both defects were the same shape: arithmetic that *looked* right
+## against a source whose keys I had spelled from memory.
 ##
-## Both halves are checked because they fail differently. **Carry** is the obvious one and moves every
-## source. **The retreat** is the one that matters for the kit a player is actually comparing:
-## `big_game` and `trapping` carry the same sled, so their carry is IDENTICAL and only the retreat
-## separates them. A repricing that did carry alone would look correct and still leave the two kits
-## quoting the same take.
+## 1. The food line never moved while trade moved by exactly 5×. The repricing scaled `"per_worker"`,
+##    and food reads **`per_worker_yield`**. Trade's key happened to be right, which is what made the
+##    bug look like a ceiling.
+## 2. The retreat was applied as `effective / stay`, which assumes the wire's `engageRate` already
+##    carries the species' own flight. It does not — it is animals brought INTO CONTACT — so a
+##    trapping party was quoted above its own reach.
+##
+## **Every key below is taken from `SourceForecast`'s constants, never typed**, which is the guard
+## against the first one recurring; the retreat assertion pins the second by naming the sim's own
+## expression.
 func _assert_kit_reprices_the_source() -> void:
 	const PUBLISHED_CARRY := 40.0
 	const BARE_CARRY := 12.0
 	const PUBLISHED_ENGAGE := 10.0
-	# `1 - wariness` for a Rabbit Warren at 0.75: a spear party keeps one animal in four.
+	# `1 - wariness` for a Rabbit Warren at 0.75: three animals in four bolt before contact.
 	const STAY := 0.25
 	var src := {
-		"per_worker_biomass": PUBLISHED_CARRY,
-		"per_worker": 8.0,
-		"engage_rate": PUBLISHED_ENGAGE,
-		"stay_fraction": STAY,
+		SourceForecast.FORECAST_PER_WORKER_BIOMASS_KEY: PUBLISHED_CARRY,
+		SourceForecast.FORECAST_PER_WORKER_KEY: 8.0,
+		SourceForecast.FORECAST_PER_WORKER_TRADE_KEY: 2.0,
+		SourceForecast.FORECAST_ENGAGE_RATE_KEY: PUBLISHED_ENGAGE,
+		KitRoster.SOURCE_STAY_FRACTION: STAY,
 	}
 
-	# --- CARRY: a sledless crew hauls a third as much, in every currency at once.
+	# --- CARRY: a sledless crew hauls a third as much, in EVERY account at once.
 	var bare := KitRoster.repriced_source(src, "", BARE_CARRY, 1.0)
 	var ratio := BARE_CARRY / PUBLISHED_CARRY
 	_assert_band_panel("a kit's carry reprices the source's per-worker biomass (%s)"
-			% str(bare["per_worker_biomass"]),
-		is_equal_approx(float(bare["per_worker_biomass"]), BARE_CARRY))
-	_assert_band_panel("…and the yield currencies scale with it, not independently (%s)"
-			% str(bare["per_worker"]),
-		is_equal_approx(float(bare["per_worker"]), 8.0 * ratio))
+			% str(bare[SourceForecast.FORECAST_PER_WORKER_BIOMASS_KEY]),
+		is_equal_approx(float(bare[SourceForecast.FORECAST_PER_WORKER_BIOMASS_KEY]), BARE_CARRY))
+	# **THE FOOD LINE, by the key food actually reads.** This is the assertion the shipped bug walked
+	# straight past, because it scaled a key nothing reads and the trade line still moved.
+	_assert_band_panel("…and FOOD reprices with it — the key the forecast reads, not one like it (%s)"
+			% str(bare[SourceForecast.FORECAST_PER_WORKER_KEY]),
+		is_equal_approx(float(bare[SourceForecast.FORECAST_PER_WORKER_KEY]), 8.0 * ratio))
+	_assert_band_panel("…and so does TRADE, by the same ratio — one throughput, not two (%s)"
+			% str(bare[SourceForecast.FORECAST_PER_WORKER_TRADE_KEY]),
+		is_equal_approx(float(bare[SourceForecast.FORECAST_PER_WORKER_TRADE_KEY]), 2.0 * ratio))
 
-	# --- THE RETREAT: a device that is not there to be seen keeps everything it reaches.
-	var trapped := KitRoster.repriced_source(src, "", PUBLISHED_CARRY, 0.0)
-	_assert_band_panel("dispersion 0 means nothing breaks off (%s)" % str(trapped["stay_fraction"]),
-		is_equal_approx(float(trapped["stay_fraction"]), 1.0))
-	# Folded into the reach term, so the take AND the crew count are both right without a second
-	# factor applied anywhere: reaching `1/STAY` times as many is exactly what keeping all of them is.
-	_assert_band_panel("…and it rides the ENGAGEMENT term, so one substitution serves both (%s)"
-			% str(trapped["engage_rate"]),
-		is_equal_approx(float(trapped["engage_rate"]), PUBLISHED_ENGAGE / STAY))
-	# The claim that motivated all of it: same carry, different take.
-	_assert_band_panel("…so two kits with the SAME carry still quote different takes",
-		not is_equal_approx(float(trapped["engage_rate"]), PUBLISHED_ENGAGE))
-
-	# --- A NEUTRAL KIT CHANGES NOTHING, or the shipped game moved.
+	# --- THE RETREAT: applied OUTRIGHT, because the published reach carries none of it.
 	var neutral := KitRoster.repriced_source(src, "", PUBLISHED_CARRY, 1.0)
-	_assert_band_panel("a kit at the published carry and a neutral dispersion is a no-op",
-		is_equal_approx(float(neutral["per_worker_biomass"]), PUBLISHED_CARRY)
-			and is_equal_approx(float(neutral["engage_rate"]), PUBLISHED_ENGAGE)
-			and is_equal_approx(float(neutral["stay_fraction"]), STAY))
+	_assert_band_panel("a neutral kit still pays the species' OWN retreat — reach x (1 - wariness) (%s)"
+			% str(neutral[SourceForecast.FORECAST_ENGAGE_RATE_KEY]),
+		is_equal_approx(float(neutral[SourceForecast.FORECAST_ENGAGE_RATE_KEY]),
+			PUBLISHED_ENGAGE * STAY))
+	var trapped := KitRoster.repriced_source(src, "", PUBLISHED_CARRY, 0.0)
+	_assert_band_panel("dispersion 0 means nothing breaks off (%s)"
+			% str(trapped[KitRoster.SOURCE_STAY_FRACTION]),
+		is_equal_approx(float(trapped[KitRoster.SOURCE_STAY_FRACTION]), 1.0))
+	# **NEVER ABOVE ITS OWN REACH** — the second shipped defect, which multiplied the reach instead of
+	# fractioning it and quoted a party more animals than it ever met.
+	_assert_band_panel("…and a party is never quoted MORE than it reaches (%s <= %s)"
+			% [str(trapped[SourceForecast.FORECAST_ENGAGE_RATE_KEY]), str(PUBLISHED_ENGAGE)],
+		float(trapped[SourceForecast.FORECAST_ENGAGE_RATE_KEY]) <= PUBLISHED_ENGAGE + 0.001)
+	# The claim that motivated the whole repricing: same carry, different take.
+	_assert_band_panel("…so two kits with the SAME carry still quote different takes",
+		not is_equal_approx(float(trapped[SourceForecast.FORECAST_ENGAGE_RATE_KEY]),
+			float(neutral[SourceForecast.FORECAST_ENGAGE_RATE_KEY])))
 
 	# --- A SOURCE WITH NO RETREAT STAGE (a patch, a pen) is untouched by that half.
-	var patch := {"patch_per_worker_biomass": 8.0, "patch_per_worker": 6.0}
+	var patch := {
+		"patch_" + SourceForecast.FORECAST_PER_WORKER_BIOMASS_KEY: 8.0,
+		"patch_" + SourceForecast.FORECAST_PER_WORKER_KEY: 6.0,
+	}
 	var gathered := KitRoster.repriced_source(patch, "patch_", 1.6, 0.0)
 	_assert_band_panel("a source that publishes no retreat is repriced on carry alone",
-		is_equal_approx(float(gathered["patch_per_worker_biomass"]), 1.6)
-			and not gathered.has("stay_fraction"))
+		is_equal_approx(float(gathered["patch_" + SourceForecast.FORECAST_PER_WORKER_BIOMASS_KEY]),
+				1.6)
+			and is_equal_approx(
+				float(gathered["patch_" + SourceForecast.FORECAST_PER_WORKER_KEY]), 6.0 * 0.2)
+			and not gathered.has(KitRoster.SOURCE_STAY_FRACTION))
 
 func _assert_kit_picker_closed() -> void:
 	var picker := _find_meta_control(_panel, KitRoster.KIT_PICKER_META) as OptionButton
