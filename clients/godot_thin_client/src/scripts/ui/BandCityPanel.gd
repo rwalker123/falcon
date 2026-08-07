@@ -947,24 +947,25 @@ func _position_card_and_rail() -> void:
 	if _is_vertical_edge(_dock_edge):
 		_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		return
-	# The chrome cluster: flush to the trailing edge of the row the card may actually use, full strip
-	# height. Anchored by hand rather than laid out, because it is no longer any container's child.
+	# The chrome cluster: flush to the STRIP's trailing edge — i.e. the screen's — full strip height.
+	# Anchored by hand rather than laid out, because it is no longer any container's child.
 	#
-	# **`_bound_trailing` IS IN BOTH OFFSETS, and it is what stops the rail being drawn over the HUD's
-	# right-hand column.** The rail is pinned to the trailing end of the strip, and the trailing end of
-	# the strip is exactly where that column is — the same collision `_bound_trailing` holds the CARD off,
-	# one island over. It was inert while only a TOP dock carried bounds (a top dock has no rail at all,
-	# `_rail_width`), and went live the day a BOTTOM dock could keep the HUD's strip. The pair keeps the
-	# rail's WIDTH at `rail_width`: shifting only `offset_left` would stretch the column by the bound
-	# instead of moving it, and the centred stack inside would then sit under the readouts.
+	# **`_bound_trailing` IS DELIBERATELY ABSENT FROM BOTH OFFSETS.** It was briefly in them, to hold the
+	# rail off the HUD's right-hand column, and that inset the parked minimap and turn orb by the
+	# column's whole width — leaving a visible band of dead map between the chrome and the screen edge on
+	# every bottom dock past the fork. The clearance runs the other way now: when the HUD keeps this
+	# strip, `Main._update_right_column_bottom_clearance` stops the right dock's CARDS above the strip's
+	# top edge, so the corner is the chrome's alone and there is nothing here to be drawn over. The CARD
+	# is a different island and still pays both bounds — it shares the columns' vertical band, the rail
+	# does not.
 	var rail_width := _rail_width()
 	if _rail != null:
 		_rail.anchor_left = 1.0
 		_rail.anchor_right = 1.0
 		_rail.anchor_top = 0.0
 		_rail.anchor_bottom = 1.0
-		_rail.offset_left = -(_bound_trailing + rail_width)
-		_rail.offset_right = -_bound_trailing
+		_rail.offset_left = -rail_width
+		_rail.offset_right = 0.0
 		_rail.offset_top = 0.0
 		_rail.offset_bottom = 0.0
 	# The card: its content width, centred in what the chrome leaves. Clamped to the available room so a

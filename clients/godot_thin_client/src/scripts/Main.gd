@@ -1255,6 +1255,10 @@ func _apply_reservation(id: StringName, edge: int, size: float) -> void:
         hud.call("set_reserved_inset", id, edge, hud_size)
     # A card sharing its strip with the HUD must be told what to keep clear of.
     _update_band_panel_lateral_bounds()
+    # …and the HUD column that shares the strip's TRAILING corner with the parked chrome must be told
+    # to stop above it. The mirror image of the line above: that one moves the CARD off the columns,
+    # this one moves ONE column off the chrome.
+    _update_right_column_bottom_clearance()
     # Co-edge stacking: push the Band panel's leading offset so it sits just past any inboard
     # reserver on its edge (e.g. the Inspector when both are left) instead of overlapping it.
     _update_band_panel_edge_offset()
@@ -1404,6 +1408,37 @@ func _update_band_panel_lateral_bounds() -> void:
         return
     var columns: Vector2 = hud.call("lateral_column_widths")
     band_city_panel.call("set_lateral_bounds", columns.x, columns.y)
+
+## Tell the HUD how far above the window's bottom edge its RIGHT column must stop.
+##
+## **The other half of the conditional inset, and the half `set_reserved_inset` structurally cannot
+## do.** When the HUD keeps a BOTTOM band dock's strip, `DockRowController` has parked the minimap,
+## the zoom rail and the turn orb into the card's chrome rail — which is pinned FLUSH to the screen's
+## trailing edge, the corner the right dock's own cards occupy. Measured on a 2560×1080 canvas: the
+## Telling card at its page cap, the Victory card and an 11-row Terrain Types legend put the right
+## dock's content at y 170→1151 against a strip whose top edge is 720, so the legend card alone lands
+## 334px inside the parked chrome. It is not a hypothetical future card; `L` and `V` reach it today.
+##
+## **Only the RIGHT column yields, and that asymmetry is the point.** The LEFT column has nothing in
+## that strip — the band card is centred and holds clear of it — and its full height across the whole
+## window IS the defect the conditional inset exists to fix, so a bottom inset on `LayoutRoot` (which
+## shortens both columns, `Hud.set_reserved_inset`) would undo that fix to close this one.
+##
+## Same shape as `_update_band_panel_lateral_bounds`: the SIZE comes out of `_reservations`, because
+## that is the number the yield rule was evaluated against, and the verdict is asked of
+## `_reserver_overlays_hud` rather than restated — a clearance applied where the HUD has already
+## yielded would charge the column twice for one strip.
+func _update_right_column_bottom_clearance() -> void:
+    if hud == null or not hud.has_method("set_right_column_bottom_clearance"):
+        return
+    var edge: int = SIDE_LEFT
+    if band_city_panel != null and band_city_panel.has_method("get_dock"):
+        edge = int(band_city_panel.call("get_dock"))
+    var reserved: Dictionary = _reservations.get(BAND_PANEL_RESERVER, {})
+    var size: float = float(reserved.get("size", 0.0))
+    var keeps_the_strip: bool = edge == SIDE_BOTTOM \
+        and _reserver_overlays_hud(BAND_PANEL_RESERVER, edge, size)
+    hud.call("set_right_column_bottom_clearance", size if keeps_the_strip else 0.0)
 
 ## The Band panel's leading offset = Σ sizes of all lower-priority reservers currently on the SAME
 ## edge as the Band panel (today just the Inspector when both dock left; 0 otherwise). Recomputed

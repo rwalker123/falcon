@@ -318,6 +318,12 @@ var _inset_left: float = 0.0
 var _inset_right: float = 0.0
 var _inset_top: float = 0.0
 var _inset_bottom: float = 0.0
+## The `MarginContainer` theme constant `set_right_column_bottom_clearance` writes, and a sentinel no
+## margin can hold, so "not captured yet" is distinguishable from a genuinely zero authored margin.
+const RIGHT_DOCK_MARGIN_BOTTOM := &"margin_bottom"
+const RIGHT_DOCK_MARGIN_UNCAPTURED := -1
+var _right_dock_margin_bottom: int = RIGHT_DOCK_MARGIN_UNCAPTURED
+var _right_column_bottom_clearance: float = 0.0
 
 func _ready() -> void:
     _selection = HudSelectionState.new()
@@ -867,6 +873,45 @@ func set_reserved_inset(id: StringName, edge: int, size: float) -> void:
         layout_root.offset_top = _inset_top
         layout_root.offset_right = -_inset_right
         layout_root.offset_bottom = -_inset_bottom
+
+## The RIGHT dock's own bottom clearance, in pixels — how far above `ContentRow`'s bottom edge the
+## right column's CARDS must stop. `Main` pushes it; `size <= 0` releases it.
+##
+## **`set_reserved_inset` above cannot express this, which is the whole reason this exists.** That one
+## offsets `LayoutRoot` on a whole EDGE, so a bottom reservation shortens both lateral columns across
+## the entire window — and on a bottom band dock exactly one of them has to yield. The band card's
+## parked chrome (minimap + zoom rail + turn orb) sits at the strip's TRAILING end, flush to the
+## screen, which is the same corner the right dock's cards occupy; the LEFT column has nothing in that
+## strip and must keep running to the window's bottom edge, that being the clipping the conditional
+## inset was written to fix.
+##
+## **It is a MARGIN on the dock's own `MarginContainer`, not a height on the region.** The region is a
+## cell of `ContentRow` and the row writes its rect every layout pass, so a height written here would
+## be overwritten; the margin is the container's own declared padding, and shortening `RightScroll`
+## through it is what keeps the cards inside — the scroll then scrolls rather than overflowing, so no
+## card can draw into the strip however tall its content grows. `right_dock_region`'s RECT is
+## untouched, so `lateral_column_widths()` and `right_column_width()` answer exactly as before and no
+## clearance can feed back into the yield rule that produced it.
+func set_right_column_bottom_clearance(size: float) -> void:
+    if right_dock_region == null:
+        return
+    var clearance: float = maxf(size, 0.0)
+    if _right_dock_margin_bottom == RIGHT_DOCK_MARGIN_UNCAPTURED:
+        # Captured ONCE, before the first override: a theme constant read back after an override
+        # answers the override, so the scene's authored margin has to be taken while it is still the
+        # only value there.
+        _right_dock_margin_bottom = right_dock_region.get_theme_constant(RIGHT_DOCK_MARGIN_BOTTOM)
+    elif is_equal_approx(clearance, _right_column_bottom_clearance):
+        return
+    _right_column_bottom_clearance = clearance
+    right_dock_region.add_theme_constant_override(RIGHT_DOCK_MARGIN_BOTTOM,
+        _right_dock_margin_bottom + int(roundf(clearance)))
+    _refit_right_dock()
+
+## What the right column is currently holding clear at its bottom. Read by the harnesses, which have no
+## `Main` to ask.
+func right_column_bottom_clearance() -> float:
+    return _right_column_bottom_clearance
 
 ## Sum the registered reservations into the four per-edge totals.
 func _recompute_insets() -> void:

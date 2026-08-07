@@ -696,6 +696,13 @@ func _ready() -> void:
 		var hud_overlaid: bool = MAIN_SCRIPT.band_dock_overlays_hud(edge, size, _hud, _panel)
 		if _hud.has_method("set_reserved_inset"):
 			_hud.set_reserved_inset(&"band_panel", edge, 0.0 if hud_overlaid else size)
+		# The RIGHT column's own clearance, `Main._update_right_column_bottom_clearance`'s half: where
+		# the HUD keeps a BOTTOM strip, the parked chrome owns that strip's trailing corner and the
+		# right dock's cards must stop above it. Fanned out here for the same reason the inset is —
+		# `Main` is not instanced, so its rule is borrowed rather than restated.
+		var keeps_bottom_strip: bool = hud_overlaid and edge == SIDE_BOTTOM
+		if _hud.has_method("set_right_column_bottom_clearance"):
+			_hud.set_right_column_bottom_clearance(size if keeps_bottom_strip else 0.0)
 		var columns: Vector2 = _hud.lateral_column_widths() if hud_overlaid else Vector2.ZERO
 		_panel.set_lateral_bounds(columns.x, columns.y)
 	_panel.reservation_changed.connect(_reservation_listener)
@@ -2033,6 +2040,7 @@ func _render_bottom_yield_states() -> void:
 	_assert_rail_is_right_justified("band_panel_dockrow_bottom_yield")
 	_assert_card_is_centred("band_panel_dockrow_bottom_yield")
 	_report_bottom_yield_geometry("band_panel_dockrow_bottom_yield")
+	await _assert_right_dock_clears_the_parked_chrome("band_panel_dockrow_bottom_yield")
 	await _assert_bottom_yield_converges("band_panel_dockrow_bottom_yield")
 	await _report_bottom_yield_at_high_scale()
 
@@ -2077,6 +2085,13 @@ func _assert_hud_yields_the_strip(expected_yield: bool, state_name: String) -> v
 ##
 ## Asserted in BOTH directions from one call site, so the 1920 state states the clipping is still there
 ## (the status quo it must preserve) with the same words the wide state uses to say it is gone.
+##
+## **IT MEASURES REGIONS, AND FOR THE RIGHT COLUMN THE REGION IS NO LONGER THE DRAWN EXTENT.** Both
+## regions still run to the window's bottom edge when the HUD keeps its strip — nothing insets
+## `ContentRow` — but the right dock now holds its CARDS clear of the strip through its own margin
+## (`Hud.set_right_column_bottom_clearance`), so its drawn content stops above what this measures. That
+## claim is `_assert_right_dock_clears_the_parked_chrome`'s, and the two are not interchangeable: this
+## one says the row was not shortened, that one says nothing is painted in the chrome's corner.
 func _assert_lateral_columns_reach_the_bottom(expected: bool, state_name: String) -> void:
 	var window_bottom: float = get_viewport().get_visible_rect().size.y
 	var failures: Array[String] = []
@@ -2355,6 +2370,119 @@ func _report_bottom_yield_geometry(state_name: String) -> void:
 		_hud.left_column_ceiling(), _hud.right_column_ceiling(), bounded, unbounded,
 		BandCityPanel.WIDE_SHELL_MIN_WIDTH, _panel.band_zone_columns(), flank_room.call(unbounded),
 		_panel._work_columns])
+
+## A swatch colour for the staged legend's rows. Any colour renders the same box; it is named so the
+## fixture carries no bare literal.
+const LEGEND_WORST_CASE_SWATCH := Color(0.3, 0.5, 0.2)
+
+## How many terrain rows the staged legend carries: enough to drive its inner scroll to
+## `LegendController.LEGEND_MAX_HEIGHT`, i.e. the tallest that card can ever be. DERIVED from the
+## controller's own row arithmetic (`LEGEND_MIN_ROW_HEIGHT + LEGEND_ROW_PADDING` is its `_row_height()`),
+## so a retune of either moves the fixture with it instead of leaving it quietly short.
+func _legend_worst_case_rows() -> int:
+	var row_height: float = LegendController.LEGEND_MIN_ROW_HEIGHT + LegendController.LEGEND_ROW_PADDING
+	return int(ceilf(LegendController.LEGEND_MAX_HEIGHT / row_height))
+
+## GUARD: **THE RIGHT DOCK'S DRAWN CONTENT STAYS OUT OF THE STRIP THE PARKED CHROME IS IN.**
+##
+## The other half of the flush-right rail, and the reason the rail may BE flush. When the HUD keeps a
+## bottom dock's strip, `DockRowController` has parked the minimap, the zoom rail and the turn orb into
+## that strip's trailing end, hard against the screen — the same corner the right dock's cards occupy.
+## Measured on this canvas before the clearance existed: the Telling card at its page cap, the Victory
+## card and an 11-row Terrain Types legend put the right dock's content at y 170→1151 against a strip
+## whose top edge is 720, so the legend card alone lay 334px inside the parked chrome.
+##
+## **It is asserted against BOTH rects, and neither implies the other.** Clearing the strip's whole
+## band is the general claim — it is what a future right-dock card has to keep satisfying — while
+## clearing the RAIL's own rect is the specific pair sharing that corner, and a strip that grew or a
+## rail that widened would break them at different moments.
+##
+## **THE NEGATIVE CONTROL IS THE WHOLE VALUE OF IT** (`_assert_card_clears_lateral_columns`' rule): the
+## right dock is empty in every other state in this file, and an empty column clears anything. So the
+## dock is STAGED at the tallest content it can hold — the Victory card plus a legend long enough to
+## reach `LEGEND_MAX_HEIGHT` — and the clearance is then RELEASED to check that this content really
+## does reach the chrome without it, before it is put back and the claim is made.
+##
+## **The staging is restored exactly and the restore is not incidental**: the HUD is long-lived, so a
+## legend or a Victory card left showing re-renders in every later frame. No narrative beat is pushed
+## for the same reason `TellingPanel` is untouched everywhere else here — the page turn is the client's
+## one `Tween`, and a `Tween` at `Engine.time_scale = 0` never advances at all.
+func _assert_right_dock_clears_the_parked_chrome(state_name: String) -> void:
+	if not _hud.has_method("set_right_column_bottom_clearance"):
+		push_error("band_panel_preview: %s — the HUD has no right-column clearance to assert" % state_name)
+		return
+	var legend_rows: Array = []
+	for i in range(_legend_worst_case_rows()):
+		legend_rows.append({"label": "Terrain %d" % i, "value_text": "%d tiles" % i,
+			"color": LEGEND_WORST_CASE_SWATCH})
+	_hud.toggle_victory()
+	_hud.toggle_legend()
+	_hud.update_overlay_legend({"key": "terrain", "title": "Terrain Types", "rows": legend_rows})
+	await _settle()
+
+	# THE CONTROL, first: with the clearance released this content must genuinely reach the chrome, or
+	# the claim below is a right dock that was never tall enough to collide with anything.
+	var clearance: float = float(_hud.call("right_column_bottom_clearance"))
+	_hud.set_right_column_bottom_clearance(0.0)
+	await _settle()
+	var unheld: Dictionary = _right_dock_content_reach()
+	_hud.set_right_column_bottom_clearance(clearance)
+	await _settle()
+	var held: Dictionary = _right_dock_content_reach()
+
+	var strip_top: float = _panel._root.get_global_rect().position.y
+	_assert_band_panel("%s: WITHOUT the clearance the right dock's cards really do reach the parked chrome (content ends %.0f against a strip starting %.0f; %d of them over the rail)"
+		% [state_name, float(unheld["bottom"]), strip_top, int(unheld["over_rail"])],
+		float(unheld["bottom"]) > strip_top and int(unheld["over_rail"]) > 0)
+	_assert_band_panel("%s: the right dock's %d drawn card(s) stop above the strip (content ends %.0f of a strip starting %.0f, %.0fpx clear) under a %.0fpx clearance"
+		% [state_name, int(held["cards"]), float(held["bottom"]), strip_top,
+			strip_top - float(held["bottom"]), clearance],
+		int(held["cards"]) > 0 and float(held["bottom"]) <= strip_top + ZONE_BOUNDS_TOLERANCE)
+	# The MECHANISM behind that claim, stated separately because the clip box is what a future card is
+	# bounded by: a card can only overflow the strip if the box it is clipped to reaches into it.
+	_assert_band_panel("%s: the right dock's clip box %s ends above the strip (%.0f of %.0f)"
+		% [state_name, str(held["clip"]), Rect2(held["clip"]).end.y, strip_top],
+		Rect2(held["clip"]).end.y <= strip_top + ZONE_BOUNDS_TOLERANCE)
+	_assert_band_panel("%s: no right-dock card is drawn over the parked chrome %s (%d overlapping)"
+		% [state_name, str(_panel._rail.get_global_rect()), int(held["over_rail"])],
+		int(held["over_rail"]) == 0)
+
+	# Hand the right dock back exactly as it was found: legend emptied AND re-suppressed, Victory hidden.
+	_hud.update_overlay_legend({})
+	_hud.toggle_legend()
+	_hud.toggle_victory()
+	await _settle()
+
+## How far down the window the right dock actually DRAWS, and how much of that lands over the parked
+## chrome.
+##
+## **Never `right_dock_region`, whose rect spans the whole row whether or not anything is painted in
+## it** — that is exactly the distinction `348e5c09` got the wrong side of, bounding the rail against a
+## reserved REGION rather than against drawn content.
+##
+## **And never a card's bare rect either.** `RightStack` is a `VBoxContainer` inside `RightScroll`, so a
+## card taller than the box keeps its full height and simply hangs out of the bottom of it — measured
+## here at 1193 in a box ending at 1056. What the player sees is the card CLIPPED to that scroll, which
+## is why every rect is intersected with it: the clip box is the right dock's real drawn extent, and it
+## is the thing the clearance moves.
+func _right_dock_content_reach() -> Dictionary:
+	var rail := _panel._rail.get_global_rect()
+	var clip := _hud.right_dock_scroll.get_global_rect()
+	var bottom := -INF
+	var cards := 0
+	var over_rail := 0
+	for child in _hud.right_stack.get_children():
+		var card := child as Control
+		if card == null or not card.visible:
+			continue
+		var drawn := card.get_global_rect().intersection(clip)
+		if drawn.size.y <= 0.0 or drawn.size.x <= 0.0:
+			continue
+		cards += 1
+		bottom = maxf(bottom, drawn.end.y)
+		if drawn.intersects(rail):
+			over_rail += 1
+	return {"bottom": bottom, "cards": cards, "over_rail": over_rail, "clip": clip}
 
 # ---- THE PANEL AT A HIGH INTERFACE SCALE ------------------------------------------------------
 #
@@ -2975,21 +3103,28 @@ func _assert_card_is_narrower_than_strip(state_name: String) -> void:
 ## inset". It is a sibling of the card now, anchored to `_root`, so the claim is the stronger one — it
 ## sits at the edge of the screen, with the card floating well to its left.
 ##
-## **`_bound_trailing` comes off that edge, and it is not slack** — it is the HUD's right-hand column,
-## which the rail must clear exactly as the card does once a BOTTOM dock stops yielding the HUD's strip
-## (`Main.band_dock_overlays_hud`). Written as "the strip's end minus the bound" rather than as a
-## tolerance, so a rail that drifted INTO the column by that much still fails.
+## **THE CLAIM IS THE WINDOW'S OWN RIGHT EDGE, NOT "the row's end less the HUD column".** It was the
+## latter for one commit — the rail was pinned at `-(_bound_trailing + rail_width)` to hold it off the
+## right-hand HUD column — and that inset the parked minimap and turn orb by the column's whole width,
+## leaving a visible band of dead map between the chrome and the screen on every bottom dock past the
+## fork. The clearance runs the other way now (`Hud.set_right_column_bottom_clearance`), so the rail is
+## flush again and this asserts it against the VIEWPORT rather than against a bound that would move
+## with it — a claim phrased in the panel's own terms goes green whichever way the bound is applied,
+## which is exactly how the inset shipped unnoticed.
+##
+## It reports `_bound_trailing` beside the verdict, so a frame's numbers still say which HUD column was
+## live when it was taken.
 func _assert_rail_is_right_justified(state_name: String) -> void:
 	var rail_right := _panel._rail.get_global_rect().end.x
-	var usable_right: float = _panel._root.get_global_rect().end.x - _panel._bound_trailing
-	var gap: float = usable_right - rail_right
+	var window_right: float = get_viewport().get_visible_rect().end.x
+	var gap: float = window_right - rail_right
 	if absf(gap) > ZONE_BOUNDS_TOLERANCE:
-		push_error("band_panel_preview: %s — the chrome cluster ends at %.0f but its row ends at %.0f (strip end %.0f less a %.0fpx HUD column) — %.0fpx out" % [
-			state_name, rail_right, usable_right, _panel._root.get_global_rect().end.x,
-			_panel._bound_trailing, gap])
+		push_error("band_panel_preview: %s — the chrome cluster ends at %.0f but the window ends at %.0f — %.0fpx short (strip end %.0f, HUD column %.0f)" % [
+			state_name, rail_right, window_right, gap,
+			_panel._root.get_global_rect().end.x, _panel._bound_trailing])
 		return
-	print("band_panel_preview: assert OK — %s the chrome cluster is flush to its row's trailing edge (%.0f, past a %.0fpx HUD column)" % [
-		state_name, usable_right, _panel._bound_trailing])
+	print("band_panel_preview: assert OK — %s the chrome cluster is flush to the window's right edge (%.0f, with a %.0fpx HUD column live)" % [
+		state_name, window_right, _panel._bound_trailing])
 
 ## GUARD: the card's width FOLLOWS ITS CONTENT — the claim the whole rework rests on (issue #377).
 ##

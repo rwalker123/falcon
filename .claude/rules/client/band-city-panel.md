@@ -1018,9 +1018,34 @@ is placing itself, not reasoning forward about someone else's placement.
 `Main` is the FIRST listener on `reservation_changed` and the reflow the second — `_is_reflowed` would
 answer for the previous reservation.
 
-**Two consequences to know.** The chrome rail is pinned at `offset_left = -(_bound_trailing +
-rail_width)` / `offset_right = -_bound_trailing`; moving only the left offset widens the rail instead
-of moving it. And the second band column is lost between the fork and ~**2595** — the bounds cost the
+### The chrome rail stays FLUSH to the screen; the right dock is what clears it
+
+The rail was briefly pinned at `offset_left = -(_bound_trailing + rail_width)` to keep the minimap and
+turn orb out of the right column once the HUD stopped yielding. **That was the wrong side of the
+problem** — it pushed the chrome 419px inboard and left a band of bare map between it and the screen
+edge, which is a visible regression against how the corner had always looked.
+
+The measurement that decided it: on a 2560 bottom dock with the strip top at `y=720`, the right dock's
+**content** reaches 302 with nothing in it, 574 at a full Telling page, **718 with the Victory card**
+(2px of clearance) and **1151 with an 11-row Terrain Types legend** — 431px *inside* the strip. Both of
+those are one keypress away (`V`, `L`), so the region-versus-content distinction did not rescue it: a
+flush rail really would sit under the minimap.
+
+So the clearance moved to the right dock's own container.
+`Hud.set_right_column_bottom_clearance(px)` adds to `RightDock`'s `margin_bottom`, pushed by
+`Main._update_right_column_bottom_clearance` iff the dock is BOTTOM and the HUD kept its strip.
+**The region's rect is untouched**, so `lateral_column_widths()` / `right_column_width()` answer
+exactly as before and the clearance cannot feed back into the yield rule that produced it. `RightScroll`
+shortens with it, so a card of any height is bounded rather than merely currently-short. **The LEFT
+column is deliberately not clearanced** — running to the window bottom is the whole point of the
+conditional inset.
+
+**The assertion that let this ship is the lesson.** `_assert_rail_is_right_justified` claimed the rail
+sat at "strip end less `_bound_trailing`" — phrased in terms of the implementation, so it went green
+whichever way the bound was applied. It now claims the **viewport's** right edge, which fails against
+the inboard pinning and passes against the flush one.
+
+**Still to know:** the second band column is lost between the fork and ~**2595** — the bounds cost the
 span on exactly the monitors wide enough to have afforded two. (The lower edge of that band IS the
 fork by construction: below it no bounds apply, so the flank is untouched — which is why moving the
 fork from 2215 to 2432 narrowed the trade without needing a re-measurement.) Above ~2600 the flank
