@@ -1621,7 +1621,7 @@ func _ready() -> void:
 	await _settle()
 	await _save("band_panel_no_idle")
 
-	_assert_no_scroll_containers()
+	_assert_scroll_only_in_the_parties_list()
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
@@ -1672,6 +1672,12 @@ func _ready() -> void:
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
 	_assert_worst_case_party_lines()
+	# **THE OVERFLOWING HALF of the scroll pair.** This is the strip that used to pin
+	# `PANEL_HEIGHT_WIDE` at 294px of a 300px box; it now scrolls instead, which is what let the
+	# two-column budget come down. Judged with `band_panel_band_columns_two`'s empty list below —
+	# either claim alone passes on a list that always scrolls, or on one that never does.
+	_assert_scroll_only_in_the_parties_list()
+	_assert_parties_list_scrolls_iff_it_overflows("band_panel_worst_case_party")
 	_report_zone_content_extent("band_panel_worst_case_party")
 	_hud._bandpanel._toggle_parties_inspector(str(HUNT_WORST_CASE_ENTITY))
 	# PUT THE PREVIOUS ROSTER BACK. `update_band_alerts` keeps a losing-population diff against the LAST
@@ -1692,6 +1698,11 @@ func _ready() -> void:
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
+	# The POPULATED non-overflowing case: two party rows and an open strip in a tall side dock with
+	# room to spare, so the bar must stay hidden. `band_panel_band_columns_two`'s half is an EMPTY
+	# list, which cannot tell "no bar because it fits" from "no bar because there is nothing in it".
+	_assert_scroll_only_in_the_parties_list()
+	_assert_parties_list_scrolls_iff_it_overflows("band_panel_parties_inspector_narrow")
 	_hud._bandpanel._toggle_parties_inspector(str(HUNT_LEAN_ENTITY))
 
 	# (b2) NEXT-DELIVERY DISAMBIGUATION on a projected-0 forecast. A hunt party is bound to ONE herd
@@ -1844,6 +1855,7 @@ func _render_dock_row_states() -> void:
 	_assert_zone_content_fits()
 	_assert_chrome_parked(true, "band_panel_dockrow_bottom")
 	_assert_parked_chrome_fits("band_panel_dockrow_bottom")
+	_assert_parked_chrome_margin("band_panel_dockrow_bottom")
 	_assert_shell_is_wide(true, "band_panel_dockrow_bottom")
 	# **1920 IS THE STATUS QUO AND MUST STAY IT.** The HUD yields this strip here — with the two authored
 	# columns applied the card would have 895 against the 1190 three zones need — so the tile column is
@@ -2453,6 +2465,11 @@ func _render_band_column_states() -> void:
 	# THE PRECONDITION FOR THE SPLIT PAIR: this state must really be the chartless one, or "the
 	# chartless split balances" is a claim about the other layout.
 	_assert_band_flank_charts("band_panel_band_columns_two", false)
+	# **THE NON-OVERFLOWING half of the scroll pair.** This band fields no parties, so the list is one
+	# hint line and the bar must stay hidden — without it, "scrolls iff it overflows" would pass on a
+	# list that scrolls unconditionally, which is a visible scrollbar on every band in the game.
+	_assert_scroll_only_in_the_parties_list()
+	_assert_parties_list_scrolls_iff_it_overflows("band_panel_band_columns_two")
 	_report_zone_content_extent("band_panel_band_columns_two")
 	var two_column_strip: float = _panel.current_reservation_size()
 	await _assert_band_columns_converge("band_panel_band_columns_two")
@@ -2493,16 +2510,21 @@ func _render_band_column_states() -> void:
 	_report_zone_content_extent("band_panel_band_columns_one")
 	var one_column_strip: float = _panel.current_reservation_size()
 
-	# **THE STRIP IS THE SAME HEIGHT IN BOTH, AND THAT IS THE MEASURED FINDING, not an oversight.**
-	# A two-column flank needs 148px where one needs 299, so the height was expected to come back —
-	# but the flank was never what pinned it. The PARTIES zone's worst case (294px of body) and the
-	# parked chrome stack (~322px of strip, `DockRowController._required_height`) both bind above the
-	# saving, and 294 + the header + the card's chrome IS 360. Asserted rather than noted, because a
-	# future height cut keyed on the column count would break both of those silently — the parties
-	# strip by clipping, the chrome by quietly declining to park.
-	_assert_band_panel("band columns: the strip is the same height at one column and two (%.0f / %.0f) — the parties zone and the parked chrome pin it, not the flank"
-		% [one_column_strip, two_column_strip],
-		is_equal_approx(one_column_strip, two_column_strip))
+	# **THE TWO-COLUMN STRIP IS SHORTER, AND THE ONE-COLUMN STRIP IS UNTOUCHED.** Two claims, not one,
+	# and the second is the regression bar: a one-column flank still stacks 299px into its 300px box,
+	# so a budget cut applied flat would slice it — and every TOP dock is one column (the lateral
+	# bounds cost it 704px of span), which is why no top-dock frame may move.
+	#
+	# Asserted as EQUALITIES against the panel's own two consts rather than as an inequality: "shorter"
+	# is satisfied by any cut, including one that drops the strip under the parked chrome's
+	# requirement, which is the failure `_assert_parked_chrome_margin` exists for.
+	_assert_band_panel("band columns: ONE column keeps the full body budget (%.0f, want %.0f) — its flank still stacks 299 of a 300px box"
+		% [one_column_strip, BandCityPanel.PANEL_HEIGHT_WIDE],
+		is_equal_approx(one_column_strip, BandCityPanel.PANEL_HEIGHT_WIDE))
+	_assert_band_panel("band columns: TWO columns shorten the strip to the two-column budget (%.0f, want %.0f) — %.0fpx of map handed back"
+		% [two_column_strip, BandCityPanel.PANEL_HEIGHT_WIDE_TWO_COLUMN,
+			one_column_strip - two_column_strip],
+		is_equal_approx(two_column_strip, BandCityPanel.PANEL_HEIGHT_WIDE_TWO_COLUMN))
 
 	await _pin_canvas(Vector2i(ULTRAWIDE_WIDTH, DOCKROW_CANVAS.y))
 	await _settle()
@@ -2869,6 +2891,35 @@ func _parked_chrome_pairs() -> Array:
 ## grown DOWNWARD still sits entirely inside a 340px column while rendering ~64px low. That is exactly
 ## what `set_anchors_and_offsets_preset` does to a plain `Control` (see `BandCityPanel._build_rail`'s note
 ## 3), so the centre-vs-centre test is the guard on that trap.
+## GUARD: **THE TWO-COLUMN STRIP STILL CLEARS THE PARKED CHROME STACK, AND BY HOW MUCH.**
+##
+## `DockRowController.parks_for` is `reserved >= _required_height()`, and the two-column budget
+## (`BandCityPanel.PANEL_HEIGHT_WIDE_TWO_COLUMN`) is the first thing in this panel's history to move the
+## left-hand side of that comparison DOWN. Below it the gate declines, `BottomBar` keeps the minimap and
+## the turn orb, and issue #324's whole dock-row reflow silently un-does itself — the exact way an
+## earlier attempt at this budget (230) failed.
+##
+## **AND IT WOULD NOT MERELY UN-DO — IT WOULD OSCILLATE.** A declined park restores the HUD's lateral
+## bounds, which costs `_available_card_span()` 704px, which drops the flank to ONE column, which
+## restores the 360 budget, which parks again. `_assert_band_columns_converge` is what would catch the
+## loop; this is what stops it being reachable.
+##
+## Three claims, and the third is what makes the first two mean something: the strip clears the
+## requirement, the chrome is REALLY parked (a margin computed on a state where the gate never applied
+## is arithmetic about nothing), and the flank really has TWO columns (on one column the strip is still
+## 360 and the margin is the one this panel has always had). The margin is PRINTED as well as asserted —
+## a comfortable clearance and a one-pixel squeak are the same green line otherwise.
+func _assert_parked_chrome_margin(state_name: String) -> void:
+	var reserved: float = _panel.current_reservation_size()
+	var required: float = _hud._dockrow._required_height()
+	var columns: int = _panel.band_zone_columns()
+	_assert_band_panel("%s: the flank really has two columns, so this margin is the two-column budget's (%d)"
+		% [state_name, columns], columns == 2)
+	_assert_band_panel("%s: …and the chrome is really parked, so the gate this margin is about actually applied"
+		% state_name, not _hud.bottom_bar.visible)
+	_assert_band_panel("%s: the two-column strip clears the parked chrome stack — %.0f of %.0f needed, margin %.0fpx"
+		% [state_name, reserved, required, reserved - required], reserved >= required)
+
 func _assert_parked_chrome_fits(state_name: String) -> void:
 	var failures: Array[String] = []
 	var rail: Control = _panel._rail
@@ -3585,23 +3636,82 @@ func _assert_map_path_states_kit() -> void:
 	_assert_band_panel("…so the Kit row renders on the map path — \"%s\"" % want,
 		_rich_text_containing(_panel, want) != "")
 
-## GUARD: the zone model is NO-SCROLL by construction — a ScrollContainer anywhere in the panel would
-## silently reintroduce the content-dependent sizing the rework removed.
-func _assert_no_scroll_containers() -> void:
-	var found := _find_scroll_container(_panel)
-	if found != null:
-		push_error("band_panel_preview: ScrollContainer in the panel at %s — the zones must not scroll" % found.get_path())
-	else:
-		print("band_panel_preview: assert OK — no ScrollContainer in the panel")
+## GUARD: the zone model is NO-SCROLL by construction, with **exactly one sanctioned exception** — the
+## parties zone's list (`HudWorkVocab.PARTIES_LIST_NAME`). Any other `ScrollContainer` would silently
+## reintroduce the content-dependent sizing the rework removed.
+##
+## **THE RULE IS NARROWED, NOT DELETED, and that is the whole point of asserting it this way.** The
+## exception is safe only because that one node declares a FIXED minimum, so what the list holds never
+## reaches the zone's minimum; a scroll added anywhere else would carry its content's height straight
+## into the reservation. So the walk collects EVERY `ScrollContainer` and requires each to be that node
+## AND to sit under the parties zone host.
+##
+## **IT ALSO ASSERTS THE SANCTIONED ONE EXISTS**, because "no strays" is satisfied by a panel that has
+## lost the list scroll altogether — which is the regression that would put the seven-line strip back
+## to clipping.
+func _assert_scroll_only_in_the_parties_list() -> void:
+	var found: Array[Node] = []
+	_collect_scroll_containers(_panel, found)
+	# **THE PARTIES ZONE IS FOUND THROUGH THE PANEL'S OWN `_zones` DICT, never by host name.** The wide
+	# shell mounts it in `Zone_parties` and the narrow one in the single `NarrowZoneHost`, so a
+	# host-name test would call the narrow shell's own list a stray — which it did.
+	var parties_zone: Variant = _panel._zones.get(BandCityPanel.ZONE_PARTIES)
+	var strays: Array[String] = []
+	var sanctioned := 0
+	for node in found:
+		if String(node.name) == HudWorkVocab.PARTIES_LIST_NAME and parties_zone is Node \
+				and (parties_zone as Node).is_ancestor_of(node):
+			sanctioned += 1
+		else:
+			strays.append(String(node.get_path()))
+	if not strays.is_empty():
+		push_error("band_panel_preview: %s — ScrollContainer outside the parties list at %s — no other zone may scroll"
+			% [_current_state, ", ".join(strays)])
+		return
+	# A zone the panel does not currently own (no band, or the zones freed) has no list to find — an
+	# absence that says nothing about the rule and must not fail.
+	if not (parties_zone is Node):
+		print("band_panel_preview: assert OK — no ScrollContainer in the panel (the parties zone is not mounted here)")
+		return
+	_assert_band_panel("the parties zone scrolls its list and NOTHING else in the panel scrolls (%d sanctioned, %d stray)"
+		% [sanctioned, strays.size()], sanctioned == 1)
 
-func _find_scroll_container(node: Node) -> Node:
+func _collect_scroll_containers(node: Node, into: Array[Node]) -> void:
 	if node is ScrollContainer:
-		return node
+		into.append(node)
 	for child in node.get_children():
-		var found := _find_scroll_container(child)
-		if found != null:
-			return found
-	return null
+		_collect_scroll_containers(child, into)
+
+## The parties list's scrollbar, or `null` where the list is not mounted (the narrow shell's other
+## tabs). Read off the live node rather than re-derived, since "is it scrolling?" is a question about
+## what Godot decided, not about what the content measures.
+func _parties_list_scroll() -> ScrollContainer:
+	var parties_zone: Variant = _panel._zones.get(BandCityPanel.ZONE_PARTIES)
+	if not (parties_zone is Node):
+		return null
+	var found: Array[Node] = []
+	_collect_scroll_containers(parties_zone as Node, found)
+	return found[0] as ScrollContainer if not found.is_empty() else null
+
+## GUARD: **the list scrolls WHEN IT OVERFLOWS AND ONLY THEN.** `SCROLL_MODE_AUTO` is what makes that
+## true, so this reads the bar's own visibility back and pairs it with the content's own measurement —
+## a bar shown over content that fits is as wrong as content clipped with no bar.
+##
+## Stated as a relation rather than as a literal expectation, so ONE assertion serves the empty list
+## and the seven-line worst case, and neither can pass by rendering the other's answer.
+func _assert_parties_list_scrolls_iff_it_overflows(state_name: String) -> void:
+	var scroll := _parties_list_scroll()
+	if scroll == null:
+		push_error("band_panel_preview: %s — no parties list to judge" % state_name)
+		return
+	var rows: Control = scroll.get_child(0)
+	var needed := rows.get_combined_minimum_size().y
+	var room := scroll.size.y
+	var overflows := needed > room + ZONE_BOUNDS_TOLERANCE
+	var bar := scroll.get_v_scroll_bar()
+	_assert_band_panel("%s: the parties list scrolls iff it overflows (content %.0fpx of %.0fpx room, bar %s)"
+		% [state_name, needed, room, "shown" if bar.visible else "hidden"],
+		bar.visible == overflows)
 
 ## GUARD: a zone's content must FIT — not merely sit inside its host's rect. The zone hosts clip, so
 ## content the box cannot hold still reports a rect within bounds and passes `_assert_zones_within_bounds`

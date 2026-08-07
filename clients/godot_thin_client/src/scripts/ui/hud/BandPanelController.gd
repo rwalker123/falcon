@@ -286,9 +286,13 @@ func _make_alloc_block() -> VBoxContainer:
 ## (`_build_allocation_panel`, the no-dock ui_preview fallback) simply stacks the
 ## same three VBoxes — ONE set of builders, never a second layout.
 ##
-## NOTHING here scrolls. Content that can outgrow its box is PAGED against
-## `BandCityPanel.work_zone_size()`; a ScrollContainer would reintroduce exactly
-## the content-dependent height the panel rework removed.
+## NOTHING here scrolls EXCEPT the parties zone's LIST. Content that can outgrow
+## its box is PAGED against `BandCityPanel.work_zone_size()`, because a scroll whose
+## content height reached the panel would reintroduce exactly the content-dependent
+## height the panel rework removed. The parties list is the one exception and it is
+## exempt for that same reason rather than in spite of it — it declares a FIXED
+## minimum (`HudWorkVocab.PARTIES_LIST_MIN_HEIGHT`), so what it holds never reaches
+## the zone's minimum. See `build_parties_zone`.
 ## ============================================================================
 
 ## The interior box a zone's content may fill, in canvas px. The panel answers it from its FIXED
@@ -1594,6 +1598,24 @@ func _emit_cancel_order(band: Dictionary, scope: String) -> void:
 # ---- zone `parties` ---------------------------------------------------------
 
 ## Zone `parties`: head + `⋯` menu · one row per party in the field · the compose footer.
+##
+## **THE LIST BETWEEN THE HEAD AND THE FOOTER SCROLLS, AND IT IS THE ONLY THING IN THE PANEL THAT
+## DOES.** The zone's chrome is fixed — the head names the section and the Scout/Hunt/Deny row is the
+## zone's whole purpose, so neither may scroll out of reach — while the rows and the open inspector
+## strip are unbounded content, and the strip's seven-line worst case measured **294px of the 300px
+## box**, i.e. it was the tallest thing in the panel and what pinned the strip's height for BOTH
+## column counts.
+##
+## **IT DOES NOT REOPEN THE FLICKER BUG, and that is the whole argument for the exception.** The panel
+## is no-scroll because a zone whose content height fed back into a FIXED reservation would re-emit
+## `reservation_changed` → `MapView.set_reserved_inset` on every edit. This scroll declares
+## `HudWorkVocab.PARTIES_LIST_MIN_HEIGHT` and NOTHING ELSE as its minimum, so what the list holds never
+## reaches the column's minimum, never reaches the panel, and never reaches the reservation. The work
+## zone answers the same requirement by PAGING; this zone cannot page, because the strip is a
+## disclosure that must sit under the row it was opened from.
+##
+## The scroll takes `SIZE_EXPAND_FILL`, which is what the old bottom spacer did — so the footer is
+## still pinned to the bottom of the zone and a short list still renders exactly where it did.
 func build_parties_zone(band: Dictionary) -> VBoxContainer:
     # BEFORE anything reads the latched float requirement below: a box change invalidates the mark.
     _note_parties_zone_box()
@@ -1609,28 +1631,62 @@ func build_parties_zone(band: Dictionary) -> VBoxContainer:
     ], HudComposeVocab.PARTY_MENU_TOOLTIP)
     col.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_PARTIES,
         HudComposeVocab.PARTIES_HEADER_FORMAT % [parties.size(), _band_labor.band_party_workers(band)], menu))
+    # **THE EMPTY HINT IS ZONE-LEVEL, NOT A LIST ITEM** — `_fill_work_zone`'s idiom exactly, where the
+    # board's empty hint is a sibling of the board rather than a row of it. What the zone says when
+    # there are no parties is a statement about the ZONE, and it must never be something the player can
+    # scroll away from; the list below it is simply empty.
     if parties.is_empty():
         col.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.PARTIES_EMPTY_HINT))
-    else:
-        for exp in parties:
-            col.add_child(_build_party_row(exp))
-    # Order: rows → inspector (if open) → an EXPAND_FILL spacer → footer, so the Scout/Hunt footer
-    # stays pinned to the BOTTOM of the zone with the strip sitting under the clicked row (the strip is
-    # a row → detail disclosure, the parties twin of the work board's inspector). Drop a strip pinned to
-    # a party that has left the list (recalled, moved to another band), mirroring `_fill_work_zone`'s
-    # stale-key clear. The strip's own line separation is tightened (PARTIES_INSPECTOR_LINE_SEPARATION)
-    # so strip + a row + the pinned footer still fit the height-capped T/B parties zone.
+    var list := _build_parties_list()
+    col.add_child(list)
+    var rows: VBoxContainer = list.get_child(0)
+    for exp in parties:
+        rows.add_child(_build_party_row(exp))
+    # Order inside the scrolled list: rows → inspector (if open), so the strip sits under the clicked
+    # row (the strip is a row → detail disclosure, the parties twin of the work board's inspector).
+    # Drop a strip pinned to a party that has left the list (recalled, moved to another band),
+    # mirroring `_fill_work_zone`'s stale-key clear. The strip's own line separation stays tightened
+    # (PARTIES_INSPECTOR_LINE_SEPARATION) — scrolling to read a strip is a fallback, not the intent.
     var inspected := _party_by_open_key(parties)
     if inspected.is_empty():
         _party_open_key = ""
     else:
-        col.add_child(_build_parties_inspector(inspected))
-    var spacer := Control.new()
-    spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
-    spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    col.add_child(spacer)
+        rows.add_child(_build_parties_inspector(inspected))
     col.add_child(_build_party_footer(band))
     return col
+
+## The parties zone's scrolling list host — a `ScrollContainer` whose single child is the VBox the rows
+## and the inspector strip go into. Returned with that VBox as child 0, which is what the builder above
+## fills.
+##
+## Three settings carry the contract:
+##   * **vertical AUTO** — the bar appears only when the content really overflows, so a band with one
+##     party looks exactly as it did before this zone could scroll at all.
+##   * **horizontal DISABLED** — the rows are already fitted to the flank's fixed width; a horizontal
+##     bar here would mean a row had been built too wide, which is a layout bug rather than something
+##     to offer the player a control for. DISABLED also forces the child to the container's width,
+##     which is what keeps the rows full-bleed.
+##   * **a declared `custom_minimum_size.y`** — the ONE number this zone contributes to the column's
+##     minimum. A `ScrollContainer` reports no minimum on a scrolling axis, so without it the zone
+##     would claim to need nothing at all and `band_panel_preview`'s content-fit walk would descend
+##     past it and measure the unbounded list instead.
+func _build_parties_list() -> ScrollContainer:
+    var scroll := ScrollContainer.new()
+    scroll.name = HudWorkVocab.PARTIES_LIST_NAME
+    scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+    scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+    scroll.custom_minimum_size = Vector2(0.0, HudWorkVocab.PARTIES_LIST_MIN_HEIGHT)
+    var rows := HudWidgets.make_zone_column()
+    # The zone's own block spacing, not the column's section spacing: these are sibling ROWS plus the
+    # strip that belongs to one of them, exactly the spacing they had as direct children of `col`.
+    rows.add_theme_constant_override("separation", HudWorkVocab.ZONE_BLOCK_SEPARATION)
+    # A scrolled child must not claim the viewport's height as its own, or a short list would stretch
+    # its rows down the zone; the width still fills, since horizontal scrolling is disabled.
+    rows.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+    scroll.add_child(rows)
+    return scroll
 
 ## The party in `parties` whose entity matches `_party_open_key`, or `{}` when none is open / the open
 ## one has left the list (the caller then clears the stale key).

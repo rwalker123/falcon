@@ -28,9 +28,12 @@ class_name BandCityPanel
 ##   * NARROW (otherwise, in practice a L/R dock): a tab bar under the header and
 ##     exactly one zone beneath it filling the panel.
 ##
-## There is deliberately **no ScrollContainer anywhere in this panel** — the design
-## is no-scroll (the work zone pages itself against `work_zone_size()`), and a
-## scroll container would silently reintroduce content-dependent sizing.
+## There is deliberately **no ScrollContainer anywhere in this panel except the
+## parties zone's list** — the design is no-scroll (the work zone pages itself
+## against `work_zone_size()`), because a scroll whose content height reached the
+## panel would silently reintroduce content-dependent sizing. The one exception
+## declares a fixed minimum and so reaches nothing; see
+## `BandPanelController.build_parties_zone`.
 ##
 ## All geometry/typography flows from named constants + `HudStyle` (no magic
 ## numbers, one visual-language source).
@@ -48,6 +51,10 @@ const PANEL_WIDTH := 380.0
 ## ACTIVE SHELL spends on its own chrome (the narrow shell's tab bar) before clamping to
 ## `MAX_WIDE_HEIGHT_FRACTION`, so both shells hand their zones the same box. Read as a flat strip
 ## height it is 35px short in the narrow shell, which is the zone the tab bar used to be paid out of.
+##
+## **IT IS THE ONE-COLUMN BUDGET SINCE THE FLANK LEARNED TO WIDEN.** A two-column flank needs far less
+## stacking room than a one-column one, so `_horizontal_panel_height()` picks
+## `PANEL_HEIGHT_WIDE_TWO_COLUMN` there instead — declared below, beside the column cap it keys off.
 const PANEL_HEIGHT_WIDE := 360.0
 ## Cross-axis size when collapsed to a thin rail (both orientations).
 const COLLAPSED_SIZE := 46.0
@@ -177,24 +184,59 @@ const WIDE_SEPARATOR_SPAN := 2.0 * RAIL_SEPARATOR_SPAN
 ## board several times NARROWER, degrading the very thing the wide shell exists to improve.
 const WIDE_SHELL_MIN_WIDTH := ZONE_BAND_WIDTH + ZONE_PARTY_WIDTH + ZONE_WORK_MIN_WIDTH \
 	+ WIDE_SEPARATOR_SPAN + PANEL_CHROME_H
-## **THE STRIP DOES NOT GET SHORTER WHEN THE BAND FLANK WIDENS, AND THAT IS MEASURED.**
+## The tallest content a **TWO-column** band flank has to hold: its CHARTED split (vitals + outlook |
+## PEOPLE + WORKFORCE) at the TALL tier, measured **263px** on `band_panel_band_columns_two_charted`.
 ##
-## The width growth was expected to buy height back — a two-column flank needs 139px where one needs
-## 273 — so a `PANEL_HEIGHT_WIDE_TWO_COLUMN` was built and tried at 230. It cannot exist: the band
-## flank was never what pinned this budget. **TWO other things bind above it, both unrelated to the
-## band zone**, and 360 is already their minimum:
+## **MEASURED, never derived.** The authored splits' separations and label wrapping differ per
+## grouping, so the flank's height does not decompose by subtracting a block from another split's
+## total — both attempts to predict one from the other came out ~12px wrong. Re-measure all four
+## candidates (`BandPanelController.build_band_zone`) before moving it.
+const BAND_ZONE_TWO_COLUMN_EXTENT := 263.0
+## The slack the two-column body budget carries over that extent. **A measurement tolerance, not
+## padding**: 263 is a laid-out extent off float rects summed through nine block separations, and a
+## budget set to exactly it would fail `band_panel_preview._assert_zone_content_fits` on sub-pixel
+## drift in any one of them. Stated as one `ZONE_SEPARATION` — the smallest unit of vertical air this
+## panel already spends — rather than as a fresh number of its own.
+const BAND_ZONE_TWO_COLUMN_SLACK := float(ZONE_SEPARATION)
+## What a horizontal strip spends before a zone sees its box: the header row plus the card's own
+## vertical chrome (`_interior_size`'s `chrome_v` = 2 × (`PANEL_CONTENT_MARGIN_V` +
+## `PANEL_BORDER_WIDTH`) = 22, and a 38px header). **The header is PURE CHROME** — two text rows
+## beside fixed icon controls — which is what lets its height be a constant here at all, and it is
+## the same 60px `PANEL_HEIGHT_WIDE`'s 360 already spends to hand its zones a 300px box.
+const HORIZONTAL_BODY_CHROME := 60.0
+## **THE BODY'S BUDGET WHEN THE BAND FLANK HAS TWO COLUMNS**, chosen by `_horizontal_panel_height()`.
 ##
-##   * **the PARTIES zone's worst case, 294px of body** — a hunt party lighting all seven inspector
-##     lines at once (`band_panel_worst_case_party`; the budget is spelled out in
-##     `band-city-panel.md` → "The parties strip's SEVEN lines"). At a 230px strip its box is 170 and
-##     it overflows by 124.
-##   * **the PARKED CHROME STACK, ~322px of strip** — `DockRowController._required_height()` is the
-##     nav cluster (164) + the turn cluster (128) + `RAIL_SLOT_SEPARATION` + the card's own chrome, and
-##     the reflow gate is `reserved >= that`. Below it the gate DECLINES, `BottomBar` keeps the minimap
-##     and orb, and a bottom dock silently loses the whole issue-#324 dock-row reflow.
+## **STILL CONTENT-INDEPENDENT, which is the only reason it may exist.** The selector is
+## `band_zone_columns()`, a function of the viewport, the dock edge, the rail's declared span and the
+## lateral bounds — not one term is content — so the strip's height stays off the snapshot's critical
+## path, exactly as `_shell_chrome_height()`'s geometric term does. A budget that tracked what the
+## band HOLDS would re-emit `reservation_changed` → `MapView.set_reserved_inset` on every `+` press,
+## which is the map flicker the fixed cross-axis size exists to prevent.
 ##
-## 294 + the header + the card's vertical chrome IS 360. So the flank's saved height is real and has
-## nowhere to go, and this const stays a single budget for both column counts.
+## **DERIVED FROM WHAT THE ZONES NEED AT TWO COLUMNS, never a round number.** The saving is unlocked
+## by the parties LIST learning to scroll (`BandPanelController.build_parties_zone`), which retires
+## the 294px worst case that used to pin this budget for both counts. What is left, per zone:
+##
+##   * **band flank** — `BAND_ZONE_TWO_COLUMN_EXTENT`, the binding one.
+##   * **parties zone** — its fixed chrome only now: the head, the pinned Scout/Hunt/Deny row and
+##     `HudComposeVocab.PARTIES_LIST_MIN_HEIGHT`. Measured well under the flank, so it cannot bind.
+##   * **work zone** — pages itself against `work_zone_size()`, so a shorter box costs it a board row
+##     rather than overflowing. It never binds by construction.
+##
+## **A ONE-column horizontal dock keeps `PANEL_HEIGHT_WIDE` EXACTLY**, and must: its flank still
+## stacks 299px into the 300px box, and a flat lower budget would slice it. Top docks are one column
+## (the lateral bounds cost them 704px of span), so no top-dock frame moves.
+##
+## **THE FLOOR IS THE PARKED CHROME STACK, and it is asserted rather than assumed.** On a BOTTOM dock
+## `DockRowController._required_height()` — the nav cluster + the turn cluster + `RAIL_SLOT_SEPARATION`
+## + the card's chrome, **322px measured** — is the strip below which the reflow gate DECLINES,
+## `BottomBar` keeps the minimap and orb, and issue #324's whole dock-row reflow silently un-does
+## itself. And it does not merely un-do: the gate FEEDS BACK, because a declined park restores the
+## HUD's lateral bounds, which costs the span, which drops the flank to one column, which restores the
+## 360 strip, which parks again. `band_panel_preview._assert_parked_chrome_margin` pins the margin on
+## a two-column bottom dock, and `_assert_band_columns_converge` is what would catch the oscillation.
+const PANEL_HEIGHT_WIDE_TWO_COLUMN := BAND_ZONE_TWO_COLUMN_EXTENT + BAND_ZONE_TWO_COLUMN_SLACK \
+	+ HORIZONTAL_BODY_CHROME
 ## Safety net so a short window can never let the T/B strip eat the screen: the reserved wide-dock
 ## height is the body budget clamped to this fraction of the window height.
 const MAX_WIDE_HEIGHT_FRACTION := 0.6
@@ -1152,9 +1194,24 @@ func _panel_width_extent() -> float:
 ## It is deliberately NOT a scale question — the narrow shell is reached at `ui_scale` 1.0 in a window
 ## under ~1511px too, and paid the same 35px there. The two shells now hand their zones the SAME box,
 ## which is the only arrangement under which one set of tier thresholds can be right for both.
+##
+## **AND THE COLUMN TERM IS THE SAME ARGUMENT AGAIN.** `_body_budget()` picks the budget from
+## `band_zone_columns()`, which is as purely geometric as `_shell_chrome_height()` is — so the strip
+## can get shorter when the flank widens without the height ever becoming a function of content.
 func _horizontal_panel_height() -> float:
-	return minf(PANEL_HEIGHT_WIDE + _shell_chrome_height(),
+	return minf(_body_budget() + _shell_chrome_height(),
 		_viewport_size().y * MAX_WIDE_HEIGHT_FRACTION)
+
+## The body budget for the CURRENT flank layout: a two-column flank stacks its blocks side by side and
+## needs a shorter box than the one-column stack does, so it takes `PANEL_HEIGHT_WIDE_TWO_COLUMN`.
+##
+## **BOTH BRANCHES ARE GEOMETRIC.** `band_zone_columns()` reads the span, the dock edge, the rail and
+## the lateral bounds and nothing else, so this is a second chrome term and not a fit-to-content: see
+## `PANEL_HEIGHT_WIDE_TWO_COLUMN` for the derivation and for the parked-chrome floor underneath it.
+##
+## A vertical dock and the narrow shell both answer ONE column by construction, so neither is touched.
+func _body_budget() -> float:
+	return PANEL_HEIGHT_WIDE_TWO_COLUMN if band_zone_columns() > 1 else PANEL_HEIGHT_WIDE
 
 ## How many `ZONE_BAND_WIDTH` columns the BAND flank lays its blocks out across.
 ##

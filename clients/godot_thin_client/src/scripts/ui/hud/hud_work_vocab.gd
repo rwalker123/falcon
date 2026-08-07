@@ -235,6 +235,34 @@ const ROLE_CARD_HINT_HEIGHT := 28.0
 ## `_work_board_capacity` and what it actually draws at, so the page can never overflow its zone.
 const WORK_ROW_HEIGHT := 28.0
 
+## The node name of the PARTIES zone's scrolling LIST — the party rows plus whichever inspector strip
+## is open, between that zone's fixed head and its fixed Scout/Hunt/Deny footer.
+##
+## **IT IS THE BAND/CITY PANEL'S ONE SANCTIONED `ScrollContainer`, and the NAME is how that stays
+## true.** The panel is no-scroll by design: a zone whose content height fed back into a FIXED
+## reservation is the map flicker the fixed cross-axis size exists to prevent. This one cannot, because
+## the scroll's whole contribution to the zone's minimum is `PARTIES_LIST_MIN_HEIGHT` and nothing else —
+## the list's real height never reaches the panel. `band_panel_preview` asserts that every
+## `ScrollContainer` in the panel is THIS node under the parties zone, so the invariant still holds
+## everywhere else rather than having been deleted.
+const PARTIES_LIST_NAME := "PartiesList"
+
+## The least room that scrolling list is ever given, in board rows. **A floor that never binds any
+## shipped layout** — head + footer + this sits far under the band flank's two-column extent, which is
+## what `BandCityPanel.PANEL_HEIGHT_WIDE_TWO_COLUMN` is derived from — and its only job is to stop a
+## future shorter box collapsing the list into a bare scrollbar with no visible row.
+##
+## THREE, because a list showing fewer than the row being read plus one either side has stopped reading
+## as a list: at two there is nothing to say the bar beside it is for scrolling.
+const PARTIES_LIST_MIN_ROWS := 3
+
+## That floor in pixels. `WORK_ROW_HEIGHT` is this client's one row unit — the work board's capacity
+## maths divides by it — so the parties list states its floor in the same unit rather than in a number
+## of its own. A party row is taller than a board row (42 against 28), which makes this a floor of
+## about two party rows: deliberately conservative, since the point is a non-degenerate list and not a
+## promise about how many parties are visible.
+const PARTIES_LIST_MIN_HEIGHT := float(PARTIES_LIST_MIN_ROWS) * WORK_ROW_HEIGHT
+
 ## Sized so a TYPICAL label — `Forage (nn, nn)`, `Hunt Woolly Mammoth` — fits whole beside the row's
 ## fixed furniture. At 300 a 1920 bottom dock took 4 columns and cut the labels mid-coordinate
 ## (`Forage (73, 20`), which costs the row the one thing it is for: naming WHICH source. Three
