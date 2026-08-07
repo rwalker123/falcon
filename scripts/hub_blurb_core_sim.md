@@ -30,6 +30,7 @@ environment overrides. A new config's row goes in its arc's rule, not here.
 | `cultivation.md` | Cultivation, the `Sow` verb, the Field | `forage.rs`, `tests/forage_*.rs` |
 | `graze.md` | The pasture layer, the two food webs, ecological carrying capacity, the pen economy | `graze.rs`, `tests/grazing_*.rs` |
 | `combat.md` | Combat & casualties, predation | `combat/`, `tests/predators.rs` |
+| `equipment.md` | The minimal TOE — the spear / sled / basket kits, the two-tier rule, the durability cliff, the named-kit roster a party is sent out with | `equipment_config.rs`, `creatures_config.rs`, `data/equipment.json`, `tests/kit_selection.rs` |
 | `yield-forecast.md` | Pre-commit per-source yield forecast, assign-time seeding | `labor_config.rs`, `snapshot/`, `orders.rs` |
 | `telling.md` | The narrative beat engine, `when` grammar, stance, fork tier, memory threads | `telling/`, `tests/telling*.rs` |
 | `expeditions.md` | Wondrous sites, scouting & hunting expeditions | `sites.rs`, `expedition_config.rs` |

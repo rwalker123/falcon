@@ -462,10 +462,14 @@ func draw_targeting(radius: float, origin: Vector2) -> void:
 	elif need == TARGETING_NEED_HERD:
 		# Quarry targeting: glow the herds that are valid targets + reticle the hovered hex, so it
 		# reads "click on a herd".
-		# `min_distance` is the outfitting band's `hunt_reach`, and this test is the RENDER-SIDE
-		# MIRROR of `TargetingController.is_expedition_quarry` — a herd within reach is a LOCAL hunt, not a party's
-		# job, and `TargetingController._try_pick_quarry` refuses it. The halo must never promise a target the pick
-		# will refuse, nor hide one it would accept, so the two tests must be changed together.
+		# `min_distance` is `TargetingController.quarry_min_distance` for the MISSION being composed, and
+		# this test is the RENDER-SIDE MIRROR of `TargetingController.is_expedition_quarry`. On a HUNT it
+		# is the outfitting band's `hunt_reach` — a herd within reach is a LOCAL hunt, not a party's job,
+		# and `TargetingController._try_pick_quarry` refuses it. On a DENIAL raid it is
+		# `TargetingController.QUARRY_NO_REACH_BOUND` (`-1`), because breaking the herd next door is a
+		# legal order; at `-1` the same strict comparison admits a herd on the band's OWN tile and still
+		# skips the unknown distance. The halo must never promise a target the pick will refuse, nor hide
+		# one it would accept, so the two tests must be changed together.
 		# Absent (every other targeting mode omits the key) it defaults to 0 and admits everything.
 		var min_distance := int(_targeting.get("min_distance", TARGETING_NO_MIN_DISTANCE))
 		for herd in _view.herds:

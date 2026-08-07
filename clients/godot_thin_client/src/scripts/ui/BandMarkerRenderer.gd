@@ -208,8 +208,17 @@ func _travel_arrow_color(task_kind: String) -> Color:
 ## amber ring (needs a command); a hunt `delivering` party shows a green food pip (carrying a haul
 ## home). The shared label / travel arrow / selection ring stay in `_draw_unit`.
 func _draw_expedition_body(unit: Dictionary, center: Vector2, marker_radius: float, color: Color) -> void:
-	var is_hunt := String(unit.get("expedition_mission", "")) == _view.EXPEDITION_HUNT_MISSION
-	var glyph := _view.EXPEDITION_HUNT_GLYPH if is_hunt else _view.EXPEDITION_GLYPH
+	var mission := String(unit.get("expedition_mission", ""))
+	var is_hunt := mission == _view.EXPEDITION_HUNT_MISSION
+	# A DENIAL raid gets its own mark rather than the bow: it engages like a hunt party and brings
+	# nothing home, so a bow on the map would promise a delivery that is never coming. Its phase
+	# decorations stay OFF (`is_hunt` gates those below) — the green food pip is a haul cue, and a
+	# denial party's haul is a rounding error it should not advertise.
+	var glyph := _view.EXPEDITION_GLYPH
+	if is_hunt:
+		glyph = _view.EXPEDITION_HUNT_GLYPH
+	elif mission == _view.EXPEDITION_DENY_MISSION:
+		glyph = _view.EXPEDITION_DENY_GLYPH
 	# Dark backing disc keeps the glyph legible over any terrain (mirrors the site/herd markers).
 	_view.draw_circle(center, marker_radius, Color(0.04, 0.06, 0.07, _view.EXPEDITION_DISC_ALPHA))
 	# Hollow faction ring — no solid fill, so it never reads as a resident band's dot.

@@ -46,12 +46,6 @@ const METER_AWAY_TILE_X := 64
 ## match the rendered VALUE markup, which no other row can produce.
 const CULTIVATION_ROW_KEY := "Cultivation"
 
-## How much of a rendered detail card to echo around a row key when reporting. Enough for the value
-## cell and its colour tag, short enough to stay one log line.
-const DETAIL_EXCERPT_CHARS := 96
-
-const DETAIL_EXCERPT_ABSENT := "<row absent>"
-
 ## The take that crew is paid — `min(2 × 0.32, 0.96 × 0.25)` = the DIPPED ceiling, 0.24 food/turn. It is
 ## the number the green forecast line, the deal's middle term and the sim's own `actual_yield` must all
 ## carry; before the dip reached the forecast the green line quoted 0.64 (the undipped labour take) while
@@ -66,14 +60,6 @@ const BUILD_CREW_DIPPED_TAKE := "0.96"
 ## failure of BOTH and an assertion that pinned only one of them would pass on half a fix.
 func _meter_value_markup(verb: String, hex: String) -> String:
 	return "[color=#%s]%s %d%%[/color]" % [hex, verb, REVERTING_METER_PERCENT]
-
-## A readable slice of a rendered detail card's BBCode around one row key — for the run log, so a
-## failing meter assertion shows what the card actually SAID rather than only that it disagreed.
-func _detail_excerpt(bbcode: String, key: String) -> String:
-	var at := bbcode.find(key)
-	if at < 0:
-		return DETAIL_EXCERPT_ABSENT
-	return bbcode.substr(at, DETAIL_EXCERPT_CHARS)
 
 ## The staple tile as the COMPOSE SHEET sees it — `BaseFx.food_tile_fixture` already runs through
 ## `BaseFx.seed_forage_rows`, so this is simply the named handle the dip-comparison assertion reads its
@@ -400,8 +386,8 @@ func run(harness) -> void:
 	await h._save("tile_meter_reverting")
 	var reverting_row = h._hud.tile_detail.text
 	print("ui_preview: meter rows  building=%s  reverting=%s" % [
-		_detail_excerpt(building_row, CULTIVATION_ROW_KEY),
-		_detail_excerpt(reverting_row, CULTIVATION_ROW_KEY)])
+		Readout.detail_excerpt(building_row, CULTIVATION_ROW_KEY),
+		Readout.detail_excerpt(reverting_row, CULTIVATION_ROW_KEY)])
 	h._assert_hud("the SAME meter with nobody on it reads as a LOSS, in WARN ink — not a build",
 		reverting_row.contains(_meter_value_markup(
 			HudFloraVocab.RUNG_REVERTING_LABEL, HudStyle.WARN_HEX)))

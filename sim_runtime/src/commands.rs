@@ -186,6 +186,12 @@ pub enum CommandPayload {
         /// sim's default (`components::DEFAULT_ESCAPEMENT_FLOOR`). Validated `0.0..=1.0` at the
         /// server boundary and **rejected**, never clamped. Ignored by the band-wide roles.
         floor: Option<f32>,
+        /// **The kit this crew works under** — an `equipment.json` roster id. `None` = the job's
+        /// default. An unknown id, or one whose `jobs` does not cover this role, is a **command
+        /// failure with a reason**, never a silent fall back: naming a kit is how the player
+        /// compares tiers, so a quiet substitution answers a different question than the one asked.
+        /// Ignored by the band-wide roles, which consume no kit component.
+        kit_id: Option<String>,
     },
     MoveBand {
         faction_id: u32,
@@ -213,6 +219,29 @@ pub enum CommandPayload {
         /// sim's default (`components::DEFAULT_ESCAPEMENT_FLOOR`); validated `0.0..=1.0` at the
         /// server boundary and **rejected**, never clamped.
         floor: Option<f32>,
+        /// **The kit the party is SENT OUT WITH** — an `equipment.json` roster id, resolved **once**
+        /// at launch and carried for the party's whole life. `None` = the hunt job's default; an
+        /// unknown id, or one whose `jobs` does not include `hunt`, fails the command with a reason.
+        kit_id: Option<String>,
+    },
+    /// **Outfit and launch a DENIAL RAID** (`docs/plan_denial_raid.md`) — the third expedition verb,
+    /// beside Scout and Hunt. Proto field 49.
+    ///
+    /// **It carries no floor, and cannot be given one.** Its escapement ceiling is the herd's whole
+    /// standing stock, so there is no floor to name — the order is *"this herd, this
+    /// many people"*. That is why it is its own payload rather than a flag on
+    /// [`Self::SendHuntExpedition`]: there is nothing here to validate and nothing to tune.
+    ///
+    /// **No target faction** — denial is aimed at a herd, not at a player.
+    SendDenialRaid {
+        faction_id: u32,
+        band_id: Option<u64>,
+        party_workers: u32,
+        fauna_id: String,
+        /// **The kit the raid is sent out with** — the one thing there *is* to say about a mission
+        /// that carries no floor, because a kit is a property of the **party** rather than of the
+        /// mission. Same rule as [`Self::SendHuntExpedition::kit_id`].
+        kit_id: Option<String>,
     },
     ExportMap {
         path: Option<String>,
@@ -659,6 +688,7 @@ impl CommandEnvelope {
                 policy,
                 species,
                 floor,
+                kit_id,
             } => pb::command_envelope::Command::AssignLabor(pb::AssignLaborCommand {
                 faction_id: *faction_id,
                 band_id: *band_id,
@@ -670,6 +700,7 @@ impl CommandEnvelope {
                 policy: policy.clone(),
                 species: species.clone(),
                 floor: *floor,
+                kit_id: kit_id.clone(),
             }),
             CommandPayload::MoveBand {
                 faction_id,
@@ -708,6 +739,7 @@ impl CommandEnvelope {
                 party_workers,
                 fauna_id,
                 floor,
+                kit_id,
             } => pb::command_envelope::Command::SendHuntExpedition(pb::SendHuntExpeditionCommand {
                 faction_id: *faction_id,
                 band_id: *band_id,
@@ -716,6 +748,23 @@ impl CommandEnvelope {
                 // Retired by the harvest floor arc; the number is immutable, the value unread.
                 policy: None,
                 floor: *floor,
+                // Retired with the fill target itself; same rule — the field number is immutable and
+                // the value is never written.
+                fill_target: None,
+                kit_id: kit_id.clone(),
+            }),
+            CommandPayload::SendDenialRaid {
+                faction_id,
+                band_id,
+                party_workers,
+                fauna_id,
+                kit_id,
+            } => pb::command_envelope::Command::SendDenialRaid(pb::SendDenialRaidCommand {
+                faction_id: *faction_id,
+                band_id: *band_id,
+                party_workers: *party_workers,
+                fauna_id: fauna_id.clone(),
+                kit_id: kit_id.clone(),
             }),
             CommandPayload::ExportMap { path } => {
                 pb::command_envelope::Command::ExportMap(pb::ExportMapCommand {
@@ -963,6 +1012,7 @@ impl CommandEnvelope {
                 policy: cmd.policy,
                 species: cmd.species,
                 floor: cmd.floor,
+                kit_id: cmd.kit_id,
             },
             pb::command_envelope::Command::MoveBand(cmd) => CommandPayload::MoveBand {
                 faction_id: cmd.faction_id,
@@ -990,8 +1040,16 @@ impl CommandEnvelope {
                     party_workers: cmd.party_workers,
                     fauna_id: cmd.fauna_id,
                     floor: cmd.floor,
+                    kit_id: cmd.kit_id,
                 }
             }
+            pb::command_envelope::Command::SendDenialRaid(cmd) => CommandPayload::SendDenialRaid {
+                faction_id: cmd.faction_id,
+                band_id: cmd.band_id,
+                party_workers: cmd.party_workers,
+                fauna_id: cmd.fauna_id,
+                kit_id: cmd.kit_id,
+            },
             pb::command_envelope::Command::ExportMap(cmd) => {
                 CommandPayload::ExportMap { path: cmd.path }
             }

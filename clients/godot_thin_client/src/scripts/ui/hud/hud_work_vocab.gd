@@ -37,7 +37,7 @@ const POLICY_PICKER_COLUMNS := 3
 # of itself on the rung gates and the crop list, and the commit button below is what falls off the fold
 # when the picker grows (the `forage_crop_picker` guard in ui_preview asserts exactly that). The width
 # is not free either — the face's longest LINE sets the rung's width, so 22px of side chrome per button
-# is width the grid spends on nothing, and at the ZONE_POLICY_PICKER_COLUMNS budget (the Band panel's
+# is width the grid spends on nothing, and in the Band panel's fixed-width zone column (the
 # PARTIES-zone launch picker, in a ~300px dock) the authored box pushed the picker 18px past its zone,
 # where the zone's `clip_contents` ate the end of every metric line. Trim the box, never the type.
 const POLICY_PICKER_PADDING_V := 4
@@ -485,14 +485,3 @@ const PAGER_FORMAT := "Page %d / %d"
 
 const PAGER_RANGE_FORMAT := "%d–%d of %d"
 
-## `cancel_order` scopes (the server grammar: `cancel_order <faction> [band] [all|work|roles]`).
-## `work` clears Forage + Hunt only — standing roles, parties and an in-progress move survive.
-## A policy picker rendered INSIDE a zone wraps to this many columns, and it is the ONE picker that
-## does NOT take the shared `POLICY_PICKER_COLUMNS` (3): a zone is a FIXED-width box and a picker wider
-## than it drags the whole zone column past its host, where `clip_contents` slices it. MEASURED at 3:
-## the four two-line rungs need ~444px, the L/R dock's zone gives ~354, and the frame comes out with
-## `⇊ Deplete` cut in half, the Quarry button clipped and the hint text sliced — two extra
-## `_assert_zone_content_fits` failures in `band_panel_preview`. So the Band panel's launch picker reads
-## 2 + 2 while every free-floating picker reads 3 + 1; closing that gap needs a WIDER PARTIES ZONE (or a
-## narrower metric line), not a bigger number here.
-const ZONE_POLICY_PICKER_COLUMNS := 2

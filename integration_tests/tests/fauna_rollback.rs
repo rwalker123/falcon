@@ -72,6 +72,90 @@ fn herd_registry_biomass_and_position_rewind_on_rollback() {
     assert_eq!(herd.owner, owner0);
 }
 
+/// **A rollback rewinds the QUARRY'S WOUNDS** (`docs/plan_hunt_through_combat.md` §4.2). The
+/// cross-turn damage ledger is durable herd state like any other — a party seven turns into wearing
+/// a mammoth down must resume seven turns in, not start over — and it is the newest field on `Herd`,
+/// so this is the guard that the checkpoint's whole-registry clone actually carried it.
+///
+/// Asserted on **both halves of the ledger**: the banked damage *and* the in-contact flag that gates
+/// healing. Restoring the damage while dropping the flag would hand the herd a free turn of recovery
+/// after every rollback — a silent, drifting divergence rather than a visible one.
+#[test]
+fn a_quarry_s_accumulated_wounds_rewind_on_rollback() {
+    common::ensure_test_config();
+    let mut app = build_headless_app();
+    app.update();
+
+    /// Damage no default produces, banked on the herd before the checkpoint is taken.
+    const CAPTURED_DAMAGE: f32 = 137.0;
+    /// The damage the ledger is dragged to afterwards — the value the rollback must throw away.
+    const DRAGGED_DAMAGE: f32 = 4.0;
+    /// A body deep enough that neither figure completes an animal, so both stay banked.
+    const DEEP_BODY: core_sim::CombatStats = core_sim::CombatStats {
+        attack: 0.0,
+        defense: 0.0,
+        durability: 1_000.0,
+        range: core_sim::RangeBand::Melee,
+        wariness: 0.0,
+    };
+
+    let herd_id = {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry
+            .herds
+            .first_mut()
+            .expect("at least one herd spawned");
+        herd.wounds.strike(CAPTURED_DAMAGE, &DEEP_BODY, 1.0);
+        herd.id.clone()
+    };
+    assert_eq!(
+        wounds_of(&app, &herd_id).pending(),
+        CAPTURED_DAMAGE,
+        "the fixture must bank the damage it claims to"
+    );
+
+    let checkpoint = capture_sim_state(&app.world);
+
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry
+            .herds
+            .iter_mut()
+            .find(|h| h.id == herd_id)
+            .expect("mutable herd");
+        herd.wounds = core_sim::DamageLedger::default();
+        herd.wounds.strike(DRAGGED_DAMAGE, &DEEP_BODY, 1.0);
+    }
+    assert_eq!(
+        wounds_of(&app, &herd_id).pending(),
+        DRAGGED_DAMAGE,
+        "the edit must land, or the rewind below asserts nothing"
+    );
+
+    restore_sim_state(&mut app.world, &checkpoint);
+
+    let restored = wounds_of(&app, &herd_id);
+    assert_eq!(
+        restored.pending(),
+        CAPTURED_DAMAGE,
+        "the banked damage must rewind"
+    );
+    // The contact flag rides with it: `strike` set it, so a restored herd is still mid-hunt and does
+    // not heal on the first post-restore Logistics pass.
+    assert!(
+        !restored.is_clean(),
+        "the in-contact half of the ledger must rewind too, or a rollback grants a free heal"
+    );
+}
+
+fn wounds_of(app: &bevy::app::App, herd_id: &str) -> core_sim::DamageLedger {
+    app.world
+        .resource::<HerdRegistry>()
+        .find(herd_id)
+        .expect("herd present")
+        .wounds
+}
+
 /// Slice 2 (`docs/plan_fauna_neglect_escape.md` §4 item 1): the **under-herded edge-gate** is
 /// snapshot-persisted, so a rollback rewinds it and the notice does not spuriously re-fire after a
 /// restore (unlike the transient `pen_starving`, which re-announces). A mutate-then-restore must bring

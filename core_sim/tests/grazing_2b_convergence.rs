@@ -82,6 +82,8 @@ fn base_world() -> App {
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(GrazeRegistry::default());
     app.world.insert_resource(FaunaConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::CombatConfigHandle::default());
     app.world.insert_resource(LadderConfigHandle::default());
     app.world.run_system_once(spawn_initial_herds);
     app.world.run_system_once(spawn_initial_graze);

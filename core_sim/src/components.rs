@@ -789,8 +789,43 @@ pub enum ExpeditionMission {
         /// take is still bounded by what the party can **carry**, so erasing a herd this way is as
         /// slow and as crew-hungry as eating it. Denial is a mission of its own with the carry bound
         /// removed, at which point this field means only "how deep a harvest".
+        ///
+        /// **The floor is the ONLY number a hunt carries.** A party-side `fill_target` ("take ≈50
+        /// and come home") shipped beside it and was retired — see
+        /// `docs/plan_hunt_through_combat.md` §5.2, marked retired in place.
         floor: f32,
     },
+    /// **Erase the herd `fauna_id`** — the denial raid (`docs/plan_denial_raid.md` §1). The party
+    /// works the herd until it is past the point of no return
+    /// ([`crate::fauna::herd_past_recovery`]) and then walks away.
+    ///
+    /// **It carries no floor and no rate, and that is the whole reason it is a mission** rather than
+    /// a number on the assign dialog. There is nothing to tune: you choose a herd and a party size.
+    /// [`Self::hunt_floor`] reports [`STRIP_IT_BARE`] for it — the escapement ceiling is the herd's
+    /// whole standing stock — and `floor` never appears in its command text or its UI.
+    ///
+    /// **One line of behaviour differs from a hunt** ([`Self::engagement_stop`]): a hunting party
+    /// stops engaging once its pack is full, a denial party never stops. `carried` keeps the hunt's
+    /// formula exactly, so the raid still banks whatever it can haul on the way home — a rounding
+    /// error against what it killed, which is the point. Everything else is reused unchanged:
+    /// [`ExpeditionPhase`], party outfitting, travel, and
+    /// [`crate::fauna::AnimalTake`], which already models kill ≠ carry.
+    ///
+    /// **No target faction** (§2). Denial is aimed at a herd, not at a player.
+    Deny { fauna_id: String },
+}
+
+/// **The orders a party works a herd under** — what [`ExpeditionMission::Hunt`] and
+/// [`ExpeditionMission::Deny`] have in common, resolved once so the `Hunting` phase arm and the
+/// forecasts branch on data rather than re-matching the mission at every seam.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RaidOrders<'a> {
+    /// The herd the party named — keys `HerdRegistry::find`.
+    pub fauna_id: &'a str,
+    /// Where the raid stops, as a fraction of `K`. [`STRIP_IT_BARE`] for a denial raid.
+    pub floor: f32,
+    /// **The one line that differs** — whether a full pack stops the party engaging.
+    pub stop: crate::fauna::EngagementStop,
 }
 
 impl ExpeditionMission {
@@ -799,35 +834,77 @@ impl ExpeditionMission {
         match self {
             ExpeditionMission::Scout => "scout",
             ExpeditionMission::Hunt { .. } => "hunt",
+            ExpeditionMission::Deny { .. } => "deny",
         }
     }
 
     /// Parse a mission from its wire keys (snapshot restore). `"hunt"` reconstructs
-    /// `Hunt { fauna_id, floor }` from `target_herd` + `floor`; anything else is `Scout`.
+    /// `Hunt { fauna_id, floor }` from `target_herd` + `floor`; `"deny"` reconstructs
+    /// `Deny { fauna_id }` from `target_herd` alone — it carries no number; anything else is
+    /// `Scout`.
     pub fn from_wire(kind: &str, target_herd: &str, floor: f32) -> Self {
         match kind {
             "hunt" => ExpeditionMission::Hunt {
                 fauna_id: target_herd.to_string(),
                 floor,
             },
+            "deny" => ExpeditionMission::Deny {
+                fauna_id: target_herd.to_string(),
+            },
             _ => ExpeditionMission::Scout,
         }
     }
 
-    /// The target herd id for a `Hunt` mission (empty for `Scout`) — the snapshot `expeditionTargetHerd`.
+    /// The target herd id for a `Hunt`/`Deny` mission (empty for `Scout`) — the snapshot
+    /// `expeditionTargetHerd`.
     pub fn target_herd(&self) -> &str {
         match self {
-            ExpeditionMission::Hunt { fauna_id, .. } => fauna_id,
+            ExpeditionMission::Hunt { fauna_id, .. } | ExpeditionMission::Deny { fauna_id } => {
+                fauna_id
+            }
             ExpeditionMission::Scout => "",
         }
     }
 
     /// The raid's escapement floor for a `Hunt` mission — the snapshot `expeditionFloor`. A `Scout`
     /// party harvests nothing, so it reports the floor that takes nothing.
+    ///
+    /// **A `Deny` mission reports [`STRIP_IT_BARE`]** (`docs/plan_denial_raid.md` §1) — its ceiling
+    /// is the herd's whole standing stock, and it carries no floor of its own to report. `0` is the
+    /// honest reading rather than a stand-in: nothing is meant to be left standing. It is a
+    /// *derived* number, never a lever — the mission has no floor to set, which is the point of it
+    /// being a mission.
     pub fn hunt_floor(&self) -> f32 {
         match self {
             ExpeditionMission::Hunt { floor, .. } => *floor,
+            ExpeditionMission::Deny { .. } => STRIP_IT_BARE,
             ExpeditionMission::Scout => NO_RAID_FLOOR,
+        }
+    }
+
+    /// **Does a full pack stop this party engaging?** — the one line of behaviour a denial raid
+    /// changes (`docs/plan_denial_raid.md` §1), stated here so every take and forecast path reads it
+    /// from the mission rather than re-deriving it from a floor.
+    pub fn engagement_stop(&self) -> crate::fauna::EngagementStop {
+        match self {
+            ExpeditionMission::Deny { .. } => crate::fauna::EngagementStop::Never,
+            ExpeditionMission::Hunt { .. } | ExpeditionMission::Scout => {
+                crate::fauna::EngagementStop::WhenPackFull
+            }
+        }
+    }
+
+    /// **The orders a party works a herd under**, for the two missions that work one — `None` for a
+    /// `Scout`, which raids nothing. One seam, so the `Hunting` phase arm handles a hunt and a
+    /// denial raid through the same code with the differences carried as data.
+    pub fn raid_orders(&self) -> Option<RaidOrders<'_>> {
+        match self {
+            ExpeditionMission::Scout => None,
+            _ => Some(RaidOrders {
+                fauna_id: self.target_herd(),
+                floor: self.hunt_floor(),
+                stop: self.engagement_stop(),
+            }),
         }
     }
 }
@@ -901,6 +978,18 @@ pub struct Expedition {
     /// either end any more — the band's store is fixed-point — so the exact carried fraction settles
     /// and `forecast == actual` holds without a remainder being dropped per trip.
     pub carried_trade: f32,
+    /// **The kit this party was SENT OUT WITH**, resolved from the roster at launch and carried for
+    /// the party's whole life (`equipment.json`'s `kits`).
+    ///
+    /// **It is never re-resolved against the home band's stock.** A party sent out with `none` is
+    /// bare-handed until it folds back — re-reading the band's spears each turn would silently
+    /// re-arm it, and a bare-handed comparison that quietly re-arms is not a comparison. The party's
+    /// own [`BandEquipment`] wear still moves under it, so a `big_game` party still steps down when
+    /// its spears run out; what is fixed is *which components it reaches for*.
+    ///
+    /// A scouting party carries the hunt job's default: its roadside kills resolve through the same
+    /// hunt seams, and `send_expedition` names no kit.
+    pub kit: crate::equipment_config::KitChoice,
 }
 
 /// Permanent settlement seeded by a founding action.
@@ -983,6 +1072,17 @@ impl LaborTarget {
         }
     }
 
+    /// **Which TOE job this target draws a tier from**, or `None` for a band-wide role that consumes
+    /// no component and therefore has no kit to choose. The one mapping between a labor role and
+    /// `equipment.json`'s `jobs` list, so the command's refusal and the turn's pricing agree.
+    pub fn kit_job(&self) -> Option<crate::equipment_config::KitJob> {
+        match self {
+            LaborTarget::Forage { .. } => Some(crate::equipment_config::KitJob::Forage),
+            LaborTarget::Hunt { .. } => Some(crate::equipment_config::KitJob::Hunt),
+            LaborTarget::Scout | LaborTarget::Warrior => None,
+        }
+    }
+
     /// Whether two targets name the **same source** (so re-assigning replaces rather than
     /// duplicates). Forage is keyed by tile and Hunt by herd id — for both, the **floor** is a
     /// mutable property of the same source (dragging the floor on the same tile/herd replaces the
@@ -1017,6 +1117,28 @@ pub struct LaborAssignment {
     /// **a crew change never touches it**, which is what makes a paused build re-staffable
     /// (`docs/plan_investment_rung_toggle.md` §6).
     pub improvement: Option<Improvement>,
+    /// **The kit this crew works under** (`equipment.json`'s roster), chosen at assign time and
+    /// re-resolved from *here* every turn — never from whatever the band happens to hold.
+    ///
+    /// `None` = **no kit was named**, which reads as the job's default
+    /// ([`crate::equipment_config::EquipmentConfig::default_kit`]) and is the only reading for the
+    /// band-wide roles: Scout and Warrior consume no component, so they have no kit axis to choose
+    /// along. `assign_labor` stores the *resolved* choice for a Forage/Hunt row, so a replayed
+    /// command lands on the kit it named rather than on whatever the default is today.
+    pub kit: Option<crate::equipment_config::KitChoice>,
+}
+
+impl LaborAssignment {
+    /// **The kit this row is priced at** — its own choice, or the job's default when it named none.
+    /// The one seam the resolved take, the assign-time seed and the wire all read, so a row cannot
+    /// be quoted at one tier and paid at another. `None` for a band-wide role, which has no job.
+    pub fn kit_choice(
+        &self,
+        config: &crate::equipment_config::EquipmentConfig,
+    ) -> Option<crate::equipment_config::KitChoice> {
+        let job = self.target.kit_job()?;
+        Some(self.kit.clone().unwrap_or_else(|| config.default_kit(job)))
+    }
 }
 
 /// Retained per-source food-yield telemetry for one labor assignment this turn (derived, not
@@ -1129,6 +1251,64 @@ pub struct SourceYield {
     /// trade forecast is a separate arc (#337 covers the animal web). The `actual` trade a Deplete
     /// gather earns *is* reported — only the projection is missing.
     pub realized_trade: f32,
+    /// **The band around [`SourceYield::actual`] / [`SourceYield::trade`]** — *"6–11, likely 9"*
+    /// (`docs/plan_hunt_through_combat.md` §6.4). See [`YieldRange`].
+    pub range: YieldRange,
+}
+
+/// **The distribution a [`SourceYield`]'s `actual` / `trade` sit in the middle of**, in the same two
+/// currencies and the same units (`docs/plan_hunt_through_combat.md` §6.4).
+///
+/// A hunt has two stochastic stages — the quarry's retreat (`fauna::animals_that_stay`) and the
+/// fight's per-unit attack rolls — so a **pre-commit** row states an expectation, not a promise, and
+/// this is the band the sim will actually pay inside. A **resolved** row is a fact rather than a
+/// forecast, so it reports [`YieldRange::certain`]: the take has happened and there is no
+/// distribution left.
+///
+/// **It is an ANSWER, not a term the client composes**, and that follows the boundary rule
+/// `.claude/rules/core_sim/yield-forecast.md` already draws: the take goes through
+/// `fauna::quantise_animal_take`'s `floor()`, so a band on the animals brought down is **not** a band
+/// on the food — on a slow breeder both bounds routinely land on the same whole animal and the range
+/// is a point at a staffing where the underlying draw genuinely varies. Publishing `wariness` and
+/// `hit_chance` as terms instead would put a second, non-linear copy of the model in a language with
+/// no tests over it, which is the same reason `regrowthSamples` ships sampled.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct YieldRange {
+    /// The pessimistic bound on the provisions component.
+    pub low: f32,
+    /// The optimistic bound on the provisions component.
+    pub high: f32,
+    /// The pessimistic bound on the trade-goods component — carried because the forecast is a
+    /// **pair** everywhere else (issue #337): a wolf's food range is honestly all-zero, and a
+    /// food-only band could not state its take at all.
+    pub trade_low: f32,
+    /// The optimistic bound on the trade-goods component.
+    pub trade_high: f32,
+}
+
+impl YieldRange {
+    /// A row that produced nothing in either currency.
+    pub const ZERO: Self = Self {
+        low: 0.0,
+        high: 0.0,
+        trade_low: 0.0,
+        trade_high: 0.0,
+    };
+
+    /// **A range that is a point** — what a *resolved* row reports (the take happened; there is
+    /// nothing left to be uncertain about), and what a *forecast* row reports wherever no stage is
+    /// stochastic: the whole plant web (no engagement, no retreat, no fight), a pen, and a species
+    /// held at `wariness 0`. Since slice 7 authored the roster's wariness
+    /// (`docs/plan_hunt_through_combat.md` §3.1) a **wild hunt's** forecast is no longer one of
+    /// them.
+    pub fn certain(provisions: f32, trade_goods: f32) -> Self {
+        Self {
+            low: provisions,
+            high: provisions,
+            trade_low: trade_goods,
+            trade_high: trade_goods,
+        }
+    }
 }
 
 impl SourceYield {
@@ -1151,7 +1331,138 @@ impl SourceYield {
         // has not been projected at all, and the client renders "no data" rather than "famine".
         // `Vec::new` allocates nothing, so this stays a `const`.
         arrivals: Vec::new(),
+        // Nothing was taken, so there is nothing to be uncertain about either.
+        range: YieldRange::ZERO,
     };
+}
+
+/// **A band's TOE, as WEAR** — how much of each consumable kit it has used up (the minimal TOE,
+/// `docs/plan_early_game_labor.md` → "Equipment / TOE", `docs/plan_hunt_through_combat.md` §4.8).
+/// The tiers, durabilities and wear rates are config
+/// ([`crate::equipment_config::EquipmentConfig`]); what a band owns is only *how worn* its kits are.
+///
+/// **Wear, not stock, and that is what makes the band START KITTED for free**: `Default` is zero
+/// wear, so every spawn site inserts a full kit without reading config, and "start-stocked, not
+/// craftable" needs no seeding pass. A kit is **equipped while its wear is strictly below its
+/// `starting_durability`**; past that the role steps down to its unequipped tier and **stays there**
+/// — nothing in this slice ever reduces wear.
+///
+/// **Wear is charged for USE, never for turns elapsed** (`docs/plan_denial_raid.md` §1.2) — a turn
+/// clock would charge an idle march the same as a slaughter and make denial free. **One kit, one
+/// job, one quantum** (§4.8): the hunting kit wears per **animal killed**, the sled per **biomass
+/// hauled home from a hunt**, baskets per **biomass gathered**. The three ledgers are independent by
+/// construction, so a band that only hunts wears no baskets and one that only gathers wears no sled.
+///
+/// **Persisted** (`SimState`'s `BandRecord::equipment`) — a checkpoint that forgot how worn your
+/// spears were would silently re-stock them on rollback.
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq)]
+pub struct BandEquipment {
+    /// Condition spent on the **hunting kit** (spears), on the config's 0–100 scale. Charged
+    /// `wear_per_kill` per animal a hunt kills.
+    pub hunting_wear: f32,
+    /// Condition spent on the **sled kit** (travois / drag harness), on the config's 0–100 scale.
+    /// Charged `wear_per_biomass_hauled` per unit of biomass hauled home — by a wild hunt *and* by a
+    /// pen harvest, because both are dragging carcasses.
+    pub sled_wear: f32,
+    /// Condition spent on the **basket kit**, on the config's 0–100 scale. Charged
+    /// `wear_per_biomass_gathered` per unit of biomass a *gather* takes off a patch. The forage web's
+    /// own ledger: nothing on the hunt path touches it.
+    pub basket_wear: f32,
+}
+
+impl BandEquipment {
+    /// **Does the band still have condition in its hunting kit?** — half of the effective predicate,
+    /// never the whole of it. **Strictly below** `starting_durability`, so a kit worn exactly to its
+    /// limit is spent: the cliff lands on the turn the last charge is used, not one turn later.
+    ///
+    /// **Crate-private on purpose.** Whether that condition is *serving* also depends on whether the
+    /// party's chosen kit reaches for this component at all, and
+    /// [`crate::equipment_config::KitChoice::hunting_equipped`] is the one place the two halves are
+    /// joined. A caller that could ask this directly would be a second way to ask the question — and
+    /// the one that silently re-arms a party sent out with no kit.
+    pub(crate) fn has_hunting_condition(
+        &self,
+        config: &crate::equipment_config::EquipmentConfig,
+    ) -> bool {
+        self.hunting_wear < config.hunting_kit.starting_durability
+    }
+
+    /// Condition left in the sled? Same rule and same privacy as [`Self::has_hunting_condition`].
+    pub(crate) fn has_sled_condition(
+        &self,
+        config: &crate::equipment_config::EquipmentConfig,
+    ) -> bool {
+        self.sled_wear < config.sled_kit.starting_durability
+    }
+
+    /// Condition left in the baskets? Same rule and same privacy as [`Self::has_hunting_condition`].
+    pub(crate) fn has_basket_condition(
+        &self,
+        config: &crate::equipment_config::EquipmentConfig,
+    ) -> bool {
+        self.basket_wear < config.basket_kit.starting_durability
+    }
+
+    /// Remaining condition on the hunting kit, clamped at `0` — the wire readout, and the number a
+    /// player watches run down.
+    pub fn hunting_remaining(&self, config: &crate::equipment_config::EquipmentConfig) -> f32 {
+        (config.hunting_kit.starting_durability - self.hunting_wear).max(0.0)
+    }
+
+    /// Remaining condition on the sled, clamped at `0`.
+    pub fn sled_remaining(&self, config: &crate::equipment_config::EquipmentConfig) -> f32 {
+        (config.sled_kit.starting_durability - self.sled_wear).max(0.0)
+    }
+
+    /// Remaining condition on the baskets, clamped at `0`.
+    pub fn basket_remaining(&self, config: &crate::equipment_config::EquipmentConfig) -> f32 {
+        (config.basket_kit.starting_durability - self.basket_wear).max(0.0)
+    }
+
+    /// Charge the hunting kit for `kills` animals. **Only USE charges it** — a party that kills
+    /// nothing this turn calls this with `0` and loses nothing.
+    pub fn wear_hunting(
+        &mut self,
+        config: &crate::equipment_config::EquipmentConfig,
+        kills: u32,
+    ) -> &mut Self {
+        self.hunting_wear += kills as f32 * config.hunting_kit.wear_per_kill;
+        self
+    }
+
+    /// Charge the **sled** for `biomass` hauled home from a hunt. Negative/NaN inputs are floored at
+    /// `0` so a degenerate take can never *restore* a kit — there is no replenishment in this slice.
+    pub fn wear_sled(
+        &mut self,
+        config: &crate::equipment_config::EquipmentConfig,
+        biomass: f32,
+    ) -> &mut Self {
+        self.sled_wear += usable_biomass(biomass) * config.sled_kit.wear_per_biomass_hauled;
+        self
+    }
+
+    /// Charge the **baskets** for `biomass` gathered off a patch. Same flooring rule as
+    /// [`Self::wear_sled`], and deliberately a *separate* quantum: a band that hunts but does not
+    /// gather calls this with nothing and its baskets stay whole.
+    pub fn wear_baskets(
+        &mut self,
+        config: &crate::equipment_config::EquipmentConfig,
+        biomass: f32,
+    ) -> &mut Self {
+        self.basket_wear += usable_biomass(biomass) * config.basket_kit.wear_per_biomass_gathered;
+        self
+    }
+}
+
+/// The biomass a wear charge may actually bill for: non-finite or negative input reads as **no use**.
+/// Shared by both carry kits so neither can grow its own flooring rule — a negative take must never
+/// *restore* a kit, because nothing in this slice replenishes one.
+fn usable_biomass(biomass: f32) -> f32 {
+    if biomass.is_finite() {
+        biomass.max(0.0)
+    } else {
+        0.0
+    }
 }
 
 /// A band's partition of its working-age pool across labor demands. Replaces the retired
@@ -1261,7 +1572,13 @@ impl LaborAllocation {
     /// This is what makes a **paused** build re-staffable: adjusting its crew no longer re-issues the
     /// improvement through its start gate. `workers == 0` still drops the assignment and the
     /// improvement with it, which is the one deliberate way to abandon an investment.
-    pub fn set_assignment(&mut self, target: LaborTarget, workers: u32, available: u32) -> u32 {
+    pub fn set_assignment(
+        &mut self,
+        target: LaborTarget,
+        workers: u32,
+        available: u32,
+        kit: Option<crate::equipment_config::KitChoice>,
+    ) -> u32 {
         // Free headroom excludes any existing assignment on the same source (it is being replaced).
         let others: u32 = self
             .assignments
@@ -1290,6 +1607,11 @@ impl LaborAllocation {
                 target,
                 workers: applied,
                 improvement,
+                // **The kit is a property of the ORDER, so a re-assignment replaces it** — unlike
+                // `improvement`, which is carried across because it is a build in flight. Naming a
+                // kit is the whole of what this command decides about tier; silently keeping the
+                // previous one would make the selection unchangeable.
+                kit,
             });
             self.last_yields.push(SourceYield::ZERO);
         }
@@ -1855,8 +2177,8 @@ mod tests {
         assert_eq!(allocation.workers_on(&LaborTarget::Scout), 0);
 
         let available = 10;
-        allocation.set_assignment(LaborTarget::Scout, 3, available);
-        allocation.set_assignment(LaborTarget::Warrior, 2, available);
+        allocation.set_assignment(LaborTarget::Scout, 3, available, None);
+        allocation.set_assignment(LaborTarget::Warrior, 2, available, None);
         // Only the Scout assignment is counted (Warrior is a different singleton source).
         assert_eq!(allocation.workers_on(&LaborTarget::Scout), 3);
         assert_eq!(allocation.workers_on(&LaborTarget::Warrior), 2);
@@ -1891,8 +2213,8 @@ mod tests {
         // set_assignment on the same tile with a new floor replaces (no duplicate row) and updates
         // the stored floor.
         let mut allocation = LaborAllocation::default();
-        allocation.set_assignment(sustain, 4, 10);
-        allocation.set_assignment(deplete.clone(), 3, 10);
+        allocation.set_assignment(sustain, 4, 10, None);
+        allocation.set_assignment(deplete.clone(), 3, 10, None);
         assert_eq!(allocation.assignments.len(), 1, "a floor change replaces");
         assert_eq!(allocation.assignments[0].workers, 3);
         assert_eq!(allocation.assignments[0].target, deplete);
@@ -1911,11 +2233,11 @@ mod tests {
             species: None,
         };
         let mut allocation = LaborAllocation::default();
-        allocation.set_assignment(sustain.clone(), 4, 10);
+        allocation.set_assignment(sustain.clone(), 4, 10, None);
         assert!(allocation.set_improvement(&sustain, Some(Improvement::Cultivate)));
 
         // Re-staffing the same source: the improvement survives.
-        allocation.set_assignment(sustain.clone(), 2, 10);
+        allocation.set_assignment(sustain.clone(), 2, 10, None);
         assert_eq!(allocation.assignments[0].workers, 2);
         assert_eq!(
             allocation.assignments[0].improvement,
@@ -1929,7 +2251,7 @@ mod tests {
             floor: 0.15,
             species: None,
         };
-        allocation.set_assignment(deplete.clone(), 2, 10);
+        allocation.set_assignment(deplete.clone(), 2, 10, None);
         assert_eq!(allocation.assignments[0].target, deplete);
         assert_eq!(
             allocation.assignments[0].improvement,
@@ -1937,7 +2259,7 @@ mod tests {
         );
 
         // Unassigning drops the source, and the investment with it.
-        allocation.set_assignment(deplete.clone(), 0, 10);
+        allocation.set_assignment(deplete.clone(), 0, 10, None);
         assert!(allocation.assignments.is_empty());
         // Nothing to hang a verb on once the source is unstaffed.
         assert!(!allocation.set_improvement(&deplete, Some(Improvement::Cultivate)));

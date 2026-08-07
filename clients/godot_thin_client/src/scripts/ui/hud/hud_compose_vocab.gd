@@ -71,7 +71,23 @@ const FLOOR_LEARNING_HINT_EXPEDITION := "Above the food peak — the party takes
 # `SourceForecast.FLOOR_PRESET_*`. **Naming is not settled** (`docs/plan_harvest_floor.md` §10 Q2);
 # they live here precisely so a rename is one edit rather than a sweep. Each names the INTENT, not the
 # number: the number is on the slider beside them and in `FLOOR_VALUE_FORMAT`.
+# **ONE WORD EACH, BECAUSE THREE PRESETS MUST FIT ONE ROW IN A 354px DOCK COLUMN.** The long forms
+# below wrapped the picker onto two rows there — `💀 Take everything` and `♻ Best harvest` on the
+# first, `↑ Learn from it` orphaned on a second — which is what forced the zone's own 2-column
+# constant. Nothing is lost: the long form leads every preset's TOOLTIP (`FLOOR_PRESET_LONG_LABELS`
+# below), each face keeps its zone glyph, and the sentence that actually explains the choice is the
+# floor hint under the picker, which never shortened.
 const FLOOR_PRESET_LABELS := {
+	"strip": "Everything",
+	"peak": "Best",
+	"learn": "Learning",
+}
+
+# …and the phrase each is short FOR, which leads the preset's tooltip beside the number it stands
+# for. It is a separate table rather than a suffix so the two can be worded independently: a face is
+# a name and a tooltip is a sentence's opening, and folding them cost the long form the moment the
+# face shortened.
+const FLOOR_PRESET_LONG_LABELS := {
 	"strip": "Take everything",
 	"peak": "Best harvest",
 	"learn": "Learn from it",
@@ -558,10 +574,9 @@ const STANDING_SUMMARY_FORMAT := "%s %d %s"
 
 const STANDING_SUMMARY_SEPARATOR := " ·"
 
-## The parties inspector strip's two inline links (mirrors the work inspector's Jump/Unassign).
+## The parties inspector strip's two inline links (mirrors the work inspector's Jump/Unassign). The
+## second one's face is the VERB PAIR below, since which verb the sim will honour is not fixed.
 const PARTY_INSPECT_JUMP := "Jump to party"
-
-const PARTY_INSPECT_RECALL := "Recall"
 
 ## PARTIES zone.
 const PARTIES_HEADER_FORMAT := "%d out · %d workers"
@@ -572,7 +587,22 @@ const PARTY_MENU_TOOLTIP := "Bulk actions for parties in the field."
 
 const PARTY_RECALL_GLYPH := "✕"
 
+## **THE VERB FOLLOWS THE SIM, and these two words are the whole of the fork.** A party still standing
+## in its home band's camp with no map report owed folds back the instant the command lands
+## (`core_sim` `cancel_party_standing_in_camp`), so the order is a CANCEL of something that never took
+## effect; one in the field walks home over turns, which is a RECALL. Every single-party surface — the
+## row ✕'s tooltip, the parties inspector link, the Occupants drawer's button — reads the ONE predicate
+## `HudBandLaborState.party_cancels_in_camp` and picks a side here, so no two of them can promise
+## different things about the same press.
+const PARTY_RECALL_VERB := "Recall"
+
+const PARTY_CANCEL_VERB := "Cancel"
+
 const PARTY_RECALL_TOOLTIP := "Recall — the party walks home"
+
+## The cancel branch's tooltip names WHY it is instant, since "Cancel" alone reads as if it might be
+## the same round trip under a friendlier word.
+const PARTY_CANCEL_TOOLTIP := "Cancel — the party never left camp, so it folds back at once"
 
 const PARTY_RECALL_WIDTH := 24.0
 
@@ -597,10 +627,18 @@ const PARTY_RECALL_ONE_CONFIRM_OK := "Recall"
 ## expedition party?" (the full mission label) reads doubled; a hunt party fills its herd name.
 const PARTY_RECALL_SCOUT_LABEL := "scouting"
 
-## The parties inspector strip is DENSER than the work inspector (up to 6 detail lines vs ~1), and the
-## T/B parties zone is height-capped at ~300px, so its detail lines are tightened a touch below
-## HudWorkVocab.ZONE_BLOCK_SEPARATION to keep the strip + a party row + the bottom-pinned footer inside the box.
-const PARTIES_INSPECTOR_LINE_SEPARATION := 4
+## The parties inspector strip is DENSER than the work inspector (up to SEVEN detail lines vs ~1), and
+## the T/B parties zone is height-capped at ~300px and CLIPS, so its detail lines are tightened well
+## below HudWorkVocab.ZONE_BLOCK_SEPARATION to keep the strip + a party row + the bottom-pinned footer
+## inside the box.
+##
+## **IT WAS 4, AND THE WORST CASE IS WHAT MOVED IT.** A hunt party carrying every optional line at once
+## — the one `band_panel_worst_case_party` stages — needs 9 gaps in that column, so each pixel here
+## costs the zone nine: at 4 the strip alone measured 218px of a 300px box that also owes a 20px head,
+## a 42px party row, a 42px footer and four 6px block gaps. Two pixels is the whole of what padding
+## could pay (going lower closes the gap between two 14px lines to nothing); the rest came from merging
+## the two ORDERS lines into one — see `DetailFormat.expedition_orders_line`.
+const PARTIES_INSPECTOR_LINE_SEPARATION := 2
 
 const SEND_PARTY_NO_IDLE_REASON := "No idle workers to spare. Free some from Work."
 
@@ -614,9 +652,90 @@ const COMPOSE_MISSION_LABEL_SCOUT := "⚑ Scout"
 
 const COMPOSE_MISSION_LABEL_HUNT := "🏹 Hunt"
 
+## **THE THIRD VERB** (`docs/plan_denial_raid.md` §3). Denial is a MISSION rather than a preset on the
+## hunt form, because the thing it changes is a BOUND and not a number: the party never stops
+## engaging, so it carries no floor, no fill target and no crew preset — a herd and a party size, and
+## nothing else. `floor` must never appear anywhere in its UI.
+const COMPOSE_MISSION_DENY := "deny"
+
+## 💀 is the STRIP zone's own glyph (`FoodIcons.FLOOR_ZONE_ICONS`), and it is right here for the same
+## reason it is right there: leaving nothing standing. It cannot collide with a floor glyph on this
+## control — a denial form has no floor picker at all — and the three footer buttons name their
+## missions in words beside their marks.
+const COMPOSE_MISSION_LABEL_DENY := "💀 Deny"
+
+## **HOW MUCH THE COMPOSE SHEET MAY OVERSHOOT THE PARTIES ZONE BEFORE IT LEAVES IT** (see
+## `BandComposeFloat` and `BandPanelController._party_compose_floats`). The requirement is summed from
+## per-control minimum sizes while the box is a laid-out rect, so the two can differ by a subpixel on a
+## sheet that genuinely fits exactly; one pixel of slack keeps a rounding difference from floating a
+## sheet the zone holds. It is deliberately not a design margin — a sheet two pixels too tall for a
+## `clip_contents` host is two pixels sliced, and it floats.
+const COMPOSE_FLOAT_SLACK := 1.0
+
+## **THE NARROWEST PARTIES COLUMN A COMPOSE MEASUREMENT MAY BE BELIEVED AT**
+## (`BandPanelController._party_compose_measurable`). A column with no width at all has not been
+## anchored into a zone host yet, and nothing measured under it means anything. It is a
+## NOT-YET-LAID-OUT test rather than a design minimum: the shipped zone columns are ~354px (side dock
+## flank) and wider, so no real column is anywhere near it.
+##
+## **IT IS ONLY HALF THE TEST, AND THE HALF IT IS NOT IS WHY THIS DEFECT WAS REPORTED TWICE.** A column
+## width says NOTHING about whether the column's contents have been laid out, because the two are
+## established by different mechanisms: the column is anchored `PRESET_FULL_RECT` into its zone host,
+## so Godot hands it the host's width SYNCHRONOUSLY the instant it is reparented, while everything
+## inside it is sized by the container sort, which is DEFERRED through the message queue. Measured on
+## the empty hunt form in the instant between the two: `col.size.x == 356`, a wholly plausible reading,
+## beside `col.get_combined_minimum_size().y == 1278` where the laid-out answer is **207** — every
+## autowrap `Label` under it shaping one word per line. 1278px floats that sheet out of every dock this
+## client has, and the high-water mark then holds it there for the rest of the composing act: the
+## reported picture exactly, `Quarry: Choose…` and a disabled Send floating out of a dock with 800px to
+## spare. The other half of the test is the SHEET having been FITTED to this column — see
+## `_party_compose_measurable`. **A bare width floor on the sheet does not do it either**: an unsorted
+## Control still clamps its own size up to its own combined minimum, so the unlaid-out sheet measures a
+## perfectly non-zero 220×903. Only the RELATION between the two widths distinguishes the states.
+const COMPOSE_MEASURE_MIN_COLUMN_WIDTH := 1.0
+
+## **HOW MANY FRAMES THE DEFERRED MEASUREMENT WILL WAIT FOR A LAYOUT PASS** before giving up on this
+## composing act's render (`BandPanelController._measure_party_compose`). One `process_frame` is the
+## normal cost and covers every path measured here; the retry exists because ONE bad reading latches
+## for the rest of the composition, so "wait another frame" has to be cheaper than "record it anyway",
+## and because the alternative to waiting — returning — leaves the mark unmeasured until the next
+## render arms a new one. Bounded rather than open so a sheet whose zone never lays out (a collapsed
+## panel, a hidden dock) cannot spin a coroutine for the session; giving up leaves the sheet INLINE,
+## which is the safe direction the whole fork is biased toward.
+const COMPOSE_MEASURE_MAX_FRAMES := 4
+
 const COMPOSE_TITLE_SCOUT := "Setup a scouting party…"
 
 const COMPOSE_TITLE_HUNT := "Setup a hunting party…"
+
+const COMPOSE_TITLE_DENY := "Setup a denial raid…"
+
+## The footer button's hover text. It names the deal the whole mission is — kills without stopping,
+## brings almost nothing home — because that is the ONE thing a player must know before pressing it.
+const SEND_DENIAL_RAID_HINT := "Detach a party to break a herd. It never stops engaging, so it kills far more than it can carry and brings almost nothing home."
+
+## The denial form's own quarry hint. The hunt form's says the rest of the form follows from the
+## quarry; on this form the quarry and the party size ARE the whole form, so it says what the number
+## under it will answer instead.
+const COMPOSE_DENY_QUARRY_HINT := "Choose a herd to break — the collapse estimate follows from it."
+
+## **THE WIDTH EVERY FIELD ROW'S KEY LABEL RESERVES, so the three controls line up as one stack.**
+## `Band:`, `Kit` and `Quarry` are three different words in front of three different widget types
+## (two `OptionButton`s and a `Button`), and each row is built by a different module — so without one
+## declared width the value controls start at three different x positions and the sheet reads as
+## three unrelated widgets rather than one form.
+##
+## **The two obvious alternatives were both measured and both lose.** A key at its natural width puts
+## each control against its own word (`Kit` is 22px, `Quarry` 55), which is the ragged edge this
+## exists to remove. A key at `SIZE_EXPAND_FILL` splits the row 50/50 — the shape the Kit and Quarry
+## rows shipped with — and on a ~245px sheet that leaves the control ~119px, which `🧺 Gathering kit`
+## plus a themed arrow does not fit: the fix for a clipped affordance would have clipped the name
+## instead. A declared floor gives the key exactly what the longest key needs and hands the whole
+## remainder to the control, which is the axis that has something to lose.
+##
+## 64 is the widest key on any of the four sheets — `Quarry`, measured at 55px against this client's
+## unthemed default font — plus a gutter, so no key can push its own row's control out of line.
+const COMPOSE_FIELD_KEY_WIDTH := 64.0
 
 const COMPOSE_FIELD_PARTY := "Party"
 
@@ -641,12 +760,102 @@ const COMPOSE_QUARRY_LABEL_FORMAT := "%s %s"
 # than to be read on its own, the row already naming the herd in words beside it.
 const COMPOSE_QUARRY_ICON_MAX_WIDTH := 20
 
+## **A HEX CAN HOLD MORE THAN ONE HERD, AND THE MAP CLICK NAMES ONLY THE HEX.** `try_dispatch` is
+## handed a TILE, so a click on a tile carrying a rabbit warren and a wolf pack can resolve to just
+## one of them and re-clicking resolves to the same one — there was no way to reach the other. The
+## Quarry row therefore grows a chooser LISTING the tile's eligible quarries, and it appears ONLY
+## when there are two or more: one quarry is the common case and it renders exactly as before.
+## It is the `⋯` the zone heads already use, so the panel keeps ONE "there are choices here" glyph.
+## A chooser entry names the herd the same way the picked-quarry button does, so the row and the menu
+## cannot describe one herd differently: bundled ART where the species has any (as the item's own
+## icon), else the emoji through `COMPOSE_QUARRY_LABEL_FORMAT`. Unicode ships ONE deer, so two roster
+## species can share a glyph — which is exactly why the art branch exists in the menu too.
+const COMPOSE_QUARRY_CHOICES_TOOLTIP := "Another herd shares this hex — choose which one to raid."
+
 ## The refusal when the player picks a herd the band can already work from home. The hunt_reach split
 ## is a rule the map does not spell out, so the refusal is where it gets taught — it names the herd,
 ## the distance, the reach that binds and the local alternative.
 const QUARRY_WITHIN_REACH_FORMAT := "%s is %d tiles away — inside %s's hunt reach (%d). Hunt it from the herd itself instead of sending a party."
 
 const COMPOSE_OF_IDLE_FORMAT := "of %d idle"
+
+# ---- THE KIT (`docs/plan_denial_raid.md`, `equipment.json` `kits`) -------------------------------
+## **A KIT DESCRIBES THE CREW, SO ITS ROW SITS DIRECTLY UNDER THE CREW STEPPER AND ABOVE EVERY
+## FORECAST** — it moves the fight (the attack tier) and the haul (the carry tier), so every figure
+## below it is a function of it. One row, four sheets: the hunting-party form, the denial form, the
+## herd drawer's assign-hunters block and the land drawer's assign-foragers block.
+const COMPOSE_FIELD_KIT := "Kit"
+
+## The picker's closed face: the job's glyph and the kit's own display name. **A NATIVE `OptionButton`,
+## not a pill row and no longer a `MenuButton`** (`HudWidgets.build_option_picker`) — the roster grows
+## toward a dozen kits and a row of pills cannot hold that in a 354px dock column, and a control that
+## draws its own arrow is the only kind whose affordance a long kit name cannot push off the edge.
+##
+## **THE CARET IS NOT IN THIS STRING, AND PUTTING ONE BACK RE-CREATES THE DEFECT IT WAS TAKEN OUT
+## FOR.** The face used to end in a `⌄` text glyph, because a `MenuButton` draws no arrow of its own.
+## `Gathering kit` is long enough to reach the button's edge, so on the forage sheet the caret was
+## clipped away entirely — present in the string, never drawn — while on the hunt sheet it rendered as
+## a small low-baseline mark that read as a stray comma beside the `Band:` picker's themed arrow one
+## row above. An `OptionButton` draws the arrow as an ICON in reserved right-hand margin that
+## `clip_text` cannot eat, so a glyph here would now be a SECOND affordance saying the same thing —
+## and the one that clips.
+const KIT_PICKER_FACE_FORMAT := "%s %s"
+
+## The glyph is keyed by the JOB THE SHEET IS COMPOSING, never by the kit's id: ids come from
+## `equipment.json` and a client-side table keyed on them goes stale the moment a kit is added. The
+## glyph says what the crew is walking out to do, which is the same for every kit on one sheet.
+const KIT_JOB_GLYPHS := {
+	"hunt": "🏹",
+	"forage": "🧺",
+}
+
+## The fallback face glyph for a job with no glyph of its own — the roster's `jobs` is wire data, so a
+## job this table has never heard of must still render a legible face rather than an empty one.
+const KIT_JOB_GLYPH_FALLBACK := "🎒"
+
+const KIT_PICKER_TOOLTIP := "What this crew carries. A kit decides what they can hurt and how much they can haul — the line beneath it is this band's own tier, after wear."
+
+## **THE JOB'S DEFAULT IS MARKED, NOT SEPARATED.** The player needs to know which kit the verb takes
+## when they name none; that is a note on an ordinary entry, and a divider would imply the roster has
+## two classes of member. `none` has none of that treatment either — it is an ordinary kit that grants
+## nothing, and it sorts last only because the roster authors it last.
+const KIT_DEFAULT_ENTRY_SUFFIX := "  (default)"
+
+# The hint line under the picker — `attack 20.0 · carry 40.0 per hunter · spears 74 · sled 58`.
+const KIT_HINT_SEPARATOR := " · "
+const KIT_HINT_ATTACK_FORMAT := "attack %s"
+const KIT_HINT_HUNT_CARRY_FORMAT := "carry %s per hunter"
+const KIT_HINT_FORAGE_CARRY_FORMAT := "carry %s per gatherer"
+## A component's remaining condition on `equipment.json`'s 0-100 scale, and the word for a spent one.
+## **Performance is FLAT until expiry** (durability and performance are orthogonal axes), so this
+## number never scales anything above it — it says how much longer the tier lasts, not how good it is.
+const KIT_HINT_CONDITION_FORMAT := "%s %d"
+const KIT_HINT_DRY_FORMAT := "%s dry"
+const KIT_COMPONENT_SPEARS := "spears"
+const KIT_COMPONENT_SLED := "sled"
+const KIT_COMPONENT_BASKETS := "baskets"
+## Tier decimals. The tiers span 1.0 (bare hands) to 40.0 (a sled), authored as small round numbers,
+## so one decimal states them without claiming a precision the roster does not have.
+const KIT_TIER_DECIMALS := 1
+
+## **THE HONESTY LINE.** `huntTripEstimates` / `denialEstimates` are quoted for the hunt job's DEFAULT
+## kit ONLY — repricing them per kit is scoped out (they are ~95% of snapshot capture) — so a sheet
+## whose selected kit differs from the id the table names must refuse to present the table as the
+## answer, and say whose numbers it was going to show. `%s` the kit the table IS priced for, `%s` the
+## kit the player selected.
+const KIT_DENIAL_ESTIMATES_QUOTED_FORMAT := "The collapse forecast is priced for %s, not for %s — so no turn count and no take are quoted here."
+const KIT_TRIP_ESTIMATES_QUOTED_FORMAT := "The raid forecast is priced for %s, not for %s — so no turn count and no payload are quoted here."
+
+## **THE HONESTY LINE'S PARTY-AXIS TWIN.** Both estimate tables sample the party axis on a LADDER
+## (`expedition_config.estimate_party_sizes`), so a selected party usually falls between two rungs and
+## the sheet quotes the nearest one (`SourceForecast.nearest_estimate_party`). The take SCALES with
+## party size, so a row computed for 8 read against a party of 12 misstates it — the sheet must NAME
+## the party the figures belong to rather than present a nearby row as exact. Unlike the kit line
+## above, the figures still RENDER: they are a real answer to a nearby question, not another kit's
+## numbers. `%d` the party quoted, `%d` the party selected. `""` where they agree, which the ladder's
+## dense low end and the denial table's requirement run make the common case.
+const PARTY_DENIAL_ESTIMATES_QUOTED_FORMAT := "The collapse forecast is priced for a party of %d — the nearest size the scouts costed — not for your %d."
+const PARTY_TRIP_ESTIMATES_QUOTED_FORMAT := "The raid forecast is priced for a party of %d — the nearest size the scouts costed — not for your %d."
 
 const COMPOSE_CANCEL_TOOLTIP := "Cancel"
 

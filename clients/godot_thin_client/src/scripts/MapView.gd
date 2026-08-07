@@ -372,12 +372,18 @@ const EXPEDITION_PHASE_AWAITING := "awaiting"
 const EXPEDITION_AWAITING_RING_FACTOR := 1.35    # pulsing ring base radius, of marker radius
 const EXPEDITION_AWAITING_PULSE_AMPLITUDE := 0.22
 const EXPEDITION_AWAITING_PULSE_SPEED := 3.2
+
 const EXPEDITION_AWAITING_RING_WIDTH := 2.5
 # --- Hunting-expedition marker (PR 2, docs/plan_exploration_and_sites.md §2b) ---
 # A hunt party (`expedition_mission == "hunt"`) reads as a bow disc — a clearly different motif from
 # the scout's flag — so scout vs hunt parties are distinguishable at a glance.
 const EXPEDITION_HUNT_MISSION := "hunt"
 const EXPEDITION_HUNT_GLYPH := "🏹"              # bow motif = a hunting party following game
+# DENIAL raid (docs/plan_denial_raid.md) — a third mission, and a third marker: it engages like a hunt
+# party but brings nothing home, so wearing the bow would read as a hunt on the map. 💀 is the mark it
+# wears everywhere else (the footer button, the parties row), so the three surfaces agree.
+const EXPEDITION_DENY_MISSION := "deny"
+const EXPEDITION_DENY_GLYPH := "💀"
 # Hunt phase read: HUNTING (gathering at the herd) shows a small red "working" cue ring; DELIVERING
 # and RETURNING (hauling a haul home) show a green food pip. So gathering vs hauling read at a glance.
 const EXPEDITION_PHASE_HUNTING := "hunting"
@@ -2171,7 +2177,6 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 		# Use current position if available, otherwise fall back to home tile lookup
 		var current_x: int = int(entry.get("current_x", -1))
 		var current_y: int = int(entry.get("current_y", -1))
-		var is_traveling: bool = bool(entry.get("is_traveling", false))
 
 		if current_x < 0 or current_y < 0:
 			# Fall back to home tile lookup
@@ -2189,152 +2194,83 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			counter += 1
 			label = "Band %d" % counter
 		label_cache[label] = true
-		var marker := {
-			"entity": int(entry.get("entity", -1)),
-			# THE HANDLE EVERY BAND-ADDRESSED COMMAND NAMES (see `HudConst.NO_BAND_ID`). It has to ride the
-			# marker because the emit path reads the SELECTED UNIT — which is this marker, not the raw
-			# cohort — so a marker that drops it emits commands naming band 0 and the server rejects every
-			# one. Distinct from `entity`, which never leaves the client.
-			"band_id": int(entry.get("band_id", HudConst.NO_BAND_ID)),
-			"faction": entry.get("faction", PLAYER_FACTION_ID),
-			"pos": [current_x, current_y],
-			"size": int(entry.get("size", 0)),
-			"id": label,
-			"is_traveling": is_traveling,
-			# Travel destination tile (valid only while `is_traveling`; `0,0` otherwise). Drives the
-			# wrap-aware destination reticle + line the selected traveling unit draws (band OR
-			# expedition) in BandOverlayRenderer._draw_travel_destination.
-			"travel_target_x": int(entry.get("travel_target_x", 0)),
-			"travel_target_y": int(entry.get("travel_target_y", 0)),
-			"turns_of_food": float(entry.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS)),
-			# Band food ledger (food/turn) — total income across worked sources vs total consumption.
-			# Carried onto the marker so the allocation panel's ledger footer reads them off the
-			# selected-unit copy (the per-source actual/sustainable yields ride inside labor_assignments).
-			"food_income": float(entry.get("food_income", 0.0)),
-			"food_consumption": float(entry.get("food_consumption", 0.0)),
-			# The ledger's THIRD term: the food this band paid this turn to feed the pens it keeps
-			# (a corralled herd cannot graze). It comes straight off the larder and is in neither of
-			# the two rows above, so the Food line's net rate must subtract it — see DetailFormat.band_net_food.
-			"pen_feed_upkeep": float(entry.get("pen_feed_upkeep", 0.0)),
-			"morale": float(entry.get("morale", 1.0)),
-			"morale_delta": float(entry.get("morale_delta", 0.0)),
-			"morale_cause": int(entry.get("morale_cause", 0)),
-			# Civilization Wellbeing (docs/plan_civ_wellbeing.md): productivity, discontent,
-			# migration counters, and the four signed Layer-1 morale contributions that feed
-			# the band drawer's itemized breakdown + "people leaving" alert reason.
-			"output_multiplier": float(entry.get("output_multiplier", 1.0)),
-			"discontent_fraction": float(entry.get("discontent_fraction", 0.0)),
-			"last_emigrated": int(entry.get("last_emigrated", 0)),
-			"last_immigrated": int(entry.get("last_immigrated", 0)),
-			"morale_settling": float(entry.get("morale_settling", 0.0)),
-			"morale_terrain": float(entry.get("morale_terrain", 0.0)),
-			"morale_climate": float(entry.get("morale_climate", 0.0)),
-			"morale_unrest": float(entry.get("morale_unrest", 0.0)),
-			# The three named fertility factors (docs/plan_population_growth_model.md) behind the
-			# band drawer's Growth row + its itemized breakdown. They combine by PRODUCT, neutral at
-			# 1.0 — but the DEFAULT here is 0.0, because all-zero is the sim's not-projected
-			# sentinel and BandFoodStatus.fertility_is_projected keys off a zero reserve. Defaulting
-			# them to the neutral 1.0 would fabricate a "normal growth" reading for a band that has
-			# published none.
-			"fertility_hunger": float(entry.get("fertility_hunger", 0.0)),
-			"fertility_reserve": float(entry.get("fertility_reserve", 0.0)),
-			"fertility_trend": float(entry.get("fertility_trend", 0.0)),
-			# Data-driven settlement stage (icon glyph + label). The icon becomes the band's
-			# map token; empty icon → neutral non-circular fallback marker (square; ownership is
-			# on the banner, no disc). Label surfaces in tooltip/roster.
-			"settlement_stage_id": String(entry.get("settlement_stage_id", "")),
-			"settlement_stage_label": String(entry.get("settlement_stage_label", "")),
-			"settlement_stage_icon": String(entry.get("settlement_stage_icon", "")),
-			"activity": String(entry.get("activity", "")),
-			"supply_network_id": int(entry.get("supply_network_id", 0)),
-			# Early-Game Labor (slice 3b): what the band is working + its reach, for the
-			# selected-band map highlights (work-range ring / worked forage tiles / hunted
-			# herds) AND the allocation panel's Population/Workers/Idle header (the drawer
-			# reads _selected_unit, which is a copy of this marker — so these must be carried
-			# here or the panel reads 0). `scout_reveal_radius` (now the band's sight-range
-			# bonus, not a reveal-disc radius) is still carried but no longer drawn.
-			"work_range": int(entry.get("work_range", 0)),
-			# Hunt reach (work_range + hunt leash): the herd-hunt affordance offers a LOCAL hunt within
-			# this hex distance, a hunting EXPEDITION beyond it (Hud._build_herd_assign_controls).
-			"hunt_reach": int(entry.get("hunt_reach", 0)),
-			"scout_reveal_radius": int(entry.get("scout_reveal_radius", 0)),
-			"working_age": int(entry.get("working_age", 0)),
-			"idle_workers": int(entry.get("idle_workers", 0)),
-			# Age structure of THIS band (children / working / elders). Distinct from `working_age`
-			# above, which counts assignable workers — hence the `age_` prefix on all three.
-			# FRACTIONAL, like every other Scalar on this block: the decoder runs them through
-			# `fixed64_to_f64`, and truncating here zeroes every remainder, so `HudFormat.apportion_people`
-			# has nothing left to redistribute and the PEOPLE header undercounts the band.
-			"age_children": float(entry.get("age_children", 0.0)),
-			"age_working": float(entry.get("age_working", 0.0)),
-			"age_elders": float(entry.get("age_elders", 0.0)),
-			# Scouting expedition (docs/plan_exploration_and_sites.md §2): a detached party is a
-			# cohort tagged Expedition flowing through this same populations[] array. These three
-			# discriminator fields drive the distinct expedition marker (_draw_band_token →
-			# _draw_expedition_body), its awaiting-orders idle indicator, and the HUD expedition
-			# panel. Default false/"" so
-			# resident-band markers are unaffected.
-			"is_expedition": bool(entry.get("is_expedition", false)),
-			"expedition_mission": String(entry.get("expedition_mission", "")),
-			"expedition_phase": String(entry.get("expedition_phase", "")),
-			# The band that outfitted this party (entity bits; 0 for a normal band) — the Band/City
-			# panel groups a band's active expeditions by home_band_entity == band.entity.
-			"home_band_entity": int(entry.get("home_band_entity", 0)),
-			# Hunt expedition (PR 2): the herd (fauna_id) a hunt party follows; "" for scouts.
-			"expedition_target_herd": String(entry.get("expedition_target_herd", "")),
-			# WHERE THIS RAID STOPS, as a fraction of the herd's capacity — the party's orders. `1.0`
-			# for a scout or a resident band (they harvest no herd, and an absent floor must never
-			# read as "take everything"); the retired `expeditionHuntPolicy` string is a
-			# `(deprecated)` wire slot the sim no longer writes.
-			"expedition_floor": float(entry.get("expedition_floor", 1.0)),
-			"expedition_carry_cap": float(entry.get("expedition_carry_cap", 0.0)),
-			# Next-delivery forecast (the in-flight raid twin): the detail panel's "Next delivery" line
-			# reads these off `_selected_unit` (the marker), so they MUST ride the marker or the panel
-			# renders nothing while the Parties-zone row (raw dict) shows the token — guarded by
-			# marker_field_guard (fractional round-trip for the projected float).
-			"expedition_eta_turns": int(entry.get("expedition_eta_turns", 0)),
-			"expedition_projected_delivery": float(entry.get("expedition_projected_delivery", 0.0)),
-			"expedition_recurring": bool(entry.get("expedition_recurring", false)),
-			# Hard party-size cap (from the expedition config); the resident-band outfit stepper
-			# clamps its max to min(idle_workers, this).
-			"max_expedition_party_size": int(entry.get("max_expedition_party_size", 0)),
-				# Global expedition/labor config levers echoed on every cohort. They ride the marker
-				# because the targeting flow carries a copy of the band dict, and the pre-launch
-				# forecast reads its threshold + the local-hunt preview its take rate off it. Neither
-				# computes an expedition's trip length: that is a PURE LOOKUP into the target herd's
-				# sim-simulated `hunt_trip_estimates` (the client never divides a carry cap by a
-				# rate). `expedition_viability_warn_turns` = the viable/not-viable threshold on
-				# turns_to_fill, `hunt_per_worker_provisions` = the RESIDENT-BAND local-hunt take
-				# rate, which IS arithmetic. Band = flow arithmetic; expedition = lookup.
-				"hunt_per_worker_provisions": float(entry.get("hunt_per_worker_provisions", 0.0)),
-				"expedition_viability_warn_turns": int(entry.get("expedition_viability_warn_turns", 0)),
-				# Per-worker carry: the pre-launch forecast shows the HAUL a filled pack delivers as
-				# party × this lever (the same blessed party×lever arithmetic as the band ceiling, NOT
-				# the turns-to-fill lookup). 0 when absent → no haul rendered.
-				"expedition_per_worker_carry": float(entry.get("expedition_per_worker_carry", 0.0)),
-				# Band move speed (tiles/turn). The hunt-expedition forecast's round-trip TRAVEL turns
-				# are ceil(2 × hex_distance(band, herd) / this), added to the herd's hunting turns for
-				# the total trip length (and the per-turn averaging denominator). 0/absent → travel 0.
-				"band_move_tiles_per_turn": float(entry.get("band_move_tiles_per_turn", 0.0)),
-			"labor_assignments": (entry.get("labor_assignments", []) as Array).duplicate(true) if entry.get("labor_assignments", []) is Array else [],
-		}
+
+		# **THE MARKER IS A STRUCTURAL COPY OF THE COHORT, NOT AN ALLOWLIST OF IT.**
+		#
+		# A band reaches the Band panel by TWO paths carrying two dicts: the per-snapshot refresh hands
+		# over the decoder's cohort dict, a click on this marker hands over THIS copy. This used to be a
+		# hand-listed literal naming ~45 of the cohort's keys, and it leaked THREE times — `hunt_mode`,
+		# then `working_age`/`idle_workers`, then the Minimal TOE's six, the last of which made a band's
+		# `Kit` row vanish when you clicked its map icon and took the ⚠ zero-effective-attack warning
+		# silently with it. Every leak had the same shape: the decoder grew a field, the panel read it, and
+		# nobody remembered this list. Enumerating what to KEEP cannot be made safe by care; enumerating
+		# what to ADD can, because the addition is the thing being written.
+		#
+		# **`duplicate()` IS SHALLOW, AND THAT IS THE CORRECT DEPTH.** `duplicate(true)` would re-allocate
+		# `labor_assignments` / `stores` / `harvest` / `scout` for every band every frame, which is the
+		# per-turn cost `turn-profiling.md` spent a pass removing ("snapshot sub-trees are HELD BY
+		# REFERENCE"). The four sub-trees that DO need isolating are re-stamped with their own deep copies
+		# below, exactly as they always were, so nothing about nested aliasing moves here and
+		# `snapshot_alias_guard`'s "MapView must not write into the decoder's cached world" is untouched:
+		# every stamp below lands in this copy's own top level.
+		#
+		# **IT PRESERVES ABSENCE, which is the property two readouts depend on.** `duplicate()` reproduces
+		# the cohort's key set exactly — present stays present and ABSENT STAYS ABSENT — so
+		# `DetailFormat.band_states_kit` (a bare `has()`) and `SourceForecast.hunt_gate_model` (which
+		# early-returns blank without `hunter_attack`, so a defaulted `attack 0` cannot refuse every hunt in
+		# the game) keep their tests and now get the SAME answer on both paths. The hand list was what
+		# destroyed absence semantics, by dropping keys the cohort actually had.
+		#
+		# **NO COERCIONS RIDE THE COPY.** The literal wrapped every field in `int()` / `float()` / `String()`,
+		# which is where the `age_children` narrowing bug lived; a duplicate carries the decoder's own types,
+		# so nothing can narrow in transit. The coercions that survive are on the STAMPS below, and they
+		# defend against a hand-built FIXTURE rather than against the decoder (see each one).
+		var marker := entry.duplicate()
+
+		# --- THE MAP-ONLY STAMPS: everything the marker has that the cohort does not ------------------
+		# Keep `marker_field_guard.MARKER_STAMPED_KEYS` in step with these — it asserts the partition is
+		# total, so a stamp added here and not named there fails the guard rather than the eye.
+		#
+		# The RESOLVED tile. The cohort carries `current_x`/`current_y`, which may be absent or negative
+		# for a band that has never moved; `pos` is those resolved through the home-tile fallback above,
+		# and it is what every map draw and the drawer's "Position:" row read.
+		marker["pos"] = [current_x, current_y]
+		# The DE-DUPLICATED display name. The cohort's own `label` can be empty or repeated across bands;
+		# `id` is this run's unique, stable-per-frame name ("Band 3"), which the Occupants drawer titles
+		# itself with. `label` survives the copy untouched beside it.
+		marker["id"] = label
+
+		# --- SUB-TREE ISOLATION, unchanged from the literal this replaced ----------------------------
+		# The shallow copy shares these two Array/Dictionary instances with the decoder's cached frame,
+		# so they are re-stamped with their own deep copies exactly as they always were. This is the ONE
+		# thing `duplicate(true)` on the whole dict would have bought, and buying it here instead keeps
+		# the cost to the sub-trees that need it rather than every sub-tree on the cohort.
+		var assignments_variant: Variant = entry.get("labor_assignments", [])
+		if assignments_variant is Array:
+			marker["labor_assignments"] = (assignments_variant as Array).duplicate(true)
 		var stores_variant: Variant = entry.get("stores", {})
 		if stores_variant is Dictionary:
 			marker["stores"] = (stores_variant as Dictionary).duplicate(true)
 
-		# Add destination info for units with active assignments
-		var harvest_variant: Variant = entry.get("harvest", {})
-		if harvest_variant is Dictionary:
-			var harvest: Dictionary = harvest_variant as Dictionary
+		# The travel DESTINATION, derived from whichever task sub-tree the band actually has — harvest
+		# first, scout as the fallback. **Gated on `has`, not on `get(…, {}) is Dictionary`**: the old
+		# spelling took its own empty default down the branch, so every band on the map carried a
+		# fabricated `harvest: {}` plus a `dest_x: -1` / `travel_task_kind: "harvest"` for a journey it
+		# was not making. Both readers already treat a negative destination as "none"
+		# (`BandMarkerRenderer._draw_travel_destination`), so absence reads identically and the marker
+		# stops claiming a task sub-tree its cohort never had.
+		#
+		# The `duplicate(true)` on each is the sub-tree isolation above, for the same reason.
+		if entry.get("harvest", null) is Dictionary:
+			var harvest: Dictionary = entry["harvest"]
 			marker["harvest"] = harvest.duplicate(true)
 			marker["dest_x"] = int(harvest.get("target_x", -1))
 			marker["dest_y"] = int(harvest.get("target_y", -1))
 			marker["travel_task_kind"] = String(harvest.get("kind", "harvest"))
-		var scout_variant: Variant = entry.get("scout", {})
-		if scout_variant is Dictionary:
-			var scout: Dictionary = scout_variant as Dictionary
+		if entry.get("scout", null) is Dictionary:
+			var scout: Dictionary = entry["scout"]
 			marker["scout"] = scout.duplicate(true)
-			if not marker.has("dest_x") or int(marker.get("dest_x", -1)) < 0:
+			if int(marker.get("dest_x", -1)) < 0:
 				marker["dest_x"] = int(scout.get("target_x", -1))
 				marker["dest_y"] = int(scout.get("target_y", -1))
 				marker["travel_task_kind"] = "scout"

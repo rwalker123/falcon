@@ -1012,7 +1012,7 @@ mod tests {
 
             let mut allocation = LaborAllocation::default();
             if scouts > 0 {
-                allocation.set_assignment(LaborTarget::Scout, scouts, scouts);
+                allocation.set_assignment(LaborTarget::Scout, scouts, scouts, None);
             }
 
             world.spawn((
@@ -1173,6 +1173,7 @@ mod tests {
             },
             2,
             4,
+            None,
         );
         let worked = run_worked_visibility(allocation, Vec::new());
         assert_eq!(
@@ -1217,6 +1218,7 @@ mod tests {
             },
             2,
             4,
+            None,
         );
         let worked = run_worked_visibility(allocation, vec![herd]);
         assert_eq!(
@@ -1240,6 +1242,7 @@ mod tests {
             },
             2,
             4,
+            None,
         );
         let ledger = run_worked_visibility(allocation, Vec::new());
         // The band center still reveals its own tile — the pass ran to completion.

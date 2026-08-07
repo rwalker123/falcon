@@ -7,6 +7,7 @@ extends RefCounted
 ## chapter moved is a set of frames changed. See `.claude/rules/client/test-harnesses.md`.
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
+const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
@@ -26,12 +27,16 @@ const LOCAL_HUNT_HUNTERS := 6
 ## for the player, so this — not 6 — is what a guard on those frames can assert.
 const LOCAL_HUNT_CAPPED_CREW := 3
 
-## The crews the two BOUND frames are composed at, and the numbers their steppers must SHOW: one
-## bound by the band's idle labor, one by the maximum party size. Named because each is asserted
-## against the rendered value, so the dial and the expectation are one number rather than two.
+## The crew the LABOR-BOUND frame is composed at, and the number its stepper must SHOW. Named because
+## it is asserted against the rendered value, so the dial and the expectation are one number rather
+## than two.
+##
+## **ITS PARTY-SIZE TWIN IS GONE, and that is the point of the pair having become a single.** The other
+## frame staged `idle 6 >= max party 2` so `PARTY_SIZE_BOUND_NOTE_FORMAT` would render — but
+## `max_expedition_party_size` is the estimate tables' SAMPLING AXIS and never was a rules cap, so
+## `expedition_party_cap` no longer reads it, that note has no reachable branch left, and a frame
+## staging a cap the client does not apply would render the max-useful note under a party-size name.
 const LABOR_BOUND_CREW := 3
-
-const PARTY_SIZE_BOUND_CREW := 2
 
 ## The crew the TWO-PRODUCT frames (issue #337) are composed with — the wolf's pelts-only pair and the
 ## oracle deer's food+trade control. Two hunters is the oracle's own no-waste point (food_per_animal
@@ -98,17 +103,14 @@ const RAID_TRAVEL_HUNT_TURNS := 8
 # collapsed fixtures where the raid also lands 0 animals.
 const NEVER_FILLS_TRIP_TURNS := 0
 
+## The quarry `_horizon_raid_herd` builds — a slow breeder a big party can neither fill nor exhaust. Named
+## because the unbounded-raid copy assertions quote it by EQUALITY and a hand-typed second spelling is
+## how a rename turns a real claim into a comparison of two wrong strings.
+const HORIZON_QUARRY_NAME := "Steppe Bison"
+
 ## `floor_chart_model`'s `lesson_known` for a probe reading the VERDICT rather than the aside: the
 ## faction has NOT learned this source's lesson, so the teaching line is the one it always carried.
 const LESSON_NOT_YET_LEARNED := false
-
-## The verdict's SENTENCE — the row's Labels joined (the severity dot is a Label of the row too, so it
-## leads). Found by the same meta as the severity above, because the row's two halves are one claim and
-## a needle search across the sheet would match whichever line happened to carry the same number. "" when
-## no verdict rendered, which fails a `contains` assertion rather than satisfying it.
-func _verdict_text(root: Node) -> String:
-	var node := Q.find_meta_node(root, HudWidgets.VERDICT_META)
-	return " ".join(Readout.face_lines(node)) if node != null else ""
 
 ## The TRIP-READOUT claims that live on the `_hunt_assign_forecast_states` frames, dispatched by state
 ## name so each fixture is asserted on the ONE thing it was built to show. They ride here rather than
@@ -138,14 +140,50 @@ func _assert_trip_readout(state_name: String) -> void:
 			# button and the one-line form already carry, so the box cannot disagree with either.
 			h._assert_hud("a raid past the band's warn line reads SLOW in the trip verdict",
 				Readout.verdict_severity(sheet) == SourceForecast.VERDICT_SLOW
-					and _verdict_text(sheet).contains(str(DEER_SUSTAIN_TRIP_TURNS)))
+					and Readout.verdict_text(sheet).contains(str(DEER_SUSTAIN_TRIP_TURNS)))
 		"herd_hunt_forecast_eradicate":
-			# `turns_to_fill == 0` — the raid ran the whole forecast horizon still delivering, so there
-			# is no total to quote and the verdict says so instead of printing a bare 0.
-			h._assert_hud("an unbounded raid states no total, and still reads SLOW",
+			# **A STRIP-BARE RAID COMPLETES, AND THE SHEET MUST SAY WHEN.** This assertion used to pin
+			# the OPPOSITE — `an unbounded raid states no total, and still reads SLOW` — against a
+			# fixture whose floor-`0` row carried the wire's no-turn-count sentinel. That pairing was a
+			# sim defect, so the assertion was pinning a bug: a floor-`0` raid ends by emptying the
+			# range and comes home on a real turn. The claim it pinned lives on
+			# `herd_hunt_forecast_horizon`, where the projection genuinely does run out.
+			var strip_verdict := Readout.verdict_text(sheet)
+			h._assert_hud("a strip-bare raid quotes a REAL total, never the unbounded sentence",
+				strip_verdict.contains(str(HerdFx.STRIP_BARE_TRIP_TURNS))
+					and not strip_verdict.contains(SourceForecast.EXPEDITION_TRIP_LONG_VERDICT))
+			# The stop is what makes the total legible: the party comes home because the range is empty,
+			# not because its pack filled. Asserted BESIDE the total — a verdict quoting a turn count
+			# under the wrong stop is the same defect one clause along.
+			h._assert_hud("…and names the stop that ended it — the herd running out, not the clock",
+				strip_verdict.contains(SourceForecast.TRIP_BOUND_CLAUSES[
+					SourceForecast.TRIP_BOUND_HERD_LOST]))
+			# A raid the sim bounds inside the band's warn line is not a warning, and the Send says so:
+			# `Send Anyway (long raid)` was the third spelling of "never completes" on this frame.
+			var strip_send := Q.find_meta_node(sheet, HudWidgets.SEND_HUNT_CONFIRM_META) as Button
+			h._assert_hud("…and the Send is the ordinary one, not the long-raid warning",
+				strip_send != null and not strip_send.disabled
+					and strip_send.text == SourceForecast.SEND_HUNTING_EXPEDITION_BUTTON
+					and Readout.verdict_severity(sheet) == SourceForecast.VERDICT_OK)
+		"herd_hunt_forecast_horizon":
+			# `turns_to_fill == RAID_TURNS_UNBOUNDED` — the raid ran the whole forecast horizon still
+			# delivering, so there is no total to quote and the verdict says so instead of printing a
+			# bare 0. **The pairing half of the strip-bare claims above**: without a frame that still
+			# reaches this branch, "never says `many turns`" would pass on a client that could no longer
+			# say it at all.
+			# **THIS BAND CARRIES NO MOVE RATE, so its trip is all hunting and the floor IS the
+			# horizon** — which is exactly why it cannot tell `horizon` from `horizon + travel`.
+			# `herd_hunt_horizon_travel` is the frame that can; this one pins that the branch is still
+			# reachable and that it no longer hedges.
+			h._assert_hud("an unbounded raid bounds itself with the horizon, and still reads SLOW",
 				Readout.verdict_severity(sheet) == SourceForecast.VERDICT_SLOW
-					and _verdict_text(sheet).contains(
-						SourceForecast.EXPEDITION_TRIP_LONG_VERDICT))
+					and Readout.verdict_text(sheet) == "%s Away more than %d turns. Still delivering at the end of the forecast." % [
+						HudWidgets.VERDICT_DOT, BandFx.FORECAST_HORIZON_TURNS])
+			var horizon_send := Q.find_meta_node(sheet, HudWidgets.SEND_HUNT_CONFIRM_META) as Button
+			h._assert_hud("…and its Send names that same floor rather than the word \"long\"",
+				horizon_send != null
+					and horizon_send.text == "Send Anyway (more than %d turns)"
+						% BandFx.FORECAST_HORIZON_TURNS)
 		"herd_hunt_forecast_no_surplus":
 			# **A REFUSED RAID RENDERS NO BOX AT ALL.** It has no payload to lay out in rows, and an
 			# empty well would read as a raid delivering nothing measurable rather than one the panel
@@ -208,7 +246,9 @@ func _labor_bound_raid_herd() -> Dictionary:
 			table["%s:%d" % [String(entry[0]), w]] = {
 				"turns_to_fill": int(entry[2]), "delivers_food": true, "delivers_trade": true,
 				"animals_taken": animals, "delivered_food": float(animals) * fpa,
-				"delivered_trade": float(animals) * HerdFx.RAID_TRADE_PER_ANIMAL, "wasted_food": 0.0}
+				"delivered_trade": float(animals) * HerdFx.RAID_TRADE_PER_ANIMAL, "wasted_food": 0.0,
+				# A clean raid that hauls its whole kill: the PACK is what stops it.
+				SourceForecast.TRIP_BOUND_KEY: SourceForecast.TRIP_BOUND_PACK_FULL}
 	herd["hunt_trip_estimates"] = table
 	return herd
 
@@ -230,6 +270,10 @@ func _no_surplus_herd() -> Dictionary:
 				"turns_to_fill": 0, "delivers_food": true, "delivers_trade": true,
 				"animals_taken": 0, "delivered_food": 0.0, "delivered_trade": 0.0,
 				"wasted_food": 0.0,
+				# The herd IS at its floor, so the raid's stop is the floor — reached on turn one, with
+				# nothing taken. The client never renders this clause (the readout takes the refusal
+				# sentence branch), which is exactly why the fixture must still carry the sim's answer.
+				SourceForecast.TRIP_BOUND_KEY: SourceForecast.TRIP_BOUND_FLOOR,
 			}
 	herd["hunt_trip_estimates"] = table
 	return herd
@@ -281,13 +325,41 @@ func _hunt_assign_forecast_states() -> Array:
 			# Eradicate DELIVERS (#337): every rung is paid the species' yield vector, so this row carries
 			# a real payload and the client must NOT read a denial off the policy string. A denial is a
 			# quarry that pays neither product — see `_pelt_only_wolf_raid_herd` for the inedible case.
+			# **AND IT COMPLETES.** A floor-`0` raid ends by emptying the range, so its row is
+			# `herd_lost` beside a real turn count — the frame the "never completes" fix is judged on.
 			"name": "herd_hunt_forecast_eradicate",
 			"floor": 0.0,
 			"herd": HerdFx.assign_preview_herd("game_deer_07", "Red Deer", "thriving", 0.30,
 				DEER_SUSTAIN_TRIP_TURNS, DEER_SURPLUS_TRIP_TURNS,
 				DEER_SUSTAIN_ANIMALS, DEER_SURPLUS_ANIMALS),
 		},
+		{
+			# **THE RAID THAT GENUINELY DOES NOT FINISH** — and it is a floor at the food PEAK, not a
+			# floor of 0. It is the pairing half of the state above: with the strip-bare row moved onto
+			# a real turn count, this is the corpus's only delivering `horizon` row, so without it the
+			# three "many turns" surfaces would have no fixture at all and a regression that spelled
+			# every raid as unbounded would render no frame differently.
+			"name": "herd_hunt_forecast_horizon",
+			"floor": SourceForecast.FLOOR_FOOD_PEAK,
+			"herd": _horizon_raid_herd(),
+		},
 	]
+
+## A slow breeder a big party can neither fill nor exhaust — the sim's own words for the ONE stop that
+## reports no turn count. Built from the shared forecast herd and then re-stamped at the PEAK floor's
+## cell, because `HerdFx.forecast_herd` pairs every delivering row with a stop that HAS a turn, which
+## is now true of its floor-`0` row too.
+func _horizon_raid_herd() -> Dictionary:
+	var herd := HerdFx.assign_preview_herd("game_bison_44", HORIZON_QUARRY_NAME, "thriving", 0.30,
+		DEER_SUSTAIN_TRIP_TURNS, DEER_SURPLUS_TRIP_TURNS,
+		DEER_SUSTAIN_ANIMALS, DEER_SURPLUS_ANIMALS)
+	# The stance-keyed table has not been floorified yet (`_show_herd` does that), so the peak floor is
+	# still spelled `sustain` — `BaseFx.LEGACY_STANCE_FLOORS` maps it to `FLOOR_FOOD_PEAK`.
+	var cell: Dictionary = (herd["hunt_trip_estimates"] as Dictionary)[
+		"sustain:%d" % HerdFx.HUNT_FORECAST_PARTY]
+	cell["turns_to_fill"] = SourceForecast.RAID_TURNS_UNBOUNDED
+	cell[SourceForecast.TRIP_BOUND_KEY] = SourceForecast.TRIP_BOUND_HORIZON
+	return herd
 
 ## The partial-with-waste raid herd: a Thunder Mammoth (16 food/animal) whose standing surplus is ONE
 ## animal. Any fieldable party kills that 1 animal but cannot carry a whole mammoth — a party of `w` hauls
@@ -314,6 +386,7 @@ func _partial_waste_mammoth() -> Dictionary:
 			table["%s:%d" % [policy, w]] = {
 				"turns_to_fill": int(policy_turns[policy]), "delivers_food": true,
 				"animals_taken": 1, "delivered_food": delivered, "wasted_food": fpa - delivered,
+				SourceForecast.TRIP_BOUND_KEY: SourceForecast.TRIP_BOUND_PACK_FULL,
 			}
 	herd["hunt_trip_estimates"] = table
 	return herd
@@ -329,6 +402,7 @@ func _hunt_preview_far_band() -> Dictionary:
 		"hunt_reach": 7, "work_range": 2, "max_expedition_party_size": 8,
 		"hunt_per_worker_provisions": 0.8,
 		"expedition_viability_warn_turns": 20,
+		"expedition_forecast_horizon_turns": BandFx.FORECAST_HORIZON_TURNS,
 		# Per-worker carry (shipped 4.0) → the forecast's HAUL = party × this.
 		"expedition_per_worker_carry": 4.0,
 		"activity": "forage", "labor_assignments": [],
@@ -346,6 +420,7 @@ func _raid_travel_band() -> Dictionary:
 		"hunt_reach": 7, "work_range": 2, "max_expedition_party_size": 8,
 		"hunt_per_worker_provisions": 0.8,
 		"expedition_viability_warn_turns": 20,
+		"expedition_forecast_horizon_turns": BandFx.FORECAST_HORIZON_TURNS,
 		"expedition_per_worker_carry": 4.0,
 		"band_move_tiles_per_turn": 2,
 		"activity": "forage", "labor_assignments": [],
@@ -366,6 +441,82 @@ func _delivered_oracle_band() -> Dictionary:
 		"activity": "hunt", "labor_assignments": [],
 	}
 
+# ---- THE ENGAGEMENT-BOUND FOWL (docs/plan_hunt_through_combat.md §2) ----------------------------
+# A LIGHT-BODIED quarry at the shipped hunt conversion, dialed so the two bounds on a take are an
+# order of magnitude apart and neither frame can be passed by the wrong one. Every number below is a
+# term the wire really carries; the derived ones are composed in the builder from these rather than
+# restated, so the fixture cannot describe a bird that could not exist.
+#   room above the food peak = 161 − 0.5 × 200 = 61 biomass = ~470 birds
+#   one hunter's CARRY        = 0.80 food = 40 biomass = 307 birds
+#   one hunter's REACH        = 10 birds
+const FOWL_PROVISIONS_PER_BIOMASS := 0.02
+
+const FOWL_BODY_MASS := 0.13
+
+const FOWL_CAPACITY := 200.0
+
+const FOWL_BIOMASS := 161.0
+
+const FOWL_PER_WORKER_YIELD := 0.80
+
+const FOWL_ENGAGE_RATE := 10.0
+
+## ONE hunter, which is the party the defect was reported on: the two bounds are furthest apart there,
+## and it is the smallest crew that can hold `animals_engaged`'s "a party that exists reaches one".
+const FOWL_HUNTERS := 1
+
+## The engagement A/B's herd. `engage_rate` is the ONLY field that moves between the pair, and its
+## absent half publishes `NO_ENGAGEMENT_STAGE` — the literal wire value a PEN carries, and the reading
+## the whole plant web gets by never publishing the field at all — so the twin pins that the arm DROPS
+## rather than merely shrinking, and that forage and corrals are untouched by this arc.
+func _engagement_fowl_herd(engage_rate: float) -> Dictionary:
+	return {
+		"id": "game_fowl_11", "label": "Wild Fowl (game_fowl_11)", "species": "Wild Fowl",
+		"size_class": "small", "huntable": true, "ecology_phase": "thriving",
+		"x": 66, "y": 10,
+		"husbandry_ceiling": "wild",
+		"biomass": FOWL_BIOMASS,
+		"carrying_capacity": FOWL_CAPACITY,
+		"body_mass": FOWL_BODY_MASS,
+		# The sim's own identity, composed rather than restated: `food_per_animal = body_mass ×
+		# provisions_per_biomass`. A fixture that states both freely can claim a bird whose meat and
+		# whose mass disagree, which is precisely the arithmetic these frames are judging.
+		"food_per_animal": FOWL_BODY_MASS * FOWL_PROVISIONS_PER_BIOMASS,
+		"provisions_per_biomass": FOWL_PROVISIONS_PER_BIOMASS,
+		"per_worker_yield": FOWL_PER_WORKER_YIELD,
+		"engage_rate": engage_rate,
+		"tile_info": HerdFx.compact_herd_tile_fixture(),
+	}
+
+## One account's take — the `now` magnitude, whether or not the row also states a holding rate. The
+## face reads `<now> → <after> <ACCOUNT>` when it arrows and `<now> <ACCOUNT>` when it does not, so
+## the token to read is three back past an arrow and one back without one. Asked so an assertion
+## about WHAT A TAKE PAYS is independent of whether this particular crew also reaches the floor —
+## which is a different claim, and one `forage_accounts`' `_yield_now_after` already carries.
+## Callers test the account's PRESENCE separately (the unit word), since an account with no row leaves
+## no number to parse and the fall-through would read whatever token precedes it.
+func _yield_take(yields_text: String, account: String) -> float:
+	var upto := yields_text.split(account)[0].strip_edges().split(" ", false)
+	if upto.is_empty():
+		return 0.0
+	if upto.size() >= 3 and upto[upto.size() - 2] == "→":
+		return float(upto[upto.size() - 3])
+	return float(upto[upto.size() - 1])
+
+## ---- THE SPEC-ORACLE DEER'S OWN TERMS ----------------------------------------------------------
+## The four wire numbers the both-products assertion recomposes this herd's take from, named here and
+## spent in the fixture below so the expectation and the fixture cannot drift into two stories. The
+## two per-animal quanta are the SIM's own reference mix (`SourceYieldForecast::body_mass_yield`), so
+## an assertion that scales one account into the other through them is arriving at the answer by a
+## different route than the client, which rescales through the per-biomass vector.
+const ORACLE_DEER_FOOD_PER_ANIMAL := 1.23
+
+const ORACLE_DEER_TRADE_PER_ANIMAL := 0.18
+
+const ORACLE_DEER_PER_WORKER := 0.8
+
+const ORACLE_DEER_SUSTAIN_CEILING := 2.33
+
 ## The spec oracle deer: food_per_animal 1.23, Sustain flow ceiling 2.33, per-worker 0.8, output 1.0.
 ##   1 worker  → can't carry one whole 1.23 deer → delivered 0.80, ≈0.65 deer/turn · ⚠ 35% wasted
 ##   2 workers → lands exactly one whole deer/turn, no waste → ≈1 deer/turn · renewable
@@ -378,15 +529,16 @@ func _delivered_oracle_herd() -> Dictionary:
 		"size_class": "big", "huntable": true, "ecology_phase": "thriving",
 		"x": 66, "y": 10, "biomass": 820.0,
 		"husbandry_ceiling": "wild",
-		"food_per_animal": 1.23,
-		"per_worker_yield": 0.8,
+		"food_per_animal": ORACLE_DEER_FOOD_PER_ANIMAL,
+		"per_worker_yield": ORACLE_DEER_PER_WORKER,
 		"hunt_policy_ceilings": {
-			"sustain": 2.33, "surplus": 3.5, "deplete": 5.0, "eradicate": 7.0,
+			"sustain": ORACLE_DEER_SUSTAIN_CEILING,
+			"surplus": 3.5, "deplete": 5.0, "eradicate": 7.0,
 		},
 		# THE SECOND PRODUCT (issue #337). A deer is edible AND its hide sells, so it pays BOTH: the
 		# picker's four rungs must read food-then-trade (food leading), never food alone. The trade
 		# ceilings are the food ones times the species' hide-to-meat ratio, so they ascend together.
-		"trade_per_animal": 0.18,
+		"trade_per_animal": ORACLE_DEER_TRADE_PER_ANIMAL,
 		"per_worker_trade": 0.12,
 		"hunt_policy_trade_ceilings": {
 			"sustain": 0.34, "surplus": 0.51, "deplete": 0.73, "eradicate": 1.02,
@@ -436,6 +588,10 @@ func _pelt_only_wolf_raid_herd() -> Dictionary:
 				"animals_taken": animals,
 				"delivered_food": 0.0, "wasted_food": 0.0,
 				"delivered_trade": float(animals) * 1.40,
+				# **AN INEDIBLE QUARRY NEVER FILLS A *FOOD* PACK**, so the pack is inert on a wolf raid
+				# and the herd's own floor is what ends it — the sim's `raid_load` rule, stated on the
+				# fixture rather than left for the client to infer from `delivers_food`.
+				SourceForecast.TRIP_BOUND_KEY: SourceForecast.TRIP_BOUND_FLOOR,
 			}
 	herd["hunt_trip_estimates"] = table
 	return herd
@@ -673,19 +829,38 @@ func run(harness) -> void:
 	# THE VERDICT states the trip's length. This band carries no move rate, so travel is 0 and there is
 	# no split to spell out — the pair that DOES is `herd_hunt_raid_travel` below.
 	h._assert_hud("the verdict states how long the party is away",
-		_verdict_text(h._hud._drawercompose._compose_sheet).contains(str(HerdFx.DISTANCE_RAID_TURNS[0])))
+		Readout.verdict_text(h._hud._drawercompose._compose_sheet).contains(str(HerdFx.DISTANCE_RAID_TURNS[0])))
 	h._assert_hud("…and a brisk raid reads OK",
 		Readout.verdict_severity(h._hud._drawercompose._compose_sheet) == SourceForecast.VERDICT_OK)
-	# **THE BOX IS NOT A CHART, AND A PARTY IS NOT A CREW.** Without this pair, "made the expedition
-	# look like the local sheet" could quietly come to mean "gave it a chart and crew targets" — both
-	# of which are deliberately absent, a raid being a forward-simulated trip rather than a per-turn
-	# drawdown by a resident crew, with no floor curve to walk and no holding crew to price.
-	h._assert_hud("…and the branch is still an EXPEDITION sheet — no chart, no crew targets",
-		Q.find_meta_node(h._hud._drawercompose._compose_sheet, HudWidgets.FLOOR_CHART_META) == null
-			and Q.find_crew_target(h._hud._drawercompose._compose_sheet,
+	# **THE ESCAPEMENT GRAPH IS BACK ON THIS BRANCH** (`docs/plan_hunt_through_combat.md` §5.2) — and
+	# this assertion once claimed the opposite, on the premise that a raid does not draw the herd down
+	# the way a resident crew does. It does: a party's per-turn take is the same
+	# `min(room, carry, engagement)`, so the curve IS the raid's. The half of the old pair that
+	# SURVIVES is the crew targets, and the two must be asserted apart or "the expedition sheet reads
+	# like the local one" quietly comes to mean "it grew a *hold it after* promise" — which a detached
+	# party cannot keep, because it leaves.
+	h._assert_hud("the expedition sheet draws the escapement graph — the herd-side half of the pair",
+		Q.find_meta_node(h._hud._drawercompose._compose_sheet, HudWidgets.FLOOR_CHART_META) != null)
+	h._assert_hud("…but still NO crew targets: a party has no *hold it after*, it goes home",
+		Q.find_crew_target(h._hud._drawercompose._compose_sheet,
 				HudWidgets.CREW_TARGET_CLEAR) == null
 			and Q.find_crew_target(h._hud._drawercompose._compose_sheet,
 				HudWidgets.CREW_TARGET_HOLD) == null)
+	var expedition_sheet: Control = h._hud._drawercompose._compose_sheet
+	# **THERE IS NO PARTY-SIDE LEVER ON THE TRIP'S LENGTH, and that absence is deliberate.** A fill
+	# target ("come home with N animals") was offered here and is retired (issue #491): trip length is
+	# `carry ÷ (engage_rate × stay_chance × body_mass)`, in which PARTY SIZE CANCELS, so the control
+	# moved a species-and-kit constant and the spread it existed to escape is a TUNING problem. What the
+	# readout quotes is the sim's own untargeted raid, and the verdict below is the whole of what the
+	# sheet says about the trip's end.
+	# **THE VERDICT NAMES WHICH STOP ENDS THE TRIP** — the point of §5.2, and the thing a turn count
+	# alone cannot say. This raid fills its pack, so it must read the pack clause and NOT the floor
+	# one; asserting only "some clause is present" would pass on the wrong stop.
+	h._assert_hud("…and the verdict names the stop that ends the trip — the PACK, not the floor",
+		Readout.verdict_text(expedition_sheet).contains(
+				SourceForecast.TRIP_BOUND_CLAUSES[SourceForecast.TRIP_BOUND_PACK_FULL])
+			and not Readout.verdict_text(expedition_sheet).contains(
+				SourceForecast.TRIP_BOUND_CLAUSES[SourceForecast.TRIP_BOUND_FLOOR]))
 	# The peak zone's half of change A, on the surface that has the least redundancy: this sheet sits
 	# at `FLOOR_FOOD_PEAK`, the zone now says nothing, and the aside renders NOT AT ALL rather than a
 	# dashed rule over empty space. Paired with the strip-zone assertion on `forage_three_accounts`,
@@ -736,10 +911,15 @@ func run(harness) -> void:
 	#   3n never fills — a collapsing Wild Fowl flock: every cell is `turns_to_fill = 0` → red line +
 	#                    the DISABLED "Herd too lean to raid" button, exactly as 3r below (the HERD has
 	#                    nothing left to give, and no party size can fix a herd with no surplus).
-	#   3o eradicate   — a healthy Red Deer on Eradicate: it DELIVERS like every other rung (#337 pays each
-	#                    rung the species' yield vector), and its cell ran the whole horizon still
-	#                    delivering → amber LONG-RAID line + "Send Anyway (long raid)". NOT a denial:
-	#                    denial is now a property of the QUARRY (pays neither product), not of the rung.
+	#   3o eradicate   — a healthy Red Deer at the STRIP-BARE floor: it DELIVERS like every other rung
+	#                    (#337 pays each rung the species' yield vector) AND it COMPLETES — the raid ends
+	#                    by emptying the range on turn 11, so the line quotes a real total and the Send is
+	#                    the ordinary one. NOT a denial: denial is now a property of the QUARRY (pays
+	#                    neither product), not of the rung.
+	#   3o2 horizon    — a Steppe Bison at the food PEAK the party can neither fill nor exhaust: the one
+	#                    row whose projection genuinely ran out → amber LONG-RAID line + "Send Anyway
+	#                    (long raid)". It is the PAIR to 3o, since with the strip-bare row bounded this is
+	#                    the corpus's only delivering `horizon` cell.
 	# WARNED, not BLOCKED — and never a confirm dialog: a slow raid and a long one are real tradeoffs, so
 	# they read as a price tag and stay ENABLED. The ONE blocked case is 3n's, a herd with no surplus
 	# left: it would return empty at every party size, so there is no price to pay.
@@ -818,7 +998,7 @@ func run(harness) -> void:
 	# this one walks 8 tiles each way at 2 tiles a turn, so the total is 8 hunting + 8 travel and the
 	# verdict has to spell out where those turns go. Asserted as a PAIR with the total, because a
 	# verdict quoting the split alone would leave the player adding it up themselves.
-	var travel_verdict = _verdict_text(h._hud._drawercompose._compose_sheet)
+	var travel_verdict = Readout.verdict_text(h._hud._drawercompose._compose_sheet)
 	h._assert_hud("a raid with travel states the TOTAL and the split it is made of",
 		travel_verdict.contains(str(RAID_TRAVEL_HUNT_TURNS + RAID_TRAVEL_TURNS))
 			and travel_verdict.contains("%d hunting, %d travel" % [
@@ -836,6 +1016,23 @@ func run(harness) -> void:
 	h._compose_herd(lean, HerdFx.HUNT_FORECAST_PARTY)
 	await h._settle()
 	await h._save("herd_hunt_no_surplus")
+	# **THE HERD-SIDE HALF OF THE REFUSAL A/B.** Every cell here is `TRIP_BOUND_FLOOR` — the standing
+	# surplus really is spent — so this frame is what stops the party-side claims in
+	# `_unkillable_quarry_states` passing on a sheet that blames the party for everything. The two
+	# fixtures deliver the identical zero and differ only in the sim's `bound`.
+	var lean_sheet: Control = h._hud._drawercompose._compose_sheet
+	var lean_quarry := SourceForecast.herd_display_name(lean)
+	h._assert_hud("a herd genuinely at its floor is still refused in the HERD's name",
+		Q.has_label_containing(lean_sheet,
+				_empty_refusal(SourceForecast.TRIP_BOUND_FLOOR, "line", lean_quarry))
+			and not Q.has_label_containing(lean_sheet,
+				_empty_refusal(SourceForecast.TRIP_BOUND_HORIZON, "line", lean_quarry)))
+	# **A PAYLOAD FLAT AT ZERO IS NOT A PLATEAU.** This herd publishes no `engage_rate`, so nothing
+	# floors its ceiling — which is exactly the shape where the rise/break scan used to read the
+	# flatness as "the first hunter was all that was useful" and cap the party at one.
+	h._assert_hud("…and a raid that lands nothing at EVERY size names no max-useful party at all",
+		not Q.has_label_containing(lean_sheet, SourceForecast.MAX_USEFUL_NOTE_FORMAT % [
+			1, SourceForecast.MAX_USEFUL_NOUN_ONE]))
 
 	h._hud._compose.reset_hunt_source()
 	h._hud._compose.set_hunt_band(-1)
@@ -869,22 +1066,10 @@ func run(harness) -> void:
 	h._compose_herd(bison)
 	await h._settle()
 	await h._save("herd_hunt_labor_bound_deplete")
-	#   3v Party-size-bound — the SUB-CASE where freeing idle workers would NOT help: idle 6 >= max party 2,
-	#              so the party-SIZE cap binds, not idle. The note reads "2 of 4 useful — at the max party
-	#              size" instead of the free-up-workers advice.
-	var party_capped: Dictionary = _hunt_preview_far_band().duplicate(true)
-	party_capped["idle_workers"] = 6
-	party_capped["max_expedition_party_size"] = 2
-	h._hud._band_labor._player_bands = [party_capped]
-	h._hud._band_labor._player_band = party_capped
-	h._hud._compose.reset_hunt_source()
-	h._hud._compose.set_hunt_band(-1)
-	h._show_herd(bison)
-	h._compose_herd(bison, PARTY_SIZE_BOUND_CREW, SourceForecast.FLOOR_FOOD_PEAK)
-	await h._settle()
-	await h._save("herd_hunt_party_size_bound")
-	h._assert_hud("the party-size-bound frame renders the 2-hunter crew the max party size caps it at",
-		Readout.stepper_value(h._hud._drawercompose._compose_sheet) == PARTY_SIZE_BOUND_CREW)
+	#   (The PARTY-SIZE-BOUND frame that stood here is DELETED with the cap it staged: a band with
+	#    `idle 6 >= max party 2` no longer binds on anything, because `expedition_party_cap` reads the
+	#    idle workforce alone. Its note had no reachable branch left, so the frame could only have
+	#    rendered the max-useful note under a party-size name.)
 	# Restore the far band + sustain for the states that follow.
 	h._hud._band_labor._player_bands = [_hunt_preview_far_band()]
 	h._hud._band_labor._player_band = h._hud._band_labor._player_bands[0]
@@ -959,6 +1144,165 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("herd_hunt_whole_animal_cap_deplete")
 
+	# States 3r-a / 3r-b — THE ENGAGEMENT BOUND, AS AN A/B ON ONE HERD
+	# (`docs/plan_hunt_through_combat.md` §2). A party can only kill what it can get NEAR, and until
+	# `engageRate` reached the wire this sheet composed its preview from the crew's CARRY and the stock
+	# above the floor alone. Measured in play on a live Wild Fowl herd with ONE hunter: the sheet read
+	# **≈307 birds/turn** where the sim pays **ten**, and told the player "max 2 workers useful here —
+	# more would be idle" while ~470 birds stood above the floor and each hunter reached ten of them.
+	# The number was 30× out and the advice was exactly backwards.
+	#
+	# **THE PAIR IS THE CLAIM.** One herd, one crew, one floor; the ONLY thing that moves between the
+	# two frames is `engage_rate`, and the second publishes `NO_ENGAGEMENT_STAGE` — a pen's own wire
+	# value, and what the plant web gets by never publishing the field — so it pins that the arm DROPS
+	# rather than merely shrinking, and that forage and corrals are untouched. A lone bounded frame
+	# would pass just as well on a sheet that had simply got quieter.
+	#
+	# Both takes are stated by the harness's own oracle (`HerdFx.hunt_take_oracle`, the sim's
+	# `quantise_animal_take` restated in food), never by asking the sheet what it thinks — a check
+	# written out of `SourceForecast` would agree with the sheet by construction.
+	h._hud._band_labor._player_bands = [_delivered_oracle_band()]
+	h._hud._band_labor._player_band = h._hud._band_labor._player_bands[0]
+	var fowl_fpa := FOWL_BODY_MASS * FOWL_PROVISIONS_PER_BIOMASS
+	var fowl_room := FOWL_BIOMASS - SourceForecast.FLOOR_FOOD_PEAK * FOWL_CAPACITY
+	var fowl_ceiling := fowl_room * FOWL_PROVISIONS_PER_BIOMASS
+	var fowl_collection := float(FOWL_HUNTERS) * FOWL_PER_WORKER_YIELD
+	var reach_take := HerdFx.hunt_take_oracle(fowl_collection, fowl_ceiling, fowl_fpa,
+		float(FOWL_HUNTERS) * FOWL_ENGAGE_RATE)
+	var carry_take := HerdFx.hunt_take_oracle(fowl_collection, fowl_ceiling, fowl_fpa)
+	var reach_face := SourceForecast.format_magnitude(float(reach_take["delivered"]))
+	var carry_face := SourceForecast.format_magnitude(float(carry_take["delivered"]))
+	# THE TWO CREW TERMS, restated from the sim's own `hunt_haul_workers` / `hunt_engage_workers`: the
+	# peak animal drop a ceiling allows is `floor(ceiling / body) + 1`, and the crew is that drop
+	# divided by what ONE worker carries / reaches. Composed here, not asked of `SourceForecast`, for
+	# the reason the take oracle is.
+	var fowl_peak_drop := floorf(fowl_ceiling / fowl_fpa) + 1.0
+	var fowl_haul_crew := int(ceilf(fowl_peak_drop * fowl_fpa / FOWL_PER_WORKER_YIELD))
+	var fowl_engage_crew := int(ceilf(fowl_peak_drop / FOWL_ENGAGE_RATE))
+	var fowl_assignable := int(_delivered_oracle_band()["idle_workers"])
+	# The two notes, spelled through the SHIPPED formats so a reworded note fails loudly here rather
+	# than silently matching nothing.
+	var idle_advice: String = SourceForecast.MAX_USEFUL_NOTE_FORMAT % [fowl_haul_crew,
+		SourceForecast.MAX_USEFUL_NOUN_ONE if fowl_haul_crew == 1 \
+			else SourceForecast.MAX_USEFUL_NOUN_MANY]
+	var wanted_advice: String = SourceForecast.LABOR_BOUND_NOTE_FORMAT % [fowl_assignable,
+		fowl_engage_crew]
+
+	var fowl_reaching := _engagement_fowl_herd(FOWL_ENGAGE_RATE)
+	h._hud._compose.reset_hunt_source()
+	h._hud._compose.set_hunt_band(-1)
+	h._show_herd(fowl_reaching)
+	h._compose_herd(fowl_reaching, FOWL_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
+	await h._settle()
+	await h._save("herd_hunt_engagement_bound")
+	var reaching_sheet: Control = h._hud._drawercompose._compose_sheet
+	h._assert_hud("the take is what one hunter can REACH (%s food/turn), not what it could carry (%s)"
+		% [reach_face, carry_face],
+		Readout.yields_text(reaching_sheet).contains(reach_face)
+			and not Readout.yields_text(reaching_sheet).contains(carry_face))
+	# THE ADVICE, WHICH IS THE OTHER HALF OF THE DEFECT. With the reach bound live the herd can use far
+	# more hunters than this band HAS, so the stepper is labor-bound and says so — and the sentence
+	# claiming more hands would be idle must be nowhere on the sheet.
+	h._assert_hud("more hunters are wanted, not idle — the cap reads \"%s\"" % wanted_advice,
+		Q.has_label_containing(reaching_sheet, wanted_advice)
+			and not Q.has_label_containing(reaching_sheet, idle_advice))
+	# **THE THIRD SURFACE THE SAME BOUND HAS TO REACH — the CREW TARGETS and the verdict beneath them.**
+	# The take and the cap became engagement-aware while the chart's targets went on dividing the room
+	# by the CARRY alone, so this sheet offered `2 clear it now` for a herd two hunters would take ~47
+	# turns to clear, and the sentence under it promised the floor next turn. Reported from play on a
+	# Red Deer herd, where the same sheet read `6 clear it now` beside a take of six deer a turn.
+	#
+	# Both terms are composed from the FIXTURE's own wire numbers rather than asked of
+	# `SourceForecast` — a target checked against the layer that produces it agrees by construction.
+	var fowl_carry_biomass := FOWL_PER_WORKER_YIELD / FOWL_PROVISIONS_PER_BIOMASS
+	var fowl_clear_by_carry := int(ceilf(fowl_room / fowl_carry_biomass))
+	var fowl_clear_by_reach := int(ceilf(fowl_room / (FOWL_BODY_MASS * FOWL_ENGAGE_RATE)))
+	# (0) THE FRAME REALLY SEPARATES THE TWO BOUNDS. Without this the assertion below passes on any
+	# sheet whose two answers happen to coincide, and says nothing about which one it read.
+	h._assert_hud("the fixture separates the bounds — reaching the room takes %d hands, carrying it %d"
+		% [fowl_clear_by_reach, fowl_clear_by_carry],
+		fowl_clear_by_reach > fowl_clear_by_carry)
+	var fowl_clear := Readout.crew_target_count(reaching_sheet, HudWidgets.CREW_TARGET_CLEAR)
+	h._assert_hud("*clear it now* names the crew that can REACH the room in a turn (%d), not carry it (%d)"
+		% [fowl_clear_by_reach, fowl_clear_by_carry], fowl_clear == fowl_clear_by_reach)
+	# (1) **THE TARGET AND THE READOUT BESIDE IT AGREE**, which is the class of defect this pins: at the
+	# crew the pill names, the SIM's own take empties the room, and one hand short of it does not. Both
+	# takes come from `HerdFx.hunt_take_oracle` (`quantise_animal_take` restated in food), so the claim
+	# is a cross-check against the sim's arithmetic rather than a restatement of the client's.
+	var fowl_room_food := floorf(fowl_ceiling / fowl_fpa) * fowl_fpa
+	var clear_take := float(HerdFx.hunt_take_oracle(float(fowl_clear) * FOWL_PER_WORKER_YIELD,
+		fowl_ceiling, fowl_fpa, floorf(float(fowl_clear) * FOWL_ENGAGE_RATE))["delivered"])
+	var short_take := float(HerdFx.hunt_take_oracle(float(fowl_clear - 1) * FOWL_PER_WORKER_YIELD,
+		fowl_ceiling, fowl_fpa, floorf(float(fowl_clear - 1) * FOWL_ENGAGE_RATE))["delivered"])
+	h._assert_hud("…and at that crew the take really does empty the room (%.4f of %.4f food), one hand short does not"
+		% [clear_take, fowl_room_food],
+		clear_take >= fowl_room_food and short_take < fowl_room_food)
+	# (2) **AND THE VERDICT READS THE SAME PROJECTION.** One hunter reaching ten birds a turn cannot
+	# out-take this herd's regrowth, so the crew binds and the sentence must say so; carry-bound, the
+	# same hunter moved 40 biomass a turn and the sheet promised the floor. The twin below is what
+	# makes this a claim about the ARM rather than about the fixture.
+	h._assert_hud("the verdict is the crew's, not a promise of a floor one hunter cannot reach",
+		Readout.verdict_severity(reaching_sheet) == SourceForecast.VERDICT_SLOW)
+	# (3) **THE ⚠ GATE AND THE VERDICT ARE TWO READINGS OF ONE PROJECTION**, which is the invariant
+	# `take_draws_down` was introduced to hold and the one an engagement-blind gate quietly breaks:
+	# here the party reaches 1.3 biomass of bird a turn against ~2.5 of regrowth, so the stock RISES —
+	# nothing is being overdrawn — while the carry alone (40 a turn) says it falls. Left carry-only the
+	# sheet could fly `⚠ OVERDRAWS THE HERD` directly above *it settles at 84% and holds there*.
+	#
+	# Asserted as the EQUALITY of the two answers, never as the literal `false`: the pairing is the
+	# claim, so a fixture that stops rising fails nothing while a gate that stops agreeing fails here.
+	var bound_model := SourceForecast.floor_chart_model(fowl_reaching,
+		SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX,
+		SourceForecast.FLOOR_FOOD_PEAK, FOWL_HUNTERS, SourceForecast.IMPROVEMENT_NONE, "hunters",
+		LESSON_NOT_YET_LEARNED)
+	var verdict_falls: bool = float(bound_model["settled_fraction"]) \
+		< float(bound_model["stock_fraction"]) - SourceForecast.STOCK_FRACTION_EPSILON
+	var gate_falls := SourceForecast.take_draws_down(fowl_reaching,
+		SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX,
+		SourceForecast.FLOOR_FOOD_PEAK, FOWL_HUNTERS, SourceForecast.IMPROVEMENT_NONE)
+	# The precondition, without which the equality is satisfied by two blind answers agreeing: the
+	# CARRY-ONLY walk (`project_stock`'s unbounded default — the pre-fix reading) must say the opposite.
+	var carry_only_walk := SourceForecast.project_stock(
+		SourceForecast.regrowth_samples(fowl_reaching, HudComposeVocab.BARE_FORECAST_PREFIX),
+		FOWL_BIOMASS, FOWL_CAPACITY, SourceForecast.FLOOR_FOOD_PEAK,
+		float(FOWL_HUNTERS) * fowl_carry_biomass)
+	h._assert_hud("precondition: carry alone would call this herd drawn down (%.3f → %.3f), so the pair is not vacuous"
+		% [FOWL_BIOMASS / FOWL_CAPACITY, float(carry_only_walk["settled_fraction"])],
+		float(carry_only_walk["settled_fraction"])
+			< FOWL_BIOMASS / FOWL_CAPACITY - SourceForecast.STOCK_FRACTION_EPSILON)
+	h._assert_hud("the ⚠ gate and the verdict read ONE projection — both say the stock %s"
+		% ("falls" if verdict_falls else "rises"), gate_falls == verdict_falls)
+
+	# 3r-b — THE SAME BIRD WITH NO ENGAGEMENT STAGE. This is the pen's wire value and the plant web's
+	# silence, and it must read exactly as the sheet always did: carry-bound, and capped at the two
+	# haulers who can carry the peak drop.
+	var fowl_unreached := _engagement_fowl_herd(SourceForecast.NO_ENGAGEMENT_STAGE)
+	h._hud._compose.reset_hunt_source()
+	h._hud._compose.set_hunt_band(-1)
+	h._show_herd(fowl_unreached)
+	h._compose_herd(fowl_unreached, FOWL_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
+	await h._settle()
+	await h._save("herd_hunt_engagement_unbounded")
+	var unreached_sheet: Control = h._hud._drawercompose._compose_sheet
+	h._assert_hud("no engagement stage → the take is carry-bound (%s food/turn) as it always was"
+		% carry_face,
+		Readout.yields_text(unreached_sheet).contains(carry_face)
+			and not Readout.yields_text(unreached_sheet).contains(reach_face))
+	h._assert_hud("…and the cap is the haul crew again, so \"%s\" is the honest advice here"
+		% idle_advice,
+		Q.has_label_containing(unreached_sheet, idle_advice)
+			and not Q.has_label_containing(unreached_sheet, wanted_advice))
+	# **THE CREW TARGETS AND THE VERDICT DROP THE ARM TOO, and this half is the regression that matters
+	# most**: a pen and the whole PLANT web publish exactly this value, so a target or a projection that
+	# read `NO_ENGAGEMENT_STAGE` as "reaches nothing" would move every forage sheet in the game. The
+	# same hunter carrying 40 biomass a turn clears this room in one, so the pill reads the carry
+	# quotient and the verdict promises the floor — precisely as it did before the arm existed.
+	h._assert_hud("no engagement stage → *clear it now* is the carry quotient (%d) again"
+		% fowl_clear_by_carry,
+		Readout.crew_target_count(unreached_sheet, HudWidgets.CREW_TARGET_CLEAR) == fowl_clear_by_carry)
+	h._assert_hud("…and the verdict reaches the floor again, so the arm DROPS rather than merely shrinking",
+		Readout.verdict_severity(unreached_sheet) == SourceForecast.VERDICT_OK)
+
 	# States 3s–3v — the CARRY-AWARE ANIMALS-FIRST local-hunt preview (spec oracle: deer fpa 1.23, band
 	# per-worker 0.8, output 1.0, Sustain ceiling 2.33). The preview line reads the crew's HONEST
 	# delivered take in animals, not the unquantized food rate the crew could never carry; the policy
@@ -1029,6 +1373,20 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("herd_hunt_pelts_only")
 	h._assert_compose_sheet_fits("herd_hunt_pelts_only")
+	# **THE REGRESSION THAT MATTERS MOST once the readout credits every account a take pays.** The
+	# rule is render-only-where-the-vector-PAYS, not "render every account": a wolf's provisions rate
+	# is a structural 0, so the crossing into food answers a structural zero and `yield_rows` emits NO
+	# food row — never the `0.00 FOOD` that says its pelts are worth no meat. Asserted as a PAIR, since
+	# the negative alone is satisfied by a readout that lost both accounts.
+	var wolf_yields := Readout.yields_text(h._hud._drawercompose._compose_sheet)
+	h._assert_hud("an inedible quarry's PER TURN row states the TRADE it pays…",
+		wolf_yields.contains(SourceForecast.YIELD_ACCOUNT_UNITS[
+			SourceForecast.YIELD_ACCOUNT_TRADE].to_upper())
+			and _yield_take(wolf_yields, SourceForecast.YIELD_ACCOUNT_UNITS[
+				SourceForecast.YIELD_ACCOUNT_TRADE].to_upper()) > 0.0)
+	h._assert_hud("…and NO food row beside it — a wolf pays pelts and no meat, ever",
+		not wolf_yields.contains(SourceForecast.YIELD_ACCOUNT_UNITS[
+			SourceForecast.YIELD_ACCOUNT_FOOD].to_upper()))
 	# **THE CHART ON AN INEDIBLE QUARRY** (the wolf half of the five chart cases). The readout above it
 	# carries no food line at all, and the chart must not care: a floor is a fraction of BIOMASS, and
 	# the crew targets divide by `perWorkerBiomass`, which is positive on a wolf where both the food
@@ -1189,6 +1547,37 @@ func run(harness) -> void:
 	h._compose_herd(oracle_pair, PELT_FRAME_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
 	await h._settle()
 	await h._save("herd_hunt_both_products")
+	# **THE READOUT'S HALF OF THE PAIR — one animal count, valued in BOTH accounts.** The picker faces
+	# above have named the pair since #337; the `PER TURN` row beneath them did not, and reported from
+	# play a Wild Boar's compose sheet read `0.00 FOOD` with no trade row while an expedition on the
+	# same species read `20.00 FOOD  2.50 TRADE`. A quantised take must be COUNTED on one axis (a
+	# wolf's food quantum is honestly 0, so nothing else may divide), but the count is unit-free: the
+	# sim quantises on `ratio_axis()` and then values that count in every currency the species pays
+	# (`YieldPair::rescaled_to`). The client stopped at the axis it had quantised on.
+	var pair_yields := Readout.yields_text(h._hud._drawercompose._compose_sheet)
+	var food_unit: String = SourceForecast.YIELD_ACCOUNT_UNITS[
+		SourceForecast.YIELD_ACCOUNT_FOOD].to_upper()
+	var trade_unit: String = SourceForecast.YIELD_ACCOUNT_UNITS[
+		SourceForecast.YIELD_ACCOUNT_TRADE].to_upper()
+	h._assert_hud("a local hunt's PER TURN row names BOTH accounts this take pays",
+		pair_yields.contains(food_unit) and pair_yields.contains(trade_unit))
+	# THE MAGNITUDES, recomposed from the sim's own two steps: `quantise_animal_take` for the count
+	# (the harness's `HerdFx.hunt_take_oracle`, in food), then the species' whole-animal quanta for the
+	# crossing into trade. The client rescales through the per-biomass VECTOR instead, so the two
+	# arrive at the same pair by different routes rather than by construction — and a fix that valued
+	# the second account off the per-worker rates (0.12 / 0.80, a mix the crew's carry has no business
+	# supplying) misses it.
+	var pair_food := float(HerdFx.hunt_take_oracle(PELT_FRAME_HUNTERS * ORACLE_DEER_PER_WORKER,
+		ORACLE_DEER_SUSTAIN_CEILING, ORACLE_DEER_FOOD_PER_ANIMAL)["delivered"])
+	var pair_trade := pair_food * ORACLE_DEER_TRADE_PER_ANIMAL / ORACLE_DEER_FOOD_PER_ANIMAL
+	h._assert_hud("…the FOOD reading is the crew's quantised take (%s)"
+		% SourceForecast.format_magnitude(pair_food),
+		is_equal_approx(_yield_take(pair_yields, food_unit),
+			float(SourceForecast.format_magnitude(pair_food))))
+	h._assert_hud("…and the TRADE reading is that SAME take in the other currency (%s)"
+		% SourceForecast.format_magnitude(pair_trade),
+		is_equal_approx(_yield_take(pair_yields, trade_unit),
+			float(SourceForecast.format_magnitude(pair_trade))))
 
 	# 3z — THE INVESTMENT-RUNG TWIN of 3y (issue #397). The extractive rungs above have paid a pair since
 	# #337, but Tame and Corral rendered a FOOD-ONLY payoff face — a Wild Boar read `→ 1.48 food` beside
@@ -1235,3 +1624,446 @@ func run(harness) -> void:
 	h._hud._compose.reset_hunt_source()
 	h._hud._compose.set_hunt_band(-1)
 	h._hud._compose.set_hunt_floor(SourceForecast.FLOOR_FOOD_PEAK)
+
+	# ---- THE FIGHT, SAID BEFORE THE PARTY LEAVES (§2.1 / §6.5) -----------------------------------
+	await _combat_gate_states()
+
+	# ---- THE FORECAST REPORTS A RANGE (§6.4) -----------------------------------------------------
+	await _yield_range_states()
+
+	# ---- AN EMPTY RAID IS EMPTY FOR ONE OF TWO REASONS --------------------------------------------
+	await _unkillable_quarry_states()
+
+
+# =====================================================================================
+#  THE PRE-LAUNCH FIGHT (`docs/plan_hunt_through_combat.md` §2.1, §4.2, §6.5)
+# =====================================================================================
+# The gate produces a real outcome that reads as a bug unexplained: **hunters die and nothing is
+# killed.** The client holds every term it needs — the band's resolved `hunterAttack`, the herd's
+# `defense` and its newly-exported `durability` — so the sim exports no verdict and the sheet asks
+# itself the question. Beside it, `1 / engageRate` turns `0.05` into *"twenty hunters to take a
+# mammoth"*, which is a number a player can size a party against.
+
+## The mammoth's own two defensive axes, at the roster's settled values (§4.2). They must not be
+## blurred: **`defense` is whether a hit counts at all, `durability` is how many counting hits it
+## takes** — so the first decides the refusal and the second the effort figure, and a fixture that
+## moved one would move only one of the two assertions below.
+const GATE_MAMMOTH_DEFENSE := 12.0
+
+const GATE_MAMMOTH_DURABILITY := 500.0
+
+## §2.1's own row: twenty hunters can surround one mammoth. Stated as the wire's `engageRate` and
+## INVERTED by the assertion rather than restated, so the harness and the readout arrive at 20 from
+## opposite ends.
+const GATE_MAMMOTH_ENGAGE_RATE := 0.05
+
+## A herd carrying ALL THREE of the fight's terms — the two above plus the engagement stage that gates
+## whether either line is spoken at all. Built on the deadly-herd mammoth, which already carries the
+## `defense 12` the refusal is judged on, so this fixture adds the two fields the arc appended and
+## changes nothing else about the animal.
+func _combat_gate_mammoth() -> Dictionary:
+	var herd := HerdFx.deadly_herd_fixture()
+	herd["defense"] = GATE_MAMMOTH_DEFENSE
+	herd["durability"] = GATE_MAMMOTH_DURABILITY
+	herd["engage_rate"] = GATE_MAMMOTH_ENGAGE_RATE
+	return herd
+
+## **A PEN CARRYING THE FIGHT'S TERMS AND STILL SAYING NOTHING.** The herd is corralled, so it
+## publishes `NO_ENGAGEMENT_STAGE` — a penned animal is not stalked — while keeping a real `defense`
+## and `durability`. That is what makes the negative below a claim about the ENGAGEMENT GATE rather
+## than about a fixture that simply omitted the fields: strip the gate and this sheet grows both
+## lines, which is the byte-identity this arc has to hold for the pen and the whole plant web.
+func _combat_gate_pen() -> Dictionary:
+	var herd := HerdFx.domesticated_herd_fixture()
+	herd["defense"] = GATE_MAMMOTH_DEFENSE
+	herd["durability"] = GATE_MAMMOTH_DURABILITY
+	herd["engage_rate"] = SourceForecast.NO_ENGAGEMENT_STAGE
+	return herd
+
+func _combat_gate_states() -> void:
+	var quarry := String(HerdFx.deadly_herd_fixture()["species"])
+	var mammoth := _combat_gate_mammoth()
+	# State gate-a — A SPEARED PARTY, above the gate. **THE SHEET SAYS NOTHING ABOUT THE FIGHT**, and
+	# that is the claim: both pre-launch lines this state used to carry are retired (reported from
+	# playtest). The hunters-per-animal figure and the hunter-turns effort figure were species
+	# constants that never moved with anything the player was dialling, printed between the kit they
+	# had just chosen and the forecast that already prices the whole trip. What survives is the
+	# REFUSAL, asserted in gate-b.
+	var speared := BandFx.with_equipped_kit(BandFx.hunt_preview_local_band())
+	h._hud._band_labor._player_bands = [speared]
+	h._hud._band_labor._player_band = speared
+	h._hud._compose.reset_hunt_source()
+	h._hud._compose.set_hunt_band(-1)
+	h._show_herd(mammoth)
+	h._compose_herd(mammoth, LOCAL_HUNT_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
+	await h._settle()
+	await h._save("herd_hunt_gate_effort")
+	var speared_sheet: Control = h._hud._drawercompose._compose_sheet
+	# **`HUNT_GATE_ABSENT`, NOT `HUNT_GATE_WINNABLE`.** The two are different findings — "the sheet
+	# says the fight is winnable" and "the sheet says nothing about the fight" — and the whole point of
+	# the removal is that a winnable fight now renders NO line, so the winnable state no longer exists
+	# on screen. Asserting the absence is what stops the effort face creeping back.
+	h._assert_hud("a party above the gate is told nothing about the fight — no line at all",
+		Readout.hunt_gate_blocked(speared_sheet) == Readout.HUNT_GATE_ABSENT
+			and Readout.hunt_gate_line(speared_sheet) == "")
+
+	# State gate-b — THE SAME MAMMOTH, THE SAME PARTY SIZE, BARE HANDS. `max(0, 1 − 12)` is zero, so
+	# no headcount kills anything and the party takes casualties for nothing. **The only thing that
+	# moves between the two frames is the band's kit**, which is what makes this an A/B on the WEAPON
+	# rather than on the animal — §4.8's whole claim that the first spear should feel like a different
+	# game.
+	var bare := BandFx.with_bare_hands(BandFx.hunt_preview_local_band())
+	h._hud._band_labor._player_bands = [bare]
+	h._hud._band_labor._player_band = bare
+	h._hud._compose.reset_hunt_source()
+	h._show_herd(mammoth)
+	h._compose_herd(mammoth, LOCAL_HUNT_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
+	await h._settle()
+	await h._save("herd_hunt_gate_blocked")
+	var bare_sheet: Control = h._hud._drawercompose._compose_sheet
+	h._assert_hud("bare hands against a mammoth is refused IN WORDS, before the party is sent",
+		Readout.hunt_gate_blocked(bare_sheet) == Readout.HUNT_GATE_BLOCKED)
+	h._assert_hud("…and the refusal names BOTH terms, so the lesson is the weapon and not the headcount",
+		Readout.hunt_gate_line(bare_sheet).contains(
+				String.num(BandFx.KIT_ATTACK_BARE, SourceForecast.HUNT_GATE_SCALAR_DECIMALS))
+			and Readout.hunt_gate_line(bare_sheet).contains(
+				String.num(GATE_MAMMOTH_DEFENSE, SourceForecast.HUNT_GATE_SCALAR_DECIMALS)))
+	# **THE NEGATIVE, AND IT IS THE HALF THE ARC KEEPS BREAKING.** A PEN publishes no engagement
+	# stage, so the refusal may not render on one — and this fixture carries a real `defense` and
+	# `durability`, so the silence is the ENGAGEMENT GATE's doing rather than a fixture that omitted
+	# the terms. **That gate is the reason `has_engagement_stage` survives the removal above**: a
+	# penned animal is not fought, and without it a pen would wear the refusal. PNG-less: the claim is
+	# an absence, which a picture states only by not showing something, and the frame set's byte-diff
+	# is where a regression would actually surface.
+	var pen := _combat_gate_pen()
+	h._hud._compose.reset_hunt_source()
+	h._show_herd(pen)
+	h._compose_herd(pen, LOCAL_HUNT_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
+	await h._settle()
+	var pen_sheet: Control = h._hud._drawercompose._compose_sheet
+	h._assert_hud("a PEN is not stalked and not fought — the refusal does not render on one",
+		Readout.hunt_gate_blocked(pen_sheet) == Readout.HUNT_GATE_ABSENT)
+
+	# Reset for whatever renders next.
+	h._hud._band_labor._player_bands = []
+	h._hud._band_labor._player_band = BandFx.band_fixture()
+	h._hud._compose.reset_hunt_source()
+	h._hud._compose.set_hunt_band(-1)
+
+
+# =====================================================================================
+#  THE FORECAST REPORTS A RANGE (`docs/plan_hunt_through_combat.md` §6.4)
+# =====================================================================================
+# `actualYield` became the take's EXPECTATION over the retreat seed, and the pair around it says how
+# far the real take can land from it. **A LIVE BAND IS THE SHIPPED CASE ON A HUNT** — wariness is
+# authored across the roster (0.10–0.85), so the retreat binomial spreads a raid's take and a range
+# on a herd row is the feature, not a defect to go hunting for. What is still degenerate is the plant
+# web (a patch publishes no retreat stage), a resolved row, and a spread too narrow to survive the
+# formatter's own rounding.
+#
+# **SO THE PAIR OF STATES IS THE CLAIM.** A band renders where the bounds differ, and NO band renders
+# where they agree; the second is what stops the first passing on a readout that decorates every row.
+# Both halves are CONSTRUCTED here — the fixtures state the two bounds directly — so neither frame
+# depends on what the roster happens to author this month.
+
+## A real band on this turn's take — the spec's own worked example, *"6–11, likely 9"*, in the food
+## units a deer hunt actually pays. `actual` sits between them because it is the EXPECTATION, which is
+## what `forecast == actual` is restated on.
+const RANGE_ACTUAL := 0.90
+
+const RANGE_LOW := 0.60
+
+const RANGE_HIGH := 1.10
+
+## The band's own hunt assignment, with the pair either SPREAD or collapsed onto the expectation.
+## One builder for both states, so the only thing that differs between them is the two bounds —
+## a second fixture could drift in a term the assertion does not name.
+func _range_band(low: float, high: float) -> Dictionary:
+	var band := BandFx.hunt_preview_local_band()
+	band["labor_assignments"] = [{
+		"kind": "hunt", "workers": 2, "fauna_id": HerdFx.herd_fixture()["id"],
+		"target_x": 66, "target_y": 10, "floor": SourceForecast.FLOOR_FOOD_PEAK,
+		"actual_yield": RANGE_ACTUAL, "sustainable_yield": RANGE_ACTUAL,
+		"realized_yield": RANGE_ACTUAL, "workers_needed": 2, "overdraws": false,
+		SourceForecast.YIELD_RANGE_LOW_KEY: low,
+		SourceForecast.YIELD_RANGE_HIGH_KEY: high,
+	}]
+	return band
+
+func _yield_range_states() -> void:
+	var herd := HerdFx.herd_fixture()
+	var band_clause: String = SourceForecast.YIELD_RANGE_CLAUSE_FORMAT \
+		% SourceForecast.format_yield_range(RANGE_LOW, RANGE_HIGH)
+
+	# State range-a — A REAL BAND. The row's headline stays the steady realized rate (the band is
+	# about this turn's expectation, which is a different number), and the spread rides beside it in
+	# the muted register the wasted note already uses.
+	var spread := _range_band(RANGE_LOW, RANGE_HIGH)
+	h._hud._band_labor._player_bands = [spread]
+	h._hud._band_labor._player_band = spread
+	h._hud._compose.reset_hunt_source()
+	h._show_herd(herd)
+	await h._settle()
+	await h._save("herd_hunt_yield_range")
+	h._assert_hud("a stochastic take states its band beside the expectation — \"%s\"" % band_clause,
+		Q.has_label_containing(h._hud, band_clause))
+
+	# State range-b — **THE DEGENERATE CASE, PINNED.** A forage patch and every resolved row report it,
+	# and without this half the state above passes just as well on a readout that draws a range
+	# unconditionally. The bounds are collapsed onto the expectation HERE rather than staged off a
+	# wariness-free species, so the claim is about the readout and not about the roster.
+	var point := _range_band(RANGE_ACTUAL, RANGE_ACTUAL)
+	h._hud._band_labor._player_bands = [point]
+	h._hud._band_labor._player_band = point
+	h._hud._compose.reset_hunt_source()
+	h._show_herd(herd)
+	await h._settle()
+	await h._save("herd_hunt_yield_point")
+	h._assert_hud("…and where the distribution is a POINT no band is drawn at all",
+		not Q.has_label_containing(h._hud, SourceForecast.YIELD_RANGE_CLAUSE_FORMAT % ""))
+
+	# Reset for whatever renders next.
+	h._hud._band_labor._player_bands = []
+	h._hud._band_labor._player_band = BandFx.band_fixture()
+	h._hud._compose.reset_hunt_source()
+
+
+# =====================================================================================
+#  AN EMPTY RAID IS EMPTY FOR ONE OF TWO REASONS, AND THEY ARE OPPOSITES
+# =====================================================================================
+# Reported from play. A THRIVING Wild Aurochs herd — ten of eleven animals standing, four of them
+# affordable above a 50% floor — was refused to a party of one as *"too lean to raid — its surplus is
+# spent"*, over a line two rows up saying it takes several hunters to bring ONE aurochs into contact.
+# The herd was not the problem; the party was. Since the take started resolving through the fight
+# (`docs/plan_hunt_through_combat.md` §4) a raid delivers nothing for two unrelated reasons with
+# OPPOSITE remedies — wait for the herd to rebuild, against send more hunters — and the refusal named
+# the wrong one, which is worse than naming no one.
+#
+# **THE SIM ALREADY TELLS THEM APART**, so the frames are an A/B on `HuntTripBound` alone: this herd's
+# every cell is `horizon` (the projection ran out with the party still empty-handed), while
+# `_no_surplus_herd`'s every cell is `floor` (the standing surplus is spent). Both deliver ZERO in
+# both currencies, so a client reading the numbers cannot separate them and every claim below is
+# really a claim about reading the sim's answer instead.
+
+## The reported herd's own terms — `B/K` a hair over 0.9, i.e. unmistakably NOT at its floor, which is
+## the whole premise the old refusal contradicted. Ten of eleven animals, so `body_mass` and the pair
+## agree by construction rather than by two roundings landing together.
+const AUROCHS_CAPACITY := 1320.0
+
+const AUROCHS_BIOMASS := 1200.0
+
+const AUROCHS_BODY_MASS := 120.0
+
+## A clean binary rate, so the sheet's `1 / engageRate` inversion lands on a whole number rather than
+## on `6.000000000000001` — the reported herd's own figure was ~6, and what the frame has to hold is
+## the SHAPE (several hunters per animal), not that particular quotient.
+const AUROCHS_ENGAGE_RATE := 0.25
+
+## The two readings of that rate, stated from the harness's side so the sheet and the fixture arrive
+## at the same number from opposite ends.
+const AUROCHS_HUNTERS_PER_ANIMAL := 4
+
+## **THE SIM'S `fauna::hunt_engage_workers`, RESTATED FROM THIS FIXTURE'S OWN NUMBERS** — the crew that
+## brings the herd's peak animal drop into contact in one turn, which is the ceiling the party stepper
+## must report. `room = 1200 − 0.5 × 1320 = 540`; `peak drop = floor(540 / 120) + 1 = 5`;
+## `crew = ceil(5 / 0.25) = 20`. Written out rather than asked of `SourceForecast`, because a ceiling
+## read back from the code under test could only ever confirm itself.
+const AUROCHS_ENGAGE_CREW := 20
+
+## A per-biomass rate that keeps the herd's food quantum a round number
+## (`food_per_animal = body_mass × this`), so nothing in the readout reads as noise.
+const AUROCHS_PROVISIONS_PER_BIOMASS := 0.02
+
+## The band's kit against the aurochs' two defensive axes. **The fight is WINNABLE and slow**, which is
+## the case the arc is about: a blocked gate is already covered by `herd_hunt_gate_blocked`, and a
+## refusal that named the party would be unsurprising there. `durability / (attack − defense)` =
+## `160 / (20 − 5)` ≈ 10.7 hunter-turns for ONE hunter — enough that a party of one lands nothing
+## inside the projection's horizon, and nowhere near "cannot hurt it".
+const AUROCHS_DEFENSE := 5.0
+
+const AUROCHS_DURABILITY := 160.0
+
+## The party the case was reported at, and the smallest one that can hold the claim: one hunter, four
+## animals standing affordable, and a herd that needs twenty hands to be reached at all.
+const AUROCHS_PARTY := 1
+
+## **THE HERD WITH REAL SURPLUS AND A PARTY THAT CANNOT TOUCH IT.** Every sampled cell delivers zero in
+## both currencies while the herd stands at 0.9 of its capacity, and every cell carries
+## `TRIP_BOUND_HORIZON` — the sim's own statement that the projection ran its whole length without the
+## party filling a pack, spending the surplus or losing the herd. `delivers_food` stays TRUE: the
+## quarry is edible (that flag says so since #337), and a fixture that cleared both flags would stage a
+## DENIAL mission instead, which is a different branch entirely.
+func _unkillable_aurochs_herd() -> Dictionary:
+	var herd := HerdFx.assign_preview_herd("game_aurochs_05", "Wild Aurochs", "thriving",
+		AUROCHS_PROVISIONS_PER_BIOMASS * (AUROCHS_BIOMASS
+			- SourceForecast.FLOOR_FOOD_PEAK * AUROCHS_CAPACITY), 0, 0)
+	herd["biomass"] = AUROCHS_BIOMASS
+	herd["carrying_capacity"] = AUROCHS_CAPACITY
+	# Stated rather than derived, so the room, the peak drop and the engagement crew above are one
+	# arithmetic chain the adapter cannot re-seed underneath.
+	herd["body_mass"] = AUROCHS_BODY_MASS
+	herd["food_per_animal"] = AUROCHS_BODY_MASS * AUROCHS_PROVISIONS_PER_BIOMASS
+	herd["engage_rate"] = AUROCHS_ENGAGE_RATE
+	herd["defense"] = AUROCHS_DEFENSE
+	herd["durability"] = AUROCHS_DURABILITY
+	var table := {}
+	for w in range(1, 9):
+		for stance in BaseFx.LEGACY_STANCE_FLOORS:
+			table["%s:%d" % [String(stance), w]] = {
+				# `turns_to_fill == 0` and `bound == horizon` are ONE statement of the same fact and
+				# must move together: the projection never completed.
+				"turns_to_fill": 0, "delivers_food": true, "delivers_trade": false,
+				"animals_taken": 0, "delivered_food": 0.0, "delivered_trade": 0.0,
+				"wasted_food": 0.0,
+				SourceForecast.TRIP_BOUND_KEY: SourceForecast.TRIP_BOUND_HORIZON,
+			}
+	herd["hunt_trip_estimates"] = table
+	return herd
+
+## The three faces of one refusal, read out of the ONE table the client composes them from — so the
+## assertions cannot drift from the copy, and a reworded sentence moves the expectation with it.
+func _empty_refusal(bound: String, face: String, quarry: String) -> String:
+	var entry: Dictionary = SourceForecast.HUNT_EMPTY_REFUSALS[bound]
+	return String(entry[face]) if face == "button" else String(entry[face]) % quarry
+
+func _unkillable_quarry_states() -> void:
+	var aurochs := _unkillable_aurochs_herd()
+	var quarry := String(aurochs["species"])
+	# A band beyond `hunt_reach` (so the sheet takes the EXPEDITION branch) carrying a real
+	# `hunter_attack`, without which the combat gate's own line — the one the refusal used to
+	# contradict — would not render at all.
+	var band := BandFx.with_equipped_kit(_hunt_preview_far_band())
+	h._hud._band_labor._player_bands = [band]
+	h._hud._band_labor._player_band = band
+	h._hud._compose.reset_hunt_source()
+	h._hud._compose.set_hunt_band(-1)
+	h._show_herd(aurochs)
+	h._compose_herd(aurochs, AUROCHS_PARTY, SourceForecast.FLOOR_FOOD_PEAK)
+	await h._settle()
+	await h._save("herd_hunt_party_cannot_kill")
+	var sheet: Control = h._hud._drawercompose._compose_sheet
+
+	# **THE REFUSAL NAMES THE PARTY, AND SAYS THE HERD IS NOT THE PROBLEM.** Asserted as a PAIR with
+	# the herd-side sentence's absence, because a table that answered one refusal for every bound
+	# would satisfy a lone positive — and that table is exactly what shipped.
+	var party_line := _empty_refusal(SourceForecast.TRIP_BOUND_HORIZON, "line", quarry)
+	var herd_line := _empty_refusal(SourceForecast.TRIP_BOUND_FLOOR, "line", quarry)
+	h._assert_hud("a raid this party cannot kill is refused in the PARTY's name — \"%s\"" % party_line,
+		Q.has_label_containing(sheet, party_line)
+			and not Q.has_label_containing(sheet, herd_line))
+
+	# **THE SEND BUTTON AGREES WITH THE LINE**, off the same entry. A button reading "Herd too lean to
+	# raid" under a sentence naming the party is the same misattribution one control further on, and
+	# a face resolved separately is free to be exactly that.
+	var send := Q.find_meta_node(sheet, HudWidgets.SEND_HUNT_CONFIRM_META) as Button
+	var party_button := _empty_refusal(SourceForecast.TRIP_BOUND_HORIZON, "button", quarry)
+	h._assert_hud("…and the disabled Send wears the SAME culprit's face — \"%s\"" % party_button,
+		send != null and send.disabled and send.text == party_button)
+
+	# **THE SPELLED-OUT REASON CARRIES THE PARTY'S REMEDIES AND NONE OF THE HERD'S.** This is the line
+	# that actually sends the player somewhere, so the negative half is the load-bearing one: "wait for
+	# the herd to rebuild" is advice that would never come true here.
+	var party_reason := _empty_refusal(SourceForecast.TRIP_BOUND_HORIZON, "reason", quarry)
+	var herd_reason := _empty_refusal(SourceForecast.TRIP_BOUND_FLOOR, "reason", quarry)
+	h._assert_hud("…and the reason beside it sends the player to the PARTY, not to the herd",
+		Q.has_label_containing(sheet, party_reason)
+			and not Q.has_label_containing(sheet, herd_reason))
+
+	# **THE CREW CEILING IS THE ENGAGEMENT CREW, NOT ONE.** The plateau scan can only report a bind it
+	# watches the payload run into, and a payload flat at zero never rises — so the sheet said "max 1
+	# worker useful here" two lines above the crew ONE animal takes. Both halves are asserted: the
+	# ceiling the note now names, and the absence of the advice that contradicted the line above it.
+	var expected_note: String = SourceForecast.LABOR_BOUND_NOTE_FORMAT % [
+		SourceForecast.expedition_party_cap(band), AUROCHS_ENGAGE_CREW]
+	var idle_note: String = SourceForecast.MAX_USEFUL_NOTE_FORMAT % [
+		AUROCHS_PARTY, SourceForecast.MAX_USEFUL_NOUN_ONE]
+	h._assert_hud("the party ceiling is the crew that REACHES the herd — \"%s\"" % expected_note,
+		Q.has_label_containing(sheet, expected_note)
+			and not Q.has_label_containing(sheet, idle_note))
+
+	# **THE CONTRADICTION ITSELF.** It was a relation between two RENDERED lines — the reach line and
+	# the ceiling — until the reach line was retired; the ceiling is still the half that has to hold,
+	# and it must be at least the crew one animal takes or the cap is back below the engagement arm
+	# that floors it.
+	h._assert_hud("…and the ceiling can no longer sit BELOW the hunters one animal takes (%d >= %d)"
+			% [AUROCHS_ENGAGE_CREW, AUROCHS_HUNTERS_PER_ANIMAL],
+		AUROCHS_ENGAGE_CREW >= AUROCHS_HUNTERS_PER_ANIMAL)
+
+	# Reset for whatever renders next.
+	h._hud._band_labor._player_bands = []
+	h._hud._band_labor._player_band = BandFx.band_fixture()
+	h._hud._compose.reset_hunt_source()
+	h._hud._compose.set_hunt_band(-1)
+
+	# ---- THE UNBOUNDED RAID QUOTES A FLOOR, AND THE FLOOR INCLUDES THE WALK ----------------------
+	# **The pairing half of `herd_hunt_forecast_horizon`, and the only frame that can tell the fix from
+	# the bug it replaces.** That state's band carries no move rate, so its trip is all hunting and
+	# `horizon` and `horizon + travel` are the same number — a client quoting the bare horizon renders
+	# it identically. Here the SAME never-completing Steppe Bison is raided from the travel band (8
+	# tiles out at 2 tiles a turn → a round trip of `RAID_TRAVEL_TURNS`), so the two answers differ by
+	# the whole walk and the copy has to say which one it means.
+	#
+	# The rule the sim's own field states: the horizon bounds the HUNTING alone, so the floor on the
+	# TRIP is `horizon + round-trip travel`. A number wrong in the reassuring direction is worse than
+	# the "many turns" it replaces, which is why every claim below is an EQUALITY.
+	h._hud._band_labor._player_bands = [_raid_travel_band()]
+	h._hud._band_labor._player_band = h._hud._band_labor._player_bands[0]
+	var horizon_travel_herd := _horizon_raid_herd()
+	h._hud._compose.reset_hunt_source()
+	h._hud._compose.set_hunt_band(-1)
+	h._show_herd(horizon_travel_herd)
+	h._compose_herd(horizon_travel_herd, HerdFx.HUNT_FORECAST_PARTY,
+		SourceForecast.FLOOR_FOOD_PEAK)
+	await h._settle()
+	await h._save("herd_hunt_horizon_travel")
+	_assert_horizon_floor_is_the_whole_trip()
+
+	# Reset again for whatever renders after this chapter.
+	h._hud._band_labor._player_bands = []
+	h._hud._band_labor._player_band = BandFx.band_fixture()
+	h._hud._compose.reset_hunt_source()
+	h._hud._compose.set_hunt_band(-1)
+
+
+## The three surfaces that used to say "many turns", each asserted by EQUALITY against a sentence
+## spelled out HERE rather than re-composed through `SourceForecast`'s own formats — a claim about copy
+## that borrows the copy under test can only ever agree with itself. A `contains` would not do either:
+## the failure being guarded is a line quoting the HORIZON where it owes the horizon PLUS the walk, and
+## those two lines share every word.
+func _assert_horizon_floor_is_the_whole_trip() -> void:
+	var sheet: Control = h._hud._drawercompose._compose_sheet
+	var trip_floor := BandFx.FORECAST_HORIZON_TURNS + RAID_TRAVEL_TURNS
+	# 1. THE TRIP VERDICT — the sentence the defect was reported against ("Away many turns — still
+	#    delivering at the end of the forecast, after 18 turns of travel"), now a bound in the same span
+	#    and the same shape its bounded twin ("Away ≈36 turns — 18 hunting, 18 travel") states.
+	var expected_verdict := ("%s Away more than %d turns — more than %d hunting, %d travel. "
+		+ "Still delivering at the end of the forecast.") % [
+			HudWidgets.VERDICT_DOT, trip_floor, BandFx.FORECAST_HORIZON_TURNS, RAID_TRAVEL_TURNS]
+	var got_verdict := Readout.verdict_text(sheet)
+	h._assert_hud("an unbounded raid's verdict bounds the WHOLE trip — want \"%s\", got \"%s\""
+			% [expected_verdict, got_verdict],
+		got_verdict == expected_verdict)
+	h._assert_hud("…and still reads SLOW, the severity the line and the button already carry",
+		Readout.verdict_severity(sheet) == SourceForecast.VERDICT_SLOW)
+	# 2. THE SEND BUTTON — the last control the player looks at before committing, so it names the same
+	#    figure rather than the word "long".
+	var send := Q.find_meta_node(sheet, HudWidgets.SEND_HUNT_CONFIRM_META) as Button
+	var expected_send := "Send Anyway (more than %d turns)" % trip_floor
+	h._assert_hud("…and the Send names the same floor — want \"%s\", got \"%s\""
+			% [expected_send, "" if send == null else send.text],
+		send != null and not send.disabled and send.text == expected_send)
+	# 3. THE ONE-LINE FORM (the targeting banner's and the dock sheet's sentence — the compose sheet
+	#    renders the box instead, so it is asserted on the producer). The payload tail is the fixture's
+	#    and is not the claim, so the equality is on the whole HEAD through the travel split.
+	var forecast := SourceForecast.hunt_trip_forecast(
+		h._hud._band_labor._player_band, h._hud._selection.herd(),
+		SourceForecast.FLOOR_FOOD_PEAK, HerdFx.HUNT_FORECAST_PARTY,
+		h._hud._band_labor.grid_width(), h._hud._band_labor.wrap_horizontal())
+	var expected_head := ("[color=#%s]delivers ≈%d %s over more than %d turns "
+		+ "(more than %d hunting + %d travel)") % [
+			HudStyle.WARN_HEX, int(forecast.get("animals", 0)), HORIZON_QUARRY_NAME,
+			trip_floor, BandFx.FORECAST_HORIZON_TURNS, RAID_TRAVEL_TURNS]
+	var got_line := SourceForecast.hunt_forecast_line_bbcode(forecast, HORIZON_QUARRY_NAME)
+	h._assert_hud("…and the one-line form opens on the same floor and split — want \"%s\", got \"%s\""
+			% [expected_head, got_line],
+		got_line.begins_with(expected_head))

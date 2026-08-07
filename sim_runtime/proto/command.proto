@@ -244,6 +244,12 @@ message AssignLaborCommand {
   // failure unless finite and within 0.0..=1.0 — never clamped, because a clamp turns a typo into a
   // quiet policy change. Appended (append-only).
   optional float floor = 10;
+  // THE KIT this crew works under (equipment.json `kits`). Absent = the job's default. An unknown
+  // id, or one whose `jobs` does not cover this role, is a COMMAND FAILURE with a reason — never a
+  // silent fall back to the default, because naming a kit is how the player compares tiers.
+  // Ignored by the band-wide roles (scout/warrior), which consume no kit component.
+  // Appended (append-only).
+  optional string kit_id = 11;
 }
 
 // Travel a band toward a target tile at band_move_tiles_per_turn/turn.
@@ -284,6 +290,38 @@ message SendHuntExpeditionCommand {
   // (0.5, the food peak). Rejected with a command failure unless finite and within 0.0..=1.0 —
   // never clamped. Appended (append-only).
   optional float floor = 6;
+  // RETIRED with the player-set fill target (docs/plan_hunt_through_combat.md §5.2, marked retired
+  // in place). It named a count of whole animals to come home with, below the pack's capacity. Trip
+  // length is `carry / (engage_rate × stay_chance × body_mass)` — PARTY SIZE CANCELS — so it was the
+  // only lever on a species-and-kit constant, and the trips it existed to escape are a TUNING
+  // problem (issue #491), not a control problem. The field number is NOT reused and NOT renumbered —
+  // a shipped number is immutable — and the server ignores any value, exactly as `policy` above.
+  optional uint32 fill_target = 7;
+  // THE KIT the party is SENT OUT WITH — resolved ONCE at launch and carried for the party's whole
+  // life, never re-resolved against the band's later stock. Absent = the hunt job's default. An
+  // unknown id, or one whose `jobs` does not include `hunt`, is a command failure with a reason.
+  // Appended (append-only).
+  optional string kit_id = 8;
+}
+
+// Outfit and launch a DENIAL RAID: draw party_workers off the home band and send a detached party to
+// erase the herd fauna_id (docs/plan_denial_raid.md).
+//
+// IT CARRIES NO FLOOR, and that absence is the design. Its escapement ceiling is the herd's whole
+// standing stock, so there is no floor to name. You choose a herd and a party size — which is
+// precisely why it is a separate command rather than a value on send_hunt_expedition.
+//
+// It aims at a HERD, never at a player: there is deliberately no target-faction field (§2).
+message SendDenialRaidCommand {
+  uint32 faction_id = 1;
+  optional uint64 band_id = 2;
+  uint32 party_workers = 3;
+  string fauna_id = 4;
+  // THE KIT the raid is sent out with — same rule as SendHuntExpeditionCommand.kit_id. This is the
+  // one place the denial raid's grammar is NOT closed: a kit is a property of the party, not of the
+  // mission, so it is the one thing there is to say about a raid that carries no floor and no fill
+  // target. Appended (append-only).
+  optional string kit_id = 5;
 }
 
 // Ask the server to republish the world as a FULL snapshot.
@@ -442,5 +480,7 @@ message CommandEnvelope {
     // 46 is held by `abandon_improvement`; the config-override pair takes 47 and 48.
     SetConfigOverrideCommand set_config_override = 47;
     ClearConfigOverridesCommand clear_config_overrides = 48;
+    // 48 is held by `clear_config_overrides`, so the denial raid takes 49 (append-only).
+    SendDenialRaidCommand send_denial_raid = 49;
   }
 }

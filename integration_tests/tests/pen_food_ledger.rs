@@ -133,6 +133,7 @@ fn run_one_turn_with_a_pen(larder: f32, hay: f32) -> (f32, f32, f32, f32, f32, f
             },
             workers: workers.max(1),
             improvement: None,
+            kit: None,
         }],
         ..Default::default()
     });

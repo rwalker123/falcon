@@ -31,7 +31,7 @@ use crate::state::population::{
 };
 use crate::state::subsistence::{
     FoodModuleState, ForagePatchState, HerdTelemetryState, IntensificationKnowledgeState,
-    SedentarizationState,
+    KitOptionState, SedentarizationState,
 };
 use ahash::RandomState;
 use serde::{Deserialize, Serialize};
@@ -192,6 +192,16 @@ pub struct WorldSnapshot {
     /// Per-faction Cultivation/Herding knowledge progress (Intensification Rung 1b/1c).
     #[serde(default)]
     pub intensification_knowledge: Vec<IntensificationKnowledgeState>,
+    /// **The kit roster** (`equipment.json`'s `kits`) — every kit a party may be sent out with, in
+    /// file order, with the tiers each grants. A per-world constant, published once so the client's
+    /// picker needs no second copy of the TOE table.
+    #[serde(default)]
+    pub kits: Vec<KitOptionState>,
+    /// The kit each verb uses when the player names none. Both always name a roster entry.
+    #[serde(default)]
+    pub default_hunt_kit_id: String,
+    #[serde(default)]
+    pub default_forage_kit_id: String,
     pub moisture_raster: FloatRasterState,
     pub elevation_overlay: ElevationOverlayState,
     /// Climate-band cut points (`docs/plan_climate_authority.md` §8.3), a per-map constant.
@@ -279,6 +289,14 @@ pub struct WorldDelta {
     pub demographics: Option<Vec<PopulationDemographicsState>>,
     pub forage_patches: Option<Vec<ForagePatchState>>,
     pub intensification_knowledge: Option<Vec<IntensificationKnowledgeState>>,
+    /// The kit roster; a per-world constant, so a delta re-sends it only when the world is rebuilt.
+    /// `None` means unchanged.
+    #[serde(default)]
+    pub kits: Option<Vec<KitOptionState>>,
+    #[serde(default)]
+    pub default_hunt_kit_id: Option<String>,
+    #[serde(default)]
+    pub default_forage_kit_id: Option<String>,
     pub moisture_raster: Option<FloatRasterState>,
     pub elevation_overlay: Option<ElevationOverlayState>,
     /// Climate-band cut points; a per-map constant, so a delta re-sends it only when the map is

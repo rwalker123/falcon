@@ -482,9 +482,19 @@ static func zone_head(title: String, readout: String, menu: MenuButton = null, r
 ## has no members of; hence the key is tested with `has` rather than read with a `false` default.
 const MENU_ENTRY_CHECKED := "checked"
 
+## A `build_section_menu` entry's OPTIONAL `Texture2D` icon — the species/site ART where the client
+## has any. Also absent-is-not-empty: an entry without it is built with no icon at all rather than
+## with a null one, so every existing text-only menu is byte-identical. It exists because
+## **Unicode ships ONE deer** — the same reason `build_marker_icon` does — so a menu that could only
+## carry an emoji would render two roster species identically and defeat its own purpose as a
+## chooser. A caller that HAS no art for a species falls back to the emoji in the LABEL, which is
+## the `build_marker_icon` split read through a `PopupMenu`'s own item API.
+const MENU_ENTRY_ICON := "icon"
+
 ## The `⋯` section menu: a `MenuButton`, so its popup is a WINDOW and opening it cannot change any
 ## zone's layout height (the whole zone model depends on heights not moving). `entries` is an ordered
-## array of `{label, disabled, on_pick}` dictionaries, each optionally carrying `MENU_ENTRY_CHECKED`.
+## array of `{label, disabled, on_pick}` dictionaries, each optionally carrying `MENU_ENTRY_CHECKED`
+## and/or `MENU_ENTRY_ICON`.
 static func build_section_menu(entries: Array, tooltip: String) -> MenuButton:
     var button := MenuButton.new()
     button.text = HudWorkVocab.SECTION_MENU_GLYPH
@@ -493,30 +503,128 @@ static func build_section_menu(entries: Array, tooltip: String) -> MenuButton:
     button.custom_minimum_size = Vector2(HudWorkVocab.SECTION_MENU_WIDTH, 0.0)
     HudStyle.apply_button(button, "ghost")
     compact(button, HudWorkVocab.ZONE_HEAD_FONT_SIZE, HudWorkVocab.ZONE_MENU_PADDING_V)
-    var popup := button.get_popup()
+    _fill_menu_popup(button.get_popup(), entries)
+    return button
+
+## **A COMPOSE-SHEET FIELD ROW'S KEY LABEL** — `Band:`, `Kit`, `Quarry`. Its whole job is the ONE
+## declared width (`HudComposeVocab.COMPOSE_FIELD_KEY_WIDTH`) that makes three rows built by three
+## different modules line their value controls up; the reasoning is on that constant. `SIZE_FILL`, not
+## `EXPAND` — the key takes exactly its declared width and the CONTROL is the row's only expanding
+## child, so a third widget on the row (the quarry chooser) comes out of the value's share rather than
+## out of the key's, and a row with two children and a row with three still start their value at the
+## same x.
+static func build_field_key(text: String) -> Label:
+    var key := Label.new()
+    key.text = text
+    key.custom_minimum_size = Vector2(HudComposeVocab.COMPOSE_FIELD_KEY_WIDTH, 0.0)
+    key.size_flags_horizontal = Control.SIZE_FILL
+    key.add_theme_color_override("font_color", HudStyle.INK)
+    return key
+
+## **THE CHOICE AS A NATIVE SELECTOR** — an `OptionButton` whose face states the CURRENT choice, for a
+## control that is a chooser in its own right rather than an overflow on a section head (the kit
+## picker, and the compose sheets' `Band:` picker).
+##
+## **IT REPLACED A `MenuButton` WHOSE FACE CARRIED A `⌄` GLYPH, AND THE MECHANISM IS THE WHOLE POINT.**
+## A `MenuButton` draws no arrow, so the affordance had to be baked into `text` — where `clip_text`
+## eats it the moment the label reaches the button's edge (`Gathering kit` did, so the forage sheet's
+## kit picker showed no caret at all) and where it renders as a small low-baseline mark rather than as
+## the themed arrow the `Band:` picker one row above already drew. An `OptionButton` reserves the
+## arrow's width as an internal right margin, so the icon is drawn OUTSIDE the text's clip rect and no
+## face can push it off. It also CHECKS the current entry natively — its popup items are radio-check
+## items and it marks the selected one itself — which is the behaviour `_fill_menu_popup` hand-rolls
+## through `MENU_ENTRY_CHECKED`.
+##
+## `entries` is an ordered array of `{label, on_pick}` — `build_section_menu`'s contract minus
+## `MENU_ENTRY_CHECKED`, which a native selector OWNS: `selected_index` is both the entry the face
+## opens on and the one the popup marks, and passing a second, hand-rolled mark would let the two
+## disagree. (No `MENU_ENTRY_ICON` either: neither caller has per-entry art, and repeating ONE glyph
+## down every row is noise rather than a distinction.)
+##
+## **`face` OVERRIDES the closed face, and the two are deliberately not the same sentence.** A list
+## entry may carry a marker that belongs only in the list (the kit roster tags its job default) and
+## the face may carry a glyph the list deliberately omits. `select()` writes the item's own text into
+## `text`, so the override is applied AFTER it; every caller rebuilds the whole row on a pick, so the
+## next selection's write is never the thing left on screen.
+##
+## `EXPAND_FILL` + `clip_text` are load-bearing together, the picked-quarry button's rule: `clip_text`
+## drops the minimum width to ~0, so without the expand the control collapses to a sliver beside its
+## key label — and without the clip a long entry name widens the row past the dock column.
+## `fit_to_longest_item` is OFF for that same reason: it sets the minimum width from the widest ENTRY,
+## which is exactly the dock-widening `clip_text` is here to prevent.
+static func build_option_picker(entries: Array, selected_index: int, face: String,
+        tooltip: String) -> OptionButton:
+    var button := OptionButton.new()
+    button.tooltip_text = tooltip
+    button.focus_mode = Control.FOCUS_NONE
+    button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    button.clip_text = true
+    button.fit_to_longest_item = false
+    HudStyle.apply_button(button, "ghost")
+    var picks: Array[Callable] = []
+    for entry_variant in entries:
+        if not (entry_variant is Dictionary):
+            continue
+        var entry: Dictionary = entry_variant
+        button.add_item(String(entry.get("label", "")), picks.size())
+        var pick: Variant = entry.get("on_pick", null)
+        picks.append(pick if pick is Callable else Callable())
+    if selected_index >= 0 and selected_index < picks.size():
+        button.select(selected_index)
+    button.text = face
+    button.item_selected.connect(func(index: int) -> void:
+        if index >= 0 and index < picks.size() and picks[index].is_valid():
+            picks[index].call())
+    return button
+
+## The shared popup fill for the `⋯` menu face above — one implementation of the entry contract
+## (`{label, disabled, on_pick}` + the optional `MENU_ENTRY_CHECKED` / `MENU_ENTRY_ICON`).
+static func _fill_menu_popup(popup: PopupMenu, entries: Array) -> void:
     var picks: Array[Callable] = []
     for entry_variant in entries:
         if not (entry_variant is Dictionary):
             continue
         var entry: Dictionary = entry_variant
         var index := picks.size()
+        var label := String(entry.get("label", ""))
+        var icon_variant: Variant = entry.get(MENU_ENTRY_ICON, null)
+        var icon: Texture2D = icon_variant as Texture2D if icon_variant is Texture2D else null
         if entry.has(MENU_ENTRY_CHECKED):
-            popup.add_radio_check_item(String(entry.get("label", "")), index)
+            if icon != null:
+                popup.add_icon_radio_check_item(icon, label, index)
+            else:
+                popup.add_radio_check_item(label, index)
             popup.set_item_checked(index, bool(entry[MENU_ENTRY_CHECKED]))
+        elif icon != null:
+            popup.add_icon_item(icon, label, index)
         else:
-            popup.add_item(String(entry.get("label", "")), index)
+            popup.add_item(label, index)
+        if icon != null:
+            # The bundled art is a 256px source; a `PopupMenu` draws an item icon at its native size
+            # and sizes the popup around it, so an uncapped mark would make a menu the width of the
+            # screen. Capped to the same width a species mark takes on any other TEXT ROW in this HUD
+            # (`build_marker_icon`'s callers), which is what a menu item is.
+            popup.set_item_icon_max_width(index, int(HudWorkVocab.WORK_ROW_ICON_WIDTH))
         popup.set_item_disabled(index, bool(entry.get("disabled", false)))
         var pick: Variant = entry.get("on_pick", null)
         picks.append(pick if pick is Callable else Callable())
     popup.id_pressed.connect(func(id: int) -> void:
         if id >= 0 and id < picks.size() and picks[id].is_valid():
             picks[id].call())
-    return button
+
+## The PARTY the stepper row was built with, as `HBoxContainer` meta — the `CREW_TARGET_COUNT_META`
+## idiom, and needed for the same reason: the number lives in a child `Label` that
+## `add_stepper_controls` places between two unlabelled buttons, so a harness has no `row.text` to
+## read and a positional walk over the children would pass silently on the wrong node. This is the
+## SETTLED count, since the row is built from whatever the caller clamped — which is what makes it
+## the honest thing to compare a chart's `HarvestFloorChart.crew()` against.
+const PARTY_STEPPER_COUNT_META := "party_stepper_count"
 
 ## The party stepper row, shared by both missions so they cannot drift apart in shape.
 static func build_party_stepper_row(count: int, party_max: int, on_change: Callable) -> HBoxContainer:
     var row := HBoxContainer.new()
     row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    row.set_meta(PARTY_STEPPER_COUNT_META, count)
     var key := Label.new()
     key.text = HudComposeVocab.COMPOSE_FIELD_PARTY
     key.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -529,6 +637,13 @@ static func build_party_stepper_row(count: int, party_max: int, on_change: Calla
 ## same pair as child Labels at two sizes), so a harness matching on `btn.text` breaks with every
 ## visual pass. `band_panel_preview._picker_rung_buttons` reads this.
 const POLICY_RUNG_META := "policy"
+
+## The compose sheet's QUARRY CHOOSER, as `MenuButton` meta — the control that appears only when a hex
+## holds more than one eligible quarry. It needs a handle of its own because the parties zone builds a
+## `⋯` `MenuButton` for its section menu too, so a node-type search finds both, and because the claim
+## the harness makes is an ABSENCE with one candidate: a search that could match the wrong menu would
+## report a chooser on a sheet that has none.
+const QUARRY_CHOICES_META := "quarry_choices"
 
 ## The floor CHART, as `HarvestFloorChart` meta — the same stable-handle reasoning, and needed more
 ## than most: the chart carries no text at all, so a harness has nothing else to find it by. (It
@@ -580,6 +695,17 @@ const CREW_ROW_DIP_META := "crew_row_dip"
 ## the assertable half: the sentence carries turn counts and percentages that move with the fixture.
 const VERDICT_META := "verdict"
 
+## **THE PRE-LAUNCH FIGHT'S ONE REMAINING LINE** (`docs/plan_hunt_through_combat.md` §2.1 / §6.5), with
+## a meta because it must be assertable by ABSENCE as well as by presence — a pen and the whole plant
+## web render none, and that emptiness is the byte-identity claim this arc has to hold.
+##
+## **THE ENGAGEMENT FIGURE'S OWN META WENT WITH THE LINE** (`One hunter brings 10 Wild Fowl into
+## contact.`): a species constant that never moved with anything the player was dialling. So did the
+## gate's WINNABLE face (`0.1 hunter-turns to bring one down`) — the meta now only ever rides a
+## refusal, and a winnable fight renders no line at all, which `Readout.HUNT_GATE_ABSENT` is the
+## assertion for.
+const HUNT_GATE_META := "hunt_gate"
+
 ## The "send a hunting expedition" CONFIRM button, as `Button` meta — set by BOTH hosts that build
 ## one (the herd drawer's compose control and the Band panel's parties compose sheet). Same reason as
 ## the rung meta above, only more so: this button's face is the raid VERDICT
@@ -588,6 +714,22 @@ const VERDICT_META := "verdict"
 ## harness cannot match on. `tools/command_guard.gd` presses it through this meta — it is the ONLY
 ## way to reach those two emit sites, whose payload-building lives in an inline `pressed` lambda.
 const SEND_HUNT_CONFIRM_META := "send_hunt_confirm"
+
+## The DENIAL raid's confirm button (`docs/plan_denial_raid.md`). **Its OWN meta, not the hunt one**,
+## and for the reason the two forms are separate at all: a harness that pressed "the send button" on a
+## parties compose sheet could not tell which MISSION it had just launched, and the two emit different
+## signals with different, non-interchangeable payloads (a denial payload carries no floor, and its
+## command grammar rejects one). Its face is the collapse verdict, so text is not matchable either.
+const SEND_DENIAL_CONFIRM_META := "send_denial_confirm"
+
+## A parties-footer MISSION LAUNCH button (`⚑ Scout` / `🏹 Hunt` / `💀 Deny`), as `Button` meta, carrying
+## the MISSION key it opens the compose sheet on. It is the entry point to a composing act — the press
+## a player makes and the only path that opens a sheet with nothing filled in — so a harness that
+## cannot reach it can only ever stage the compose sheet by writing `_party_compose_open` directly,
+## which is how the EMPTY form in a tall dock went uncovered through two reports of the same defect.
+## Keyed on the mission rather than a bare `true` because all three buttons are built by one builder
+## and their faces (which carry the mission glyph) are exactly what a harness must not match on.
+const MISSION_LAUNCH_META := "mission_launch"
 
 ## A compose sheet's COMMIT button, as `Button` meta — set by both sheets' builders. Its face is the
 ## thing under test whenever the crew noun moves (`Forage` / `Tend` / `Unassign` on the plant web,
@@ -833,8 +975,12 @@ static func build_floor_picker(
         # Tooltip carries the VERBOSE metric the face compacts, led by the preset's own label and the
         # NUMBER it stands for — the one place the two spellings of a floor sit together, so a player
         # can learn that "Best harvest" is 50% left standing without dragging the slider to find out.
+        # **THE TOOLTIP CARRIES THE LONG FORM THE FACE SHORTENED.** The faces are one word each so
+        # three presets fit a 354px dock column; the phrase each stands for is the first thing this
+        # tooltip says, beside the number, so nothing the shortening took is unreachable.
         var preset_name := "%s (%s)" % [
-            HudComposeVocab.FLOOR_PRESET_LABELS.get(preset, preset),
+            HudComposeVocab.FLOOR_PRESET_LONG_LABELS.get(preset,
+                HudComposeVocab.FLOOR_PRESET_LABELS.get(preset, preset)),
             HudComposeVocab.FLOOR_VALUE_FORMAT % SourceForecast.floor_percent(floor_value)]
         var name_line := HudComposeVocab.POLICY_TOOLTIP_NAME_FORMAT % [preset_name, full] \
             if full != "" else preset_name
@@ -883,6 +1029,79 @@ static func build_floor_chart(model: Dictionary, on_change: Callable) -> VBoxCon
         on_change.call(value, committed))
     block.add_child(chart)
     return block
+
+## **THE EXPEDITION'S READOUT — the same box, the same three registers, a different question.** The
+## branch used to answer with one wrapped bbcode sentence carrying five facts (the animals, the
+## turns, the split, the food, the trade and the waste), beside a local sheet that laid the same
+## kinds of fact out in a bounded well. Two sheets on one panel, reading nothing alike.
+##
+## What must NOT carry over is the local readout's PER-TURN framing: the header
+## (`EXPEDITION_TRIP_ROW_HEADER`), the absent `now → after` on every row, and a verdict about the
+## trip's length rather than about which of the crew and the floor binds — all three because a raid
+## is one bounded errand, not a rate a resident crew settles into.
+##
+## Only a DELIVERING trip reaches here (`SourceForecast.hunt_trip_delivers`); the refused states keep
+## their sentence, an empty box being worse than the line it replaced.
+##
+## **IT LIVES IN THE SHARED WIDGET LAYER BECAUSE TWO CONTROLLERS RENDER IT.** It was private to
+## `DrawerComposeController` while the Band panel's dock sheet answered the same question with a
+## one-line bbcode sentence — and the two drifted, as a copied control always does: on a Wild Fowl
+## flock the drawer laid out a full box and the dock rendered NOTHING. Both sheets call this now, so
+## the raid has one readout. Everything it needs (`trip`, the quarry's name, the composed floor)
+## arrives as a PARAMETER — no controller state, which is what let it move at all.
+static func mount_trip_readout(parent: VBoxContainer, trip: Dictionary, quarry: String,
+        floor_value: float) -> void:
+    var column := build_readout_box(parent)
+    # The waste rides the yields row's own `waste` slot, exactly as the local hunt's does — a kill the
+    # party could not haul is the animal web's concern on both branches, and it is amber either way.
+    var waste_pct := float(trip.get("waste_pct", 0.0))
+    column.add_child(build_yields_row(
+        _trip_yield_rows(trip, quarry),
+        HudStyle.INK,
+        "",
+        HudStyle.HEALTHY,
+        SourceForecast.HUNT_WASTE_NOTE_FORMAT % int(round(waste_pct * 100.0)) \
+            if waste_pct > 0.0 else "",
+        SourceForecast.EXPEDITION_TRIP_ROW_HEADER))
+    column.add_child(build_verdict_line(SourceForecast.hunt_trip_verdict(trip)))
+    # THE ASIDE IS THE FLOOR HINT AND NOTHING ELSE. The local readout's other line — the live teaching
+    # rate — has no counterpart here: an expedition accrues no husbandry (the gap
+    # `FLOOR_LEARNING_HINT_EXPEDITION` already names in the learning zone), so a teaching line would
+    # quote a multiplier this party never earns. A zone with nothing to say renders no aside at all,
+    # rather than a dashed rule over empty space.
+    # The COMPOSED floor, not the estimate row's nearest sample: the hint explains the preset the
+    # player is holding, and the sampling is a fact about the forecast table rather than about them.
+    var hint := HudFormat.floor_hint(floor_value, SourceForecast.LABOR_KIND_HUNT, true)
+    if hint != "":
+        column.add_child(build_readout_aside(
+            [readout_aside_line(hint)]))
+## The trip's payload as yields rows: the ANIMALS the party brings back, then whatever accounts those
+## bodies pay.
+##
+## **THE ANIMAL COUNT LEADS, IN THE LOCAL HUNT ROW'S OWN IDIOM** — its `YIELD_ROW_NUMBER` /
+## `YIELD_ROW_UNIT` overrides, the quarry as the unit and `YIELD_ACCOUNT_NONE` as the account,
+## because a body is not an account. It borrows the `≈` FACE vocabulary and deliberately not the
+## `/turn` UNIT one: this is a whole-trip count, and the header above already says so.
+##
+## The food and trade rows go through `SourceForecast.yield_rows`, so the render-only-where-the-
+## vector-pays rule keeps one definition — a wolf raid states pelts and no `0 food`, an edible quarry
+## with no trade states food alone. `YIELD_ACCOUNT_NONE` as the zero account means NO row is
+## synthesised when both are empty; that state cannot arrive here anyway (it is `empty`, and the
+## caller took the sentence branch), so a fabricated zero would be a reading of nothing.
+##
+## No `after` on any row: a trip has no holding state to arrow toward.
+static func _trip_yield_rows(trip: Dictionary, quarry: String) -> Array[Dictionary]:
+    var animals := int(trip.get("animals", 0))
+    var rows: Array[Dictionary] = [{
+        SourceForecast.YIELD_ROW_ACCOUNT: SourceForecast.YIELD_ACCOUNT_NONE,
+        SourceForecast.YIELD_ROW_VALUE: float(animals),
+        YIELD_ROW_NUMBER: HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT % animals,
+        YIELD_ROW_UNIT: quarry,
+    }]
+    rows.append_array(SourceForecast.yield_rows(
+        float(trip.get("food", 0.0)), float(trip.get("trade", 0.0)), 0.0,
+        SourceForecast.YIELD_ACCOUNT_NONE))
+    return rows
 
 ## **THE TWO CREW TARGETS** (`docs/plan_harvest_floor.md` §7.6) — the distinction the rate model never
 ## had. A floor and a crew are independent statements, so there are two different worker numbers and
@@ -1082,8 +1301,10 @@ static func build_yields_row(rows: Array, number_tint: Color, note: String, note
     return block
 
 ## One account's reading: the number, then its unit. `unit` is the CALLER's none-of-my-business — a
-## hunt states a whole-animal rate in the quarry's own name rather than in an account's — so a row
-## may carry it as its own override of the account table.
+## raid's trip payload leads with the BODIES it brings back, stated in the quarry's own name rather
+## than in an account's — so a row may carry it as its own override of the account table. **A
+## per-turn RATE is not such a caller**: what a turn of work pays is an account, so both webs' live
+## readouts take the table's unit and the whole-animal reading is the chart's above them.
 const YIELD_ROW_UNIT := "unit"
 const YIELD_ROW_NUMBER := "number"
 ## **ONE ACCOUNT'S NUMBER, MUTED, WHATEVER THE ROW TINT IS.** The tint passed to `build_yields_row` is
@@ -1102,10 +1323,12 @@ static func _yield_reading(row: Dictionary, number_tint: Color) -> HBoxContainer
     # Label would let an account's two halves wrap apart onto different lines, which is the one thing
     # this reading cannot survive.
     #
-    # **A CALLER THAT SUPPLIES ITS OWN FACE OWNS ALL OF IT**, transition included — the hunt's animal
-    # rate is a composed `≈0.41`, not a magnitude this widget formats, so composing its arrow here
+    # **A CALLER THAT SUPPLIES ITS OWN FACE OWNS ALL OF IT**, transition included — the raid payload's
+    # animal count is a composed `≈8`, not a magnitude this widget formats, so composing an arrow here
     # would set a raw float beside an `≈`-prefixed one AND append a second arrow to a face that
     # already has one. Such a row still declares `YIELD_ROW_AFTER`, so the header knows to key it.
+    # (The trip states no transition at all, so nothing currently exercises that pairing; the rule
+    # holds for the next composed face rather than describing a live one.)
     if row.has(YIELD_ROW_NUMBER):
         number.text = String(row[YIELD_ROW_NUMBER])
     elif row.has(SourceForecast.YIELD_ROW_AFTER):

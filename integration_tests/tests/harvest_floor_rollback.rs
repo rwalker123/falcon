@@ -130,6 +130,7 @@ fn spawn_band_with_floors(app: &mut bevy::prelude::App, floor: f32) -> Entity {
                         },
                         workers: 2,
                         improvement: None,
+                        kit: None,
                     },
                     LaborAssignment {
                         target: LaborTarget::Hunt {
@@ -138,6 +139,7 @@ fn spawn_band_with_floors(app: &mut bevy::prelude::App, floor: f32) -> Entity {
                         },
                         workers: 2,
                         improvement: None,
+                        kit: None,
                     },
                 ],
                 ..Default::default()
@@ -204,11 +206,12 @@ fn the_default_floor_is_the_food_peak() {
     );
 }
 
-/// **A hunt expedition's floor round-trips through the command, the mission and the rollback.**
+/// **A hunt expedition's floor round-trips through the mission and the rollback.**
 ///
-/// The raid's floor is the whole of what its orders say about pressure, so it has to survive the
-/// same three hops the assignment's does. Pinned at a floor **no retired stance named** (`0.42`), so
-/// a value that appears at the far end cannot have come from a default or from a label.
+/// The floor is the whole of what a raid's orders say — how deep to draw the herd — so it has to
+/// survive the same hops the assignment's floor does. Pinned at a floor **no retired stance named**
+/// (`0.42`), so a value that appears at the far end cannot have come from a default or from a
+/// label.
 #[test]
 fn an_expedition_floor_round_trips_through_the_mission_and_the_rollback() {
     use core_sim::{Expedition, ExpeditionMission, ExpeditionPhase};
@@ -265,6 +268,7 @@ fn an_expedition_floor_round_trips_through_the_mission_and_the_rollback() {
                 announced: false,
                 pending_reveal: Vec::new(),
                 carried_trade: 0.0,
+                kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Hunt),
             },
         ))
         .id();
@@ -299,7 +303,7 @@ fn an_expedition_floor_round_trips_through_the_mission_and_the_rollback() {
         .expect("the restored world carries the hunt mission");
     assert_eq!(
         restored, CAPTURED_FLOOR,
-        "a rollback restores the raid's floor, not a re-picked one"
+        "a rollback restores the raid's orders, not re-picked ones"
     );
 }
 

@@ -201,6 +201,15 @@ fn create_populations<'a>(
                         } else {
                             Some(builder.create_vector(&assignment.arrival_schedule))
                         };
+                        // The kit this crew works under. Absent rather than `""` on a band-wide
+                        // role, matching how `improvement`/`faunaId` treat an empty value — the
+                        // FlatBuffers default for an absent string is `""`, so the two readings
+                        // coincide for a consumer.
+                        let kit_id = if assignment.kit_id.is_empty() {
+                            None
+                        } else {
+                            Some(builder.create_string(&assignment.kit_id))
+                        };
                         fb::LaborAssignment::create(
                             builder,
                             &fb::LaborAssignmentArgs {
@@ -218,17 +227,29 @@ fn create_populations<'a>(
                                 arrivalSchedule: arrival_schedule,
                                 tradeYield: assignment.trade_yield,
                                 realizedTradeYield: assignment.realized_trade_yield,
+                                // The band the two scalars above sit in the middle of — appended
+                                // last, after `floor`, so the slots stay positional.
+                                actualYieldLow: assignment.actual_yield_low,
+                                actualYieldHigh: assignment.actual_yield_high,
+                                tradeYieldLow: assignment.trade_yield_low,
+                                tradeYieldHigh: assignment.trade_yield_high,
                                 // The improvement axis — appended (append-only wire).
                                 improvement,
                                 // THE HARVEST FLOOR — where this crew stops, as a fraction of `K`.
                                 // The authority `policy` is a label for; appended last.
                                 floor: assignment.floor,
+                                // THE KIT this crew is working under — appended last.
+                                kitId: kit_id,
                             },
                         )
                     })
                     .collect();
                 Some(builder.create_vector(&entries))
             };
+            // Always written: this cohort's tiers are always quoted at *some* roster kit, and a
+            // consumer comparing a selection against an absent string would read every band as a
+            // mismatch.
+            let kit_id = builder.create_string(&cohort.kit_id);
             let expedition_mission = if cohort.expedition_mission.is_empty() {
                 None
             } else {
@@ -243,6 +264,13 @@ fn create_populations<'a>(
                 None
             } else {
                 Some(builder.create_string(&cohort.expedition_target_herd))
+            };
+            // `""` = "not raiding" (a resident band, a scout, a party walking a load home) — absent
+            // rather than an empty string, the convention every discriminator above follows.
+            let expedition_trip_bound = if cohort.expedition_trip_bound.is_empty() {
+                None
+            } else {
+                Some(builder.create_string(&cohort.expedition_trip_bound))
             };
             let pending_reveal_x = if cohort.pending_reveal_x.is_empty() {
                 None
@@ -277,6 +305,9 @@ fn create_populations<'a>(
                     bandId: cohort.band_id,
                     // THE RAID'S FLOOR — replaces the retired `expeditionHuntPolicy`.
                     expeditionFloor: cohort.expedition_floor,
+                    // WHICH STOP the in-flight projection says will end this party's raid.
+                    // (`expeditionFillTarget` is a retired `(deprecated)` slot — see `snapshot.fbs`.)
+                    expeditionTripBound: expedition_trip_bound,
                     entity: cohort.entity,
                     home: cohort.home,
                     currentX: cohort.current_x,
@@ -352,6 +383,19 @@ fn create_populations<'a>(
                     // Predators Phase 3 — the raid legibility pair, appended after fodderStore.
                     raidRadius: cohort.raid_radius,
                     raidForfeit: cohort.raid_forfeit,
+                    // The minimal TOE — the two kits' remaining condition and the two tiers they
+                    // resolve to, appended after the raid pair.
+                    huntingKitDurability: cohort.hunting_kit_durability,
+                    sledKitDurability: cohort.sled_kit_durability,
+                    basketKitDurability: cohort.basket_kit_durability,
+                    hunterAttack: cohort.hunter_attack,
+                    huntCarryPerWorkerBiomass: cohort.hunt_carry_per_worker_biomass,
+                    forageCarryPerWorkerBiomass: cohort.forage_carry_per_worker_biomass,
+                    // The kit the three tiers above are resolved through — appended last.
+                    kitId: Some(kit_id),
+                    // The projections' horizon, so the client can put a number on their
+                    // "never completed" sentinels — appended after the kit.
+                    expeditionForecastHorizonTurns: cohort.expedition_forecast_horizon_turns,
                 },
             )
         })

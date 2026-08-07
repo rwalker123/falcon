@@ -49,12 +49,49 @@ const BAND_FODDER_ROW_FORMAT := "Fodder: %.1f"
 # sets the precedent for a self-tinted run inside that value cell.
 const BAND_FOOD_HAY_CLAUSE_FORMAT := " · [color=#%s]%.1f hay[/color]"
 
+# ---- THE GROWTH ROW AS A CLAUSE ON THE MORALE LINE, for the `compact` (SHORT band-zone tier) host —
+# the second merge this tier makes, and the same trade for the same reason as the hay clause above:
+# HEIGHT is what is scarce in a height-capped horizontal dock, and it has a whole screen of width.
+#
+# **MORALE AND GROWTH ARE THE RIGHT PAIR.** Both are player-band health scalars, both already carry
+# disclosure carets, and they read naturally together. The alternative — dropping a row — is not
+# available here: `Kit` is the row the tier gained and it is NOT droppable (a spent kit is stated
+# nowhere else in the client and is not recoverable from any other surface), and `Trade` is already
+# the row this tier drops.
+#
+# **BOTH `[url]` METAS SURVIVE, which is the whole reason a merge beats a drop.** The vitals block is
+# ONE `RichTextLabel`, so a row is a line and merging two is joining two strings: the Growth clause
+# carries the identical clickable run a standalone Growth row wears
+# (`DetailFormat.inline_disclosure_label`), on the same label, so both popovers keep working and
+# neither breakdown is lost. It carries its OWN tint rather than inheriting the morale value cell's,
+# exactly as the hay clause does — a falling band's growth is not itself a red reading.
+#
+# **THE SEPARATOR IS LOAD-BEARING BEYOND ITS LOOK.** Followed directly by `DISCLOSURE_URL_OPEN` it is
+# what tells a merged clause from a standalone row structurally, which is the only assertion that can
+# catch this tier's layout leaking into the tier above it.
+const BAND_MORALE_GROWTH_CLAUSE_SEPARATOR := " · "
+const BAND_MORALE_GROWTH_CLAUSE_FORMAT := BAND_MORALE_GROWTH_CLAUSE_SEPARATOR + "%s [color=#%s]%s[/color]"
+
 # ---- The band's TRADE row (issue #381): what THIS band HOLDS and what it earns per turn in the
 # second product, in the Food row's shape — `Trade: 12.0 · +0.04 /turn`. The stock carries ONE decimal,
 # like the Fodder row above and for the same reason: sub-unit trade income accumulates in the sim
 # rather than rounding away, so a band earning ~0.005/turn would read a flat `0` for a hundred turns
 # beside a visibly non-zero rate if this printed an integer.
 const BAND_TRADE_ROW_FORMAT := "Trade: %.1f · [color=#%s]%s[/color]"
+
+# ---- The band's KIT row (`docs/plan_hunt_through_combat.md` §4.8) — `Kit: Spears 87 · Sled 54 ·
+# Baskets dry`. Three consumable kits, start-stocked and not craftable, each with its own condition
+# and its own job; a dry one has stepped its role down to bare hands FOR GOOD, so it reads DANGER
+# rather than merely dim.
+#
+# **THE ROW IS THE CLOCK, THE DISCLOSURE IS THE CLIFF.** What a player needs at a glance is how long
+# until each kit runs out and which side of the line they are already on — never a gauge, never a
+# bar, and never a number scaled by what is left, because performance is FLAT until expiry and any
+# gradient drawn here would claim a taper the model does not have. What each kit actually DOES lives
+# one click down, where there is room to say it and to say that it stops.
+const BAND_KIT_ROW_PREFIX := "Kit: "
+const BAND_KIT_ROW_SEPARATOR := " · "
+const BAND_KIT_ROW_ENTRY_FORMAT := "%s [color=#%s]%s[/color]"
 
 # ---- The hunt party's carry-ceiling FULL badge (shown when carried ≥ cap; the party heads home full).
 const HUNT_FULL_BADGE := "· FULL"
@@ -183,11 +220,26 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
             if DetailFormat.band_has_trade_flow(unit_data):
                 _disclosures.register(HudDisclosureVocab.DETAIL_ROW_TRADE, HudDisclosureVocab.BREAKDOWN_KIND_TRADE,
                     unit_data, _disclosures.trade_breakdown_lines(unit_data))
+        # THE BAND'S KIT, beneath its larders and above its morale: three consumable tools whose
+        # condition only ever falls, and whose expiry silently drops a whole role to bare hands. It is
+        # our OWN bands' business, like Food and Trade — a rival's equipment is not ours to count.
+        # **Gated on the field being STATED, never on a value**: a dry kit is `0` and is the single
+        # most important reading here, so only an absent field may suppress the row.
+        if DetailFormat.band_states_kit(unit_data):
+            lines.append(_band_kit_line(unit_data))
+            _disclosures.register(HudDisclosureVocab.DETAIL_ROW_KIT,
+                HudDisclosureVocab.BREAKDOWN_KIND_KIT, unit_data,
+                _disclosures.kit_breakdown_lines(unit_data))
     # Morale is our own bands' business only (a non-player band's morale isn't ours
     # to see); morale drives productivity + migration (a harsh tile erodes it until
     # people begin leaving), while deaths stay starvation/cold-driven.
     if _is_player_unit(unit_data):
-        lines.append(_band_morale_line(unit_data, terrain_label, context))
+        # **BUILT, THEN REGISTERED, THEN APPENDED — in that order, because the merge needs all three.**
+        # The SHORT tier joins Growth onto this line, and the clause carries Growth's own clickable
+        # run, which does not exist until `register` has recorded its caret state. So the morale line
+        # is held rather than appended, both disclosures are registered, and only then does the tier
+        # decide whether this is one line or two.
+        var morale_line := _band_morale_line(unit_data, terrain_label, context, compact)
         # **NO `Output:` ROW.** Productivity ties visibly to morale, but the multiplier's CONSEQUENCE
         # is the work board: every rate the WORK zone shows is already scaled by it. So it renders as
         # an item of that zone's head (`BandPanelController._build_work_head`), under the same
@@ -205,9 +257,18 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
         # be the very "no data read as famine" mistake the sim guards against on its own side.
         var growth_line := _band_growth_line(unit_data, context)
         if growth_line != "":
-            lines.append(growth_line)
             _disclosures.register(HudDisclosureVocab.DETAIL_ROW_GROWTH, HudDisclosureVocab.BREAKDOWN_KIND_GROWTH,
                 unit_data, _fertility_breakdown_lines(unit_data))
+        # THE TIER DECIDES: two rows, or one line carrying both. `compact` is the SHORT band-zone
+        # tier — see `BAND_MORALE_GROWTH_CLAUSE_FORMAT` for why this pair and why a merge rather than
+        # a drop. A band with no published growth reading merges nothing and keeps its bare Morale
+        # row, in every tier.
+        if compact and growth_line != "":
+            lines.append(morale_line + _band_growth_clause(unit_data, context))
+        else:
+            lines.append(morale_line)
+            if growth_line != "":
+                lines.append(growth_line)
     if with_position:
         var pos_array: Array = Array(unit_data.get("pos", []))
         if pos_array.size() == 2:
@@ -243,11 +304,19 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
     var lines: Array[String] = []
     var mission := String(unit_data.get("expedition_mission", ""))
     var is_hunt := mission == HudExpeditionVocab.EXPEDITION_MISSION_HUNT
-    # The party's OWN target, resolved once: the `Target:` row's live position and the delivery line's
-    # lost-vs-lean disambiguation are the same herd, so they must not be looked up twice.
-    var target_herd: Dictionary = _band_labor.expedition_target_herd(unit_data) if is_hunt else {}
+    # **A DENIAL RAID IS A RAID FOR THE ROWS IT SHARES AND NOT FOR ONE OF THE ORDERS**
+    # (`docs/plan_denial_raid.md`). It has a target herd, a party and a pack, so `is_raid` gates the
+    # Target and Carried rows; it has NO floor, NO fill target and NO delivery ETA — those read `0.0`
+    # / `0` / absent because the mission has no such lever — so they stay gated on `is_hunt` alone,
+    # and what a denial party shows in their place is its COLLAPSE VERDICT.
+    var is_deny := mission == HudExpeditionVocab.EXPEDITION_MISSION_DENY
+    var is_raid := is_hunt or is_deny
+    # The party's OWN target, resolved once: the `Target:` row's live position, the delivery line's
+    # lost-vs-lean disambiguation and the denial verdict's own lookup are the same herd, so they must
+    # not be looked up twice.
+    var target_herd: Dictionary = _band_labor.expedition_target_herd(unit_data) if is_raid else {}
     lines.append("Mission: %s" % DetailFormat.expedition_mission_label(mission))
-    if is_hunt:
+    if is_raid:
         # The migratory herd it follows (species label from the fauna_id, falling back to the id).
         # A hunt party's target MIGRATES and is often NOT the herd on the tile the player is looking
         # at, so when the target is still in the telemetry with a live position we append it — the
@@ -263,12 +332,16 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
                 if tx >= 0 and ty >= 0:
                     target_line += " (%d, %d)" % [tx, ty]
             lines.append(target_line)
-        # The party's ORDERS — where the raid stops, as a fraction of the herd's capacity. Always on
-        # the wire for a hunt party, and every value is meaningful (including `0`), so it is stated
-        # unconditionally rather than gated on being non-empty as the retired policy string was.
-        lines.append("Leaves standing: %s" % (HudComposeVocab.FLOOR_VALUE_FORMAT
-            % SourceForecast.floor_percent(float(unit_data.get("expedition_floor",
-                SourceForecast.DEFAULT_HARVEST_FLOOR)))))
+    if is_hunt:
+        # The party's ORDERS row — where the raid stops as a fraction of the herd's capacity. Always
+        # on the wire for a hunt party, and every value is meaningful (including `0`), so the row is
+        # stated unconditionally rather than gated on being non-empty as the retired policy string was.
+        # **It stays ONE row whatever it carries, because this producer's output lands in the parties
+        # zone's height-capped, clipping inspector strip** — see `DetailFormat.expedition_orders_line`.
+        # **A DENIAL PARTY IS NOT IN THIS BRANCH**: its `expeditionFloor` reads `0.0` because it HAS no
+        # such orders, so rendering the row would put a lever on screen that the mission does not carry
+        # and the command grammar cannot express.
+        lines.append(DetailFormat.expedition_orders_line(unit_data, mission))
     var phase := String(unit_data.get("expedition_phase", "")).strip_edges()
     if phase != "":
         lines.append("Phase: %s" % HudFormat.expedition_phase_label(phase))
@@ -281,29 +354,47 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
     var carried := 0
     var stores_variant: Variant = unit_data.get("stores", {})
     if stores_variant is Dictionary:
-        if is_hunt:
-            # The hunt party lives off its own kills; its store item key isn't fixed, so total it.
+        if is_raid:
+            # A raiding party lives off its own kills; its store item key isn't fixed, so total it.
             for qty in (stores_variant as Dictionary).values():
                 carried += int(round(float(qty)))
         else:
             carried = int(round(float((stores_variant as Dictionary).get(HudConst.STORE_ITEM_PROVISIONS, 0.0))))
-    if is_hunt:
+    if is_raid:
         # Carried X / cap + a FULL badge at the carry ceiling (the party heads home when full).
+        # **A DENIAL PARTY SHOWS THIS ROW AND IT READS NEAR-EMPTY, WHICH IS THE POINT** — it banks
+        # whatever it can haul on the way home, a rounding error against what it killed. Suppressing
+        # it would hide the mission's own cost.
         var cap := int(round(float(unit_data.get("expedition_carry_cap", 0.0))))
         if cap > 0:
             var full_badge := "  %s" % HUNT_FULL_BADGE if carried >= cap else ""
             lines.append("Carried: %d / %d  (%s)%s" % [carried, cap, DetailFormat.food_turns_text(turns), full_badge])
         else:
             lines.append("Carried: %d  (%s)" % [carried, DetailFormat.food_turns_text(turns)])
+        # **THE DENIAL PARTY'S OWN READOUT, IN PLACE OF A DELIVERY ETA.** The mission publishes none —
+        # its verdict is whether the herd goes past the point of no return — so this reads the target
+        # herd's `denialEstimates` row for THIS party's size, the same table the launch sheet quoted.
+        # Rendered before the hunt-only lines below so the two missions read in the same slot.
+        if is_deny:
+            var collapse_line := DetailFormat.expedition_collapse_line(unit_data, target_herd)
+            if collapse_line != "":
+                lines.append(collapse_line)
         # Next-delivery forecast (the in-flight twin of the pre-launch hunt trip estimate): ALWAYS
         # shown for a hunt party once the field is on the wire, because a projected 0 is a real,
         # decision-relevant answer ("this herd has no surplus to raid") that a `> 0` guard used to
         # hide. The gate is `has(...)`, not `> 0`: the native decoder always inserts the field now, so
         # present-and-0 is a genuine no-surplus; an ABSENT key (older build) renders nothing rather
         # than a false "none".
-        if unit_data.has("expedition_projected_delivery"):
+        if is_hunt and unit_data.has("expedition_projected_delivery"):
             lines.append(DetailFormat.expedition_next_delivery_line(unit_data, target_herd))
-    else:
+        # **WHICH STOP ENDS THE TRIP** — the sim's own answer for THIS party's real orders, off the
+        # same in-flight forward simulation the ETA above comes from. A `""` bound (not raiding: a
+        # party already walking a load home, or a snapshot predating the field) renders no line, so
+        # the strip never states a stop for a party that is not hunting toward one.
+        var bound_line := DetailFormat.expedition_trip_bound_line(unit_data, mission)
+        if bound_line != "":
+            lines.append(bound_line)
+    if not is_raid:
         lines.append("Provisions: %d  (%s)" % [carried, DetailFormat.food_turns_text(turns)])
     var pos_array: Array = Array(unit_data.get("pos", []))
     if pos_array.size() == 2:
@@ -384,6 +475,37 @@ func _band_trade_line(unit_data: Dictionary) -> String:
         DetailFormat.band_trade_stock(unit_data), hex,
         SourceForecast.format_yield(income)]
 
+## Selection-panel band KIT row: `Kit: Spears 87 · Sled 54 · Baskets dry` — the band's three
+## consumable kits and how much is left of each, with a spent one named in DANGER ink.
+##
+## **THE CONDITION IS A CLOCK, NOT A PERFORMANCE READING.** Durability and performance are orthogonal
+## axes: a kit works at its full tier until it hits zero and then the role steps down permanently. So
+## this row prints the number flat, tints only the ZERO, and draws no bar — a filled gauge here would
+## say "half a sled hauls half as much", which is exactly wrong.
+##
+## **ALL THREE ARE ALWAYS LISTED, including on a band that neither hunts nor forages today.** Each
+## kit wears on its own quantum (spears per animal killed, the sled per biomass hauled, baskets per
+## biomass gathered), so what a band is doing this turn does not predict which kit is closest to
+## running out — and a row that hid the idle ones would hide the very kit whose loss is about to
+## change what the band CAN do.
+##
+## **IT SURVIVES THE `compact` TIER**, unlike Trade. The Trade row is a rate the WORK zone's head
+## restates; a spent kit is stated nowhere else in the client at all, and it is not recoverable.
+func _band_kit_line(unit_data: Dictionary) -> String:
+    var entries: Array[String] = []
+    for kit in [
+        [DetailFormat.KIT_LABEL_SPEARS, DetailFormat.KIT_DURABILITY_KEY_SPEARS],
+        [DetailFormat.KIT_LABEL_SLED, DetailFormat.KIT_DURABILITY_KEY_SLED],
+        [DetailFormat.KIT_LABEL_BASKETS, DetailFormat.KIT_DURABILITY_KEY_BASKETS],
+    ]:
+        var label := String(kit[0])
+        var key := String(kit[1])
+        var hex := HudStyle.INK_HEX if DetailFormat.kit_is_equipped(unit_data, key) \
+            else HudStyle.DANGER_HEX
+        entries.append(BAND_KIT_ROW_ENTRY_FORMAT % [
+            label, hex, DetailFormat.kit_condition_face(unit_data, key)])
+    return BAND_KIT_ROW_PREFIX + BAND_KIT_ROW_SEPARATOR.join(entries)
+
 ## Selection-panel band morale row: "Morale: 41% ▼ — harsh terrain (Karst Cavern Mouth)".
 ## Morale, its per-turn trend, and the dominant cause come from the snapshot cohort dict
 ## (decoded in `native/src/lib.rs population_to_dict`). A falling trend appends the named
@@ -391,7 +513,8 @@ func _band_trade_line(unit_data: Dictionary) -> String:
 ## already stripped by the caller). A rehydrated save reports delta 0 / cause None for one turn, so
 ## the row degrades to a bare percentage.
 ## Stashes morale on the render context so `DetailFormat.detail_bbcode` tints the value.
-func _band_morale_line(unit_data: Dictionary, terrain_label: String, ctx: DetailFormat.Context) -> String:
+func _band_morale_line(unit_data: Dictionary, terrain_label: String, ctx: DetailFormat.Context,
+        compact: bool = false) -> String:
     var morale: float = float(unit_data.get("morale", 1.0))
     ctx.morale = morale
     var text := "Morale: %d%%" % int(round(morale * 100.0))
@@ -401,7 +524,14 @@ func _band_morale_line(unit_data: Dictionary, terrain_label: String, ctx: Detail
         # Name the cause only when morale is actually concerning — a healthy band
         # drifting slowly (nearly every tile bleeds a little today) shouldn't be
         # branded "harsh climate/terrain". Below the warn threshold, spell it out.
-        if morale < BandFoodStatus.warn_morale():
+        #
+        # **NOT IN THE `compact` TIER, where the Growth clause shares this line.** The cause is the
+        # longest run this row can carry (`harsh terrain (Karst Cavern Mouth)`), the label is
+        # `AUTOWRAP_WORD`, and a merged line that wraps costs back the very row the merge bought — a
+        # fix that measures as no fix, with nothing failing. The trend GLYPH stays, so the row still
+        # says morale is falling; the cause is recoverable from the disclosure popover this row's
+        # caret opens, which is what makes it the clause that yields rather than the merge.
+        if morale < BandFoodStatus.warn_morale() and not compact:
             var cause := int(unit_data.get("morale_cause", DetailFormat.MORALE_CAUSE_NONE))
             var cause_label := DetailFormat.morale_cause_label(cause)
             if cause_label != "":
@@ -428,6 +558,32 @@ func _band_growth_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> Stri
     var fertility := DetailFormat.band_fertility(unit_data)
     ctx.fertility = fertility
     return DetailFormat.GROWTH_ROW_FORMAT % int(round(fertility * 100.0))
+
+## The Growth row rendered as a CLAUSE on the Morale line, for the SHORT band-zone tier — the pair to
+## `_band_growth_line`, and the only place the two can differ is the anchor suffix, which a merged
+## line cannot afford (`DetailFormat.GROWTH_VALUE_SHORT_FORMAT`).
+##
+## It reads `ctx.fertility`, which `_band_growth_line` has already stashed, and tints from the SAME
+## `BandFoodStatus.hex_for_fertility` buckets `DetailFormat._value_hex` would have given a standalone
+## row — so the merge changes where the number sits and nothing about what it says. The label is the
+## identical clickable run a standalone row wears, so the fertility popover survives the merge; a
+## Growth row that registered no disclosure (an empty breakdown) falls back to the plain word, which
+## is what keeps the reading legible rather than unlabelled.
+func _band_growth_clause(unit_data: Dictionary, ctx: DetailFormat.Context) -> String:
+    var fertility := DetailFormat.band_fertility(unit_data)
+    # **THE CARETS HAVE TO BE ON THE CONTEXT BEFORE THIS RUN IS BUILT, and they are not yet.** Every
+    # other disclosure is drawn by `detail_bbcode` from a context this producer fills on its LAST
+    # line — so a clause built mid-producer reads an empty `disclosures` and silently falls back to
+    # the plain word, losing the caret and the click with it (measured: the merged line rendered
+    # `Growth 188%`). Reading the controller's live state here is the fix, and the same assignment
+    # runs again at the end: it is idempotent, and this is the one row rendered before its turn.
+    ctx.disclosures = _disclosures.state()
+    var label := DetailFormat.inline_disclosure_label(HudDisclosureVocab.DETAIL_ROW_GROWTH, ctx)
+    if label == "":
+        label = HudDisclosureVocab.DETAIL_ROW_GROWTH
+    return BAND_MORALE_GROWTH_CLAUSE_FORMAT % [
+        label, BandFoodStatus.hex_for_fertility(fertility),
+        DetailFormat.GROWTH_VALUE_SHORT_FORMAT % int(round(fertility * 100.0))]
 
 ## Itemized fertility breakdown: the three named factors as indented sub-lines, each rendered as a
 ## MULTIPLIER — `    ▼ ×0.60  short rations` — because they combine by product, so reading down the

@@ -25,6 +25,12 @@ const BOAR_FOOD_PER_ANIMAL := 4.0
 # percentage the readout prints, and two spellings of one quantum would drift.
 
 const RAID_TRADE_PER_ANIMAL := 0.5
+# **THE DENIAL RAID's carry** (`docs/plan_denial_raid.md`) — food ONE party member hauls home over the
+# whole raid. Deliberately tiny beside what the raid kills, because that ratio IS the mission: a party
+# that never stops engaging kills far more than its pack holds, so `delivered_food` is a rounding error
+# and `wasted_food` is the take. A fixture that hauled its whole kill would be a hunting raid wearing a
+# denial outcome, and the waste readout the mission exists to show would have nothing to state.
+const DENIAL_CARRY_PER_WORKER := 2.0
 # The DISTANCE frames' raid (`hunt_distance_herd`, the reference Red Deer at 2.0 food/animal): a party
 # of `i+1` lands `DISTANCE_RAID_ANIMALS[i]` animals in `DISTANCE_RAID_TURNS[i]` HUNTING turns. Those
 # frames open at the seeded party of 1, so the first cell is the one they render; the plateau at 3
@@ -100,7 +106,8 @@ static func raid_boar_herd() -> Dictionary:
 ## trade twin, since a hunt pays a VECTOR: `delivers_trade` + `delivered_trade = animals × tpa`.
 ## The per-policy bumps are illustrative fixture data; the live sim exports the real per-floor counts.
 static func raid_estimate_table(turns_row: Array, animals_row: Array, fpa: float,
-		tpa: float = RAID_TRADE_PER_ANIMAL) -> Dictionary:
+		tpa: float = RAID_TRADE_PER_ANIMAL,
+		bound: String = SourceForecast.TRIP_BOUND_PACK_FULL) -> Dictionary:
 	var table := {}
 	for i in animals_row.size():
 		var turns := int(turns_row[i])
@@ -115,8 +122,39 @@ static func raid_estimate_table(turns_row: Array, animals_row: Array, fpa: float
 				"animals_taken": animals,
 				"delivered_food": float(animals) * fpa,
 				"delivered_trade": float(animals) * tpa, "wasted_food": 0.0,
+				# **WHICH STOP ENDS THIS SAMPLED TRIP** (`docs/plan_hunt_through_combat.md` §5.2). The
+				# sim writes it on every row, so a fixture omitting it would be a herd no live server can
+				# produce — and every bound-clause assertion would pass vacuously against the one state
+				# the client renders for a snapshot that predates the field. `pack_full` is the honest
+				# default for a CLEAN raid (whole kill hauled, nothing left standing at the floor); the
+				# floor-bound contrast is `band_expedition.gd`'s `_floor_bound_raid_herd`.
+				SourceForecast.TRIP_BOUND_KEY: bound,
 			}
 	return table
+
+## **THE SIM'S `fauna::quantise_animal_take`, RESTATED IN FOOD** — the harness's oracle for what a
+## hunting crew is actually paid, so the assertions compare the sheet against the SIM's composition
+## rather than against itself (both halves of the sheet dipped together would satisfy any test the
+## sheet makes of its own numbers).
+##
+## Food and biomass differ only by the species' constant provisions rate, which divides out of every
+## comparison the sim makes — `collection / body_mass` is `collection_food / food_per_animal` — so this
+## is the same arithmetic in cheaper units. `max(1.0, carryable)` is the load-bearing line: a crew that
+## cannot carry one whole animal still kills one and wastes the difference.
+##
+## **`engaged` IS THE THIRD BOUND** (`docs/plan_hunt_through_combat.md` §2) — the whole animals the
+## party can bring into CONTACT, which `quantise_animal_take` mins in beside the affordable and the
+## carryable. It defaults to `INF`, the reading the sim itself passes for a pen and the one the wire's
+## `NO_ENGAGEMENT_STAGE` stands for, so every caller that predates the engagement stage is unchanged.
+static func hunt_take_oracle(collection: float, ceiling: float, food_per_animal: float,
+		engaged: float = INF) -> Dictionary:
+	var affordable := floorf(ceiling / food_per_animal)
+	if affordable < 1.0:
+		return {"delivered": 0.0, "wasted": 0.0}
+	var killed := minf(minf(affordable, maxf(1.0, floorf(collection / food_per_animal))), engaged)
+	var killed_food := killed * food_per_animal
+	var carried := minf(killed_food, collection)
+	return {"delivered": carried, "wasted": killed_food - carried}
 
 ## A NON-food hex under the herd, so the Tile card drops its "Assign foragers" block and the herd's
 ## assign controls (stepper + policy + forecast + button) sit fully in-frame.
@@ -148,9 +186,40 @@ static func assign_preview_herd(id: String, species: String, phase: String, sust
 ##       `"<policy>:<party_workers>"` → `{turns_to_fill, delivers_food, delivers_trade, …}`. An
 ##       expedition's trip is NOT a rate division (on Surplus/Deplete the ceiling is a *stock* the party
 ##       strips in a turn or two, then it crawls at the regrowth trickle), so the client looks the answer
-##       up and does no math. `turns_to_fill == 0` → won't fill within the horizon; `delivers_food ==
+##       up and does no math. `turns_to_fill == 0` → the projection ran out with the raid still going,
+##       which is `TRIP_BOUND_HORIZON` and nothing else — a raid that ends by emptying the range
+##       reports the turn it ended on, like any other; `delivers_food ==
 ##       false` says the QUARRY IS INEDIBLE (#337), and only `delivers_food AND delivers_trade` both
 ##       false is a denial mission — the raid banks whichever half the species pays.
+## **A ROW THAT DELIVERS NOTHING CANNOT WEAR A PARTY-SIDE BOUND.** `pack_full` requires a LOAD, and a
+## load is a delivery — so the sim never pairs it with an empty payload, and
+## a fixture that did would be a herd no live server can produce. It would also be invisible: the
+## sheet's empty-raid refusal is keyed off `bound`, so such a row falls to the UNATTRIBUTED entry and
+## every assertion about *which* refusal is rendered testifies about nothing.
+##
+## What a zero row in these families means is the herd standing AT ITS FLOOR — except at a floor of
+## `0`, where the sim's own `surplus_spent` test cannot fire (it is gated on `floor > 0`) and a raid
+## that lands nothing is one whose quarry dies out under it. **The party-side empty raid — a herd with
+## real surplus a party cannot kill — is a different fixture entirely** (`hunt.gd`'s
+## `_unkillable_aurochs_herd`), because it is a different fact about a different actor.
+static func clean_raid_bound(animals: int, stance: String, delivering: String) -> String:
+	if animals > 0:
+		return delivering
+	return SourceForecast.TRIP_BOUND_FLOOR \
+		if float(BaseFx.LEGACY_STANCE_FLOORS.get(stance, 0.0)) > 0.0 \
+		else SourceForecast.TRIP_BOUND_HERD_LOST
+
+## **A STRIP-BARE RAID FINISHES BY EMPTYING THE RANGE, so it reports the turn it finished on.**
+##
+## The floor-`0` row used to carry `turns_to_fill == 0` beside `TRIP_BOUND_HORIZON`, i.e. the wire's
+## "still going when the projection ran out" — which the sheet then read on three surfaces at once as a
+## raid that never completes, for the one mission whose whole purpose is to finish. The sim reserves
+## that sentinel for `horizon` alone now: a raid that drives the herd under its extinction floor ends
+## on `herd_lost`, on a real turn, because the live arm's lost-herd guard turns the party for home in
+## that same turn. This is that turn — longer than the surplus raid on the same herd, since the party
+## keeps killing until there is nothing left rather than stopping at a floor.
+const STRIP_BARE_TRIP_TURNS := 11
+
 ## `trip_turns` is the simulated turns-to-fill for the 4-worker party these states dial in.
 static func forecast_herd(id: String, species: String, phase: String, sustain_ceiling: float,
 		trip_turns: int = 0, surplus_trip_turns: int = 0,
@@ -207,26 +276,42 @@ static func forecast_herd(id: String, species: String, phase: String, sustain_ce
 				"animals_taken": sustain_animals,
 				"delivered_food": sustain_delivered,
 				"delivered_trade": float(sustain_animals) * RAID_TRADE_PER_ANIMAL, "wasted_food": 0.0,
+				SourceForecast.TRIP_BOUND_KEY: clean_raid_bound(sustain_animals, "sustain",
+					SourceForecast.TRIP_BOUND_PACK_FULL),
 			},
 			"surplus:%d" % HUNT_FORECAST_PARTY: {
 				"turns_to_fill": surplus_trip_turns, "delivers_food": true, "delivers_trade": true,
 				"animals_taken": surplus_animals,
 				"delivered_food": surplus_delivered,
 				"delivered_trade": float(surplus_animals) * RAID_TRADE_PER_ANIMAL, "wasted_food": 0.0,
+				SourceForecast.TRIP_BOUND_KEY: clean_raid_bound(surplus_animals, "surplus",
+					SourceForecast.TRIP_BOUND_PACK_FULL),
 			},
 			"deplete:%d" % HUNT_FORECAST_PARTY: {
 				"turns_to_fill": surplus_trip_turns, "delivers_food": true, "delivers_trade": true,
 				"animals_taken": surplus_animals,
 				"delivered_food": surplus_delivered,
 				"delivered_trade": float(surplus_animals) * RAID_TRADE_PER_ANIMAL, "wasted_food": 0.0,
+				SourceForecast.TRIP_BOUND_KEY: clean_raid_bound(surplus_animals, "deplete",
+					SourceForecast.TRIP_BOUND_PACK_FULL),
 			},
 			# Eradicate DELIVERS (issue #337): `delivers_food` says the quarry is EDIBLE, not that the
 			# rung is a denial mission, and an Eradicate raid banks the whole-stock windfall.
 			"eradicate:%d" % HUNT_FORECAST_PARTY: {
-				"turns_to_fill": 0, "delivers_food": true, "delivers_trade": true,
+				"turns_to_fill": STRIP_BARE_TRIP_TURNS,
+				"delivers_food": true, "delivers_trade": true,
 				"animals_taken": surplus_animals,
 				"delivered_food": surplus_delivered,
 				"delivered_trade": float(surplus_animals) * RAID_TRADE_PER_ANIMAL, "wasted_food": 0.0,
+				# **THE FLOOR-`0` ROW COMPLETES, and its turn count is what says so.** It used to pair
+				# `turns_to_fill == 0` with `TRIP_BOUND_HORIZON` — the wire's "still going when the
+				# projection ran out" — which the sheet read on three surfaces at once as a raid that
+				# never completes (`over many turns` / `still delivering at the end of the forecast` /
+				# `Send Anyway (long raid)`), for the one mission whose whole purpose is to finish.
+				# `herd_lost` beside a REAL turn is the sim's own pairing; the horizon pairing lives on
+				# `hunt.gd`'s `_horizon_raid_herd`, where it is genuinely what the projection found.
+				SourceForecast.TRIP_BOUND_KEY: clean_raid_bound(surplus_animals, "eradicate",
+					SourceForecast.TRIP_BOUND_HERD_LOST),
 			},
 		},
 	}
@@ -301,8 +386,72 @@ static func set_managed_herders(fixture: Dictionary, needed: int) -> void:
 ## state swaps in its own list and must restore this one.
 static func world_herds_fixture() -> Array:
 	return [
-		{"id": "game_deer_07", "species": "Red Deer", "x": 68, "y": 15, "population": 120, "ecology_phase": "stressed", "food_per_animal": 2.0},
+		{
+			"id": "game_deer_07", "species": "Red Deer", "x": 68, "y": 15, "population": 120,
+			"ecology_phase": "stressed", "food_per_animal": 2.0,
+			# **THE DENIAL TABLE, so an IN-FLIGHT denial party has a verdict to read**
+			# (`docs/plan_denial_raid.md` §3). The sim publishes no per-party collapse field — its
+			# answer lives on the TARGET herd, one row per party size — so a launched raid resolves
+			# its own row out of this list exactly as its launch sheet did. A world-herd entry
+			# without one leaves the party's readout blank, which is the state no live server can be
+			# in and the one in which every claim about that line passes vacuously.
+			"denial_estimates": denial_estimate_table(SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY,
+				DENIAL_COLLAPSE_TURNS, DENIAL_COLLAPSE_LOW, DENIAL_COLLAPSE_HIGH,
+				DENIAL_COLLAPSE_KILLS, 2.0),
+		},
 	]
+
+# The in-flight denial party's own table — parties 1..8 against the reference Red Deer. **More hands
+# break the herd SOONER and that is the mission's only lever**, so the rows fall monotonically; the
+# band widens where the retreat is chanciest. The party the frames render is `HUNT_EXPEDITION_PARTY`
+# (5), whose row is `4` with a `3–5` band — the plan's own worked example.
+const DENIAL_COLLAPSE_TURNS := [12, 8, 6, 5, 4, 4, 3, 3]
+
+const DENIAL_COLLAPSE_LOW := [10, 7, 5, 4, 3, 3, 2, 2]
+
+const DENIAL_COLLAPSE_HIGH := [15, 10, 8, 6, 5, 5, 4, 4]
+
+const DENIAL_COLLAPSE_KILLS := [30, 48, 60, 70, 78, 86, 92, 98]
+
+## The DENIAL raid's pre-launch table (`docs/plan_denial_raid.md` §1.1) — an ARRAY with ONE row per
+## party size and **no other axis**, which is the whole shape difference from `raid_estimate_table`
+## above: denial carries no floor and no fill target, so party size is the only thing there is to
+## sample and a row's own `party_workers` is its identity.
+##
+## `outcome` is the sim's verdict and the client renders NOTHING numeric without it, so every row
+## carries one. A `repelled` / `horizon` table passes all-zero turn rows: `0` means "not within the
+## horizon on that end", never "immediately".
+static func denial_estimate_table(outcome: String, turns_row: Array, low_row: Array,
+		high_row: Array, kills_row: Array, fpa: float,
+		carry_per_worker: float = DENIAL_CARRY_PER_WORKER,
+		tpa: float = RAID_TRADE_PER_ANIMAL) -> Array:
+	var rows: Array = []
+	for i in kills_row.size():
+		var party := i + 1
+		var killed := int(kills_row[i])
+		var killed_food := float(killed) * fpa
+		# What the pack holds, never what it killed — the raid banks a rounding error on the way home
+		# and leaves the rest standing dead on the range.
+		var hauled := minf(killed_food, float(party) * carry_per_worker)
+		var hauled_share := (hauled / killed_food) if killed_food > 0.0 else 0.0
+		rows.append({
+			"party_workers": party,
+			"turns_to_collapse": int(turns_row[i]),
+			"turns_to_collapse_low": int(low_row[i]),
+			"turns_to_collapse_high": int(high_row[i]),
+			"outcome": outcome,
+			"animals_killed": killed,
+			"delivered_food": hauled,
+			"wasted_food": killed_food - hauled,
+			# The trade half rides the same carried biomass, so it scales with what came home rather
+			# than with what died — and its WASTE is the rest of the same conversion. The sim runs one
+			# `HuntYield::apply` over `take.wasted`, so a kill left on the range takes its hides with
+			# it; a table stating `wasted_trade` as 0 beside a large `wasted_food` would be a herd no
+			# live server can produce.
+			"delivered_trade": float(killed) * tpa * hauled_share,
+			"wasted_trade": float(killed) * tpa * (1.0 - hauled_share),
+		})
+	return rows
 
 static func herd_fixture() -> Dictionary:
 	return {

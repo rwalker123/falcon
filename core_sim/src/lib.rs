@@ -28,6 +28,7 @@ mod crisis_config;
 mod culture;
 mod culture_corruption_config;
 mod demographics_config;
+mod equipment_config;
 mod espionage;
 mod expedition_config;
 mod fauna;
@@ -89,19 +90,21 @@ use bevy::ecs::schedule::{LogLevel, ScheduleBuildSettings};
 use bevy::prelude::*;
 
 pub use combat::{
-    resolve_fight, CombatStats, CombatTuning, Contingent, ContingentId, ContingentResult,
-    FightOutcome, FightPayload, Force, ForceId, Posture, RangeBand, TerrainContext,
+    attacks_landed_at, landed_strikes_seeded, resolve_fight, strike_damage, units_brought_down,
+    CombatStats, CombatTuning, Contingent, ContingentId, ContingentResult, DamageLedger,
+    FightOutcome, FightPayload, Force, ForceId, Posture, RangeBand, StrikeDraw, TerrainContext,
+    EXPECTED_STRIKES,
 };
 pub use combat_config::{
     load_combat_config_from_env, CombatConfig, CombatConfigHandle, CombatConfigMetadata,
     BUILTIN_COMBAT_CONFIG,
 };
 pub use components::{
-    available_workers, floor_is_valid, floor_overdraws, raid_is_recurring, BandId, BandTravel,
-    DeathCause, DemographicFlowAccumulator, ElementKind, Expedition, ExpeditionMission,
+    available_workers, floor_is_valid, floor_overdraws, raid_is_recurring, BandEquipment, BandId,
+    BandTravel, DeathCause, DemographicFlowAccumulator, ElementKind, Expedition, ExpeditionMission,
     ExpeditionPhase, Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget,
     LocalStore, LogisticsLink, MoraleCause, PendingMigration, PopulationCohort, PowerNode,
-    ResidentBand, Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink,
+    ResidentBand, Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink, YieldRange,
     DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE,
     TRADE_GOODS,
 };
@@ -143,6 +146,11 @@ pub use demographics_config::{
     load_demographics_config_from_env, DemographicsConfig, DemographicsConfigHandle,
     DemographicsConfigMetadata,
 };
+pub use equipment_config::{
+    load_equipment_config_from_env, BasketKitConfig, DefaultKitsConfig, EquipmentConfig,
+    EquipmentConfigHandle, EquipmentConfigMetadata, HuntingKitConfig, KitChoice, KitComponent,
+    KitDefinition, KitJob, KitSelectionError, SledKitConfig, BUILTIN_EQUIPMENT_CONFIG,
+};
 pub use espionage::{
     AgentAssignment, CounterIntelBudgets, EspionageAgentHandle, EspionageCatalog,
     EspionageMissionId, EspionageMissionInstanceId, EspionageMissionKind, EspionageMissionState,
@@ -154,20 +162,25 @@ pub use expedition_config::{
     ExpeditionConfigMetadata, BUILTIN_EXPEDITION_CONFIG,
 };
 pub use fauna::{
-    advance_herd_grazing, advance_herds, advance_husbandry, advance_predation, build_prey_index,
-    carnivore_k_at, escapement_ceiling, forecast_expected_take, herd_capacity, herd_ecology,
-    herd_herders_needed, herd_hunt_yield, herded_fraction, herders_needed, hunt_escapement_ceiling,
-    hunt_source_yield_preview, pen_upkeep, project_arrivals_hunt, project_realized_hunt,
-    quantise_animal_take, repopulate_fauna, spawn_initial_herds, species_requires_denial,
-    AnimalTake, EcologyPhase, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
-    HerdTelemetryEntry, PreyDatum, RoamState, SourceYieldForecast, FODDERING_DISCOVERY_ID,
-    FULLY_HERDED, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID,
+    advance_herd_grazing, advance_herds, advance_husbandry, advance_predation, animals_affordable,
+    animals_engaged, animals_that_stay, build_prey_index, carnivore_k_at, denial_party_needed,
+    escapement_ceiling, forecast_expected_take, forecast_take_range, herd_capacity, herd_ecology,
+    herd_herders_needed, herd_hunt_yield, herd_past_recovery, herd_quarry_fight,
+    herd_replacement_animals, herded_fraction, herders_needed, hunt_engage_workers,
+    hunt_escapement_ceiling, hunt_haul_workers, hunt_source_yield_preview, hunt_take_bound,
+    hunt_take_workers, pen_upkeep, project_arrivals_hunt, project_realized_hunt,
+    quantise_animal_take, repopulate_fauna, resolve_hunt_fight, retreat_seed, spawn_initial_herds,
+    species_requires_denial, AnimalTake, EcologyPhase, EngagementStop, FightCasualties, Herd,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, HerdTelemetryEntry, HuntDraw, HuntFight,
+    HuntTakeBound, HuntingParty, PreyDatum, QuarryFight, RoamState, SourceYieldForecast, TakeRange,
+    FODDERING_DISCOVERY_ID, FULLY_HERDED, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION,
+    NO_DEATHS_TO_REPORT, PENNING_DISCOVERY_ID,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle,
     FaunaConfigMetadata, GrazeConfig, HuntYield, HuntYieldDef, HusbandryCeiling,
     MigratoryAbundanceConfig, ShoreRequirement, SizeClass, SpeciesDef, YieldAccounts,
-    BUILTIN_FAUNA_CONFIG, NO_GRAZE_CAPACITY,
+    BUILTIN_FAUNA_CONFIG, NO_GRAZE_CAPACITY, NO_RETREAT,
 };
 pub use flora_config::{
     load_flora_config_from_env, CultivationCeiling, FloraConfig, FloraConfigHandle,
@@ -306,9 +319,11 @@ pub use snapshot::{
 pub use systems::spawn_initial_world;
 pub use systems::{
     advance_band_movement, advance_expeditions, advance_labor_allocation, advance_predator_raids,
-    expedition_take_provisions, hunt_per_worker_provisions, hunt_take, hunt_trip_forecast,
-    output_multiplier, simulate_power, HuntTripForecast, MigrationKnowledgeEvent, PowerSimParams,
-    TradeDiffusionEvent,
+    advance_tick, denial_forecast, expedition_returned_event, expedition_take_provisions,
+    fold_party_into_band, hunt_per_worker_provisions, hunt_report_event, hunt_take,
+    hunt_trip_forecast, output_multiplier, party_owes_a_report, simulate_power, DenialForecast,
+    DenialOutcome, HuntOutcome, HuntTripBound, HuntTripForecast, MigrationKnowledgeEvent,
+    PowerSimParams, TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,
@@ -478,6 +493,8 @@ pub fn build_headless_app() -> App {
     let combat_handle = combat_config::CombatConfigHandle::new(combat_config);
     let (creatures_config, creatures_metadata) = creatures_config::load_creatures_config_from_env();
     let creatures_handle = creatures_config::CreaturesConfigHandle::new(creatures_config);
+    let (equipment_config, equipment_metadata) = equipment_config::load_equipment_config_from_env();
+    let equipment_handle = equipment_config::EquipmentConfigHandle::new(equipment_config);
     let (demographics_config, demographics_metadata) =
         demographics_config::load_demographics_config_from_env();
     let demographics_handle =
@@ -573,6 +590,8 @@ pub fn build_headless_app() -> App {
         .insert_resource(combat_metadata)
         .insert_resource(creatures_handle)
         .insert_resource(creatures_metadata)
+        .insert_resource(equipment_handle)
+        .insert_resource(equipment_metadata)
         .insert_resource(demographics_handle)
         .insert_resource(demographics_metadata)
         .insert_resource(supply_network_handle)

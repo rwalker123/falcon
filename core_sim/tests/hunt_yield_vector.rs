@@ -16,18 +16,20 @@ use bevy::MinimalPlugins;
 
 use core_sim::{
     advance_band_movement, advance_expeditions, advance_herds, advance_labor_allocation,
-    build_headless_app, hunt_source_yield_preview, recapture_snapshot_in_place, scalar_from_f32,
-    scalar_one, scalar_zero, spawn_initial_forage, spawn_initial_herds, spawn_initial_world,
-    CombatConfigHandle, CommandEventLog, CreaturesConfigHandle, CultureManager, Diet,
-    DiscoveryProgressLedger, Expedition, ExpeditionMission, ExpeditionPhase, FactionId,
-    FactionInventory, FaunaConfig, FaunaConfigHandle, FloraConfigHandle, ForageRegistry,
-    GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, HuntYield,
-    Improvement, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
-    LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
-    ResidentBand, SimulationConfig, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
+    build_headless_app, hunt_engage_workers, hunt_haul_workers, hunt_source_yield_preview,
+    recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage,
+    spawn_initial_herds, spawn_initial_world, CombatConfigHandle, CommandEventLog,
+    CreaturesConfigHandle, CultureManager, Diet, DiscoveryProgressLedger, Expedition,
+    ExpeditionMission, ExpeditionPhase, FactionId, FactionInventory, FaunaConfig,
+    FaunaConfigHandle, FloraConfigHandle, ForageRegistry, GenerationId, GenerationRegistry,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, HuntYield, HuntingParty, Improvement,
+    LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle,
+    LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand,
+    SimulationConfig, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
-    NO_IMPROVEMENT_UNDERWAY, TRADE_GOODS,
+    MSY_BIOMASS_FRACTION, NO_BUILD_UNDERWAY_DIP, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
+    TRADE_GOODS,
 };
 
 /// Four depths on the intensity dial. Every one of them must pay the species' product vector; none
@@ -45,11 +47,23 @@ const TEST_CAPACITY: f32 = 4000.0;
 /// second variable into the pinned number.)
 const UNBOUNDED_CREW: u32 = 60;
 
-/// A crew big enough to **carry the whole herd home in one turn** (`workers ×
-/// per_worker_biomass_capacity 40 >= TEST_CAPACITY`). `quantise_animal_take` caps the kill by what
-/// the crew can collect, so proving Eradicate empties a herd needs a crew that could haul it —
-/// otherwise the test would be measuring the carry cap, not the policy.
-const HAUL_THE_WHOLE_HERD_CREW: u32 = 100;
+/// A crew big enough to **take the whole herd in one turn** — which now means clearing **two** crew
+/// bounds, not one. `quantise_animal_take` caps the kill by what the crew can collect *and*, since
+/// `docs/plan_hunt_through_combat.md` §2, by how many animals it can bring into contact
+/// (`workers × engage_rate`). Proving Eradicate empties a herd needs a crew that clears both, or the
+/// test measures a crew bound instead of the policy.
+///
+/// **Three crew bounds now, not two** — slice 4 added the **fight**
+/// (`docs/plan_hunt_through_combat.md` §4): the kill is `combat::resolve_fight`'s enemy losses, so a
+/// crew must also do enough damage to put the whole herd on the ground in one turn.
+///
+/// `TEST_CAPACITY / body_mass` is ~267 animals at the shipped Red Deer mass. Red Deer engage at
+/// `1.0` (so engagement wants ≥ 267) and a spear-armed hunter brings down `(20 − 1) / 25 = 0.76` of
+/// one a turn (so the fight wants ≥ 351) — the fight is now the tighter of the three and sets this
+/// number. It was `100` sized against carry alone, then `300` when engagement landed; at each of
+/// those Sustain and Eradicate paid **identically**, which is a true statement about a small crew and
+/// says nothing about the floor.
+const HAUL_THE_WHOLE_HERD_CREW: u32 = 400;
 
 /// **A crew far too small to clear the herd's escapement room** — the *labor-bound* half of the
 /// forecast==actual sweep. One hunter carries `per_worker_biomass_capacity`, which is a rounding
@@ -59,7 +73,14 @@ const HAUL_THE_WHOLE_HERD_CREW: u32 = 100;
 /// the whole standing surplus (`B − floor·K`), which on a full herd is enormous, so a realistic crew
 /// is labor-bound at *every* stance and a forecast that only agreed with the take at the ceiling
 /// would look correct on a fully-staffed harness and lie in play.
-const LABOR_BOUND_CREW: u32 = 1;
+const LABOR_BOUND_CREW: u32 = 2;
+
+/// **Two, not one, because the build dip has to have somewhere to land.** Engagement rounds up to a
+/// whole animal (`fauna::animals_engaged`), so a single hunter engages `1` whether gentling or
+/// hunting and the dip — correctly applied — is unobservable. At two the dipped crew engages `1`
+/// against `2`, which is the smallest staffing where a dip can be *seen* rather than merely applied.
+/// A crew that cannot see the dip proves nothing about whether the dip is there.
+const _: () = assert!(LABOR_BOUND_CREW >= 2);
 
 /// Float slop for a take reconstructed from a biomass delta through an `f32` rate.
 const YIELD_EPSILON: f32 = 1e-3;
@@ -99,12 +120,21 @@ fn spawn_world() -> App {
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(ForageRegistry::default());
     app.world.insert_resource(FaunaConfigHandle::default());
+    // **This harness is a deterministic pin, so the retreat stage is held at its identity.**
+    // Slice 7 authored a non-zero `combat.wariness` across the roster
+    // (`docs/plan_hunt_through_combat.md` §3.1); `FaunaConfig::without_retreat` carries the whole
+    // reasoning for why the pre-existing suite neutralises it rather than re-baselining.
+    app.world
+        .resource_mut::<FaunaConfigHandle>()
+        .hold_wariness_at_zero();
     app.world.insert_resource(LaborConfigHandle::default());
     app.world.insert_resource(FloraConfigHandle::default());
     app.world.insert_resource(LadderConfigHandle::default());
     app.world.insert_resource(WellbeingConfigHandle::default());
     app.world.insert_resource(CombatConfigHandle::default());
     app.world.insert_resource(CreaturesConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::EquipmentConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.run_system_once(spawn_initial_herds);
     app.world.run_system_once(spawn_initial_forage);
@@ -196,6 +226,7 @@ fn spawn_hunters(
                     },
                     workers,
                     improvement: NO_IMPROVEMENT_UNDERWAY,
+                    kit: None,
                 }],
                 ..Default::default()
             },
@@ -464,6 +495,15 @@ const INEDIBLE_SPECIES: &str = "Grey Wolf Pack";
 /// `expedition_hunt::exported_snapshot_fields_reproduce_band_hunt_take` uses.
 fn headless_with_species(display_name: &str) -> (App, String, UVec2) {
     let mut app = build_headless_app();
+    // **This suite measures the yield VECTOR, so the retreat stage is held at its identity** — the
+    // same move [`steady_quarry`] makes for `engage_rate` and `defense`, one field further along.
+    // Slice 7 authored a non-zero `combat.wariness` roster-wide
+    // (`docs/plan_hunt_through_combat.md` §3.1), and a `forecast == actual` pin cannot be read off a
+    // stochastic take at all: the forecast reports the take's *expectation*, so an equality here
+    // would be asserting that one draw equals a mean. See `FaunaConfig::without_retreat`.
+    app.world
+        .resource_mut::<FaunaConfigHandle>()
+        .hold_wariness_at_zero();
     app.update();
     let id = {
         let registry = app.world.resource::<HerdRegistry>();
@@ -495,6 +535,12 @@ fn headless_with_species(display_name: &str) -> (App, String, UVec2) {
         herd.hunt_credit = 0.0;
         herd.position()
     };
+    // **Re-emit the display telemetry, or the WIRE describes the herd this fixture replaced.**
+    // `WorldSnapshot.herds` is built from `HerdTelemetry`, which `app.update()` filled *before* the
+    // reshape above — so a test reading the exported `biomass` would compose a ceiling against the
+    // pre-reshape stock while the take reads the registry. `spawn_initial_herds` early-returns on a
+    // non-empty registry and refreshes exactly the telemetry + density the turn loop would.
+    app.world.run_system_once(spawn_initial_herds);
     (app, id, pos)
 }
 
@@ -578,6 +624,7 @@ fn spawn_resident_crew(
                     },
                     workers,
                     improvement,
+                    kit: None,
                 }],
                 ..Default::default()
             },
@@ -590,6 +637,58 @@ fn spawn_resident_crew(
 /// the turn resolves.
 fn precommit_pair(app: &App, id: &str, policy: f32, workers: u32) -> (f32, f32) {
     precommit_pair_building(app, id, policy, workers, NO_IMPROVEMENT_UNDERWAY)
+}
+
+/// [`precommit_pair`] at the band's **live** output multiplier rather than the content-band `1.0`.
+///
+/// A single-turn fixture can assume a content band; a multi-turn one cannot — morale moves under a
+/// run, and the resolved take applies the multiplier while [`precommit_pair`] does not. Reading the
+/// exported cohort's own multiplier is what `expedition_hunt`'s band-preview sweep already does, and
+/// it keeps a multi-turn comparison about the fight rather than about wellbeing.
+fn precommit_pair_at_band_morale(
+    app: &App,
+    id: &str,
+    band: bevy::prelude::Entity,
+    policy: f32,
+    workers: u32,
+) -> (f32, f32) {
+    let multiplier = {
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let cohort = snapshot
+            .populations
+            .iter()
+            .find(|p| p.entity == band.to_bits())
+            .expect("the hunting band is in the snapshot");
+        core_sim::Scalar::from_raw(cohort.output_multiplier).to_f32()
+    };
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let labor = app.world.resource::<LaborConfigHandle>().get();
+    let registry = app.world.resource::<HerdRegistry>();
+    let herd = registry.find(id).expect("the herd is on the map");
+    let seed = hunt_source_yield_preview(
+        herd,
+        &fauna,
+        &ladder,
+        labor.hunt.per_worker_biomass_capacity,
+        &HuntingParty::builtin_equipped(),
+        multiplier,
+        workers,
+        policy,
+        NO_IMPROVEMENT_UNDERWAY,
+        labor.yield_average_horizon_turns,
+        labor.arrivals_horizon_turns,
+        app.world
+            .resource::<CombatConfigHandle>()
+            .get()
+            .forecast_range_sigmas,
+    );
+    (seed.actual, seed.trade)
 }
 
 /// [`precommit_pair`] with a build verb in flight.
@@ -610,12 +709,17 @@ fn precommit_pair_building(
         &fauna,
         &ladder,
         labor.hunt.per_worker_biomass_capacity,
+        &HuntingParty::builtin_equipped(),
         FORECAST_OUTPUT_MULTIPLIER,
         workers,
         policy,
         improvement,
         labor.yield_average_horizon_turns,
         labor.arrivals_horizon_turns,
+        app.world
+            .resource::<CombatConfigHandle>()
+            .get()
+            .forecast_range_sigmas,
     );
     (seed.actual, seed.trade)
 }
@@ -642,6 +746,26 @@ fn exported_pair(app: &App, band: bevy::prelude::Entity) -> (f32, f32) {
         .first()
         .expect("its one Hunt assignment is exported");
     (row.actual_yield, row.trade_yield)
+}
+
+/// The **exported** telemetry row for a band's single assignment — the whole shipped record, for the
+/// staffing signals (`workersNeeded` / `wastedYield`) [`exported_pair`] does not carry.
+fn exported_row(app: &App, band: bevy::prelude::Entity) -> sim_runtime::LaborAssignmentState {
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    snapshot
+        .populations
+        .iter()
+        .find(|p| p.entity == band.to_bits())
+        .expect("the hunting band is in the snapshot")
+        .labor_assignments
+        .first()
+        .expect("its one Hunt assignment is exported")
+        .clone()
 }
 
 /// The **exported** herd row — the terms a client composes any floor's ceiling from
@@ -736,6 +860,86 @@ fn the_forecast_equals_the_paid_take_in_both_products_on_the_wire() {
         saw_labor_bound && saw_escapement_bound,
         "both regimes must be covered: labor-bound={saw_labor_bound} \
          escapement-bound={saw_escapement_bound}"
+    );
+}
+
+/// **7c. `forecast == actual` ACROSS A MULTI-TURN KILL** (`docs/plan_hunt_through_combat.md` §4.2).
+///
+/// Damage now carries between turns, so a sub-threshold party takes **nothing** for several turns and
+/// then a whole animal. That pulse is exactly the shape a forward projection can miss: a forecast
+/// that resolved the fight once and froze it would quote the first turn's zero forever, and a
+/// forecast that ignored the herd's banked wounds would quote a zero on the very turn the kill lands.
+/// Either way the multi-turn kill is invisible in the preview while the sim pays it — the defect
+/// class this suite exists for.
+///
+/// Asserted on the **exported snapshot**, per component, on **every** turn of the run: the wait turns
+/// (both zero, honestly) and the kill turn (both the same body). Paired with the liveness half —
+/// a kill must actually land, or a forecast frozen at zero would agree with a take frozen at zero.
+#[test]
+fn the_forecast_equals_the_paid_take_across_a_multi_turn_kill() {
+    /// Far below `ceil(500 / (20 − 12)) = 63`, so the party grinds the mammoth down over several
+    /// turns instead of taking one every turn.
+    const SUB_THRESHOLD_CREW: u32 = 12;
+    /// Long enough to contain at least one wait→kill cycle at that crew.
+    const TURNS: u32 = 12;
+    /// Take everything the herd can spare, so the escapement never binds and the *fight* is the only
+    /// term that can produce a zero.
+    const STRIP_IT_BARE: f32 = 0.0;
+
+    let (mut app, id, pos) = headless_with_species(HEAVY_BODIED_SPECIES);
+    reveal_herd(&mut app, &id);
+    let band = spawn_resident_hunters(&mut app, pos, &id, STRIP_IT_BARE, SUB_THRESHOLD_CREW);
+    // The band has to be on the wire before its multiplier can be read off it.
+    recapture_snapshot_in_place(&mut app.world);
+
+    let mut saw_wait_turn = false;
+    let mut saw_kill_turn = false;
+    for turn in 1..=TURNS {
+        // **Quote the crew the turn will actually field.** A mammoth hunt costs the band people, so
+        // `working` shrinks under the run and `advance_labor_allocation` normalizes the assignment
+        // down to what is left. Forecasting a stale headcount would measure that lag rather than the
+        // accumulator — casualty-aware staffing in the preview is its own follow-up.
+        let crew = {
+            let cohort = app
+                .world
+                .get::<PopulationCohort>(band)
+                .expect("the band is alive");
+            core_sim::available_workers(cohort.working).min(SUB_THRESHOLD_CREW)
+        };
+        // The pre-commit quote for THIS turn's herd state — banked wounds and all — at the band's
+        // live morale, since a multi-turn run cannot assume a content band.
+        let forecast = precommit_pair_at_band_morale(&app, &id, band, STRIP_IT_BARE, crew);
+        app.world.run_system_once(advance_labor_allocation);
+        recapture_snapshot_in_place(&mut app.world);
+        let paid = exported_pair(&app, band);
+
+        assert!(
+            (forecast.0 - paid.0).abs() <= YIELD_EPSILON,
+            "turn {turn}: forecast FOOD {} must equal the paid {}",
+            forecast.0,
+            paid.0
+        );
+        assert!(
+            (forecast.1 - paid.1).abs() <= YIELD_EPSILON,
+            "turn {turn}: forecast TRADE {} must equal the paid {}",
+            forecast.1,
+            paid.1
+        );
+        if paid.0 > 0.0 {
+            saw_kill_turn = true;
+        } else {
+            saw_wait_turn = true;
+        }
+    }
+    assert!(
+        saw_wait_turn,
+        "the fixture must be genuinely sub-threshold — a party that kills every turn does not \
+         exercise the accumulator"
+    );
+    assert!(
+        saw_kill_turn,
+        "liveness: the banked damage must eventually land a kill, or both sides agree on zero \
+         for the wrong reason"
     );
 }
 
@@ -990,7 +1194,7 @@ fn a_composed_ceiling_carries_the_windfall_at_floor_zero() {
 // B3 — the EXPEDITION arm: a raid PAYS both products it forecast
 // ---------------------------------------------------------------------------------------------------
 
-/// The reference raiding party (`≤ expedition_config.max_party_size`, so the pre-launch estimate
+/// The reference raiding party (a rung of `expedition_config.estimate_party_sizes`, so the pre-launch estimate
 /// table carries a row for it).
 const RAID_PARTY: u32 = 4;
 
@@ -1057,6 +1261,14 @@ fn party_cohort(tile: bevy::prelude::Entity, workers: u32) -> PopulationCohort {
 ///   **graze** branch; a carnivore's `K` is recomputed every turn from the live prey base, which
 ///   both drifts under the forecast's fixed-`K` clone and (at `TEST_CAPACITY`) puts the herd under
 ///   the extinction floor of its own prey-derived `K`, despawning the quarry on turn one.
+/// - **`engage_rate` → [`RAID_UNBOUNDED_ENGAGE_RATE`]** — the engagement bound
+///   (`docs/plan_hunt_through_combat.md` §2) decides *how long a raid lasts*, which is a third
+///   confound of exactly the same shape. An **inedible** quarry never fills its pack, so its raid can
+///   only end when the standing surplus is spent; at the shipped wolf rate a legal party
+///   (a sampled rung of `estimate_party_sizes`) reaches 2 wolves a turn against a herd regrowing ~100 biomass a turn, so the
+///   raid never completes inside the forecast horizon and the row this test compares against
+///   disappears. Neutralising reach leaves the take bounded by carry and the herd, which is the
+///   regime the yield vector is measured in.
 fn steady_quarry(app: &mut App, display_name: &str) {
     let mut config = (*app.world.resource::<FaunaConfigHandle>().get()).clone();
     let key = config
@@ -1068,14 +1280,39 @@ fn steady_quarry(app: &mut App, display_name: &str) {
     let def = config.species.get_mut(&key).expect("just resolved");
     def.combat.attack = 0.0;
     def.diet = Diet::Herbivore;
+    def.engage_rate = RAID_UNBOUNDED_ENGAGE_RATE;
+    // **The FIGHT must not bind either** — the same reason `engage_rate` is pinned above. This suite
+    // measures a species' PRODUCT vector (`docs/plan_hunt_yield_model.md`), so neither the party's
+    // reach nor its ability to bring the quarry down may be the term that decides the take. Since
+    // slice 4 the kill resolves through `combat::resolve_fight`
+    // (`docs/plan_hunt_through_combat.md` §4), and a shipped wolf (`defense 3`, `durability 20`)
+    // would cap a 4-hunter raid at 3.4 animals a turn — nine times below its carry, which pushed
+    // every wolf raid past the forecast horizon and left this harness comparing nothing.
+    def.combat.defense = RAID_UNGUARDED_DEFENSE;
+    def.combat.durability = RAID_UNBOUNDED_DURABILITY;
     app.world
         .resource_mut::<FaunaConfigHandle>()
         .replace(std::sync::Arc::new(config));
 }
 
+/// **No protection at all** — the raid harness's quarry, so the party's `attack` clears the gate by
+/// its whole value and the *weapon tier* cannot decide this suite's numbers.
+const RAID_UNGUARDED_DEFENSE: f32 = 0.0;
+
+/// **A body that soaks almost nothing**, so the fight is never the binding term here: at the shipped
+/// spear one hunter brings down `20 / 0.1 = 200` a turn, far past any crew's carry. The fight's own
+/// behaviour is pinned by `core_sim/tests/hunt_fight.rs`; this suite is about products.
+const RAID_UNBOUNDED_DURABILITY: f32 = 0.1;
+
 /// The wild-game reference growth rate the raid harness pins its quarry to — the same `r` the
 /// sibling `expedition_hunt` raid tests use for their worked boar example.
 const WILD_REGROWTH_RATE: f32 = 0.10;
+
+/// **An engagement rate at which reach never binds** ([`steady_quarry`]). One hunter reaches this
+/// many animals a turn; the lightest body in the roster puts fewer than a thousand animals in a
+/// [`TEST_CAPACITY`] herd, so even a single-hunter party can bring the whole herd into contact and the
+/// take falls back to the carry-and-herd bounds these yield-vector pins are written against.
+const RAID_UNBOUNDED_ENGAGE_RATE: f32 = 1000.0;
 
 /// Pin the two things about a quarry that decide **when a raid ends**, so the pin measures the yield
 /// vector rather than whichever herd the map handed the fixture.
@@ -1138,20 +1375,31 @@ fn spawn_raid_party(
                 mission: ExpeditionMission::Hunt {
                     fauna_id: fauna_id.to_string(),
                     floor,
+                    // This suite measures the raid's PRODUCTS, not its length, so the party fills
+                    // its pack exactly as it did before the fill target existed.
                 },
                 phase: ExpeditionPhase::Hunting,
                 announced: false,
                 pending_reveal: Vec::new(),
                 carried_trade: 0.0,
+                kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Hunt),
             },
         ))
         .id()
 }
 
-/// The **exported** pre-launch raid promise for `(policy, RAID_PARTY)` — the very row the client's
-/// "delivers ≈X over ≈N turns · ⇄ ~Y trade goods" line reads — as
-/// `(turns_to_fill, delivered_food, delivered_trade)`.
-fn exported_raid_promise(app: &App, id: &str, floor: f32) -> (u32, f32, f32) {
+/// One **exported** pre-launch raid row, field for field — the very row the client's outfit UI reads.
+struct ExportedRaid {
+    turns_to_fill: u32,
+    animals_taken: u32,
+    delivered_food: f32,
+    wasted_food: f32,
+    delivered_trade: f32,
+    bound: String,
+}
+
+/// The **exported** pre-launch raid row for `(floor, RAID_PARTY)`, read off the shipped snapshot.
+fn exported_raid_row(app: &App, id: &str, floor: f32) -> ExportedRaid {
     let snapshot = app
         .world
         .resource::<SnapshotHistory>()
@@ -1170,6 +1418,21 @@ fn exported_raid_promise(app: &App, id: &str, floor: f32) -> (u32, f32, f32) {
         .unwrap_or_else(|| {
             panic!("the herd exports a floor {floor} × {RAID_PARTY}-worker trip estimate")
         });
+    ExportedRaid {
+        turns_to_fill: row.turns_to_fill,
+        animals_taken: row.animals_taken,
+        delivered_food: row.delivered_food,
+        wasted_food: row.wasted_food,
+        delivered_trade: row.delivered_trade,
+        bound: row.bound.clone(),
+    }
+}
+
+/// The **exported** pre-launch raid promise for `(policy, RAID_PARTY)` — the very row the client's
+/// "delivers ≈X over ≈N turns · ⇄ ~Y trade goods" line reads — as
+/// `(turns_to_fill, delivered_food, delivered_trade)`.
+fn exported_raid_promise(app: &App, id: &str, floor: f32) -> (u32, f32, f32) {
+    let row = exported_raid_row(app, id, floor);
     (row.turns_to_fill, row.delivered_food, row.delivered_trade)
 }
 
@@ -1302,5 +1565,368 @@ fn an_inedible_raid_comes_home_with_pelts_and_no_food() {
     assert!(
         (banked_trade - promised_trade).abs() <= RAID_PAYLOAD_EPSILON,
         "and it banks exactly what the outfit UI promised"
+    );
+}
+
+/// **`turns_to_fill == 0` on the wire is "the raid was still going when the projection ran out"** —
+/// `HuntTripBound::Horizon`, and nothing else. A lost herd is a *completion*: the party comes home on
+/// the turn the guard fires, so it names that turn like every other stop.
+const NEVER_COMPLETES: u32 = 0;
+
+/// **The waste is a sum over a whole raid, so its allowance is a raid's worth of quanta.** The
+/// forecast accumulates `Σ apply(wasted)` as raw `f32` while this test derives the same total from
+/// the herd's biomass ledger minus the pack's fixed-point contents — the same two-representation
+/// comparison [`RAID_PAYLOAD_EPSILON`] covers for a single load, over an order of magnitude more
+/// turns.
+const RAID_WASTE_EPSILON: f32 = 64.0 / core_sim::Scalar::SCALE as f32;
+
+/// **11b. A floor-`0` raid delivers, banks and WASTES exactly what its exported row promised.**
+///
+/// The floor-`0` raid used to pass `f32::INFINITY` as its carry room — "driving the herd extinct is
+/// the point, the meat is incidental" — which made `carried = killed × body_mass`. Two things were
+/// then false at once: its hunt report published `wasted_biomass = 0` for a raid that left a range of
+/// carcasses, and `Expedition::carried_trade` accrued pelts off the whole kill instead of off the
+/// load. Its **exported promise** carried the same lie: on a mammoth herd the row advertised the
+/// whole animal's 16 provisions and zero waste against a pack that holds 3.2.
+///
+/// *When* a party stops engaging (`fauna::EngagementStop`, which is what `Deny` changes) and *how
+/// much* it can haul are separate questions. This pins all four components of the answer — food,
+/// pelts, waste and the kill count — against a **real driven party**, on the shipped snapshot row a
+/// client reads, for the one floor no other test in this file covers.
+#[test]
+fn a_floor_zero_raid_delivers_and_wastes_what_its_exported_row_promised() {
+    let (mut app, id, pos) = headless_with_species(HEAVY_BODIED_SPECIES);
+    steady_quarry(&mut app, HEAVY_BODIED_SPECIES);
+    pin_quarry(&mut app, &id);
+    reveal_herd(&mut app, &id);
+    recapture_snapshot_in_place(&mut app.world);
+    let promised = exported_raid_row(&app, &id, STRIP_IT_BARE);
+    let quarry = {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        let registry = app.world.resource::<HerdRegistry>();
+        let herd = registry.find(&id).expect("the herd is on the map");
+        (core_sim::herd_hunt_yield(herd, &fauna), herd.body_mass)
+    };
+    let (yields, body_mass) = quarry;
+
+    // The raid, driven for real: the herd's ecology then the party's take, the order both the live
+    // arm and the projection run in.
+    let home = spawn_raid_home_band(&mut app, pos);
+    let party = spawn_raid_party(&mut app, home, pos, &id, STRIP_IT_BARE);
+    let horizon = app
+        .world
+        .resource::<core_sim::ExpeditionConfigHandle>()
+        .get()
+        .hunt
+        .forecast_horizon_turns;
+    let mut killed_biomass = 0.0_f32;
+    // The turn the herd went — which is the turn the party comes home, because the live arm's
+    // lost-herd guard flips it to `Returning` in the same turn's Population stage.
+    let mut lost_on = None;
+    for turn in 1..=horizon {
+        app.world.run_system_once(advance_herds);
+        if app.world.resource::<HerdRegistry>().find(&id).is_none() {
+            lost_on = Some(turn);
+            break;
+        }
+        let standing = herd_biomass(&app, &id);
+        app.world.run_system_once(advance_band_movement);
+        app.world.run_system_once(advance_expeditions);
+        killed_biomass += (standing - herd_biomass(&app, &id)).max(0.0);
+        if app.world.get::<Expedition>(party).map(|e| e.phase) != Some(ExpeditionPhase::Hunting) {
+            break;
+        }
+    }
+
+    // A floor-`0` raid never delivers mid-trip (`done`/`relaunch` are both false), so its whole haul
+    // is still in the pack — which is exactly why the pack must be the bound.
+    let carried_food = app
+        .world
+        .get::<PopulationCohort>(party)
+        .map(|c| c.stores.get(FOOD).to_f32())
+        .unwrap_or(0.0)
+        + larder(&app, home);
+    let banked_trade = app
+        .world
+        .get::<Expedition>(party)
+        .map(|e| e.carried_trade)
+        .unwrap_or(0.0)
+        + trade_goods(&app, home);
+    let carried_biomass = carried_food / yields.provisions_per_biomass;
+    let wasted_food = (killed_biomass - carried_biomass).max(0.0) * yields.provisions_per_biomass;
+
+    // **The liveness half, first** — every equality below would hold trivially on a raid that did
+    // nothing at all.
+    assert!(
+        carried_food > 0.0 && banked_trade > 0.0,
+        "a strip-it-bare raid banks the windfall it can carry: {carried_food} food, {banked_trade} \
+         trade"
+    );
+    assert!(
+        wasted_food > 0.0,
+        "…and leaves the rest of a {body_mass}-biomass body on the range: killed {killed_biomass}, \
+         carried {carried_biomass}"
+    );
+
+    // **The four components.**
+    assert!(
+        (promised.delivered_food - carried_food).abs() <= RAID_PAYLOAD_EPSILON,
+        "the exported row promised {} food, the party banked {carried_food}",
+        promised.delivered_food
+    );
+    assert!(
+        (promised.delivered_trade - banked_trade).abs() <= RAID_PAYLOAD_EPSILON,
+        "the exported row promised {} trade goods, the party banked {banked_trade}",
+        promised.delivered_trade
+    );
+    assert!(
+        (promised.wasted_food - wasted_food).abs() <= RAID_WASTE_EPSILON,
+        "the exported row promised {} wasted, the raid wasted {wasted_food}",
+        promised.wasted_food
+    );
+    assert_eq!(
+        promised.animals_taken,
+        (killed_biomass / body_mass).round() as u32,
+        "…and the kill count is the same raid's: {killed_biomass} biomass of {body_mass}-biomass \
+         animals"
+    );
+
+    // **The stop is the herd's, not the pack's.** A full pack does not end a floor-`0` raid — the
+    // live arm answers `(done, relaunch) = (false, false)` — so the projection must not claim a
+    // pack-full homecoming the party does not make. The wire's claim is paired here with the world
+    // fact that produced it.
+    assert_eq!(
+        promised.bound,
+        core_sim::HuntTripBound::HerdLost.as_str(),
+        "it ends by running the herd out, and the live raid did exactly that (herd lost on: \
+         {lost_on:?})"
+    );
+    let lost_on = lost_on
+        .expect("…and the driven party really did lose its herd, or the bound above is unpinned");
+    // **It ends, and the row says WHEN.** The floor-`0` raid's only stop is the lost-herd guard, so
+    // publishing `NEVER_COMPLETES` here published *"this raid never comes home"* for the one raid
+    // that reliably does — the client had a real `bound` beside a `0` turn count and nothing true to
+    // render. The turn is the sim's, not the projection's own: it is the turn the driven party lost
+    // the herd it was raiding.
+    assert_ne!(
+        promised.turns_to_fill, NEVER_COMPLETES,
+        "a raid that ends by emptying the range still ends — the never-completes sentinel is for a \
+         raid still going at the horizon"
+    );
+    assert_eq!(
+        promised.turns_to_fill, lost_on,
+        "…and the turn it names is the turn the real party's herd ran out"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------------
+// B4 — the ENGAGEMENT bound reaches the WIRE (`docs/plan_hunt_through_combat.md` §2)
+// ---------------------------------------------------------------------------------------------------
+
+/// The lightest-bodied huntable species in the shipped roster (`body_mass` 0.13, `engage_rate` 10) —
+/// the regime where **reach** is the binding bound by a wide margin: one hunter's 40 biomass of carry
+/// is 307 birds, and one hunter reaches ten.
+const SMALL_BODIED_SPECIES: &str = "Wild Fowl";
+
+/// The heaviest (`body_mass` 800, `engage_rate` 0.05) — the other end of the same authoring rule
+/// (`engage_rate × body_mass ≤ per_worker_biomass_capacity`), where the two bounds meet.
+const HEAVY_BODIED_SPECIES: &str = "Thunder Mammoths";
+
+/// **One hunter**, because that is the staffing the defect was measured at and the one where the two
+/// bounds are furthest apart.
+const LONE_HUNTER: u32 = 1;
+
+/// **12. The wire carries the ENGAGEMENT term, and without it a client's composed take is ~30× the
+/// take the sim pays.**
+///
+/// The escapement ceiling and the per-worker carry ship as **terms** because the composition
+/// `min(workers × carry, ceiling)` is linear and exact (`.claude/rules/core_sim/yield-forecast.md`,
+/// "THE BOUNDARY"). Engagement is the **third** bound and is linear in the same way — but it was not
+/// on the wire, so a compose sheet built the `min()` out of two of the three and quoted a carry-bound
+/// number. Measured on a Wild Fowl herd with one hunter: 307 birds/turn against a take of 10.
+///
+/// Asserted on the **exported snapshot** — the herd row's terms and the assignment row's
+/// `actualYield` — because the whole point is that the client cannot re-derive the answer from
+/// anything it does not ship: an in-process check would pass on a wire missing the field entirely.
+///
+/// The pair is **carry-only overstates** (the defect) beside **carry+reach reproduces exactly** (the
+/// fix), so a term that silently went dead could not satisfy both.
+#[test]
+fn the_exported_terms_reproduce_the_engagement_bounded_take() {
+    let (mut app, id, pos) = headless_with_species(SMALL_BODIED_SPECIES);
+    reveal_herd(&mut app, &id);
+    let floor = MSY_BIOMASS_FRACTION;
+    let band = spawn_resident_hunters(&mut app, pos, &id, floor, LONE_HUNTER);
+    app.world.run_system_once(advance_labor_allocation);
+    recapture_snapshot_in_place(&mut app.world);
+
+    let herd = exported_herd(&app, &id);
+    let paid = exported_pair(&app, band).0;
+
+    assert!(
+        herd.engage_rate > 0.0,
+        "the herd row must publish a real engagement throughput, got {}",
+        herd.engage_rate
+    );
+    assert!(
+        herd.body_mass > 0.0 && herd.per_worker_biomass > 0.0 && herd.provisions_per_biomass > 0.0,
+        "liveness: the three terms this composition already had must be on the row too ({herd:?})"
+    );
+
+    // THE CLIENT'S OWN COMPOSITION, from exported terms alone. `engaged` mirrors the sim's
+    // `animals_engaged` (floor to whole animals, never below one for a party that exists) and the
+    // rest is the documented whole-animal quantiser.
+    let room = (herd.biomass - floor * herd.carrying_capacity).max(0.0);
+    let carry = LONE_HUNTER as f32 * herd.per_worker_biomass;
+    let compose = |reachable: f32| -> f32 {
+        let affordable = (room / herd.body_mass).floor();
+        let carryable = (carry / herd.body_mass).floor();
+        let killed = affordable.min(carryable.max(1.0)).min(reachable);
+        (killed * herd.body_mass).min(carry) * herd.provisions_per_biomass
+    };
+    let engaged = (LONE_HUNTER as f32 * herd.engage_rate).floor().max(1.0);
+    let with_reach = compose(engaged);
+    let carry_only = compose(f32::INFINITY);
+
+    assert!(
+        (with_reach - paid).abs() <= YIELD_EPSILON,
+        "composed WITH the engagement term ({with_reach}) must equal the exported take ({paid})"
+    );
+    assert!(
+        carry_only > with_reach * 2.0,
+        "…and composing without it must be the overstatement this field exists to close: \
+         {carry_only} vs {with_reach}"
+    );
+    assert!(
+        paid > 0.0,
+        "liveness: the harness must actually take something, or both readings are zero"
+    );
+}
+
+/// **13. A PEN publishes no engagement stage — a penned animal is not stalked.**
+///
+/// The no-regress half of the pair above, and the one case where `0` on the wire is the *correct*
+/// reading rather than a missing field: a reader must treat `<= 0` as unbounded and drop the term,
+/// exactly as `fauna::hunt_engage_workers` does. Asserted beside a wild herd of the same species so
+/// the `0` is demonstrably the pen's answer and not the field being dead.
+#[test]
+fn a_penned_herd_publishes_no_engagement_stage() {
+    let (mut app, id, _pos) = headless_with_species(SMALL_BODIED_SPECIES);
+    reveal_herd(&mut app, &id);
+    recapture_snapshot_in_place(&mut app.world);
+    let wild = exported_herd(&app, &id).engage_rate;
+    assert!(
+        wild > 0.0,
+        "liveness: the same species reads a real rate while it is wild, got {wild}"
+    );
+
+    {
+        // `headless_with_species` re-speciates the herd's yield terms, not its husbandry ceiling, so
+        // the fixture states the roster's ceiling for the species under test before penning it —
+        // `corral_at` gates on `can_pen()` and refuses (loudly) otherwise.
+        let ceiling = app
+            .world
+            .resource::<FaunaConfigHandle>()
+            .get()
+            .species_by_display(SMALL_BODIED_SPECIES)
+            .expect("the species is in the shipped roster")
+            .husbandry_ceiling;
+        let pos = {
+            let registry = app.world.resource::<HerdRegistry>();
+            registry
+                .find(&id)
+                .expect("the herd is on the map")
+                .position()
+        };
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.husbandry_ceiling = ceiling;
+        assert!(herd.corral_at(pos), "the fixture herd pens");
+    }
+    app.world.run_system_once(spawn_initial_herds);
+    recapture_snapshot_in_place(&mut app.world);
+
+    assert_eq!(
+        exported_herd(&app, &id).engage_rate,
+        0.0,
+        "a pen has no engagement stage — the wire's finite reading of unbounded"
+    );
+}
+
+/// **14. `workersNeeded` counts the hands that can REACH the animals, not only the ones that can
+/// carry them.**
+///
+/// The mirror defect of #12, in the opposite direction and on the same panel: `hunt_haul_workers`
+/// sized the crew as a pure carry question, so a Wild Fowl herd with hundreds of head standing above
+/// its floor reported a crew of two — *"more workers would be idle"* about the very hands the take
+/// was short of. Engagement is a **third unit** (animals reachable per hunter, beside biomass carried
+/// and heads minded) and belongs in the same `max()`.
+///
+/// Asserted on the **exported** assignment row, and paired both ways: the light-bodied herd's count
+/// must exceed its own haul crew (the new term is live and binding), while the heavy-bodied one must
+/// still be its haul crew (the old term is not dead). Plus the standing invariant — a row may not
+/// report *overstaffed* and *understaffed* at once.
+#[test]
+fn the_exported_crew_counts_the_hands_that_can_reach_the_herd() {
+    let mut saw_reach_bound = false;
+    let mut saw_carry_bound = false;
+    for species in [SMALL_BODIED_SPECIES, HEAVY_BODIED_SPECIES] {
+        let (mut app, id, pos) = headless_with_species(species);
+        reveal_herd(&mut app, &id);
+        let floor = MSY_BIOMASS_FRACTION;
+        let (haul, reach) = {
+            let fauna = app.world.resource::<FaunaConfigHandle>().get();
+            let labor = app.world.resource::<LaborConfigHandle>().get();
+            let registry = app.world.resource::<HerdRegistry>();
+            let herd = registry.find(&id).expect("the herd is on the map");
+            let ceiling = core_sim::hunt_escapement_ceiling(
+                floor,
+                herd.biomass,
+                core_sim::herd_capacity(herd, &fauna),
+            );
+            (
+                hunt_haul_workers(
+                    ceiling,
+                    herd.body_mass,
+                    labor.hunt.per_worker_biomass_capacity,
+                ),
+                hunt_engage_workers(
+                    ceiling,
+                    herd.body_mass,
+                    fauna.engage_rate_for(&herd.species),
+                    NO_BUILD_UNDERWAY_DIP,
+                ),
+            )
+        };
+        let band = spawn_resident_hunters(&mut app, pos, &id, floor, LONE_HUNTER);
+        app.world.run_system_once(advance_labor_allocation);
+        recapture_snapshot_in_place(&mut app.world);
+        let row = exported_row(&app, band);
+
+        assert!(
+            haul > 0 && reach > 0,
+            "{species}: liveness — both crew terms must be real counts ({haul} haul, {reach} reach)"
+        );
+        assert_eq!(
+            row.workers_needed,
+            haul.max(reach),
+            "{species}: the exported crew is the larger of the two jobs"
+        );
+        if reach > haul {
+            saw_reach_bound = true;
+        } else {
+            saw_carry_bound = true;
+        }
+        // **The two staffing signals may not contradict each other** — the invariant the haul term
+        // was sized off the ceiling to preserve, restated with the third term in the `max()`.
+        assert!(
+            !(LONE_HUNTER > row.workers_needed && row.wasted_yield > 0.0),
+            "{species}: a row cannot say drop workers and add workers at once ({row:?})"
+        );
+    }
+    assert!(
+        saw_reach_bound && saw_carry_bound,
+        "both units must bind somewhere in the roster: reach={saw_reach_bound} \
+         carry={saw_carry_bound}"
     );
 }

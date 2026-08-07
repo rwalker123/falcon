@@ -24,6 +24,14 @@ const NO_NEGLECT_REMAINING: u32 = 0;
 /// a number nobody chose.
 const NO_RUNG_CREW: u32 = 0;
 
+/// **The wire's finite reading of "this source has no engagement stage"** — a **pen** (a penned animal
+/// is not stalked) and a species the roster cannot resolve, both of which
+/// [`crate::fauna_config::FaunaConfig::engage_rate_for`] / [`crate::SourceYieldForecast`] answer with
+/// [`f32::INFINITY`] sim-side. FlatBuffers floats carry an infinity fine; a *client* dividing by one
+/// does not, so the seam converts once, here, and the schema documents `<= 0` as *unbounded* — the
+/// same reading `fauna::hunt_engage_workers` gives it.
+const NO_ENGAGEMENT_STAGE: f32 = 0.0;
+
 /// The compact per-tile pasture-phase code the client reads off `TileState` (`GRAZE_PHASE_*`).
 /// A tile with **no patch** (a biome that carries no pasture: water, ice, bare rock) is
 /// [`GRAZE_PHASE_NONE`] — the zero/default, so an absent pasture can never be misread as a healthy one.
@@ -139,23 +147,39 @@ fn herd_regrowth_samples(herd: &Herd, fauna: &FaunaConfig) -> Vec<f32> {
 }
 
 /// The **pre-launch hunt-trip estimate table** for one herd: [`hunt_trip_forecast`] run for every
-/// sampled floor ([`RAID_FORECAST_FLOOR_SAMPLES`]) × every legal party size
-/// (`1..=expedition.max_party_size`), so the client's outfit UI is a **table lookup** — zero
+/// sampled floor ([`RAID_FORECAST_FLOOR_SAMPLES`]) × every sampled party size
+/// (`expedition.estimate_party_sizes`), so the client's outfit UI is a **table lookup** — zero
 /// arithmetic, zero ecology model. Each row carries both `turns_to_fill` (turns until the raid
 /// completes) and `animals_taken` (the payload the client headlines).
 ///
-/// Cost is bounded by construction: `samples × max_party_size × hunt.forecast_horizon_turns`
+/// **BOTH axes are sampled, and neither caps the party.** A band may outfit every worker it has
+/// (`docs/plan_denial_raid.md` §3.1). The party ladder is marks on a dial exactly as the floor
+/// samples beside it are: the client resolves a party to the **nearest rung** and quotes that row
+/// *with the size it was sampled for*, rather than composing an estimate of its own. That is what
+/// lets a sparse ladder span the whole dialable range for fewer rows than a contiguous `1..=8` run
+/// spent on a ninth of it — and a party past the last rung reads the last rung, never a blank.
+///
+/// Cost is bounded by construction: `floor samples × ladder rungs × hunt.forecast_horizon_turns`
 /// turn-steps per herd, and only **huntable** herds are estimated. In practice a raid is **short** —
 /// it grabs the surplus and terminates — so a snapshot's worth of raids simulates cheaply.
 ///
 /// A species that **pays nothing** ([`crate::fauna::species_requires_denial`]) is estimated at the
 /// one floor it can legally be worked at: there is no point quoting a sustainable raid on a quarry
 /// with no product.
+///
+/// **Every row's party-side stop is the pack** — a raid carries no count-of-animals target, so the
+/// table's two axes (`floors × party sizes`) are the whole of what a launch can vary. The in-flight
+/// `PopulationCohortState.expeditionTripBound` answers for a party's real orders once it is sent,
+/// and the launch feed line answers at the moment of the commit.
 pub(crate) fn hunt_trip_estimate_entries(
     herd: &Herd,
     fauna: &FaunaConfig,
-    labor: &LaborConfig,
     expedition: &ExpeditionConfig,
+    // The party the table is quoted for — see [`HerdSnapshotInputs::party`] for why it is the hunt
+    // job's DEFAULT kit rather than any one band's selection.
+    party: &crate::fauna::HuntingParty,
+    // That same default kit's per-hunter haul tier — the sled half of what the table is quoted at.
+    per_worker_haul: f32,
 ) -> Vec<HuntTripEstimateState> {
     let denial_only = crate::fauna::species_requires_denial(fauna.hunt_yield_for(&herd.species));
     let sampled: &[f32] = if denial_only {
@@ -163,15 +187,23 @@ pub(crate) fn hunt_trip_estimate_entries(
     } else {
         &RAID_FORECAST_FLOOR_SAMPLES
     };
-    let mut entries = Vec::with_capacity(sampled.len() * expedition.max_party_size as usize);
+    let mut entries = Vec::with_capacity(sampled.len() * expedition.estimate_party_sizes.len());
     for &floor in sampled {
-        for party_workers in 1..=expedition.max_party_size {
-            let forecast = hunt_trip_forecast(party_workers, herd, floor, fauna, labor, expedition);
+        for &party_workers in &expedition.estimate_party_sizes {
+            let forecast = hunt_trip_forecast(
+                party_workers,
+                herd,
+                floor,
+                fauna,
+                per_worker_haul,
+                expedition,
+                party,
+            );
             entries.push(HuntTripEstimateState {
                 floor,
                 party_workers,
-                // `0` = the raid never completes within `hunt.forecast_horizon_turns`.
-                turns_to_fill: forecast.turns_to_fill.unwrap_or(0),
+                turns_to_fill: forecast.turns_to_fill.unwrap_or(NEVER_FILLED),
+                bound: forecast.bound.as_str().to_string(),
                 delivers_food: forecast.delivers_food,
                 delivers_trade: forecast.delivers_trade,
                 animals_taken: forecast.animals_taken,
@@ -183,6 +215,214 @@ pub(crate) fn hunt_trip_estimate_entries(
     }
     entries
 }
+
+/// **The wire's "this raid never fills the pack"** — the `0` sentinel on
+/// [`HuntTripEstimateState::turns_to_fill`]. Named for the reason its denial twin
+/// [`NEVER_PAST_RECOVERY`] is: a bare `0` beside a turn count reads as *"immediately"*, which is the
+/// opposite of what it means; the row's `bound` carries the reason.
+///
+/// **It is horizon-relative, and the scale it is relative to rides the wire** as
+/// `PopulationCohortState::expedition_forecast_horizon_turns` — so a client can say *"more than N
+/// turns"* rather than *"many"*. Read that field's doc before quoting it: the horizon bounds the
+/// **hunting** only, and the trip's floor is `horizon + round-trip travel`.
+const NEVER_FILLED: u32 = 0;
+
+/// The **pre-launch DENIAL-RAID table** for one herd: the rows the client's launch sheet looks up,
+/// and the party size it **opens on**.
+pub(crate) struct DenialTable {
+    /// One entry per party size on [`denial_party_axis`], ascending, so the sheet is a table lookup
+    /// with zero arithmetic and zero ecology model (`docs/plan_denial_raid.md` §1.1). The axis is
+    /// **sampled, not contiguous** — the client resolves a party to the nearest row and names the
+    /// size that row was computed for.
+    pub(crate) entries: Vec<DenialEstimateState>,
+    /// **The party the sheet opens on** — see [`seeded_denial_party`].
+    pub(crate) party_needed: u32,
+}
+
+/// **Which party sizes the denial table quotes** — the shared `estimate_party_sizes` ladder, plus a
+/// short contiguous run starting at *this herd's own* closed-form requirement
+/// (`docs/plan_denial_raid.md` §3.1). Ascending and unique, so [`seeded_denial_party`] can read the
+/// first success straight off it.
+///
+/// The axis used to be a contiguous `1..=requirement + 8`, which was two defects in one shape. It
+/// **stopped**, so a party past the last row found nothing and every readout on the sheet went
+/// blank; and it was **dense where it was expensive**, spending a row on every sub-requirement party
+/// — precisely the raids that get repelled and therefore run the whole forecast horizon.
+///
+/// # Two terms, and each is doing a different job
+///
+/// - **The ladder** is the sampling axis both tables share, so a party the player dials resolves to
+///   a rung by the same rule on both sheets. Its last rung is the only quoting bound (it absorbed
+///   the retired `deny.max_party_quoted`), which is what keeps a `wariness 0.999` retune from asking
+///   for millions of rows at `3 × rows × hunt.forecast_horizon_turns` turn-steps each, every
+///   snapshot, on the hot half of the turn.
+/// - **The requirement run** ([`crate::fauna::denial_party_needed`], widened by
+///   `deny.requirement_rows`) is there because the closed form is a *bound on the search*, not the
+///   answer: it is linear in the party and therefore blind to the whole-animal quantiser, to the
+///   fight, and to [`crate::fauna::animals_engaged`]'s `max(1)` floor (which lets a lone hunter
+///   reach one mammoth where the arithmetic reads `0.05`). Which row actually declines the herd is
+///   [`seeded_denial_party`]'s answer, off the forward simulation — and it lands at the requirement
+///   or a little above, so the rows around the requirement are the ones the seed cannot be rounded
+///   off. Everything above is the *how fast* decision (on the reported herd: 9 hunters grind past
+///   the horizon, 16 cross the line in 11 turns), and a sparse rung answers that perfectly well.
+///
+/// **The row count strictly improves, per herd.** Against the retired `min(requirement + 8, 64)`:
+/// equal at the cheapest herds (a requirement of 1 gives 9 rows either way) and far smaller
+/// everywhere the old axis was expensive — a requirement of 26 cost 34 rows and now costs 13.
+fn denial_party_axis(herd: &Herd, fauna: &FaunaConfig, expedition: &ExpeditionConfig) -> Vec<u32> {
+    let ecology = herd_ecology(herd, fauna);
+    let replacement = crate::fauna::herd_replacement_animals(
+        herd.biomass,
+        herd_capacity(herd, fauna),
+        herd.body_mass,
+        &ecology,
+    );
+    let needed = crate::fauna::denial_party_needed(
+        replacement,
+        fauna.engage_rate_for(&herd.species),
+        fauna.wariness_for(&herd.species),
+    )
+    .unwrap_or(NO_VIABLE_DENIAL_PARTY);
+
+    merge_requirement_run(
+        &expedition.estimate_party_sizes,
+        needed,
+        expedition.deny.requirement_rows,
+    )
+}
+
+/// The pure half of [`denial_party_axis`]: the ladder, plus `rows` contiguous party sizes starting
+/// at `needed`, clamped to the ladder's last rung — ascending and unique, which is what lets
+/// [`seeded_denial_party`] read the first success straight off it.
+///
+/// [`NO_VIABLE_DENIAL_PARTY`] as `needed` contributes nothing (there is no requirement to sample
+/// around), and neither does a requirement past the last rung: the herd then reports the sentinel,
+/// which is the honest reading — the sim will not quote a raid it declines to simulate.
+fn merge_requirement_run(ladder: &[u32], needed: u32, rows: u32) -> Vec<u32> {
+    let mut axis = ladder.to_vec();
+    let ceiling = ladder.last().copied().unwrap_or(NO_VIABLE_DENIAL_PARTY);
+    if needed != NO_VIABLE_DENIAL_PARTY && rows > 0 {
+        let last_row = needed.saturating_add(rows - 1);
+        axis.extend((needed..=last_row).filter(|party| *party <= ceiling));
+    }
+    axis.sort_unstable();
+    axis.dedup();
+    axis
+}
+
+/// **The party size the launch sheet opens on** — the smallest quoted party whose *own row*
+/// **succeeded** ([`crate::DenialOutcome::succeeded`]: `past_recovery` or `herd_lost`), and
+/// therefore the smallest one that genuinely drives the herd past recovery
+/// (`docs/plan_denial_raid.md` §3.1).
+///
+/// **The test is success, not "not [`crate::DenialOutcome::Repelled`]".** Those read the same on
+/// three of the four verdicts and differ on the one that matters: a
+/// [`crate::DenialOutcome::Horizon`] row is a raid the projection ran to its whole length with the
+/// herd still standing, so it demonstrates nothing the sim will vouch for. Seeding there quoted a
+/// Wild Aurochs party of 5 under the verdict *"still standing when the forecast runs out"* — a
+/// number presented as the answer, one short of one.
+///
+/// **It is read off the rows rather than recomputed**, which is the whole point: the sheet cannot
+/// open on a value whose verdict, one line below it, refuses to say the herd goes down. The closed
+/// form sized the axis; the forward simulation — quantiser, fight and engagement floor included —
+/// decides.
+///
+/// [`NO_VIABLE_DENIAL_PARTY`] when **no** quoted party gets there. Four situations reach it and all
+/// four are honest: a quarry nothing can engage (`wariness >= 1`), a requirement past the ladder's
+/// last rung ([`ExpeditionConfig::max_estimated_party`]), a herd whose regrowth simply out-runs the
+/// whole table, and a herd whose quoted axis never reaches a success row — every party either
+/// repelled or still grinding at the horizon. The rows keep carrying their own verdict, which is
+/// what the client renders.
+fn seeded_denial_party(entries: &[DenialEstimateState]) -> u32 {
+    entries
+        .iter()
+        .find(|row| {
+            crate::DenialOutcome::from_wire(&row.outcome)
+                .is_some_and(crate::DenialOutcome::succeeded)
+        })
+        .map(|row| row.party_workers)
+        .unwrap_or(NO_VIABLE_DENIAL_PARTY)
+}
+
+/// **The wire's "no party we quote drives this herd down"** — the `0` on
+/// `HerdTelemetryState::denial_party_needed`. Named because a bare `0` beside a party count reads as
+/// *"send nobody"*, which is not what it means; every row's `outcome` carries the reason.
+const NO_VIABLE_DENIAL_PARTY: u32 = 0;
+
+/// The **pre-launch DENIAL-RAID estimates** for one herd — one entry per party size on
+/// [`denial_party_axis`], plus the party the sheet opens on.
+///
+/// **There is no floor axis and no fill-target axis, because the mission carries neither.** Where
+/// [`hunt_trip_estimate_entries`] samples a continuum of floors, this table has one dimension: you
+/// choose a herd and a party size. That is the whole reason denial is a mission rather than a preset.
+///
+/// Cost is `3 × axis rows × hunt.forecast_horizon_turns` turn-steps per huntable herd — the factor
+/// of three is the reported range's three quantiles (`docs/plan_hunt_through_combat.md` §6.4), and
+/// the axis is bounded by the ladder's last rung. Sampling is what makes it cheap where it used to
+/// be dear: the expensive rows are the small **repelled** parties, which run the whole horizon, and
+/// a sparse ladder spends a handful of rows on them instead of one per hunter.
+fn denial_estimate_entries(
+    herd: &Herd,
+    fauna: &FaunaConfig,
+    expedition: &ExpeditionConfig,
+    // The party the table is quoted for — see [`HerdSnapshotInputs::party`] for why it is the hunt
+    // job's DEFAULT kit rather than any one band's selection.
+    party: &crate::fauna::HuntingParty,
+    // That same default kit's per-hunter haul tier.
+    per_worker_haul: f32,
+    // `combat_config.forecast_range_sigmas` — the reported band's width, a readout lever.
+    range_sigmas: f32,
+) -> DenialTable {
+    let entries: Vec<DenialEstimateState> = denial_party_axis(herd, fauna, expedition)
+        .into_iter()
+        .map(|party_workers| {
+            let forecast = crate::systems::denial_forecast(
+                party_workers,
+                herd,
+                fauna,
+                per_worker_haul,
+                expedition,
+                party,
+                range_sigmas,
+            );
+            DenialEstimateState {
+                party_workers,
+                // `0` = never past recovery within `hunt.forecast_horizon_turns`; `outcome` says
+                // which kind of never, which is what the client renders instead of a blank.
+                turns_to_collapse: forecast.turns_to_collapse.unwrap_or(NEVER_PAST_RECOVERY),
+                turns_to_collapse_low: forecast
+                    .turns_to_collapse_low
+                    .unwrap_or(NEVER_PAST_RECOVERY),
+                turns_to_collapse_high: forecast
+                    .turns_to_collapse_high
+                    .unwrap_or(NEVER_PAST_RECOVERY),
+                outcome: forecast.outcome.as_str().to_string(),
+                animals_killed: forecast.animals_killed,
+                delivered_food: forecast.delivered_food,
+                wasted_food: forecast.wasted_food,
+                delivered_trade: forecast.delivered_trade,
+                wasted_trade: forecast.wasted_trade,
+            }
+        })
+        .collect();
+    let party_needed = seeded_denial_party(&entries);
+    DenialTable {
+        entries,
+        party_needed,
+    }
+}
+
+/// **The wire's "this party never gets there"** — the `0` sentinel on
+/// [`DenialEstimateState::turns_to_collapse`] and its two range ends. Named because a bare `0` beside
+/// a turn count reads as *"immediately"*, which is the opposite of what it means; the row's `outcome`
+/// carries the reason.
+///
+/// **The denial forecast runs over the SAME horizon the hunt forecast does** —
+/// `denial_projection_at` and `hunt_trip_forecast_seeded` both read
+/// `expedition_config.hunt.forecast_horizon_turns` — so the one published lever
+/// `PopulationCohortState::expedition_forecast_horizon_turns` is the scale for this sentinel and for
+/// [`NEVER_FILLED`] alike, and no second horizon belongs on the wire.
+const NEVER_PAST_RECOVERY: u32 = 0;
 
 /// Display herd telemetry for the client, plus each herd's **pre-commit yield forecast**
 /// (`fauna::hunt_forecast` — the same ceiling/conversion helpers `hunt_take` pays with, so
@@ -214,6 +454,25 @@ pub(crate) struct HerdSnapshotInputs<'a> {
     /// the filter below is a no-op, which is the ONLY way to reveal hidden fauna: unseen herds never
     /// reach the wire, so no client render flag could put them back.
     pub(crate) fog_enabled: bool,
+    /// **The party this per-herd estimate is priced for** — the hunter profile and the base resolver
+    /// tuning (`docs/plan_hunt_through_combat.md` §4), resolved at the **hunt job's DEFAULT kit**.
+    /// The herd row is a fact about the *herd*, not about any one band, and this table has no band
+    /// to ask; a band's real, kit-resolved numbers ride its `SourceYield` row.
+    ///
+    /// **Which kit it is quoted at is PUBLISHED** ([`HerdTelemetryState::hunt_trip_estimates_kit_id`]
+    /// / `denial_estimates_kit_id`) so a client can tell when the player's selection differs and
+    /// decline to present the table as an answer for a kit it was not computed for. Repricing the
+    /// two tables per kit is its own arc — they are ~95% of snapshot capture and a kit axis
+    /// multiplies them, the same structural cost question per-band repricing already faces.
+    pub(crate) party: crate::fauna::HuntingParty,
+    /// The default kit's per-hunter **haul** tier, the sled half of what the two tables are quoted at.
+    pub(crate) quoted_per_worker_haul: f32,
+    /// The roster id of that default kit — published verbatim on both tables.
+    pub(crate) quoted_kit_id: String,
+    /// `combat_config.forecast_range_sigmas` — how wide a band the **denial** estimate reports around
+    /// its expected turns-to-collapse (`docs/plan_hunt_through_combat.md` §6.4). A **readout width**:
+    /// nothing the sim resolves reads it, so widening the band cannot move an animal.
+    pub(crate) range_sigmas: f32,
 }
 
 impl HerdSnapshotInputs<'_> {
@@ -256,6 +515,10 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
         expedition,
         grid_size,
         wrap_horizontal,
+        party,
+        quoted_per_worker_haul,
+        ref quoted_kit_id,
+        range_sigmas,
         ..
     } = inputs;
     let width = grid_size.x.max(1);
@@ -281,6 +544,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                         fauna,
                         ladder,
                         labor.hunt.per_worker_biomass_capacity,
+                        &party,
                         FORECAST_OUTPUT_MULTIPLIER,
                     )
                 })
@@ -302,6 +566,26 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
             // published `ecology_phase` word with, so the bands below cannot describe a different
             // source than the word does.
             let ecology = herd.map(|herd| herd_ecology(herd, fauna));
+            // **The denial raid's pre-launch table** — the rows AND the party the sheet opens on,
+            // built together because the second is read off the first (`seeded_denial_party`).
+            // Gated on `huntable` exactly as the hunt table is: denial is a way of working a herd,
+            // so a herd nobody can work is not a target.
+            let denial = herd
+                .filter(|_| entry.huntable)
+                .map(|herd| {
+                    denial_estimate_entries(
+                        herd,
+                        fauna,
+                        expedition,
+                        &party,
+                        quoted_per_worker_haul,
+                        range_sigmas,
+                    )
+                })
+                .unwrap_or_else(|| DenialTable {
+                    entries: Vec::new(),
+                    party_needed: NO_VIABLE_DENIAL_PARTY,
+                });
             HerdTelemetryState {
                 id: entry.id.clone(),
                 label: entry.label.clone(),
@@ -384,10 +668,34 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     .as_ref()
                     .map(|ecology| ecology.stressed_fraction)
                     .unwrap_or(0.0),
+                // **The THIRD bound on a take** (`docs/plan_hunt_through_combat.md` §2): how many
+                // animals one hunter can bring into contact per turn. The escapement ceiling and the
+                // per-worker carry already ship as terms, and a client composing `min()` from those
+                // two alone quotes a carry-bound take the sim will never pay — ~30× over on a Wild
+                // Fowl herd with one hunter, whose 40 biomass of carry is 307 birds against 10 of
+                // reach. It is exact and linear in the crew, so it ships as a term like its two
+                // siblings; the whole-animal `floor()` stays the sim's answer in `SourceYield.actual`.
+                //
+                // **A PEN publishes `NO_ENGAGEMENT_STAGE`** — `engage_rate_for` answers `INFINITY` for
+                // an unresolvable species and a penned animal is not stalked either, so the wire's
+                // finite "unbounded" reading covers both and no reader has to carry an infinity.
+                engage_rate: herd
+                    .filter(|herd| !herd.is_corralled())
+                    .map(|herd| fauna.engage_rate_for(&herd.species))
+                    .filter(|rate| rate.is_finite())
+                    .unwrap_or(NO_ENGAGEMENT_STAGE),
                 // Only a huntable herd can be the target of a trip — don't pay for the rest.
                 hunt_trip_estimates: herd
                     .filter(|_| entry.huntable)
-                    .map(|herd| hunt_trip_estimate_entries(herd, fauna, labor, expedition))
+                    .map(|herd| {
+                        hunt_trip_estimate_entries(
+                            herd,
+                            fauna,
+                            expedition,
+                            &party,
+                            quoted_per_worker_haul,
+                        )
+                    })
                     .unwrap_or_default(),
                 // Grazing 2b-iii: the herd's live derived K, and the exact hex radius the sim
                 // grazes/derives K over (migratory `loiter_radius` resolved via `species_by_display`,
@@ -471,6 +779,10 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // not resolve reads all-zeros (harmless).
                 attack: species_def.map(|def| def.combat.attack).unwrap_or(0.0),
                 defense: species_def.map(|def| def.combat.defense).unwrap_or(0.0),
+                // **The gate's other half** (§6.5): `defense` says whether a hit counts, this says
+                // how many counting hits a body takes. The client composes both — it already holds
+                // the band's own `hunterAttack` — so no "can this band win" answer is exported.
+                durability: species_def.map(|def| def.combat.durability).unwrap_or(0.0),
                 ferocity: species_def.map(|def| def.ferocity).unwrap_or(0.0),
                 aggression: species_def.map(|def| def.aggression).unwrap_or(0.0),
                 // Predators Phase 1a — the herd's prey-sensing radius, but ONLY for a carnivore
@@ -513,6 +825,19 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // the pair reads "nothing at risk" rather than a zero that means "shedding now".
                 has_neglect_grace: neglect_grace.is_some(),
                 neglect_grace_remaining: neglect_grace.unwrap_or(NO_NEGLECT_REMAINING),
+                // **The denial raid's pre-launch table** — one row per party size, no floor axis
+                // (`docs/plan_denial_raid.md`).
+                denial_estimates: denial.entries,
+                // **The party the launch sheet opens on** — the smallest row above that is not
+                // `repelled`, so the control starts at a number that works instead of at an
+                // arbitrary default the player has to guess their way off.
+                denial_party_needed: denial.party_needed,
+                // **WHICH KIT EACH TABLE IS QUOTED FOR** — the hunt job's default, since neither is
+                // repriced per selection. Published so a client whose player has chosen another kit
+                // can say the table does not answer for it rather than presenting a kitted raid's
+                // numbers to a bare-handed party.
+                hunt_trip_estimates_kit_id: quoted_kit_id.clone(),
+                denial_estimates_kit_id: quoted_kit_id.clone(),
             }
         })
         .collect()
@@ -578,7 +903,12 @@ pub(crate) fn snapshot_forage_patches(
                 forage,
                 flora,
                 ladder,
-                seasonal,
+                // **The EQUIPPED reference rate, not any band's basket tier** — a patch row is a fact
+                // about the *patch*, and a patch has no band to resolve a kit against. Exactly the
+                // rule `HerdTelemetryState` already follows for the hunt's haul; a band's real,
+                // kit-resolved gather rate rides its own `PopulationCohortState`
+                // (`forageCarryPerWorkerBiomass`) and its `SourceYield` row.
+                forage_per_worker_biomass(forage.per_worker_biomass_capacity, seasonal),
                 FORECAST_OUTPUT_MULTIPLIER,
             );
             ForagePatchState {
@@ -645,7 +975,10 @@ pub(crate) fn snapshot_forage_patches(
                 // `per_worker_yield` beside it. Shipped rather than left to
                 // `per_worker_yield / provisions_per_biomass`, which is `0 / 0` on a Field of cotton,
                 // flax or hay.
-                per_worker_biomass: forage_per_worker_biomass(forage, seasonal),
+                per_worker_biomass: forage_per_worker_biomass(
+                    forage.per_worker_biomass_capacity,
+                    seasonal,
+                ),
                 // **The growth curve, sampled** — the plant twin; non-negative at every sample, and
                 // its `0.0` entry is the reseed floor's lift.
                 regrowth_samples: patch_regrowth_samples(patch, forage),
@@ -995,5 +1328,185 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A quoted row for `party_workers` carrying `outcome`'s verdict. Every other field is inert
+    /// here — [`seeded_denial_party`] reads the verdict and the party size and nothing else — so
+    /// they are left at the wire's own zeroes rather than given fixture values that could be
+    /// mistaken for inputs.
+    fn denial_row(party_workers: u32, outcome: crate::DenialOutcome) -> DenialEstimateState {
+        DenialEstimateState {
+            party_workers,
+            outcome: outcome.as_str().to_string(),
+            ..DenialEstimateState::default()
+        }
+    }
+
+    /// **The sheet opens on the smallest party that SUCCEEDS, not on the smallest that is merely not
+    /// `repelled`** — the reported Wild Aurochs defect (`docs/plan_denial_raid.md` §3.1).
+    ///
+    /// A `horizon` row is a raid the projection ran its whole length without the herd going down,
+    /// so it proves nothing the sim will vouch for. The old `!= repelled` predicate seeded there,
+    /// and the sheet quoted that party under its own verdict line *"still standing when the forecast
+    /// runs out"* — a number offered as the answer while being one short of one.
+    ///
+    /// The fixture puts the two side by side, because the bug is only visible where a `horizon` row
+    /// sits **below** a real success row: with either predicate an axis of successes alone opens on
+    /// the same party.
+    #[test]
+    fn the_seeded_party_is_the_smallest_row_whose_raid_succeeded() {
+        let axis = [
+            denial_row(1, crate::DenialOutcome::Repelled),
+            denial_row(2, crate::DenialOutcome::Repelled),
+            denial_row(3, crate::DenialOutcome::Horizon),
+            denial_row(4, crate::DenialOutcome::Horizon),
+            denial_row(5, crate::DenialOutcome::PastRecovery),
+            denial_row(6, crate::DenialOutcome::HerdLost),
+        ];
+
+        assert_eq!(
+            seeded_denial_party(&axis),
+            5,
+            "the seed must name the smallest party that drove the herd past recovery — a `horizon` \
+             row is a raid the forecast never saw finish"
+        );
+    }
+
+    /// **An axis that never reaches a success row seeds the sentinel**, from both directions it can
+    /// fail: a party the herd out-breeds at every size (`repelled` throughout — the case that has
+    /// always read `0`), and a party that is winning slowly at every size but never crosses the line
+    /// inside `hunt.forecast_horizon_turns` (`horizon` throughout — which used to seed its **first**
+    /// row and now reads *"no quoted party drives this herd down"*).
+    ///
+    /// Paired deliberately: answering `0` for everything would satisfy either half alone, and the
+    /// test above is what stops that.
+    #[test]
+    fn an_axis_with_no_success_row_seeds_no_viable_party() {
+        let repelled: Vec<DenialEstimateState> = (1..=6)
+            .map(|party| denial_row(party, crate::DenialOutcome::Repelled))
+            .collect();
+        assert_eq!(
+            seeded_denial_party(&repelled),
+            NO_VIABLE_DENIAL_PARTY,
+            "a herd whose regrowth out-runs every quoted party has no party to open on"
+        );
+
+        let horizon: Vec<DenialEstimateState> = (1..=6)
+            .map(|party| denial_row(party, crate::DenialOutcome::Horizon))
+            .collect();
+        assert_eq!(
+            seeded_denial_party(&horizon),
+            NO_VIABLE_DENIAL_PARTY,
+            "an axis that tops out at `horizon` quotes no party the sim will vouch for either"
+        );
+
+        assert_eq!(
+            seeded_denial_party(&[]),
+            NO_VIABLE_DENIAL_PARTY,
+            "…and a herd with no quoted rows at all (non-huntable) reads the same sentinel"
+        );
+    }
+
+    /// **The denial axis is the ladder plus a contiguous run at the herd's own requirement**, and
+    /// each of the four shapes below is a different thing the sheet has to get right.
+    ///
+    /// The run exists because the seed is read off the *forward simulation*, which lands at the
+    /// closed-form requirement or a little above it. Without it a sparse ladder would round the
+    /// answer up to its next rung — the sheet opening on a party larger than the one that works.
+    #[test]
+    fn the_denial_axis_samples_the_requirement_on_top_of_the_ladder() {
+        let ladder = [1, 2, 3, 4, 8, 16, 32, 64];
+
+        // A requirement in a gap brings its own contiguous run with it.
+        assert_eq!(
+            merge_requirement_run(&ladder, 9, 5),
+            vec![1, 2, 3, 4, 8, 9, 10, 11, 12, 13, 16, 32, 64],
+            "the run must sit ON the axis, in order, with the ladder's rungs still present"
+        );
+
+        // A requirement that lands on a rung adds only what the ladder did not already hold.
+        assert_eq!(
+            merge_requirement_run(&ladder, 4, 5),
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 16, 32, 64],
+            "a requirement on a rung must not duplicate it — the axis is unique by construction"
+        );
+
+        // Past the last rung the run contributes nothing: the herd reports the sentinel instead of
+        // the axis running away with a requirement the sim declines to simulate.
+        assert_eq!(
+            merge_requirement_run(&ladder, 96, 5),
+            ladder.to_vec(),
+            "a requirement past the ladder's last rung must not widen the axis at all"
+        );
+
+        // …and so does the sentinel, which is "no party of any size brings this quarry into contact".
+        assert_eq!(
+            merge_requirement_run(&ladder, NO_VIABLE_DENIAL_PARTY, 5),
+            ladder.to_vec(),
+            "there is no requirement to sample around, so the axis is the bare ladder"
+        );
+    }
+
+    /// **The retired contiguous axis, restated as arithmetic** — `1..=requirement + 8`, capped at
+    /// `deny.max_party_quoted`'s `64`. It exists only so the budget test below can compare against
+    /// the thing that shipped, rather than against a number typed into an assertion.
+    fn retired_contiguous_axis_rows(needed: u32) -> u32 {
+        const RETIRED_HEADROOM: u32 = 8;
+        const RETIRED_MAX_PARTY_QUOTED: u32 = 64;
+        needed
+            .saturating_add(RETIRED_HEADROOM)
+            .min(RETIRED_MAX_PARTY_QUOTED)
+    }
+
+    /// **The sampled axis never costs more rows than the contiguous one it replaced** — the budget
+    /// this arc had to pay for itself out of, swept over every requirement the retired axis could
+    /// quote.
+    ///
+    /// Snapshot capture is the hot half of a turn and the two estimate tables are ~95% of it, so a
+    /// wider readout is not free. It pays because the rows the old axis spent were the **expensive**
+    /// ones: every sub-requirement party is a raid that gets repelled and therefore runs the whole
+    /// forecast horizon, and there was one per hunter. The liveness half is the other assertion —
+    /// on the wary herds the saving is large, not marginal, so this cannot pass by the axis having
+    /// quietly become the ladder alone.
+    #[test]
+    fn the_sampled_axis_never_costs_more_rows_than_the_contiguous_one() {
+        let expedition = ExpeditionConfig::builtin();
+        let ladder = &expedition.estimate_party_sizes;
+        let rows = expedition.deny.requirement_rows;
+        let mut biggest_saving = 0u32;
+
+        for needed in NO_VIABLE_DENIAL_PARTY..=expedition.max_estimated_party() {
+            let sampled = merge_requirement_run(ladder, needed, rows).len() as u32;
+            let contiguous = retired_contiguous_axis_rows(needed);
+            assert!(
+                sampled <= contiguous,
+                "a requirement of {needed} costs {sampled} sampled rows against the retired \
+                 axis's {contiguous} — the ladder has to pay for itself"
+            );
+            biggest_saving = biggest_saving.max(contiguous - sampled);
+        }
+
+        assert!(
+            biggest_saving > 0,
+            "…and the saving must be real somewhere, or the axis is only as good as what it replaced"
+        );
+    }
+
+    /// **The hunt table's budget**, which is the tighter of the two: its axis is
+    /// `floors × party sizes`, so every rung added costs one row per sampled floor.
+    #[test]
+    fn the_hunt_tables_row_count_still_fits_the_contiguous_axis_it_replaced() {
+        /// The retired contiguous party axis, `1..=8`.
+        const RETIRED_PARTY_SIZES: usize = 8;
+
+        let ladder = ExpeditionConfig::builtin().estimate_party_sizes.len();
+        assert!(
+            ladder <= RETIRED_PARTY_SIZES,
+            "the hunt table is sampled at {} floors, so {ladder} rungs is {} rows against the \
+             retired {}",
+            RAID_FORECAST_FLOOR_SAMPLES.len(),
+            ladder * RAID_FORECAST_FLOOR_SAMPLES.len(),
+            RETIRED_PARTY_SIZES * RAID_FORECAST_FLOOR_SAMPLES.len()
+        );
     }
 }

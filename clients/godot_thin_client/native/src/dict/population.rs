@@ -180,6 +180,45 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     //                  Full net is larder_delta == food_income − food_consumption − pen_feed_upkeep
     //                  − raid_forfeit.
     let _ = dict.insert("raid_forfeit", cohort.raidForfeit() as f64);
+    // --- THE MINIMAL TOE (`docs/plan_hunt_through_combat.md` 4.8) ---------------------------------
+    // The band's THREE consumable kits and the tiers they resolve to. **All six shipped on the wire
+    // with NO consumer here**, which is this crate's most-repeated bug and the third time this arc
+    // has reproduced it — so they are decoded beside `raid_forfeit`, the previous newest slot, and
+    // the golden now carries all six.
+    //
+    // ONE KIT, ONE JOB. Spears raise `hunter_attack`, a SLED raises the HUNT's carry, BASKETS raise
+    // the FORAGE web's. The two carry tiers are NOT two readings of one number — a band can be out
+    // of baskets with its sled untouched — and a readout that renders one on the other's row is the
+    // exact defect slice 5 corrected.
+    //
+    // Remaining condition on the equipment.json 0-100 scale; `0` = DRY, and a dry kit steps its role
+    // down to the unequipped tier and STAYS there (no replenishment path exists yet). **Performance
+    // is FLAT until expiry**, so no client readout may scale anything by what is left here.
+    let _ = dict.insert(
+        "hunting_kit_durability",
+        cohort.huntingKitDurability() as f64,
+    );
+    let _ = dict.insert("sled_kit_durability", cohort.sledKitDurability() as f64);
+    let _ = dict.insert("basket_kit_durability", cohort.basketKitDurability() as f64);
+    // The RESOLVED tiers, so the client renders this band's real numbers instead of re-deriving them
+    // from the durabilities plus a config it does not have. `hunter_attack` is the term the combat
+    // gate `max(0, attack − defense)` compares against `HerdTelemetryState.defense`.
+    let _ = dict.insert("hunter_attack", cohort.hunterAttack() as f64);
+    let _ = dict.insert(
+        "hunt_carry_per_worker_biomass",
+        cohort.huntCarryPerWorkerBiomass() as f64,
+    );
+    let _ = dict.insert(
+        "forage_carry_per_worker_biomass",
+        cohort.forageCarryPerWorkerBiomass() as f64,
+    );
+    // **THE KIT THE THREE TIERS ABOVE ARE RESOLVED THROUGH** (`docs/plan_denial_raid.md`). For an
+    // IN-FLIGHT PARTY it is the kit it was SENT OUT WITH, decided at launch and carried for the
+    // party's whole life — the drawer's answer to "what did I send them with?", and the tier the
+    // party really fights and hauls at. For a RESIDENT BAND it is the JOB'S DEFAULT, because a band
+    // has one kit per assignment and this row is per cohort; the per-crew truth is the labor
+    // assignment's own `kit_id` beside that row's yields. Never empty on the wire.
+    let _ = dict.insert("kit_id", cohort.kitId().unwrap_or(""));
     // Data-driven settlement stage (id/label/icon are opaque pass-through strings resolved
     // by the sim from `settlement_stage_config.json`). Missing/pre-stage snapshots yield
     // `None` → empty strings, which the client renders as a neutral non-circular fallback
@@ -261,6 +300,21 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // is renewable, so its two values match; only depletable herds diverge.
             let _ = entry.insert("actual_yield", assignment.actualYield() as f64);
             let _ = entry.insert("sustainable_yield", assignment.sustainableYield() as f64);
+            // **THE BAND THE TWO SCALARS ABOVE SIT IN THE MIDDLE OF** (§6.4). `actual_yield` is the
+            // take's EXPECTATION over the retreat seed; the take the sim pays lies inside
+            // [low, high], and where nothing is stochastic the distribution is degenerate and
+            // low == actual == high BIT-FOR-BIT. That is the shipped case today (wariness 0,
+            // hit_chance 1.0 across the roster), so a reader must render ONE number when the bounds
+            // agree and a range only when they differ — slice 7 authors wariness and the same
+            // readout turns on with no further change here.
+            //
+            // BOTH CURRENCIES, read as one vector beside their scalars: a wolf's food band is
+            // honestly all-zero, so a food-only range could not state its take at all. Undecoded
+            // until now — see the kit block in `population_to_dict` for the class of bug.
+            let _ = entry.insert("actual_yield_low", assignment.actualYieldLow() as f64);
+            let _ = entry.insert("actual_yield_high", assignment.actualYieldHigh() as f64);
+            let _ = entry.insert("trade_yield_low", assignment.tradeYieldLow() as f64);
+            let _ = entry.insert("trade_yield_high", assignment.tradeYieldHigh() as f64);
             // The per-source STEADY average: the honest long-run average of this source's lumpy
             // `actual_yield`. Headlines the Band panel row + map label so they don't swing turn-to-turn.
             let _ = entry.insert("realized_yield", assignment.realizedYield() as f64);
@@ -321,6 +375,13 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // inserted (as "" when the string is absent) so the entry shape is stable and no consumer
             // has to distinguish "not building" from "older snapshot" — the two mean the same thing.
             let _ = entry.insert("improvement", assignment.improvement().unwrap_or_default());
+            // **THE KIT THIS CREW IS WORKING UNDER** (`docs/plan_denial_raid.md`) — the roster id the
+            // row's yields are priced at: what the player named on `assign_labor`, or the job's
+            // default when they named none, already RESOLVED (the sim never publishes
+            // "unspecified"). `""` on a band-wide role (scout / warrior), which consumes no kit
+            // component and so has no kit axis — read that as "no selection to make", never as "no
+            // kit". Always inserted so the entry shape is stable.
+            let _ = entry.insert("kit_id", assignment.kitId().unwrap_or_default());
             array.push(&entry.to_variant());
         }
     }
@@ -352,7 +413,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // Scouting expedition (docs/plan_exploration_and_sites.md §2): a detached party is a
     // PopulationCohort tagged Expedition that flows through this same populations[] array as a
     // resident band, carrying discriminator fields. Default to false/"" so resident-band
-    // markers are unaffected. (The persistence-only pending-reveal fields stay undecoded.)
+    // markers are unaffected.
     let _ = dict.insert("is_expedition", cohort.isExpedition());
     let _ = dict.insert(
         "expedition_mission",
@@ -364,6 +425,18 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // cycler excludes expeditions. Bit-reinterpreted as i64 like `entity` above so the comparison
     // matches. Empty/0 for resident bands.
     let _ = dict.insert("home_band_entity", cohort.homeBandEntity() as i64);
+    // **THE LENGTH OF `pendingReveal{X,Y}`, NOT THE ARRAYS — this decoder PROJECTS here, and the
+    // reason is the payload.** The only question the client ever asks of those coordinates is "does
+    // this party still owe its home band a map report", the fourth term of the sim's cancel-in-camp
+    // test (`core_sim` `cancel_party_standing_in_camp` → `party_owes_a_report`, which is itself just
+    // `!pending_reveal.is_empty()`). The coordinates themselves are a scout's ACCUMULATED reveals —
+    // hundreds of tiles per cohort per frame, every frame until it reports — so marshalling them into
+    // GDScript would be that whole payload carried to answer a boolean. `0` for a resident band and
+    // for a party with nothing left to deliver.
+    let _ = dict.insert(
+        "pending_reveal_count",
+        cohort.pendingRevealX().map_or(0, |coords| coords.len()) as i64,
+    );
     // Hunt expedition (PR 2, docs/plan_exploration_and_sites.md §2b): the herd a hunt party
     // follows (fauna_id string like "game_deer_57", mirrors LaborAssignment.faunaId); "" for a
     // scout expedition / normal band. `expedition_mission` also takes "hunt", `expedition_phase`
@@ -381,6 +454,18 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert(
         "expedition_carry_cap",
         f64::from(cohort.expeditionCarryCap()),
+    );
+    // WHICH STOP WILL END THIS PARTY'S RAID — the `core_sim::HuntTripBound` key
+    // ("pack_full" | "floor" | "herd_lost" | "horizon"), off the same in-flight
+    // forward simulation `expedition_eta_turns` comes from, so it answers for the party's REAL
+    // orders rather than for the band-agnostic pre-launch table.
+    //
+    // `""` = NOT RAIDING (a resident band, a scout, or a party already walking a load home), and it
+    // is deliberately a different statement from `"horizon"`, which means the projection ran and
+    // found no stop. The client renders no bound clause at all for `""`.
+    let _ = dict.insert(
+        "expedition_trip_bound",
+        cohort.expeditionTripBound().unwrap_or(""),
     );
     // In-flight hunt-party next-delivery forecast (the drawer's "Next delivery: ~X food in ~N turns"
     // line) — the in-flight twin of the pre-launch huntTripEstimates. 0 / 0.0 / false when n/a
@@ -425,6 +510,20 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert(
         "expedition_viability_warn_turns",
         cohort.expeditionViabilityWarnTurns() as i64,
+    );
+    // **HOW LONG THE SIM'S RAID PROJECTION RUNS** — the SCALE every "never completed" sentinel this
+    // subsystem publishes is relative to (`turns_to_fill == 0`, `turns_to_collapse{,_low,_high} == 0`,
+    // `expedition_trip_bound == "horizon"`). ONE lever serves both raid tables (the sim's
+    // `denial_projection_at` and `hunt_trip_forecast_seeded` read the same
+    // `expedition_config.hunt.forecast_horizon_turns`), so there is nothing here for a client to pick
+    // wrongly between.
+    //
+    // **IT IS NOT A TRIP LENGTH.** It bounds the HUNTING only — `turns_to_fill` excludes travel — so a
+    // client quoting it as a trip figure understates the trip by the entire walk. The floor on a hunt's
+    // whole span is `this + round-trip travel`; see `SourceForecast.RAID_TURNS_UNBOUNDED`.
+    let _ = dict.insert(
+        "expedition_forecast_horizon_turns",
+        cohort.expeditionForecastHorizonTurns() as i64,
     );
     // Per-worker carry the pack fills to: an expedition delivers `party_workers ×
     // expeditionPerWorkerCarry` food when it fills. This IS a display number the client may multiply

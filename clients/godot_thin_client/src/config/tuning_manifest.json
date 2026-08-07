@@ -222,15 +222,15 @@
       "env_var": "EXPEDITION_CONFIG_PATH",
       "params": [
         {
-          "pointer": "/max_party_size",
-          "label": "Max party size",
+          "pointer": "/deny/requirement_rows",
+          "label": "Denial requirement rows",
           "type": "int",
           "min": 1,
-          "max": 40,
+          "max": 16,
           "step": 1,
-          "default": 8,
-          "unit": "workers",
-          "hint": "Ceiling on workers detached to one expedition."
+          "default": 5,
+          "unit": "rows",
+          "hint": "How many rows the denial sheet samples starting at a herd's own requirement, so the party it opens on is not rounded up to the next sampled rung."
         },
         {
           "pointer": "/observe_sight_range",

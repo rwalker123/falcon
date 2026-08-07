@@ -122,6 +122,14 @@ static func crew_row_dip_note(root: Node) -> String:
 	var node := Q.find_meta_node(root, HudWidgets.CREW_ROW_DIP_META)
 	return (node as Label).text if node is Label else ""
 
+## The verdict's SENTENCE — the row's Labels joined (the severity dot is a Label of the row too, so it
+## leads). Found by the same meta as the severity below, because the row's two halves are one claim and
+## a needle search across the sheet would match whichever line happened to carry the same number. "" when
+## no verdict rendered, which fails a `contains` assertion rather than satisfying it.
+static func verdict_text(root: Node) -> String:
+	var node := Q.find_meta_node(root, HudWidgets.VERDICT_META)
+	return " ".join(face_lines(node)) if node != null else ""
+
 ## The verdict's SEVERITY (`SourceForecast.VERDICT_*`), which is its assertable half — the sentence
 ## carries turn counts and percentages that move with the fixture. "" when no verdict rendered.
 static func verdict_severity(root: Node) -> String:
@@ -174,6 +182,60 @@ static func stepper_value(root: Node) -> int:
 		return STEPPER_VALUE_ABSENT
 	var value: Node = siblings[index + 1]
 	return int((value as Label).text) if value is Label else STEPPER_VALUE_ABSENT
+
+## How many characters of a detail card's BBCode `detail_excerpt` returns around the key it found —
+## enough to carry the row's whole value cell into the run log, short enough not to swallow the rows
+## either side of it (which is what would let an assertion match a neighbour's number).
+const DETAIL_EXCERPT_CHARS := 96
+
+## What `detail_excerpt` answers when the key is not on the card at all. A SENTINEL, not "", because
+## an absent row and a row with an empty value are different findings and a `contains` assertion must
+## fail loudly on the first rather than quietly on the second.
+const DETAIL_EXCERPT_ABSENT := "<row absent>"
+
+## A readable slice of a rendered detail card's BBCode around one row key — for the run log, so a
+## failing assertion shows what the card actually SAID rather than only that it disagreed.
+##
+## It is also the only honest way to ASSERT on such a row: `detail_bbcode` splits a `Key: value` line
+## into two colour spans, so the rendered source never contains the line contiguously, and the bare
+## value is no better a needle (a `50` appears in any percentage two rows up). Excerpt from the KEY,
+## then assert on what follows it.
+static func detail_excerpt(bbcode: String, key: String) -> String:
+	var at := bbcode.find(key)
+	if at < 0:
+		return DETAIL_EXCERPT_ABSENT
+	return bbcode.substr(at, DETAIL_EXCERPT_CHARS)
+
+## **THE PRE-LAUNCH FIGHT'S TWO LINES** (`docs/plan_hunt_through_combat.md` §2.1 / §6.5), each read by
+## its OWN meta. Two readers rather than one, because the lines are composed from disjoint wire terms
+## — `engageRate` against `hunterAttack` / `defense` / `durability` — so a single handle would let one
+## regress while an assertion on the other went on passing.
+##
+## `""` when the line is absent, which is a REAL reading and half of what each is asserted on: a pen
+## and the whole plant web must render neither, and a `contains` assertion fails on `""` rather than
+## being satisfied by it.
+static func hunt_gate_line(root: Node) -> String:
+	var node := Q.find_meta_node(root, HudWidgets.HUNT_GATE_META)
+	return (node as RichTextLabel).get_parsed_text() if node is RichTextLabel else ""
+
+## What `hunt_gate_blocked` answers when NO gate line rendered at all. A third state, not a `false`:
+## "the sheet says the fight is winnable" and "the sheet says nothing about the fight" are different
+## findings, and collapsing them would let a vanished line pass an is-not-blocked assertion.
+const HUNT_GATE_ABSENT := -1
+
+const HUNT_GATE_WINNABLE := 0
+
+const HUNT_GATE_BLOCKED := 1
+
+## **IS THE FIGHT UNWINNABLE, STRUCTURALLY?** — off the gate line's own meta value, never off its
+## words. The refusal and the effort figure are ONE line in two states, so a text match would have to
+## re-type the copy it is checking and would pass the moment either sentence was reworded.
+static func hunt_gate_blocked(root: Node) -> int:
+	var node := Q.find_meta_node(root, HudWidgets.HUNT_GATE_META)
+	if node == null:
+		return HUNT_GATE_ABSENT
+	return HUNT_GATE_BLOCKED if bool((node as Control).get_meta(HudWidgets.HUNT_GATE_META, false)) \
+		else HUNT_GATE_WINNABLE
 
 ## The index of the `Key: value` row with this key, or -1. Matches the key EXACTLY (up to the
 ## `DetailFormat` separator) so `Foraging` cannot be found by a row that merely mentions it.

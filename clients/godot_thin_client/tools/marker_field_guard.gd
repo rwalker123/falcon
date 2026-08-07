@@ -13,8 +13,9 @@ extends Node
 ##
 ## This test feeds ONE realistic population entry through the real `_rebuild_unit_markers` and
 ## asserts the produced marker (a) round-trips every value the panel actually reads and (b)
-## carries a superset of PANEL_CONSUMED_KEYS — so any future field the panel consumes but the
-## marker forgets to copy fails HERE, at build time, instead of as a silent 0 in the live HUD.
+## PARTITIONS exactly into its source's keys plus the declared map-only stamps — so any future field
+## the decoder adds and the marker forgets to copy fails HERE, at build time, instead of as a silent
+## 0 (or a vanished row) in the live HUD.
 ##
 ## Run as a scene (NOT --script: MapView.gd references the TerrainTextureManager autoload,
 ## which only registers when the project is loaded). No GPU / viewport needed — this is pure
@@ -24,66 +25,41 @@ extends Node
 
 const MAP_VIEW := preload("res://src/scripts/MapView.gd")
 
-# Every key the band drawer (`BandDetailLines.unit_summary_lines`) and the labor-allocation panel
-# (`Hud._build_allocation_panel` / `_effective_*`) read off `_selected_unit` (the marker copy),
-# plus the marker fields MapView draws from the same copy (e.g. the travel-destination reticle).
-# The marker's key set MUST stay a superset of this list; add a key here whenever the panel or a
-# selected-unit map draw starts reading a new marker field, and the guard will hold the marker to it.
-const PANEL_CONSUMED_KEYS := [
-	"entity",              # CLIENT-LOCAL identity only: selection, roster lookup, the pending-labor key
-	"band_id",             # THE handle every band-addressed command names — see HudConst.NO_BAND_ID
-	"faction",             # _is_player_unit gating
-	"id",                  # Occupants-drawer "Unit:" label (the band panel names the band in its header)
-	"pos",                 # drawer "Position:" line
-	"size",                # band panel "Population:" row / Occupants-drawer "Size:" row
-	"turns_of_food",        # BandDetailLines Food row
-	"food_income",         # Food summary line net rate + Gathered/Hunted breakdown
-	"food_consumption",    # Food summary line net rate + Eaten (people) breakdown
-	"pen_feed_upkeep",     # Food summary line net rate + Pen feed (animals) breakdown
-	"stores",              # BandDetailLines Food row provisions
-	"morale",              # BandDetailLines Morale row / DetailFormat.morale_is_concerning
-	"morale_delta",        # BandDetailLines Morale trend
-	"morale_cause",        # BandDetailLines Morale named cause
-	"output_multiplier",   # BandDetailLines Output row + the local-hunt yield preview (payout modifier)
-	"morale_settling",     # BandDetailLines morale breakdown
-	"morale_terrain",      # BandDetailLines morale breakdown
-	"morale_climate",      # BandDetailLines morale breakdown
-	"morale_unrest",       # BandDetailLines morale breakdown
-	"fertility_hunger",    # BandDetailLines Growth row + fertility breakdown
-	"fertility_reserve",   # BandDetailLines Growth row — ALSO the not-projected sentinel (0 = no reading)
-	"fertility_trend",     # BandDetailLines Growth row + fertility breakdown
-	"working_age",         # allocation header Workers / _effective_idle
-	"idle_workers",        # allocation header Idle / quick_assign_hunters
-	"age_children",        # band panel age-structure row (children / working / elders)
-	"age_working",         # band panel age-structure row — NOT working_age (assignable workers)
-	"age_elders",          # band panel age-structure row
-	"labor_assignments",   # allocation "Current actions" steppers
-	"work_range",          # selected-band map highlights
-	"hunt_reach",          # herd-hunt affordance local-vs-expedition distance gate
-	"scout_reveal_radius", # allocation Scout role hint
-	"is_traveling",        # travel-destination map draw gating
-	"travel_target_x",     # travel-destination map draw (BandOverlayRenderer._draw_travel_destination)
-	"travel_target_y",     # travel-destination map draw (BandOverlayRenderer._draw_travel_destination)
-	"activity",            # roster activity glyph
-	"is_expedition",       # expedition panel gating + distinct marker
-	"expedition_mission",  # expedition panel mission line
-	"expedition_phase",    # expedition marker awaiting state + panel phase line
-	"max_expedition_party_size", # outfit stepper max clamp
-	"expedition_target_herd", # hunt expedition target herd (panel + marker)
-	"expedition_floor", # where a hunt raid stops, as a fraction of K (panel readout)
-	"expedition_carry_cap",   # hunt expedition carry ceiling (panel Carried X / cap)
-	"expedition_eta_turns",           # hunt expedition next-delivery ETA (detail panel Next-delivery line)
-	"expedition_projected_delivery",  # hunt expedition next-delivery forecast (detail panel Next-delivery line)
-	"expedition_recurring",           # hunt expedition recurring ↻ badge (detail panel Next-delivery line)
-	"home_band_entity",       # Band/City panel groups a band's active expeditions by this
-	# Global config levers echoed on every cohort. NEITHER computes an expedition's trip length —
-	# that is a pure lookup into the herd's `hunt_trip_estimates` (SourceForecast.hunt_trip_forecast), which
-	# divides nothing. Band = flow arithmetic; expedition = lookup.
-	"hunt_per_worker_provisions",      # RESIDENT-BAND local-hunt take rate (Hud._hunt_take_rate)
-	"expedition_viability_warn_turns", # viable/not-viable threshold applied to turns_to_fill
-	"expedition_per_worker_carry",     # per-worker carry → pre-launch HAUL = party × this
-	"band_move_tiles_per_turn"         # round-trip TRAVEL turns = ceil(2 × dist / this)
+# **THE EXHAUSTIVE CLAIM: every key the marker's SOURCE dict carries survives onto the marker.**
+#
+# This used to be `PANEL_CONSUMED_KEYS`, a hand-maintained list of "things the panel reads", checked
+# one key at a time. It could only ever catch a leak someone had already thought to name — and the
+# leak class it exists for is precisely the one nobody thinks to name: the decoder grows a field, the
+# panel reads it, and `MapView._rebuild_unit_markers` never hears about it. That shipped three times
+# (`hunt_mode`, then `working_age`/`idle_workers`, then the Minimal TOE's six, which made a band's
+# `Kit` row vanish on the map-click path and took the ⚠ zero-effective-attack warning silently with it).
+#
+# Since the marker became a STRUCTURAL copy (`entry.duplicate()` plus stamps), "is this one key on the
+# marker" stopped being the question. The claim is now a PARTITION, asserted as an equality:
+#
+#     marker.keys()  ==  entry.keys()  ∪  MARKER_STAMPED_KEYS  −  MARKER_OMITTED_KEYS
+#
+# so a key the source carried and the marker dropped fails, AND a key the marker invented without
+# declaring it fails. Nothing has to be remembered; a new decoder field is covered the day it exists.
+#
+# Its power is exactly the fixture's key set, which is why FIXTURE_ENTRY below is a realistic cohort:
+# a field absent from the fixture is a field this claim says nothing about. That is the one thing the
+# `snapshot_dict.json` golden and `decode_guard` cover from the other side.
+
+# The map-only additions — everything the marker has that its source dict does not. Keep in step with
+# the stamps in `_rebuild_unit_markers`; a stamp added there and not named here fails the partition.
+const MARKER_STAMPED_KEYS := [
+	"pos",               # [current_x, current_y] RESOLVED through the home-tile fallback
+	"id",                # the de-duplicated display name ("Band 3"); the cohort's own `label` rides along
+	"dest_x",            # travel destination, from `harvest`/`scout` — absent when the band has neither
+	"dest_y",
+	"travel_task_kind",  # which sub-tree that destination came from
 ]
+
+# Keys the marker deliberately does NOT carry, each with the reason. **Empty is the correct state**
+# under a structural copy — an entry here means someone chose to drop a field the cohort had, and the
+# partition assertion makes that choice explicit rather than accidental.
+const MARKER_OMITTED_KEYS := {}
 
 # The SECOND bug class this guard exists for: a CONTINUOUS field the native decoder emits as a
 # float (a fixed-point Scalar run through `fixed64_to_f64`, or a `float` wire field) that the
@@ -134,6 +110,16 @@ const FRACTIONAL_ROUND_TRIP_KEYS := {
 	"hunt_per_worker_provisions": 0.8125,
 	"expedition_per_worker_carry": 4.375,
 	"band_move_tiles_per_turn": 3.5,
+	# The MINIMAL TOE's six — `float` in the schema end to end, so all six qualify under the rule
+	# above. The durabilities are the `equipment.json` 0–100 scale and deliberately carry a half:
+	# `87.5` copied through `int()` is 87, which is the exact shape this list exists to catch and
+	# which the presence half above cannot see. The other three are resolved rates.
+	"hunting_kit_durability": 87.5,
+	"sled_kit_durability": 62.25,
+	"basket_kit_durability": 41.75,
+	"hunter_attack": 1.6875,
+	"hunt_carry_per_worker_biomass": 2.3125,
+	"forage_carry_per_worker_biomass": 1.5625,
 }
 
 # Tolerance for the fractional round-trip. Loose enough for float32 wire fields widened to f64,
@@ -182,11 +168,22 @@ const FIXTURE_ENTRY := {
 	"expedition_eta_turns": 6,       # int count → presence + _expect_int
 	"expedition_recurring": true,    # bool → presence + explicit check
 	"home_band_entity": 7777,
-	# Pre-launch hunt-trip forecast levers (global config echoed on every cohort).
+	# The decoder's PROJECTION of `pendingReveal{X,Y}` — how many tiles this party still owes its home
+	# band, never the coordinates. It is a term of the cancel-in-camp predicate the Occupants drawer's
+	# Recall/Cancel button reads OFF THE MARKER (`_selected_unit` is the map-click payload), so it has
+	# to survive the copy like every other panel-consumed field.
+	"pending_reveal_count": 3,
+	# Pre-launch hunt-trip forecast levers (global config echoed on every cohort). The horizon is the
+	# scale every "never completed" sentinel is relative to, and the IN-FLIGHT denial readout reads it
+	# off this marker (a launched party's own cohort), so it has to survive the copy like the warn line.
 	"expedition_viability_warn_turns": 20,
+	"expedition_forecast_horizon_turns": 60,
 }
 
 var _failures: Array[String] = []
+## How many keys the source dict carried — printed on the PASS line, because a partition over an EMPTY
+## source is vacuously true and reads exactly like a real one.
+var _source_key_count := 0
 
 func _ready() -> void:
 	var mv: Node = MAP_VIEW.new()
@@ -202,11 +199,29 @@ func _ready() -> void:
 		mv.free()
 		return
 	var marker: Dictionary = markers[0]
+	_source_key_count = entry.size()
 
-	# 1. Superset guard: no panel-consumed key may be missing from the marker.
-	for key in PANEL_CONSUMED_KEYS:
+	# 1. **THE PARTITION.** Every key the source dict carried must survive onto the marker, and every
+	#    key the marker has beyond that must be a DECLARED stamp. Both directions, because each alone
+	#    passes on a broken copy: a subset test is satisfied by a marker that dropped nothing but
+	#    invented a field nobody declared, and a superset test by one that copied wholesale and then
+	#    quietly stopped.
+	for key in entry:
+		if MARKER_OMITTED_KEYS.has(key):
+			continue
 		if not marker.has(key):
-			_fail("marker is MISSING panel-consumed key '%s' (dropped in _rebuild_unit_markers)" % key)
+			_fail("marker DROPPED source key '%s' — the copy in _rebuild_unit_markers is not structural"
+					% key)
+	for key in marker:
+		if entry.has(key) or MARKER_STAMPED_KEYS.has(key):
+			continue
+		_fail("marker carries UNDECLARED key '%s' — add it to MARKER_STAMPED_KEYS with its reason" % key)
+	# …and the omission list is a partition, not a wish: a key excused here that the source never had
+	# is a stale excuse, and reads as coverage that does not exist.
+	for key in MARKER_OMITTED_KEYS:
+		if not entry.has(key):
+			_fail("MARKER_OMITTED_KEYS names '%s', which the source dict does not carry — stale excuse"
+					% key)
 
 	# 2. Round-trip guard: the fields most prone to silent-default drops must preserve
 	#    the input value, not fall back to a default.
@@ -231,7 +246,9 @@ func _ready() -> void:
 	_expect_str(marker, "expedition_target_herd", "game_deer_07")
 	_expect_float(marker, "expedition_floor", 0.3)
 	_expect_int(marker, "home_band_entity", 7777)
+	_expect_int(marker, "pending_reveal_count", 3)
 	_expect_int(marker, "expedition_viability_warn_turns", 20)
+	_expect_int(marker, "expedition_forecast_horizon_turns", 60)
 	_expect_int(marker, "expedition_eta_turns", 6)
 	if not bool(marker.get("is_expedition", false)):
 		_fail("is_expedition did not round-trip to true (defaulted?)")
@@ -293,7 +310,7 @@ func _fail(msg: String) -> void:
 
 func _finish() -> void:
 	if _failures.is_empty():
-		print("marker_field_guard: PASS — marker carries every panel-consumed field and round-trips values")
+		print("marker_field_guard: PASS — marker partitions into its source's %d keys + %d declared stamps, and round-trips values" % [_source_key_count, MARKER_STAMPED_KEYS.size()])
 		get_tree().quit(0)
 	else:
 		printerr("marker_field_guard: FAIL — %d problem(s):" % _failures.size())

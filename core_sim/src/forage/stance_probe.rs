@@ -73,6 +73,22 @@ const FULLY_STAFFED_HUNTERS: u32 = 100_000;
 
 /// A resident band's Hunt take has no carry limit — it banks the whole take (`hunt_take`'s own
 /// contract).
+/// The probe measures the FLOOR, so it holds the retreat draw fixed — and [`probe_fauna`] holds the
+/// wariness that draw reads at `0` besides, so the seed is inert as well as fixed.
+const PROBE_RETREAT_SEED: crate::fauna::HuntDraw = crate::fauna::HuntDraw::Seeded(0);
+
+/// **The shipped roster with the retreat stage held at its identity** (`FaunaConfig::without_retreat`).
+///
+/// This probe asserts *monotonicity in the floor* — a deeper floor takes more now and less over 600
+/// turns — and a monotonicity assertion cannot be read off a stochastic take: slice 7's authored
+/// `wariness` would put a binomial between the floor and the number the probe compares, so a run
+/// that broke the ordering and a run that merely drew badly would be indistinguishable. The floor is
+/// what is under test here, so the retreat is neutralised exactly the way `engage_rate` and
+/// `defense` already are in `hunt_yield_vector::steady_quarry`.
+fn probe_fauna() -> std::sync::Arc<FaunaConfig> {
+    std::sync::Arc::new(FaunaConfig::builtin().without_retreat())
+}
+
 const NO_CARRY_LIMIT: f32 = f32::INFINITY;
 
 /// Neutral band productivity and a full growing season, so the numbers are the source's own.
@@ -161,6 +177,7 @@ fn run_patch_with_crew(
             &flora,
             &ladder,
             UNIT_OUTPUT_MULTIPLIER,
+            forage.per_worker_biomass_capacity,
             FULL_SEASONAL_WEIGHT,
         )
         .to_f32();
@@ -255,6 +272,7 @@ fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
             &flora,
             &ladder,
             UNIT_OUTPUT_MULTIPLIER,
+            forage.per_worker_biomass_capacity,
             FULL_SEASONAL_WEIGHT,
         )
         .to_f32();
@@ -371,7 +389,7 @@ fn run_herd_with_crew(
     start_fraction: f32,
     hunters: u32,
 ) -> HerdOutcome {
-    let fauna = FaunaConfig::builtin();
+    let fauna = probe_fauna();
     let labor = LaborConfig::builtin();
     let ladder = LadderConfig::builtin();
     let mut herd = probe_herd(&fauna, species_key, start_fraction);
@@ -400,10 +418,15 @@ fn run_herd_with_crew(
             floor,
             improvement,
             labor.hunt.per_worker_biomass_capacity,
+            // The probe measures what the FLOOR does to a herd, so it hunts with the shipped kit —
+            // the tier an ordinary band is on. A dry-speared party is a different probe.
+            &crate::fauna::HuntingParty::builtin_equipped(),
             &fauna,
             &ladder,
             NO_CARRY_LIMIT,
-        );
+            PROBE_RETREAT_SEED,
+        )
+        .take;
         let provisions = hunt_yield
             .apply(take.carried, UNIT_OUTPUT_MULTIPLIER)
             .provisions;
@@ -447,7 +470,7 @@ struct HerdBuildOutcome {
 /// `advance_labor_allocation` does. `accrue_corral`'s gate is Penning + the species ceiling +
 /// ownership — **no health check**, so this measures whether a stance can stop a pen being built.
 fn run_corral(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutcome {
-    let fauna = FaunaConfig::builtin();
+    let fauna = probe_fauna();
     let labor = LaborConfig::builtin();
     let ladder = LadderConfig::builtin();
     let pen = ladder.rung(RungKey::AnimalPen);
@@ -469,10 +492,13 @@ fn run_corral(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOu
             floor,
             improvement,
             labor.hunt.per_worker_biomass_capacity,
+            &crate::fauna::HuntingParty::builtin_equipped(),
             &fauna,
             &ladder,
             NO_CARRY_LIMIT,
-        );
+            PROBE_RETREAT_SEED,
+        )
+        .take;
         if turns_to_complete.is_none() {
             provisions_over_build += hunt_yield
                 .apply(take.carried, UNIT_OUTPUT_MULTIPLIER)
@@ -508,7 +534,7 @@ fn run_corral(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOu
 /// `advance_labor_allocation` does — after the take, gated on the herd being `Thriving` and its
 /// species' husbandry ceiling allowing domestication, at the species' own `taming_rate` timescale.
 fn run_tame(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutcome {
-    let fauna = FaunaConfig::builtin();
+    let fauna = probe_fauna();
     let labor = LaborConfig::builtin();
     let ladder = LadderConfig::builtin();
     let pastoral = ladder.rung(RungKey::AnimalPastoral);
@@ -533,10 +559,13 @@ fn run_tame(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutc
             floor,
             improvement,
             labor.hunt.per_worker_biomass_capacity,
+            &crate::fauna::HuntingParty::builtin_equipped(),
             &fauna,
             &ladder,
             NO_CARRY_LIMIT,
-        );
+            PROBE_RETREAT_SEED,
+        )
+        .take;
         if turns_to_complete.is_none() {
             provisions_over_build += hunt_yield
                 .apply(take.carried, UNIT_OUTPUT_MULTIPLIER)
@@ -637,9 +666,66 @@ fn a_deeper_floor_never_takes_less_on_turn_one_on_either_web() {
                      {animal:?}"
                 );
             }
-            assert_live_below_capacity(&animal, &format!("{key}, {crew} hunters"));
+            // **The liveness pair asks whether the party could bring one down IN ONE TURN** — the
+            // premise the fight added (`docs/plan_hunt_through_combat.md` §4.2). Below that
+            // threshold **turn one** is honestly zero at every floor, and that is a statement about
+            // the fight, not about the floor: asserting liveness there would be asserting that a
+            // lone hunter can drop a mammoth on the spot. So the two regimes are asserted as the two
+            // different things they are.
+            //
+            // **It is a claim about turn one and nothing more.** Damage carries between turns now,
+            // so the same party *does* kill on a later turn — that is
+            // `hunt_fight::a_sub_threshold_party_kills_after_enough_turns`, and it is why the zeros
+            // below are read off `first_turn_take` rather than the 600-turn total beside it.
+            if crew >= hunters_to_bring_one_down(key) {
+                assert_live_below_capacity(&animal, &format!("{key}, {crew} hunters"));
+            } else {
+                assert!(
+                    animal.iter().all(|take| *take == 0.0),
+                    "{key}, {crew} hunters: a party that cannot bring one down in a turn takes \
+                     nothing on turn one at ANY floor — no floor is deep enough to substitute for a \
+                     weapon: {animal:?}"
+                );
+                // **And the horizon is the other half.** Left long enough the SAME party grinds the
+                // animal down, so a zero here must be a statement about one turn and not about the
+                // party. Without this the block above would pass identically on a stateless
+                // resolver — the model the accumulator replaced.
+                let over_time = run_herd_with_crew(key, STRIP_IT_BARE, None, FULL_HERD, crew);
+                assert!(
+                    over_time.total_take > 0.0,
+                    "{key}, {crew} hunters: a sub-threshold party must still kill EVENTUALLY — \
+                     damage carries between turns, so the turn-one zeros above are about the turn, \
+                     not about the party"
+                );
+            }
         }
     }
+}
+
+/// **The smallest party that can bring one animal of this species down in a single turn** —
+/// `ceil(durability / max(0, attack − defense))` at the shipped kitted tier
+/// (`docs/plan_hunt_through_combat.md` §4.2), derived from config rather than tabulated so a retune
+/// of any of the three inputs moves it.
+///
+/// **Damage carries between turns** (§4.2), so a party below this threshold takes nothing **on turn
+/// one** at every floor and then, given enough turns, a whole animal. That list of turn-one zeros
+/// orders perfectly, which is exactly why the sweep above must not read it as a floor property — and
+/// why the sweep pairs it with the horizon assertion that the same party does eventually eat.
+///
+/// A party that cannot beat the quarry's `defense` at all can never bring one down, at any headcount
+/// — §0.2's founding case — so this answers [`u32::MAX`] there rather than a large finite crew.
+fn hunters_to_bring_one_down(species_key: &str) -> u32 {
+    let fauna = probe_fauna();
+    let party = crate::fauna::HuntingParty::builtin_equipped();
+    let quarry = fauna
+        .species
+        .get(species_key)
+        .expect("probe names a shipped species");
+    let per_hunter = crate::combat::strike_damage(party.hunter.attack, quarry.combat.defense);
+    if per_hunter <= 0.0 {
+        return u32::MAX;
+    }
+    (quarry.combat.durability / per_hunter).ceil() as u32
 }
 
 /// **The liveness bound that pairs with every turn-one monotonicity assertion** — a full source has
@@ -799,7 +885,7 @@ fn floor_zero_strips_a_patch_that_recovers_and_a_herd_that_does_not() {
     // --- The animal web: the same 0.02, and the herd crosses it. `advance_herds` despawns there
     // (pinned live in `core_sim/tests/fauna_deplete.rs`); this pins that the take path takes it
     // under.
-    let fauna = FaunaConfig::builtin();
+    let fauna = probe_fauna();
     for key in PROBE_SPECIES {
         let wiped = run_herd(key, STRIP_IT_BARE, None, FULL_HERD);
         assert!(
@@ -918,7 +1004,7 @@ fn probe_plant_stances() {
 #[test]
 #[ignore = "measurement harness — run with --ignored --nocapture"]
 fn probe_animal_stances() {
-    let fauna = FaunaConfig::builtin();
+    let fauna = probe_fauna();
     let ladder = LadderConfig::builtin();
     println!("\n=== ANIMAL WEB — wild herds ({PROBE_TURNS} turns) ===");
     println!(
@@ -1107,7 +1193,7 @@ fn probe_rung_three_builds() {
         );
     }
 
-    let fauna = FaunaConfig::builtin();
+    let fauna = probe_fauna();
     for key in ["rabbit", "boar"] {
         let def = &fauna.species[key];
         println!(

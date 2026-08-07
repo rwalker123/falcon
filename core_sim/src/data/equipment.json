@@ -1,0 +1,45 @@
+{
+  "_comment": "THE MINIMAL TOE (docs/plan_early_game_labor.md 'Equipment / TOE', docs/plan_hunt_through_combat.md 4.8). A TOE is the equipment set that lifts a ROLE from its UNEQUIPPED to its EQUIPPED tier. ONE KIT, ONE JOB - three kits ship: the HUNTING kit (spears - what makes `attack` a real number, and the gate combat::resolve_fight compares against a species' defense), the SLED kit (travois/drag harness - the HUNT's carry, because a carcass is one lumpy object you DRAG out whole and a container does not help you move a deer) and the BASKET kit (the FORAGE web's carry, because berries are loose, divisible and bounded entirely by what you can hold). An earlier draft pointed baskets at the hunt's carry, which is a physical nonsense and left foraging with no kit at all; 4.8's 'One kit, one job' is the correction. Consumable, START-STOCKED and NOT CRAFTABLE: running one dry is the intended pressure and the pull into the Milestone-2 crafting economy. TWO TIERS, NEVER A TAPER: performance is FLAT until expiry and then the role STEPS DOWN to its unequipped tier - durability and performance are deliberately ORTHOGONAL axes so a future crafting system can tune them independently. THE TIER IS PER-BAND, PER-ROLE, not per-hunter inventory. WEAR IS CHARGED FOR USE, NEVER FOR TURNS ELAPSED (docs/plan_denial_raid.md 1.2): a turn clock would charge an idle march the same as a slaughter, which would make denial free. ONE HOME PER FACT - all three EQUIPPED tiers already had homes and stay there: a speared hunter's attack is the only one this file owns, while the bare hand's attack is creatures.json's `person.combat.attack` (1.0), a hunt's per-hunter haul rate is labor_config.json's `hunt.per_worker_biomass_capacity` (40.0) and a gatherer's is labor_config.json's `forage.per_worker_biomass_capacity` (8.0). Both of those ARE the equipped tiers - the shipped game has always run kitted - so what lives here beside them is only each kit's UNEQUIPPED step-down and its durability. PLAYTEST DIALS.",
+  "_comment_shapes": "THE TWO CARRY KITS WANT DIFFERENT SHAPES, NOT MERELY DIFFERENT NUMBERS (4.8). FORAGE IS CONTAINMENT-BOUND - bare hands is a handful against a basketful - so its ratio is LARGE: 8.0 equipped against 1.6 bare, exactly one fifth, which is about what a forager keeps when the only vessel is two cupped hands and the fold of a hide. THE HUNT IS TRANSPORT-BOUND - a sledless party can always drag SOMETHING - so its ratio is SMALLER: 40.0 equipped against 12.0, under a third. The hunt's shortfall needs no new mechanic: a party that cannot haul its kill leaves more of it on the range, which AnimalTake.wasted already computes and the client already shows.",
+  "_comment_durability": "DURABILITY IS A 0-100 CONDITION SCALE ON ALL THREE KITS, and the per-use wear rate is what says how long each lasts - that is what keeps the two axes orthogonal (change how long a kit lasts without touching what it does). A band carries WEAR (BandEquipment, persisted); a kit is EQUIPPED while its wear is strictly below its starting_durability, and the drop at expiry is a cliff. Hunting: 100 / 0.4 per animal killed = 250 kills. Sled: 100 / 0.02 per biomass hauled home from a hunt = 5000 biomass. Baskets: 100 / 0.04 per biomass gathered = 2500 biomass. AGAINST THE SHIPPED ~16-WORKER STARTING BAND THE BASKET HITS plan_early_game_labor's ~15-20 TURN KIT-DURATION TARGET AND THE TWO HUNT KITS OVERSHOOT IT BY ~3x. Gathering, the band reaches 16 x 8 = 128 biomass a turn, so 2500/128 = ~19.5 turns of baskets - on target. Hunting Red Deer (engage_rate 1, body_mass 15) it ENGAGES 16 animals a turn, but engaged is not killed: Red Deer ship combat.wariness 0.65, so the RETREAT (docs/plan_hunt_through_combat.md 3) leaves ~5.6 of them to fight and ~5.6 is the kill rate. That is 250/5.6 = ~45 turns of spears and 5000/(5.6 x 15) = ~60 turns of sled. AN EARLIER DRAFT OF THIS COMMENT QUOTED ~15.6 AND ~20.8, computed at wariness 0 before the roster's values were authored; the arithmetic here is corrected, the wear rates are NOT. Closing a 3x gap is a balance change, not a comment fix, and it belongs with the hunt-effectiveness tuning tracked on issue #491. THE THREE QUANTA ARE INDEPENDENT BY CONSTRUCTION: a band that only hunts wears no baskets and a band that only gathers wears no sled. KNOWN SKEW, a config problem not a model one: a per-KILL charge is species-blind, so a party on Wild Fowl (engage_rate 10 -> 160 engaged, wariness 0.65 -> ~56 kills a turn) shreds the same spears in ~4.5 turns - an order of magnitude off the Red Deer figure above, which is the skew, whatever the absolute numbers settle at. The quantum is deliberate (docs/plan_denial_raid.md 1.2 requires wear to track USE, and for a spear use IS a kill); if small game proves to wreck the pacing, the lever is a per-species use cost, not a turn clock.",
+  "hunting_kit": {
+    "equipped_attack": 20.0,
+    "starting_durability": 100.0,
+    "wear_per_kill": 0.4
+  },
+  "sled_kit": {
+    "unequipped_per_worker_biomass_capacity": 12.0,
+    "starting_durability": 100.0,
+    "wear_per_biomass_hauled": 0.02
+  },
+  "basket_kit": {
+    "unequipped_per_worker_biomass_capacity": 1.6,
+    "starting_durability": 100.0,
+    "wear_per_biomass_gathered": 0.04
+  },
+  "_comment_kits": "THE KIT ROSTER - what a party is SENT OUT WITH, chosen by name instead of implicitly using whatever the band owns. A kit is a MASK over the three component blocks above: effective_equipped(component) = kit uses it AND the band still has condition in it. The two working kits reproduce the pre-roster behaviour exactly - `big_game` uses the hunting and sled components (every hunt path asked for both), `gathering` uses the basket (every gather path asked for that) - so choosing them is bit-for-bit the shipped game. `none` is an ORDINARY ROSTER MEMBER and NOT a sentinel: it simply uses nothing, so every predicate reads false and the party runs at the unequipped tiers throughout - and, because wear rides the same predicate, spends no durability on any component. That is what makes a bare-handed comparison free to run: it must not consume the very kit it is being compared against. `jobs` is what a kit may be sent on; a kit named for a job it does not list is a COMMAND FAILURE, never a silent fall back to the default. `default_kits` is what each verb uses when the player names none.",
+  "kits": [
+    {
+      "id": "big_game",
+      "display_name": "Big-game kit",
+      "jobs": ["hunt"],
+      "uses": ["hunting_kit", "sled_kit"]
+    },
+    {
+      "id": "gathering",
+      "display_name": "Gathering kit",
+      "jobs": ["forage"],
+      "uses": ["basket_kit"]
+    },
+    {
+      "id": "none",
+      "display_name": "No kit",
+      "jobs": ["hunt", "forage"],
+      "uses": []
+    }
+  ],
+  "default_kits": {
+    "hunt": "big_game",
+    "forage": "gathering"
+  }
+}

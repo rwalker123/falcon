@@ -56,6 +56,13 @@ fn spawn_world() -> App {
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(ForageRegistry::default());
     app.world.insert_resource(FaunaConfigHandle::default());
+    // **This harness is a deterministic pin, so the retreat stage is held at its identity.**
+    // Slice 7 authored a non-zero `combat.wariness` across the roster
+    // (`docs/plan_hunt_through_combat.md` §3.1); `FaunaConfig::without_retreat` carries the whole
+    // reasoning for why the pre-existing suite neutralises it rather than re-baselining.
+    app.world
+        .resource_mut::<FaunaConfigHandle>()
+        .hold_wariness_at_zero();
     app.world.insert_resource(LaborConfigHandle::default());
     app.world
         .insert_resource(core_sim::FloraConfigHandle::default());
@@ -65,6 +72,8 @@ fn spawn_world() -> App {
         .insert_resource(core_sim::CombatConfigHandle::default());
     app.world
         .insert_resource(core_sim::CreaturesConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::EquipmentConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.run_system_once(spawn_initial_herds);
     // Seed depletable forage patches on every food-module tile (§0-ii).
@@ -125,6 +134,7 @@ fn forage_alloc_policy(tile: UVec2, workers: u32, policy: f32) -> LaborAllocatio
             },
             workers,
             improvement: None,
+            kit: None,
         }],
         ..Default::default()
     }
@@ -263,6 +273,7 @@ fn sustain_hunt_below_regrowth_lets_herd_grow() {
                 },
                 workers: 1,
                 improvement: None,
+                kit: None,
             }],
             ..Default::default()
         },
@@ -284,6 +295,13 @@ fn sustain_hunt_below_regrowth_lets_herd_grow() {
         "under-hunting (worker_cap < regrowth) should let the herd grow: {start} -> {after}"
     );
 }
+
+/// **The slack the whole-animal wobble bound allows.** Its two sides are the same quantum reached by
+/// different arithmetic — one a difference of two horizon-length averages, the other a single
+/// division — so they agree to a few `f32` ULPs rather than bit-for-bit. A thousandth is orders of
+/// magnitude below the gap any real regression opens: the biomass sawtooth this guard exists to
+/// exclude is the full kill spike, ~40× wider.
+const PULSE_WOBBLE_SLACK: f32 = 1.001;
 
 /// **The lumpy `actual` pulses; the forward-projected `realized` reads FLAT.** A whole-animal Sustain
 /// hunt on a slow breeder (MSY ≪ `body_mass`) pays nothing for several turns then a whole animal at
@@ -343,6 +361,7 @@ fn a_hunt_actual_pulses_while_realized_holds_the_steady_average() {
                 },
                 workers: 2,
                 improvement: None,
+                kit: None,
             }],
             ..Default::default()
         },
@@ -389,17 +408,30 @@ fn a_hunt_actual_pulses_while_realized_holds_the_steady_average() {
     );
 
     // `realized` is FLAT — a settled Sustain herd sits above K/2, where the projected policy rate is
-    // MSY every simulated turn regardless of the biomass sawtooth, so the headline barely moves. Its
-    // turn-to-turn change is a tiny fraction of the steady rate (NOT the sawtooth the instantaneous
-    // rate would show), and it never reaches the kill spike.
+    // MSY every simulated turn regardless of the biomass sawtooth, so the headline barely moves. It
+    // never reaches the kill spike, and its turn-to-turn change is bounded by the **one wobble a
+    // whole-animal projection cannot avoid**: as the herd's pulse phase shifts under the window, the
+    // horizon catches one more or one fewer body, moving the average by exactly *one animal spread
+    // over the window*. On this fixture a kill turn lands exactly one body (the crew out-carries a
+    // body and the room above `K/2` never holds two), so `actual_max` **is** one animal's provisions
+    // and the quantum can be read straight off the sawtooth this guard exists to exclude — which is
+    // ~40× wider. Stating the bound as the quantum rather than as a fraction of the mean says what
+    // the wobble IS, and does not have to be re-tuned when the fixture's herd changes.
+    let realized_horizon = app
+        .world
+        .resource::<LaborConfigHandle>()
+        .get()
+        .yield_average_horizon_turns as f32;
+    let pulse_wobble = actual_max / realized_horizon;
     let max_delta_realized = realized
         .windows(2)
         .map(|w| (w[1] - w[0]).abs())
         .fold(0.0_f32, f32::max);
     assert!(
-        max_delta_realized < 0.05 * realized_mean,
-        "realized must read flat turn-to-turn (max Δrealized {max_delta_realized}, \
-         steady {realized_mean}): {realized:?}"
+        max_delta_realized <= pulse_wobble * PULSE_WOBBLE_SLACK,
+        "realized must read flat turn-to-turn — at most one animal per window \
+         ({pulse_wobble}) — but moved by {max_delta_realized} (steady {realized_mean}): \
+         {realized:?}"
     );
     assert!(
         realized_max < 0.7 * actual_max,
@@ -469,6 +501,7 @@ fn a_drawn_down_hunt_realized_drifts_smoothly_never_sawtooths() {
                 },
                 workers: 4,
                 improvement: None,
+                kit: None,
             }],
             ..Default::default()
         },
@@ -542,6 +575,7 @@ fn hunt_lapses_beyond_leash() {
                 },
                 workers: 3,
                 improvement: None,
+                kit: None,
             }],
             ..Default::default()
         },
@@ -638,11 +672,12 @@ fn assignment_sum_clamps_to_working_age() {
         },
         3,
         available,
+        None,
     );
     assert_eq!(applied, 3);
 
     // Scout 4 workers requested, but only 2 headroom left → clamped to 2.
-    let applied = alloc.set_assignment(LaborTarget::Scout, 4, available);
+    let applied = alloc.set_assignment(LaborTarget::Scout, 4, available, None);
     assert_eq!(applied, 2, "over-budget assignment clamps to free headroom");
     assert_eq!(alloc.assigned_total(), available);
 
@@ -655,12 +690,13 @@ fn assignment_sum_clamps_to_working_age() {
         },
         0,
         available,
+        None,
     );
     assert_eq!(applied, 0);
     assert_eq!(alloc.assigned_total(), 2);
 
     // Normalize down when working-age shrinks below the assigned total.
-    alloc.set_assignment(LaborTarget::Warrior, 2, 4);
+    alloc.set_assignment(LaborTarget::Warrior, 2, 4, None);
     assert_eq!(alloc.assigned_total(), 4);
     let dropped = alloc.normalize(3);
     assert!(
@@ -887,6 +923,7 @@ fn stage_hunt(
                 },
                 workers,
                 improvement: None,
+                kit: None,
             }],
             ..Default::default()
         },
@@ -1009,6 +1046,7 @@ fn the_schedule_total_matches_the_realized_average_over_the_horizon() {
         &fauna,
         &ladder,
         per_worker,
+        &core_sim::HuntingParty::builtin_equipped(),
         1.0,
         4,
         0.5,
@@ -1020,6 +1058,7 @@ fn the_schedule_total_matches_the_realized_average_over_the_horizon() {
         &fauna,
         &ladder,
         per_worker,
+        &core_sim::HuntingParty::builtin_equipped(),
         1.0,
         4,
         0.5,
@@ -1057,6 +1096,7 @@ fn a_spent_source_schedules_nothing() {
         &app.world.resource::<FaunaConfigHandle>().get(),
         &app.world.resource::<LadderConfigHandle>().get(),
         labor.hunt.per_worker_biomass_capacity,
+        &core_sim::HuntingParty::builtin_equipped(),
         1.0,
         4,
         0.5,
@@ -1108,6 +1148,7 @@ fn a_trimmed_assignment_is_announced_and_names_the_lost_build() {
         },
         workers: 3,
         improvement: Some(core_sim::Improvement::Tame),
+        kit: None,
     });
     let band = spawn_band(&mut app, patch_tile, 3, allocation);
 

@@ -33,7 +33,11 @@ pub struct HuntTripEstimateState {
     /// points rather than a formula. Appended (append-only).
     #[serde(default)]
     pub floor: f32,
-    /// Party size, `1 ..= expedition_config.max_party_size`.
+    /// Party size — one of `expedition_config.estimate_party_sizes`, an explicit ascending
+    /// **ladder**. Like [`Self::floor`] beside it, this is a **mark on a dial**: the table samples
+    /// party sizes rather than enumerating them, so a client resolves the party it is showing to the
+    /// **nearest** row and names the size that row was computed for. It is a sampling axis, not a cap
+    /// on what may be launched — the legal bound is the band's own idle workers.
     pub party_workers: u32,
     /// Turns of hunting until the **raid completes** — the party comes home when the pack fills OR the
     /// standing surplus is spent (the herd is at the policy's floor) OR the herd is lost. **Not** "turns
@@ -69,6 +73,67 @@ pub struct HuntTripEstimateState {
     /// `delivers_food == false`.
     #[serde(default)]
     pub delivered_trade: f32,
+    /// **WHICH stop ends this trip** (appended) — the `core_sim::HuntTripBound` key:
+    /// `"pack_full"`, `"floor"`, `"herd_lost"` or `"horizon"`. A trip length alone cannot say which
+    /// bound it was — *"you fill the pack in 4 turns"* and *"you reach the floor in 2 turns with the
+    /// pack a third full"* are different decisions and the same kind of number — so the sim names
+    /// the bound and the client composes nothing.
+    ///
+    /// A launched party's own bound is `PopulationCohortState::expedition_trip_bound`.
+    #[serde(default)]
+    pub bound: String,
+}
+
+/// The sim's **pre-launch denial-raid estimate** for one party size against one herd — the denial
+/// twin of [`HuntTripEstimateState`] (`docs/plan_denial_raid.md` §1.1).
+///
+/// **It carries no floor**, and that absence is the design rather than an omission: a denial
+/// mission has no floor and no rate — *"you choose a herd and a party size"* — so there is nothing
+/// to sample and the table has one axis.
+///
+/// **The headline is [`Self::turns_to_collapse`], not a food total.** Success is pushing the herd
+/// under `ecology.collapse_fraction`, the point of no return where the growth flow is zeroed and the
+/// herd declines irreversibly with the party gone — never killing every animal. What comes home is a
+/// rounding error against what was killed, which is the point, and [`Self::wasted_food`] is where the
+/// rest of it went.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct DenialEstimateState {
+    /// Party size — the shared `expedition_config.estimate_party_sizes` ladder **plus a short
+    /// contiguous run at this herd's own closed-form requirement**, so the row the sheet opens on
+    /// ([`HerdTelemetryState::denial_party_needed`]) is an exact party rather than the next rung
+    /// above it. Ascending and unique. Like the hunt table's twin it is a **sampling** axis — resolve
+    /// a party to the nearest row — and not a cap on what may be launched.
+    pub party_workers: u32,
+    /// **Turns until the herd is past recovery** at the take's expectation — and therefore turns
+    /// until the party comes home, because that is when a denial raid completes. **`0` = it never got
+    /// there** within `forecast_horizon_turns`; [`Self::outcome`] says which *kind* of never, and
+    /// must be rendered instead of a blank.
+    pub turns_to_collapse: u32,
+    /// The **optimistic** end of the range — the fewest turns
+    /// (`docs/plan_hunt_through_combat.md` §6.4). More animals staying and more strikes landing is
+    /// the good draw for a raid, and it drives the herd under sooner.
+    pub turns_to_collapse_low: u32,
+    /// The **pessimistic** end. `0` here beside a positive [`Self::turns_to_collapse`] is the honest
+    /// *"only on a good run"* — not an error.
+    pub turns_to_collapse_high: u32,
+    /// The `core_sim::DenialOutcome` key: `"past_recovery"` / `"herd_lost"` / `"repelled"` /
+    /// `"horizon"`. **`"repelled"` is the one the design insists on** — the party's kills per turn
+    /// are at or below the herd's own regrowth, so it *cannot* get there. That is a verdict about the
+    /// party; `"horizon"` is a statement about the clock.
+    pub outcome: String,
+    /// Whole animals the raid **kills** before it walks away.
+    pub animals_killed: u32,
+    /// Food landed in the pack over the raid — small, and non-zero.
+    pub delivered_food: f32,
+    /// Food killed and left on the range — **the bulk of a raid's take**, stated rather than hidden.
+    pub wasted_food: f32,
+    /// The trade half of the same carried biomass; the whole payload on an inedible quarry.
+    pub delivered_trade: f32,
+    /// **Trade goods killed and left on the range** — the twin of [`Self::wasted_food`], and on an
+    /// **inedible** quarry the only non-zero waste there is: a wolf pays no provisions, so a
+    /// food-only waste line reads `0` beside a large [`Self::animals_killed`] on the raid whose
+    /// waste is total.
+    pub wasted_trade: f32,
 }
 
 /// A fully-fed pen — the neutral value of [`HerdTelemetryState::pen_fed_fraction`], so an un-penned
@@ -134,7 +199,7 @@ pub struct HerdTelemetryState {
     #[serde(default)]
     pub corral_trade: f32,
     /// The sim's **pre-launch trip estimates** for a hunting *expedition* against this herd — one
-    /// entry per (stance × party size `1..=max_party_size`), so the outfit UI is a **table lookup**
+    /// entry per (sampled floor × sampled party size, `estimate_party_sizes`), so the outfit UI is a **table lookup**
     /// and the client does no arithmetic at all. The improvements are place-bound band work an
     /// expedition cannot do — since issue #442 its mission cannot even name one — so there is nothing
     /// to exclude. Empty for a non-huntable herd. See [`HuntTripEstimateState`] for why the trip is
@@ -378,6 +443,90 @@ pub struct HerdTelemetryState {
     /// `thriving`) — see [`Self::collapse_fraction`].
     #[serde(default)]
     pub stressed_fraction: f32,
+    /// **How many animals ONE hunter can bring into contact per turn** (`SpeciesDef::engage_rate`,
+    /// `docs/plan_hunt_through_combat.md` §2) — the **third** bound on a hunt take, beside the stock
+    /// standing above the floor and the party's carry. Without it the pre-commit curve a client
+    /// composes from [`Self::per_worker_biomass`] and the per-biomass vector is carry-bound only, and
+    /// overstates a small-bodied species' take by the ratio of the two (measured: ~30× on a Wild Fowl
+    /// herd with one hunter). It ships as a **term** rather than an answer because the expression is
+    /// linear and exact — see the schema comment for the composition and for the crew count that
+    /// inverts it.
+    ///
+    /// **`0` means "no engagement stage", not "reaches nothing"** — the wire's finite stand-in for the
+    /// sim's [`f32::INFINITY`]: a **pen** (a penned animal is not stalked) and a species the roster
+    /// cannot resolve. Read `<= 0` as *unbounded* and drop the term. Appended (append-only).
+    #[serde(default)]
+    pub engage_rate: f32,
+    /// **How much damage ONE animal of this species soaks before it goes down**
+    /// (`SpeciesDef::combat.durability`, `docs/plan_hunt_through_combat.md` §4.2/§6.5) — the last
+    /// term needed to explain the combat gate *before* a hunt is launched.
+    ///
+    /// The client already holds the other two — `PopulationCohortState::hunter_attack` and
+    /// [`Self::defense`] — so **the gate itself is already composable** and the sim deliberately
+    /// exports no *"can this band win"* boolean:
+    /// `effective_attack = max(0, hunter_attack − defense)` (`0` ⇒ this species cannot be hunted at
+    /// all), `hunter_turns = durability / effective_attack`. This field is what turns *"you cannot
+    /// win"* into *"you cannot win, and with spears it would take 62 hunter-turns"*.
+    ///
+    /// **`defense` and `durability` are different axes**: defense is whether a hit counts at all,
+    /// durability is how many counting hits it takes. Authored per species, never derived from
+    /// [`Self::body_mass`]. `0` for a species the roster cannot resolve. Appended (append-only).
+    #[serde(default)]
+    pub durability: f32,
+    /// **The sim's pre-launch estimates for a DENIAL RAID against this herd** — one entry per party
+    /// size, with no floor axis and no fill-target axis because the mission carries neither
+    /// (`docs/plan_denial_raid.md`). The denial twin of [`Self::hunt_trip_estimates`]; empty for a
+    /// non-huntable herd, exactly as that one is. Derived at capture. Appended last.
+    ///
+    /// **The party axis runs past `max_expedition_party_size`** where this herd needs it to — see
+    /// [`Self::denial_party_needed`], and `expeditions.md` → "Denial is a MISSION, not a floor" for
+    /// why a denial raid's outfit bound is the band's idle workers rather than that flat ceiling.
+    #[serde(default)]
+    pub denial_estimates: Vec<DenialEstimateState>,
+    /// **The party the launch sheet OPENS on** — the smallest row in [`Self::denial_estimates`]
+    /// whose raid **succeeded** (`"past_recovery"` or `"herd_lost"`), and therefore the smallest
+    /// party whose kills genuinely outpace this herd's regrowth (`docs/plan_denial_raid.md` §3.1).
+    ///
+    /// **Not *"the smallest row that is not `repelled`"*.** A `"horizon"` row is a raid the
+    /// projection ran its whole length with the herd still standing, so it proves nothing the sim
+    /// will vouch for; seeding there quoted a party under its own verdict line *"still standing when
+    /// the forecast runs out"*.
+    ///
+    /// A denial raid is a **step function** in party size: below the requirement it accomplishes
+    /// literally nothing however long it runs. Seeding the stepper here turns the control from a
+    /// guessing game into an adjustment.
+    ///
+    /// **`0` = no quoted party drives this herd down**, never *"send nobody"*. Reached by a quarry
+    /// nothing can bring into contact, by a requirement past the sim's quoting bound
+    /// (the last rung of `expedition_config` `estimate_party_sizes`), by a herd whose regrowth out-runs the whole
+    /// table, and by a quoted axis that never reaches a success row (every party either repelled or
+    /// still grinding at the horizon); the rows' own `outcome` says which. It may also legitimately
+    /// exceed the launching band's idle workers — *"you need more people than you have"* is an
+    /// answer.
+    ///
+    /// **Quoted for the EQUIPPED tier, like every other field on this table.** A herd row is a fact
+    /// about the herd and has no band to ask, so the capture prices it with
+    /// `hunter_profile(.., equipped = true)`. Since TOE the take depends on the band's own attack and
+    /// carry tier, so a band whose kit has run dry is quoted a party it cannot achieve. That is a
+    /// property of the whole herd table rather than of this field. Appended last.
+    #[serde(default)]
+    pub denial_party_needed: u32,
+    /// **The `equipment.json` roster id [`Self::hunt_trip_estimates`] was computed at** — the hunt
+    /// job's default kit (`"big_game"` as shipped), on every herd, always.
+    ///
+    /// **The table is NOT repriced per kit, and this field exists so a consumer can say so.** The
+    /// two estimate tables are ~95% of snapshot capture and a kit axis multiplies them — the same
+    /// structural cost question per-band repricing already faces. A client whose player has selected
+    /// another kit must therefore refuse to present these rows as an answer for that selection: the
+    /// kit moves the take through **both** the fight and the haul, and a `none` party's effective
+    /// attack against a defended quarry is zero, so the error is total rather than marginal.
+    #[serde(default)]
+    pub hunt_trip_estimates_kit_id: String,
+    /// The same, for [`Self::denial_estimates`]. **Two fields rather than one** because they are two
+    /// tables: if one is later repriced per kit and the other is not, a single field would lie about
+    /// whichever was left behind.
+    #[serde(default)]
+    pub denial_estimates_kit_id: String,
 }
 
 impl Default for HerdTelemetryState {
@@ -439,6 +588,16 @@ impl Default for HerdTelemetryState {
             regrowth_samples: Vec::new(),
             collapse_fraction: 0.0,
             stressed_fraction: 0.0,
+            // `0` is the "no engagement stage" reading, which is the honest default for a herd
+            // nothing has described.
+            engage_rate: 0.0,
+            durability: 0.0,
+            denial_estimates: Vec::new(),
+            // A herd nothing has described quotes no party — the same "no viable party" reading the
+            // capture publishes for an unraidable one.
+            denial_party_needed: 0,
+            hunt_trip_estimates_kit_id: String::new(),
+            denial_estimates_kit_id: String::new(),
         }
     }
 }
@@ -792,6 +951,38 @@ pub struct FoodModuleState {
     pub module: String,
     pub seasonal_weight: f32,
     pub kind: String,
+}
+
+/// **One named kit a party may be sent out with** (`equipment.json`'s `kits`) — a **mask** over the
+/// three consumable component blocks (spears / sled / baskets), published once per world so the
+/// client's picker renders real numbers without a second copy of the TOE table.
+///
+/// The three tiers are what this kit grants a party whose components are all **fresh**. What a given
+/// band's *wear* then does to them is that band's own row (`PopulationCohortState`'s
+/// `hunter_attack` / `hunt_carry_per_worker_biomass` / `forage_carry_per_worker_biomass`).
+///
+/// **`none` is an ordinary roster entry, not a sentinel**: it grants nothing, so its tiers are the
+/// unequipped ones throughout and a party sent with it spends no durability on any component. No
+/// consumer should special-case its id.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct KitOptionState {
+    pub id: String,
+    pub display_name: String,
+    /// Which verbs this kit may be sent on: `"hunt"` and/or `"forage"`. A kit named for a job outside
+    /// this list is a **command failure**, never a silent fall back to the default, so a picker must
+    /// filter by the job it is composing. No kit lists the band-wide roles — they consume no
+    /// component and have no kit axis.
+    pub jobs: Vec<String>,
+    /// A fresh-kit hunter's combat `attack` under this kit — what the gate
+    /// `max(0, attack − defense)` compares against a herd's `defense`. **Below a species' defense
+    /// that species cannot be hunted at all**, which is why `none` is a real decision rather than a
+    /// discount.
+    pub attack: f32,
+    /// Per-hunter HUNT haul rate (biomass/turn) under this kit — the sled's tier.
+    pub hunt_carry_per_worker_biomass: f32,
+    /// Per-gatherer throughput (biomass/turn, **before** the tile's seasonal weight) under this kit —
+    /// the baskets' tier.
+    pub forage_carry_per_worker_biomass: f32,
 }
 
 /// `TileState::graze_ecology_phase` — the biome carries no pasture at all (water, ice, bare rock).

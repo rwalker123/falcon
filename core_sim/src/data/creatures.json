@@ -1,8 +1,9 @@
 {
   "_comment": "The creatures roster (docs/plan_predators.md). Intrinsic CombatStats for non-fauna units. A human is not wildlife (not fauna_config) and its stats are not resolver tuning (not combat_config). Playtest dials.",
+  "_comment_durability": "DURABILITY is how much damage a body soaks before it goes down (docs/plan_hunt_through_combat.md 4.2) - authored, never derived from mass. A person is on the BOAR/WOLF tier (20): a body with neither bulk nor armour, which takes a few solid hits and no more. It is what turns an animal's ferocity-scaled attack into casualties, so it is the single dial that says how costly a dangerous hunt and a predator raid are.",
   "creatures": {
     "person": {
-      "combat": { "attack": 1.0, "defense": 1.0, "range": "melee" }
+      "combat": { "attack": 1.0, "defense": 1.0, "durability": 20.0, "range": "melee" }
     }
   }
 }

@@ -159,6 +159,24 @@ a delta carries only the newly appended rows, a full snapshot the whole retained
 accumulation belongs to the CONSUMERS (`EventDockPanel`, `TellingPanel`), each with its own retention
 and de-duplication. `WorldCache` must not grow a ring for it.
 
+## `pending_reveal_count` — the one field this decoder PROJECTS rather than copies
+
+`PopulationCohortState.pendingRevealX` / `pendingRevealY` are the tiles a party has observed and not
+yet reported. `population_to_dict` emits **their LENGTH, as `pending_reveal_count`, and neither
+array**.
+
+The client's only question of them is *"does this party still owe its home band a map report"* — the
+fourth term of the sim's cancel-in-camp test (`cancel_party_standing_in_camp` → `party_owes_a_report`,
+itself just `!pending_reveal.is_empty()`), which decides whether a recall reads **Cancel** or **Recall**
+(`band-city-panel.md`). The coordinates are a scout's ACCUMULATED reveals — hundreds of tiles per
+cohort per frame, every frame until it reports — so marshalling them into GDScript would carry that
+whole payload to answer a boolean.
+
+**A decoder that projects needs its reason written at the site**, which is why the comment sits with
+`is_expedition` / `home_band_entity` rather than here alone: the next reader's instinct on finding no
+`pending_reveal` key is to add the arrays. `0` is the honest reading for a resident band and for a
+party with nothing left to deliver.
+
 `population_to_dict` decodes two **Predators Phase 3** cohort keys (appended after `fodderStore` in
 the schema): `raid_radius` ← `cohort.raidRadius()` (a plain `uint` reach, `as i64` — like `work_range`,
 NOT a Scalar), the odd-r hex distance within which an aggressive carnivore herd raids this band's
@@ -166,6 +184,98 @@ larder; and `raid_forfeit` ← `cohort.raidForfeit()` (`float`, `as f64`), the f
 raids THIS turn — the raid twin of `pen_feed_upkeep`. Both are consumed client-side by the band panel:
 `raid_radius` derives the "Predator nearby" Warrior alert (the DANGER itself is derived on the client
 from visible-herd telemetry, never a wire flag), `raid_forfeit` is the "Lost to raids" food-ledger row.
+
+`population_to_dict` also decodes the **minimal TOE** (`docs/plan_hunt_through_combat.md` §4.8) — the
+band's three consumable kits and the tiers they resolve to: `hunting_kit_durability` /
+`sled_kit_durability` / `basket_kit_durability` (condition on equipment.json's 0-100 scale, `0` = dry)
+plus `hunter_attack` / `hunt_carry_per_worker_biomass` / `forage_carry_per_worker_biomass`. All six
+shipped on the wire with **no consumer here at all** — the third time this arc reproduced this crate's
+most-repeated bug — as did the labor assignment's forecast BAND (`actual_yield_low`/`_high`,
+`trade_yield_low`/`_high`, §6.4) and `HerdTelemetryState.durability` (§4.2/§6.5, the last term the
+combat gate needed). Eleven fields, thirty golden lines, no fixture edit: `decode_fixture.rs`'s
+SATURATION reaches an appended scalar automatically, so the only step an appended scalar needs here is
+the converter and a re-record.
+
+**ONE KIT, ONE JOB, and the two carry tiers are not two readings of one number.** A band can be out of
+baskets with its sled untouched, so `hunt_carry_per_worker_biomass` and
+`forage_carry_per_worker_biomass` must never be rendered on each other's rows — the defect slice 5
+corrected sim-side. The golden gives every field a DISTINCT saturated value, which is what makes a
+swapped accessor visible in the diff rather than merely different.
+
+It also decodes **`expedition_forecast_horizon_turns`** ← `cohort.expeditionForecastHorizonTurns()`, a
+plain `uint` echoed on every cohort beside `expedition_viability_warn_turns` — the SCALE every "never
+completed" sentinel on this wire is relative to (`turns_to_fill == 0`,
+`turns_to_collapse{,_low,_high} == 0`, `expedition_trip_bound == "horizon"`). **It is not a trip
+length**: it bounds the hunting alone, so a client quoting it as one understates the trip by the whole
+walk — the floor on a hunt's span is `this + round-trip travel` (`labor-ui.md` → "An unbounded raid
+quotes a FLOOR"). Because the MARKER is a structural `duplicate()` of the cohort, it reaches the
+in-flight denial readout — whose caller has no band and reads the horizon off the launched party —
+without a stamp; `marker_field_guard` carries it so the copy stays honest.
+
+`herds_to_array` (`dict/subsistence.rs`) decodes the DENIAL raid's pre-launch table,
+`HerdTelemetryState.denialEstimates` (`docs/plan_denial_raid.md`), as **`denial_estimates` — a Godot
+ARRAY of row dictionaries, not a keyed dict like its `hunt_trip_estimates` sibling**. The hunt table
+needs a composite `"<floor>:<party>"` key because it is sampled on TWO axes, and that key is the
+source of the Rust-`f32`-Display trap its own comment records; denial carries no floor and no fill
+target, so party size is the only axis, a row's `party_workers` IS its identity, and an array cannot
+reproduce the trap. Each row carries `party_workers` / `turns_to_collapse` / `turns_to_collapse_low` /
+`turns_to_collapse_high` / `outcome` / `animals_killed` / `delivered_food` / `wasted_food` /
+`delivered_trade` / `wasted_trade`. **A `0` on any turn field means "not within the horizon on that
+end", never "immediately"**, and `outcome` is what the client renders instead of a blank — decode all
+four together or the consumer cannot tell a repelled party from an expired clock.
+
+**THE WASTE IS A PAIR, AND BOTH HALVES ARE DECODED** — `wastedTrade` is appended last on the table
+and is the twin `deliveredTrade` already had. The sim prices both out of ONE `HuntYield::apply` over
+the wasted biomass, so a kill left on the range takes its hides with it; decoding the food half alone
+reported a raid whose quarry pays pelts as wasting nothing, on the one mission whose entire readout is
+what it destroys and does not bring home. It is the appended-field drop this file records for its own
+sake, and the same food-only blindness issue #337 removed elsewhere.
+
+Beside the table it decodes `HerdTelemetryState.denialPartyNeeded` as **`denial_party_needed`**, the
+smallest party in that table whose raid SUCCEEDED (`past_recovery` / `herd_lost`, never `horizon`,
+whose projection merely ran out) — the party the compose sheet's stepper opens
+on and the count its repelled refusal names. **Inserted UNCONDITIONALLY, unlike `denial_estimates`**:
+it is a scalar with a real meaning at `0`, so a herd carrying no table still answers the question.
+**`0` means no quoted party drives this herd down and is never "send nobody"** — three honest
+situations reach it (wariness ≥ 1, a requirement past the LAST RUNG of
+`expedition_config.estimate_party_sizes` — the sole quoting bound, having absorbed the retired
+`deny.max_party_quoted` — and regrowth out-running the whole table), all told apart by the rows' own
+`outcome`. It may legitimately EXCEED the band's idle
+workers, so it is not a cap and is never clamped here; only the stepper, which knows the band, clamps
+it.
+
+## THE KIT ROSTER — six additions, three homes (`docs/plan_denial_raid.md`)
+
+Kit selection lands as one roster plus five per-row ids, and they are decoded in the module that owns
+each one's section:
+
+| wire | key | module |
+|---|---|---|
+| `SubsistenceSection.kits:[KitOption]` | `kits` (array of `{id, display_name, jobs, attack, hunt_carry_per_worker_biomass, forage_carry_per_worker_biomass}`) | `dict/subsistence.rs` → `kits_to_array` |
+| `SubsistenceSection.defaultHuntKitId` / `defaultForageKitId` | `default_hunt_kit_id` / `default_forage_kit_id` | `snapshot/mod.rs` + `bridge/decoder.rs` |
+| `PopulationCohortState.kitId` | `kit_id` on the band dict | `dict/population.rs` |
+| `LaborAssignment.kitId` | `kit_id` on the assignment entry | `dict/population.rs` |
+| `HerdTelemetryState.huntTripEstimatesKitId` / `denialEstimatesKitId` | `hunt_trip_estimates_kit_id` / `denial_estimates_kit_id` | `dict/subsistence.rs` → `herds_to_array` |
+
+**The roster and its two defaults are WHOLE-SECTION fields, so they are decoded on BOTH paths** —
+`snapshot_to_dict` and `decode_delta_against` — which is the rule the `food_modules` /
+`faction_inventory` staleness above records. A whole-section field read only on the full path
+republishes the baseline's value for the life of the world.
+
+**`KitOption`'s three tiers are the FRESH-kit ones, and they are not any band's numbers.** What a
+given band's wear does to them is the band's own cohort row (`hunter_attack` /
+`hunt_carry_per_worker_biomass` / `forage_carry_per_worker_biomass`), and the client composes the
+effective tier from the two (`KitRoster.effective_tiers`). A readout quoting the roster's number to a
+band with dry spears is the defect class this arc keeps correcting.
+
+**`none` is an ORDINARY roster entry and nothing here special-cases its id** — it grants nothing, so
+its tiers are the unequipped ones throughout. It is authored last in `equipment.json` and the decode
+preserves that order, which is the whole of why it sorts last in the picker.
+
+**The two herd ids exist so the client can say the tables are not repriced.** Both name the hunt
+job's default on every herd; when the player's selection differs, the sheet must refuse to present
+`huntTripEstimates` / `denialEstimates` as the answer rather than quoting a kitted raid's numbers to
+a bare-handed party.
 
 **The whole path is gated by `tools/decode_guard.gd`** (see its Key Scripts row) — the answer to
 "`VarDictionary` cannot be built outside a live engine", which is why the coverage here was a single

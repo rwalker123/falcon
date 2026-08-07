@@ -38,6 +38,38 @@ pub struct CombatConfig {
     /// supply, plus a *home-advantage* discount for local hunts) will supersede this flat dial. Ships
     /// finite & `> 0`.
     pub expedition_danger_multiplier: f32,
+    /// **The probability one unit's attack lands** — where the resolver's variance lives
+    /// (`docs/plan_hunt_through_combat.md` §4.7), drawn per unit so it is *binomial in force size*.
+    /// Ships **1.0**, which is an *exact identity*: no draw is made and no randomness consumed, so
+    /// the take stays deterministic and the forecast's reported range is a **point**
+    /// ([`Self::forecast_range_sigmas`]). Authoring a sub-1 chance is what makes the range real.
+    /// Ships finite, `> 0` and `<= 1`.
+    pub hit_chance: f32,
+    /// **How much of its own `durability` a wounded body knits back per turn out of contact** — the
+    /// decay half of [`crate::combat::DamageLedger`]. Ships **0.2** (five quiet turns clear any
+    /// wound); finite, `> 0` and `<= 1`.
+    pub wound_recovery_rate: f32,
+    /// **Damage a hunt does to its own party per ANIMAL ENGAGED**, independent of what the quarry
+    /// swings (`docs/plan_hunt_through_combat.md` §4.6) — hunters fall, are trampled in a drive, cut
+    /// themselves butchering.
+    ///
+    /// **A lever, not a per-species field**: the danger is in the activity, not in the rabbit, so it
+    /// scales with the *engagement* and lives here beside `expedition_danger_multiplier` — the other
+    /// dial in this file that only the hunt adapter reads. Ships **0.15**, finite and `> 0`.
+    pub hunt_injury_damage_per_animal: f32,
+    /// **How wide the pre-commit forecast's reported range is**, in standard deviations of the take's
+    /// own binomials (`docs/plan_hunt_through_combat.md` §6.4).
+    ///
+    /// A forecast has no event seed — [`crate::fauna::retreat_seed`] is `(map_seed, tick, herd,
+    /// party)` and a projection cannot know a future tick — so it draws nothing and reads the
+    /// distribution instead: the point estimate is the mean, the reported bounds are this many
+    /// sigmas either side. Ships **2.0** (~95% of a normal-approximated binomial), which is the
+    /// *"6–11, likely 9"* the design asks for.
+    ///
+    /// **It is a READOUT width, never a model term** — no resolution path reads it, so widening it
+    /// cannot move a single animal. Finite and `> 0`: a `0` would report a point estimate as a
+    /// certainty, which is exactly the promise this slice exists to stop making.
+    pub forecast_range_sigmas: f32,
 }
 
 impl CombatConfig {
@@ -68,6 +100,11 @@ impl CombatConfig {
         CombatTuning {
             lethality: self.lethality,
             disengage_fraction: self.disengage_fraction,
+            hit_chance: self.hit_chance,
+            wound_recovery_rate: self.wound_recovery_rate,
+            // Config describes a **live** fight; a forecast substitutes its own draw mode at the
+            // point of use (`fauna::HuntDraw`), never in the loaded tuning.
+            draw: crate::combat::StrikeDraw::Seeded,
         }
     }
 
@@ -88,6 +125,38 @@ impl CombatConfig {
                 value: self.disengage_fraction.to_string(),
             });
         }
+        // A probability, so the same `(0, 1]` bound. **`0` is rejected**, not treated as "never
+        // hits": a fight where no attack ever lands is the whole subsystem silently disabled, which
+        // is exactly what the `lethality`/`disengage_fraction` bounds above exist to refuse.
+        require_positive_finite("hit_chance", self.hit_chance)?;
+        if self.hit_chance > MAX_FRACTION {
+            return Err(CombatConfigError::Invalid {
+                field: "hit_chance",
+                constraint: format!("be at most {MAX_FRACTION}"),
+                value: self.hit_chance.to_string(),
+            });
+        }
+        // A share of `durability`, so the same `(0, 1]` bound. **`0` is rejected** on the same
+        // reasoning as the dials above: a ledger that never decays is a wound the quarry carries for
+        // the rest of the campaign, which is the "never forgets" end the design explicitly refused.
+        require_positive_finite("wound_recovery_rate", self.wound_recovery_rate)?;
+        if self.wound_recovery_rate > MAX_FRACTION {
+            return Err(CombatConfigError::Invalid {
+                field: "wound_recovery_rate",
+                constraint: format!("be at most {MAX_FRACTION}"),
+                value: self.wound_recovery_rate.to_string(),
+            });
+        }
+        // Damage, not a fraction, so only the positive-finite half applies — but `0` is rejected for
+        // the same reason every other severity dial here is: it silently deletes the baseline risk
+        // rather than tuning it down.
+        require_positive_finite(
+            "hunt_injury_damage_per_animal",
+            self.hunt_injury_damage_per_animal,
+        )?;
+        // A width in sigmas, so unbounded above but never `0`: a zero-width range reports a
+        // distribution as a promise, which is the failure mode the range readout exists to end.
+        require_positive_finite("forecast_range_sigmas", self.forecast_range_sigmas)?;
         Ok(())
     }
 }
@@ -203,6 +272,65 @@ mod tests {
         assert_eq!(config.lethality, 1.0);
         assert_eq!(config.disengage_fraction, 0.5);
         assert_eq!(config.expedition_danger_multiplier, 1.5);
+        assert_eq!(config.wound_recovery_rate, 0.2);
+        assert_eq!(config.hunt_injury_damage_per_animal, 0.15);
+        assert_eq!(config.forecast_range_sigmas, 2.0);
+    }
+
+    /// A zero-width range would report the point estimate as a certainty — the exact promise the
+    /// range readout exists to stop making.
+    #[test]
+    fn validate_rejects_a_zero_forecast_range() {
+        let mut config = CombatConfig::builtin().as_ref().clone();
+        config.forecast_range_sigmas = 0.0;
+        assert!(matches!(
+            config.validate(),
+            Err(CombatConfigError::Invalid {
+                field: "forecast_range_sigmas",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_a_wound_recovery_rate_above_one() {
+        let mut config = CombatConfig::builtin().as_ref().clone();
+        config.wound_recovery_rate = 1.5;
+        assert!(matches!(
+            config.validate(),
+            Err(CombatConfigError::Invalid {
+                field: "wound_recovery_rate",
+                ..
+            })
+        ));
+    }
+
+    /// A ledger that never decays is the "never forgets" model the design refused — a party chipping
+    /// at a mammoth across fifty turns of unrelated play.
+    #[test]
+    fn validate_rejects_a_wound_recovery_rate_of_zero() {
+        let mut config = CombatConfig::builtin().as_ref().clone();
+        config.wound_recovery_rate = 0.0;
+        assert!(matches!(
+            config.validate(),
+            Err(CombatConfigError::Invalid {
+                field: "wound_recovery_rate",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_a_non_positive_hunt_injury_damage() {
+        let mut config = CombatConfig::builtin().as_ref().clone();
+        config.hunt_injury_damage_per_animal = 0.0;
+        assert!(matches!(
+            config.validate(),
+            Err(CombatConfigError::Invalid {
+                field: "hunt_injury_damage_per_animal",
+                ..
+            })
+        ));
     }
 
     #[test]

@@ -13,6 +13,21 @@ extends Node
 ## then read ui_preview_out/band_panel_*.png.
 
 const HUD_SCENE := preload("res://src/ui/HudLayer.tscn")
+
+## The hang guard, a SIBLING node in `band_panel_preview.tscn` (`tools/preview_watchdog.gd`).
+##
+## **This harness does NOT have `ui_preview`'s chapter-loading defect** — it loads no chapters, so
+## nothing here can leave a half-written frame set behind a broken sub-script. What it DOES share is
+## the shape underneath it: the whole run is one long `await`ing `_ready()` whose last line is
+## `get_tree().quit()`, so any runtime error aborts it without ever exiting, and any of the three
+## scenes/scripts it `preload`s failing to compile takes THIS script's parse down with it — leaving
+## the root node scriptless and the process idling forever with no FAIL and no status. The guard is
+## the same node, for that shape only; this harness's own PASS/FAIL contract is untouched (it prints
+## `ERROR: band_panel_preview` lines and still exits 0 on a red run — see
+## `.claude/rules/client/test-harnesses.md`).
+const WATCHDOG_NODE := "Watchdog"
+const WATCHDOG_PROGRESS_METHOD := "note_progress"
+
 ## Scratch prefs file — never the player's `user://narrative.cfg`.
 const PREVIEW_PREFS_PATH := "user://band_panel_preview_prefs.cfg"
 ## Scratch DOCK prefs — never the player's `user://band_city_dock.cfg`. Without this the harness both
@@ -22,6 +37,11 @@ const PREVIEW_DOCK_PREFS_PATH := "user://band_panel_preview_dock.cfg"
 const BAND_PANEL_SCENE := preload("res://src/ui/BandCityPanel.tscn")
 ## The real MapView, for the map-selection path state (see `band_panel_people_map_path`).
 const MAP_VIEW_SCRIPT := preload("res://src/scripts/MapView.gd")
+## **THE KIT ROSTER IS SHARED WITH `ui_preview`, and deliberately so.** It is world config the sim
+## publishes once (`SubsistenceSection.kits`), not a per-harness prop: two copies could quote
+## different tiers or a different job default, and the `kit <id>` command token asserted here is the
+## same token that harness's frames are read against. This is the ONE cross-harness fixture preload.
+const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 ## The hex `_band_fixture()` stands on — the tile the map-path state clicks.
 const MAP_PATH_TILE := Vector2i(71, 18)
 ## A grid just large enough to hold MAP_PATH_TILE, and one flat terrain id to fill it with.
@@ -68,6 +88,102 @@ const QUARRY_FOOD_PER_ANIMAL := 4.0
 const QUARRY_TRADE_PER_ANIMAL := 0.5
 ## The INEDIBLE quarry on the work board (issue #337): its hunt row pays trade goods and no food.
 const TRADE_ONLY_HERD_ID := "game_wolf_03"
+
+# ---- THE COMBAT GATE's two herd terms on the quarry (`docs/plan_hunt_through_combat.md` §4.2) -----
+## `defense` is whether a hit counts at all — deliberately ABOVE the roster's bare-handed `attack`
+## (1.0) and far below the big-game kit's (20.0), so the gate's verdict FLIPS with the kit and the
+## kit-mismatch frame's line is a discriminator rather than a decoration.
+const QUARRY_DEFENSE := 2.0
+## …and `durability` is how many counting hits it takes. A round number well above the effective
+## attack, so the effort figure reads as a real several-hunter-turns rather than a rounding.
+const QUARRY_DURABILITY := 60.0
+
+# ---- THE DENIAL RAID's fixture (`docs/plan_denial_raid.md`) --------------------------------------
+## The party the two denial frames compose, i.e. which row of the table below they render. It is the
+## reference band's whole IDLE workforce, because that is the only ceiling this form has: the denial
+## sheet deliberately carries NO max-useful cap (a raid has no payload to plateau), so it renders a
+## party the HUNT sheet beside it would have clamped to the boar's raid plateau of 2 — which is the
+## rendered difference between the two forms. Set it above `_band_fixture`'s idle count and the
+## stepper clamps, leaving every assertion below answering for a row the frame never shows.
+const DENIAL_PARTY := 3
+## The VIABLE table's rows for parties 1..8. **More hands break the herd sooner** — the mission's only
+## lever — so the counts fall monotonically; the band widens where the retreat is chanciest. Party 4
+## reads `3–5`, the plan's own worked example.
+const DENIAL_TURNS_ROW := [11, 8, 6, 4, 4, 3, 3, 2]
+const DENIAL_LOW_ROW := [9, 6, 5, 3, 3, 2, 2, 2]
+const DENIAL_HIGH_ROW := [14, 10, 8, 5, 5, 4, 4, 3]
+const DENIAL_KILLS_ROW := [26, 42, 55, 66, 74, 82, 88, 94]
+## The REPELLED table's kills — non-zero, and that is the claim. A repelled party is not one that
+## kills nothing; it is one whose kills do not outpace the herd's regrowth, so the take readout must
+## still have something to state while the verdict says the herd is never pushed past recovery. Its
+## turn rows are all `0`, the wire's "not within the horizon on that end".
+const DENIAL_REPELLED_KILLS_ROW := [3, 5, 7, 9, 10, 11, 12, 13]
+## **THE BAND WHOSE IDLE WORKFORCE OUTRUNS `max_expedition_party_size`** (8, on `_band_fixture`). That
+## field is the wire echo of the sim's estimate-table SAMPLING AXIS, not a rules cap, so the denial
+## stepper's ceiling is the band's own idle workers — and this count is the only shape in which a
+## ceiling read off the wrong field is visible at all. Deliberately ABOVE `DENIAL_DEEP_PARTY_NEEDED`,
+## so the seed lands unclamped and the cap has somewhere further to go.
+const DENIAL_DEEP_PARTY_IDLE := 12
+## The party the sim quotes for that quarry (`denialPartyNeeded`): the smallest one whose kills outpace
+## the herd's regrowth. **Above 8**, which is the case the whole frame exists for — a requirement one
+## rung past the sampling axis, which the old stepper could not even be dialled to.
+const DENIAL_DEEP_PARTY_NEEDED := 11
+## …and the party the second frame steps BACK to, below that requirement, so its row is `repelled` and
+## the refusal beneath it has a count to name.
+const DENIAL_DEEP_PARTY_SHORT := 4
+## **THE REPORTED SHAPE — a bounded expectation, a bounded good run, and a BAD run that never
+## finishes.** `high == 0` is the wire's "not within the horizon on that end", and no other denial
+## fixture in this file stages it: every table above bounds all three, so the frames could not show
+## what the old rule did here — it dropped the expectation entirely and quoted the LUCKY end alone,
+## beside a take line priced at the expectation. The spread between the two is deliberately wide,
+## because a low sitting near the expectation would render a defensible-looking sentence either way.
+const DENIAL_OPEN_HIGH_TURNS := 47
+const DENIAL_OPEN_HIGH_LOW := 12
+## The party this frame composes. Inside the reference band's idle workforce, so the stepper renders
+## it unclamped and the frame is judged on the sentence rather than on a cap.
+const DENIAL_OPEN_HIGH_PARTY := 2
+## Whole animals ONE raider of that party kills over the raid. A repelled party is not one that kills
+## nothing — it is one the herd outbreeds — so the sub-requirement rows carry a real take.
+const DENIAL_DEEP_KILLS_PER_WORKER := 3
+## The collapse band quoted for a party at or above the requirement. One row of the table is ever
+## rendered, so a flat band states everything the frame needs and nothing it does not.
+const DENIAL_DEEP_TURNS := 6
+const DENIAL_DEEP_TURNS_LOW := 5
+const DENIAL_DEEP_TURNS_HIGH := 8
+## Food ONE raider hauls home over the whole raid — tiny beside the kill, which IS the mission. A
+## fixture that hauled its whole kill would be a hunting raid wearing a denial outcome, and the waste
+## readout would have nothing to state.
+const DENIAL_CARRY_PER_WORKER := 2.0
+## **THE SHIPPED PARTY LADDER** — `expedition_config.estimate_party_sizes`, the SAMPLED party axis of
+## both estimate tables. It is restated here rather than read off a fixture because these assertions
+## are about the SHAPE the sim ships: dense at the low end where one hunter is a large proportional
+## change, sparse at the top where it is not. Every other estimate fixture in this file samples
+## CONTIGUOUSLY (1..8), which is the axis the sim retired — so no frame can reach a between-rungs
+## party and only a constructed table can.
+const LADDER_PARTY_SIZES := [1, 2, 3, 4, 8, 16, 32, 64]
+## Its last rung — the ONE quoting bound there is, having absorbed the retired `deny.max_party_quoted`.
+const LADDER_LAST_RUNG := 64
+## A party sitting EXACTLY between two rungs (4 and 8), i.e. the TIE the lower-rung rule decides. It is
+## a tie on purpose: an untied gap would pass with the tie-break written either way.
+const LADDER_TIE_PARTY := 6
+## How many rows the denial table samples around the herd's own requirement, on top of the ladder —
+## `expedition_config.deny.requirement_rows`. At a requirement of 1 that run is `{1,2,3,4,5}`.
+const DENIAL_REQUIREMENT_ROWS := 5
+## A denial party between two rungs of the resulting `{1,2,3,4,5,8,16,32,64}` axis. It rounds DOWN to 5
+## by distance rather than by the tie rule (gap 1 against gap 2), so it exercises the nearest rule
+## independently of `LADDER_TIE_PARTY`. **This is the party the caller's report blanked the sheet on.**
+const DENIAL_LADDER_BETWEEN := 6
+## …and one past the ladder's top, which must resolve to `LADDER_LAST_RUNG` rather than to nothing.
+const DENIAL_LADDER_PAST := 96
+## The ladder tables' flat payload terms. One row of each is ever read by these assertions, so flat
+## bands state everything the claims need — except the kill/animal counts, which RISE with the party so
+## the plateau scan has a real curve rather than a flat line it would read as an immediate plateau.
+const LADDER_ANIMALS_PER_WORKER := 2
+const LADDER_TURNS_TO_FILL := 5
+const DENIAL_LADDER_KILLS_PER_WORKER := 4
+const DENIAL_LADDER_TURNS := 7
+const DENIAL_LADDER_TURNS_LOW := 5
+const DENIAL_LADDER_TURNS_HIGH := 9
 ## The quarry fixtures straddle the band's hunt reach: the Wild Boar is a party's job, the Roe Deer
 ## one tile out is a local hunt the picker must refuse.
 const QUARRY_BAND_HUNT_REACH := 2
@@ -77,6 +193,46 @@ const QUARRY_FAR_Y := 18
 const QUARRY_NEAR_HERD_ID := "game_deer_79"
 const QUARRY_NEAR_X := 72
 const QUARRY_NEAR_Y := 18
+## **A HERD ON THE BAND'S OWN TILE** — the extreme of "within hunt reach", and the case a DENIAL raid
+## must still be allowed to name (reported from play: the warren beside camp could not be broken,
+## because the quarry rule was the hunt's). It stands at the band fixture's own coordinates, so its
+## outbound walk is exactly ZERO turns — which is also the only geometry that exercises the verdict's
+## no-travel-split branch, a herd even one tile out costing a turn.
+const QUARRY_HOME_HERD_ID := "game_rabbit_18"
+const QUARRY_HOME_SPECIES := "Rabbit Warren"
+const QUARRY_HOME_X := 71
+const QUARRY_HOME_Y := 18
+## Stated rather than re-derived, like `DENIAL_OUTBOUND_TRAVEL_TURNS`: the band and the warren share a
+## tile, so the odd-r distance is 0 and `ceil(0 / move_rate)` is 0 whatever the move rate.
+const QUARRY_HOME_OUTBOUND_TRAVEL_TURNS := 0
+## **TWO HERDS ON ONE HEX** — the reported pair. A tile can hold more than one herd and a map click
+## names only the TILE, so the pick resolves to whichever the snapshot lists first and re-clicking
+## resolves to the same one; the Quarry row's chooser is the way to the other. The pair is
+## deliberately a food quarry beside an INEDIBLE one: they differ in art, in name and in what the
+## raid brings home, so a chooser that offered one herd twice could not pass. Same row as the band
+## (71, 18) and seven columns out, i.e. far beyond `QUARRY_BAND_HUNT_REACH`.
+const SHARED_TILE_X := 78
+const SHARED_TILE_Y := 18
+const SHARED_TILE_FOOD_HERD_ID := "game_rabbit_11"
+const SHARED_TILE_FOOD_SPECIES := "Rabbit Warren"
+const SHARED_TILE_PELT_HERD_ID := "game_wolf_11"
+const SHARED_TILE_PELT_SPECIES := "Wolf Pack"
+## The shared hex's raid table: whole animals taken per party size 1..8, and the turns it takes. Flat
+## in the turns because nothing on this frame is judged on trip LENGTH — the claim is the chooser.
+const SHARED_TILE_RAID_ANIMALS_ROW := [4, 7, 9, 10, 10, 10, 10, 10]
+const SHARED_TILE_RAID_TURNS := 6
+## The two species' per-animal quanta. A rabbit is small and pays a little of both; a wolf pays pelts
+## alone, so it carries a TRADE quantum and no food one at all.
+const SHARED_TILE_FOOD_PER_ANIMAL := 1.5
+const SHARED_TILE_FOOD_TRADE_PER_ANIMAL := 0.2
+const SHARED_TILE_PELT_TRADE_PER_ANIMAL := 0.9
+## **THE WALK OUT TO THE FAR QUARRY, stated from the fixture's own geometry.** The band stands at
+## (71, 18) and the boar at (75, 18) — the same row, so the odd-r hex distance is the bare column
+## delta, 4 — and `_band_fixture` moves 2 tiles a turn, so the party arrives on turn `ceil(4 / 2)` = 2.
+## The denial verdict adds it to both ends of the collapse band, because the sim's table counts only
+## the turns spent working the herd. Written out rather than asked of `outbound_travel_turns`: an
+## expectation re-derived through the code under test asserts nothing.
+const DENIAL_OUTBOUND_TRAVEL_TURNS := 2
 # The two disclosure keys of `_band_fixture()` (entity 904) — the `[url]` meta payload its Food /
 # Morale rows carry, i.e. what `DetailFormat.breakdown_key` builds for that band.
 const BAND_FIXTURE_DISCLOSURE_FOOD := "food:904"
@@ -157,6 +313,26 @@ const HUNT_DELIVERING_ENTITY := 952
 const HUNT_LEAN_ENTITY := 953
 # A hunt party whose target herd has DROPPED OUT of `_world_herds` (lost/replaced), projecting 0.
 const HUNT_LOST_ENTITY := 954
+# A party still standing in its home band's camp with no map report owed — the one shape a recall
+# CANCELS on the spot rather than walking home (`HudBandLaborState.party_cancels_in_camp`).
+const HUNT_IN_CAMP_ENTITY := 955
+# **THE TALLEST PARTY THE INSPECTOR STRIP CAN BE ASKED TO HOLD** — every optional line of
+# `BandDetailLines.expedition_summary_lines` live at once. See `_worst_case_party_fixture`.
+const HUNT_WORST_CASE_ENTITY := 956
+# Its pack number: the carried figure EQUALS the cap so the `Carried:` row takes its longest form —
+# `N / cap` plus the `· FULL` badge — rather than the bare count a capless party gets.
+# The floor it was launched with, deliberately NOT the default — the Orders row is asserted against
+# it, so a fixture at the default would match a row the producer had stopped composing from the party.
+const WORST_CASE_FLOOR := 0.3
+# Its quarry, one of `_herd_fixtures()`. Named so the fixture and the assertion's needles resolve the
+# SAME herd — the assertion reads the herd's live position and species back off `_world_herds` rather
+# than restating them.
+const WORST_CASE_TARGET_HERD_ID := "game_deer_79"
+const WORST_CASE_CARRY_CAP := 18
+# How many detail lines that party's strip must render. Stated here rather than counted from the render
+# so the state FAILS on a producer that quietly stops emitting one — a shorter strip fits its box, so
+# the extent report would go green on a fixture that had stopped being the worst case.
+const WORST_CASE_DETAIL_LINES := 7
 # A 21:9 monitor — comfortably past the wide shell's content cap, which is the whole point of the state.
 const ULTRAWIDE_WIDTH := 3440
 const ULTRAWIDE_HEIGHT := 900
@@ -203,6 +379,8 @@ var _pinned_size := PREVIEW_SIZE
 var _pinned_canvas := Vector2i.ZERO
 var _hud: HudLayer
 var _panel: BandCityPanel
+## The hang guard from the scene, or `null` if it has gone — a safety net, never a dependency.
+var _watchdog: Node = null
 ## The last state `_save`d, so an assertion failure names the frame it fired on.
 var _current_state := "<pre-render>"
 ## Set by `_unhandled_input` below — this harness's stand-in for `MapView`'s hex picking, which is also
@@ -424,6 +602,7 @@ func _set_forage_patches(patches: Array) -> void:
 const DEEP_DRAW_FLOOR := 0.15
 
 func _ready() -> void:
+	_watchdog = _resolve_watchdog()
 	# FREEZE ANIMATION TIME — the treatment `ui_preview`, `map_preview` and `blend_probe` all carry, and
 	# taken for the same reason: a frame that varies run-to-run cannot be pixel-diffed to prove a panel
 	# refactor changed nothing. Measured before the freeze, two runs of IDENTICAL code differed byte-wise
@@ -533,6 +712,11 @@ func _ready() -> void:
 	_hud.update_food_modules([
 		{"x": 71, "y": 18, "module": "savanna_grassland", "kind": "gather"},
 	])
+	# The world's KIT ROSTER (Main pushes snapshot["kits"] + the two job defaults): the compose
+	# sheets' Kit picker is built from it. World setup rather than per-state, exactly as the herds and
+	# food modules above are — a roster seeded per frame would give one sheet a picker and the next none.
+	_hud.update_kit_roster(BandFx.kit_roster_fixture(),
+		BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE)
 	_push_bands([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
 	print("band_panel_preview: cycler split — player_bands=%d (expect 1), player_expeditions=%d (expect 2)" % [
 		_hud._band_labor._player_bands.size(), _hud._band_labor._player_expeditions.size()])
@@ -677,6 +861,11 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 	_report_zone_content_extent("band_panel_vitals_worst_case")
 	_assert_merged_food_row_fits()
+	# The SHORT tier's SECOND merge, and the one the `Kit` row is paid for with. Measured in the same
+	# frame as the Food merge because this is the frame that carries every optional row at once — the
+	# only state in which the zone is asked to hold the full set.
+	_assert_merged_morale_growth_fits()
+
 
 	# (c) CONCERNING food (net negative + low runway): the breakdown AUTO-shows (no click) under a red net.
 	_push_bands([_concerning_food_band_fixture()])
@@ -715,6 +904,7 @@ func _ready() -> void:
 		await _settle()
 		await _settle()   # extra frame: let the deferred fit_content re-pack + reservation settle
 		await _save(state["name"])
+		_report_zone_content_extent(String(state["name"]))
 
 	# PER-SOURCE MAX-USEFUL CAP on the Current-actions rows. Push a band with idle workers to spare and
 	# three staffed sources: a Forage row staffed AT its patch's max-useful (3), a Forage row BELOW its
@@ -801,6 +991,7 @@ func _ready() -> void:
 	await get_tree().process_frame
 	await _settle()
 	_assert_people_sum_matches_size(_hud._selection._selected_unit, "band_panel_people_map_path")
+	_assert_map_path_states_kit()
 	await _save("band_panel_people_map_path")
 	# Restore the snapshot-path band so the later states start from the same subject they always did.
 	_push_bands([_band_fixture()])
@@ -1049,19 +1240,83 @@ func _ready() -> void:
 	_set_world_herds(_quarry_herd_fixtures())
 	_push_bands([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
 	_assert_quarry_eligibility()
+	_assert_denial_quarry_eligibility()
+	_assert_denial_party_needed_skips_horizon()
+	_assert_denial_turn_clause_shapes()
 	_panel.set_active_tab(&"parties")
 	_hud._bandpanel._party_compose_open = true
 	_hud._bandpanel._party_compose_mission = "hunt"
 	_hud._compose.set_party_quarry(QUARRY_FAR_HERD_ID)
 	# Picking a quarry fills the party to its max-useful cap (the one-shot `TargetingController._try_pick_quarry` sets);
 	# seed it here too so the frame shows the shipped default (the party at the cap, not a stray 1).
+	# **THE COUNT IS PUT BACK ON ITS FLOOR FIRST, and that is what makes the ordering claim below
+	# testable rather than lucky.** Autofill only moves the party if the party is not already at the
+	# cap, so a state-order change that left a big count behind would silently turn
+	# `_assert_chart_reads_the_settled_party` into a tautology. It costs the frame nothing: the very
+	# next line arms the fill, so what renders is the cap either way.
+	_hud._bandpanel._send_expedition_count = COMPOSE_HUNT_SEED_PARTY
 	_hud._compose.arm_party_autofill()
 	_hud._bandpanel.rerender()
 	await _settle()
 	await _save("band_panel_compose_hunt")
+	_report_compose_widths("band_panel_compose_hunt")
+	_assert_hunt_sheet_chart(true, "band_panel_compose_hunt")
+	_assert_chart_reads_the_settled_party("band_panel_compose_hunt", COMPOSE_HUNT_SEED_PARTY)
+	# The tall side dock is where the sheet must NOT leave the zone — the other half of the fork the
+	# height-capped state below asserts. See `_assert_compose_in_zone`.
+	_assert_compose_in_zone("band_panel_compose_hunt")
+	_assert_party_past_the_rungs_is_quoted()
+	_assert_party_ladder_rounding()
+
+	# **THE SAME SHEET IN THE HEIGHT-CAPPED TOP DOCK** — the tier gate on the chart, and the only
+	# state that renders it. The parties zone CLIPS there, and the chart is ~150px of a ~300px box, so
+	# the SHORT tier keeps the presets alone exactly as the band zone's outlook chart is kept out. The
+	# frame is judged on the ABSENCE plus the fit: a gate that never fired and a chart clipped off the
+	# bottom of the zone are the same picture.
+	_panel.set_dock(SIDE_TOP)
+	await _settle()
+	await _save("band_panel_compose_hunt_short")
+	# **THE FIT IS ASSERTED HERE NOW, AND IT IS ASSERTED IN THREE PLACES AT ONCE.** An open parties
+	# compose sheet does not fit a height-capped horizontal dock at all — measured at 641px of a 265px
+	# box WITHOUT the chart (quarry row, presets, floor hint, party stepper, kit row, forecast and
+	# send, none of which this tier drops), which is why this state used to REPORT its extent instead
+	# of asserting it. The sheet renders in `BandComposeFloat` there now, so the claim can be made —
+	# but only as a set: `_assert_zone_content_fits` alone passes TRIVIALLY once the sheet leaves the
+	# zone, and a float is only a fix if the overflow landed somewhere that is itself measured.
+	_report_zone_content_extent("band_panel_compose_hunt_short")
+	_report_compose_widths("band_panel_compose_hunt_short")
+	_assert_hunt_sheet_chart(false, "band_panel_compose_hunt_short")
+	_assert_zone_content_fits()
+	_assert_compose_float("band_panel_compose_hunt_short")
+	await _assert_float_leaves_the_map_clickable("band_panel_compose_hunt_short")
+	# **AN UNKNOWN ZONE BOX MUST NOT FLOAT.** Taken HERE, with the mark latched at the short dock's
+	# genuine 641px, because that is the only configuration in which the two possible answers differ.
+	_assert_unknown_zone_box_does_not_float("band_panel_compose_hunt_short")
+	# **AND A MARK LATCHED IN THE SHORT DOCK MUST NOT SURVIVE THE MOVE TO THE TALL ONE.** Staged here,
+	# judged after the real `set_dock` → render below.
+	var staged_mark := _stage_impossible_compose_mark()
+	_panel.set_dock(SIDE_LEFT)
+	await _settle()
+	_assert_mark_dropped_on_dock_change("band_panel_compose_hunt", staged_mark)
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
+	# **THE DOCK IS THE SECOND LAUNCH SITE, AND IT MUST OFFER THE SAME ORDERS** (§5.2). A lever on the
+	# herd drawer's sheet and absent here is the same defect as a lever that does nothing. The FLOOR is
+	# now the whole of what a raid is ordered with (the fill target is retired, issue #491), and what
+	# this sheet must still state is the trip's BOUND: it rides its own quiet line here (this zone's
+	# forecast is the one-LINE form, already dense with five facts) where the drawer folds the identical
+	# clause into its readout verdict — one table, so the two surfaces cannot describe one stop
+	# differently.
+	_assert_band_panel("the dock's hunt sheet names which stop ends the trip",
+		_has_label_containing(_panel, SourceForecast.TRIP_BOUND_CLAUSES[
+			SourceForecast.TRIP_BOUND_PACK_FULL]))
+	# **ONE QUARRY ON THE HEX GETS NO CHOOSER, and this frame is the whole guarantee that the common
+	# case did not grow chrome for the rare one.** The boar stands alone on (75, 18); the paired
+	# positive is `band_panel_compose_deny_two_quarries`, without which a chooser rendered on every
+	# sheet would satisfy every claim there.
+	_assert_band_panel("a lone quarry on the hex gets NO chooser on the Quarry row",
+		_find_meta_control(_panel, HudWidgets.QUARRY_CHOICES_META) == null)
 
 	# The same sheet on ERADICATE — the frame the EXPEDITION rung's hint is judged on (issue #337). The
 	# launch picker is the ONE surface that renders `SEND_HUNT_POLICY_HINTS` verbatim, and Eradicate's
@@ -1086,6 +1341,35 @@ func _ready() -> void:
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
 
+	# **THE EMPTY FORM OPENED THE WAY A PLAYER OPENS IT, IN THE TALL DOCK — the state that was missing
+	# when this defect was reported the second time.** Every compose fixture above stages its sheet by
+	# writing `_party_compose_open` and picking a quarry first, so the harness never once rendered the
+	# SMALLEST the sheet ever is: the form the player sees the instant they press `🏹 Hunt`, on a band
+	# with no parties out. That is the exact picture that came back from play, floating out of a dock
+	# with hundreds of px to spare. The whole composing act is restarted here — closed, then reopened
+	# through the REAL footer button — because the phantom this exists to catch is taken on the render
+	# that the press arms, and a sheet already open has already been measured.
+	_hud._bandpanel._close_party_compose()
+	_push_bands([_band_fixture()])
+	_panel.set_active_tab(&"parties")
+	await _settle()
+	await _assert_empty_compose_opens_in_the_zone("band_panel_compose_hunt_empty")
+	# Asked at the STATE rather than inside the block above, so it is still asked when that block
+	# refuses its own precondition — a trigger stuck ON floats the sheet, which takes the phantom
+	# reading out of the parties column and would otherwise let this claim go unasked.
+	await _settle()
+	_assert_zone_holds_its_compose_sheet("band_panel_compose_hunt_empty")
+	await _save("band_panel_compose_hunt_empty")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	# Restore the roster the states below read: `update_band_alerts` keeps a losing-population diff
+	# against the last roster pushed, and the parties rows are what the scout/deny frames render above
+	# their sheets.
+	_push_bands([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
+	_hud._bandpanel.rerender()
+	await _settle()
+
 	# Same sheet under Scout: scouting title, NO quarry row, NO policy picker, "Send scouting party…".
 	_hud._bandpanel._party_compose_mission = "scout"
 	_hud._bandpanel.rerender()
@@ -1094,6 +1378,212 @@ func _ready() -> void:
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
+
+	# **THE DENIAL FORM — the third verb** (`docs/plan_denial_raid.md` §3). Quarry → party → the
+	# COLLAPSE VERDICT → the take → send. What is ABSENT is the specification: no floor picker, no
+	# floor hint, no fill target, no crew preset — a herd and a party size, and nothing else the
+	# `send_denial_raid` grammar (closed at four tokens) could even carry.
+	_hud._bandpanel._party_compose_mission = HudComposeVocab.COMPOSE_MISSION_DENY
+	_hud._compose.set_party_quarry(QUARRY_FAR_HERD_ID)
+	_hud._bandpanel._send_expedition_count = DENIAL_PARTY
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_compose_deny")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_denial_viable()
+
+	# ---- THE KIT PICKER, on the sheet the roster was designed against ----------------------------
+	# **CLOSED.** The row sits directly under the party stepper and above the verdict, because a kit
+	# describes the crew and moves every figure below it. The band is re-pushed carrying real component
+	# CONDITIONS, so the hint line under the picker states this band's EFFECTIVE tier — the fresh-kit
+	# numbers on `KitOption` are not what a band with worn spears actually gets, and quoting them would
+	# be the defect class this branch has spent four commits removing.
+	_push_bands([_scout_expedition_fixture(), _kit_worn_band_fixture(), _hunt_expedition_fixture()])
+	_hud._compose.set_party_kit_id(BandFx.KIT_DEFAULT_HUNT)
+	_hud._bandpanel._send_expedition_count = DENIAL_PARTY
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_compose_deny_kit")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_kit_picker_closed()
+
+	# **OPEN.** The roster grows toward a dozen kits and a pill row cannot hold that in a 354px column,
+	# so the control is an `OptionButton` — a native selector, which also MARKS the current entry
+	# itself. The popup is an embedded subwindow, so it lands in the capture; the structural claims
+	# (which entries, which one is marked, which one is tagged the default, and `none` LAST) ride the
+	# assertion, since a screenshot cannot say which item carries the radio dot.
+	var kit_picker := _find_meta_control(_panel, KitRoster.KIT_PICKER_META) as OptionButton
+	if kit_picker != null:
+		# Placed by hand under the button. `show_popup()` would do it, but it also grabs input and can
+		# move focus mid-run; the popup is an EMBEDDED subwindow, so positioning it and calling
+		# `popup()` renders it into the same viewport the capture reads.
+		var below := kit_picker.get_screen_position() + Vector2(0.0, kit_picker.size.y)
+		kit_picker.get_popup().position = Vector2i(below)
+		kit_picker.get_popup().popup()
+	await _settle()
+	await _save("band_panel_compose_deny_kit_open")
+	_assert_kit_picker_open(kit_picker)
+	if kit_picker != null:
+		kit_picker.get_popup().hide()
+
+	# **THE KIT-MISMATCH STATE** — `none` selected against a table quoted for `big_game`. This is the
+	# frame the honesty rule is judged on, and it is judged largely on what the sheet must NOT say: no
+	# collapse verdict, no estimate caveat, no take line, no counted refusal. What it MUST say is the
+	# combat gate — composed from wire terms, honest at any tier — plus the sentence naming the kit
+	# those withheld numbers belonged to. Driven through the popup's REAL `id_pressed`, so the pick
+	# path is exercised rather than the model being written.
+	_pick_kit(KitRoster.NO_KIT_ID if kit_picker == null else BandFx.KIT_ID_NONE)
+	await _settle()
+	await _save("band_panel_compose_deny_kit_mismatch")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_kit_mismatch_suppresses_estimates()
+	# Restore: the frames below are read against the DEFAULT kit and the reference band, and a
+	# selection left on `none` would suppress every verdict they assert.
+	_hud._compose.set_party_kit_id(BandFx.KIT_DEFAULT_HUNT)
+	_push_bands([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
+	_hud._bandpanel._send_expedition_count = DENIAL_PARTY
+	_hud._bandpanel.rerender()
+	await _settle()
+
+	# The SAME form against a herd that outbreeds the party — the `repelled` verdict, which is a claim
+	# about the PARTY and not about the clock. It still LAUNCHES (a raid that cannot get there keeps
+	# working the herd until recalled), so the Send warns rather than blocking. Judged as a PAIR with
+	# the viable frame above: a table answering one verdict for every outcome satisfies either alone.
+	_set_world_herds(_quarry_herd_fixtures(_denial_repelled_rows()))
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_compose_deny_repelled")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_denial_repelled()
+	_set_world_herds(_quarry_herd_fixtures())
+
+	# **TWO HERDS ON ONE HEX** — the reported gap. The map click names a TILE, so a warren sharing a
+	# hex with a wolf pack resolves to whichever the snapshot lists first and re-clicking resolves to
+	# the same one; the Quarry row's `⋯` chooser is the way to the other. Rendered on the DENIAL form
+	# because that is where it was reported, and the row is shared, so the hunt form gets the identical
+	# control from the identical builder. The pair reads differently on purpose — a warren pays meat,
+	# a wolf pays pelts alone — so the chooser is judged on two rows that could not be confused.
+	_set_world_herds(_shared_tile_quarry_fixtures())
+	_hud._compose.set_party_quarry(SHARED_TILE_FOOD_HERD_ID)
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_compose_deny_two_quarries")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_quarry_chooser()
+	_set_world_herds(_quarry_herd_fixtures())
+
+	# **THE SAME VIABLE FORM ON A QUARRY THE BAND IS CAMPED ON TOP OF** — the reported defect. Denial
+	# erases a herd rather than harvesting one, so a herd inside the band's hunt reach is a legal target
+	# (a HUNT of it still is not — `_assert_denial_quarry_eligibility` pins both halves). The walk out
+	# is ZERO here, which is the frame's other claim: the verdict must still name its span and must not
+	# append "(0 of them travel)".
+	_hud._compose.set_party_quarry(QUARRY_HOME_HERD_ID)
+	# **RE-PINNED, because adopting a quarry now SEEDS the party.** The chooser assertion above drives
+	# the real `choose_quarry`, which arms the autofill the denial sheet consumes — so the sheet came
+	# out of that block on the shared hex's requirement rather than on `DENIAL_PARTY`, and this frame's
+	# verdict is asserted against that row. Stating the party is what keeps the frame's claim its own.
+	_hud._bandpanel._send_expedition_count = DENIAL_PARTY
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_compose_deny_in_reach")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_denial_in_reach_verdict()
+
+	# **A BAND WITH MORE IDLE WORKERS THAN `max_expedition_party_size`, ON A QUARRY THAT NEEDS MORE
+	# STILL.** That field is the wire echo of the estimate tables' sampling axis, not a rules cap, so
+	# the stepper's ceiling is the band's own idle workforce — and this quarry's requirement (11) sits
+	# one rung past the 8 the old cap enforced, i.e. past a party the sheet could not even be dialled
+	# to. The quarry is adopted through the REAL `choose_quarry` — the one adoption both the map pick
+	# and the chooser take — so the seed is exercised by the path that arms it rather than by writing
+	# the count.
+	_push_bands([_scout_expedition_fixture(), _deep_party_band_fixture(), _hunt_expedition_fixture()])
+	var deep_herds := _quarry_herd_fixtures(_denial_needs_deep_party_rows())
+	_set_world_herds(deep_herds)
+	_hud._compose.clear_party_quarry()
+	_hud._targeting.choose_quarry(_deep_party_band_fixture(), deep_herds[0],
+		HudComposeVocab.COMPOSE_MISSION_DENY)
+	await _settle()
+	await _save("band_panel_compose_deny_deep_party")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_denial_deep_party()
+
+	# The SAME sheet stepped back BELOW the requirement: that row is `repelled`, and its reason must
+	# now NAME the party the sim quotes instead of prescribing hands without a count.
+	_hud._bandpanel._send_expedition_count = DENIAL_DEEP_PARTY_SHORT
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_compose_deny_short_party")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_denial_counted_refusal()
+
+	# **THE SAME QUARRY IN FRONT OF A BAND THAT CANNOT FIELD IT AT ALL** — the reference band's THREE
+	# idle workers against a requirement of 11. This is the one state in which the Send DISABLES: a
+	# party the player chose to under-size still launches (the frame above), but a band that cannot
+	# reach the requirement however it dials the stepper has no such choice to be trusted with. Only
+	# the band changes; the herds are the deep-party table still, so the pair differ in supply alone.
+	_push_bands([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_compose_deny_short_handed")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_denial_short_handed()
+
+	# **THE REPORTED VERDICT SHAPE — a bounded expectation over an UNBOUNDED bad run.** No other denial
+	# table in this file leaves an end open, so no frame could show what the old rule did with one: it
+	# dropped the expectation and quoted the lucky end alone, under a take line priced at the
+	# expectation. Back on the reference band, so the sentence is what differs from the frames above.
+	_set_world_herds(_quarry_herd_fixtures(_denial_open_high_rows()))
+	_hud._bandpanel._send_expedition_count = DENIAL_OPEN_HIGH_PARTY
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_compose_deny_open_high")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_denial_open_high_verdict()
+
+	# **THE QUOTED-PARTY NOTE, ON THE RENDERED SHEET.** PNG-less deliberately (no `_save`): every other
+	# denial table in this file samples parties contiguously, so a between-rungs party is only
+	# reachable through a LADDER fixture, and staging one as a frame would move the state order this
+	# file's whole walk depends on. The model-level claims live in `_assert_party_ladder_rounding`;
+	# this is the half that says the sentence actually reaches the sheet.
+	# The DEEP-PARTY band, because the stepper's ceiling is the band's idle workforce and the reference
+	# band's three would clamp a party of 6 back onto a rung — which is the one way this claim could
+	# pass by never reaching the state it is about.
+	_push_bands([_scout_expedition_fixture(), _deep_party_band_fixture(), _hunt_expedition_fixture()])
+	_set_world_herds(_quarry_herd_fixtures(_denial_ladder_rows()))
+	_hud._bandpanel._send_expedition_count = DENIAL_LADDER_BETWEEN
+	_hud._bandpanel.rerender()
+	await _settle()
+	_assert_denial_quoted_party_note()
+	# **PUT THE REFERENCE BAND BACK, and that is not tidiness.** `update_band_alerts` keeps a
+	# losing-population diff against the LAST roster pushed, so leaving the deep-party band standing
+	# changes what the next state's alert set says — and the next state is `band_panel_no_idle`, whose
+	# turn orb draws its calm breath only while there are no attention entries. A PNG-less block must
+	# leave the walk exactly where it found it.
+	_push_bands([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
+	_set_world_herds(_quarry_herd_fixtures())
+	await _settle()
+
+	_hud._bandpanel._send_expedition_count = 1
 	_hud._bandpanel._party_compose_open = false
 	_hud._bandpanel._party_compose_mission = ""
 	_hud._compose.clear_party_quarry()
@@ -1130,7 +1620,38 @@ func _ready() -> void:
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
+	_report_zone_content_extent("band_panel_parties_inspector_wide")
 	_hud._bandpanel._toggle_parties_inspector(str(HUNT_DELIVERING_ENTITY))   # close before the next state
+
+	# (a2) THE WORST-CASE PARTY — the same height-capped bottom dock, the same open strip, and a party
+	# carrying EVERY optional line of `BandDetailLines.expedition_summary_lines` at once (see
+	# `_worst_case_party_fixture` for the seven and their gates). The state above is NOT the worst case:
+	# its party carries no fill target, no carry cap and no trip bound, and it still overran its box —
+	# which is the `band_panel_vitals_worst_case` lesson exactly. Every fixture carried SOME of the
+	# optional lines and none carried them all, so the assertions were green on a strip nobody had ever
+	# asked to hold the whole set.
+	#
+	# ONE party, not two: a second row costs the zone another 48px for a structural reason that has
+	# nothing to do with the strip's own height, and mixing the two would leave the reported number
+	# unattributable.
+	#
+	# It REPORTS its extent as well as asserting the fit — a near-miss and a comfortable fit are the
+	# same green line otherwise, and this zone has now been at the edge twice.
+	_push_bands([_many_sources_band_fixture(), _worst_case_party_fixture()])
+	_hud._bandpanel._toggle_parties_inspector(str(HUNT_WORST_CASE_ENTITY))
+	await _settle()
+	await _save("band_panel_worst_case_party")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_worst_case_party_lines()
+	_report_zone_content_extent("band_panel_worst_case_party")
+	_hud._bandpanel._toggle_parties_inspector(str(HUNT_WORST_CASE_ENTITY))
+	# PUT THE PREVIOUS ROSTER BACK. `update_band_alerts` keeps a losing-population diff against the LAST
+	# roster pushed, so a state inserted here must leave the walk exactly where it found it or every
+	# following state diffs against a roster it never saw.
+	_push_bands([_many_sources_band_fixture(), _hunt_expedition_fixture()])
+	await _settle()
 
 	# (b) NARROW shell (left dock, Parties tab): the tall L/R parties zone holds both parties + the strip
 	# with room to spare. Inspect the NO-SURPLUS party → the invisible-line bug the strip fixes:
@@ -1235,8 +1756,40 @@ func _ready() -> void:
 
 	await _render_dock_row_states()
 
+	# ---- THE BAND-ZONE TIERS, LAST, AND DELIBERATELY SO ------------------------------------------
+	# The SHORT tier merges Growth onto the Morale line; TALL and COMPACT must not. Both probes RESIZE
+	# THE CANVAS and re-dock, and a panel left in another shell silently re-renders every state after
+	# it in the wrong one (measured: run mid-file, they flipped `band_panel_arrivals_top` from its
+	# 300px `Zone_band` into a 265px `NarrowZoneHost` and overflowed it). So they run after the last
+	# frame, where there is nothing left to perturb.
+	_push_bands([_vitals_worst_case_band_fixture()])
+	# The BAND tab, explicitly: the narrow shell renders ONE zone into `NarrowZoneHost`, and the run
+	# above leaves whichever tab its last state selected — so without this the probes measure the WORK
+	# board and find no vitals label to read at all.
+	_panel.set_active_tab(&"band")
+	# …and THE SAME BAND IN THE TALL DOCK, which must NOT have merged: Morale and Growth are separate
+	# rows there, with the morale cause clause intact. Without this the merge could quietly become the
+	# layout everywhere and every frame above would still be green.
+	_panel.set_dock(SIDE_LEFT)
+	await _settle()
+	_report_zone_content_extent("band_panel_vitals_worst_case_tall")
+	_assert_growth_row_not_merged("band_panel_vitals_worst_case_tall")
+	# …and the COMPACT tier between them, which must not have merged either. **PNG-LESS, and that is
+	# the honest shape of it**: the tier is reachable only on a short canvas (the narrow shell's zone
+	# box is the canvas minus ~95px, so COMPACT's 340-420px band needs a 435-515px window), and this
+	# band's COMPACT content measures 528px — it overflows that box by ~143px whatever the vitals do.
+	# That is a pre-existing property of the tier and not this merge's business, so the ROWS are
+	# asserted and the fit deliberately is not. Without this the merge could leak into COMPACT and
+	# every rendered frame would still be green, since no frame renders at that tier.
+	await _pin_canvas(Vector2i(PREVIEW_SIZE.x, COMPACT_TIER_PROBE_HEIGHT))
+	_panel.set_dock(SIDE_LEFT)
+	await _settle()
+	_report_zone_content_extent("compact_tier_probe")
+	_assert_growth_row_not_merged("compact_tier_probe")
+	await _pin_canvas(PREVIEW_SIZE)
+
 	_assert_herd_field_pairs()
-	get_tree().quit()
+	_finish()
 
 # ---- THE DOCK-ROW REFLOW (issue #324) ---------------------------------------------------------
 #
@@ -1888,29 +2441,149 @@ func _check_line(label: String, got: String, want: String) -> void:
 	else:
 		push_error("band_panel_preview: %s expected '%s' but got '%s'" % [label, want, got])
 
-## GUARD: the row ✕ (single-party recall) must route through the CONFIRM dialog, not fire the recall
-## emit immediately — mirroring "Recall all". Build a real party row, press its recall Button, and
-## assert a ConfirmationDialog appeared on the HUD while `recall_expedition_requested` did NOT fire.
-## Verified to FAIL with the ✕ wired straight to `_on_recall_expedition_pressed`.
+## The parties zone's host in the WIDE shell — the one the worst-case party state renders into. (The
+## NARROW shell swaps in `NarrowZoneHost`, which is why the band zone's own extent report carries a
+## two-name list; this state is bottom-docked, so it is always this one.)
+const PARTIES_ZONE_HOST_NAME := "Zone_parties"
+
+## GUARD: the worst-case party's strip must really be rendering EVERY optional line. The extent this
+## state reports is only a worst case while it is — a strip that quietly stopped emitting a line is
+## SHORTER, so it fits its box and both the bounds assertion and `_assert_zone_content_fits` go green
+## on a state that has stopped measuring what it exists to measure. The same trap
+## `band_panel_vitals_worst_case` carries one zone over.
+##
+## Asserted on the RENDER, not on `expedition_summary_lines`' return value: the producer answering
+## seven lines says nothing about the strip building seven Labels out of them.
+func _assert_worst_case_party_lines() -> void:
+	var lines := _parties_inspector_lines()
+	_assert_band_panel("worst-case party — the strip renders all %d detail lines (got %d: %s)" % [
+		WORST_CASE_DETAIL_LINES, lines.size(), ", ".join(lines)],
+		lines.size() == WORST_CASE_DETAIL_LINES)
+	# …and that each optional line is the one it is supposed to be, by the LONGEST form of its own
+	# gate — a strip rendering seven lines of which two are the wrong ones would pass a bare count.
+	# Each needle is composed from the fixture's own numbers or from the producer's own vocabulary, so
+	# a re-tune of either cannot leave the claim quietly matching nothing.
+	# The TARGET is read back out of the live herd list rather than restated, so the needles and the
+	# fixture cannot drift: a herd that migrated, was renamed or dropped out fails here instead of
+	# quietly matching nothing.
+	var target: Dictionary = _hud._band_labor.find_world_herd(WORST_CASE_TARGET_HERD_ID)
+	_assert_band_panel("worst-case party — its target herd is in the telemetry (else the Target row" \
+		+ " carries no position and this is not the worst case)", not target.is_empty())
+	var joined := "\n".join(lines)
+	for needle in [
+		# The Target row's LIVE position, which needs the herd to still be in `_world_herds`.
+		"(%d, %d)" % [int(target.get("x", -1)), int(target.get("y", -1))],
+		# The Orders row, at the floor this party was launched with rather than at the default.
+		HudComposeVocab.FLOOR_VALUE_FORMAT % SourceForecast.floor_percent(WORST_CASE_FLOOR),
+		# The Carried row at its ceiling, hence the FULL badge.
+		BandDetailLines.HUNT_FULL_BADGE,
+		# The recurring delivery's own suffix.
+		DetailFormat.EXPEDITION_RECURRING_GLYPH,
+		# The sim's answer for which stop ends the trip.
+		SourceForecast.TRIP_BOUND_CLAUSES[SourceForecast.TRIP_BOUND_PACK_FULL],
+	]:
+		_assert_band_panel("worst-case party — the strip states `%s`" % needle, joined.contains(needle))
+
+## The detail-line texts the parties inspector strip is rendering right now, in order.
+## `_build_parties_inspector` gives the strip ONE `PanelContainer` holding a column of: a head HBox, one
+## Label per detail line, and a links HBox — so the column's direct Label children ARE the detail lines.
+## Scoped to the parties zone rather than to the panel, since the WORK inspector is a `PanelContainer`
+## of the same shape.
+func _parties_inspector_lines() -> Array[String]:
+	var lines: Array[String] = []
+	for host_variant in _find_zone_hosts(_panel):
+		var host: Control = host_variant
+		if String(host.name) != PARTIES_ZONE_HOST_NAME:
+			continue
+		var strip := _find_first_of_type(host, "PanelContainer")
+		if strip == null:
+			return lines
+		for column in strip.get_children():
+			for child in column.get_children():
+				if child is Label:
+					lines.append((child as Label).text)
+	return lines
+
+## The first descendant of `node` whose class is `type_name`, depth-first, or `null`.
+func _find_first_of_type(node: Node, type_name: String) -> Node:
+	for child in node.get_children():
+		if child.is_class(type_name):
+			return child
+		var found := _find_first_of_type(child, type_name)
+		if found != null:
+			return found
+	return null
+
+## **THE VERB AND THE CEREMONY FOLLOW THE SIM, AND THE CLAIM IS THE PAIR.** Recalling a party still
+## standing in its home band's camp with no map report owed CANCELS it on the spot
+## (`core_sim::cancel_party_standing_in_camp`); one in the field walks home over turns. So the single
+## recall path is two different orders and the control must say which: `Cancel`, acting straight off
+## the press, against `Recall` behind the confirm that names the trip being abandoned.
+##
+## **A rule that showed one verb everywhere would satisfy either half alone**, which is why both are
+## driven here, through the REAL row builder and the REAL `pressed` handler rather than by calling
+## `confirm_recall_expedition` directly — the row's own ✕ is where a caller could drift.
+##
+## The two fixtures differ in POSITION and nothing else, so what is being judged is the predicate.
+## Sabotage-verified in both directions: forcing the predicate true makes the FIELD party offer Cancel
+## and skip the dialog; forcing it false makes the camped one raise one.
 func _assert_row_recall_confirms() -> void:
+	# The bands must be the roster the predicate resolves the home band out of — `party_cancels_in_camp`
+	# reads `player_band_by_entity(home_band_entity)`, so a camped party whose band is not listed would
+	# answer "in the field" for the wrong reason.
+	_push_bands([_band_fixture(), _in_field_expedition_fixture(), _in_camp_expedition_fixture()])
+	_assert_recall_press("field party", _in_field_expedition_fixture(),
+		HudComposeVocab.PARTY_RECALL_VERB, HudComposeVocab.PARTY_RECALL_TOOLTIP, true)
+	_assert_recall_press("camped party", _in_camp_expedition_fixture(),
+		HudComposeVocab.PARTY_CANCEL_VERB, HudComposeVocab.PARTY_CANCEL_TOOLTIP, false)
+	# THE TERM THAT IS NOT ABOUT POSITION: a party standing in camp that still owes a map report is
+	# walked home by the sim, so the client must say `Recall` and ask. Without it, every claim above is
+	# satisfied by a client testing "is it on the band's tile".
+	_push_bands([_band_fixture(), _in_camp_with_report_owed_fixture()])
+	_assert_recall_press("camped party owing a report", _in_camp_with_report_owed_fixture(),
+		HudComposeVocab.PARTY_RECALL_VERB, HudComposeVocab.PARTY_RECALL_TOOLTIP, true)
+	_push_bands([_band_fixture(), _hunt_expedition_fixture(), _lean_hunt_expedition_fixture(),
+		_lost_hunt_expedition_fixture()])
+
+## One half of the pair above: check the verb `BandPanelController.recall_verb` hands the parties
+## inspector link and the Occupants drawer's button, build `exp`'s real party row and check its ✕'s
+## tooltip, then PRESS that ✕ and require the ceremony `wants_confirm` names — a dialog and no emit,
+## or an emit and no dialog.
+func _assert_recall_press(label: String, exp: Dictionary, want_verb: String, want_tooltip: String,
+		wants_confirm: bool) -> void:
+	_assert_band_panel("recall verb — %s reads '%s'" % [label, want_verb],
+		_hud._bandpanel.recall_verb(exp) == want_verb)
+	var row: HBoxContainer = _hud._bandpanel._build_party_row(exp)
+	var recall: Button = row.get_child(row.get_child_count() - 1)   # ✕ is the row's last child
+	_assert_band_panel("recall tooltip — %s reads '%s' (got '%s')" % [label, want_tooltip, recall.tooltip_text],
+		recall.tooltip_text == want_tooltip)
 	var fired := [false]
 	var sink := func(_payload: Dictionary) -> void: fired[0] = true
 	_hud.recall_expedition_requested.connect(sink)
-	var row: HBoxContainer = _hud._bandpanel._build_party_row(_hunt_expedition_fixture())
-	var recall: Button = row.get_child(row.get_child_count() - 1)   # ✕ is the row's last child
+	# **COUNT THE DIALOGS, DO NOT LOOK FOR ONE.** `_dismiss_dialogs` frees with `queue_free`, which is
+	# deferred, so the PREVIOUS half of this pair is still a child of the HUD when this half runs — a
+	# presence test therefore reports the camped party as having confirmed. (Measured: it did.)
+	var before := _hud_dialog_count()
 	recall.pressed.emit()
-	var dialog_shown := false
-	for child in _hud.get_children():
-		if child is ConfirmationDialog:
-			dialog_shown = true
+	var dialog_shown := _hud_dialog_count() > before
 	_hud.recall_expedition_requested.disconnect(sink)
-	if dialog_shown and not fired[0]:
-		print("band_panel_preview: assert OK — row ✕ recall confirms first (no immediate emit)")
+	if wants_confirm:
+		_assert_band_panel("recall ceremony — %s confirms first, no immediate emit (dialog=%s, emitted=%s)" % [
+			label, dialog_shown, fired[0]], dialog_shown and not fired[0])
 	else:
-		push_error("band_panel_preview: row ✕ recall did NOT confirm (dialog=%s, emitted=%s)" % [
-			dialog_shown, fired[0]])
+		_assert_band_panel("recall ceremony — %s acts on the press, no dialog (dialog=%s, emitted=%s)" % [
+			label, dialog_shown, fired[0]], fired[0] and not dialog_shown)
 	_dismiss_dialogs()
 	row.queue_free()
+
+## Confirmation dialogs parented on the HUD right now, freed-but-not-yet-collected ones included —
+## which is exactly why `_assert_recall_press` compares two readings rather than testing presence.
+func _hud_dialog_count() -> int:
+	var count := 0
+	for child in _hud.get_children():
+		if child is ConfirmationDialog:
+			count += 1
+	return count
 
 ## GUARD: whenever the WIDE shell is active, the work zone must be at least one readable board column
 ## (`ZONE_WORK_MIN_WIDTH`) — otherwise Hud's `_work_board_capacity` clamps to a single column too
@@ -1958,6 +2631,63 @@ func _assert_people_sum_matches_size(band: Dictionary, state_name: String) -> vo
 			state_name, total, size, str(raw)])
 	else:
 		print("band_panel_preview: assert OK — %s PEOPLE brackets sum to the band's %d people" % [state_name, size])
+
+## **THE MAP-CLICK PATH CARRIES THE KIT, and it is this harness's THIRD instance of one bug class.**
+## The marker copy is a hand-listed allowlist, so a field the decoder ships and the panel reads goes
+## dark on the map path alone — `hunt_mode` first, then `working_age`/`idle_workers`, now the Minimal
+## TOE's six. Clicking a band's icon on the map made its `Kit` row simply vanish
+## (`DetailFormat.band_states_kit` is a bare `has()` on the spears key), and took the ⚠ zero-effective-
+## attack warning silently with it (`SourceForecast.hunt_gate_model` early-returns BLANK without
+## `hunter_attack`) — a missing warning looking exactly like a hunt that is fine.
+##
+## **BOTH HALVES, because either passes alone on a broken client.** The PAYLOAD half asks the selected
+## unit — the marker copy itself — since that is where the leak is and a panel that stopped rendering
+## the row for its own reasons would hide it. The RENDER half asks the frame, since a marker carrying
+## six keys nothing draws is not the fix either. The rendered value is read out of the vitals
+## `RichTextLabel` (the row is BBCode, which a `Label` walk cannot see at all).
+func _assert_map_path_states_kit() -> void:
+	var band: Dictionary = _hud._selection._selected_unit
+	# **THE SIX ARE NAMED FROM THE READOUTS' OWN CONSTANTS, not from a list on MapView.** Since the
+	# marker became a structural copy there IS no key list there to borrow — and borrowing one would
+	# have asserted that the copy copies what the copy copies. These are the keys `DetailFormat` and
+	# `SourceForecast` actually read, so the claim is "what the panel asks for arrived".
+	var missing: Array[String] = []
+	for toe_key in [
+		DetailFormat.KIT_DURABILITY_KEY_SPEARS, DetailFormat.KIT_DURABILITY_KEY_SLED,
+		DetailFormat.KIT_DURABILITY_KEY_BASKETS, DetailFormat.KIT_TIER_KEY_HUNT_CARRY,
+		DetailFormat.KIT_TIER_KEY_FORAGE_CARRY, SourceForecast.BAND_HUNTER_ATTACK_KEY,
+	]:
+		if not band.has(toe_key):
+			missing.append(String(toe_key))
+	_assert_band_panel("the map-click payload carries the Minimal TOE's six (missing %s)" % str(missing),
+		missing.is_empty())
+	# …and the payload is the WHOLE cohort, which is the invariant that stops a fourth leak: the marker
+	# is `entry.duplicate()` plus declared stamps, so every key the fixture cohort carries is here.
+	# `marker_field_guard` owns the exhaustive form of this against a realistic cohort; this is the
+	# same claim at the END of the chain the report came from — map click → marker → selection → panel.
+	var dropped: Array[String] = []
+	for source_key in _kit_band_fixture():
+		if not band.has(source_key):
+			dropped.append(String(source_key))
+	_assert_band_panel("…and the map-click payload is the WHOLE cohort (dropped %s)" % str(dropped),
+		dropped.is_empty())
+	# …and they arrive as the FLOATS the wire carries. Presence cannot see an `int()` narrowing, which
+	# is the second bug class `marker_field_guard` exists for and which is live-visible here: the
+	# marker IS the selection payload for a band clicked on the map.
+	var spears := float(_kit_band_fixture().get(DetailFormat.KIT_DURABILITY_KEY_SPEARS, 0.0))
+	_assert_band_panel("…un-narrowed, spears reading %s against the fixture's %s"
+			% [str(band.get(DetailFormat.KIT_DURABILITY_KEY_SPEARS, 0.0)), str(spears)],
+		is_equal_approx(float(band.get(DetailFormat.KIT_DURABILITY_KEY_SPEARS, 0.0)), spears))
+	# The RENDER half — the row the report was actually about. The needle carries the VALUE as well as
+	# the label, so it cannot be satisfied by a row that rendered the kit's name over a defaulted
+	# reading; and it is composed from the FIXTURE's number rather than asked of `kit_condition_face`,
+	# which would re-derive the expectation through the code under test. **`BAND_KIT_ROW_PREFIX` is NOT
+	# what appears on screen** — the vitals rows are DISCLOSURES, so the row's own label is the caret's
+	# (`Kit ▸`) and the prefix is consumed by that wrapping.
+	var want := "%s %s" % [DetailFormat.KIT_LABEL_SPEARS,
+		String.num(spears, DetailFormat.KIT_CONDITION_DECIMALS)]
+	_assert_band_panel("…so the Kit row renders on the map path — \"%s\"" % want,
+		_rich_text_containing(_panel, want) != "")
 
 ## GUARD: the zone model is NO-SCROLL by construction — a ScrollContainer anywhere in the panel would
 ## silently reintroduce the content-dependent sizing the rework removed.
@@ -2043,6 +2773,27 @@ func _assert_trade_row_absent_in_short_tier() -> void:
 		return
 	print("band_panel_preview: assert OK — SHORT tier drops the Trade row (Food row still present)")
 
+## The hosts the band zone can render into — its own zone box in the WIDE shell, and the single
+## swapped host in the NARROW one. The tier note is appended to their extent lines alone.
+const BAND_ZONE_HOST_NAMES := ["Zone_band", "NarrowZoneHost"]
+const BAND_ZONE_TIER_NOTE_FORMAT := " [%s tier]"
+## The three tiers by name, indexed by `HudWorkVocab.BAND_ZONE_TIER_*` (SHORT 0, COMPACT 1, TALL 2).
+const BAND_ZONE_TIER_NAMES := ["SHORT", "COMPACT", "TALL"]
+
+## The canvas height that lands the LEFT dock's band zone in the COMPACT tier. The narrow shell's zone
+## box is the canvas minus ~95px of chrome, and COMPACT is `[BAND_ZONE_CHART_MIN_HEIGHT,
+## BAND_ZONE_TALL_MIN_HEIGHT)` = [340, 420) — so 480 gives a 385px box, mid-band rather than on either
+## edge, where a few pixels of chrome drift cannot silently move the probe into a neighbouring tier.
+const COMPACT_TIER_PROBE_HEIGHT := 480
+
+## Which content tier the band zone is rendering at RIGHT NOW — read off the controller rather than
+## re-derived from the zone height, so the reported tier is the one that actually built the rows.
+func _band_zone_tier_name() -> String:
+	var tier: int = _hud._bandpanel._band_zone_tier
+	if tier < 0 or tier >= BAND_ZONE_TIER_NAMES.size():
+		return "?"
+	return String(BAND_ZONE_TIER_NAMES[tier])
+
 ## MEASUREMENT (not an assertion — `_assert_zone_content_fits` is the assertion): print how tall each
 ## zone's content actually came out against the box it was given, so a state that PASSES still says by
 ## how much. A near-miss and a comfortable fit are the same green line otherwise, and the whole point
@@ -2055,8 +2806,13 @@ func _report_zone_content_extent(state_name: String) -> void:
 		var extent := _zone_content_extent(host, host)
 		if extent <= 0.0:
 			continue
-		print("band_panel_preview: %s — zone %s content %.0fpx of a %.0fpx box (%.0f spare)" % [
-			state_name, host.name, extent, host.size.y, host.size.y - extent])
+		print("band_panel_preview: %s — zone %s content %.0fpx of a %.0fpx box (%.0f spare)%s" % [
+			state_name, host.name, extent, host.size.y, host.size.y - extent,
+			# The band zone's TIER, beside its extent: the SHORT tier renders two fewer rows than the
+			# TALL one (Trade dropped, Fodder and Growth merged), so an extent quoted without it is a
+			# number whose content nobody can reconstruct.
+			BAND_ZONE_TIER_NOTE_FORMAT % _band_zone_tier_name() \
+				if BAND_ZONE_HOST_NAMES.has(String(host.name)) else ""])
 
 ## The deepest point any measurable control in this zone reaches, relative to the zone's own top.
 func _zone_content_extent(node: Node, host: Control) -> float:
@@ -2099,24 +2855,101 @@ func _assert_merged_food_row_fits() -> void:
 	if text.contains(FODDER_ROW_NEEDLE):
 		push_error("band_panel_preview: the SHORT tier still renders a standalone Fodder row beside the merged Food line")
 		return
-	var next_row := text.find(HudDisclosureVocab.DETAIL_ROW_MORALE)
-	if next_row <= 0:
-		push_error("band_panel_preview: merged-food-row assert cannot find the Morale row that bounds the Food one (got: %s)" % text)
+	# **THE ROW IS BOUNDED BY THE ROW THAT FOLLOWS IT, AND THAT ROW IS NOW `Kit`.** This read to
+	# `Morale` while Food and Morale were adjacent; the Kit row landed between them and the cut then
+	# measured TWO rows as one, reporting a 624px wrap on a line that fits comfortably. A bound naming
+	# the row that actually follows is the only kind that survives an insertion, so it takes whichever
+	# of the candidates comes FIRST rather than one fixed name.
+	var food_run := _vitals_run(text, HudDisclosureVocab.DETAIL_ROW_FOOD,
+		[HudDisclosureVocab.DETAIL_ROW_KIT, HudDisclosureVocab.DETAIL_ROW_MORALE])
+	if food_run == "":
+		push_error("band_panel_preview: merged-food-row assert cannot find the Food row (got: %s)" % text)
 		return
-	var food_run := text.substr(0, next_row)
+	_assert_vitals_run_fits("merged Food", food_run, vitals)
+
+## GUARD: the SHORT tier's OTHER merge — Growth joined onto the Morale line to pay for the `Kit` row
+## every live band states (`BandDetailLines.BAND_MORALE_GROWTH_CLAUSE_FORMAT`). Same trap and the same
+## measurement as the Food row above: the label is `AUTOWRAP_WORD`, so a merged line too wide for the
+## column WRAPS and costs back the very row the merge bought — a fix that measures as no fix, with
+## nothing failing. **The bounds assertion cannot see this**: a wrapped line still sits inside the zone
+## rect, so `_assert_zone_content_fits` passes and the frame is silently one row taller.
+##
+## It is also what makes the DROPPED morale cause clause load-bearing rather than cosmetic: put the
+## cause back at this tier (`— harsh terrain (Karst Cavern Mouth)`) and this is the assertion that
+## fails, naming the overflow.
+func _assert_merged_morale_growth_fits() -> void:
+	var vitals := _find_vitals_label(_panel)
+	if vitals == null:
+		push_error("band_panel_preview: merged-morale-row assert found no vitals label")
+		return
+	var text: String = vitals.get_parsed_text()
+	if not text.contains(HudDisclosureVocab.DETAIL_ROW_GROWTH):
+		push_error("band_panel_preview: the SHORT tier's Morale line carries no Growth clause — the merge is off (got: %s)" % text)
+		return
+	# Nothing follows Morale in the dock's vitals block (the Position row is the drawer host's), so the
+	# run reaches the end of the label — stated as an EMPTY bound list rather than left implicit.
+	var morale_run := _vitals_run(text, HudDisclosureVocab.DETAIL_ROW_MORALE, [])
+	if morale_run == "":
+		push_error("band_panel_preview: merged-morale-row assert cannot find the Morale row (got: %s)" % text)
+		return
+	_assert_vitals_run_fits("merged Morale+Growth", morale_run, vitals)
+
+## GUARD: **the merge is the SHORT tier's layout and nobody else's.** Morale and Growth stay separate
+## rows at TALL and COMPACT, with the morale cause clause intact — so a merge leaking upward would
+## quietly cost every tier a reading it has the room for.
+##
+## Structural, off the BBCode rather than the parsed text: `detail_bbcode` opens every table row with
+## `[cell]`, so a standalone Growth row's clickable run is preceded by one while the merged clause's is
+## preceded by the clause SEPARATOR. The parsed text strips both, which is why the visible half — the
+## `of normal` anchor, which only a standalone row spends the width on — is asserted beside it rather
+## than instead of it.
+func _assert_growth_row_not_merged(state_name: String) -> void:
+	var vitals := _find_vitals_label(_panel)
+	if vitals == null:
+		push_error("band_panel_preview: growth-row tier assert found no vitals label (%s)" % state_name)
+		return
+	var merged_needle := BandDetailLines.BAND_MORALE_GROWTH_CLAUSE_SEPARATOR \
+		+ DetailFormat.DISCLOSURE_URL_OPEN
+	if vitals.text.contains(merged_needle):
+		push_error("band_panel_preview: %s merged Growth onto the Morale line — that is the SHORT tier's layout only" % state_name)
+		return
+	if not vitals.get_parsed_text().contains(DetailFormat.GROWTH_ROW_ANCHOR_SUFFIX):
+		push_error("band_panel_preview: %s dropped the Growth row's `of normal` anchor — the SHORT tier's short form leaked up" % state_name)
+		return
+	print("band_panel_preview: assert OK — %s keeps Growth as its own row, anchor intact" % state_name)
+
+## One vitals ROW cut out of the parsed block. **`[table]` rows carry NO line break into
+## `get_parsed_text()`** — the whole block comes back concatenated into one string — so a row is cut by
+## the KEY of whichever row follows it, and an empty `bounds` list means "this row runs to the end of
+## the block". Returns "" when `key` is not in the text at all.
+func _vitals_run(text: String, key: String, bounds: Array) -> String:
+	var start := text.find(key)
+	if start < 0:
+		return ""
+	var stop := text.length()
+	for bound_variant in bounds:
+		var at := text.find(String(bound_variant), start + key.length())
+		if at > start:
+			stop = mini(stop, at)
+	return text.substr(start, stop - start)
+
+## Measure one vitals row's NATURAL (unwrapped) run against the width the label was actually given — in
+## the label's OWN font at its OWN size, plus the gutter the `[table=2]` spends between its key and
+## value cells, so the figure is the whole ROW rather than one cell.
+func _assert_vitals_run_fits(label: String, run: String, vitals: RichTextLabel) -> void:
 	var font := vitals.get_theme_font(VITALS_FONT_THEME_KEY)
 	var font_size := vitals.get_theme_font_size(VITALS_FONT_SIZE_THEME_KEY)
 	var table_gap := float(vitals.get_theme_constant(VITALS_TABLE_SEPARATION_THEME_KEY))
-	var needed: float = font.get_string_size(food_run, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x + table_gap
+	var needed: float = font.get_string_size(run, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x + table_gap
 	var available := vitals.size.x
-	print("band_panel_preview: merged Food row — \"%s\" measures %.0fpx of a %.0fpx column" % [
-		food_run, needed, available])
+	print("band_panel_preview: %s row — \"%s\" measures %.0fpx of a %.0fpx column" % [
+		label, run, needed, available])
 	if needed > available:
-		push_error("band_panel_preview: the merged Food line WRAPS — %.0fpx of run in a %.0fpx column" % [
-			needed, available])
+		push_error("band_panel_preview: the %s line WRAPS — %.0fpx of run in a %.0fpx column" % [
+			label, needed, available])
 	else:
-		print("band_panel_preview: assert OK — the merged Food line fits its column (%.0f spare)" % [
-			available - needed])
+		print("band_panel_preview: assert OK — the %s line fits its column (%.0f spare)" % [
+			label, available - needed])
 
 ## **THE FORAGE-TRADE REGRESSION.** A forage source ships `realized_trade_yield == 0` (the documented
 ## not-yet-projected sentinel) beside a real `trade_yield`, and the decoder always inserts the key — so
@@ -2218,6 +3051,529 @@ func _collect_zone_overflow(node: Node, bounds: Rect2, failures: Array[String]) 
 				continue   # one report per subtree — its children overflow by construction
 		_collect_zone_overflow(content, bounds, failures)
 
+## **WHY THE DOCK RENDERED NOTHING FOR WILD FOWL — and the INVERSION that closed it.**
+##
+## `hunt_trip_estimates` is sampled on TWO axes, and the client used to know that about only one:
+## `hunt_estimate_row` read the nearest sampled FLOOR and then demanded an EXACT party-size match. A
+## party above the largest sampled size found no row, `hunt_trip_forecast` answered
+## `available == false`, and every raid readout — the one-line sentence AND the boxed section —
+## rendered nothing at all. The dock reached that party and the drawer did not: the dock's stepper
+## AUTO-FILLS to `expedition_useful_cap`, whose engagement arm is deliberately NOT bounded by the
+## sampled sizes, while the drawer's count is seeded from the standing staffing (1), which always was.
+##
+## **THIS ASSERTION USED TO PIN THAT BEHAVIOUR AND NOW PINS ITS OPPOSITE.** The sim replaced the
+## contiguous party axis with a sampled LADDER (`estimate_party_sizes`), which made an exact match
+## strictly worse than before — most party sizes now fall between rungs — so both lookups read the
+## NEAREST rung, and the sheet NAMES the party the figures were costed for whenever it is not the one
+## selected. It is inverted rather than deleted because the guard's subject did not change: what a
+## party past the sampled sizes gets is still the one thing this state can see.
+func _assert_party_past_the_rungs_is_quoted() -> void:
+	# **THE LIVE HERD THE HUD HOLDS, not the raw builder's output.** `_set_world_herds` runs every
+	# fixture through `_floorify_estimates`, which is what puts `floor` / `party_workers` ON the rows —
+	# a raw `_quarry_herd_fixtures()` table encodes the party in its KEY alone, so reading the axis off
+	# it finds 0 everywhere and the claim collapses into a tautology.
+	var herd: Dictionary = _hud._band_labor.find_world_herd(QUARRY_FAR_HERD_ID)
+	# The fixture's own axis, read off the table rather than restated: `_quarry_herd_fixtures` samples
+	# parties 1..N, and hardcoding N here would pass on a table that had since narrowed.
+	var sampled_max := 0
+	for key in (herd["hunt_trip_estimates"] as Dictionary):
+		var row: Dictionary = (herd["hunt_trip_estimates"] as Dictionary)[key]
+		sampled_max = maxi(sampled_max, int(row.get(SourceForecast.HUNT_ESTIMATE_PARTY_KEY, 0)))
+	var band := _band_fixture()
+	var inside := SourceForecast.hunt_trip_forecast(band, herd,
+		SourceForecast.DEFAULT_HARVEST_FLOOR, sampled_max, MAP_PATH_GRID_W, false)
+	var beyond := SourceForecast.hunt_trip_forecast(band, herd,
+		SourceForecast.DEFAULT_HARVEST_FLOOR, sampled_max + 1, MAP_PATH_GRID_W, false)
+	_assert_band_panel(("a party at the largest sampled size (%d) is quoted, and one PAST it (%d) is "
+			+ "quoted too — the party axis reads its nearest mark exactly as the FLOOR axis does") % [
+			sampled_max, sampled_max + 1],
+		bool(inside.get("available", false)) and bool(beyond.get("available", false)))
+	# …and BOTH readouts speak for it, which is the half that says the sheet is whole rather than
+	# merely un-blanked: a forecast that resolves but delivers nothing would look identical otherwise.
+	_assert_band_panel("…and both raid readouts speak for it — the box as well as the line",
+		SourceForecast.hunt_trip_delivers(beyond)
+			and SourceForecast.hunt_forecast_line_bbcode(beyond, "Wild Boar") != "")
+	# **AND IT SAYS WHOSE NUMBERS THEY ARE.** Asserted by EQUALITY: half the claim is that the note is
+	# present, and the other half is that it names the rung actually read and the party actually
+	# selected — a note quoting either number wrong reads as reassurance and is worse than silence.
+	# The expectation is composed from the VOCABULARY, never through `quoted_party_note` itself.
+	_assert_band_panel("…under a note naming the party the figures were costed for",
+		SourceForecast.quoted_party_note(beyond, sampled_max + 1,
+				HudComposeVocab.PARTY_TRIP_ESTIMATES_QUOTED_FORMAT)
+			== HudComposeVocab.PARTY_TRIP_ESTIMATES_QUOTED_FORMAT % [sampled_max, sampled_max + 1])
+	# The paired NEGATIVE, on the same herd one step down: a party that IS a sampled rung renders no
+	# note at all. Without it every claim above is satisfied by a sheet that annotates every raid.
+	_assert_band_panel("…and a party ON a rung renders no note at all",
+		SourceForecast.quoted_party_note(inside, sampled_max,
+			HudComposeVocab.PARTY_TRIP_ESTIMATES_QUOTED_FORMAT) == "")
+
+## **THE SHIPPED LADDER'S OWN ROUNDING, over CONSTRUCTED tables.** Every estimate fixture in this file
+## samples parties CONTIGUOUSLY (1..N), which is the axis the sim retired — so no frame here can reach
+## a party that falls BETWEEN two rungs, and the guard above can only ever test the past-the-end case.
+## The shipped axis is `expedition_config.estimate_party_sizes` = `[1, 2, 3, 4, 8, 16, 32, 64]`, with
+## the denial table adding a dense run at the herd's own requirement on top of it.
+##
+## PNG-less on purpose, the `_assert_denial_party_needed_skips_horizon` rule: which rung a party
+## rounds to is a number, not a picture, and the sheet renders the same plausible readout whichever
+## row it came from. Asserted directly over constructed rows, since the answer is a pure function.
+func _assert_party_ladder_rounding() -> void:
+	# The HUNT axis is the bare ladder. A party of 6 sits exactly between 4 and 8 — the TIE — and the
+	# rule is that the LOWER rung wins: over-quoting a party's take is the more misleading direction,
+	# and `<` alone would leave the answer to dictionary iteration order.
+	var hunt := _ladder_hunt_estimates()
+	_assert_band_panel("the hunt ladder rounds a TIE (6, between 4 and 8) DOWN to the lower rung",
+		SourceForecast.nearest_estimate_party(LADDER_PARTY_SIZES, 6) == 4)
+	# …and an UNTIED gap rounds by distance, UP as readily as down — without this the tie rule above
+	# would be satisfied by a lookup that simply took the largest rung at or below the party.
+	_assert_band_panel("…and rounds an untied between-rungs party (13) UP to its nearer rung (16)",
+		SourceForecast.nearest_estimate_party(LADDER_PARTY_SIZES, 13) == 16)
+	_assert_band_panel("…and a party PAST the last rung (100) resolves to 64 rather than to nothing",
+		SourceForecast.nearest_estimate_party(LADDER_PARTY_SIZES, 100) == LADDER_LAST_RUNG)
+	var band := _band_fixture()
+	var herd := {"hunt_trip_estimates": hunt}
+	var between := SourceForecast.hunt_trip_forecast(band, herd,
+		SourceForecast.DEFAULT_HARVEST_FLOOR, LADDER_TIE_PARTY, MAP_PATH_GRID_W, false)
+	_assert_band_panel(("a between-rungs raid resolves to a FULL readout, not a blank sheet — "
+			+ "quoted for %d, delivers=%s") % [
+			int(between.get(SourceForecast.QUOTED_PARTY_KEY, SourceForecast.NO_SAMPLED_PARTY)),
+			str(SourceForecast.hunt_trip_delivers(between))],
+		SourceForecast.hunt_trip_delivers(between))
+	var between_note := SourceForecast.quoted_party_note(between, LADDER_TIE_PARTY,
+		HudComposeVocab.PARTY_TRIP_ESTIMATES_QUOTED_FORMAT)
+	_assert_band_panel("…and names the rung it was costed for and the party the player picked — got \"%s\""
+			% between_note,
+		between_note == HudComposeVocab.PARTY_TRIP_ESTIMATES_QUOTED_FORMAT % [4, LADDER_TIE_PARTY])
+	var on_rung := SourceForecast.hunt_trip_forecast(band, herd,
+		SourceForecast.DEFAULT_HARVEST_FLOOR, 8, MAP_PATH_GRID_W, false)
+	_assert_band_panel("…while a party ON a rung (8) renders no note — the ladder's common case",
+		SourceForecast.hunt_trip_delivers(on_rung)
+			and SourceForecast.quoted_party_note(on_rung, 8,
+				HudComposeVocab.PARTY_TRIP_ESTIMATES_QUOTED_FORMAT) == "")
+	# **THE DENIAL AXIS IS THE LADDER PLUS THE REQUIREMENT RUN**, and against a requirement of 1 it is
+	# `{1,2,3,4,5,8,16,32,64}` — the axis on which a party of 6 used to find NOTHING and blank the whole
+	# sheet. It rounds to 5 (gap 1) rather than to 8 (gap 2), which is not a tie and so exercises the
+	# nearest rule independently of the tie-break above.
+	var denial := _denial_ladder_rows()
+	var deny_between := SourceForecast.denial_forecast(denial_herd_of(denial), DENIAL_LADDER_BETWEEN)
+	_assert_band_panel(("a between-rungs DENIAL party (%d on a {1,2,3,4,5,8,…} axis) resolves at all "
+			+ "— available=%s, quoted for %d") % [DENIAL_LADDER_BETWEEN,
+			str(bool(deny_between.get("available", false))),
+			int(deny_between.get(SourceForecast.QUOTED_PARTY_KEY, SourceForecast.NO_SAMPLED_PARTY))],
+		bool(deny_between.get("available", false)))
+	var deny_note := SourceForecast.quoted_party_note(deny_between, DENIAL_LADDER_BETWEEN,
+		HudComposeVocab.PARTY_DENIAL_ESTIMATES_QUOTED_FORMAT)
+	_assert_band_panel("…to the NEAREST rung (5, not the 8 above it), named on the sheet — got \"%s\""
+			% deny_note,
+		deny_note == HudComposeVocab.PARTY_DENIAL_ESTIMATES_QUOTED_FORMAT % [5, DENIAL_LADDER_BETWEEN])
+	var deny_past := SourceForecast.denial_forecast(denial_herd_of(denial), DENIAL_LADDER_PAST)
+	_assert_band_panel("…and a denial party past the last rung resolves to 64, never to a blank sheet",
+		bool(deny_past.get("available", false))
+			and int(deny_past.get(SourceForecast.QUOTED_PARTY_KEY, 0)) == LADDER_LAST_RUNG)
+
+## A herd carrying nothing but a denial table — the whole of what `denial_forecast` reads without a
+## band, so the constructed-rows assertions above need no fixture herd behind them.
+static func denial_herd_of(rows: Array) -> Dictionary:
+	return {SourceForecast.HERD_DENIAL_ESTIMATES_KEY: rows}
+
+## The shipped ladder as a HUNT table — one row per rung at the default floor, every rung delivering,
+## the payload rising with the party so `expedition_useful_cap`'s plateau scan has a real curve to
+## walk. `floor` / `party_workers` are stamped ON the rows, which is what `_floorify_estimates` does
+## for the file's other fixtures and what both lookups actually read.
+func _ladder_hunt_estimates() -> Dictionary:
+	var table := {}
+	for party_variant in LADDER_PARTY_SIZES:
+		var party := int(party_variant)
+		var animals := party * LADDER_ANIMALS_PER_WORKER
+		table["%s:%d" % [str(SourceForecast.DEFAULT_HARVEST_FLOOR), party]] = {
+			SourceForecast.HUNT_ESTIMATE_FLOOR_KEY: SourceForecast.DEFAULT_HARVEST_FLOOR,
+			SourceForecast.HUNT_ESTIMATE_PARTY_KEY: party,
+			"turns_to_fill": LADDER_TURNS_TO_FILL, "delivers_food": true, "delivers_trade": true,
+			"animals_taken": animals,
+			"delivered_food": float(animals) * QUARRY_FOOD_PER_ANIMAL,
+			"delivered_trade": float(animals) * QUARRY_TRADE_PER_ANIMAL,
+			"wasted_food": 0.0,
+			SourceForecast.TRIP_BOUND_KEY: SourceForecast.TRIP_BOUND_PACK_FULL,
+		}
+	return table
+
+## The shipped ladder as a DENIAL table, plus the dense run the sim samples around a herd's own
+## requirement — at a requirement of 1 that is `{1,2,3,4,5}`, so the union is `{1,2,3,4,5,8,16,32,64}`
+## and a party of 6 is the between-rungs case the ladder made common. Composed through `_denial_rows`
+## so the payload arithmetic (what the pack holds, what is left on the range) is the file's one copy.
+func _denial_ladder_rows() -> Array:
+	var parties: Array = []
+	for party_variant in LADDER_PARTY_SIZES:
+		var party := int(party_variant)
+		if not parties.has(party):
+			parties.append(party)
+	for extra in range(1, DENIAL_REQUIREMENT_ROWS + 1):
+		if not parties.has(extra):
+			parties.append(extra)
+	parties.sort()
+	var turns: Array = []
+	var low: Array = []
+	var high: Array = []
+	var kills: Array = []
+	for party_variant in parties:
+		turns.append(DENIAL_LADDER_TURNS)
+		low.append(DENIAL_LADDER_TURNS_LOW)
+		high.append(DENIAL_LADDER_TURNS_HIGH)
+		kills.append(int(party_variant) * DENIAL_LADDER_KILLS_PER_WORKER)
+	return _denial_rows(SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY, turns, low, high, kills, parties)
+
+## **WHERE THE COMPOSE SHEET CURRENTLY LIVES.** The sheet the parties zone cannot hold is rendered in
+## `BandComposeFloat` instead (a card on the HUD `CanvasLayer`, beside the panel), so every assertion
+## and measurement about that sheet has to follow it there. Pointed at `_panel` they would all go
+## VACUOUS the moment the float works — which is exactly the failure `_assert_compose_float` below
+## exists to make impossible for the fit claim, and this helper makes impossible for the rest.
+func _compose_surface() -> Node:
+	var float_card := _hud._bandpanel.compose_float()
+	if float_card != null and _hud._bandpanel.compose_is_floating():
+		return float_card
+	return _panel
+
+## **THE FIT CLAIM DOES NOT DISAPPEAR WITH THE SHEET.** `_assert_zone_content_fits` passes TRIVIALLY
+## once the compose sheet leaves the zone — an empty box fits anything — so a float that moved the
+## overflow somewhere unmeasured would look exactly like a fix. This is the other half: the sheet is
+## really gone from the zone, the zone really fits what is left, and the float itself fits the VIEWPORT
+## and clears the panel card it came from.
+##
+## Both rect claims are made in the `event_dock` inset idiom, negative control included: a
+## non-overlap test on two rects that never share a band is not a claim, so the vacuity guard fires on
+## the axis the two are NOT stacked along, and a live control first shows the very same `intersects`
+## test firing on these very rects when one is moved onto the other.
+func _assert_compose_float(state_name: String) -> void:
+	var floater: BandComposeFloat = _hud._bandpanel.compose_float()
+	if floater == null or not _hud._bandpanel.compose_is_floating():
+		push_error("band_panel_preview: %s — the compose sheet did NOT float, so nothing below is a claim" % state_name)
+		return
+	# (1) IT REALLY LEFT THE ZONE. Asked of the Send button's own meta, which every branch of this
+	# sheet renders and nothing else in the panel carries.
+	_assert_band_panel("%s — the composed sheet is GONE from the parties zone" % state_name,
+		_find_meta_control(_panel, HudWidgets.SEND_HUNT_CONFIRM_META) == null)
+	_assert_band_panel("%s — …and it is in the float, whole (its Send is there)" % state_name,
+		_find_meta_control(floater, HudWidgets.SEND_HUNT_CONFIRM_META) != null)
+	# (2) THE ZONE FITS WHAT IS LEFT — the same walk `_assert_zone_content_fits` makes, restated here
+	# with its number so a zone that merely stopped overflowing by luck is visible.
+	for host_variant in _find_zone_hosts(_panel):
+		var host: Control = host_variant
+		var extent := _zone_content_extent(host, host)
+		if extent <= 0.0:
+			continue
+		_assert_band_panel("%s — zone %s holds its remaining content (%.0fpx of a %.0fpx box)" % [
+			state_name, host.name, extent, host.size.y], extent <= host.size.y + ZONE_BOUNDS_TOLERANCE)
+	# (3) THE FLOAT FITS THE VIEWPORT. This is where the overflow went, so this is where it is measured.
+	var view := get_viewport().get_visible_rect()
+	var card := _panel.card_rect()
+	var box := floater.get_global_rect()
+	var over := _rect_overflow(box, view)
+	_assert_band_panel("%s — the float fits the viewport (float %s in %s, worst overflow %.0fpx)" % [
+		state_name, box, view, maxf(over.x, over.y)], over.x <= ZONE_BOUNDS_TOLERANCE and over.y <= ZONE_BOUNDS_TOLERANCE)
+	# …and it is holding its content rather than growing out of itself, the `AutoSizingPanel` lie
+	# `panel-framework.md` records: a card fitted too short still DRAWS at its content's size.
+	_assert_band_panel("%s — the float's card fits the float (%.0fpx of %.0fpx)" % [
+		state_name, floater.card().get_combined_minimum_size().y, box.size.y],
+		floater.card().get_combined_minimum_size().y <= box.size.y + ZONE_BOUNDS_TOLERANCE
+			or floater.card().get_combined_minimum_size().y > view.size.y)
+	# (4) IT NEVER OVERLAPS THE CARD IT CAME FROM — with the vacuity guard on the axis the two are not
+	# stacked along, and a live negative control on the same two rects.
+	var stacked_vertically: bool = box.position.y >= card.end.y or card.position.y >= box.end.y
+	var shares_other_axis: bool = box.position.x < card.end.x and card.position.x < box.end.x \
+		if stacked_vertically else box.position.y < card.end.y and card.position.y < box.end.y
+	if not shares_other_axis:
+		push_error(("band_panel_preview: %s — VACUOUS: the float and the panel card share no band on "
+			+ "either axis, so 'they do not overlap' claims nothing") % state_name)
+		return
+	var moved_onto_card := Rect2(card.position, box.size)
+	_assert_band_panel("%s — negative control: the SAME test fires with the float moved onto the card" % state_name,
+		moved_onto_card.intersects(card))
+	_assert_band_panel("%s — the float clears the panel card (float %s vs card %s)" % [
+		state_name, box, card], not box.intersects(card))
+
+## **THE PAIRED NEGATIVE, and without it the fork is only ever asserted in one direction.** A trigger
+## stuck ON is as wrong as one stuck off and every claim in `_assert_compose_float` would still pass
+## under it — the sheet would be whole, in a float, clear of the card, in a dock that has ample room
+## for it in the zone. This is the state that says the zone keeps the sheet it CAN hold.
+func _assert_compose_in_zone(state_name: String) -> void:
+	_assert_band_panel("%s — the zone HOLDS the sheet it has room for (no float)" % state_name,
+		not _hud._bandpanel.compose_is_floating()
+			and _find_meta_control(_panel, HudWidgets.SEND_HUNT_CONFIRM_META) != null)
+
+## **OPEN THE EMPTY HUNT FORM THROUGH THE FOOTER BUTTON, AND JUDGE THE MEASUREMENT ITSELF** — the
+## regression guard for the second report of the floating empty sheet. It is deliberately NOT a
+## picture: a sheet floating on a phantom measurement and one floating on a real one render
+## identically, and a sheet sitting in the zone on a mark that HAPPENS to be under the box is
+## indistinguishable from one sitting there because the mark is honest.
+##
+## The mechanism, measured: between the render and the deferred container sort, the parties column has
+## already been given its host's width by its anchors while nothing under it has been fitted, so
+## `get_combined_minimum_size()` sums a column of autowrap `Label`s all shaping at wrap width 0 —
+## **1278px where the laid-out answer is 207**. Recording that latches the float for the rest of the
+## composing act, since the mark is a high-water mark. So the claim is made in that window and in the
+## one after it, as a PAIR: unmeasurable before the layout pass, measurable after, and the mark that
+## survives is the laid-out number. Either half alone passes on a guard wired to one answer.
+func _assert_empty_compose_opens_in_the_zone(state_name: String) -> void:
+	var launch := _find_meta_control_valued(_panel, HudWidgets.MISSION_LAUNCH_META,
+		HudComposeVocab.COMPOSE_MISSION_HUNT) as Button
+	if launch == null or launch.disabled:
+		push_error("band_panel_preview: %s — no live 🏹 Hunt launch button, so nothing below is driven" % state_name)
+		return
+	# The REAL press. Everything until the next `await` runs inside the pre-layout window the phantom
+	# lives in — the sheet is built and parented, and no container has sorted.
+	launch.emit_signal("pressed")
+	var col: VBoxContainer = _hud._bandpanel._parties_zone_col
+	var box: Vector2 = _hud._bandpanel._parties_zone_box_known()
+	var phantom: float = col.get_combined_minimum_size().y
+	# **THE VACUITY GUARD.** If the unsorted reading would not have floated the sheet anyway, refusing
+	# to record it proves nothing about this defect.
+	if phantom <= box.y + HudComposeVocab.COMPOSE_FLOAT_SLACK:
+		push_error(("band_panel_preview: %s — VACUOUS: the pre-layout column reads %.0fpx against a "
+			+ "%.0fpx box, so recording it would not have floated the sheet either way") % [
+			state_name, phantom, box.y])
+		return
+	_assert_band_panel(("%s — a sheet the layout has not fitted is NOT measurable (column %.0fpx wide "
+		+ "reports %.0fpx of requirement, which WOULD float it out of its %.0fpx box)") % [
+		state_name, col.size.x, phantom, box.y], not _hud._bandpanel._party_compose_measurable())
+	await _settle()
+	# …and the paired positive, without which a guard stuck at "never measurable" passes above.
+	var settled: float = _hud._bandpanel._parties_zone_col.get_combined_minimum_size().y
+	_assert_band_panel("%s — …and IS measurable once it has been (%.0fpx now)" % [state_name, settled],
+		_hud._bandpanel._party_compose_measurable())
+	_assert_band_panel(("%s — the mark that survived is the LAID-OUT number, not the phantom "
+		+ "(%.0fpx recorded, %.0fpx laid out, %.0fpx unsorted)") % [
+		state_name, _hud._bandpanel._party_compose_needed, settled, phantom],
+		is_equal_approx(_hud._bandpanel._party_compose_needed, settled))
+
+## **A ZONE THAT CAN HOLD THE SHEET NEVER FLOATS IT, stated against the measured numbers rather than
+## the dock edge.** `_assert_compose_in_zone` says a particular tall dock kept its sheet; this says the
+## RULE — whatever the mark and whatever the box, the sheet is in the zone exactly when the zone has
+## room for it. The precondition is the room, so a state where it does not fit refuses to claim
+## anything here rather than passing as "correctly floated".
+##
+## The sheet is located by NODE IDENTITY (the controller's own `_party_compose_sheet`, walked up to
+## whichever surface owns it), never by a face: the empty form's Send is disabled and carries no
+## confirm meta, being a reason rather than a confirm.
+func _assert_zone_holds_its_compose_sheet(state_name: String) -> void:
+	var needed: float = _hud._bandpanel._party_compose_needed
+	var box: Vector2 = _hud._bandpanel._parties_zone_box_known()
+	if box == Vector2.ZERO or needed > box.y + HudComposeVocab.COMPOSE_FLOAT_SLACK:
+		push_error(("band_panel_preview: %s — VACUOUS: the zone (%.0fpx) cannot hold this sheet "
+			+ "(%.0fpx), so 'a zone with room keeps its sheet' is not what is being tested") % [
+			state_name, box.y, needed])
+		return
+	var sheet: Control = _hud._bandpanel._party_compose_sheet
+	_assert_band_panel(("%s — the zone has room (%.0fpx of a %.0fpx box, %.0fpx spare) and so it KEEPS "
+		+ "its sheet") % [state_name, needed, box.y, box.y - needed],
+		sheet != null and is_instance_valid(sheet) and _is_descendant_of(sheet, _panel)
+			and not _hud._bandpanel.compose_is_floating())
+
+## Find a Control carrying `meta` with a specific VALUE — the identity handle on one of a family of
+## controls built by a shared builder (the three parties-footer mission launchers).
+func _find_meta_control_valued(node: Node, meta: String, value: Variant) -> Control:
+	if node is Control and (node as Control).has_meta(meta) and (node as Control).get_meta(meta) == value:
+		return node as Control
+	for child in node.get_children():
+		var found := _find_meta_control_valued(child, meta, value)
+		if found != null:
+			return found
+	return null
+
+func _is_descendant_of(node: Node, root: Node) -> bool:
+	var walk: Node = node
+	while walk != null:
+		if walk == root:
+			return true
+		walk = walk.get_parent()
+	return false
+
+## **AN UNKNOWN ZONE BOX MUST NOT FLOAT — and no picture can carry this.** Reported from play: the
+## sheet floated in a TALL left dock, where the zone offers ~1055px and the empty form wanted a couple
+## of hundred. `BandCityPanel.parties_zone_size()` answers `Vector2.ZERO` whenever the panel is
+## collapsed, hidden, or simply has not laid out yet, and the predicate used to fall back to
+## `ZONE_FALLBACK_SIZE` (340×360) — so "I do not know yet" decided as "this overflows", and the
+## high-water mark latched it ON for the rest of the composing act.
+##
+## Driven through the REAL predicate with the mark left exactly where the short dock measured it, and
+## the box made unknown the way the live client makes it unknown (a collapsed panel). The precondition
+## is the whole point: with the mark below the fallback's 360 the two answers coincide and the claim
+## would be vacuous.
+func _assert_unknown_zone_box_does_not_float(state_name: String) -> void:
+	var needed: float = _hud._bandpanel._party_compose_needed
+	if needed <= HudWorkVocab.ZONE_FALLBACK_SIZE.y:
+		push_error(("band_panel_preview: %s — VACUOUS: the latched requirement is %.0fpx, under the "
+			+ "%.0fpx fallback box, so an unknown box answers 'no float' either way") % [
+			state_name, needed, HudWorkVocab.ZONE_FALLBACK_SIZE.y])
+		return
+	var was_collapsed: bool = _panel.is_collapsed()
+	_panel.set_collapsed(true)
+	var box: Vector2 = _hud._bandpanel._parties_zone_box_known()
+	_assert_band_panel("%s — precondition: a collapsed panel answers no parties-zone box" % state_name,
+		box == Vector2.ZERO)
+	_assert_band_panel(("%s — an UNKNOWN zone box does not float (mark %.0fpx, which WOULD float "
+		+ "against the %.0fpx fallback)") % [state_name, needed, HudWorkVocab.ZONE_FALLBACK_SIZE.y],
+		not _hud._bandpanel._party_compose_floats())
+	_panel.set_collapsed(was_collapsed)
+
+## Stage a latched requirement no zone box in this client can hold, while the panel is still in the
+## SHORT dock. **The mark is the INPUT to the rule under test, not the rule** — the rule is "a change of
+## zone box drops the mark", and no fixture here produces a mark that naturally overflows the TALL dock
+## (that dock holds this sheet comfortably, which is exactly what `_assert_compose_in_zone` asserts one
+## state earlier), so a staged one is the only way the two answers can differ at all.
+func _stage_impossible_compose_mark() -> float:
+	var staged: float = get_viewport().get_visible_rect().size.y * IMPOSSIBLE_MARK_VIEWPORTS
+	_hud._bandpanel._party_compose_needed = staged
+	return staged
+
+## **A MARK LATCHED IN ONE BOX MUST NOT SURVIVE A MOVE TO ANOTHER.** The requirement is a high-water
+## mark that never falls during a composing act — which is right, since a mark tracking every shrink
+## would hop the sheet back into the zone as a field cleared — so a mark CARRIED ACROSS a dock change
+## keeps a sheet floating in a column that was never measured. Read right after a real `set_dock` +
+## render, so what it judges is the shipped path's outcome.
+func _assert_mark_dropped_on_dock_change(state_name: String, staged: float) -> void:
+	var box: Vector2 = _hud._bandpanel._parties_zone_box_known()
+	_assert_band_panel("%s — precondition: the new dock states a box (%s)" % [state_name, box],
+		box != Vector2.ZERO)
+	_assert_band_panel(("%s — precondition: the staged mark (%.0fpx) WOULD float in this %.0fpx "
+		+ "box, so dropping it is what decides the fork") % [state_name, staged, box.y], staged > box.y)
+	_assert_band_panel("%s — the mark from the SHORT dock did not survive the move (now %.0fpx)" % [
+		state_name, _hud._bandpanel._party_compose_needed],
+		_hud._bandpanel._party_compose_needed < staged)
+	_assert_band_panel("%s — …so the tall dock keeps its sheet in the zone" % state_name,
+		not _hud._bandpanel.compose_is_floating()
+			and _find_meta_control(_panel, HudWidgets.SEND_HUNT_CONFIRM_META) != null)
+
+## **THE MAP STILL TAKES THE PRESSES BESIDE THE FLOAT.** `BandComposeFloat` is deliberately the card
+## and NOTHING more — no full-screen catcher — because the dock's sheet stays open through a map pick
+## and a catcher would eat the very click the quarry picker needs. That is a behavioural claim and a
+## PNG is pixel-identical either way, so it is driven through the real dispatch with `Viewport.push_input`,
+## exactly as `_assert_open_strip_reaches_the_map` drives the open strip. Reading the float's
+## `mouse_filter` back would only say what the node was configured as, not what the Viewport does with it.
+func _assert_float_leaves_the_map_clickable(state_name: String) -> void:
+	var floater: BandComposeFloat = _hud._bandpanel.compose_float()
+	if floater == null or not _hud._bandpanel.compose_is_floating():
+		push_error("band_panel_preview: %s — no float, so the click-through probe proves nothing" % state_name)
+		return
+	var box := floater.get_global_rect()
+	var failures: Array[String] = []
+	# PRECONDITION: the probe fires at all. The bare canvas beside the float — a full float width
+	# outboard of it, on the float's own rows — is map in the live client and decoration here.
+	var open_ground := Rect2(Vector2(box.end.x + FLOAT_PROBE_GAP, box.position.y),
+		Vector2(get_viewport().get_visible_rect().size.x - box.end.x - FLOAT_PROBE_GAP, box.size.y))
+	var reached := 0
+	for point in _rect_probe_points(open_ground):
+		if await _press_reaches_map(_canvas_to_window(point)):
+			reached += 1
+	if reached == 0:
+		failures.append("no press in the %s band beside the float reached _unhandled_input, so this probe proves nothing" % str(open_ground))
+	# THE CLAIM: the float eats its OWN rect and only its own.
+	for point in _rect_ring_probe_points(box):
+		if await _press_reaches_map(_canvas_to_window(point)):
+			failures.append("a press at %s on the float itself fell through to the map's input path" % point)
+			break
+	# …and one canvas pixel outboard of its leading edge is already map again.
+	for row in [box.position.y + PROBE_RECT_INSET, box.get_center().y, box.end.y - PROBE_RECT_INSET]:
+		var just_outside := Vector2(box.end.x + FLOAT_EDGE_PROBE_OFFSET, row)
+		if not await _press_reaches_map(_canvas_to_window(just_outside)):
+			failures.append("a press at %s, just outboard of the float, never reached the map's input path" % just_outside)
+			break
+	if failures.is_empty():
+		print("band_panel_preview: assert OK — %s the float eats its own rect and nothing else (%d/%d open-ground presses reached the map)" % [
+			state_name, reached, _rect_probe_points(open_ground).size()])
+		return
+	for failure in failures:
+		push_error("band_panel_preview: %s — %s" % [state_name, failure])
+
+## How far outboard of the float the open-ground probe band starts, and where the "one pixel out is
+## already map" samples sit. Both in canvas px; the second is deliberately just past the float's edge,
+## since the claim is about the float's own rect and not about some comfortable distance from it.
+const FLOAT_PROBE_GAP := 8.0
+const FLOAT_EDGE_PROBE_OFFSET := 3.0
+
+## How many viewport heights `_stage_impossible_compose_mark` asks for. Any multiple above 1 is past
+## every box a dock can offer (a zone box is a fraction of the window); 4 leaves the claim legible in
+## the printed numbers rather than sitting a pixel over the line.
+const IMPOSSIBLE_MARK_VIEWPORTS := 4.0
+
+## The party `band_panel_compose_hunt` is seeded to before it arms autofill — the stepper's own floor,
+## i.e. the smallest party the form can express, so the fill has somewhere to move FROM whatever the
+## states above left behind. `HudConst.WORKER_STEP` rather than a literal 1: it is the step the sheet's
+## own `clampi` floors on, so the seed cannot drift out from under that clamp.
+const COMPOSE_HUNT_SEED_PARTY := HudConst.WORKER_STEP
+
+## GUARD: **THE PARTY CAP IS RESOLVED BEFORE THE FLOOR CHART IS COMPOSED** (`labor-ui.md` → "THE CAP IS
+## RESOLVED BEFORE THE CHART ON BOTH SHEETS"). The chart's projection, its two crew targets and its
+## verdict are all read against a CREW, so a sheet that composes the model ahead of its own
+## `clampi`/autofill states a verdict for a party the stepper beneath then refuses to show.
+##
+## **IT CANNOT BE A PICTURE, and that is why it is here.** The disagreement lasts exactly one frame —
+## the render on which autofill arms — and the next rerender resolves it, so a capture taken after the
+## settle shows a chart and a stepper that have already been reconciled. What can see it is the two
+## RENDERED numbers compared against each other: `HarvestFloorChart.crew()` (read off the live model,
+## so a chart refreshed in place cannot answer staler than it draws) against the stepper row's
+## `PARTY_STEPPER_COUNT_META` (the count the row was BUILT with, hence exactly the digit on screen).
+## Neither side is a controller field, so the claim survives a sheet that clamps its member correctly
+## and still hands the old number to the chart.
+##
+## The VACUITY guard rides first: autofill must really have moved the party off `seeded`, or the two
+## numbers agree for free and the ordering is untested.
+func _assert_chart_reads_the_settled_party(state_name: String, seeded: int) -> void:
+	var surface := _compose_surface()
+	var chart := _find_meta_control(surface, HudWidgets.FLOOR_CHART_META)
+	var stepper := _find_meta_control(surface, HudWidgets.PARTY_STEPPER_COUNT_META)
+	if chart == null or stepper == null:
+		push_error("band_panel_preview: %s renders no %s — the cap-before-chart claim cannot be made" % [
+			state_name, "floor chart" if chart == null else "party stepper"])
+		return
+	var settled := int(stepper.get_meta(HudWidgets.PARTY_STEPPER_COUNT_META))
+	var drawn_for := (chart as HarvestFloorChart).crew()
+	_assert_band_panel("%s — autofill moved the party off its seed (%d → %d), so the order is testable"
+			% [state_name, seeded, settled], settled != seeded)
+	_assert_band_panel("%s — the chart is drawn for the party the stepper shows (chart %d, stepper %d)"
+			% [state_name, drawn_for, settled], drawn_for == settled)
+
+## GUARD: the dock hunt sheet's floor CHART is gated on the zone having room — present at TALL, absent
+## at SHORT, where the parties zone is height-capped and clips. **Both halves are asserted**: a gate
+## that never fires and a gate stuck on are both green to the bounds assertion, since a clipped chart
+## still sits inside the zone rect.
+func _assert_hunt_sheet_chart(want: bool, state_name: String) -> void:
+	var chart := _find_meta_control(_compose_surface(), HudWidgets.FLOOR_CHART_META)
+	var tier := _band_zone_tier_name()
+	if want and chart == null:
+		push_error("band_panel_preview: %s (%s tier) renders NO floor chart — the tier gate is stuck off" % [
+			state_name, tier])
+		return
+	if not want and chart != null:
+		push_error("band_panel_preview: %s (%s tier) renders a floor chart — the tier gate is stuck on" % [
+			state_name, tier])
+		return
+	print("band_panel_preview: assert OK — %s (%s tier) %s the floor chart" % [
+		state_name, tier, "carries" if want else "keeps out"])
+
+## MEASUREMENT: the compose sheet's floor PICKER and its CHART against the column they render in.
+## Both are widgets the herd drawer sized in a ~400px sheet and the dock hosts in a ~354px zone, and
+## both fail SILENTLY when they do not fit — the picker WRAPS onto a second row (the reason the zone
+## once clamped itself to 2 columns) and the chart raises the zone's minimum width past its host,
+## where it is clipped. A green bounds assertion says neither happened; only the numbers say by how
+## much, which is what decides whether a shortened face was enough.
+func _report_compose_widths(state_name: String) -> void:
+	var surface := _compose_surface()
+	var picker := _find_meta_control(surface, HudWidgets.POLICY_RUNG_META)
+	# The rung's own meta rides the BUTTON; the grid that lays the three of them out is its
+	# grandparent (button → cell `MarginContainer` → grid), and the GRID is what can wrap.
+	var grid: Control = picker.get_parent().get_parent() as Control if picker != null else null
+	if grid != null:
+		print("band_panel_preview: %s — floor picker grid needs %.0fpx of a %.0fpx column (%d columns, %d rungs)" % [
+			state_name, grid.get_combined_minimum_size().x, grid.size.x,
+			(grid as GridContainer).columns if grid is GridContainer else -1,
+			grid.get_child_count()])
+	var chart := _find_meta_control(surface, HudWidgets.FLOOR_CHART_META)
+	if chart == null:
+		print("band_panel_preview: %s — no floor chart in this zone" % state_name)
+		return
+	print("band_panel_preview: %s — floor chart needs %.0f x %.0fpx, drawn at %.0f x %.0fpx" % [
+		state_name, chart.get_combined_minimum_size().x, chart.get_combined_minimum_size().y,
+		chart.size.x, chart.size.y])
+
 ## The panel's fixed-size zone hosts (BandCityPanel names them `Zone_<key>` / `NarrowZoneHost`).
 func _find_zone_hosts(node: Node) -> Array:
 	var hosts: Array = []
@@ -2244,6 +3600,30 @@ func _assert_forage_jump_names_land() -> void:
 
 ## Pass/fail reporting for the rung-ready assertions, in this harness's `push_error` idiom so a
 ## regression fails loudly in the run log rather than waiting to be noticed in a thumbnail.
+## A control carrying `meta`, found by IDENTITY rather than by face — the rule this harness already
+## follows for policy rungs (`HudWidgets.POLICY_RUNG_META`). The fill-target control is a checkbox
+## whose own text FLIPS between its two states, so a text match would find it in one state and pass
+## vacuously in the other.
+func _find_meta_control(node: Node, meta: String) -> Control:
+	if node is Control and (node as Control).has_meta(meta):
+		return node as Control
+	for child in node.get_children():
+		var found := _find_meta_control(child, meta)
+		if found != null:
+			return found
+	return null
+
+## Does any Label under `node` carry `text`? For the bound clause, which is a plain
+## `HudWidgets.alloc_hint_label` sentence — the ONE case where "this text appears somewhere" IS the
+## claim, and it is paired above with a positive identity check so neither can pass alone.
+func _has_label_containing(node: Node, text: String) -> bool:
+	if node is Label and (node as Label).text.contains(text):
+		return true
+	for child in node.get_children():
+		if _has_label_containing(child, text):
+			return true
+	return false
+
 func _assert_band_panel(label: String, ok: bool) -> void:
 	if ok:
 		print("band_panel_preview: PASS — ", label)
@@ -3059,6 +4439,33 @@ func _many_sources_band_fixture() -> Dictionary:
 	band["labor_assignments"] = assignments
 	return band
 
+## **A BAND WHOSE IDLE WORKFORCE OUTRUNS `max_expedition_party_size`** (left at the reference band's 8).
+## The denial stepper's ceiling is supply — idle workers — and that field is the estimate tables'
+## SAMPLING AXIS rather than a rules cap, so this is the only band shape in which a stepper reading the
+## wrong one is visible at all. Same entity 904, so the expeditions still attach and the cycler reads 1/1.
+func _deep_party_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	# **THE WORKFORCE IS WHAT IS RAISED, NOT `idle_workers`.** `HudBandLaborState.effective_idle`
+	# derives idle as `working_age − assigned`, so writing the idle count alone would leave every
+	# surface — the stepper's cap included — still reading the reference band's 3.
+	var assigned := 0
+	for assignment_variant in (band["labor_assignments"] as Array):
+		assigned += int((assignment_variant as Dictionary).get("workers", 0))
+	var workers := assigned + DENIAL_DEEP_PARTY_IDLE
+	# Keep the age split in step with the enlarged workforce, `_many_sources_band_fixture`'s rule:
+	# `age_working` IS `working_age` and the three sum to `size`, or the PEOPLE bar renders as a bug on
+	# the very frame the parties zone is being judged on. SCALED off the reference band's own brackets
+	# rather than retyped, so the dependency ratio the bar is tinted by does not move either.
+	var scale := float(workers) / float(band["age_working"])
+	band["working_age"] = workers
+	band["idle_workers"] = DENIAL_DEEP_PARTY_IDLE
+	band["age_working"] = float(workers)
+	band["age_children"] = float(band["age_children"]) * scale
+	band["age_elders"] = float(band["age_elders"]) * scale
+	band["size"] = int(round(
+		float(workers) + float(band["age_children"]) + float(band["age_elders"])))
+	return band
+
 ## Every worker committed: the parties footer must still SHOW its button, disabled, with the reason.
 func _no_idle_band_fixture() -> Dictionary:
 	var band := _band_fixture()
@@ -3157,7 +4564,30 @@ func _capture(name: String) -> Image:
 	push_error("band_panel_preview: viewport never came back to the pinned %s canvas for %s" % [_pinned_size, name])
 	return null
 
+## The hang guard from the scene, or `null` if the node has gone. Checked for its method rather than
+## assumed: calling a missing method on an untyped `Node` is a runtime error, and one raised here
+## would abort `_ready` exactly the way the guard exists to survive.
+func _resolve_watchdog() -> Node:
+	var node := get_node_or_null(WATCHDOG_NODE)
+	if node != null and node.has_method(WATCHDOG_PROGRESS_METHOD):
+		return node
+	push_warning(("band_panel_preview: no %s node in the scene — the run has NO hang guard. Restore "
+		+ "it from tools/band_panel_preview.tscn (see preview_watchdog.gd).") % WATCHDOG_NODE)
+	return null
+
+## A sign of life for the hang guard, from the one call every state makes.
+func _note_progress() -> void:
+	if _watchdog != null:
+		_watchdog.note_progress()
+
+## Stand the guard down on the way out, so a slow shutdown cannot be reported as a stall.
+func _finish() -> void:
+	if _watchdog != null:
+		_watchdog.disarm()
+	get_tree().quit()
+
 func _settle() -> void:
+	_note_progress()
 	# Re-assert the window EVERY state: the WM's maximize lands asynchronously and can arrive between
 	# two states, rendering them at different resolutions (blend_probe hit the same thing).
 	await _pin_window(_pinned_size)
@@ -3317,7 +4747,11 @@ func _herd_fixtures() -> Array:
 ## metrics / max-useful party cap / trip forecast are all pure lookups into. Without the trip table the
 ## sheet renders bare rungs and no forecast, i.e. exactly the state the quarry-first flow exists to fix.
 ## It sits 4 tiles from the band at (71,18), so the round-trip travel term is exercised too.
-func _quarry_herd_fixtures() -> Array:
+## The two quarry herds the parties compose sheet is judged on. **`denial_rows` swaps the FAR herd's
+## denial table and nothing else** (`docs/plan_denial_raid.md`) — the viable and the repelled frames
+## must differ only in the sim's answer, or a "the verdict changed" assertion would be satisfied by
+## two different herds rather than by two different forecasts.
+func _quarry_herd_fixtures(denial_rows: Array = []) -> Array:
 	var herd := {
 		"id": QUARRY_FAR_HERD_ID, "species": "Wild Boar", "x": QUARRY_FAR_X, "y": QUARRY_FAR_Y,
 		"population": 140, "ecology_phase": "thriving", "huntable": true,
@@ -3354,8 +4788,30 @@ func _quarry_herd_fixtures() -> Array:
 				"animals_taken": animals,
 				"delivered_food": float(animals) * QUARRY_FOOD_PER_ANIMAL,
 				"delivered_trade": float(animals) * QUARRY_TRADE_PER_ANIMAL,
-				"wasted_food": 0.0}
+				"wasted_food": 0.0,
+				# **WHICH STOP ENDS THIS SAMPLED TRIP** (`docs/plan_hunt_through_combat.md` §5.2).
+				# The sim writes it on every row, so a fixture without it is a herd no live server can
+				# produce — and the dock sheet's bound line would then be absent for the honest
+				# "not stated" reason, leaving its ONE render site unexercised. A clean raid that
+				# hauls its whole kill is stopped by the PACK.
+				SourceForecast.TRIP_BOUND_KEY: SourceForecast.TRIP_BOUND_PACK_FULL}
 	herd["hunt_trip_estimates"] = table
+	var denial_table := denial_rows if not denial_rows.is_empty() else _denial_viable_rows()
+	herd["denial_estimates"] = denial_table
+	herd["denial_party_needed"] = _denial_party_needed_for(denial_table)
+	# **WHICH KIT BOTH TABLES ARE QUOTED FOR.** The sim writes the hunt job's default on every herd,
+	# always, so a fixture leaving them blank would exercise only the client's fall-back reading and
+	# the STATED path — the one live data takes — would go untested. Stamped on all three herds below
+	# through `_stamp_estimate_kits`.
+	_stamp_estimate_kits(herd)
+	# The COMBAT GATE's two herd terms (`docs/plan_hunt_through_combat.md` §4.2). They exist here for
+	# the kit-mismatch frame, which suppresses the estimate tables and renders the gate in their place:
+	# without them the gate answers `stated == false` and the frame would show a sheet that says
+	# nothing at all. Chosen so the gate DISCRIMINATES between the kits — at the big-game tier (20) the
+	# effective attack is 18 and the line states the effort, bare-handed (1) it is 0 and the line
+	# refuses outright, which is exactly the `none` party's honest verdict.
+	herd["defense"] = QUARRY_DEFENSE
+	herd["durability"] = QUARRY_DURABILITY
 	# A second huntable herd INSIDE the band's hunt reach. It is not a party's job (the band can work
 	# it from home), so the picker must refuse it — the near half of the eligibility assertion.
 	var near := {
@@ -3367,7 +4823,789 @@ func _quarry_herd_fixtures() -> Array:
 		"hunt_policy_trade_ceilings": {"sustain": 0.03, "surplus": 0.12, "deplete": 0.06, "eradicate": 0.0},
 		"hunt_trip_estimates": table.duplicate(true),
 	}
-	return [herd, near]
+	# A third huntable herd standing ON THE BAND'S TILE. A hunting party must still refuse it — there is
+	# no expedition to make of game you are camped on — but a DENIAL raid must take it, because denial
+	# erases a herd rather than harvesting one. It carries the same viable denial table as the boar, so
+	# the two frames differ only in the WALK, which is the term under test.
+	var home := {
+		"id": QUARRY_HOME_HERD_ID, "species": QUARRY_HOME_SPECIES,
+		"x": QUARRY_HOME_X, "y": QUARRY_HOME_Y,
+		"population": 260, "ecology_phase": "thriving", "huntable": true,
+		"per_worker_yield": 0.6, "food_per_animal": QUARRY_FOOD_PER_ANIMAL,
+		"hunt_policy_ceilings": {"sustain": 0.25, "surplus": 1.00, "deplete": 0.50, "eradicate": 0.0},
+		"per_worker_trade": 0.05, "trade_per_animal": QUARRY_TRADE_PER_ANIMAL,
+		"hunt_policy_trade_ceilings": {"sustain": 0.02, "surplus": 0.08, "deplete": 0.04, "eradicate": 0.0},
+		"denial_estimates": denial_table,
+		"denial_party_needed": _denial_party_needed_for(denial_table),
+	}
+	_stamp_estimate_kits(near)
+	_stamp_estimate_kits(home)
+	return [herd, near, home]
+
+## Stamp a herd with the kit id its two pre-launch estimate tables are quoted for — the HUNT job's
+## default, which is what the sim writes on every herd whether or not it publishes either table.
+## Mutates in place and returns nothing: every caller is building the dict it hands over.
+static func _stamp_estimate_kits(herd: Dictionary) -> void:
+	herd[KitRoster.HERD_TRIP_ESTIMATES_KIT_KEY] = BandFx.KIT_DEFAULT_HUNT
+	herd[KitRoster.HERD_DENIAL_ESTIMATES_KIT_KEY] = BandFx.KIT_DEFAULT_HUNT
+
+## **TWO ELIGIBLE QUARRIES ON ONE HEX** — the reported pair, both beyond the band's hunt reach so the
+## picker accepts either. Their ORDER is the fixture's claim as much as their contents: the compose
+## sheet is staged on the FIRST (the warren, what a tile click would resolve to), and reaching the
+## second is exactly what the chooser exists for.
+##
+## The wolf is INEDIBLE, which is why it is the second herd rather than a second rabbit: it pays
+## pelts and no meat, so the two rows read differently at every register a live server would produce
+## them at — and a denial raid on it hauls trade goods and leaves no food on the range.
+func _shared_tile_quarry_fixtures() -> Array:
+	var food_herd := {
+		"id": SHARED_TILE_FOOD_HERD_ID, "species": SHARED_TILE_FOOD_SPECIES,
+		"x": SHARED_TILE_X, "y": SHARED_TILE_Y,
+		"population": 320, "ecology_phase": "thriving", "huntable": true,
+		"per_worker_yield": 0.9, "food_per_animal": SHARED_TILE_FOOD_PER_ANIMAL,
+		"hunt_policy_ceilings": {"sustain": 0.40, "surplus": 1.40, "deplete": 0.70, "eradicate": 0.0},
+		"per_worker_trade": 0.04, "trade_per_animal": SHARED_TILE_FOOD_TRADE_PER_ANIMAL,
+		"hunt_policy_trade_ceilings": {
+			"sustain": 0.02, "surplus": 0.07, "deplete": 0.04, "eradicate": 0.0,
+		},
+		"hunt_trip_estimates": _shared_tile_raid_table(
+			SHARED_TILE_FOOD_PER_ANIMAL, SHARED_TILE_FOOD_TRADE_PER_ANIMAL),
+		"denial_estimates": _denial_viable_rows(),
+		"denial_party_needed": _denial_party_needed_for(_denial_viable_rows()),
+	}
+	var pelt_herd := {
+		"id": SHARED_TILE_PELT_HERD_ID, "species": SHARED_TILE_PELT_SPECIES,
+		"x": SHARED_TILE_X, "y": SHARED_TILE_Y,
+		"population": 40, "ecology_phase": "thriving", "huntable": true,
+		# No food account at all — an inedible quarry's provisions rate is a structural zero, not a
+		# reading, so the whole food half is absent rather than set to 0.0.
+		"per_worker_trade": 0.20, "trade_per_animal": SHARED_TILE_PELT_TRADE_PER_ANIMAL,
+		"hunt_policy_trade_ceilings": {
+			"sustain": 0.10, "surplus": 0.35, "deplete": 0.18, "eradicate": 0.0,
+		},
+		"hunt_trip_estimates": _shared_tile_raid_table(0.0, SHARED_TILE_PELT_TRADE_PER_ANIMAL),
+		"denial_estimates": _denial_trade_only_rows(),
+		"denial_party_needed": _denial_party_needed_for(_denial_trade_only_rows()),
+	}
+	return [food_herd, pelt_herd]
+
+## A compact raid table for the shared-hex pair: one row per (floor sample × party size), with the
+## payload derived from the species' own quanta. `food_per_animal == 0` is the INEDIBLE case — the
+## quarry delivers no food at any party size, which is what `delivers_food` states.
+func _shared_tile_raid_table(food_per_animal: float, trade_per_animal: float) -> Dictionary:
+	var table := {}
+	for i in SHARED_TILE_RAID_ANIMALS_ROW.size():
+		var party := i + 1
+		var animals := int(SHARED_TILE_RAID_ANIMALS_ROW[i])
+		for floor_key in ["sustain", "surplus", "deplete", "eradicate"]:
+			table["%s:%d" % [floor_key, party]] = {
+				"turns_to_fill": SHARED_TILE_RAID_TURNS,
+				"delivers_food": food_per_animal > 0.0,
+				"delivers_trade": true,
+				"animals_taken": animals,
+				"delivered_food": float(animals) * food_per_animal,
+				"delivered_trade": float(animals) * trade_per_animal,
+				"wasted_food": 0.0,
+				SourceForecast.TRIP_BOUND_KEY: SourceForecast.TRIP_BOUND_PACK_FULL,
+			}
+	return table
+
+## The viable denial table with its FOOD accounts struck out — the inedible quarry's version. A raid
+## on a wolf pack kills the same animals and hauls the same pelts; there is no meat to bring home and
+## none to leave rotting on the range, so both food halves are zero rather than the boar's numbers.
+##
+## **AND IT WASTES NOTHING, WHICH IS A FACT ABOUT THE PRODUCT RATHER THAN ABOUT THE PARTY.**
+## `carry_room_biomass` answers `NO_CARRY_BOUND` for a species paying no provisions — the pack is
+## measured in provisions, so a quarry that pays none never fills it — and the sim's own take then
+## carries every kill (`take.wasted` is empty). So the party hauls the WHOLE pelt yield and both
+## waste halves are zero; inheriting the boar's food-bound carry share here would have quoted a wolf
+## pack losing three quarters of its hides to a pack it cannot fill.
+func _denial_trade_only_rows() -> Array:
+	var rows: Array = []
+	for row_variant in _denial_viable_rows():
+		var row: Dictionary = (row_variant as Dictionary).duplicate(true)
+		row["delivered_food"] = 0.0
+		row["wasted_food"] = 0.0
+		row["delivered_trade"] = float(int(row.get("animals_killed", 0))) * QUARRY_TRADE_PER_ANIMAL
+		row["wasted_trade"] = 0.0
+		rows.append(row)
+	return rows
+
+## The DENIAL raid's pre-launch table — an ARRAY with ONE row per party size and no other axis, which
+## is the whole shape difference from `hunt_trip_estimates` above: denial carries no floor and no fill
+## target, so party size is the only thing there is to sample and a row's `party_workers` is its id.
+##
+## `outcome` is on every row because the client renders nothing numeric without it, and a `0` turn
+## count means "not within the horizon on that end" rather than "immediately".
+## **`parties` states the AXIS where it is not `1..N`.** Every table below the ladder assertions samples
+## contiguously, which is what an empty `parties` means; the ladder fixture states its own rungs, since
+## the sampled axis is exactly what those assertions are about.
+func _denial_rows(outcome: String, turns_row: Array, low_row: Array, high_row: Array,
+		kills_row: Array, parties: Array = []) -> Array:
+	var rows: Array = []
+	for i in kills_row.size():
+		var party: int = int(parties[i]) if i < parties.size() else i + 1
+		var killed := int(kills_row[i])
+		var killed_food := float(killed) * QUARRY_FOOD_PER_ANIMAL
+		# What the pack holds, never what it killed: the raid banks a rounding error on the way home.
+		var hauled := minf(killed_food, float(party) * DENIAL_CARRY_PER_WORKER)
+		var hauled_share := (hauled / killed_food) if killed_food > 0.0 else 0.0
+		# **BOTH PRODUCTS COME OFF ONE CONVERSION OF THE SAME BIOMASS**, which is what the sim does
+		# (`hunt_yield.apply(take.carried)` beside `hunt_yield.apply(take.wasted)`): the pelts ride
+		# whichever share of the kill the pack held, and the rest is left on the range with the meat.
+		# A fixture stating a wasted_trade of 0 beside a large wasted_food would be a herd no live
+		# server can produce, and the waste readout's trade half would have nothing to state.
+		var killed_trade := float(killed) * QUARRY_TRADE_PER_ANIMAL
+		var hauled_trade := killed_trade * hauled_share
+		rows.append({
+			"party_workers": party,
+			"turns_to_collapse": int(turns_row[i]),
+			"turns_to_collapse_low": int(low_row[i]),
+			"turns_to_collapse_high": int(high_row[i]),
+			"outcome": outcome,
+			"animals_killed": killed,
+			"delivered_food": hauled,
+			"wasted_food": killed_food - hauled,
+			"delivered_trade": hauled_trade,
+			"wasted_trade": killed_trade - hauled_trade,
+		})
+	return rows
+
+## A raid that gets there: `past_recovery`, with a real turn band.
+func _denial_viable_rows() -> Array:
+	return _denial_rows(SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY,
+		DENIAL_TURNS_ROW, DENIAL_LOW_ROW, DENIAL_HIGH_ROW, DENIAL_KILLS_ROW)
+
+## A raid that never gets there: `repelled`, every turn row `0` (not within the horizon on either
+## end) and a small but NON-ZERO kill count — the party is outbred, not incapable.
+func _denial_repelled_rows() -> Array:
+	var zeroes := [0, 0, 0, 0, 0, 0, 0, 0]
+	return _denial_rows(SourceForecast.DENIAL_OUTCOME_REPELLED,
+		zeroes, zeroes, zeroes, DENIAL_REPELLED_KILLS_ROW)
+
+## **THE OPEN-HIGH TABLE — every row bounded on the expectation and the good run, unbounded on the
+## bad one.** `high == 0` is the wire's own "not within the horizon on that end"; the sim really does
+## publish this shape (a raid whose unlucky draws run past the 60-turn projection), and it is the shape
+## the verdict copy shipped wrong. Flat across party sizes, since the claim is the SENTENCE and a
+## descending table would only invite an assertion about which row was read.
+func _denial_open_high_rows() -> Array:
+	var kills: Array = []
+	var turns: Array = []
+	var low: Array = []
+	var zeroes: Array = []
+	for i in DENIAL_KILLS_ROW.size():
+		kills.append(int(DENIAL_KILLS_ROW[i]))
+		turns.append(DENIAL_OPEN_HIGH_TURNS)
+		low.append(DENIAL_OPEN_HIGH_LOW)
+		zeroes.append(0)
+	return _denial_rows(SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY, turns, low, zeroes, kills)
+
+## **A TABLE WITH THE REQUIREMENT INSIDE IT** — every party below `DENIAL_DEEP_PARTY_NEEDED` is
+## `repelled`, that party and up are `past_recovery`. This is the shape the sim publishes for a herd
+## whose requirement outruns `maxExpeditionPartySize`: the party axis runs to whichever of that
+## ceiling and `denialPartyNeeded` is larger (`snapshot.fbs`), so the table STOPS at the requirement
+## rather than at 8 — which is also why a stepper dialled past it quotes no verdict at all.
+func _denial_needs_deep_party_rows() -> Array:
+	var kills: Array = []
+	var turns: Array = []
+	var low: Array = []
+	var high: Array = []
+	var zeroes: Array = []
+	for i in DENIAL_DEEP_PARTY_NEEDED:
+		kills.append((i + 1) * DENIAL_DEEP_KILLS_PER_WORKER)
+		turns.append(DENIAL_DEEP_TURNS)
+		low.append(DENIAL_DEEP_TURNS_LOW)
+		high.append(DENIAL_DEEP_TURNS_HIGH)
+		zeroes.append(0)
+	# Composed through `_denial_rows` twice rather than by hand, so both halves carry the payload
+	# arithmetic (what the pack holds, what is left on the range) the rest of this fixture set uses.
+	var repelled := _denial_rows(SourceForecast.DENIAL_OUTCOME_REPELLED, zeroes, zeroes, zeroes, kills)
+	var viable := _denial_rows(SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY, turns, low, high, kills)
+	var rows: Array = []
+	for i in kills.size():
+		rows.append(viable[i] if i + 1 >= DENIAL_DEEP_PARTY_NEEDED else repelled[i])
+	return rows
+
+## **`denialPartyNeeded`, DERIVED FROM THE TABLE RATHER THAN STATED BESIDE IT.** The field IS "the
+## smallest party in `denialEstimates` whose raid SUCCEEDED", so a fixture that spelled it out
+## separately could quote a party its own rows contradict — and every one of these tables would then
+## have to be kept in step by hand. `DENIAL_PARTY_NEEDED_NONE` when no row succeeds, which is exactly
+## what the sim publishes for a herd no quoted party drives down.
+##
+## **THE TEST IS `denial_outcome_succeeds`, NOT "is not `repelled`"**, and the difference is a shipped
+## defect: `horizon` is neither, so the looser test quoted a row whose projection merely RAN OUT as the
+## party that breaks the herd — a Wild Aurochs sheet opened at 5 under the verdict *"still standing when
+## the forecast runs out"*. The success set lives in `SourceForecast` for the reason every other outcome
+## key does: the client renders verdicts off these keys, and a second copy of "which outcomes count as
+## success" is what let the two diverge.
+## **THE `horizon` GUARD — the one shape no fixture in this file stages, and the one that shipped
+## wrong.** Every denial table here is built from `past_recovery` and `repelled` alone, so "the first
+## row that is not `repelled`" and "the first row that SUCCEEDED" agree on all four of them and the
+## defect is invisible to every frame. This drives `_denial_party_needed_for` over a table whose first
+## non-repelled row is a `horizon` — the projection ran its whole length with the herd still standing —
+## and requires the derivation to walk PAST it to the row that actually breaks the herd.
+##
+## PNG-less on purpose: a table's quoted party is a number, not a picture, and the sheet renders the
+## same plausible stepper whichever row it came from. Asserted directly over constructed rows, since
+## the answer is a pure function and a fixture would only re-state it.
+func _assert_denial_party_needed_skips_horizon() -> void:
+	var outcomes := [
+		SourceForecast.DENIAL_OUTCOME_REPELLED,
+		SourceForecast.DENIAL_OUTCOME_HORIZON,
+		SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY,
+	]
+	var rows: Array = []
+	for i in outcomes.size():
+		rows.append({
+			SourceForecast.DENIAL_ESTIMATE_PARTY_KEY: i + 1,
+			"outcome": String(outcomes[i]),
+		})
+	var horizon_party := 2
+	var success_party := 3
+	_assert_band_panel("a `horizon` row is NOT the party that breaks the herd (derived %d, wanted %d)"
+			% [_denial_party_needed_for(rows), success_party],
+		_denial_party_needed_for(rows) == success_party)
+	# …and the negative half, or the claim above also passes on a derivation that simply took the LAST
+	# row: a table whose only non-repelled row is a horizon quotes NO party at all.
+	var no_success := rows.slice(0, horizon_party)
+	_assert_band_panel("…and a table that never succeeds quotes no party at all (derived %d)"
+			% _denial_party_needed_for(no_success),
+		_denial_party_needed_for(no_success) == SourceForecast.DENIAL_PARTY_NEEDED_NONE)
+	# **THE SUCCESS SET AND THE VERDICT TABLE'S `VERDICT_OK` SEVERITIES ARE ONE ANSWER**, stated twice
+	# in `SourceForecast` twenty lines apart. `denial_outcome_succeeds` decides which party the sheet
+	# opens on and the severity decides whether the Send wears the primary face; the two disagreeing
+	# would offer a party under a warning face, or warn about one it had just recommended.
+	var agree := true
+	for outcome_variant in SourceForecast.DENIAL_VERDICTS:
+		var outcome := String(outcome_variant)
+		var severity_ok := String(SourceForecast.DENIAL_VERDICTS[outcome]["severity"]) \
+			== SourceForecast.VERDICT_OK
+		if SourceForecast.denial_outcome_succeeds(outcome) != severity_ok:
+			agree = false
+	_assert_band_panel("…and the success set is exactly the verdict table's VERDICT_OK entries", agree)
+
+func _denial_party_needed_for(rows: Array) -> int:
+	for row_variant in rows:
+		var row: Dictionary = row_variant as Dictionary
+		if SourceForecast.denial_outcome_succeeds(String(row.get("outcome", ""))):
+			return int(row.get(SourceForecast.DENIAL_ESTIMATE_PARTY_KEY, 0))
+	return SourceForecast.DENIAL_PARTY_NEEDED_NONE
+
+## The PARSED text of the first `RichTextLabel` under `node` containing `text`, or `""`. The verdict
+## and take lines are BBCode (`HudWidgets.forecast_label`), which `_has_label_containing` — a `Label`
+## walk — cannot see at all; and it returns the WHOLE line rather than a bool because the claims below
+## are about what the line does NOT also say, which a `contains` can never carry.
+func _rich_text_containing(node: Node, text: String) -> String:
+	if node is RichTextLabel:
+		var parsed := (node as RichTextLabel).get_parsed_text()
+		if parsed.contains(text):
+			return parsed
+	for child in node.get_children():
+		var found := _rich_text_containing(child, text)
+		if found != "":
+			return found
+	return ""
+
+# ---- THE KIT PICKER (`docs/plan_denial_raid.md`) -------------------------------------------------
+
+## Every rendered text line under `node`, in tree order — a `Label`'s `text` and a `RichTextLabel`'s
+## PARSED text (BBCode stripped), skipping hidden nodes and blanks. It exists for the kit-mismatch
+## claim, which is partly about what the sheet must NOT say: a `contains` search can only ever testify
+## that something IS there, so the absence half needs the WHOLE list to compare against.
+func _text_lines(node: Node) -> Array[String]:
+	var lines: Array[String] = []
+	if node is Control and not (node as Control).visible:
+		return lines
+	if node is RichTextLabel:
+		var parsed := (node as RichTextLabel).get_parsed_text().strip_edges()
+		if parsed != "":
+			lines.append(parsed)
+	elif node is Label:
+		var text := (node as Label).text.strip_edges()
+		if text != "":
+			lines.append(text)
+	for child in node.get_children():
+		lines.append_array(_text_lines(child))
+	return lines
+
+## Drive the kit picker through its REAL popup dispatch, choosing the entry whose label begins with
+## this kit's display name. By the POPUP, never by writing `ComposeState` — the pick path (popup →
+## `OptionButton._selected` → `item_selected` → callback → `set_party_kit_id` → rerender) is half of
+## what the frames claim.
+##
+## **`index_pressed`, NOT `id_pressed`.** An `OptionButton` connects its popup's `index_pressed` and
+## nothing else, so emitting `id_pressed` would run no handler, change no selection and leave the
+## sheet exactly as it was — silently, which on the mismatch frame reads as the honesty rule failing
+## rather than as the harness never having picked anything.
+func _pick_kit(kit_id: String) -> void:
+	var picker := _find_meta_control(_panel, KitRoster.KIT_PICKER_META) as OptionButton
+	if picker == null:
+		_assert_band_panel("picking a kit needs the picker to exist", false)
+		return
+	var want := KitRoster.display_name_for_id(_hud._band_labor.kits(), kit_id)
+	var popup := picker.get_popup()
+	for i in popup.item_count:
+		if popup.get_item_text(i).begins_with(want):
+			popup.index_pressed.emit(i)
+			return
+	_assert_band_panel("picking a kit needs an entry named %s (found %d entries)"
+		% [want, popup.item_count], false)
+
+## The picker CLOSED: it exists, its face names the selected kit, and the hint beneath it states this
+## band's EFFECTIVE tier.
+##
+## **THE HINT IS THE CLAIM, and it is composed from the fixture's own numbers rather than through
+## `KitRoster.tier_hint`** — an expectation re-derived through the function under test asserts
+## nothing. The carry is the BARE tier while the roster publishes 40 for this kit, so a hint quoting
+## the fresh number fails here and nowhere else; the attack is the EQUIPPED one on the same line,
+## which is what stops "quote the bare tier for everything" passing instead.
+func _assert_kit_picker_closed() -> void:
+	var picker := _find_meta_control(_panel, KitRoster.KIT_PICKER_META) as OptionButton
+	_assert_band_panel("the denial sheet carries a Kit picker", picker != null)
+	if picker == null:
+		return
+	# **THE FACE CARRIES NO `(default)` SUFFIX AND NO CARET**, which is the whole of what the
+	# `OptionButton` conversion has to get right: `select()` writes the item's own text into `text`,
+	# so a face equal to the LIST entry means the override never ran, and the equality catches it.
+	var face := HudComposeVocab.KIT_PICKER_FACE_FORMAT % [
+		String(HudComposeVocab.KIT_JOB_GLYPHS[KitRoster.JOB_HUNT]), "Big-game kit"]
+	_assert_band_panel("…whose face names the selected kit (\"%s\")" % picker.text,
+		picker.text == face)
+	var hint := HudComposeVocab.KIT_HINT_SEPARATOR.join([
+		HudComposeVocab.KIT_HINT_ATTACK_FORMAT % String.num(BandFx.KIT_ATTACK_EQUIPPED,
+			HudComposeVocab.KIT_TIER_DECIMALS),
+		HudComposeVocab.KIT_HINT_HUNT_CARRY_FORMAT % String.num(BandFx.KIT_HUNT_CARRY_BARE,
+			HudComposeVocab.KIT_TIER_DECIMALS),
+		HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [HudComposeVocab.KIT_COMPONENT_SPEARS,
+			int(KIT_FRAME_SPEARS_CONDITION)],
+		HudComposeVocab.KIT_HINT_DRY_FORMAT % HudComposeVocab.KIT_COMPONENT_SLED,
+	])
+	var rendered := _find_meta_control(_panel, KitRoster.KIT_HINT_META) as Label
+	_assert_band_panel("…over a hint stating the EFFECTIVE tier, not the fresh one — \"%s\"" % hint,
+		rendered != null and rendered.text == hint)
+
+## The picker OPEN. A screenshot cannot say which entry carries the radio dot, so the structure rides
+## here: the roster's hunt kits and only those, the composed one marked, the job default TAGGED, and
+## `none` LAST — which it is because the ROSTER authors it last and this client sorts nothing.
+##
+## **The MARK is now the `OptionButton`'s own**, not a hand-rolled `MENU_ENTRY_CHECKED` — the control
+## builds radio-check items and checks the selected one itself — so this reads `is_item_checked` to
+## assert that the SELECTED INDEX handed to the builder reached the popup.
+func _assert_kit_picker_open(picker: OptionButton) -> void:
+	_assert_band_panel("the Kit picker opens a menu", picker != null)
+	if picker == null:
+		return
+	var popup := picker.get_popup()
+	var labels: Array[String] = []
+	for i in popup.item_count:
+		labels.append(popup.get_item_text(i))
+	# The GATHERING kit lists `forage` alone, so its absence is the filter working rather than a
+	# roster that happens to hold two entries.
+	var want_labels: Array[String] = [
+		"Big-game kit" + HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX, "No kit"]
+	_assert_band_panel("…listing exactly this verb's kits, the default tagged, `none` last — %s"
+			% str(labels),
+		labels == want_labels)
+	var checked: Array[String] = []
+	for i in popup.item_count:
+		if popup.is_item_checked(i):
+			checked.append(popup.get_item_text(i))
+	_assert_band_panel("…marking exactly the composed kit (%s)" % str(checked),
+		checked.size() == 1 and String(checked[0]).begins_with("Big-game kit"))
+
+## **THE KIT-MISMATCH STATE, ASSERTED BY EQUALITY** — `none` composed against tables quoted for
+## `big_game`.
+##
+## The claim is half an ABSENCE (no collapse verdict, no estimate caveat, no take line, no counted
+## refusal — every one of them a figure computed for a raid the player is not sending) and a
+## `contains` search can only testify that something IS present. So the sheet's lines BELOW the kit
+## hint are compared to the exact expected list: the combat gate, which is composed from wire terms
+## and is honest at any tier, then the sentence naming the kit whose numbers were withheld. A verdict
+## put back fails this, and so does a gate line dropped.
+func _assert_kit_mismatch_suppresses_estimates() -> void:
+	var hint := _find_meta_control(_panel, KitRoster.KIT_HINT_META) as Label
+	_assert_band_panel("the kit-mismatch sheet still states the picked kit's tier", hint != null)
+	if hint == null:
+		return
+	var lines := _text_lines(_panel)
+	var at := lines.find(hint.text)
+	_assert_band_panel("…and that hint is on the sheet the assertion walks", at >= 0)
+	if at < 0:
+		return
+	var tail := lines.slice(at + 1)
+	# The gate at the BARE-handed tier against this quarry's defense: the effective attack is 0, so it
+	# refuses outright — the honest verdict for a party carrying nothing, and the one thing this sheet
+	# can still say. Composed from the vocabulary, never through `hunt_gate_model_at`.
+	var gate := SourceForecast.HUNT_GATE_BLOCKED_FORMAT % [
+		SourceForecast.HUNT_FORECAST_WARN_GLYPH, "Wild Boar",
+		String.num(BandFx.KIT_ATTACK_BARE, SourceForecast.HUNT_GATE_SCALAR_DECIMALS),
+		String.num(QUARRY_DEFENSE, SourceForecast.HUNT_GATE_SCALAR_DECIMALS)]
+	var note := HudComposeVocab.KIT_DENIAL_ESTIMATES_QUOTED_FORMAT % ["Big-game kit", "No kit"]
+	var want: Array[String] = [gate, note]
+	_assert_band_panel(("…and below it says EXACTLY the gate and the quoted-kit note — "
+			+ "no verdict, no caveat, no take, no refusal. Got %s") % str(tail),
+		tail == want)
+	# The send stays LIVE: the raid is perfectly launchable, we simply cannot quote its length. A
+	# disabled button here would read as the kit being illegal, which it is not.
+	var confirm := _find_meta_control(_panel, HudWidgets.SEND_DENIAL_CONFIRM_META) as Button
+	_assert_band_panel("…while the Send stays live — the raid launches, only its length is unquotable",
+		confirm != null and not confirm.disabled)
+
+## **THE QUOTED-PARTY NOTE REACHES THE SHEET, and it names the right two numbers.** Asserted by
+## EQUALITY against the vocabulary, never through `quoted_party_note` — an expectation re-derived
+## through the producer under test asserts nothing. Its own PRECONDITION rides first: the stepper must
+## really be sitting on the between-rungs party, since a count the band clamped back onto a rung would
+## make every claim below pass on a sheet that never reached the state.
+func _assert_denial_quoted_party_note() -> void:
+	_assert_band_panel("the deny sheet is dialled to a BETWEEN-rungs party (%d) — the precondition"
+			% DENIAL_LADDER_BETWEEN,
+		_hud._bandpanel._send_expedition_count == DENIAL_LADDER_BETWEEN)
+	var want := HudComposeVocab.PARTY_DENIAL_ESTIMATES_QUOTED_FORMAT % [
+		DENIAL_LADDER_BETWEEN - 1, DENIAL_LADDER_BETWEEN]
+	var lines := _text_lines(_panel)
+	_assert_band_panel(("…and it says which party the collapse figures were costed for — wanted \"%s\", "
+			+ "the sheet's hint lines are %s") % [want, str(lines)],
+		lines.has(want))
+	# The verdict is still THERE. A sheet that lost its figures and kept the note would satisfy the
+	# claim above while being strictly worse than the blank it replaced.
+	_assert_band_panel("…beside a verdict, not in place of one",
+		_rich_text_containing(_panel, String(SourceForecast.DENIAL_VERDICTS[
+			SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY]["line"]) % "Wild Boar") != "")
+
+## The VIABLE denial form. The ABSENCES are half the claims — what this mission does not carry IS its
+## specification, so a form that grew a floor picker would be as wrong as one that quoted no verdict.
+func _assert_denial_viable() -> void:
+	var quarry := "Wild Boar"
+	# Composed from the VOCABULARY, never from `denial_verdict_text` — an expectation re-derived
+	# through the formatter under test asserts nothing.
+	var want := String(SourceForecast.DENIAL_VERDICTS[
+		SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY]["line"]) % quarry
+	# **THE RANGE IS FROM LAUNCH, SO BOTH ENDS CARRY THE WALK OUT.** The sim's table counts raiding
+	# turns; the party has to get there first, and the HUNT form on this same sheet has always
+	# headlined a round-trip total — so an unqualified collapse count read as the same span and was
+	# short by the outbound leg. The expectation is stated from the harness's side (the constant
+	# below, derived from this fixture's own geometry) so the two arrive at one string from opposite
+	# ends; re-deriving it through `outbound_travel_turns` would assert nothing.
+	# **THE EXPECTATION LEADS AND THE SPREAD FOLLOWS IT**, because the take line under this sentence is
+	# priced at the expectation: a verdict leading with the lucky end describes a different raid from
+	# the kill count two rows down.
+	want += SourceForecast.DENIAL_TURNS_LEAD_FORMAT % [
+		SourceForecast.DENIAL_TURNS_ONE_FORMAT % (
+			DENIAL_TURNS_ROW[DENIAL_PARTY - 1] + DENIAL_OUTBOUND_TRAVEL_TURNS),
+		SourceForecast.DENIAL_SPAN_FROM_LAUNCH]
+	want += SourceForecast.DENIAL_SPREAD_RANGE_FORMAT % [
+		DENIAL_LOW_ROW[DENIAL_PARTY - 1] + DENIAL_OUTBOUND_TRAVEL_TURNS,
+		DENIAL_HIGH_ROW[DENIAL_PARTY - 1] + DENIAL_OUTBOUND_TRAVEL_TURNS]
+	want += SourceForecast.DENIAL_TRAVEL_SPLIT_FORMAT % DENIAL_OUTBOUND_TRAVEL_TURNS
+	_assert_band_panel("the denial form leads with the EXPECTATION and states the spread — \"%s\"" % want,
+		_rich_text_containing(_panel, want) == want)
+	# **THE WASTE IS STATED, IN EVERY PRODUCT IT IS WASTED IN, AND IS NOT DRESSED AS A WARNING.** On a
+	# hunt an unhauled kill wears `HUNT_FORECAST_WARN_GLYPH`; on a raid it IS the mission, so the line
+	# is quiet and factual. The whole line is asserted BY EQUALITY rather than by `contains`, because
+	# half the claim is what the sentence must not also say: a waste stated food-only would satisfy
+	# every containment test while dropping the 26.75 of hides this boar leaves rotting beside the
+	# meat, which is the food-only blindness this pair of figures exists to remove. The expectation is
+	# composed from the VOCABULARY and from this fixture's own arithmetic, never through
+	# `denial_take_bbcode` — re-deriving it through the formatter under test asserts nothing.
+	var killed: int = DENIAL_KILLS_ROW[DENIAL_PARTY - 1]
+	var killed_food := float(killed) * QUARRY_FOOD_PER_ANIMAL
+	var hauled_food := minf(killed_food, float(DENIAL_PARTY) * DENIAL_CARRY_PER_WORKER)
+	var left := killed_food - hauled_food
+	# The pelts ride the same carried share the meat does (`_denial_rows`' one conversion), so this
+	# boar's raid wastes BOTH products and neither figure can be a fabricated zero.
+	var killed_trade := float(killed) * QUARRY_TRADE_PER_ANIMAL
+	var hauled_trade := killed_trade * (hauled_food / killed_food)
+	var left_trade := killed_trade - hauled_trade
+	var want_take := SourceForecast.DENIAL_TAKE_KILLS_FORMAT % [killed, quarry]
+	want_take += SourceForecast.DENIAL_TAKE_FOOD_FORMAT % SourceForecast.format_magnitude(hauled_food)
+	want_take += SourceForecast.DENIAL_TAKE_TRADE_FORMAT % [
+		FoodIcons.TRADE_GOODS_GLYPH, SourceForecast.format_magnitude(hauled_trade)]
+	want_take += SourceForecast.DENIAL_TAKE_LEFT_FORMAT % SourceForecast.DENIAL_TAKE_LEFT_JOIN.join([
+		SourceForecast.format_magnitude(left),
+		SourceForecast.DENIAL_TAKE_LEFT_TRADE_FORMAT % [
+			FoodIcons.TRADE_GOODS_GLYPH, SourceForecast.format_magnitude(left_trade)],
+	])
+	var take_line := _rich_text_containing(_panel,
+		SourceForecast.DENIAL_TAKE_KILLS_FORMAT % [killed, quarry])
+	_assert_band_panel("…and states the take PLAINLY, waste in BOTH products — wanted \"%s\", got \"%s\""
+			% [want_take, take_line],
+		take_line == want_take
+			and not take_line.contains(SourceForecast.HUNT_FORECAST_WARN_GLYPH))
+	# NO FLOOR ANYWHERE — not a picker, not even the row heading. Two surfaces,
+	# one claim. **The heading is matched UPPER-CASED because `alloc_section_label` upper-cases what it
+	# is given**, so the vocabulary const as written matches nothing and that clause would be vacuous
+	# — which is exactly how it first shipped, passing with a Policy row put back on the form.
+	_assert_band_panel("…and offers NO floor picker and no Policy row",
+		_find_meta_control(_panel, HudWidgets.POLICY_RUNG_META) == null
+			and not _has_label_containing(_panel, HudComposeVocab.COMPOSE_FIELD_POLICY.to_upper()))
+	# **THE BAND IS AN ESTIMATE, NOT A PROMISE, AND THE PANEL SAYS SO** — `turns_to_collapse` is an
+	# integral over many stochastic retreat draws, so a lucky run really can finish sooner than the
+	# reported low. The caveat rides under every verdict that quotes a number (and, per the repelled
+	# frame, under none that does not).
+	_assert_band_panel("…and words the band as an estimate rather than a promise",
+		_has_label_containing(_panel, SourceForecast.DENIAL_ESTIMATE_CAVEAT))
+	# The Send is the plain primary one and is ENABLED — this raid works.
+	var send := _find_meta_control(_panel, HudWidgets.SEND_DENIAL_CONFIRM_META) as Button
+	_assert_band_panel("…and its Send is the plain primary one, enabled",
+		send != null and not send.disabled
+			and send.text == String(SourceForecast.DENIAL_VERDICTS[
+				SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY]["button"]))
+
+## The IN-REACH form — the same viable verdict on a quarry the band is camped on top of. **Its claim
+## is the TRAVEL TERM**: the walk out is genuinely zero, so both ends of the collapse band are the
+## sim's own numbers unshifted, the sentence still names its span ("from launch", never bare), and the
+## breakdown clause is ABSENT rather than reading "(0 of them travel)" — a term for nothing.
+func _assert_denial_in_reach_verdict() -> void:
+	var want := String(SourceForecast.DENIAL_VERDICTS[
+		SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY]["line"]) % QUARRY_HOME_SPECIES
+	want += SourceForecast.DENIAL_TURNS_LEAD_FORMAT % [
+		SourceForecast.DENIAL_TURNS_ONE_FORMAT % (
+			DENIAL_TURNS_ROW[DENIAL_PARTY - 1] + QUARRY_HOME_OUTBOUND_TRAVEL_TURNS),
+		SourceForecast.DENIAL_SPAN_FROM_LAUNCH]
+	want += SourceForecast.DENIAL_SPREAD_RANGE_FORMAT % [
+		DENIAL_LOW_ROW[DENIAL_PARTY - 1] + QUARRY_HOME_OUTBOUND_TRAVEL_TURNS,
+		DENIAL_HIGH_ROW[DENIAL_PARTY - 1] + QUARRY_HOME_OUTBOUND_TRAVEL_TURNS]
+	# EQUALITY, so the absence rides in the same claim: a line that also appended a travel clause is a
+	# different string and fails here rather than passing a `contains`.
+	_assert_band_panel("a quarry inside hunt reach is raidable, and reads sensibly at zero travel — \"%s\"" % want,
+		_rich_text_containing(_panel, want) == want)
+	# …stated again on its own, because the equality above would also be satisfied by a form that lost
+	# the verdict entirely, and this is the clause the zero-travel case exists to keep out.
+	_assert_band_panel("…and appends no travel split, there being no travel to split off",
+		_rich_text_containing(_panel, SourceForecast.DENIAL_TRAVEL_SPLIT_FORMAT
+			% QUARRY_HOME_OUTBOUND_TRAVEL_TURNS) == "")
+
+## The REPELLED form. **The verdict is about the PARTY, and the herd-side sentence must be absent** —
+## this arc has already shipped a refusal that blamed the herd for the party's problem twice, and the
+## negative half is what makes the positive one mean something.
+func _assert_denial_repelled() -> void:
+	var quarry := "Wild Boar"
+	var party_line := String(SourceForecast.DENIAL_VERDICTS[
+		SourceForecast.DENIAL_OUTCOME_REPELLED]["line"]) % quarry
+	var horizon_line := String(SourceForecast.DENIAL_VERDICTS[
+		SourceForecast.DENIAL_OUTCOME_HORIZON]["line"]) % quarry
+	# **AND THE WHOLE LINE IS THE OUTCOME, WITH NO TURN CLAUSE APPENDED.** Equality, not `contains`:
+	# the outcome LEADS the sentence and the number is a clause on it, so "never a blank turn count
+	# without its outcome" is only true if a forecast the sim bounded on neither end renders the
+	# outcome ALONE. A `contains` would pass on a line that also quoted a number.
+	_assert_band_panel("a repelled raid is refused in the PARTY's name, with no turn count — \"%s\""
+			% party_line,
+		_rich_text_containing(_panel, party_line) == party_line
+			and _rich_text_containing(_panel, horizon_line) == "")
+	# **AND NO CAVEAT, because there is no number to caveat.** `DENIAL_ESTIMATE_CAVEAT` qualifies a
+	# turn band; printed under a verdict that quotes none it reads as an estimate the player cannot
+	# see. Asserted as a PAIR with the viable frame, which requires it.
+	_assert_band_panel("…and prints no estimate caveat, having quoted no estimate",
+		not _has_label_containing(_panel, SourceForecast.DENIAL_ESTIMATE_CAVEAT))
+	# It STILL LAUNCHES: a raid that cannot get there keeps working the herd until it is recalled, so
+	# the launch verdict warns and the player is trusted — exactly as a slow hunting raid is.
+	var send := _find_meta_control(_panel, HudWidgets.SEND_DENIAL_CONFIRM_META) as Button
+	_assert_band_panel("…and the Send warns rather than blocking",
+		send != null and not send.disabled
+			and send.text == String(SourceForecast.DENIAL_VERDICTS[
+				SourceForecast.DENIAL_OUTCOME_REPELLED]["button"]))
+	# …and it says what to do about it, in the party's terms. **The NUMBERLESS form is the right one
+	# HERE**: every row of this table is repelled, so the sim quotes no party at all
+	# (`DENIAL_PARTY_NEEDED_NONE`) and there is nothing honest to name — the counted twin rides
+	# `band_panel_compose_deny_short_party`, and the pair is what makes either mean anything.
+	_assert_band_panel("…and the reason beside it sends the player to the PARTY",
+		_has_label_containing(_panel, String(SourceForecast.DENIAL_VERDICTS[
+			SourceForecast.DENIAL_OUTCOME_REPELLED]["reason"]) % quarry))
+
+## **THE REPORTED VERDICT — a bounded expectation over an unbounded bad run.** Two claims in one
+## EQUALITY, which is why it is an equality and not a `contains`: the sentence must LEAD with the
+## expectation (the figure the take line beneath it is priced at), and it must SAY the bad run may not
+## finish rather than dropping that end. A `contains` on the expectation alone would pass on a line
+## that also quoted the lucky end as the answer, which is the defect.
+func _assert_denial_open_high_verdict() -> void:
+	var quarry := "Wild Boar"
+	var want := String(SourceForecast.DENIAL_VERDICTS[
+		SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY]["line"]) % quarry
+	want += SourceForecast.DENIAL_TURNS_LEAD_FORMAT % [
+		SourceForecast.DENIAL_TURNS_ONE_FORMAT % (
+			DENIAL_OPEN_HIGH_TURNS + DENIAL_OUTBOUND_TRAVEL_TURNS),
+		SourceForecast.DENIAL_SPAN_FROM_LAUNCH]
+	want += SourceForecast.DENIAL_SPREAD_OPEN_HIGH_FORMAT % (
+		DENIAL_OPEN_HIGH_LOW + DENIAL_OUTBOUND_TRAVEL_TURNS)
+	want += SourceForecast.DENIAL_TRAVEL_SPLIT_FORMAT % DENIAL_OUTBOUND_TRAVEL_TURNS
+	_assert_band_panel("an unbounded bad run still leads with the expectation — \"%s\"" % want,
+		_rich_text_containing(_panel, want) == want)
+	# **AND THE CAVEAT STILL RIDES UNDER IT**, this verdict quoting numbers. The caveat is gated on
+	# `denial_turns_phrase`, which the rewrite re-pointed at the lead figure — a gate that answered
+	# `""` here would silently drop the caveat from exactly the shape that most needs qualifying.
+	_assert_band_panel("…and the estimate caveat rides under it, a number having been quoted",
+		_has_label_containing(_panel, SourceForecast.DENIAL_ESTIMATE_CAVEAT))
+
+## **THE FIVE CLAUSE SHAPES, DRIVEN DIRECTLY.** Only two of them are reachable from a rendered frame
+## (the ordinary range and the open high), and the other three are exactly the ends where a lone
+## optimistic number could reappear. PNG-less for the reason the horizon guard is: a turn clause is a
+## string, and the sheet renders a plausible-looking sentence whichever draw it led with.
+func _assert_denial_turn_clause_shapes() -> void:
+	var travel := 1
+	var of_raiding := SourceForecast.DENIAL_TRAVEL_UNKNOWN
+	# 1 — all three bounded: the expectation leads, the spread follows, the split closes.
+	var ordinary := SourceForecast.denial_turns_clause({
+		"turns": 20, "low": 12, "high": 31, SourceForecast.DENIAL_TRAVEL_KEY: travel})
+	var want_ordinary := SourceForecast.DENIAL_TURNS_LEAD_FORMAT % [
+			SourceForecast.DENIAL_TURNS_ONE_FORMAT % 20, SourceForecast.DENIAL_SPAN_FROM_LAUNCH] \
+		+ SourceForecast.DENIAL_SPREAD_RANGE_FORMAT % [12, 31] \
+		+ SourceForecast.DENIAL_TRAVEL_SPLIT_FORMAT % travel
+	_assert_band_panel("a bounded band leads with the expectation — \"%s\"" % ordinary,
+		ordinary == want_ordinary)
+	# 3 — the EXPECTATION itself is unbounded, so only luck gets there. This is the one shape whose
+	# lead is the good run, and it must SAY the raid is not expected to finish.
+	var lucky := SourceForecast.denial_turns_clause({
+		"turns": 0, "low": 12, "high": 0, SourceForecast.DENIAL_TRAVEL_KEY: travel})
+	var want_lucky := SourceForecast.DENIAL_ONLY_GOOD_RUN_LEAD_FORMAT % [
+			SourceForecast.DENIAL_TURNS_ONE_FORMAT % 12, SourceForecast.DENIAL_SPAN_FROM_LAUNCH] \
+		+ SourceForecast.DENIAL_SPREAD_NOT_EXPECTED \
+		+ SourceForecast.DENIAL_TRAVEL_SPLIT_FORMAT % travel
+	_assert_band_panel("an unbounded expectation says the raid is not expected to finish — \"%s\"" % lucky,
+		lucky == want_lucky)
+	# 4 — `low == high`: the distribution is degenerate, so the lead IS the whole answer and no spread
+	# renders. "between 8 and 8 depending on the run" is a spread for nothing.
+	var degenerate := SourceForecast.denial_turns_clause({
+		"turns": 8, "low": 8, "high": 8, SourceForecast.DENIAL_TRAVEL_KEY: 0})
+	_assert_band_panel("a degenerate band renders no spread — \"%s\"" % degenerate,
+		degenerate == SourceForecast.DENIAL_TURNS_LEAD_FORMAT % [
+			SourceForecast.DENIAL_TURNS_ONE_FORMAT % 8, SourceForecast.DENIAL_SPAN_FROM_LAUNCH])
+	# 5 — nothing bounded: no clause at all, so the outcome word stands alone. The structural half of
+	# "never a blank turn count without its outcome".
+	_assert_band_panel("a forecast bounded on no end renders no clause",
+		SourceForecast.denial_turns_clause({
+			"turns": 0, "low": 0, "high": 0, SourceForecast.DENIAL_TRAVEL_KEY: travel}) == "")
+	# **THE IN-FLIGHT SPAN IS THE OTHER HALF OF EVERY SHAPE**, and it is asserted here rather than left
+	# to the drawer's own frame: the span is chosen once for the whole clause, so a rewrite that named
+	# it per branch would leave the launch sheet right and the drawer quietly telling a party already
+	# out that its band starts when it leaves.
+	var in_flight := SourceForecast.denial_turns_clause({
+		"turns": 20, "low": 12, "high": 31, SourceForecast.DENIAL_TRAVEL_KEY: of_raiding})
+	_assert_band_panel("…and a bandless forecast names the RAIDING span, never the launch one",
+		in_flight.contains(SourceForecast.DENIAL_SPAN_OF_RAIDING)
+			and not in_flight.contains(SourceForecast.DENIAL_SPAN_FROM_LAUNCH)
+			and not in_flight.contains(SourceForecast.DENIAL_TRAVEL_SPLIT_FORMAT % 0))
+
+## **THE DEEP PARTY** — a band whose idle workforce outnumbers `max_expedition_party_size`, on a quarry
+## whose requirement outruns it too. Two claims, and neither is legible in the frame alone: the sheet
+## OPENS on the party the sim quotes, and the stepper's ceiling is the band's own idle workers rather
+## than the estimate tables' sampling axis.
+func _assert_denial_deep_party() -> void:
+	_assert_band_panel("the denial stepper opens on the party the sim quotes (%d, wanted %d)"
+			% [_hud._bandpanel._send_expedition_count, DENIAL_DEEP_PARTY_NEEDED],
+		_hud._bandpanel._send_expedition_count == DENIAL_DEEP_PARTY_NEEDED)
+	# …and it is a party the OLD cap could not even be dialled to, which is what makes the seed a
+	# change in what the form can express rather than a different default.
+	_assert_band_panel("…a party past `max_expedition_party_size` (%d)"
+			% int(_deep_party_band_fixture().get("max_expedition_party_size", 0)),
+		DENIAL_DEEP_PARTY_NEEDED > int(_deep_party_band_fixture().get("max_expedition_party_size", 0)))
+	# **THE CEILING IS THE BAND'S IDLE WORKFORCE**, driven through the render's OWN clamp rather than
+	# read off the stepper's face: under the retired cap a count of 12 came back as 8. This leaves the
+	# panel on a party the table quotes no row for — a real state, and the next frame re-renders anyway.
+	_hud._bandpanel._send_expedition_count = DENIAL_DEEP_PARTY_IDLE
+	_hud._bandpanel.rerender()
+	_assert_band_panel("…and the party may be dialled to the band's whole idle workforce (%d of %d)"
+			% [_hud._bandpanel._send_expedition_count, DENIAL_DEEP_PARTY_IDLE],
+		_hud._bandpanel._send_expedition_count == DENIAL_DEEP_PARTY_IDLE)
+
+## **A REPELLED RAID NAMES THE PARTY IT WOULD TAKE, WHENEVER THE SIM QUOTES ONE.** "Send more hunters"
+## is correct on the merits and useless in hand — it prescribes hands without saying how many — while
+## `denialPartyNeeded` has been on the wire all along. Composed from the VOCABULARY, never from
+## `denial_refusal_reason`: an expectation re-derived through the code under test asserts nothing.
+func _assert_denial_counted_refusal() -> void:
+	var quarry := "Wild Boar"
+	var want := String(SourceForecast.DENIAL_VERDICTS[
+		SourceForecast.DENIAL_OUTCOME_REPELLED]["reason_counted"]) % [quarry, DENIAL_DEEP_PARTY_NEEDED]
+	_assert_band_panel("a repelled raid's reason NAMES the party it takes — \"%s\"" % want,
+		_has_label_containing(_panel, want))
+	# …and the numberless sentence is GONE rather than printed beside it: with a figure in hand it is
+	# the sentence this replaces, and a sheet carrying both states the remedy twice.
+	var bare := String(SourceForecast.DENIAL_VERDICTS[
+		SourceForecast.DENIAL_OUTCOME_REPELLED]["reason"]) % quarry
+	_assert_band_panel("…and not the numberless sentence beside it",
+		not _has_label_containing(_panel, bare))
+	# **AND THE SEND IS STILL LIVE — the companion half of the disable rule.** This party is under-sized
+	# BY CHOICE (the band can field 12 and the player dialled 4), which is the warn-and-trust case:
+	# a raid that cannot break the herd keeps working it until recalled. Without this claim the
+	# short-handed assertion below would pass on a sheet that disabled the Send for every repelled row.
+	var send := _find_meta_control(_panel, HudWidgets.SEND_DENIAL_CONFIRM_META) as Button
+	_assert_band_panel("…and a party the PLAYER under-sized still launches",
+		send != null and not send.disabled
+			and send.text == String(SourceForecast.DENIAL_VERDICTS[
+				SourceForecast.DENIAL_OUTCOME_REPELLED]["button"]))
+
+## **THE ONE STATE IN WHICH THIS SHEET REFUSES.** The band cannot field the party the herd requires at
+## all — there is no stepper setting that reaches it — so the Send goes visible-and-disabled with its
+## reason, the sheet's no-quarry convention. Composed from the VOCABULARY, and read as a PAIR with
+## `_assert_denial_counted_refusal`'s live Send: a rule that disabled every repelled raid would pass
+## the disable claim alone.
+func _assert_denial_short_handed() -> void:
+	var quarry := "Wild Boar"
+	var idle := _hud._band_labor.effective_idle(_hud._band_labor.panel_band())
+	_assert_band_panel("the band can field %d of the %d hunters this herd needs — the precondition"
+			% [idle, DENIAL_DEEP_PARTY_NEEDED],
+		idle < DENIAL_DEEP_PARTY_NEEDED)
+	var send := _find_meta_control(_panel, HudWidgets.SEND_DENIAL_CONFIRM_META) as Button
+	_assert_band_panel("…so the Send is DISABLED and says which shortfall it is",
+		send != null and send.disabled
+			and send.text == SourceForecast.DENIAL_SHORT_HANDED_BUTTON)
+	var want := SourceForecast.DENIAL_SHORT_HANDED_REASON_FORMAT % [
+		quarry, DENIAL_DEEP_PARTY_NEEDED, idle]
+	_assert_band_panel("…and the reason beneath it names BOTH numbers — \"%s\"" % want,
+		_has_label_containing(_panel, want))
+	# …and it SUPERSEDES the repelled refusal rather than printing beside it: both name the party the
+	# sim quotes, so a sheet carrying the pair states the requirement twice.
+	var counted := String(SourceForecast.DENIAL_VERDICTS[
+		SourceForecast.DENIAL_OUTCOME_REPELLED]["reason_counted"]) % [quarry, DENIAL_DEEP_PARTY_NEEDED]
+	_assert_band_panel("…and the counted refusal is not printed beside it",
+		not _has_label_containing(_panel, counted))
+
+## **THE CHOOSER APPEARS ONLY WHERE THERE IS A CHOICE, AND CHOOSING RE-TARGETS.** Both halves are
+## behavioural: a PNG can show that a `⋯` is on the Quarry row, but not what its menu holds, not which
+## herd it marks as current, and not what a pick does. The frame under it is the picture; this is the
+## claim.
+##
+## The ABSENCE half rides `band_panel_compose_hunt` (one eligible quarry on the boar's hex, so no
+## chooser) — the pair is what makes either mean something, since a control rendered unconditionally
+## satisfies every assertion here on its own.
+func _assert_quarry_chooser() -> void:
+	var menu := _find_meta_control(_panel, HudWidgets.QUARRY_CHOICES_META) as MenuButton
+	_assert_band_panel("two herds on one hex put a chooser on the Quarry row", menu != null)
+	if menu == null:
+		return
+	var popup := menu.get_popup()
+	_assert_band_panel("…offering exactly the hex's two eligible quarries (found %d)"
+			% popup.item_count,
+		popup.item_count == 2)
+	# **EXACTLY ONE ITEM IS MARKED, and it is the composed one.** A menu of plain items could not say
+	# which herd the sheet is aimed at, which is the whole reason the entries are radio-check items;
+	# "some item is checked" would pass on a menu that marked both.
+	var checked: Array = []
+	for i in popup.item_count:
+		if popup.is_item_checked(i):
+			checked.append(popup.get_item_text(i))
+	_assert_band_panel("…marking exactly the composed quarry (%s)" % str(checked),
+		checked.size() == 1 and String(checked[0]).contains(SHARED_TILE_FOOD_SPECIES))
+	# **CHOOSING THE OTHER ONE RE-TARGETS**, driven through the REAL `id_pressed` wiring rather than by
+	# calling the entry's callback — the popup's own dispatch is part of what is being asserted.
+	var other := -1
+	for i in popup.item_count:
+		if not popup.is_item_checked(i):
+			other = i
+	popup.id_pressed.emit(popup.get_item_id(other))
+	_assert_band_panel("…and choosing the other one re-targets the sheet (%s)"
+			% _hud._compose.party_quarry_id(),
+		_hud._compose.party_quarry_id() == SHARED_TILE_PELT_HERD_ID)
+	# …and the sheet REBUILT against the new quarry: the chooser is a fresh node now, and it must mark
+	# the wolf. Reading the model back alone would pass on a switch that never re-rendered.
+	var after := _find_meta_control(_panel, HudWidgets.QUARRY_CHOICES_META) as MenuButton
+	var after_checked := ""
+	if after != null:
+		var after_popup := after.get_popup()
+		for i in after_popup.item_count:
+			if after_popup.is_item_checked(i):
+				after_checked = after_popup.get_item_text(i)
+	_assert_band_panel("…and the re-rendered row marks the herd now composed (%s)" % after_checked,
+		after_checked.contains(SHARED_TILE_PELT_SPECIES))
 
 ## The tile_info a map click on a herd's hex delivers (`TargetingController._huntable_herd_on_tile` reads `herds`).
 func _quarry_tile_info(herd: Dictionary) -> Dictionary:
@@ -3400,6 +5638,63 @@ func _assert_quarry_eligibility() -> void:
 	_hud._targeting._pending_pick_quarry = {}
 	_hud._compose.clear_party_quarry()
 	print("band_panel_preview: assert OK — quarry picker takes the far herd, refuses the near one")
+
+## **THE BEYOND-REACH RULE BELONGS TO THE HUNT, NOT TO THE EXPEDITION** (reported from play: deer and
+## rabbit a few tiles from camp were not offered as denial targets while herds further out were). A
+## denial raid is not a way of GETTING food, it is a way of ERASING a herd, so a quarry the band could
+## work from home is a coherent order — one hunting it at floor 0 cannot express, being carry-bounded
+## and stopping at the pack. Both halves are driven against the SAME herd, because the claim is a
+## DIFFERENCE between the missions: an assertion that only took the denial pick would be satisfied by
+## dropping the rule from the hunt as well, which is the regression this pins against.
+##
+## Behavioural, not pictorial — the accept and the refusal both happen at the click. The GLOW is
+## asserted here too (`min_distance`, the number MapView filters on): the halo must never promise a
+## target the pick refuses nor hide one it would take, and a mission-blind glow beside a mission-aware
+## pick is exactly that disagreement.
+func _assert_denial_quarry_eligibility() -> void:
+	var herds := _quarry_herd_fixtures()
+	var home: Dictionary = herds[2]
+	_set_world_herds(herds)
+	# DENY, on a herd standing on the band's own tile — the extreme of "in reach". Taken, and the pick
+	# ends targeting like any other.
+	_hud._compose.clear_party_quarry()
+	_hud._targeting._pending_pick_quarry = _pending_quarry_pick(HudComposeVocab.COMPOSE_MISSION_DENY)
+	_hud._targeting._try_pick_quarry(_quarry_tile_info(home))
+	assert(_hud._compose.party_quarry_id() == QUARRY_HOME_HERD_ID,
+		"band_panel_preview: a DENIAL raid refused a herd inside hunt reach (%s)" \
+		% _hud._compose.party_quarry_id())
+	assert(_hud._targeting._pending_pick_quarry.is_empty(),
+		"band_panel_preview: the accepted denial pick stayed armed instead of resolving")
+	# …and the SAME herd under HUNT: still refused, still armed. This is the pin that says the fix did
+	# not weaken the hunt's rule.
+	_hud._compose.clear_party_quarry()
+	_hud._targeting._pending_pick_quarry = _pending_quarry_pick(HudComposeVocab.COMPOSE_MISSION_HUNT)
+	_hud._targeting._try_pick_quarry(_quarry_tile_info(home))
+	assert(_hud._compose.party_quarry_id() == "",
+		"band_panel_preview: a HUNT expedition accepted a herd on the band's own tile (%s)" \
+		% _hud._compose.party_quarry_id())
+	assert(not _hud._targeting._pending_pick_quarry.is_empty(),
+		"band_panel_preview: the refused hunt pick dropped out of targeting instead of staying armed")
+	# The glow's own filter, read off the targeting descriptor MapView is handed.
+	var hunt_min := int(_hud._targeting._current_targeting_info().get("min_distance", -99))
+	assert(hunt_min == QUARRY_BAND_HUNT_REACH,
+		"band_panel_preview: a hunt pick glows at min_distance %d, not the band's hunt_reach %d" \
+		% [hunt_min, QUARRY_BAND_HUNT_REACH])
+	_hud._targeting._pending_pick_quarry = _pending_quarry_pick(HudComposeVocab.COMPOSE_MISSION_DENY)
+	var deny_min := int(_hud._targeting._current_targeting_info().get("min_distance", -99))
+	assert(deny_min == TargetingController.QUARRY_NO_REACH_BOUND,
+		"band_panel_preview: a denial pick glows at min_distance %d, not %d (every visible herd)" \
+		% [deny_min, TargetingController.QUARRY_NO_REACH_BOUND])
+	_hud._targeting._pending_pick_quarry = {}
+	_hud._compose.clear_party_quarry()
+	print("band_panel_preview: assert OK — denial takes the herd on the band's own tile, the hunt still refuses it, and both glows agree")
+
+## An armed quarry pick for `mission`, in the shape `TargetingController.begin_pick_quarry` builds.
+func _pending_quarry_pick(mission: String) -> Dictionary:
+	return {
+		"band": _band_fixture(),
+		TargetingController.PICK_QUARRY_MISSION_KEY: mission,
+	}
 
 ## Herds for the per-source-cap verify state: game_deer_07 carries the pre-commit forecast fields the
 ## Current-actions Hunt row reads via `HudBandLaborState.find_world_herd` + `SourceForecast.forecast_inputs` — `per_worker_yield`
@@ -3472,8 +5767,76 @@ func _map_path_snapshot() -> Dictionary:
 	return {
 		"grid": {"width": MAP_PATH_GRID_W, "height": MAP_PATH_GRID_H, "wrap_horizontal": false},
 		"overlays": {"terrain": terrain},
-		"populations": _stamp_band_ids([_band_fixture()]),
+		"populations": _stamp_band_ids([_kit_band_fixture()]),
 	}
+
+## **THE REFERENCE BAND WITH THE MINIMAL TOE'S SIX ON IT** — the six the decoder puts on EVERY cohort,
+## so this rather than `_band_fixture` is the shape a live server actually produces. It is a SEPARATE
+## fixture, and that is a finding rather than a preference: the `Kit` row costs 26px, the band zone
+## reads **299 of its 300px box** in a height-capped T/B dock (`band_panel_vitals_worst_case` prints
+## it). **The six fields now ride the SHARED fixture** — every live cohort states its kit, so a
+## harness measuring a band without one was measuring a zone a whole row short of what it renders
+## against a real server. The 25px that cost `Zone_band` in 13 states is paid for by the SHORT tier
+## merging Growth onto the Morale line (`BandDetailLines`' `BAND_MORALE_GROWTH_CLAUSE_FORMAT`), the
+## same trade the Fodder row already makes onto Food.
+##
+## Used by the MAP-PATH state, which renders in the TALL left dock where the row fits. Spears
+## deliberately WEARING rather than round, so the row prints a real number and an `int()` narrowing is
+## visible; none dry, so the DANGER tint keeps its meaning; `hunter_attack` above a Wild Boar's
+## defense, so the ⚠ effective-attack gate stays quiet and its own coverage stays where it is.
+func _kit_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["hunting_kit_durability"] = 74.5
+	band["sled_kit_durability"] = 58.0
+	band["basket_kit_durability"] = 91.0
+	band["hunter_attack"] = 2.0
+	band["hunt_carry_per_worker_biomass"] = 2.5
+	band["forage_carry_per_worker_biomass"] = 1.75
+	return band
+
+# ---- THE SHARED FIXTURE's kit condition (`docs/plan_hunt_through_combat.md` §4.8) ----------------
+## The three components' remaining condition on `_band_fixture`, on `equipment.json`'s 0-100 scale.
+## **THREE DIFFERENT NUMBERS, deliberately** — a fixture giving two components one value would pass
+## every assertion with their accessors swapped, which is the defect class this arc keeps reproducing.
+## Spears WEARING rather than round, so the row prints a real number and an `int()` narrowing shows.
+const KIT_SHARED_SPEARS_CONDITION := 74.5
+const KIT_SHARED_SLED_CONDITION := 58.0
+const KIT_SHARED_BASKETS_CONDITION := 91.0
+
+# ---- THE KIT PICKER's band (`docs/plan_denial_raid.md`) ------------------------------------------
+## Condition on the two hunt components, and the whole point of the pair is that they DISAGREE.
+## Spears are worn but live; the SLED has run dry, so the big-game kit's carry has stepped down to the
+## bare-handed tier while its attack has not. That is what makes the picker's hint line assertable as
+## the EFFECTIVE tier rather than the roster's fresh one: `KitOption` publishes carry 40 for this kit
+## and the band gets 12, and a hint quoting 40 to this band would be a lie of exactly the class this
+## branch exists to remove.
+const KIT_FRAME_SPEARS_CONDITION := 74.5
+const KIT_FRAME_SLED_DRY := 0.0
+## The baskets are irrelevant to a hunt sheet and are left healthy, so nothing on these frames can
+## pass by reading the forage component on the hunt's row — the defect the three-kit split corrected.
+const KIT_FRAME_BASKETS_CONDITION := 91.0
+
+## The band the three Kit frames render against: the reference band plus a real, UNEVEN set of
+## component conditions.
+##
+## **A SEPARATE FIXTURE, and the separation is load-bearing.** `_band_fixture` states no kit at all,
+## and `DetailFormat.band_states_kit` is a bare `has()` on the spears key — so folding these onto it
+## would light the `Kit` vitals row in 13 other states and overflow `Zone_band` by 25px, which is what
+## `_kit_band_fixture`'s own note records. This one is that fixture's twin with the SLED run dry, kept
+## apart from it because the map-path state asserts a live `Sled 58` row.
+func _kit_worn_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["hunting_kit_durability"] = KIT_FRAME_SPEARS_CONDITION
+	band["sled_kit_durability"] = KIT_FRAME_SLED_DRY
+	band["basket_kit_durability"] = KIT_FRAME_BASKETS_CONDITION
+	# The band's OWN resolved tiers, i.e. what it gets under the JOB DEFAULT. They are the cohort's
+	# statement and the `Kit` row reads them; the picker does NOT — it resolves the SELECTED kit's
+	# tiers off the roster — so they are set consistently with the conditions above rather than being
+	# what the picker's assertions read.
+	band["hunter_attack"] = BandFx.KIT_ATTACK_EQUIPPED
+	band["hunt_carry_per_worker_biomass"] = BandFx.KIT_HUNT_CARRY_BARE
+	band["forage_carry_per_worker_biomass"] = BandFx.KIT_FORAGE_CARRY_EQUIPPED
+	return band
 
 ## Stamp a fixture cohort with the `band_id` the real wire carries, DELIBERATELY DIFFERENT from its
 ## `entity`. `band_id` is the durable handle every band-addressed command names
@@ -3538,10 +5901,30 @@ func _band_fixture() -> Dictionary:
 		"age_working": 16.5375,
 		"age_elders": 4.6425,
 		"max_expedition_party_size": 8,
+		# **THE BAND'S KIT, ON THE SHARED FIXTURE BECAUSE EVERY LIVE COHORT CARRIES IT**
+		# (`docs/plan_hunt_through_combat.md` §4.8). `DetailFormat.band_states_kit` is a bare `has()`
+		# on the spears key, so a fixture that omits these renders no `Kit` vitals row — and the band
+		# zone was then being measured a whole row short of what it renders against a real server.
+		# Three DIFFERENT conditions on the 0-100 scale, so an assertion cannot pass with two
+		# accessors swapped; none dry, so the row's DANGER tint keeps its meaning and the frames that
+		# judge a spent kit stay the ones that state one.
+		"hunting_kit_durability": KIT_SHARED_SPEARS_CONDITION,
+		"sled_kit_durability": KIT_SHARED_SLED_CONDITION,
+		"basket_kit_durability": KIT_SHARED_BASKETS_CONDITION,
+		# The RESOLVED tiers the sim publishes beside them. Equipped throughout, matching the
+		# conditions above — `hunter_attack` well clear of `QUARRY_DEFENSE`, so no compose sheet on
+		# this band reads the combat gate's refusal and the frames that judge that refusal stay the
+		# ones that compose a bare-handed kit.
+		"hunter_attack": BandFx.KIT_ATTACK_EQUIPPED,
+		"hunt_carry_per_worker_biomass": BandFx.KIT_HUNT_CARRY_EQUIPPED,
+		"forage_carry_per_worker_biomass": BandFx.KIT_FORAGE_CARRY_EQUIPPED,
 		# The raid-forecast levers the sim echoes on every cohort: the slow-raid warn line and the
 		# move rate the client adds round-trip travel from. Without them the compose sheet's forecast
 		# degrades to hunting turns only and can never read "slow" — i.e. it would prove less.
 		"expedition_viability_warn_turns": 20,
+		# …and the horizon the "never completed" sentinels are relative to, without which the denial
+		# sheet's horizon verdict falls back to naming a clock the player cannot see.
+		"expedition_forecast_horizon_turns": BandFx.FORECAST_HORIZON_TURNS,
 		"band_move_tiles_per_turn": 2.0,
 		"work_range": 2,
 		# Deliberately SHORT: the quarry fixtures straddle it (Wild Boar 4 tiles out = a party's job,
@@ -3820,6 +6203,37 @@ func _arrivals_starving_band_fixture() -> Dictionary:
 	]
 	return band
 
+## A party outfitted by band 904 that HAS NOT LEFT: it stands on the band's own tile (71, 18) and owes
+## it no map report, which is the sim's `cancel_party_standing_in_camp` exactly — so a recall folds it
+## back the instant the command lands. It is the fixture the CANCEL branch of every single-party recall
+## surface is judged on, and it differs from `_hunt_expedition_fixture` in its POSITION alone (plus the
+## explicit zero report), so the pair is a controlled A/B on the predicate rather than on the party.
+func _in_camp_expedition_fixture() -> Dictionary:
+	var exp := _hunt_expedition_fixture()
+	exp["id"] = "Hunters 4"
+	exp["entity"] = HUNT_IN_CAMP_ENTITY
+	exp["current_x"] = 71
+	exp["current_y"] = 18
+	# Stated, never left to the reader's default: "nothing owed" is a TERM of the predicate, and a
+	# fixture silent on it would pass whether the client asked the question or not.
+	exp["pending_reveal_count"] = 0
+	return exp
+
+## The same party in the FIELD — `_hunt_expedition_fixture` with the one term that is not about
+## position made explicit, so the Recall half of the A/B states all four terms too.
+func _in_field_expedition_fixture() -> Dictionary:
+	var exp := _hunt_expedition_fixture()
+	exp["pending_reveal_count"] = 0
+	return exp
+
+## A party standing in camp that still OWES ITS HOME BAND A MAP REPORT. The sim walks this one home —
+## flushing `pending_reveal` to the faction map is the one thing an out-of-band fold-back cannot do —
+## so it is the case that separates the real predicate from the tempting "is it on the band's tile".
+func _in_camp_with_report_owed_fixture() -> Dictionary:
+	var exp := _in_camp_expedition_fixture()
+	exp["pending_reveal_count"] = 12
+	return exp
+
 ## A detached HUNT expedition outfitted by band 904, following game_deer_79 under a Surplus policy.
 func _hunt_expedition_fixture() -> Dictionary:
 	return {
@@ -3888,3 +6302,67 @@ func _lost_hunt_expedition_fixture() -> Dictionary:
 		"expedition_projected_delivery": 0.0,
 		"expedition_recurring": false,
 	}
+
+## **THE WORST CASE FOR THE PARTIES INSPECTOR STRIP — every optional line live at once.**
+##
+## The strip is the party's detail panel and it lives in a `clip_contents` zone capped at ~300px on a
+## horizontal dock, so what it costs is decided by how many of `BandDetailLines.expedition_summary_lines`'
+## conditional lines a single party can light up. No fixture in this file had ever lit them all: the
+## delivering party `band_panel_parties_inspector_wide` opens carries no fill target, no carry cap and
+## no trip bound, and it read 310px of a 300px box on its own. This is the band-zone lesson
+## (`band_panel_vitals_worst_case`) applied one zone over — a state built from the PRODUCER's gates
+## rather than from the shape an existing fixture happens to have.
+##
+## The seven lines, each with the gate that lights it:
+##  1. `Mission`        — unconditional
+##  2. `Target`         — `is_raid` + a non-empty `expedition_target_herd`; the live `(x, y)` needs the
+##                        herd to still be in `_world_herds`, hence `game_deer_79` from `_herd_fixtures`
+##  3. `Orders`         — `is_hunt`; the fill target is > 0 so it names the quarry rather than the pack
+##  4. `Phase`          — a non-empty `expedition_phase`
+##  5. `Carried`        — `is_raid`; the carry cap is > 0 AND met, which is the LONGEST form (`/ cap`
+##                        plus the `· FULL` badge)
+##  6. `Next delivery`  — `is_hunt` + `has("expedition_projected_delivery")`; `expedition_recurring`
+##                        appends the `↻`, the longest form again
+##  7. trip bound       — a non-empty `expedition_trip_bound`
+##
+## **A DENIAL PARTY IS STRICTLY SHORTER, so the hunt is the worst case.** It renders Mission · Target ·
+## Phase · Carried · Collapse — five — and the quoted-party note a between-rungs party earns rides the
+## `Collapse:` row as a CLAUSE (`DetailFormat.DENIAL_COLLAPSE_QUOTED_PARTY_FORMAT`) rather than as a
+## line of its own, which is exactly the choice this strip's height budget forces.
+##
+## **`Position` IS ABSENT AND THAT IS NOT AN OMISSION.** `expedition_summary_lines` renders it from
+## `pos`, which is the MAP MARKER's stamp — `MapView._rebuild_unit_markers` writes it — while the
+## parties zone reads the raw cohort dicts `update_band_alerts` pushed, and the native decoder emits no
+## `pos` key at all (`current_x`/`current_y` instead). Staging one here would inflate this zone's
+## requirement with a row it can never be handed, and the merge or the cut that paid for it would be
+## paid for nothing. The row is live in the OTHER host — the Occupants drawer, reached through the
+## marker — which is why the producer keeps it.
+func _worst_case_party_fixture() -> Dictionary:
+	return {
+		"id": "Hunters 4",
+		"entity": HUNT_WORST_CASE_ENTITY,
+		"faction": 0,
+		"size": 6,
+		"current_x": 65,
+		"current_y": 12,
+		"turns_of_food": 5.0,
+		"is_expedition": true,
+		"expedition_mission": "hunt",
+		"expedition_phase": "delivering",
+		# In `_herd_fixtures()`, so the Target row carries its live position.
+		"expedition_target_herd": WORST_CASE_TARGET_HERD_ID,
+		"expedition_floor": WORST_CASE_FLOOR,
+		"home_band_entity": 904,
+		"expedition_eta_turns": 6,
+		"expedition_projected_delivery": 14.0,
+		# The `↻` suffix — a recurring party's delivery line is the longer of the two.
+		"expedition_recurring": true,
+		# The pack is FULL, which is the Carried row's longest form (`N / cap` + the `· FULL` badge).
+		"expedition_carry_cap": float(WORST_CASE_CARRY_CAP),
+		"stores": {"provisions": float(WORST_CASE_CARRY_CAP)},
+		# …and the sim's own answer for which stop ends the trip, which is a line of its own. It reads
+		# `pack_full` because this party's pack IS full, and because `fill_target` — the bound this
+		# fixture used to carry — is retired with the lever that named it (issue #491).
+		"expedition_trip_bound": SourceForecast.TRIP_BOUND_PACK_FULL,
+	}
+

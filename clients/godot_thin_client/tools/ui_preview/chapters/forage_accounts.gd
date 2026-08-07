@@ -15,6 +15,12 @@ const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
 
+## **A PLANT SOURCE HAS NO BODY TO COUNT.** The crew terms take a whole-animal quantum beside their
+## engagement pair, and a patch answers `0` for it — grain is gathered by the handful — so every
+## plant-side recomposition below spells this and `SourceForecast.NO_ENGAGEMENT_STAGE` rather than
+## passing two unexplained zeros. It is what makes those calls read as *this web has no reach arm*.
+const PLANT_NO_BODY := 0.0
+
 # "leave the floor alone" for `_compose_herd`'s optional argument — a sentinel OUTSIDE the legal
 # `0..1` range, since every real floor including `0` is a value a frame may want to dial.
 const HAY_MEADOW_FODDER_PER_BIOMASS := 0.005
@@ -623,13 +629,17 @@ func run(harness) -> void:
 	# build must give. With the stale verb pricing the crew this reads 6 against 2.
 	h._assert_hud("a finished rung's verb dips no crew — HOLD divides by the wire's own throughput (%d)"
 		% stale_hold,
-		stale_hold == SourceForecast.crew_to_hold(stale_samples, ForageFx.STALE_VERB_FLOOR, stale_carry, 0.0))
+		stale_hold == SourceForecast.crew_to_hold(stale_samples, ForageFx.STALE_VERB_FLOOR, stale_carry,
+			PLANT_NO_BODY, SourceForecast.NO_ENGAGEMENT_STAGE, SourceForecast.NO_BUILD_DIP))
 	h._assert_hud("…and so does CLEAR, the other half of the same division",
 		Readout.crew_target_count(stale_sheet, HudWidgets.CREW_TARGET_CLEAR)
 			== SourceForecast.crew_to_clear(SourceForecast.escapement_room(stale_tile,
 				HudComposeVocab.FORAGE_FORECAST_PREFIX, ForageFx.STALE_VERB_FLOOR), stale_carry,
 				SourceForecast.crew_that_reaches(stale_samples, ForageFx.STALE_VERB_STOCK,
-					ForageFx.STALE_VERB_CAPACITY, ForageFx.STALE_VERB_FLOOR, stale_carry)))
+					ForageFx.STALE_VERB_CAPACITY, ForageFx.STALE_VERB_FLOOR, stale_carry,
+					PLANT_NO_BODY, SourceForecast.NO_ENGAGEMENT_STAGE, SourceForecast.NO_BUILD_DIP),
+				PLANT_NO_BODY, SourceForecast.NO_ENGAGEMENT_STAGE,
+				SourceForecast.NO_BUILD_DIP))
 	# (2) **THE INVARIANT THAT BROKE** — the sheet's crew target and the card's rate must imply the SAME
 	# biomass per forager. The card's is a LOWER bound (its take may be bound by the room rather than by
 	# the crew), so a crew target may never price a forager BELOW it: that is exactly the contradiction
@@ -671,7 +681,8 @@ func run(harness) -> void:
 		HudComposeVocab.FORAGE_FORECAST_PREFIX) \
 		* SourceForecast.build_dip(building_tile, HudComposeVocab.FORAGE_FORECAST_PREFIX, "cultivate")
 	var build_reaching := SourceForecast.crew_that_reaches(build_samples, BUILD_DIP_STOCK,
-		BUILD_DIP_CAPACITY, BUILD_DIP_FLOOR, build_carry)
+		BUILD_DIP_CAPACITY, BUILD_DIP_FLOOR, build_carry, PLANT_NO_BODY,
+		SourceForecast.NO_ENGAGEMENT_STAGE, ForageFx.STALE_VERB_BUILD_FRACTION)
 	# THE CARD'S STANDING RATE, composed the way the sim composes it (`forage_take`'s `min(crew carry,
 	# ceiling)` through the patch's food rate) — derived from the tile's own wire terms rather than
 	# written down, so the card and the sheet cannot drift apart by fixture edit.
@@ -696,11 +707,11 @@ func run(harness) -> void:
 	# (0) THE FRAME REALLY IS THE REGIME. Without this every assertion below is about an ordinary
 	# patch: the whole point is a crew that CANNOT out-take the regrowth, so the crew that can must be
 	# strictly larger than the one-turn quotient the target used to state.
+	var build_quotient := SourceForecast.crew_to_clear(SourceForecast.escapement_room(
+		building_tile, HudComposeVocab.FORAGE_FORECAST_PREFIX, BUILD_DIP_FLOOR), build_carry, 0,
+		PLANT_NO_BODY, SourceForecast.NO_ENGAGEMENT_STAGE, ForageFx.STALE_VERB_BUILD_FRACTION)
 	h._assert_hud("the fixture reaches the regime — the reaching crew (%d) exceeds the one-turn quotient (%d)"
-		% [build_reaching, SourceForecast.crew_to_clear(SourceForecast.escapement_room(
-			building_tile, HudComposeVocab.FORAGE_FORECAST_PREFIX, BUILD_DIP_FLOOR), build_carry, 0)],
-		build_reaching > SourceForecast.crew_to_clear(SourceForecast.escapement_room(building_tile,
-			HudComposeVocab.FORAGE_FORECAST_PREFIX, BUILD_DIP_FLOOR), build_carry, 0))
+		% [build_reaching, build_quotient], build_reaching > build_quotient)
 	# (1) **THE INVARIANT, stated as a RELATION between the two rendered numbers** rather than as the
 	# pair of literals it happens to produce: a target offering to *clear it now* may never name fewer
 	# hands than the verdict beside it names as merely REACHING the floor. Those five foragers cleared

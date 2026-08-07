@@ -14,6 +14,7 @@ pub(crate) fn pending_migration_to_state(migration: &PendingMigration) -> Pendin
 pub(crate) fn labor_assignment_to_state(
     assignment: &LaborAssignment,
     yields: &SourceYield,
+    equipment: &crate::equipment_config::EquipmentConfig,
 ) -> LaborAssignmentState {
     let mut state = LaborAssignmentState {
         kind: assignment.target.kind().to_string(),
@@ -31,11 +32,24 @@ pub(crate) fn labor_assignment_to_state(
         // The other currency, beside the food it never joins (issue #337).
         trade_yield: yields.trade,
         realized_trade_yield: yields.realized_trade,
+        // **The band the two scalars above sit in the middle of** (§6.4). A seeded row carries the
+        // real distribution; a resolved row carries the point it paid.
+        actual_yield_low: yields.range.low,
+        actual_yield_high: yields.range.high,
+        trade_yield_low: yields.range.trade_low,
+        trade_yield_high: yields.range.trade_high,
         // **The second axis** (issue #442) — what this crew is building, `""` for a pure harvest.
         // Written for every kind, because a band-wide role simply never carries one.
         improvement: assignment
             .improvement
             .map(|improvement| improvement.as_str().to_string())
+            .unwrap_or_default(),
+        // **The kit this crew works under**, RESOLVED — the row's yields are priced at exactly it,
+        // so the wire states the kit rather than "the player named none". `""` on a band-wide role,
+        // which has no kit axis at all.
+        kit_id: assignment
+            .kit_choice(equipment)
+            .map(|kit| kit.id().to_string())
             .unwrap_or_default(),
         ..Default::default()
     };
@@ -144,19 +158,42 @@ fn merged_arrival_schedule(allocation: Option<&LaborAllocation>) -> Vec<f32> {
 }
 
 /// The global expedition levers the snapshot echoes onto **every** cohort (resolved once per
-/// capture, not per band). `max_party_size` pre-clamps the client's outfit stepper; the other three
-/// are the linear constants the client's **pre-launch hunt forecast** multiplies against a herd's
+/// capture, not per band). `max_estimated_party` says **where the pre-launch estimate tables stop**
+/// (`expedition_config.estimate_party_sizes`'s last rung) — it does *not* cap the outfit stepper,
+/// which clamps to the band's idle workers (`docs/plan_denial_raid.md` §3.1); the other three are
+/// the linear constants the client's **pre-launch hunt forecast** multiplies against a herd's
 /// exported `hunt_policy_ceilings` — so the outfit UI never re-derives the ecology model. See
-/// `core_sim/CLAUDE.md` → Scouting & Hunting Expeditions → Snapshot.
+/// `.claude/rules/core_sim/expeditions.md`.
 pub(crate) struct ExpeditionLevers {
-    pub(crate) max_party_size: u32,
+    pub(crate) max_estimated_party: u32,
     pub(crate) hunt_per_worker_carry: f32,
     pub(crate) hunt_per_worker_provisions: f32,
     pub(crate) hunt_viability_warn_turns: u32,
+    /// `expedition_config.hunt.forecast_horizon_turns` — how far *every* raid projection in the
+    /// snapshot was simulated before giving up, echoed per-cohort so the client has a scale for the
+    /// horizon-relative `0` sentinels (`turns_to_fill`, `turns_to_collapse*`) and for the
+    /// `"horizon"` trip bound. The same lever drives the hunt and denial forecasts, so this one echo
+    /// answers for both. **Not a trip length** — see
+    /// [`sim_schema::state::PopulationCohortState::expedition_forecast_horizon_turns`].
+    pub(crate) hunt_forecast_horizon_turns: u32,
     /// `labor_config.band_move_tiles_per_turn` — a band's move speed, echoed per-cohort so the client
     /// can add a raid's round-trip travel (`ceil(2 × hex_distance / this)`) to the band-agnostic
     /// pre-launch `huntTripEstimates`. Same global-config-surfaced-per-band idiom as the others.
     pub(crate) band_move_tiles_per_turn: u32,
+}
+
+/// **The TOE levers a cohort's kit readout is resolved against** — the config, plus the two
+/// *equipped* tiers that live outside `equipment.json` (one home per fact): the bare-handed `person`
+/// profile from `creatures.json` and the kitted haul rate from `labor_config.json`. Bundled so the
+/// resolution happens in exactly one place ([`population_state`]) rather than at the capture site.
+pub(crate) struct BandKitLevers<'a> {
+    pub(crate) config: &'a crate::equipment_config::EquipmentConfig,
+    /// The base human's intrinsic combat profile — the *unequipped* attack tier.
+    pub(crate) hunter_intrinsic: crate::combat::CombatStats,
+    /// `labor_config.hunt.per_worker_biomass_capacity` — the *equipped* HUNT haul tier (the sled's).
+    pub(crate) equipped_haul_rate: f32,
+    /// `labor_config.forage.per_worker_biomass_capacity` — the *equipped* GATHER tier (the basket's).
+    pub(crate) equipped_gather_rate: f32,
 }
 
 pub(crate) struct PopulationStateInputs<'a> {
@@ -182,6 +219,10 @@ pub(crate) struct PopulationStateInputs<'a> {
     pub(crate) travel_target: Option<UVec2>,
     pub(crate) hunt_reach: u32,
     pub(crate) expedition_delivery: Option<crate::systems::ExpeditionDelivery>,
+    /// The band's kit **wear** (the minimal TOE). `None` = no wear has been recorded, which reads as
+    /// a **full kit** — the component is the wear ledger, not the kit's existence.
+    pub(crate) equipment: Option<&'a BandEquipment>,
+    pub(crate) kit_levers: &'a BandKitLevers<'a>,
 }
 
 pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationCohortState {
@@ -204,7 +245,51 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         travel_target,
         hunt_reach,
         expedition_delivery,
+        equipment,
+        kit_levers,
     } = inputs;
+    // **The minimal TOE, resolved for the wire.** The component records *wear*, so an absent one
+    // reads as no wear — a full kit — exactly as the labor pass reads it. Durability and performance
+    // stay ORTHOGONAL: the tiers below are read off each kit's equipped/dry *predicate*, never scaled
+    // by the remaining condition. **Three kits, three independent readouts** (§4.8): the sled's tier
+    // says nothing about the basket's, so they are published as separate fields rather than one
+    // "carry" number the client would have to guess the job of.
+    let kit = equipment.copied().unwrap_or_default();
+    // **WHICH kit these tiers are quoted for.** A detached party has one, decided at launch, so its
+    // row states the tier it will actually fight and haul at. A **resident band** has one per
+    // assignment, and this row is per *cohort* — so it is quoted at the job's **default** kit, the
+    // same reading the per-herd estimate tables take. The per-assignment truth rides
+    // `LaborAssignmentState::kit_id` and that row's own yields.
+    //
+    // **The two choices diverge for a band and coincide for a party**, which is why only the hunt
+    // one is published (see `kit_id` below): a party carries one kit across both jobs, a band does
+    // not.
+    let hunt_choice = expedition.map(|exp| exp.kit.clone()).unwrap_or_else(|| {
+        kit_levers
+            .config
+            .default_kit(crate::equipment_config::KitJob::Hunt)
+    });
+    let forage_choice = expedition.map(|exp| exp.kit.clone()).unwrap_or_else(|| {
+        kit_levers
+            .config
+            .default_kit(crate::equipment_config::KitJob::Forage)
+    });
+    let hunting_equipped = hunt_choice.hunting_equipped(&kit, kit_levers.config);
+    let hunting_kit_durability = kit.hunting_remaining(kit_levers.config);
+    let sled_kit_durability = kit.sled_remaining(kit_levers.config);
+    let basket_kit_durability = kit.basket_remaining(kit_levers.config);
+    let hunter_attack = kit_levers
+        .config
+        .hunter_profile(kit_levers.hunter_intrinsic, hunting_equipped)
+        .attack;
+    let hunt_carry_per_worker_biomass = kit_levers.config.hunt_per_worker_biomass_capacity(
+        kit_levers.equipped_haul_rate,
+        hunt_choice.sled_equipped(&kit, kit_levers.config),
+    );
+    let forage_carry_per_worker_biomass = kit_levers.config.forage_per_worker_biomass_capacity(
+        kit_levers.equipped_gather_rate,
+        forage_choice.basket_equipped(&kit, kit_levers.config),
+    );
     let migration = cohort.migration.as_ref().map(pending_migration_to_state);
     let (travel_target_x, travel_target_y) = travel_target.map(|t| (t.x, t.y)).unwrap_or((0, 0));
     let demand = food_demand(
@@ -226,7 +311,11 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 .iter()
                 .enumerate()
                 .map(|(i, assignment)| {
-                    labor_assignment_to_state(assignment, a.last_yields.get(i).unwrap_or(&NO_YIELD))
+                    labor_assignment_to_state(
+                        assignment,
+                        a.last_yields.get(i).unwrap_or(&NO_YIELD),
+                        kit_levers.config,
+                    )
                 })
                 .collect()
         })
@@ -332,8 +421,15 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     .unwrap_or_default();
     // Hunt carry cap = party_workers × per_worker_carry (`0` for scouts + normal bands). The party's
     // worker count is its working-age head-count.
+    // **A denial party has a pack too** — it does not clamp to carry, but it still hauls home
+    // whatever it can (`docs/plan_denial_raid.md` §1), so its cap is the hunt's.
     let expedition_carry_cap = match expedition {
-        Some(exp) if matches!(exp.mission, ExpeditionMission::Hunt { .. }) => {
+        Some(exp)
+            if matches!(
+                exp.mission,
+                ExpeditionMission::Hunt { .. } | ExpeditionMission::Deny { .. }
+            ) =>
+        {
             working_age as f32 * expedition_levers.hunt_per_worker_carry
         }
         _ => 0.0,
@@ -377,7 +473,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         pending_reveal_y,
         expedition_carried_trade,
         expedition_floor,
-        max_expedition_party_size: expedition_levers.max_party_size,
+        max_expedition_party_size: expedition_levers.max_estimated_party,
         expedition_carry_cap,
         // Appended after every earlier-shipped field (append-only wire discipline; matches the
         // `.fbs` slot order for `expeditionTargetHerd`/`expeditionHuntPolicy`/`travelTargetX/Y`).
@@ -420,6 +516,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // reads them off the selected resident band).
         hunt_per_worker_provisions: expedition_levers.hunt_per_worker_provisions,
         expedition_viability_warn_turns: expedition_levers.hunt_viability_warn_turns,
+        expedition_forecast_horizon_turns: expedition_levers.hunt_forecast_horizon_turns,
         expedition_per_worker_carry: expedition_levers.hunt_per_worker_carry,
         band_move_tiles_per_turn: expedition_levers.band_move_tiles_per_turn as f32,
         // In-flight hunt-party delivery forecast (`0`/false for a scout, a normal band, or a party
@@ -436,6 +533,14 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             .as_ref()
             .map(|d| d.recurring)
             .unwrap_or(false),
+        // Which stop will end THIS party's raid. `""` = not raiding at all (a resident band, a
+        // scout, or a party already walking a load home) — never confused with `"horizon"`, which is
+        // a projection that ran and found no stop.
+        expedition_trip_bound: expedition_delivery
+            .as_ref()
+            .and_then(|d| d.trip_bound)
+            .map(|bound| bound.as_str().to_string())
+            .unwrap_or_default(),
         // The band's hay reserve (Flora Roster F3) — the FODDER key of the same `LocalStore` its
         // provisions ride, surfaced as a scalar so the client can show it beside the food reserve. It
         // also rides the full `stores` list above, but a named scalar spares the client a key lookup.
@@ -450,6 +555,26 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // Predators Phase 3 — the raid legibility pair. `raid_radius` echoes the global lever
         // (like `work_range`); `raid_forfeit` is this band's past-turn raid debit (set above).
         raid_radius,
+        // The minimal TOE — the three kits' remaining condition and the three tiers they resolve to
+        // (resolved above, off the band's own wear).
+        hunting_kit_durability,
+        sled_kit_durability,
+        basket_kit_durability,
+        hunter_attack,
+        hunt_carry_per_worker_biomass,
+        forage_carry_per_worker_biomass,
+        // **Which roster kit the two HUNT tiers above are quoted at** — the party's own for an
+        // expedition (a party has one kit, so it covers the forage tier too), the **hunt** job's
+        // default for a resident band.
+        //
+        // **It deliberately does not answer for a resident band's forage tier.** `forage_choice`
+        // above is a *different* kit for a band, so pairing `forage_carry_per_worker_biomass` with
+        // this id would quote a gathering rate against `big_game`, which carries no basket component
+        // at all. A second `forage_kit_id` field was considered and rejected: the forage default
+        // already rides the wire once as `SubsistenceSnapshot::default_forage_kit_id`, and the
+        // per-crew truth is the assignment row's own `kit_id`, so a per-cohort copy would be a third
+        // home for a fact that has two. The `.fbs` states the narrowed scope for readers.
+        kit_id: hunt_choice.id().to_string(),
     }
 }
 
@@ -529,13 +654,33 @@ mod tests {
     /// `f32` sums of `Scalar`-quantized values — a few ULPs of slack, no more.
     const EPSILON: f32 = 1e-4;
 
+    /// The TOE levers, resolved off the builtins. The `EquipmentConfig` is parked in a `OnceLock` so
+    /// the returned borrow is `'static` — the fixtures pass `&kit_levers()` as a temporary.
+    fn kit_levers() -> BandKitLevers<'static> {
+        static EQUIPMENT: std::sync::OnceLock<
+            std::sync::Arc<crate::equipment_config::EquipmentConfig>,
+        > = std::sync::OnceLock::new();
+        let config = EQUIPMENT.get_or_init(crate::equipment_config::EquipmentConfig::builtin);
+        BandKitLevers {
+            config,
+            hunter_intrinsic: crate::creatures_config::CreaturesConfig::builtin().person(),
+            equipped_haul_rate: crate::labor_config::LaborConfig::builtin()
+                .hunt
+                .per_worker_biomass_capacity,
+            equipped_gather_rate: crate::labor_config::LaborConfig::builtin()
+                .forage
+                .per_worker_biomass_capacity,
+        }
+    }
+
     fn levers() -> ExpeditionLevers {
         let cfg = ExpeditionConfig::builtin();
         ExpeditionLevers {
-            max_party_size: cfg.max_party_size,
+            max_estimated_party: cfg.max_estimated_party(),
             hunt_per_worker_carry: cfg.hunt.per_worker_carry,
             hunt_per_worker_provisions: 0.0,
             hunt_viability_warn_turns: cfg.hunt.viability_warn_turns,
+            hunt_forecast_horizon_turns: cfg.hunt.forecast_horizon_turns,
             band_move_tiles_per_turn: 1,
         }
     }
@@ -606,6 +751,9 @@ mod tests {
             travel_target: None,
             hunt_reach: 0,
             expedition_delivery: None,
+            // These fixtures assert on the food ledger, not the TOE.
+            equipment: None,
+            kit_levers: &kit_levers(),
         })
     }
 
@@ -631,6 +779,7 @@ mod tests {
                 },
                 workers: 4,
                 improvement: None,
+                kit: None,
             }],
             last_yields: vec![SourceYield {
                 arrivals,
@@ -692,6 +841,8 @@ mod tests {
             announced: false,
             pending_reveal: Vec::new(),
             carried_trade: 0.0,
+            kit: crate::equipment_config::EquipmentConfig::builtin()
+                .default_kit(crate::equipment_config::KitJob::Hunt),
         };
         let runway = captured_runway(&cohort, None, Some(&expedition));
         let historical = TEST_LARDER / demand_of(&cohort);
@@ -757,6 +908,7 @@ mod tests {
                 target: LaborTarget::Scout,
                 workers: 4,
                 improvement: None,
+                kit: None,
             }],
             last_yields: vec![SourceYield::ZERO],
             ..Default::default()

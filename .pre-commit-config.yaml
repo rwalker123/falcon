@@ -11,3 +11,12 @@ repos:
         entry: scripts/pre-commit-rust.sh clippy
         language: system
         pass_filenames: false
+      # A hub's banner and routing blurb are GENERATED from scripts/hub_*.md, so an edit made in
+      # the hub is reverted by the next re-run. That was a CI-only check, which means it reported
+      # after the push and reached a human; it has caught the same mistake twice. Here it fails the
+      # commit instead, next to the fix instructions the script already prints.
+      - id: hub-drift
+        name: hub banner/blurb drift
+        entry: scripts/split_claude_md.sh --check
+        language: system
+        pass_filenames: false

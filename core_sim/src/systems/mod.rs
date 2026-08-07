@@ -21,12 +21,13 @@ use crate::{
     combat_config::CombatConfigHandle,
     components::{
         available_workers, floor_overdraws, fragments_from_contract, fragments_to_contract,
-        raid_is_recurring, BandId, BandTravel, DeathCause, DemographicFlowAccumulator, ElementKind,
-        Expedition, ExpeditionMission, ExpeditionPhase, Improvement, KnowledgeFragment,
-        LaborAllocation, LaborAssignment, LaborTarget, LocalStore, LogisticsLink, MoraleCause,
-        MoraleContributions, MountainMetadata, PendingMigration, PopulationCohort, PowerNode,
-        ResidentBand, SourceYield, StartingUnit, Tile, TradeLink, DEFAULT_ESCAPEMENT_FLOOR, FODDER,
-        FOOD, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE, TRADE_GOODS,
+        raid_is_recurring, BandEquipment, BandId, BandTravel, DeathCause,
+        DemographicFlowAccumulator, ElementKind, Expedition, ExpeditionMission, ExpeditionPhase,
+        Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
+        LogisticsLink, MoraleCause, MoraleContributions, MountainMetadata, PendingMigration,
+        PopulationCohort, PowerNode, ResidentBand, SourceYield, StartingUnit, Tile, TradeLink,
+        YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
+        TRADE_GOODS,
     },
     creatures_config::CreaturesConfigHandle,
     culture::{
@@ -36,6 +37,7 @@ use crate::{
     },
     culture_corruption_config::{CorruptionSeverityConfig, CultureCorruptionConfigHandle},
     demographics_config::{DemographicsConfig, DemographicsConfigHandle, DemographicsConsumption},
+    equipment_config::EquipmentConfigHandle,
     expedition_config::ExpeditionConfig,
     fauna::{
         self, herd_capacity, herd_ecology, herd_hunt_yield, pen_upkeep, sustainable_yield, Herd,

@@ -127,6 +127,33 @@ pub struct LaborAssignmentState {
     /// [`Self::arrival_schedule`].
     #[serde(default)]
     pub realized_trade_yield: f32,
+    /// **The band [`Self::actual_yield`] sits in the middle of** — *"6–11, likely 9"*
+    /// (`docs/plan_hunt_through_combat.md` §6.4).
+    ///
+    /// A hunt has two stochastic stages (the quarry's retreat, the fight's per-unit attack rolls), so
+    /// a **pre-commit** row states an expectation rather than a promise, and this is the band the sim
+    /// will pay inside. `forecast == actual` is restated accordingly: `actual_yield` is the take's
+    /// **expectation** over the seed, and the take lies within `[low, high]`. **Where nothing is
+    /// stochastic the range is a point** — `low == actual_yield == high`, bit-for-bit — which is the
+    /// plant web, a pen, and every resolved row. A **wild hunt** is not one of them: the roster's
+    /// `wariness` is authored, so an animal-web pre-commit row carries a real band. Render one number
+    /// when the two agree, a range only when they differ — one rule, covering both.
+    ///
+    /// A **resolved** row reports the point it paid: the take happened, so there is no distribution
+    /// left. Appended (append-only).
+    #[serde(default)]
+    pub actual_yield_low: f32,
+    /// The optimistic bound — see [`Self::actual_yield_low`].
+    #[serde(default)]
+    pub actual_yield_high: f32,
+    /// The trade-goods twin of [`Self::actual_yield_low`], carried because the forecast is a **pair**
+    /// everywhere else (#337): a wolf's food band is honestly all-zero, so a food-only range could
+    /// not state its take at all.
+    #[serde(default)]
+    pub trade_yield_low: f32,
+    /// The optimistic bound on the trade component — see [`Self::trade_yield_low`].
+    #[serde(default)]
+    pub trade_yield_high: f32,
     /// **What this crew is BUILDING on the source** — the second, independent axis of an assignment
     /// (issue #442, `docs/plan_investment_rung_toggle.md`): `""` | `"cultivate"` | `"sow"` |
     /// `"tame"` | `"corral"`.
@@ -140,6 +167,15 @@ pub struct LaborAssignmentState {
     /// a rewind restores a half-finished build's verb rather than dropping it.
     #[serde(default)]
     pub improvement: String,
+    /// **The `equipment.json` roster id this crew is working under** — what the player named on
+    /// `assign_labor`, or the job's default when they named none, **resolved**: the sim never
+    /// publishes "unspecified", so a forage/hunt row always names a real roster entry and the row's
+    /// yields are priced at exactly it.
+    ///
+    /// `""` on a band-wide role (scout / warrior), which consumes no kit component and therefore has
+    /// no kit axis — *"no selection to make"*, not *"no kit"*. Appended last.
+    #[serde(default)]
+    pub kit_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -260,9 +296,22 @@ pub struct PopulationCohortState {
     /// for free in `stores`, so without this a rewind would drop the pelts and only the pelts).
     #[serde(default)]
     pub expedition_carried_trade: f32,
-    /// Server-side hard cap on an expedition party (`expedition_config.json` `max_party_size`). A
-    /// global config lever echoed per-cohort (same idiom as `work_range`) so the client outfit
-    /// stepper pre-clamps to `min(idle_workers, this)`. Populated for every cohort.
+    /// **Where the pre-launch estimate tables stop** — the last rung of `expedition_config.json`
+    /// `estimate_party_sizes`, which is the party axis of `HerdTelemetryState::hunt_trip_estimates`
+    /// and the base of `denial_estimates`' own axis. A global config lever echoed per-cohort, same
+    /// idiom as `work_range`, populated for every cohort.
+    ///
+    /// **The axis it bounds is SAMPLED, not contiguous.** The rows between `1` and this are a ladder
+    /// of chosen party sizes, so a client resolves the party it is showing to the **nearest** row on
+    /// the herd's own table rather than assuming every size below this has one.
+    ///
+    /// **It is NOT a cap on the party, and the outfit stepper must not clamp to it**
+    /// (`docs/plan_denial_raid.md` §3.1): the legal bound is the band's own `idle_workers` and
+    /// nothing else. The field name predates that split and survives only because renaming a wire
+    /// slot costs a client decode change for no behaviour. What it is *for* is telling the client
+    /// where the quoted rows stop — a legal party past the last row has no pre-computed estimate, and
+    /// the client quotes the largest sampled row **with the size it was sampled for** rather than
+    /// composing one (the take is non-linear; see `yield-forecast.md`'s terms-vs-answers rule).
     #[serde(default)]
     pub max_expedition_party_size: u32,
     /// Hunt expedition only: the carry cap = `party_workers × expedition_config.hunt.per_worker_carry`
@@ -468,6 +517,115 @@ pub struct PopulationCohortState {
     /// (append-only).
     #[serde(default)]
     pub expedition_floor: f32,
+    /// **Which stop will end this party's raid** — the `core_sim::HuntTripBound` key
+    /// (`"pack_full"` / `"floor"` / `"herd_lost"` / `"horizon"`), read off the same in-flight
+    /// forward simulation [`Self::expedition_eta_turns`] comes from, so it answers for the party's
+    /// *real* orders (its own floor, against the herd's live stock) rather than for the
+    /// band-agnostic pre-launch table.
+    ///
+    /// **`""` = not raiding** — a resident band, a scout, or a party already walking a load home.
+    /// That is a different statement from `"horizon"`, which means the projection ran and found no
+    /// stop inside `hunt.forecast_horizon_turns`. Appended (append-only).
+    #[serde(default)]
+    pub expedition_trip_bound: String,
+    /// **Remaining condition on the band's HUNTING kit** (spears) — the minimal TOE
+    /// (`docs/plan_hunt_through_combat.md` §4.8, `docs/plan_early_game_labor.md`). On
+    /// `equipment.json`'s 0–100 scale; **`0` = dry**, at which point the role has stepped down to its
+    /// unequipped tier and **stays there** (nothing replenishes a kit in this slice — running dry is
+    /// the intended pressure).
+    ///
+    /// **Performance is FLAT until expiry**: durability and performance are deliberately orthogonal
+    /// axes, so no readout may be scaled by this. Wears per **animal killed**, never per turn
+    /// elapsed. Appended (append-only).
+    #[serde(default)]
+    pub hunting_kit_durability: f32,
+    /// **Remaining condition on the band's SLED kit** (travois / drag harness — the *hunt's* carry),
+    /// same scale and same cliff as [`Self::hunting_kit_durability`]. Wears per **biomass hauled home
+    /// from a hunt**. Appended (append-only).
+    #[serde(default)]
+    pub sled_kit_durability: f32,
+    /// **Remaining condition on the band's BASKET kit** (the *forage* web's carry), same scale and
+    /// same cliff. Wears per **biomass gathered**.
+    ///
+    /// **A separate field from [`Self::sled_kit_durability`], not a second reading of it** — the two
+    /// kits do different jobs on different webs and run down on different quanta (§4.8, "one kit, one
+    /// job"), so a band can be out of baskets while its sled is untouched. Appended (append-only).
+    #[serde(default)]
+    pub basket_kit_durability: f32,
+    /// **This band's per-hunter combat `attack`**, kit resolved in — `1.0` bare-handed (the
+    /// `creatures.json` `person` row) and `20.0` with the hunting kit
+    /// (`equipment.json` `hunting_kit.equipped_attack`).
+    ///
+    /// It is the left-hand side of the fight's gate, `max(0, attack − defense)`, against a herd's
+    /// [`crate::state::HerdTelemetryState::defense`] — **below a species' `defense` that species
+    /// cannot be hunted at all**, which is why the TOE had to land before the hunt resolves through
+    /// combat. **Published and inert in the fight itself**: the resolver still fields the intrinsic
+    /// `person` profile until the slice that moves the kill into `combat::resolve_fight`. Appended
+    /// (append-only).
+    #[serde(default)]
+    pub hunter_attack: f32,
+    /// **This band's per-worker HUNT haul rate** (biomass/turn), sled resolved in — the term every
+    /// hunt take, crew-size figure and hunt forecast is capped by. Equipped it is
+    /// `labor_config.json`'s `hunt.per_worker_biomass_capacity`; sledless it is `equipment.json`'s
+    /// `sled_kit.unequipped_per_worker_biomass_capacity`.
+    ///
+    /// **Band-scoped, unlike [`crate::state::HerdTelemetryState::per_worker_biomass`]**, which stays
+    /// the *equipped reference* rate because a herd has no band to resolve a tier against. Appended
+    /// (append-only).
+    #[serde(default)]
+    pub hunt_carry_per_worker_biomass: f32,
+    /// **This band's per-gatherer FORAGE throughput** (biomass/turn *before* the tile's seasonal
+    /// weight), baskets resolved in — the term every gather take and gather forecast is capped by.
+    /// Equipped it is `labor_config.json`'s `forage.per_worker_biomass_capacity`; bare-handed it is
+    /// `equipment.json`'s `basket_kit.unequipped_per_worker_biomass_capacity`.
+    ///
+    /// **The forage web's own number, and before §4.8 there was none** — the field beside it answers
+    /// only for the hunt, and the client must not render one as the other. Band-scoped for the same
+    /// reason: `ForagePatchState::per_worker_biomass` stays the equipped reference rate because a
+    /// patch has no band. Appended (append-only).
+    #[serde(default)]
+    pub forage_carry_per_worker_biomass: f32,
+    /// **The `equipment.json` roster id the three kit tiers above are resolved through.**
+    ///
+    /// For an **in-flight party** it is the kit it was *sent out with*, decided at launch and carried
+    /// for the party's whole life — the drawer's answer to *"what did I send them with?"*, and the
+    /// tier it really fights and hauls at. For a **resident band** it is the job's **default**,
+    /// because a band holds one kit per assignment and this row is per cohort; the per-crew truth is
+    /// [`LaborAssignmentState::kit_id`] beside that row's own yields. Never empty. Appended last.
+    #[serde(default)]
+    pub kit_id: String,
+    /// **How far every pre-launch raid projection in this snapshot was simulated before giving up**
+    /// (`expedition_config.hunt.forecast_horizon_turns`). Global config echoed per-cohort — same idiom
+    /// as [`Self::expedition_viability_warn_turns`] / [`Self::hunt_per_worker_provisions`] /
+    /// [`Self::expedition_per_worker_carry`] — and populated for **every** cohort, since the
+    /// outfit/hunt UI lives on the resident-band panel.
+    ///
+    /// It is the **scale for the projections' "never completed" sentinels**, which are all
+    /// horizon-relative and none of which carried the horizon before this field:
+    /// [`HuntTripEstimateState::turns_to_fill`](crate::state::subsistence::HuntTripEstimateState::turns_to_fill)
+    /// `== 0`,
+    /// [`DenialEstimateState::turns_to_collapse`](crate::state::subsistence::DenialEstimateState::turns_to_collapse)
+    /// (and its two range ends) `== 0`, and [`Self::expedition_trip_bound`] `== "horizon"`. **One
+    /// lever serves all of them**: the denial forecast and the hunt forecast run over the *same*
+    /// horizon (`core_sim`'s `denial_projection_at` and `hunt_trip_forecast_seeded` both read this
+    /// one config field), so there is deliberately no second horizon on the wire.
+    ///
+    /// **It is NOT the trip length and must never be quoted as one.** A bounded raid reads *"Away
+    /// ≈36 turns — 18 hunting, 18 travel"*; the unbounded case has to be a **lower bound on that
+    /// same span** or the two are not comparable and the player is worse off than with *"many"*. The
+    /// hunting alone is at least this many turns and the round-trip travel is a separate,
+    /// already-known term (`ceil(2 × hex_distance / band_move_tiles_per_turn)`), so the floor on the
+    /// whole trip is
+    ///
+    /// ```text
+    /// forecast_horizon_turns + round-trip travel      e.g. "Away more than 78 turns"
+    /// ```
+    ///
+    /// Quoting the horizon alone understates the trip by the entire walk — a number wrong in the
+    /// *reassuring* direction, which is worse than the "many" it replaces. Appended last
+    /// (append-only).
+    #[serde(default)]
+    pub expedition_forecast_horizon_turns: u32,
 }
 
 /// Presentation view of a band's resolved settlement stage (mirror of the `SettlementStageView`

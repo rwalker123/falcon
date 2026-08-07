@@ -34,6 +34,84 @@ mod tests {
         }
     }
 
+    /// **The kit roster, the per-row kit ids and the estimate tables' quoted kit survive the wire.**
+    ///
+    /// Encode → decode through the generated reader, because a field appended behind an existing one
+    /// is exactly the shape that silently fails to serialize — and the estimate-table ids are the
+    /// field a client uses to *refuse* to present a table for a kit it was not computed for, so an
+    /// absent one reads as "quoted for nothing" and the refusal never fires.
+    #[test]
+    fn the_kit_roster_and_every_kit_id_ride_the_wire() {
+        const BARE_HUNT_CARRY: f32 = 12.0;
+        const BARE_FORAGE_CARRY: f32 = 1.6;
+        const BARE_ATTACK: f32 = 1.0;
+
+        let snapshot = WorldSnapshot {
+            kits: vec![KitOptionState {
+                id: "none".to_string(),
+                display_name: "No kit".to_string(),
+                jobs: vec!["hunt".to_string(), "forage".to_string()],
+                attack: BARE_ATTACK,
+                hunt_carry_per_worker_biomass: BARE_HUNT_CARRY,
+                forage_carry_per_worker_biomass: BARE_FORAGE_CARRY,
+            }],
+            default_hunt_kit_id: "big_game".to_string(),
+            default_forage_kit_id: "gathering".to_string(),
+            herds: vec![HerdTelemetryState {
+                id: "herd_wild".to_string(),
+                hunt_trip_estimates_kit_id: "big_game".to_string(),
+                denial_estimates_kit_id: "big_game".to_string(),
+                ..Default::default()
+            }],
+            populations: vec![PopulationCohortState {
+                kit_id: "none".to_string(),
+                labor_assignments: vec![LaborAssignmentState {
+                    kind: "hunt".to_string(),
+                    kit_id: "big_game".to_string(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("snapshot decodes");
+        let payload = envelope.payload_as_snapshot().expect("snapshot payload");
+
+        let subsistence = payload.subsistence().expect("subsistence section present");
+        assert_eq!(subsistence.defaultHuntKitId(), Some("big_game"));
+        assert_eq!(subsistence.defaultForageKitId(), Some("gathering"));
+        let option = subsistence.kits().expect("the roster is published").get(0);
+        assert_eq!(option.id(), Some("none"));
+        assert_eq!(option.displayName(), Some("No kit"));
+        assert_eq!(option.attack(), BARE_ATTACK);
+        assert_eq!(option.huntCarryPerWorkerBiomass(), BARE_HUNT_CARRY);
+        assert_eq!(option.forageCarryPerWorkerBiomass(), BARE_FORAGE_CARRY);
+        let jobs = option
+            .jobs()
+            .expect("a kit states the jobs it may be sent on");
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(jobs.get(0), "hunt");
+
+        let herd = subsistence.herds().expect("herds present").get(0);
+        assert_eq!(herd.huntTripEstimatesKitId(), Some("big_game"));
+        assert_eq!(herd.denialEstimatesKitId(), Some("big_game"));
+
+        let cohort = payload
+            .population()
+            .expect("population section present")
+            .populations()
+            .expect("populations present")
+            .get(0);
+        assert_eq!(cohort.kitId(), Some("none"));
+        let row = cohort
+            .laborAssignments()
+            .expect("labor rows present")
+            .get(0);
+        assert_eq!(row.kitId(), Some("big_game"));
+    }
+
     /// **The pen-as-a-managed-population fields survive the wire.** `penUpkeep` (what the pen eats
     /// each turn) and `penFedFraction` (`< 1` = starving) are appended to `HerdTelemetryState`
     /// (append-only discipline), and the client renders the feed as a negative row against the
@@ -322,6 +400,200 @@ mod tests {
             (patch.perWorkerBiomass() - GATHERER_CARRY).abs() < 1e-6,
             "…and its gatherers still have a biomass throughput: {}",
             patch.perWorkerBiomass()
+        );
+    }
+
+    /// **The ENGAGEMENT throughput crosses the wire, and a source with no engagement stage is
+    /// distinguishable from one that has not stated it.**
+    ///
+    /// It is the third arm of the client's `min()` (`docs/plan_hunt_through_combat.md` §2): without it
+    /// a compose sheet bounds a hunt by carry and stock alone and quotes a take the sim will never pay
+    /// — measured at ~30× on a light-bodied species. The two readings are pinned **together** because
+    /// they are the same number on the wire: a hunted herd's real rate, and the `0` a **pen** publishes
+    /// for *"a penned animal is not stalked, drop this term"*.
+    #[test]
+    fn the_engagement_throughput_rides_the_wire_and_a_pen_states_it_has_none() {
+        /// The shipped Wild Fowl rate — one hunter reaches ten birds a turn.
+        const STALKED_ENGAGE_RATE: f32 = 10.0;
+        /// The wire's finite reading of the sim's `f32::INFINITY`: no engagement stage at all.
+        const NO_ENGAGEMENT_STAGE: f32 = 0.0;
+
+        let snapshot = WorldSnapshot {
+            herds: vec![
+                HerdTelemetryState {
+                    id: "herd_wild".to_string(),
+                    engage_rate: STALKED_ENGAGE_RATE,
+                    ..Default::default()
+                },
+                HerdTelemetryState {
+                    id: "herd_pen".to_string(),
+                    corralled: true,
+                    engage_rate: NO_ENGAGEMENT_STAGE,
+                    ..Default::default()
+                },
+            ],
+            ..WorldSnapshot::default()
+        };
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("snapshot decodes");
+        let herds = envelope
+            .payload_as_snapshot()
+            .expect("snapshot payload")
+            .subsistence()
+            .expect("subsistence section present")
+            .herds()
+            .expect("herds present");
+
+        assert!(
+            (herds.get(0).engageRate() - STALKED_ENGAGE_RATE).abs() < 1e-6,
+            "a hunted herd publishes its real reach: {}",
+            herds.get(0).engageRate()
+        );
+        assert_eq!(
+            herds.get(1).engageRate(),
+            NO_ENGAGEMENT_STAGE,
+            "…and a pen publishes none, which a reader treats as unbounded"
+        );
+    }
+
+    /// **THE FORECAST'S BAND CROSSES THE WIRE, IN BOTH CURRENCIES**
+    /// (`docs/plan_hunt_through_combat.md` §6.4).
+    ///
+    /// A forecast has no event seed, so `actualYield` is the take's **expectation** and the band is
+    /// what the invariant now claims contains it. Asserted on the **decoded** FlatBuffers rather than
+    /// the in-process struct, for the reason `IntensificationKnowledgeState::foddering` already
+    /// records: a field that never reached the codec still passes an in-process assertion.
+    ///
+    /// The **degenerate** row is pinned beside the widened one, because it is the shipped case —
+    /// `wariness 0` and `hit_chance 1.0` make the band a point — and a reader must render one number
+    /// there rather than a range of zero width.
+    #[test]
+    fn the_forecast_band_rides_the_wire_in_both_currencies() {
+        /// A stochastic hunt: the point estimate with a band either side of it.
+        const LIKELY_FOOD: f32 = 9.0;
+        const LOW_FOOD: f32 = 6.0;
+        const HIGH_FOOD: f32 = 11.0;
+        /// The trade half of the same take — a wolf's whole payload, and the reason the band is a
+        /// pair rather than a food scalar (#337).
+        const LIKELY_TRADE: f32 = 1.5;
+        const LOW_TRADE: f32 = 1.0;
+        const HIGH_TRADE: f32 = 2.0;
+        /// The shipped case: no stochastic stage, so the band is the point estimate.
+        const CERTAIN_FOOD: f32 = 4.0;
+
+        let snapshot = WorldSnapshot {
+            populations: vec![PopulationCohortState {
+                entity: 1,
+                labor_assignments: vec![
+                    LaborAssignmentState {
+                        kind: "hunt".to_string(),
+                        actual_yield: LIKELY_FOOD,
+                        actual_yield_low: LOW_FOOD,
+                        actual_yield_high: HIGH_FOOD,
+                        trade_yield: LIKELY_TRADE,
+                        trade_yield_low: LOW_TRADE,
+                        trade_yield_high: HIGH_TRADE,
+                        ..Default::default()
+                    },
+                    LaborAssignmentState {
+                        kind: "hunt".to_string(),
+                        actual_yield: CERTAIN_FOOD,
+                        actual_yield_low: CERTAIN_FOOD,
+                        actual_yield_high: CERTAIN_FOOD,
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("snapshot decodes");
+        let rows = envelope
+            .payload_as_snapshot()
+            .expect("snapshot payload")
+            .population()
+            .expect("population section present")
+            .populations()
+            .expect("cohorts present")
+            .get(0)
+            .laborAssignments()
+            .expect("the assignments ride the cohort");
+
+        let stochastic = rows.get(0);
+        assert_eq!(
+            (
+                stochastic.actualYieldLow(),
+                stochastic.actualYield(),
+                stochastic.actualYieldHigh()
+            ),
+            (LOW_FOOD, LIKELY_FOOD, HIGH_FOOD),
+            "the FOOD band and its point estimate must survive the codec"
+        );
+        assert_eq!(
+            (
+                stochastic.tradeYieldLow(),
+                stochastic.tradeYield(),
+                stochastic.tradeYieldHigh()
+            ),
+            (LOW_TRADE, LIKELY_TRADE, HIGH_TRADE),
+            "…and so must the TRADE band, which is a wolf's whole payload"
+        );
+
+        let certain = rows.get(1);
+        assert_eq!(
+            (certain.actualYieldLow(), certain.actualYieldHigh()),
+            (CERTAIN_FOOD, CERTAIN_FOOD),
+            "the shipped roster has no stochastic stage, so its band is a point and a client renders \
+             one number"
+        );
+    }
+
+    /// **`durability` crosses the wire** (`docs/plan_hunt_through_combat.md` §4.2/§6.5) — the term
+    /// that turns the combat gate from *"you cannot"* into *"you cannot, and here is how long it
+    /// would take"*.
+    ///
+    /// Pinned **beside `defense`**, because the two blur and must not: defense is whether a hit counts
+    /// at all, durability is how many counting hits it takes. A decoder that read one for the other
+    /// would pass a single-field check.
+    #[test]
+    fn a_herd_publishes_the_gate_and_the_attrition_denominator_separately() {
+        /// The shipped megafauna row: a hide that stops a bare hand, and a body that soaks 500.
+        const MEGAFAUNA_DEFENSE: f32 = 12.0;
+        const MEGAFAUNA_DURABILITY: f32 = 500.0;
+
+        let snapshot = WorldSnapshot {
+            herds: vec![HerdTelemetryState {
+                id: "herd_mammoth".to_string(),
+                defense: MEGAFAUNA_DEFENSE,
+                durability: MEGAFAUNA_DURABILITY,
+                ..Default::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("snapshot decodes");
+        let herd = envelope
+            .payload_as_snapshot()
+            .expect("snapshot payload")
+            .subsistence()
+            .expect("subsistence section present")
+            .herds()
+            .expect("herds present")
+            .get(0);
+
+        assert_eq!(
+            herd.defense(),
+            MEGAFAUNA_DEFENSE,
+            "the gate crosses the wire"
+        );
+        assert_eq!(
+            herd.durability(),
+            MEGAFAUNA_DURABILITY,
+            "…and so does the attrition denominator beside it"
         );
     }
 

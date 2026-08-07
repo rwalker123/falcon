@@ -118,6 +118,12 @@ func _is_concerning(kind: String, band: Dictionary) -> bool:
             # trade goods, so the stock cannot drain and the flow cannot go negative. Answered
             # explicitly rather than falling through to the morale verdict by accident.
             return false
+        HudDisclosureVocab.BREAKDOWN_KIND_KIT:
+            # A kit that has RUN OUT is concerning; one merely wearing down is not. There is no
+            # replenishment path, so the step down is permanent — the caret is the one warning the
+            # player gets, and gating it on a remaining-condition threshold would either cry wolf
+            # every turn or fire after the loss it was meant to announce.
+            return DetailFormat.band_kit_is_dry(band)
         _:
             return DetailFormat.morale_is_concerning(band)
 
@@ -170,6 +176,39 @@ func trade_breakdown_lines(band: Dictionary) -> Array[String]:
     var hunted := DetailFormat.sum_realized_trade(band, SourceForecast.LABOR_KIND_HUNT)
     if SourceForecast.has_component(hunted):
         lines.append(DetailFormat.food_breakdown_row(hunted, DetailFormat.FOOD_LABEL_HUNTED))
+    return lines
+
+## **THE THREE KITS, EACH BESIDE THE ROLE IT SETS** (`docs/plan_hunt_through_combat.md` §4.8) — the
+## Kit row's breakdown, and the only place a band's resolved tiers are stated.
+##
+## **THE PAIRING IS THE READOUT.** Spears → `attack`, the SLED → the HUNT's carry, BASKETS → the
+## FORAGE web's. Those last two are separate wire fields with separate durabilities behind them (a
+## band can be out of baskets with its sled untouched), so each row reads its OWN tier key and the
+## two are never interchanged — that substitution, baskets boosting the hunt, is the defect slice 5
+## corrected in the sim and the one this readout would otherwise carry forward into the UI.
+##
+## **NOTHING HERE IS SCALED BY THE REMAINING CONDITION.** Performance is flat until expiry, so a kit
+## at 3 quotes the same tier as one at 97 — the condition says how long, the tier says how well, and
+## the closing sentence is what stops a player reading the first as the second.
+func kit_breakdown_lines(band: Dictionary) -> Array[String]:
+    var lines: Array[String] = []
+    if not DetailFormat.band_states_kit(band):
+        return lines
+    lines.append(DetailFormat.kit_breakdown_row(band, DetailFormat.KIT_DURABILITY_KEY_SPEARS,
+        DetailFormat.KIT_LABEL_SPEARS, DetailFormat.KIT_ROLE_ATTACK_FORMAT % String.num(
+            float(band.get(DetailFormat.KIT_TIER_KEY_ATTACK, 0.0)),
+            DetailFormat.KIT_CONDITION_DECIMALS)))
+    lines.append(DetailFormat.kit_breakdown_row(band, DetailFormat.KIT_DURABILITY_KEY_SLED,
+        DetailFormat.KIT_LABEL_SLED, DetailFormat.KIT_ROLE_HUNT_CARRY_FORMAT % String.num(
+            float(band.get(DetailFormat.KIT_TIER_KEY_HUNT_CARRY, 0.0)),
+            DetailFormat.KIT_CARRY_DECIMALS)))
+    lines.append(DetailFormat.kit_breakdown_row(band, DetailFormat.KIT_DURABILITY_KEY_BASKETS,
+        DetailFormat.KIT_LABEL_BASKETS, DetailFormat.KIT_ROLE_FORAGE_CARRY_FORMAT % String.num(
+            float(band.get(DetailFormat.KIT_TIER_KEY_FORAGE_CARRY, 0.0)),
+            DetailFormat.KIT_CARRY_DECIMALS)))
+    # A full-width sentence, deliberately NOT indented: `detail_bbcode` routes the indent to the
+    # two-tone sub-row branch, and this is a caveat on all three rows rather than a fourth one.
+    lines.append(DetailFormat.KIT_BREAKDOWN_CLIFF_NOTE)
     return lines
 
 ## Meta dispatcher for the summary-row disclosures (Food/Morale): the `[url]` meta IS the disclosure

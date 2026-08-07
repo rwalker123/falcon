@@ -17,7 +17,8 @@ paths:
 
 | File | Purpose |
 |------|---------|
-| `src/data/combat_config.json` | **Combat resolver tuning** (Predators Phase 0, `docs/plan_predators.md`; loader `combat_config.rs`, env override `COMBAT_CONFIG_PATH`). The severity constants the pure `combat::resolve_fight` reads — `lethality` (**1.0** — scales every side's total losses) / `disengage_fraction` (**0.5** — a loser past this loss share is driven off, not annihilated) / **`expedition_danger_multiplier`** (**1.5** — a multiplier on `lethality` applied **only** in the expedition-hunt adapter, never the resident-band path: a detached party is far from home, unsupported and tired, so the same beast costs it more; a deferred general combat-modifiers layer — proximity/fatigue/supply + a home-advantage discount for local hunts — will supersede this flat dial). **Resolver tuning, NOT creature identity** (creature stats live on `fauna_config`/`creatures.json`). **Validated** inside `from_json_str` (all three finite & `> 0`, `disengage_fraction ≤ 1`); a broken invariant is rejected at **error** level (`combat_config.invalid_rejected`) and the builtin used. Not on the hot-reload path. See "Combat & Casualties" |
+| `src/data/combat_config.json` | **Combat resolver tuning** (Predators Phase 0, `docs/plan_predators.md`; loader `combat_config.rs`, env override `COMBAT_CONFIG_PATH`). The severity constants the pure `combat::resolve_fight` reads — `lethality` (**1.0** — scales the damage every side deals) / **`hit_chance`** (**1.0** — P(one unit's attack lands), drawn **per unit** so variance is *binomial in force size*; `1.0` is an **exact identity**, no draw made and no randomness consumed, which keeps the FIGHT's own stage deterministic and `forecast == actual` an exact identity for it. It does **not** make the pre-commit range a point: the retreat is a second, independent stage and the roster's authored `combat.wariness` (0.10–0.85) draws regardless, so every wild-hunt and raid row already reports a real band) / `disengage_fraction` (**0.5** — a loser past this loss share is driven off, not annihilated) / **`wound_recovery_rate`** (**0.2** — share of its own `durability` a wounded body knits back per turn **out of contact**, the decay half of `combat::DamageLedger`; linear in `durability` so the ledger empties in exactly `ceil(1/rate)` idle turns rather than asymptoting at a sliver, and applied **only** on turns with no contact — see "Damage carries between turns") — plus two dials only the **hunt adapter** reads: **`expedition_danger_multiplier`** (**1.5** — a multiplier on `lethality` applied **only** in the expedition-hunt adapter, never the resident-band path: a detached party is far from home, unsupported and tired, so the same beast costs it more; a deferred general combat-modifiers layer — proximity/fatigue/supply + a home-advantage discount for local hunts — will supersede this flat dial) and **`hunt_injury_damage_per_animal`** (**0.15** — the hunt's own hazard per **animal engaged**, independent of the quarry; see "The hunt itself injures people") — plus **`forecast_range_sigmas`** (**2.0** — how wide the pre-commit forecast's reported band is, in standard deviations of the take's own binomials; a **READOUT** width no resolution path reads, so widening it cannot move an animal. `~95%` of a normal-approximated binomial, i.e. §6.4's *"6–11, likely 9"*; see `yield-forecast.md` → "THE INVARIANT IS RESTATED"). **Resolver tuning, NOT creature identity** (creature stats live on `fauna_config`/`creatures.json`). **Validated** inside `from_json_str` (all seven finite & `> 0`; `disengage_fraction`, `hit_chance` and `wound_recovery_rate` `≤ 1`); a broken invariant is rejected at **error** level (`combat_config.invalid_rejected`) and the builtin used. Not on the hot-reload path. See "Combat & Casualties" |
+
 ## Combat & Casualties (Predators arc — Phase 0)
 
 The **combat subsystem** and the first live consumer of the long-inert **Warrior** role. Authoritative
@@ -26,26 +27,176 @@ the casualty math lives in a first-class module, never as a bespoke hunt formula
 
 - **`core_sim/src/combat/` — a first-class module that imports NOTHING from fauna/labor/population**
   (dependency inversion is one-way: fauna/labor → combat, never back). It owns the algorithm and the
-  neutral types; domains adapt *into* it. Types: **`CombatStats { attack, defense, range }`** (the
-  shared per-unit body — the *same* struct describes a wolf and a human), `RangeBand` (`Melee|Ranged`,
+  neutral types; domains adapt *into* it. Types: **`CombatStats { attack, defense, durability, range, wariness }`**
+  (the shared per-unit body — the *same* struct describes a wolf and a human), `RangeBand` (`Melee|Ranged`,
   persisted-enum, accepted/ignored by the placeholder resolver), `Posture`, `FightPayload { sides,
   terrain, seed }`, `Force { id, posture, contingents }`, `Contingent { kind, count, profile }`,
   `FightOutcome { results, victor, disengaged }`, `ContingentResult { force, kind, killed, wounded }`.
   Callers describe **composition** (contingents), never an aggregate "power" scalar.
-- **`resolve_fight(&FightPayload, &CombatTuning) -> FightOutcome` — a PURE function, no RNG** (the
-  `seed` is accepted and reserved for future variance). The placeholder model: `power(side) = Σ count ×
-  attack`; `victor` = strictly-higher power (`None` on a tie); each side's **total losses depend on
-  ENEMY power relative to OWN power** (`losses = (power_enemy / power_self) × lethality`, clamped to
-  headcount) — so **more/stronger defenders → FEWER own casualties**; the kill/wound split is
-  `killed_frac = incoming_per_defender / (incoming_per_defender + own.defense)` with
-  `incoming_per_defender = power_enemy / count_self` — so **more defenders → more wounded** (a bigger
-  party thins each blow) and **higher own defense → more wounded** (the equip-to-shift-severity lever).
-  `disengaged` iff the loser's losses exceed `disengage_fraction` of its headcount. `range`/`terrain`/
-  `posture`/`seed` are accepted and **ignored** (reserved for the real resolver). Casualties stay
-  **f32** (whole-unit quantization is a later refinement). **Note:** the design prose spelled the
-  split's denominator `power_enemy / count_enemy`; with the enemy a single beast that leaves the split
-  constant regardless of party size — contradicting the equip-to-shift-severity thesis — so the seam
-  divides by the **defenders** (`count_self`), which is what makes a stronger party move severity.
+- **`resolve_fight(&FightPayload, &CombatTuning) -> FightOutcome` — a PURE function of its payload**
+  (deterministic and rollback-safe: any variance is drawn from `FightPayload::seed`, never a shared
+  stream). **The attrition model is damage against durability, and the gate is hard**
+  (`docs/plan_hunt_through_combat.md` §4.2):
+
+  ```text
+  per-strike damage = max(0, attacker.attack − target.defense)    // THE GATE — combat::strike_damage
+  damage into a contingent = Σ landed strikes × per-strike damage × lethality
+  units down = min(count, damage / durability)                    // combat::units_brought_down
+  ```
+
+  Three properties this shape exists to guarantee, each of which a more natural formulation silently
+  breaks: **headcount cannot substitute for a weapon** (below the gate the per-strike damage is
+  *exactly* `0`, so no quantity of attackers and no length of horizon produces a casualty — §0.2's
+  eight hundred bare-handed people and a mammoth); **"many small animals per turn" is not authored**
+  (the division is continuous, so excess damage spills to the next unit and 20 damage into
+  2-durability quarry brings down ten — rising on its own with a better weapon); and **high-`defense`
+  quarry gains super-linearly from a better weapon** (doubling `attack` 20 → 40 takes a `defense 12`
+  target's effective attack 8 → 28 while a `defense 0` target's merely doubles).
+
+  **Variance lives in `hit_chance`, drawn per unit** — binomial in force size, so three hunters are a
+  gamble and thirty are reliable. It never softens the gate: a sub-gate pairing does not even roll.
+  At the shipped `1.0` no draw is made at all.
+
+  **`CombatTuning::draw` decides whether the roll is DRAWN or READ OFF ITS DISTRIBUTION**
+  (`combat::StrikeDraw`, `docs/plan_hunt_through_combat.md` §6.4). `Seeded` is a live fight, taking
+  its stream from `FightPayload::seed`; `Quantile { sigmas }` is a **forecast**, which makes no draw
+  at all and reads the binomial `sigmas` standard deviations from its mean
+  (`combat::attacks_landed_at`). Both go through the one `combat::landed_strikes` seam, which is what
+  lets a forecast resolve `resolve_fight` itself instead of a second copy of the model. **The
+  quantile's identities are the draw's identities** — `chance >= 1` answers `attackers` and
+  `chance <= 0` answers `0` whatever `sigmas` says — which is what makes the shipped forecast
+  bit-identical to the take rather than merely close (`a_certain_hit_chance_has_no_spread_to_quantile`).
+  A forecast has no event seed because `fauna::retreat_seed` needs a tick and a projection cannot know
+  a future one; `.claude/rules/core_sim/yield-forecast.md` → "THE INVARIANT IS RESTATED" owns the
+  consequence.
+
+  **THE FIGHT'S STREAM IS SALTED APART FROM THE RETREAT'S** (`fauna::FIGHT_SEED_SALT`, applied by
+  `HuntDraw::seed`). A hunt has two stochastic stages — the retreat (`fauna::animals_that_stay`) and
+  these strike rolls — and **every draw site here reseeds a FRESH `SmallRng` from a `u64` rather than
+  passing one advancing stream along**. Handing both stages the same value therefore does not make
+  them take turns on one stream: it replays the *same uniforms in the same order*, so `gen_bool` in
+  each stage compares one uniform against two thresholds and *"animal k stayed"* becomes a nested
+  event of *"hunter k landed"*. §4.7 asks for variance binomial in force size, which is a claim about
+  two **independent** stages. **Measured**: at `wariness == hit_chance == 0.5` the shared-seed
+  correlation is exactly `r = −1.000` (the two indicators are complements of one uniform, so
+  `landed == engaged − stayed` every event); salted apart it is `r = +0.002`. Pinned by
+  `fauna::tests::the_retreat_and_the_fight_draw_from_independent_streams`, which computes both arms
+  so the independence claim is not merely asserted. It is inert at the shipped `hit_chance 1.0`
+  (`attacks_landed` short-circuits before it draws) and authoring a sub-1 chance is the tuning step
+  `combat_config.json` names, which is why it was salted before that step rather than after.
+
+  **`ContingentResult` carries `damage_dealt` beside `killed`/`wounded`** — the raw flow that landed
+  on that contingent, after `lethality` and *before* the division by `durability`. It exists because
+  `killed + wounded` has already been divided and clamped and therefore cannot be inverted, and a
+  fight that spans turns has to bank what did not finish a body (below).
+
+  Unchanged from the placeholder: `power(side) = Σ count × attack`; `victor` = strictly-higher power
+  (`None` on a tie); the kill/wound split `killed_frac = incoming_per_defender /
+  (incoming_per_defender + own.defense)` with `incoming_per_defender = power_enemy / count_self` — so
+  **more defenders → more wounded** (a bigger party thins each blow) and **higher own defense → more
+  wounded** (the equip-to-shift-severity lever); `disengaged` iff the loser's losses exceed
+  `disengage_fraction` of its headcount. `range`/`terrain`/`posture` are accepted and **ignored**
+  (reserved for the real resolver). Casualties stay **f32**; the *caller* quantizes (a hunt floors the
+  animals it brings down, a cohort's brackets are genuinely fractional).
+
+  **A side's own losses no longer shrink with its own headcount, and that is the model change.** The
+  placeholder scaled losses by `power_enemy / power_self`; damage is a quantity the enemy *deals*, so
+  a bigger party takes the same absolute damage and spreads it thinner — which the split above then
+  reports as a shift toward **wounded**. Mitigation by numbers survives as severity, not as an
+  exemption from being hit. Damage is **not** redistributed when a contingent is annihilated (one more
+  piece of the placeholder). **Note:** the design prose spelled the split's denominator `power_enemy /
+  count_enemy`; with the enemy a single beast that leaves the split constant regardless of party size,
+  so the seam divides by the **defenders** (`count_self`).
+
+### Damage carries between turns — `combat::DamageLedger`
+
+**A fight that does not kill this turn is not forgotten** (`docs/plan_hunt_through_combat.md` §4.2).
+`DamageLedger { pending, in_contact }` is combat's own state type, so the hunt, a predator raid and a
+future TOE-vs-TOE battle bank a multi-turn fight the same way instead of each growing a private meter.
+
+- **Without it the gate is ABSOLUTE rather than steep.** A stateless resolver makes
+  `ceil(durability / (attack − defense))` a hard threshold — **63** hunters for a mammoth at the
+  shipped spear — so a party of 62 takes casualties every turn and kills nothing on any horizon.
+  *"Twenty weak spears and then follow it around for days"* is the intended low-tech experience and it
+  needs the days to count for something. **The gate itself is untouched**: below it `strike_damage` is
+  exactly `0`, and banking zero forever is still zero.
+- **Banking damage is legitimate where banking the ceiling was not**, and the distinction is
+  load-bearing. `hunt_credit`'s resident arm was deleted because the escapement ceiling is a **stock**
+  and accumulating a stock compounds it; damage is a **flow**, and an accumulator is the correct
+  integral of a rate. *A stock must not bank; a rate must.* The long form lives on `DamageLedger`
+  itself, because that is the objection a reader will raise at the state, not at a design doc.
+- **`strike(damage, profile, standing) -> whole units down`** — banks the damage, hands back only
+  **completed** bodies and keeps the remainder. **THIS TURN'S BLOW is clamped to `standing ×
+  durability`, the BANK is not**, so a blow struck at bodies that are not there cannot be banked and
+  spent on the next thing that walks past, while the unfinished remainder still survives the turn.
+  Invariant: `pending < durability`.
+  - **Clamping the running total instead is a permanent zero below one standing body**, and that was
+    the denial forecast's *"breeds back faster than this party kills"* on a three-goat herd a real
+    party erased in two turns: `standing × durability < durability` forces
+    `floor(total / durability) == 0` on every turn whatever the damage, so the bank was re-earned and
+    re-discarded for sixty turns. **A `standing` below one animal is a FORECAST, not an impossible
+    herd** — a live retreat draws whole animals, a projection reads the same binomial's *mean*, so an
+    engagement of three wary goats presents `1.2` one turn and `0.8` the next. Banking across those
+    turns is what makes the projected kill rate the expectation the live take pays. Guard:
+    `combat::tests::a_ledger_completes_a_body_against_a_fractional_standing_count` (a *rate*
+    assertion — four bodies in five turns at `standing 0.8` — because "eventually kills something"
+    also passes for a ledger that rounds the fraction up) and
+    `denial_raid::a_tiny_wary_herd_is_erased_and_the_forecast_no_longer_calls_it_repelled`.
+- **`recover(rate, profile)`** runs in `advance_herds` (Logistics) and heals **only on a turn with no
+  contact**; a struck turn merely clears the flag. Logistics precedes Population, so a party that
+  keeps hunting never lets a turn of healing through and one that breaks off gets a single turn of
+  grace. Healing *every* turn would make `hunters × effective_attack > rate × durability` a **second**
+  absolute threshold — the exact shape the accumulator exists to remove. `advance_herds` therefore
+  takes `Res<CombatConfigHandle>`; hand-built fauna harnesses must insert it.
+- **`Herd::wounds` is the herd-level home** — the animal does not care who wounded it, so two bands
+  working one herd wear it down together. It is authoritative sim state and rides the checkpoint with
+  the cloned `HerdRegistry` (`SimState::herds`), **both halves**: restoring the damage while dropping
+  `in_contact` would grant a free heal after every rollback. Guard:
+  `integration_tests/tests/fauna_rollback.rs::a_quarry_s_accumulated_wounds_rewind_on_rollback`.
+- **`fauna::herd_quarry_fight(herd, fauna)` is THE seam** between the ledger and the fight —
+  `FaunaConfig::quarry_fight_for` alone answers the *species*, i.e. an un-hunted animal, so a take
+  path that skipped the seam would silently restart the wounds every turn (the stateless behaviour,
+  failing quietly). `QuarryFight::wounds` goes in, `HuntFight::wounds` comes out, and
+  `resolve_hunt_fight` stays a **pure** function; the caller stores the ledger back.
+- **Every FORWARD PROJECTION resolves the fight INSIDE its loop now.** `project_realized_hunt`,
+  `project_arrivals_hunt` and `hunt_trip_forecast` used to hoist it out as a constant, which was right
+  for a stateless resolver and is now wrong: a sub-threshold party's first turn is zero and its
+  seventh is a whole animal, so a frozen answer quotes **zero forever** for exactly the parties the
+  accumulator serves. `project_realized_hunt`'s early break also moved from *"the take was zero"* to
+  *"the **source** offered nothing"* — a zero take is now a **wait** turn and stays in the average's
+  denominator, matching the `0.0` slots the arrivals schedule already publishes. Guard:
+  `hunt_yield_vector::the_forecast_equals_the_paid_take_across_a_multi_turn_kill`.
+
+### The hunt itself injures people
+
+**Casualties used to come only from the animal fighting back**, so on the shipped roster only mammoth,
+aurochs and wolf could hurt anyone and a boar cost nothing — contradicting §4.2's own *"survives by
+ferocity alone — frail, still costs you people"*. `fauna::hunt_injuries` adds a **baseline hazard**:
+`hunt_injury_damage_per_animal × animals engaged × lethality`, put through the resolver's own
+`units_brought_down` and **added into** the same `FightCasualties` the fight produces.
+
+- **It scales with the ENGAGEMENT, not the quarry** — more animals worked, more chances to get hurt —
+  which is why it is one config lever rather than a per-species field: the danger is in the activity,
+  not in the rabbit. It rides `HuntingParty::injury_damage_per_animal` and is scaled by the party's
+  `lethality`, so an expedition's `expedition_danger_multiplier` reaches it like every other blow.
+- **It is never gated** — a ravine does not have to beat your `defense` to hurt you, so
+  `strike_damage` is deliberately absent from it.
+- **It is always `wounded`, never `killed`, and that is the gate doing its job rather than an
+  exemption.** What makes a blow lethal is an attacker landing it past your defense; a hunt's hazards
+  have none. It is also what keeps this *texture*: `available_workers` **floors** a cohort's working
+  scalar, so **any** fatality, however fractional, costs a whole worker of throughput on the spot — a
+  four-hunter raid losing a quarter of its capacity to a rabbit would be a balance change wearing a
+  flavour note's clothes. (Measured: it broke two expedition tests before the fatal share went to `0`.)
+- **The `HuntDanger` feed line is now gated on a DEATH** (`fauna::NO_DEATHS_TO_REPORT`), not on
+  `FightCasualties::any()`. Every hunt produces some `wounded` now, so `any()` would push a
+  "cost N lives" line reading `0` for every band, every turn. The injury is real in the numbers and
+  becomes mechanically live with the rest of `wounded` when the recovery slice lands. **The gate did
+  not widen when the hunt report landed and must not** — the wounded ride `hunters_wounded` on every
+  `hunt_report` instead, which is where a wounded-only turn became visible (`event-feed.md` → "The
+  hunt report").
+
+### Strength, behaviour and the roster
+
 - **Strength ≠ danger — `SpeciesDef` splits STRENGTH from BEHAVIOUR.** A big `attack` does **not** make
   a thing dangerous to you (a mammoth is immensely strong but will never raid your camp); danger is
   **DERIVED, never stored**. Four fields, all `#[serde(default)]` (so every existing species is
@@ -59,40 +210,112 @@ the casualty math lives in a first-class module, never as a bespoke hunt formula
   Danger is composed client-side, never a stored scalar: **hunt-danger ≈ `attack × ferocity`**,
   **camp-threat ≈ `attack × aggression`** (Phase 1). `diet` and `aggression` are **inert this phase**
   (Phase 1 consumes them: prey-derived carrying capacity + the predator-raid trigger). `FaunaConfig::validate`
-  enforces `combat.attack ≥ 0` finite, `combat.defense > 0` finite (a denominator), `0 ≤ aggression ≤ 1`,
-  `0 ≤ ferocity ≤ 1`.
+  enforces `combat.attack ≥ 0` finite, **`combat.defense ≥ 0`** finite, **`combat.durability > 0`**
+  finite, `0 ≤ aggression ≤ 1`, `0 ≤ ferocity ≤ 1`, `0 ≤ combat.wariness ≤ 1`.
+
+  **`defense 0` is legal and authored; `durability 0` is not** — and the asymmetry is the point.
+  `defense` is the gate, so `0` is the meaningful statement *"no protection at all"* that rabbit /
+  fowl / grouse / snow hare / catfish carry, and it is the whole of why a **bare-handed** band can
+  still eat (`attack 1` clears `0` and nothing else). `durability` is the attrition *denominator*, so
+  `0` would let one point of damage bring down every animal in the engagement — a body that soaks
+  nothing is not "unprotected", it is absent.
+- **The durability roster** (`fauna_config.json`, playtest dials, `docs/plan_hunt_through_combat.md`
+  §4.2): mammoth **500**, aurochs **150**, steppe runner / marsh grazer / wild elk **60**, wild horse
+  **35**, reindeer / deer **25**, boar / wolf **20**, ibex **15**, seal / crag goat / wild sheep
+  **12**, gazelle **8**, grouse / snow hare **3**, catfish / rabbit / fowl **2**; `person` is **20**
+  (`creatures.json` — the boar/wolf tier, a body with neither bulk nor armour). **The decoupling from
+  mass is real where it matters:** boar and seal are the same body mass and boar is nearly twice as
+  durable; wolf is lighter than a wild sheep and tougher; ibex outlasts a seal at less than half the
+  weight. The five small-game rows also carry **`defense 0`**, which is what a bare-handed band can
+  hunt and nothing else.
+- **The wariness roster** (`fauna_config.json`, playtest dials, `docs/plan_hunt_through_combat.md`
+  §3.1): gazelle **0.85**, rabbit / snow hare **0.75**, ibex / wolf **0.70**, deer / fowl **0.65**,
+  steppe runner / grouse / crag goat **0.60**, wild horse **0.55**, marsh grazer / elk / wild sheep
+  **0.50**, reindeer **0.45**, catfish **0.40**, seal **0.35**, boar **0.25**, aurochs **0.20**,
+  mammoth **0.10**. **The ordering is the design** and a re-tune must not invert it: the mammoth is
+  lowest because it *stands and fights* (its defences are `defense 12` and `ferocity`, not absence),
+  the gazelle highest because §4.2 lists it as surviving by *wariness alone*, and the pen small game
+  cluster high — a warren that scatters is the second half of the pressure toward penning. **No row
+  ships `0` or `1.0`**: `1.0` would be unhuntable at any headcount or weapon tier, and `0` is the
+  identity path a deterministic test harness installs (`FaunaConfig::without_retreat`), never a
+  species' value. Guard: `hunt_wariness::the_authored_ordering_is_the_one_the_design_states`.
+  **Authoring it made the animal web's take stochastic**, which is why every pre-existing suite pins
+  the roster back to `0` and the variance lives only in `core_sim/tests/hunt_wariness.rs` — see
+  `yield-forecast.md` → "THE INVARIANT IS RESTATED".
 - **The graduated roster** (`fauna_config.json`, playtest dials): mammoth `attack 8 / ferocity 0.9`
   (strong AND fights back → deadly), aurochs `4 / 0.7 / aggression 0.1`, boar `1.5 / 0.6` (cornered
   and mean), steppe/marsh grazer `2.5 / 0.4`, elk `2 / 0.4`, horse `2 / 0.3`, seal `1 / 0.3`, down to
   deer `0.8 / 0.15` and gazelle `0.3 / 0.05` (skittish — flee, cost almost nothing). Rabbit / fowl /
   snow hare / grouse / catfish stay fully default (attack 0 → harmless).
-- **The hunt-path adapter (`advance_labor_allocation`, the Hunt arm's wild-take branch).** After a wild
-  hunt take resolves, a herd that will **fight back** (`attack × ferocity > 0` — a hunt only faces the
-  animal's attack to the extent it doesn't flee) turns on the party: the adapter builds a
-  `FightPayload` — **band side** (`Aggressor`, one `"person"` contingent, `count = the hunters assigned
-  to THIS herd`, profile = the creatures roster's `person`), **animal side** (`Defender`, one contingent
-  `count = 1.0`, profile = `species.combat` with **attack scaled to `attack × ferocity`**) — with a
-  rollback-stable `seed = map_seed ^ tick ^ herd-id
-  hash` (reserved/unused by the resolver but a real value), and applies **only the band side's** outcome
-  (the take already removed the animal's biomass; applying its casualties too would double-count).
-  `killed` comes out of the cohort's **working-age** bracket via
-  `PopulationCohort::apply_combat_casualties` (the `death_fraction` seam's combat twin — a net-new
-  mortality path); `wounded` is **computed and surfaced but mechanically inert this phase** (recovery is
-  a later slice). A `CommandEventKind::HuntDanger` (`"hunt_danger"`) feed line fires when casualties
-  occur — label names the **species** ("The Thunder Mammoths hunt cost 2 lives"), detail carries the
-  **fractional** `killed=<k> wounded=<w> species=<s>`. **The hunting party answers the danger with its
-  OWN strength** — the hunters' bare-hands `person` profile today; their equipment (TOE, deferred) will
-  compose into that profile with no rework here.
-- **The expedition-hunt adapter is the SAME seam, but bloodier** (`advance_expeditions`, the
-  `ExpeditionPhase::Hunting` arm — after `expedition_take_biomass`, inside the `in_reach` guard so it
-  only fires on an engagement turn). A hunting **expedition** builds the identical fight — its party
-  (`count = the party workers`) vs the beast (at `attack × ferocity`) — and applies **only the band side's** `killed` to the
-  expedition's own `PopulationCohort`, narrating on the same `HuntDanger` feed. **It fights at a scaled
-  lethality:** `tuning.lethality *= combat_config.expedition_danger_multiplier` (**1.5**) — a detached
-  party is far from home, unsupported and tired, so the same beast costs it more than it costs a
-  resident band. The **resolver is untouched** and the resident-band path uses the base tuning; only the
-  expedition adapter scales it. A deferred **general combat-modifiers layer** (proximity / fatigue /
-  supply) will supersede this flat multiplier and add a *home-advantage discount* to local hunts.
+- **THE HUNT IS ONE RESOLUTION NOW — the take's kill arm IS `resolve_fight`'s enemy losses**
+  (`docs/plan_hunt_through_combat.md` §0.1, slice 4). It used to be **two**: what happened to the
+  hunters went through this module while what happened to the animals came out of the party's
+  *carrying capacity*, and nothing reconciled them — a party could succeed at the take on one path
+  while the other said the mammoth routed it. Both separate danger adapters (the `advance_labor_allocation`
+  Hunt arm's and `advance_expeditions`' `Hunting` arm's) are **deleted**; each site now applies the
+  band-side casualties that came back **with** the take.
+  - **`fauna::resolve_hunt_fight(stayed, hunters, &HuntingParty, &QuarryFight, draw) -> HuntFight`**
+    is the single seam, and **all six take/forecast paths call it** — `systems::hunt_take` (resident
+    band + scout replenish), `expedition_take_biomass`, `project_arrivals_hunt`,
+    `project_realized_hunt`, `forecast_production_and_take` and `hunt_source_yield_preview` — so
+    `forecast == actual` per component cannot drift into two answers. `HuntFight { brought_down,
+    casualties, fought }`; `brought_down` is **floored to whole animals** and becomes
+    `quantise_animal_take`'s fourth bound (see `fauna.md`).
+  - **A herd is a `Force`** (§4.1): `stayed` animals map to one `Contingent` at the species'
+    `CombatStats` with **attack scaled to `attack × ferocity`** (`QuarryFight::fighting_profile` — the
+    strength-vs-behaviour split, unchanged), the party to one `"person"` contingent at the
+    **kit-composed** profile (`EquipmentConfig::hunter_profile` — `attack 1` bare, `20` speared).
+    `AnimalTake` needed no new field.
+  - **Brought down = `killed + wounded`**, not `killed` alone. The split models *recoverable* losses
+    for a force that fights again; a hunting party finishes what it puts on the ground. Reading only
+    `killed` would apply a silent few-percent haircut varying with party size and break §4.6's
+    ceiling arithmetic, which is `min(engage_rate, (attack − defense)/durability) × body_mass` exactly.
+  - **The one-sided fast path** (§4.5): a quarry contributing no attack (`attack × ferocity == 0`)
+    has structurally-zero casualties, so the payload and the party's `Force` are skipped and
+    `fought == false` — which is what the systems read to decide whether a `HuntDanger` line fires.
+    It is a **short-circuit, not a second model**: it composes the same `combat::strike_damage` /
+    `combat::units_brought_down` primitives `resolve_fight` does, so the kill count is identical.
+  - **The dip multiplies the crew here too** — every caller passes `workers × build_dip`, the same
+    term `animals_engaged` is handed, or a band mid-Tame would fight at full strength for free.
+  - **A pen has no fight at all**: the corral-tend branch passes `f32::INFINITY`, which is returned
+    untouched with no casualties and `fought == false`. A penned animal is not stalked, not fought
+    and not wary.
+  - **Restraint is free**: the escapement floor bounds **`engaged`**, not `killed`
+    (`fauna::animals_affordable`), so a crew at its floor does not engage, take casualties and wear
+    its kit for animals it was never going to keep.
+  - **EVERY path applies that clamp, the three forecast paths included, and the retreat is why.** It
+    used to be live-only, on the argument that the quantiser re-clamps the kill by the same
+    `affordable` whatever the engagement was — which held only while `animals_that_stay` was the
+    identity at `wariness 0`. **The retreat keeps a FRACTION of whatever it is handed**, so once the
+    roster authored a real wariness (§3.1) a forecast that retreated the party's full reach and
+    clamped afterwards was retreating a *different population* than the take, and over-quoted
+    whenever the escapement room bound below that reach — the steady state of an ordinary hunt, not
+    an edge. Measured: 20 hunters on a Rabbit Warren with room for 37 animals, `forecast_expected_take`
+    quoted **36** rabbits against a live take of **~9** (4×, and above the best of 400 seeded draws).
+    Repaired in `fauna::forecast_production_and_take_at`, `project_realized_hunt` and
+    `project_arrivals_hunt`; in the two projections the clamp is **inside the loop**, because the
+    room changes every projected turn while the party's reach does not. Pinned on the exported
+    snapshot — `forecast == actual` is a wire claim — by
+    `hunt_wariness::the_exported_forecast_is_the_take_when_the_escapement_floor_binds`, which stands
+    the herd **at** its floor: the sibling containment test explicitly holds `TEST_CAPACITY` high *so
+    that the escapement floor never binds*, and so excluded the whole regime.
+  - **A detached party fights at the `expedition_danger_multiplier`-scaled lethality** (that rides
+    `HuntingParty::tuning`), and **now wears its own kit**: `advance_expeditions` queries
+    `&mut BandEquipment`, resolves both tiers through the same `EquipmentConfig` seams a resident band
+    does, and charges `wear_hunting` per animal killed + `wear_carry` per biomass hauled. Before slice
+    4 a raid ran on free, immortal equipment.
+  - `killed` comes out of the cohort's **working-age** bracket via
+    `PopulationCohort::apply_combat_casualties`; `wounded` is computed and surfaced but mechanically
+    inert (recovery is a later slice). The `CommandEventKind::HuntDanger` feed line is unchanged —
+    label names the **species**, detail carries the fractional `killed=<k> wounded=<w> species=<s>`.
+  - **The gate cuts both ways, and it narrowed hunt DEATHS sharply.** An animal must clear a human's
+    `defense 1` to *kill* anyone, so at the shipped roster only **mammoth** (`8 × 0.9 = 7.2`),
+    **aurochs** (`4 × 0.7 = 2.8`) and **wolf** (`3 × 0.8 = 2.4`) can cost a band lives. A boar
+    (`1.5 × 0.6 = 0.9`) and a deer (`0.8 × 0.15 = 0.12`) kill **nobody** — where the retired
+    power-ratio model gave every positive attack some casualties. **They still cost you people**, via
+    the baseline injury risk (see "The hunt itself injures people"), which is what closes §4.2's
+    "survives by ferocity alone" gap; the levers for the *fatal* half are `ferocity`, the species'
+    `attack`, or `person.defense`, all config.
 - **Warrior stays inert in Phase 0.** Warriors are a band-wide **standing guard** (border/camp patrol),
   not a hunting escort — they do **not** mitigate hunt danger (the hunting party answers that itself,
   via its own equipment). Its labor arm remains a no-op branch. **Its first live consumer is the
@@ -107,12 +330,35 @@ the casualty math lives in a first-class module, never as a bespoke hunt formula
   components are a separate client-dev task.
 
 Tests: `core_sim/src/combat/mod.rs` unit tests (even fight, 5:1, adding-defenders mitigation + wounded
-shift, defense→wounded shift, determinism, zero-attack → zero casualties); `core_sim/tests/predators.rs`
+shift, defense→wounded shift, determinism, zero-attack → zero casualties, **the gate draws no blood**,
+**spillover is exact and rises with the weapon**, **the shipped `hit_chance` is seed-independent**,
+**variance shrinks as the force grows**, **no seed lets a sub-gate force through**, **the ledger turns
+sub-threshold damage into a kill / never banks damage the bodies could not soak / cannot accumulate a
+sub-gate party's nothing**, **a result carries `damage_dealt`**);
+**`core_sim/tests/hunt_fight.rs`** (the take-side properties: no headcount of bare hands kills a
+mammoth, over any horizon; a better weapon pays off on big game and not on small; no weapon tier beats
+`engage_rate × body_mass`, swept over the whole roster with per-species liveness; the kill rate
+responds to party, weapon and quarry; a fractional engagement reaches one animal and fails at the
+*fight*; **a harmless quarry is no battle but still hurts someone**; the fast path agrees with the full
+resolver; a pen has no fight at all; hunt ordering does not change outcomes at a live sub-1
+`hit_chance`; **a sub-threshold party kills after enough turns**, **more hunters shorten the wait**,
+**wounds decay out of contact but not instantly**, **the baseline injury wounds and never kills**,
+**it tracks the engagement and never dominates a real fight** — all at a **`wariness 0`** roster, since
+this file pins exact-arithmetic claims about the *fight* and the retreat is a different stage);
+**`core_sim/tests/hunt_wariness.rs`** (the retreat's own suite and the only home of the take's
+variance: the authored ordering's shape, the exported band's containment across 400 live seeds, "a
+wary herd costs hunter-turns and never herd biomass", and the surviving zero identity);
+`core_sim/tests/predators.rs`
 (a mammoth hunt costs working-age lives with a killed/wounded split; a **rabbit** hunt — ferocity 0 —
 costs nobody; ferocity scales hunt-danger; config-validation rejections including ferocity); `core_sim/tests/expedition_hunt.rs`
 (a hunting expedition takes casualties against a mammoth; the `expedition_danger_multiplier` scales
-losses). **Note:** `hunt_trip_forecast` does not yet model casualties, so `the_raid_forecast_matches_a_real_party_run`
-hunts a harmless species — wiring casualties into the launch forecast is a Phase-1+ follow-up.
+losses). **Note:** `hunt_trip_forecast` still does not model casualties (it projects the take, and the take's
+*kill* arm is the fight — the party's own losses are not fed back into the projected party size), so
+`the_raid_forecast_matches_a_real_party_run` hunts a harmless species. Wiring casualties into the
+launch forecast remains a follow-up, and the resident-band preview has the same gap:
+`hunt_yield_vector::the_forecast_equals_the_paid_take_across_a_multi_turn_kill` has to re-read the
+band's live head count each turn, because a mammoth hunt shrinks it under the run while
+`hunt_source_yield_preview` quotes whatever staffing it is handed.
 
 See Also: `docs/plan_predators.md` (the whole arc), "Fauna & Wild Game" (the `SpeciesDef` table + the
 Warrior role), "Population & Demographics" (the `death_fraction`/bracket seam casualties apply at).

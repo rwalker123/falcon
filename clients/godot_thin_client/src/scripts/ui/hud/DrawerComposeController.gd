@@ -123,8 +123,10 @@ func _herd_label_for_id(herd_id: String) -> String:
 ## than becoming a third signal on this controller.
 func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y: int, herd_id: String,
         floor: float, species: String = "",
-        improvement: String = SourceForecast.IMPROVEMENT_NONE) -> void:
-    _emit_assign_labor_fn.call(band, kind, workers, x, y, herd_id, floor, species, improvement)
+        improvement: String = SourceForecast.IMPROVEMENT_NONE,
+        kit_id: String = KitRoster.NO_KIT_ID) -> void:
+    _emit_assign_labor_fn.call(band, kind, workers, x, y, herd_id, floor, species, improvement,
+        kit_id)
 
 ## Send the improvement command when the composed second axis differs from what the source is already
 ## building — the SET verb (`cultivate` / `sow` / `tame` / `corral`) when one is composed, and
@@ -260,7 +262,25 @@ func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float,
         return {"available": false}
     ceiling *= output
     var collection := float(workers) * per_worker * output   # crew's raw food throughput /turn
-    var carryable := floorf(collection / fpa)                # whole animals /turn the crew can carry
+    # WHOLE ANIMALS /TURN THE CREW CAN CARRY — **AND NEVER MORE THAN IT CAN REACH**
+    # (`docs/plan_hunt_through_combat.md` §2). The sim's take is
+    # `min(stock above the floor, collection, engaged × body_mass)` with the quantiser running on that
+    # min, and the engagement arm was the one this sheet had never had: one hunter's 40 biomass of
+    # carry read **307 Wild Fowl a turn** against a take of ten — the sheet promising 30× what the sim
+    # pays, for the whole life of the wire field's absence.
+    #
+    # **THE BOUND IS APPLIED TO THE ANIMAL COUNT, NOT TO `collection`**, and the two are the same
+    # arithmetic taken in different orders: `floor(min(carry, engaged × fpa) / fpa)` is
+    # `min(floor(carry / fpa), engaged)` — but the first divides a product of `fpa` BY `fpa` and can
+    # land a whole engagement one animal short on a rounding, while the second is exact. It also keeps
+    # the partial-body branch below reading the RAW carry, which is right: engagement is never the
+    # binding arm there (a party that exists reaches at least one animal), so the waste it reports
+    # stays a carry story.
+    #
+    # `animals_engaged` answers UNBOUNDED for a pen and for a species with no engagement stage, so the
+    # `min` is a no-op on every managed-herd and plant-web frame.
+    var carryable := minf(floorf(collection / fpa),
+        SourceForecast.animals_engaged(workers, float(rates["engage_rate"]), float(rates["dip"])))
     var delivered := 0.0
     var waste := 0.0
     if carryable >= 1.0:
@@ -346,11 +366,16 @@ func _local_hunt_preview_bbcode(band: Dictionary, herd: Dictionary, floor: float
 
 ## The hunt web's yield model — the animal twin of `_forage_yield_model`, in the same shape.
 ##
-## **ITS ROW IS AN ANIMAL RATE, NOT AN ACCOUNT.** A hunt delivers whole bodies, so the honest reading
-## is the quarry's own name per turn (`≈0.41 Grey Wolf/turn`) — a ratio of a take to one animal's
-## worth of the same product, and therefore UNIT-FREE: it reads identically for a deer and a wolf
-## without naming either currency, which is the whole reason it is stated that way. So the row carries
-## its own `unit` and NO route: a body is not an account, and it has nowhere to be sent.
+## **ITS ROWS ARE ACCOUNTS, LIKE EVERY OTHER PER-TURN READING — one per account the take PAYS.** The
+## readout answers what a turn of this hunt puts in the band's stores, so it is stated in every
+## account the take credits (an edible species that also sells its hide pays food AND trade; a wolf
+## pays trade alone) through `SourceForecast.rescaled_accounts` → `yield_rows` and the account
+## table's units, exactly as the plant web's is and exactly as the raid's payload
+## (`_trip_yield_rows`) already was. **The WHOLE-ANIMAL reading belongs to the CHART above it** (the
+## escapement curve and its handle, which count bodies) and to the whole-trip payload of a raid; a
+## per-turn row wearing the quarry's name in place of an account states a rate in a currency the
+## stores do not keep, and the header over it (`per turn · now → after`) then keys nothing the
+## number beside it can be spent as.
 ##
 ## **`improvement` IS THE CREW'S OWN DIP, and the two forecasts here take it DIFFERENTLY** — the plant
 ## twin's rule, on the animal web. The TAKE carries it (the sim pays a building crew
@@ -379,37 +404,47 @@ func _hunt_yield_model(band: Dictionary, herd: Dictionary, floor: float, workers
     var dw := _hunt_delivered_and_waste(band, herd, floor, workers, improvement)
     if not bool(dw.get("available", false)):
         # Graceful degrade — the per-animal quantum (or a lever) is unknown on BOTH components, so fall
-        # back to the smoothed per-turn line rather than regress the readout. It is stated in whichever
-        # currency the take is actually in: a trade take never reads as food, so THIS path's row is a
-        # real account and wears the account table's unit and route.
+        # back to the smoothed per-turn line rather than regress the readout. **It credits the SAME
+        # account set the quantised path does**, through the same rescale: the two paths differ in
+        # whether the take is quantised, never in what a take pays, and a model whose two branches
+        # stated different currencies for one herd is the defect one branch above records.
         var take := _hunt_take_rate(herd, floor, workers, improvement)
         if not bool(take.get("available", false)):
             return {}
         var actual := float(take["rate"]) * output
+        var smooth := SourceForecast.rescaled_accounts(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
+            String(take["axis"]), actual)
         var trade_axis: bool = String(take["axis"]) == SourceForecast.YIELD_AXIS_TRADE
         var account := SourceForecast.YIELD_ACCOUNT_TRADE if trade_axis \
             else SourceForecast.YIELD_ACCOUNT_FOOD
-        var smooth_row := {
-            SourceForecast.YIELD_ROW_ACCOUNT: account,
-            SourceForecast.YIELD_ROW_VALUE: actual,
-        }
+        var smooth_after := {}
         var smooth_hold := _hunt_take_rate(herd, floor, workers, improvement, true)
         if reaches and bool(smooth_hold.get("available", false)):
-            var held := float(smooth_hold["rate"]) * output
-            if not is_equal_approx(held, actual):
-                smooth_row[SourceForecast.YIELD_ROW_AFTER] = held
+            smooth_after = SourceForecast.rescaled_accounts(herd,
+                HudComposeVocab.BARE_FORECAST_PREFIX, String(smooth_hold["axis"]),
+                float(smooth_hold["rate"]) * output)
         return {
-            YIELD_MODEL_ROWS: [smooth_row],
+            YIELD_MODEL_ROWS: SourceForecast.yield_rows(
+                float(smooth[SourceForecast.YIELD_ACCOUNT_FOOD]),
+                float(smooth[SourceForecast.YIELD_ACCOUNT_TRADE]),
+                float(smooth[SourceForecast.YIELD_ACCOUNT_FODDER]),
+                account, smooth_after),
+            # The SENTENCE states the same vector the rows do — `yield_components` is the joiner the
+            # plant twin already uses, and it obeys the same render-only-when-non-zero rule, so this
+            # line cannot quote one account beside a row set carrying two.
             YIELD_MODEL_TEXT: HudComposeVocab.LOCAL_HUNT_YIELD_FORMAT % (
-                SourceForecast.format_trade(actual) if trade_axis \
-                else SourceForecast.format_yield(actual)),
+                SourceForecast.yield_components(
+                    float(smooth[SourceForecast.YIELD_ACCOUNT_FOOD]),
+                    float(smooth[SourceForecast.YIELD_ACCOUNT_TRADE]),
+                    float(smooth[SourceForecast.YIELD_ACCOUNT_FODDER]), account)),
             YIELD_MODEL_OVERDRAW: _is_overdraw(actual, sustainable) \
                 and _herd_take_draws_down(herd, floor, workers, improvement),
             YIELD_MODEL_WASTE: "",
         }
-    # ANIMALS-FIRST: the crew's honest carry-aware delivered take, as a per-turn animal rate (one
-    # consistent format — no fast/slow flip). `delivered` is already carry-quantized, so this credits no
-    # throughput the crew can't haul home.
+    # The crew's honest carry-aware delivered take. `delivered` is already carry-quantized, so this
+    # credits no throughput the crew can't haul home — and it is a take in an ACCOUNT, which is what
+    # the readout row states. The animal RATE derived beside it is the SENTENCE's (`YIELD_MODEL_TEXT`,
+    # the one-line preview), where the whole-animal rhythm is the whole point of the line.
     var fpa := float(dw["per_animal"])
     var delivered := float(dw["delivered"])
     var animal_rate := delivered / fpa if fpa > 0.0 else 0.0
@@ -418,29 +453,37 @@ func _hunt_yield_model(band: Dictionary, herd: Dictionary, floor: float, workers
     # Overdraw and waste are DIFFERENT flags and may co-occur — render both. Overdraw = the delivered take
     # exceeds the herd's food-peak ceiling; waste = a kill the crew couldn't carry.
     var waste_pct := float(dw["waste_pct"])
-    # THE STEADY-STATE ANIMAL RATE, composed the same way and therefore quantised the same way. It
-    # rides `YIELD_ROW_NUMBER` rather than `YIELD_ROW_AFTER` because this row's face is a COMPOSED
-    # string (`≈0.41`, not a magnitude the widget formats), so the transition has to be composed here
-    # too — the widget's own arrow would set a raw float beside an `≈`-prefixed one.
-    var animal_row := {
-        SourceForecast.YIELD_ROW_ACCOUNT: SourceForecast.YIELD_ACCOUNT_NONE,
-        SourceForecast.YIELD_ROW_VALUE: animal_rate,
-        HudWidgets.YIELD_ROW_NUMBER: HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT % rate_text,
-        HudWidgets.YIELD_ROW_UNIT: HudComposeVocab.HUNT_ANIMAL_RATE_UNIT_FORMAT % quarry,
-    }
+    # **THE COUNT IS TAKEN ON ONE AXIS AND VALUED IN EVERY ACCOUNT** — the sim's own order
+    # (`forecast_production_and_take`: quantise on `ratio_axis()`, then `YieldPair::rescaled_to`), and
+    # the half this readout used to drop. A boar's take genuinely credits meat AND hide; stopping at
+    # the axis the quantiser happened to divide by rendered its `PER TURN` row as food alone, while
+    # the very same species raided by an expedition (`_trip_yield_rows`) stated both. `yield_rows` is
+    # still the one place the "render only where the vector pays" rule lives, so a wolf — whose
+    # provisions rate is a structural 0 — rescales to a zero food component that renders NO row, and
+    # the zero account below keeps that answer for an all-zero take.
+    var take := SourceForecast.rescaled_accounts(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
+        String(dw["axis"]), delivered)
+    # THE ZERO ACCOUNT IS THE AXIS THE TAKE WAS MEASURED ON — the same choice the degrade branch above
+    # makes, so one model's two paths can never state an empty take in two different currencies.
+    var trade_axis: bool = String(dw["axis"]) == SourceForecast.YIELD_AXIS_TRADE
+    var account := SourceForecast.YIELD_ACCOUNT_TRADE if trade_axis \
+        else SourceForecast.YIELD_ACCOUNT_FOOD
+    # THE STEADY STATE RIDES EACH ACCOUNT'S OWN `after`, so `build_yields_row` composes the arrow from
+    # the two magnitudes it formats itself and its header keys them. It RESCALES THE SAME WAY the take
+    # does — an arrowed row must key both accounts consistently, and a hold rate credited on one axis
+    # beside a take credited on two would arrow only half the reading. `yield_rows` drops an `after`
+    # equal to its take, which is the same "an arrow to itself is noise" test this used to make here.
+    var after := {}
     var held := _hunt_delivered_and_waste(band, herd, floor, workers, improvement, true)
     if reaches and bool(held.get("available", false)):
-        var held_fpa := float(held["per_animal"])
-        var held_rate := float(held["delivered"]) / held_fpa if held_fpa > 0.0 else 0.0
-        if not is_equal_approx(held_rate, animal_rate):
-            animal_row[HudWidgets.YIELD_ROW_NUMBER] = SourceForecast.YIELD_AFTER_FORMAT % [
-                HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT % rate_text,
-                HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT % _format_animal_rate(held_rate)]
-            # The row must still DECLARE it carries a transition, or the header above it has no arrow
-            # to key. The value is the composed face's; nothing reads this one for the hunt row.
-            animal_row[SourceForecast.YIELD_ROW_AFTER] = held_rate
+        after = SourceForecast.rescaled_accounts(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
+            String(held["axis"]), float(held["delivered"]))
     return {
-        YIELD_MODEL_ROWS: [animal_row],
+        YIELD_MODEL_ROWS: SourceForecast.yield_rows(
+            float(take[SourceForecast.YIELD_ACCOUNT_FOOD]),
+            float(take[SourceForecast.YIELD_ACCOUNT_TRADE]),
+            float(take[SourceForecast.YIELD_ACCOUNT_FODDER]),
+            account, after),
         YIELD_MODEL_TEXT: HudComposeVocab.HUNT_DELIVERED_FORMAT % [rate_text, quarry],
         YIELD_MODEL_OVERDRAW: _is_overdraw(delivered, sustainable) \
             and _herd_take_draws_down(herd, floor, workers, improvement),
@@ -530,8 +573,12 @@ func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
         return {}
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
     var actual := SourceForecast.expected_yield(forecast, workers, band)
+    # The trade account names its own whole-animal quantum so the engagement arm can price it; a PATCH
+    # publishes none, so the arm drops out and the plant web reads exactly as it did. Fodder names
+    # none anywhere — no animal pays it — which is why those two calls leave the key defaulted.
     var actual_trade := SourceForecast.expected_yield_account(
-        forecast, workers, band, "per_worker_trade", "ceiling_trade")
+        forecast, workers, band, "per_worker_trade", "ceiling_trade",
+        SourceForecast.FORECAST_TRADE_PER_ANIMAL_KEY)
     var actual_fodder := SourceForecast.expected_yield_account(
         forecast, workers, band, "per_worker_fodder", "ceiling_fodder")
     var zero_account := String(forecast["zero_account"])
@@ -543,9 +590,11 @@ func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
     if reaches:
         after = {
             SourceForecast.YIELD_ACCOUNT_FOOD: SourceForecast.expected_yield_account(
-                forecast, workers, band, "per_worker", "hold_ceiling"),
+                forecast, workers, band, "per_worker", "hold_ceiling",
+                SourceForecast.FORECAST_FOOD_PER_ANIMAL_KEY),
             SourceForecast.YIELD_ACCOUNT_TRADE: SourceForecast.expected_yield_account(
-                forecast, workers, band, "per_worker_trade", "hold_ceiling_trade"),
+                forecast, workers, band, "per_worker_trade", "hold_ceiling_trade",
+                SourceForecast.FORECAST_TRADE_PER_ANIMAL_KEY),
             SourceForecast.YIELD_ACCOUNT_FODDER: SourceForecast.expected_yield_account(
                 forecast, workers, band, "per_worker_fodder", "hold_ceiling_fodder"),
         }
@@ -632,29 +681,39 @@ func _yield_preview_bbcode(model: Dictionary, overdraw_suffix: String) -> String
 ## dropdown). NOTE: lists ALL player bands; in-range filtering (Forage within work_range / Hunt
 ## within work_range + leash) is deferred to the multi-band slice (needs the hunt-leash reach in
 ## the snapshot, and can't be exercised until a 2nd band can exist).
+##
+## **It goes through the SHARED field-row builders** (`HudWidgets.build_field_key` /
+## `build_option_picker`), which is what makes it, the Kit row beneath it and the Band panel's Quarry
+## row one family: one declared key width, one ghost chrome, one height. It used to be a bare
+## `OptionButton` on a natural-width label — the only off-palette control on the sheet, and the one
+## whose value box started at a different x from every other row's.
 func _build_band_picker(selected_band: Dictionary, on_pick: Callable) -> HBoxContainer:
     var row := HBoxContainer.new()
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    var name_label := Label.new()
-    name_label.text = HudWorkVocab.BAND_PICKER_LABEL
-    name_label.add_theme_color_override("font_color", HudStyle.INK)
-    row.add_child(name_label)
-    var picker := OptionButton.new()
-    picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.add_child(HudWidgets.build_field_key(HudWorkVocab.BAND_PICKER_LABEL))
     var bands := _band_labor.current_player_bands()
     var selected_entity := int(selected_band.get("entity", -1))
-    var selected_idx := 0
+    var selected_index := 0
+    var entries: Array = []
     for i in bands.size():
-        var b: Dictionary = bands[i]
-        picker.add_item(HudFormat.band_display_name(b, i + 1))
-        picker.set_item_metadata(i, int(b.get("entity", -1)))
-        if int(b.get("entity", -1)) == selected_entity:
-            selected_idx = i
-    picker.select(selected_idx)
-    picker.item_selected.connect(func(idx: int) -> void:
-        on_pick.call(_band_labor.player_band_by_entity(int(picker.get_item_metadata(idx)))))
-    row.add_child(picker)
+        var band: Dictionary = bands[i]
+        var entity := int(band.get("entity", -1))
+        if entity == selected_entity:
+            selected_index = i
+        entries.append({
+            "label": HudFormat.band_display_name(band, i + 1),
+            # Resolved through the labor model at PRESS time rather than captured: the picker outlives
+            # a snapshot, and the band dict this row was built from is a copy of a stale turn's.
+            "on_pick": func() -> void: on_pick.call(_band_labor.player_band_by_entity(entity)),
+        })
+    # The face is the selected entry's own label — there is no glyph and no marker to hold apart here,
+    # unlike the Kit row — so it is stated from the same list rather than composed.
+    var face := "" if entries.is_empty() \
+        else String((entries[selected_index] as Dictionary).get("label", ""))
+    # No tooltip: the row's own `Band:` key says what the control is, and this picker has never
+    # carried one. Inventing copy here would be a change of content behind a change of chrome.
+    row.add_child(HudWidgets.build_option_picker(entries, selected_index, face, ""))
     return row
 
 ## Cap the worker stepper at what the source can absorb: min(the band's assignable workers,
@@ -1171,72 +1230,6 @@ func _fill_yields_host(host: Container, model: Dictionary, labor_kind: String) -
         HudStyle.WARN if overdraws else HudStyle.HEALTHY,
         String(model[YIELD_MODEL_WASTE])))
 
-## **THE EXPEDITION'S READOUT — the same box, the same three registers, a different question.** The
-## branch used to answer with one wrapped bbcode sentence carrying five facts (the animals, the
-## turns, the split, the food, the trade and the waste), beside a local sheet that laid the same
-## kinds of fact out in a bounded well. Two sheets on one panel, reading nothing alike.
-##
-## What must NOT carry over is the local readout's PER-TURN framing: the header
-## (`EXPEDITION_TRIP_ROW_HEADER`), the absent `now → after` on every row, and a verdict about the
-## trip's length rather than about which of the crew and the floor binds — all three because a raid
-## is one bounded errand, not a rate a resident crew settles into.
-##
-## Only a DELIVERING trip reaches here (`SourceForecast.hunt_trip_delivers`); the refused states keep
-## their sentence, an empty box being worse than the line it replaced.
-func _mount_trip_readout(parent: VBoxContainer, trip: Dictionary, quarry: String,
-        floor_value: float) -> void:
-    var column := HudWidgets.build_readout_box(parent)
-    # The waste rides the yields row's own `waste` slot, exactly as the local hunt's does — a kill the
-    # party could not haul is the animal web's concern on both branches, and it is amber either way.
-    var waste_pct := float(trip.get("waste_pct", 0.0))
-    column.add_child(HudWidgets.build_yields_row(
-        _trip_yield_rows(trip, quarry),
-        HudStyle.INK,
-        "",
-        HudStyle.HEALTHY,
-        SourceForecast.HUNT_WASTE_NOTE_FORMAT % int(round(waste_pct * 100.0)) \
-            if waste_pct > 0.0 else "",
-        SourceForecast.EXPEDITION_TRIP_ROW_HEADER))
-    column.add_child(HudWidgets.build_verdict_line(SourceForecast.hunt_trip_verdict(trip)))
-    # THE ASIDE IS THE FLOOR HINT AND NOTHING ELSE. The local readout's other line — the live teaching
-    # rate — has no counterpart here: an expedition accrues no husbandry (the gap
-    # `FLOOR_LEARNING_HINT_EXPEDITION` already names in the learning zone), so a teaching line would
-    # quote a multiplier this party never earns. A zone with nothing to say renders no aside at all,
-    # rather than a dashed rule over empty space.
-    # The COMPOSED floor, not the estimate row's nearest sample: the hint explains the preset the
-    # player is holding, and the sampling is a fact about the forecast table rather than about them.
-    var hint := HudFormat.floor_hint(floor_value, SourceForecast.LABOR_KIND_HUNT, true)
-    if hint != "":
-        column.add_child(HudWidgets.build_readout_aside(
-            [HudWidgets.readout_aside_line(hint)]))
-
-## The trip's payload as yields rows: the ANIMALS the party brings back, then whatever accounts those
-## bodies pay.
-##
-## **THE ANIMAL COUNT LEADS, IN THE LOCAL HUNT ROW'S OWN IDIOM** — its `YIELD_ROW_NUMBER` /
-## `YIELD_ROW_UNIT` overrides, the quarry as the unit and `YIELD_ACCOUNT_NONE` as the account,
-## because a body is not an account. It borrows the `≈` FACE vocabulary and deliberately not the
-## `/turn` UNIT one: this is a whole-trip count, and the header above already says so.
-##
-## The food and trade rows go through `SourceForecast.yield_rows`, so the render-only-where-the-
-## vector-pays rule keeps one definition — a wolf raid states pelts and no `0 food`, an edible quarry
-## with no trade states food alone. `YIELD_ACCOUNT_NONE` as the zero account means NO row is
-## synthesised when both are empty; that state cannot arrive here anyway (it is `empty`, and the
-## caller took the sentence branch), so a fabricated zero would be a reading of nothing.
-##
-## No `after` on any row: a trip has no holding state to arrow toward.
-func _trip_yield_rows(trip: Dictionary, quarry: String) -> Array[Dictionary]:
-    var animals := int(trip.get("animals", 0))
-    var rows: Array[Dictionary] = [{
-        SourceForecast.YIELD_ROW_ACCOUNT: SourceForecast.YIELD_ACCOUNT_NONE,
-        SourceForecast.YIELD_ROW_VALUE: float(animals),
-        HudWidgets.YIELD_ROW_NUMBER: HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT % animals,
-        HudWidgets.YIELD_ROW_UNIT: quarry,
-    }]
-    rows.append_array(SourceForecast.yield_rows(
-        float(trip.get("food", 0.0)), float(trip.get("trade", 0.0)), 0.0,
-        SourceForecast.YIELD_ACCOUNT_NONE))
-    return rows
 
 ## The herd "Assign hunters" controls (compose a count + policy, then Assign). Shown
 ## only for a huntable herd while a player band exists to staff it.
@@ -1297,6 +1290,21 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     var is_expedition := distance >= 0 and distance > reach
     # Local hunt caps at the band's assignable hunt workers; an expedition caps at the party ceiling.
     var assignable := SourceForecast.expedition_party_cap(band) if is_expedition else _band_labor.assignable_hunt_workers(band, herd_id)
+    # **THE KIT, RESOLVED HERE AND MOUNTED UNDER THE CREW ROW.** Its selection decides whether the
+    # sim's `huntTripEstimates` table applies to this raid at all, and every reading below is priced
+    # against that answer — so the resolve leads and the ROW lands beside the crew it describes.
+    var kits := _band_labor.kits()
+    var default_kit := _band_labor.default_kit_id(KitRoster.JOB_HUNT)
+    var kit_id := KitRoster.resolve_selection(kits, KitRoster.JOB_HUNT, default_kit,
+        _compose.hunt_kit_id())
+    _compose.set_hunt_kit_id(kit_id)
+    # **THE HONESTY GATE, EXPEDITION BRANCH ONLY.** A LOCAL hunt is priced from the herd's own
+    # per-biomass vector and the band's ceilings — no estimate table, so no kit mismatch to have. The
+    # raid's every figure is a lookup into `huntTripEstimates`, which is quoted for ONE kit; where the
+    # selection differs the sheet must not present that table as the answer. Compare the ids — never
+    # assume the default is selected.
+    var trip_quoted := not is_expedition or KitRoster.estimates_apply_to(herd,
+        KitRoster.HERD_TRIP_ESTIMATES_KIT_KEY, default_kit, kit_id)
     # **THE HARVEST ROW IS THE SAME CONTROL ON BOTH BRANCHES** — three floor presets plus the slider
     # between them, since a floor is a number and there is no per-branch option list left to differ
     # about. Corral being local-only is still true: it is an IMPROVEMENT, and the improvement control
@@ -1334,8 +1342,14 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # It reads the IMPROVEMENT axis to pick the ownership-gated vs would-be crew field; the rationale
     # for that split lives on the helper. The expedition party has no herding crew, so
     # `SourceForecast.expedition_useful_cap` is left alone.
-    var capped := SourceForecast.expedition_useful_cap(band, herd, _compose.hunt_floor(), assignable) if is_expedition \
-        else _forecast_worker_cap(forecast, assignable, SourceForecast.herd_crew_floor(
+    # **THE DEMAND-SIDE CAP IS A READING OF THE TABLE TOO**, so under a kit mismatch the party falls
+    # back to supply alone: with no table for this kit the payload's plateau is unknown, and clamping
+    # to another kit's plateau would refuse a party this one may well need.
+    var capped := {"cap": assignable, "note": ""}
+    if is_expedition and trip_quoted:
+        capped = SourceForecast.expedition_useful_cap(band, herd, _compose.hunt_floor(), assignable)
+    elif not is_expedition:
+        capped = _forecast_worker_cap(forecast, assignable, SourceForecast.herd_crew_floor(
             herd, composed_improvement != SourceForecast.IMPROVEMENT_NONE))
     var cap := int(capped["cap"])
     # Auto-max on a FLOOR click — "give me everything this herd can spare at this floor": the
@@ -1353,8 +1367,17 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # "up to X/turn" button metric, DESCENDING as the floor rises (take everything > best harvest >
     # learn from it). Worker-independent on both branches (the expedition's is the max over party sizes
     # of delivered / trip_turns, so it never changes as the Party stepper steps).
-    var floor_takes := SourceForecast.expedition_policy_takes(band, herd, _band_labor.grid_width(), _band_labor.wrap_horizontal()) if is_expedition \
-        else _hunt_floor_takes(herd, composed_improvement)
+    # **THE PRESET METRICS GO WITH THE TABLE THEY COME FROM.** `expedition_policy_takes` is a reading
+    # of `huntTripEstimates`, so under a kit mismatch it would put a figure priced at another kit on a
+    # sheet whose own note says none are quoted. `{}` is the picker's supported degrade (a herd the
+    # wire does not describe), so the rungs render bare rather than wrong.
+    var floor_takes := {}
+    if is_expedition:
+        if trip_quoted:
+            floor_takes = SourceForecast.expedition_policy_takes(band, herd,
+                _band_labor.grid_width(), _band_labor.wrap_horizontal())
+    else:
+        floor_takes = _hunt_floor_takes(herd, composed_improvement)
     # **THE FLOOR FIRST, THEN THE CREW — the SAME vertical grammar the forage sheet reads in.** You
     # choose how hard to pull, then staff it. The cap is recomputed from the composed floor before the
     # stepper renders (a preset click re-renders and may auto-fill the crew) and the forecast below
@@ -1370,9 +1393,15 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # control** (`docs/plan_harvest_floor.md` §7.3). It is the same setter the presets use, so a
     # dragged value and a clicked preset are one state — which is what lets the picker honestly show
     # NO preset selected between two of them. It replaced the plain slider slice 4a shipped as a
-    # placeholder. An EXPEDITION gets no chart: a raid's trip is a forward simulation the sim answers
-    # in `huntTripEstimates`, not a per-turn drawdown of the herd by a resident crew, so projecting
-    # one here would draw a curve the raid does not follow.
+    # placeholder.
+    #
+    # **IT RENDERS ON THE EXPEDITION BRANCH TOO NOW** (`docs/plan_hunt_through_combat.md` §5.2), and
+    # the note that used to stand here saying it must not was written before the party had a stop of
+    # its own. The curve IS one a raid follows: a party's per-turn take is the same
+    # `min(room, carry, engagement)` a resident crew's is, so the drawdown it draws is the raid's. What
+    # the picture cannot show is where the trip ENDS, and the fill target plus the bound clause in the
+    # readout are exactly what now say that — the herd-side half and the party-side half of one
+    # decision, which is why the graph had to come back rather than the target arriving alone.
     var chart_model: Dictionary = {}
     var live_hosts: Array[Dictionary] = []
     # **WHETHER THE FACTION ALREADY KNOWS WHAT THIS HERD TEACHES**, bound once and captured by the
@@ -1381,25 +1410,28 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # it — see `SourceForecast.teaching_note`.
     var lesson_known := SourceForecast.rung_lesson_known(SourceForecast.SOURCE_KIND_HERD, herd,
         HudComposeVocab.BARE_FORECAST_PREFIX, _player_knowledge())
-    if not is_expedition:
-        chart_model = SourceForecast.floor_chart_model(herd, SourceForecast.SOURCE_KIND_HERD,
-            HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_floor(), _compose.hunt_count(),
-            composed_improvement, crew_label.to_lower(), lesson_known)
-        if bool(chart_model.get("known", false)):
-            target.add_child(HudWidgets.build_floor_chart(chart_model,
-                func(floor: float, committed: bool) -> void:
-                    _compose.set_hunt_floor(floor)
-                    if committed:
-                        _compose.arm_hunt_autofill()
-                        _build_herd_assign_controls(_live_herd(herd_id, herd), target)
-                    else:
-                        # A LIVE drag must not rebuild these controls — the rebuild frees the chart
-                        # and the drag dies with it. Refill only the readings that follow the floor.
-                        _refresh_floor_live(live_hosts, SourceForecast.floor_chart_model(
-                            _live_herd(herd_id, herd), SourceForecast.SOURCE_KIND_HERD,
-                            HudComposeVocab.BARE_FORECAST_PREFIX, floor, _compose.hunt_count(),
-                            composed_improvement, crew_label.to_lower(), lesson_known),
-                            _compose.hunt_count())))
+    chart_model = SourceForecast.floor_chart_model(herd, SourceForecast.SOURCE_KIND_HERD,
+        HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_floor(), _compose.hunt_count(),
+        composed_improvement, crew_label.to_lower(), lesson_known)
+    if bool(chart_model.get("known", false)):
+        target.add_child(HudWidgets.build_floor_chart(chart_model,
+            func(floor: float, committed: bool) -> void:
+                _compose.set_hunt_floor(floor)
+                if committed:
+                    _compose.arm_hunt_autofill()
+                    _build_herd_assign_controls(_live_herd(herd_id, herd), target)
+                else:
+                    # A LIVE drag must not rebuild these controls — the rebuild frees the chart
+                    # and the drag dies with it. Refill only the readings that follow the floor.
+                    # **On the EXPEDITION branch `live_hosts` is empty and that is deliberate**: the
+                    # raid's numbers are a lookup into a table SAMPLED at five floors, so most of a
+                    # drag moves nothing, and the release rebuilds the sheet against the sample the
+                    # player landed on. The drag itself still survives, which is the contract.
+                    _refresh_floor_live(live_hosts, SourceForecast.floor_chart_model(
+                        _live_herd(herd_id, herd), SourceForecast.SOURCE_KIND_HERD,
+                        HudComposeVocab.BARE_FORECAST_PREFIX, floor, _compose.hunt_count(),
+                        composed_improvement, crew_label.to_lower(), lesson_known),
+                        _compose.hunt_count())))
     # The expedition branch spends this slot on the distance refusal — it is that branch's answer to
     # "why is this a party rather than a hunt?" — and the local branch on what the floor means for the
     # herd. **ONE hint table serves both webs and both branches now** (`HudFormat.floor_hint`): a
@@ -1415,6 +1447,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         target.add_child(HudWidgets.alloc_hint_label(
             "%s is %d tiles away — beyond this band's hunt reach (%d). Detach a party to follow it." \
             % [_herd_label_for_id(herd_id), distance, reach]))
+    if is_expedition and trip_quoted:
         trip = SourceForecast.hunt_trip_forecast(band, herd, _compose.hunt_floor(),
             _compose.hunt_count(), _band_labor.grid_width(), _band_labor.wrap_horizontal())
         # **THE FLOOR HINT TRAVELS INTO THE TRIP READOUT'S ASIDE**, where the local sheet keeps its
@@ -1430,19 +1463,80 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # THE CREW, on ONE line with both targets (§7.6) — with its cap note, which explains THIS stepper's
     # dead `+` and therefore travels with it. Clicking a target staffs it, clamped to the same cap the
     # `+` obeys: a target is a shortcut to a count, never a way past the ceiling.
-    _mount_crew_row(target, live_hosts,
-        HudComposeVocab.COMPOSE_FIELD_PARTY if is_expedition else crew_label,
-        _compose.hunt_count(), _compose.hunt_count() < cap,
-        func(n: int) -> void:
-            _compose.set_hunt_count(clampi(n, 0, cap))
-            _build_herd_assign_controls(_live_herd(herd_id, herd), target),
-        chart_model,
-        func(count: int) -> void:
-            _compose.set_hunt_count(clampi(count, 0, cap))
-            _build_herd_assign_controls(_live_herd(herd_id, herd), target))
+    #
+    # **THE CREW TARGETS STAY OFF THE EXPEDITION BRANCH even now that it has a chart.** They answer
+    # *clear it now* and *hold it after*, and the second is a promise about a crew that STAYS — a
+    # detached party leaves. So the crew row is handed an empty model there (which is also what drops
+    # the build-dip note, correctly: a party builds nothing).
+    var on_crew_change := func(n: int) -> void:
+        _compose.set_hunt_count(clampi(n, 0, cap))
+        _build_herd_assign_controls(_live_herd(herd_id, herd), target)
+    if is_expedition:
+        # **THE EXPEDITION BRANCH TAKES THE INLINE `Party` ROW, the dock sheet's own control.** The
+        # two hunting-party entry points were the same decision in two shapes — a `PARTY` section
+        # heading with the stepper beneath it here, an inline labelled row there — so the herd
+        # drawer's raid now reads Quarry / Party / Kit as one stack of labelled rows exactly as the
+        # dock's does. **The LOCAL branches keep the section heading and their own crew NOUNS**
+        # (`Hunters` / `Foragers` / `Herders`): that split is deliberate, so a managed herd's keepers
+        # never read as a hunting party, and the crew targets that hang off the heading are a
+        # resident crew's controls anyway.
+        target.add_child(HudWidgets.build_party_stepper_row(_compose.hunt_count(), cap,
+            on_crew_change))
+    else:
+        _mount_crew_row(target, live_hosts, crew_label,
+            _compose.hunt_count(), _compose.hunt_count() < cap, on_crew_change, chart_model,
+            func(count: int) -> void:
+                _compose.set_hunt_count(clampi(count, 0, cap))
+                _build_herd_assign_controls(_live_herd(herd_id, herd), target))
     var cap_note := String(capped["note"])
     if cap_note != "":
         target.add_child(HudWidgets.alloc_hint_label(cap_note))
+    # **THE KIT ROW, directly under the crew stepper and above every forecast** — a kit describes the
+    # crew, and it moves the fight (the attack tier) and the haul (the carry tier) alike. Both branches
+    # get it: a local hunt sends `assign_labor … kit <id>` exactly as a raid sends
+    # `send_hunt_expedition … kit <id>`.
+    _mount_kit_row(target, kits, KitRoster.JOB_HUNT, kit_id, default_kit, band,
+        func(picked: String) -> void:
+            _compose.set_hunt_kit_id(picked)
+            _build_herd_assign_controls(_live_herd(herd_id, herd), target))
+    # **THE FIGHT, STATED BEFORE THE PARTY LEAVES** (`docs/plan_hunt_through_combat.md` §2.1 / §6.5),
+    # directly under the crew that will fight it — both lines answer "is this crew the right size, and
+    # can it win at all", which is what the stepper one row up has just posed.
+    #
+    # **THE ENGAGEMENT STAGE IS THE GATE ON BOTH, and that is what keeps a PEN and the whole PLANT web
+    # byte-identical**: both publish `NO_ENGAGEMENT_STAGE` — a penned animal is not stalked and a berry
+    # does not fight back — so neither line renders and neither sheet moves. The dip rides the reach
+    # exactly as it rides every crew target (hands gentling a herd are hands not stalking it), so a
+    # Tame in progress raises the hunters-per-animal figure honestly rather than quoting a wild reach.
+    var engage_rate := float(herd.get(
+        HudComposeVocab.BARE_FORECAST_PREFIX + SourceForecast.FORECAST_ENGAGE_RATE_KEY,
+        SourceForecast.NO_ENGAGEMENT_STAGE))
+    var engage_dip := SourceForecast.build_dip(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
+        composed_improvement)
+    #
+    # **THE HUNTERS-PER-ANIMAL LINE IS GONE** (reported from playtest). `One hunter brings 10 Wild Fowl
+    # into contact.` is a fact about the SPECIES that never moved with anything the player was
+    # dialling, sitting between the kit they had just chosen and the forecast they were reading; the
+    # crew targets and the party cap already divide by the same reach, so the number it stated is
+    # spent where it is actionable rather than announced where it is not.
+    #
+    # **AND THE GATE NOW RENDERS ONLY WHEN IT REFUSES.** `0.1 hunter-turns to bring one Wild Fowl
+    # down` is the same removal: above the gate the effort figure is a species constant beside a
+    # forecast that already prices the trip. The REFUSAL stays and is the whole point of keeping the
+    # helper — a sub-gate party kills nothing at any headcount and still takes casualties, which reads
+    # as a bug unexplained, and it is the honesty line a `none` kit depends on.
+    if SourceForecast.has_engagement_stage(engage_rate, engage_dip):
+        var quarry := _herd_label_for_id(herd_id)
+        # **IT IS ASKED AT THE SELECTED KIT'S EFFECTIVE ATTACK, NOT THE BAND'S DEFAULT-KIT TIER.** The
+        # picker one row up decides what these hunters carry, so a gate quoting the band's default kit
+        # would refuse — or clear — a fight the composed party is not having.
+        var gate_tiers := KitRoster.effective_tiers(kits, KitRoster.kit_by_id(kits, kit_id), band)
+        var gate := SourceForecast.hunt_gate_model_at(float(gate_tiers["attack"]), herd, quarry)
+        if bool(gate["blocked"]):
+            var gate_label := HudWidgets.forecast_label("[color=#%s]%s[/color]" % [
+                HudStyle.DANGER_HEX, String(gate["text"])])
+            gate_label.set_meta(HudWidgets.HUNT_GATE_META, true)
+            target.add_child(gate_label)
     # WOULD THIS SUBMIT CHANGE ANYTHING? — the forage sheet's rule, on the hunt web, because
     # `workers == 0` means the SAME two different things here (the sim's `assign_labor` skips validation
     # entirely at 0, so the unassign is always legal). `current` is the pending-aware standing crew on
@@ -1459,7 +1553,18 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     var is_noop := not is_expedition and _compose.hunt_count() <= 0 and current <= 0
     var assign_btn := Button.new()
     assign_btn.set_meta(HudWidgets.COMPOSE_COMMIT_META, true)
-    if is_expedition:
+    if is_expedition and not trip_quoted:
+        # **THE KIT-MISMATCH RAID.** The table is not an answer for this party, so nothing derived from
+        # it renders — no trip readout, no one-line verdict, no refusal. The combat gate two rows above
+        # already stated what this kit can and cannot hurt (it is composed from wire terms and stays
+        # honest at any tier), so what is added here is the sentence naming whose numbers were
+        # withheld. The send stays live and plainly styled: the raid launches, we simply cannot quote
+        # its length.
+        target.add_child(HudWidgets.alloc_hint_label(KitRoster.estimates_quoted_note(kits, herd,
+            KitRoster.HERD_TRIP_ESTIMATES_KIT_KEY, default_kit, kit_id,
+            HudComposeVocab.KIT_TRIP_ESTIMATES_QUOTED_FORMAT)))
+        SourceForecast.style_send_hunt_button(assign_btn, {}, "")
+    elif is_expedition:
         # **THE TRIP READOUT** — the raid's answer in the SAME bounded box the local sheet uses, so a
         # player moving between the two branches reads one layout: the payload as a yields row, the
         # trip's length as the verdict, the floor's meaning as the aside. It re-renders with this
@@ -1470,7 +1575,8 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         # (client arithmetic over the BAND flow ceiling). This one is the sim's forward-simulated TRIP
         # estimate — a pure table lookup, zero client arithmetic. The two must never be confused.
         if SourceForecast.hunt_trip_delivers(trip):
-            _mount_trip_readout(target, trip, _herd_label_for_id(herd_id), _compose.hunt_floor())
+            HudWidgets.mount_trip_readout(target, trip, _herd_label_for_id(herd_id),
+                _compose.hunt_floor())
         else:
             # A raid with nothing to lay out in rows — no estimate, a denial quarry, a herd at its
             # floor — keeps the ONE-LINE form, which is also the send-hunt banner's, so the two entry
@@ -1478,13 +1584,22 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
             var forecast_line := SourceForecast.hunt_forecast_line_bbcode(trip, _herd_label_for_id(herd_id))
             if forecast_line != "":
                 target.add_child(HudWidgets.forecast_label(forecast_line))
-        # The no-surplus refusal — computed ONCE and used for both the button tooltip and the reason
-        # line, and identical to what the targeting flow posts to the command feed.
-        var no_surplus := SourceForecast.hunt_trip_no_surplus(trip)
-        var reason := SourceForecast.hunt_no_surplus_reason(herd) if no_surplus else ""
+        # **WHICH PARTY THE FIGURES ABOVE WERE COSTED FOR**, whenever the sampled party ladder rounded
+        # the composed count to a neighbouring rung — the dock sheet's line, verbatim, so the two entry
+        # points cannot name different parties for one raid.
+        var party_note := SourceForecast.quoted_party_note(trip, _compose.hunt_count(),
+            HudComposeVocab.PARTY_TRIP_ESTIMATES_QUOTED_FORMAT)
+        if party_note != "":
+            target.add_child(HudWidgets.alloc_hint_label(party_note))
+        # The empty-raid refusal — computed ONCE and used for both the button tooltip and the reason
+        # line, and identical to what the Band panel's dock sheet renders. It takes the TRIP as well as
+        # the herd: whether the culprit is the herd's spent surplus or a party that cannot make the
+        # kill comes off the sim's own `bound`, and the two remedies are opposites.
+        var returns_empty := SourceForecast.hunt_trip_returns_empty(trip)
+        var reason := SourceForecast.hunt_empty_refusal_reason(trip, herd) if returns_empty else ""
         SourceForecast.style_send_hunt_button(assign_btn, trip, reason)
         # The reason is spelled out beside the button too — a disabled control's tooltip is easy to miss.
-        if no_surplus:
+        if returns_empty:
             target.add_child(HudWidgets.alloc_hint_label(reason))
     else:
         # The averaging-window disclaimer USED TO STAND HERE, as a wrapped body line under the hint: the
@@ -1536,7 +1651,12 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         # positive party is the other precondition. (`or` — never clear a disable the style step set.)
         assign_btn.disabled = assign_btn.disabled or _compose.hunt_count() <= 0
         assign_btn.pressed.connect(func() -> void:
-            if _compose.hunt_count() <= 0 or SourceForecast.hunt_trip_no_surplus(
+            if _compose.hunt_count() <= 0:
+                return
+            # **THE EMPTY-RAID GUARD IS ALSO A READING OF THE TABLE**, so it is skipped where the table
+            # is not quoted for this kit: refusing a launch on another kit's projection would be the
+            # same lie as quoting one, cast as a silent no-op.
+            if trip_quoted and SourceForecast.hunt_trip_returns_empty(
                     SourceForecast.hunt_trip_forecast(band, herd, _compose.hunt_floor(), _compose.hunt_count(),
             _band_labor.grid_width(), _band_labor.wrap_horizontal())):
                 return
@@ -1549,6 +1669,9 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
                 # THE PARTY'S ORDERS: where the raid stops, as a fraction of the herd's capacity.
                 # `send_hunt_expedition` takes it as its optional trailing token.
                 "floor": _compose.hunt_floor(),
+                # The kit the party walks out with, and the job default `Main` omits the token for.
+                "kit_id": kit_id,
+                "default_kit_id": default_kit,
             })
             # Committing is the end of the compose act — return to the read state (§15).
             close_compose_sheet())
@@ -1558,11 +1681,22 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
             # improvement commands act on the bands ALREADY WORKING the source, so a verb sent to an
             # unstaffed herd is rejected outright — the crew has to land first.
             _emit_assign_labor(band, SourceForecast.LABOR_KIND_HUNT, _compose.hunt_count(),
-                herd_x, herd_y, herd_id, _compose.hunt_floor(), "", composed_improvement)
+                herd_x, herd_y, herd_id, _compose.hunt_floor(), "", composed_improvement, kit_id)
             _emit_improvement(band, SourceForecast.LABOR_KIND_HUNT, composed_improvement,
                 standing_improvement, herd_x, herd_y, herd_id)
             close_compose_sheet())
     target.add_child(assign_btn)
+
+## Mount the kit row where a sheet wants it — a no-op when the roster offers this job no kit at all,
+## so a sheet rendered before the first snapshot (or against a world whose roster does not cover the
+## verb) is byte-identical to what it was before the picker existed. The Band panel's dock sheets keep
+## the identical helper; the two controllers share no base, and one Callable to reach the other's copy
+## would be an injection that buys nothing.
+func _mount_kit_row(target: VBoxContainer, kits: Array, job: String, kit_id: String,
+        default_kit: String, band: Dictionary, on_pick: Callable) -> void:
+    var row := KitRoster.build_kit_row(kits, job, kit_id, default_kit, band, on_pick)
+    if row != null:
+        target.add_child(row)
 
 
 
@@ -2056,6 +2190,20 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     var cap_note := String(capped["note"])
     if cap_note != "":
         target.add_child(HudWidgets.alloc_hint_label(cap_note))
+    # **THE KIT ROW, directly under the crew stepper and above the readout** — the forage web's half of
+    # the picker. There is no honesty gate here: the plant web has no estimate table quoted at one kit,
+    # so the readout below is composed from the patch's own terms at any selection. What the kit DOES
+    # move is the gatherer's carry tier, which the hint line under the picker states at this band's
+    # real basket condition rather than at the roster's fresh number.
+    var forage_kits := _band_labor.kits()
+    var forage_default_kit := _band_labor.default_kit_id(KitRoster.JOB_FORAGE)
+    var forage_kit_id := KitRoster.resolve_selection(forage_kits, KitRoster.JOB_FORAGE,
+        forage_default_kit, _compose.forage_kit_id())
+    _compose.set_forage_kit_id(forage_kit_id)
+    _mount_kit_row(target, forage_kits, KitRoster.JOB_FORAGE, forage_kit_id, forage_default_kit, band,
+        func(picked: String) -> void:
+            _compose.set_forage_kit_id(picked)
+            _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target))
     # WOULD THIS SUBMIT CHANGE ANYTHING? `current` is the pending-aware standing staffing on this tile
     # for THIS band, so the two zero-worker cases are DIFFERENT SUBMITS, and the block below —
     # forecast line and button TOGETHER — has to read coherently for each:
@@ -2133,7 +2281,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         # second. The sim's improvement commands act on the bands ALREADY WORKING the tile, so a verb
         # sent to an unworked patch is rejected outright — the crew has to land first.
         _emit_assign_labor(band, SourceForecast.LABOR_KIND_FORAGE, _compose.forage_count(), x, y, "",
-            _compose.forage_floor(), _compose.forage_species(), composed_improvement)
+            _compose.forage_floor(), _compose.forage_species(), composed_improvement, forage_kit_id)
         _emit_improvement(band, SourceForecast.LABOR_KIND_FORAGE, composed_improvement,
             standing_improvement, x, y, "")
         close_compose_sheet())

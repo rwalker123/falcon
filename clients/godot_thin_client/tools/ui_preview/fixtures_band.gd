@@ -6,6 +6,12 @@
 
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 
+## The shipped `expedition_config.hunt.forecast_horizon_turns` — how far the sim simulates a raid before
+## giving up on it, echoed onto every cohort as `expedition_forecast_horizon_turns`. **It is not a trip
+## length**: it bounds the HUNTING only, so an unbounded raid's floor is this PLUS the round-trip travel
+## the band's own position implies. Named here so every band fixture in every chapter states one number.
+const FORECAST_HORIZON_TURNS := 60
+
 static func band_fixture() -> Dictionary:
 	return {
 		"id": "Band 2",
@@ -48,6 +54,9 @@ static func band_fixture() -> Dictionary:
 		# Band = flow arithmetic; expedition = lookup.
 		"hunt_per_worker_provisions": 0.8,
 		"expedition_viability_warn_turns": 20,
+		#   expedition_forecast_horizon_turns — the SCALE the "never completed" sentinels are relative
+		#     to, so an unbounded raid can be quoted a floor instead of "many turns".
+		"expedition_forecast_horizon_turns": FORECAST_HORIZON_TURNS,
 		# Per-worker carry (shipped 4.0): the forecast shows the HAUL a filled pack delivers as
 		# party × this (blessed party×lever arithmetic, NOT the turns-to-fill lookup).
 		"expedition_per_worker_carry": 4.0,
@@ -197,3 +206,109 @@ static func hunt_preview_local_band() -> Dictionary:
 		"output_multiplier": 0.9,
 		"activity": "hunt", "labor_assignments": [],
 	}
+
+# ---- THE THREE KITS (`docs/plan_hunt_through_combat.md` §4.8) ------------------------------------
+# Shipped tiers, one pair per kit, at the values `equipment.json` / `labor_config` authorise. They are
+# named rather than inlined because both the Kit ROW's frames and the hunt sheet's COMBAT-GATE frames
+# are judged against them, in two different chapters — and because the pairing of a kit with its own
+# tier is the fact these fixtures exist to hold. `attack 1` is the creatures.json person, which is
+# below every megafauna's `defense`, so it is also what makes the gate's refusal reachable at all.
+const KIT_ATTACK_EQUIPPED := 20.0
+
+const KIT_ATTACK_BARE := 1.0
+
+## **THE SLED'S TIER, AND IT IS NOT THE BASKET'S.** A carcass is one lumpy object you drag out whole,
+## so losing the sled cuts the HUNT's haul to 12 and touches gathering not at all.
+const KIT_HUNT_CARRY_EQUIPPED := 40.0
+
+const KIT_HUNT_CARRY_BARE := 12.0
+
+## **THE BASKET'S TIER, AND IT IS NOT THE SLED'S.** Berries are bounded by what you can hold, so the
+## bare-handed ratio here is far harsher — a fifth, against the hunt's drag-something-anyway 30%.
+const KIT_FORAGE_CARRY_EQUIPPED := 8.0
+
+const KIT_FORAGE_CARRY_BARE := 1.6
+
+# The three conditions a kitted band ships with. **DELIBERATELY THREE DIFFERENT NUMBERS** on the
+# 0-100 scale: a fixture that gave two kits one value would pass every assertion with their accessors
+# swapped, which is the exact defect class this arc keeps reproducing.
+const KIT_CONDITION_SPEARS := 87.0
+
+const KIT_CONDITION_SLED := 54.0
+
+const KIT_CONDITION_BASKETS := 31.0
+
+# ---- THE KIT ROSTER (`docs/plan_denial_raid.md`, `SubsistenceSection.kits`) -----------------------
+# The ids the wire carries and the two job defaults. Named because the `kit <id>` COMMAND token is
+# asserted against them and because "which id is the default" is half of what the picker's frames
+# claim — a literal in two harnesses is how those two claims come apart.
+const KIT_ID_BIG_GAME := "big_game"
+const KIT_ID_GATHERING := "gathering"
+const KIT_ID_NONE := "none"
+const KIT_DEFAULT_HUNT := KIT_ID_BIG_GAME
+const KIT_DEFAULT_FORAGE := KIT_ID_GATHERING
+
+## The world's kit roster, in `equipment.json` order — the picker's list, and the ONE roster both
+## preview harnesses drive (`band_panel_preview` preloads this module for it, so the two cannot quote
+## different tiers or a different default).
+##
+## **EVERY ENTRY STATES ALL THREE TIERS, and the ones its kit does not use are the BARE ones.** That
+## is the wire's own shape and it is what `KitRoster.unequipped_tier` reads the bare-handed tier off:
+## the minimum across the roster on an axis IS that axis's unequipped tier, so a fixture that left an
+## unused axis at its equipped value would make the client's step-down silently unreachable.
+##
+## **`none` IS AN ORDINARY MEMBER AND IT IS AUTHORED LAST**, exactly as `equipment.json` authors it —
+## which is the whole of why the picker renders it last. The client sorts nothing.
+static func kit_roster_fixture() -> Array:
+	return [
+		{
+			"id": KIT_ID_BIG_GAME, "display_name": "Big-game kit", "jobs": ["hunt"],
+			"attack": KIT_ATTACK_EQUIPPED,
+			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_EQUIPPED,
+			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
+		},
+		{
+			"id": KIT_ID_GATHERING, "display_name": "Gathering kit", "jobs": ["forage"],
+			"attack": KIT_ATTACK_BARE,
+			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
+			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_EQUIPPED,
+		},
+		{
+			"id": KIT_ID_NONE, "display_name": "No kit", "jobs": ["hunt", "forage"],
+			"attack": KIT_ATTACK_BARE,
+			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
+			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
+		},
+	]
+
+## A band carrying ALL THREE kits, each at its own condition and each role at its equipped tier.
+static func with_equipped_kit(band: Dictionary) -> Dictionary:
+	band["hunting_kit_durability"] = KIT_CONDITION_SPEARS
+	band["sled_kit_durability"] = KIT_CONDITION_SLED
+	band["basket_kit_durability"] = KIT_CONDITION_BASKETS
+	band["hunter_attack"] = KIT_ATTACK_EQUIPPED
+	band["hunt_carry_per_worker_biomass"] = KIT_HUNT_CARRY_EQUIPPED
+	band["forage_carry_per_worker_biomass"] = KIT_FORAGE_CARRY_EQUIPPED
+	return band
+
+## **ONE KIT DRY, THE OTHER TWO INTACT** — the state that proves the three wear independently. The
+## baskets have run out, so the FORAGE carry has stepped down to bare hands and the hunt's has not:
+## a band that has gathered its baskets to pieces still drags carcasses home on an untouched sled.
+## This is the frame a readout rendering one carry on the other's row fails.
+static func with_baskets_dry(band: Dictionary) -> Dictionary:
+	band = with_equipped_kit(band)
+	band["basket_kit_durability"] = 0.0
+	band["forage_carry_per_worker_biomass"] = KIT_FORAGE_CARRY_BARE
+	return band
+
+## A band that has run EVERY kit dry — the bare-hands state, which is permanent: there is no
+## replenishment path, so every role has stepped down and stays there. Its `hunter_attack` of 1 is
+## what the combat gate refuses megafauna on.
+static func with_bare_hands(band: Dictionary) -> Dictionary:
+	band["hunting_kit_durability"] = 0.0
+	band["sled_kit_durability"] = 0.0
+	band["basket_kit_durability"] = 0.0
+	band["hunter_attack"] = KIT_ATTACK_BARE
+	band["hunt_carry_per_worker_biomass"] = KIT_HUNT_CARRY_BARE
+	band["forage_carry_per_worker_biomass"] = KIT_FORAGE_CARRY_BARE
+	return band

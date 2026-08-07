@@ -38,6 +38,13 @@ const BREAKDOWN_KIND_GROWTH := "growth"
 # all: nothing consumes trade goods. See `DisclosureController.trade_breakdown_lines`.
 const BREAKDOWN_KIND_TRADE := "trade"
 
+# The band's THREE consumable kits (`docs/plan_hunt_through_combat.md` §4.8) — spears, a sled, and
+# baskets — and the tier each one currently resolves its role to. It is a disclosure rather than three
+# more vitals rows because the ROW answers "how long have I got" in one glance and the popover answers
+# "and what happens when it runs out", which is a sentence and a table. See
+# `DisclosureController.kit_breakdown_lines`.
+const BREAKDOWN_KIND_KIT := "kit"
+
 # The detail-row labels the disclosure attaches to (must equal the `Key` the detail formatter splits out).
 const DETAIL_ROW_FOOD := "Food"
 
@@ -46,3 +53,5 @@ const DETAIL_ROW_MORALE := "Morale"
 const DETAIL_ROW_GROWTH := "Growth"
 
 const DETAIL_ROW_TRADE := "Trade"
+
+const DETAIL_ROW_KIT := "Kit"

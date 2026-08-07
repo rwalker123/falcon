@@ -29,6 +29,15 @@ const LABOR_KIND_HUNT := "hunt"
 # the value lives in exactly one place.
 const DEFAULT_HARVEST_FLOOR := SourceForecast.DEFAULT_HARVEST_FLOOR
 
+# `home_band_entity` on a cohort no band detached — the decoder's own "0 for a normal band".
+const NO_HOME_BAND_ENTITY := 0
+
+# The tile a cohort stands on when the snapshot did not state one. **The party's and the home band's
+# sentinels DIFFER on purpose**: `party_cancels_in_camp` compares the two positions, and one shared
+# sentinel would make two silent absences read as "standing in the same camp".
+const PARTY_POSITION_UNKNOWN := -1
+const HOME_POSITION_UNKNOWN := -2
+
 # The food-module `kind` that marks a HUNTING site rather than a gathering one — the split
 # `FoodIcons.for_site` needs to pick a quarry glyph over a forage sprig. Lives here with
 # `food_module_icon`, its only reader.
@@ -62,6 +71,15 @@ var _prev_band_sizes: Dictionary = {}
 var _forage_patch_lookup: Dictionary = {}
 # Snapshot food modules keyed by tile (a Forage row's resource glyph, matching the map marker).
 var _food_module_by_tile: Dictionary = {}
+# ---- THE KIT ROSTER (`docs/plan_denial_raid.md`) --------------------------------------------------
+# The world's kit roster in `equipment.json` order, and the kit each verb uses when the player names
+# none. WORLD-level data rather than band-level: one roster serves every band and every sheet, so it
+# sits beside the grid scalars rather than being re-read per compose. The ORDER is the wire's and is
+# preserved — `equipment.json` authors the null choice (`none`) last, which is what puts it at the
+# bottom of every picker without this model knowing which entry is null.
+var _kits: Array = []
+var _default_hunt_kit_id: String = KitRoster.NO_KIT_ID
+var _default_forage_kit_id: String = KitRoster.NO_KIT_ID
 
 # ---- Read accessors (backing value returned by reference — no deep copy) --------------------------
 
@@ -104,6 +122,18 @@ func forage_patch_lookup() -> Dictionary:
 
 func food_module_by_tile() -> Dictionary:
 	return _food_module_by_tile
+
+## The world's kit roster, in wire order.
+func kits() -> Array:
+	return _kits
+
+## The kit a verb uses when the player names none — the token the command builders OMIT for, so a
+## composition that never touched the picker emits the line it emitted before the picker existed.
+## `""` for a job the wire has not named a default for.
+func default_kit_id(job: String) -> String:
+	if job == KitRoster.JOB_FORAGE:
+		return _default_forage_kit_id
+	return _default_hunt_kit_id
 
 # ---- Snapshot lookups (derived reads over the ingested tables) -----------------------------------
 
@@ -163,6 +193,41 @@ func band_parties(band: Dictionary) -> Array:
 			rows.append(exp_variant)
 	return rows
 
+## **WOULD RECALLING THIS PARTY CANCEL IT ON THE SPOT?** The client-side reading of the sim's
+## `cancel_party_standing_in_camp`: a party standing in its home band's camp with no map report owed is
+## folded back by `handle_recall_expedition` the instant the command lands, so the order is a CANCEL of
+## something that never took effect rather than an errand home. `false` = the ordinary recall, which
+## walks the party back over turns.
+##
+## **THE FOUR TERMS ARE THE SIM'S, MATCHED EXACTLY.** A looser client test — say "the phase is hunting
+## and it carries nothing" — would print *Cancel* over a party that really does walk home, which is the
+## same lie the wrong way round. In particular: co-location is EXACT, never comm range (the sim folds a
+## `Returning` party back within 2 tiles, but doing that on a recall would teleport workers home rather
+## than cancel an order); and the pack is NOT a term (a full larder does not force a round trip).
+##
+## Every single-party recall surface reads this one function — the parties row ✕, the parties inspector
+## link, the Occupants drawer's button — so the verb they show and the confirm they raise cannot
+## disagree about what the sim will do. Lives on this model because it is a question about the snapshot
+## (the party, and the home band it is grouped under), not about any one panel.
+func party_cancels_in_camp(exp: Dictionary) -> bool:
+	if not bool(exp.get("is_expedition", false)):
+		return false
+	# "Nothing to deliver" is about the MAP, not the pack: flushing `pending_reveal` to the faction map
+	# is the one thing an out-of-band fold-back cannot do, so it is what gates the sim. The decoder
+	# projects the wire's coordinate pair to this count for exactly this question.
+	if int(exp.get("pending_reveal_count", 0)) > 0:
+		return false
+	var home := player_band_by_entity(int(exp.get("home_band_entity", NO_HOME_BAND_ENTITY)))
+	if home.is_empty():
+		return false
+	# Absent coordinates on either side must not read as a match, so the two defaults DIFFER — a party
+	# whose position the snapshot never stated is in no camp.
+	var party_x := int(exp.get("current_x", PARTY_POSITION_UNKNOWN))
+	var party_y := int(exp.get("current_y", PARTY_POSITION_UNKNOWN))
+	var home_x := int(home.get("current_x", HOME_POSITION_UNKNOWN))
+	var home_y := int(home.get("current_y", HOME_POSITION_UNKNOWN))
+	return party_x == home_x and party_y == home_y
+
 ## Workers currently out with this band's parties — the Workforce bar's Parties segment.
 func band_party_workers(band: Dictionary) -> int:
 	var total := 0
@@ -185,6 +250,19 @@ func set_grid(width: int, height: int, wrap_horizontal_flag: bool) -> void:
 func set_world_herds(herds: Array) -> void:
 	_world_herds = herds
 	changed.emit(&"world_herds")
+
+## Ingest the world's kit roster and the two job defaults. **The three ride ONE call**, because they
+## are one fact: a roster whose defaults name kits it does not contain would let every picker open on
+## an entry it cannot show. A non-Array roster is ignored (the last value stands), matching the
+## `set_food_modules` / `set_forage_patches` ingest — a delta carries a section only when it changed,
+## so absence means unchanged and never "the world has no kits".
+func set_kit_roster(kits_variant: Variant, default_hunt: String, default_forage: String) -> void:
+	if not (kits_variant is Array):
+		return
+	_kits = kits_variant
+	_default_hunt_kit_id = default_hunt
+	_default_forage_kit_id = default_forage
+	changed.emit(&"kits")
 
 func set_panel_band(band: Dictionary) -> void:
 	_panel_band = band
@@ -296,8 +374,16 @@ func reconcile_pending(turn: int) -> bool:
 # Per-source rate keys whose ABSENCE is meaningful, so they are copied through only when the wire
 # assignment carried them (see the loop in `effective_worker_map`). `realized_yield` is the steady
 # food average; `trade_yield` / `realized_trade_yield` are its issue-#337 twins in the other product.
+## THE FORECAST'S BAND (`docs/plan_hunt_through_combat.md` §6.4) travels the same presence-sensitive
+## way, and for a sharper reason than the rates above: `source_yield_readout` renders a range ONLY
+## when the two bounds differ, so a `get(..., 0.0)` default would hand it `0.0–0.0` — equal, and
+## therefore silent — on an assignment that never carried them. Copying only what the wire sent keeps
+## "no band published" and "the band is a point" the same rendered answer by construction rather than
+## by luck. Both products, read as one vector beside their scalars.
 const OPTIONAL_YIELD_KEYS: Array[String] = [
 	"realized_yield", "trade_yield", "realized_trade_yield",
+	SourceForecast.YIELD_RANGE_LOW_KEY, SourceForecast.YIELD_RANGE_HIGH_KEY,
+	SourceForecast.TRADE_RANGE_LOW_KEY, SourceForecast.TRADE_RANGE_HIGH_KEY,
 ]
 
 ## Confirmed labor assignments overlaid with this band's pending assigns, keyed by source/role.

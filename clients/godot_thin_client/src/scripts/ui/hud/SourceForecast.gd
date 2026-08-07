@@ -412,6 +412,45 @@ static func yield_rows(food: float, trade: float, fodder: float = 0.0,
             rows.append(row)
     return rows
 
+## **ONE TAKE, COUNTED ON ONE AXIS AND VALUED IN EVERY ACCOUNT** — the client mirror of the sim's
+## `YieldPair::rescaled_to` (`core_sim/src/fauna_config.rs`), and the companion `yield_rows` needs on
+## the animal web.
+##
+## A quantised take must be counted on ONE axis, because the quantiser divides by a per-animal quantum
+## and a wolf's food quantum is honestly `0` (`herd_yield_axis` is where that choice is made, and it
+## must stay a single choice). **But that constraint governs the COUNT, not the CREDIT.** A ratio is
+## unit-free, so the same count values in every currency the species pays — which is why the sim runs
+## `quantise_animal_take` on `ratio_axis()` and then credits BOTH components of the species'
+## `HuntYield` through this rescale. A client that stops at the axis it quantised on reports a boar's
+## meat and silently drops the hide it sells beside it.
+##
+## The reference mix is the source's own PER-BIOMASS vector — the same structural witness
+## `zero_account_of` reads. Every term a take is composed from is that vector times one biomass (the
+## per-worker rates, the ceilings, and the per-animal quanta, which are `body_mass ×
+## <account>PerBiomass`), so the proportion is identical whichever of them is used, and this one is
+## the only one still present on a source standing at its floor. `value` comes back BIT-IDENTICAL on
+## its own axis: no divide-then-multiply round trip on the component that was actually computed.
+##
+## A source with no positive rate on `axis` pays nothing anywhere — the degenerate case the sim's
+## `rescaled_to` answers `ZERO` for — so it answers zeros rather than dividing by it.
+static func rescaled_accounts(src: Dictionary, prefix: String, axis: String,
+        value: float) -> Dictionary:
+    var food_rate := float(src.get(prefix + FORECAST_PROVISIONS_PER_BIOMASS_KEY, 0.0))
+    var trade_rate := float(src.get(prefix + FORECAST_TRADE_PER_BIOMASS_KEY, 0.0))
+    var fodder_rate := float(src.get(prefix + FORECAST_FODDER_PER_BIOMASS_KEY, 0.0))
+    var on_trade: bool = axis == YIELD_AXIS_TRADE
+    var reference := trade_rate if on_trade else food_rate
+    if reference <= 0.0:
+        return {YIELD_ACCOUNT_FOOD: 0.0, YIELD_ACCOUNT_TRADE: 0.0, YIELD_ACCOUNT_FODDER: 0.0}
+    var share := value / reference
+    return {
+        YIELD_ACCOUNT_FOOD: food_rate * share if on_trade else value,
+        YIELD_ACCOUNT_TRADE: value if on_trade else trade_rate * share,
+        # No animal pays fodder, so a herd's third account rescales to a structural zero and renders
+        # no row — the same answer the account had before this existed.
+        YIELD_ACCOUNT_FODDER: fodder_rate * share,
+    }
+
 # WHICH COMPONENT A SPECIES ACTUALLY PAYS — the client mirror of the sim's `ratio_axis()`: the first
 # component with a POSITIVE rate, provisions preferred so every edible species divides exactly as it
 # did before this arc, trade for an inedible one. Everything that would otherwise DIVIDE BY A
@@ -460,6 +499,25 @@ const FORECAST_REGROWTH_SAMPLES_KEY := "regrowth_samples"
 # target rounds up to, and it is in the same units as the curve and the throughput above — unlike
 # `food_per_animal`, which is that quantum already converted into provisions.
 const FORECAST_BODY_MASS_KEY := "body_mass"
+# **THE ENGAGEMENT THROUGHPUT — the THIRD bound on a hunt take** (`docs/plan_hunt_through_combat.md`
+# §2, `HerdTelemetryState.engageRate`): how many animals ONE hunter can bring into contact per turn,
+# beside the stock standing above the floor and the party's carry. A `min()` composed from those two
+# alone quotes a take the sim will never pay — measured at ~30× on a Wild Fowl herd with one hunter,
+# whose 40 biomass of carry is 307 birds against 10 of reach.
+const FORECAST_ENGAGE_RATE_KEY := "engage_rate"
+# **`<= 0` MEANS "NO ENGAGEMENT STAGE", never "reaches nothing".** It is the wire's finite stand-in for
+# the sim's `f32::INFINITY` — a PEN (a penned animal is not stalked), a species the roster cannot
+# resolve, and the whole PLANT web, which never publishes the field at all. Read it as UNBOUNDED and
+# drop the term: that is what leaves forage and corrals byte-identical to before this arm existed.
+const NO_ENGAGEMENT_STAGE := 0.0
+# The value the dropped term contributes to a `min()` / the crew `max()` — an unbounded reach cannot
+# be the binding arm, and `INF` says so without a branch at every call site.
+const ENGAGEMENT_UNBOUNDED := INF
+# **A PARTY THAT EXISTS REACHES AT LEAST ONE ANIMAL** — the sim's `fauna::animals_engaged` `max(1.0)`.
+# A fractional engagement means a small band cannot corner the quarry EFFICIENTLY, not that it cannot
+# walk up to it: three hunters do reach a mammoth and then fail at the FIGHT, which is where the gate
+# lives. Flooring to zero would put a headcount threshold in front of the attack-vs-defense one.
+const ENGAGED_AT_LEAST := 1.0
 # **THE PHASE, AND WHERE ITS BOUNDARIES ARE — both on the wire now.** `ecology_phase` is the source's
 # CURRENT band as a word (Thriving / Stressed / Collapsing); the two fractions below are the cut points
 # `classify_ecology_phase` used to reach it, **in the same units the floor is in** (fractions of `K`).
@@ -635,9 +693,6 @@ const MAX_USEFUL_CAPPED_TOOLTIP := "Fully staffed — this source can use at mos
 # not usefulness. Named in the "N of M" spirit (N = the labor cap you're at, M = the useful ceiling),
 # so a capped `+` reads as "fixable by reassigning labor" rather than as a silent bug.
 const LABOR_BOUND_NOTE_FORMAT := "%d of %d useful — free up idle workers to send more"
-# The expedition sub-case where freeing idle workers WOULD NOT help: the party-size cap binds
-# (idle >= max party), so the advice is wrong — say we're at the party limit instead.
-const PARTY_SIZE_BOUND_NOTE_FORMAT := "%d of %d useful — at the max party size"
 
 # **THE RAID TABLE IS THE ONE PLACE THE SIM STILL EXPORTS ROWS, and for the opposite reason to the
 # retired ceiling lists.** A resident band's ceiling has a closed form the client can evaluate at any
@@ -657,6 +712,12 @@ const HERD_TRIP_ESTIMATES_KEY := "hunt_trip_estimates"
 # reproduce Rust float formatting exactly and a near-miss silently finds nothing.
 const HUNT_ESTIMATE_FLOOR_KEY := "floor"
 const HUNT_ESTIMATE_PARTY_KEY := "party_workers"
+# **WHICH SAMPLED PARTY A FORECAST WAS COMPUTED FOR**, carried out on BOTH raid forecasts (the hunting
+# trip's and the denial raid's) because the party axis is SAMPLED and a selected party usually falls
+# between two rungs. It is the forecast's own record of the rounding `nearest_estimate_party` made, and
+# the ONE thing `quoted_party_note` reads — so the sentence naming the quoted party and the figures it
+# qualifies can never come from two lookups free to disagree.
+const QUOTED_PARTY_KEY := "quoted_party"
 # Sentinel for "the snapshot doesn't carry the levers/ceiling this forecast needs" (older server).
 # A real take rate / ceiling is always ≥ 0, so a negative reads unambiguously as absent → the caller
 # renders NO forecast line rather than a misleading zero.
@@ -669,9 +730,74 @@ const HUNT_RATE_UNAVAILABLE := -1.0
 # NOT "turns to fill the pack" (a big party leaves a partial pack once it strips the surplus).
 const HUNT_FORECAST_DELIVERS_FORMAT := "delivers ≈%d %s over ≈%d turns"
 # `turnsToFill == 0` no longer means "won't fill" — under the raid model it means the raid ran the whole
-# forecast horizon still delivering (a slow breeder a big party can neither fill nor exhaust). The
-# client has no horizon lever, so it words this "over many turns" rather than a bare number.
-const HUNT_FORECAST_LONG_RAID_FORMAT := "delivers ≈%d %s over many turns"
+# forecast horizon still delivering (a slow breeder a big party can neither fill nor exhaust). The client
+# now HAS the horizon (`expeditionForecastHorizonTurns`), so it quotes a FLOOR on the trip instead of the
+# hedge it used to word this as: `over more than 78 turns`, in the SAME span the bounded line's `over ≈36
+# turns` is in, so the two are comparable at a glance.
+const HUNT_FORECAST_LONG_RAID_FORMAT := "delivers ≈%d %s over more than %d turns"
+# The band carries no horizon at all (a fixture that predates the lever) — there is no floor to quote, so
+# the line falls back to the hedge. **Quoting `0` here is the one outcome worse than "many".**
+const HUNT_FORECAST_LONG_RAID_NO_HORIZON_FORMAT := "delivers ≈%d %s over many turns"
+# **THE WIRE'S "THE RAID HAD NOT FINISHED WHEN THE PROJECTION RAN OUT", AND IT NOW MEANS `horizon` AND
+# NOTHING ELSE.** `HuntTripForecast::turns_to_fill` is `Option<u32>`, `None` rendered as `0` here, and
+# the sim reserves `None` for [`HuntTripBound::Horizon`] alone: a raid that ends by driving the herd
+# extinct reports the turn it ended on like any other, because the live arm's lost-herd guard turns the
+# party for home that same turn.
+#
+# **THAT PAIRING IS THE WHOLE OF FIX #2, and it is the ONE test for the three "many turns" surfaces.**
+# A floor-`0` (`Take everything`) raid ends by emptying the range, so it used to publish this sentinel
+# and read on three surfaces at once as a trip that never completes — `delivers ≈12 Red Deer over many
+# turns`, `Away many turns — still delivering at the end of the forecast`, `Send Anyway (long raid)` —
+# for the one mission whose whole purpose is to finish. Reading the sentinel is therefore reading
+# "horizon", not "no answer": a `herd_lost` row carries a real turn count and takes the bounded branch,
+# where its `TRIP_BOUND_CLAUSES` line says the range is empty by the time the party is home. **Never
+# add a second `<= 0` test beside this one**, and never let a bound key reach the long branch.
+const RAID_TURNS_UNBOUNDED := 0
+
+## Did the sim's projection run its whole length with this raid still going? The ONE reading of
+## `RAID_TURNS_UNBOUNDED`, so the one-line form, the trip verdict and the Send button cannot answer it
+## three ways — and so a raid that COMPLETES by emptying the range (a real `turns_to_fill` beside a
+## `herd_lost` bound) can never take a "many turns" branch on any of them.
+static func raid_is_unbounded(hunt_turns: int) -> bool:
+    return hunt_turns <= RAID_TURNS_UNBOUNDED
+
+# **THE SCALE EVERY "NEVER COMPLETED" SENTINEL ON THIS WIRE IS RELATIVE TO** — how many turns the sim's
+# raid projection runs before giving up (`expedition_config.hunt.forecast_horizon_turns`), echoed onto
+# EVERY cohort in the `expeditionViabilityWarnTurns` idiom. ONE lever serves both raid tables (the sim's
+# `denial_projection_at` and `hunt_trip_forecast_seeded` read the same field), so `turnsToFill == 0`,
+# `turnsToCollapse{,Low,High} == 0` and `expeditionTripBound == "horizon"` are all measured against this
+# one number and there is nothing here to pick wrongly between.
+#
+# **IT IS NOT A TRIP LENGTH, AND QUOTING IT AS ONE IS WORSE THAN THE HEDGE IT REPLACES.** It bounds the
+# HUNTING alone — `turnsToFill` excludes travel — while the round trip out and back is a separate,
+# already-known term, so the floor on the WHOLE trip is `horizon + round_trip_travel_turns`: *"Away more
+# than 78 turns"*, never *"more than 60"*. A number wrong in the REASSURING direction sends the player
+# out on a raid they would not have taken.
+const COHORT_FORECAST_HORIZON_KEY := "expedition_forecast_horizon_turns"
+# The lever is absent (a fixture that predates it). A real horizon is always positive — the sim pins that
+# on the exported snapshot — so `0` reads unambiguously as "no bound to quote", and every surface falls
+# back to its hedge rather than printing "more than 0 turns".
+const FORECAST_HORIZON_UNKNOWN := 0
+
+## **HOW FAR THE SIM'S RAID PROJECTION RAN, off whichever cohort the caller has in hand** — the BAND on a
+## launch sheet, the launched PARTY in the in-flight drawer. It is a global lever echoed on every cohort,
+## so any cohort answers it; `FORECAST_HORIZON_UNKNOWN` when the dict carries none.
+static func forecast_horizon_turns(cohort: Dictionary) -> int:
+    return maxi(FORECAST_HORIZON_UNKNOWN,
+        int(cohort.get(COHORT_FORECAST_HORIZON_KEY, FORECAST_HORIZON_UNKNOWN)))
+
+## Does this unbounded forecast carry a FLOOR the copy can quote? `false` = no horizon on the wire, so
+## every surface says "many turns" rather than inventing one. The ONE reading of the floor keys below,
+## for the reason `raid_is_unbounded` is the one reading of the sentinel: the line, the verdict and the
+## Send button must not answer it three ways.
+static func raid_floor_is_known(forecast: Dictionary) -> bool:
+    return int(forecast.get(RAID_TURNS_FLOOR_KEY, FORECAST_HORIZON_UNKNOWN)) > FORECAST_HORIZON_UNKNOWN
+
+# The floor on the WHOLE trip (`horizon + round-trip travel`) and on its hunting half (`horizon` alone).
+# They are separate keys rather than a re-use of `turns` / `hunt_turns` because those two are EXACT on the
+# bounded branch, and a consumer reading a floor as an exact figure is the failure this arc is fixing.
+const RAID_TURNS_FLOOR_KEY := "turns_floor"
+const RAID_HUNT_TURNS_FLOOR_KEY := "hunt_turns_floor"
 # The FOOD the delivered animals are worth, appended so the party-size tradeoff reads BOTH ways: a
 # bigger party takes more animals AND more food.
 const HUNT_FORECAST_FOOD_FORMAT := " · ~%d food"
@@ -687,13 +813,16 @@ const HUNT_FORECAST_SLOW_SUFFIX := " — a slow raid"
 # band_move_tiles_per_turn), the SAME formula the server's launch feed uses. When travel > 0 the headline
 # turns is the TOTAL and this breakdown spells the split out; when 0 the headline is just the hunting turns.
 const HUNT_FORECAST_TRAVEL_BREAKDOWN := " (%d hunting + %d travel)"
-# The long-raid line has no bounded hunting-turn count ("over many turns"), so travel rides as a trailing
-# "(+T travel)" rather than a two-part split.
+# The long raid's split, in the bounded breakdown's own shape so the two lines compare term for term. The
+# hunting half wears "more than" (the horizon is a floor on it); the travel half is EXACT and must not,
+# or the line would claim less than the client actually knows.
+const HUNT_FORECAST_LONG_TRAVEL_BREAKDOWN := " (more than %d hunting + %d travel)"
+# The horizon-less fallback: no hunting floor to state, so travel rides as a trailing "(+T travel)".
 const HUNT_FORECAST_LONG_TRAVEL_SUFFIX := " (+%d travel)"
-# The ONE non-viable case under the raid model: the herd is at/below the policy's floor, so there is no
-# standing surplus to raid and the party would return empty. NOT a "won't fill" verdict (the raid always
-# completes); the herd simply has nothing to give this policy right now.
-const HUNT_FORECAST_NO_SURPLUS_FORMAT := "%s is too lean to raid — its surplus is spent"
+# The ONE non-viable case under the raid model: the party comes home with nothing in either currency.
+# The SENTENCE it renders is not one sentence — see `HUNT_EMPTY_REFUSALS`, which keys it off the sim's
+# own `bound`, because "the herd is spent" and "your party cannot kill it" are different facts with
+# opposite remedies.
 # A DENIAL mission is a raid with NO PAYLOAD IN EITHER CURRENCY, not a failed one. It is no longer
 # "Eradicate": since issue #337 `delivers_food` says the QUARRY IS INEDIBLE, Eradicate banks a
 # whole-stock windfall like every other rung, and an inedible quarry still pays pelts. The sim decides
@@ -720,11 +849,113 @@ const EXPEDITION_TRIP_ROW_HEADER := "this trip"
 # beside its quarry has none, and "18 turns — 18 hunting, 0 travel" would be three numbers for one.
 const EXPEDITION_TRIP_VERDICT_FORMAT := "Away ≈%d turns."
 const EXPEDITION_TRIP_VERDICT_SPLIT_FORMAT := "Away ≈%d turns — %d hunting, %d travel."
-# `turns_to_fill == 0` is the sim saying the raid ran the whole forecast horizon still delivering, so
-# there is no total to quote — the same "many turns" the one-line form words it as. Travel is still
-# known (the client adds it), so it is named rather than folded into an unbounded total.
+# `turns_to_fill == 0` is the sim saying the raid ran the whole forecast horizon still delivering. There
+# is no TOTAL to quote, but there is a FLOOR — the horizon bounds the hunting and the round trip is known
+# — so the verdict states it in the SAME span and the SAME shape the bounded pair above states theirs:
+# "Away more than 78 turns — more than 60 hunting, 18 travel." The two are then comparable, which is the
+# whole point of quoting a number instead of "many". The bound clause table renders NOTHING for `horizon`
+# on the understanding that this sentence carries "still delivering at the end of the forecast" — keep it.
+const EXPEDITION_TRIP_LONG_VERDICT_FORMAT := "Away more than %d turns. Still delivering at the end of the forecast."
+const EXPEDITION_TRIP_LONG_VERDICT_SPLIT_FORMAT := "Away more than %d turns — more than %d hunting, %d travel. Still delivering at the end of the forecast."
+# The horizon-less fallback pair: no floor on the wire, so the hedge stands and travel is named beside it
+# rather than folded into a total that cannot be computed.
 const EXPEDITION_TRIP_LONG_VERDICT := "Away many turns — still delivering at the end of the forecast."
 const EXPEDITION_TRIP_LONG_VERDICT_TRAVEL_FORMAT := "Away many turns — still delivering at the end of the forecast, after %d turns of travel."
+
+# ---- WHICH STOP ENDS THE TRIP (`docs/plan_hunt_through_combat.md` §5.2) -------------------------
+# A trip LENGTH alone cannot say WHY the party turned for home — "the pack filled in 4 turns" and "you
+# reach the floor in 2 turns with the pack a third full" are different situations carrying the same
+# kind of number — so the SIM names the bound and this layer only renders it. These are
+# `core_sim::HuntTripBound::as_str` keys, and the client never infers one from the numbers.
+const TRIP_BOUND_KEY := "bound"
+# **`""` IS "NOT STATED", AND IT IS NOT `TRIP_BOUND_HORIZON`.** On a launched party it means *not
+# raiding* (a resident band, a scout, a party already walking a load home); on an estimate row it
+# means a snapshot that predates the field. Both render NO clause, which is the only honest answer —
+# `horizon`, by contrast, is the projection having run and found no stop.
+const TRIP_BOUND_NONE := ""
+const TRIP_BOUND_PACK_FULL := "pack_full"
+const TRIP_BOUND_FLOOR := "floor"
+const TRIP_BOUND_HERD_LOST := "herd_lost"
+const TRIP_BOUND_HORIZON := "horizon"
+# The sentence each bound adds after the trip's length. `horizon` renders NOTHING: the long-raid
+# verdict above already says exactly that ("still delivering at the end of the forecast"), and a
+# second spelling of it beside the first would be the same fact twice.
+const TRIP_BOUND_CLAUSES := {
+    TRIP_BOUND_PACK_FULL: "The pack fills; the herd never reaches your floor.",
+    TRIP_BOUND_FLOOR: "The herd reaches your floor first — the party comes home part-loaded.",
+    TRIP_BOUND_HERD_LOST: "The herd is wiped out before the party's load is made up.",
+    TRIP_BOUND_HORIZON: "",
+}
+
+# ---- WHY AN EMPTY RAID IS EMPTY, AND WHO THE PLAYER HAS TO FIX ---------------------------------
+# `delivered_food <= 0 and delivered_trade <= 0` is the arithmetic of "the party comes home with
+# nothing", and it is still exactly right. What it does NOT say is WHY — and it used to be read as
+# saying so, because before the take resolved through the fight (`docs/plan_hunt_through_combat.md`
+# §4) a raid could only come home empty by finding the herd already at its floor. It cannot any more:
+# a party that cannot bring one animal down inside the projection's horizon lands here too, with the
+# herd's surplus standing untouched. Reported from play on a THRIVING Wild Aurochs herd with four
+# animals affordable, refused as *"too lean to raid — its surplus is spent"* to a party of one.
+#
+# **A WRONG EXPLANATION IS WORSE THAN A WRONG NUMBER**: it sends the player to fix the wrong thing.
+# The remedies are opposites — wait for the herd to rebuild against send more hunters — so one
+# sentence cannot serve both.
+#
+# **THE SIM ALREADY TELLS THEM APART AND THE CLIENT NEVER INFERS IT FROM THE NUMBERS.** `HuntTripBound`
+# names the stop that ended the projection, and the three reachable-with-nothing-delivered ones are
+# distinct facts: `floor` is the herd-side stop (the standing surplus is spent), `horizon` is the
+# projection running out with the party still empty-handed (it never killed anything — had it killed,
+# it would have delivered and this branch would not be taken), and `herd_lost` is the quarry dying
+# under a raid that never made up a load. `pack_full` CANNOT reach this branch: it requires a load,
+# and a load is a delivery.
+#
+# Each entry carries the three faces of ONE refusal — the forecast LINE, the send button's face, and
+# the spelled-out REASON — so the button cannot say "too lean" over a line naming the party. Adding a
+# cause means adding all three at once, which is the point of one table rather than three.
+# `line` and `reason` take the quarry's name; `button` takes none.
+const HUNT_EMPTY_REFUSALS := {
+    # THE HERD-SIDE STOP — the original case, wording unchanged. Party size genuinely cannot fix it:
+    # standing surplus is a property of the herd.
+    TRIP_BOUND_FLOOR: {
+        "line": "%s is too lean to raid — its surplus is spent",
+        "button": "Herd too lean to raid",
+        "reason": "%s has nothing standing above this floor — the raid would return empty. Wait for the herd to rebuild, lower the floor, or hunt it locally.",
+    },
+    # THE PARTY-SIDE FAILURE. The herd is NOT at its floor — had it been, the projection would have
+    # stopped on `floor` — so the line says so out loud, because the sentence it replaces claimed the
+    # opposite. The three remedies are the three terms of the fight: headcount, kit, and the quarry's
+    # own defence (`hunt_gate_model`, two lines above this on the sheet, states the arithmetic).
+    TRIP_BOUND_HORIZON: {
+        "line": "%s stands above your floor — but this party cannot bring one down",
+        "button": "Party can't make the kill",
+        "reason": "%s has surplus standing; these hunters simply never bring one down in the time a raid allows, so the party returns empty. Send more hunters, arm them better, or pick smaller game.",
+    },
+    # THE QUARRY DIES UNDER THE RAID WITHOUT PAYING FOR IT — reachable at a floor of 0, where nothing
+    # stops the projection before the herd's extinction threshold. Neither the herd nor the party is
+    # the thing to change; the QUARRY is.
+    TRIP_BOUND_HERD_LOST: {
+        "line": "%s is gone before the party can make up a load",
+        "button": "Nothing left to raid",
+        "reason": "%s collapses before your party lands anything — the raid would return empty. Leave it standing and find another quarry.",
+    },
+    # THE UNATTRIBUTED REFUSAL, keyed on `TRIP_BOUND_NONE` and used for every bound this branch cannot
+    # explain — an estimate row carrying no bound at all, or one of the two party-side stops, which are
+    # unreachable here. It names NEITHER side on purpose: guessing is how the defect above happened,
+    # and a fixture that forgets its bound should read as unexplained rather than as somebody's fault.
+    TRIP_BOUND_NONE: {
+        "line": "%s — the raid would return empty",
+        "button": "Raid returns empty",
+        "reason": "This raid on %s brings nothing home, and the forecast does not say which of the herd and the party is the reason.",
+    },
+}
+
+# ---- RETIRED: the fill target, the party-side twin of the floor (§5.2) ---------------------------
+# A player-set "come home with N animals" stop shipped here and is GONE, sim and client alike (issue
+# #491). Trip length is `carry ÷ (engage_rate × stay_chance × body_mass)` — **party size cancels** —
+# so it is a species-and-kit constant, and this lever was the only thing that moved it. It existed to
+# escape the trips nobody wants (Wild Fowl 88 turns against Mammoth 1.1); that spread is a TUNING
+# problem and is tracked as one on #491, not a second dial for the player to hold. Every raid is now
+# the untargeted raid — the default the whole control collapsed to — so `send_hunt_expedition` closes
+# after the floor and the trip's bound can only be `pack_full` / `floor` / `herd_lost` / `horizon`.
 
 # THE SEND BUTTON'S FOUR FACES, owned by `style_send_hunt_button`. A trip that is a trap names the cost
 # (amber "armed") but is NEVER gated behind a confirm — the player is told, then trusted. Only the
@@ -738,14 +969,15 @@ const EXPEDITION_TRIP_LONG_VERDICT_TRAVEL_FORMAT := "Away many turns — still d
 const SEND_HUNTING_EXPEDITION_BUTTON := "Send Expedition"
 const SEND_HUNT_ANYWAY_TURNS_FORMAT := "Send Anyway (≈%d turns)"
 # A LONG raid (`turnsToFill == 0`, ran the whole horizon still delivering) still lands animals — enabled,
-# but the button names it a long haul rather than quoting a turn count the client can't bound.
+# and the button now names the FLOOR on the trip in the same clause its bounded twin names the total, so a
+# player choosing between two quarries compares two numbers rather than a number and a word.
+const SEND_HUNT_LONG_RAID_FORMAT := "Send Anyway (more than %d turns)"
+# The horizon-less fallback: no floor to quote, so the button names the haul without a figure.
 const SEND_HUNT_LONG_RAID_BUTTON := "Send Anyway (long raid)"
-# The ONE blocked case: the herd has no surplus above the policy's floor. A raid that returns empty is a
-# mistake with no upside (unlike a slow-but-delivering one), so the button is DISABLED and says why +
-# the way out. Party size can't fix it — surplus is a property of the HERD, not the party — so the
-# reason names no alternative size.
-const SEND_HUNT_NO_SURPLUS_BUTTON := "Herd too lean to raid"
-const SEND_HUNT_NO_SURPLUS_REASON := "%s has nothing standing above this floor — the raid would return empty. Wait for the herd to rebuild, lower the floor, or hunt it locally."
+# The ONE blocked case: the raid comes home with nothing in either currency. That is a mistake with no
+# upside (unlike a slow-but-delivering raid), so the button is DISABLED and says why plus the way out —
+# and its FACE is keyed off the same `bound` the refusal line is, so the button can never contradict
+# the sentence above it. See `HUNT_EMPTY_REFUSALS`.
 # A denial raid's button states the deal rather than implying failure — the mission IS the point. It
 # is the quarry that decides this (pays neither product), not the rung: see HUNT_FORECAST_DENIAL_FORMAT.
 const SEND_HUNT_DENIAL_BUTTON := "Send (brings nothing home)"
@@ -794,6 +1026,180 @@ static func format_trade(value: float) -> String:
 ## is a question about the sim, not about how many decimals a label shows.
 static func has_component(rate: float) -> bool:
     return rate >= COMPONENT_RENDER_MIN
+
+# =====================================================================================
+#  THE FORECAST'S BAND (docs/plan_hunt_through_combat.md §6.4)
+# =====================================================================================
+# `actual_yield` stopped being a promise and became an EXPECTATION: the take the sim pays lies inside
+# `[actual_yield_low, actual_yield_high]`, and `trade_yield` carries the same pair in the other
+# product. **A BAND ON A HUNT IS SHIPPED BEHAVIOUR, NOT A BUG** — wariness is authored across the
+# whole roster (fauna_config's `combat.wariness`, 0.10 on a mammoth that stands and fights up to 0.85
+# on a gazelle that simply is not there), so the RETREAT binomial is live and a raid's reported low
+# and high genuinely differ. `hit_chance` still ships `1.0`, so the damage binomial contributes
+# nothing to the spread; the width comes from animals breaking off before contact, which is why the
+# clause this client writes says *likely* rather than naming a combat roll.
+#
+# **THE DISTRIBUTION IS STILL DEGENERATE IN THREE PLACES, and each is a real state rather than a
+# leftover**: a RESOLVED row (the take happened, so there is nothing left to distribute), a source
+# that publishes no retreat stage at all (every forage patch — the plant web has no wariness), and a
+# spread narrow enough that both bounds round to one printed string, which `has_yield_range` treats as
+# one number by design.
+#
+# **SO THE READOUT RENDERS ONE NUMBER WHEN THE BOUNDS AGREE**, and the range only when they differ.
+# The degenerate case is PINNED rather than merely expected, because that is the half a readout
+# decorating every row would still satisfy — see `chapters/hunt.gd`'s `herd_hunt_yield_range` /
+# `herd_hunt_yield_point` pair.
+#
+# **The band is an ANSWER, never a term.** The take passes through the whole-animal quantiser's
+# `floor()`, so a band on the animals brought down is not a band on the food; the client renders the
+# pair the sim published and composes nothing from wariness or hit-chance.
+const YIELD_RANGE_LOW_KEY := "actual_yield_low"
+const YIELD_RANGE_HIGH_KEY := "actual_yield_high"
+const TRADE_RANGE_LOW_KEY := "trade_yield_low"
+const TRADE_RANGE_HIGH_KEY := "trade_yield_high"
+# The band's shape — an en dash between the two bounds. It rides BESIDE the expectation rather than
+# replacing it: `actualYield` is the number `forecast == actual` is restated on, so the band
+# QUALIFIES the headline and never becomes it.
+const YIELD_RANGE_TOOLTIP_FORMAT := "%s–%s"
+# The band as a clause on the row's take note and on its tooltip. One word — "likely" — because the
+# spread's cause (quarry breaking off before contact) is a species property the row cannot name and a
+# sentence the row has no width for.
+const YIELD_RANGE_CLAUSE_FORMAT := " · likely %s"
+# The TRADE band's own clause, glyphed like every other trade number this client writes, so a
+# trade-only quarry (a wolf, whose food band is honestly all-zero) can still state its spread.
+const YIELD_RANGE_TRADE_CLAUSE_FORMAT := " · likely %s %s"
+
+## **IS THERE A BAND HERE AT ALL?** — the ONE test, so no two surfaces can disagree about whether a
+## source's take is uncertain. Gated at the FORMATTER's resolution rather than on raw inequality, the
+## same call `has_component` makes and for the same reason: bounds that round to one printed string
+## are one number on screen, and a `low != high` test would render `0.31–0.31` as a range.
+static func has_yield_range(low: float, high: float) -> bool:
+    return format_magnitude(high) != format_magnitude(low)
+
+## The band as a bare `6.00–11.00`, or the point's own magnitude when the bounds agree. Magnitudes,
+## not signed rates: a take is never negative, and a `+6.00–+11.00` reads as an arithmetic expression.
+static func format_yield_range(low: float, high: float) -> String:
+    return YIELD_RANGE_TOOLTIP_FORMAT % [format_magnitude(low), format_magnitude(high)] \
+        if has_yield_range(low, high) else format_magnitude(low)
+
+## **BOTH PRODUCTS' BANDS AS ONE CLAUSE** (` · likely 6.00–11.00 · likely ⇄ 0.20–0.40`), or `""` when
+## neither is a band — which is the shipped case, and what keeps every existing readout
+## byte-identical. Reads the two pairs straight off a labor-assignment / worker-map dict; an
+## assignment from a snapshot that predates the fields carries no key at all, and two absent bounds
+## are equal, so it answers `""` there too.
+##
+## **THE TWO ACCOUNTS ARE READ SEPARATELY AND NEITHER SUBSTITUTES FOR THE OTHER** — the pair travels
+## as a vector, exactly as `actual_yield` / `trade_yield` do, because a wolf's food band is honestly
+## all-zero while its trade band is the whole of what the raid pays.
+static func yield_range_clause(m: Dictionary) -> String:
+    var clause := ""
+    var food_low := float(m.get(YIELD_RANGE_LOW_KEY, 0.0))
+    var food_high := float(m.get(YIELD_RANGE_HIGH_KEY, 0.0))
+    if has_yield_range(food_low, food_high):
+        clause += YIELD_RANGE_CLAUSE_FORMAT % format_yield_range(food_low, food_high)
+    var trade_low := float(m.get(TRADE_RANGE_LOW_KEY, 0.0))
+    var trade_high := float(m.get(TRADE_RANGE_HIGH_KEY, 0.0))
+    if has_yield_range(trade_low, trade_high):
+        clause += YIELD_RANGE_TRADE_CLAUSE_FORMAT % [
+            FoodIcons.TRADE_GOODS_GLYPH, format_yield_range(trade_low, trade_high)]
+    return clause
+
+# =====================================================================================
+#  THE PRE-LAUNCH FIGHT (docs/plan_hunt_through_combat.md §2.1, §4.2, §6.5)
+# =====================================================================================
+# A hunt is a fight, and two of its facts have to be legible BEFORE the party leaves.
+#
+# **HOW MANY HUNTERS ONE ANIMAL TAKES** is `1 / engageRate` — "twenty hunters to take a mammoth" is a
+# number a player can reason about and `0.05` is not. It is composed here from the SAME
+# `engagement_per_worker` every crew target divides by, never from a second reading of the pair, so
+# the sentence and the stepper's cap can never disagree; and the dip rides it for the same reason it
+# rides them (hands gentling a herd are hands not stalking it).
+#
+# **WHETHER THE FIGHT CAN BE WON AT ALL** is `max(0, hunterAttack − defense)`. At zero the party
+# kills nothing at ANY headcount and still takes casualties, which is a real outcome that reads as a
+# bug unexplained. The sim deliberately exports no verdict — the expression is linear and exact in
+# three terms already on the wire, so it ships as terms and the client asks itself the question.
+#
+# `durability / effective_attack` turns *"you cannot"* into an effort figure: the hunter-turns ONE
+# hunter needs per kill, which is what makes the two ends of the roster comparable (a mammoth at 62
+# against a rabbit at 0.1). **It is deliberately not divided by the party**: the herd's accumulated
+# wounds are not exported, so a per-party turn count here would be a second, always-pessimistic
+# duration model competing with the sim's own `huntTripEstimates`.
+
+## Whether the pre-launch fight lines have anything to say about this source. A PEN and the whole
+## PLANT web publish no engagement stage (`NO_ENGAGEMENT_STAGE`), which is exactly the byte-identity
+## this gate buys: a penned animal is not stalked and a berry does not fight back.
+static func has_engagement_stage(engage_rate: float, dip: float) -> bool:
+    return not is_inf(engagement_per_worker(engage_rate, dip))
+
+# THE GATE's ONE verdict. It names both terms, because "you cannot" without the arithmetic is a
+# tooltip the player has no way to act on: knowing it is the WEAPON and not the headcount is the whole
+# lesson (`4.8` — the first spear should feel like a different game). It is also the honesty line the
+# `none` kit depends on (`docs/plan_denial_raid.md`): with the estimate tables suppressed for a kit
+# they are not quoted at, this is what still answers what the party can and cannot hurt.
+#
+# **THE WINNABLE BRANCH'S FACE IS RETIRED** (reported from playtest). `0.1 hunter-turns to bring one
+# Wild Fowl down` was a species constant that never moved with anything the player was dialling,
+# printed directly above a forecast that already prices the whole trip. The MODEL still answers
+# `blocked` / `effective_attack`; what went is the sentence for the case that needs none.
+const HUNT_GATE_BLOCKED_FORMAT := "%sYour hunters cannot hurt %s — attack %s against its defense %s. No party size changes that: they would take casualties and kill nothing."
+# What `attack`/`defense`/`durability` are printed with. They are open-ended strength scalars on a
+# human anchor of 1, authored as small whole-ish numbers, so a rate's two decimals would be false
+# precision — `attack 20.00` claims a resolution the roster does not have.
+const HUNT_GATE_SCALAR_DECIMALS := 0
+
+## **THE COMBAT GATE, COMPOSED CLIENT-SIDE FROM THREE TERMS ALREADY ON THE WIRE** —
+## `{stated, blocked, effective_attack, text}` — and `text` is non-empty only when `blocked`.
+##
+## `stated` is false when the band or the herd is silent about its half: a snapshot that predates the
+## fields, or a species the roster cannot resolve (`durability == 0`). Absent terms must render NO
+## line — a defaulted `attack 0` would refuse every hunt in the game.
+##
+## **`blocked` and the forecast's own zero are two signals from different paths, and both are kept.**
+## The sim quotes a sub-gate party `0` at every quantile because the fight is already inside
+## `hunt_source_yield_preview`; this line is arithmetic over the exported terms. A failure in either
+## still leaves the player warned, which is the whole point of not exporting a verdict.
+static func hunt_gate_model(band: Dictionary, herd: Dictionary, quarry: String) -> Dictionary:
+    if not band.has(BAND_HUNTER_ATTACK_KEY):
+        return {"stated": false, "blocked": false, "effective_attack": 0.0, "text": ""}
+    return hunt_gate_model_at(float(band.get(BAND_HUNTER_ATTACK_KEY, 0.0)), herd, quarry)
+
+## **THE GATE AT AN ARBITRARY ATTACK TIER** — the same arithmetic over the same two herd terms, asked
+## about a party whose own kit has already resolved its effective attack (`KitRoster.effective_tiers`)
+## rather than about the band's default-kit tier.
+##
+## It exists because the gate is the ONE forecast that stays honest for every kit: it is composed from
+## wire terms rather than looked up in a table quoted for one kit, so a sheet that has to suppress the
+## estimate tables can still say what this party can and cannot hurt. For 15 of 20 roster species a
+## bare-handed party's effective attack is 0, and the line says so plainly.
+##
+## `hunt_gate_model` is exactly this asked at the band's own tier, so the two can never disagree about
+## what a gate is; only about whose attack it is.
+static func hunt_gate_model_at(attack: float, herd: Dictionary, quarry: String) -> Dictionary:
+    var blank := {"stated": false, "blocked": false, "effective_attack": 0.0, "text": ""}
+    var defense := float(herd.get(HERD_DEFENSE_KEY, 0.0))
+    # `durability` is still the STATED-ness test even though no surviving face quotes it: a species
+    # the roster cannot resolve reads `0`, and answering `blocked` about one whose defence we could
+    # not look up would refuse a hunt on a gap in the data.
+    if float(herd.get(HERD_DURABILITY_KEY, 0.0)) <= 0.0:
+        return blank
+    var effective := maxf(attack - defense, 0.0)
+    if effective > 0.0:
+        # **A WINNABLE FIGHT SAYS NOTHING, and `text` is empty rather than absent.** The reading the
+        # caller acts on is `blocked`; `effective_attack` stays for anyone composing on the margin.
+        return {"stated": true, "blocked": false, "effective_attack": effective, "text": ""}
+    return {"stated": true, "blocked": true, "effective_attack": 0.0,
+        "text": HUNT_GATE_BLOCKED_FORMAT % [
+            HUNT_FORECAST_WARN_GLYPH, quarry,
+            String.num(attack, HUNT_GATE_SCALAR_DECIMALS),
+            String.num(defense, HUNT_GATE_SCALAR_DECIMALS)]}
+
+# The three wire terms the gate is composed from — the BAND's resolved per-hunter attack (1 bare-
+# handed, 20 speared) and the HERD's two defensive axes. `defense` is whether a hit counts at all,
+# `durability` is how many counting hits it takes; they blur easily and must not.
+const BAND_HUNTER_ATTACK_KEY := "hunter_attack"
+const HERD_DEFENSE_KEY := "defense"
+const HERD_DURABILITY_KEY := "durability"
 
 ## THE ONE DEFINITION of a worked source's trade rate, read off a labor-assignment / worker-map dict.
 ##
@@ -955,7 +1361,28 @@ static func round_trip_travel_turns(band: Dictionary, herd: Dictionary,
         grid_width, wrap_horizontal)
     if one_way < 0:
         return 0
-    return int(ceil(float(2 * one_way) / move_rate))
+    return int(ceil(float(TRAVEL_LEGS_PER_ROUND_TRIP * one_way) / move_rate))
+
+# A round trip is out and back. Named because `outbound_travel_turns` divides by it and a bare `2`
+# there would read as an unexplained halving rather than as "one of the two legs".
+const TRAVEL_LEGS_PER_ROUND_TRIP := 2
+
+## **THE OUTBOUND LEG ALONE — the walk OUT, taken from the round trip rather than measured again.**
+##
+## There is exactly ONE definition of travel in this client (`round_trip_travel_turns`, which mirrors
+## the server's launch feed), and this is a reading of it, not a second one: for an integer `n`,
+## `ceil(ceil(x)/n) == ceil(x/n)`, so `ceil(round_trip / 2)` is EXACTLY `ceil(one_way / move_rate)` —
+## the turn the party arrives. A second `hex_distance ÷ move_rate` here would be a second definition
+## free to drift from the one the hunt readout and the server both use.
+##
+## **WHO WANTS THE OUTBOUND LEG RATHER THAN THE ROUND TRIP:** a HUNT's payload only counts once it is
+## carried home, so its headline is the whole round trip. A DENIAL raid's verdict is about the HERD
+## crossing the point of no return — an event that happens on the range, the moment the party has
+## walked there and started killing — so the return leg falls outside the span the verdict is about.
+static func outbound_travel_turns(band: Dictionary, herd: Dictionary,
+        grid_width: int, wrap_horizontal: bool) -> int:
+    return int(ceil(float(round_trip_travel_turns(band, herd, grid_width, wrap_horizontal))
+        / float(TRAVEL_LEGS_PER_ROUND_TRIP)))
 
 ## **THE STOCK STANDING ABOVE `floor`, in biomass** — `max(0, B − floor·K)`, the client half of the
 ## one expression both take paths pay (`fauna::hunt_escapement_ceiling` /
@@ -1165,8 +1592,96 @@ static func learn_multiplier(floor: float) -> float:
 static func haul_workers(ceiling: float, body: float, per_worker: float) -> int:
     if body <= 0.0 or not can_price_crew(per_worker):
         return 0
-    var animals := floori(maxf(ceiling, 0.0) / body) + HUNT_PEAK_DROP_BANK_BONUS
-    return ceili(float(animals) * body / per_worker)
+    return ceili(float(peak_animal_drop(ceiling, body)) * body / per_worker)
+
+## **THE MOST WHOLE ANIMALS A `ceiling` CAN DROP IN ONE TURN** — `floor(ceiling / body) + 1`, the
+## client mirror of the sim's `fauna::peak_animal_drop`, and shared by BOTH crew terms below for the
+## reason the sim shares it: two terms sized against different drops can never be reconciled.
+## `body` is assumed positive — every caller checks it first.
+static func peak_animal_drop(ceiling: float, body: float) -> int:
+    return floori(maxf(ceiling, 0.0) / body) + HUNT_PEAK_DROP_BANK_BONUS
+
+## **THE WHOLE-ANIMAL ENGAGEMENT CREW**, mirroring the sim's `fauna::hunt_engage_workers` exactly: how
+## many hunters it takes to bring the peak animal drop *into contact* in one turn. It is the exact
+## inverse of `animals_engaged` — that floors `workers × engage_rate × dip` to whole animals, so the
+## crew reaching `n` of them is `ceil(n / (engage_rate × dip))`.
+##
+## **IT CANNOT BE FOLDED INTO `haul_workers`, because the two scale on DIFFERENT UNITS** — hauling is
+## per biomass (one hauler carries 40), engaging is per animal (one hunter reaches 10 fowl or 0.05
+## mammoths) — so neither dominates across the roster. A Wild Fowl herd with ~470 head above its floor
+## is ~61 biomass: **two** haulers clear it and **47** hunters are needed to reach it, so a cap sized
+## on carry alone said "more hands would be idle" about the very hands the take was short of. The
+## mammoth inverts it (one hunter reaches the peak drop; twenty are needed to carry it home).
+##
+## **THE DIP RIDES THIS CREW TOO** (`docs/plan_harvest_floor.md` §3.1) — hands gentling a herd are
+## hands not stalking it, so it takes proportionally more of them to corner the same drop.
+##
+## `0` where the term has nothing to say: a source with no engagement stage (`NO_ENGAGEMENT_STAGE` —
+## a pen, the plant web) or a degenerate body/dip. The `max()` then keeps the haul crew and neither
+## web regresses. Units on `ceiling`/`body` are free, exactly as they are for `haul_workers`.
+static func engage_workers(ceiling: float, body: float, engage_rate: float, dip: float) -> int:
+    if body <= 0.0:
+        return 0
+    var reach := engagement_per_worker(engage_rate, dip)
+    if is_inf(reach):
+        return 0
+    return ceili(float(peak_animal_drop(ceiling, body)) / reach)
+
+## **THE ANIMALS ONE WORKER BRINGS INTO CONTACT PER TURN** — `engageRate × dip`, and the ONE
+## composition of that pair every engagement quotient in this file divides by. It exists so the three
+## of them (the engagement crew above, the engagement carry below, and through it every crew target)
+## cannot be written against three spellings of one product.
+##
+## `ENGAGEMENT_UNBOUNDED` where there is no engagement stage at all — a pen, the whole plant web, a dip
+## of zero — so a caller drops the term with a `min()` or an `is_inf` rather than a per-site branch on
+## `NO_ENGAGEMENT_STAGE`. **The dip rides it** (`docs/plan_harvest_floor.md` §3.1): hands gentling a
+## herd are hands not stalking it.
+static func engagement_per_worker(engage_rate: float, dip: float) -> float:
+    var reach := maxf(engage_rate, 0.0) * maxf(dip, 0.0)
+    if reach <= NO_ENGAGEMENT_STAGE or is_inf(reach):
+        return ENGAGEMENT_UNBOUNDED
+    return reach
+
+## **THE BIOMASS ONE WORKER BRINGS INTO CONTACT PER TURN** — `bodyMass × engageRate × dip`, the
+## engagement stage's exact twin of the haul side's `perWorkerBiomass × dip`. Stating the reach in the
+## room's OWN units is what lets a crew target stay one quotient: the hands that move a room in a turn
+## are `room ÷ min(carry, this)`, because a take is bounded by both and the smaller one binds — which
+## is the sim's `min(carryable, engaged)` read backwards.
+##
+## `ENGAGEMENT_UNBOUNDED` for a source with no engagement stage AND for one with no body to count
+## (every forage patch), so `min(carry, …)` collapses to the carry alone and the plant web and the pens
+## are byte-identical to before this arm existed. That is the regression that matters most here.
+static func engagement_carry(body_mass: float, engage_rate: float, dip: float) -> float:
+    if body_mass <= 0.0:
+        return ENGAGEMENT_UNBOUNDED
+    var reach := engagement_per_worker(engage_rate, dip)
+    return ENGAGEMENT_UNBOUNDED if is_inf(reach) else body_mass * reach
+
+## **THE TAKE-SIDE CREW FOR A WHOLE-ANIMAL SOURCE** — `max(haul, engage)`, the client mirror of the
+## sim's `fauna::hunt_take_workers`, and the one place that `max` is written down. Two jobs, one crew,
+## two units: reach the animals, then carry them home. `max()`, never `+` — one crew covering its
+## busiest job.
+##
+## Units on `ceiling`/`body` are free (an animal count is a ratio), so this answers in biomass for the
+## crew targets and in the paid account for the worker cap, exactly as its two halves do.
+static func take_workers(ceiling: float, body: float, per_worker: float,
+        engage_rate: float, dip: float) -> int:
+    return maxi(haul_workers(ceiling, body, per_worker),
+        engage_workers(ceiling, body, engage_rate, dip))
+
+## **HOW MANY ANIMALS THIS PARTY BRINGS INTO CONTACT THIS TURN** — the client mirror of the sim's
+## `fauna::animals_engaged`, and the one definition of it, so no two readings of a herd can disagree
+## about how many it could reach. `floor(workers × engage_rate × dip)`, never below one for a party
+## that exists (`ENGAGED_AT_LEAST`); a party of no workers engages nothing, which is a different
+## statement and is why the worker test comes first.
+##
+## `ENGAGEMENT_UNBOUNDED` for a source with no engagement stage, so the caller's `min()` drops the arm.
+static func animals_engaged(workers: int, engage_rate: float, dip: float) -> float:
+    if workers <= 0:
+        return 0.0
+    if engage_rate <= NO_ENGAGEMENT_STAGE:
+        return ENGAGEMENT_UNBOUNDED
+    return maxf(floorf(float(workers) * engage_rate * maxf(dip, 0.0)), ENGAGED_AT_LEAST)
 
 ## ***CLEAR IT NOW*** — the crew that takes everything standing above the floor in ONE turn:
 ## `room ÷ (perWorkerBiomass × dip)`, a closed form in terms already on the wire. Deliberately NOT
@@ -1182,12 +1697,22 @@ static func haul_workers(ceiling: float, body: float, per_worker: float) -> int:
 ## is FLOORED on the reaching crew. The one-turn drain still wins wherever the room is large, which is
 ## the case the label was written for; a `reaching` of `NO_CREW_ANSWER` (no priceable crew, nothing
 ## standing above the floor) floors on nothing.
-static func crew_to_clear(room: float, carry: float, reaching: int) -> int:
+##
+## **THE ROOM IS DIVIDED BY WHAT A WORKER CAN MOVE, WHICH ON A HUNT IS NOT WHAT THEY CAN CARRY.**
+## `min(carry, engagement_carry)` is the sim's `min(carryable, engaged)` read backwards: a take is
+## bounded by both, so the crew that clears a room in one turn is set by the SMALLER of the two.
+## Reported from play on a Red Deer herd — six hunters carry sixteen deer (`6 × 40 ÷ 15`) and REACH
+## six (`6 × engageRate 1`), so `6 clear it now` named a crew that needed three turns, beside a worker
+## cap that had already become engagement-aware. A source with no engagement stage answers
+## `ENGAGEMENT_UNBOUNDED`, so the `min` collapses to the carry and forage and pens are unmoved.
+static func crew_to_clear(room: float, carry: float, reaching: int,
+        body_mass: float, engage_rate: float, dip: float) -> int:
     if not can_price_crew(carry):
         return NO_CREW_ANSWER
     if room <= 0.0:
         return 0
-    return maxi(maxi(1, ceili(room / carry)), maxi(reaching, 0))
+    var per_worker := minf(carry, engagement_carry(body_mass, engage_rate, dip))
+    return maxi(maxi(1, ceili(room / per_worker)), maxi(reaching, 0))
 
 ## ***HOLD IT AFTER*** — the crew that takes exactly what grows back at the floor, so the stock sits
 ## there: the interpolated regrowth at the floor over the same carry, **rounded up to one whole body
@@ -1197,15 +1722,21 @@ static func crew_to_clear(room: float, carry: float, reaching: int) -> int:
 ## `0` is a real answer with two causes, and both are worth stating: at floor `1.0` nothing is ever
 ## taken, and below a herd's Allee point the regrowth is NEGATIVE — there is no take that holds a
 ## stock which is falling on its own.
+##
+## **ON A WHOLE-ANIMAL SOURCE IT IS `take_workers`, NOT `haul_workers`** — the hands that hold a herd
+## have to REACH the regrowth as well as carry it, and on a light-bodied quarry reaching is by far the
+## larger of the two (the sim's `hunt_take_workers` `max`, one crew covering its busiest job). The
+## engagement half answers 0 for a pen and for a species with no engagement stage, so the `max`
+## collapses back to the haul crew and neither web moves.
 static func crew_to_hold(samples: PackedFloat32Array, floor: float, carry: float,
-        body_mass: float) -> int:
+        body_mass: float, engage_rate: float, dip: float) -> int:
     if not can_price_crew(carry):
         return NO_CREW_ANSWER
     var growth := regrowth_at(samples, clamp_floor(floor))
     if growth <= 0.0:
         return 0
     if body_mass > 0.0:
-        return haul_workers(growth, body_mass, carry)
+        return take_workers(growth, body_mass, carry, engage_rate, dip)
     return maxi(1, ceili(growth / carry))
 
 ## The same *hold it after* crew, resolved straight from a SOURCE — the form `forecast_inputs` carries
@@ -1221,9 +1752,11 @@ static func hold_crew(src: Dictionary, kind: String, prefix: String, floor: floa
         improvement: String) -> int:
     if source_is_managed(src, kind, prefix):
         return 0
+    var dip := build_dip(src, prefix, improvement)
     var crew := crew_to_hold(regrowth_samples(src, prefix), floor,
-        per_worker_biomass(src, prefix) * build_dip(src, prefix, improvement),
-        float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)))
+        per_worker_biomass(src, prefix) * dip,
+        float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)),
+        float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)), dip)
     return maxi(crew, 0)
 
 ## The *reaching* crew — `crew_that_reaches` resolved straight from a SOURCE, in the form
@@ -1244,10 +1777,13 @@ static func reach_crew(src: Dictionary, kind: String, prefix: String, floor: flo
         improvement: String) -> int:
     if source_is_managed(src, kind, prefix):
         return 0
+    var dip := build_dip(src, prefix, improvement)
     var crew := crew_that_reaches(regrowth_samples(src, prefix),
         float(src.get(prefix + FORECAST_BIOMASS_KEY, 0.0)),
         float(src.get(prefix + FORECAST_CAPACITY_KEY, 0.0)), floor,
-        per_worker_biomass(src, prefix) * build_dip(src, prefix, improvement))
+        per_worker_biomass(src, prefix) * dip,
+        float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)),
+        float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)), dip)
     return maxi(crew, 0)
 
 ## **THE PROJECTION** — the stock's trajectory under this crew at this floor, one turn at a time:
@@ -1259,8 +1795,17 @@ static func reach_crew(src: Dictionary, kind: String, prefix: String, floor: flo
 ## is `floor(ceiling / bodyMass)` — not linear, so no client may re-derive it, and `SourceYield.actual`
 ## on a committed assignment is the sim's answer. What is drawn here is the crew's smoothed carry
 ## against the source's own growth: a projection, never a promise.
+##
+## **IT DOES BOUND THE TAKE BY WHAT THE PARTY CAN REACH** (`docs/plan_hunt_through_combat.md` §2), and
+## that is not a quantisation — it is the third arm of the sim's own `min`. `engage_total` is the
+## BIOMASS the crew brings into contact in a turn (`engaged_quantum(workers, bodyMass, …)`, i.e. the
+## floored whole-animal count times the body), so the walk descends at the rate the sim would actually
+## pay rather than at the rate the crew could carry. `ENGAGEMENT_UNBOUNDED` — the default, and what a
+## pen and the whole plant web resolve to — drops the arm and leaves every existing caller's walk
+## byte-identical.
 static func project_stock(samples: PackedFloat32Array, biomass: float, capacity: float,
-        floor: float, carry_total: float) -> Dictionary:
+        floor: float, carry_total: float,
+        engage_total: float = ENGAGEMENT_UNBOUNDED) -> Dictionary:
     var series := PackedFloat32Array()
     var reached := PROJECTION_REACHED_NONE
     if capacity <= 0.0:
@@ -1268,13 +1813,15 @@ static func project_stock(samples: PackedFloat32Array, biomass: float, capacity:
     var stock := clampf(biomass, 0.0, capacity)
     var start_fraction := stock / capacity
     var floor_fraction := clamp_floor(floor)
+    # What this crew can move in one turn: the smaller of what it CARRIES and what it REACHES.
+    var crew_take := minf(maxf(carry_total, 0.0), maxf(engage_total, 0.0))
     series.push_back(start_fraction)
     for turn in range(PROJECTION_HORIZON_TURNS):
         # REGROW — the curve's own answer at this stock, sign and all. A negative sample is a decline
         # the crew did not cause and cannot stop.
         stock = clampf(stock + regrowth_at(samples, stock / capacity), 0.0, capacity)
-        # TAKE — the escapement room, capped by what the crew can carry.
-        stock = maxf(0.0, stock - minf(maxf(carry_total, 0.0),
+        # TAKE — the escapement room, capped by what the crew can carry and reach.
+        stock = maxf(0.0, stock - minf(crew_take,
             maxf(0.0, stock - floor_fraction * capacity)))
         var fraction := stock / capacity
         series.push_back(fraction)
@@ -1293,8 +1840,13 @@ static func project_stock(samples: PackedFloat32Array, biomass: float, capacity:
 ## must out-carry the largest regrowth in the band it has to cross); the probe steps past it only
 ## cover reaching that equilibrium within the drawn horizon. `NO_CREW_ANSWER` when the throughput
 ## cannot be priced or no crew inside the probe reaches it.
+##
+## **THE CREW HAS TO OUT-TAKE THAT REGROWTH, AND ON A HUNT ITS TAKE IS BOUNDED BY REACH** — so the
+## closed form divides by `min(carry, engagement_carry)` and each probe walks a projection carrying
+## the same bound. Dividing by the carry alone named a crew that cannot draw the herd down at all,
+## which is the number the verdict offers as the remedy and the number the *clear* target floors on.
 static func crew_that_reaches(samples: PackedFloat32Array, biomass: float, capacity: float,
-        floor: float, carry: float) -> int:
+        floor: float, carry: float, body_mass: float, engage_rate: float, dip: float) -> int:
     if not can_price_crew(carry) or capacity <= 0.0:
         return NO_CREW_ANSWER
     var start_fraction := clampf(biomass / capacity, 0.0, 1.0)
@@ -1302,9 +1854,11 @@ static func crew_that_reaches(samples: PackedFloat32Array, biomass: float, capac
     if start_fraction <= floor_fraction:
         return 0
     var peak := peak_regrowth_between(samples, floor_fraction, start_fraction)
-    var need := maxi(1, floori(maxf(peak, 0.0) / carry) + 1)
+    var per_worker := minf(carry, engagement_carry(body_mass, engage_rate, dip))
+    var need := maxi(1, floori(maxf(peak, 0.0) / per_worker) + 1)
     for _step in range(CREW_PROBE_STEPS):
-        var walk := project_stock(samples, biomass, capacity, floor, float(need) * carry)
+        var walk := project_stock(samples, biomass, capacity, floor, float(need) * carry,
+            engaged_quantum(need, body_mass, engage_rate, dip))
         if int(walk["reached_turn"]) != PROJECTION_REACHED_NONE:
             return need
         need += 1
@@ -1324,6 +1878,15 @@ static func crew_that_reaches(samples: PackedFloat32Array, biomass: float, capac
 ## capacity, no published curve, or a rung-3 managed one has no drawdown projection at all, so the
 ## flag is left exactly as it was rather than suppressed on the strength of a walk that was never
 ## taken.
+##
+## **IT WALKS THE ENGAGEMENT-BOUND PROJECTION, THE SAME ONE THE VERDICT IS WRITTEN OFF.** The gate and
+## the sentence beneath it are two readings of ONE walk — that is the whole point of the gate — so a
+## carry-only walk here would fall where the verdict's rises and put `⚠ overdraws the herd` back above
+## *it settles at 84% and holds there*, in the one case the arm exists for: a party that cannot reach
+## what it could carry. It is not the safe direction either, however subtractive the gate is; a flag
+## kept by a projection the panel does not believe is the same contradiction the flag was gated to
+## remove. A source with no engagement stage resolves to `ENGAGEMENT_UNBOUNDED` and walks exactly the
+## carry-bound projection it always did.
 static func take_draws_down(src: Dictionary, kind: String, prefix: String, floor: float,
         workers: int, improvement: String) -> bool:
     var capacity := float(src.get(prefix + FORECAST_CAPACITY_KEY, 0.0))
@@ -1332,9 +1895,13 @@ static func take_draws_down(src: Dictionary, kind: String, prefix: String, floor
             or source_is_managed(src, kind, prefix):
         return true
     var biomass := float(src.get(prefix + FORECAST_BIOMASS_KEY, 0.0))
-    var carry := per_worker_biomass(src, prefix) * build_dip(src, prefix, improvement)
+    var dip := build_dip(src, prefix, improvement)
+    var carry := per_worker_biomass(src, prefix) * dip
+    var crew := maxi(workers, 0)
     var walk := project_stock(samples, biomass, capacity, clamp_floor(floor),
-        float(maxi(workers, 0)) * carry)
+        float(crew) * carry,
+        engaged_quantum(crew, float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)),
+            float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)), dip))
     return float(walk["settled_fraction"]) \
         < clampf(biomass / capacity, 0.0, 1.0) - STOCK_FRACTION_EPSILON
 
@@ -1382,6 +1949,215 @@ const VERDICT_SETTLES_END := "."
 const VERDICT_AT_FLOOR_FORMAT := "Already at or below the floor. This crew takes nothing until it grows past %s."
 # No crew at all is its own reading and must not render as "reaches the floor in 0 turns".
 const VERDICT_NO_CREW := "No one assigned. Nothing is taken and it grows back on its own."
+
+# ---- THE DENIAL RAID — a MISSION, not a floor (`docs/plan_denial_raid.md`) -----------------------
+# **IT CARRIES NO FLOOR AND NO RATE, WHICH IS WHY NONE OF THE RAID VOCABULARY ABOVE APPLIES TO IT.**
+# A hunting raid's readout answers "what comes home, and when"; a denial party deliberately publishes
+# no `expeditionProjectedDelivery` / `expeditionEtaTurns` / `expeditionTripBound` at all, because its
+# goal is not a delivery — it is to push the herd BELOW `ecology.collapse_fraction`, where growth
+# zeroes and the decline is irreversible, and then walk away (§1.1). So its readout is a COLLAPSE
+# VERDICT, and `expeditionFloor` (`0.0`) / `expeditionFillTarget` (`0`) must never be rendered for it:
+# they are the mission reporting that it has no such lever, not values it chose.
+const HERD_DENIAL_ESTIMATES_KEY := "denial_estimates"
+# The table is an ARRAY with ONE axis — party size — so a row's own `party_workers` is its identity
+# and `denial_estimate_row` SCANS for it. (`huntTripEstimates` needs a composite key because it is
+# sampled on two axes; that key is where its Rust-float-Display trap comes from, and one axis is
+# exactly what makes the trap inexpressible here.)
+const DENIAL_ESTIMATE_PARTY_KEY := "party_workers"
+# **THE PARTY THE SHEET OPENS ON** — the sim's own `denialPartyNeeded`: the smallest party in the
+# table above whose raid SUCCEEDED (`DENIAL_SUCCESS_OUTCOMES`), i.e. the smallest one whose kills
+# outpace this herd's regrowth. **NOT "the first row that is not `repelled`"** — that reading quotes a
+# `horizon` row, whose projection merely ran out, as the party that breaks the herd. It is what the stepper seeds to and what the repelled refusal names, and both read it
+# through `denial_party_needed` so the control and the sentence cannot quote different counts.
+const HERD_DENIAL_PARTY_NEEDED_KEY := "denial_party_needed"
+# **`0` IS "NO QUOTED PARTY DRIVES THIS HERD DOWN", and it is NEVER "send nobody".** Three honest
+# situations reach it (a quarry nothing can bring into contact, a requirement past the sim's quoting
+# bound, a herd out-growing the whole table), all told apart by the rows' own `outcome` — so the
+# client renders the verdict, never seeds the stepper here, and never invents a figure for the copy.
+const DENIAL_PARTY_NEEDED_NONE := 0
+# **THE SHORT-HANDED FACE — the one state in which this sheet's Send is DISABLED.** Named for the
+# BAND's shortfall rather than for the raid's outcome, because that is what the player has to fix; the
+# `repelled` face beside it ("Send Anyway") would read as an offer the button is refusing to honour.
+const DENIAL_SHORT_HANDED_BUTTON := "Not Enough Hunters"
+# …and the reason beneath it, in the sheet's own hint register, stating BOTH numbers: what the herd
+# requires and what the band actually has. The stepper above it is already sitting at the second.
+const DENIAL_SHORT_HANDED_REASON_FORMAT := "%s needs %d hunters and this band has only %d idle. Free up workers before this raid can break the herd."
+# **`0` MEANS "NOT WITHIN THE HORIZON" ON THAT END, never "immediately".** `Low` is the FEWEST turns
+# — the optimistic draw, where more animals stay and more strikes land — so a positive `low` beside a
+# `0` `high` reads "only on a good run".
+const DENIAL_TURNS_BEYOND_HORIZON := 0
+# The sim's own `DenialOutcome` keys. `repelled` and `horizon` are the pair this arc insists on, and
+# they are NOT interchangeable: `repelled` is a verdict about the PARTY (its kills do not outpace the
+# herd's regrowth, so no amount of waiting gets there), `horizon` is a verdict about the CLOCK (the
+# projection ran out). Rendering one for the other blames the herd for the party's problem, which
+# this arc has already shipped twice.
+const DENIAL_OUTCOME_PAST_RECOVERY := "past_recovery"
+const DENIAL_OUTCOME_HERD_LOST := "herd_lost"
+const DENIAL_OUTCOME_REPELLED := "repelled"
+const DENIAL_OUTCOME_HORIZON := "horizon"
+# The unattributed key — an estimate row that carries no outcome at all. It names NEITHER side, for
+# the reason `HUNT_EMPTY_REFUSALS`' own unattributed entry does: guessing is the defect.
+const DENIAL_OUTCOME_NONE := ""
+# **THE TWO OUTCOMES IN WHICH THE RAID ACTUALLY WORKED** — the herd goes under the Allee threshold
+# and cannot come back, or falls past its extinction floor and despawns. Everything else is a raid
+# that did NOT get there, and the reason to name the set rather than to spell "not repelled" at each
+# reader is that those are DIFFERENT SETS: **`horizon` is not `repelled` and it is not a success
+# either.** A horizon row means the projection ran its whole length with the herd still standing —
+# the party may well get there after it, and it may not — so quoting one as the party that breaks
+# this herd promises an outcome the sim declined to state. That is exactly the defect this constant
+# exists to make unexpressible; it shipped as "the first row that is not `repelled`" and opened a
+# Wild Aurochs sheet on a party of 5 under the verdict *"still standing when the forecast runs out"*.
+#
+# **It is the same set the table below marks `VERDICT_OK`**, and must stay so: severity there is the
+# raid's verdict and not a tint choice — `denial_outcome_succeeds` and the Send button's primary face
+# are two readings of one question. `band_panel_preview` asserts the two agree entry by entry.
+const DENIAL_SUCCESS_OUTCOMES := [DENIAL_OUTCOME_PAST_RECOVERY, DENIAL_OUTCOME_HERD_LOST]
+
+# **THE TURN COUNT IS AN ESTIMATE, AND EVERY FORM OF IT WEARS `≈`.** `turns_to_collapse` is an
+# integral over many stochastic retreat draws, so a lucky run really can finish sooner than the
+# reported low (measured: a seeded raid landed on turn 7 against a reported low of 8). The band is a
+# claim about the EXPECTATION, not a promise per run — hence `≈` on both ends and the caveat below.
+# **THE LEAD FIGURE, AND IT IS THE EXPECTATION WHEREVER THE SIM BOUNDED ONE.** Every other number on
+# this sheet — the kill count, the food hauled, the waste left on the range — is priced at
+# `turns_to_collapse`, so a sentence leading with any other draw describes a different raid from the
+# take line beneath it. Reported from play: a Red Deer raid read *"≈12 turns on a good run"* over a
+# take of 180 kills, which is the forty-seven-turn expectation's take. The old rule dropped the
+# expectation entirely whenever `high` was unbounded — the one number that matched the rest of the
+# sheet was the one never printed.
+const DENIAL_TURNS_ONE_FORMAT := "≈%d turns"
+# **WHICH SPAN THE FIGURE IS IN, and neither surface may leave it to be inferred** (reported from play).
+# The collapse table counts turns spent WORKING the herd; the party still has to walk there, and the
+# hunt readout on the same sheet has always added its round trip. A pre-launch verdict states the total
+# FROM LAUNCH; an in-flight one quotes the table's own raiding turns, a launched party's remaining walk
+# not being knowable from the drawer's inputs.
+const DENIAL_SPAN_FROM_LAUNCH := " from launch"
+const DENIAL_SPAN_OF_RAIDING := " of raiding"
+# The clause the lead figure rides in, appended to the outcome sentence rather than baked into each
+# entry's format: an outcome that quotes no turns must still render its outcome (below).
+const DENIAL_TURNS_LEAD_FORMAT := " in %s%s"
+# **THE EXPECTATION ITSELF RAN PAST THE HORIZON, so only luck gets there at all.** This is the one
+# place "on a good run" is the right words — and it must still say outright that the raid is not
+# expected to finish, or a lone optimistic number reads as the answer.
+const DENIAL_ONLY_GOOD_RUN_LEAD_FORMAT := " only on a good run — %s%s"
+const DENIAL_SPREAD_NOT_EXPECTED := ", and the raid is not expected to finish inside the forecast"
+# **THE SPREAD, STATED AFTER THE EXPECTATION RATHER THAN INSTEAD OF IT.** The ordinary case names both
+# ends; the reported case names the good end and says the bad one is unbounded. An unbounded end is
+# always SAID to be unbounded — silently dropping it is what let a lucky-run figure stand alone.
+const DENIAL_SPREAD_RANGE_FORMAT := " — between %d and %d depending on the run"
+const DENIAL_SPREAD_OPEN_HIGH_FORMAT := " — as few as %d on a good run, and a bad one may not finish"
+# …and where there IS travel folded into that total, how much of it is the walk — the hunt line's
+# `(7 hunting + 3 travel)` split, in the one term a denial total actually adds. Rendered only when
+# there is travel to split off, exactly as the hunt breakdown is.
+const DENIAL_TRAVEL_SPLIT_FORMAT := " (%d of them travel)"
+# The forecast's own travel key, and the sentinel for "no band was supplied, so this forecast states
+# the AT-THE-HERD span". A real leg is never negative, so `-1` reads unambiguously as absent — the
+# `HUNT_RATE_UNAVAILABLE` idiom. It is NOT `0`: a band standing on its quarry has a real zero-turn
+# walk and must still read "from launch".
+const DENIAL_TRAVEL_KEY := "travel"
+const DENIAL_TRAVEL_UNKNOWN := -1
+# **HOW LONG THE FORECAST THAT "RAN OUT" ACTUALLY IS** — `expeditionForecastHorizonTurns`, carried onto
+# the forecast so the `horizon` verdict can say it. `FORECAST_HORIZON_UNKNOWN` (`0`) when the caller had
+# no cohort carrying the lever, in which case the verdict keeps its hedge.
+const DENIAL_HORIZON_TURNS_KEY := "horizon_turns"
+# The caveat, in the panel's own hint register. It is what keeps the band from reading as a guarantee.
+const DENIAL_ESTIMATE_CAVEAT := "An estimate over many raids — the fight is chancy, so a lucky run finishes sooner."
+
+# **THE VERDICT TABLE — one entry per outcome, all four faces of it in ONE place** (the
+# `HUNT_EMPTY_REFUSALS` idiom, and for the same reason: the line, the button and the spelled-out
+# reason are three views of one answer, and three lookups are free to disagree).
+#
+# `turns` is whether THIS outcome has a turn count to quote at all. A `repelled` party never gets
+# there, so quoting a number would be a promise the sim did not make; the outcome word is the whole
+# answer. **That is also the structural guarantee behind "never render a blank turn count without its
+# outcome"** — the line IS the outcome, and the turn clause is only ever appended to it.
+const DENIAL_VERDICTS := {
+    # It works: the herd goes under the Allee threshold and cannot come back. The mission's own
+    # success condition, so the send is the plain primary one.
+    DENIAL_OUTCOME_PAST_RECOVERY: {
+        "line": "%s past recovery",
+        "turns": true,
+        "button": "Send Denial Raid",
+        "severity": VERDICT_OK,
+        "reason": "",
+    },
+    # It works HARDER than asked: the herd falls past its extinction floor and despawns entirely. Not
+    # a failure — a bigger version of the same success, and the copy must not read as a warning.
+    DENIAL_OUTCOME_HERD_LOST: {
+        "line": "%s wiped out",
+        "turns": true,
+        "button": "Send Denial Raid",
+        "severity": VERDICT_OK,
+        "reason": "",
+    },
+    # **A VERDICT ABOUT THE PARTY.** Its kills per turn sit at or below the herd's own regrowth, so
+    # the raid never gets there however long it works — the remedy is HANDS, and the herd is not the
+    # thing to fix. It still LAUNCHES (a raid that cannot get there keeps working the herd until it
+    # is recalled, §6 Q2), so this warns and never blocks.
+    # **TWO REASONS, AND WHICH ONE RENDERS IS A FACT ABOUT THE SIM'S ANSWER, NOT ABOUT THE WORDING.**
+    # "Send more hunters" is correct on the merits and useless in hand: it prescribes hands without
+    # naming how many, while the sim has been shipping the exact figure (`denialPartyNeeded`) all
+    # along. So where there IS a number, `reason_counted` names it — `%s` the quarry, `%d` the party
+    # — and where there is not (`DENIAL_PARTY_NEEDED_NONE`), the bare `reason` stands verbatim,
+    # because inventing a figure there would be a promise the sim did not make.
+    DENIAL_OUTCOME_REPELLED: {
+        "line": "%s breeds back faster than this party kills — it is never pushed past recovery",
+        "turns": false,
+        "button": "Send Anyway (never collapses)",
+        "severity": VERDICT_SLOW,
+        "reason": "This party's kills do not outpace %s's regrowth. Send more hunters — the herd is not the problem.",
+        "reason_counted": "This party's kills do not outpace %s's regrowth. It takes %d hunters to push this herd past recovery — the herd is not the problem.",
+    },
+    # **A VERDICT ABOUT THE CLOCK.** The projection ran its whole length; the party may well get there
+    # after it. Deliberately worded so it cannot be mistaken for the party being outmatched.
+    #
+    # **`line_bounded` SAYS HOW LONG THAT LENGTH IS, IN THIS SHEET'S OWN SPAN.** "When the forecast runs
+    # out" names a clock the player cannot see, so where the horizon is on the wire the sentence quotes
+    # it — shifted onto the launch clock by the same outbound walk `denial_turns_clause` shifts its
+    # figures by, and closed by the same `from launch` / `of raiding` words, or the two spans on one
+    # sheet would mean different things. `%s` quarry, `%d` turns, `%s` span. The bare `line` stands where
+    # no cohort carried the lever: a hedge beats a number that is wrong in the reassuring direction.
+    DENIAL_OUTCOME_HORIZON: {
+        "line": "%s is still standing when the forecast runs out",
+        "line_bounded": "%s is still standing after %d turns%s",
+        "turns": false,
+        "button": "Send Anyway (no collapse in sight)",
+        "severity": VERDICT_SLOW,
+        "reason": "The forecast ran its whole length without %s going past recovery. A bigger party gets there sooner.",
+    },
+    DENIAL_OUTCOME_NONE: {
+        "line": "%s — the forecast does not say whether this raid breaks the herd",
+        "turns": false,
+        "button": "Send Denial Raid",
+        "severity": VERDICT_SLOW,
+        "reason": "This raid on %s has no stated outcome, so the forecast names neither the herd nor the party.",
+    },
+}
+
+# **THE WASTE READOUT — stated, never hidden, and never dressed as a warning** (§3). On a hunt
+# `wasted` is the occasional overflow of an animal too big to haul and wears `HUNT_WASTE_NOTE_FORMAT`'s
+# `⚠`; on a raid it is essentially the whole take, and it is the POINT of the mission. So it is a
+# quiet factual line — what the party kills, the little it hauls home, and what it leaves standing
+# dead on the range — in the aside's own ink rather than amber.
+#
+# **THE WASTE IS A PAIR, exactly as the delivered payload is** — the sim runs ONE `HuntYield::apply`
+# over the wasted biomass, so a kill priced in hides wastes hides. Stated food-only, a raid on an
+# edible quarry reported the meat left rotting and silently dropped the pelts that went with it, on
+# the one mission whose entire readout is what it destroys and does not bring home. The two
+# components share ONE clause (`DENIAL_TAKE_LEFT_FORMAT`'s subject) rather than becoming a second
+# `·` clause: "on the range" is where BOTH ended up, and a trailing trade clause after it would read
+# as more of what came home.
+const DENIAL_TAKE_KILLS_FORMAT := "kills ≈%d %s"
+const DENIAL_TAKE_FOOD_FORMAT := " · brings home %s food"
+const DENIAL_TAKE_TRADE_FORMAT := " · %s %s trade goods"
+const DENIAL_TAKE_LEFT_FORMAT := " · leaves %s on the range"
+# The waste's TRADE half, glyph + words — the delivered line's own spelling of a trade quantity. The
+# FOOD half stays a bare magnitude, so an edible quarry with no trade renders exactly the sentence it
+# rendered before the pair existed.
+const DENIAL_TAKE_LEFT_TRADE_FORMAT := "%s %s trade goods"
+# …and what joins them when both are real. NOT `TRADE_COMPONENT_SEPARATOR` (` · `), which is what
+# separates the take line's own clauses — nesting it inside one clause's subject would read as a
+# fourth clause beginning at the trade figure and ending "on the range".
+const DENIAL_TAKE_LEFT_JOIN := " and "
 # §7.2 — WORKERS ABOVE THE HOLD NUMBER ARE STILL NEVER RELEASED. At-the-floor is the most reversible
 # condition in the model (drop the floor, or let the season move the hold number, and they are wanted
 # again), and this repo only rewrites an assignment for PERMANENT conditions. What changed is that the
@@ -1593,16 +2369,32 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
     # come from two different reads.
     var dip := build_dip(src, prefix, improvement)
     var carry := per_worker_biomass(src, prefix) * dip
-    var walk := project_stock(samples, biomass, capacity, floor_value, float(workers) * carry)
-    var hold := crew_to_hold(samples, floor_value, carry, float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)))
-    var reaching := crew_that_reaches(samples, biomass, capacity, floor_value, carry)
-    # Bound once and passed BOTH to the verdict and out on the model: the flag draws from the model
-    # and the verdict is composed here, so a second read of the same two keys is how the sheet ends up
-    # naming one threshold in two units. See `stock_face`.
+    # Bound once and passed to EVERYTHING below — the walk, all three crew targets, the verdict and
+    # out on the model. The flag draws from the model and the verdict is composed here, so a second
+    # read of the same keys is how the sheet ends up naming one threshold in two units
+    # (see `stock_face`) — and, since `9f716262`, how the targets end up carry-only beside a worker
+    # cap and a per-turn take that are not.
     var body_mass := float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0))
+    # **THE THIRD BOUND ON A HUNT TAKE** (`docs/plan_hunt_through_combat.md` §2). A patch publishes no
+    # such field and a pen publishes `NO_ENGAGEMENT_STAGE`, so both read as unbounded and every number
+    # composed below is exactly what it was before the arm existed.
+    var engage_rate := float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE))
+    var walk := project_stock(samples, biomass, capacity, floor_value, float(workers) * carry,
+        engaged_quantum(workers, body_mass, engage_rate, dip))
+    var hold := crew_to_hold(samples, floor_value, carry, body_mass, engage_rate, dip)
+    var reaching := crew_that_reaches(samples, biomass, capacity, floor_value, carry, body_mass,
+        engage_rate, dip)
     var quarry := herd_display_name(src) if kind == SOURCE_KIND_HERD else ""
     return {
         "known": true,
+        # **THE CREW EVERYTHING BELOW WAS COMPOSED AGAINST**, carried on the model rather than left
+        # implicit at the call site. The walk, the settled fraction and the verdict are all functions
+        # of it, so a sheet that composes this model BEFORE it clamps its own stepper draws a chart
+        # for a crew the row beneath refuses to show — a one-frame disagreement no capture can see.
+        # Carrying it makes that comparison a rendered-against-rendered assertion
+        # (`HarvestFloorChart.crew()` against the stepper's `PARTY_STEPPER_COUNT_META`) instead of a
+        # claim about a controller field.
+        "workers": workers,
         "capacity": capacity,
         "stock_fraction": clampf(biomass / capacity, 0.0, 1.0),
         # **THE PHASE THE SOURCE REPORTS, NOT ONE DERIVED HERE.** The chart tints the standing-stock
@@ -1625,7 +2417,8 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
         "body_mass": body_mass,
         "quarry": quarry,
         "learn_multiplier": learn_multiplier(floor_value),
-        "crew_to_clear": crew_to_clear(escapement_room(src, prefix, floor_value), carry, reaching),
+        "crew_to_clear": crew_to_clear(escapement_room(src, prefix, floor_value), carry, reaching,
+            body_mass, engage_rate, dip),
         "crew_to_hold": hold,
         # **THE DIP THE TWO TARGETS ABOVE WERE DIVIDED BY** (§3.1), carried so the crew row can SAY
         # it. Every impossible-looking number on a building sheet follows from it — six foragers move
@@ -1683,6 +2476,14 @@ static func herd_axis_rates(herd: Dictionary, floor: float, improvement: String)
         # be a smooth number beside a bodies-per-turn one.
         "hold_ceiling": float(forecast["axis_hold_ceiling"]),
         "per_animal": float(forecast["axis_per_animal"]),
+        # **THE ENGAGEMENT PAIR, so the delivered take can bound itself on the party's REACH.** The
+        # quantised take (`DrawerComposeController._hunt_delivered_and_waste`) composes its own
+        # `collection` rather than calling `expected_yield_account`, so the third arm has to reach it
+        # here or the sheet's headline stays carry-bound while the worker cap beside it is not. It
+        # bounds the whole-animal COUNT with `animals_engaged`, which is why the pair travels raw and
+        # undipped: that function applies the dip, and it is the ONE mirror of the sim's arithmetic.
+        "engage_rate": float(forecast["engage_rate"]),
+        "dip": float(forecast["dip"]),
     }
 
 ## Does the wire describe this source's forecast **at all**? A PRESENCE test, not a rate test — the
@@ -1862,6 +2663,13 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
         # (`crew_to_clear` / `crew_to_hold` apply the dip themselves, from the same `dip` above).
         "per_worker_biomass": per_worker_biomass(src, prefix),
         "dip": dip,
+        # **THE ENGAGEMENT THROUGHPUT, RAW** (`docs/plan_hunt_through_combat.md` §2) — carried
+        # undipped beside the `dip` above for the reason `per_worker_biomass` is: the two consumers
+        # (`expected_yield_account`'s reach arm and `max_useful_workers`' engagement crew) apply the
+        # dip themselves, through `animals_engaged` / `engage_workers`, which are the client's ONE
+        # mirror of the sim's arithmetic. A forage patch publishes no such field, so it reads
+        # `NO_ENGAGEMENT_STAGE` and both consumers drop the term.
+        "engage_rate": float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)),
         # **THE *HOLD IT AFTER* CREW, CARRIED SO THE WORKER CAP CAN FLOOR ITSELF ON IT** (§7.2). It is
         # the same number the chart's second crew target offers — the hands that take exactly what
         # grows back at this floor — and `max_useful_workers` takes the max of it and the one-turn
@@ -2056,7 +2864,17 @@ static func max_useful_workers(forecast: Dictionary) -> int:
     var hold := maxi(maxi(int(forecast.get("hold_crew", 0)), 0),
         maxi(int(forecast.get("reach_crew", 0)), 0))
     if bool(forecast.get("whole_animal", false)) and per_animal > 0.0:
-        return maxi(haul_workers(ceiling, per_animal, per_worker), hold)
+        # **TWO JOBS, ONE CREW, TWO UNITS** — reach the animals, then carry them home. This is the
+        # sim's `fauna::hunt_take_workers`, `max(haul, engage)` and never `+`: one crew covering its
+        # busiest job. Sizing it on carry alone told a Wild Fowl player "max 2 workers useful here"
+        # while ~470 birds stood above the floor and each hunter reached ten of them — the advice was
+        # backwards, and it was backwards for the whole life of the engagement field's absence.
+        # `take_workers` answers the haul crew alone for a pen and for a species with no engagement
+        # stage, exactly as this line did before that `max` had a name of its own — and it now has
+        # one because `crew_to_hold` asks the same question about the regrowth.
+        return maxi(take_workers(ceiling, per_animal, per_worker,
+            float(forecast.get("engage_rate", NO_ENGAGEMENT_STAGE)),
+            float(forecast.get("dip", NO_BUILD_DIP))), hold)
     return maxi(int(ceilf(ceiling / per_worker)), hold)
 
 ## The herding crew this herd demands, as a FLOOR on a local-hunt worker cap — the one definition,
@@ -2135,10 +2953,40 @@ static func source_worker_cap_state(forecast: Dictionary, workers: int, idle: in
         note = MAX_USEFUL_CAPPED_TOOLTIP % [useful, noun]
     return {"can_add": false, "note": note}
 
-## The take `workers` would ACTUALLY produce here: min(workers × per_worker, ceiling), scaled by the
-## acting band's output multiplier (the sim exports the forecast at 1.0).
+## The take `workers` would ACTUALLY produce here: min(workers × per_worker, ceiling, the party's
+## reach), scaled by the acting band's output multiplier (the sim exports the forecast at 1.0).
 static func expected_yield(forecast: Dictionary, workers: int, band: Dictionary) -> float:
-    return expected_yield_account(forecast, workers, band, "per_worker", "ceiling")
+    return expected_yield_account(forecast, workers, band, "per_worker", "ceiling",
+        FORECAST_FOOD_PER_ANIMAL_KEY)
+
+## **THE ENGAGEMENT ARM OF THE TAKE, IN ONE ACCOUNT'S UNITS** — `floor(workers × engageRate × dip)`
+## whole animals, each worth this account's per-animal quantum. That quantum IS `bodyMass ×
+## <account>PerBiomass` (the wire publishes the product as `food_per_animal` / `trade_per_animal`), so
+## this is the schema's `reach(workers, rung)` with no second derivation of the body.
+##
+## `ENGAGEMENT_UNBOUNDED` — i.e. the arm drops out of the caller's `min()` — in the two cases where it
+## has nothing to say: a source with **no engagement stage** (a pen, the plant web), and an account
+## with **no whole-animal quantum** at all (fodder, which no animal pays). Neither is "reaches
+## nothing", and treating either as zero would collapse a take the sim pays in full.
+static func engagement_reach(forecast: Dictionary, workers: int, per_animal_key: String) -> float:
+    return engaged_quantum(workers, float(forecast.get(per_animal_key, 0.0)),
+        float(forecast.get("engage_rate", NO_ENGAGEMENT_STAGE)),
+        float(forecast.get("dip", NO_BUILD_DIP)))
+
+## The same arm with its quantum handed in rather than looked up — the form the CHART's projection
+## needs, whose quantum is `bodyMass` (the curve, the room and the throughput are all biomass there)
+## rather than an account's `*_per_animal`. `engagement_reach` is this function reading a forecast, so
+## the sheet's take and the chart's projection bound themselves on ONE definition.
+##
+## **IT BOUNDS THE WHOLE-ANIMAL COUNT AND THEN CONVERTS**, never the other way about: `animals_engaged`
+## floors `workers × engageRate × dip` to whole animals exactly as the sim does, and the quantum is
+## applied to that count. Multiplying first and flooring after can land a whole engagement one animal
+## short on a rounding.
+static func engaged_quantum(workers: int, per_animal: float, engage_rate: float,
+        dip: float) -> float:
+    if per_animal <= 0.0:
+        return ENGAGEMENT_UNBOUNDED
+    return animals_engaged(workers, engage_rate, dip) * per_animal
 
 ## The same take on ANY ONE account (#426). `min(workers × per_worker, ceiling)` is applied PER
 ## COMPONENT, never to a total: the sim caps each account against its own ceiling, and a patch whose
@@ -2159,10 +3007,19 @@ static func expected_yield(forecast: Dictionary, workers: int, band: Dictionary)
 ## there), so the account quoted the SOURCE's whole ceiling rather than report `0.00` of a rung that
 ## really pays trade. `perWorkerBiomass` states that throughput directly on both webs, so every
 ## account is priced by the crew that works it and the `min` is honest everywhere.
+##
+## **THE `min` HAS A THIRD ARM ON THE ANIMAL WEB** (`docs/plan_hunt_through_combat.md` §2). Engagement
+## caps how many animals a party can *reach at all*, and the two arms above it cannot express that: a
+## crew's carry and the stock above the floor both say a lone hunter takes 307 Wild Fowl a turn where
+## the sim pays ten. `per_animal_key` is the account's own whole-animal quantum
+## (`food_per_animal` / `trade_per_animal`), and it defaults to **empty on purpose** — an account with
+## no quantum (fodder; a source the wire states none for) has no engagement arm rather than a zero
+## one, which is the same "unbounded, not nothing" reading `NO_ENGAGEMENT_STAGE` gets.
 static func expected_yield_account(forecast: Dictionary, workers: int, band: Dictionary,
-        per_worker_key: String, ceiling_key: String) -> float:
+        per_worker_key: String, ceiling_key: String, per_animal_key: String = "") -> float:
     var ceiling := float(forecast.get(ceiling_key, 0.0))
-    var raw := minf(float(workers) * float(forecast.get(per_worker_key, 0.0)), ceiling)
+    var raw := minf(minf(float(workers) * float(forecast.get(per_worker_key, 0.0)), ceiling),
+        engagement_reach(forecast, workers, per_animal_key))
     return raw * float(band.get("output_multiplier", OUTPUT_FULL))
 
 ## Resolve a worked source's row readout. Two INDEPENDENT signals ride the same row:
@@ -2192,6 +3049,12 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
         warn = bool(m.get("overdraws", false))
         var renewable := kind == LABOR_KIND_FORAGE and not warn
         tooltip = "Actual %s" % format_yield(actual)
+        # **THE ACTUAL IS AN EXPECTATION NOW, AND ITS BAND RIDES BESIDE IT** (§6.4). The headline
+        # stays the expectation — that is what `forecast == actual` is restated on — and the band
+        # QUALIFIES it rather than replacing it, in both products, so a wolf's trade-only take can
+        # still state its spread. `""` where the distribution is degenerate, which is every row
+        # shipped today and is what keeps this string byte-identical to what it printed before.
+        tooltip += yield_range_clause(m)
         if renewable:
             tooltip += YIELD_TOOLTIP_RENEWABLE
         else:
@@ -2249,10 +3112,15 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
     # Understaffing a BUILD is a real loss and a real prompt — a Cultivate or a Tame accrues at
     # `min(workers / crew_needed, 1)` and decays when neglected — but this note has never carried that
     # signal, so nothing is lost by silencing it here.
-    var muted_note := ""
+    # **THE BAND, ON THE ROW ITSELF** (§6.4) — the same clause the tooltip carries, in the muted
+    # register the wasted note already uses, so all three hosts of this readout (the work board's
+    # rows, the drawer's standing summary, the stepper's status line) show it without a channel of
+    # their own. `""` while the distribution is degenerate, so no row grows a band where there is
+    # none: that emptiness is the assertion, not a hope.
+    var muted_note := yield_range_clause(m) if bool(m.get("has_yield", false)) else ""
     var wasted := float(m.get("wasted_yield", 0.0))
     if kind != LABOR_KIND_FORAGE and wasted >= FOOD_FLOW_MIN:
-        muted_note = WASTED_NOTE_FORMAT % format_magnitude(wasted)
+        muted_note += WASTED_NOTE_FORMAT % format_magnitude(wasted)
         var wasted_tip := WASTED_TOOLTIP % format_yield(wasted)
         tooltip = wasted_tip if tooltip == "" else tooltip + TOOLTIP_LINE_SEPARATOR + wasted_tip
     return {
@@ -2419,22 +3287,93 @@ static func nearest_estimate_floor(estimates: Dictionary, floor: float) -> float
             best = sampled
     return best
 
-## One raid row — the cell for (the nearest sampled floor, `workers`), or `{}` when the table has no
-## such cell. It SCANS rather than rebuilding the `"<floor>:<party>"` key, because that key renders the
-## floor with Rust's `f32` Display and a GDScript-side near-miss finds nothing silently.
-static func hunt_estimate_row(estimates: Dictionary, floor: float, workers: int) -> Dictionary:
-    var sampled := nearest_estimate_floor(estimates, floor)
-    if sampled == NO_SAMPLED_FLOOR:
+## **THE NEAREST SAMPLED PARTY SIZE a table carries**, or `NO_SAMPLED_PARTY` when it carries none —
+## the PARTY axis's twin of `nearest_estimate_floor`, and named for it so a reader can see the two are
+## one idea. Both estimate tables are sampled on this axis now: `expedition_config
+## .estimate_party_sizes` is an ascending LADDER (`[1, 2, 3, 4, 8, 16, 32, 64]`), dense where one
+## hunter is a large proportional change and sparse where it is not, so most party sizes fall BETWEEN
+## two rungs. Demanding an exact match there blanks the whole sheet — a party of 6 against a denial
+## axis of `{1,2,3,4,5,8,16,32,64}` used to find nothing at all — and the marks-on-a-dial reading the
+## floor axis already takes is the honest one: the launch command still sends the player's exact
+## party, and this only decides which row the PREVIEW quotes. **The sheet then NAMES the quoted party
+## whenever it is not the selected one** (`quoted_party_note`); a nearby row must never be presented
+## as though it were exact, because the take scales with party size.
+const NO_SAMPLED_PARTY := 0
+
+static func nearest_estimate_party(parties: Array, workers: int) -> int:
+    var best := NO_SAMPLED_PARTY
+    var best_gap := INF
+    for party_variant in parties:
+        var party := int(party_variant)
+        if party <= 0:
+            continue
+        var gap := absf(float(party - workers))
+        # Strictly closer wins; **on a TIE the LOWER rung wins** — quoting the bigger party's take
+        # against a smaller one over-states what comes home, and over-quoting is the more misleading
+        # of the two directions. (`gap < best_gap` alone would leave the tie to iteration order.)
+        if gap < best_gap or (gap == best_gap and party < best):
+            best_gap = gap
+            best = party
+    return best
+
+## The row for the nearest sampled party in `rows`, or `{}` when none of them names one. The ONE
+## resolution of the party axis, shared by both tables so the hunt sheet and the denial sheet cannot
+## round a party two different ways.
+static func _row_for_nearest_party(rows: Array, party_key: String, workers: int) -> Dictionary:
+    var parties: Array = []
+    for row_variant in rows:
+        if row_variant is Dictionary:
+            parties.append(int((row_variant as Dictionary).get(party_key, 0)))
+    var party := nearest_estimate_party(parties, workers)
+    if party == NO_SAMPLED_PARTY:
         return {}
+    for row_variant in rows:
+        if not (row_variant is Dictionary):
+            continue
+        var row := row_variant as Dictionary
+        if int(row.get(party_key, 0)) == party:
+            return row
+    return {}
+
+## Every raid row standing at `sampled` — the floor axis resolved, the party axis not yet. It SCANS
+## rather than rebuilding the `"<floor>:<party>"` key, because that key renders the floor with Rust's
+## `f32` Display and a GDScript-side near-miss finds nothing silently.
+static func _estimate_rows_at_floor(estimates: Dictionary, sampled: float) -> Array:
+    var rows: Array = []
     for key in estimates:
         var row_variant: Variant = estimates[key]
         if not (row_variant is Dictionary):
             continue
         var row := row_variant as Dictionary
-        if int(row.get(HUNT_ESTIMATE_PARTY_KEY, 0)) == workers \
-                and is_equal_approx(float(row.get(HUNT_ESTIMATE_FLOOR_KEY, 0.0)), sampled):
-            return row
-    return {}
+        if is_equal_approx(float(row.get(HUNT_ESTIMATE_FLOOR_KEY, 0.0)), sampled):
+            rows.append(row)
+    return rows
+
+## One raid row — the cell for (the nearest sampled floor, the nearest sampled party), or `{}` when the
+## table carries no cell at all. **BOTH axes are read at their nearest mark**; the party axis used to
+## demand an exact match, which is what silenced the whole readout for a party the ladder does not
+## sample.
+static func hunt_estimate_row(estimates: Dictionary, floor: float, workers: int) -> Dictionary:
+    var sampled := nearest_estimate_floor(estimates, floor)
+    if sampled == NO_SAMPLED_FLOOR:
+        return {}
+    return _row_for_nearest_party(_estimate_rows_at_floor(estimates, sampled),
+        HUNT_ESTIMATE_PARTY_KEY, workers)
+
+## **WHICH PARTY A FORECAST'S FIGURES WERE COMPUTED FOR**, when it is not the one selected — the
+## sentence the sheet renders beside the numbers, in `KitRoster.estimates_quoted_note`'s idiom and for
+## its reason: a figure quoted for a party the player is not sending must SAY so rather than be
+## presented as exact. `""` where the selected party IS a sampled rung (the ladder's dense low end and
+## the denial table's requirement run make that the common case) and where no row was found at all.
+##
+## **It takes the FORMAT as a parameter** — this layer references no `Hud*Vocab` module by invariant —
+## and reads the quoted party off the FORECAST rather than looking the row up a second time, so the
+## note and the figures it qualifies come from one resolution.
+static func quoted_party_note(forecast: Dictionary, workers: int, format: String) -> String:
+    var quoted := int(forecast.get(QUOTED_PARTY_KEY, NO_SAMPLED_PARTY))
+    if quoted == NO_SAMPLED_PARTY or quoted == workers:
+        return ""
+    return format % [quoted, workers]
 
 ## The raid `workers` from `band` deliver hunting `herd` at `floor`. A PURE TABLE LOOKUP into the sim's
 ## forward-simulated `hunt_trip_estimates` (`HERD_TRIP_ESTIMATES_KEY`) — ZERO arithmetic: the sim grabs
@@ -2454,6 +3393,11 @@ static func hunt_trip_forecast(band: Dictionary, herd: Dictionary, floor: float,
     var estimate := hunt_estimate_row(estimates_variant as Dictionary, floor, workers)
     if estimate.is_empty():
         return {"available": false}
+    # WHICH sampled party the rows below were computed for — the party axis is a LADDER, so this is
+    # usually not `workers`, and the sheet says so beside the figures (`quoted_party_note`). It rides
+    # every available branch, the denial carve-out included: a raid that brings nothing home still
+    # brings nothing home for a stated party size.
+    var quoted_party := int(estimate.get(HUNT_ESTIMATE_PARTY_KEY, NO_SAMPLED_PARTY))
     # A DENIAL mission carries nothing home at all. **`delivers_food == false` alone no longer means
     # that** (issue #337): it was redefined to say the QUARRY IS INEDIBLE, and an inedible quarry still
     # pays pelts — a wolf raid reads `delivers_food false, delivers_trade true` and is a real delivery,
@@ -2461,27 +3405,48 @@ static func hunt_trip_forecast(band: Dictionary, herd: Dictionary, floor: float,
     # carve-out fires only when the species pays NEITHER product.
     if not bool(estimate.get("delivers_food", false)) \
             and not bool(estimate.get("delivers_trade", false)):
-        return {"available": true, "denial": true, "empty": false}
-    # Nothing delivered in EITHER currency = the herd is at/below the policy's floor: no standing
-    # surplus to raid, the party returns empty. The ONE non-viable case (the raid always completes;
-    # the herd has nothing). Reading food alone here would call every wolf raid "too lean".
+        return {"available": true, "denial": true, "empty": false, QUOTED_PARTY_KEY: quoted_party}
+    # **WHICH STOP ENDS THIS SAMPLED TRIP**, off the row rather than inferred from the numbers here.
+    #
+    # **IT IS READ BEFORE THE EMPTY BRANCH BECAUSE THE EMPTY BRANCH IS WHAT NEEDS IT MOST** — an empty
+    # raid is empty for one of three unrelated reasons and only the sim can tell them apart; see
+    # `HUNT_EMPTY_REFUSALS`.
+    var bound := String(estimate.get(TRIP_BOUND_KEY, TRIP_BOUND_NONE))
+    # Nothing delivered in EITHER currency = the party comes home with nothing, whatever the reason.
+    # The ONE non-viable case. Reading food alone here would call every wolf raid empty.
     # NOT `animals_taken == 0`: a party too small to carry a whole animal now KILLS one and hauls the
     # fraction its pack holds (mirroring the local hunt), so `animals_taken >= 1` whenever there's any
     # surplus — the delivered PAYLOAD (with waste) is the honest bind, not the whole-animal kill count.
+    #
+    # **THE ARITHMETIC IS STILL RIGHT; WHAT MOVED IS THE EXPLANATION.** This branch once asserted the
+    # herd was at its floor, because before the take resolved through the fight that was the only way
+    # to land here. It is not any more, so the `bound` travels out and `HUNT_EMPTY_REFUSALS` says which
+    # of the herd and the party the player has to fix.
     var delivered_food := float(estimate.get("delivered_food", 0.0))
     var delivered_trade := float(estimate.get("delivered_trade", 0.0))
     if delivered_food <= 0.0 and delivered_trade <= 0.0:
-        return {"available": true, "denial": false, "empty": true}
+        return {"available": true, "denial": false, "empty": true, TRIP_BOUND_KEY: bound,
+            QUOTED_PARTY_KEY: quoted_party}
     var animals := int(estimate.get("animals_taken", 0))
-    # turns_to_fill == 0 = the raid ran the whole horizon still delivering (a long raid). A warn
-    # threshold of 0 means the server sent none — report the raid, judge nothing. `turns_to_fill` now
-    # counts HUNTING turns only; the band-relative round trip is added on top so the headline is honest.
-    var hunt_turns := int(estimate.get("turns_to_fill", 0))
-    var long_raid: bool = hunt_turns <= 0
+    # `turns_to_fill == RAID_TURNS_UNBOUNDED` = the raid ran the whole horizon still delivering (a long
+    # raid), and since the floor-0 fix that is `horizon` and nothing else — a `herd_lost` raid completes
+    # and reports its turn, so it lands on the bounded branch below. A warn threshold of 0 means the
+    # server sent none — report the raid, judge nothing. `turns_to_fill` counts HUNTING turns only; the
+    # band-relative round trip is added on top so the headline is honest.
+    var hunt_turns := int(estimate.get("turns_to_fill", RAID_TURNS_UNBOUNDED))
+    var long_raid: bool = raid_is_unbounded(hunt_turns)
     var travel := round_trip_travel_turns(band, herd, grid_width, wrap_horizontal)
     var total := hunt_turns + travel
     var warn_turns := int(band.get("expedition_viability_warn_turns", 0))
     var slow: bool = not long_raid and warn_turns > 0 and total > warn_turns
+    # **THE FLOOR ON AN UNBOUNDED RAID, IN THE SAME SPAN `total` IS IN.** The horizon bounds the HUNTING
+    # only, so the trip's floor is it PLUS the very round trip added one line above — quoting the horizon
+    # alone would understate the trip by the whole walk. Zero on a bounded raid (there is a real total)
+    # and zero when the band carries no horizon (nothing to quote), which `raid_floor_is_known` reads.
+    var horizon := forecast_horizon_turns(band)
+    var hunt_turns_floor := horizon if long_raid else FORECAST_HORIZON_UNKNOWN
+    var turns_floor := (hunt_turns_floor + travel) if hunt_turns_floor > FORECAST_HORIZON_UNKNOWN \
+        else FORECAST_HORIZON_UNKNOWN
     # Waste fraction: killed-but-not-carried food over total killed. A small party on big game raids one
     # animal and hauls only the pack's worth, wasting the rest — a high % here is informative, not a block.
     var wasted_food := float(estimate.get("wasted_food", 0.0))
@@ -2489,8 +3454,10 @@ static func hunt_trip_forecast(band: Dictionary, herd: Dictionary, floor: float,
     var waste_pct := (wasted_food / killed) if killed > 0.0 else 0.0
     return {
         "available": true, "denial": false, "empty": false,
+        QUOTED_PARTY_KEY: quoted_party,
         "animals": animals, "turns": total, "hunt_turns": hunt_turns, "travel": travel,
-        "long_raid": long_raid, "slow": slow,
+        "long_raid": long_raid, "slow": slow, TRIP_BOUND_KEY: bound,
+        RAID_TURNS_FLOOR_KEY: turns_floor, RAID_HUNT_TURNS_FLOOR_KEY: hunt_turns_floor,
         # The delivered PAYLOAD in food — what the party actually LANDS (a partial for a small party),
         # straight from the sim's forward-simulated raid, NOT animals × food_per_animal (which counts the
         # whole kill and overstates a partial). It may be 0 on an inedible quarry, whose whole payload
@@ -2513,11 +3480,13 @@ static func hunt_forecast_line_bbcode(forecast: Dictionary, herd_name: String) -
         return "[color=#%s]%s[/color]" % [
             HudStyle.WARN_HEX, HUNT_FORECAST_DENIAL_FORMAT % herd_name,
         ]
-    # No surplus above the policy's floor → the raid returns empty. The ONE non-viable case (red).
+    # The raid comes home with nothing — the ONE non-viable case (red). WHICH refusal it is comes off
+    # the sim's `bound`, never off these numbers: the herd being spent and the party being unable to
+    # make the kill are the same zero with opposite remedies.
     if bool(forecast.get("empty", false)):
         return "[color=#%s]%s%s[/color]" % [
             HudStyle.DANGER_HEX, HUNT_FORECAST_WARN_GLYPH,
-            HUNT_FORECAST_NO_SURPLUS_FORMAT % herd_name,
+            String(hunt_empty_refusal(forecast)["line"]) % herd_name,
         ]
     # A real raid: headline the delivered PAYLOAD (the animal count over turns + what it LANDS), then
     # the waste. The payload is `delivered_food` and/or `delivered_trade`, each named only when the
@@ -2533,11 +3502,21 @@ static func hunt_forecast_line_bbcode(forecast: Dictionary, herd_name: String) -
         waste = "[color=#%s]%s[/color]" % [
             HudStyle.WARN_HEX, HUNT_WASTE_SUFFIX_FORMAT % int(round(waste_pct * 100.0))]
     if bool(forecast.get("long_raid", false)):
-        # Ran the whole horizon still delivering (no bounded turn count) — a slow but real haul (amber).
-        var long_text: String = HUNT_FORECAST_LONG_RAID_FORMAT % [animals, herd_name]
+        # Ran the whole horizon still delivering — a slow but real haul (amber). No exact total, so the
+        # line quotes the FLOOR (`horizon + travel`) in the bounded form's own span and shape; without a
+        # horizon on the wire there is no floor and it falls back to the hedge.
         var long_travel := int(forecast.get("travel", 0))
-        if long_travel > 0:
-            long_text += HUNT_FORECAST_LONG_TRAVEL_SUFFIX % long_travel
+        var long_text: String
+        if raid_floor_is_known(forecast):
+            long_text = HUNT_FORECAST_LONG_RAID_FORMAT % [
+                animals, herd_name, int(forecast.get(RAID_TURNS_FLOOR_KEY, 0))]
+            if long_travel > 0:
+                long_text += HUNT_FORECAST_LONG_TRAVEL_BREAKDOWN % [
+                    int(forecast.get(RAID_HUNT_TURNS_FLOOR_KEY, 0)), long_travel]
+        else:
+            long_text = HUNT_FORECAST_LONG_RAID_NO_HORIZON_FORMAT % [animals, herd_name]
+            if long_travel > 0:
+                long_text += HUNT_FORECAST_LONG_TRAVEL_SUFFIX % long_travel
         return "[color=#%s]%s%s%s[/color]%s" % [
             HudStyle.WARN_HEX, long_text, food, HUNT_FORECAST_SLOW_SUFFIX, waste,
         ]
@@ -2568,15 +3547,17 @@ static func _raid_payload_suffix(forecast: Dictionary) -> String:
         suffix += HUNT_FORECAST_TRADE_FORMAT % [FoodIcons.TRADE_GOODS_GLYPH, int(round(trade))]
     return suffix
 
-## The raid returns empty: the sim's estimate for THIS (policy, party size) says the herd has no surplus
-## above the policy's floor (`animals_taken == 0`). The single definition of the blocked case — both
-## entry points (panel button + targeting click) gate on it.
-static func hunt_trip_no_surplus(forecast: Dictionary) -> bool:
+## The raid returns empty: the sim's estimate for THIS (floor, party size) delivers nothing in either
+## currency. The single definition of the blocked case — both entry points (panel button + targeting
+## click) gate on it. **It says THAT, never WHY** — `hunt_empty_refusal` is what answers why, and the
+## two were one function for as long as there was only one why.
+static func hunt_trip_returns_empty(forecast: Dictionary) -> bool:
     return bool(forecast.get("available", false)) and bool(forecast.get("empty", false))
 
 ## **DOES THIS TRIP HAVE A PAYLOAD TO PUT IN A READOUT?** The three states that do NOT — no estimate
-## at all, a denial quarry that pays neither product, a herd stripped to its floor — each have exactly
-## one thing to say and say it as a sentence (`hunt_forecast_line_bbcode`); only a delivering raid has
+## at all, a denial quarry that pays neither product, and a raid that comes home empty (whether the
+## herd is spent or the party cannot make the kill) — each have exactly one thing to say and say it as
+## a sentence (`hunt_forecast_line_bbcode`); only a delivering raid has
 ## an animal count, a yield vector and a trip length to lay out as rows. The compose sheet branches on
 ## this so a non-viable raid can never render an empty box, which would read as a raid that delivers
 ## nothing measurable rather than one that is refused.
@@ -2591,13 +3572,31 @@ static func hunt_trip_delivers(forecast: Dictionary) -> bool:
 ## one-line form and the Send button already make — `slow` past the band's warn threshold, `long_raid`
 ## when the sim's estimate never bounded the trip — so the box, the sentence and the button cannot
 ## disagree about whether a raid is worth the wait.
+##
+## **AND IT NAMES WHICH STOP ENDS THE TRIP** (§5.2), because the length alone cannot: a raid that
+## comes home on its fill target and one that comes home on the floor are different decisions wearing
+## the same turn count. The clause is the SIM's answer (`TRIP_BOUND_CLAUSES` off `bound`), and a
+## forecast that carries no bound — an estimate row from a snapshot that predates the field — renders
+## the sentence it always did.
 static func hunt_trip_verdict(forecast: Dictionary) -> Dictionary:
     var travel := int(forecast.get("travel", 0))
+    var clause := trip_bound_clause(forecast)
     if bool(forecast.get("long_raid", false)):
+        # The floor on the whole span, split exactly as the bounded verdict splits its total — so "Away
+        # ≈36 turns — 18 hunting, 18 travel" and "Away more than 78 turns — more than 60 hunting, 18
+        # travel" answer the same question and can be read against each other.
+        var long_text: String
+        if raid_floor_is_known(forecast):
+            var floor_total := int(forecast.get(RAID_TURNS_FLOOR_KEY, 0))
+            long_text = EXPEDITION_TRIP_LONG_VERDICT_SPLIT_FORMAT % [
+                floor_total, int(forecast.get(RAID_HUNT_TURNS_FLOOR_KEY, 0)), travel] if travel > 0 \
+                else EXPEDITION_TRIP_LONG_VERDICT_FORMAT % floor_total
+        else:
+            long_text = EXPEDITION_TRIP_LONG_VERDICT_TRAVEL_FORMAT % travel if travel > 0 \
+                else EXPEDITION_TRIP_LONG_VERDICT
         return {
             "severity": VERDICT_SLOW,
-            "text": EXPEDITION_TRIP_LONG_VERDICT_TRAVEL_FORMAT % travel if travel > 0 \
-                else EXPEDITION_TRIP_LONG_VERDICT,
+            "text": _with_bound_clause(long_text, clause),
         }
     var turns := int(forecast.get("turns", 0))
     var text := EXPEDITION_TRIP_VERDICT_SPLIT_FORMAT % [
@@ -2605,24 +3604,431 @@ static func hunt_trip_verdict(forecast: Dictionary) -> Dictionary:
         else EXPEDITION_TRIP_VERDICT_FORMAT % turns
     return {
         "severity": VERDICT_SLOW if bool(forecast.get("slow", false)) else VERDICT_OK,
-        "text": text,
+        "text": _with_bound_clause(text, clause),
     }
 
-## The ONE sentence spoken about a no-surplus raid — shared verbatim by the herd panel (reason line +
-## disabled-button tooltip) and the targeting-click command-feed refusal, so the two entry points can
-## never disagree. Under the raid model party size cannot fix it (surplus is a property of the HERD, not
-## the party), so — unlike the retired row scan — there is no alternative size to name.
-static func hunt_no_surplus_reason(herd: Dictionary) -> String:
-    return SEND_HUNT_NO_SURPLUS_REASON % herd_display_name(herd)
 
-## Max party the band can detach as a hunting expedition: min(idle_workers, max_expedition_party_size),
-## falling back to idle when the cap is absent/0 (mirrors the compose sheet's `party_max`). The SUPPLY
-## side of the party stepper — what the band can spare; `expedition_useful_cap` below is the DEMAND
-## side (what the raid can use), and the stepper takes the tighter of the two.
+## The trip's length and the stop that ends it, as one sentence — or the length alone when the bound
+## has nothing to add (`""` = not stated; `horizon` = the length sentence already said it).
+static func _with_bound_clause(text: String, clause: String) -> String:
+    return text if clause == "" else "%s %s" % [text, clause]
+
+
+## **WHICH STOP ENDS THIS TRIP, IN WORDS** — the sim's `bound` key through `TRIP_BOUND_CLAUSES`, and
+## `""` for the two states with nothing to add. The readout box folds it into its verdict; the Band
+## panel's dock sheet, whose forecast is the one-LINE form, renders it as its own quiet line beneath.
+## One table, so the two surfaces cannot describe the same stop differently.
+static func trip_bound_clause(forecast: Dictionary) -> String:
+    return String(TRIP_BOUND_CLAUSES.get(
+        String(forecast.get(TRIP_BOUND_KEY, TRIP_BOUND_NONE)), ""))
+
+## **WHY THIS RAID COMES HOME EMPTY** — the `HUNT_EMPTY_REFUSALS` entry for the sim's own `bound`, i.e.
+## the `{line, button, reason}` triple every surface of the refusal is composed from. THE ONE
+## resolution of that key, so the sentence, the button face and the spelled-out reason are three faces
+## of one answer rather than three lookups free to disagree.
+##
+## A bound the branch cannot explain — an estimate row that carries none, or one of the two party-side
+## stops, which structurally cannot land here (both require a delivered load) — falls to the
+## unattributed entry rather than to a guess. Guessing is the defect this exists to fix.
+static func hunt_empty_refusal(forecast: Dictionary) -> Dictionary:
+    var bound := String(forecast.get(TRIP_BOUND_KEY, TRIP_BOUND_NONE))
+    return HUNT_EMPTY_REFUSALS.get(bound, HUNT_EMPTY_REFUSALS[TRIP_BOUND_NONE])
+
+## The ONE sentence spoken about an empty raid — shared verbatim by the herd panel (reason line +
+## disabled-button tooltip) and the Band panel's dock sheet, so the two entry points can never
+## disagree. **It takes the FORECAST as well as the herd** because which sentence it is depends on the
+## sim's `bound`: "wait for the herd to rebuild" and "send more hunters" are opposite instructions and
+## a reason that names the wrong one is worse than no reason at all.
+static func hunt_empty_refusal_reason(forecast: Dictionary, herd: Dictionary) -> String:
+    return String(hunt_empty_refusal(forecast)["reason"]) % herd_display_name(herd)
+
+# ---- THE DENIAL RAID's readout (`docs/plan_denial_raid.md` §1.1 / §3) ---------------------------
+
+## One denial row — the cell for the NEAREST sampled party, or `{}` when the table carries no rows at
+## all. It SCANS, like its hunting sibling, but for the opposite reason: the table has ONE axis, so a
+## row's own `party_workers` IS its identity and there is no key to rebuild in the first place.
+##
+## **It read the party axis EXACTLY until the ladder landed, and that was the worse half of the two.**
+## The denial axis is the shared `estimate_party_sizes` ladder plus a short contiguous run at the
+## herd's own requirement, so against a requirement of 1 it is `{1,2,3,4,5,8,16,32,64}` — a party of 6
+## found nothing and the entire sheet went blank. Both tables take the nearest rung now, and the sheet
+## names it (`quoted_party_note`) wherever it is not the party selected.
+static func denial_estimate_row(rows: Array, workers: int) -> Dictionary:
+    return _row_for_nearest_party(rows, DENIAL_ESTIMATE_PARTY_KEY, workers)
+
+## What `workers` from this band do to `herd` on a DENIAL raid — a table lookup into the sim's
+## `denialEstimates` plus the ONE band-relative term the band-agnostic table cannot carry. Returns
+## `{available, outcome, turns, low, high, travel, animals, food, trade, wasted}`.
+##
+## **THE TURN COUNTS ARE FROM LAUNCH, AND THE OUTBOUND WALK IS WHY** (reported from play). The sim's
+## `turns_to_collapse` counts turns of RAIDING — the party has to reach the herd before it can kill
+## anything — so a bare "≈5–8 turns" beside a hunt line that HAS always added its round trip made two
+## missions on one sheet quote turn counts meaning different things. Each bounded end therefore gains
+## the outbound leg, and `DENIAL_SPAN_FROM_LAUNCH` names the span out loud.
+##
+## **THE RETURN LEG IS DELIBERATELY NOT IN IT.** The verdict is about the HERD crossing the point of no
+## return, which happens on the range the moment the party is there and killing; the walk home comes
+## after the event and is not part of the span the sentence is about. A hunt is the opposite case — its
+## payload only counts once carried home — which is exactly why it adds the whole round trip.
+##
+## **NO `band` = NO TRAVEL TERM, AND THAT IS A STATED SPAN, NOT A DEFAULT.** A launched party's
+## remaining walk is unknowable here (the sim publishes no per-party arrival for a denial mission), so
+## the in-flight caller passes no band, the forecast carries `DENIAL_TRAVEL_UNKNOWN`, and the sentence
+## says "of raiding" instead of "from launch". Both surfaces name their span; neither is bare.
+##
+## `available == false` = the snapshot carries no denial row for this party size (a non-huntable herd,
+## a party larger than the sim sampled) → the caller renders NO verdict at all rather than a blank.
+## **`horizon_cohort` IS FOR THE CALLER WITH NO BAND, AND IT IS READ FOR THE HORIZON ONLY.** The forecast
+## horizon is a global lever echoed onto EVERY cohort, so the launch sheet's `band` already answers it and
+## passes nothing here; the in-flight drawer, which deliberately passes no band (see the travel note
+## above), hands in the launched PARTY's own cohort. It is never consulted for travel — a launched party's
+## remaining walk is not on the wire, which is the whole reason that caller passes no band.
+static func denial_forecast(herd: Dictionary, workers: int, band: Dictionary = {},
+        grid_width: int = 0, wrap_horizontal: bool = false,
+        horizon_cohort: Dictionary = {}) -> Dictionary:
+    var rows_variant: Variant = herd.get(HERD_DENIAL_ESTIMATES_KEY, [])
+    if workers <= 0 or not (rows_variant is Array):
+        return {"available": false}
+    var row := denial_estimate_row(rows_variant as Array, workers)
+    if row.is_empty():
+        return {"available": false}
+    var travel := DENIAL_TRAVEL_UNKNOWN if band.is_empty() \
+        else outbound_travel_turns(band, herd, grid_width, wrap_horizontal)
+    return {
+        "available": true,
+        # WHICH sampled party these figures belong to — the sheet says so out loud when it is not the
+        # one selected. Read off the ROW, so it is the rounding actually made rather than a second one.
+        QUOTED_PARTY_KEY: int(row.get(DENIAL_ESTIMATE_PARTY_KEY, NO_SAMPLED_PARTY)),
+        # The sim's own key, carried through untouched — every branch below asks THIS, never the
+        # numbers, because a `0` turn count is reachable from two unrelated outcomes.
+        "outcome": String(row.get("outcome", DENIAL_OUTCOME_NONE)).strip_edges().to_lower(),
+        # Each end shifted onto the launch clock, and `0` (beyond the horizon on that end) left alone —
+        # see `_denial_turns_from_launch`.
+        "turns": _denial_turns_from_launch(
+            int(row.get("turns_to_collapse", DENIAL_TURNS_BEYOND_HORIZON)), travel),
+        "low": _denial_turns_from_launch(
+            int(row.get("turns_to_collapse_low", DENIAL_TURNS_BEYOND_HORIZON)), travel),
+        "high": _denial_turns_from_launch(
+            int(row.get("turns_to_collapse_high", DENIAL_TURNS_BEYOND_HORIZON)), travel),
+        DENIAL_TRAVEL_KEY: travel,
+        # The lever off whichever cohort the caller had — the band on a launch sheet, the party in flight.
+        DENIAL_HORIZON_TURNS_KEY: forecast_horizon_turns(
+            horizon_cohort if not horizon_cohort.is_empty() else band),
+        "animals": int(row.get("animals_killed", 0)),
+        "food": float(row.get("delivered_food", 0.0)),
+        "trade": float(row.get("delivered_trade", 0.0)),
+        # BOTH products of the wasted biomass, carried through the same way the delivered pair is —
+        # the sim prices them off one conversion, so a consumer reading only `wasted` reports a raid
+        # on a pelt-bearing quarry as wasting nothing at all.
+        "wasted": float(row.get("wasted_food", 0.0)),
+        "wasted_trade": float(row.get("wasted_trade", 0.0)),
+    }
+
+## A collapse turn count moved onto the clock the player is actually on — the raiding turns plus the
+## walk out. **`DENIAL_TURNS_BEYOND_HORIZON` (`0`) is not a turn count and must not be shifted**: it
+## means the projection never bounded that end, and `travel` turns of walking do not bound it either.
+## An unknown travel term (`DENIAL_TRAVEL_UNKNOWN`, the in-flight caller) leaves the count as the sim
+## stated it, which is what the "of raiding" clause then says.
+static func _denial_turns_from_launch(turns: int, travel: int) -> int:
+    if turns <= DENIAL_TURNS_BEYOND_HORIZON or travel <= 0:
+        return turns
+    return turns + travel
+
+## **THE ONE RESOLUTION OF THE OUTCOME KEY** — the `{line, turns, button, severity, reason}` entry
+## every surface of the verdict is composed from, so the sentence, the Send button's face and the
+## spelled-out reason are three views of one answer. An outcome this table cannot explain falls to the
+## unattributed entry rather than to a guess (the `hunt_empty_refusal` rule).
+static func denial_verdict(forecast: Dictionary) -> Dictionary:
+    var outcome := String(forecast.get("outcome", DENIAL_OUTCOME_NONE))
+    return DENIAL_VERDICTS.get(outcome, DENIAL_VERDICTS[DENIAL_OUTCOME_NONE])
+
+## **DID THIS PARTY'S RAID GET THERE?** — the ONE test over `DENIAL_SUCCESS_OUTCOMES`, so no reader
+## has to spell the set and none can spell it as "not `repelled`". `horizon` answers FALSE: a
+## projection that ran out is not a raid that worked, and treating it as one is what quoted a party
+## that never breaks the herd as the party that does.
+static func denial_outcome_succeeds(outcome: String) -> bool:
+    return DENIAL_SUCCESS_OUTCOMES.has(outcome)
+
+## **THE FIGURE THE SENTENCE LEADS ON — the EXPECTATION where the sim bounded it, the good run only
+## where it did not.** `0` is "beyond the horizon" on that end and never a turn count, so an unbounded
+## expectation falls through to `low`; both unbounded means the projection bounded nothing and there is
+## nothing to lead with.
+static func _denial_lead_turns(forecast: Dictionary) -> int:
+    var turns := int(forecast.get("turns", DENIAL_TURNS_BEYOND_HORIZON))
+    if turns > DENIAL_TURNS_BEYOND_HORIZON:
+        return turns
+    return int(forecast.get("low", DENIAL_TURNS_BEYOND_HORIZON))
+
+## That figure as a phrase, or `""` when the forecast has no number to give — which is also the gate
+## every caller uses to decide whether a verdict quotes a number at all (`DENIAL_ESTIMATE_CAVEAT`
+## qualifies a figure, so it must not print where there is none). It wears `≈` because the band is a
+## claim about many draws, not a promise about this one.
+##
+## **IT IS THE LEAD ALONE, NOT THE WHOLE RANGE.** The spread rides `denial_turns_clause`, which is what
+## keeps "which number leads" from being answerable in two places.
+static func denial_turns_phrase(forecast: Dictionary) -> String:
+    var lead := _denial_lead_turns(forecast)
+    if lead <= DENIAL_TURNS_BEYOND_HORIZON:
+        return ""
+    return DENIAL_TURNS_ONE_FORMAT % lead
+
+## **THE TURN CLAUSE — the EXPECTATION, its SPAN, then the spread.** `""` when the forecast has no
+## number to quote, so the outcome sentence stands alone. Five shapes, and the `0`-means-unbounded
+## convention holds on every end:
+##
+## 1. all three bounded — `" in ≈20 turns from launch — between 12 and 31 depending on the run"`
+## 2. `high` unbounded — `" in ≈47 turns from launch — as few as 12 on a good run, and a bad one may
+##    not finish"`
+## 3. the EXPECTATION unbounded — `" only on a good run — ≈12 turns from launch, and the raid is not
+##    expected to finish inside the forecast"`
+## 4. `low == high` — the distribution is degenerate, so the lead figure IS the whole answer and no
+##    spread renders
+## 5. nothing bounded — no clause at all
+##
+## **THE EXPECTATION LEADS WHEREVER IT EXISTS**, because every other number on the sheet is priced at
+## it; leading with the lucky end described a different raid from the take line two rows down (reported
+## from play). **AN UNBOUNDED END IS STATED, NEVER DROPPED** — the rule this replaced quoted `low`
+## alone whenever `high` ran past the horizon, which is how a lone optimistic figure came to read as
+## the answer. And no branch can produce a bare count: the span rides the lead figure in every one, the
+## hunt readout on the same sheet quoting a round-trip TOTAL that an unqualified denial count read as.
+##
+## The travel split renders only where there is travel to split off — a band standing beside its quarry
+## has none, and "(0 of them travel)" would be a term for nothing.
+static func denial_turns_clause(forecast: Dictionary) -> String:
+    var phrase := denial_turns_phrase(forecast)
+    if phrase == "":
+        return ""
+    var travel := int(forecast.get(DENIAL_TRAVEL_KEY, DENIAL_TRAVEL_UNKNOWN))
+    var span := denial_span(forecast)
+    var turns := int(forecast.get("turns", DENIAL_TURNS_BEYOND_HORIZON))
+    var low := int(forecast.get("low", DENIAL_TURNS_BEYOND_HORIZON))
+    var high := int(forecast.get("high", DENIAL_TURNS_BEYOND_HORIZON))
+    var clause := ""
+    if turns <= DENIAL_TURNS_BEYOND_HORIZON:
+        # The lead figure is the GOOD RUN (`_denial_lead_turns` fell through), so the sentence says so
+        # and says the raid is not expected to finish — never the bare optimistic number.
+        clause = DENIAL_ONLY_GOOD_RUN_LEAD_FORMAT % [phrase, span] + DENIAL_SPREAD_NOT_EXPECTED
+    else:
+        clause = DENIAL_TURNS_LEAD_FORMAT % [phrase, span]
+        if low > DENIAL_TURNS_BEYOND_HORIZON and high > DENIAL_TURNS_BEYOND_HORIZON:
+            # `low == high` is the degenerate distribution: the lead already IS both ends, and
+            # "between 8 and 8" would be a spread for nothing.
+            if low != high:
+                clause += DENIAL_SPREAD_RANGE_FORMAT % [low, high]
+        elif low > DENIAL_TURNS_BEYOND_HORIZON:
+            clause += DENIAL_SPREAD_OPEN_HIGH_FORMAT % low
+    if travel > 0:
+        clause += DENIAL_TRAVEL_SPLIT_FORMAT % travel
+    return clause
+
+## The verdict as one plain sentence — the OUTCOME always, the turn phrase only when that outcome has
+## one to quote and the sim bounded it. **The outcome leads and the number is a clause on it**, which
+## is the structural form of "never render a blank turn count without its outcome": there is no branch
+## in which the number can render alone, and none in which its absence renders as silence.
+static func denial_verdict_text(forecast: Dictionary, herd_name: String) -> String:
+    if not bool(forecast.get("available", false)):
+        return ""
+    var entry := denial_verdict(forecast)
+    # An outcome whose SENTENCE carries the forecast's own length (the `horizon` verdict) composes it here
+    # rather than through the turn clause: the clause states the collapse figures, and this outcome has
+    # none — what it states is how long the projection ran before giving up.
+    var bounded := _denial_bounded_line(entry, forecast, herd_name)
+    var text := bounded if bounded != "" else String(entry["line"]) % herd_name
+    if bool(entry["turns"]):
+        text += denial_turns_clause(forecast)
+    return text
+
+## **WHICH CLOCK THIS SHEET IS QUOTING** — `from launch` where the outbound walk is known, `of raiding`
+## where it is not (the in-flight drawer). The ONE resolution, so the turn clause and the horizon sentence
+## cannot name two different spans in one verdict.
+static func denial_span(forecast: Dictionary) -> String:
+    return DENIAL_SPAN_OF_RAIDING \
+        if int(forecast.get(DENIAL_TRAVEL_KEY, DENIAL_TRAVEL_UNKNOWN)) == DENIAL_TRAVEL_UNKNOWN \
+        else DENIAL_SPAN_FROM_LAUNCH
+
+## The outcome's sentence with the forecast's own LENGTH in it, or `""` when this outcome has no bounded
+## form or the wire carried no horizon. The figure is shifted onto the launch clock by
+## `_denial_turns_from_launch` — the same shift the collapse figures take — so the sentence and the clause
+## beneath it are on one clock; where travel is unknown it stays the raiding-turn count and says so.
+static func _denial_bounded_line(entry: Dictionary, forecast: Dictionary, herd_name: String) -> String:
+    var format := String(entry.get("line_bounded", ""))
+    var horizon := int(forecast.get(DENIAL_HORIZON_TURNS_KEY, FORECAST_HORIZON_UNKNOWN))
+    if format == "" or horizon <= FORECAST_HORIZON_UNKNOWN:
+        return ""
+    var travel := int(forecast.get(DENIAL_TRAVEL_KEY, DENIAL_TRAVEL_UNKNOWN))
+    return format % [herd_name, _denial_turns_from_launch(horizon, travel), denial_span(forecast)]
+
+## …and the same sentence tinted: SIGNAL cyan for a raid that gets there, WARN amber for one that does
+## not. It never reads DANGER — a denial raid that cannot break the herd is a bad bargain, not a
+## refusal (it still launches and keeps working the herd until recalled).
+static func denial_verdict_bbcode(forecast: Dictionary, herd_name: String) -> String:
+    var text := denial_verdict_text(forecast, herd_name)
+    if text == "":
+        return ""
+    var hex := HudStyle.SIGNAL_HEX if String(denial_verdict(forecast)["severity"]) == VERDICT_OK \
+        else HudStyle.WARN_HEX
+    return "[color=#%s]%s[/color]" % [hex, text]
+
+## **THE WASTE, STATED AND NOT ALARMED ABOUT** — what the raid kills, the little it hauls home, and
+## what it leaves dead on the range. Quiet ink, no `⚠`: on a hunt an unhauled kill is a mistake, on a
+## raid it is the mission. `""` when the forecast has no take to describe.
+static func denial_take_bbcode(forecast: Dictionary, herd_name: String) -> String:
+    if not bool(forecast.get("available", false)):
+        return ""
+    var animals := int(forecast.get("animals", 0))
+    if animals <= 0:
+        return ""
+    var text := DENIAL_TAKE_KILLS_FORMAT % [animals, herd_name]
+    # Each account only when the quarry actually pays it — the render-only-when-non-zero rule, so an
+    # inedible quarry's raid quotes pelts alone rather than a false `0.00 food`.
+    var food := float(forecast.get("food", 0.0))
+    if has_component(food):
+        text += DENIAL_TAKE_FOOD_FORMAT % format_magnitude(food)
+    var trade := float(forecast.get("trade", 0.0))
+    if has_component(trade):
+        text += DENIAL_TAKE_TRADE_FORMAT % [FoodIcons.TRADE_GOODS_GLYPH, format_magnitude(trade)]
+    # …and the waste in BOTH products, under the same rule: what the quarry does not pay is not
+    # stated, so nothing here can render a fabricated `0.00`.
+    var wasted := denial_waste_face(forecast)
+    if wasted != "":
+        text += DENIAL_TAKE_LEFT_FORMAT % wasted
+    return "[color=#%s]%s[/color]" % [HudStyle.INK_DIM_HEX, text]
+
+## **WHAT THE RAID LEAVES ON THE RANGE, IN EVERY PRODUCT IT LEAVES IT IN** — the subject of the take
+## line's waste clause, and the ONE spelling of it, so any second surface that states a raid's waste
+## states it in the same words. `""` when the forecast wastes nothing measurable in either account,
+## which is the caller's signal to render no clause at all rather than an empty one.
+##
+## Food leads and renders BARE (the take line's own order, and the reading an edible quarry has always
+## had); trade carries the glyph and the words, because a bare second number in one clause could not
+## say which account it belonged to. Neither is printed at zero — the render-only-when-non-zero rule
+## the delivered pair one line above already follows — so a food-only quarry's waste reads exactly as
+## it did before trade joined it, and a wolf pack (which binds no carry and therefore wastes nothing)
+## renders no clause instead of two honest-looking zeros.
+static func denial_waste_face(forecast: Dictionary) -> String:
+    var parts: Array[String] = []
+    var food := float(forecast.get("wasted", 0.0))
+    if has_component(food):
+        parts.append(format_magnitude(food))
+    var trade := float(forecast.get("wasted_trade", 0.0))
+    if has_component(trade):
+        parts.append(DENIAL_TAKE_LEFT_TRADE_FORMAT % [
+            FoodIcons.TRADE_GOODS_GLYPH, format_magnitude(trade)])
+    return DENIAL_TAKE_LEFT_JOIN.join(parts)
+
+## **THE ONE READING OF `denialPartyNeeded`** — the smallest party the sim quotes whose raid actually
+## SUCCEEDS in driving this herd past recovery (never a `horizon` row, which only means the projection
+## ran out), `DENIAL_PARTY_NEEDED_NONE` when it quotes none. The stepper's seed and the
+## repelled refusal's count BOTH come through here, so the control and the sentence beside it cannot
+## disagree about the number. It is NOT a cap and may exceed the band's idle workers — that is the
+## honest "you need more people than you have", and only the stepper, which knows the band, clamps it.
+static func denial_party_needed(herd: Dictionary) -> int:
+    return int(herd.get(HERD_DENIAL_PARTY_NEEDED_KEY, DENIAL_PARTY_NEEDED_NONE))
+
+## The spelled-out reason a denial raid will not get there — `""` for the two outcomes that do, so the
+## sheet renders no line rather than an empty one.
+##
+## **THE REPELLED REFUSAL NAMES THE PARTY THE SIM QUOTES, WHENEVER IT QUOTES ONE.** Which of the
+## outcome's two reasons renders is decided by `denial_party_needed`, never by the wording: with a
+## figure the sentence carries `[quarry, needed]`, without one it falls back to the numberless form
+## that takes the quarry alone. An outcome with no counted variant (every other one) is unaffected.
+static func denial_refusal_reason(forecast: Dictionary, herd: Dictionary) -> String:
+    var entry := denial_verdict(forecast)
+    var needed := denial_party_needed(herd)
+    var counted := String(entry.get("reason_counted", ""))
+    if counted != "" and needed > DENIAL_PARTY_NEEDED_NONE:
+        return counted % [herd_display_name(herd), needed]
+    var reason := String(entry["reason"])
+    return "" if reason == "" else reason % herd_display_name(herd)
+
+## **THE ONE CONDITION THAT DISABLES A DENIAL SEND: the band cannot field the party this herd
+## REQUIRES.** Not "the chosen party is too small" — that is the player's call to under-size a raid and
+## it is warned about, not blocked (see `style_send_denial_button`) — but "no party this band can put
+## in the field reaches the requirement at all", which is a fact about the BAND and not a choice.
+##
+## **`DENIAL_PARTY_NEEDED_NONE` IS NOT SHORT-HANDED.** `0` is not "not enough hunters": per
+## `snapshot.fbs` it also covers a quarry nothing can bring into contact (wariness ≥ 1), where more
+## hands never help, and a requirement past the sim's quoting bound. There is no number to compare, so
+## the verdict copy governs and the button behaves as it always has.
+static func denial_is_short_handed(herd: Dictionary, idle: int) -> bool:
+    var needed := denial_party_needed(herd)
+    return needed > DENIAL_PARTY_NEEDED_NONE and needed > idle
+
+## …and the sentence that says so, `""` when the band is not short-handed. Both numbers, off the SAME
+## `denial_party_needed` reading the stepper's seed and the repelled refusal use, so the sheet cannot
+## disable a Send over one figure while quoting another.
+static func denial_short_handed_reason(herd: Dictionary, idle: int) -> String:
+    if not denial_is_short_handed(herd, idle):
+        return ""
+    return DENIAL_SHORT_HANDED_REASON_FORMAT % [
+        herd_display_name(herd), denial_party_needed(herd), idle]
+
+## The denial Send button, off the SAME entry the verdict line came from. With no forecast at all (a
+## party size the sim did not sample) it takes the plain primary face rather than a warning it cannot
+## justify.
+##
+## **IT DISABLES IN EXACTLY ONE CASE, AND THE DISTINCTION IS THE WHOLE RULE.** A party the player has
+## CHOSEN to under-size still launches: a raid that cannot break the herd keeps working it until it is
+## recalled (§6 Q2), so a stepped-down `repelled` party warns and the player is trusted, exactly as a
+## slow hunting raid is. That reasoning does not carry to a band that cannot field the required party
+## AT ALL (`short_handed`) — there is no party to trust the player with, so the button goes
+## visible-and-disabled-with-its-reason, the same shape as the sheet's no-quarry branch.
+static func style_send_denial_button(button: Button, forecast: Dictionary,
+        short_handed: bool = false) -> void:
+    if short_handed:
+        button.disabled = true
+        button.text = DENIAL_SHORT_HANDED_BUTTON
+        HudStyle.apply_button(button, "ghost")
+        return
+    button.disabled = false
+    if not bool(forecast.get("available", false)):
+        button.text = String(DENIAL_VERDICTS[DENIAL_OUTCOME_PAST_RECOVERY]["button"])
+        HudStyle.apply_button(button, "primary")
+        return
+    var entry := denial_verdict(forecast)
+    button.text = String(entry["button"])
+    HudStyle.apply_button(button,
+        "primary" if String(entry["severity"]) == VERDICT_OK else "armed")
+
+## **THE SUPPLY SIDE OF THE PARTY STEPPER — the band's IDLE WORKFORCE, and nothing else.** What the
+## band can spare is the only thing that bounds how many hunters may walk out of camp;
+## `expedition_useful_cap` below is the DEMAND side (what the raid can actually use at the kill), and
+## the stepper takes the tighter of the two. Kept as a named function rather than inlined because it is
+## the seam TWO entry points read — the herd drawer's expedition branch and the dock's hunt form.
+##
+## **`max_expedition_party_size` IS NOT A RULES CAP AND IS NOT READ HERE.** It is the wire echo of the
+## LAST RUNG of `expedition_config.estimate_party_sizes` — the top of the estimate tables' SAMPLED
+## party axis, and the only quoting bound there is (it absorbed the retired `deny.max_party_quoted`) —
+## and the sim deleted the rules cap for all three launch verbs, so this clamp was the client enforcing
+## a limit nothing on the server holds. A party past that rung is quoted at the rung, with the sheet
+## naming it (`quoted_party_note`); it is not refused.
 static func expedition_party_cap(band: Dictionary) -> int:
-    var idle := int(band.get("idle_workers", 0))
-    var cap := int(band.get("max_expedition_party_size", 0))
-    return mini(idle, cap) if cap > 0 else idle
+    return int(band.get("idle_workers", 0))
+
+## **THE PARTY THAT CAN REACH THIS HERD'S STANDING SURPLUS** — `engage_workers` over the room above the
+## floor, in the room's own BIOMASS units (the quotient is a ratio, so the units are free exactly as
+## they are for the local cap's account-denominated call). The raid twin of the floor
+## `max_useful_workers` takes through `take_workers`, and it reuses the SAME primitive rather than
+## restating it: a second definition of the engagement crew is precisely what let the two sheets drift.
+##
+## **ONLY THE ENGAGE HALF OF `take_workers`, and that is deliberate.** The haul half is sized on
+## `perWorkerBiomass`, a RESIDENT crew's throughput; a raid hauls in its PACK
+## (`expedition.hunt.per_worker_carry`), which is not on the wire — and the pack side is exactly what
+## the plateau scan already watches the delivered payload run into. Engagement is the arm the scan
+## cannot see, so it is the arm this adds.
+##
+## **A DETACHED PARTY BUILDS NOTHING**, so the dip is `IMPROVEMENT_NONE`'s — resolved through
+## `build_dip` rather than written as a bare 1.0, so "not building" stays one value in one place.
+## `0` for a herd with no engagement stage (a pen; a species the roster cannot resolve) and for one
+## with no body to count, which is what leaves every raid predating this field byte-identical.
+static func expedition_engage_crew(herd: Dictionary, floor: float) -> int:
+    # A raw herd dict carries its forecast fields BARE — the `patch_` prefix belongs to the tile_info
+    # cross-ref, and this layer never reads the compose vocabulary that names it.
+    var prefix := ""
+    return engage_workers(escapement_room(herd, prefix, floor),
+        float(herd.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)),
+        float(herd.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)),
+        build_dip(herd, prefix, IMPROVEMENT_NONE))
 
 ## The max-useful party for a raid: `delivered_food` PLATEAUS with party size once the standing surplus
 ## (not the pack) binds, so beyond the plateau extra hunters raise the payload by nothing. Scan the
@@ -2647,19 +4053,21 @@ static func expedition_useful_cap(band: Dictionary, herd: Dictionary, floor: flo
     # even when it exceeds what we can field right now. The returned cap still clamps to `assignable`
     # below, so this widens ONLY the explanatory note (it lets a labor-bound stepper name the ceiling
     # it is working toward, "N of M useful"), never the cap.
-    var scan_cap := 1
-    for key in estimates:
-        var row_variant: Variant = estimates[key]
-        if not (row_variant is Dictionary):
-            continue
-        var row := row_variant as Dictionary
-        if is_equal_approx(float(row.get(HUNT_ESTIMATE_FLOOR_KEY, 0.0)), sampled):
-            scan_cap = maxi(scan_cap, int(row.get(HUNT_ESTIMATE_PARTY_KEY, 0)))
+    #
+    # **IT WALKS THE SAMPLED RUNGS, NOT `1..=largest`, AND THAT IS LOAD-BEARING NOW THAT THE PARTY AXIS
+    # IS A LADDER.** The walk used to step every integer and `continue` past the sizes the table did not
+    # carry; with `hunt_estimate_row` reading the nearest rung, no size is ever missing, so an unsampled
+    # 5 would answer rung 4's row, read as "the payload stopped rising" and BREAK the scan one rung in.
+    # Sorting the rows ascending is what makes the rise/break test mean what it says.
+    var rows := _estimate_rows_at_floor(estimates, sampled)
+    rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+        return int(a.get(HUNT_ESTIMATE_PARTY_KEY, 0)) < int(b.get(HUNT_ESTIMATE_PARTY_KEY, 0)))
     var prev_delivered := -1.0
     var plateau := 0
-    for workers in range(1, scan_cap + 1):
-        var cell := hunt_estimate_row(estimates, sampled, workers)
-        if cell.is_empty():
+    for cell_variant in rows:
+        var cell: Dictionary = cell_variant
+        var workers := int(cell.get(HUNT_ESTIMATE_PARTY_KEY, 0))
+        if workers <= 0:
             continue
         # Scan the component this QUARRY pays (issue #337): an inedible species delivers 0 food at
         # every party size, so a food-only scan finds no plateau at all and the party stepper loses
@@ -2669,24 +4077,37 @@ static func expedition_useful_cap(band: Dictionary, herd: Dictionary, floor: flo
             else float(cell.get("delivered_trade", 0.0))
         if delivered > prev_delivered:
             prev_delivered = delivered
-            plateau = workers   # the payload is still rising — this size is useful
+            # **A PAYLOAD THAT HAS NOT RISEN ABOVE ZERO IS NOT A PLATEAU.** A raid every sampled party
+            # size comes home empty from — a party too small to make the kill at all — is FLAT at zero,
+            # and the rise/break scan reads that flatness as "the first size was enough", capping at
+            # ONE. That is how the sheet came to read *"max 1 worker useful here"* about a party of one
+            # that kills nothing (reported from play). A size is useful when it lands something.
+            if delivered > 0.0:
+                plateau = workers   # the payload is still rising — this size is useful
         else:
             break               # the payload stopped rising — the previous size is the plateau
+    # **THE ENGAGEMENT ARM THE PLATEAU CANNOT SEE** (`docs/plan_hunt_through_combat.md` §2). The scan
+    # can only report a bind it can WATCH the payload run into, and the sampled party sizes stop long
+    # before the crew that brings this quarry into contact: a herd needing six hunters per animal with
+    # four animals standing wants ~30, so every sampled row delivers nothing and the scan has nothing
+    # to plateau on. The local sheet's cap has floored on this crew since the arm landed
+    # (`max_useful_workers` → `take_workers`); the raid's never did, which is how the sheet came to say
+    # *"max 1 worker useful here"* two lines above *"6 hunters bring one Wild Aurochs into contact"*.
+    # It is a FLOOR on the demand side, never a cap — `assignable` still binds below — so the note
+    # names the ceiling the player is working toward instead of calling the missing hands idle.
+    plateau = maxi(plateau, expedition_engage_crew(herd, floor))
     if plateau <= 0:
         return {"cap": assignable, "note": ""}
     var useful: int = mini(plateau, assignable)
     if useful >= assignable:
         # Labor-bound below the plateau: the party capped at what you can field, not at usefulness.
-        # `assignable = min(idle, max_party_size)`, so distinguish which constraint binds — freeing
-        # idle workers only helps when idle is the binder; if the party-size cap binds, say so.
+        # **THERE IS ONLY ONE SUPPLY CONSTRAINT NOW, so there is only one note.** `assignable` is the
+        # band's idle workforce (`expedition_party_cap`), so freeing idle workers is ALWAYS the remedy;
+        # the party-size twin that used to sit here described `max_expedition_party_size` binding
+        # instead, and that cap is gone — a branch that can never be taken is worse than no branch.
         var labor_note := ""
         if plateau > assignable:
-            var idle := int(band.get("idle_workers", 0))
-            var max_party := int(band.get("max_expedition_party_size", 0))
-            if max_party > 0 and idle >= max_party:
-                labor_note = PARTY_SIZE_BOUND_NOTE_FORMAT % [assignable, plateau]
-            else:
-                labor_note = LABOR_BOUND_NOTE_FORMAT % [assignable, plateau]
+            labor_note = LABOR_BOUND_NOTE_FORMAT % [assignable, plateau]
         return {"cap": assignable, "note": labor_note}
     var noun := MAX_USEFUL_NOUN_ONE if useful == 1 else MAX_USEFUL_NOUN_MANY
     return {"cap": useful, "note": MAX_USEFUL_NOTE_FORMAT % [useful, noun]}
@@ -2729,9 +4150,15 @@ static func expedition_policy_takes(band: Dictionary, herd: Dictionary,
             var cell := cell_variant as Dictionary
             if not is_equal_approx(float(cell.get(HUNT_ESTIMATE_FLOOR_KEY, 0.0)), sampled):
                 continue
-            var trip_turns := int(cell.get("turns_to_fill", 0)) + travel
-            if trip_turns <= 0:
+            # **AN UNBOUNDED RAID HAS NO LENGTH, AND ITS TRAVEL IS NOT ONE.** The skip used to test the
+            # SUM, so a horizon cell on a distant herd read `delivered ÷ travel` — a rate for a raid the
+            # sim says never finished, made entirely out of the walk. Under the old wire that was every
+            # floor-`0` cell, so the `Take everything` preset quoted a fabricated rate on a far herd and
+            # no rate at all on a near one. Ask the raid, not the total.
+            var cell_hunt_turns := int(cell.get("turns_to_fill", RAID_TURNS_UNBOUNDED))
+            if raid_is_unbounded(cell_hunt_turns):
                 continue
+            var trip_turns := cell_hunt_turns + travel
             # Each component gates on its OWN delivers flag: `delivers_food == false` now means the
             # quarry is inedible, so gating the whole row on it would blank a wolf's every preset.
             if bool(cell.get("delivers_food", false)):
@@ -2753,15 +4180,17 @@ static func expedition_policy_takes(band: Dictionary, herd: Dictionary,
 ##     promises). "primary" for a brisk raid; "armed" amber for a slow/long raid (`Send Anyway (≈54
 ##     turns)` / `Send Anyway (long raid)`) or a denial (`SEND_HUNT_DENIAL_BUTTON`) — ENABLED either
 ##     way: the player is told, then trusted.
-##   NO SURPLUS (`animals_taken == 0`) — the raid returns empty, a mistake with no upside. DISABLED,
-##     with the reason and the way out (party size can't fix it, so the reason names no alternative).
+##   RETURNS EMPTY (nothing delivered in either currency) — a mistake with no upside. DISABLED, with
+##     the reason and the way out, both keyed off the sim's `bound` so the face and the sentence above
+##     it name the SAME culprit.
 ## No confirm dialogs either way.
 static func style_send_hunt_button(button: Button, forecast: Dictionary, reason: String) -> void:
-    # NO SURPLUS — the one blocked case. Disabled, and it says WHY plus what to do instead (the button is
-    # the last thing the player looks at before clicking, so the reason belongs on it). Same words as the
-    # panel line and the targeting refusal, from the one helper.
-    if hunt_trip_no_surplus(forecast):
-        button.text = SEND_HUNT_NO_SURPLUS_BUTTON
+    # RETURNS EMPTY — the one blocked case. Disabled, and it says WHY plus what to do instead (the button
+    # is the last thing the player looks at before clicking, so the reason belongs on it). **Its FACE comes
+    # from the same `HUNT_EMPTY_REFUSALS` entry the line and the reason do**: a button reading "Herd too
+    # lean to raid" under a line naming the PARTY is the same misattribution one control further on.
+    if hunt_trip_returns_empty(forecast):
+        button.text = String(hunt_empty_refusal(forecast)["button"])
         button.disabled = true
         button.tooltip_text = reason
         HudStyle.apply_button(button, "ghost")
@@ -2774,7 +4203,10 @@ static func style_send_hunt_button(button: Button, forecast: Dictionary, reason:
         HudStyle.apply_button(button, "armed")
         return
     if bool(forecast.get("long_raid", false)):
-        button.text = SEND_HUNT_LONG_RAID_BUTTON
+        # The FLOOR on the trip, in the same clause the slow face states its total — so the last control
+        # the player looks at before clicking carries a number rather than the word "long".
+        button.text = (SEND_HUNT_LONG_RAID_FORMAT % int(forecast.get(RAID_TURNS_FLOOR_KEY, 0))) \
+            if raid_floor_is_known(forecast) else SEND_HUNT_LONG_RAID_BUTTON
         HudStyle.apply_button(button, "armed")
         return
     if bool(forecast.get("slow", false)):

@@ -26,10 +26,17 @@ extends Node
 ##    payload off the HUD's own signal.
 ## 3. Format each captured payload with `Main`'s own `format_*` builders — the pure statics
 ##    `Main._on_hud_*` calls — so the recorded text is byte-for-byte what the client transmits.
-## 4. Write those lines to `ui_preview_out/emitted_band_commands.json`, where **`cargo xtask
-##    command-guard` parses every one with the REAL server-side parser**
-##    (`sim_runtime::command_text::parse_command_line`, the same function the native `CommandBridge`
-##    runs) and asserts the band handle equals the fixture's `band_id`.
+## 4. Write those lines to `ui_preview_out/emitted_band_commands.json` — each as
+##    `{kind, line, expected_kit}` — where **`cargo xtask command-guard` parses every one with the
+##    REAL server-side parser** (`sim_runtime::command_text::parse_command_line`, the same function
+##    the native `CommandBridge` runs) and asserts the band handle equals the fixture's `band_id`
+##    AND the parsed kit equals `expected_kit`.
+##
+## **THE KIT TAIL IS ASSERTED FOR THE HANDLE'S OWN REASON.** `Main._kit_token` omits `kit <id>`
+## whenever the selection equals the job default, so a line that merely PARSES says nothing about the
+## kit: if `_kit_token` regressed to `""`, every drive below would still parse, `EXPECTED_KINDS` would
+## still count, and this harness would report PASS while no kit ever left the client. `_record`
+## therefore states, per line, which kit the parser must recover.
 ##
 ## **THE FIXTURE'S `entity` AND `band_id` ARE DELIBERATELY DIFFERENT VALUES.** If they agreed this
 ## harness would prove nothing at all — sending the wrong handle would produce the right number.
@@ -46,6 +53,9 @@ const MAP_VIEW_SCRIPT := preload("res://src/scripts/MapView.gd")
 ## `Main`'s command-text builders are pure statics precisely so they can be reached without standing
 ## up the app scene — the `escape_claimant` precedent.
 const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
+## The world's kit roster, shared with both preview harnesses — one roster, one set of ids, so the
+## `kit <id>` token this guard emits is the token those frames are read against.
+const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
 ## Scratch prefs, never the player's real ones (the `band_panel_preview` rule).
 const GUARD_PREFS_PATH := "user://command_guard_prefs.cfg"
@@ -130,6 +140,10 @@ func _ready() -> void:
 	_hud.set_grid_dimensions({"width": GRID_W, "height": GRID_H, "wrap_horizontal": false})
 	_hud.update_herds(_herd_fixtures())
 	_hud.update_band_alerts([_band_fixture(), _party_fixture()])
+	# The kit roster, so every compose sheet below resolves a real selection and the `kit <id>` tail
+	# is a token the REAL parser has to accept rather than one the client never emits.
+	_hud.update_kit_roster(BandFx.kit_roster_fixture(),
+		BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE)
 	await _settle()
 
 	await _drive_assign_labor()
@@ -139,6 +153,8 @@ func _ready() -> void:
 	await _drive_recall_expedition()
 	await _drive_send_hunt_expedition_from_band_panel()
 	await _drive_send_hunt_expedition_from_herd_drawer()
+	await _drive_send_denial_raid()
+	await _drive_assign_labor_kits()
 
 	_assert_every_command_emitted()
 	_write_emitted()
@@ -193,9 +209,35 @@ func _drive_send_hunt_expedition_from_band_panel() -> void:
 	_hud._bandpanel._party_compose_open = true
 	_hud._bandpanel._party_compose_mission = "hunt"
 	_hud._compose.set_party_quarry(FAR_HERD_ID)
+	# **A NON-DEFAULT KIT, so the line carries the tail rather than omitting it.** `Main._kit_token`
+	# omits `kit <id>` when the selection equals the job default — which is the shipped case and is
+	# byte-identical to the pre-roster line — so composing the default here would test nothing new.
+	_hud._compose.set_party_kit_id(BandFx.KIT_ID_NONE)
 	_hud._bandpanel.rerender()
 	await _settle()
 	_press_send_hunt_confirm(_panel, "band panel parties compose")
+	await _settle()
+	_hud._bandpanel._party_compose_open = false
+	_hud._bandpanel._party_compose_mission = ""
+	_hud._compose.clear_party_quarry()
+
+## `send_denial_raid` (`docs/plan_denial_raid.md`) — the parties compose sheet's THIRD mission. Its
+## own driver and its own confirm meta, because it is its own command: the grammar is CLOSED at four
+## tokens (`send_denial_raid <faction> <band> <party> <fauna_id>`) and a fifth is a hard parse error,
+## so a payload that picked up a floor or a fill target would be REJECTED by the real parser this
+## gate runs — which is exactly the assertion worth having, and one no client-side test can make.
+func _drive_send_denial_raid() -> void:
+	_hud._selection.clear()
+	_panel.set_active_tab(&"parties")
+	_hud._bandpanel._party_compose_open = true
+	_hud._bandpanel._party_compose_mission = HudComposeVocab.COMPOSE_MISSION_DENY
+	_hud._compose.set_party_quarry(FAR_HERD_ID)
+	# The one order the closed four-token grammar still admits, and the reason this drive matters
+	# most: a `kit <id>` pair the parser refuses would be a hard parse error here.
+	_hud._compose.set_party_kit_id(BandFx.KIT_ID_NONE)
+	_hud._bandpanel.rerender()
+	await _settle()
+	_press_meta_button(_panel, HudWidgets.SEND_DENIAL_CONFIRM_META, "band panel denial compose")
 	await _settle()
 	_hud._bandpanel._party_compose_open = false
 	_hud._bandpanel._party_compose_mission = ""
@@ -209,9 +251,34 @@ func _drive_send_hunt_expedition_from_herd_drawer() -> void:
 	await _settle()
 	# `open_herd_compose` takes the herd it is composing for — it gates on `_herd_compose_available`
 	# and keys the compose state off `herd.id`, so the drawer's own selection is not enough.
+	# **BEFORE the open, not after.** The commit button's payload is captured in a `pressed` closure
+	# built during the render, so a selection written after the sheet exists is not the one the button
+	# carries — the line would come out untailed and the drive would silently assert nothing.
+	_hud._compose.set_hunt_kit_id(BandFx.KIT_ID_NONE)
 	_hud._drawercompose.open_herd_compose(herd)
 	await _settle()
 	_press_send_hunt_confirm(_hud, "herd drawer compose")
+	await _settle()
+
+## `assign_labor` with the KIT TAIL, on BOTH grammars (`docs/plan_denial_raid.md`). The quick-hunt
+## drive above emits the untailed line (it names no kit, so the job default stands and the token is
+## omitted); this one emits the tailed twin of each, which is what puts `kit <id>` in front of the
+## real parser on the forage grammar's two optional positionals as well as on the hunt grammar.
+##
+## It reaches `HudLayer._emit_assign_labor` DIRECTLY rather than through a compose sheet, and that is
+## deliberate: what is under test here is the LINE, and the two compose sheets' own kit plumbing is
+## asserted in the preview harnesses, where the picker can be read back. Standing up a tile card here
+## would buy a second copy of that coverage and a forage fixture this file has no other use for.
+func _drive_assign_labor_kits() -> void:
+	var band: Dictionary = _hud._band_labor.panel_band()
+	_hud._emit_assign_labor(band, SourceForecast.LABOR_KIND_HUNT, PARTY_WORKERS,
+		int(band.get("current_x", 0)), int(band.get("current_y", 0)), NEAR_HERD_ID,
+		SourceForecast.DEFAULT_HARVEST_FLOOR, "", SourceForecast.IMPROVEMENT_NONE,
+		BandFx.KIT_ID_NONE)
+	await _settle()
+	_hud._emit_assign_labor(band, SourceForecast.LABOR_KIND_FORAGE, PARTY_WORKERS,
+		TARGET_X, TARGET_Y, "", SourceForecast.DEFAULT_HARVEST_FLOOR, "",
+		SourceForecast.IMPROVEMENT_NONE, BandFx.KIT_ID_NONE)
 	await _settle()
 
 ## Push the band through a REAL MapView and click its hex, so the HUD's selected unit is the marker
@@ -235,20 +302,27 @@ func _select_band_marker_from_map() -> void:
 
 ## Press the meta-tagged "send hunting expedition" confirm somewhere under `root`.
 func _press_send_hunt_confirm(root: Node, where: String) -> void:
-	var button := _find_send_hunt_confirm(root)
+	_press_meta_button(root, HudWidgets.SEND_HUNT_CONFIRM_META, where)
+
+## Press a confirm found BY META, never by face — every launch button in this client wears its own
+## verdict as its text. **Each mission has its OWN meta**, and that is not tidiness: a search for
+## "the send button" on a parties compose sheet could not tell which MISSION it had just launched,
+## and the two emit different signals with non-interchangeable payloads.
+func _press_meta_button(root: Node, meta: String, where: String) -> void:
+	var button := _find_meta_button(root, meta)
 	if button == null:
-		_fail("no send-hunt confirm button found in the %s" % where)
+		_fail("no `%s` confirm button found in the %s" % [meta, where])
 		return
 	if button.disabled:
-		_fail("the %s's send-hunt confirm is disabled — the fixture raid must be viable" % where)
+		_fail("the %s's confirm is disabled — the fixture order must be launchable" % where)
 		return
 	button.pressed.emit()
 
-func _find_send_hunt_confirm(node: Node) -> Button:
-	if node is Button and node.has_meta(HudWidgets.SEND_HUNT_CONFIRM_META):
+func _find_meta_button(node: Node, meta: String) -> Button:
+	if node is Button and node.has_meta(meta):
 		return node
 	for child in node.get_children():
-		var found := _find_send_hunt_confirm(child)
+		var found := _find_meta_button(child, meta)
 		if found != null:
 			return found
 	return null
@@ -264,23 +338,53 @@ func _connect_recorders() -> void:
 		_record("send_expedition", p, MAIN_SCRIPT.format_send_expedition(p)))
 	_hud.send_hunt_expedition_requested.connect(func(p: Dictionary) -> void:
 		_record("send_hunt_expedition", p, MAIN_SCRIPT.format_send_hunt_expedition(p)))
+	_hud.send_denial_raid_requested.connect(func(p: Dictionary) -> void:
+		_record("send_denial_raid", p, MAIN_SCRIPT.format_send_denial_raid(p)))
 	_hud.recall_expedition_requested.connect(func(p: Dictionary) -> void:
 		_record("recall_expedition", p, MAIN_SCRIPT.format_recall_expedition(p)))
 	_hud.cancel_order_requested.connect(func(band: Dictionary, scope: String) -> void:
 		_record("cancel_order", band, MAIN_SCRIPT.format_cancel_order(band, scope)))
 
+## The commands whose grammar carries a `kit <id>` tail. Every OTHER kind records `expected_kit` as
+## `""` — a command with no kit axis names no kit, which is what the Rust half's `NotKitBearing`
+## answer means.
+const KIT_BEARING_KINDS := {
+	"assign_labor": true,
+	"send_hunt_expedition": true,
+	"send_denial_raid": true,
+}
+
 ## Record one emitted command. A builder that DECLINES (empty dict) is itself a failure here: every
 ## drive below is a well-formed order, so "nothing to send" means a handle went missing.
+##
+## **It records the kit the line is EXPECTED to carry**, and `cargo xtask command-guard` asserts the
+## real server parser recovers exactly that. Without it the four kit drives proved only that a line
+## PARSES: `Main._kit_token` regressed to `""` would leave every line valid, every `EXPECTED_KINDS`
+## count intact, and the gate green while no kit ever left the client.
+##
+## The expectation is the DRIVE'S OWN `kit_id`, taken off the payload it composed — not a second copy
+## of `_kit_token`'s rule. The one case that would make it circular is a drive composing the job
+## DEFAULT, where the token is legitimately omitted and the assertion could never fail; that is a
+## fixture error and fails here rather than passing quietly.
 func _record(kind: String, payload: Dictionary, formatted: Dictionary) -> void:
 	if formatted.is_empty():
 		_fail("%s: Main declined to build a line — a required field was missing from %s" % [kind, payload])
 		return
-	_emitted.append({"kind": kind, "line": String(formatted["line"])})
+	var expected_kit := ""
+	if KIT_BEARING_KINDS.has(kind):
+		expected_kit = String(payload.get("kit_id", "")).strip_edges()
+		var job_default := String(payload.get("default_kit_id", "")).strip_edges()
+		if expected_kit != "" and expected_kit == job_default:
+			_fail("%s: the drive composed the JOB DEFAULT (%s), so `Main._kit_token` omits the tail and this line asserts nothing about the kit" % [kind, expected_kit])
+			return
+	_emitted.append({"kind": kind, "line": String(formatted["line"]), "expected_kit": expected_kit})
 
 ## The commands this guard must see. Missing one is a failure: a driver that quietly stopped
 ## reaching its emit site would otherwise turn this guard green by producing nothing to check.
 const EXPECTED_KINDS := {
-	"assign_labor": 1,
+	# THREE — the map's quick-hunt (which names no kit, so the line is the untailed one) plus the two
+	# `_drive_assign_labor_kits` emits that put `kit <id>` on both grammars.
+	"assign_labor": 3,
 	"cancel_order": 1,
 	"move_band": 1,
 	"send_expedition": 1,
@@ -288,6 +392,8 @@ const EXPECTED_KINDS := {
 	# TWO — the Band panel's parties compose and the herd drawer's, which build their payloads
 	# independently and so can drift apart.
 	"send_hunt_expedition": 2,
+	# ONE — the parties compose sheet is the denial raid's only launch site.
+	"send_denial_raid": 1,
 }
 
 func _assert_every_command_emitted() -> void:

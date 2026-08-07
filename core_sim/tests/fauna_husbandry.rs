@@ -68,6 +68,13 @@ fn spawn_world() -> App {
     app.world.insert_resource(HerdTelemetry::default());
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(FaunaConfigHandle::default());
+    // **This harness is a deterministic pin, so the retreat stage is held at its identity.**
+    // Slice 7 authored a non-zero `combat.wariness` across the roster
+    // (`docs/plan_hunt_through_combat.md` §3.1); `FaunaConfig::without_retreat` carries the whole
+    // reasoning for why the pre-existing suite neutralises it rather than re-baselining.
+    app.world
+        .resource_mut::<FaunaConfigHandle>()
+        .hold_wariness_at_zero();
     app.world.insert_resource(LaborConfigHandle::default());
     app.world
         .insert_resource(core_sim::FloraConfigHandle::default());
@@ -77,6 +84,8 @@ fn spawn_world() -> App {
         .insert_resource(core_sim::CombatConfigHandle::default());
     app.world
         .insert_resource(core_sim::CreaturesConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::EquipmentConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.run_system_once(spawn_initial_herds);
     app
@@ -202,6 +211,7 @@ fn spawn_crew_of(
                     },
                     workers: hunters,
                     improvement,
+                    kit: None,
                 }],
                 ..Default::default()
             },
@@ -1000,7 +1010,14 @@ fn a_worker_hunting_a_pastoral_herd_takes_its_pastoral_msy_and_draws_the_herd_do
         // species instead of accidentally-tight for the one the current seed happens to place.
         // `HUNT_WORKERS` is sized so the carry cap never binds, so the crew hauls everything it kills:
         // the MSY is both the policy ceiling and the collection.
-        let take = quantise_animal_take(msy, msy, herd.body_mass).carried;
+        let take = quantise_animal_take(
+            msy,
+            msy,
+            herd.body_mass,
+            f32::INFINITY,
+            core_sim::EngagementStop::WhenPackFull,
+        )
+        .carried;
         (take, take * fauna.hunt.provisions_per_biomass)
     };
     // **Seated at the OPERATING POINT, not at capacity** (slice 8). A Sustain hunt is constant
@@ -2158,7 +2175,11 @@ fn the_shed_is_bounded_by_the_true_overage_near_a_ceil_boundary() {
 
     run_understaffed_turns(&mut app, &id, herded, 1);
 
-    let shed_animals = (start_biomass - herd_of(&app, &id).biomass) / body_mass;
+    // **Rounded to whole animals, because that is what is being asserted.** The count is recovered by
+    // dividing a ~1-animal delta by a ~400-animal total, and f32 carries ~7 digits — so the exact
+    // quotient lands within ~1e-5 of the integer either side of it, and a hair-tight bound passes or
+    // fails on the fixture's magnitude rather than on the shed's behaviour.
+    let shed_animals = ((start_biomass - herd_of(&app, &id).biomass) / body_mass).round();
     assert!(
         (1.0..=3.0).contains(&shed_animals),
         "the shed is the true overage (~1–2 animals), not the ceil-boundary over-estimate (~dozens): \

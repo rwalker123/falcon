@@ -80,6 +80,15 @@ pub struct SnapshotContext<'w> {
     /// Scouting & Hunting Expeditions → Snapshot).
     pub fauna: Res<'w, crate::fauna_config::FaunaConfigHandle>,
     pub expedition: Res<'w, crate::expedition_config::ExpeditionConfigHandle>,
+    /// The base human's intrinsic combat profile — the **unequipped** attack tier the minimal TOE's
+    /// hunting kit lifts a band off (`docs/plan_hunt_through_combat.md` §4.8).
+    pub creatures: Res<'w, crate::creatures_config::CreaturesConfigHandle>,
+    /// The TOE kit table — the equipped attack tier, the unequipped haul tier, and the durability
+    /// dials each band's `BandEquipment` wear is measured against.
+    pub equipment: Res<'w, crate::equipment_config::EquipmentConfigHandle>,
+    /// Resolver tuning — read so a herd's pre-commit forecast resolves the SAME fight the take will
+    /// (`docs/plan_hunt_through_combat.md` §4).
+    pub combat: Res<'w, crate::combat_config::CombatConfigHandle>,
     pub settlement_stage: Res<'w, crate::settlement_stage_config::SettlementStageConfigHandle>,
     pub supply_membership: Res<'w, SupplyNetworkMembership>,
     pub pipeline_config: Res<'w, TurnPipelineConfigHandle>,
@@ -177,22 +186,22 @@ pub(crate) struct PublishState {
     /// constructs a brand-new `App` and therefore a brand-new history — which is also what makes
     /// "first publication" simply mean `frame_seq == 0`.
     frame_seq: u64,
-    tiles: HashMap<u64, TileState>,
-    logistics: HashMap<u64, LogisticsLinkState>,
-    trade_links: HashMap<u64, TradeLinkState>,
-    populations: HashMap<u64, PopulationCohortState>,
-    power: HashMap<u64, PowerNodeState>,
+    tiles: Indexed<u64, TileState>,
+    logistics: Indexed<u64, LogisticsLinkState>,
+    trade_links: Indexed<u64, TradeLinkState>,
+    populations: Indexed<u64, PopulationCohortState>,
+    power: Indexed<u64, PowerNodeState>,
     power_metrics: Whole<PowerTelemetryState>,
-    generations: HashMap<u16, GenerationState>,
-    influencers: HashMap<u32, InfluentialIndividualState>,
-    culture_layers: HashMap<u32, CultureLayerState>,
+    generations: Indexed<u16, GenerationState>,
+    influencers: Indexed<u32, InfluentialIndividualState>,
+    culture_layers: Indexed<u32, CultureLayerState>,
     culture_tensions: Whole<Vec<CultureTensionState>>,
-    discovery_progress: HashMap<(u32, u32), DiscoveryProgressEntry>,
-    great_discoveries: HashMap<(u32, u16), GreatDiscoveryState>,
+    discovery_progress: Indexed<(u32, u32), DiscoveryProgressEntry>,
+    great_discoveries: Indexed<(u32, u16), GreatDiscoveryState>,
     great_discovery_definitions: Whole<HashMap<u16, GreatDiscoveryDefinitionState>>,
-    great_discovery_progress: HashMap<(u32, u16), GreatDiscoveryProgressState>,
+    great_discovery_progress: Indexed<(u32, u16), GreatDiscoveryProgressState>,
     great_discovery_telemetry: Whole<GreatDiscoveryTelemetryState>,
-    knowledge_ledger: HashMap<u64, KnowledgeLedgerEntryState>,
+    knowledge_ledger: Indexed<u64, KnowledgeLedgerEntryState>,
     knowledge_metrics: Whole<KnowledgeMetricsState>,
     knowledge_timeline: Whole<Vec<KnowledgeTimelineEventState>>,
     crisis_telemetry: Whole<CrisisTelemetryState>,
@@ -237,6 +246,12 @@ pub(crate) struct PublishState {
     voice_medium: Whole<Vec<VoiceMediumState>>,
     herds: Whole<Vec<HerdTelemetryState>>,
     food_modules: Whole<Vec<FoodModuleState>>,
+    /// The kit roster and the two per-job defaults — per-world constants, so in practice they diff
+    /// out on every frame after the first and are re-sent only when the world is rebuilt on new
+    /// tuning. Diffed rather than always-sent for exactly that reason.
+    kits: Whole<Vec<KitOptionState>>,
+    default_hunt_kit_id: Whole<String>,
+    default_forage_kit_id: Whole<String>,
     history: VecDeque<StoredSnapshot>,
 }
 
@@ -311,7 +326,7 @@ struct TileParts {
 
 /// The map's tiles: the largest single collection, one entry per hex.
 fn diff_tiles(
-    baseline: &mut HashMap<u64, TileState>,
+    baseline: &mut Indexed<u64, TileState>,
     snapshot: &WorldSnapshot,
     write: Baseline,
 ) -> TileParts {
@@ -329,7 +344,7 @@ struct CultureParts {
 /// Culture: the per-tile layer grid (map-sized, on the published-state deadband) and the tension
 /// roster that rides with it.
 fn diff_culture(
-    layers: &mut HashMap<u32, CultureLayerState>,
+    layers: &mut Indexed<u32, CultureLayerState>,
     tensions: &mut Whole<Vec<CultureTensionState>>,
     snapshot: &WorldSnapshot,
     write: Baseline,
@@ -351,7 +366,7 @@ struct PowerParts {
 
 /// Power: one node per tile, so map-sized like the two above, plus the grid's telemetry block.
 fn diff_power(
-    nodes: &mut HashMap<u64, PowerNodeState>,
+    nodes: &mut Indexed<u64, PowerNodeState>,
     metrics: &mut Whole<PowerTelemetryState>,
     snapshot: &WorldSnapshot,
     write: Baseline,
@@ -429,12 +444,12 @@ struct KnowledgeParts {
 
 /// The baselines the knowledge section owns.
 struct KnowledgeBaselines<'a> {
-    ledger: &'a mut HashMap<u64, KnowledgeLedgerEntryState>,
+    ledger: &'a mut Indexed<u64, KnowledgeLedgerEntryState>,
     metrics: &'a mut Whole<KnowledgeMetricsState>,
     timeline: &'a mut Whole<Vec<KnowledgeTimelineEventState>>,
-    discovery_progress: &'a mut HashMap<(u32, u32), DiscoveryProgressEntry>,
-    great_discoveries: &'a mut HashMap<(u32, u16), GreatDiscoveryState>,
-    great_discovery_progress: &'a mut HashMap<(u32, u16), GreatDiscoveryProgressState>,
+    discovery_progress: &'a mut Indexed<(u32, u32), DiscoveryProgressEntry>,
+    great_discoveries: &'a mut Indexed<(u32, u16), GreatDiscoveryState>,
+    great_discovery_progress: &'a mut Indexed<(u32, u16), GreatDiscoveryProgressState>,
     great_discovery_definitions: &'a mut Whole<HashMap<u16, GreatDiscoveryDefinitionState>>,
     great_discovery_telemetry: &'a mut Whole<GreatDiscoveryTelemetryState>,
 }
@@ -593,13 +608,20 @@ struct SubsistenceParts {
     herds: Option<Vec<HerdTelemetryState>>,
     forage_patches: Option<Vec<ForagePatchState>>,
     food_modules: Option<Vec<FoodModuleState>>,
+    kits: Option<Vec<KitOptionState>>,
+    default_hunt_kit_id: Option<String>,
+    default_forage_kit_id: Option<String>,
 }
 
 /// Fauna and flora: the herd roster, the forage patches, and the food-module map.
+#[allow(clippy::too_many_arguments)] // one baseline slot per diffed section
 fn diff_subsistence(
     herds: &mut Whole<Vec<HerdTelemetryState>>,
     forage_patches: &mut Whole<Vec<ForagePatchState>>,
     food_modules: &mut Whole<Vec<FoodModuleState>>,
+    kits: &mut Whole<Vec<KitOptionState>>,
+    default_hunt_kit_id: &mut Whole<String>,
+    default_forage_kit_id: &mut Whole<String>,
     snapshot: &WorldSnapshot,
     write: Baseline,
 ) -> SubsistenceParts {
@@ -607,6 +629,13 @@ fn diff_subsistence(
         herds: diff_whole(herds, &snapshot.herds, write),
         forage_patches: diff_whole(forage_patches, &snapshot.forage_patches, write),
         food_modules: diff_whole(food_modules, &snapshot.food_modules, write),
+        kits: diff_whole(kits, &snapshot.kits, write),
+        default_hunt_kit_id: diff_whole(default_hunt_kit_id, &snapshot.default_hunt_kit_id, write),
+        default_forage_kit_id: diff_whole(
+            default_forage_kit_id,
+            &snapshot.default_forage_kit_id,
+            write,
+        ),
     }
 }
 
@@ -630,11 +659,11 @@ struct PeopleParts {
 
 /// The baselines the people-and-network section owns.
 struct PeopleBaselines<'a> {
-    logistics: &'a mut HashMap<u64, LogisticsLinkState>,
-    trade_links: &'a mut HashMap<u64, TradeLinkState>,
-    populations: &'a mut HashMap<u64, PopulationCohortState>,
-    generations: &'a mut HashMap<u16, GenerationState>,
-    influencers: &'a mut HashMap<u32, InfluentialIndividualState>,
+    logistics: &'a mut Indexed<u64, LogisticsLinkState>,
+    trade_links: &'a mut Indexed<u64, TradeLinkState>,
+    populations: &'a mut Indexed<u64, PopulationCohortState>,
+    generations: &'a mut Indexed<u16, GenerationState>,
+    influencers: &'a mut Indexed<u32, InfluentialIndividualState>,
     axis_bias: &'a mut Whole<AxisBiasState>,
     sentiment: &'a mut Whole<SentimentTelemetryState>,
     corruption: &'a mut Whole<CorruptionLedger>,
@@ -707,22 +736,22 @@ impl PublishState {
             sink: None,
             last_publish_profile: Vec::new(),
             frame_seq: 0,
-            tiles: HashMap::new(),
-            logistics: HashMap::new(),
-            trade_links: HashMap::new(),
-            populations: HashMap::new(),
-            power: HashMap::new(),
+            tiles: Indexed::default(),
+            logistics: Indexed::default(),
+            trade_links: Indexed::default(),
+            populations: Indexed::default(),
+            power: Indexed::default(),
             power_metrics: Whole::default(),
-            generations: HashMap::new(),
-            influencers: HashMap::new(),
-            culture_layers: HashMap::new(),
+            generations: Indexed::default(),
+            influencers: Indexed::default(),
+            culture_layers: Indexed::default(),
             culture_tensions: Whole::default(),
-            discovery_progress: HashMap::new(),
-            great_discoveries: HashMap::new(),
+            discovery_progress: Indexed::default(),
+            great_discoveries: Indexed::default(),
             great_discovery_definitions: Whole::default(),
-            great_discovery_progress: HashMap::new(),
+            great_discovery_progress: Indexed::default(),
             great_discovery_telemetry: Whole::default(),
-            knowledge_ledger: HashMap::new(),
+            knowledge_ledger: Indexed::default(),
             knowledge_metrics: Whole::default(),
             knowledge_timeline: Whole::default(),
             crisis_telemetry: Whole::default(),
@@ -759,6 +788,9 @@ impl PublishState {
             voice_medium: Whole::default(),
             herds: Whole::default(),
             food_modules: Whole::default(),
+            kits: Whole::default(),
+            default_hunt_kit_id: Whole::default(),
+            default_forage_kit_id: Whole::default(),
             history: VecDeque::new(),
         }
     }
@@ -876,6 +908,9 @@ impl PublishState {
             herds,
             forage_patches,
             food_modules,
+            kits,
+            default_hunt_kit_id,
+            default_forage_kit_id,
             logistics,
             trade_links,
             populations,
@@ -977,8 +1012,16 @@ impl PublishState {
                     )
                 });
                 scope.spawn(|_| {
-                    subsistence_parts =
-                        diff_subsistence(herds, forage_patches, food_modules, captured, write)
+                    subsistence_parts = diff_subsistence(
+                        herds,
+                        forage_patches,
+                        food_modules,
+                        kits,
+                        default_hunt_kit_id,
+                        default_forage_kit_id,
+                        captured,
+                        write,
+                    )
                 });
                 scope.spawn(|_| {
                     people_parts = diff_people(
@@ -1056,6 +1099,9 @@ impl PublishState {
             herds: subsistence_parts.herds,
             forage_patches: subsistence_parts.forage_patches,
             food_modules: subsistence_parts.food_modules,
+            kits: subsistence_parts.kits,
+            default_hunt_kit_id: subsistence_parts.default_hunt_kit_id,
+            default_forage_kit_id: subsistence_parts.default_forage_kit_id,
             logistics: people_parts.logistics,
             removed_logistics: people_parts.removed_logistics,
             trade_links: people_parts.trade_links,
@@ -1140,48 +1186,62 @@ impl PublishState {
     }
 
     pub(crate) fn reset_to_entry(&mut self, entry: &StoredSnapshot) {
-        self.tiles = entry
-            .snapshot
-            .tiles
-            .iter()
-            .map(|state| (state.entity, state.clone()))
-            .collect();
-        self.logistics = entry
-            .snapshot
-            .logistics
-            .iter()
-            .map(|state| (state.entity, state.clone()))
-            .collect();
-        self.populations = entry
-            .snapshot
-            .populations
-            .iter()
-            .map(|state| (state.entity, state.clone()))
-            .collect();
-        self.power = entry
-            .snapshot
-            .power
-            .iter()
-            .map(|state| (state.entity, state.clone()))
-            .collect();
-        self.generations = entry
-            .snapshot
-            .generations
-            .iter()
-            .map(|state| (state.id, state.clone()))
-            .collect();
-        self.influencers = entry
-            .snapshot
-            .influencers
-            .iter()
-            .map(|state| (state.id, state.clone()))
-            .collect();
-        self.culture_layers = entry
-            .snapshot
-            .culture_layers
-            .iter()
-            .map(|state| (state.id, state.clone()))
-            .collect();
+        self.tiles.reset(
+            entry
+                .snapshot
+                .tiles
+                .iter()
+                .map(|state| (state.entity, state.clone()))
+                .collect(),
+        );
+        self.logistics.reset(
+            entry
+                .snapshot
+                .logistics
+                .iter()
+                .map(|state| (state.entity, state.clone()))
+                .collect(),
+        );
+        self.populations.reset(
+            entry
+                .snapshot
+                .populations
+                .iter()
+                .map(|state| (state.entity, state.clone()))
+                .collect(),
+        );
+        self.power.reset(
+            entry
+                .snapshot
+                .power
+                .iter()
+                .map(|state| (state.entity, state.clone()))
+                .collect(),
+        );
+        self.generations.reset(
+            entry
+                .snapshot
+                .generations
+                .iter()
+                .map(|state| (state.id, state.clone()))
+                .collect(),
+        );
+        self.influencers.reset(
+            entry
+                .snapshot
+                .influencers
+                .iter()
+                .map(|state| (state.id, state.clone()))
+                .collect(),
+        );
+        self.culture_layers.reset(
+            entry
+                .snapshot
+                .culture_layers
+                .iter()
+                .map(|state| (state.id, state.clone()))
+                .collect(),
+        );
         self.corruption.reset(entry.snapshot.corruption.clone());
         self.axis_bias.reset(entry.snapshot.axis_bias.clone());
         self.sentiment.reset(entry.snapshot.sentiment.clone());
@@ -1203,12 +1263,14 @@ impl PublishState {
             .reset(entry.snapshot.moisture_raster.clone());
         self.culture_tensions
             .reset(entry.snapshot.culture_tensions.clone());
-        self.discovery_progress = entry
-            .snapshot
-            .discovery_progress
-            .iter()
-            .map(|state| ((state.faction, state.discovery), state.clone()))
-            .collect();
+        self.discovery_progress.reset(
+            entry
+                .snapshot
+                .discovery_progress
+                .iter()
+                .map(|state| ((state.faction, state.discovery), state.clone()))
+                .collect(),
+        );
         self.victory.reset(entry.snapshot.victory.clone());
         self.faction_inventory
             .reset(entry.snapshot.faction_inventory.clone());
@@ -1240,31 +1302,42 @@ impl PublishState {
         self.voice_medium.reset(entry.snapshot.voice_medium.clone());
         self.herds.reset(entry.snapshot.herds.clone());
         self.food_modules.reset(entry.snapshot.food_modules.clone());
-        self.great_discoveries = entry
-            .snapshot
-            .great_discoveries
-            .iter()
-            .map(|state| ((state.faction, state.id), state.clone()))
-            .collect();
-        self.great_discovery_progress = entry
-            .snapshot
-            .great_discovery_progress
-            .iter()
-            .map(|state| ((state.faction, state.discovery), state.clone()))
-            .collect();
+        self.kits.reset(entry.snapshot.kits.clone());
+        self.default_hunt_kit_id
+            .reset(entry.snapshot.default_hunt_kit_id.clone());
+        self.default_forage_kit_id
+            .reset(entry.snapshot.default_forage_kit_id.clone());
+        self.great_discoveries.reset(
+            entry
+                .snapshot
+                .great_discoveries
+                .iter()
+                .map(|state| ((state.faction, state.id), state.clone()))
+                .collect(),
+        );
+        self.great_discovery_progress.reset(
+            entry
+                .snapshot
+                .great_discovery_progress
+                .iter()
+                .map(|state| ((state.faction, state.discovery), state.clone()))
+                .collect(),
+        );
         self.great_discovery_telemetry
             .reset(entry.snapshot.great_discovery_telemetry.clone());
-        self.knowledge_ledger = entry
-            .snapshot
-            .knowledge_ledger
-            .iter()
-            .map(|state| {
-                (
-                    encode_ledger_key(FactionId(state.owner_faction), state.discovery_id),
-                    state.clone(),
-                )
-            })
-            .collect();
+        self.knowledge_ledger.reset(
+            entry
+                .snapshot
+                .knowledge_ledger
+                .iter()
+                .map(|state| {
+                    (
+                        encode_ledger_key(FactionId(state.owner_faction), state.discovery_id),
+                        state.clone(),
+                    )
+                })
+                .collect(),
+        );
         self.knowledge_metrics
             .reset(entry.snapshot.knowledge_metrics.clone());
         self.knowledge_timeline
@@ -1387,6 +1460,9 @@ impl PublishState {
             voice_medium: None,
             herds: None,
             food_modules: None,
+            kits: None,
+            default_hunt_kit_id: None,
+            default_forage_kit_id: None,
             faction_inventory: None,
             sedentarization: None,
             discovered_sites: None,
@@ -1516,6 +1592,9 @@ impl PublishState {
             voice_medium: None,
             herds: None,
             food_modules: None,
+            kits: None,
+            default_hunt_kit_id: None,
+            default_forage_kit_id: None,
             faction_inventory: None,
             sedentarization: None,
             discovered_sites: None,
@@ -1629,6 +1708,9 @@ impl PublishState {
             voice_medium: None,
             herds: None,
             food_modules: None,
+            kits: None,
+            default_hunt_kit_id: None,
+            default_forage_kit_id: None,
             faction_inventory: None,
             sedentarization: None,
             discovered_sites: None,
@@ -1704,6 +1786,53 @@ impl PublishState {
     }
 }
 
+/// **The kit roster for the wire** — one row per `equipment.json` kit, carrying the tiers that kit
+/// grants a party whose components are all **fresh** (`BandEquipment::default()` is zero wear).
+///
+/// The tiers are resolved through the **same three seams** the take path reads
+/// (`hunter_profile` / `hunt_per_worker_biomass_capacity` / `forage_per_worker_biomass_capacity`),
+/// so the picker's numbers cannot drift from what sending that kit actually buys. It is a fresh-kit
+/// statement on purpose: what a given band's *wear* then does to those tiers is that band's own row.
+fn kit_roster_states(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    labor: &crate::labor_config::LaborConfig,
+    kit_levers: &crate::snapshot::population::BandKitLevers<'_>,
+) -> Vec<KitOptionState> {
+    let fresh = BandEquipment::default();
+    equipment
+        .kits()
+        .iter()
+        .map(|definition| {
+            let choice = equipment
+                .kit(&definition.id)
+                .expect("a roster entry resolves by its own id");
+            KitOptionState {
+                id: definition.id.clone(),
+                display_name: definition.display_name.clone(),
+                jobs: definition
+                    .jobs
+                    .iter()
+                    .map(|job| job.as_str().to_string())
+                    .collect(),
+                attack: equipment
+                    .hunter_profile(
+                        kit_levers.hunter_intrinsic,
+                        choice.hunting_equipped(&fresh, equipment),
+                    )
+                    .attack,
+                hunt_carry_per_worker_biomass: equipment.hunt_per_worker_biomass_capacity(
+                    labor.hunt.per_worker_biomass_capacity,
+                    choice.sled_equipped(&fresh, equipment),
+                ),
+                forage_carry_per_worker_biomass: equipment.forage_per_worker_biomass_capacity(
+                    labor.forage.per_worker_biomass_capacity,
+                    choice.basket_equipped(&fresh, equipment),
+                ),
+            }
+        })
+        .collect()
+}
+
 pub(crate) type PopulationSnapshotQuery<'w, 's> = Query<
     'w,
     's,
@@ -1714,6 +1843,7 @@ pub(crate) type PopulationSnapshotQuery<'w, 's> = Query<
         Option<&'static BandTravel>,
         Option<&'static Expedition>,
         Option<&'static BandId>,
+        Option<&'static BandEquipment>,
     ),
 >;
 
@@ -1824,6 +1954,9 @@ pub fn capture_snapshot(
         mut flora_quotes,
         fauna,
         expedition,
+        creatures,
+        equipment,
+        combat,
         settlement_stage,
         supply_membership,
         pipeline_config,
@@ -1991,18 +2124,38 @@ pub fn capture_snapshot(
     // (the outfit UI lives on the resident-band panel, not on the expedition).
     let expedition_cfg = expedition.get();
     let fauna_config = fauna.get();
+    // **The minimal TOE levers**, resolved once for every cohort: the kit table plus the two
+    // *equipped* tiers that live outside `equipment.json` (one home per fact) — the bare-handed
+    // `person` profile and `labor_config`'s kitted haul rate. What varies per band is only its
+    // `BandEquipment` wear, which `population_state` resolves against these.
+    let equipment_config = equipment.get();
+    let combat_config = combat.get();
+    // A detached party fights at the `expedition_danger_multiplier`-scaled lethality, exactly as
+    // `advance_expeditions` resolves it — so the in-flight ETA and the turn agree.
+    let expedition_combat_tuning = {
+        let mut tuning = combat_config.tuning();
+        tuning.lethality *= combat_config.expedition_danger_multiplier;
+        tuning
+    };
+    let kit_levers = crate::snapshot::population::BandKitLevers {
+        config: &equipment_config,
+        hunter_intrinsic: creatures.get().person(),
+        equipped_haul_rate: labor_config.hunt.per_worker_biomass_capacity,
+        equipped_gather_rate: labor_config.forage.per_worker_biomass_capacity,
+    };
     let expedition_levers = ExpeditionLevers {
-        max_party_size: expedition_cfg.max_party_size,
+        max_estimated_party: expedition_cfg.max_estimated_party(),
         hunt_per_worker_carry: expedition_cfg.hunt.per_worker_carry,
         hunt_per_worker_provisions: hunt_per_worker_provisions(&labor_config, &fauna_config),
         hunt_viability_warn_turns: expedition_cfg.hunt.viability_warn_turns,
+        hunt_forecast_horizon_turns: expedition_cfg.hunt.forecast_horizon_turns,
         band_move_tiles_per_turn: labor_config.band_move_tiles_per_turn,
     };
     // A cohort → live-tile map so an in-flight expedition can find its home band's CURRENT tile
     // (bands are nomadic). The `populations` query is read-only, so iterating it twice is fine.
     let cohort_positions: std::collections::HashMap<Entity, UVec2> = populations
         .iter()
-        .filter_map(|(entity, cohort, _, _, _, _)| {
+        .filter_map(|(entity, cohort, _, _, _, _, _)| {
             tile_positions
                 .get(&cohort.current_tile.to_bits())
                 .copied()
@@ -2012,7 +2165,7 @@ pub fn capture_snapshot(
     let mut population_states: Vec<PopulationCohortState> = populations
         .iter()
         .map(
-            |(entity, cohort, allocation, travel, expedition, band_id)| {
+            |(entity, cohort, allocation, travel, expedition, band_id, equipment)| {
                 let current_pos = tile_positions.get(&cohort.current_tile.to_bits()).copied();
                 // A band is "traveling" while a `move_band` order is still en route to its target.
                 let is_traveling = travel
@@ -2033,6 +2186,25 @@ pub fn capture_snapshot(
                 let expedition_delivery = expedition.and_then(|exp| {
                     let party_pos = current_pos?;
                     let home_pos = cohort_positions.get(&exp.home_band).copied();
+                    // **This party's own fighting tier** — the kit it was SENT OUT WITH masked over
+                    // its `BandEquipment` wear, through the same seams `advance_expeditions` reads,
+                    // so the ETA projects the take the party can actually make: bare-handed if it
+                    // left bare-handed, and stepped down once its spears are gone.
+                    let party_wear = equipment.copied().unwrap_or_default();
+                    let party = crate::fauna::HuntingParty {
+                        hunter: equipment_config.hunter_profile(
+                            kit_levers.hunter_intrinsic,
+                            exp.kit.hunting_equipped(&party_wear, &equipment_config),
+                        ),
+                        tuning: expedition_combat_tuning,
+                        injury_damage_per_animal: combat_config.hunt_injury_damage_per_animal,
+                    };
+                    // And the same kit's haul tier — the ETA has to project what THIS party can drag
+                    // home, not what a kitted one could.
+                    let party_haul = equipment_config.hunt_per_worker_biomass_capacity(
+                        kit_levers.equipped_haul_rate,
+                        exp.kit.sled_equipped(&party_wear, &equipment_config),
+                    );
                     crate::systems::expedition_delivery(
                         exp,
                         cohort.stores.get(FOOD).to_f32(),
@@ -2043,6 +2215,8 @@ pub fn capture_snapshot(
                         &fauna_config,
                         &labor_config,
                         &expedition_cfg,
+                        &party,
+                        party_haul,
                         config.grid_size.x,
                         config.map_topology.wrap_horizontal,
                     )
@@ -2066,6 +2240,8 @@ pub fn capture_snapshot(
                     travel_target,
                     hunt_reach,
                     expedition_delivery,
+                    equipment,
+                    kit_levers: &kit_levers,
                 })
             },
         )
@@ -2371,6 +2547,8 @@ pub fn capture_snapshot(
     // Per herd, and derived rather than copied: each entry resolves distance/reach/visibility
     // against the viewer's fog before it is emitted.
     let herds_scope = crate::turn_profile::scope("snapshot.build.herds");
+    // The kit both per-herd estimate tables are priced at, resolved once.
+    let quoted_kit = equipment_config.default_kit(crate::equipment_config::KitJob::Hunt);
     let herd_states = herd_snapshot_entries(HerdSnapshotInputs {
         telemetry: &herds,
         registry: &herd_registry,
@@ -2383,6 +2561,27 @@ pub fn capture_snapshot(
         visibility: &visibility_ledger,
         viewer: viewer_faction.0,
         fog_enabled: config.fog_enabled,
+        // **The hunt job's DEFAULT kit, deliberately** — the herd row is a fact about the herd and
+        // has no band to ask, so both estimate tables are quoted at one kit and **publish which**.
+        // A fresh kit (`BandEquipment::default()` is zero wear), because the table describes the
+        // kit rather than any band's wear on it; with the shipped `big_game` default this is
+        // bit-for-bit the hardcoded `equipped = true` it replaced.
+        party: crate::fauna::HuntingParty {
+            hunter: equipment_config.hunter_profile(
+                kit_levers.hunter_intrinsic,
+                quoted_kit.hunting_equipped(&BandEquipment::default(), &equipment_config),
+            ),
+            tuning: combat_config.tuning(),
+            injury_damage_per_animal: combat_config.hunt_injury_damage_per_animal,
+        },
+        quoted_per_worker_haul: equipment_config.hunt_per_worker_biomass_capacity(
+            kit_levers.equipped_haul_rate,
+            quoted_kit.sled_equipped(&BandEquipment::default(), &equipment_config),
+        ),
+        quoted_kit_id: quoted_kit.id().to_string(),
+        // The denial estimate's reported band width — a readout lever, read from the same config the
+        // per-source yield range reads it from.
+        range_sigmas: combat_config.forecast_range_sigmas,
     });
     drop(herds_scope);
     let faction_inventory_state = snapshot_faction_inventory(&faction_inventory);
@@ -2416,8 +2615,19 @@ pub fn capture_snapshot(
     // into it, so this is a second full copy of the rasters, the herd list, the forage patches and
     // the crisis heatmap — proportional to the assembled snapshot's own byte size.
     let assemble_scope = crate::turn_profile::scope("snapshot.build.assemble");
+    // **THE KIT ROSTER, once per world** — the picker's list plus the tiers each kit grants, so the
+    // client renders real numbers without a second copy of the TOE table. A per-world constant, so
+    // it diffs out on every frame after the first.
+    let kit_states = kit_roster_states(&equipment_config, &labor_config, &kit_levers);
     let assembled = WorldSnapshot {
         header,
+        kits: kit_states,
+        default_hunt_kit_id: equipment_config
+            .default_kit_id(crate::equipment_config::KitJob::Hunt)
+            .to_string(),
+        default_forage_kit_id: equipment_config
+            .default_kit_id(crate::equipment_config::KitJob::Forage)
+            .to_string(),
         tiles: tile_states,
         logistics: logistics_states,
         trade_links: trade_states,

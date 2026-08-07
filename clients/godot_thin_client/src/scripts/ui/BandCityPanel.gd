@@ -85,7 +85,7 @@ const BODY_SEPARATION := 8
 ## height math reuses the exact same paddings the card draws with (no magic 12/10 duplicated).
 const PANEL_CONTENT_MARGIN_H := 12
 const PANEL_CONTENT_MARGIN_V := 10
-## Card border thickness (`_panel_stylebox`), subtracted alongside the content margins when the
+## Card border thickness (`panel_card_stylebox`), subtracted alongside the content margins when the
 ## panel reports the interior box its Work zone may fill. Declared here, beside the margins it is
 ## always summed with, so `PANEL_CHROME_H` below can be a `const`.
 const PANEL_BORDER_WIDTH := 1.0
@@ -415,6 +415,25 @@ func work_zone_size() -> Vector2:
 		return Vector2(maxf(interior.x - flanks - _wide_separator_span(), 0.0), body_height)
 	return Vector2(interior.x, maxf(body_height - _tab_bar_height(), 0.0))
 
+## The box the PARTIES zone's content may fill, in canvas px. Its HEIGHT is the body's, i.e. exactly
+## what `work_zone_size` reports — every wide-shell zone shares the card's one body height — and its
+## WIDTH is this zone's own FIXED flank rather than the work board's expanding column, which is the
+## whole difference between the two answers. `BandPanelController` measures the compose sheet against
+## it (see `BandComposeFloat`), so reading the work board's width there would tell a 380px-wide sheet
+## it had a 1520px column.
+func parties_zone_size() -> Vector2:
+	var box := work_zone_size()
+	if box == Vector2.ZERO:
+		return box
+	return Vector2(ZONE_PARTY_WIDTH if _shell_is_wide() else box.x, box.y)
+
+## The CARD's global rect — the island the strip holds, not the strip (`_root`) itself. Published for
+## the free-floating compose card, which anchors itself to the card's map-facing edge and must never
+## overlap it; every other reader of this geometry lives inside this file. See `_position_card_and_rail`
+## for why the two rects stopped being the same one.
+func card_rect() -> Rect2:
+	return _panel.get_global_rect() if _panel != null else Rect2()
+
 ## Push a tab's badge (narrow shell only; ignored in the wide shell, which has no tab bar).
 ## `hot` tints it WARN. An empty `text` clears the badge.
 func set_tab_badge(zone: StringName, text: String, hot: bool) -> void:
@@ -525,7 +544,7 @@ func _build() -> void:
 
 	_panel = PanelContainer.new()
 	_panel.name = "PanelCard"
-	_panel.add_theme_stylebox_override("panel", _panel_stylebox())
+	_panel.add_theme_stylebox_override("panel", panel_card_stylebox())
 	_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	# The card DOES eat its own clicks — a press on the panel must never also select the hex behind it.
 	# `STOP` is the `Control` default, set explicitly because with `_root` on `IGNORE` it is the surface
@@ -1015,7 +1034,7 @@ func _wide_panel_height() -> float:
 	return minf(PANEL_HEIGHT_WIDE, _viewport_size().y * MAX_WIDE_HEIGHT_FRACTION)
 
 ## The card's INTERIOR box — what the card DRAWS AT, less the border and the content margins it draws
-## with (`_panel_stylebox`). Chrome only; never content.
+## with (`panel_card_stylebox`). Chrome only; never content.
 ## `work_zone_size()` and `_affordable_work_columns()` read this, so both follow the card's width with no
 ## edit of their own.
 func _interior_size() -> Vector2:
@@ -1520,7 +1539,11 @@ func _apply_stage_visual(label: Label, sprite_rect: TextureRect, sprite: Texture
 		label.text = glyph
 		label.visible = sprite == null
 
-func _panel_stylebox() -> StyleBoxFlat:
+## The card's own stylebox. PUBLIC and `static` because a second surface draws in it — the
+## free-floating compose card (`BandComposeFloat`), which is this panel's content taken off the panel
+## and must therefore read as the panel's own surface rather than as a second kind of card. One
+## definition, so the two cannot drift into two looks.
+static func panel_card_stylebox() -> StyleBoxFlat:
 	# Square-edged card (the strip meets the screen edge — no rounding/shadow).
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = HudStyle.PANEL_SOLID

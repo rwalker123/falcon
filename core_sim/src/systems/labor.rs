@@ -90,6 +90,7 @@ pub struct LaborConfigs<'w> {
     pub wellbeing: Res<'w, WellbeingConfigHandle>,
     pub combat: Res<'w, CombatConfigHandle>,
     pub creatures: Res<'w, CreaturesConfigHandle>,
+    pub equipment: Res<'w, EquipmentConfigHandle>,
 }
 
 /// Resolve each band's per-worker labor yields (Early-Game Labor, slice 3a). Replaces the retired
@@ -132,7 +133,11 @@ pub fn advance_labor_allocation(
     configs: LaborConfigs,
     tiles: Query<&Tile>,
     food_modules: Query<&FoodModuleTag>,
-    mut cohorts: Query<(&mut PopulationCohort, &mut LaborAllocation)>,
+    mut cohorts: Query<(
+        &mut PopulationCohort,
+        &mut LaborAllocation,
+        Option<&mut BandEquipment>,
+    )>,
 ) {
     let fauna = configs.fauna.get();
     let labor = configs.labor.get();
@@ -143,8 +148,21 @@ pub fn advance_labor_allocation(
     // the base human's intrinsic combat profile, resolved once: a dangerous hunt builds a fight from
     // the hunting party (the hunters on that herd) vs the animal's fighting stock and applies the
     // band-side casualties. Hoisted out of the per-cohort loop — neither changes within a turn.
-    let combat_tuning = configs.combat.get().tuning();
+    let combat_config = configs.combat.get();
+    let combat_tuning = combat_config.tuning();
+    // The hunt's own baseline hazard, per animal engaged — hoisted with the tuning it rides beside.
+    let hunt_injury_damage = combat_config.hunt_injury_damage_per_animal;
     let person_profile = configs.creatures.get().person();
+    // **The minimal TOE** (`docs/plan_hunt_through_combat.md` §4.8) — the two-tier table and the
+    // durability dials, resolved once. What varies per band is only its `BandEquipment` *wear*.
+    let equipment_cfg = configs.equipment.get();
+    // The **equipped** tiers of the two carry kits. `labor_config.json`'s shipped rates ARE the
+    // kitted tiers (the game has always run kitted); each kit's own
+    // `unequipped_per_worker_biomass_capacity` is the step down a band takes when that kit is gone.
+    // **One kit, one job** (§4.8): the sled answers for the hunt, baskets for the gather, and neither
+    // can be read for the other.
+    let equipped_haul_rate = labor.hunt.per_worker_biomass_capacity;
+    let equipped_gather_rate = labor.forage.per_worker_biomass_capacity;
     let map_seed = sim_config.map_seed;
     let husbandry = &fauna.husbandry;
     let work_range = labor.band_work_range;
@@ -206,7 +224,15 @@ pub fn advance_labor_allocation(
     let grid_height = tile_registry.height;
     let wrap_horizontal = sim_config.map_topology.wrap_horizontal;
 
-    for (mut cohort, mut allocation) in cohorts.iter_mut() {
+    for (mut cohort, mut allocation, mut band_equipment) in cohorts.iter_mut() {
+        // **This band's carry tier, resolved ONCE per band per turn.** The component records *wear*,
+        // so an absent one reads as **no wear — a full kit** (the same `unwrap_or_default()` reading
+        // `SimState` gives `DemographicFlowAccumulator`); every band starts stocked, and "dry" is
+        // expressed as wear reaching the kit's durability, never as an absent component. Resolved
+        // *before* the assignment loop so every source this band works is priced on one kit state: a
+        // kit that expires part-way through the loop must not pay two different rates to two herds in
+        // the same turn.
+        let band_kit = band_equipment.as_deref().copied().unwrap_or_default();
         // Normalize each turn: if `working` shrank, trim assignments so Σ ≤ available.
         let available = available_workers(cohort.working);
         let faction = cohort.faction;
@@ -271,6 +297,48 @@ pub fn advance_labor_allocation(
             // it is pulling. `None` = a pure harvest. It dips the take ceiling, drives the build
             // meter, and is the thing completion clears — `policy` is never written by this system.
             let improvement = assignment.improvement;
+            // **THE KIT THIS CREW WAS SENT OUT WITH** (`equipment.json`'s roster) — the mask that
+            // decides which of the three components serve it at all, re-resolved from the
+            // *assignment* every turn and never from what the band happens to hold. `None` = the
+            // crew named no kit, which is its job's default: the two shipped working kits reach for
+            // exactly the components this loop used to consult unconditionally, so a crew that named
+            // nothing is priced bit-for-bit as it was before the roster existed.
+            //
+            // **The WEAR half is still resolved once per band** (`band_kit` above), so a kit that
+            // expires part-way through the loop cannot pay two different rates to two herds in the
+            // same turn; only the *mask* varies per assignment.
+            let crew_kit = assignment.kit_choice(&equipment_cfg);
+            // **The three EFFECTIVE predicates, resolved once for this crew.** Each one decides a
+            // tier *and* gates that component's wear below — one value, both answers, because a crew
+            // that is not using a component must not be charged for it. Get that split wrong and a
+            // bare-handed comparison consumes the very kit it is being compared against.
+            let hunting_equipped = crew_kit
+                .as_ref()
+                .is_some_and(|kit| kit.hunting_equipped(&band_kit, &equipment_cfg));
+            let sled_equipped = crew_kit
+                .as_ref()
+                .is_some_and(|kit| kit.sled_equipped(&band_kit, &equipment_cfg));
+            let basket_equipped = crew_kit
+                .as_ref()
+                .is_some_and(|kit| kit.basket_equipped(&band_kit, &equipment_cfg));
+            // This crew's HUNT haul tier — the **sled**, if its kit carries one.
+            let hunt_per_worker_biomass =
+                equipment_cfg.hunt_per_worker_biomass_capacity(equipped_haul_rate, sled_equipped);
+            // **And its BASKET tier** — the forage web's carry, which before §4.8's "one kit, one
+            // job" correction had no kit at all. It is the undipped, pre-seasonal per-gatherer
+            // throughput every `forage_take`, gather forecast and staffing inversion below is capped
+            // by; the sled is never consulted for it.
+            let forage_per_worker_capacity = equipment_cfg
+                .forage_per_worker_biomass_capacity(equipped_gather_rate, basket_equipped);
+            // **And its FIGHTING tier** (`docs/plan_hunt_through_combat.md` §4). The hunting kit
+            // swaps the whole `attack` tier (`1` bare-handed, `20` speared), which is the gate every
+            // take resolves through — so a crew sent out with no spears stops being able to hurt
+            // anything with a `defense`, and the seed it was assigned on says so on the same tier.
+            let hunting_party = fauna::HuntingParty {
+                hunter: equipment_cfg.hunter_profile(person_profile, hunting_equipped),
+                tuning: combat_tuning,
+                injury_damage_per_animal: hunt_injury_damage,
+            };
             match &assignment.target {
                 LaborTarget::Forage {
                     tile,
@@ -493,6 +561,7 @@ pub fn advance_labor_allocation(
                         &labor.forage,
                         &flora,
                         &ladder,
+                        forage_per_worker_capacity,
                         seasonal,
                         mult_f,
                         workers,
@@ -625,6 +694,7 @@ pub fn advance_labor_allocation(
                             &labor.forage,
                             &flora,
                             &ladder,
+                            forage_per_worker_capacity,
                             seasonal,
                             mult_f,
                             workers,
@@ -643,6 +713,13 @@ pub fn advance_labor_allocation(
                             // The forward-projected steady headline (computed pre-take above).
                             realized: forage_realized,
                             arrivals,
+                            // **A RESOLVED row is a fact, not a forecast** — the take has happened, so
+                            // the band around it is a point. The distribution belongs to the
+                            // pre-commit seed (`fauna::forecast_take_range`).
+                            range: YieldRange::certain(
+                                paid,
+                                trade_production.min(trade_collection),
+                            ),
                             // The crop the crew could not carry: it stood in the field and rotted.
                             // The understaffing signal — "add hands here" — and the reason a rich
                             // Field is a real labor sink rather than a free ration.
@@ -691,9 +768,26 @@ pub fn advance_labor_allocation(
                         &flora,
                         &ladder,
                         mult_f,
+                        forage_per_worker_capacity,
                         seasonal,
                     );
                     let take = biomass_before - patch.biomass;
+                    // **The BASKETS are charged for USE, and only for use** (§4.8,
+                    // `docs/plan_denial_raid.md` §1.2). The gather's quantum is the *biomass* the
+                    // crew took off the patch — the same number the fodder credit below routes — so a
+                    // band that hunts all turn and gathers nothing wears no baskets at all, and a
+                    // crew that found nothing standing above its floor pays nothing either. Charged
+                    // **after** the take, the accrue-after-take ordering every rung's build meter
+                    // uses: the turn is paid at the tier it was priced with and the cliff lands on
+                    // the next turn.
+                    //
+                    // **Gated on the SAME predicate that chose the tier** — a crew whose kit carries
+                    // no baskets gathered by hand, so there is nothing to wear out.
+                    if basket_equipped {
+                        if let Some(kit) = band_equipment.as_mut() {
+                            kit.wear_baskets(&equipment_cfg, take);
+                        }
+                    }
                     // **THE earn path, rungs 1–2** — the drawn-down half of the split above. A crew
                     // with nothing standing above its floor is watching the stand, not practising on
                     // it, whatever it intended; that is what replaced the `EcologyPhase::Thriving`
@@ -905,8 +999,9 @@ pub fn advance_labor_allocation(
                     // by. **Understaffing** (`wasted`): what the escapement ceiling offered beyond
                     // what the crew could gather — here it is not lost, it simply stays in the stock
                     // and regrows, but it is the same "add hands" answer.
-                    let per_worker_biomass = forage_per_worker_biomass(&labor.forage, seasonal)
-                        * ladder.build_dip(improvement);
+                    let per_worker_biomass =
+                        forage_per_worker_biomass(forage_per_worker_capacity, seasonal)
+                            * ladder.build_dip(improvement);
                     // **Floored at the build's own crew**, the plant twin of a herd's `herders_needed`
                     // (see [`source_crew_needed`]): a rung declares how many hands its build wants,
                     // and a thin patch can absorb fewer gatherers than that — inverting the take
@@ -936,6 +1031,7 @@ pub fn advance_labor_allocation(
                         &labor.forage,
                         &flora,
                         &ladder,
+                        forage_per_worker_capacity,
                         seasonal,
                         mult_f,
                         workers,
@@ -958,6 +1054,8 @@ pub fn advance_labor_allocation(
                         // The forward-projected steady headline (computed pre-take above).
                         realized: forage_realized,
                         arrivals,
+                        // Resolved: a fact, so the band is a point — see the Field arm above.
+                        range: YieldRange::certain(provisions.to_f32(), forage_trade),
                         wasted: forage_provisions(
                             (production - take).max(0.0),
                             patch_provisions_per_biomass(
@@ -1031,7 +1129,8 @@ pub fn advance_labor_allocation(
                         herd,
                         &fauna,
                         &ladder,
-                        labor.hunt.per_worker_biomass_capacity,
+                        hunt_per_worker_biomass,
+                        &hunting_party,
                         mult_f,
                         workers,
                         *floor,
@@ -1221,10 +1320,28 @@ pub fn advance_labor_allocation(
                         // rung 3's actual payoffs are the faster `r`, no chasing, the self-feeding
                         // footprint and a `K` you control. On poor enough range a pen *will* pulse
                         // (the aurochs is closest), and that is honest. See `managed_yield_biomass`.
-                        let collection = workers as f32 * labor.hunt.per_worker_biomass_capacity;
+                        let collection = workers as f32 * hunt_per_worker_biomass;
                         let take =
-                            fauna::quantise_animal_take(production, collection, herd.body_mass);
+                            // A penned animal is not stalked: no engagement bound.
+                            fauna::quantise_animal_take(
+                                production,
+                                collection,
+                                herd.body_mass,
+                                f32::INFINITY,
+                                fauna::EngagementStop::WhenPackFull,
+                            );
                         herd.biomass -= take.killed_biomass();
+                        // **The carry kit wears on what it HAULS, and a pen hauls** (the minimal
+                        // TOE). The *hunting* kit is untouched here: a penned beast is slaughtered,
+                        // not stalked, so there is no fight and no spear to blunt — which is the
+                        // same reason this branch passes no engagement bound to the quantiser.
+                        // Gated on the same predicate that chose the haul tier: a keeper with no
+                        // sled dragged the carcass by hand and wore nothing out doing it.
+                        if sled_equipped {
+                            if let Some(kit) = band_equipment.as_mut() {
+                                kit.wear_sled(&equipment_cfg, take.carried);
+                            }
+                        }
                         // **A pen changes the INTENSITY, never the PRODUCT** — the keeper is paid
                         // this herd's own species vector, so a penned wolf yields pelts and no meat
                         // exactly as a wild one does (`docs/plan_hunt_yield_model.md`).
@@ -1291,7 +1408,8 @@ pub fn advance_labor_allocation(
                             herd,
                             &fauna,
                             &ladder,
-                            labor.hunt.per_worker_biomass_capacity,
+                            hunt_per_worker_biomass,
+                            &hunting_party,
                             mult_f,
                             workers,
                             *floor,
@@ -1308,6 +1426,10 @@ pub fn advance_labor_allocation(
                             // projects its managed yield, already smooth).
                             realized: hunt_realized.provisions,
                             arrivals,
+                            // Resolved: a fact, so the band is a point. A pen is also the one animal
+                            // source with no stochastic stage at all — not stalked, not fought, not
+                            // wary — so its forecast is a point too.
+                            range: YieldRange::certain(tended, paid.trade_goods),
                             wasted: pen_yield.apply(take.wasted, mult_f).provisions,
                             // **ONE CREW doing both jobs** ([`source_crew_needed`]): big enough to
                             // mind the heads *and* to haul the meat. The haul side is the **steady
@@ -1315,12 +1437,17 @@ pub fn advance_labor_allocation(
                             // per-turn `production`, NOT this turn's lumpy `take.carried` — a slow-
                             // breeding pen (the aurochs pulses) drops 0 animals on a wait turn, which
                             // would collapse the crew to the herder count and contradict `wasted`.
+                            //
+                            // **No engagement term here, deliberately** — a penned animal is not
+                            // stalked, so there is no reach to invert (the same exemption this branch
+                            // states by passing `f32::INFINITY` to the quantiser). `hunt_haul_workers`
+                            // rather than `hunt_take_workers` says that in the signature.
                             workers_needed: source_crew_needed(
                                 herders_needed,
                                 fauna::hunt_haul_workers(
                                     production,
                                     herd.body_mass,
-                                    labor.hunt.per_worker_biomass_capacity,
+                                    hunt_per_worker_biomass,
                                 ),
                             ),
                             overdraws: false,
@@ -1345,16 +1472,45 @@ pub fn advance_labor_allocation(
                     let working_the_herd = crew_is_working_the_source(standing_above_floor);
                     // The band has no carry room — it eats/banks whatever it hauls, so pass an
                     // unbounded carry cap (behaviour unchanged from before the expedition clamp).
-                    let take = hunt_take(
+                    let outcome = hunt_take(
                         herd,
                         workers,
                         *floor,
                         improvement,
-                        labor.hunt.per_worker_biomass_capacity,
+                        hunt_per_worker_biomass,
+                        &hunting_party,
                         &fauna,
                         &ladder,
                         f32::INFINITY,
+                        fauna::HuntDraw::Seeded(fauna::retreat_seed(
+                            sim_config.map_seed,
+                            tick.0,
+                            &herd.id,
+                            workers,
+                        )),
                     );
+                    let take = outcome.take;
+                    // **BOTH KITS ARE CHARGED FOR USE, AND ONLY FOR USE** (the minimal TOE,
+                    // `docs/plan_denial_raid.md` §1.2). The hunting kit pays per **animal killed**
+                    // and the carry kit per **biomass carried home**, so a party that waits out a
+                    // herd too thin to spare a body — or that marches all turn without engaging —
+                    // spends nothing. A turn-based clock would charge an idle march the same as a
+                    // slaughter, which is exactly what would make denial free.
+                    //
+                    // Charged AFTER the take, so this turn's take is paid at the tier the take was
+                    // priced with and the cliff lands on the *next* turn. That is the same
+                    // accrue-after-take ordering every rung's build meter uses.
+                    //
+                    // **Each charge is gated on the predicate that chose its own tier**, and the two
+                    // are independent: a kit with spears but no sled blunts spears only.
+                    if let Some(kit) = band_equipment.as_mut() {
+                        if hunting_equipped {
+                            kit.wear_hunting(&equipment_cfg, take.killed);
+                        }
+                        if sled_equipped {
+                            kit.wear_sled(&equipment_cfg, take.carried);
+                        }
+                    }
                     // **THE earn path, rungs 1–2** — the drawn-down half of the split above, and the
                     // heart of the ladder: the same hunt teaches **Herding** on a wild herd and
                     // **Penning** on a tamed one. The gate is the **escapement room**, never
@@ -1550,7 +1706,8 @@ pub fn advance_labor_allocation(
                     // `herders_needed` is `0` (it isn't yours to maintain), so the `max` collapses to
                     // the haul-side count.
                     //
-                    // The haul side is the **peak-drop carry crew** ([`fauna::hunt_haul_workers`]) off
+                    // The take side is [`fauna::hunt_take_workers`] — the crew that can both **reach**
+                    // and **carry** the peak animal drop off
                     // the SAME escapement ceiling the take was bounded by — NOT this turn's lumpy
                     // `take.carried`. A slow breeder whose room is lighter than one body carries `0` on
                     // a wait turn, which would collapse `workers_needed` and contradict `wasted_yield`;
@@ -1569,10 +1726,19 @@ pub fn advance_labor_allocation(
                     // cap (`SourceForecast.max_useful_workers`, which divides by `carry × dip`) by
                     // exactly the dip. Read through the one [`LadderConfig::build_dip`] seam so the
                     // two webs cannot dip differently.
-                    let take_workers = fauna::hunt_haul_workers(
+                    //
+                    // **The ENGAGEMENT side is the third unit** ([`fauna::hunt_engage_workers`],
+                    // `docs/plan_hunt_through_combat.md` §2): a hunter reaches `engage_rate` animals a
+                    // turn whatever they can carry, so the crew that clears the ceiling needs
+                    // `ceil(peak drop / (engage_rate × dip))` hands. Sizing on carry alone reported
+                    // "more hands would be idle" about small-bodied game — 470 fowl above the floor is
+                    // 61 biomass, two haulers' worth, and 47 hunters' worth of reach.
+                    let take_workers = fauna::hunt_take_workers(
                         standing_above_floor,
                         herd.body_mass,
-                        labor.hunt.per_worker_biomass_capacity * ladder.build_dip(improvement),
+                        hunt_per_worker_biomass * ladder.build_dip(improvement),
+                        fauna.engage_rate_for(&herd.species),
+                        ladder.build_dip(improvement),
                     );
                     let workers_needed = source_crew_needed(herders_needed, take_workers);
                     // **The arrival schedule — computed POST-take, unlike `realized`.** It
@@ -1584,7 +1750,8 @@ pub fn advance_labor_allocation(
                         herd,
                         &fauna,
                         &ladder,
-                        labor.hunt.per_worker_biomass_capacity,
+                        hunt_per_worker_biomass,
+                        &hunting_party,
                         mult_f,
                         workers,
                         *floor,
@@ -1605,102 +1772,69 @@ pub fn advance_labor_allocation(
                         // so it is smooth where `actual` (the whole-animal kill) pulses.
                         realized: hunt_realized.provisions,
                         arrivals,
+                        // Resolved: a fact, so the band is a point — see the Field arm above. This is
+                        // the row whose *seeded* twin carries a real distribution once `wariness` or
+                        // a sub-1 `hit_chance` is authored.
+                        range: YieldRange::certain(provisions.to_f32(), paid.trade_goods),
                     };
-                    // **Predators Phase 0 — the hunt turns dangerous** (`docs/plan_predators.md`).
-                    // A herd whose species can fight back (`combat.attack > 0` — mammoth, ox) turns on
-                    // the party after the take resolves. It composes a fight (the hunters assigned to
-                    // this herd vs the beast's fighting stock), resolves it through the neutral combat
-                    // subsystem, and applies **only the band-side** casualties — the take path already
-                    // removed the animal's biomass, so applying the animal-side result too would
-                    // double-count (discarded in Phase 0).
-                    if let Some(species) = fauna.species_by_display(&herd.species) {
-                        // **Danger = strength × BEHAVIOUR** (`docs/plan_predators.md`): a hunt only faces
-                        // the animal's attack to the extent it *fights back* rather than flees, so the
-                        // beast's effective attack is `attack × ferocity`. A fleeing deer (ferocity ~0.15)
-                        // costs almost nothing; a cornered boar (0.6) does; a mammoth (0.9) is deadly.
-                        let effective_attack = species.combat.attack * species.ferocity;
-                        if effective_attack > 0.0 {
-                            // **The hunting party answers the danger itself** — its defending strength is
-                            // just the hunters assigned to THIS herd (bare-hands `person` profile today).
-                            // Warriors are a band-wide standing guard (border/camp patrol) and do NOT
-                            // mitigate a hunt; the hunters' own equipment (TOE, deferred) will compose
-                            // into this profile when it lands, with no rework here.
-                            let party_count = workers as f32;
-                            // The animal fights at its ferocity-scaled attack (defense/range unchanged).
-                            let animal_profile = CombatStats {
-                                attack: effective_attack,
-                                ..species.combat
-                            };
-                            // A single beast turns on the party each dangerous hunt-turn — a deliberate
-                            // Phase-0 simplification (scaling the engaged count with take/party size is a
-                            // later refinement). Its intrinsic combat body is the same `attack` predation
-                            // will one day read.
-                            // Deterministic, rollback-stable seed (reserved/unused by the placeholder
-                            // resolver, but a real value): map_seed ^ tick ^ herd-id hash.
-                            let mut hasher = crate::hashing::FnvHasher::new();
-                            std::hash::Hash::hash(&herd.id, &mut hasher);
-                            let seed = map_seed ^ tick.0 ^ std::hash::Hasher::finish(&hasher);
-                            let payload = FightPayload {
-                                sides: vec![
-                                    Force {
-                                        id: ForceId(0),
-                                        posture: Posture::Aggressor,
-                                        contingents: vec![Contingent {
-                                            kind: ContingentId::from("person"),
-                                            count: party_count,
-                                            profile: person_profile,
-                                        }],
-                                    },
-                                    Force {
-                                        id: ForceId(1),
-                                        posture: Posture::Defender,
-                                        contingents: vec![Contingent {
-                                            kind: ContingentId(herd.species.clone()),
-                                            count: 1.0,
-                                            profile: animal_profile,
-                                        }],
-                                    },
-                                ],
-                                terrain: vec![TerrainContext {
-                                    hex: (band_pos.x, band_pos.y),
-                                }],
-                                seed,
-                            };
-                            let outcome = resolve_fight(&payload, &combat_tuning);
-                            // Apply ONLY the band side (`ForceId(0)`); discard the animal side.
-                            let band_side = outcome
-                                .results
-                                .iter()
-                                .find(|r| r.force == ForceId(0))
-                                .map(|r| (r.killed, r.wounded))
-                                .unwrap_or((0.0, 0.0));
-                            let (killed_f, wounded_f) = band_side;
-                            if killed_f + wounded_f > 0.0 {
-                                // `killed` come out of the working-age bracket (the new casualty
-                                // mortality path); `wounded` is **computed and surfaced but mechanically
-                                // inert this phase** — no capacity/recovery effect yet (a later slice).
-                                cohort.apply_combat_casualties(scalar_from_f32(killed_f));
-                                // The prose rounds `killed` for a readable "cost N lives"; the **detail
-                                // carries the fractional truth** (casualties are `Scalar`-fractional by
-                                // design — a well-guarded party takes a fraction of a death), so a
-                                // consumer reads precise killed/wounded rather than a rounded 0.
-                                let killed_r = killed_f.round() as u32;
-                                event_log.push(CommandEventEntry::new(
-                                    tick.0,
-                                    CommandEventKind::HuntDanger,
-                                    faction,
-                                    // Human text names the SPECIES, never the internal herd id.
-                                    format!(
-                                        "The {} hunt cost {} lives",
-                                        species.display_name, killed_r
-                                    ),
-                                    Some(format!(
-                                        "killed={:.3} wounded={:.3} species={}",
-                                        killed_f, wounded_f, species.display_name
-                                    )),
-                                ));
-                            }
-                        }
+                    // **The fight already happened — inside the take** (`docs/plan_hunt_through_combat.md`
+                    // §0.1). This site used to resolve the party's casualties in a *second*
+                    // `resolve_fight` beside a take computed from carrying capacity, so a band could
+                    // succeed at the take on one path while the other said the mammoth routed it.
+                    // There is one resolution now: `hunt_take` handed back both sides of it, the
+                    // animal side is already off the herd as `take.killed_biomass()`, and this is
+                    // where the band side lands.
+                    //
+                    // **The line is gated on a DEATH, not on any casualty** (§4.5: snaring rabbits
+                    // is not a war). Since the hunt carries a baseline injury risk (§4.6) every hunt
+                    // now produces *some* `wounded`, so `casualties.any()` would push a
+                    // "cost N lives" line — reading `0` — for every band, every turn. A hunting
+                    // accident is real in the numbers and becomes mechanically live with the rest of
+                    // `wounded` when the recovery slice lands; it is not a battle report.
+                    if outcome.fight.casualties.killed > fauna::NO_DEATHS_TO_REPORT {
+                        let killed_f = outcome.fight.casualties.killed;
+                        let wounded_f = outcome.fight.casualties.wounded;
+                        // `killed` come out of the working-age bracket (the casualty mortality path);
+                        // `wounded` is **computed and surfaced but mechanically inert this phase** —
+                        // no capacity/recovery effect yet (a later slice).
+                        cohort.apply_combat_casualties(scalar_from_f32(killed_f));
+                        // The prose rounds `killed` for a readable "cost N lives"; the **detail
+                        // carries the fractional truth** (casualties are `Scalar`-fractional by
+                        // design — a well-guarded party takes a fraction of a death), so a consumer
+                        // reads precise killed/wounded rather than a rounded 0.
+                        let killed_r = killed_f.round() as u32;
+                        // Human text names the SPECIES, never the internal herd id.
+                        let species_name = fauna
+                            .species_by_display(&herd.species)
+                            .map(|def| def.display_name.clone())
+                            .unwrap_or_else(|| herd.species.clone());
+                        event_log.push(CommandEventEntry::new(
+                            tick.0,
+                            CommandEventKind::HuntDanger,
+                            faction,
+                            format!("The {} hunt cost {} lives", species_name, killed_r),
+                            Some(format!(
+                                "killed={:.3} wounded={:.3} species={}",
+                                killed_f, wounded_f, species_name
+                            )),
+                        ));
+                    }
+                    // **THE HUNT REPORT** (`docs/plan_hunt_through_combat.md` §6.6) — what happened,
+                    // as facts, every turn a hunt happens. It is not the wounded-only twin of the
+                    // `HuntDanger` line above: that stays gated on a **death**, because the baseline
+                    // injury risk makes every engagement produce some `wounded` and a "cost 0 lives"
+                    // line per band per turn is not a report. The wounded ride here instead, on every
+                    // hunt, beside which bound actually ended the take.
+                    if let Some(entry) = crate::systems::expeditions::hunt_report_event(
+                        tick.0,
+                        faction,
+                        &fauna
+                            .species_by_display(&herd.species)
+                            .map(|def| def.display_name.clone())
+                            .unwrap_or_else(|| herd.species.clone()),
+                        &outcome,
+                    ) {
+                        event_log.push(entry);
                     }
                 }
                 LaborTarget::Scout => {
@@ -2311,7 +2445,14 @@ pub fn advance_predator_raids(
                                 profile: CombatStats {
                                     attack: 0.0,
                                     defense: person.defense,
+                                    // The exposed folk are the same bodies as the warriors — they
+                                    // simply have nothing to fight back with.
+                                    durability: person.durability,
                                     range: person.range,
+                                    // Hunters do not break off — the party chose this fight, and
+                                    // whether it holds is the resolver's business, not a per-hunter
+                                    // flight roll. Dynamic troop morale is a later arc (§3).
+                                    wariness: person.wariness,
                                 },
                             },
                         ],
@@ -2474,6 +2615,7 @@ mod labor_yield_tests {
         world.insert_resource(WellbeingConfigHandle::default());
         world.insert_resource(crate::combat_config::CombatConfigHandle::default());
         world.insert_resource(crate::creatures_config::CreaturesConfigHandle::default());
+        world.insert_resource(crate::equipment_config::EquipmentConfigHandle::default());
         world.insert_resource(FactionInventory::default());
         world.insert_resource(DiscoveryProgressLedger::default());
         world.insert_resource(CommandEventLog::default());
@@ -2622,6 +2764,7 @@ mod labor_yield_tests {
                     },
                     workers: WORKERS,
                     improvement: None,
+                    kit: None,
                 },
                 LaborAssignment {
                     target: LaborTarget::Hunt {
@@ -2630,6 +2773,7 @@ mod labor_yield_tests {
                     },
                     workers: WORKERS,
                     improvement: None,
+                    kit: None,
                 },
             ],
         );
@@ -2701,6 +2845,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
         let fauna = world.resource::<FaunaConfigHandle>().get();
@@ -2741,6 +2886,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
         let fauna = world.resource::<FaunaConfigHandle>().get();
@@ -2797,6 +2943,11 @@ mod labor_yield_tests {
     }
 
     use crate::components::FOOD;
+
+    /// The shipped `combat_config.forecast_range_sigmas` — the reported band's width. These seeds
+    /// assert on `workers_needed` and the scalar take, never on the band, so the value is inert
+    /// here; it is named rather than a bare literal because it is a config lever.
+    const SHIPPED_FORECAST_RANGE_SIGMAS: f32 = 2.0;
 
     /// Set the source-tile forage patch cultivated (owned by faction 0) at the given biomass.
     fn cultivate_source_patch(world: &mut World, biomass: f32) {
@@ -2871,6 +3022,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -2901,6 +3053,7 @@ mod labor_yield_tests {
                 },
                 workers: assigned,
                 improvement: None,
+                kit: None,
             }],
         );
 
@@ -2966,6 +3119,7 @@ mod labor_yield_tests {
                 },
                 workers: assigned,
                 improvement: None,
+                kit: None,
             }],
         );
 
@@ -3039,6 +3193,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
         let keeper = spawn_band(
@@ -3051,6 +3206,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
 
@@ -3083,7 +3239,10 @@ mod labor_yield_tests {
                 &world_labor.forage,
             );
             let take_biomass = tended.actual / rate;
-            let per_worker = crate::forage::forage_per_worker_biomass(&world_labor.forage, 1.0);
+            let per_worker = crate::forage::forage_per_worker_biomass(
+                world_labor.forage.per_worker_biomass_capacity,
+                1.0,
+            );
             (take_biomass / per_worker).ceil() as u32
         };
         assert!(
@@ -3165,6 +3324,7 @@ mod labor_yield_tests {
                 &fauna,
                 &ladder,
                 labor.hunt.per_worker_biomass_capacity,
+                &crate::fauna::HuntingParty::builtin_equipped(),
                 1.0,
             );
             (
@@ -3198,12 +3358,14 @@ mod labor_yield_tests {
                 &fauna,
                 &ladder,
                 labor.hunt.per_worker_biomass_capacity,
+                &crate::fauna::HuntingParty::builtin_equipped(),
                 1.0,
                 crew,
                 0.5,
                 improvement,
                 labor.yield_average_horizon_turns,
                 labor.arrivals_horizon_turns,
+                SHIPPED_FORECAST_RANGE_SIGMAS,
             )
         };
         let tame_seed = seed(Some(Improvement::Tame), &world);
@@ -3230,6 +3392,7 @@ mod labor_yield_tests {
                 },
                 workers: crew,
                 improvement: Some(Improvement::Tame),
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -3296,6 +3459,7 @@ mod labor_yield_tests {
                 &labor.forage,
                 &flora,
                 &ladder,
+                labor.forage.per_worker_biomass_capacity,
                 SEASONAL_WEIGHT,
                 NEUTRAL_OUTPUT_MULT,
                 crew,
@@ -3303,6 +3467,7 @@ mod labor_yield_tests {
                 improvement,
                 labor.yield_average_horizon_turns,
                 labor.arrivals_horizon_turns,
+                SHIPPED_FORECAST_RANGE_SIGMAS,
             )
         };
         let cultivate_seed = seed(Some(Improvement::Cultivate), &world);
@@ -3328,7 +3493,10 @@ mod labor_yield_tests {
                 &labor.forage,
                 &flora,
                 &ladder,
-                SEASONAL_WEIGHT,
+                crate::forage::forage_per_worker_biomass(
+                    labor.forage.per_worker_biomass_capacity,
+                    SEASONAL_WEIGHT,
+                ),
                 NEUTRAL_OUTPUT_MULT,
             )
             .per_worker_yield
@@ -3369,6 +3537,7 @@ mod labor_yield_tests {
                 },
                 workers: crew,
                 improvement: Some(Improvement::Cultivate),
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -3413,7 +3582,10 @@ mod labor_yield_tests {
             (
                 patch.biomass,
                 workers as f32
-                    * crate::forage::forage_per_worker_biomass(&labor.forage, SEASONAL_WEIGHT)
+                    * crate::forage::forage_per_worker_biomass(
+                        labor.forage.per_worker_biomass_capacity,
+                        SEASONAL_WEIGHT,
+                    )
                     * build_dip(&world, Improvement::Cultivate),
             )
         };
@@ -3441,6 +3613,7 @@ mod labor_yield_tests {
                 &labor.forage,
                 &flora,
                 &ladder,
+                labor.forage.per_worker_biomass_capacity,
                 SEASONAL_WEIGHT,
                 NEUTRAL_OUTPUT_MULT,
                 workers,
@@ -3448,6 +3621,7 @@ mod labor_yield_tests {
                 Some(Improvement::Cultivate),
                 labor.yield_average_horizon_turns,
                 labor.arrivals_horizon_turns,
+                SHIPPED_FORECAST_RANGE_SIGMAS,
             )
         };
 
@@ -3462,6 +3636,7 @@ mod labor_yield_tests {
                 },
                 workers,
                 improvement: Some(Improvement::Cultivate),
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -3531,6 +3706,7 @@ mod labor_yield_tests {
                     },
                     workers: WORKERS,
                     improvement,
+                    kit: None,
                 }],
             );
             world.run_system_once(advance_labor_allocation);
@@ -3577,12 +3753,14 @@ mod labor_yield_tests {
                 &fauna,
                 &ladder,
                 labor.hunt.per_worker_biomass_capacity,
+                &crate::fauna::HuntingParty::builtin_equipped(),
                 NEUTRAL_OUTPUT_MULT,
                 WORKERS,
                 crate::fauna::MSY_BIOMASS_FRACTION,
                 Some(Improvement::Tame),
                 labor.yield_average_horizon_turns,
                 labor.arrivals_horizon_turns,
+                SHIPPED_FORECAST_RANGE_SIGMAS,
             )
         };
         assert_eq!(
@@ -3646,6 +3824,7 @@ mod labor_yield_tests {
                 },
                 workers,
                 improvement: None,
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -3667,6 +3846,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -3679,17 +3859,39 @@ mod labor_yield_tests {
     /// MSY even under Sustain), which is why `overdraws` exists. The forward-projected `realized` IS
     /// comparable, and it is ordered by how deep the stance's floor is.
     ///
-    /// **A Sustain projection sits ABOVE MSY, and that is honest, not an overdraw.** The window opens
-    /// on a herd standing above `K/2`, so the first projected turn draws that accumulated surplus down
-    /// to the floor and the rest of the horizon pays the regrowth — an average between the two. What
-    /// makes Sustain sustainable is its floor, not its being under a line.
+    /// **A Sustain projection TRACKS MSY to within one animal per window — it does not sit above it,
+    /// and the difference is the quantiser.** The window opens on a herd standing above `K/2`, so the
+    /// projection draws that accumulated surplus down to the floor and then lives on the regrowth;
+    /// what makes Sustain sustainable is its floor, not its being under a line. But on a **slow
+    /// breeder** the payout is a *pulse train* — the room above the floor is lighter than one body for
+    /// several turns, then clears it — so the window's average lands wherever the last pulse fell
+    /// relative to the window's edge, which is a **half-open interval around MSY**, not a floor under
+    /// it. (Here: one 80-unit body per window against 40 turns × MSY 5 = 1.25 bodies' worth.)
+    ///
+    /// It read as a floor while `project_realized_hunt` let the smooth escapement rate flow on turns
+    /// the herd could not spare a whole animal — the party's engagement was bounded by its own reach
+    /// alone, so the projection quoted a trickle the take never pays. Bounding the engagement by what
+    /// the herd can spare (`fauna::animals_affordable`, the clamp the live path always applied) is
+    /// what put the pulse into the average, and it is what makes this row agree with the **arrivals
+    /// schedule beside it** — two exported projections of the same herd that previously disagreed by
+    /// the whole quantisation. So the tolerance below is *one animal spread over the window*, read off
+    /// the arrivals pulse rather than restated here, and it is a **tighter** claim than the `>=` it
+    /// replaced.
     ///
     /// **The decline is visible as `realized < actual` on Surplus**: the opening turn draws the stock
     /// down to `0.30·K` and the horizon that follows pays only the trickle back, so the steady
-    /// headline lands well below the turn the player just watched. **Deplete cannot be read that way**
-    /// — it leaves the herd *at* the Allee brink, where the projection terminates (nothing more to
-    /// take), so its average is the strip rate over the turns it actually delivered, exactly like
-    /// Eradicate's. That termination rule is what keeps it from being diluted toward zero.
+    /// headline lands well below the turn the player just watched.
+    ///
+    /// **Deplete does NOT terminate on a slow breeder, and that is the quantiser rather than a
+    /// dilution bug.** Whole animals cannot strip a herd to *exactly* `0.15·K` — the take stops on the
+    /// last whole body standing above the brink — so the herd survives a little above it and goes on
+    /// offering a sub-body trickle, which the loop correctly counts as wait turns. Its average is
+    /// therefore the honest long-run rate under that floor: ordered above Surplus and above Sustain,
+    /// but nowhere near a one-turn strip. **The divide-by-turns-simulated rule this used to pin lives
+    /// on the one policy that really does spend its source in a turn** —
+    /// `eradicate_realized_reads_the_strip_rate_not_a_diluted_average`, whose floor of `0` leaves
+    /// nothing standing to round against. (It read as a strip here only while the smooth projection
+    /// took `2.25` animals where the take pays `2`.)
     #[test]
     fn realized_reads_the_honest_overhunting_rate() {
         let sustain = slow_breeder_hunt_at(0.5);
@@ -3702,11 +3904,26 @@ mod labor_yield_tests {
                 && (sustain.sustainable - deplete.sustainable).abs() < 1e-6,
             "sustainable is the policy-independent MSY reference: {sustain:?} {surplus:?} {deplete:?}"
         );
-        // Sustain projects at or above its sustainable MSY — the opening drawdown to `K/2` plus a
-        // horizon of regrowth — and never below it: a Sustain hunt is not an under-draw either.
+        // **One whole animal's provisions**, read off the projection's own arrivals schedule — whose
+        // non-zero slots on this slow breeder ARE single-animal pulses — so the tolerance is the
+        // sim's own quantum rather than one restated here and left to drift from the fixture.
+        let one_animal = sustain.arrivals.iter().cloned().fold(0.0_f32, f32::max);
         assert!(
-            sustain.realized >= sustain.sustainable - 1e-5,
-            "a Sustain hunt projects at least its sustainable MSY: {sustain:?}"
+            one_animal > 0.0,
+            "liveness: the projection must land at least one animal in the window, or the quantum \
+             below is zero and the assertion is vacuous: {sustain:?}"
+        );
+        let window_quantum = one_animal
+            / LaborConfigHandle::default()
+                .get()
+                .yield_average_horizon_turns as f32;
+        // Sustain tracks its sustainable MSY to within that one animal — above it when the window
+        // catches an extra pulse, a shade under when it catches one fewer. Either way it is the MSY
+        // the herd can pay, delivered in whole bodies.
+        assert!(
+            (sustain.realized - sustain.sustainable).abs() <= window_quantum,
+            "a Sustain hunt projects its sustainable MSY to within one animal per window \
+             ({window_quantum}): {sustain:?}"
         );
         assert!(
             sustain.realized > 0.0,
@@ -3729,11 +3946,13 @@ mod labor_yield_tests {
             surplus.realized > 0.0 && surplus.realized < surplus.actual,
             "Surplus projects well below its opening draw (sees the decline): {surplus:?}"
         );
-        // Deplete leaves the herd at the Allee brink with nothing standing above it, so its projection
-        // terminates and reports the strip it delivered rather than a horizon-diluted average.
+        // Deplete leaves the herd just above the Allee brink — the last whole body it could not take
+        // without crossing — so the projection runs on and reports the long-run rate that floor
+        // sustains. Ordered above Sustain's, which leaves twice as much standing.
         assert!(
-            deplete.realized > 10.0 * deplete.sustainable,
-            "Deplete reads the strip it delivered, not a diluted average: {deplete:?}"
+            deplete.realized > sustain.realized,
+            "a deeper floor must project a higher steady rate than Sustain's: {deplete:?} vs \
+             {sustain:?}"
         );
     }
 
@@ -3857,6 +4076,7 @@ mod labor_yield_tests {
                 },
                 workers: assigned,
                 improvement: None,
+                kit: None,
             }],
         );
         // The sim's expectation: one crew, `max(herders, steady_haul)` — taken on the **pre-take**
@@ -3885,6 +4105,7 @@ mod labor_yield_tests {
                 &fauna,
                 &ladder,
                 labor.hunt.per_worker_biomass_capacity,
+                &crate::fauna::HuntingParty::builtin_equipped(),
                 1.0,
             );
             let ceiling = forecast
@@ -4033,7 +4254,10 @@ mod labor_yield_tests {
                         &labor.forage,
                         &FloraConfig::builtin(),
                         &LadderConfig::builtin(),
-                        SEASONAL_WEIGHT,
+                        crate::forage::forage_per_worker_biomass(
+                            labor.forage.per_worker_biomass_capacity,
+                            SEASONAL_WEIGHT,
+                        ),
                         NEUTRAL_OUTPUT_MULT,
                     );
                     drop(labor);
@@ -4049,6 +4273,7 @@ mod labor_yield_tests {
                             },
                             workers,
                             improvement,
+                            kit: None,
                         }],
                     );
                     world.run_system_once(advance_labor_allocation);
@@ -4121,6 +4346,7 @@ mod labor_yield_tests {
                             &fauna,
                             &LadderConfig::builtin(),
                             per_worker,
+                            &crate::fauna::HuntingParty::builtin_equipped(),
                             NEUTRAL_OUTPUT_MULT,
                         );
                         drop(fauna);
@@ -4135,6 +4361,7 @@ mod labor_yield_tests {
                                 },
                                 workers,
                                 improvement,
+                                kit: None,
                             }],
                         );
                         world.run_system_once(advance_labor_allocation);
@@ -4227,7 +4454,10 @@ mod labor_yield_tests {
             &labor.forage,
             &FloraConfig::builtin(),
             &LadderConfig::builtin(),
-            SEASONAL_WEIGHT,
+            crate::forage::forage_per_worker_biomass(
+                labor.forage.per_worker_biomass_capacity,
+                SEASONAL_WEIGHT,
+            ),
             NEUTRAL_OUTPUT_MULT,
         );
         let hunt_per_worker = labor.hunt.per_worker_biomass_capacity;
@@ -4243,6 +4473,7 @@ mod labor_yield_tests {
             &fauna,
             &LadderConfig::builtin(),
             hunt_per_worker,
+            &crate::fauna::HuntingParty::builtin_equipped(),
             NEUTRAL_OUTPUT_MULT,
         );
         drop(fauna);
@@ -4298,6 +4529,7 @@ mod labor_yield_tests {
                 },
                 workers: field_workers_needed,
                 improvement: None,
+                kit: None,
             }],
         );
         let short_handed = spawn_band(
@@ -4310,6 +4542,7 @@ mod labor_yield_tests {
                 },
                 workers: 1,
                 improvement: None,
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -4389,7 +4622,11 @@ mod labor_yield_tests {
         // claim is that a bare tended patch pays exactly this.
         let wild_take = {
             let cfg = world.resource::<LaborConfigHandle>().get();
-            let crew = WORKERS as f32 * crate::forage::forage_per_worker_biomass(&cfg.forage, 1.0);
+            let crew = WORKERS as f32
+                * crate::forage::forage_per_worker_biomass(
+                    cfg.forage.per_worker_biomass_capacity,
+                    1.0,
+                );
             crew.min(biomass - patch_cap * crate::fauna::MSY_BIOMASS_FRACTION) * wild_rate
         };
         cultivate_source_patch(&mut world, biomass);
@@ -4405,6 +4642,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
 
@@ -4482,6 +4720,7 @@ mod labor_yield_tests {
                     },
                     workers: WORKERS,
                     improvement: None,
+                    kit: None,
                 }],
             );
             world.run_system_once(advance_labor_allocation);
@@ -4562,6 +4801,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
         // Band B (same faction) forages the neighbor tile (1,0), which has no food module/patch →
@@ -4578,6 +4818,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
 
@@ -4623,6 +4864,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
 
@@ -4721,6 +4963,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -4749,6 +4992,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: Some(Improvement::Cultivate),
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -4837,6 +5081,7 @@ mod labor_yield_tests {
                     },
                     workers: SOLE_FORAGER,
                     improvement,
+                    kit: None,
                 }],
             );
             world.run_system_once(advance_labor_allocation);
@@ -4922,6 +5167,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -4954,6 +5200,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: Some(Improvement::Corral),
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -5019,6 +5266,7 @@ mod labor_yield_tests {
                     },
                     workers: SOLE_HUNTER,
                     improvement,
+                    kit: None,
                 }],
             );
             world.run_system_once(advance_labor_allocation);
@@ -5088,7 +5336,10 @@ mod labor_yield_tests {
             &labor.forage,
             &FloraConfig::builtin(),
             &LadderConfig::builtin(),
-            SEASONAL_WEIGHT,
+            crate::forage::forage_per_worker_biomass(
+                labor.forage.per_worker_biomass_capacity,
+                SEASONAL_WEIGHT,
+            ),
             NEUTRAL_OUTPUT_MULT,
         );
         expected_yield(&forecast, workers, floor, improvement)
@@ -5181,6 +5432,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: Some(Improvement::Cultivate),
+                kit: None,
             }],
         );
 
@@ -5328,6 +5580,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: Some(Improvement::Tame),
+                kit: None,
             }],
         );
 
@@ -5409,6 +5662,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: Some(Improvement::Corral),
+                kit: None,
             }],
         );
 
@@ -5472,6 +5726,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: Some(Improvement::Cultivate),
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -5496,6 +5751,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: Some(Improvement::Corral),
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -5523,6 +5779,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: Some(Improvement::Corral),
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -5564,6 +5821,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -5582,6 +5840,7 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
+                kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);

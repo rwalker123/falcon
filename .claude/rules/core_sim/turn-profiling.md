@@ -2,6 +2,7 @@
 paths:
   - "core_sim/src/turn_profile.rs"
   - "core_sim/src/snapshot/capture.rs"
+  - "core_sim/src/snapshot/mod.rs"
   - "core_sim/src/snapshot/publish.rs"
   - "core_sim/src/network.rs"
   - "core_sim/tests/turn_profile_wiring.rs"
@@ -571,10 +572,36 @@ so those ghosts last one turn and go unnoticed. **A section that can be identica
 turns is where this class does lasting damage** — that is the property to check when adding a
 command that toggles one.
 
-**The keyed per-row sections (`diff_indexed` and friends) are deliberately NOT covered.** The
-equivalent guard there is a set of ids published on held frames rather than one bool, and the cases
-it would buy all self-heal on the next turn for the reason above. If a future section is both
-row-keyed *and* stable across turns, that is when it needs building.
+#### The keyed per-row sections carry the same guard as a SET of ids — `Indexed<K, T>`
+
+They were originally left out on the argument that every case a per-row flag would buy self-heals on
+the next turn. **One class does not, and it is worse than staleness: a row that is ADDED on a held
+frame and REMOVED before the next Advance is in no baseline at all.** The removal sweep walks the
+baseline, so it has nothing to find; and neither does the next turn's `Advance` diff, because the
+baseline never learned the row existed. The client keeps the row forever, and every subsequent frame
+is silent about it.
+
+`Indexed<K, T>` (`snapshot/mod.rs`) is the row-keyed twin of `Whole::held`: the baseline map plus the
+**set of ids published on held frames since the last `Advance`**. `diff_indexed` restates a row whose
+id is in that set even when it compares equal to the baseline, and `diff_removed` sweeps the set as
+well as the baseline, so a row that only ever lived on held frames is still reported as removed —
+once, after which the id is forgotten. `Advance` clears the set, so a steady-state turn's set is
+empty and the fast path (`retained == baseline_len && held_retained == held_len`) is unchanged: one
+hash probe per entry, no extra allocation, nothing new on the map-sized sections.
+
+**The wrapper is the guard.** A new keyed section takes the set from its field's type rather than
+from a convention someone has to remember, exactly as `Whole` does for a whole section.
+
+**The worked example is the one that found it, and it reached a player.** `send_hunt_expedition`
+spawns a detached party — published on the launch command's held frame — and `recall_expedition`
+cancels it **in camp** and despawns it in the same tick, on the next held frame. The client kept the
+party row on its Band panel indefinitely; its ✕ kept sending the `BandId` the row still carried; and
+the sim answered `Expedition 2 does not exist in the simulation` on turn after turn, because the
+party genuinely did not. Pinned at both levels:
+`server::tests::a_party_cancelled_in_the_tick_it_launched_is_published_as_removed` reads
+`removedPopulations` off the encoded delta, and
+`snapshot::indexed_diff_tests::a_row_added_and_removed_across_held_frames_is_still_reported_as_removed`
+pins the mechanism.
 
 ### ECS change detection is the WRONG tool here — do not re-propose it
 

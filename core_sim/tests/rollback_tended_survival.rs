@@ -117,6 +117,7 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
                 },
                 1,
                 available,
+                None,
             );
             alloc.set_assignment(
                 LaborTarget::Hunt {
@@ -125,6 +126,7 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
                 },
                 1,
                 available,
+                None,
             );
         }
     }

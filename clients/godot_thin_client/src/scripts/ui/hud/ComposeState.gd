@@ -67,6 +67,19 @@ var _party_quarry_id: String = ""
 # The sheet's OWN autofill one-shot. Deliberately NOT `_hunt_autofill`: sharing it would let one
 # surface's floor click refill the other surface's stepper.
 var _party_autofill := false
+# ---- THE KIT each group is composing (`docs/plan_denial_raid.md`) ---------------------------------
+# The roster id the crew will be sent out with, per compose group — `KitRoster.NO_KIT_ID` until the
+# first render resolves one.
+#
+# **THREE FIELDS, NOT ONE, AND THE SPLIT FOLLOWS THE GROUPS ABOVE.** A kit is dialed on a SHEET, and
+# the three sheets are independently open: composing `none` in the herd drawer must not silently
+# re-arm the dock's party form with it. The hunt and denial missions share `_party_kit_id` because
+# they are one sheet under two missions and both send on the `hunt` job — `KitRoster.resolve_selection`
+# re-validates against the mission's own job on every render, so a selection can never survive into a
+# verb that would refuse it.
+var _forage_kit_id: String = KitRoster.NO_KIT_ID
+var _hunt_kit_id: String = KitRoster.NO_KIT_ID
+var _party_kit_id: String = KitRoster.NO_KIT_ID
 
 # ---- The open sheet's subject identity -----------------------------------------------------------
 var _kind: String = KIND_NONE
@@ -234,6 +247,8 @@ func clamp_hunt_count(cap: int) -> void:
 func party_quarry_id() -> String:
 	return _party_quarry_id
 
+## The quarry is now `herd_id` — a fresh pick, a re-pick on the map, or a switch between the herds
+## sharing one hex.
 func set_party_quarry(herd_id: String) -> void:
 	_party_quarry_id = herd_id
 
@@ -249,6 +264,29 @@ func consume_party_autofill() -> bool:
 	var armed := _party_autofill
 	_party_autofill = false
 	return armed
+
+# ---- The composed KIT, one accessor pair per group ------------------------------------------------
+# Read RAW: the value the player last picked, which may name a kit the current roster/job no longer
+# offers. Every render passes it through `KitRoster.resolve_selection` before using it, so the
+# fall-back to the job default lives in ONE place rather than in each accessor.
+
+func forage_kit_id() -> String:
+	return _forage_kit_id
+
+func set_forage_kit_id(kit_id: String) -> void:
+	_forage_kit_id = kit_id
+
+func hunt_kit_id() -> String:
+	return _hunt_kit_id
+
+func set_hunt_kit_id(kit_id: String) -> void:
+	_hunt_kit_id = kit_id
+
+func party_kit_id() -> String:
+	return _party_kit_id
+
+func set_party_kit_id(kit_id: String) -> void:
+	_party_kit_id = kit_id
 
 # ---- The open sheet's subject ---------------------------------------------------------------------
 

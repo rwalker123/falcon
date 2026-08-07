@@ -15,7 +15,7 @@ paths:
 
 | Script | Purpose |
 |--------|---------|
-| `ui/hud/TargetingController.gd` | `RefCounted` controller (HUD decomposition, `docs/plan_hud_decomposition.md`) owning the **COMMAND-TARGETING** cluster — the three remaining targeting flows (**move-band** picks a destination TILE, **send-expedition** outfits a party then picks a TILE, **pick-quarry** is the parties compose sheet's HERD picker) plus the floating top-centre **targeting banner** that guides each. It holds the three pending dicts (`_pending_move_band` / `_pending_send_expedition` / `_pending_pick_quarry`), the banner (`_ensure_targeting_banner` / `_refresh_targeting` / `_current_targeting_info` / `_targeting_banner_bbcode`), the per-flow begin/cancel/dispatch functions (`_try_dispatch_pending_move_band` / `_try_dispatch_pending_send_expedition` / `_try_pick_quarry` / `_huntable_herd_on_tile`) and the wrap-aware `_hex_distance_wrapped`. **Public API:** `begin_move_band` / `begin_send_expedition` / `begin_pick_quarry` / `cancel_pick_quarry` / `is_expedition_quarry` (THE single quarry-eligibility definition — the pick, the sheet's re-validation and MapView's glow all route through it), plus `is_targeting_active` / `cancel_active_targeting` / `try_dispatch` (the last runs the three `_try_*` in the SAME order as before). Hud holds it as `_targeting`, constructed in `_ready` **AFTER `_drawercompose` and BEFORE `_bandpanel`** (which injects it — so `_targeting` must exist first). **It emits its OWN signals, HudLayer RELAYS each** (the `TurnOrbController` pattern; the controller never emits a HudLayer signal): `targeting_changed` (→ `MapView.set_targeting`) · `move_band_requested` · `send_expedition_requested`. **The three reflective delegators STAY on HudLayer** — `is_targeting_active` (Main's escape_claimant path) / `cancel_active_targeting` (Main relays MapView's `targeting_cancel_requested` by name) / `try_dispatch` (called from `show_tile_selection` / `notify_hex_selected`), each probed BY NAME so a `has_method` miss fails SILENTLY. **The injection surface is TWO Callables** — `_resolve_assign_band` (STAYS on HudLayer, DrawerComposeController injects it too; reached through a typed adapter since `Callable.call` returns `Variant`) and `_after_pending_change` (STAYS on HudLayer, the `_emit_assign_labor` pending path owns it) — **plus, as construction-order and gap fixes not in the original decomposition spec: `_compose` (the parties compose's quarry/autofill one-shots, needed by the pick) and a lazily-bound `_bandpanel.rerender()` Callable (`_bandpanel` is built AFTER `_targeting`, so a direct ref is impossible at construction)**. Collaborators: `_band_labor` (`record_pending_move` + the grid pair), `_drawercompose` (the three `close_compose_sheet()` nudges), `_command_feed` (the quarry-pick miss/refusal `note()`s), and the HUD CanvasLayer as the **host** it parents the banner into — via the host's `LayoutRoot` (NOT the bare CanvasLayer) so the banner keeps insetting with the reserved-edge docks exactly as before. Behaviour identical to the old inlined targeting code |
+| `ui/hud/TargetingController.gd` | `RefCounted` controller (HUD decomposition, `docs/plan_hud_decomposition.md`) owning the **COMMAND-TARGETING** cluster — the three remaining targeting flows (**move-band** picks a destination TILE, **send-expedition** outfits a party then picks a TILE, **pick-quarry** is the parties compose sheet's HERD picker) plus the floating top-centre **targeting banner** that guides each. It holds the three pending dicts (`_pending_move_band` / `_pending_send_expedition` / `_pending_pick_quarry`), the banner (`_ensure_targeting_banner` / `_refresh_targeting` / `_current_targeting_info` / `_targeting_banner_bbcode`), the per-flow begin/cancel/dispatch functions (`_try_dispatch_pending_move_band` / `_try_dispatch_pending_send_expedition` / `_try_pick_quarry` / `_huntable_herd_on_tile`) and the wrap-aware `_hex_distance_wrapped`. **Public API:** `begin_move_band` / `begin_send_expedition` / `begin_pick_quarry` / `cancel_pick_quarry` / `is_expedition_quarry` (THE single quarry-eligibility definition — the pick, the sheet's re-validation, the tile chooser and MapView's glow all route through it) / `quarry_min_distance` (the one number that rule is expressed in, so the pick and the glow cannot derive it separately), plus `is_targeting_active` / `cancel_active_targeting` / `try_dispatch` (the last runs the three `_try_*` in the SAME order as before). Hud holds it as `_targeting`, constructed in `_ready` **AFTER `_drawercompose` and BEFORE `_bandpanel`** (which injects it — so `_targeting` must exist first). **It emits its OWN signals, HudLayer RELAYS each** (the `TurnOrbController` pattern; the controller never emits a HudLayer signal): `targeting_changed` (→ `MapView.set_targeting`) · `move_band_requested` · `send_expedition_requested`. **The three reflective delegators STAY on HudLayer** — `is_targeting_active` (Main's escape_claimant path) / `cancel_active_targeting` (Main relays MapView's `targeting_cancel_requested` by name) / `try_dispatch` (called from `show_tile_selection` / `notify_hex_selected`), each probed BY NAME so a `has_method` miss fails SILENTLY. **The injection surface is TWO Callables** — `_resolve_assign_band` (STAYS on HudLayer, DrawerComposeController injects it too; reached through a typed adapter since `Callable.call` returns `Variant`) and `_after_pending_change` (STAYS on HudLayer, the `_emit_assign_labor` pending path owns it) — **plus, as construction-order and gap fixes not in the original decomposition spec: `_compose` (the parties compose's quarry/autofill one-shots, needed by the pick) and a lazily-bound `_bandpanel.rerender()` Callable (`_bandpanel` is built AFTER `_targeting`, so a direct ref is impossible at construction)**. Collaborators: `_band_labor` (`record_pending_move` + the grid pair), `_drawercompose` (the three `close_compose_sheet()` nudges), `_command_feed` (the quarry-pick miss/refusal `note()`s), and the HUD CanvasLayer as the **host** it parents the banner into — via the host's `LayoutRoot` (NOT the bare CanvasLayer) so the banner keeps insetting with the reserved-edge docks exactly as before. Behaviour identical to the old inlined targeting code |
 ## Command Targeting
 
 Labor allocation is source-centric (assign workers to a source/role, see the **Labor
@@ -124,6 +124,24 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   defaults it to **0**, which admits everything and changes nothing for move/scout-tile targeting. The
   MapView test is commented as the RENDER-SIDE MIRROR of `Hud._is_expedition_quarry` — change the two
   together, in both directions.
+
+  **THE BEYOND-REACH RULE IS THE HUNT'S, NOT THE EXPEDITION'S**, so `is_expedition_quarry` /
+  `eligible_quarries_on_tile` / `choose_quarry` / `begin_pick_quarry` all take the **mission**
+  (`HudComposeVocab.COMPOSE_MISSION_*`), and the armed pick carries it in `_pending_pick_quarry` under
+  `PICK_QUARRY_MISSION_KEY` so the rule the halo glowed under IS the rule the click is judged by. A
+  hunting party exists for game the band cannot work from home; a **DENIAL** raid is not a way of
+  getting food but of erasing a herd, and hunting the warren next door at `floor 0` cannot express that
+  (a hunt is carry-bounded and stops at the pack), so denial may name any herd the band can see and
+  reach. Both halves come out of **`quarry_min_distance(band, mission)`** — the band's `hunt_reach` for
+  a hunt, **`QUARRY_NO_REACH_BOUND` (`-1`)** for denial — which is also what goes on the wire as
+  `min_distance`, so the pick and the glow are one number rather than two derivations. `-1` rather than
+  `0` because the test is *strictly farther than*: at `0` a herd on the band's OWN tile would fail it,
+  and at `-1` the unknown distance (`-1`) still does, which is how "an unknown distance is never a
+  quarry" falls out of the same comparison. The mission is tested for the one that RELAXES the rule, so
+  an unrecognised mission string keeps the hunt's stricter bound. **The refusal note (and the banner's
+  "click on a herd to hunt") is still worded for the hunt**; on a denial pick that branch is reachable
+  only for a herd whose tile cannot be resolved at all.
+
   (4) `marker_field_guard` covers `expedition_target_herd` / `expedition_hunt_policy` /
   `expedition_carry_cap`. Recall is the unchanged `recall_expedition` (works for hunt parties too).
   (5) **Pre-launch RAID forecast — the delivered payload + waste** (server `5a130e0`): a hunting expedition
@@ -142,11 +160,13 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   herd id in the sheet and re-renders. **The forecast, the max-useful cap, the ascending per-policy metrics
   and the no-surplus block therefore all live in the FORM**, from the SAME helpers the herd drawer's
   beyond-reach branch uses (`SourceForecast.expedition_policy_takes` · `SourceForecast.expedition_useful_cap` · `SourceForecast.hunt_trip_forecast` →
-  `SourceForecast.hunt_forecast_line_bbcode` · `SourceForecast.style_send_hunt_button` · `SourceForecast.hunt_no_surplus_reason`), so the two entry
+  `SourceForecast.hunt_forecast_line_bbcode` · `SourceForecast.style_send_hunt_button` · `SourceForecast.hunt_empty_refusal_reason`), so the two entry
   points structurally cannot quote different numbers. The line reads cyan
   `delivers ≈N <Herd> over ≈M turns · ~F food` (+ amber `· ⚠ P% wasted`) for a brisk raid, WARN-amber `⚠ … — a slow raid` past `expeditionViabilityWarnTurns` (or `delivers ≈N <Herd>
-  over many turns … — a slow raid` for a **long** raid, `turnsToFill == 0`, that ran the whole horizon still
-  delivering), amber denial `<Herd> — denial mission … brings nothing home` (an INEDIBLE quarry that pays
+  over more than M turns (more than H hunting + T travel) … — a slow raid` for a **long** raid,
+  `turnsToFill == 0`, that ran the whole horizon still delivering — `M` being
+  `expeditionForecastHorizonTurns + round-trip travel`, never the bare horizon; see `labor-ui.md` →
+  "An unbounded raid quotes a FLOOR"), amber denial `<Herd> — denial mission … brings nothing home` (an INEDIBLE quarry that pays
   neither product — **never** the Eradicate rung, which delivers its whole-stock windfall like every
   other rung, #337), and DANGER-red
   `⚠ <Herd> is too lean to raid — its surplus is spent` when **`deliveredFood == 0`** (the herd at/below the
@@ -199,8 +219,9 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   + `expedition_launch_policy_sustain`; herd-panel expedition states `herd_hunt_forecast_viable` (the
   partial-with-waste Thunder Mammoth: `~4 food · ⚠ 75% wasted`, button ENABLED) / `_slow` / `_surplus` /
   `_no_surplus` (`deliveredFood 0` everywhere → disabled "too lean") / `_eradicate` (a real delivery —
-  `delivers ≈12 Red Deer over many turns · ~24 food · ⇄ ~6 trade goods — a slow raid`, amber "Send Anyway
-  (long raid)"),
+  `delivers ≈12 Red Deer over ≈11 turns · ~24 food · ⇄ ~6 trade goods`, ordinary Send — a strip-bare raid
+  COMPLETES) / `_horizon` + `herd_hunt_horizon_travel` (the raid that genuinely does not finish, quoting
+  its floor: `Send Anyway (more than 68 turns)`),
   the raid set `herd_hunt_boar_raid` (clean, no waste) / `herd_hunt_max_useful` / `herd_hunt_raid_travel`
   (travel-inclusive `over ≈16 turns (8 hunting + 8 travel)`, and the picker caps correctly lower) /
   `herd_hunt_expedition_automax` (a policy click fills the Party to max-useful).

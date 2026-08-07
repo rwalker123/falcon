@@ -140,6 +140,66 @@ const FOOD_LABEL_PEN_FEED := "%s Pen feed (animals)" % CORRAL_GLYPH
 const RAID_GLYPH := "⚔"
 const FOOD_LABEL_RAID_FORFEIT := "%s Lost to raids" % RAID_GLYPH
 
+# ---- THE THREE KITS (`docs/plan_hunt_through_combat.md` §4.8) ------------------------------------
+# ONE KIT, ONE JOB: spears raise a hunter's `attack`, a SLED is the HUNT's carry (a carcass is one
+# lumpy object you drag out whole), BASKETS are the FORAGE web's (berries are loose and bounded by
+# what you can hold). The three names are typed once, here, because the Kit ROW lists them and the Kit
+# BREAKDOWN explains them — and the pairing of a kit with its role is the whole readout: a sled line
+# quoting the forage carry, or a basket line quoting the hunt's, is exactly the defect slice 5
+# corrected in the sim and the one this client must not reintroduce.
+const KIT_LABEL_SPEARS := "Spears"
+const KIT_LABEL_SLED := "Sled"
+const KIT_LABEL_BASKETS := "Baskets"
+
+# The three wire keys, beside the labels they belong to. A cohort from a snapshot that predates the
+# TOE carries none of them, which is what the Kit row's presence gate reads.
+const KIT_DURABILITY_KEY_SPEARS := "hunting_kit_durability"
+const KIT_DURABILITY_KEY_SLED := "sled_kit_durability"
+const KIT_DURABILITY_KEY_BASKETS := "basket_kit_durability"
+
+# The RESOLVED tiers each kit sets. **`hunt_carry_per_worker_biomass` and
+# `forage_carry_per_worker_biomass` ARE NOT TWO READINGS OF ONE NUMBER** — a band can be out of
+# baskets with its sled untouched — so each is named beside its own kit and neither is ever read for
+# the other's row.
+const KIT_TIER_KEY_ATTACK := "hunter_attack"
+const KIT_TIER_KEY_HUNT_CARRY := "hunt_carry_per_worker_biomass"
+const KIT_TIER_KEY_FORAGE_CARRY := "forage_carry_per_worker_biomass"
+
+# **A KIT IS EQUIPPED WHILE ITS CONDITION IS ABOVE ZERO** — the schema's own rule, and the only test
+# there is: at 0 the role steps down to its unequipped tier and STAYS there, because nothing
+# replenishes kit yet. Not a threshold of the client's choosing.
+const KIT_DRY := 0.0
+
+# What a dry kit reads as on the row. A WORD, not a `0`, because the number is not the point: the
+# point is which SIDE OF THE CLIFF the role is on.
+const KIT_DRY_FACE := "dry"
+
+# The condition's own rounding — it is a 0-100 scale, so a whole number is its full resolution.
+const KIT_CONDITION_DECIMALS := 0
+
+# The two carry tiers are biomass per worker per turn; one decimal, because the bare-handed forage
+# tier is `1.6` and an integer would print it as `2` beside an equipped `8`.
+const KIT_CARRY_DECIMALS := 1
+
+# The role each kit sets, as the breakdown's own phrasing. The tier is stated FLAT — never scaled by
+# the remaining condition — because durability and performance are orthogonal axes: a kit at 3
+# performs exactly as one at 97, and then stops.
+const KIT_ROLE_ATTACK_FORMAT := "attack %s"
+const KIT_ROLE_HUNT_CARRY_FORMAT := "hunt carry %s per hunter"
+const KIT_ROLE_FORAGE_CARRY_FORMAT := "gathering %s per forager"
+
+# The bare-handed tag on a dry kit's breakdown row — the state worth saying plainly, since there is no
+# replenishment path and the role stays there.
+const KIT_BARE_HANDS_SUFFIX := " — bare hands"
+
+# One `    ▲ Spears 87 — attack 20`-style breakdown row, and the sentence beneath the three of them.
+const KIT_BREAKDOWN_ROW_FORMAT := "%s%s %s %s — %s"
+
+# **THE CLIFF, IN ONE SENTENCE.** Without it a player reads the conditions as a performance gradient
+# and paces their hunting against a number that does not move anything — which is the exact
+# misreading the flat-until-expiry model invites.
+const KIT_BREAKDOWN_CLIFF_NOTE := "A kit works at full strength until it runs out — the condition is how long you have, not how well it works. There is no way to make more yet."
+
 const BREAKDOWN_CARET_OPEN := "▾"
 const BREAKDOWN_CARET_CLOSED := "▸"
 
@@ -276,6 +336,21 @@ const EXPEDITION_NEXT_DELIVERY_NO_SURPLUS := "Next delivery: none — its target
 const EXPEDITION_NEXT_DELIVERY_TARGET_LOST := "Next delivery: target herd lost — the party is returning home"
 # The click affordance on an Active-expeditions row (the whole row is the button there).
 const EXPEDITION_ROW_FOCUS_HINT := "Click to show this expedition on the map."
+# **THE HUNT PARTY'S ORDERS ROW** — `%s` the floor's own `HudComposeVocab.FLOOR_VALUE_FORMAT` value.
+# It carried a second `· `-joined clause for the fill target and is a ONE-clause row since that lever
+# retired (issue #491); see `expedition_orders_line` for why it stays ONE row whatever it carries.
+const EXPEDITION_ORDERS_ROW_FORMAT := "Orders: %s"
+# **THE DENIAL PARTY'S ROW KEY** (`docs/plan_denial_raid.md`), standing where `Next delivery:` stands
+# on a hunt party. One word, so `_split_kv` lays it out as a table row beside the others; the VALUE
+# carries its own tint, since a verdict's severity is a fact about the forecast and not about the key.
+const DENIAL_COLLAPSE_ROW := "Collapse:"
+# **THE QUOTED-PARTY CLAUSE — the compose sheets' `quoted_party_note` in a detail row's clothing.**
+# `denialEstimates` samples the party axis on a LADDER, and a LAUNCHED party's size is bounded by the
+# band alone, so an in-flight party very often falls between two rungs; the row then quotes the nearest
+# one and must SAY so, because the collapse timeline scales with party size. It is a CLAUSE rather than
+# a row of its own: this producer's output lands in the parties zone's clipped inspector strip, where a
+# second row costs height the tier has already budgeted. `%d` the party quoted, `%d` this party's.
+const DENIAL_COLLAPSE_QUOTED_PARTY_FORMAT := " — priced for a party of %d, not this party's %d"
 
 # ---- The tile card's BASKET rows — what the `Foraging` stock above them is MADE OF (flora roster
 # F1/F5). Each realized plant reads on its OWN indented row: a role icon, the plant's display name,
@@ -298,6 +373,16 @@ const FLORA_COMPOSITION_SUBLINE_FORMAT := "%s%s %s"
 # deltas: these factors combine by product, and three percentages that refuse to sum to the headline
 # would invite arithmetic they cannot support. See `fertility_breakdown_row`.
 const GROWTH_ROW_FORMAT := "Growth: %d%% of normal"
+# The same reading with the anchor DROPPED, for the SHORT band-zone tier's MERGED Morale+Growth line
+# (`BandDetailLines.BAND_MORALE_GROWTH_CLAUSE_FORMAT`). The anchor is what makes a standalone `150%`
+# legible, and it is exactly what a merged line cannot afford: the vitals label is `AUTOWRAP_WORD`, so
+# a run too wide for the column WRAPS and costs back the very row the merge bought. The suffix is
+# recoverable — the Growth disclosure the clause still opens restates the factors in full — and the
+# `%` is unambiguous beside a `%` morale reading on the same line.
+const GROWTH_VALUE_SHORT_FORMAT := "%d%%"
+# The anchor itself, so a reader asserting that the TALL/COMPACT tiers KEPT the full row has a needle
+# that cannot drift from the format above.
+const GROWTH_ROW_ANCHOR_SUFFIX := " of normal"
 const FERTILITY_BREAKDOWN_ROW_FORMAT := "%s%s ×%.2f  %s"
 # The three factor labels, in the display order of `docs/plan_population_growth_model.md` §2:
 # hunger (the gate) → reserve (stock) → trend (flow). `hunger` is only ever ≤ 1 and `reserve` only
@@ -464,6 +549,23 @@ static func _value_hex(key: String, value: String, ctx: Context) -> String:
         return pen_feed_value_hex(value)
     return HudStyle.INK_HEX
 
+## The BBCode a clickable disclosure run OPENS with. Named because it is the needle that tells a
+## disclosure rendered as its OWN table row (`detail_bbcode` emits `[cell]` immediately before it)
+## from one MERGED into another row's value cell (where a separator precedes it) — a structural
+## difference the parsed text cannot show, and the only thing that can catch a tier merge leaking into
+## the tier above it.
+const DISCLOSURE_URL_OPEN := "[url="
+
+## **THE SAME CLICKABLE RUN, FOR A ROW MERGED INTO ANOTHER ROW'S VALUE CELL.** A merged row is still a
+## disclosure — the vitals block is ONE `RichTextLabel`, so both `[url]` metas live on the same label
+## and both popovers keep working — and it must wear the identical label + caret + tint a standalone
+## row wears, so this delegates rather than re-spelling the run. `""` when the row registered no
+## disclosure, which is the caller's cue to state the label plainly.
+static func inline_disclosure_label(key: String, ctx: Context) -> String:
+    if ctx == null or not ctx.disclosures.has(key):
+        return ""
+    return _key_cell(key, ctx)
+
 ## A disclosure row (Food/Morale) renders its key as a clickable `[url]` + ▸/▾ caret, which opens its
 ## breakdown in the shared POPOVER via `meta_clicked` → `DisclosureController` (never inline — see the
 ## BREAKDOWN_* consts). The caret is ▾ only while THIS row's popover is up. A CONCERNING row wears the
@@ -475,7 +577,7 @@ static func _key_cell(key: String, ctx: Context) -> String:
     var st: Dictionary = ctx.disclosures[key]
     var caret := BREAKDOWN_CARET_OPEN if bool(st.get("open", false)) else BREAKDOWN_CARET_CLOSED
     var caret_hex := HudStyle.WARN_HEX if bool(st.get("concerning", false)) else HudStyle.SIGNAL_HEX
-    return "[url=%s%s][color=#%s]%s %s[/color][/url]" % [
+    return DISCLOSURE_URL_OPEN + "%s%s][color=#%s]%s %s[/color][/url]" % [
         HudDisclosureVocab.BREAKDOWN_TOGGLE_META_PREFIX, String(st.get("key", "")),
         caret_hex, key, caret,
     ]
@@ -1124,6 +1226,49 @@ static func fertility_breakdown_row(factor: float, label: String) -> String:
         else DetailFormat.MORALE_CONTRIB_NEGATIVE_GLYPH
     return FERTILITY_BREAKDOWN_ROW_FORMAT % [DetailFormat.MORALE_BREAKDOWN_INDENT, glyph, factor, label]
 
+## **DOES THIS BAND STATE ITS KIT AT ALL?** — `has()`, never `> 0`, because a dry kit is a real and
+## important reading and only an ABSENT field means "not stated". One test behind the Kit row and its
+## disclosure, so a band cannot show one without the other.
+static func band_states_kit(band: Dictionary) -> bool:
+    return band.has(KIT_DURABILITY_KEY_SPEARS)
+
+## **HAS ANY KIT RUN OUT?** — what tints the Kit row's caret WARN, and the row's own value. It is the
+## whole of what "concerning" means here: running dry is a permanent step down to bare hands, and a
+## kit merely wearing is not a fact to shout about, because nothing the player can do changes its
+## rate. `false` for a band that states no kit at all.
+static func band_kit_is_dry(band: Dictionary) -> bool:
+    if not band_states_kit(band):
+        return false
+    return not kit_is_equipped(band, KIT_DURABILITY_KEY_SPEARS) \
+        or not kit_is_equipped(band, KIT_DURABILITY_KEY_SLED) \
+        or not kit_is_equipped(band, KIT_DURABILITY_KEY_BASKETS)
+
+## Is this kit still equipped? The schema's own rule and the only test there is (see `KIT_DRY`).
+static func kit_is_equipped(band: Dictionary, durability_key: String) -> bool:
+    return float(band.get(durability_key, KIT_DRY)) > KIT_DRY
+
+## One kit's condition as the Kit ROW says it — the whole number, or the word for a kit that has run
+## out. **Never a bar, never a fraction of a maximum**: performance is flat until expiry, so a filled
+## gauge would draw a taper the model does not have.
+static func kit_condition_face(band: Dictionary, durability_key: String) -> String:
+    return String.num(float(band.get(durability_key, KIT_DRY)), KIT_CONDITION_DECIMALS) \
+        if kit_is_equipped(band, durability_key) else KIT_DRY_FACE
+
+## One `    ▲ Spears 87 — attack 20` breakdown row. Green while the kit is equipped, amber once it is
+## dry — through the SAME ▲/▼ sign glyphs the food and morale breakdowns tint by, so the popover has
+## one two-tone rule rather than a per-family one.
+##
+## `role` is composed by the caller from THAT KIT's own tier. It is a parameter rather than a lookup
+## here on purpose: the wrong pairing (a sled quoting the forage carry) is the defect this arc keeps
+## reproducing, so the pairing is written once per kit at the one call site and is assertable there.
+static func kit_breakdown_row(band: Dictionary, durability_key: String, label: String,
+        role: String) -> String:
+    var equipped := kit_is_equipped(band, durability_key)
+    var glyph := MORALE_CONTRIB_POSITIVE_GLYPH if equipped else MORALE_CONTRIB_NEGATIVE_GLYPH
+    var suffix := "" if equipped else KIT_BARE_HANDS_SUFFIX
+    return KIT_BREAKDOWN_ROW_FORMAT % [MORALE_BREAKDOWN_INDENT, glyph, label,
+        kit_condition_face(band, durability_key), role + suffix]
+
 ## One `    ▲ +0.48  Gathered`-style breakdown row (morale-indent + sign glyph → shared tint path).
 static func food_breakdown_row(value: float, label: String) -> String:
     var glyph := DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH if value > 0.0 else DetailFormat.MORALE_CONTRIB_NEGATIVE_GLYPH
@@ -1314,10 +1459,49 @@ static func expedition_row_tooltip(exp: Dictionary, phase: String, target_herd: 
         floor_hint = HudFormat.floor_hint(
             float(exp.get("expedition_floor", SourceForecast.DEFAULT_HARVEST_FLOOR)),
             SourceForecast.LABOR_KIND_HUNT, true)
+    # A DENIAL party's orders are just "this herd, these hands", so what its hover adds is the one
+    # thing the row cannot show: the collapse verdict. `join_tooltip_lines` drops the `""` a hunt or a
+    # scout answers here, so neither gains a line.
+    var collapse_line := expedition_collapse_line(exp, target_herd) \
+        if mission == HudExpeditionVocab.EXPEDITION_MISSION_DENY else ""
     return HudFormat.join_tooltip_lines([
         expedition_mission_label(mission), floor_hint,
+        expedition_orders_line(exp, mission),
         HudFormat.status_tooltip_line(phase), _expedition_delivery_tooltip_line(exp, mission, target_herd),
+        expedition_trip_bound_line(exp, mission), collapse_line,
         EXPEDITION_ROW_FOCUS_HINT])
+
+## **THE PARTY'S ORDERS** — how deep to draw the herd: *"Orders: 30% left standing"*.
+##
+## **IT IS A MERGED ROW THAT NOW CARRIES ONE CLAUSE, and it stays merged.** It was `Leaves standing:`
+## and `Fill target:` as two rows, then one sentence stating both; the fill target is retired (issue
+## #491 — trip length is a species-and-kit constant, so the lever moved nothing party size did not
+## already fix), and what is left is the floor alone. The ROW is what the parties inspector strip
+## budgeted for: that strip is the detail panel for a launched party, lives in a `clip_contents` zone
+## capped at ~300px on a horizontal dock, and a hunt party carrying every optional line at once overran
+## it — so a second orders row must not come back for the next order the party learns to carry.
+##
+## `""` for a scout, a denial party or a resident band — none of them evaluates a floor.
+static func expedition_orders_line(exp: Dictionary, mission: String) -> String:
+    if mission != HudExpeditionVocab.EXPEDITION_MISSION_HUNT:
+        return ""
+    var floor_value: String = HudComposeVocab.FLOOR_VALUE_FORMAT % SourceForecast.floor_percent(
+        float(exp.get("expedition_floor", SourceForecast.DEFAULT_HARVEST_FLOOR)))
+    return EXPEDITION_ORDERS_ROW_FORMAT % floor_value
+
+## **WHICH STOP WILL END THIS PARTY'S RAID**, in the same words the pre-launch readout uses
+## (`SourceForecast.TRIP_BOUND_CLAUSES`) — one table, so what the sheet promised and what the party
+## reports cannot be phrased differently.
+##
+## `""` on the wire is NOT RAIDING (a resident band, a scout, or a party already walking a load home)
+## and is deliberately distinct from `"horizon"`, which is the projection having found no stop; both
+## render nothing, but for reasons that are not interchangeable and must not be collapsed here.
+static func expedition_trip_bound_line(exp: Dictionary, mission: String) -> String:
+    if mission != HudExpeditionVocab.EXPEDITION_MISSION_HUNT:
+        return ""
+    return SourceForecast.trip_bound_clause(
+        {SourceForecast.TRIP_BOUND_KEY: String(exp.get("expedition_trip_bound",
+            SourceForecast.TRIP_BOUND_NONE))})
 
 ## The full-wording next-delivery line for a hunt row's tooltip — the compact `· ~14 in 6t` token on
 ## the row itself is legible-but-terse in the 300px column, so hover carries the same phrasing the
@@ -1327,6 +1511,49 @@ static func _expedition_delivery_tooltip_line(exp: Dictionary, mission: String, 
     if mission != HudExpeditionVocab.EXPEDITION_MISSION_HUNT or not exp.has("expedition_projected_delivery"):
         return ""
     return expedition_next_delivery_line(exp, target_herd)
+
+## **THE IN-FLIGHT DENIAL READOUT** (`docs/plan_denial_raid.md` §3) — the collapse verdict where a
+## hunt party shows `Next delivery`. A denial party publishes no `expeditionProjectedDelivery` /
+## `expeditionEtaTurns` / `expeditionTripBound` at all, deliberately: its question is not when food
+## arrives, it is whether the herd goes past the point of no return.
+##
+## **THE SIM PUBLISHES NO PER-PARTY COLLAPSE FIELD, so this reads the TARGET HERD's own
+## `denialEstimates` row for the party's size** — the same table, the same row and therefore the same
+## sentence the launch sheet quoted, which is what stops the promise made at launch and the readout in
+## flight from drifting. `""` when the target is gone from telemetry (the `Target:` row above already
+## says the herd is not there) or the herd carries no row for this party size.
+##
+## The value carries its OWN `[color]`, the `_band_food_line` precedent: the verdict's severity is not
+## a property of the row KEY, so it cannot come from `_value_hex`'s key registry.
+##
+## **IT PASSES NO BAND, SO THE VERDICT READS "…of raiding" RATHER THAN "…from launch"** — and that is
+## the honest span here, not an omission. The launch sheet adds the OUTBOUND WALK because it knows
+## where the party is starting from; this party has already left, its remaining walk is not on the wire
+## (a denial mission publishes no `expeditionEtaTurns`), and adding the walk from the HOME BAND's tile
+## would quote a leg the party may have finished turns ago. `denial_forecast` names the span it is
+## quoting either way, so the two surfaces cannot be read as the same clock.
+static func expedition_collapse_line(exp: Dictionary, target_herd: Dictionary) -> String:
+    if target_herd.is_empty():
+        return ""
+    # The party's own size is the table's only axis — `size` is the cohort's head count, which for a
+    # detached party IS its workers (the same reading `HudBandLaborState.band_party_workers` takes).
+    var party := int(exp.get("size", 0))
+    # **THE PARTY IS HANDED IN FOR THE FORECAST HORIZON AND FOR NOTHING ELSE** — still no band, so still no
+    # travel term and still the "…of raiding" span. The horizon is a global lever echoed onto every
+    # cohort, so this launched party answers it exactly as its home band would; without it the verdict
+    # falls back to naming a clock the player cannot see.
+    var forecast := SourceForecast.denial_forecast(target_herd, party, {}, 0, false, exp)
+    var verdict := SourceForecast.denial_verdict_bbcode(forecast,
+        SourceForecast.herd_display_name(target_herd))
+    if verdict == "":
+        return ""
+    # …and WHICH party the sim costed it for, whenever the ladder rounded this one. The note is the
+    # compose sheets' rule reaching the launched party: a nearby row is a real answer to a nearby
+    # question, never an exact one, and this surface is where a between-rungs party is most likely
+    # (a launch is bounded by the band's idle workers and by nothing else).
+    var party_note := SourceForecast.quoted_party_note(forecast, party,
+        DENIAL_COLLAPSE_QUOTED_PARTY_FORMAT)
+    return "%s %s%s" % [DENIAL_COLLAPSE_ROW, verdict, party_note]
 
 ## The robust "Next delivery: …" wording, shared by the parties inspector strip
 ## (`BandDetailLines.expedition_summary_lines`) and the row tooltip (`expedition_row_tooltip`) so the

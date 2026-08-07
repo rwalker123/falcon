@@ -243,6 +243,8 @@ func _ready() -> void:
             hud.connect("send_expedition_requested", Callable(self, "_on_hud_send_expedition"))
         if hud.has_signal("send_hunt_expedition_requested") and not hud.is_connected("send_hunt_expedition_requested", Callable(self, "_on_hud_send_hunt_expedition")):
             hud.connect("send_hunt_expedition_requested", Callable(self, "_on_hud_send_hunt_expedition"))
+        if hud.has_signal("send_denial_raid_requested") and not hud.is_connected("send_denial_raid_requested", Callable(self, "_on_hud_send_denial_raid")):
+            hud.connect("send_denial_raid_requested", Callable(self, "_on_hud_send_denial_raid"))
         if hud.has_signal("recall_expedition_requested") and not hud.is_connected("recall_expedition_requested", Callable(self, "_on_hud_recall_expedition")):
             hud.connect("recall_expedition_requested", Callable(self, "_on_hud_recall_expedition"))
         if hud.has_signal("extend_pen_requested") and not hud.is_connected("extend_pen_requested", Callable(self, "_on_hud_extend_pen")):
@@ -542,6 +544,13 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         # The HUD needs the live herd positions (herds migrate) to jump the map to a hunted herd
         # from the band panel's Current-actions rows, and to name it. Same array MapView renders.
         _hud_invoke("update_herds", [snapshot["herds"]])
+    if snapshot.has("kits") and SnapshotSections.changed(snapshot, "kits"):
+        # The KIT ROSTER + the two job defaults, forwarded as ONE call: the compose sheets' pickers
+        # need the list and the "what does the verb take when I name none" answer together, and a
+        # roster ingested without its defaults would open every picker on nothing. Gated on `kits`
+        # alone — the defaults are scalars riding the same section and change with it.
+        _hud_invoke("update_kit_roster", [snapshot["kits"],
+            snapshot.get("default_hunt_kit_id", ""), snapshot.get("default_forage_kit_id", "")])
     if snapshot.has("forage_patches") and SnapshotSections.changed(snapshot, "forage_patches"):
         # The HUD needs the forage patches to cap each Current-actions Forage row's worker stepper at
         # the patch's max-useful (the same forecast the compose control reads off tile_info). Same
@@ -785,6 +794,22 @@ static func _floor_percent_text(payload: Dictionary) -> String:
 ## being silently reinterpreted as a crop key. The two optional forage tokens are disjoint by
 ## construction — a floor only ever parses as a float, a species key never does — so the parser
 ## tells them apart without the client having to pad the line.
+## **THE KIT TOKEN — `kit <id>`, NAMED, SPACE-SEPARATED AND ORDER-INDEPENDENT** (the parser's existing
+## `name value` style, as in `queue_espionage_mission … owner 1 target 2`). It is lifted out of the
+## tail before any positional form is read, so it may sit anywhere after the role and none of the four
+## grammars has to make room for it.
+##
+## **IT IS OMITTED WHEN THE CHOICE EQUALS THE JOB DEFAULT**, which is also what absent means to the
+## parser — so a composition that never touched the picker emits the byte-identical line it emitted
+## before the picker existed. `""` on either side
+## (a sheet composed before a roster landed, a role with no kit axis) likewise emits nothing.
+static func _kit_token(payload: Dictionary) -> String:
+    var kit_id := String(payload.get("kit_id", "")).strip_edges()
+    var default_id := String(payload.get("default_kit_id", "")).strip_edges()
+    if kit_id == "" or kit_id == default_id:
+        return ""
+    return " kit %s" % kit_id
+
 static func format_assign_labor(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
@@ -810,6 +835,10 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
                 forage_line = "assign_labor %d %d forage %d %d %s %d" % [faction, band_id, fx, fy, ffloor, workers]
             else:
                 forage_line = "assign_labor %d %d forage %d %d %s %s %d" % [faction, band_id, fx, fy, ffloor, fspecies, workers]
+            # The kit rides the TAIL as a named pair, so it never has to be disambiguated against the
+            # two optional positionals above it (a floor parses as a float, a species key never does,
+            # and `kit` is neither).
+            forage_line += _kit_token(payload)
             return {
                 "line": forage_line,
                 "message": "Assign %d forager%s to (%d, %d), leaving %s standing." % [
@@ -820,8 +849,9 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
             if herd_id == "":
                 return {}
             return {
-                "line": "assign_labor %d %d hunt %s %s %d" % [
-                    faction, band_id, herd_id, _format_floor(payload), workers],
+                "line": "assign_labor %d %d hunt %s %s %d%s" % [
+                    faction, band_id, herd_id, _format_floor(payload), workers,
+                    _kit_token(payload)],
                 "message": "Assign %d hunter%s to %s, leaving %s standing." % [
                     workers, "" if workers == 1 else "s", herd_id, _floor_percent_text(payload)],
             }
@@ -866,6 +896,10 @@ static func format_send_expedition(payload: Dictionary) -> Dictionary:
 ## `send_hunt_expedition <faction_id> <band_id> <party_workers> <fauna_id> [floor]`
 ## The trailing floor is optional and is a NUMBER in `0.0..=1.0` — the four stance words are rejected
 ## by name at parse. The server defaults the food peak when it is omitted; the client always sends it.
+##
+## **THE GRAMMAR IS CLOSED AFTER THE FLOOR**, like `send_denial_raid`'s. A second positional (the
+## retired fill target, issue #491) is now an `UnexpectedArgument` parse error rather than an ignored
+## token, so a token appended here fails the command outright instead of degrading quietly.
 static func format_send_hunt_expedition(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
@@ -877,6 +911,10 @@ static func format_send_hunt_expedition(payload: Dictionary) -> Dictionary:
         return {}
     var line := "send_hunt_expedition %d %d %d %s %s" % [
         faction, band_id, party_workers, fauna_id, _format_floor(payload)]
+    # …and the kit LAST, as a named pair. It has to come after the positionals: the parser lifts it
+    # out of the tail before reading them, but a human reading the log should see the positional
+    # grammar unbroken.
+    line += _kit_token(payload)
     # The COMMAND addresses the herd by its id; the FEED NOTE names the species. `game_deer_07` is a
     # database key — meaningless to a player — so it must never reach the feed. Hud sends the display
     # name alongside the key; fall back to the key only if it somehow didn't (better than an empty
@@ -884,10 +922,45 @@ static func format_send_hunt_expedition(payload: Dictionary) -> Dictionary:
     var fauna_label := String(payload.get("fauna_label", "")).strip_edges()
     if fauna_label == "":
         fauna_label = fauna_id
+    # The receipt names the one order a raid carries — how deep to draw the herd.
+    var orders := "leaving %s standing" % _floor_percent_text(payload)
     return {
         "line": line,
-        "message": "Send hunting expedition (%d, leaving %s standing) after %s." % [
-            party_workers, _floor_percent_text(payload), fauna_label],
+        "message": "Send hunting expedition (%d, %s) after %s." % [
+            party_workers, orders, fauna_label],
+    }
+
+## `send_denial_raid <faction_id> <band_id> <party_workers> <fauna_id>` (`docs/plan_denial_raid.md`).
+##
+## **THE GRAMMAR IS CLOSED AT FOUR TOKENS AND A FIFTH IS A HARD PARSE ERROR** — which is the command
+## layer saying what the mission says: denial carries no floor and no fill target, so there is no
+## optional trailing token to append and none may be invented. That is also why this is a builder of
+## its own rather than a branch of `format_send_hunt_expedition`, whose two optional tails would be
+## rejected here.
+static func format_send_denial_raid(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID:
+        return {}
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var party_workers := int(payload.get("party_workers", 0))
+    var fauna_id := String(payload.get("fauna_id", "")).strip_edges()
+    if party_workers <= 0 or fauna_id == "":
+        return {}
+    # The COMMAND addresses the herd by its database key; the FEED NOTE names the species, the
+    # `format_send_hunt_expedition` rule — `game_deer_07` must never reach a player-facing line.
+    var fauna_label := String(payload.get("fauna_label", "")).strip_edges()
+    if fauna_label == "":
+        fauna_label = fauna_id
+    return {
+        # **THE ONE THING THE CLOSED GRAMMAR ADMITS, AND IT IS NOT A NUMBER.** A kit is a property of
+        # the PARTY, not of the mission, so it is the only order a raid carrying no floor and no fill
+        # target still has to give — and it rides as a named pair rather than as the fifth positional
+        # the parser refuses.
+        "line": "send_denial_raid %d %d %d %s%s" % [faction, band_id, party_workers, fauna_id,
+            _kit_token(payload)],
+        # The receipt states the whole order, because the whole order is two things: a herd and a
+        # party. There is no third clause to quote and none to omit.
+        "message": "Send denial raid (%d) against %s." % [party_workers, fauna_label],
     }
 
 ## `recall_expedition <faction_id> <expedition_band_id>` — a detached party is a band, addressed by
@@ -1011,6 +1084,11 @@ func _on_hud_send_expedition(payload: Dictionary) -> void:
 ## and send it to follow a herd. The 4th arg is a herd id string, not tile coords.
 func _on_hud_send_hunt_expedition(payload: Dictionary) -> void:
     _send_formatted_command(format_send_hunt_expedition(payload))
+
+## Denial raid (`docs/plan_denial_raid.md`): outfit a party off a resident band and send it to break a
+## herd. Its own handler because its own command — see `format_send_denial_raid`.
+func _on_hud_send_denial_raid(payload: Dictionary) -> void:
+    _send_formatted_command(format_send_denial_raid(payload))
 
 ## Extend a built pen by one fenced ring (Grazing 2d-γ). The server works the ring off over ~25
 ## turns (rejecting at max radius / unowned / Herding-unknown with a feed message).

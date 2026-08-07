@@ -3000,6 +3000,10 @@ fn spawn_population_entity(
     // Every band carries a labor allocation (default empty = fully idle). The client drives
     // assignment; the startup food reserve covers the ramp before the first orders land.
     entity.insert(LaborAllocation::default());
+    // **The band starts KITTED** (the minimal TOE) — `BandEquipment` carries *wear*, so the default
+    // (zero wear) IS a full hunting kit and a full carry kit, and "start-stocked, not craftable"
+    // needs no config read and no seeding pass here.
+    entity.insert(BandEquipment::default());
     // The band's durable identity — see `BandId`. Allocated here rather than derived from position
     // because several bands can share a hex and a band outlives the hex it started on.
     entity.insert(band_ids.allocate());

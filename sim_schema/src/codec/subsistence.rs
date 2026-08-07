@@ -3,7 +3,7 @@
 use crate::codec::FbBuilder;
 use crate::state::subsistence::{
     FloraShareInfo, FoodModuleState, ForagePatchState, HerdTelemetryState,
-    IntensificationKnowledgeState, SedentarizationState,
+    IntensificationKnowledgeState, KitOptionState, SedentarizationState,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -19,6 +19,9 @@ pub(crate) fn serialize_subsistence_section<'a>(
     let intensification_knowledge =
         create_intensification_knowledge(builder, &snapshot.intensification_knowledge);
     let food_modules = create_food_modules(builder, &snapshot.food_modules);
+    let kits = create_kits(builder, &snapshot.kits);
+    let default_hunt_kit_id = builder.create_string(&snapshot.default_hunt_kit_id);
+    let default_forage_kit_id = builder.create_string(&snapshot.default_forage_kit_id);
     fb::SubsistenceSection::create(
         builder,
         &fb::SubsistenceSectionArgs {
@@ -27,6 +30,9 @@ pub(crate) fn serialize_subsistence_section<'a>(
             sedentarization: Some(sedentarization),
             intensificationKnowledge: Some(intensification_knowledge),
             foodModules: Some(food_modules),
+            kits: Some(kits),
+            defaultHuntKitId: Some(default_hunt_kit_id),
+            defaultForageKitId: Some(default_forage_kit_id),
         },
     )
 }
@@ -55,6 +61,18 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
         .food_modules
         .as_ref()
         .map(|entries| create_food_modules(builder, entries));
+    let kits = delta
+        .kits
+        .as_ref()
+        .map(|entries| create_kits(builder, entries));
+    let default_hunt_kit_id = delta
+        .default_hunt_kit_id
+        .as_ref()
+        .map(|id| builder.create_string(id));
+    let default_forage_kit_id = delta
+        .default_forage_kit_id
+        .as_ref()
+        .map(|id| builder.create_string(id));
     fb::SubsistenceSection::create(
         builder,
         &fb::SubsistenceSectionArgs {
@@ -63,8 +81,43 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
             sedentarization,
             intensificationKnowledge: intensification_knowledge,
             foodModules: food_modules,
+            kits,
+            defaultHuntKitId: default_hunt_kit_id,
+            defaultForageKitId: default_forage_kit_id,
         },
     )
+}
+
+/// **The kit roster**, once per world — the picker's list plus the tiers each kit grants, so the
+/// client never re-derives the TOE table. `jobs` crosses as free-form strings (the `species` /
+/// `policy` convention), so adding a job needs no schema change.
+fn create_kits<'a>(
+    builder: &mut FbBuilder<'a>,
+    states: &[KitOptionState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::KitOption<'a>>>> {
+    let mut entries = Vec::with_capacity(states.len());
+    for state in states {
+        let id = builder.create_string(&state.id);
+        let display_name = builder.create_string(&state.display_name);
+        let jobs: Vec<_> = state
+            .jobs
+            .iter()
+            .map(|job| builder.create_string(job))
+            .collect();
+        let jobs = builder.create_vector(&jobs);
+        entries.push(fb::KitOption::create(
+            builder,
+            &fb::KitOptionArgs {
+                id: Some(id),
+                displayName: Some(display_name),
+                jobs: Some(jobs),
+                attack: state.attack,
+                huntCarryPerWorkerBiomass: state.hunt_carry_per_worker_biomass,
+                forageCarryPerWorkerBiomass: state.forage_carry_per_worker_biomass,
+            },
+        ));
+    }
+    builder.create_vector(&entries)
 }
 
 fn create_sedentarization<'a>(
@@ -99,6 +152,13 @@ fn create_herds<'a>(
         let size_class = builder.create_string(herd.size_class.as_str());
         let ecology_phase = builder.create_string(herd.ecology_phase.as_str());
         let husbandry_ceiling = builder.create_string(herd.husbandry_ceiling.as_str());
+        // WHICH KIT EACH ESTIMATE TABLE IS QUOTED FOR — always written, even when the table beside it
+        // is empty: "these rows would have been priced at X" is still the honest answer, and a
+        // consumer comparing the player's selection against an absent string would read every herd
+        // as a mismatch.
+        let hunt_trip_estimates_kit_id =
+            builder.create_string(herd.hunt_trip_estimates_kit_id.as_str());
+        let denial_estimates_kit_id = builder.create_string(herd.denial_estimates_kit_id.as_str());
         let hunt_trip_estimates = if herd.hunt_trip_estimates.is_empty() {
             None
         } else {
@@ -106,11 +166,14 @@ fn create_herds<'a>(
                 .hunt_trip_estimates
                 .iter()
                 .map(|estimate| {
+                    let bound = builder.create_string(estimate.bound.as_str());
                     fb::HuntTripEstimate::create(
                         builder,
                         &fb::HuntTripEstimateArgs {
                             // THE SAMPLED FLOOR — replaces the retired `policy` string.
                             floor: estimate.floor,
+                            // WHICH STOP ENDS THE TRIP — a `HuntTripBound` key.
+                            bound: Some(bound),
                             partyWorkers: estimate.party_workers,
                             turnsToFill: estimate.turns_to_fill,
                             deliversFood: estimate.delivers_food,
@@ -119,6 +182,35 @@ fn create_herds<'a>(
                             animalsTaken: estimate.animals_taken,
                             deliveredFood: estimate.delivered_food,
                             wastedFood: estimate.wasted_food,
+                        },
+                    )
+                })
+                .collect();
+            Some(builder.create_vector(&entries))
+        };
+        // The denial twin of the table above — one row per party size, no floor axis (the mission
+        // carries no floor). Absent when empty, the same convention.
+        let denial_estimates = if herd.denial_estimates.is_empty() {
+            None
+        } else {
+            let entries: Vec<_> = herd
+                .denial_estimates
+                .iter()
+                .map(|estimate| {
+                    let outcome = builder.create_string(estimate.outcome.as_str());
+                    fb::DenialEstimate::create(
+                        builder,
+                        &fb::DenialEstimateArgs {
+                            partyWorkers: estimate.party_workers,
+                            turnsToCollapse: estimate.turns_to_collapse,
+                            turnsToCollapseLow: estimate.turns_to_collapse_low,
+                            turnsToCollapseHigh: estimate.turns_to_collapse_high,
+                            outcome: Some(outcome),
+                            animalsKilled: estimate.animals_killed,
+                            deliveredFood: estimate.delivered_food,
+                            wastedFood: estimate.wasted_food,
+                            deliveredTrade: estimate.delivered_trade,
+                            wastedTrade: estimate.wasted_trade,
                         },
                     )
                 })
@@ -220,6 +312,18 @@ fn create_herds<'a>(
                 // The phase bands this herd's own rung cuts on — appended last (append-only wire).
                 collapseFraction: herd.collapse_fraction,
                 stressedFraction: herd.stressed_fraction,
+                // The engagement throughput — appended last (append-only wire). `0` = no engagement
+                // stage (a pen, an unresolvable species), which a reader treats as unbounded.
+                engageRate: herd.engage_rate,
+                // The attrition denominator — appended last, so the slot stays positional.
+                durability: herd.durability,
+                // The denial raid's pre-launch table — appended last.
+                denialEstimates: denial_estimates,
+                // The party that table's sheet opens on — appended last, so the slot stays
+                // positional. `0` = no quoted party drives this herd down.
+                denialPartyNeeded: herd.denial_party_needed,
+                huntTripEstimatesKitId: Some(hunt_trip_estimates_kit_id),
+                denialEstimatesKitId: Some(denial_estimates_kit_id),
             },
         );
         entries.push(entry);

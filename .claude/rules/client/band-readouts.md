@@ -11,11 +11,71 @@ paths:
 
 # Band readouts — demographics, food, morale, wellbeing, tile facts
 
+
+## THE SHORT BAND-ZONE TIER MERGES ROWS RATHER THAN DROPPING THEM
+
+A horizontal (T/B) dock's band zone is height-capped and **CLIPS** rather than scrolling, while having
+a whole screen of width. `BandDetailLines.unit_summary_lines`' `compact` flag is that tier saying so,
+and it now buys three rows in three different ways — the differences are the rule:
+
+| row | what the SHORT tier does | why |
+|---|---|---|
+| `Trade` | **DROPPED** | the rate is still stated by the WORK zone's head `⇄` total, so nothing is lost |
+| `Fodder` | **MERGED** onto Food as a hay clause | a hay stock has no other home in the client |
+| `Growth` | **MERGED** onto Morale as a clause | the fertility breakdown has no other home either |
+| `Kit` | **KEPT, at every tier** | a spent kit is stated NOWHERE else and is not recoverable |
+
+**The `Kit` row is what forced the third merge.** Every live cohort states its kit
+(`DetailFormat.band_states_kit` is a bare `has()` on the spears key), so the row is shipped behaviour
+— and the band zone was already measured at 299 of its 300px box, so one more 26px vitals row put it
+25px over in 13 states. Dropping a row was not available: `Trade` is already the one this tier drops,
+and `Kit` is the row that cannot be.
+
+**Morale and Growth are the right pair to join.** Both are player-band health scalars, both already
+carry disclosure carets, and they read naturally together.
+
+**BOTH `[url]` METAS SURVIVE, which is why a merge beats a drop.** The vitals block is ONE
+`RichTextLabel`, so a row is a line and merging two is joining two strings: the Growth clause carries
+the identical clickable run a standalone row wears (`DetailFormat.inline_disclosure_label`, which
+delegates to the same `_key_cell`), on the same label — so both popovers keep working. The clause
+carries its OWN tint rather than inheriting the morale value cell's, exactly as the hay clause does.
+
+**The carets have to be read from the CONTROLLER, not from the context, and that is a real trap.**
+Every other disclosure is drawn by `detail_bbcode` from a context this producer fills on its LAST
+line, so a clause built mid-producer sees an empty `disclosures` and silently falls back to the plain
+word — losing the caret and the click with it (measured: the merged line rendered `Growth 188%`).
+`_band_growth_clause` assigns `ctx.disclosures = _disclosures.state()` before building the run.
+
+### The width trap, and what pays for it
+
+The vitals label is `AUTOWRAP_WORD`. **A merged line that does not fit WRAPS, and costs back the very
+row the merge saved** — a fix that measures as no fix, with nothing failing: a wrapped line still sits
+inside the zone rect, so the bounds assertion passes and the frame is silently one row taller. So:
+
+- **the morale CAUSE clause is dropped at SHORT.** `— harsh terrain (Karst Cavern Mouth)` is the
+  longest run this row can carry; with it the merged line measures 500px in a 380px column and the
+  zone goes 22px over. The trend GLYPH stays, so the row still says morale is falling, and the cause is
+  recoverable from the popover this row's own caret opens.
+- **Growth drops its `of normal` anchor at SHORT** (`DetailFormat.GROWTH_VALUE_SHORT_FORMAT`). The
+  anchor is what makes a standalone `150%` legible; beside a `%` morale reading on the same line the
+  bare percentage is unambiguous, and the disclosure restates the factors in full.
+
+Measured after: the merged Morale+Growth run is **251px of a 380px column** and the zone's worst case
+is back to **299px of its 300px box**. `band_panel_preview._assert_merged_morale_growth_fits` is what
+holds that — the Food row's twin, and the only assertion that can see a wrap.
+
+**TALL and COMPACT keep both rows and the cause clause**, asserted by
+`_assert_growth_row_not_merged` at each: structurally, off the BBCode, since `detail_bbcode` opens
+every row with `[cell]` and a merged clause is preceded by the clause separator instead
+(`DetailFormat.DISCLOSURE_URL_OPEN` is that needle). The COMPACT probe is PNG-less — the tier needs a
+435-515px canvas and this band's COMPACT content overruns that box by ~143px whatever the vitals do,
+which is a property of the tier and not of the merge.
+
 ## Key scripts
 
 | Script | Purpose |
 |--------|---------|
-| `ui/hud/BandDetailLines.gd` | `RefCounted` producer (HUD decomposition, `docs/plan_hud_decomposition.md`) owning the **STATEFUL band/party detail-line producers** — the rows a BAND or a PARTY shows in whichever detail surface hosts it: `unit_summary_lines(unit, terrain_label, ctx, compact, with_position)` (Food · Fodder · **Trade** · Morale · Growth · Position, registering the Food/Morale/Growth/Trade disclosures through `DisclosureController` as it emits them) and `expedition_summary_lines(unit, ctx)` (Mission · Target + its live `(x, y)` · Policy · Phase · Carried/Provisions · Next delivery · Position), plus the private row builders `_band_food_line` / `_band_trade_line` / `_band_morale_line` / `_morale_breakdown_lines` and the shared gate `_band_has_fodder_economy`. **The two trailing flags are DIFFERENT QUESTIONS and must not be folded together**: `compact` is the band zone's HEIGHT TIER (the SHORT tier drops Trade and merges Fodder onto the Food line), while `with_position` is the host saying whether it states the band's coordinates somewhere ELSE — the Band/City dock does, in its panel header, in every tier. **There is no `_band_output_line`**: productivity reads on the WORK zone's head now (see the Civilization Wellbeing bullet below). **It is the stateful HALF of a three-way split**: the PURE producers became `DetailFormat` statics (`herd_summary_lines`, the expedition tooltip trio). (`_format_stockpile_label` was the third piece of that split, via `HudFormat.stockpile_label`; both it and the accessible-stockpile rows it served are retired — see the accessible-stockpile note further down this file.) Hud holds it as `_banddetail`, constructed in `_ready` AFTER `_disclosures` and BEFORE `_bandpanel`; **both detail hosts share the one instance** — the Occupants-card drawer (`Hud._render_occupant_drawer`) and `BandPanelController`'s vitals label + parties inspector strip, which is what retired three of that controller's nine Callable injections. **THE INJECTION SURFACE IS ONE CALLABLE** — `_herd_label_for_id`, which cannot fold onto `HudBandLaborState` because it reads THREE collaborators (`_selectioncard.find_roster_herd` AND `_selection.herd()` AND `_band_labor.find_world_herd`); `_is_player_unit` is a trivial private COPY (the `SelectionCardController` / `BandPanelController` precedent). **IT NEVER SEES THE SELECTION MODEL**: the old producers read `_selection` at exactly two sites, both `tile_info()["terrain_label"]` for the morale row's "it's the hex you're on" payload, so that ONE display string is now a `terrain_label` PARAMETER and both hosts resolve it through the new `SelectionCardController.selected_terrain_label()`. It also owns `_food_flow_present`, which is a **private handshake between `_band_food_line` (writer) and `unit_summary_lines` (its only reader)** — the formatter has never seen it, so it is deliberately not on the `DetailFormat.Context`. Consts follow the `DetailFormat` rule (a const lives here iff every reader moved here): the Fodder/FULL-badge/morale-arrow/contribution-label vocabulary came (the stockpile-row vocabulary went with those rows). The disclosure `DETAIL_ROW_*` / `BREAKDOWN_KIND_*` protocol vocabulary lives in `hud_disclosure_vocab.gd` and `MORALE_CAUSE_*` in `DetailFormat.gd` — read back as `HudDisclosureVocab.X` / `DetailFormat.X`, NOT as `HudLayer.X`; `Hud.gd` defines none of them |
+| `ui/hud/BandDetailLines.gd` | `RefCounted` producer (HUD decomposition, `docs/plan_hud_decomposition.md`) owning the **STATEFUL band/party detail-line producers** — the rows a BAND or a PARTY shows in whichever detail surface hosts it: `unit_summary_lines(unit, terrain_label, ctx, compact, with_position)` (Food · Fodder · **Trade** · Morale · Growth · Position, registering the Food/Morale/Growth/Trade disclosures through `DisclosureController` as it emits them) and `expedition_summary_lines(unit, ctx)` (Mission · Target + its live `(x, y)` · **Orders** · Phase · Carried/Provisions · Next delivery · the trip-bound clause · Position — the **Orders** row being the floor alone since issue #491 retired the fill target it was merged with, still ONE row via `DetailFormat.expedition_orders_line` because this producer's output lands in a `clip_contents` strip capped at ~300px; see `band-city-panel.md` → "The parties strip's SEVEN lines"), plus the private row builders `_band_food_line` / `_band_trade_line` / **`_band_kit_line`** (the three consumable kits and how much is left of each, registering a fifth `Kit` disclosure — see "The band's KIT" below) / `_band_morale_line` / `_morale_breakdown_lines` and the shared gate `_band_has_fodder_economy`. **The two trailing flags are DIFFERENT QUESTIONS and must not be folded together**: `compact` is the band zone's HEIGHT TIER (the SHORT tier drops Trade and merges Fodder onto the Food line), while `with_position` is the host saying whether it states the band's coordinates somewhere ELSE — the Band/City dock does, in its panel header, in every tier. **There is no `_band_output_line`**: productivity reads on the WORK zone's head now (see the Civilization Wellbeing bullet below). **It is the stateful HALF of a three-way split**: the PURE producers became `DetailFormat` statics (`herd_summary_lines`, the expedition tooltip trio). (`_format_stockpile_label` was the third piece of that split, via `HudFormat.stockpile_label`; both it and the accessible-stockpile rows it served are retired — see the accessible-stockpile note further down this file.) Hud holds it as `_banddetail`, constructed in `_ready` AFTER `_disclosures` and BEFORE `_bandpanel`; **both detail hosts share the one instance** — the Occupants-card drawer (`Hud._render_occupant_drawer`) and `BandPanelController`'s vitals label + parties inspector strip, which is what retired three of that controller's nine Callable injections. **THE INJECTION SURFACE IS ONE CALLABLE** — `_herd_label_for_id`, which cannot fold onto `HudBandLaborState` because it reads THREE collaborators (`_selectioncard.find_roster_herd` AND `_selection.herd()` AND `_band_labor.find_world_herd`); `_is_player_unit` is a trivial private COPY (the `SelectionCardController` / `BandPanelController` precedent). **IT NEVER SEES THE SELECTION MODEL**: the old producers read `_selection` at exactly two sites, both `tile_info()["terrain_label"]` for the morale row's "it's the hex you're on" payload, so that ONE display string is now a `terrain_label` PARAMETER and both hosts resolve it through the new `SelectionCardController.selected_terrain_label()`. It also owns `_food_flow_present`, which is a **private handshake between `_band_food_line` (writer) and `unit_summary_lines` (its only reader)** — the formatter has never seen it, so it is deliberately not on the `DetailFormat.Context`. Consts follow the `DetailFormat` rule (a const lives here iff every reader moved here): the Fodder/FULL-badge/morale-arrow/contribution-label vocabulary came (the stockpile-row vocabulary went with those rows). The disclosure `DETAIL_ROW_*` / `BREAKDOWN_KIND_*` protocol vocabulary lives in `hud_disclosure_vocab.gd` and `MORALE_CAUSE_*` in `DetailFormat.gd` — read back as `HudDisclosureVocab.X` / `DetailFormat.X`, NOT as `HudLayer.X`; `Hud.gd` defines none of them |
 | `ui/BandFoodStatus.gd` | Single source of truth for band food-supply thresholds (`band_status_config.json`) + the days→green/amber/red color / BBCode-hex mapping (plus the parallel morale and output warn/critical thresholds; morale carries the `color_for_morale`/`hex_for_morale` pair because it really has both a `Label` host and a BBCode host, while **output carries `color_for_output` ALONE** — its one surface is the WORK zone head, which is `Label`s), shared by MapView's band dot and Hud's food/morale lines + alerts |
 - **Demographics readout** (`Hud.gd` `update_demographics`, dispatched from `Main.gd`): the player
   faction's age structure from `PopulationDemographicsState` (snapshot `demographics[]`) shows as a
@@ -452,3 +512,125 @@ fodder credit.
 - The gate reason it produces is the compose sheet's, not the strip's:
   `RungGates.wild_fodder_reason`, in `labor-ui.md` → "The FODDER account can be real and unbankable at
   once".
+
+## The band's KIT — three consumables, a clock each, and a cliff (`docs/plan_hunt_through_combat.md` §4.8)
+
+The minimal TOE ships **three kits**, and their whole point is that they only ever fall: they are
+start-stocked, not craftable, and running one dry drops its role to the unequipped tier **for good**.
+All six wire fields shipped with **no consumer in the client at all** — `huntingKitDurability` /
+`sledKitDurability` / `basketKitDurability`, plus the three resolved tiers `hunterAttack` /
+`huntCarryPerWorkerBiomass` / `forageCarryPerWorkerBiomass` — so a player could not see their
+equipment dying, only its consequences.
+
+**ONE KIT, ONE JOB, and the pairing IS the readout.** Spears raise `attack`; a **sled** carries the
+**hunt** (a carcass is one lumpy object you drag out whole); **baskets** carry the **forage** web
+(berries are loose and bounded by what you can hold). The two carry tiers are separate wire fields
+with separate durabilities behind them — a band can be out of baskets with its sled untouched — so
+**neither may ever be rendered on the other's row**. That substitution, baskets boosting the hunt, is
+the defect slice 5 corrected in the sim, and a UI that repeats it is out of reach of every sim test.
+
+### The row is the clock; the disclosure is the cliff
+
+`BandDetailLines._band_kit_line` emits one vitals row, `Kit: Spears 87 · Sled 54 · Baskets dry`, and
+`DisclosureController.kit_breakdown_lines` hangs the popover under it — the Food/Morale/Growth/Trade
+idiom, a fifth `BREAKDOWN_KIND_*`. The split is what each half can honestly answer at its size: the
+row says *how long have I got and which side of the line am I on*, and only the popover has room for
+*what each one is doing for me, and what happens when it stops*.
+
+- **PERFORMANCE IS FLAT UNTIL EXPIRY, so nothing here may be scaled by the remaining condition** —
+  no bar, no gauge, no gradient. Durability and performance are orthogonal axes: a kit at 3 performs
+  exactly as one at 97 and then stops, and any taper drawn here states a model the sim does not have.
+  The popover's closing sentence (`DetailFormat.KIT_BREAKDOWN_CLIFF_NOTE`) is what stops a player
+  reading `87` and `54` as rates; without it the two numbers invite exactly that.
+- **A spent kit reads as the WORD `dry`, in DANGER ink, never as `0`.** The number is not the point —
+  which side of the cliff the role is on is — and a zero beside two live conditions reads as a
+  quantity on the same scale rather than as a state change.
+- **The gate is `has()`, never `> 0`** (`DetailFormat.band_states_kit`). A dry kit IS `0` and is the
+  single most important reading on the row, so only an ABSENT field may suppress it; a `> 0` gate
+  would hide the loss it exists to announce, and a defaulted `Spears 0` on a pre-TOE cohort would
+  report equipment destroyed that was never there.
+- **The caret is WARN only once a kit has RUN OUT** (`DetailFormat.band_kit_is_dry`). Wearing down is
+  not a fact to shout about — nothing the player does changes its rate — while the step down is
+  permanent, so a remaining-condition threshold would either cry wolf every turn or fire after the
+  loss.
+- **All three are listed even on a band that neither hunts nor forages today.** Each wears on its own
+  quantum (spears per animal killed, the sled per biomass hauled, baskets per biomass gathered), so
+  this turn's activity does not predict which kit is closest to running out.
+- **It survives the `compact` (SHORT band-zone) tier, unlike Trade.** The Trade row is a rate the WORK
+  zone's head restates; a spent kit is stated nowhere else in the client and is not recoverable.
+
+**Frames + assertions (`ui_preview`, `chapters/band_expedition.gd`):** `band_kit` (one kit dry, two
+intact — the row) · `band_kit_expanded` (the popover, and **the swap cross-check**: the sled's line
+must quote the hunt's carry and never the forage web's, and the basket's the reverse) · `band_kit_bare`
+(every kit dry — bare hands on all three roles, and the two carries STILL not swapped at the
+unequipped tier) · plus the PNG-less negative that a band stating no kit renders **no Kit row**,
+without which the three frames above pass on a row that renders unconditionally. The fixtures' three
+conditions are deliberately three DIFFERENT numbers (`fixtures_band.gd`), because two kits sharing one
+value would pass every assertion with their accessors swapped.
+
+## The forecast's BAND rides beside the expectation, never in place of it (§6.4)
+
+`LaborAssignment` gained `actualYieldLow`/`High` and `tradeYieldLow`/`High`, and `actualYield` became
+the take's **expectation** over the retreat seed. `SourceForecast.yield_range_clause` renders it as a
+muted ` · likely 6.00–11.00` on the row and the same clause on its tooltip, through the row's existing
+`muted_note` channel — so all three hosts of `source_yield_readout` (the work board's rows, the
+drawer's standing summary, the stepper's status line) show it without a channel of their own.
+
+**IT SHIPPED DEGENERATE, AND THAT WAS THE POINT.** When the readout landed, wariness was `0` across
+the roster and `hit_chance` `1.0`, so every stage took its exact identity at every quantile,
+`low == actual == high` bit-for-bit, and the clause was `""` on every source in the game — every
+existing readout byte-identical. **Slice 7 authored the roster's wariness and the band turned on with
+no client change at all**, which is the whole return on shipping it inert: a wild hunt's rows now
+carry a real ` · likely 6.00–11.00`. It stays `""` wherever nothing is stochastic — the whole plant
+web, a pen, and every **resolved** row, which is degenerate by construction since the take has
+happened.
+
+- **The presence test is at the FORMATTER's resolution** (`has_yield_range`), the call `has_component`
+  makes and for the same reason: bounds that round to one printed string are one number on screen, so
+  a raw `low != high` would render `0.31–0.31` as a range.
+- **The two accounts are read as a VECTOR and neither substitutes for the other.** A wolf's food band
+  is honestly all-zero while its trade band is the whole of what the raid pays, so a food-only range
+  could not state its take at all.
+- **The four keys travel PRESENCE-SENSITIVELY** through `HudBandLaborState.OPTIONAL_YIELD_KEYS`. A
+  `get(…, 0.0)` default would hand the readout `0.0–0.0` — equal, therefore silent — on an assignment
+  that never carried them, which makes "no band published" and "the band is a point" the same rendered
+  answer by luck rather than by construction.
+- **The headline does not move.** The row still headlines `realized_yield`, the steady average; the
+  band is about this turn's expectation, which is a different number, and folding them would put a
+  range on a figure that has none.
+
+**Frames:** `herd_hunt_yield_range` / `herd_hunt_yield_point` (`chapters/hunt.gd`), judged as a PAIR —
+the second is the shipped case, and without it the first passes on a readout that decorates every row.
+
+## A launched DENIAL raid states a COLLAPSE, where a hunt party states a delivery
+
+`docs/plan_denial_raid.md` §3. `BandDetailLines.expedition_summary_lines` splits its raid branch in
+two: **`is_raid`** (hunt OR deny) gates the rows the two missions share — `Target:` with the target's
+live `(x, y)`, and `Carried:` — while **`is_hunt`** alone still gates the `Orders:` row (the floor and
+the fill target until issue #491 retired that lever, merged into one row), `Next delivery:` and the
+trip-bound clause. That asymmetry IS the mission: a denial party's `expeditionFloor` reads `0.0`
+because it has no such order, and it publishes no delivery projection at all, so rendering either
+would put a lever on screen the command grammar cannot even express.
+
+What stands in the delivery's place is **`DetailFormat.expedition_collapse_line`** — a `Collapse:` row
+whose value is `SourceForecast.denial_verdict_bbcode`. The sim publishes **no per-party collapse
+field**, so the line reads the TARGET HERD's own `denialEstimates` row for the party's `size`: the
+same table, the same row and therefore the same sentence its launch sheet quoted, which is what stops
+the promise made at launch and the readout in flight from drifting. It renders `""` when the target is
+gone from telemetry — the `Target:` row above already says the herd is not there — or when the herd
+carries no row for that party size.
+
+- **The value carries its OWN `[color]`**, the `_band_food_line` precedent, because a verdict's
+  severity is a fact about the FORECAST and not about the row key, so it cannot come from
+  `_value_hex`'s key registry.
+- **The `Carried:` row is deliberately kept and reads near-empty**, which is the mission's own cost.
+  Suppressing it would hide the one number that says what a raid banks on the way home.
+- The row also rides the Active-parties row TOOLTIP (`DetailFormat.expedition_row_tooltip`), gated on
+  the deny mission alone, since a compact row cannot carry a sentence.
+
+Frame + assertions: `ui_preview`'s **`expedition_denial_panel`**, which asserts the mission label, the
+range verdict, the three ABSENT hunt readouts and the surviving `Carried:` row, beside three PNG-less
+claims about the verdict's structure (a `repelled` outcome carrying a full turn band still quotes no
+number; an unbounded `past_recovery` still names its outcome; and the two degenerate band forms). Each
+is sabotage-verified against a different mutation. The launch half and the vocabulary live in
+`band-city-panel.md` → "DENIAL is a third MISSION on the parties footer".

@@ -130,24 +130,6 @@ func _building_herd_band_fixture() -> Dictionary:
 		"activity": "hunt", "labor_assignments": [],
 	}
 
-## **THE SIM'S `fauna::quantise_animal_take`, RESTATED IN FOOD** — the harness's oracle for what a
-## hunting crew is actually paid, so the assertions compare the sheet against the SIM's composition
-## rather than against itself (both halves of the sheet dipped together would satisfy any test the
-## sheet makes of its own numbers).
-##
-## Food and biomass differ only by the species' constant provisions rate, which divides out of every
-## comparison the sim makes — `collection / body_mass` is `collection_food / food_per_animal` — so this
-## is the same arithmetic in cheaper units. `max(1.0, carryable)` is the load-bearing line: a crew that
-## cannot carry one whole animal still kills one and wastes the difference.
-func _hunt_take_oracle(collection: float, ceiling: float, food_per_animal: float) -> Dictionary:
-	var affordable := floorf(ceiling / food_per_animal)
-	if affordable < 1.0:
-		return {"delivered": 0.0, "wasted": 0.0}
-	var killed := minf(affordable, maxf(1.0, floorf(collection / food_per_animal)))
-	var killed_food := killed * food_per_animal
-	var carried := minf(killed_food, collection)
-	return {"delivered": carried, "wasted": killed_food - carried}
-
 ## The band STANDING on Tame on that herd — the fixture the re-admission frame turns on. Everything
 ## else about `BandFx.band_fixture` is kept; only the assignment list is replaced, by the single hunt
 ## assignment whose `fauna_id` matches `HerdFx.fully_tamed_herd_fixture`'s and whose policy is the rung the
@@ -267,12 +249,14 @@ func run(harness) -> void:
 		* float(dip_herd["provisions_per_biomass"])
 	var bare_collection := float(HERD_DIP_CREW) * float(dip_herd["per_worker_yield"])
 	var built_collection := bare_collection * dip_fraction
-	var bare_take := _hunt_take_oracle(bare_collection, dip_ceiling, dip_fpa)
-	var built_take := _hunt_take_oracle(built_collection, dip_ceiling, dip_fpa)
-	var bare_face: String = HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT \
-		% h._hud._drawercompose._format_animal_rate(float(bare_take["delivered"]) / dip_fpa)
-	var built_face: String = HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT \
-		% h._hud._drawercompose._format_animal_rate(float(built_take["delivered"]) / dip_fpa)
+	var bare_take := HerdFx.hunt_take_oracle(bare_collection, dip_ceiling, dip_fpa)
+	var built_take := HerdFx.hunt_take_oracle(built_collection, dip_ceiling, dip_fpa)
+	# THE NEEDLE IS THE ACCOUNT MAGNITUDE THE ROW STATES. The readout's per-turn readings are food and
+	# trade like every other web's — the whole-animal count is the CHART's business above it, and the
+	# raid's whole-trip payload's — so the needle is spelled through `format_magnitude`, exactly as
+	# `HudWidgets._yield_reading` spells the number it is aimed at.
+	var bare_face := SourceForecast.format_magnitude(float(bare_take["delivered"]))
+	var built_face := SourceForecast.format_magnitude(float(built_take["delivered"]))
 	var built_killed: float = float(built_take["delivered"]) + float(built_take["wasted"])
 	var built_waste_pct := int(round(float(built_take["wasted"]) / built_killed * 100.0))
 	h._hud._compose.reset_hunt_source()
@@ -300,7 +284,7 @@ func run(harness) -> void:
 	# terms and as a RELATION to the undipped take — never as a literal — so a config retune moves the
 	# fixture rather than the claim. Undipped this crew lands a whole animal a turn; it must not say so
 	# while it is gentling the herd instead.
-	h._assert_hud("the take is the sim's DIPPED one (%s/turn), not the undipped %s/turn"
+	h._assert_hud("the take is the sim's DIPPED one (%s food/turn), not the undipped %s food/turn"
 		% [built_face, bare_face],
 		Readout.yields_text(dip_sheet).contains(built_face)
 			and not Readout.yields_text(dip_sheet).contains(bare_face))
@@ -347,10 +331,13 @@ func run(harness) -> void:
 		HudComposeVocab.BARE_FORECAST_PREFIX) * dip_fraction
 	var dip_samples := SourceForecast.regrowth_samples(dip_herd,
 		HudComposeVocab.BARE_FORECAST_PREFIX)
+	# This herd publishes no `engageRate` — it predates the engagement stage — so both recompositions
+	# state `NO_ENGAGEMENT_STAGE` and the reach arm drops out, leaving the claim about the DIP alone.
 	var dip_hold := SourceForecast.crew_to_hold(dip_samples, HERD_DIP_FLOOR, dip_carry,
-		HERD_DIP_BODY_MASS)
+		HERD_DIP_BODY_MASS, SourceForecast.NO_ENGAGEMENT_STAGE, dip_fraction)
 	var bare_hold := SourceForecast.crew_to_hold(dip_samples, HERD_DIP_FLOOR,
-		dip_carry / dip_fraction, HERD_DIP_BODY_MASS)
+		dip_carry / dip_fraction, HERD_DIP_BODY_MASS, SourceForecast.NO_ENGAGEMENT_STAGE,
+		SourceForecast.NO_BUILD_DIP)
 	h._assert_hud("the *hold it after* target divides by the DIPPED carry (%d, against %d undipped)"
 		% [dip_hold, bare_hold],
 		Readout.crew_target_count(dip_sheet, HudWidgets.CREW_TARGET_HOLD) == dip_hold
@@ -368,7 +355,7 @@ func run(harness) -> void:
 	var bare_sheet = h._hud._drawercompose._compose_sheet
 	h._assert_hud("no build in flight, no dip claimed on the crew row",
 		Readout.crew_row_dip_note(bare_sheet) == "")
-	h._assert_hud("…the same crew lands the whole body again (%s/turn)" % bare_face,
+	h._assert_hud("…the same crew lands the whole body again (%s food/turn)" % bare_face,
 		Readout.yields_text(bare_sheet).contains(bare_face)
 			and not Readout.yields_text(bare_sheet).contains(built_face))
 	h._assert_hud("…wasting nothing, so the waste note is a claim about the BUILD and not about the herd",

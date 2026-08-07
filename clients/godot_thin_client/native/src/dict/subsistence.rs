@@ -200,12 +200,101 @@ pub(crate) fn herds_to_array(
                     // both halves of the sampled pair have to be readable off the row itself, and
                     // the key stays what it always was — an opaque unique id.
                     let _ = entry.insert("party_workers", i64::from(estimate.partyWorkers()));
+                    // **WHICH STOP ENDS THIS SAMPLED TRIP** (`docs/plan_hunt_through_combat.md`
+                    // §5.2) — a `core_sim::HuntTripBound` key. A trip LENGTH alone cannot tell the
+                    // player's two levers apart ("you come home on your target in 4 turns" and "you
+                    // reach the floor in 2 turns with the pack a third full" are different
+                    // decisions carrying the same kind of number), so the sim names the bound.
+                    //
+                    // **NO ROW HERE EVER READS `"fill_target"`**: this table is band-agnostic and
+                    // samples floor × party size only, so every row is the UNTARGETED raid. A
+                    // launched party's own bound is `expedition_trip_bound` on its cohort.
+                    let _ = entry.insert("bound", estimate.bound().unwrap_or(""));
                     let key = format!("{}:{}", floor, estimate.partyWorkers());
                     let _ = estimate_dict.insert(key, &entry);
                 }
             }
             let _ = dict.insert("hunt_trip_estimates", &estimate_dict);
         }
+        // **THE DENIAL RAID'S PRE-LAUNCH TABLE** (`docs/plan_denial_raid.md` §1.1) — one row per
+        // party size, and NO other axis. That is the whole shape difference from `huntTripEstimates`
+        // above: denial carries no floor and no fill target, so party size is the only thing the sim
+        // can sample and the only thing the player chooses.
+        //
+        // **AN ARRAY, NOT A KEYED DICTIONARY, and the one axis is why.** The hunt table needs a
+        // composite `"<floor>:<party>"` key because it is sampled on two, and that key is the source
+        // of the Rust-`f32`-Display trap its own comment records. With one axis a row's
+        // `party_workers` IS its identity, so an array needs no key at all and the trap cannot
+        // recur; `SourceForecast.denial_estimate_row` scans it exactly as it scans the hunt rows.
+        //
+        // Row contract (`SourceForecast` reads all of it):
+        //   turns_to_collapse            the EXPECTATION — turns until the herd is past recovery,
+        //                                which is also when the party comes home; 0 = never got
+        //                                there inside the sim's forecast horizon.
+        //   turns_to_collapse_low/_high  THE RANGE, because the retreat is stochastic. `low` is the
+        //                                FEWEST turns (the optimistic draw). `0` on EITHER end means
+        //                                "not within the horizon on that end", so a positive `low`
+        //                                beside a `0` `high` reads "only on a good run".
+        //   outcome                      "past_recovery" | "herd_lost" | "repelled" | "horizon".
+        //                                `repelled` is a verdict about the PARTY (its kills do not
+        //                                outpace the herd's regrowth); `horizon` is about the CLOCK.
+        //                                **A blank turn count is never rendered without this.**
+        //   animals_killed               what the mission is actually about.
+        //   delivered_food/_trade        small, and non-zero — the raid banks what it can haul home.
+        //   wasted_food/_trade           killed and left on the range: the BULK of a raid's take,
+        //                                stated rather than hidden (§3). **A PAIR, for the same
+        //                                reason the delivered figures are** — the sim runs one
+        //                                `HuntYield::apply` over the wasted biomass, so a raid whose
+        //                                quarry pays pelts wastes pelts. Read food-only and a raid
+        //                                whose kill is priced in hides reports its waste as zero on
+        //                                the one mission whose whole readout is what it destroys.
+        if let Some(estimates) = herd.denialEstimates() {
+            let mut denial_rows = VarArray::new();
+            for estimate in estimates {
+                let mut entry = VarDictionary::new();
+                let _ = entry.insert("party_workers", i64::from(estimate.partyWorkers()));
+                let _ = entry.insert("turns_to_collapse", i64::from(estimate.turnsToCollapse()));
+                let _ = entry.insert(
+                    "turns_to_collapse_low",
+                    i64::from(estimate.turnsToCollapseLow()),
+                );
+                let _ = entry.insert(
+                    "turns_to_collapse_high",
+                    i64::from(estimate.turnsToCollapseHigh()),
+                );
+                let _ = entry.insert("outcome", estimate.outcome().unwrap_or(""));
+                let _ = entry.insert("animals_killed", i64::from(estimate.animalsKilled()));
+                let _ = entry.insert("delivered_food", f64::from(estimate.deliveredFood()));
+                let _ = entry.insert("wasted_food", f64::from(estimate.wastedFood()));
+                let _ = entry.insert("delivered_trade", f64::from(estimate.deliveredTrade()));
+                let _ = entry.insert("wasted_trade", f64::from(estimate.wastedTrade()));
+                denial_rows.push(&entry.to_variant());
+            }
+            let _ = dict.insert("denial_estimates", &denial_rows);
+        }
+        // **THE PARTY THE DENIAL SHEET OPENS ON** — the smallest party in the table above whose raid
+        // SUCCEEDED (`past_recovery` or `herd_lost`), i.e. the smallest one whose kills genuinely
+        // outpace this herd's regrowth. **A `horizon` row is NOT a success**: its projection ran its
+        // whole length with the herd still standing, so quoting one names a party that may never get
+        // there at all. The stepper is otherwise a guessing game: below that requirement a raid
+        // accomplishes literally nothing however long it runs, and no row on the sheet named which
+        // number crossed the line.
+        //
+        // **`0` MEANS "NO QUOTED PARTY DRIVES THIS HERD DOWN", and it is never "send nobody".**
+        // Three honest situations reach it, all told apart by the rows' own `outcome`: a quarry
+        // nothing can bring into contact (wariness >= 1), a requirement past the sim's quoting bound
+        // (the LAST RUNG of `expedition_config.estimate_party_sizes`, which absorbed the retired
+        // `deny.max_party_quoted` — two numbers naming one bound could disagree), and a herd whose
+        // regrowth out-runs the whole table. The client renders the verdict in that case and never
+        // seeds a stepper at 0.
+        //
+        // **It may legitimately EXCEED the band's idle workers** — that is the honest "you need more
+        // people than you have", and the sheet shows both numbers. So it is not a cap and must never
+        // be clamped here; only the stepper, which knows the band, clamps it.
+        //
+        // Inserted UNCONDITIONALLY, unlike `denial_estimates` above: it is a scalar with a real
+        // meaning at 0, so a herd with no table at all still answers the question.
+        let _ = dict.insert("denial_party_needed", i64::from(herd.denialPartyNeeded()));
         let _ = dict.insert("corralled", herd.corralled());
         // Pen-construction meter 0..1 accrued while a keeper band works this herd under the Corral
         // policy — the animal twin of `ForagePatchState.cultivationProgress`. Read by Hud's herd
@@ -367,6 +456,84 @@ pub(crate) fn herds_to_array(
         let _ = dict.insert(
             "neglect_grace_remaining",
             i64::from(herd.neglectGraceRemaining()),
+        );
+        // THE ENGAGEMENT THROUGHPUT (`docs/plan_hunt_through_combat.md` §2) — how many animals ONE
+        // hunter brings into contact per turn, and the THIRD bound on a take beside the stock above
+        // the floor and the party's carry. Without it `SourceForecast`'s pre-commit curve is
+        // carry-bound only and overstates a light-bodied species by the ratio of the two (~30× on a
+        // Wild Fowl herd with one hunter: 40 biomass of carry is 307 birds against 10 of reach).
+        // **`<= 0` MEANS "NO ENGAGEMENT STAGE", not "reaches nothing"** — the wire's finite stand-in
+        // for the sim's `f32::INFINITY`, published for a PEN (a penned animal is not stalked) and for
+        // a species the roster cannot resolve. The client reads it as unbounded and drops the term,
+        // which is also what leaves the plant web (which never publishes this field) untouched. This
+        // decoder has a history of silently dropping appended fields; it is the newest slot on
+        // `HerdTelemetryState`, decoded beside the neglect pair it follows.
+        let _ = dict.insert("engage_rate", herd.engageRate());
+        // HOW MUCH DAMAGE ONE ANIMAL SOAKS BEFORE IT GOES DOWN (`docs/plan_hunt_through_combat.md`
+        // 4.2 / 6.5) — the last term needed to explain the combat gate BEFORE a hunt is launched.
+        // The client already held the other two (`PopulationCohortState.hunterAttack`, `defense`
+        // above), so the gate is composable client-side and the sim exports no verdict:
+        //     effective_attack = max(0, hunter_attack − defense)   // 0 ⇒ cannot be hunted at all
+        //     hunter_turns     = durability / effective_attack     // what ONE hunter needs
+        // **DEFENSE AND DURABILITY ARE DIFFERENT AXES**: defense is whether a hit counts at all,
+        // durability is how many counting hits it takes. Authored per species, never derived from
+        // `body_mass`. `0` for a herd whose species the roster cannot resolve. It is the newest slot
+        // on `HerdTelemetryState`, decoded beside the `engage_rate` it follows.
+        let _ = dict.insert("durability", herd.durability());
+        // **WHICH KIT THE TWO ESTIMATE TABLES ABOVE ARE QUOTED FOR** (`docs/plan_denial_raid.md`) —
+        // the hunt job's DEFAULT roster id, on every herd, always. Neither table is repriced per kit
+        // (they are ~95% of snapshot capture), and these exist so the client can SAY SO: when the
+        // player's selected kit differs from the id here, the sheet must refuse to present the table
+        // as the answer for their selection rather than quoting a kitted raid's numbers to a
+        // bare-handed party. Two keys rather than one because they are two tables, and one may be
+        // repriced before the other.
+        let _ = dict.insert(
+            "hunt_trip_estimates_kit_id",
+            herd.huntTripEstimatesKitId().unwrap_or(""),
+        );
+        let _ = dict.insert(
+            "denial_estimates_kit_id",
+            herd.denialEstimatesKitId().unwrap_or(""),
+        );
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+/// The KIT ROSTER (`SubsistenceSection.kits`, `equipment.json` `kits`) — every kit a party may be
+/// sent out with, in roster order, each with the tiers it grants a party whose components are all
+/// FRESH. The client renders the picker off this rather than carrying a second copy of the TOE
+/// table.
+///
+/// **The tiers here are the FRESH-KIT ones and are not this band's numbers.** What a given band's
+/// WEAR does to them is the band's own row (`hunter_attack` / `hunt_carry_per_worker_biomass` /
+/// `forage_carry_per_worker_biomass` on the cohort), and a readout quoting these against a band with
+/// dry spears is a lie of the exact class this arc keeps correcting.
+///
+/// `"none"` is an ORDINARY roster entry — a kit that grants nothing, so its tiers are the unequipped
+/// ones throughout — and is deliberately NOT special-cased here.
+pub(crate) fn kits_to_array(kits: Vector<'_, ForwardsUOffset<fb::KitOption<'_>>>) -> VarArray {
+    let mut array = VarArray::new();
+    for kit in kits {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("id", kit.id().unwrap_or(""));
+        let _ = dict.insert("display_name", kit.displayName().unwrap_or(""));
+        // Which verbs this kit may be sent on ("hunt" and/or "forage"). A kit named for a job outside
+        // this list is a COMMAND FAILURE server-side, never a silent fall back to the default, so the
+        // picker filters by the job it is composing.
+        let jobs = kit
+            .jobs()
+            .map(crate::dict::strings_to_variant_array)
+            .unwrap_or_default();
+        let _ = dict.insert("jobs", &jobs);
+        let _ = dict.insert("attack", kit.attack() as f64);
+        let _ = dict.insert(
+            "hunt_carry_per_worker_biomass",
+            kit.huntCarryPerWorkerBiomass() as f64,
+        );
+        let _ = dict.insert(
+            "forage_carry_per_worker_biomass",
+            kit.forageCarryPerWorkerBiomass() as f64,
         );
         array.push(&dict.to_variant());
     }

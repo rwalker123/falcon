@@ -11,6 +11,8 @@ const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
 const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
 const WorldFx := preload("res://tools/ui_preview/fixtures_world.gd")
+const Q := preload("res://tools/ui_preview/node_query.gd")
+const Readout := preload("res://tools/ui_preview/readouts.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -29,6 +31,42 @@ const BAND_DISCLOSURE_GROWTH := "growth:904"
 
 # The collapsed-growth band is `_concerning_food_band_fixture`'s entity (905), not 904.
 const BAND_DISCLOSURE_GROWTH_COLLAPSED := "growth:905"
+
+# ---- THE LAUNCHED HUNT PARTY'S ORDERS ROW --------------------------------------------------------
+# The detail row's KEY, which is what `Readout.detail_excerpt` seeks: the leading half of
+# `DetailFormat.EXPEDITION_ORDERS_ROW_FORMAT`, restated here only because a `const` cannot split one.
+# A reworded row does not pass quietly — the excerpt answers `DETAIL_EXCERPT_ABSENT` and every
+# assertion below fails naming the row it could not find.
+#
+# **IT WAS `Leaves standing`, THEN A MERGED TWO-CLAUSE ROW, AND IT IS THE SAME ROW.** The fill target
+# that shared it is retired (issue #491), so the row states the floor alone; it stays a merged-shaped
+# `Orders:` row because the parties inspector strip budgeted for ONE row here — see
+# `DetailFormat.expedition_orders_line`.
+const EXPEDITION_ORDERS_DETAIL_KEY := "Orders"
+
+# ---- THE IN-FLIGHT DENIAL RAID (`docs/plan_denial_raid.md` §3) -----------------------------------
+# The party size the frame renders, and the row of `HerdFx`'s denial table it therefore reads. Named
+# so the expected sentence is composed from the SAME index the fixture is, rather than from a literal
+# that would drift the first time the table is re-tuned.
+const DENIAL_PARTY_SIZE := 5
+
+## The species the shared world-herd list names, i.e. what the verdict must be phrased about.
+const DENIAL_TARGET_QUARRY := "Red Deer"
+
+## How long the sim's raid projection runs (`expeditionForecastHorizonTurns`) and a walk out to the
+## quarry, for the driven `horizon`-verdict claims. They are deliberately DIFFERENT numbers, so a
+## sentence that shifted by the wrong term — or by none — is a different string.
+const DENIAL_HORIZON_TURNS := BandFx.FORECAST_HORIZON_TURNS
+const DENIAL_HORIZON_OUTBOUND_TURNS := 7
+
+## The two row KEYS a denial party must NOT render, each because the mission has no such thing: the
+## hunt party's ORDERS row — a floor it never chose — and a delivery it is not making.
+const DENIAL_ABSENT_ORDERS_KEY := EXPEDITION_ORDERS_DETAIL_KEY
+
+const DENIAL_ABSENT_DELIVERY_KEY := "Next delivery"
+
+## …and the one it MUST, near-empty: the little the raid banks on the way home.
+const DENIAL_CARRIED_DETAIL_KEY := "Carried"
 
 ## Find a Button by its face anywhere under `root` — the harness presses the REAL control the player
 ## presses, so an assertion covers the wiring and not just the handler it would have called.
@@ -167,6 +205,38 @@ func _concerning_food_band_fixture() -> Dictionary:
 ## A hunting expedition (PR 2, docs/plan_exploration_and_sites.md §2b): a detached party following a
 ## migratory herd. mission "hunt" + a target herd + carried food (its own kills). The drawer renders
 ## the hunt readout (target herd + carried food + phase) + Recall/Move.
+## A launched DENIAL raid, built off the hunt party so the only differences are the mission's own.
+##
+## **`expedition_floor` 0.0 IS ON IT DELIBERATELY** — it is what the sim really publishes for this
+## mission (which has no such lever), so a fixture omitting it would let the absent `Orders:` row pass
+## on a party that simply carried no field. The delivery trio is absent because a denial party
+## genuinely publishes none.
+func _denial_expedition_fixture() -> Dictionary:
+	return {
+		"id": "Raiders 1",
+		"size": DENIAL_PARTY_SIZE,
+		"entity": 7104,
+		"faction": 0,
+		"pos": [67, 16],
+		"turns_of_food": 3.0,
+		# A rounding error against what it killed — the mission's own cost, stated rather than hidden.
+		"stores": {"provisions": 2.0},
+		"is_expedition": true,
+		"expedition_mission": "deny",
+		"expedition_phase": "hunting",
+		"expedition_target_herd": "game_deer_07",
+		"expedition_carry_cap": 16.0,
+		"expedition_floor": 0.0,
+		"tile_info": {
+			"x": 67, "y": 16,
+			"terrain_label": "Prairie Steppe",
+			"tags_text": "Fertile",
+			"visibility_state": "active",
+			"food_module": "",
+			"food_module_label": "None",
+		},
+	}
+
 func _hunt_expedition_fixture() -> Dictionary:
 	return {
 		"id": "Hunters 1",
@@ -513,6 +583,157 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("expedition_hunt_recurring")
 
+	# State 1j3 — **A LAUNCHED PARTY UNDER A STATED TRIP BOUND.** The row this adds is the sim's own
+	# answer for which stop will end the raid, in the same words the pre-launch readout uses.
+	# **`expeditionTripBound` is the AUTHORITY once a party is out** — the sheet's estimate is a
+	# projection over a SAMPLED party and floor, this is the sim's forward simulation of the party's
+	# REAL orders — which is why it is rendered rather than the sheet's estimate being remembered.
+	# The frame staged a FILL TARGET until issue #491 retired that lever; the bound is what is left of
+	# it, and `pack_full` is the stop the raid it staged would really have reached.
+	var bounded_hunt := _hunt_expedition_fixture()
+	bounded_hunt["expedition_trip_bound"] = SourceForecast.TRIP_BOUND_PACK_FULL
+	h._hud.show_unit_selection(bounded_hunt)
+	await h._settle()
+	await h._save("expedition_hunt_bounded")
+	# **THE ROW IS READ THROUGH `Readout.detail_excerpt`, not searched for whole.** `detail_bbcode`
+	# splits a `Key: value` line into two spans, so the rendered source never contains the line
+	# contiguously. Excerpt from the KEY and assert the VALUE is what follows it.
+	var orders_row := Readout.detail_excerpt(h._hud.occupant_detail.text,
+		EXPEDITION_ORDERS_DETAIL_KEY)
+	h._assert_hud("a launched party states the ONE order it carries — the floor it was given",
+		orders_row.contains(HudComposeVocab.FLOOR_VALUE_FORMAT % SourceForecast.floor_percent(
+			SourceForecast.DEFAULT_HARVEST_FLOOR)))
+	h._assert_hud("…and the sim's own answer for which stop will end its raid",
+		h._hud.occupant_detail.text.contains(SourceForecast.TRIP_BOUND_CLAUSES[
+			SourceForecast.TRIP_BOUND_PACK_FULL]))
+	# **THE `""` BOUND IS NOT `horizon`, AND IT RENDERS NOTHING.** A party already walking a load home
+	# is not raiding toward a stop, so the row must be ABSENT rather than reading a stop it does not
+	# have — and this negative is only a claim because the state above shows the presence.
+	var unbounded_hunt := _hunt_expedition_fixture()
+	h._hud.show_unit_selection(unbounded_hunt)
+	await h._settle()
+	h._assert_hud("a party the sim states no bound for says nothing about a stop",
+		not h._hud.occupant_detail.text.contains(SourceForecast.TRIP_BOUND_CLAUSES[
+				SourceForecast.TRIP_BOUND_FLOOR])
+			and not h._hud.occupant_detail.text.contains(SourceForecast.TRIP_BOUND_CLAUSES[
+				SourceForecast.TRIP_BOUND_PACK_FULL]))
+	# …and it still states its ORDERS row, the floor being an order every hunt party carries.
+	h._assert_hud("…but still states the floor it is holding",
+		Readout.detail_excerpt(h._hud.occupant_detail.text, EXPEDITION_ORDERS_DETAIL_KEY).contains(
+			HudComposeVocab.FLOOR_VALUE_FORMAT % SourceForecast.floor_percent(
+				SourceForecast.DEFAULT_HARVEST_FLOOR)))
+
+	# State 1j4 — **AN IN-FLIGHT DENIAL RAID** (`docs/plan_denial_raid.md` §3). The third mission, and
+	# its drawer is judged on what it does NOT say as much as on what it does: a denial party publishes
+	# no delivery ETA and has no floor and no fill target, so the `Orders:` row (which carries both) and
+	# the `Next delivery` line must both be absent, and the collapse verdict stands where the ETA stands
+	# on a hunt party.
+	var deny_party := _denial_expedition_fixture()
+	h._hud.show_unit_selection(deny_party)
+	await h._settle()
+	await h._save("expedition_denial_panel")
+	var deny_text: String = h._hud.occupant_detail.text
+	h._assert_hud("a denial party names its MISSION",
+		deny_text.contains(HudExpeditionVocab.EXPEDITION_MISSION_LABELS[
+			HudExpeditionVocab.EXPEDITION_MISSION_DENY]))
+	# **THE VERDICT, COMPOSED FROM THE FIXTURE'S OWN ROW** — the party of `DENIAL_PARTY_SIZE` reads the
+	# table's row for that size, so the expected sentence is stated from the harness's side and the two
+	# arrive at one string from opposite ends.
+	var party_low: int = HerdFx.DENIAL_COLLAPSE_LOW[DENIAL_PARTY_SIZE - 1]
+	var party_high: int = HerdFx.DENIAL_COLLAPSE_HIGH[DENIAL_PARTY_SIZE - 1]
+	var deny_verdict: String = SourceForecast.DENIAL_VERDICTS[
+		SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY]["line"] % DENIAL_TARGET_QUARRY
+	# **AN IN-FLIGHT VERDICT QUOTES THE AT-THE-HERD SPAN, AND SAYS SO.** The launch sheet adds the
+	# outbound walk and reads "…from launch"; this party has already left and its remaining walk is not
+	# on the wire, so the drawer quotes the sim's own raiding turns UNSHIFTED under a clause that names
+	# them. Neither surface leaves the span to be inferred — that was the defect.
+	var party_turns: int = HerdFx.DENIAL_COLLAPSE_TURNS[DENIAL_PARTY_SIZE - 1]
+	deny_verdict += SourceForecast.DENIAL_TURNS_LEAD_FORMAT % [
+		SourceForecast.DENIAL_TURNS_ONE_FORMAT % party_turns,
+		SourceForecast.DENIAL_SPAN_OF_RAIDING]
+	deny_verdict += SourceForecast.DENIAL_SPREAD_RANGE_FORMAT % [party_low, party_high]
+	h._assert_hud("…and states the COLLAPSE VERDICT over its RAIDING turns, expectation first — \"%s\""
+			% deny_verdict,
+		deny_text.contains(deny_verdict))
+	# …and the launch-clock wording is nowhere on it: a party already out must not be told its collapse
+	# band starts when it leaves. Asserted as the pairing negative to the claim above, since a clause
+	# builder that emitted neither span would satisfy that one alone only by accident.
+	h._assert_hud("…and never the FROM-LAUNCH span, which is the launch sheet's",
+		not deny_text.contains(SourceForecast.DENIAL_SPAN_FROM_LAUNCH))
+	# **THE HUNT-ONLY READOUTS ARE ABSENT, and that is the mission's specification.** Its
+	# `expedition_floor` reads `0.0` because it HAS no such order; rendering the row would put a lever
+	# on screen the command grammar cannot express.
+	h._assert_hud("…and renders NO orders row (no floor) and NO delivery ETA",
+		not deny_text.contains(DENIAL_ABSENT_ORDERS_KEY)
+			and not deny_text.contains(DENIAL_ABSENT_DELIVERY_KEY))
+	# It still states what it hauled home, which reads near-empty — the mission's own cost, and the
+	# row a suppression would have hidden.
+	h._assert_hud("…while still stating the little it carries",
+		deny_text.contains(DENIAL_CARRIED_DETAIL_KEY))
+
+	# **THE PNG-LESS HALF: the verdict's structure, driven directly.** None of these three can be seen
+	# in a frame — each is about a sentence the fixtures above never produce — and each fails on a
+	# DIFFERENT mutation.
+	#
+	# (a) A `repelled` outcome carrying a full turn band still quotes NO number. The party never gets
+	# there, so a turn count would be a promise the sim did not make.
+	var repelled := {
+		"available": true, "outcome": SourceForecast.DENIAL_OUTCOME_REPELLED,
+		"turns": 4, "low": 3, "high": 5, "animals": 0, "food": 0.0, "trade": 0.0, "wasted": 0.0,
+	}
+	h._assert_hud("a repelled verdict names the PARTY's problem and quotes no turn count",
+		SourceForecast.denial_verdict_text(repelled, DENIAL_TARGET_QUARRY)
+			== SourceForecast.DENIAL_VERDICTS[
+				SourceForecast.DENIAL_OUTCOME_REPELLED]["line"] % DENIAL_TARGET_QUARRY)
+	# (b) **A BLANK TURN COUNT NEVER RENDERS WITHOUT ITS OUTCOME.** A `past_recovery` row the
+	# projection bounded on neither end still names the outcome and simply appends no clause — the
+	# whole reason the outcome LEADS the sentence and the number is a clause on it.
+	var unbounded := {
+		"available": true, "outcome": SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY,
+		"turns": 0, "low": 0, "high": 0, "animals": 0, "food": 0.0, "trade": 0.0, "wasted": 0.0,
+	}
+	h._assert_hud("a collapse the forecast cannot bound still names its outcome, with no bare number",
+		SourceForecast.denial_verdict_text(unbounded, DENIAL_TARGET_QUARRY)
+			== SourceForecast.DENIAL_VERDICTS[
+				SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY]["line"] % DENIAL_TARGET_QUARRY)
+	# (c) The two degenerate bands the range must collapse: low == high reads as ONE number, and a
+	# positive low beside a `0` high reads "on a good run" rather than promising the good draw.
+	h._assert_hud("a degenerate band reads one number, and an unbounded expectation falls to the good run",
+		SourceForecast.denial_turns_phrase({"low": 4, "high": 4, "turns": 4})
+				== SourceForecast.DENIAL_TURNS_ONE_FORMAT % 4
+			and SourceForecast.denial_turns_phrase({"low": 3, "high": 0, "turns": 0})
+				== SourceForecast.DENIAL_TURNS_ONE_FORMAT % 3)
+	# (d) **THE HORIZON VERDICT SAYS HOW LONG THE FORECAST IS, IN ITS OWN SPAN.** "Still standing when
+	# the forecast runs out" names a clock the player cannot see — the same hedge the hunt sheet's
+	# "away many turns" was — so where the cohort carries the lever the sentence quotes it. Two
+	# spans, one lever, asserted by EQUALITY against sentences spelled out HERE: the in-flight drawer
+	# has no band and so states the RAIDING turns unshifted, while a launch sheet adds the outbound
+	# walk and says "from launch". The pair is the claim — a builder that ignored `travel` satisfies
+	# the first alone, and one that always shifted satisfies the second alone.
+	var horizon_in_flight := {
+		"available": true, "outcome": SourceForecast.DENIAL_OUTCOME_HORIZON,
+		"turns": 0, "low": 0, "high": 0, "animals": 0, "food": 0.0, "trade": 0.0, "wasted": 0.0,
+		SourceForecast.DENIAL_TRAVEL_KEY: SourceForecast.DENIAL_TRAVEL_UNKNOWN,
+		SourceForecast.DENIAL_HORIZON_TURNS_KEY: DENIAL_HORIZON_TURNS,
+	}
+	var horizon_from_launch := horizon_in_flight.duplicate()
+	horizon_from_launch[SourceForecast.DENIAL_TRAVEL_KEY] = DENIAL_HORIZON_OUTBOUND_TURNS
+	h._assert_hud("a horizon verdict states the forecast's LENGTH, in the span it is quoting",
+		SourceForecast.denial_verdict_text(horizon_in_flight, DENIAL_TARGET_QUARRY)
+				== "%s is still standing after %d turns of raiding" % [
+					DENIAL_TARGET_QUARRY, DENIAL_HORIZON_TURNS]
+			and SourceForecast.denial_verdict_text(horizon_from_launch, DENIAL_TARGET_QUARRY)
+				== "%s is still standing after %d turns from launch" % [
+					DENIAL_TARGET_QUARRY, DENIAL_HORIZON_TURNS + DENIAL_HORIZON_OUTBOUND_TURNS])
+	# …and with no lever on the wire it keeps the hedge rather than quoting a zero — the one reading
+	# worse than "when the forecast runs out".
+	var horizon_no_lever := horizon_in_flight.duplicate()
+	horizon_no_lever[SourceForecast.DENIAL_HORIZON_TURNS_KEY] = SourceForecast.FORECAST_HORIZON_UNKNOWN
+	h._assert_hud("…and falls back to the hedge where the cohort carries no horizon at all",
+		SourceForecast.denial_verdict_text(horizon_no_lever, DENIAL_TARGET_QUARRY)
+			== String(SourceForecast.DENIAL_VERDICTS[
+				SourceForecast.DENIAL_OUTCOME_HORIZON]["line"]) % DENIAL_TARGET_QUARRY)
+
 	# State 1k — the hunt launch policy picker: an idle band (short allocation panel) showing the
 	# "Send expedition" outfit block — the party stepper, the scout + hunt send buttons, and the hunt
 	# POLICY radio (DEPLETE selected) with its EXPEDITION hint. The expedition hints must never promise
@@ -588,9 +809,154 @@ func run(harness) -> void:
 	_click_disclosure(BAND_DISCLOSURE_FOOD)
 	h._set_world_herds(HerdFx.world_herds_fixture())   # restore the shared world-herd list
 
+	# **HAND THE REFERENCE BAND BACK, exactly as the retired FILL-TARGET block did on its way out.**
+	# Four raid frames stood here until issue #491 removed the lever they showed, and their tail put
+	# `_player_band` / `_player_bands` back where the rest of this chapter's walk expects them. Every
+	# state that follows renders into the SAME long-lived `HudLayer`, and `update_band_alerts` keeps a
+	# losing-population diff against the last roster pushed — so deleting the block without its restore
+	# moves frames in later chapters for a reason that has nothing to do with the lever. Measured: it
+	# moved the three `band_kit_*` frames, which come back byte-identical with this restore in place.
+	h._hud._compose.reset_hunt_source()
+	h._hud._band_labor._player_bands = []
+	h._hud._band_labor._player_band = BandFx.band_fixture()
+	await h._settle()
+
+	# ---- THE THREE KITS (`docs/plan_hunt_through_combat.md` §4.8) --------------------------------
+	await _kit_states()
+
 	# band_alerts (above) left _player_band as an alert-fixture band (no work_range, far from the food
 	# tile); seed a NEAR band so the forage controls resolve an in-range actor.
 	h._hud._band_labor._player_band = BandFx.forage_range_bands()[0]
 	h._hud._band_labor._player_bands = []
 	h._hud._compose.reset_forage_source()
 	h._hud._compose.set_forage_band(-1)
+
+
+# ---- THE THREE KITS (`docs/plan_hunt_through_combat.md` §4.8) ------------------------------------
+# The kit disclosure key for the kitted band — `DetailFormat.breakdown_key(kind, band)`'s shape, over
+# the reference band's own entity so it cannot collide with its Food/Morale/Growth popovers.
+const BAND_DISCLOSURE_KIT := "kit:904"
+
+## **THE KITS WERE INVISIBLE, AND A PLAYER COULD NOT SEE THEIR EQUIPMENT DYING.** Three consumables
+## ship — spears raising `attack`, a SLED carrying the hunt, BASKETS carrying the forage web — and all
+## six wire fields arrived and were dropped. These four frames are the readout, and the split is
+## deliberate: the ROW answers *how long have I got and which side of the line am I on*, and only the
+## DISCLOSURE has room for *what each one is doing for me, and what happens when it stops*.
+##
+## **NOTHING HERE MAY BE SCALED BY THE REMAINING CONDITION.** Durability and performance are
+## orthogonal — a kit at 3 performs exactly as one at 97 and then stops — so the assertions below pin
+## the TIER against its shipped constant rather than against anything derived from the condition, and
+## a readout that drew a gradient would fail them at every condition but full.
+func _kit_states() -> void:
+	# State kit-a — ONE KIT DRY, the other two intact. The row reads two live conditions and one
+	# DANGER-inked word, which is the whole of what a glance has to deliver: two clocks and one loss.
+	var worn := BandFx.with_baskets_dry(BandFx.band_fixture())
+	h._hud._band_labor._player_band = worn
+	h._hud.show_unit_selection(worn)
+	await h._settle()
+	await h._save("band_kit")
+	# **THE FACES ARE READ OFF THE PARSED TEXT, THE INK OFF THE SOURCE**, and the split is forced by
+	# the row itself: each kit's condition is wrapped in its own `[color]` span, so the rendered
+	# source never contains `Spears 87` contiguously — while the parsed text, having dropped every
+	# tag, cannot testify about a colour. Two readings of one label, each asked what it can answer.
+	var kit_row := String(h._hud.occupant_detail.get_parsed_text())
+	h._assert_hud("the Kit row states all three kits, live ones by condition",
+		kit_row.contains("%s %s" % [DetailFormat.KIT_LABEL_SPEARS,
+				String.num(BandFx.KIT_CONDITION_SPEARS, DetailFormat.KIT_CONDITION_DECIMALS)])
+			and kit_row.contains("%s %s" % [DetailFormat.KIT_LABEL_SLED,
+				String.num(BandFx.KIT_CONDITION_SLED, DetailFormat.KIT_CONDITION_DECIMALS)]))
+	# **A SPENT KIT READS AS A WORD, NOT A ZERO.** The number is not the point — which side of the
+	# cliff the role is on is — and a `0` beside two live conditions reads as a quantity on the same
+	# scale rather than as a state change. The DANGER span is asserted with the kit's own NAME in
+	# front of it, because this label carries other red runs (a negative food net) that a bare hex
+	# search would match.
+	h._assert_hud("…and a spent kit reads as a WORD, in DANGER ink",
+		h._hud.occupant_detail.text.contains("%s [color=#%s]%s" % [DetailFormat.KIT_LABEL_BASKETS,
+			HudStyle.DANGER_HEX, DetailFormat.KIT_DRY_FACE]))
+
+	# State kit-b — the SAME band, disclosure OPEN. **This frame carries the cross-check the whole
+	# three-kit split exists for**: the sled's line must quote the HUNT's carry and the basket's line
+	# the FORAGE web's, and neither may quote the other's. Baskets boosting the hunt is precisely the
+	# defect slice 5 corrected in the sim, and rendering one tier on the other's row would carry it
+	# straight back into the UI where no sim test can see it.
+	_click_disclosure(BAND_DISCLOSURE_KIT)
+	await h._settle()
+	await h._save("band_kit_expanded")
+	var kit_popover := _kit_popover_text()
+	var sled_line := _kit_breakdown_line(kit_popover, DetailFormat.KIT_LABEL_SLED)
+	var basket_line := _kit_breakdown_line(kit_popover, DetailFormat.KIT_LABEL_BASKETS)
+	var hunt_carry := String.num(BandFx.KIT_HUNT_CARRY_EQUIPPED, DetailFormat.KIT_CARRY_DECIMALS)
+	var forage_carry := String.num(BandFx.KIT_FORAGE_CARRY_BARE, DetailFormat.KIT_CARRY_DECIMALS)
+	h._assert_hud("the SLED's line quotes the HUNT's carry (%s) and never the forage web's (%s)"
+		% [hunt_carry, forage_carry],
+		sled_line.contains(hunt_carry) and not sled_line.contains(forage_carry))
+	h._assert_hud("the BASKETS' line quotes the FORAGE web's carry (%s) and never the hunt's (%s)"
+		% [forage_carry, hunt_carry],
+		basket_line.contains(forage_carry) and not basket_line.contains(hunt_carry))
+	h._assert_hud("the SPEARS' line quotes the attack tier they set (%s)"
+		% String.num(BandFx.KIT_ATTACK_EQUIPPED, DetailFormat.KIT_CONDITION_DECIMALS),
+		_kit_breakdown_line(kit_popover, DetailFormat.KIT_LABEL_SPEARS).contains(
+			DetailFormat.KIT_ROLE_ATTACK_FORMAT % String.num(BandFx.KIT_ATTACK_EQUIPPED,
+				DetailFormat.KIT_CONDITION_DECIMALS)))
+	# **THE CLIFF SENTENCE IS WHAT STOPS THE CONDITIONS READING AS A PERFORMANCE GRADIENT.** Without
+	# it a player paces their hunting against `87` and `54` as if they were rates.
+	h._assert_hud("…and the popover says the condition is a clock, not a rate",
+		kit_popover.contains(DetailFormat.KIT_BREAKDOWN_CLIFF_NOTE))
+	h._assert_hud("…and only the spent kit is called out as bare hands",
+		basket_line.contains(DetailFormat.KIT_BARE_HANDS_SUFFIX)
+			and not sled_line.contains(DetailFormat.KIT_BARE_HANDS_SUFFIX))
+	_click_disclosure(BAND_DISCLOSURE_KIT)
+
+	# State kit-c — EVERY kit run dry. Bare hands is a state worth showing plainly: there is no
+	# replenishment path, so all three roles have stepped down and stay there.
+	var bare := BandFx.with_bare_hands(BandFx.band_fixture())
+	h._hud._band_labor._player_band = bare
+	h._hud.show_unit_selection(bare)
+	await h._settle()
+	_click_disclosure(BAND_DISCLOSURE_KIT)
+	await h._settle()
+	await h._save("band_kit_bare")
+	var bare_popover := _kit_popover_text()
+	h._assert_hud("a band with nothing left states bare hands on all three roles",
+		_kit_breakdown_line(bare_popover, DetailFormat.KIT_LABEL_SPEARS).contains(
+				DetailFormat.KIT_BARE_HANDS_SUFFIX)
+			and _kit_breakdown_line(bare_popover, DetailFormat.KIT_LABEL_SLED).contains(
+				DetailFormat.KIT_BARE_HANDS_SUFFIX)
+			and _kit_breakdown_line(bare_popover, DetailFormat.KIT_LABEL_BASKETS).contains(
+				DetailFormat.KIT_BARE_HANDS_SUFFIX))
+	h._assert_hud("…and the two carries STILL do not swap: the sled reads %s, the baskets %s"
+		% [String.num(BandFx.KIT_HUNT_CARRY_BARE, DetailFormat.KIT_CARRY_DECIMALS),
+			String.num(BandFx.KIT_FORAGE_CARRY_BARE, DetailFormat.KIT_CARRY_DECIMALS)],
+		_kit_breakdown_line(bare_popover, DetailFormat.KIT_LABEL_SLED).contains(
+				String.num(BandFx.KIT_HUNT_CARRY_BARE, DetailFormat.KIT_CARRY_DECIMALS))
+			and _kit_breakdown_line(bare_popover, DetailFormat.KIT_LABEL_BASKETS).contains(
+				String.num(BandFx.KIT_FORAGE_CARRY_BARE, DetailFormat.KIT_CARRY_DECIMALS)))
+	_click_disclosure(BAND_DISCLOSURE_KIT)
+
+	# **THE NEGATIVE HALF, and without it the three frames above are satisfied by a row that renders
+	# unconditionally.** A band that states no kit at all — every fixture predating the TOE, and the
+	# state a rehydrated cohort is in — must render NO Kit row, because a defaulted `Spears 0` would
+	# report equipment destroyed that was never there. It is asserted rather than rendered: the
+	# reference band's own frame (`band`, far above) is the picture.
+	h._hud._band_labor._player_band = BandFx.band_fixture()
+	h._hud.show_unit_selection(BandFx.band_fixture())
+	await h._settle()
+	h._assert_hud("a band that states no kit renders no Kit row — never a defaulted zero",
+		Readout.detail_excerpt(h._hud.occupant_detail.text, HudDisclosureVocab.DETAIL_ROW_KIT)
+			== Readout.DETAIL_EXCERPT_ABSENT)
+
+## The open breakdown popover's text — the RENDERED disclosure, not the producer's return, so the
+## assertions above cover the click, the payload stash and the popover's own restate.
+func _kit_popover_text() -> String:
+	var label = h._hud._disclosures._breakdown_popover_label
+	return "" if label == null else (label as RichTextLabel).get_parsed_text()
+
+## ONE kit's breakdown line out of the popover, by the kit's NAME. Split per line rather than matched
+## across the whole popover, because the three lines carry the same shape and a whole-popover
+## `contains` could be satisfied by the WRONG kit's row — which is the exact substitution these
+## assertions exist to catch.
+func _kit_breakdown_line(popover: String, label: String) -> String:
+	for line in popover.split("\n"):
+		if String(line).contains(label):
+			return String(line)
+	return ""

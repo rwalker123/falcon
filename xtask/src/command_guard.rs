@@ -20,7 +20,19 @@
 //!    player's click reaches, formats it with `Main`'s own builders, and writes the emitted lines to
 //!    `ui_preview_out/emitted_band_commands.json` along with the fixture's handles.
 //! 2. This module parses **every** line with `sim_runtime::command_text::parse_command_line` — the
-//!    same function the server runs — and asserts the band handle equals the fixture's `band_id`.
+//!    same function the server runs — and asserts the band handle equals the fixture's `band_id`
+//!    **and that the parsed payload carries the kit the drive composed**.
+//!
+//! ## The kit tail is asserted for the band handle's own reason
+//!
+//! Four drives exist specifically to push a **non-default** kit through the real parser, because
+//! `Main._kit_token` omits `kit <id>` whenever the selection equals the job default. Asserting only
+//! that those lines *parse* proves nothing about the kit: if `_kit_token` regressed to `""` every
+//! line would still parse, `EXPECTED_KINDS` would still count, and this gate would report **PASS**
+//! while no kit ever left the client — the same silent-value class as the `entity`/`band_id` defect
+//! above, one field over. So the Godot half records the kit each line is **expected** to carry
+//! (`expected_kit`, `""` meaning "no token, the job default stands") and this module compares it
+//! against what the server parser actually recovered.
 //!
 //! **The fixture's `entity` and `band_id` are deliberately different values.** If they agreed this
 //! gate would prove nothing: sending the wrong handle would produce the right number. That
@@ -117,23 +129,48 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     }
 
     let mut failures = Vec::new();
+    // How many lines the Godot half says should carry a real `kit <id>`. **The gate's second
+    // precondition**: if none do, every kit assertion below is the vacuous `""` case and a
+    // `Main._kit_token` that emitted nothing would pass unnoticed — exactly the hole this closes.
+    let mut kit_bearing_lines = 0_usize;
     for entry in commands {
-        let (label, line) = match entry {
-            Value::String(line) => (line.clone(), line.clone()),
-            Value::Object(map) => {
-                let line = map
-                    .get("line")
-                    .and_then(Value::as_str)
-                    .ok_or("command-guard: a command entry has no `line`")?;
-                let label = map
-                    .get("kind")
-                    .and_then(Value::as_str)
-                    .unwrap_or(line)
-                    .to_string();
-                (label, line.to_string())
-            }
-            other => return Err(format!("command-guard: unexpected command entry {other}").into()),
+        // **The object form is required, and a bare string is a hard error.** A string entry
+        // carries no `expected_kit`, so accepting one would silently opt that line out of the kit
+        // assertion — a skip that looks like a pass, which is the failure mode this whole module
+        // exists to refuse.
+        let Value::Object(map) = entry else {
+            return Err(format!(
+                "command-guard: a command entry is not an object ({entry}). The Godot half must \
+                 emit `{{kind, line, expected_kit}}` — a bare line cannot be checked for its kit."
+            )
+            .into());
         };
+        let line = map
+            .get("line")
+            .and_then(Value::as_str)
+            .ok_or("command-guard: a command entry has no `line`")?
+            .to_string();
+        let label = map
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or(&line)
+            .to_string();
+        // Absent (rather than empty) means the two halves have drifted, and the drifted state is the
+        // one that silently checks nothing — so it is an error, not a default.
+        let expected_kit = map
+            .get("expected_kit")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                format!(
+                    "command-guard: `{label}` carries no `expected_kit`. The Godot half must state \
+                     the kit each line should carry (`\"\"` = the job default, no token), or this \
+                     gate cannot tell a missing tail from an intended one."
+                )
+            })?
+            .to_string();
+        if !expected_kit.is_empty() {
+            kit_bearing_lines += 1;
+        }
 
         let payload = match sim_runtime::command_text::parse_command_line(&line) {
             Ok(payload) => payload,
@@ -191,6 +228,23 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                 "{label}: sent {sent}, expected the fixture's band handle {expected}. Line: `{line}`"
             ));
         }
+
+        // **THE KIT, through the same real parser.**
+        if let Some(failure) = kit_failure(&label, &line, &payload, &expected_kit) {
+            failures.push(failure);
+        }
+    }
+
+    // The gate's kit precondition, and the twin of the differing-handles check above: with every
+    // line expecting `""`, each assertion above is satisfied by a client that emits no kit ever.
+    if kit_bearing_lines == 0 {
+        return Err(
+            "command-guard: not one emitted line was composed with a NON-DEFAULT kit, so \
+                    the kit assertions are all vacuous and this gate proves nothing about the \
+                    `kit <id>` tail. The Godot half's drives must compose a kit the job default is \
+                    not."
+                .into(),
+        );
     }
 
     if !failures.is_empty() {
@@ -207,7 +261,8 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
 
     println!(
         "command-guard: PASS — {} emitted command(s) parsed by the real server parser, every band \
-         handle resolved to the fixture's BandId (and none to its entity)",
+         handle resolved to the fixture's BandId (and none to its entity), and every `kit <id>` \
+         tail resolved to the kit the drive composed ({kit_bearing_lines} non-default)",
         commands.len()
     );
     Ok(())
@@ -245,6 +300,7 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
         | CommandPayload::MoveBand { band_id, .. }
         | CommandPayload::ScoutArea { band_id, .. }
         | CommandPayload::SendExpedition { band_id, .. }
+        | CommandPayload::SendDenialRaid { band_id, .. }
         | CommandPayload::SendHuntExpedition { band_id, .. } => *band_id,
         CommandPayload::RecallExpedition {
             expedition_band_id, ..
@@ -257,8 +313,164 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
     }
 }
 
+/// What a parsed payload says about the kit it names — the kit half of [`BandHandle`], with the same
+/// three-outcome shape and for the same reason.
+///
+/// **[`Self::Omitted`] and [`Self::NotKitBearing`] must stay apart.** Collapsing them into one
+/// "no kit" answer would make *"the client dropped the tail off a kit-bearing command"* — the
+/// regression this is here to catch — indistinguishable from *"this command has no kit axis"*.
+enum KitToken {
+    /// The command names a kit.
+    Named(String),
+    /// A kit-bearing variant whose optional tail is absent. To the server that means **the job's
+    /// default**, which is exactly what a dropped selection also looks like.
+    Omitted,
+    /// A variant with no kit axis at all (`move_band`, `cancel_order`, `recall_expedition`, and the
+    /// scouting `send_expedition`, which is not a kit job).
+    NotKitBearing,
+}
+
+/// The kit a payload names, whatever the variant calls it. Every `CommandPayload` variant carrying
+/// one is listed; as with [`band_handle`], coverage is bounded by which commands the Godot half
+/// actually drives.
+fn kit_token(payload: &CommandPayload) -> KitToken {
+    let optional = match payload {
+        CommandPayload::AssignLabor { kit_id, .. }
+        | CommandPayload::SendDenialRaid { kit_id, .. }
+        | CommandPayload::SendHuntExpedition { kit_id, .. } => kit_id.clone(),
+        _ => return KitToken::NotKitBearing,
+    };
+    match optional {
+        Some(id) => KitToken::Named(id),
+        None => KitToken::Omitted,
+    }
+}
+
+/// Does this parsed line disagree with the kit the drive composed? `None` = it agrees.
+///
+/// `expected_kit` is the drive's own selection; `""` means the drive named the job default (or a
+/// command with no kit axis), which `Main._kit_token` renders as no token and the server reads as the
+/// default. Pulled out of the loop so the comparison is reachable from a unit test — the regression
+/// it guards is a *client* change, and a check that can only be exercised by launching Godot is one
+/// nobody runs while editing it.
+fn kit_failure(
+    label: &str,
+    line: &str,
+    payload: &CommandPayload,
+    expected_kit: &str,
+) -> Option<String> {
+    match (kit_token(payload), expected_kit) {
+        (KitToken::Named(sent_kit), want) if sent_kit == want => None,
+        (KitToken::Omitted | KitToken::NotKitBearing, "") => None,
+        (KitToken::Omitted, want) => Some(format!(
+            "{label}: the drive composed kit `{want}`, but the emitted line carries NO `kit` token \
+             at all — the server would silently run the job default. This is the regression the kit \
+             assertion exists for. Line: `{line}`"
+        )),
+        (KitToken::NotKitBearing, want) => Some(format!(
+            "{label}: the drive composed kit `{want}`, but the line parsed to a command variant that \
+             carries no kit — either the emit path changed or `kit_token` is missing a variant. \
+             Line: `{line}`"
+        )),
+        (KitToken::Named(sent_kit), want) => Some(format!(
+            "{label}: sent kit `{sent_kit}`, expected `{want}`{}. Line: `{line}`",
+            if want.is_empty() {
+                " (no token at all — the drive named the job default)"
+            } else {
+                ""
+            }
+        )),
+    }
+}
+
 fn u64_field(doc: &Value, key: &str) -> Result<u64, Box<dyn Error>> {
     doc.get(key)
         .and_then(Value::as_u64)
         .ok_or_else(|| format!("command-guard: emitted document has no numeric `{key}`").into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sim_runtime::command_text::parse_command_line;
+
+    /// The kit the `command_guard.tscn` drives compose — a real roster id that is **not** any job's
+    /// default, which is what makes `Main._kit_token` emit a tail at all.
+    const COMPOSED_KIT: &str = "none";
+
+    fn parse(line: &str) -> CommandPayload {
+        parse_command_line(line).expect("the fixture line must parse with the real server parser")
+    }
+
+    /// **The regression this gate was blind to**: `Main._kit_token` answering `""` for every
+    /// selection. The line still parses, still names the right band and still counts toward
+    /// `EXPECTED_KINDS` — only the kit is gone, on all three kit-bearing grammars.
+    #[test]
+    fn a_dropped_kit_tail_is_a_failure_on_every_kit_bearing_grammar() {
+        for untailed in [
+            "assign_labor 0 71204 hunt game_deer_07 0.5 2",
+            "assign_labor 0 71204 forage 44 23 0.5 2",
+            "send_hunt_expedition 0 71204 1 game_boar_04 0.5",
+            "send_denial_raid 0 71204 1 game_boar_04",
+        ] {
+            let failure = kit_failure("drive", untailed, &parse(untailed), COMPOSED_KIT)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "a line with no `kit` token must FAIL against a composed kit: {untailed}"
+                    )
+                });
+            assert!(
+                failure.contains("NO `kit` token"),
+                "the failure must name what went missing, not merely differ: {failure}"
+            );
+        }
+    }
+
+    /// The liveness half — the tailed twins must PASS, or the assertion above is satisfied by a gate
+    /// that rejects everything.
+    #[test]
+    fn the_tailed_twins_carry_the_composed_kit_through_the_real_parser() {
+        for tailed in [
+            "assign_labor 0 71204 hunt game_deer_07 0.5 2 kit none",
+            "assign_labor 0 71204 forage 44 23 0.5 2 kit none",
+            "send_hunt_expedition 0 71204 1 game_boar_04 0.5 kit none",
+            "send_denial_raid 0 71204 1 game_boar_04 kit none",
+        ] {
+            assert!(
+                kit_failure("drive", tailed, &parse(tailed), COMPOSED_KIT).is_none(),
+                "a line carrying the composed kit must pass: {tailed}"
+            );
+        }
+    }
+
+    /// The two `""` readings, which are the same answer from different causes and must stay apart in
+    /// the failure text: a kit-bearing command that named the default, and a command with no kit axis
+    /// at all. Both agree with `""`; both DISAGREE with a composed kit, and for different reasons.
+    #[test]
+    fn an_untailed_line_agrees_with_no_expectation_whichever_kind_it_is() {
+        let untailed_assign = "assign_labor 0 71204 hunt game_deer_07 0.5 2";
+        let no_kit_axis = "move_band 0 71204 44 23";
+        assert!(kit_failure("drive", untailed_assign, &parse(untailed_assign), "").is_none());
+        assert!(kit_failure("drive", no_kit_axis, &parse(no_kit_axis), "").is_none());
+
+        let axis_failure = kit_failure("drive", no_kit_axis, &parse(no_kit_axis), COMPOSED_KIT)
+            .expect("a kitless variant cannot satisfy a composed kit");
+        assert!(
+            axis_failure.contains("carries no kit"),
+            "a kitless VARIANT must not report as a dropped tail — the remedies differ: {axis_failure}"
+        );
+    }
+
+    /// A tail that survives but names the **wrong** kit — the mis-wired-picker case, distinct from
+    /// the dropped one and reported as such.
+    #[test]
+    fn a_line_naming_a_different_kit_is_a_failure_that_names_both() {
+        let line = "assign_labor 0 71204 hunt game_deer_07 0.5 2 kit big_game";
+        let failure = kit_failure("drive", line, &parse(line), COMPOSED_KIT)
+            .expect("a kit that is not the composed one must fail");
+        assert!(
+            failure.contains("big_game") && failure.contains(COMPOSED_KIT),
+            "the failure must name what was sent AND what was wanted: {failure}"
+        );
+    }
 }

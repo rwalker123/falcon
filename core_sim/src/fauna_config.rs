@@ -223,6 +223,28 @@ pub struct SpeciesDef {
     /// **Playtest dials.** Validated finite & `> 0` — at `0` a herd would hold infinitely many
     /// animals and `floor(x / 0)` would take the whole stock in one turn.
     pub body_mass: f32,
+    /// **How many of these one hunter can bring into contact per turn** — the engagement stage of
+    /// `docs/plan_hunt_through_combat.md` §2, and a purely **spatial** constraint. Twenty hunters can
+    /// surround one mammoth (`0.05`); one hunter can work a line of snares (`10`).
+    ///
+    /// **It says nothing about how fast they die.** That is the fight's business — durability against
+    /// `hunters × max(0, attack − defense)`. Folding lethality in here would be a kill model living
+    /// outside the resolver, which is the duplication that arc exists to delete, and it is what let a
+    /// hand-authored "turns per kill" table look plausible during design.
+    ///
+    /// **It scales linearly with party size and is throughput, not a threshold.** Forty hunters
+    /// engage two mammoths a turn; five still engage one (contact rounds up — a small band can walk
+    /// up to a mammoth, it just cannot hurt it quickly) and grind it down over many turns. The gate
+    /// is attack-vs-defense, never headcount.
+    ///
+    /// **Authored against `engage_rate × body_mass`** — the most biomass one hunter can ever take
+    /// from this species per turn, at any weapon tier. That ceiling is what orders the roster: a
+    /// mammoth's `40` is an outlier rather than the top of a smooth curve, the tameable species sit
+    /// at 20–26.5 (you hunt them until you can tame them), pen small game is at the bottom, and
+    /// dangerous-for-their-size (boar `4`, wolf `1.75`) are the worst deals in the game.
+    ///
+    /// **Playtest dials.** Validated finite & `> 0`.
+    pub engage_rate: f32,
     /// Food-module keys (see `FoodModule::as_str`) this species hosts in.
     #[serde(default)]
     pub host_biomes: Vec<String>,
@@ -1502,6 +1524,12 @@ const MAX_FRACTION: f32 = 1.0;
 /// best-case sanity check, not an every-species guarantee.
 const PEN_ESCAPEMENT_QUARTERS: f32 = 2.0;
 
+/// **The wariness at which the retreat stage is an exact identity** — no draw, no randomness
+/// consumed, every engaged animal stays (`docs/plan_hunt_through_combat.md` §3). No roster row ships
+/// it; it is what [`FaunaConfig::without_retreat`] installs to keep a deterministic harness
+/// deterministic.
+pub const NO_RETREAT: f32 = 0.0;
+
 impl FaunaConfig {
     pub fn builtin() -> Arc<Self> {
         Arc::new(
@@ -1514,6 +1542,34 @@ impl FaunaConfig {
         let config: FaunaConfig = serde_json::from_str(json)?;
         config.validate()?;
         Ok(config)
+    }
+
+    /// **This roster with every species' `combat.wariness` held at `0`** — the retreat stage
+    /// (`docs/plan_hunt_through_combat.md` §3) reduced to its exact identity, so a hunt take is a
+    /// *deterministic* function of the crew, the floor and the fight again.
+    ///
+    /// # Why a shared helper rather than a per-suite pin
+    ///
+    /// Slice 7 authored a non-zero `wariness` on all 20 species, which makes every take on the
+    /// animal web stochastic. The existing suite is this arc's **deterministic regression net**: a
+    /// test carrying variance can no longer tell a real regression from a draw, which is the one
+    /// thing it exists to do. So every pre-existing harness holds wariness at `0` and keeps pinning
+    /// the numbers it pinned before, and the variance lives *only* in the tests written for it
+    /// (`core_sim/tests/hunt_wariness.rs`).
+    ///
+    /// This is [`crate::fauna::animals_that_stay`]'s zero-identity used as a lever, and it is the
+    /// same move `hunt_yield_vector::steady_quarry` already makes for `engage_rate` and `defense`
+    /// — one more field, hoisted to a shared helper because eleven suites need it and a copy in each
+    /// would drift.
+    ///
+    /// **It is not a general "make the hunt deterministic" switch**: the fight's own draw is
+    /// `combat_config.hit_chance`, which ships at `1.0` and is already an identity.
+    pub fn without_retreat(&self) -> Self {
+        let mut config = self.clone();
+        for def in config.species.values_mut() {
+            def.combat.wariness = NO_RETREAT;
+        }
+        config
     }
 
     pub fn from_file(path: &Path) -> Result<Self, FaunaConfigError> {
@@ -1646,6 +1702,11 @@ impl FaunaConfig {
             // many animals and `floor(escapement / 0) = inf` would strip the whole stock in one
             // turn; negative would invert the floor and hand back a negative kill count.
             require_positive_finite(species_field("body_mass"), def.body_mass)?;
+            // **The engagement throughput** (`plan_hunt_through_combat.md` §2). Positive is the whole
+            // bound: at `0` no party of any size could ever reach the species, which is not a
+            // balance choice but an unhuntable animal expressed as a typo; negative would hand back a
+            // negative engagement and invert the take.
+            require_positive_finite(species_field("engage_rate"), def.engage_rate)?;
             // **The husbandry density gains** — the per-rung K multiplier (`>= 1.0`). A gain **below 1**
             // would mean domestication *reduces* the land's carrying capacity, inverting the whole point
             // of the dial; `1.0` is neutral (a wild/untagged species). Both `#[serde(default)]` to 1.0,
@@ -1653,16 +1714,31 @@ impl FaunaConfig {
             require_at_least_one(species_field("pastoral_density"), def.pastoral_density)?;
             require_at_least_one(species_field("pen_density"), def.pen_density)?;
             // **The intrinsic combat body** (Predators Phase 0, `docs/plan_predators.md`). `attack` may
-            // be `0` (most prey just runs — a harmless hunt), but `defense` is a **denominator** in the
-            // kill/wound split (`combat::resolve_fight`): at `0` the split is `0/0` and a species would
-            // be un-fightable. `aggression` is a `[0, 1]` probability of initiating a raid (inert this
-            // phase). All finite — a NaN would poison the fight arithmetic.
+            // be `0` (most prey just runs — a harmless hunt), and so may **`defense`**: it is the hard
+            // gate `max(0, attack − defense)` (`docs/plan_hunt_through_combat.md` §4.2), and `0` is the
+            // meaningful statement *"no protection at all"* that the five small-game rows carry — the
+            // whole of why a bare-handed band can still take a rabbit. It appears in the kill/wound
+            // split's denominator too, where `resolve_fight` already guards the `0/0` a harmless
+            // attacker would otherwise produce. `aggression` is a `[0, 1]` probability of initiating a
+            // raid. All finite — a NaN would poison the fight arithmetic.
             require_non_negative_finite(species_field("combat.attack"), def.combat.attack)?;
-            require_positive_finite(species_field("combat.defense"), def.combat.defense)?;
+            require_non_negative_finite(species_field("combat.defense"), def.combat.defense)?;
+            // **Durability is a DENOMINATOR** (`units_down = damage / durability`, §4.2), so `0` would
+            // turn a single point of damage into every animal in the engagement — a species wiped out
+            // by one hunter — and negative would hand back a negative kill count. Unlike `defense`
+            // there is no coherent zero: a body that soaks nothing is not "unprotected", it is absent.
+            require_positive_finite(species_field("combat.durability"), def.combat.durability)?;
             require_in_unit_range(species_field("aggression"), def.aggression)?;
             // `ferocity` is a probability (fights back vs flees), so the same `[0, 1]` bound as
             // `aggression`. It scales the animal's effective attack in the hunt-casualty adapters.
             require_in_unit_range(species_field("ferocity"), def.ferocity)?;
+            // `combat.wariness` is a probability too (breaks off at contact vs stays to be fought),
+            // and `CombatStats` is `#[serde(default)]`, so the JSON can author anything here.
+            // `fauna::animals_that_stay` clamps an out-of-range value with `.min(1.0)`, which hides an
+            // authoring slip — and a **NaN** is worse than hidden: `NaN <= 0.0` is false so the
+            // wariness-`0` early return is skipped, and `NaN.min(1.0)` is `1.0` in Rust, so every
+            // engaged animal retreats and the species' take is **silently zero** on every hunt.
+            require_in_unit_range(species_field("combat.wariness"), def.combat.wariness)?;
             // **Carnivore coherence** (Predators Phase 1a, `docs/plan_predators.md`). A carnivore's
             // carrying capacity is `Σ prey_flow / prey_per_biomass`, so `prey_per_biomass` is a
             // denominator and must be `> 0` (a `0` yields infinite `K`). And a carnivore whose `attack`
@@ -1867,6 +1943,57 @@ impl FaunaConfig {
     pub fn animals_per_herder_for(&self, display: &str) -> f32 {
         self.species_by_display(display)
             .map_or(DEFAULT_ANIMALS_PER_HERDER, |def| def.animals_per_herder)
+    }
+
+    /// **The probability an animal of this species breaks off at contact**
+    /// ([`crate::combat::CombatStats::wariness`]), resolved by display name — the
+    /// [`FaunaConfig::taming_rate_for`] path. An unresolvable species reads `0.0`: no retreat, which
+    /// is the identity, and the honest reading of a fixture the roster does not describe.
+    pub fn wariness_for(&self, display: &str) -> f32 {
+        self.species_by_display(display)
+            .map_or(0.0, |def| def.combat.wariness)
+    }
+
+    /// **The animals one hunter of this species can bring into contact per turn**
+    /// ([`SpeciesDef::engage_rate`]), resolved by the display name a `Herd` carries — the
+    /// [`FaunaConfig::taming_rate_for`] path, so retuning the dial reaches herds already on the map.
+    ///
+    /// **A species the table cannot resolve reads [`f32::INFINITY`] — no engagement bound at all**,
+    /// not a small number. The unresolvable case is an isolated test fixture, and the honest reading
+    /// of "this herd is not in the roster" is *the engagement stage has nothing to say about it*,
+    /// which leaves such a fixture's take exactly as it was before this arc. A finite default would
+    /// silently cap fixtures at a number nobody chose.
+    pub fn engage_rate_for(&self, display: &str) -> f32 {
+        self.species_by_display(display)
+            .map_or(f32::INFINITY, |def| def.engage_rate)
+    }
+
+    /// **The quarry's side of a hunt fight** ([`crate::fauna::QuarryFight`] — its combat body plus the
+    /// `ferocity` that decides whether it fights back), resolved by display name through the
+    /// [`FaunaConfig::taming_rate_for`] path. **THE seam** every take and forecast path resolves the
+    /// fight's quarry through, so none of them can assemble a different animal.
+    ///
+    /// An unresolvable species (an isolated test fixture) reads [`crate::combat::CombatStats`]'s
+    /// default with `ferocity 0` — a harmless body at the neutral `durability 1`, which is the honest
+    /// reading of *"the roster does not describe this herd"* and matches what
+    /// [`FaunaConfig::wariness_for`] already answers for the same case.
+    ///
+    /// **It answers the SPECIES, so the wounds come back empty** — an un-hunted animal. A path with a
+    /// live herd in hand resolves through [`crate::fauna::herd_quarry_fight`] instead, which carries
+    /// [`crate::fauna::Herd::wounds`] into the fight.
+    pub fn quarry_fight_for(&self, display: &str) -> crate::fauna::QuarryFight {
+        self.species_by_display(display).map_or(
+            crate::fauna::QuarryFight {
+                profile: CombatStats::default(),
+                ferocity: 0.0,
+                wounds: crate::combat::DamageLedger::default(),
+            },
+            |def| crate::fauna::QuarryFight {
+                profile: def.combat,
+                ferocity: def.ferocity,
+                wounds: crate::combat::DamageLedger::default(),
+            },
+        )
     }
 
     /// **The species' resolved hunt-yield vector** ([`SpeciesDef::hunt_yield`]) — *what* a take of this
@@ -2291,6 +2418,13 @@ impl FaunaConfigHandle {
     pub fn replace(&mut self, config: Arc<FaunaConfig>) {
         self.0 = config;
     }
+
+    /// **Hold the whole roster's `combat.wariness` at `0` in place** — the handle-side spelling of
+    /// [`FaunaConfig::without_retreat`], which is how a harness that already has the world's
+    /// resources in hand keeps its take deterministic in one line.
+    pub fn hold_wariness_at_zero(&mut self) {
+        self.0 = Arc::new(self.0.without_retreat());
+    }
 }
 
 impl Default for FaunaConfigHandle {
@@ -2386,7 +2520,7 @@ mod tests {
         // `body_mass` is REQUIRED (slice 8) — a species with no quantum is not a species, so it must
         // fail to parse rather than default to something.
         let def: SpeciesDef = serde_json::from_str(
-            r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1],"body_mass":1}"#,
+            r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1],"body_mass":1,"engage_rate":1}"#,
         )
         .unwrap();
         assert_eq!(def.husbandry_ceiling, HusbandryCeiling::Pen);
@@ -2436,7 +2570,7 @@ mod tests {
         // `body_mass` is REQUIRED (slice 8) — a species with no quantum is not a species, so it must
         // fail to parse rather than default to something.
         let def: SpeciesDef = serde_json::from_str(
-            r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1],"body_mass":1}"#,
+            r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1],"body_mass":1,"engage_rate":1}"#,
         )
         .unwrap();
         assert_eq!(def.taming_rate, DEFAULT_TAMING_RATE);
@@ -2483,7 +2617,7 @@ mod tests {
         let config = FaunaConfig::builtin();
         // A row that omits both dials reads the neutral gain.
         let def: SpeciesDef = serde_json::from_str(
-            r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1],"body_mass":1}"#,
+            r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1],"body_mass":1,"engage_rate":1}"#,
         )
         .unwrap();
         assert_eq!(def.pastoral_density, DEFAULT_HUSBANDRY_DENSITY);

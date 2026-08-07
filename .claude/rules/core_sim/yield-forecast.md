@@ -139,6 +139,24 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 > expected(workers, rung) = min(workers × perWorkerYield × <rung>BuildFraction, ceiling(floor))
 > ```
 >
+> **ON THE ANIMAL WEB THAT `min()` HAS A THIRD ARM, and leaving it out overstates a light-bodied
+> species' take by ~30×** (`docs/plan_hunt_through_combat.md` §2). Engagement caps how many animals a
+> party can *reach* at all — `HerdTelemetryState.engageRate`, appended for exactly this:
+>
+> ```text
+> reach(workers, rung) = floor(workers × engageRate × <rung>BuildFraction) × bodyMass × <account>PerBiomass
+> expected(workers, rung) = min(crew term, ceiling(floor), reach(workers, rung))
+> ```
+>
+> It is a term rather than an answer for the same reason the two beside it are: linear in the crew and
+> exact. **`engageRate <= 0` means "no engagement stage" and the term is dropped** — the wire's finite
+> reading of the sim's `f32::INFINITY` for a **pen** (a penned animal is not stalked) and for the plant
+> web, which never publishes the field. Measured before it shipped: a Wild Fowl herd with one hunter
+> read **307 birds/turn** on the compose sheet (one hunter's 40 biomass of carry) against a take of
+> **10** — the sheet promising 30× what the sim would pay, for the whole life of the field's absence.
+> Pinned on the exported wire by
+> `hunt_yield_vector::the_exported_terms_reproduce_the_engagement_bounded_take`.
+>
 > **THE BUILD FRACTION MULTIPLIES THE CREW, NOT THE CEILING** (`docs/plan_harvest_floor.md` §3.1).
 > It moved there because dipping the ceiling made a deeper floor build for free — a fraction of a
 > bigger standing stock still filled the crew's baskets, so every stance completed a 25-turn Cultivate
@@ -168,6 +186,7 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 > |---|---|---|
 > | escapement ceiling | **terms** — `biomass`, `carryingCapacity`, `*PerBiomass` | `max(0, B − f·K) × rate` is linear and exact; this is what retired the four stance rows |
 > | build dip | **terms** — the four `*BuildFraction` fields | a factor on the crew term, likewise exact |
+> | engagement bound | **term** — `HerdTelemetryState.engageRate` | `workers × engageRate × dip × bodyMass` is linear in the crew, exactly like the carry term beside it |
 > | the take | **the answer** — `SourceYield.actual` | `floor(ceiling / bodyMass)` is not linear; no client can re-derive it |
 > | raid trip length | **sampled answers** — `huntTripEstimates` × `RAID_FORECAST_FLOOR_SAMPLES` | a bounded forward simulation; there is no expression to hand over |
 > | the growth curve | **sampled answers** — `regrowthSamples` × `REGROWTH_CURVE_SAMPLES` | see below |
@@ -253,8 +272,9 @@ projection* is the sustained MSY. Pinned by
   tile's `seasonal_weight`**, as `forage_take` does — it can be `0` in a dead season, so consumers must
   not divide by it; hunt has no seasonal factor).
 - **`perWorkerBiomass` = the same throughput in BIOMASS**, before any account conversion:
-  `per_worker_biomass_capacity × seasonal_weight` on a patch (`forage::forage_per_worker_biomass`,
-  `0` in a dead season) and `labor_config.hunt.per_worker_biomass_capacity` on a herd (no seasonal
+  `per_worker_biomass_capacity × seasonal_weight` on a patch (`forage::forage_per_worker_biomass` at
+  the *equipped reference* rate — a band's own basket tier rides its cohort row instead, see
+  `equipment.md`; `0` in a dead season) and `labor_config.hunt.per_worker_biomass_capacity` on a herd (no seasonal
   factor). It is the term the **crew** half of the panel divides by — *"clear it now"* is
   `(B − floor·K) ÷ (carry × dip)` and *"hold it after"* is the regrowth at that floor over the same
   carry, both arithmetic in biomass.
@@ -316,6 +336,88 @@ projection* is the sustained MSY. Pinned by
   patch is NOT this shape** — it is rung 2, a wild stand either way, and forecasts floor-live like a
   wild patch.
 
+> ### THE INVARIANT IS RESTATED: `forecast == actual` IS NOW A CLAIM ABOUT A DISTRIBUTION
+>
+> **`docs/plan_hunt_through_combat.md` §6.4, slice 6.** The old form — *"the forecast is the number
+> the sim will pay"* — cannot survive a stochastic take, and the reason is structural rather than a
+> gap someone could close:
+>
+> > **A forecast has no event seed.** `fauna::retreat_seed` is composed from
+> > `(map_seed, tick, herd, party)`, and a projection is projecting into ticks that have not happened.
+> > There is no tick for it to name, so a preview **physically cannot draw** the retreat — or the
+> > attack rolls — the live take will draw.
+>
+> So the invariant reads:
+>
+> > **`SourceYield::actual` is the take's EXPECTATION over the seed, and the take the sim pays lies
+> > within `SourceYield::range`.** Where no stage is stochastic the distribution is **degenerate** and
+> > `low == actual == high == the take`, bit-for-bit.
+>
+> **It landed degenerate and that is why it landed safely.** When slice 6 shipped, `wariness` was `0`
+> across the roster and `hit_chance` was `1.0`, so both binomials took their exact identities at every
+> quantile, the reported range was a **point**, and the band could be wired through every forecast
+> path with **no number in the game moving**.
+>
+> **Slice 7 authored the wariness, and the band is now real on the animal web.** A wild hunt's
+> forecast reports a genuine `low < likely < high`; the **second** sentence still governs everywhere
+> nothing is stochastic — the whole plant web, a pen, and a species held at `wariness 0` by config —
+> and those stay bit-for-bit exact. Because a forecast reports the **expectation**, a `forecast ==
+> actual` equality test on a wild hunt is no longer a meaningful assertion: it would be comparing one
+> draw against a mean. Every pre-existing suite therefore holds the roster at `0` through
+> `FaunaConfig::without_retreat` (the shared spelling of `hunt_yield_vector::steady_quarry`'s move),
+> and the variance is asserted in one place, `core_sim/tests/hunt_wariness.rs`.
+>
+> **The rejected alternative was to make the draw forecast-reproducible** by taking the tick out of
+> `retreat_seed`. It was refused for three reasons, all fatal: the draw would become a per-`(herd,
+> party)` **constant**, so a pairing that rolled well on turn 1 would roll identically on turn 40 and
+> "risk" would never vary in play; a player could therefore *learn* the answer, which is exactly the
+> spreadsheet §4.7 says variance exists to prevent; and §6.2's seeding is **per event**, whose event
+> is `(herd, tick, party)` — a tick-free seed is no longer per-event at all.
+>
+> **How the three readings are produced.** `fauna::HuntDraw` carries *how* a hunt resolves its two
+> stochastic stages — `Seeded(u64)` for a live take, `Quantile { sigmas }` for a forecast — and is
+> threaded through `animals_that_stay`, `resolve_hunt_fight`, `hunt_take` and
+> `expedition_take_biomass`, so **the forecast runs the take's own code** rather than a second copy of
+> it. Its combat half is `combat::StrikeDraw` on `CombatTuning`, read by the one
+> `combat::landed_strikes` seam. `fauna::forecast_take_range` evaluates
+> `forecast_production_and_take_at` at `−k`, the mean, and `+k`; every arm is monotone
+> non-decreasing in the draw, so `low <= likely <= high` is a property of the arithmetic rather than
+> a clamp. `combat_config.forecast_range_sigmas` (**2.0**) is the width, and it is a **readout lever**
+> — no resolution path reads it, so widening the band cannot move a single animal.
+>
+> **The range is an ANSWER, not a term, and the boundary rule above says why**: the take passes
+> through `quantise_animal_take`'s `floor()`, so a band on the animals brought down is **not** a band
+> on the food — on a slow breeder both bounds routinely land on the same whole animal. Publishing
+> `wariness` / `hit_chance` as terms would put a second, non-linear copy of the take model in a
+> language with no tests over it, the same reasoning that makes `regrowthSamples` sampled.
+>
+> **A RESOLVED row is a fact, not a forecast**, and reports `YieldRange::certain` — the take happened,
+> so there is no distribution left. Only the assign-time seed carries a real band.
+>
+> **The plant web's range is a point by construction** — a gather has no engagement, no retreat and no
+> fight (`SourceYieldForecast::fight` is `None`, `engage_rate` is `INFINITY`) — so the old invariant
+> survives there unchanged, at any configured width.
+>
+> Wire: `LaborAssignment.actualYieldLow` / `actualYieldHigh` / `tradeYieldLow` / `tradeYieldHigh`
+> (append-only, after `floor`), **both currencies** for #337's reason — a wolf's food band is honestly
+> all-zero. Guarded by `core_sim/tests/hunt_forecast_range.rs` on the exported snapshot: the
+> degenerate identity (bit-for-bit, animal web × a defaulting and an inedible species × the floor),
+> the plant web's structural point-ness at an absurd width, a resolved row's collapse under a **live**
+> sub-1 `hit_chance`, and the widened band's containment across 400 seeds — paired with three liveness
+> assertions, because *"the answer is between 6 and 11"* passes when the feature is dead (§6.3). The
+> sensitive halves are unit tests on the two quantile functions
+> (`combat::tests::a_certain_hit_chance_has_no_spread_to_quantile`,
+> `fauna::tests::zero_wariness_has_no_spread_for_the_forecast_to_report`), because the wire test reads
+> the take *after* the quantiser, which absorbs a small perturbation.
+>
+> **That file holds the roster at `wariness 0` and states the degenerate half; the LIVE half is
+> `core_sim/tests/hunt_wariness.rs`**, which runs the same containment sweep on the **shipped**
+> config — the exported band widens, contains 400 live takes, and its `likely` tracks their mean —
+> plus the ordering (a warier quarry yields less to the same crew, one field changed on one species so
+> "all else equal" is a fact), the hunter-turns identity (the herd loses exactly what was *killed*,
+> never what fled), and the surviving `wariness 0` identity, which is config-only now and is what
+> every other suite installs.
+
 **Invariant: forecast == actual — no duplicated yield math.** The forecast and the take path read the
 *same* pure helpers, so the UI can never promise a number the sim won't pay:
 - forage (`forage.rs`): `forage_escapement_ceiling` (the stock standing above the floor, in biomass — **no dip**) · `forage_per_worker_biomass`
@@ -372,6 +474,29 @@ client's compose-time "Expected yield" row promises. Shape:
   `hunt_haul_workers` off `SourceYieldForecast::ceiling_at` for a whole-animal source, so the seed
   matches the client's max-useful cap), and `wasted` = the understaffing mirror. No new formula, no new
   config lever.
+- **BOTH seed arms resolve the ASSIGNMENT's own kit tier.** The Hunt seed reads carry through
+  `EquipmentConfig::hunt_per_worker_biomass_capacity` (the **sled**) and **attack** through
+  `EquipmentConfig::hunter_profile`; the Forage seed reads
+  `EquipmentConfig::forage_per_worker_biomass_capacity` (the **baskets**). Those are the same seams
+  `advance_labor_allocation` reads (see `equipment.md`). It has to: a band-agnostic equipped rate
+  would promise a sledless band a kitted haul or a bare-handed crew a basketful, and since the take
+  resolves through the fight (`docs/plan_hunt_through_combat.md` §4) a band-agnostic *attack* would
+  promise a bare-handed band a mammoth. forecast == actual is exactly what that breaks.
+
+  Since kit selection the tier is masked by **the crew's chosen kit** as well as by the band's wear
+  (`equipment.md` → "A kit is a MASK"), and `seed_source_yield` reads that choice off the assignment
+  `set_assignment` has just stored rather than off the band — so the seed and the turn resolve the
+  identical mask, and a crew sent out with `none` is previewed bare-handed.
+- **The fight is a forecast term now**, threaded as `fauna::HuntingParty` through `hunt_forecast`,
+  `hunt_source_yield_preview`, `project_realized_hunt`, `project_arrivals_hunt` and
+  `forecast_production_and_take_at`, so all six take/forecast paths resolve the *identical* fight via
+  the one `fauna::resolve_hunt_fight` helper. A projection cannot know the tick it is projecting, so
+  it resolves at `fauna::HuntDraw::EXPECTED` — **no draw at all**, rather than the stand-in seed the
+  first cut used (`FORECAST_FIGHT_SEED` survives only as the unread stream seed a quantile-mode fight
+  hands to `resolve_fight`). At the shipped `combat_config.hit_chance` of `1.0` the fight makes no
+  draw either way, so this is bit-identical to what the seed produced; what it buys is that a sub-1
+  chance now yields the **expectation** instead of one arbitrary sample. See "THE INVARIANT IS
+  RESTATED" below.
 - **Only the source the command touched** is seeded (other sources keep their real actuals), and only
   where the turn would actually pay: out of `band_work_range` / past the hunt leash, an unseeded patch
   or a vanished herd keeps its zero row, and a **genuinely barren source still seeds `0.0`** — `+0.00`
@@ -383,6 +508,12 @@ client's compose-time "Expected yield" row promises. Shape:
   (`set_assignment`/`normalize`/`clear` — the snapshot zips the two by index, so a row left behind by a
   removed assignment used to be attributed to the *next* source). New rows default to
   `SourceYield::ZERO`.
+- **The seed carries the RANGE, and it is the only row that does.** `forecast_source_yield` takes
+  `combat_config.forecast_range_sigmas` and fills `SourceYield::range` from
+  `fauna::forecast_take_range`; the resolved arms of `advance_labor_allocation` fill
+  `YieldRange::certain`, because a take that has happened has no distribution left. Both webs pass
+  through the one `forecast_source_yield`, so the plant side's structural point-ness and the animal
+  side's real band are one code path.
 - **A FLOOR change re-seeds too**, not just a staffing change: the floor is a mutable property of the
   same source (`LaborTarget::same_source` ignores it), so `handle_assign_labor` runs the same seed
   after replacing the assignment. `changing_the_floor_reseeds_the_expected_yield` sweeps the dial
