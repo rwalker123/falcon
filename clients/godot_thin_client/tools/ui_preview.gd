@@ -95,8 +95,8 @@ const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 ## pointer line rather than the no-panel legacy fallback.
 const BAND_CITY_PANEL_SCENE := preload("res://src/ui/BandCityPanel.tscn")
 const OUT_DIR := "res://ui_preview_out"
-# The canvas EVERY frame renders at. Pinned rather than set once, because `project.godot` opens the
-# window MAXIMIZED and the WM applies — and RE-applies — that asynchronously; see `_ensure_canvas`.
+# The canvas EVERY frame renders at. Pinned rather than set once, because the WM applies — and
+# RE-applies — a window mode/size change asynchronously; see `_ensure_canvas`.
 const PREVIEW_CANVAS_SIZE := Vector2i(1500, 900)
 
 # How many frames `_ensure_canvas` / `_capture` keep re-asserting the pinned canvas while waiting for
@@ -464,7 +464,7 @@ func _pin_canvas(win: Window) -> void:
 	win.size = PREVIEW_CANVAS_SIZE
 
 ## Hold the window at the pinned canvas and WAIT for the WM to honour it, before anything is captured.
-## `project.godot` opens MAXIMIZED and macOS applies — and RE-applies — that asynchronously, many
+## macOS applies — and RE-applies — a window mode/size change asynchronously, many
 ## frames in, so the bare `get_window().size = …` this harness used to do in `_ready` was a RACE that
 ## did not stay won. Measured on two clean runs of identical code: one came back with 177 of its 184
 ## frames at the monitor's 5120x1410 instead of the intended 1500x900 while the other rendered all 184
@@ -480,9 +480,12 @@ func _ensure_canvas() -> void:
 ## Settle the window ONCE, in `_ready`, before any state renders — and take the maximize DELIBERATELY
 ## on the way, which is what closes the last of the drift.
 ##
-## `project.godot` opens the window MAXIMIZED and macOS applies that asynchronously, so whether a run
-## ever passed through the monitor-sized window was a COIN FLIP — and it is a coin flip the pixels
-## remember. Measured over four runs with the clock already frozen and the canvas pinned: runs that
+## Whether a run passes through a monitor-sized window is a coin flip the pixels REMEMBER, and the
+## deliberate maximize is what settles it. `project.godot` used to open MAXIMIZED and macOS applied that
+## asynchronously, which is the coin flip this was written against; the project now boots WINDOWED (see
+## `.claude/rules/client/test-harnesses.md` → "The tool window is quiet by DEFAULT"), and the maximize
+## stays because a WM still resizes on its own schedule and because every frame set on record was
+## rendered on this path. Measured over four runs with the clock already frozen and the canvas pinned: runs that
 ## never maximized and runs that did formed two byte-DISTINCT clusters, differing by ±1 on the
 ## antialiased edges of ~85 frames (`window/stretch` is `canvas_items` with an `expand` aspect, so the
 ## stretch scale swings 0.78 → 2.67 → 0.78 across a maximize and the rasterized-glyph/coverage state

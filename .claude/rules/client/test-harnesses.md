@@ -41,6 +41,45 @@ misses half the suite) |
 | `tools/inspector_hidden_guard.gd` / `.tscn` | Headless **regression guard** for the hidden-Inspector skip (see `inspector-panels.md` → "A hidden Inspector does not render"). Instances the real `InspectorLayer.tscn` and asserts, using `InfluencerPanel.get_influencers()` (rebuilt wholesale from a frame's `influencers` key, public) and **`_last_turn`** as witnesses: the `_tab_panels` fan-out is **skipped** while hidden — for a DELTA as well as a full snapshot, since delta streaming made every merged frame a complete world; the CHEAP PREFIX above the visibility gate **still runs** for both frame kinds; and showing the panel catches it up to the **latest** frame, not the first one seen while hidden. **The accumulator witness changed with issue #272.** It used to be `_seen_command_events`, and the claim it carried was that `_ingest_command_events` kept running while hidden because a dropped per-turn event is unrecoverable — but that stream is the event dock's now (`Main` feeds `EventDockPanel.ingest_events` directly), so the member the assertions named no longer exists and the property it described is no longer this file's. The Inspector holds **no accumulator at all**; what still must run above the gate is the prefix that writes `_cached_snapshot` and `_last_turn`, which is what makes the catch-up possible. `_last_turn` is the right witness precisely because it is written above the gate and read nowhere else on this path — mutation-verified by gating its write on `_panel_visible`, which fails two of the three prefix assertions naming the turn it found. The two assertions that only ever restated the de-dup ("the replay did not double-log") are retired rather than repointed: with nothing accumulating there is nothing to double-log. **Case 5 carries the arc's history.** Its `DELTA_WHILE_HIDDEN` fixture used to be a PARTIAL dict (`influencer_updates`, no `influencers`) and the case asserted the opposite — that a hidden delta is applied IN FULL, because a partial frame cannot be reconstructed. The fixture is now a MERGED COMPLETE frame carrying the wholesale roster *and* the sparse `*_updates` key, exactly as the decoder emits; a partial frame is still unsafe to cache and replay, it is simply no longer producible, and the fixture says so. Its three roster sizes (3 / 5 / 6) are chosen so "catch-up never ran", "catch-up replayed the OLDER frame" and "correct" are each distinguishable, which is strictly more than the two-size version caught. Mutation-tested four ways — reverting the `_cached_snapshot` write to full-snapshots-only, reverting the delta half of the skip, replaying an older frame, and re-introducing the original bug (a hidden delta discharging `_hidden_snapshot_pending`) — each producing a distinct, self-explaining failure. Exits non-zero on failure: `godot --headless --path . res://tools/inspector_hidden_guard.tscn`. **Why it must exist:** the failure is invisible in normal play — a stale-when-opened Inspector is indistinguishable from one that simply hasn't ticked yet — so nothing else catches a refactor that moves a line above or below the gate. |
 
 
+## The tool window is quiet by DEFAULT
+
+Every harness that captures pixels must run **windowed**: `--headless` selects the headless display
+driver, whose only rendering driver is `dummy`, so there is no viewport texture to read back. So
+`ui_preview`, `map_preview`, `blend_probe`, `band_panel_preview`, `menu_preview` and
+`workbench_preview` each open a real window — and a repo worked by several worktrees at once opens
+one every verification pass, in every session, all day.
+
+`project.godot` therefore boots `window/size/mode=0` (windowed) and **`window/size/no_focus=true`**,
+and `LandingScreen._claim_player_window()` — the one scene only the game instantiates — undoes both
+for a player. The harnesses are the common case, so they get the default and the game asks.
+
+Measured on macOS with Godot 4.7, probing `DisplayServer.window_is_focused()` from inside the run:
+under the old fullscreen default the harness window took the keyboard (`IS_FOCUSED=true`), and on
+exit macOS left **`loginwindow`** frontmost rather than returning focus to the app that had it — so
+each run cost a click in whatever *other* session the human was typing in. Under `no_focus` the
+window is never key and focus returns to the previous app.
+
+Three things this does not cost, each checked rather than assumed:
+- **The frames are identical.** A full `ui_preview` walk under the new defaults came back
+  **341/341 PNGs byte-identical** to the run before it, still at the pinned 1500x900.
+- **The deliberate maximize survives it.** `_stabilize_canvas` takes a `MODE_MAXIMIZED` on purpose
+  and pins back; `IS_FOCUSED` stays false at startup, through that maximize, and after the pin-back.
+- **The click probes survive it.** `band_panel_preview` pushes its presses through
+  `get_viewport().push_input()`, which is software-side and indifferent to OS focus.
+
+**This cannot be moved to the command line.** `-w`, `--position` and `--resolution` are *ignored*
+when `project.godot` declares a fullscreen mode — `window_get_mode()` still comes back `3`, with the
+flags placed either side of `--path`. Only a config file moves the boot window.
+
+**Minimizing is not the stronger version of it.** A window put in `WINDOW_MODE_MINIMIZED` stops
+posting draws, so the first `RenderingServer.frame_post_draw` await never returns and the run hangs.
+The window is still VISIBLE for its few seconds; it simply never takes the keyboard.
+
+`menu_preview` is the one harness that pins a window size without also pinning
+`Window.MODE_WINDOWED`. Under the old fullscreen default that assignment was ignored and it captured
+at the monitor's size; it now captures at its declared `PREVIEW_SIZE`.
+
+
 ## The harness is a manifest; the states are chapters
 
 `tools/ui_preview.gd` reached **11,847 lines**, of which a single `_ready()` was **5,945** — and it

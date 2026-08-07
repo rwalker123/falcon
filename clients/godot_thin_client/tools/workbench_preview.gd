@@ -1030,7 +1030,7 @@ func _assert_equipment_fits(page: WorkbenchPage, id: StringName) -> void:
 
 # ---- capture ---------------------------------------------------------------
 
-## `project.godot` opens MAXIMIZED and macOS applies that asynchronously, so the window is re-pinned
+## macOS applies a window mode/size change asynchronously, so the window is re-pinned
 ## here and again from `_settle` — the treatment `blend_probe`/`map_preview` carry. Without it a
 ## frame silently renders at the monitor's size and the surface is judged at a width it never ships
 ## at.
@@ -1040,7 +1040,7 @@ func _pin_window() -> void:
 	window.size = PREVIEW_SIZE
 
 
-## Pinned TWICE around a frame, because macOS applies `project.godot`'s MODE_MAXIMIZED
+## Pinned TWICE around a frame, because macOS applies a window mode/size change
 ## asynchronously: a single pin before the draw can be undone between the pin and the capture, and
 ## the frame silently lands at monitor size (one state rendered at 3840x1050 among four at 1600x900,
 ## which is only obvious if you happen to compare them).
@@ -1062,7 +1062,7 @@ func _save(name: String) -> void:
 		push_warning("workbench_preview: null image (dummy renderer?) — skipping %s.png; run without --headless to capture" % name)
 		return
 	# **THE GEOMETRY GUARD, AND IT RE-CAPTURES RATHER THAN JUST COMPLAINING.** macOS applies (and
-	# re-applies) `project.godot`'s MODE_MAXIMIZED asynchronously, so a pin can be undone between
+	# re-applies) a window mode/size change asynchronously, so a pin can be undone between
 	# `_settle` and the capture: measured, ONE of four frames came back at the monitor's 3840x1050
 	# while its siblings were 1600x900 — a frame judged at a width the surface never ships at, and
 	# nothing says so unless you compare the files. `blend_probe`/`map_preview` carry the same guard.

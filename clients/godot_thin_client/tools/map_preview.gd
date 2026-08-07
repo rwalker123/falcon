@@ -21,8 +21,8 @@ const WARMUP_SETTLES := 3   # frames burned before the first capture (the window
 # left to whatever the WM hands us.
 const DEFAULT_CANVAS_SIZE := Vector2i(1000, 800)
 # How many frames _ensure_canvas will keep re-asserting the pinned canvas while it waits for the WM to
-# honour it (project.godot opens MAXIMIZED; the mode change lands asynchronously). Bounded so a WM that
-# refuses to shrink the window fails loudly rather than hanging.
+# honour it (a window mode/size change lands asynchronously, whatever mode the process booted in). Bounded
+# so a WM that refuses to shrink the window fails loudly rather than hanging.
 const CANVAS_PIN_MAX_FRAMES := 60
 
 const GRID_W := 16
@@ -1491,7 +1491,7 @@ func _set_canvas(size: Vector2i) -> void:
 	await _ensure_canvas()
 
 ## Hold the window at the pinned canvas, and WAIT for the WM to honour it, before anything is measured
-## or captured. project.godot opens MAXIMIZED and macOS applies (and RE-applies) that asynchronously,
+## or captured. macOS applies (and RE-applies) a window mode/size change asynchronously,
 ## many frames in — so the bare `get_window().size = …` + two process_frames this harness used to do in
 ## _ready is a RACE, and it does not stay won. Measured on a clean run: 33 of 41 saved frames came out
 ## at the monitor's 3840x1050 rather than the pinned 1000x800, and the four earliest states flipped
