@@ -54,6 +54,10 @@ mod tests {
                 attack: BARE_ATTACK,
                 hunt_carry_per_worker_biomass: BARE_HUNT_CARRY,
                 forage_carry_per_worker_biomass: BARE_FORAGE_CARRY,
+                // `none` carries nothing, so every multiplier reads its neutral.
+                dispersion: 1.0,
+                engage_multiplier: 1.0,
+                exposure: 1.0,
             }],
             default_hunt_kit_id: "big_game".to_string(),
             default_forage_kit_id: "gathering".to_string(),

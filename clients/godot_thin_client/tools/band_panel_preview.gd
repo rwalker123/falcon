@@ -5786,9 +5786,7 @@ func _map_path_snapshot() -> Dictionary:
 ## defense, so the ⚠ effective-attack gate stays quiet and its own coverage stays where it is.
 func _kit_band_fixture() -> Dictionary:
 	var band := _band_fixture()
-	band["hunting_kit_durability"] = 74.5
-	band["sled_kit_durability"] = 58.0
-	band["basket_kit_durability"] = 91.0
+	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": 74.5}, {"item_id": "sled", "remaining": 58.0}, {"item_id": "baskets", "remaining": 91.0}, {"item_id": "traps", "remaining": 83.0}]
 	band["hunter_attack"] = 2.0
 	band["hunt_carry_per_worker_biomass"] = 2.5
 	band["forage_carry_per_worker_biomass"] = 1.75
@@ -5826,9 +5824,7 @@ const KIT_FRAME_BASKETS_CONDITION := 91.0
 ## apart from it because the map-path state asserts a live `Sled 58` row.
 func _kit_worn_band_fixture() -> Dictionary:
 	var band := _band_fixture()
-	band["hunting_kit_durability"] = KIT_FRAME_SPEARS_CONDITION
-	band["sled_kit_durability"] = KIT_FRAME_SLED_DRY
-	band["basket_kit_durability"] = KIT_FRAME_BASKETS_CONDITION
+	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": KIT_FRAME_SPEARS_CONDITION}, {"item_id": "sled", "remaining": KIT_FRAME_SLED_DRY}, {"item_id": "baskets", "remaining": KIT_FRAME_BASKETS_CONDITION}, {"item_id": "traps", "remaining": KIT_FRAME_SPEARS_CONDITION}]
 	# The band's OWN resolved tiers, i.e. what it gets under the JOB DEFAULT. They are the cohort's
 	# statement and the `Kit` row reads them; the picker does NOT — it resolves the SELECTED kit's
 	# tiers off the roster — so they are set consistently with the conditions above rather than being
@@ -5908,9 +5904,7 @@ func _band_fixture() -> Dictionary:
 		# Three DIFFERENT conditions on the 0-100 scale, so an assertion cannot pass with two
 		# accessors swapped; none dry, so the row's DANGER tint keeps its meaning and the frames that
 		# judge a spent kit stay the ones that state one.
-		"hunting_kit_durability": KIT_SHARED_SPEARS_CONDITION,
-		"sled_kit_durability": KIT_SHARED_SLED_CONDITION,
-		"basket_kit_durability": KIT_SHARED_BASKETS_CONDITION,
+		"kit_item_conditions": [{"item_id": "spears", "remaining": KIT_SHARED_SPEARS_CONDITION}, {"item_id": "sled", "remaining": KIT_SHARED_SLED_CONDITION}, {"item_id": "baskets", "remaining": KIT_SHARED_BASKETS_CONDITION}, {"item_id": "traps", "remaining": KIT_SHARED_SPEARS_CONDITION}],
 		# The RESOLVED tiers the sim publishes beside them. Equipped throughout, matching the
 		# conditions above — `hunter_attack` well clear of `QUARRY_DEFENSE`, so no compose sheet on
 		# this band reads the combat gate's refusal and the frames that judge that refusal stay the

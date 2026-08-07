@@ -206,8 +206,12 @@ func kit_breakdown_lines(band: Dictionary) -> Array[String]:
         DetailFormat.KIT_LABEL_BASKETS, DetailFormat.KIT_ROLE_FORAGE_CARRY_FORMAT % String.num(
             float(band.get(DetailFormat.KIT_TIER_KEY_FORAGE_CARRY, 0.0)),
             DetailFormat.KIT_CARRY_DECIMALS)))
+    # **Traps state their REACH, not a carry or an attack** — the term that actually binds on light
+    # game, where a weapon's damage buys nothing because there is no defence to clear.
+    lines.append(DetailFormat.kit_breakdown_row(band, DetailFormat.KIT_DURABILITY_KEY_TRAPS,
+        DetailFormat.KIT_LABEL_TRAPS, DetailFormat.KIT_ROLE_TRAPS))
     # A full-width sentence, deliberately NOT indented: `detail_bbcode` routes the indent to the
-    # two-tone sub-row branch, and this is a caveat on all three rows rather than a fourth one.
+    # two-tone sub-row branch, and this is a caveat on every row rather than one more of them.
     lines.append(DetailFormat.KIT_BREAKDOWN_CLIFF_NOTE)
     return lines
 

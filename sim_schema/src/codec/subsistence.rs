@@ -114,6 +114,11 @@ fn create_kits<'a>(
                 attack: state.attack,
                 huntCarryPerWorkerBiomass: state.hunt_carry_per_worker_biomass,
                 forageCarryPerWorkerBiomass: state.forage_carry_per_worker_biomass,
+                // What the kit DOES beyond the tiers — all three neutral at 1.0, so a kit declaring
+                // none of them encodes exactly as it did before they existed.
+                dispersion: state.dispersion,
+                engageMultiplier: state.engage_multiplier,
+                exposure: state.exposure,
             },
         ));
     }

@@ -178,6 +178,21 @@ pub struct LaborAssignmentState {
     pub kit_id: String,
 }
 
+/// **One item's remaining condition in a band's TOE** — a row of
+/// [`PopulationCohortState::kit_item_conditions`].
+///
+/// `item_id` is `equipment.json`'s item key (`"spears"`, `"sled"`, `"baskets"`, `"traps"`), which is
+/// also what a kit's `uses` list names. A client should render whatever rows arrive rather than
+/// looking for a fixed set: the roster is config, and an item added there appears here with no
+/// schema change.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct KitItemConditionState {
+    pub item_id: String,
+    /// Remaining condition on `equipment.json`'s 0–100 scale, clamped at `0`. **`0` = dry.** Never a
+    /// performance reading — see the field's docs.
+    pub remaining: f32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct PopulationCohortState {
     pub entity: u64,
@@ -528,30 +543,24 @@ pub struct PopulationCohortState {
     /// stop inside `hunt.forecast_horizon_turns`. Appended (append-only).
     #[serde(default)]
     pub expedition_trip_bound: String,
-    /// **Remaining condition on the band's HUNTING kit** (spears) — the minimal TOE
+    /// **Remaining condition on each item in the band's TOE**, one row per item the config carries
     /// (`docs/plan_hunt_through_combat.md` §4.8, `docs/plan_early_game_labor.md`). On
-    /// `equipment.json`'s 0–100 scale; **`0` = dry**, at which point the role has stepped down to its
-    /// unequipped tier and **stays there** (nothing replenishes a kit in this slice — running dry is
-    /// the intended pressure).
+    /// `equipment.json`'s 0–100 scale; **`0` = dry**, at which point any role resolving through that
+    /// item has stepped down to its unequipped tier and **stays there** (nothing replenishes an item
+    /// in this slice — running dry is the intended pressure).
     ///
     /// **Performance is FLAT until expiry**: durability and performance are deliberately orthogonal
-    /// axes, so no readout may be scaled by this. Wears per **animal killed**, never per turn
-    /// elapsed. Appended (append-only).
-    #[serde(default)]
-    pub hunting_kit_durability: f32,
-    /// **Remaining condition on the band's SLED kit** (travois / drag harness — the *hunt's* carry),
-    /// same scale and same cliff as [`Self::hunting_kit_durability`]. Wears per **biomass hauled home
-    /// from a hunt**. Appended (append-only).
-    #[serde(default)]
-    pub sled_kit_durability: f32,
-    /// **Remaining condition on the band's BASKET kit** (the *forage* web's carry), same scale and
-    /// same cliff. Wears per **biomass gathered**.
+    /// axes, so **no readout may be scaled by these numbers** — they say how much life is left, never
+    /// how well the item is working.
     ///
-    /// **A separate field from [`Self::sled_kit_durability`], not a second reading of it** — the two
-    /// kits do different jobs on different webs and run down on different quanta (§4.8, "one kit, one
-    /// job"), so a band can be out of baskets while its sled is untouched. Appended (append-only).
+    /// **A list rather than one field per item**, which is what the three named
+    /// `hunting`/`sled`/`basket` floats here used to be. Each item runs down on its **own quantum**
+    /// (§4.8, "one item, one job"), so a band can be out of baskets with its sled untouched — and a
+    /// fixed field set could not carry the traps the trapping kit added without a schema edit per
+    /// item. **Driven by the CONFIG's item table, not by the band's ledger**, whose absent entries
+    /// mean *no wear* — so an item the band has never used reads as full rather than going missing.
     #[serde(default)]
-    pub basket_kit_durability: f32,
+    pub kit_item_conditions: Vec<KitItemConditionState>,
     /// **This band's per-hunter combat `attack`**, kit resolved in — `1.0` bare-handed (the
     /// `creatures.json` `person` row) and `20.0` with the hunting kit
     /// (`equipment.json` `hunting_kit.equipped_attack`).

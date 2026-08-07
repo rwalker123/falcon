@@ -1815,19 +1815,21 @@ fn kit_roster_states(
                     .map(|job| job.as_str().to_string())
                     .collect(),
                 attack: equipment
-                    .hunter_profile(
-                        kit_levers.hunter_intrinsic,
-                        choice.hunting_equipped(&fresh, equipment),
-                    )
+                    .hunter_profile(kit_levers.hunter_intrinsic, &choice, &fresh)
                     .attack,
                 hunt_carry_per_worker_biomass: equipment.hunt_per_worker_biomass_capacity(
                     labor.hunt.per_worker_biomass_capacity,
-                    choice.sled_equipped(&fresh, equipment),
+                    &choice,
+                    &fresh,
                 ),
                 forage_carry_per_worker_biomass: equipment.forage_per_worker_biomass_capacity(
                     labor.forage.per_worker_biomass_capacity,
-                    choice.basket_equipped(&fresh, equipment),
+                    &choice,
+                    &fresh,
                 ),
+                dispersion: equipment.dispersion(&choice, &fresh),
+                engage_multiplier: equipment.engage_multiplier(&choice, &fresh),
+                exposure: equipment.exposure(&choice, &fresh),
             }
         })
         .collect()
@@ -2190,20 +2192,26 @@ pub fn capture_snapshot(
                     // its `BandEquipment` wear, through the same seams `advance_expeditions` reads,
                     // so the ETA projects the take the party can actually make: bare-handed if it
                     // left bare-handed, and stepped down once its spears are gone.
-                    let party_wear = equipment.copied().unwrap_or_default();
+                    let party_wear = equipment.cloned().unwrap_or_default();
                     let party = crate::fauna::HuntingParty {
                         hunter: equipment_config.hunter_profile(
                             kit_levers.hunter_intrinsic,
-                            exp.kit.hunting_equipped(&party_wear, &equipment_config),
+                            &exp.kit,
+                            &party_wear,
                         ),
                         tuning: expedition_combat_tuning,
-                        injury_damage_per_animal: combat_config.hunt_injury_damage_per_animal,
+                        injury_damage_per_animal: combat_config.hunt_injury_damage_per_animal
+                            * equipment_config.exposure(&exp.kit, &party_wear),
+                        engage_multiplier: equipment_config
+                            .engage_multiplier(&exp.kit, &party_wear),
+                        dispersion: equipment_config.dispersion(&exp.kit, &party_wear),
                     };
                     // And the same kit's haul tier — the ETA has to project what THIS party can drag
                     // home, not what a kitted one could.
                     let party_haul = equipment_config.hunt_per_worker_biomass_capacity(
                         kit_levers.equipped_haul_rate,
-                        exp.kit.sled_equipped(&party_wear, &equipment_config),
+                        &exp.kit,
+                        &party_wear,
                     );
                     crate::systems::expedition_delivery(
                         exp,
@@ -2549,6 +2557,8 @@ pub fn capture_snapshot(
     let herds_scope = crate::turn_profile::scope("snapshot.build.herds");
     // The kit both per-herd estimate tables are priced at, resolved once.
     let quoted_kit = equipment_config.default_kit(crate::equipment_config::KitJob::Hunt);
+    // A fresh ledger to price it against — the table describes the KIT, not any band's wear on it.
+    let quoted_wear = BandEquipment::default();
     let herd_states = herd_snapshot_entries(HerdSnapshotInputs {
         telemetry: &herds,
         registry: &herd_registry,
@@ -2569,14 +2579,19 @@ pub fn capture_snapshot(
         party: crate::fauna::HuntingParty {
             hunter: equipment_config.hunter_profile(
                 kit_levers.hunter_intrinsic,
-                quoted_kit.hunting_equipped(&BandEquipment::default(), &equipment_config),
+                &quoted_kit,
+                &quoted_wear,
             ),
             tuning: combat_config.tuning(),
-            injury_damage_per_animal: combat_config.hunt_injury_damage_per_animal,
+            injury_damage_per_animal: combat_config.hunt_injury_damage_per_animal
+                * equipment_config.exposure(&quoted_kit, &quoted_wear),
+            engage_multiplier: equipment_config.engage_multiplier(&quoted_kit, &quoted_wear),
+            dispersion: equipment_config.dispersion(&quoted_kit, &quoted_wear),
         },
         quoted_per_worker_haul: equipment_config.hunt_per_worker_biomass_capacity(
             kit_levers.equipped_haul_rate,
-            quoted_kit.sled_equipped(&BandEquipment::default(), &equipment_config),
+            &quoted_kit,
+            &quoted_wear,
         ),
         quoted_kit_id: quoted_kit.id().to_string(),
         // The denial estimate's reported band width — a readout lever, read from the same config the

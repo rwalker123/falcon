@@ -194,12 +194,21 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // Remaining condition on the equipment.json 0-100 scale; `0` = DRY, and a dry kit steps its role
     // down to the unequipped tier and STAYS there (no replenishment path exists yet). **Performance
     // is FLAT until expiry**, so no client readout may scale anything by what is left here.
-    let _ = dict.insert(
-        "hunting_kit_durability",
-        cohort.huntingKitDurability() as f64,
-    );
-    let _ = dict.insert("sled_kit_durability", cohort.sledKitDurability() as f64);
-    let _ = dict.insert("basket_kit_durability", cohort.basketKitDurability() as f64);
+    //
+    // **ONE ROW PER ITEM, driven by the server's config** — the three fixed
+    // `hunting`/`sled`/`basket` floats this replaced are deprecated on the wire. Render whatever rows
+    // arrive rather than looking for known ids: the item table is config, so the trapping kit's
+    // `traps` (and the next item after it) appears here with no client change.
+    let mut kit_item_conditions = VarArray::new();
+    if let Some(conditions) = cohort.kitItemConditions() {
+        for condition in conditions.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("item_id", condition.itemId().unwrap_or_default());
+            let _ = row.insert("remaining", condition.remaining() as f64);
+            kit_item_conditions.push(&row.to_variant());
+        }
+    }
+    let _ = dict.insert("kit_item_conditions", &kit_item_conditions);
     // The RESOLVED tiers, so the client renders this band's real numbers instead of re-deriving them
     // from the durabilities plus a config it does not have. `hunter_attack` is the term the combat
     // gate `max(0, attack − defense)` compares against `HerdTelemetryState.defense`.

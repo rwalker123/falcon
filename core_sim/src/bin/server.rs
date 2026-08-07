@@ -1685,16 +1685,15 @@ fn seed_source_yield(
             // the same tier through the same seam, so a band-agnostic equipped rate here would
             // promise a bare-handed band a basketful (`yield-forecast.md`).
             let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
-            let basket_equipped = crew_kit.basket_equipped(
-                &app.world
-                    .get::<BandEquipment>(band)
-                    .copied()
-                    .unwrap_or_default(),
-                &equipment_cfg,
-            );
+            let band_wear = app
+                .world
+                .get::<BandEquipment>(band)
+                .cloned()
+                .unwrap_or_default();
             let per_worker_biomass = equipment_cfg.forage_per_worker_biomass_capacity(
                 labor.forage.per_worker_biomass_capacity,
-                basket_equipped,
+                &crew_kit,
+                &band_wear,
             );
             forage_source_yield_preview(
                 patch,
@@ -1733,12 +1732,12 @@ fn seed_source_yield(
             let band_wear = app
                 .world
                 .get::<BandEquipment>(band)
-                .copied()
+                .cloned()
                 .unwrap_or_default();
-            let sled_equipped = crew_kit.sled_equipped(&band_wear, &equipment_cfg);
             let per_worker_biomass = equipment_cfg.hunt_per_worker_biomass_capacity(
                 labor.hunt.per_worker_biomass_capacity,
-                sled_equipped,
+                &crew_kit,
+                &band_wear,
             );
             // **And at THIS band's FIGHTING tier**, for the same reason and through the same seam
             // (`docs/plan_hunt_through_combat.md` §4): the take now resolves through the combat
@@ -1747,14 +1746,18 @@ fn seed_source_yield(
             let hunting_party = HuntingParty {
                 hunter: equipment_cfg.hunter_profile(
                     app.world.resource::<CreaturesConfigHandle>().get().person(),
-                    crew_kit.hunting_equipped(&band_wear, &equipment_cfg),
+                    &crew_kit,
+                    &band_wear,
                 ),
                 tuning: app.world.resource::<CombatConfigHandle>().get().tuning(),
                 injury_damage_per_animal: app
                     .world
                     .resource::<CombatConfigHandle>()
                     .get()
-                    .hunt_injury_damage_per_animal,
+                    .hunt_injury_damage_per_animal
+                    * equipment_cfg.exposure(&crew_kit, &band_wear),
+                engage_multiplier: equipment_cfg.engage_multiplier(&crew_kit, &band_wear),
+                dispersion: equipment_cfg.dispersion(&crew_kit, &band_wear),
             };
             hunt_source_yield_preview(
                 herd,
@@ -2900,17 +2903,24 @@ fn outfit_raiding_party(
 fn launch_forecast_party(app: &bevy::prelude::App, kit: &KitChoice) -> HuntingParty {
     let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
     let combat = app.world.resource::<CombatConfigHandle>().get();
+    // A fresh ledger: the launch line quotes the KIT the party is being sent with, before it has worn
+    // any of it. The party's own wear then moves its tiers turn by turn once it is in flight.
+    let fresh = BandEquipment::default();
     HuntingParty {
         hunter: equipment_cfg.hunter_profile(
             app.world.resource::<CreaturesConfigHandle>().get().person(),
-            kit.hunting_equipped(&BandEquipment::default(), &equipment_cfg),
+            kit,
+            &fresh,
         ),
         tuning: {
             let mut tuning = combat.tuning();
             tuning.lethality *= combat.expedition_danger_multiplier;
             tuning
         },
-        injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
+        injury_damage_per_animal: combat.hunt_injury_damage_per_animal
+            * equipment_cfg.exposure(kit, &fresh),
+        engage_multiplier: equipment_cfg.engage_multiplier(kit, &fresh),
+        dispersion: equipment_cfg.dispersion(kit, &fresh),
     }
 }
 
@@ -2926,10 +2936,7 @@ fn launch_forecast_haul(app: &bevy::prelude::App, kit: &KitChoice) -> f32 {
         .get()
         .hunt
         .per_worker_biomass_capacity;
-    equipment_cfg.hunt_per_worker_biomass_capacity(
-        equipped_rate,
-        kit.sled_equipped(&BandEquipment::default(), &equipment_cfg),
-    )
+    equipment_cfg.hunt_per_worker_biomass_capacity(equipped_rate, kit, &BandEquipment::default())
 }
 
 /// Resolve the kit a raiding verb was given, or refuse the launch with a reason.

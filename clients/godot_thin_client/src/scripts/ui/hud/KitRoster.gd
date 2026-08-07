@@ -41,12 +41,31 @@ const KIT_ATTACK_KEY := "attack"
 const KIT_HUNT_CARRY_KEY := "hunt_carry_per_worker_biomass"
 const KIT_FORAGE_CARRY_KEY := "forage_carry_per_worker_biomass"
 
-## The BAND's remaining condition in each component, on `equipment.json`'s 0-100 scale (`0` = dry).
-## A dry component steps its role down to the unequipped tier and STAYS there — there is no
-## replenishment path yet — and performance is FLAT until that cliff.
-const BAND_SPEARS_CONDITION_KEY := "hunting_kit_durability"
-const BAND_SLED_CONDITION_KEY := "sled_kit_durability"
-const BAND_BASKETS_CONDITION_KEY := "basket_kit_durability"
+## The BAND's remaining condition per ITEM — one row per item the server's config carries, as
+## `{item_id, remaining}` on `equipment.json`'s 0-100 scale (`0` = dry). A dry item steps its role
+## down to the unequipped tier and STAYS there — there is no replenishment path yet — and performance
+## is FLAT until that cliff, so nothing here may scale a displayed number.
+##
+## It replaced three fixed keys (`hunting_kit_durability` and friends), because the item table is
+## server config: a fixed field set could not carry the trapping kit's `traps`, nor the next item.
+const BAND_ITEM_CONDITIONS_KEY := "kit_item_conditions"
+const ITEM_CONDITION_ID_KEY := "item_id"
+const ITEM_CONDITION_REMAINING_KEY := "remaining"
+
+## **WHICH ITEM BACKS EACH DISPLAY AXIS.** The wire says what a kit *grants* per axis but not which
+## item supplies it, so the client carries this mapping — as it always effectively did, when the axis
+## was welded to a field name.
+##
+## **Known limitation, and it is bounded.** A second item supplying the same axis (a bow beside the
+## spear) would read its condition off the wrong row here. That is a real gap the day a kit carries
+## two weapons, and the fix is for the wire to state the axis→item mapping per kit rather than for
+## this table to grow guesses. It cannot misfire on the shipped roster: no two items declare the same
+## axis, which the server also enforces for the two carries at config-validate time.
+const AXIS_ITEMS := {
+	"attack": "spears",
+	"hunt_carry_per_worker_biomass": "sled",
+	"forage_carry_per_worker_biomass": "baskets",
+}
 
 ## Condition at or below which a component is spent. It is the wire's own cliff, not a display
 ## threshold: the sim equips a component while its remaining condition is strictly positive.
@@ -178,18 +197,17 @@ static func effective_tiers(kits: Array, kit: Dictionary, band: Dictionary) -> D
 	var fresh_attack := float(kit.get(KIT_ATTACK_KEY, 0.0))
 	var fresh_hunt := float(kit.get(KIT_HUNT_CARRY_KEY, 0.0))
 	var fresh_forage := float(kit.get(KIT_FORAGE_CARRY_KEY, 0.0))
-	var stated := band.has(BAND_SPEARS_CONDITION_KEY) or band.has(BAND_SLED_CONDITION_KEY) \
-		or band.has(BAND_BASKETS_CONDITION_KEY)
-	if not stated:
+	var conditions: Array = band.get(BAND_ITEM_CONDITIONS_KEY, [])
+	if conditions.is_empty():
 		return {"attack": fresh_attack, "hunt_carry": fresh_hunt, "forage_carry": fresh_forage,
 			"stated": false}
 	return {
 		"attack": _tier_after_wear(kits, KIT_ATTACK_KEY, fresh_attack,
-			condition_of(band, BAND_SPEARS_CONDITION_KEY)),
+			condition_of(band, KIT_ATTACK_KEY)),
 		"hunt_carry": _tier_after_wear(kits, KIT_HUNT_CARRY_KEY, fresh_hunt,
-			condition_of(band, BAND_SLED_CONDITION_KEY)),
+			condition_of(band, KIT_HUNT_CARRY_KEY)),
 		"forage_carry": _tier_after_wear(kits, KIT_FORAGE_CARRY_KEY, fresh_forage,
-			condition_of(band, BAND_BASKETS_CONDITION_KEY)),
+			condition_of(band, KIT_FORAGE_CARRY_KEY)),
 		"stated": true,
 	}
 
@@ -202,9 +220,21 @@ static func _tier_after_wear(kits: Array, axis_key: String, fresh: float,
 	var bare := unequipped_tier(kits, axis_key)
 	return fresh if is_inf(bare) else bare
 
-## A component's remaining condition, `CONDITION_DRY` when the band is silent about it.
-static func condition_of(band: Dictionary, condition_key: String) -> float:
-	return float(band.get(condition_key, CONDITION_DRY))
+## **The remaining condition of the item backing an AXIS**, `CONDITION_DRY` when the band publishes
+## no row for it.
+##
+## Absent reads as dry deliberately: the caller has already established that the band stated *some*
+## condition, so a missing row for one item is a wire the client does not understand — and quoting a
+## kitted number for gear the server never confirmed is the failure mode this whole model exists to
+## prevent. Erring toward the unequipped tier under-promises instead.
+static func condition_of(band: Dictionary, axis_key: String) -> float:
+	var item_id: String = AXIS_ITEMS.get(axis_key, "")
+	if item_id.is_empty():
+		return CONDITION_DRY
+	for row in band.get(BAND_ITEM_CONDITIONS_KEY, []):
+		if String(row.get(ITEM_CONDITION_ID_KEY, "")) == item_id:
+			return float(row.get(ITEM_CONDITION_REMAINING_KEY, CONDITION_DRY))
+	return CONDITION_DRY
 
 ## **IS THIS COMPONENT PART OF THIS KIT?** — a kit uses a component exactly when its tier on that
 ## component's axis beats the roster's bare-handed one. It answers a DISPLAY question only (whether
@@ -227,25 +257,25 @@ static func tier_hint(kits: Array, kit: Dictionary, band: Dictionary, job: Strin
 		parts.append(HudComposeVocab.KIT_HINT_FORAGE_CARRY_FORMAT % _tier_face(
 			float(tiers["forage_carry"])))
 		_append_condition(parts, kits, kit, band, tiers, KIT_FORAGE_CARRY_KEY,
-			BAND_BASKETS_CONDITION_KEY, HudComposeVocab.KIT_COMPONENT_BASKETS)
+			HudComposeVocab.KIT_COMPONENT_BASKETS)
 	else:
 		parts.append(HudComposeVocab.KIT_HINT_ATTACK_FORMAT % _tier_face(float(tiers["attack"])))
 		parts.append(HudComposeVocab.KIT_HINT_HUNT_CARRY_FORMAT % _tier_face(
 			float(tiers["hunt_carry"])))
 		_append_condition(parts, kits, kit, band, tiers, KIT_ATTACK_KEY,
-			BAND_SPEARS_CONDITION_KEY, HudComposeVocab.KIT_COMPONENT_SPEARS)
+			HudComposeVocab.KIT_COMPONENT_SPEARS)
 		_append_condition(parts, kits, kit, band, tiers, KIT_HUNT_CARRY_KEY,
-			BAND_SLED_CONDITION_KEY, HudComposeVocab.KIT_COMPONENT_SLED)
+			HudComposeVocab.KIT_COMPONENT_SLED)
 	return HudComposeVocab.KIT_HINT_SEPARATOR.join(parts)
 
-## One component's condition clause, appended only where there is something true to say: the kit has
-## to actually use the component, and the band has to have stated its condition.
+## One item's condition clause, appended only where there is something true to say: the kit has to
+## actually use the item, and the band has to have stated its condition. The axis names the item
+## through `AXIS_ITEMS`, so there is no second key to keep in step with it.
 static func _append_condition(parts: Array[String], kits: Array, kit: Dictionary,
-		band: Dictionary, tiers: Dictionary, axis_key: String, condition_key: String,
-		component: String) -> void:
+		band: Dictionary, tiers: Dictionary, axis_key: String, component: String) -> void:
 	if not bool(tiers.get("stated", false)) or not kit_uses(kits, kit, axis_key):
 		return
-	var condition := condition_of(band, condition_key)
+	var condition := condition_of(band, axis_key)
 	if condition <= CONDITION_DRY:
 		parts.append(HudComposeVocab.KIT_HINT_DRY_FORMAT % component)
 	else:

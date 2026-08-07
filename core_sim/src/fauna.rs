@@ -4288,7 +4288,7 @@ pub fn project_realized_hunt(
     // has no engagement stage at all (a penned animal is not stalked), so it is unbounded there — the
     // same exemption `project_arrivals_hunt` states by passing `f32::INFINITY` to the quantiser on
     // its corral branch.
-    let reach = animals_engaged(
+    let reach = party.reach(
         workers,
         fauna.engage_rate_for(&quarry.species),
         ladder.build_dip(improvement),
@@ -4336,7 +4336,7 @@ pub fn project_realized_hunt(
             // it is handed: clamping afterwards would retreat a bigger party than the take does and
             // over-quote every turn the escapement room binds. A projection cannot *draw* the
             // retreat the take will draw (see [`HuntDraw`]), so it reads the same binomial's mean.
-            let engaged = animals_that_stay(
+            let engaged = party.stayers(
                 reach.min(animals_affordable(rate, quarry.body_mass)),
                 wariness,
                 HuntDraw::EXPECTED,
@@ -4433,7 +4433,7 @@ pub fn project_arrivals_hunt(
     // mid-projection and the quarry is never re-speciated. The escapement clamp and the retreat that
     // follows it are not constant, so they sit in the loop below — see the twin in
     // `project_realized_hunt`.
-    let reach = animals_engaged(
+    let reach = party.reach(
         workers,
         fauna.engage_rate_for(&quarry.species),
         ladder.build_dip(improvement),
@@ -4484,7 +4484,7 @@ pub fn project_arrivals_hunt(
             // then the fight — the take's order, because the retreat keeps a fraction of whatever
             // it is handed and clamping after it would quote a take off a bigger party than the
             // one the sim sends ([`animals_affordable`]).
-            let engaged = animals_that_stay(
+            let engaged = party.stayers(
                 reach.min(animals_affordable(ceiling, quarry.body_mass)),
                 wariness,
                 HuntDraw::EXPECTED,
@@ -4563,9 +4563,15 @@ fn forecast_production_and_take_at(
     {
         Some(axis) => {
             let quantum = forecast.body_mass_yield;
+            // **The kit's reach multiplier rides the FIGHT, because that is where the party is** —
+            // and a source with no fight (a pen, the whole plant web) already has an infinite
+            // `engage_rate`, so there is nothing for a multiplier to move there anyway.
             let engaged = animals_engaged(
                 workers,
-                forecast.engage_rate,
+                forecast.engage_rate
+                    * forecast
+                        .fight
+                        .map_or(1.0, |(party, _)| party.engage_multiplier.max(0.0)),
                 forecast.build_dips.of(improvement),
             )
             // **Restraint is free, and the forecast has to say so too** — the escapement floor
@@ -4588,7 +4594,7 @@ fn forecast_production_and_take_at(
             // `engage_rate` is already `f32::INFINITY`.
             let brought_down = match forecast.fight {
                 Some((party, quarry)) => {
-                    let stayed = animals_that_stay(engaged, quarry.profile.wariness, draw);
+                    let stayed = party.stayers(engaged, quarry.profile.wariness, draw);
                     resolve_hunt_fight(
                         stayed,
                         workers as f32 * forecast.build_dips.of(improvement),
@@ -5219,9 +5225,58 @@ pub struct HuntingParty {
     /// the rabbit; it scales with the *engagement* at the point of use, so more animals worked means
     /// more chances to get hurt.
     pub injury_damage_per_animal: f32,
+    /// **Multiplies how many animals one hunter reaches** ([`crate::equipment_config::EquipmentStat::EngageMultiplier`]),
+    /// neutral at `1.0`.
+    ///
+    /// It rides here rather than on the species because reach is a property of *how you hunt*: a trap
+    /// line lets one person work a whole warren, and reach — not damage — is the term that actually
+    /// binds on light game (small game has no `defense` to clear, so raising `attack` against it buys
+    /// nothing).
+    pub engage_multiplier: f32,
+    /// **Multiplies the quarry's own `wariness` at the retreat**
+    /// ([`crate::equipment_config::EquipmentStat::Dispersion`]), neutral at `1.0`.
+    ///
+    /// A multiplier rather than a subtraction so the **species** decides how much a noisy approach
+    /// costs: at `wariness 0.85` a gazelle loses almost everything to one, at `0.10` a mammoth barely
+    /// notices. That is what lets a single spear line scatter a warren and contain a mammoth with no
+    /// per-target authoring — and why a targets/size-class axis on equipment was not needed.
+    ///
+    /// `0` (a trap) means **nothing breaks off**, which is the `wariness 0` identity the retreat has
+    /// always had rather than a new branch.
+    pub dispersion: f32,
 }
 
 impl HuntingParty {
+    /// **How many animals this party reaches** — [`animals_engaged`] with the kit's reach multiplier
+    /// folded into the species' own `engage_rate`.
+    ///
+    /// **Every production take and forecast path goes through here, never through the bare
+    /// function.** A site that called `animals_engaged` directly would silently price a trapping party
+    /// at a bare-handed reach — the defect the kit mask exists to prevent, one stat over. The bare
+    /// function survives for tests, which assert on the arithmetic itself rather than on a party.
+    pub fn reach(&self, workers: u32, engage_rate: f32, build_dip: f32) -> f32 {
+        animals_engaged(
+            workers,
+            engage_rate * self.engage_multiplier.max(0.0),
+            build_dip,
+        )
+    }
+
+    /// **How many of the animals it reached stay to be fought** — [`animals_that_stay`] with the
+    /// kit's `dispersion` applied to the quarry's own `wariness`.
+    ///
+    /// The product is **clamped into `0..=1`** because both factors are authored: a species may ship
+    /// `wariness 0.85` and a future kit a dispersion above `1.0` (a noisy drive), and a probability
+    /// above one is not a probability. `0` is the identity the retreat has always had — no draw is
+    /// made at all — so a trap line lands in a tested regime rather than a new branch.
+    pub fn stayers(&self, engaged: f32, wariness: f32, draw: HuntDraw) -> f32 {
+        animals_that_stay(
+            engaged,
+            (wariness * self.dispersion.max(0.0)).clamp(0.0, 1.0),
+            draw,
+        )
+    }
+
     /// **The shipped, fully-kitted party at the base tuning** — the `person` row's intrinsic profile
     /// with the hunting kit's `attack` tier composed in.
     ///
@@ -5233,13 +5288,21 @@ impl HuntingParty {
     pub fn builtin_equipped() -> Self {
         let combat = crate::combat_config::CombatConfig::builtin();
         let equipment = crate::equipment_config::EquipmentConfig::builtin();
+        // The **hunt job's default kit** against a band with no wear — "an ordinary band", resolved
+        // through the same seams a live one uses rather than by asserting which items that kit holds.
+        let kit = equipment.default_kit(crate::equipment_config::KitJob::Hunt);
+        let fresh = crate::components::BandEquipment::default();
         Self {
             hunter: equipment.hunter_profile(
                 crate::creatures_config::CreaturesConfig::builtin().person(),
-                true,
+                &kit,
+                &fresh,
             ),
             tuning: combat.tuning(),
-            injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
+            injury_damage_per_animal: combat.hunt_injury_damage_per_animal
+                * equipment.exposure(&kit, &fresh),
+            engage_multiplier: equipment.engage_multiplier(&kit, &fresh),
+            dispersion: equipment.dispersion(&kit, &fresh),
         }
     }
 
@@ -5247,10 +5310,19 @@ impl HuntingParty {
     /// intrinsic `attack 1`. The other side of §4.8's cliff, and what a test asserting the gate wants.
     pub fn builtin_unequipped() -> Self {
         let combat = crate::combat_config::CombatConfig::builtin();
+        // **The empty kit, not a hand-built profile.** Every unequipped tier and every neutral
+        // multiplier then comes from the same resolution a live bare-handed party runs, so this
+        // fixture cannot drift from the game if an item's unequipped side is retuned.
+        let equipment = crate::equipment_config::EquipmentConfig::builtin();
+        let kit = equipment.no_kit();
+        let fresh = crate::components::BandEquipment::default();
         Self {
             hunter: crate::creatures_config::CreaturesConfig::builtin().person(),
             tuning: combat.tuning(),
-            injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
+            injury_damage_per_animal: combat.hunt_injury_damage_per_animal
+                * equipment.exposure(&kit, &fresh),
+            engage_multiplier: equipment.engage_multiplier(&kit, &fresh),
+            dispersion: equipment.dispersion(&kit, &fresh),
         }
     }
 }

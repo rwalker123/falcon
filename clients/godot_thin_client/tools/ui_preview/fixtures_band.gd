@@ -232,6 +232,9 @@ const KIT_FORAGE_CARRY_BARE := 1.6
 # The three conditions a kitted band ships with. **DELIBERATELY THREE DIFFERENT NUMBERS** on the
 # 0-100 scale: a fixture that gave two kits one value would pass every assertion with their accessors
 # swapped, which is the exact defect class this arc keeps reproducing.
+## Traps ride the trapping kit; a fixture that omitted them would render a band the
+## server never publishes, since the condition list is driven by the config's item table.
+const KIT_CONDITION_TRAPS := 68.0
 const KIT_CONDITION_SPEARS := 87.0
 
 const KIT_CONDITION_SLED := 54.0
@@ -283,9 +286,7 @@ static func kit_roster_fixture() -> Array:
 
 ## A band carrying ALL THREE kits, each at its own condition and each role at its equipped tier.
 static func with_equipped_kit(band: Dictionary) -> Dictionary:
-	band["hunting_kit_durability"] = KIT_CONDITION_SPEARS
-	band["sled_kit_durability"] = KIT_CONDITION_SLED
-	band["basket_kit_durability"] = KIT_CONDITION_BASKETS
+	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": KIT_CONDITION_SPEARS}, {"item_id": "sled", "remaining": KIT_CONDITION_SLED}, {"item_id": "baskets", "remaining": KIT_CONDITION_BASKETS}, {"item_id": "traps", "remaining": KIT_CONDITION_TRAPS}]
 	band["hunter_attack"] = KIT_ATTACK_EQUIPPED
 	band["hunt_carry_per_worker_biomass"] = KIT_HUNT_CARRY_EQUIPPED
 	band["forage_carry_per_worker_biomass"] = KIT_FORAGE_CARRY_EQUIPPED
@@ -297,7 +298,7 @@ static func with_equipped_kit(band: Dictionary) -> Dictionary:
 ## This is the frame a readout rendering one carry on the other's row fails.
 static func with_baskets_dry(band: Dictionary) -> Dictionary:
 	band = with_equipped_kit(band)
-	band["basket_kit_durability"] = 0.0
+	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": KIT_CONDITION_SPEARS}, {"item_id": "sled", "remaining": KIT_CONDITION_SLED}, {"item_id": "baskets", "remaining": 0.0}, {"item_id": "traps", "remaining": KIT_CONDITION_TRAPS}]
 	band["forage_carry_per_worker_biomass"] = KIT_FORAGE_CARRY_BARE
 	return band
 
@@ -305,9 +306,7 @@ static func with_baskets_dry(band: Dictionary) -> Dictionary:
 ## replenishment path, so every role has stepped down and stays there. Its `hunter_attack` of 1 is
 ## what the combat gate refuses megafauna on.
 static func with_bare_hands(band: Dictionary) -> Dictionary:
-	band["hunting_kit_durability"] = 0.0
-	band["sled_kit_durability"] = 0.0
-	band["basket_kit_durability"] = 0.0
+	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": 0.0}, {"item_id": "sled", "remaining": 0.0}, {"item_id": "baskets", "remaining": 0.0}, {"item_id": "traps", "remaining": 0.0}]
 	band["hunter_attack"] = KIT_ATTACK_BARE
 	band["hunt_carry_per_worker_biomass"] = KIT_HUNT_CARRY_BARE
 	band["forage_carry_per_worker_biomass"] = KIT_FORAGE_CARRY_BARE

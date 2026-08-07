@@ -1336,130 +1336,152 @@ impl SourceYield {
     };
 }
 
-/// **A band's TOE, as WEAR** — how much of each consumable kit it has used up (the minimal TOE,
+/// **A band's TOE, as WEAR** — how much of each consumable item it has used up (the TOE,
 /// `docs/plan_early_game_labor.md` → "Equipment / TOE", `docs/plan_hunt_through_combat.md` §4.8).
-/// The tiers, durabilities and wear rates are config
-/// ([`crate::equipment_config::EquipmentConfig`]); what a band owns is only *how worn* its kits are.
+/// What each item does, how long it lasts and what wears it are config
+/// ([`crate::equipment_config::EquipmentConfig`]); what a band owns is only *how worn* its items are.
 ///
-/// **Wear, not stock, and that is what makes the band START KITTED for free**: `Default` is zero
-/// wear, so every spawn site inserts a full kit without reading config, and "start-stocked, not
-/// craftable" needs no seeding pass. A kit is **equipped while its wear is strictly below its
+/// **Wear, not stock, and that is what makes the band START KITTED for free**: `Default` is an empty
+/// ledger, so every spawn site inserts a full kit without reading config, and "start-stocked, not
+/// craftable" needs no seeding pass. An item is **equipped while its wear is strictly below its
 /// `starting_durability`**; past that the role steps down to its unequipped tier and **stays there**
 /// — nothing in this slice ever reduces wear.
 ///
+/// **An ABSENT entry reads as zero wear, not as "no such item".** That is the same reading the
+/// three named fields this replaced had by construction, and it is what keeps a band spawned before
+/// a config gained an item from being born with it already spent.
+///
 /// **Wear is charged for USE, never for turns elapsed** (`docs/plan_denial_raid.md` §1.2) — a turn
-/// clock would charge an idle march the same as a slaughter and make denial free. **One kit, one
-/// job, one quantum** (§4.8): the hunting kit wears per **animal killed**, the sled per **biomass
-/// hauled home from a hunt**, baskets per **biomass gathered**. The three ledgers are independent by
-/// construction, so a band that only hunts wears no baskets and one that only gathers wears no sled.
+/// clock would charge an idle march the same as a slaughter and make denial free. **Each item has its
+/// own quantum** ([`crate::equipment_config::WearQuantum`]): spears and traps wear per **animal
+/// killed**, the sled per **biomass hauled home from a hunt**, baskets per **biomass gathered**. The
+/// ledgers are independent by construction, so a band that only hunts wears no baskets and one that
+/// only gathers wears no sled.
 ///
 /// **Persisted** (`SimState`'s `BandRecord::equipment`) — a checkpoint that forgot how worn your
 /// spears were would silently re-stock them on rollback.
-#[derive(Component, Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Component, Debug, Clone, Default, PartialEq)]
 pub struct BandEquipment {
-    /// Condition spent on the **hunting kit** (spears), on the config's 0–100 scale. Charged
-    /// `wear_per_kill` per animal a hunt kills.
-    pub hunting_wear: f32,
-    /// Condition spent on the **sled kit** (travois / drag harness), on the config's 0–100 scale.
-    /// Charged `wear_per_biomass_hauled` per unit of biomass hauled home — by a wild hunt *and* by a
-    /// pen harvest, because both are dragging carcasses.
-    pub sled_wear: f32,
-    /// Condition spent on the **basket kit**, on the config's 0–100 scale. Charged
-    /// `wear_per_biomass_gathered` per unit of biomass a *gather* takes off a patch. The forage web's
-    /// own ledger: nothing on the hunt path touches it.
-    pub basket_wear: f32,
+    /// Condition spent per item id, on the config's 0–100 scale. A `BTreeMap` rather than a `HashMap`
+    /// so the checkpoint and the wire serialize in a stable order — a rollback that reordered this
+    /// would diff as a change every frame.
+    wear: std::collections::BTreeMap<String, f32>,
 }
 
 impl BandEquipment {
-    /// **Does the band still have condition in its hunting kit?** — half of the effective predicate,
-    /// never the whole of it. **Strictly below** `starting_durability`, so a kit worn exactly to its
-    /// limit is spent: the cliff lands on the turn the last charge is used, not one turn later.
+    /// Condition spent on `item` so far. **Absent reads as `0.0`** — see the type's docs.
+    pub fn wear_of(&self, item: &str) -> f32 {
+        self.wear.get(item).copied().unwrap_or(0.0)
+    }
+
+    /// Every item this band has spent condition on, in id order — the checkpoint's and the wire's
+    /// iteration.
+    pub fn worn_items(&self) -> impl Iterator<Item = (&str, f32)> {
+        self.wear.iter().map(|(id, wear)| (id.as_str(), *wear))
+    }
+
+    /// Restore a ledger entry verbatim — the checkpoint's setter. Not for gameplay: the only
+    /// gameplay-side mutation is [`Self::wear_item`], which can never *reduce* wear.
+    pub fn restore_wear(&mut self, item: &str, wear: f32) {
+        self.wear.insert(item.to_string(), wear);
+    }
+
+    /// **Does the band still have condition in this item?** — half of the effective predicate, never
+    /// the whole of it. **Strictly below** `starting_durability`, so an item worn exactly to its limit
+    /// is spent: the cliff lands on the turn the last charge is used, not one turn later.
     ///
     /// **Crate-private on purpose.** Whether that condition is *serving* also depends on whether the
-    /// party's chosen kit reaches for this component at all, and
-    /// [`crate::equipment_config::KitChoice::hunting_equipped`] is the one place the two halves are
-    /// joined. A caller that could ask this directly would be a second way to ask the question — and
-    /// the one that silently re-arms a party sent out with no kit.
-    pub(crate) fn has_hunting_condition(
+    /// party's chosen kit reaches for the item at all, and
+    /// [`crate::equipment_config::KitChoice::item_live`] is the one place the two halves are joined. A
+    /// caller that could ask this directly would be a second way to ask the question — and the one
+    /// that silently re-arms a party sent out with no kit.
+    ///
+    /// **An item the config does not carry has no condition**, rather than infinite condition: a kit
+    /// cannot reference one (validate rejects it), so this arm is reachable only by a band restored
+    /// from a checkpoint written against a config that has since dropped the item.
+    pub(crate) fn has_condition(
         &self,
+        item: &str,
         config: &crate::equipment_config::EquipmentConfig,
     ) -> bool {
-        self.hunting_wear < config.hunting_kit.starting_durability
+        config
+            .item(item)
+            .is_some_and(|def| self.wear_of(item) < def.starting_durability)
     }
 
-    /// Condition left in the sled? Same rule and same privacy as [`Self::has_hunting_condition`].
-    pub(crate) fn has_sled_condition(
-        &self,
-        config: &crate::equipment_config::EquipmentConfig,
-    ) -> bool {
-        self.sled_wear < config.sled_kit.starting_durability
+    /// Remaining condition on an item, clamped at `0` — the wire readout, and the number a player
+    /// watches run down. `0` for an item the config does not carry.
+    pub fn remaining(&self, item: &str, config: &crate::equipment_config::EquipmentConfig) -> f32 {
+        config.item(item).map_or(0.0, |def| {
+            (def.starting_durability - self.wear_of(item)).max(0.0)
+        })
     }
 
-    /// Condition left in the baskets? Same rule and same privacy as [`Self::has_hunting_condition`].
-    pub(crate) fn has_basket_condition(
-        &self,
-        config: &crate::equipment_config::EquipmentConfig,
-    ) -> bool {
-        self.basket_wear < config.basket_kit.starting_durability
-    }
-
-    /// Remaining condition on the hunting kit, clamped at `0` — the wire readout, and the number a
-    /// player watches run down.
-    pub fn hunting_remaining(&self, config: &crate::equipment_config::EquipmentConfig) -> f32 {
-        (config.hunting_kit.starting_durability - self.hunting_wear).max(0.0)
-    }
-
-    /// Remaining condition on the sled, clamped at `0`.
-    pub fn sled_remaining(&self, config: &crate::equipment_config::EquipmentConfig) -> f32 {
-        (config.sled_kit.starting_durability - self.sled_wear).max(0.0)
-    }
-
-    /// Remaining condition on the baskets, clamped at `0`.
-    pub fn basket_remaining(&self, config: &crate::equipment_config::EquipmentConfig) -> f32 {
-        (config.basket_kit.starting_durability - self.basket_wear).max(0.0)
-    }
-
-    /// Charge the hunting kit for `kills` animals. **Only USE charges it** — a party that kills
-    /// nothing this turn calls this with `0` and loses nothing.
-    pub fn wear_hunting(
+    /// **Charge `item` for `uses` of its own quantum.** One entry point for every item, so no item can
+    /// grow a private flooring rule: a non-finite or negative `uses` reads as **no use**, because a
+    /// degenerate take must never *restore* a kit and nothing in this slice replenishes one.
+    ///
+    /// A no-op for an item the config does not carry — there is no rate to bill at, and inventing one
+    /// would be a silent second source for a number that lives in the config.
+    pub fn wear_item(
         &mut self,
         config: &crate::equipment_config::EquipmentConfig,
-        kills: u32,
+        item: &str,
+        uses: f32,
     ) -> &mut Self {
-        self.hunting_wear += kills as f32 * config.hunting_kit.wear_per_kill;
+        let Some(def) = config.item(item) else {
+            return self;
+        };
+        let charged = usable_uses(uses) * def.wear.amount;
+        if charged > 0.0 {
+            *self.wear.entry(item.to_string()).or_insert(0.0) += charged;
+        }
         self
     }
 
-    /// Charge the **sled** for `biomass` hauled home from a hunt. Negative/NaN inputs are floored at
-    /// `0` so a degenerate take can never *restore* a kit — there is no replenishment in this slice.
-    pub fn wear_sled(
+    /// **Charge every item in `kit` whose quantum is `quantum`.** The seam every wear site calls, and
+    /// the reason a site cannot forget an item: it names the *quantum* it just spent, not the items,
+    /// so an item added to a kit is charged without editing a single call site.
+    ///
+    /// **Only items the kit actually USES are charged**, which is the pairing that makes the
+    /// bare-handed comparison free to run — otherwise running the comparison would consume the very
+    /// kit it is being compared against.
+    pub fn wear_kit(
         &mut self,
         config: &crate::equipment_config::EquipmentConfig,
-        biomass: f32,
+        kit: &crate::equipment_config::KitChoice,
+        quantum: crate::equipment_config::WearQuantum,
+        uses: f32,
     ) -> &mut Self {
-        self.sled_wear += usable_biomass(biomass) * config.sled_kit.wear_per_biomass_hauled;
-        self
-    }
-
-    /// Charge the **baskets** for `biomass` gathered off a patch. Same flooring rule as
-    /// [`Self::wear_sled`], and deliberately a *separate* quantum: a band that hunts but does not
-    /// gather calls this with nothing and its baskets stay whole.
-    pub fn wear_baskets(
-        &mut self,
-        config: &crate::equipment_config::EquipmentConfig,
-        biomass: f32,
-    ) -> &mut Self {
-        self.basket_wear += usable_biomass(biomass) * config.basket_kit.wear_per_biomass_gathered;
+        let items: Vec<String> = kit
+            .uses()
+            .filter(|item| {
+                config
+                    .item(item)
+                    .is_some_and(|def| def.wear.per == quantum)
+                    // **WEAR RIDES THE SAME PREDICATE THAT CHOSE THE TIER.** A spent item is already
+                    // paying its cost — the role has stepped down — so charging it again would let a
+                    // ledger run arbitrarily far past its own durability, and any future
+                    // repair/crafting would then have to buy back that invisible overdraft before the
+                    // item came back at all. Pinned by
+                    // `kit_selection::a_kitted_partys_own_wear_still_steps_it_down`.
+                    && self.has_condition(item, config)
+            })
+            .map(str::to_string)
+            .collect();
+        for item in items {
+            self.wear_item(config, &item, uses);
+        }
         self
     }
 }
 
-/// The biomass a wear charge may actually bill for: non-finite or negative input reads as **no use**.
-/// Shared by both carry kits so neither can grow its own flooring rule — a negative take must never
-/// *restore* a kit, because nothing in this slice replenishes one.
-fn usable_biomass(biomass: f32) -> f32 {
-    if biomass.is_finite() {
-        biomass.max(0.0)
+/// The uses a wear charge may actually bill for: non-finite or negative input reads as **no use**.
+/// One helper for every item and every quantum, so none can grow its own flooring rule — a negative
+/// take must never *restore* a kit, because nothing in this slice replenishes one.
+fn usable_uses(uses: f32) -> f32 {
+    if uses.is_finite() {
+        uses.max(0.0)
     } else {
         0.0
     }

@@ -250,6 +250,25 @@ fn create_populations<'a>(
             // consumer comparing a selection against an absent string would read every band as a
             // mismatch.
             let kit_id = builder.create_string(&cohort.kit_id);
+            // **The TOE, one row per item.** Built before the cohort table like every other nested
+            // vector: FlatBuffers forbids writing a child table while a parent is open.
+            let kit_item_conditions = {
+                let rows: Vec<_> = cohort
+                    .kit_item_conditions
+                    .iter()
+                    .map(|condition| {
+                        let item_id = builder.create_string(&condition.item_id);
+                        fb::KitItemCondition::create(
+                            builder,
+                            &fb::KitItemConditionArgs {
+                                itemId: Some(item_id),
+                                remaining: condition.remaining,
+                            },
+                        )
+                    })
+                    .collect();
+                builder.create_vector(&rows)
+            };
             let expedition_mission = if cohort.expedition_mission.is_empty() {
                 None
             } else {
@@ -383,11 +402,9 @@ fn create_populations<'a>(
                     // Predators Phase 3 — the raid legibility pair, appended after fodderStore.
                     raidRadius: cohort.raid_radius,
                     raidForfeit: cohort.raid_forfeit,
-                    // The minimal TOE — the two kits' remaining condition and the two tiers they
-                    // resolve to, appended after the raid pair.
-                    huntingKitDurability: cohort.hunting_kit_durability,
-                    sledKitDurability: cohort.sled_kit_durability,
-                    basketKitDurability: cohort.basket_kit_durability,
+                    // The TOE's resolved tiers. The three fixed durability floats that used to sit
+                    // here are DEPRECATED in the schema and replaced by `kitItemConditions` below —
+                    // one row per item, so a config that adds an item needs no schema edit.
                     hunterAttack: cohort.hunter_attack,
                     huntCarryPerWorkerBiomass: cohort.hunt_carry_per_worker_biomass,
                     forageCarryPerWorkerBiomass: cohort.forage_carry_per_worker_biomass,
@@ -396,6 +413,7 @@ fn create_populations<'a>(
                     // The projections' horizon, so the client can put a number on their
                     // "never completed" sentinels — appended after the kit.
                     expeditionForecastHorizonTurns: cohort.expedition_forecast_horizon_turns,
+                    kitItemConditions: Some(kit_item_conditions),
                 },
             )
         })

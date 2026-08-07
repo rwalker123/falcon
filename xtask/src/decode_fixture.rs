@@ -883,6 +883,24 @@ fn seed_snapshot() -> WorldSnapshot {
     s.populations = rows();
     for cohort in &mut s.populations {
         cohort.stores = rows();
+        // **The TOE, one row per item.** `rows()` would give every row the same default id, and a
+        // list keyed by `item_id` with duplicate keys is not a thing the server can emit — so the
+        // ids are spelled out. They are the shipped item table, which is what a client reading this
+        // golden will actually be handed.
+        cohort.kit_item_conditions = ["spears", "sled", "baskets", "traps"]
+            .iter()
+            .enumerate()
+            .map(|(index, item)| KitItemConditionState {
+                item_id: (*item).to_string(),
+                // Distinct per row, and one of them DRY, so the golden exercises both sides of the
+                // cliff rather than recording four healthy numbers.
+                remaining: if index == 1 {
+                    0.0
+                } else {
+                    90.0 - index as f32 * 7.5
+                },
+            })
+            .collect();
         cohort.labor_assignments = rows();
         for assignment in &mut cohort.labor_assignments {
             assignment.arrival_schedule = vec![0.0f32; 4];

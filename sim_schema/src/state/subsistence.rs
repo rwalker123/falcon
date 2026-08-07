@@ -954,16 +954,16 @@ pub struct FoodModuleState {
 }
 
 /// **One named kit a party may be sent out with** (`equipment.json`'s `kits`) — a **mask** over the
-/// three consumable component blocks (spears / sled / baskets), published once per world so the
-/// client's picker renders real numbers without a second copy of the TOE table.
+/// item table (spears / sled / baskets / traps), published once per world so the client's picker
+/// renders real numbers without a second copy of the TOE table.
 ///
-/// The three tiers are what this kit grants a party whose components are all **fresh**. What a given
-/// band's *wear* then does to them is that band's own row (`PopulationCohortState`'s
-/// `hunter_attack` / `hunt_carry_per_worker_biomass` / `forage_carry_per_worker_biomass`).
+/// The tiers are what this kit grants a party whose items are all **fresh**. What a given band's
+/// *wear* then does to them is that band's own row (`PopulationCohortState`'s `hunter_attack` /
+/// `hunt_carry_per_worker_biomass` / `forage_carry_per_worker_biomass`).
 ///
 /// **`none` is an ordinary roster entry, not a sentinel**: it grants nothing, so its tiers are the
-/// unequipped ones throughout and a party sent with it spends no durability on any component. No
-/// consumer should special-case its id.
+/// unequipped ones throughout and a party sent with it spends no durability on any item. No consumer
+/// should special-case its id.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct KitOptionState {
     pub id: String,
@@ -983,6 +983,24 @@ pub struct KitOptionState {
     /// Per-gatherer throughput (biomass/turn, **before** the tile's seasonal weight) under this kit —
     /// the baskets' tier.
     pub forage_carry_per_worker_biomass: f32,
+    /// **What this kit multiplies the quarry's own `wariness` by** at the retreat — `1.0` leaves the
+    /// species' flight response alone, `0` means nothing breaks off at contact.
+    ///
+    /// It is a *multiplier*, so a picker must not render it as a flat "scares N% away": the same kit
+    /// costs a jumpy gazelle (`wariness 0.85`) almost its whole engagement and a mammoth (`0.10`)
+    /// nearly nothing. Pair it with the herd's own reading to say anything about a specific hunt.
+    #[serde(default)]
+    pub dispersion: f32,
+    /// **What this kit multiplies the species' `engage_rate` by** — how many animals one hunter
+    /// reaches per turn. `1.0` is neutral. This is the term that binds on light game, where `attack`
+    /// buys nothing because there is no `defense` to clear.
+    #[serde(default)]
+    pub engage_multiplier: f32,
+    /// **What this kit multiplies the hunt's baseline injury hazard by.** `1.0` is neutral; `0` is a
+    /// stand-off kit whose users are never in reach of the animal, and which therefore pays its cost
+    /// in durability instead of in people.
+    #[serde(default)]
+    pub exposure: f32,
 }
 
 /// `TileState::graze_ecology_phase` — the biome carries no pasture at all (water, ice, bare rock).
