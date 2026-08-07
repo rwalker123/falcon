@@ -951,6 +951,55 @@ all.
 A TOP dock stays at one column — the lateral bounds cost it 704px — which is the geometric rule
 working, not an exception.
 
+## A BOTTOM dock yields the HUD's strip only when the card cannot afford to keep it
+
+`Hud.set_reserved_inset` insets `LayoutRoot` on **all four edges**, so a bottom reservation shortens
+`ContentRow` across the entire window — and the left/right dock columns live there. The tile card
+therefore lost the panel's full 360px of height even in the region the band card never occupies. On a
+bottom dock `DockRowController._park` has already emptied `BottomBar` (`visible = false`, minimum
+`(0,0)`, one zero-size spacer), so that inset buys nothing and costs the columns everything.
+
+**A naive exemption is WRONG, and was tried and reverted.** The inset silently does a second job: the
+card only stays clear of the lateral columns *because those columns are shortened*. At 1920 a 1190px
+card centred in its strip starts at x≈204, inside the 360px left column. Taking the exemption forces
+the bounds to apply, costing 704px on top of the rail's 321 — the span falls 1599 → 895, under
+`WIDE_SHELL_MIN_WIDTH`, and the bottom dock collapses to the narrow tabbed shell (326px at `ui_scale`
+1.35). That is a worse trade than the bug.
+
+So the rule is conditional: **the HUD yields iff the card could NOT afford the wide shell with the
+bounds applied.** `Main.band_dock_overlays_hud(edge, size, hud, panel)` is its ONE home — deliberately
+`static` and node-free so the harnesses can call it instead of restating it. Two clauses: the bottom
+bar must have left the strip, and `BandCityPanel.affords_wide_shell_with_bounds()` must hold. The fork
+sits at a logical width of **2215**.
+
+| | 1920 | 2560 | 3440 |
+|---|---|---|---|
+| HUD | yields (status quo) | **keeps** | **keeps** |
+| column bottom | 720 of 1080 | **1080 of 1080** | full height |
+| band flank | 2 cols | **1 col** | 2 cols |
+
+**The predicate reads the AUTHORED column widths, never the live ones, and that is what breaks the
+cycle.** `Hud.lateral_column_widths()` is `max(authored, live)`; the live term moves when a column's
+height changes, and its height is what the inset decides — so reading it makes the predicate depend on
+its own output. Sabotage on exactly that mutation fails 35 assertions including the fixed-point check,
+which **samples both sides of the fork**: at 2600 alone the cycle is stable and invisible, and only
+1920, where the two branches disagree, makes it thrash.
+
+`DockRowController.parks_for` / `rail_width_for` are **pure functions, not state reads**, because
+`Main` is the FIRST listener on `reservation_changed` and the reflow the second — `_is_reflowed` would
+answer for the previous reservation.
+
+**Two consequences to know.** The chrome rail is pinned at `offset_left = -(_bound_trailing +
+rail_width)` / `offset_right = -_bound_trailing`; moving only the left offset widens the rail instead
+of moving it. And the second band column is lost in the window band ~**2215–2595** — the bounds cost
+the span 704px on exactly the monitors wide enough to have afforded two. Above ~2600 the flank keeps
+both and the work board pays a column instead.
+
+**At high `ui_scale` the clipping returns, and that is the intended fallback.** On a 2560 canvas,
+`ui_scale` 1.0 gives a 1535 span and keeps the strip; 1.35 gives a logical 1896, a span of 871, and
+yields. The flip is at roughly `ui_scale` 1.15 there. Printed each run rather than asserted — it is the
+interaction of two independent constants, not a contract.
+
 ## `PANEL_HEIGHT_WIDE` cannot shrink, and the band zone is not why
 
 The 360 was tried at 230 once the two-column flank needed only 148, and it failed 18 ways. **Two

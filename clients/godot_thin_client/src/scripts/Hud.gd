@@ -1061,6 +1061,19 @@ func reflow_dock_row(edge: int, size: float) -> void:
     if _dockrow != null:
         _dockrow.apply(edge, size)
 
+## WILL the bottom-bar chrome vacate the row for a panel reserving `size` on `edge`? Asked by
+## `Main.band_dock_overlays_hud` before it decides whether the HUD may keep a BOTTOM dock's strip: the
+## strip is only free of HUD furniture once the chrome has moved into the card's rail. A thin delegator
+## for the same reason `reflow_dock_row` is one — `Main` probes it by name.
+func bottom_chrome_parks_for(edge: int, size: float) -> bool:
+    return _dockrow != null and _dockrow.parks_for(edge, size)
+
+## …and how wide a rail it will ask that card for (0 when it parks nothing). The band card's own
+## affordability test has to subtract the chrome column BEFORE the chrome has been pushed, so it takes
+## the width from here rather than from whatever the panel was last told.
+func bottom_chrome_rail_width(edge: int, size: float) -> float:
+    return 0.0 if _dockrow == null else _dockrow.rail_width_for(edge, size)
+
 ## Walk to the next/prev player band (the panel cycler's ◀/▶).
 func cycle_panel_band(delta: int) -> void:
     _bandpanel.cycle_band(delta)

@@ -344,9 +344,10 @@ var _rail_slots: Dictionary = {}          # slot:int (RAIL_SLOT_*) -> Control ho
 ## The rail column's width, DECLARED by the HUD (`set_rail_width`) — never measured from the content.
 var _rail_declared_width: float = 0.0
 ## What the card must LEAVE at each end of a horizontal strip, declared by `Main` (`set_lateral_bounds`)
-## — the HUD's left and right column widths. Only a TOP dock has any, because it is the only edge where
-## the HUD does NOT yield its strip (see `Main._reserver_overlays_hud`); a bottom dock's HUD moves out of
-## the way, so the card has the whole row.
+## — the HUD's left and right column widths. An edge has bounds exactly when the HUD does NOT yield its
+## strip there (`Main._reserver_overlays_hud`): always on a TOP dock, and on a BOTTOM dock whenever the
+## card can afford them (`affords_wide_shell_with_bounds`). When the HUD yields, it has moved out of the
+## row entirely and both are 0.
 var _bound_leading: float = 0.0
 var _bound_trailing: float = 0.0
 ## How many columns the WORK board wants, DECLARED by `BandPanelController` (`set_work_columns`). It is
@@ -904,16 +905,24 @@ func _position_card_and_rail() -> void:
 	if _is_vertical_edge(_dock_edge):
 		_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		return
-	# The chrome cluster: flush to the strip's TRAILING edge, full strip height. Anchored by hand rather
-	# than laid out, because it is no longer any container's child.
+	# The chrome cluster: flush to the trailing edge of the row the card may actually use, full strip
+	# height. Anchored by hand rather than laid out, because it is no longer any container's child.
+	#
+	# **`_bound_trailing` IS IN BOTH OFFSETS, and it is what stops the rail being drawn over the HUD's
+	# right-hand column.** The rail is pinned to the trailing end of the strip, and the trailing end of
+	# the strip is exactly where that column is — the same collision `_bound_trailing` holds the CARD off,
+	# one island over. It was inert while only a TOP dock carried bounds (a top dock has no rail at all,
+	# `_rail_width`), and went live the day a BOTTOM dock could keep the HUD's strip. The pair keeps the
+	# rail's WIDTH at `rail_width`: shifting only `offset_left` would stretch the column by the bound
+	# instead of moving it, and the centred stack inside would then sit under the readouts.
 	var rail_width := _rail_width()
 	if _rail != null:
 		_rail.anchor_left = 1.0
 		_rail.anchor_right = 1.0
 		_rail.anchor_top = 0.0
 		_rail.anchor_bottom = 1.0
-		_rail.offset_left = -rail_width
-		_rail.offset_right = 0.0
+		_rail.offset_left = -(_bound_trailing + rail_width)
+		_rail.offset_right = -_bound_trailing
 		_rail.offset_top = 0.0
 		_rail.offset_bottom = 0.0
 	# The card: its content width, centred in what the chrome leaves. Clamped to the available room so a
@@ -988,6 +997,32 @@ func set_lateral_bounds(leading: float, trailing: float) -> void:
 ## `_position_card_and_rail` cannot disagree about how much room there is.
 func _available_card_span() -> float:
 	return maxf(_panel_width_extent() - _rail_span() - _bound_leading - _bound_trailing, 0.0)
+
+## **COULD the card stand in the WIDE shell if it had to keep clear of these two columns?** The question
+## `Main.band_dock_overlays_hud` asks before it lets the HUD keep its strip on a BOTTOM dock: yielding the
+## strip costs the HUD's left column its full height, and not yielding costs the card the two bounds — so
+## the trade is only worth taking while the card can still pay them and stay in the three-zone shell.
+##
+## **EVERY TERM MUST BE ONE THE INSET CANNOT MOVE, and that is the whole reason this is a separate
+## question from `_shell_is_wide()`.** The caller passes the HUD's AUTHORED column widths
+## (`left_column_width` / `right_column_width`, scene constants) and the rail width the HUD's chrome WILL
+## declare, never `lateral_column_widths()`'s `max(authored, live)`: a live width follows a column's
+## rendered extent, the inset decides that column's height, and reading it here would make the predicate
+## depend on its own output. `_panel_width_extent()` is the viewport. So the answer is a function of the
+## window, two constants and a declared width — no path back to the inset, hence no cycle.
+##
+## The rail width is a PARAMETER for the same order-independence reason: `_rail_declared_width` is pushed
+## by `DockRowController` on the *second* listener of `reservation_changed`, so reading it here would
+## answer against the rail the panel had a moment ago rather than the one it is about to be given.
+##
+## A collapsed or hidden panel draws no card at all, and a vertical dock's card is a fixed `PANEL_WIDTH`
+## strip — none of them is a wide shell, so none of them can afford one.
+func affords_wide_shell_with_bounds(leading: float, trailing: float, rail_width: float) -> bool:
+	if _collapsed or not _shown or _is_vertical_edge(_dock_edge):
+		return false
+	var span: float = _panel_width_extent() - _rail_span_of(rail_width) \
+		- maxf(leading, 0.0) - maxf(trailing, 0.0)
+	return span >= WIDE_SHELL_MIN_WIDTH
 
 ## How wide the CARD draws. A vertical dock is the fixed strip; a horizontal one is exactly what its
 ## content needs, which is what stops a bottom dock spanning an ultrawide.
@@ -1377,7 +1412,12 @@ func _rail_width() -> float:
 ## between two regions of one card. The `ChromeRailSeparator` `ColorRect` went with the merged bar; a
 ## rule down the gap between the card and the chrome would re-assert the very join that was removed.
 func _rail_span() -> float:
-	var width := _rail_width()
+	return _rail_span_of(_rail_width())
+
+## What a rail of `width` would take off the strip. Split out so `affords_wide_shell_with_bounds` can ask
+## the question about a width that has not been declared yet without restating the "+ gutter, or zero"
+## rule — the two must never disagree about what a rail costs.
+func _rail_span_of(width: float) -> float:
 	if width <= 0.0:
 		return 0.0
 	return width + RAIL_SEPARATOR_SPAN

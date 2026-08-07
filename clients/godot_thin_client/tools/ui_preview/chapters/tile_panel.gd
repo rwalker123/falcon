@@ -10,6 +10,9 @@ const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
+## `Main`, for its HUD-yield RULE alone (`band_dock_overlays_hud`, `static` so no node is needed) — the
+## harness never instances it. See the fan-out below.
+const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
 const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
@@ -985,8 +988,13 @@ func run(harness) -> void:
 	h.add_child(tile_panel_band_panel)
 	# Fan the panel's reservation onto the HUD as Main does, and dock it RIGHT — docked left it
 	# reserves the very edge the selection card lives on and covers the frame under test.
+	# **The yield rule is CALLED, not assumed away.** A vertical dock always yields, so this is
+	# behaviour-neutral at `SIDE_RIGHT`; it is routed through `Main`'s rule anyway so that re-docking
+	# this panel horizontally some day cannot leave the harness fanning out by a rule the client
+	# stopped using.
 	tile_panel_band_panel.reservation_changed.connect(func(edge: int, size: float):
-		h._hud.set_reserved_inset(&"band_panel", edge, size))
+		h._hud.set_reserved_inset(&"band_panel", edge,
+			0.0 if MAIN_SCRIPT.band_dock_overlays_hud(edge, size, h._hud, tile_panel_band_panel) else size))
 	tile_panel_band_panel.set_dock(SIDE_RIGHT)
 	# The panel's narrow shell shows ONE zone, and its prefs are a fresh profile (see the isolation
 	# block in `_ready`), so it opens on `DEFAULT_TAB` = work. This frame is about where the band
