@@ -273,6 +273,34 @@ Kits draws those two; **Equipment is defined by subtraction** — "every other t
 it is" — so a fourth gear block lands there by construction. Only a restructuring of the config's TOP
 LEVEL reaches any client file.
 
+### The ONE exception: the Kits page promotes an entry's name into its title
+
+`kits[0]` is a coordinate, not a name. So the Kits page composes each roster block's title out of the
+entry's own `display_name` and `id` — `Big-game kit (big_game)` — and then hides **only the rows the
+title consumed**. The two key names live beside the partition consts in `WorkbenchVocab`
+(`CONFIG_KIT_DISPLAY_NAME_KEY` / `CONFIG_KIT_ID_KEY`) and are the only other config knowledge the
+client holds.
+
+**It is bounded, and the boundary is the whole point.** Promotion is a re-rendering of two values the
+page was already drawing, not a statement about which fields a kit has: every other key in the entry
+still goes through the blind walker, so a field added to a kit definition tomorrow arrives with its own
+row and no edit here. The moment a third key is added because it "should be shown", that distinction
+is gone and the page has a whitelist.
+
+An entry can be edited into any shape, so the page **degrades rather than assuming**, and each case
+suppresses only what it used: both keys → `display_name (id)`, both rows gone; `display_name` alone →
+the name, `id` untouched; `id` alone → the id; neither → the walker's own `kits[N]` with the whole
+entry still in the body. A value that is not a non-empty string is not promotable at all — a config
+carrying a number under `id` falls to the next case and **keeps the row**, since suppressing a key the
+title could not carry would hide it and say nothing in its place.
+
+**The seam into the shared layer is two parameters, and `WorkbenchWidgets` learns nothing from them.**
+`build_config_block(name, object, depth, skip_keys)` is public precisely so a page may have a better
+name for a block than the walker can derive; `build_config_object`'s `skip_keys` applies to THAT
+object's own keys and is deliberately not passed down the recursion, since a caller suppressing `id` at
+the top has said nothing about an `id` three levels in. The page decides both; the widget only honours
+them.
+
 Two consequences worth stating because they are easy to undo:
 
 - **The keys are never prettified.** `wear_per_biomass_hauled` is drawn exactly like that, because the
@@ -282,13 +310,20 @@ Two consequences worth stating because they are easy to undo:
   STRUCT, so `equipment.json`'s `_comment` blocks never reach the client; a guard against something
   that cannot arrive is dead code, and this repo has no shipped saves to need one.
 
-`workbench_preview` pins the property rather than the pictures. The fixture carries a field
-(`wear_per_turn_carried`, inside a real gear block) and a whole block (`windbreak_kit`) that **no
-shipped GDScript names**, and `_assert_the_pages_print_a_config_no_script_names` asserts both render
-with their own values — plus a scan of the four shipped scripts confirming neither string appears in
-any of them. It is the only thing standing between this design and a hardcoded field list creeping
-back, and it was sabotage-verified against exactly that (an allow-list in the renderer fails it alone,
-naming the key it could not find, with the other eight assertions green).
+`workbench_preview` pins the property rather than the pictures. The fixture carries a field inside a
+real gear block (`wear_per_turn_carried`), a whole top-level block (`windbreak_kit`) and — **because
+the Kits page is the one that got an exception** — a field inside a roster entry (`morale_bonus`), all
+three named by **no shipped GDScript**, and `_assert_the_pages_print_a_config_no_script_names` asserts
+each renders with its own value, plus a scan of the four shipped scripts confirming none of the strings
+appears in any of them. The kit one is not decoration: the other two both live on the Equipment page,
+so before it existed a `KitsPage` simplified down to a fixed jobs+uses body would have passed every
+assertion in the file. It is the only thing standing between this design and a hardcoded field list
+creeping back, and it was sabotage-verified against exactly that (an allow-list in the renderer fails
+it alone, naming the key it could not find, with the other nine assertions green).
+`_assert_the_kits_page_titles_each_entry_by_its_own_name` covers the promotion itself over all four
+title cases, asserting that the promoted rows leave the body and that nothing else does — and the
+fixture carries an ANONYMOUS roster entry for no reason but to keep the `kits[N]` fallback reachable,
+an unreachable branch reading exactly like a covered one.
 `_assert_the_pages_partition_the_config` covers the other half — that the roster is on Kits and NOT on
 Equipment, and a gear block on Equipment and NOT on Kits — which no frame can carry, since each page
 renders a plausible tree of config keys and the claim is about the *other* page.

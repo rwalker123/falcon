@@ -89,7 +89,8 @@ func _render() -> void:
 		var name := String(key)
 		if name == WorkbenchVocab.CONFIG_KITS_KEY or name == WorkbenchVocab.CONFIG_DEFAULT_KITS_KEY:
 			continue
-		for control in WorkbenchWidgets.build_config_entries(name, _config[key], 0):
+		for control in WorkbenchWidgets.build_config_entries(name, _config[key],
+				WorkbenchWidgets.CONFIG_TOP_LEVEL_DEPTH):
 			_body.add_child(control)
 		drawn += 1
 	if drawn == 0:

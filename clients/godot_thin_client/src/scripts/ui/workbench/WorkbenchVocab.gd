@@ -124,6 +124,24 @@ const CONFIG_JSON_KEY := "equipment_config_json"
 const CONFIG_KITS_KEY := "kits"
 const CONFIG_DEFAULT_KITS_KEY := "default_kits"
 
+## **THE ONE BOUNDED EXCEPTION, AND IT MUST NOT BECOME A WHITELIST.** The Kits page PROMOTES these two
+## keys of a roster entry into the block's title: `kits[0]` is a coordinate that tells a reader
+## nothing, while `Big-game kit (big_game)` names the thing they are looking at. Having said them in
+## the title the page then hides **only the keys the title actually used** — every other key in the
+## entry still renders blind, so a field added to a kit definition tomorrow still appears with no edit
+## here. Promotion is a rendering of two values the page already drew, not a list of the fields a kit
+## may have; the moment a third key is added because it "should be shown", that distinction is gone.
+##
+## With `CONFIG_KITS_KEY` / `CONFIG_DEFAULT_KITS_KEY` above, these are the ONLY config key names any
+## client code holds, and this is the one place to change them.
+const CONFIG_KIT_DISPLAY_NAME_KEY := "display_name"
+const CONFIG_KIT_ID_KEY := "id"
+## `display_name (id)` — both, when the entry states both. A roster entry may be edited into any
+## shape, so the page degrades rather than assuming: only `id` → the id alone, only `display_name` →
+## the name alone, neither → the walker's own `kits[N]`, with only the promoted key(s) suppressed in
+## each case.
+const KITS_TITLE_FORMAT := "%s (%s)"
+
 ## Said in place of a value that has nothing in it — an empty object, an empty array, an empty string,
 ## a JSON `null`. Rendered explicitly rather than left blank, because a blank right-hand column reads
 ## as a rendering bug rather than as the config's own answer.

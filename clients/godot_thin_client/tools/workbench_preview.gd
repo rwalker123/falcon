@@ -130,6 +130,7 @@ func _ready() -> void:
 	_assert_equipment_fits(_equipment_page(), EQUIPMENT_PAGE)
 	_assert_the_pages_print_a_config_no_script_names()
 	_assert_the_pages_partition_the_config()
+	_assert_the_kits_page_titles_each_entry_by_its_own_name()
 	# LAST TWO of the config block, in this order: the reset empties both pages, which is exactly the
 	# precondition the catch-up assertion needs — and nothing else may read them after it.
 	_assert_equipment_drops_the_world()
@@ -435,11 +436,36 @@ func _content_scroll() -> ScrollContainer:
 const CONFIG_INVENTED_FIELD := "wear_per_turn_carried"
 const CONFIG_INVENTED_BLOCK := "windbreak_kit"
 const CONFIG_EMPTY_BLOCK := "spare_kit"
+## **AND A THIRD, INSIDE A ROSTER ENTRY, because the Kits page is the one that got an exception.**
+## That page promotes `display_name` and `id` into its block title; the two invented keys above both
+## live on the EQUIPMENT page, so before this one existed a "simplification" of `KitsPage` down to a
+## fixed jobs+uses body would have passed every assertion in this file. This key is what makes the
+## Kits page's body generic as a *tested* fact rather than a claim in a docstring.
+const CONFIG_INVENTED_KIT_FIELD := "morale_bonus"
 ## A gear block and a kit id the REAL config carries, so the fixture is recognisably the shipped
 ## shape and the partition assertion has something honest to point at.
 const CONFIG_GEAR_BLOCK := "hunting_kit"
 const CONFIG_HUNT_KIT_ID := "big_game"
 const CONFIG_HUNT_JOB := "hunt"
+const CONFIG_HUNT_KIT_DISPLAY := "Big-game kit"
+
+## **THE FOUR ROSTER ENTRIES ARE THE FOUR TITLE CASES**, so the Kits page's degradation is exercised
+## rather than described. `[0]` states both keys, `[1]` only `id`, `[2]` only `display_name`, and
+## `[3]` neither — the last is what keeps the `kits[N]` fallback REACHABLE, which it would not be on a
+## roster where every entry names itself.
+const CONFIG_ID_ONLY_KIT_INDEX := 1
+const CONFIG_ID_ONLY_KIT_ID := "gathering"
+const CONFIG_NAME_ONLY_KIT_INDEX := 2
+const CONFIG_NAME_ONLY_KIT_DISPLAY := "No kit"
+const CONFIG_ANONYMOUS_KIT_INDEX := 3
+
+## The titles the page must compose, spelled out LITERALLY rather than rebuilt from the fixture
+## through the page's own format and branches — a derived expectation would re-run the logic under
+## test and agree with whatever it did.
+const CONFIG_HUNT_KIT_TITLE := "Big-game kit (big_game)"
+const CONFIG_ID_ONLY_KIT_TITLE := "gathering"
+const CONFIG_NAME_ONLY_KIT_TITLE := "No kit"
+const CONFIG_ANONYMOUS_KIT_TITLE := "kits[3]"
 ## The roster field carrying both array shapes the tree has to tell apart: two components on `big_game`
 ## (comma-joined onto one row) and none at all on `none`, which is an ordinary roster member and not a
 ## sentinel — so its empty array has to say `—`.
@@ -474,18 +500,25 @@ static func _equipment_config() -> Dictionary:
 		},
 		CONFIG_EMPTY_BLOCK: {},
 		WorkbenchVocab.CONFIG_KITS_KEY: [
+			# [0] BOTH keys — the ordinary entry, and the one carrying the invented kit field.
 			{
-				"id": CONFIG_HUNT_KIT_ID, "display_name": "Big-game kit",
+				WorkbenchVocab.CONFIG_KIT_ID_KEY: CONFIG_HUNT_KIT_ID,
+				WorkbenchVocab.CONFIG_KIT_DISPLAY_NAME_KEY: CONFIG_HUNT_KIT_DISPLAY,
 				"jobs": [CONFIG_HUNT_JOB], CONFIG_USES_KEY: [CONFIG_GEAR_BLOCK, "sled_kit"],
+				CONFIG_INVENTED_KIT_FIELD: 3.0,
 			},
+			# [1] `id` only — the title is the id and ONLY the `id` row is suppressed.
 			{
-				"id": "gathering", "display_name": "Gathering kit",
+				WorkbenchVocab.CONFIG_KIT_ID_KEY: CONFIG_ID_ONLY_KIT_ID,
 				"jobs": ["forage"], CONFIG_USES_KEY: ["basket_kit"],
 			},
+			# [2] `display_name` only — the mirror case, and the empty `uses` array.
 			{
-				"id": "none", "display_name": "No kit",
+				WorkbenchVocab.CONFIG_KIT_DISPLAY_NAME_KEY: CONFIG_NAME_ONLY_KIT_DISPLAY,
 				"jobs": [CONFIG_HUNT_JOB, "forage"], CONFIG_USES_KEY: [],
 			},
+			# [3] NEITHER — the entry that keeps the walker's own `kits[N]` fallback reachable.
+			{"jobs": ["forage"], CONFIG_USES_KEY: ["basket_kit"]},
 		],
 		WorkbenchVocab.CONFIG_DEFAULT_KITS_KEY: {
 			CONFIG_HUNT_JOB: CONFIG_HUNT_KIT_ID,
@@ -594,13 +627,6 @@ func _config_block_body(page: WorkbenchPage, name: String) -> Node:
 	return null
 
 
-## The name the tree gives element `index` of the roster's array — `kits[0]`, the block heading the
-## partition assertion looks for. Composed through the SAME format the renderer uses, since the two
-## agreeing is the premise here and not the claim.
-static func _roster_block_name(index: int) -> String:
-	return WorkbenchVocab.CONFIG_INDEX_FORMAT % [WorkbenchVocab.CONFIG_KITS_KEY, index]
-
-
 ## The shipped scripts a hardcoded field list could hide in. The harness itself is deliberately NOT
 ## in this list: it is the thing that invents the keys.
 const CONFIG_PAGE_SOURCES := [
@@ -622,19 +648,32 @@ const CONFIG_PAGE_SOURCES := [
 ## claim and why the previous page's roster had to go: another session is renaming the config's gear
 ## blocks right now, and a list of field names breaks on their merge without saying so.
 ##
-## Three legs plus the two vacuity guards:
-##   - the invented FIELD renders, with the value it was given;
-##   - the invented BLOCK renders, with its own children under it;
-##   - neither string appears in any shipped script, so the render above cannot have come from a page
-##     that happens to name them (this leg cannot see an allow-list of REAL key names — the rendered
-##     legs are what catch that — but it does catch the allow-list that names the new key too);
-##   - the guards: the fixture really does carry both, in the shapes claimed.
+## **AND IT HAS TO REACH THE KITS PAGE, because that page was given an exception.** Kits PROMOTES
+## `display_name` and `id` into its block title and hides those two rows — a bounded, deliberate piece
+## of field knowledge (`WorkbenchVocab.CONFIG_KIT_DISPLAY_NAME_KEY`) that would be trivial to grow
+## into a whitelist of "the fields a kit has". The two invented keys above both live on the EQUIPMENT
+## page, so before `morale_bonus` existed a `KitsPage` simplified down to a fixed jobs+uses body would
+## have passed every assertion in this file. The third invented key is what makes the Kits page's
+## BODY generic as a tested fact rather than a claim in a docstring.
+##
+## Four legs plus the vacuity guards:
+##   - the invented FIELD renders on Equipment, with the value it was given;
+##   - the invented BLOCK renders on Equipment, with its own children under it;
+##   - the invented KIT FIELD renders on Kits, inside the promoted block, with its value;
+##   - none of the three strings appears in any shipped script, so the renders above cannot have come
+##     from a page that happens to name them (this leg cannot see an allow-list of REAL key names —
+##     the rendered legs are what catch that — but it does catch the allow-list that names the new
+##     key too);
+##   - the guards: the fixture really does carry all three, in the shapes claimed.
 func _assert_the_pages_print_a_config_no_script_names() -> void:
 	var page := _equipment_page()
-	if page == null:
+	var kits := _kits_page()
+	if page == null or kits == null:
 		return
 	var config := _equipment_config()
 	var gear: Dictionary = config.get(CONFIG_GEAR_BLOCK, {})
+	var roster: Array = config[WorkbenchVocab.CONFIG_KITS_KEY]
+	var first_kit: Dictionary = roster[0]
 	if not gear.has(CONFIG_INVENTED_FIELD):
 		push_error("workbench_preview: the fixture's '%s' block does not carry the invented field '%s' — this assertion would prove nothing"
 			% [CONFIG_GEAR_BLOCK, CONFIG_INVENTED_FIELD])
@@ -642,6 +681,10 @@ func _assert_the_pages_print_a_config_no_script_names() -> void:
 	if not config.has(CONFIG_INVENTED_BLOCK):
 		push_error("workbench_preview: the fixture carries no invented top-level block '%s' — this assertion would prove nothing"
 			% CONFIG_INVENTED_BLOCK)
+		return
+	if not first_kit.has(CONFIG_INVENTED_KIT_FIELD):
+		push_error("workbench_preview: the fixture's first roster entry does not carry the invented field '%s' — nothing would then pin the KITS page's body as generic"
+			% CONFIG_INVENTED_KIT_FIELD)
 		return
 
 	var failed := 0
@@ -667,16 +710,30 @@ func _assert_the_pages_print_a_config_no_script_names() -> void:
 				push_error("workbench_preview: '%s.%s' did not render (wanted '%s', got '%s')"
 					% [CONFIG_INVENTED_BLOCK, child_key, wanted, got])
 
+	# …and the same claim on the KITS page, inside the block whose title consumed two other keys: the
+	# promotion must suppress exactly those two and leave the rest of the entry walked blind.
+	var kit_body := _config_block_body(kits, CONFIG_HUNT_KIT_TITLE)
+	if kit_body == null:
+		failed += 1
+		push_error("workbench_preview: no roster block titled '%s' on the Kits page" % CONFIG_HUNT_KIT_TITLE)
+	else:
+		var wanted_kit_face := WorkbenchWidgets.config_value_face(first_kit[CONFIG_INVENTED_KIT_FIELD])
+		var kit_face := _config_row_face(kit_body, CONFIG_INVENTED_KIT_FIELD)
+		if kit_face != wanted_kit_face:
+			failed += 1
+			push_error("workbench_preview: the kit field '%s' — which no GDScript names — did not render its value under '%s' (wanted '%s', got '%s'). The Kits page's title promotion has become a whitelist."
+				% [CONFIG_INVENTED_KIT_FIELD, CONFIG_HUNT_KIT_TITLE, wanted_kit_face, kit_face])
+
 	for path in CONFIG_PAGE_SOURCES:
 		var source := FileAccess.get_file_as_string(path)
 		if source.is_empty():
 			failed += 1
 			push_error("workbench_preview: could not read %s — the source scan is asserting nothing" % path)
 			continue
-		for invented in [CONFIG_INVENTED_FIELD, CONFIG_INVENTED_BLOCK]:
+		for invented in [CONFIG_INVENTED_FIELD, CONFIG_INVENTED_BLOCK, CONFIG_INVENTED_KIT_FIELD]:
 			if source.contains(invented):
 				failed += 1
-				push_error("workbench_preview: %s names '%s'. These two keys exist ONLY in this fixture; a shipped script naming one means the pages have started listing fields again."
+				push_error("workbench_preview: %s names '%s'. These three keys exist ONLY in this fixture; a shipped script naming one means the pages have started listing fields again."
 					% [path, invented])
 
 	# The empty shapes, asserted here because they are the other half of "print what is there": an
@@ -687,8 +744,9 @@ func _assert_the_pages_print_a_config_no_script_names() -> void:
 			% [CONFIG_EMPTY_BLOCK, _config_row_face(page, CONFIG_EMPTY_BLOCK),
 				WorkbenchVocab.CONFIG_EMPTY])
 	if failed == 0:
-		print("workbench_preview: assert OK — the pages printed '%s' and '%s', which no shipped script names (%d sources scanned)"
-			% [CONFIG_INVENTED_FIELD, CONFIG_INVENTED_BLOCK, CONFIG_PAGE_SOURCES.size()])
+		print("workbench_preview: assert OK — the pages printed '%s', '%s' and '%s', which no shipped script names (%d sources scanned)"
+			% [CONFIG_INVENTED_FIELD, CONFIG_INVENTED_BLOCK, CONFIG_INVENTED_KIT_FIELD,
+				CONFIG_PAGE_SOURCES.size()])
 
 
 ## **THE TWO PAGES PARTITION THE CONFIG'S TOP LEVEL, AND NO FRAME CAN SAY SO** — each page renders a
@@ -703,7 +761,9 @@ func _assert_the_pages_partition_the_config() -> void:
 	var kits := _kits_page()
 	if equipment == null or kits == null:
 		return
-	var roster_block := _roster_block_name(0)
+	# The roster's presence is read off the block TITLE the Kits page composes, since the walker's
+	# `kits[0]` coordinate is exactly what that title replaced.
+	var roster_block := CONFIG_HUNT_KIT_TITLE
 
 	var failed := 0
 	if not _page_states(kits, roster_block):
@@ -743,7 +803,7 @@ func _assert_the_pages_partition_the_config() -> void:
 	if not uses_faces.has(joined):
 		failed += 1
 		push_error("workbench_preview: '%s.%s' does not render its components on one row as '%s' — got %s"
-			% [_roster_block_name(0), CONFIG_USES_KEY, joined, uses_faces])
+			% [CONFIG_HUNT_KIT_TITLE, CONFIG_USES_KEY, joined, uses_faces])
 	if not uses_faces.has(WorkbenchVocab.CONFIG_EMPTY):
 		failed += 1
 		push_error("workbench_preview: the bare kit's empty '%s' array renders no explicit '%s' — got %s"
@@ -751,6 +811,90 @@ func _assert_the_pages_partition_the_config() -> void:
 	if failed == 0:
 		print("workbench_preview: assert OK — Kits draws the roster and the defaults, Equipment draws the %d other block(s), and neither draws the other's"
 			% (_equipment_config().size() - 2))
+
+
+## **THE ONE PIECE OF FIELD KNOWLEDGE ON EITHER PAGE, AND ITS FOUR DEGRADATIONS.**
+##
+## `kits[0]` is a coordinate that names nothing a reader can use, so the Kits page promotes a roster
+## entry's `display_name` and `id` into the block's title — and then hides ONLY the rows the title
+## consumed. Two things have to hold for that to stay an exception rather than a whitelist, and
+## neither is visible in a frame: that the promoted rows are gone from the BODY (a title plus an `id`
+## row reads as correct, just repetitive), and that nothing ELSE is gone
+## (`_assert_the_pages_print_a_config_no_script_names` owns that half, through a kit field no script
+## names).
+##
+## A roster entry can be edited into any of four shapes and each promotes only what it can use, so all
+## four are fixtured and asserted:
+##   [0] both keys  → `display_name (id)`, both rows gone;
+##   [1] `id` only  → the id alone, and the `display_name` row was never there to lose;
+##   [2] name only  → the display name alone, `id` untouched;
+##   [3] neither    → the walker's own `kits[3]`, whole entry still in the body.
+##
+## **The fourth is the one that rots first.** A roster where every entry names itself leaves the
+## `kits[N]` fallback unreachable, and an unreachable branch reads as covered — so the fixture carries
+## an anonymous entry for no other purpose.
+func _assert_the_kits_page_titles_each_entry_by_its_own_name() -> void:
+	var kits := _kits_page()
+	if kits == null:
+		return
+	var roster: Array = _equipment_config()[WorkbenchVocab.CONFIG_KITS_KEY]
+	var display_key := WorkbenchVocab.CONFIG_KIT_DISPLAY_NAME_KEY
+	var id_key := WorkbenchVocab.CONFIG_KIT_ID_KEY
+
+	# Each case must actually BE the shape it claims, or the branch it stands for is untested.
+	var shapes := {
+		CONFIG_HUNT_KIT_TITLE: [true, true],
+		CONFIG_ID_ONLY_KIT_TITLE: [false, true],
+		CONFIG_NAME_ONLY_KIT_TITLE: [true, false],
+		CONFIG_ANONYMOUS_KIT_TITLE: [false, false],
+	}
+	var indices := [0, CONFIG_ID_ONLY_KIT_INDEX, CONFIG_NAME_ONLY_KIT_INDEX,
+		CONFIG_ANONYMOUS_KIT_INDEX]
+	var titles := shapes.keys()
+	for slot in titles.size():
+		var entry: Dictionary = roster[indices[slot]]
+		var wanted: Array = shapes[titles[slot]]
+		if entry.has(display_key) != bool(wanted[0]) or entry.has(id_key) != bool(wanted[1]):
+			push_error("workbench_preview: roster entry %d is not the shape '%s' stands for (display_name %s, id %s) — that title branch is untested"
+				% [indices[slot], titles[slot], entry.has(display_key), entry.has(id_key)])
+			return
+
+	var failed := 0
+	for slot in titles.size():
+		var title: String = titles[slot]
+		var wanted: Array = shapes[title]
+		var body := _config_block_body(kits, title)
+		if body == null:
+			failed += 1
+			push_error("workbench_preview: no roster block titled '%s' — the Kits page did not compose the title for entry %d"
+				% [title, indices[slot]])
+			continue
+		# A key the title USED must be gone from the body; a key it could not use must still be there.
+		for pair in [[display_key, bool(wanted[0])], [id_key, bool(wanted[1])]]:
+			var key: String = pair[0]
+			var promoted: bool = pair[1]
+			var present := not _config_row_faces(body, key).is_empty()
+			if promoted and present:
+				failed += 1
+				push_error("workbench_preview: '%s' still carries a '%s' row — the title already said it, so the row is a repetition"
+					% [title, key])
+			elif not promoted and _entry_states(roster[indices[slot]], key) and not present:
+				failed += 1
+				push_error("workbench_preview: '%s' lost its '%s' row, which the title never used — the promotion is suppressing more than it promoted"
+					% [title, key])
+		# Every entry keeps the keys the title had no claim on.
+		for kept in ["jobs", CONFIG_USES_KEY]:
+			if _config_row_faces(body, kept).is_empty():
+				failed += 1
+				push_error("workbench_preview: '%s' has no '%s' row — the block body is not the generic tree"
+					% [title, kept])
+	if failed == 0:
+		print("workbench_preview: assert OK — the Kits page titles all %d entries by their own names (both keys, id only, name only, and the '%s' fallback), suppressing only what each title used"
+			% [roster.size(), CONFIG_ANONYMOUS_KIT_TITLE])
+
+
+func _entry_states(entry: Dictionary, key: String) -> bool:
+	return entry.has(key)
 
 
 ## **`reset()` IS REAL ON BOTH CONFIG PAGES, which is the counter-case to `ConfigTuningPage`'s
@@ -768,7 +912,7 @@ func _assert_equipment_drops_the_world() -> void:
 	if equipment == null or kits == null:
 		return
 	if not _page_states(equipment, CONFIG_INVENTED_BLOCK) \
-			or not _page_states(kits, _roster_block_name(0)):
+			or not _page_states(kits, CONFIG_HUNT_KIT_TITLE):
 		push_error("workbench_preview: nothing was on the config pages to drop — the reset claim would pass vacuously")
 		return
 
@@ -779,7 +923,7 @@ func _assert_equipment_drops_the_world() -> void:
 		failed += 1
 		push_error("workbench_preview: the gear block '%s' survived the world boundary on the Equipment page"
 			% CONFIG_INVENTED_BLOCK)
-	if _page_states(kits, _roster_block_name(0)):
+	if _page_states(kits, CONFIG_HUNT_KIT_TITLE):
 		failed += 1
 		push_error("workbench_preview: the kit roster survived the world boundary on the Kits page")
 	if not _page_states(equipment, WorkbenchVocab.EQUIPMENT_NO_CONFIG):

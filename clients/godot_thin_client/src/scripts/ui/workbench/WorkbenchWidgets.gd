@@ -371,6 +371,10 @@ const CONFIG_VALUE_WIDTH := 132.0
 ## insets the whole tree once, and a full step at every level walks a `CONFIG_MAX_DEPTH` document off
 ## the right-hand side of the column.
 const CONFIG_INDENT := 10
+## The level a PAGE's own entries sit at — the root of the tree, and the only depth a caller outside
+## this file ever passes. Named so the pages do not each spell a bare `0` whose meaning has to be
+## inferred from the recursion.
+const CONFIG_TOP_LEVEL_DEPTH := 0
 ## The OpenType feature that makes digits share one advance width, so a column of values aligns on its
 ## figures instead of on whatever the glyphs happen to measure. A font that does not carry the feature
 ## ignores it — this is a request, not a second font choice, which is why the variation declares no
@@ -407,18 +411,31 @@ static func tabular_figures_font() -> FontVariation:
 ##
 ## `depth` is the nesting level these entries sit at and is threaded through as a PARAMETER, never
 ## held — this layer keeps no state about the tree it is drawing.
-static func build_config_object(object: Dictionary, depth: int) -> VBoxContainer:
+##
+## `skip_keys` is the same idea for the ONE thing a caller may know that this layer must not: which of
+## THIS object's keys the caller has already stated somewhere else, so drawing them again would be a
+## repetition (`KitsPage` promotes a kit's name into the block's title). **It applies to this object's
+## own keys and is deliberately NOT passed down the recursion** — a caller suppressing `id` at the top
+## has said nothing about an `id` three levels in. This layer never decides what goes in the set; it
+## only honours one it is handed, which is what keeps it a generic tree printer.
+static func build_config_object(object: Dictionary, depth: int,
+		skip_keys: PackedStringArray = PackedStringArray()) -> VBoxContainer:
 	var column := VBoxContainer.new()
 	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	# Blocks at the top level are separate things and get the gap between rows; nested lines belong to
 	# one block and get the tighter gap, so a block reads as a unit.
-	column.add_theme_constant_override("separation", ROW_GAP if depth == 0 else ROW_LINE_GAP)
-	if object.is_empty():
-		column.add_child(build_caption(WorkbenchVocab.CONFIG_EMPTY))
-		return column
+	column.add_theme_constant_override("separation",
+		ROW_GAP if depth == CONFIG_TOP_LEVEL_DEPTH else ROW_LINE_GAP)
+	var drawn := 0
 	for key in object:
+		if skip_keys.has(String(key)):
+			continue
 		for control in build_config_entries(String(key), object[key], depth):
 			column.add_child(control)
+		drawn += 1
+	# Empty, or emptied by the skip set — either way the body says so rather than drawing a blank.
+	if drawn == 0:
+		column.add_child(build_caption(WorkbenchVocab.CONFIG_EMPTY))
 	return column
 
 
@@ -434,7 +451,7 @@ static func build_config_entries(key: String, value: Variant, depth: int) -> Arr
 		if object.is_empty():
 			out.append(build_config_row(key, WorkbenchVocab.CONFIG_EMPTY))
 		else:
-			out.append(_config_block(key, build_config_object(object, depth + 1)))
+			out.append(build_config_block(key, object, depth))
 		return out
 	if value is Array:
 		var list: Array = value
@@ -454,12 +471,21 @@ static func build_config_entries(key: String, value: Variant, depth: int) -> Arr
 	return out
 
 
-## A named subtree: the block's own name, then its body indented one level.
+## A named subtree: `name` over `object`'s own entries, indented one level.
 ##
 ## **The name is the only non-wrapping label the tree draws.** Everything else is a caption, which is
 ## what keeps an unvetted config from swelling the content column; a block name is short by
-## construction (a config key, or a key plus an index) and reads as a heading rather than as prose.
-static func _config_block(name: String, body: Control) -> VBoxContainer:
+## construction (a config key, a key plus an index, or a title a caller composed out of the entry's
+## own values) and reads as a heading rather than as prose.
+##
+## It is PUBLIC because a page may have a better name for a block than the walker can derive — the
+## walker's best is a coordinate (`kits[0]`), while the entry itself may state what it calls itself.
+## `depth` is the level the BLOCK sits at, so the body lands one deeper; `skip_keys` is what the title
+## already said. **The seam stops there**: the caller composes the name and names the keys, and this
+## layer learns nothing about either.
+static func build_config_block(name: String, object: Dictionary, depth: int,
+		skip_keys: PackedStringArray = PackedStringArray()) -> VBoxContainer:
+	var body := build_config_object(object, depth + 1, skip_keys)
 	var block := VBoxContainer.new()
 	block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	block.add_theme_constant_override("separation", ROW_LINE_GAP)

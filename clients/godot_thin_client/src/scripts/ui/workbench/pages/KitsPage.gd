@@ -74,8 +74,8 @@ func _render() -> void:
 	_render_defaults()
 
 
-## The roster, one block per entry — `kits[0]`, `kits[1]`, … in the config's own order, so `none`
-## sorts last because `equipment.json` authors it last and not because anything here says so.
+## The roster, one block per entry, in the config's own order — so `none` sorts last because
+## `equipment.json` authors it last and not because anything here says so.
 func _render_roster() -> void:
 	if _roster_body == null:
 		return
@@ -84,8 +84,74 @@ func _render_roster() -> void:
 		_roster_body.add_child(WorkbenchWidgets.build_caption(WorkbenchVocab.KITS_NO_CONFIG))
 		return
 	var kits: Variant = _config.get(WorkbenchVocab.CONFIG_KITS_KEY, [])
+	if not (kits is Array) or (kits as Array).is_empty():
+		# Not the shape this page titles — hand it straight back to the generic walker, which states
+		# an empty array as `—` and any other shape as exactly whatever it is.
+		_append_generic(WorkbenchVocab.CONFIG_KITS_KEY, kits)
+		return
+	var roster: Array = kits
+	for index in roster.size():
+		var entry: Variant = roster[index]
+		if entry is Dictionary:
+			_roster_body.add_child(_kit_block(entry, index))
+			continue
+		# A roster element that is not an object at all — there is nothing to promote into a title,
+		# so the walker states it under its coordinate.
+		_append_generic(_indexed_name(index), entry)
+
+
+## ONE ROSTER ENTRY, TITLED BY WHAT IT CALLS ITSELF.
+##
+## **This is the page's one piece of field knowledge and it is bounded on purpose** (see
+## `WorkbenchVocab.CONFIG_KIT_DISPLAY_NAME_KEY`). The title is composed from the entry's own values
+## and the keys it CONSUMED are then suppressed in the body — nothing else is. The body is still the
+## generic tree, so a key added to a kit definition arrives with its own row and no edit here.
+##
+## The four cases are the four shapes a hand-edited config can be in, and each suppresses only what it
+## used: both keys → `display_name (id)` with both rows gone; `display_name` alone → the name, with
+## the `display_name` row gone and nothing else; `id` alone → the id, likewise; neither → the walker's
+## own `kits[N]`, with the whole entry still in the body.
+func _kit_block(entry: Dictionary, index: int) -> Control:
+	var display := _promotable(entry, WorkbenchVocab.CONFIG_KIT_DISPLAY_NAME_KEY)
+	var id := _promotable(entry, WorkbenchVocab.CONFIG_KIT_ID_KEY)
+	var title := ""
+	var promoted := PackedStringArray()
+	if not display.is_empty() and not id.is_empty():
+		title = WorkbenchVocab.KITS_TITLE_FORMAT % [display, id]
+		promoted.append(WorkbenchVocab.CONFIG_KIT_DISPLAY_NAME_KEY)
+		promoted.append(WorkbenchVocab.CONFIG_KIT_ID_KEY)
+	elif not display.is_empty():
+		title = display
+		promoted.append(WorkbenchVocab.CONFIG_KIT_DISPLAY_NAME_KEY)
+	elif not id.is_empty():
+		title = id
+		promoted.append(WorkbenchVocab.CONFIG_KIT_ID_KEY)
+	else:
+		title = _indexed_name(index)
+	return WorkbenchWidgets.build_config_block(title, entry,
+		WorkbenchWidgets.CONFIG_TOP_LEVEL_DEPTH, promoted)
+
+
+## `key`'s value if the entry states it as a NON-EMPTY STRING, else `""`.
+##
+## Strict on purpose. A config edited to carry a number under `id` has nothing this page can put in a
+## title, so it falls through to the next case and **the row stays in the body** — suppressing a key
+## whose value the title could not carry would hide it and say nothing in its place.
+static func _promotable(entry: Dictionary, key: String) -> String:
+	var value: Variant = entry.get(key, null)
+	if not (value is String):
+		return ""
+	return value
+
+
+## The coordinate the walker itself would use, for the entries that have no name of their own.
+static func _indexed_name(index: int) -> String:
+	return WorkbenchVocab.CONFIG_INDEX_FORMAT % [WorkbenchVocab.CONFIG_KITS_KEY, index]
+
+
+func _append_generic(name: String, value: Variant) -> void:
 	for control in WorkbenchWidgets.build_config_entries(
-			WorkbenchVocab.CONFIG_KITS_KEY, kits, 0):
+			name, value, WorkbenchWidgets.CONFIG_TOP_LEVEL_DEPTH):
 		_roster_body.add_child(control)
 
 
@@ -100,4 +166,4 @@ func _render_defaults() -> void:
 		return
 	var defaults: Variant = _config.get(WorkbenchVocab.CONFIG_DEFAULT_KITS_KEY, {})
 	_defaults_body.add_child(WorkbenchWidgets.build_config_object(
-		defaults if defaults is Dictionary else {}, 0))
+		defaults if defaults is Dictionary else {}, WorkbenchWidgets.CONFIG_TOP_LEVEL_DEPTH))
