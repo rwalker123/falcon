@@ -974,9 +974,10 @@ func _wide_separator_span() -> float:
 ## which is the opposite of the bound the event dock takes and deliberately so. That one fixes an EDGE
 ## that must not jitter from turn to turn, and a column drawing wider than its minimum merely overlaps it
 ## a little. This one decides whether a CARD is drawn THROUGH the readouts, where being a little wrong is
-## not cosmetic: measured at 1920 they render 419px against a 344px authored minimum, because the metrics
-## line is simply longer than the minimum allows for. So the bound moves when the columns do — `Main`
-## re-pushes it per snapshot, and this early-outs on an unchanged pair.
+## not cosmetic — a readout line longer than its column's authored minimum would be overdrawn. So the
+## bound moves when the columns do — `Main` re-pushes it per snapshot, and this early-outs on an
+## unchanged pair. (The authored minimums are sized to their worst case now, so the live term is a net
+## rather than the usual answer — see `affords_wide_shell_with_bounds` for why that distinction matters.)
 ##
 ## **Without this the top-dock HUD exemption is only correct for a SPARSE band.** A band with no worked
 ## sources makes a narrow card with room either side, which is what made the fix look complete; a band
@@ -1014,6 +1015,15 @@ func _available_card_span() -> float:
 ## The rail width is a PARAMETER for the same order-independence reason: `_rail_declared_width` is pushed
 ## by `DockRowController` on the *second* listener of `reservation_changed`, so reading it here would
 ## answer against the rail the panel had a moment ago rather than the one it is about to be given.
+##
+## **THE ANSWER IS ONLY HONEST WHILE THE BOUNDS PASSED IN COVER THE ONES THE CARD IS PLACED AGAINST.**
+## This asks whether the card can pay `leading + trailing`; `_available_card_span()` then lays the card
+## out against the bounds `Main` actually pushes, which are `HudLayer.lateral_column_widths()`'s
+## `max(authored, live)`. Any pixel by which those exceed what was passed here is a band of window
+## widths where this says "afford" and the shell comes out NARROW — the trade the rule exists to
+## refuse, taken silently. It shipped that way, passed the columns' authored RESERVATIONS (344 on the
+## trailing one) against a live 419, and the band was 75px wide. The caller passes ceilings now
+## (`Hud.right_column_ceiling`); what belongs here is why the caller may not pass anything smaller.
 ##
 ## A collapsed or hidden panel draws no card at all, and a vertical dock's card is a fixed `PANEL_WIDTH`
 ## strip — none of them is a wide shell, so none of them can afford one.

@@ -1240,6 +1240,55 @@ func right_column_width() -> float:
     var readouts: float = turn_block.custom_minimum_size.x if turn_block != null else 0.0
     return maxf(dock, readouts)
 
+## **THE WIDEST THE RIGHT-HAND COLUMN CAN EVER GET, and the ONE bound a rule may reason FORWARD from.**
+##
+## `right_column_width()` above is what the scene RESERVES; `lateral_column_widths()` below is what the
+## column currently OCCUPIES; and where a live readout outgrows its authored minimum the two disagree.
+## That gap is not cosmetic, because two different consumers ask the two different questions about the
+## same column: `Main.band_dock_overlays_hud` decides whether the HUD keeps its bottom strip from the
+## authored pair (it must — a live read there would depend on the rule's own output, the cycle
+## `348e5c09` sabotage-verified), and the card is then placed against the live pair. Every pixel of
+## daylight is a band of window widths in which the HUD keeps its strip believing the card can afford
+## the wide shell while the card, paying the larger bound, collapses to the narrow tabbed shell — the
+## exact trade that rule exists to REFUSE. Measured with a 344 authored minimum against a 419 live
+## readout: a stable, reproducible 75px band (logical widths 2215-2289) in which every bottom dock
+## rendered the tabbed shell over a HUD that had kept its columns.
+##
+## So the rule reads a CEILING instead: a constant no live content can exceed, which keeps the answer
+## acyclic and jitter-free (both properties the live pair lacks) while making it CONSERVATIVE — where
+## it says the card can afford the bounds, the card really can, with the ceiling's own slack to spare.
+##
+## **`RIGHT_COLUMN_CEILING` is MEASURED, and what it is measured against is part of the constant.** The
+## widest line the readouts can produce is the top-bar KNOWLEDGE STRIP's first row — the
+## `⚒ Your people know:` prefix plus two in-progress tracks with meters and percents, since
+## `TopBarReadouts.KNOWLEDGE_STRIP_TRACKS_PER_LINE` is 2 and the prefix rides row one — at **561px** in
+## the shipped font. The other four readouts do not come close: 384 for the metrics line at four-digit
+## units and two-decimal averages, 346 for a full Sedentarization meter with its stage word, 260 for
+## four-digit demographics, 78 for the turn.
+##
+## **It is deliberately NOT `TurnBlock.custom_minimum_size.x`**, which is the shape this fix was first
+## written in. `TopBar` packs the block against the right edge behind an expanding spacer and the
+## block's own labels are left-aligned inside it, so authoring the ceiling as the node's minimum pins
+## the column's LEFT edge and lets its text float 142px clear of the screen edge — measured, and
+## visible in all 80 `band_panel_preview` frames. The reservation and the ceiling are different
+## questions about the same block; only one of them is a layout instruction.
+##
+## **A readout that can render wider than this re-opens the band silently**, which is why
+## `band_panel_preview._assert_bottom_yield_keeps_its_promise` asserts the ceiling still covers what
+## the columns actually occupy, beside the promise it exists to pin.
+const RIGHT_COLUMN_CEILING := 561.0
+
+func right_column_ceiling() -> float:
+    return maxf(right_column_width(), RIGHT_COLUMN_CEILING)
+
+## …and the leading column's ceiling, which needs no constant of its own: the left dock's cards are
+## authored to its own `custom_minimum_size.x` and measure exactly that live, so the reservation IS the
+## ceiling there. It exists as a named pair with `right_column_ceiling` so the rule reads one concept
+## on both ends, and so a left column that ever outgrows its minimum has an obvious home rather than a
+## call site to rewrite.
+func left_column_ceiling() -> float:
+    return left_column_width()
+
 ## The room the two HUD side columns actually occupy, as `(leading, trailing)` — what a panel sharing
 ## the HUD's strip must keep clear of (issue #377, `Main._update_band_panel_lateral_bounds`).
 ##
@@ -1247,9 +1296,13 @@ func right_column_width() -> float:
 ## `right_column_width` above, and the difference is deliberate.** Those two bound the EVENT DOCK's edge,
 ## which must not move every turn — so they are authored, and a column that draws wider than its minimum
 ## merely overlaps a little. This bound decides whether a CARD is drawn over the readouts, where being a
-## little wrong is not a cosmetic difference: measured live at 1920, the readouts render 419px against a
-## 344px authored minimum (the metrics line — `Units: 0 | Logistics: 0.00 | Sentiment: 0.00` — is simply
-## longer than the minimum allows for), so an authored bound puts the card straight through them.
+## little wrong is not a cosmetic difference: measured live at 1920 the readouts render 419px against a
+## 344px authored minimum, so an authored bound puts the card straight through them.
+##
+## **A RULE MUST NOT REASON FORWARD FROM THIS.** It is a measurement of the moment, so it disagrees
+## with `right_column_width` whenever a live line exceeds its reservation — and a decision that reads
+## one while the card is placed against the other is wrong across a whole band of window widths (see
+## `right_column_ceiling`, which exists for exactly that caller and bounds this from above).
 ##
 ## The band card re-lays-out per snapshot anyway, so tracking the live width costs it nothing; the event
 ## dock's no-jitter rule is about a different surface with a different cadence.

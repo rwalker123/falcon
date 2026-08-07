@@ -970,7 +970,7 @@ So the rule is conditional: **the HUD yields iff the card could NOT afford the w
 bounds applied.** `Main.band_dock_overlays_hud(edge, size, hud, panel)` is its ONE home — deliberately
 `static` and node-free so the harnesses can call it instead of restating it. Two clauses: the bottom
 bar must have left the strip, and `BandCityPanel.affords_wide_shell_with_bounds()` must hold. The fork
-sits at a logical width of **2215**.
+sits at a logical width of **2432**.
 
 | | 1920 | 2560 | 3440 |
 |---|---|---|---|
@@ -978,12 +978,38 @@ sits at a logical width of **2215**.
 | column bottom | 720 of 1080 | **1080 of 1080** | full height |
 | band flank | 2 cols | **1 col** | 2 cols |
 
-**The predicate reads the AUTHORED column widths, never the live ones, and that is what breaks the
-cycle.** `Hud.lateral_column_widths()` is `max(authored, live)`; the live term moves when a column's
-height changes, and its height is what the inset decides — so reading it makes the predicate depend on
-its own output. Sabotage on exactly that mutation fails 35 assertions including the fixed-point check,
-which **samples both sides of the fork**: at 2600 alone the cycle is stable and invisible, and only
-1920, where the two branches disagree, makes it thrash.
+**The predicate reads a column CEILING, never the live width and never the reservation — and the
+distinction between those three is the whole of this rule.** They answer different questions:
+`lateral_column_widths()` is `max(authored, live)`, a **layout instruction** the card obeys; the
+ceiling is *the widest the column can ever get*, which is what a rule may reason **forward** from.
+Reading the live width makes the predicate depend on its own output, because a column's live width can
+move when its height changes and its height is what the inset decides.
+
+**Reading the RESERVATION instead was the first attempt and it shipped a real defect.** The predicate
+took the authored 344 while the card laid out against the live 419, so between **2215 and 2280** the
+two disagreed: the HUD kept its strip *and* the card collapsed to the tabbed shell — precisely the
+trade this rule exists to refuse. It is stable and reproducible, not a race; the harness only stumbled
+into it because a mid-flight resize swept the band. Sabotage with `RIGHT_COLUMN_CEILING := 0.0`
+reproduces it deterministically and names the widths.
+
+**`RIGHT_COLUMN_CEILING` is 561, and it is NOT a scene minimum.** Authoring
+`TurnBlock.custom_minimum_size.x` was tried first and measured: `TopBar` packs the block against the
+right edge behind an expanding spacer with its labels left-aligned, so a 561 node minimum pins the
+column's LEFT edge and floats the readouts 142px clear of the screen. It moved all 80 frames and cost
+four top-dock states their wide shell. **The ceiling therefore lives where the bound is consumed, not
+in the scene** — only one of the two is a layout instruction.
+
+561 is measured against the top-bar **knowledge strip's first row** (`⚒ Your people know:` plus two
+in-progress tracks with meters and percents); the runners-up are far behind — metrics 384,
+Sedentarization 346, demographics 260, turn 78. **The headroom is asserted, not reported**: the guard
+stages every readout at its widest simultaneously and checks the ceiling still covers the column,
+reading exactly `561 / 561`. A readout that grows fails the run instead of silently re-opening the
+band. What it cannot see is a *new kind* of readout nobody measured.
+
+`left_column_ceiling()` returns the left dock's reservation unchanged — that column measures its
+authored 360 live — and exists as a named pair so a future left-column overrun has a home rather than
+a call site to rewrite. **The event dock still bounds off `right_column_width()`**, deliberately: it
+is placing itself, not reasoning forward about someone else's placement.
 
 `DockRowController.parks_for` / `rail_width_for` are **pure functions, not state reads**, because
 `Main` is the FIRST listener on `reservation_changed` and the reflow the second — `_is_reflowed` would
@@ -991,9 +1017,11 @@ answer for the previous reservation.
 
 **Two consequences to know.** The chrome rail is pinned at `offset_left = -(_bound_trailing +
 rail_width)` / `offset_right = -_bound_trailing`; moving only the left offset widens the rail instead
-of moving it. And the second band column is lost in the window band ~**2215–2595** — the bounds cost
-the span 704px on exactly the monitors wide enough to have afforded two. Above ~2600 the flank keeps
-both and the work board pays a column instead.
+of moving it. And the second band column is lost between the fork and ~**2595** — the bounds cost the
+span on exactly the monitors wide enough to have afforded two. (The lower edge of that band IS the
+fork by construction: below it no bounds apply, so the flank is untouched — which is why moving the
+fork from 2215 to 2432 narrowed the trade without needing a re-measurement.) Above ~2600 the flank
+keeps both and the work board pays a column instead.
 
 **At high `ui_scale` the clipping returns, and that is the intended fallback.** On a 2560 canvas,
 `ui_scale` 1.0 gives a 1535 span and keeps the strip; 1.35 gives a logical 1896, a span of 871, and

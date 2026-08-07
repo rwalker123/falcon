@@ -1336,8 +1336,8 @@ static func band_dock_overlays_hud(edge: int, size: float, hud_layer: Node, pane
         return false
     if not hud_layer.has_method("bottom_chrome_parks_for") \
             or not hud_layer.has_method("bottom_chrome_rail_width") \
-            or not hud_layer.has_method("left_column_width") \
-            or not hud_layer.has_method("right_column_width") \
+            or not hud_layer.has_method("left_column_ceiling") \
+            or not hud_layer.has_method("right_column_ceiling") \
             or not panel.has_method("affords_wide_shell_with_bounds"):
         return false
     # (1) The bar has to have LEFT the strip. Until the chrome parks in the card's rail, `BottomBar` is
@@ -1346,9 +1346,17 @@ static func band_dock_overlays_hud(edge: int, size: float, hud_layer: Node, pane
     if not bool(hud_layer.call("bottom_chrome_parks_for", edge, size)):
         return false
     # (2) …and the card has to be able to pay for the columns it would then have to clear.
+    #
+    #     **THE CEILINGS, NOT THE RESERVATIONS** (`Hud.right_column_ceiling`). The card is placed
+    #     against what the columns OCCUPY (`lateral_column_widths`, `max(authored, live)`), so a bound
+    #     here that a live readout can exceed makes this answer "afford" for a card that then cannot —
+    #     the HUD keeps its strip and the card collapses to the tabbed shell, i.e. the trade this rule
+    #     exists to refuse, taken silently. Measured with the reservations: a 75px band of window
+    #     widths (2215-2289) in which every bottom dock did exactly that. A ceiling is the only bound
+    #     that is BOTH safe against live content and free of the cycle a live read would reopen.
     return bool(panel.call("affords_wide_shell_with_bounds",
-        float(hud_layer.call("left_column_width")),
-        float(hud_layer.call("right_column_width")),
+        float(hud_layer.call("left_column_ceiling")),
+        float(hud_layer.call("right_column_ceiling")),
         float(hud_layer.call("bottom_chrome_rail_width", edge, size))))
 
 ## Tell the Band panel which HUD columns its card must keep clear of.
@@ -1371,6 +1379,13 @@ static func band_dock_overlays_hud(edge: int, size: float, hud_layer: Node, pane
 ## drawn THROUGH the readouts: measured at 1920 they render 419px against a 344px authored minimum
 ## (the metrics line is longer than the minimum allows for), so an authored bound puts the card straight
 ## through them.
+##
+## **`band_dock_overlays_hud` MUST bound this from above, and it does so with a CEILING rather than by
+## reading it.** That rule decides whether the HUD keeps its strip; the card is then placed against
+## these live widths, so a rule whose bound this can exceed says "afford" for a card that cannot, and
+## the shell collapses under a HUD that kept its columns. It cannot simply read this (the live term is
+## what the rule's own output moves), so it reads `Hud.right_column_ceiling` — a constant no live
+## readout can exceed — which makes it conservative rather than merely different.
 ##
 ## Live widths MOVE in ordinary play — the metrics line grows as its numbers gain digits, `L`/`V`/`R`
 ## toggle right-dock cards — which is why this is re-pushed per snapshot from `_apply_snapshot` as well

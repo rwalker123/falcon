@@ -2172,12 +2172,131 @@ func _assert_bottom_yield_converges(state_name: String) -> void:
 		_assert_band_panel("%s: the yield rule is a fixed point at %dpx over %d settles after a resize (overlays %s, published %s, inset %s, drawn %.0f)"
 			% [state_name, canvas.x, BOTTOM_YIELD_SETTLE_PASSES, str(verdicts), str(sizes), str(insets),
 				drawn], stable)
+	await _assert_bottom_yield_keeps_its_promise(state_name)
 	await _pin_canvas(BOTTOM_YIELD_CANVAS)
 	await _settle()
 
 ## How much wider the convergence probe re-pins the canvas. Any width past the fork works; 40px keeps
 ## the probe on the same side of it, so what is under test is the settling and not the verdict flipping.
 const BOTTOM_YIELD_NUDGE := 40
+
+## How far either side of the fork the promise probe walks, and in what step. The band it has to cover
+## is the daylight between the bounds the rule reads and the LIVE ones the card is placed against —
+## 75px when the rule read the columns' authored reservations (344 against a live 419 on the trailing
+## one) — so the reach is comfortably past that and the step lands several probes inside it.
+const YIELD_PROMISE_PROBE_STEP := 30
+const YIELD_PROMISE_PROBE_REACH := 150
+
+## GUARD: **THE RULE'S PROMISE — if the HUD KEEPS its strip, the card really IS in the wide shell.**
+##
+## `Main.band_dock_overlays_hud` is documented as "the HUD yields iff the card could NOT afford the wide
+## shell with the bounds applied". The converse is the half nothing was asserting, and it is the half
+## that broke: the rule asked the columns' AUTHORED reservations (which it must not read LIVE — that
+## term is moved by the rule's own output) while the card is laid out against `lateral_column_widths()`'s
+## `max(authored, live)`. Every pixel by which a live column exceeded its reservation was therefore a
+## window width where the HUD kept the strip AND the card, paying the larger bound, collapsed to the
+## narrow tabbed shell — precisely the trade `348e5c09` measured, rejected and wrote this rule to refuse.
+## Measured before the fix: 344 authored against a live 419 left a 75px band (logical widths 2215-2289)
+## in which every frame rendered the tabbed shell over a HUD that had kept its columns, publishing a
+## 395px strip. The rule reads `Hud.right_column_ceiling` now, which no live readout can exceed.
+##
+## **THE SECOND CLAIM IS WHAT KEEPS THE CEILING HONEST.** The promise walk can only see content the
+## harness happens to render, so it also asserts the ceiling still covers what the columns actually
+## occupy right now — the invariant the whole fix rests on, and the one a new readout would break.
+##
+## **IT IS A WALK, NOT A SPOT CHECK, AND THE WALK IS DERIVED.** The band sits immediately above the fork,
+## so probing the two canvases the fixed-point check already visits (1920, 2600) would miss it in both
+## directions. The fork is computed from the rule's own terms — the wide shell's minimum plus the rail's
+## span plus the two column ceilings — and the probe walks from below it to well past it, so the covered
+## range follows a retune of any of them instead of going quietly stale at a hardcoded width.
+##
+## The claim is one-directional on purpose: a width where the HUD YIELDS says nothing (the card then has
+## the whole row and any shell is legitimate). That makes it satisfiable by a rule that never keeps the
+## strip at all, so the walk also asserts it saw the HUD keep it at least once.
+func _assert_bottom_yield_keeps_its_promise(state_name: String) -> void:
+	var edge: int = _panel.get_dock()
+	var size: float = _panel.current_reservation_size()
+	var rail_span: float = _panel._rail_span_of(_hud.bottom_chrome_rail_width(edge, size))
+	var fork: float = BandCityPanel.WIDE_SHELL_MIN_WIDTH + rail_span \
+		+ _hud.left_column_ceiling() + _hud.right_column_ceiling()
+	_assert_ceilings_cover_the_columns(state_name, "this state's readouts")
+	await _assert_ceilings_cover_the_widest_readouts(state_name)
+	var broken: Array[String] = []
+	var kept := 0
+	var width := int(ceilf(fork)) - YIELD_PROMISE_PROBE_STEP
+	while width <= int(ceilf(fork)) + YIELD_PROMISE_PROBE_REACH:
+		await _pin_canvas(Vector2i(width, DOCKROW_CANVAS.y))
+		await _settle()
+		if MAIN_SCRIPT.band_dock_overlays_hud(_panel.get_dock(),
+				_panel.current_reservation_size(), _hud, _panel):
+			kept += 1
+			if not _panel._shell_is_wide():
+				broken.append("%d (bounds %.0f/%.0f, published %.0f)" % [width,
+					_panel._bound_leading, _panel._bound_trailing,
+					_panel.current_reservation_size()])
+		width += YIELD_PROMISE_PROBE_STEP
+	_assert_band_panel("%s: the HUD kept its bottom strip at %d width(s) across the fork (%.0f) and the card was in the WIDE shell at every one of them%s"
+		% [state_name, kept, fork,
+			"" if broken.is_empty() else " — NARROW at " + ", ".join(broken)],
+		kept > 0 and broken.is_empty())
+
+## The invariant the promise rests on, asked of whatever the HUD is rendering right now: a ceiling that
+## does not cover what its column OCCUPIES is a rule promising the card room it will then be denied.
+func _assert_ceilings_cover_the_columns(state_name: String, under: String) -> void:
+	var occupied: Vector2 = _hud.lateral_column_widths()
+	_assert_band_panel("%s: the column ceilings (%.0f / %.0f) cover what the columns occupy under %s (%.0f / %.0f)"
+		% [state_name, _hud.left_column_ceiling(), _hud.right_column_ceiling(), under,
+			occupied.x, occupied.y],
+		_hud.left_column_ceiling() >= occupied.x and _hud.right_column_ceiling() >= occupied.y)
+
+## …and the same invariant asked under the WIDEST READOUTS THE TOP BAR CAN PRODUCE, which is the only
+## form of it that actually guards `Hud.RIGHT_COLUMN_CEILING`.
+##
+## The claim above is true of every state in this file and says almost nothing: the harness's own top
+## bar renders ~419px, 142px inside the ceiling, so a ceiling set anywhere in between would pass it and
+## still be exceeded the first time a player's knowledge strip filled up. The constant was MEASURED
+## against a specific line — the knowledge strip's first row with two IN-PROGRESS tracks, which is
+## where the meters and their percents live — and nothing in this run renders that line, because every
+## fixture here pushes tracks that are already complete (a `✔` badge is far shorter than a meter).
+##
+## So the state is staged: every readout at the widest plausible content it can carry, all at once,
+## which no live frame needs but which is exactly what the ceiling claims to bound.
+##
+## **It restores the top bar EXACTLY, and that is checked by the frame set rather than trusted** — the
+## HUD is long-lived, so a leaked readout re-renders every later state. `update_intensification` MERGES
+## per track (an empty array writes nothing), so the restore re-pushes the same four tracks at 1.0.
+func _assert_ceilings_cover_the_widest_readouts(state_name: String) -> void:
+	_hud.update_overlay(WIDEST_READOUT_TURN, {
+		"unit_count": WIDEST_READOUT_COUNT,
+		"avg_logistics": WIDEST_READOUT_METRIC,
+		"avg_sentiment": WIDEST_READOUT_METRIC,
+	})
+	_hud.update_sedentarization([{
+		"faction": 0, "score": WIDEST_READOUT_SEDENTARIZATION, "stage": WIDEST_READOUT_STAGE}])
+	_hud.update_demographics([{"faction": 0, "children": WIDEST_READOUT_COUNT,
+		"working": WIDEST_READOUT_COUNT, "elders": WIDEST_READOUT_COUNT}])
+	_hud.update_intensification([{"faction": 0,
+		"cultivation": WIDEST_READOUT_KNOWLEDGE, "seed_selection": WIDEST_READOUT_KNOWLEDGE,
+		"herding": WIDEST_READOUT_KNOWLEDGE, "penning": WIDEST_READOUT_KNOWLEDGE,
+		"foddering": WIDEST_READOUT_KNOWLEDGE}])
+	await _settle()
+	_assert_ceilings_cover_the_columns(state_name, "the widest readouts the top bar can produce")
+	_hud.update_overlay(ARRIVAL_PREVIEW_TURN, {})
+	_hud.update_sedentarization([{"faction": 0, "score": 62.0, "stage": "soft"}])
+	_hud.update_demographics([{"faction": 0, "children": 34, "working": 51, "elders": 15}])
+	_hud.update_intensification([{"faction": 0,
+		"cultivation": 1.0, "seed_selection": 1.0, "herding": 1.0, "penning": 1.0}])
+	await _settle()
+
+## The widest plausible content for each top-bar readout — four-digit counts and turns, a full
+## Sedentarization meter under its longest stage word, and knowledge tracks part-learned, which is the
+## widest of the two knowledge forms (a meter plus its percent, against a completed track's bare `✔`).
+const WIDEST_READOUT_TURN := 9999
+const WIDEST_READOUT_COUNT := 9999
+const WIDEST_READOUT_METRIC := 100.0
+const WIDEST_READOUT_SEDENTARIZATION := 100.0
+const WIDEST_READOUT_STAGE := "hard"
+const WIDEST_READOUT_KNOWLEDGE := 0.55
 
 ## REPORT (never an assertion): **where the yield's RESPONSIVE FALLBACK sits.** `content_scale_factor`
 ## shrinks the LOGICAL viewport by exactly the scale, and every term of the rule is a logical constant,
@@ -2195,8 +2314,8 @@ func _report_bottom_yield_at_high_scale() -> void:
 		await _settle()
 		var logical: Vector2 = get_viewport().get_visible_rect().size
 		var span: float = _panel._panel_width_extent() - _panel._rail_span() \
-			- _hud.left_column_width() - _hud.right_column_width()
-		print("band_panel_preview: bottom-dock yield at ui_scale %.2f on a %dpx canvas — logical viewport %.0f, span with the authored bounds %.0f of the %.0f the wide shell needs → the HUD %s its strip" % [
+			- _hud.left_column_ceiling() - _hud.right_column_ceiling()
+		print("band_panel_preview: bottom-dock yield at ui_scale %.2f on a %dpx canvas — logical viewport %.0f, span with the column ceilings %.0f of the %.0f the wide shell needs → the HUD %s its strip" % [
 			scale, BOTTOM_YIELD_CANVAS.x, logical.x, span, BandCityPanel.WIDE_SHELL_MIN_WIDTH,
 			"KEEPS" if MAIN_SCRIPT.band_dock_overlays_hud(_panel.get_dock(),
 				_panel.current_reservation_size(), _hud, _panel) else "yields"])
@@ -2219,9 +2338,9 @@ func _report_bottom_yield_geometry(state_name: String) -> void:
 		var room: float = span - BandCityPanel.PANEL_CHROME_H - BandCityPanel.ZONE_PARTY_WIDTH \
 			- BandCityPanel.ZONE_WORK_MIN_WIDTH - BandCityPanel.WIDE_SEPARATOR_SPAN
 		return clampi(int(room / BandCityPanel.ZONE_BAND_WIDTH), 1, BandCityPanel.BAND_ZONE_MAX_COLUMNS)
-	print("band_panel_preview: %s — strip %.0f, rail span %.0f, HUD columns %.0f/%.0f (authored %.0f/%.0f) → card span %.0f bounded / %.0f unbound (wide shell needs %.0f); band flank %d column(s) bounded / %d unbound; work board %d column(s)" % [
+	print("band_panel_preview: %s — strip %.0f, rail span %.0f, HUD columns %.0f/%.0f (ceilings %.0f/%.0f) → card span %.0f bounded / %.0f unbound (wide shell needs %.0f); band flank %d column(s) bounded / %d unbound; work board %d column(s)" % [
 		state_name, strip, rail, _panel._bound_leading, _panel._bound_trailing,
-		_hud.left_column_width(), _hud.right_column_width(), bounded, unbounded,
+		_hud.left_column_ceiling(), _hud.right_column_ceiling(), bounded, unbounded,
 		BandCityPanel.WIDE_SHELL_MIN_WIDTH, _panel.band_zone_columns(), flank_room.call(unbounded),
 		_panel._work_columns])
 
@@ -5301,7 +5420,27 @@ func _pin_canvas(size: Vector2i) -> void:
 
 ## Force the window WINDOWED at `size` and wait for the WM to actually honour it, so a maximize
 ## cannot land between two states and render them at different resolutions.
-func _pin_window(size: Vector2i) -> void:
+##
+## **IT WAITS ON THE LOGICAL VIEWPORT, NOT ONLY ON `window.size`, AND THAT IS THE THING EVERY
+## ASSERTION IS MEASURED AGAINST.** `project.godot` stretches `canvas_items` with an `expand` aspect,
+## so the logical viewport is a projection OF the window: while a resize is still in flight the
+## window is one size and the canvas is another, and every width the panel and the yield rule read
+## comes off the canvas. Measured directly — a window left at 2600x928 under a canvas pinned to
+## 1920x1080 reports a logical viewport of **3025** wide, and `Main.band_dock_overlays_hud` answers
+## for that 3025px row while the state believes it is testing 1920. That is a state rendering and
+## asserting against a width it never asked for, which is exactly what this function exists to stop.
+##
+## **A PIN THAT DOES NOT PIN FAILS THE RUN.** It used to `push_warning`, which is invisible in a
+## 500-line log from a harness whose whole value is bit-identity — a mis-pinned run passed.
+##
+## `strict` is `false` for exactly one caller, `_stabilize_canvas`, which is DELIBERATELY driving the
+## window through a maximize and converging over up to `CANVAS_STABLE_MAX_FRAMES`; a transient miss
+## there is the process working, and that function reports its own failure if it never settles.
+##
+## The viewport check is skipped until a canvas has been pinned: with `content_scale_size` left at the
+## project's base, the logical viewport is the `expand` projection of whatever window the state asked
+## for and the harness is not claiming to control it (which is the whole reason `_pin_canvas` exists).
+func _pin_window(size: Vector2i, strict: bool = true) -> void:
 	_pinned_size = size
 	var window := get_window()
 	window.mode = Window.MODE_WINDOWED
@@ -5309,13 +5448,39 @@ func _pin_window(size: Vector2i) -> void:
 	if _pinned_canvas != Vector2i.ZERO:
 		window.content_scale_size = _pinned_canvas
 	for _i in range(WINDOW_PIN_MAX_FRAMES):
-		if window.size == size and window.mode == Window.MODE_WINDOWED:
-			break
+		if window.size == size and window.mode == Window.MODE_WINDOWED and _canvas_is_projected():
+			return
 		window.mode = Window.MODE_WINDOWED
 		window.size = size
 		await get_tree().process_frame
+	if not strict:
+		return
 	if window.size != size:
-		push_warning("band_panel_preview: window pinned to %s but reports %s" % [size, window.size])
+		push_error("band_panel_preview: window pinned to %s but reports %s — every width this state asserts is measured against the canvas that window projects" % [size, window.size])
+	elif not _canvas_is_projected():
+		push_error("band_panel_preview: window is %s but the logical viewport is %s, not the %s canvas it was pinned to" % [
+			size, get_viewport().get_visible_rect().size, _expected_canvas()])
+
+## Does the LOGICAL viewport match the canvas this state pinned? True (vacuously) before any canvas
+## has been pinned — see `_pin_window`.
+##
+## The window and `content_scale_size` are held equal by `_pin_canvas`, so the `expand` aspect's own
+## scale factor is exactly 1 and the only remaining term is `content_scale_factor`, which the
+## interface-scale states drive. Hence the expectation is the canvas over that factor, and it is a
+## reading of the two window properties rather than a second model of the projection.
+func _canvas_is_projected() -> bool:
+	if _pinned_canvas == Vector2i.ZERO:
+		return true
+	return get_viewport().get_visible_rect().size.distance_to(_expected_canvas()) <= CANVAS_PROJECTION_TOLERANCE
+
+func _expected_canvas() -> Vector2:
+	return Vector2(_pinned_canvas) / maxf(get_window().content_scale_factor, CONTENT_SCALE_MIN)
+
+## Sub-pixel slack between the canvas the state asked for and the projection Godot computes from it —
+## `content_scale_factor` is a float divide, so an exact compare would fail on the scale states alone.
+const CANVAS_PROJECTION_TOLERANCE := 1.5
+## Floor on the scale divisor, so a zeroed `content_scale_factor` cannot make the expectation infinite.
+const CONTENT_SCALE_MIN := 0.01
 
 ## Settle the window ONCE, in `_ready`, before any state renders — and take the maximize DELIBERATELY
 ## on the way, which is what closes the last of the drift.
@@ -5347,7 +5512,9 @@ func _stabilize_canvas() -> void:
 				return
 		else:
 			stable = 0
-			await _pin_window(PREVIEW_SIZE)
+			# NOT strict: this loop is deliberately driving the window through a maximize and has its
+			# own terminal error below.
+			await _pin_window(PREVIEW_SIZE, false)
 		await get_tree().process_frame
 	push_error("band_panel_preview: the window never held the pinned %s canvas — frames will drift" % PREVIEW_SIZE)
 
