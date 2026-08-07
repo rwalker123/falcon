@@ -265,6 +265,11 @@ const UNDER_HERDED_WORK_HERD_ID := "game_aurochs_uh"
 ## comes from (staffed 2 < needed 4), so the two read from one const rather than two loose literals.
 const UNDER_HERDED_WORK_HERDERS_NEEDED := 4
 
+## The pen feed the faction roster's herd-keeping band pays — the conditional Food row that makes the
+## faction band zone's worst case its worst case. The figure is the shipped pen upkeep the per-band
+## fixtures already quote, so the row measures what a live one does.
+const FACTION_PEN_FEED_UPKEEP := 1.74
+
 ## THE HERDER-FLOOR ROW (`band_panel_work_herder_floor`) — a MANAGED herd whose crew requirement is
 ## LARGER than what its take saturates, which is the only shape that can expose the bug: the row flags
 ## the herd under-herded and, without the floor, disables the very `+` that would staff the 3rd herder.
@@ -3688,6 +3693,12 @@ func _faction_roster() -> Array:
 		{"kind": "hunt", "workers": 4, "fauna_id": UNDER_HERDED_WORK_HERD_ID, "floor": 0.5,
 			"target_x": 70, "target_y": 17, "actual_yield": 0.30, "sustainable_yield": 0.30},
 	]
+	# …and PAYS ITS PEN'S FEED. It renders no row of its own — the Food block states a stock and a rate,
+	# not a ledger — but it is a real term of `band_net_food`, so without it the headline net on this
+	# page would be the one figure a live pen-keeping faction never sees. It is also what caught the
+	# zone at **328px of its 300px box** when the rows were briefly a four-row ledger at the vitals type
+	# size, which is why the fixture keeps paying it.
+	second["pen_feed_upkeep"] = FACTION_PEN_FEED_UPKEEP
 	return [_band_fixture(), second, _hunt_expedition_fixture()]
 
 ## The faction page's rendered claims: the total really is the faction's, the header names the right

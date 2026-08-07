@@ -802,18 +802,47 @@ pre-existing `band_panel_*` frame moved in that readout and in nothing else.
 
 | zone | holds |
 |---|---|
-| `band` | the summed PEOPLE bar · Food (larder / income / eaten / pen feed, headed by the net) · Trade (stock, headed; rate) · Herds (kept, headed; pens) |
-| `work` | the whole WORKFORCE bar · one row per band (`14 workers · 3 idle`) · the knowledge tracks |
+| `band` | the summed PEOPLE bar · Food (the larder, headed by the net /turn) · Trade (the rate, headed by the stock) · Herds (pens, headed by the kept count) |
+| `work` | the whole WORKFORCE bar · one row per band (`16 workers · 3 idle`) · the knowledge tracks |
 | `parties` | one row per party — its mission summary and the band it LEFT |
+
+**EACH ACCOUNT IS A STOCK AND A RATE, NEVER AN INLINE LEDGER.** The Food block grew `Income` / `Eaten`
+/ `Pen feed` rows for a while and they are gone: a band states `Food: 74 (93 turns) · -0.81 /turn` on
+ONE line and puts that breakdown behind a disclosure popover, so the rollup had invented a four-row
+ledger the per-band surface deliberately does not have. Both figures the page owes are still there —
+the stock on the row, the rate on the head — and the breakdown is one cycle away on the band that owns
+it. It is also what keeps the zone in its box: the ledger form measured **328px of a 300px box** at the
+vitals type size, and the stock-and-rate form measures **241**.
+
+**THERE IS NO FACTION-WIDE FOOD RUNWAY**, the `(93 turns)` a band's own row carries. Turns-of-food is
+one larder against one band's drain; averaged, it hides the band that is starving behind the ones that
+are not — the reason the dependency figure came off the top bar.
+
+### A row's type size is the row it is the counterpart of
+
+The page carries the band page's own two-size hierarchy, in the same two zones, and neither size is a
+number picked here:
+
+- **The band zone's stat rows set NO font-size override at all**, because
+  `BandPanelController._build_vitals_label` sets none either — it is a bare `RichTextLabel`, so `Food`
+  / `Trade` / `Morale` render at the stock default. Passing `FactionRollup.STAT_ROW_INHERIT_FONT_SIZE`
+  means the two track that default TOGETHER rather than through a literal somebody has to keep in
+  step; the client has no `Theme` and `Typography.gd` is a no-op shim, so there is no other way to say
+  "the same size as an un-overridden Label". **They shipped pinned at 12 — four steps under their own
+  counterpart — and read as a different kind of thing beside the band page's rows.** Reported on
+  sight.
+- **The work zone's list rows take `HudWorkVocab.WORK_ROW_FONT_SIZE`**, the work board's own, which is
+  what they are.
 
 **KNOWLEDGE LIVES IN THE WORK ZONE, not beside the stores.** A track is not a stock and not a
 population: it is what the faction's hands may ATTEMPT, and every rung it gates is a row on a work
-board. It also keeps the band zone inside a horizontal dock's box without a tier gate — and that is
-the whole of the margin, not a comfort: **measured, the band zone's four blocks read 269px of its
-300px box, 31 spare**, where the knowledge block alone is ~110px. The work zone reads 259 of 300 and
-the parties zone 44. **There is no room for a fifth block in the band zone and re-measuring is not
-optional** — `_report_zone_content_extent` prints all three on `band_panel_faction_wide`, and this
-zone has been at the edge twice before.
+board. It also keeps the band zone inside a horizontal dock's box without a tier gate: **measured, the
+band zone's four blocks read 241px of its 300px box and the work zone 265 of 300** (the parties zone
+45), where the knowledge block alone is ~110px — so it fits in the work zone and would not fit beside
+the stores. **Re-measure before adding a row anywhere on this page**; `_report_zone_content_extent`
+prints all three on `band_panel_faction_wide`, the band zone has been over its box once already in
+this arc's own history, and every row here is unconditional, so those figures are the zones' heights
+rather than their best cases.
 
 **THE PARTIES ROW NAMES THE HOME BAND, not the party's tile.** A party's own coordinates change every
 turn and mean nothing without the map; the band it left is what the player cycles to in order to act
@@ -844,9 +873,12 @@ bottom dock, all three zones abreast — the only layout the page reads as a who
 one-band faction every total is that band's own, so a page that had stopped summing would render
 identically and every assertion would pass.
 
-**THE SECOND BAND KEEPS A CORRALLED HERD**, because every other fixture band in that file hunts WILD
-game — which is correctly *not* kept — so on an all-wild roster the Herds block reads `0 / 0` and a
-page that had stopped counting kept herds would render identically.
+**THE SECOND BAND KEEPS A CORRALLED HERD AND PAYS ITS FEED.** Every other fixture band in that file
+hunts WILD game — which is correctly *not* kept — so on an all-wild roster the Herds block reads
+`0 / 0` and a page that had stopped counting kept herds would render identically. The feed renders no
+row, but it is a real term of `band_net_food`, so without it the headline net is the one figure a live
+pen-keeping faction never sees — and it is what caught the zone at 328px of its 300px box while the
+Food block was still a ledger.
 
 **EVERY STAT ROW IS ASSERTED TO RENDER ITS KEY**, and that is not belt-and-braces: `clip_text` zeroes
 a Label's minimum width, and the spacer beside it is the row's only expanding child, so a clipped key

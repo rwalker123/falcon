@@ -27,10 +27,15 @@ extends RefCounted
 
 const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 
-## A stat row's key/value type size. One step below the zone head's own words, matching the
-## composition key's chips — this page's rows are a readout, not a control, and must not compete with
-## the section heads above them.
-const STAT_ROW_FONT_SIZE := 12
+## **A STAT ROW TAKES ITS SIZE FROM THE ROW IT IS THE COUNTERPART OF, and the band zone's counterpart
+## is the vitals label — which sets NO font-size override at all.** `BandPanelController._build_vitals_label`
+## builds a bare `RichTextLabel`, so `Food` / `Trade` / `Morale` render at the stock default; a faction
+## `Larder` row pinned at some smaller number reads as a different KIND of thing beside them, which is
+## exactly how this shipped first (at 12, four steps under its own counterpart). Passing this sentinel
+## means "set no override", so the two track that default TOGETHER rather than through a literal
+## somebody has to keep in step — the client has no `Theme` and `Typography.gd` is a no-op shim, so
+## there is no other way to say "the same size as an un-overridden Label".
+const STAT_ROW_INHERIT_FONT_SIZE := 0
 
 ## The gap between a stat row's key and its value. The value is right-aligned by an expanding spacer,
 ## exactly as `HudWidgets.zone_head` right-aligns its readout, so this is a floor rather than the gap.
@@ -110,7 +115,7 @@ static func build_parties_zone(labor: HudBandLaborState, herd_label_for_id: Call
         block.add_child(_stat_row(
             HudFormat.panel_expedition_summary(party, herd_label_for_id),
             String(names.get(int(party.get("home_band_entity", -1)), "")),
-            HudStyle.INK_FAINT))
+            HudStyle.INK_FAINT, HudWorkVocab.WORK_ROW_FONT_SIZE))
     _append_more_row(block, parties.size() - shown)
     col.add_child(block)
     return col
@@ -172,26 +177,34 @@ static func _build_people_block(bands: Array) -> VBoxContainer:
     block.add_child(HudWidgets.build_composition_key(segments, _bands_chip(bands.size())))
     return block
 
-## The faction larder: what is stored, what comes in, and what goes out — read straight off the same
-## `DetailFormat` band arithmetic the per-band Food row and its popover use.
+## The faction larder: what is stored, headed by what it gains or loses a turn.
+##
+## **THE LEDGER IS NOT BROKEN OUT, and that is the band page's own shape rather than a cut for room.**
+## A band states `Food: 74 (93 turns) · -0.81 /turn` on ONE line and puts Gathered / Hunted / Eaten /
+## Pen feed behind a disclosure popover; this page had grown a four-row inline ledger the per-band
+## surface deliberately does not have. Both figures the rollup owes are still here — the STOCK on the
+## row and the RATE on the head — and the breakdown is one cycle away, on the band that owns it.
+##
+## Measured, that is also what keeps the zone inside a horizontal dock: the four-row form read **328px
+## of a 300px box** at the vitals type size, and this one reads 247. **Every row here is now
+## unconditional**, so that figure is the zone's height rather than its best case.
+##
+## **THERE IS NO FACTION-WIDE RUNWAY**, the `(93 turns)` a band's own row carries. Turns-of-food is a
+## property of one larder against one band's drain; averaged across bands it hides the band that is
+## starving behind the ones that are not — the same reason the top bar's dependency figure was taken
+## off it.
 static func _build_food_block(bands: Array) -> VBoxContainer:
     var larder := 0.0
-    var income := 0.0
-    var eaten := 0.0
-    var pen_feed := 0.0
     var net := 0.0
     for band_variant in bands:
         if not (band_variant is Dictionary):
             continue
         var band: Dictionary = band_variant
         larder += DetailFormat.band_provisions(band)
-        income += DetailFormat.band_food_income(band)
-        eaten += float(band.get("food_consumption", 0.0))
-        pen_feed += DetailFormat.band_pen_feed(band)
-        # The NET is summed from each band's own `band_net_food` rather than recomposed out of the
-        # three totals above, so this page can never quote a net the band pages do not add up to —
-        # `raid_forfeit` is a fourth, EPISODIC term of that identity and belongs in the net without
-        # earning a standing row of its own.
+        # **THE NET IS SUMMED FROM EACH BAND'S OWN `band_net_food`**, never recomposed from separate
+        # income and drain totals — so this page can never quote a net the band pages do not add up to.
+        # It carries all four terms of the larder identity, `pen_feed` and the EPISODIC `raid_forfeit`
+        # included, which is the other reason not to rebuild it out of the two figures on screen.
         net += DetailFormat.band_net_food(band)
     var block := HudWidgets.make_zone_block()
     block.add_child(HudWidgets.zone_head(HudWorkVocab.FACTION_HEADER_FOOD,
@@ -199,15 +212,6 @@ static func _build_food_block(bands: Array) -> VBoxContainer:
         HudStyle.HEALTHY if net >= 0.0 else HudStyle.DANGER))
     block.add_child(_stat_row(HudWorkVocab.FACTION_ROW_LARDER,
         SourceForecast.format_stock(larder), HudStyle.INK))
-    block.add_child(_stat_row(HudWorkVocab.FACTION_ROW_INCOME,
-        SourceForecast.format_magnitude(income), HudStyle.INK))
-    block.add_child(_stat_row(HudWorkVocab.FACTION_ROW_EATEN,
-        SourceForecast.format_magnitude(eaten), HudStyle.INK))
-    # Pen feed is a debit only a faction keeping a corral pays — the Food popover's own rule, and the
-    # render-only-when-non-zero rule this client follows everywhere else.
-    if SourceForecast.has_component(pen_feed):
-        block.add_child(_stat_row(HudWorkVocab.FACTION_ROW_PEN_FEED,
-            SourceForecast.format_magnitude(pen_feed), HudStyle.INK))
     return block
 
 ## The faction's trade goods: the stock its bands hold between them, and what they earn a turn.
@@ -334,7 +338,8 @@ static func _build_bands_block(labor: HudBandLaborState) -> VBoxContainer:
         block.add_child(_stat_row(
             HudFormat.band_display_name(band, i + 1),
             HudWorkVocab.FACTION_BAND_ROW_FORMAT % [int(band.get("working_age", 0)), idle],
-            HudStyle.SIGNAL if idle > 0 else HudStyle.INK_FAINT))
+            HudStyle.SIGNAL if idle > 0 else HudStyle.INK_FAINT,
+            HudWorkVocab.WORK_ROW_FONT_SIZE))
     _append_more_row(block, bands.size() - shown)
     return block
 
@@ -364,7 +369,7 @@ static func _build_knowledge_block(knowledge: Dictionary) -> VBoxContainer:
                 HudFormat.meter_bar(progress, KNOWLEDGE_METER_CELLS),
                 HudFormat.progress_percent(progress)]
         block.add_child(_stat_row(String(row[0]), value,
-            HudStyle.SIGNAL if known else HudStyle.INK_DIM))
+            HudStyle.SIGNAL if known else HudStyle.INK_DIM, HudWorkVocab.WORK_ROW_FONT_SIZE))
     return block
 
 # ---- leaves -----------------------------------------------------------------
@@ -375,14 +380,19 @@ static func _build_knowledge_block(knowledge: Dictionary) -> VBoxContainer:
 ## column of readouts, and a row that measured like a head would leave the section heads meaningless.
 ## Both labels route their tooltip through `HudWidgets.set_label_tooltip`, since a bare `tooltip_text`
 ## on a `Label` is a SILENT no-op at Godot's `MOUSE_FILTER_IGNORE` default.
+## `font_size` is `STAT_ROW_INHERIT_FONT_SIZE` for a VITALS row (the band zone's, which must read at
+## the size the band page's own vitals do) and an explicit size for a LIST row (the work zone's, which
+## are board rows and take `HudWorkVocab.WORK_ROW_FONT_SIZE` for it). The page therefore carries the
+## same two-size hierarchy the band page does, in the same two zones.
 static func _stat_row(key: String, value: String, value_color: Color,
-        tooltip: String = "") -> HBoxContainer:
+        font_size: int = STAT_ROW_INHERIT_FONT_SIZE, tooltip: String = "") -> HBoxContainer:
     var row := HBoxContainer.new()
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_theme_constant_override("separation", STAT_ROW_SEPARATION)
     var key_label := Label.new()
     key_label.text = key
-    key_label.add_theme_font_size_override("font_size", STAT_ROW_FONT_SIZE)
+    if font_size != STAT_ROW_INHERIT_FONT_SIZE:
+        key_label.add_theme_font_size_override("font_size", font_size)
     key_label.add_theme_color_override("font_color", HudStyle.INK_DIM)
     # **NO `clip_text` ON THE KEY.** It zeroes a Label's minimum width, and the spacer beside it is the
     # row's only expanding child — so a clipped key is squeezed to NOTHING and the row renders as a
@@ -396,7 +406,8 @@ static func _stat_row(key: String, value: String, value_color: Color,
     row.add_child(spacer)
     var value_label := Label.new()
     value_label.text = value
-    value_label.add_theme_font_size_override("font_size", STAT_ROW_FONT_SIZE)
+    if font_size != STAT_ROW_INHERIT_FONT_SIZE:
+        value_label.add_theme_font_size_override("font_size", font_size)
     value_label.add_theme_color_override("font_color", value_color)
     HudWidgets.set_label_tooltip(value_label, tooltip)
     row.add_child(value_label)

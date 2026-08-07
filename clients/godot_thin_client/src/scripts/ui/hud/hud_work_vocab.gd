@@ -165,16 +165,11 @@ const FACTION_HEADER_HERDS := "Herds"
 
 const FACTION_HEADER_KNOWLEDGE := "Knowledge"
 
-## The faction band zone's stat-row keys. They deliberately mirror the Food disclosure's own breakdown
-## words (`DetailFormat.FOOD_LABEL_*`) rather than inventing a second vocabulary for the same terms —
-## a player who has opened one band's Food popover already knows what `Eaten` and `Pen feed` mean.
+## The faction band zone's stat-row keys — one STOCK row per account, each headed by its own rate.
+## **There are deliberately no `Income` / `Eaten` / `Pen feed` rows**: a band states its ledger on one
+## line and puts the breakdown behind a disclosure, and this page follows it (see
+## `FactionRollup._build_food_block`).
 const FACTION_ROW_LARDER := "Larder"
-
-const FACTION_ROW_INCOME := "Income"
-
-const FACTION_ROW_EATEN := "Eaten"
-
-const FACTION_ROW_PEN_FEED := "Pen feed"
 
 const FACTION_ROW_PER_TURN := "Per turn"
 
