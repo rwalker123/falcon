@@ -887,7 +887,7 @@ fn the_fixtures_read_the_shipped_roster() {
 ///
 /// Both arms are measured at the SAME party size, so headcount cannot flatter either one.
 #[test]
-fn the_trapping_kit_beats_spears_on_small_game_and_takes_no_large_game_at_all() {
+fn the_passive_device_beats_spears_on_every_small_game_row_and_takes_no_large_game() {
     let equipment = EquipmentConfig::builtin();
     let fauna = FaunaConfig::builtin();
     let combat = CombatConfig::builtin();
@@ -934,19 +934,31 @@ fn the_trapping_kit_beats_spears_on_small_game_and_takes_no_large_game_at_all() 
         .brought_down
     };
 
-    let rabbit_trapped = take_of("trapping", "Rabbit Warren");
-    let rabbit_speared = take_of("big_game", "Rabbit Warren");
-    assert!(
-        rabbit_trapped > rabbit_speared,
-        "traps must OUT-TAKE spears on defenceless small game, or the kit is a decoy: \
-         trapping {rabbit_trapped} vs big_game {rabbit_speared} rabbits per turn at {HUNTERS} hunters"
-    );
-
-    // Liveness: without it "traps win" would pass on two zeroes.
-    assert!(
-        rabbit_speared > 0.0,
-        "the speared arm must actually take rabbits, or the comparison is vacuous"
-    );
+    // **EVERY small-game row, not one of them.** The passive device is *the* small-game answer, so a
+    // species it loses on is a hole in the design rather than a nuance — and one that a single-row
+    // assertion would not see. Silt Catfish is the row that found this: `engage_rate 15` and
+    // `wariness 0.40` make it the easiest small game to spear, so it is where a device tuned only
+    // against rabbits quietly comes second.
+    for species in [
+        "Wild Fowl",
+        "Rabbit Warren",
+        "Forest Grouse",
+        "Snow Hare Warren",
+        "Silt Catfish",
+    ] {
+        let trapped = take_of("trapping", species);
+        let speared = take_of("big_game", species);
+        assert!(
+            trapped > speared,
+            "the passive device must OUT-TAKE spears on {species}, or it is a decoy: \
+             trapping {trapped} vs big_game {speared} per turn at {HUNTERS} hunters"
+        );
+        // Liveness: without it "the device wins" would pass on two zeroes.
+        assert!(
+            speared > 0.0,
+            "the speared arm must actually take {species}, or the comparison is vacuous"
+        );
+    }
 
     // **AND THE OTHER HALF: A TRAP LINE TAKES NO LARGE GAME AT ALL.** Not "less than spears" —
     // *none*. Reported from play: with a flat `attack 8` traps cleared a Red Deer's `defense 1` like

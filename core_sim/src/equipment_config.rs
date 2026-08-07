@@ -1152,13 +1152,18 @@ mod tests {
         BandEquipment::default()
     }
 
-    /// **THE TRAPPING KIT'S WHOLE CLAIM, IN ONE PLACE.** Traps clear no `defense`, so a trapper falls
-    /// back to the bare hand's `attack` and can take only quarry with none at all — and in exchange
-    /// they reach four times as many animals, scatter nothing, and put nobody in reach of the
-    /// quarry. Every one of those four is a *different* stat, which is the point: without the effects
-    /// model an item could set exactly one.
+    /// **THE TRAPPING KIT'S WHOLE CLAIM, IN ONE PLACE.**
+    ///
+    /// The passive device — snares, nets, weirs, one item, because at this game's abstraction they
+    /// are one thing: something you set down, walk away from, and come back to. Its advantage is
+    /// **not being seen**: `dispersion 0` means nothing bolts, so the party keeps everything it
+    /// reaches, and against a `wariness 0.75` warren that is the whole 4× gap over a spear party.
+    ///
+    /// **Its `attack` is the spear's own number, deliberately.** At 0.13–0.67 kg the weapon is not
+    /// what is scarce, so the device must not win by hitting harder — it wins by not scaring
+    /// anything, and `max_body_mass` is what keeps it off everything else.
     #[test]
-    fn the_trapping_kit_buys_reach_stealth_and_safety_on_quarry_it_can_hold() {
+    fn the_trapping_kit_wins_by_not_being_seen_on_quarry_it_can_hold() {
         let equipment = EquipmentConfig::builtin();
         let trapping = equipment
             .kit("trapping")
@@ -1186,9 +1191,16 @@ mod tests {
             "above the bound the item grants NOTHING — the party is bare-handed and the fight's own \
              gate refuses the hunt, with no 'cannot trap that' branch anywhere"
         );
-        assert!(
-            equipment.engage_multiplier(&trapping, &fresh) > 1.0,
-            "a trap line must reach MORE animals than hands do, or it buys nothing on light game"
+        // **THE DEVICE DECLARES NO REACH MULTIPLIER, and that is a measured decision.** A x4 was
+        // authored here and turned out to be inert: the fight binds before reach does on every
+        // small-game row (reach/worker `engage_rate x mult` against fight/worker
+        // `attack / durability` is 40 against 10 on a rabbit, 60 against 10 on a catfish), so it
+        // changed no outcome anywhere. A lever with no effect is worse than no lever.
+        assert_eq!(
+            equipment.engage_multiplier(&trapping, &fresh),
+            1.0,
+            "the passive device wins by not being SEEN, not by covering more ground — a reach \
+             multiplier here is inert while the fight binds first"
         );
         assert_eq!(
             equipment.dispersion(&trapping, &fresh),

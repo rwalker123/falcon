@@ -30,7 +30,7 @@ cost a whole design conversation to unpick. **"Kit" now means only the roster en
 | **`spears`** | `attack` **20** (equipped) | per **animal killed** |
 | **`sled`** — travois, drag harness | `hunt_carry` **12** (unequipped) | per **biomass hauled home from a hunt** |
 | **`baskets`** | `forage_carry` **1.6** (unequipped) | per **biomass gathered** |
-| **`traps`** | `engage_multiplier` **4**, `dispersion` **0**, `exposure` **0** | per **animal killed** |
+| **`traps`** — the passive device (snares, nets, weirs) | `attack` **20** bounded to `max_body_mass` **1.0**, `dispersion` **0**, `exposure` **0** | per **animal killed** |
 
 Shipped kits: **`big_game`** (`spears` + `sled`), **`trapping`** (`traps` + `sled`),
 **`gathering`** (`baskets`), **`none`** (nothing).
@@ -85,6 +85,43 @@ before the effects model existed.
 - **`exposure` multiplies the hunt's baseline injury hazard** (`fauna::hunt_injuries`). `0` is a
   stand-off instrument: it wears out **instead of** its user getting hurt, which is the trade rather
   than a free lunch.
+
+### Snares, nets and weirs are ONE item, and it wins by not being seen
+
+**At this game's abstraction they are one thing**: something you set down, walk away from, and come
+back to. Whether a device holds one animal or a whole run, and whether it is discriminate, is detail
+the game never surfaces — and two items separated by numbers that mean nothing would be worse than
+one honest one. So `traps` is *the passive device*, and a "net" is not a second item.
+
+**Its whole advantage is `dispersion 0`.** It is not there to be seen, so nothing bolts and the party
+keeps everything it reaches. Against a Rabbit Warren at `wariness 0.75` a spear party loses three
+animals in four to the retreat and this loses none — that *is* the 50 → 200 gap, measured.
+
+**Its `attack` is the spear's own number, and that is the point.** At 0.13–0.67 kg the weapon is not
+what is scarce, so the device must not win by hitting harder. `max_body_mass` is what keeps it off
+everything else.
+
+**It declares NO reach multiplier, and that is measured rather than assumed.** A `×4` was authored
+and turned out inert: the fight binds before reach does on every small-game row (reach per worker
+`engage_rate × mult` against fight per worker `attack / durability` is 40 vs 10 on a rabbit, 60 vs 10
+on a catfish), so it changed no outcome anywhere. **`EquipmentStat::EngageMultiplier` therefore has
+no declaring item today** — the stat and its plumbing remain, neutral at `1.0`.
+
+Measured per turn at 20 hunters, and pinned across **every** small-game row by
+`hunt_fight::the_passive_device_beats_spears_on_every_small_game_row_and_takes_no_large_game`:
+
+| quarry | body mass | `big_game` | `trapping` |
+|---|---|---|---|
+| Wild Fowl | 0.13 | 70 | **200** |
+| Rabbit Warren | 0.27 | 50 | **200** |
+| Forest Grouse | 0.47 | 64 | **133** |
+| Snow Hare Warren | 0.60 | 50 | **133** |
+| Silt Catfish | 0.67 | 180 | **200** |
+| Desert Gazelle and everything above | ≥ 3.3 | wins | **0** |
+
+**Silt Catfish is the row that found the tuning bug.** `engage_rate 15` and `wariness 0.40` make it
+the easiest small game to spear, so it is where a device tuned only against rabbits quietly comes
+second — which is why the test sweeps all five rather than one.
 
 ### An effect can be bounded by the quarry's BODY MASS
 
