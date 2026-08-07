@@ -77,6 +77,30 @@ static func group_stylebox() -> StyleBoxFlat:
 	return sb
 
 
+## ONE GROUP: a sunk well headed by `heading`, a hairline under it, and the caller's own `body`
+## beneath that.
+##
+## The body is threaded IN rather than built here, because what goes in a well is the one thing that
+## differs between pages — the tuning page stacks parameter rows at `ROW_GAP`, the equipment page
+## stacks blocks of captions — while the chrome above it (the upper-case heading, the rule, the
+## spacing between the two) is the same on both and was written twice before this existed.
+static func build_group(heading: String, body: Control) -> PanelContainer:
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", group_stylebox())
+
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", GROUP_HEADER_GAP)
+	panel.add_child(column)
+
+	column.add_child(build_section_label(heading))
+	var rule := PanelContainer.new()
+	rule.custom_minimum_size.y = 1.0
+	rule.add_theme_stylebox_override("panel", HudStyle.hairline_stylebox())
+	column.add_child(rule)
+	column.add_child(body)
+	return panel
+
+
 ## A standing notice at the top of a page (the tuning page's restart-scoped contract). Uses the
 ## chip's near-black wash under the caller's semantic tint, so a banner reads as a stated condition
 ## rather than an alert.

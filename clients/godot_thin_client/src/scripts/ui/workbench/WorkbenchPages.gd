@@ -28,6 +28,17 @@ const PAGES: Array[Dictionary] = [
 		"script": "res://src/scripts/ui/workbench/pages/ConfigTuningPage.gd",
 	},
 	{
+		"id": &"equipment",
+		"title": WorkbenchVocab.EQUIPMENT_PAGE_TITLE,
+		"subtitle": WorkbenchVocab.EQUIPMENT_PAGE_SUBTITLE,
+		"section": WorkbenchVocab.SECTION_SIM,
+		# ▣ (U+25A3) — same Geometric Shapes block as `◈` / `▲` / `◔`, which the bundled font covers.
+		# Rendered in `workbench_preview`'s collapsed-rail frame before it was trusted, per the rule
+		# above: an uncovered symbol draws as a two-pixel stub with no error at all.
+		"glyph": "▣",
+		"script": "res://src/scripts/ui/workbench/pages/EquipmentPage.gd",
+	},
+	{
 		"id": &"turn_control",
 		"title": "Turn Control",
 		"subtitle": "Step, autoplay, rollback",

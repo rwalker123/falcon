@@ -23,6 +23,7 @@ const MAP_TONE := Color(0.10, 0.15, 0.16)
 
 ## The page each state opens. `logs` is registered with no script, so it is the placeholder state.
 const TUNING_PAGE := &"config_tuning"
+const EQUIPMENT_PAGE := &"equipment"
 const PLACEHOLDER_PAGE := &"logs"
 
 ## The dirty state's edits, as `param label -> value`. Each value is a whole number of steps from its
@@ -104,6 +105,24 @@ func _ready() -> void:
 	_shell.show_page(PLACEHOLDER_PAGE)
 	await _settle()
 	await _save("workbench_placeholder")
+
+	# The equipment page with NO WORLD — the degradation every page owes this harness, which runs
+	# with no server at all. Rendered before the fixture so it cannot be reached only by luck of
+	# ordering: a page that crashed or came up blank here could not be iterated on.
+	_shell.show_page(EQUIPMENT_PAGE)
+	await _settle()
+	await _save("workbench_equipment_empty")
+
+	# …and with one. `update_snapshot` fans at the ACTIVE page only, so the page is shown first.
+	_shell.update_snapshot(_equipment_frame(), true)
+	await _settle()
+	await _save("workbench_equipment")
+	_assert_equipment_fits()
+	_assert_equipment_states_the_bands_own_tiers()
+	_assert_equipment_quotes_each_tier_at_its_own_kit()
+	_assert_equipment_renders_the_players_bands()
+	# LAST of the equipment block: it empties the page, so nothing may read it afterwards.
+	_assert_equipment_drops_the_world()
 
 	# Back to the tuning page for the last assertion: `_tuning_page` finds the page in the TREE, and
 	# the shell detaches a page it is not showing.
@@ -385,6 +404,313 @@ func _content_scroll() -> ScrollContainer:
 	for node in _shell.find_children("*", "ScrollContainer", true, false):
 		return node
 	return null
+
+
+# ---- the equipment page ----------------------------------------------------
+
+## THE FIXTURE'S IDS. The two job defaults are DIFFERENT kits, and that is the load-bearing part: a
+## page that quoted the band's gather rate under `kitId` renders an identical-looking line when the
+## hunt and forage defaults happen to agree, so a fixture with one default for both jobs could not
+## tell the fix from the bug. The party's kit is a THIRD id again, for the same reason on the other
+## side — it is the one cohort whose forage tier really is quoted at `kitId`.
+const EQUIPMENT_HUNT_KIT_ID := "big_game"
+const EQUIPMENT_FORAGE_KIT_ID := "baskets"
+const EQUIPMENT_PARTY_KIT_ID := "none"
+const EQUIPMENT_RESIDENT_ENTITY := 301
+const EQUIPMENT_PARTY_ENTITY := 412
+## A rival band, so the player-faction filter has something to exclude. Without it the filter passes
+## on a page that renders every cohort it is given.
+const EQUIPMENT_RIVAL_ENTITY := 907
+const EQUIPMENT_RIVAL_FACTION := 3
+
+
+## The roster, in wire shape and wire ORDER — `none` last, exactly as `equipment.json` authors it.
+## Every entry states all three tiers, publishing the BARE-HANDED value on each axis its kit does not
+## use, which is the shape `KitRoster.unequipped_tier` reads the bare tier off.
+static func _equipment_kits() -> Array:
+	return [
+		{
+			"id": EQUIPMENT_HUNT_KIT_ID, "display_name": "Big Game Kit", "jobs": ["hunt"],
+			"attack": 20.0, "hunt_carry_per_worker_biomass": 40.0,
+			"forage_carry_per_worker_biomass": 1.6,
+		},
+		{
+			"id": EQUIPMENT_FORAGE_KIT_ID, "display_name": "Basket Kit", "jobs": ["forage"],
+			"attack": 1.0, "hunt_carry_per_worker_biomass": 12.0,
+			"forage_carry_per_worker_biomass": 8.0,
+		},
+		{
+			"id": EQUIPMENT_PARTY_KIT_ID, "display_name": "Bare-handed", "jobs": ["hunt", "forage"],
+			"attack": 1.0, "hunt_carry_per_worker_biomass": 12.0,
+			"forage_carry_per_worker_biomass": 1.6,
+		},
+	]
+
+
+## One full frame carrying the roster, its two defaults and three cohorts: a WORN resident band, an
+## in-flight party, and a rival the page must not draw.
+##
+## **The resident band's spears are SPENT and its sled is not**, which is the shape the whole page
+## exists for — one role dropped to the bare-handed tier while the other holds — and it is also what
+## makes the tier assertion below bite: its resolved attack (1.0, bare) differs from the fresh 20.0
+## its own kit publishes, so a line rendering the ROSTER's number where the BAND's belongs is a
+## different string rather than the same one. Its baskets are dry too, so the dry wording renders.
+static func _equipment_frame() -> Dictionary:
+	return {
+		"kits": _equipment_kits(),
+		"default_hunt_kit_id": EQUIPMENT_HUNT_KIT_ID,
+		"default_forage_kit_id": EQUIPMENT_FORAGE_KIT_ID,
+		"populations": [
+			{
+				"entity": EQUIPMENT_RESIDENT_ENTITY, "faction": HudConst.PLAYER_FACTION_ID,
+				"size": 16, "is_expedition": false, "kit_id": EQUIPMENT_HUNT_KIT_ID,
+				"hunting_kit_durability": 0.0, "sled_kit_durability": 58.0,
+				"basket_kit_durability": 0.0,
+				"hunter_attack": 1.0, "hunt_carry_per_worker_biomass": 40.0,
+				"forage_carry_per_worker_biomass": 1.6,
+				"labor_assignments": [
+					{"kind": "hunt", "kit_id": EQUIPMENT_HUNT_KIT_ID},
+					{"kind": "forage", "kit_id": EQUIPMENT_FORAGE_KIT_ID},
+					{"kind": "scout", "kit_id": ""},
+				],
+			},
+			{
+				"entity": EQUIPMENT_PARTY_ENTITY, "faction": HudConst.PLAYER_FACTION_ID,
+				"size": 5, "is_expedition": true, "kit_id": EQUIPMENT_PARTY_KIT_ID,
+				"hunting_kit_durability": 12.0, "sled_kit_durability": 0.0,
+				"basket_kit_durability": 0.0,
+				"hunter_attack": 1.0, "hunt_carry_per_worker_biomass": 12.0,
+				"forage_carry_per_worker_biomass": 1.6,
+				"labor_assignments": [],
+			},
+			{
+				"entity": EQUIPMENT_RIVAL_ENTITY, "faction": EQUIPMENT_RIVAL_FACTION,
+				"size": 9, "is_expedition": false, "kit_id": EQUIPMENT_HUNT_KIT_ID,
+				"hunting_kit_durability": 40.0, "sled_kit_durability": 40.0,
+				"basket_kit_durability": 40.0,
+				"hunter_attack": 20.0, "hunt_carry_per_worker_biomass": 40.0,
+				"forage_carry_per_worker_biomass": 8.0,
+				"labor_assignments": [],
+			},
+		],
+	}
+
+
+func _equipment_page() -> EquipmentPage:
+	for node in _shell.find_children("*", "", true, false):
+		if node is EquipmentPage:
+			return node
+	push_error("workbench_preview: equipment page not found")
+	return null
+
+
+## The tier line for one cohort, reached by the meta handle the page stamps rather than by its face —
+## both lines carry live numbers and a kit's display name, so a text search finds either or neither.
+func _tier_label(page: EquipmentPage, meta: String, entity: int) -> Label:
+	for node in page.find_children("*", "Label", true, false):
+		var label: Label = node
+		if label.has_meta(meta) and int(label.get_meta(meta)) == entity:
+			return label
+	return null
+
+
+## **THE ONE CLAIM THIS PAGE WAS POSITIONED TO GET WRONG**, and no frame can carry it: both tier
+## lines render a plausible sentence naming a real kit, and which kit is a NAME, not a picture.
+##
+## Three legs, plus the vacuity guard that makes them mean anything:
+##   - the two job defaults must be DIFFERENT kits, or every leg below passes on a page that quotes
+##     one id for both jobs;
+##   - a RESIDENT band's forage line names the world's forage default and NOT the kit its `kitId`
+##     names — `kitId` answers for the hunt tiers alone, and `big_game` has no basket component;
+##   - its hunt line does name that `kitId`, without which the fix "never use kitId" would pass;
+##   - an IN-FLIGHT PARTY's forage line names the party's OWN kit and not the forage default, which
+##     is the other direction and the reason `_forage_kit_id` branches at all.
+func _assert_equipment_quotes_each_tier_at_its_own_kit() -> void:
+	var page := _equipment_page()
+	if page == null:
+		return
+	var kits := _equipment_kits()
+	var hunt_kit := KitRoster.display_name_for_id(kits, EQUIPMENT_HUNT_KIT_ID)
+	var forage_kit := KitRoster.display_name_for_id(kits, EQUIPMENT_FORAGE_KIT_ID)
+	var party_kit := KitRoster.display_name_for_id(kits, EQUIPMENT_PARTY_KIT_ID)
+	if hunt_kit == forage_kit or hunt_kit == party_kit or forage_kit == party_kit:
+		push_error("workbench_preview: the fixture's three kits do not have distinct display names ('%s' / '%s' / '%s') — the quoting assertions cannot tell one from another"
+			% [hunt_kit, forage_kit, party_kit])
+		return
+
+	var failed := 0
+	var band_forage := _tier_label(page, WorkbenchVocab.EQUIPMENT_FORAGE_TIER_META,
+		EQUIPMENT_RESIDENT_ENTITY)
+	var band_hunt := _tier_label(page, WorkbenchVocab.EQUIPMENT_HUNT_TIER_META,
+		EQUIPMENT_RESIDENT_ENTITY)
+	var party_forage := _tier_label(page, WorkbenchVocab.EQUIPMENT_FORAGE_TIER_META,
+		EQUIPMENT_PARTY_ENTITY)
+	if band_forage == null or band_hunt == null or party_forage == null:
+		push_error("workbench_preview: the equipment page rendered no tier lines for the fixture's cohorts — the meta handles moved")
+		return
+
+	if not band_forage.text.contains(forage_kit) or band_forage.text.contains(hunt_kit):
+		failed += 1
+		push_error("workbench_preview: a resident band's FORAGE tier must be quoted at the forage default '%s' and never at its kitId '%s' — got: %s"
+			% [forage_kit, hunt_kit, band_forage.text])
+	if not band_hunt.text.contains(hunt_kit):
+		failed += 1
+		push_error("workbench_preview: a resident band's HUNT tier must be quoted at its kitId '%s' — got: %s"
+			% [hunt_kit, band_hunt.text])
+	if not party_forage.text.contains(party_kit) or party_forage.text.contains(forage_kit):
+		failed += 1
+		push_error("workbench_preview: an in-flight party carries ONE kit, so its FORAGE tier is quoted at '%s' and never at the forage default '%s' — got: %s"
+			% [party_kit, forage_kit, party_forage.text])
+	if failed == 0:
+		print("workbench_preview: assert OK — each tier line is quoted at its own kit (band forage at '%s', band hunt at '%s', party at '%s')"
+			% [forage_kit, hunt_kit, party_kit])
+
+
+## **THE TIER LINES QUOTE THE BAND'S OWN RESOLVED NUMBERS, NOT THE ROSTER'S.** A cohort states
+## `hunterAttack` where a kit states `attack`, and the two carry axes happen to share their spelling
+## with the roster's — so reading all three through `KitRoster`'s keys renders a whole, plausible
+## line in which the attack is the `0.0` of a missing key: a party that cannot hurt anything, drawn
+## beside two correct numbers. It shipped that way for one render and only a screenshot caught it.
+##
+## The vacuity guard is the band being WORN: with a fresh band every published tier equals its kit's,
+## and a line rendering either would read identically.
+func _assert_equipment_states_the_bands_own_tiers() -> void:
+	var page := _equipment_page()
+	if page == null:
+		return
+	var cohort: Dictionary = _equipment_frame()["populations"][0]
+	var kit := KitRoster.kit_by_id(_equipment_kits(), EQUIPMENT_HUNT_KIT_ID)
+	if is_equal_approx(float(cohort["hunter_attack"]), float(kit[KitRoster.KIT_ATTACK_KEY])):
+		push_error("workbench_preview: the fixture band's attack equals its kit's fresh attack (%s) — a tier line reading the ROSTER would look identical, so this assertion proves nothing"
+			% cohort["hunter_attack"])
+		return
+
+	var failed := 0
+	var expected := {
+		WorkbenchVocab.EQUIPMENT_HUNT_TIER_META: [
+			float(cohort["hunter_attack"]), float(cohort["hunt_carry_per_worker_biomass"])],
+		WorkbenchVocab.EQUIPMENT_FORAGE_TIER_META: [
+			float(cohort["forage_carry_per_worker_biomass"])],
+	}
+	for meta in expected:
+		var label := _tier_label(page, meta, EQUIPMENT_RESIDENT_ENTITY)
+		if label == null:
+			failed += 1
+			push_error("workbench_preview: no '%s' line for band #%d" % [meta, EQUIPMENT_RESIDENT_ENTITY])
+			continue
+		for value in expected[meta]:
+			var face := String.num(value, WorkbenchVocab.EQUIPMENT_TIER_DECIMALS)
+			if not label.text.contains(face):
+				failed += 1
+				push_error("workbench_preview: band #%d's '%s' line does not state its own tier %s — got: %s"
+					% [EQUIPMENT_RESIDENT_ENTITY, meta, face, label.text])
+	if failed == 0:
+		print("workbench_preview: assert OK — the tier lines state band #%d's own resolved tiers (attack %s, worn off its kit's %s)"
+			% [EQUIPMENT_RESIDENT_ENTITY, cohort["hunter_attack"], kit[KitRoster.KIT_ATTACK_KEY]])
+
+
+## The page is bounded to the PLAYER's cohorts. Asserted rather than eyeballed because a rival band
+## renders exactly like a player one, so the frame that shows two blocks and the frame that shows
+## three are equally plausible pictures.
+func _assert_equipment_renders_the_players_bands() -> void:
+	var page := _equipment_page()
+	if page == null:
+		return
+	if _tier_label(page, WorkbenchVocab.EQUIPMENT_HUNT_TIER_META, EQUIPMENT_RESIDENT_ENTITY) == null:
+		push_error("workbench_preview: the player's own band did not render — the filter claim below would pass vacuously")
+		return
+	if _tier_label(page, WorkbenchVocab.EQUIPMENT_HUNT_TIER_META, EQUIPMENT_RIVAL_ENTITY) != null:
+		push_error("workbench_preview: faction %d's band #%d rendered on a page bounded to the player's cohorts"
+			% [EQUIPMENT_RIVAL_FACTION, EQUIPMENT_RIVAL_ENTITY])
+		return
+	print("workbench_preview: assert OK — the equipment page renders the player's 2 cohorts and not faction %d's"
+		% EQUIPMENT_RIVAL_FACTION)
+
+
+## **`reset()` IS REAL ON THIS PAGE, which is the counter-case to `ConfigTuningPage`'s documented
+## no-op** — and a doc claim with no test is how the two get confused. Everything the page holds came
+## from the world that just ended, and the roster half is the one that bites: `SubsistenceSection.kits`
+## is re-sent ONLY on a world rebuild, so a page that kept it would show the previous world's kits
+## indefinitely rather than for a frame.
+##
+## Driven through the SHELL's `reset_pages()`, the way `Main`'s per-world reset reaches it, rather
+## than by calling the page's hook directly — the fan-out at every BUILT page is part of the contract.
+## The precondition is that there was something to drop, or an empty page passes for free.
+func _assert_equipment_drops_the_world() -> void:
+	var page := _equipment_page()
+	if page == null:
+		return
+	if _tier_label(page, WorkbenchVocab.EQUIPMENT_HUNT_TIER_META, EQUIPMENT_RESIDENT_ENTITY) == null:
+		push_error("workbench_preview: nothing was on the equipment page to drop — the reset claim would pass vacuously")
+		return
+
+	_shell.reset_pages()
+
+	var failed := 0
+	for entity in [EQUIPMENT_RESIDENT_ENTITY, EQUIPMENT_PARTY_ENTITY]:
+		if _tier_label(page, WorkbenchVocab.EQUIPMENT_HUNT_TIER_META, entity) != null:
+			failed += 1
+			push_error("workbench_preview: cohort #%d survived the world boundary on the equipment page"
+				% entity)
+	if not _has_label_with_text(page, WorkbenchVocab.EQUIPMENT_NO_ROSTER):
+		failed += 1
+		push_error("workbench_preview: the roster outlived its world — the page does not say '%s' after reset_pages()"
+			% WorkbenchVocab.EQUIPMENT_NO_ROSTER)
+	if failed == 0:
+		print("workbench_preview: assert OK — reset_pages() drops the equipment page's roster and both cohorts")
+
+
+func _has_label_with_text(page: EquipmentPage, text: String) -> bool:
+	for node in page.find_children("*", "Label", true, false):
+		if (node as Label).text == text:
+			return true
+	return false
+
+
+## The equipment page's half of "a row that does not fit swells the whole column".
+##
+## **THE COLUMN WIDTH IS THE DECISIVE CHECK, and on this page it is very nearly the only one that can
+## fire.** Every line the page draws except two is a `build_caption`, which wraps; what does not wrap
+## is the kit's display name and the band's head row, and an over-long one of those raises its block's
+## minimum width, the `ScrollContainer` grows to it, and the content column swells past
+## `SURFACE_WIDTH` and draws over the map. That reads as a slightly wide panel, not as a broken row.
+## The per-label clip check rides beside it for the opposite failure — a label squeezed under its own
+## minimum, i.e. a truncated name with no ellipsis to admit it.
+func _assert_equipment_fits() -> void:
+	var page := _equipment_page()
+	if page == null:
+		return
+	var scroll := _content_scroll()
+	if scroll == null:
+		push_error("workbench_preview: no content scroll to measure the equipment page against")
+		return
+
+	var failed := 0
+	var nominal_width := WorkbenchVocab.SURFACE_WIDTH - WorkbenchVocab.RAIL_WIDTH \
+		- 2.0 * WorkbenchVocab.CONTENT_PADDING
+	if scroll.size.x > nominal_width + FIT_TOLERANCE:
+		failed += 1
+		push_error("workbench_preview: the equipment page's content column is %.1fpx wider than the surface allows (%.1f > %.1f) — a label does not fit"
+			% [scroll.size.x - nominal_width, scroll.size.x, nominal_width])
+
+	var checked := 0
+	var widest := 0.0
+	for node in page.find_children("*", "Label", true, false):
+		var label: Label = node
+		if label.autowrap_mode != TextServer.AUTOWRAP_OFF:
+			continue
+		checked += 1
+		widest = maxf(widest, label.get_minimum_size().x)
+		if label.size.x + FIT_TOLERANCE < label.get_minimum_size().x:
+			failed += 1
+			push_error("workbench_preview: equipment label is clipped (%.1f < %.1f): '%s'"
+				% [label.size.x, label.get_minimum_size().x, label.text])
+	if checked == 0:
+		push_error("workbench_preview: no equipment labels measured — the block shape moved")
+		return
+	if failed == 0:
+		print("workbench_preview: assert OK — %d non-wrapping equipment labels fit (the widest needs %.0f of %.0fpx)"
+			% [checked, widest, nominal_width])
 
 
 # ---- capture ---------------------------------------------------------------

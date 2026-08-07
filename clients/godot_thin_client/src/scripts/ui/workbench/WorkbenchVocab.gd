@@ -105,6 +105,99 @@ const TUNING_HINT_SEPARATOR := "·"
 ## default that does not land exactly on the step grid cannot make an untouched row read as dirty.
 const TUNING_MODIFIED_STEP_FRACTION := 0.5
 
+# ---- equipment page --------------------------------------------------------
+const EQUIPMENT_PAGE_TITLE := "Equipment"
+const EQUIPMENT_PAGE_SUBTITLE := "TOE roster and the band's live kit state"
+## The one thing a reader of this page has to hold on to: the roster's numbers are a FRESH kit's, the
+## band's are what it resolves to now. Said on the surface because the two sets of tiers sit a
+## centimetre apart and are otherwise indistinguishable — same axes, same units, same formats.
+const EQUIPMENT_BANNER := "Roster tiers are what a FRESH kit grants. A band's own tiers are what it "\
+	+ "resolves to after wear — a dry component drops that role to the bare-handed tier and stays there."
+const EQUIPMENT_ROSTER_HEADING := "KIT ROSTER"
+const EQUIPMENT_BANDS_HEADING := "BAND KIT STATE"
+
+## What separates the clauses of a caption line. A mid dot with air either side: the clauses are
+## separate statements about one subject, not a sentence.
+const EQUIPMENT_PART_SEPARATOR := "  ·  "
+## Decimals on a tier. **A DOWNWARD ALIAS of the HUD's own answer**, not a second decision — the tiers
+## span 1.0 to 40.0 and are authored as small round numbers, so the compose sheet and this page must
+## not be able to disagree about how many places state one. (`hud-modules.md` records the alias idiom;
+## `HudComposeVocab` reads nothing, so there is no const cycle to make.)
+const EQUIPMENT_TIER_DECIMALS := HudComposeVocab.KIT_TIER_DECIMALS
+
+## The roster group's first line: the BARE-HANDED tier on each axis, read off the roster itself.
+## Every kit publishes the unequipped tier on each axis it does not use, so the minimum across the
+## roster IS that axis's bare-handed number — no second copy of the TOE table lives here.
+const EQUIPMENT_BARE_LABEL := "bare-handed"
+const EQUIPMENT_ATTACK_FORMAT := "attack %s"
+## An axis NO kit in the roster states — `KitRoster.unequipped_tier` answers `INF` there, and the
+## page renders that rather than substituting a number the sim never sent.
+const EQUIPMENT_TIER_UNSTATED := "—"
+const EQUIPMENT_HUNT_CARRY_FORMAT := "hunt carry %s"
+const EQUIPMENT_FORAGE_CARRY_FORMAT := "forage carry %s"
+
+## A roster entry's identity line: its id, the verbs it may be sent on, and whether a job defaults to
+## it. The id rides a CAPTION rather than the name row because a caption wraps and a row label does
+## not — see "A row that does not fit swells the whole column" in the rule.
+const EQUIPMENT_JOBS_FORMAT := "jobs %s"
+const EQUIPMENT_JOBS_SEPARATOR := ", "
+const EQUIPMENT_NO_JOBS := "no jobs"
+const EQUIPMENT_HUNT_DEFAULT_TAG := "hunt default"
+const EQUIPMENT_FORAGE_DEFAULT_TAG := "forage default"
+## Which components a kit actually consumes — the axes on which it beats the bare-handed tier. It is
+## a DISPLAY answer only: `none` spends nothing, and saying so is the point of the line.
+const EQUIPMENT_CONSUMES_FORMAT := "consumes %s"
+const EQUIPMENT_CONSUMES_NOTHING := "consumes nothing"
+
+## A band's head row and the three component conditions beneath it. The condition formats are
+## downward aliases of the compose sheet's, for the same reason as the decimals above: one wording for
+## one fact. Condition is on `equipment.json`'s 0-100 scale and **performance is FLAT until expiry**,
+## so nothing on this page scales a tier by what is left.
+const EQUIPMENT_BAND_HEAD_FORMAT := "Band #%d"
+const EQUIPMENT_PARTY_HEAD_FORMAT := "Party #%d"
+const EQUIPMENT_BAND_SIZE_FORMAT := "%d people"
+const EQUIPMENT_CONDITION_FORMAT := HudComposeVocab.KIT_HINT_CONDITION_FORMAT
+const EQUIPMENT_CONDITION_DRY_FORMAT := HudComposeVocab.KIT_HINT_DRY_FORMAT
+const EQUIPMENT_COMPONENT_SPEARS := HudComposeVocab.KIT_COMPONENT_SPEARS
+const EQUIPMENT_COMPONENT_SLED := HudComposeVocab.KIT_COMPONENT_SLED
+const EQUIPMENT_COMPONENT_BASKETS := HudComposeVocab.KIT_COMPONENT_BASKETS
+## Said when a cohort states no condition at all — the keys are ABSENT, which is not the same as `0`
+## (a real reading, meaning dry). The tiers beside it are then the roster's, unworn.
+const EQUIPMENT_NO_CONDITION := "no condition stated"
+
+## **THE TWO TIER LINES, AND THEY NAME THEIR KITS SEPARATELY.** `PopulationCohortState.kitId` answers
+## for the HUNT tiers; a resident band's forage tier resolves through the world's forage default, so
+## quoting it under `kitId` reads a gathering rate off a kit with no basket component at all. The
+## suffixes exist so the page SAYS which kit each line is quoted at rather than leaving the reader to
+## assume they share one.
+const EQUIPMENT_HUNT_TIER_FORMAT := "hunt — attack %s  ·  carry %s per hunter"
+const EQUIPMENT_FORAGE_TIER_FORMAT := "forage — carry %s per gatherer"
+const EQUIPMENT_QUOTED_AT_FORMAT := "  ·  at %s"
+const EQUIPMENT_QUOTED_HUNT_DEFAULT := " (the band's hunt default)"
+const EQUIPMENT_QUOTED_FORAGE_DEFAULT := " (the world's forage default)"
+## An in-flight party carries ONE kit, decided at launch, so it covers that party's forage tier too —
+## the single case in which both lines honestly name the same id.
+const EQUIPMENT_QUOTED_PARTY_KIT := " (the party's own kit)"
+
+## Handles the preview harness reaches the two tier lines by. **Identity, never face** — both lines
+## carry live numbers and a kit's display name, so a text search finds either or neither. The meta's
+## VALUE is the cohort's entity id, so an assertion can say which band it is talking about.
+const EQUIPMENT_HUNT_TIER_META := "workbench_equipment_hunt_tier"
+const EQUIPMENT_FORAGE_TIER_META := "workbench_equipment_forage_tier"
+
+## The per-assignment line: what each crew's yields are priced at, already resolved. `""` is a
+## band-wide role (scout / warrior) — no kit component consumed, hence no kit axis, which is a
+## different statement from "no kit".
+const EQUIPMENT_CREWS_PREFIX := "crews  ·  "
+const EQUIPMENT_CREW_FORMAT := "%s → %s"
+const EQUIPMENT_CREW_NO_KIT := "no kit axis"
+const EQUIPMENT_NO_CREWS := "no assignments"
+
+## The degraded states. The page must come up with no server at all (the preview harness runs without
+## one), so each group says what is missing rather than rendering an empty well.
+const EQUIPMENT_NO_ROSTER := "No kit roster yet — it arrives with the first snapshot of a world."
+const EQUIPMENT_NO_BANDS := "No player bands on the wire yet."
+
 # ---- services --------------------------------------------------------------
 ## Names under which the host (`Main`) files the Callables it lends the surface, and the ONLY thing
 ## a page and its host have to agree on.

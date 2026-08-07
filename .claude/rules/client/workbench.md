@@ -26,9 +26,10 @@ invisible yet still holding its reservation. It goes away with the Inspector.
 | `ui/workbench/WorkbenchShell.gd` | Coordinator ONLY: rail, content host, pinned footer region, page routing, edge reservation, snapshot fan-out with a hidden-surface gate. It never names or `preload`s a page |
 | `ui/workbench/WorkbenchPages.gd` | The page registry — rows of `{id, title, subtitle, section, glyph, script}`. An empty `script` is a declared-but-unbuilt page and renders the placeholder |
 | `ui/workbench/WorkbenchPage.gd` | The page contract: `build`, `build_actions`, `apply_update`, `reset` (world-scoped — see below), and the service hooks |
-| `ui/workbench/WorkbenchWidgets.gd` | All-`static`, stateless shared drawing — surface/rail/group chrome, the banner, the parameter row, the number field, the modified dot |
+| `ui/workbench/WorkbenchWidgets.gd` | All-`static`, stateless shared drawing — surface/rail chrome, `build_group` (the sunk well: heading, hairline, the caller's own body threaded in), the banner, the parameter row, the number field, the modified dot |
 | `ui/workbench/WorkbenchVocab.gd` | ALL-`const` labels, glyphs, geometry, font sizes. Zero funcs, zero vars |
 | `ui/workbench/pages/ConfigTuningPage.gd` | Page one — the manifest-driven config tuning surface |
+| `ui/workbench/pages/EquipmentPage.gd` | Page two — the TOE roster and each player band's live kit state, read side only. A second reader of `ui/hud/KitRoster.gd`, never a second copy of it |
 | `src/config/tuning_manifest.json` | What is tunable: per config kind a `kind`/`label`/`env_var` and rows of `{pointer, label, type, min, max, step, default, unit?, hint}` |
 | `tools/workbench_preview.gd` / `.tscn` | PNG preview harness for the surface (see `test-harnesses.md`) |
 | `tools/workbench_shell_budget.gd` / `.tscn` | The decomposition guard — see "The shell cannot grow" |
@@ -100,6 +101,11 @@ is a failure that shows up as a mis-laid-out page rather than as a crash.
 The shell calls `reset_pages()` from `Main`'s per-world reset, so a page's state does not outlive the
 world it described. That is the whole scope of the hook: **snapshot-derived state**, not everything a
 page holds.
+
+`EquipmentPage` is the ordinary case and shows what the hook is for: its roster is the ended world's
+config and its cohorts are that world's bands, so it drops both. The roster half is the one that
+bites — `SubsistenceSection.kits` is re-sent **only** on a world rebuild, so a page that kept it
+would go on showing the previous world's kits indefinitely rather than for one frame.
 
 `ConfigTuningPage.reset()` is therefore a **documented no-op**, and the exception is the load-bearing
 part. Its state is the designer's intent and the server's staged file — neither belongs to the world,
@@ -173,6 +179,13 @@ So **a new manifest row is not done until that assertion has run.** The lever wh
 label text or `CONTROL_WIDTH` — the number fields hold at most six characters, so control width is
 usually where the slack is.
 
+**Every page owes the same measurement, and the column check is the part that transfers.** The
+per-row checks above are shaped around a parameter row; `_assert_equipment_fits` is the equipment
+page's own version, measuring the same content column and then walking every label the page draws
+with autowrap **off** — which on that page is deliberately only two of them, a kit's display name and
+a band's head row. **The lever for a new page is to put the long text in a wrapping caption**, which
+is why every other line there is one.
+
 ## A new glyph must be RENDERED before it is trusted
 
 The bundled font does not cover every symbol, and an uncovered one does not fail — it draws as a stub
@@ -180,6 +193,45 @@ a couple of pixels tall. That is unreadable precisely where the glyph is all the
 **collapsed rail**, where it is the only thing identifying an entry. `≡` (U+2261) and `⌁` (U+2301)
 both shipped that way and were caught in `workbench_preview`'s collapsed-rail frame. Check a new one
 there the same way.
+
+## The equipment page quotes each tier at ITS OWN kit, and they are not the same kit
+
+The page draws two sets of tiers a centimetre apart in identical units and formats — the roster's,
+which are what a **fresh** kit grants, and each band's **resolved** ones — so everything about it is
+arranged to keep a number from being read against the wrong thing. Three of those arrangements are
+load-bearing rather than tidy:
+
+**`PopulationCohortState.kitId` answers for the HUNT tiers only.** For a resident band it is the hunt
+job's default; the forage tier resolves through the world's forage default, which rides the wire once
+as `SubsistenceSection.defaultForageKitId`. Quoting the gather rate under `kitId` reads a gathering
+number off `big_game`, which has no basket component at all — a plausible row that is simply wrong,
+and one the sim already refuses to publish (the `kit_selection` test
+`a_resident_bands_published_kit_answers_for_the_hunt_tiers_only`).
+**An in-flight party is the exception**: it carries one kit, decided at
+launch, so that kit covers its forage tier too and `kitId` is the honest answer for both lines. Both
+directions are asserted (`_assert_equipment_quotes_each_tier_at_its_own_kit`), and the fixture's hunt
+and forage defaults are **different kits** on purpose — with one default for both jobs, the fix and
+the bug render the same sentence.
+
+**A cohort's tier keys are NOT the roster's**, and only two thirds of that is obvious. Both carry
+axes happen to share a spelling with the roster's keys; the attack axis does not — a kit publishes
+`attack`, a cohort publishes `hunterAttack` — so reading all three through `KitRoster`'s keys renders
+a whole, plausible line in which the attack is the `0.0` of a missing key, drawn beside two correct
+numbers. That shipped for exactly one render and a screenshot caught it. The page spells its three
+cohort keys out rather than borrowing them on the strength of two coinciding, and
+`_assert_equipment_states_the_bands_own_tiers` pins the rendered numbers against a **worn** fixture
+band — a fresh band's resolved tiers equal its kit's, so the assertion would prove nothing on one.
+
+**The two carry tiers are separate fields on the wire and stay separate here.** A band can be out of
+baskets with its sled untouched, and rendering one on the other web's row is the defect the sim-side
+split corrected.
+
+The page is bounded to the **player's** cohorts (a rival's bands render identically, so the filter is
+asserted rather than eyeballed), and its only non-wrapping labels are a kit's display name and a
+band's head row — every other line is a wrapping caption, which is what keeps the content column from
+swelling. `HerdTelemetryState.huntTripEstimatesKitId` / `denialEstimatesKitId` are **not** consumed
+here; they exist so a client can refuse to present an estimate table as an answer for a kit it was not
+computed at, which is the compose sheets' job, not this page's.
 
 ## The tuning manifest is curated, and its patches are sparse
 
