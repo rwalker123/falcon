@@ -818,21 +818,37 @@ vitals type size, and the stock-and-rate form measures **241**.
 one larder against one band's drain; averaged, it hides the band that is starving behind the ones that
 are not — the reason the dependency figure came off the top bar.
 
-### A row's type size is the row it is the counterpart of
+### THE TYPE SCALE IS THE WORK BOARD'S, AND A HEADING NEVER OUT-SIZES ITS ROWS
 
-The page carries the band page's own two-size hierarchy, in the same two zones, and neither size is a
-number picked here:
+**Every row on this page is a row under a `zone_head`, and the panel has exactly ONE other such thing:
+the work board.** So the page's whole scale is the board's — heads at `ZONE_HEAD_FONT_SIZE` (10), key
+chips at `COMPOSITION_KEY_FONT_SIZE` (11), every row at `WORK_ROW_FONT_SIZE` (13). One size for all
+three zones' rows, deliberately: a page whose zones disagreed about how big a row is reads as two
+designs sharing a card.
 
-- **The band zone's stat rows set NO font-size override at all**, because
-  `BandPanelController._build_vitals_label` sets none either — it is a bare `RichTextLabel`, so `Food`
-  / `Trade` / `Morale` render at the stock default. Passing `FactionRollup.STAT_ROW_INHERIT_FONT_SIZE`
-  means the two track that default TOGETHER rather than through a literal somebody has to keep in
-  step; the client has no `Theme` and `Typography.gd` is a no-op shim, so there is no other way to say
-  "the same size as an un-overridden Label". **They shipped pinned at 12 — four steps under their own
-  counterpart — and read as a different kind of thing beside the band page's rows.** Reported on
-  sight.
-- **The work zone's list rows take `HudWorkVocab.WORK_ROW_FONT_SIZE`**, the work board's own, which is
-  what they are.
+**IT SHIPPED WRONG IN BOTH DIRECTIONS, and the second time is the instructive one.** First the rows
+were pinned at 12, four steps under the band page's vitals rows, and read as a different kind of
+thing beside them. Correcting that *against the vitals label* then produced the opposite error: that
+label is a bare `RichTextLabel` at the stock default (~16), but **it sits under no head at all**, so
+borrowing its size put a 10pt `FOOD` over a 16pt `Larder` — a heading smaller than the row it labels,
+which this panel has nowhere. Both were reported by eye.
+
+The rule that survives is the general one: **what a surface shares with its model is its RELATIONSHIP
+to the thing above it, not its absolute size.** Match the head→row step, not the row.
+
+`band_panel_preview._assert_faction_type_scale` holds it — a mis-sized Label sits inside its zone rect
+and fits its box, so the bounds and content-fits assertions pass on either error, and at the harness's
+canvas scale the difference is a couple of pixels, so no frame carries it either. It reads the RENDERED
+size (`get_theme_font_size`) rather than the override, so "set no override and inherit the default" is
+measured as what it actually draws at.
+
+**IT ASSERTS EQUALITY AGAINST THE TWO NAMED SIZES, and its first cut was decorative — caught by
+sabotage, not by review.** That version asserted *"no head renders LARGER than its rows"*, which the
+reported bug satisfies: 10 over 13 is the correct relationship and 10 over 16 is the defect, so the
+test passed on the very thing it was written for (it printed `largest head 10, smallest row 16` and
+went green). The direction was never wrong — the MAGNITUDE was — so an inequality between the two
+cannot express the rule and only the constants can. Re-sabotaged after the rewrite: it fails naming
+`6 stray: [16, 16, 16, 16, 16, 16]`.
 
 **KNOWLEDGE LIVES IN THE WORK ZONE, not beside the stores.** A track is not a stock and not a
 population: it is what the faction's hands may ATTEMPT, and every rung it gates is a row on a work

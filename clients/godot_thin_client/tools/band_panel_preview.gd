@@ -3727,6 +3727,11 @@ func _assert_faction_page() -> void:
 			expected, roundi(raw / float(maxi(bands.size(), 1))), bands.size() * 30],
 		people == str(expected))
 
+	# **A HEADING MUST NEVER RENDER LARGER THAN THE ROW IT LABELS.** Reported twice by eye and invisible
+	# to every other assertion here — a mis-sized Label sits inside its zone and fits its box, and at
+	# the harness's canvas scale the difference is a couple of pixels. See `_assert_faction_type_scale`.
+	_assert_faction_type_scale(band_zone)
+
 	# **THE HERDS BLOCK COUNTS WHAT THE FACTION KEEPS**, which is why the roster's second band works a
 	# CORRALLED herd: a wild hunted herd is correctly not kept, so on an all-wild roster this block
 	# reads `0 / 0` and a page that had stopped counting would look identical.
@@ -3817,6 +3822,68 @@ func _assert_faction_cycler() -> void:
 	_hud.cycle_panel_band(BandCityPanel.CYCLE_NEXT)
 	_assert_band_panel("faction cycler: left on a band for the states that follow",
 		not _hud._bandpanel._panel_is_faction)
+
+## THE PAGE'S TYPE SCALE: every zone head at `ALLOC_SECTION_FONT_SIZE`, every row at the work board's
+## `WORK_ROW_FONT_SIZE` — the page's claim is that it uses the board's scale, so that is what is
+## asserted, by EQUALITY against those constants.
+##
+## **This shipped wrong in both directions and neither was catchable by anything else here.** First the
+## rows were pinned at 12, four steps under the surface they were meant to match; then, correcting that
+## against the band zone's head-LESS vitals label, they came out at ~16 under a 10pt head — so `FOOD`
+## rendered smaller than the `Larder` it labels. Both were reported by eye. A mis-sized Label sits
+## inside its zone rect and fits its box, so the bounds and content-fits assertions pass on either; and
+## at this harness's canvas scale the difference is a few pixels, so a frame does not carry it either.
+##
+## It reads the RENDERED size (`get_theme_font_size`), not the override, so "set no override and take
+## the stock default" — which is exactly how the second version went wrong — is measured as what it
+## actually draws at rather than as an absent property.
+func _assert_faction_type_scale(zone: Node) -> void:
+	var heads: Array = []
+	var rows: Array = []
+	_collect_faction_type_sizes(zone, heads, rows)
+	if heads.is_empty() or rows.is_empty():
+		_assert_band_panel("faction page: type scale is measurable (%d heads, %d rows)" % [
+			heads.size(), rows.size()], false)
+		return
+	# **BY EQUALITY AGAINST THE NAMED SIZES, NEVER AS AN INEQUALITY BETWEEN THEM.** The first cut of this
+	# asserted "no head is LARGER than its rows" and was decorative: 10 over 13 is the correct
+	# relationship *and* 10 over 16 is the reported bug, so the test passed on the very defect it was
+	# written for (verified by sabotage — it printed `largest head 10, smallest row 16` and PASSED).
+	# The direction was never wrong; the MAGNITUDE was, and only the constants can say so.
+	var stray_heads: Array = []
+	for size in heads:
+		if int(size) != HudWorkVocab.ALLOC_SECTION_FONT_SIZE:
+			stray_heads.append(int(size))
+	_assert_band_panel("faction page: every zone head renders at %d (%d stray: %s)" % [
+			HudWorkVocab.ALLOC_SECTION_FONT_SIZE, stray_heads.size(), str(stray_heads)],
+		stray_heads.is_empty())
+	var stray_rows: Array = []
+	for size in rows:
+		if int(size) != HudWorkVocab.WORK_ROW_FONT_SIZE:
+			stray_rows.append(int(size))
+	_assert_band_panel("faction page: every row renders at the work board's %d (%d stray: %s)" % [
+			HudWorkVocab.WORK_ROW_FONT_SIZE, stray_rows.size(), str(stray_rows)],
+		stray_rows.is_empty())
+
+## Split a zone's Labels into `zone_head` TITLES and stat-row cells, by the structure each is built
+## with: a head's first Label is UPPERCASED (`HudWidgets.alloc_section_label`) and a stat row's is not.
+func _collect_faction_type_sizes(node: Node, heads: Array, rows: Array) -> void:
+	if node is HBoxContainer:
+		var labels: Array = []
+		for child in node.get_children():
+			if child is Label:
+				labels.append(child)
+		if labels.size() >= 2:
+			var lead: Label = labels[0]
+			var is_head := not lead.text.is_empty() and lead.text == lead.text.to_upper()
+			for label_variant in labels:
+				var label: Label = label_variant
+				if is_head:
+					heads.append(label.get_theme_font_size("font_size"))
+				else:
+					rows.append(label.get_theme_font_size("font_size"))
+	for child in node.get_children():
+		_collect_faction_type_sizes(child, heads, rows)
 
 ## A faction stat row's VALUE, found by its KEY. The row is an `HBoxContainer` whose first Label is the
 ## key and whose last is the value — the same structural shape `_zone_head_readout` reads, and it

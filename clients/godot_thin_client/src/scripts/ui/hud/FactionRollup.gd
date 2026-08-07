@@ -27,15 +27,17 @@ extends RefCounted
 
 const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 
-## **A STAT ROW TAKES ITS SIZE FROM THE ROW IT IS THE COUNTERPART OF, and the band zone's counterpart
-## is the vitals label — which sets NO font-size override at all.** `BandPanelController._build_vitals_label`
-## builds a bare `RichTextLabel`, so `Food` / `Trade` / `Morale` render at the stock default; a faction
-## `Larder` row pinned at some smaller number reads as a different KIND of thing beside them, which is
-## exactly how this shipped first (at 12, four steps under its own counterpart). Passing this sentinel
-## means "set no override", so the two track that default TOGETHER rather than through a literal
-## somebody has to keep in step — the client has no `Theme` and `Typography.gd` is a no-op shim, so
-## there is no other way to say "the same size as an un-overridden Label".
-const STAT_ROW_INHERIT_FONT_SIZE := 0
+## **EVERY ROW ON THIS PAGE IS A ROW UNDER A `zone_head`, AND THE PANEL HAS EXACTLY ONE OTHER SUCH
+## THING: THE WORK BOARD.** So a stat row takes the board's own row size, and the page's whole scale is
+## the board's — heads at `ZONE_HEAD_FONT_SIZE` (10), key chips at `COMPOSITION_KEY_FONT_SIZE` (11),
+## rows at 13.
+##
+## **The band zone's VITALS LABEL is the wrong counterpart, and matching it was a shipped mistake.**
+## `_build_vitals_label` is a bare `RichTextLabel` at the stock default (~16) — but it sits under NO
+## head at all, so borrowing its size put a 10pt heading over a 16pt row and made `FOOD` smaller than
+## the `Larder` beneath it: a hierarchy this panel never has, and reported on sight. What is shared
+## with a surface is its RELATIONSHIP to the thing above it, not its absolute size.
+const STAT_ROW_FONT_SIZE := HudWorkVocab.WORK_ROW_FONT_SIZE
 
 ## The gap between a stat row's key and its value. The value is right-aligned by an expanding spacer,
 ## exactly as `HudWidgets.zone_head` right-aligns its readout, so this is a floor rather than the gap.
@@ -115,7 +117,7 @@ static func build_parties_zone(labor: HudBandLaborState, herd_label_for_id: Call
         block.add_child(_stat_row(
             HudFormat.panel_expedition_summary(party, herd_label_for_id),
             String(names.get(int(party.get("home_band_entity", -1)), "")),
-            HudStyle.INK_FAINT, HudWorkVocab.WORK_ROW_FONT_SIZE))
+            HudStyle.INK_FAINT))
     _append_more_row(block, parties.size() - shown)
     col.add_child(block)
     return col
@@ -338,8 +340,7 @@ static func _build_bands_block(labor: HudBandLaborState) -> VBoxContainer:
         block.add_child(_stat_row(
             HudFormat.band_display_name(band, i + 1),
             HudWorkVocab.FACTION_BAND_ROW_FORMAT % [int(band.get("working_age", 0)), idle],
-            HudStyle.SIGNAL if idle > 0 else HudStyle.INK_FAINT,
-            HudWorkVocab.WORK_ROW_FONT_SIZE))
+            HudStyle.SIGNAL if idle > 0 else HudStyle.INK_FAINT))
     _append_more_row(block, bands.size() - shown)
     return block
 
@@ -369,7 +370,7 @@ static func _build_knowledge_block(knowledge: Dictionary) -> VBoxContainer:
                 HudFormat.meter_bar(progress, KNOWLEDGE_METER_CELLS),
                 HudFormat.progress_percent(progress)]
         block.add_child(_stat_row(String(row[0]), value,
-            HudStyle.SIGNAL if known else HudStyle.INK_DIM, HudWorkVocab.WORK_ROW_FONT_SIZE))
+            HudStyle.SIGNAL if known else HudStyle.INK_DIM))
     return block
 
 # ---- leaves -----------------------------------------------------------------
@@ -380,19 +381,17 @@ static func _build_knowledge_block(knowledge: Dictionary) -> VBoxContainer:
 ## column of readouts, and a row that measured like a head would leave the section heads meaningless.
 ## Both labels route their tooltip through `HudWidgets.set_label_tooltip`, since a bare `tooltip_text`
 ## on a `Label` is a SILENT no-op at Godot's `MOUSE_FILTER_IGNORE` default.
-## `font_size` is `STAT_ROW_INHERIT_FONT_SIZE` for a VITALS row (the band zone's, which must read at
-## the size the band page's own vitals do) and an explicit size for a LIST row (the work zone's, which
-## are board rows and take `HudWorkVocab.WORK_ROW_FONT_SIZE` for it). The page therefore carries the
-## same two-size hierarchy the band page does, in the same two zones.
+## **ONE SIZE FOR EVERY ROW ON THE PAGE** — there is deliberately no per-zone size parameter. Every one
+## of these rows is a row under a `zone_head`, so they are all the same kind of thing, and a page whose
+## zones disagreed about how big a row is would read as two designs sharing a card.
 static func _stat_row(key: String, value: String, value_color: Color,
-        font_size: int = STAT_ROW_INHERIT_FONT_SIZE, tooltip: String = "") -> HBoxContainer:
+        tooltip: String = "") -> HBoxContainer:
     var row := HBoxContainer.new()
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_theme_constant_override("separation", STAT_ROW_SEPARATION)
     var key_label := Label.new()
     key_label.text = key
-    if font_size != STAT_ROW_INHERIT_FONT_SIZE:
-        key_label.add_theme_font_size_override("font_size", font_size)
+    key_label.add_theme_font_size_override("font_size", STAT_ROW_FONT_SIZE)
     key_label.add_theme_color_override("font_color", HudStyle.INK_DIM)
     # **NO `clip_text` ON THE KEY.** It zeroes a Label's minimum width, and the spacer beside it is the
     # row's only expanding child — so a clipped key is squeezed to NOTHING and the row renders as a
@@ -406,8 +405,7 @@ static func _stat_row(key: String, value: String, value_color: Color,
     row.add_child(spacer)
     var value_label := Label.new()
     value_label.text = value
-    if font_size != STAT_ROW_INHERIT_FONT_SIZE:
-        value_label.add_theme_font_size_override("font_size", font_size)
+    value_label.add_theme_font_size_override("font_size", STAT_ROW_FONT_SIZE)
     value_label.add_theme_color_override("font_color", value_color)
     HudWidgets.set_label_tooltip(value_label, tooltip)
     row.add_child(value_label)
