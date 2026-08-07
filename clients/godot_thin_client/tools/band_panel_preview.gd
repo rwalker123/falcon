@@ -3785,6 +3785,13 @@ func _assert_faction_page() -> void:
 
 	_assert_faction_type_scale(work_zone)
 
+	# **A CARET MUST OPEN ITS POPOVER, NOT CHANGE THE PANEL'S SUBJECT.** Reported from play: every
+	# faction caret jumped straight to a band. The disclosure re-renders its hosts so the caret can
+	# flip ▸→▾, and that re-render rendered a BAND unconditionally — the page keeps `panel_band()`
+	# intact for the cycler, so nothing stopped it. Driven through the REAL `meta_clicked` with the
+	# very meta the row's own text carries, because the bug was in the re-render and not in the row.
+	_assert_faction_caret_keeps_the_page(band_zone)
+
 	# THE HEADER. A faction has no settlement stage and no tile, so the stage slot carries the band
 	# COUNT — the identity fact at this scale — and the coordinate slot hides itself outright.
 	_assert_band_panel("faction page: header names the faction",
@@ -3859,6 +3866,44 @@ func _assert_faction_cycler() -> void:
 	_hud.cycle_panel_band(BandCityPanel.CYCLE_NEXT)
 	_assert_band_panel("faction cycler: left on a band for the states that follow",
 		not _hud._bandpanel._panel_is_faction)
+
+## CLICKING A FACTION CARET OPENS ITS POPOVER AND LEAVES THE PAGE UP.
+##
+## Both halves are the claim. "The popover opened" alone passes on a build that opens it and then
+## renders a band behind it; "the page survived" alone passes on a caret that does nothing at all.
+##
+## It drives the REAL `meta_clicked` with the meta the row's own text carries — the same idiom
+## `_click_disclosure` uses for a band row — because the defect was in the RE-RENDER the click
+## triggers, not in the row, so poking `_open_popover` directly would have proved nothing.
+func _assert_faction_caret_keeps_the_page(zone: Node) -> void:
+	var label := _first_rich_text(zone)
+	if label == null:
+		_assert_band_panel("faction caret: the vitals label is reachable", false)
+		return
+	var meta := "%s%s" % [HudDisclosureVocab.BREAKDOWN_TOGGLE_META_PREFIX,
+		DetailFormat.breakdown_key(HudDisclosureVocab.BREAKDOWN_KIND_FOOD, {})]
+	label.meta_clicked.emit(meta)
+	_assert_band_panel("faction caret: the page survives its own caret (still the faction subject)",
+		_hud._bandpanel._panel_is_faction)
+	_assert_band_panel("faction caret: the Food popover is open",
+		_hud._disclosures._breakdown_popover_key == DetailFormat.breakdown_key(
+			HudDisclosureVocab.BREAKDOWN_KIND_FOOD, {}))
+	# …and the popover lists the BANDS, which is the whole point of the drill-down.
+	_assert_band_panel("faction caret: the popover lists the bands",
+		_hud._disclosures._breakdown_popover_label != null
+			and _hud._disclosures._breakdown_popover_label.text.contains(
+				HudDisclosureVocab.FACTION_BAND_JUMP_META_PREFIX))
+	_hud._disclosures._close_popover()
+
+## The first `RichTextLabel` under a node — the faction zone's vitals block, which is its only one.
+func _first_rich_text(node: Node) -> RichTextLabel:
+	if node is RichTextLabel:
+		return node as RichTextLabel
+	for child in node.get_children():
+		var found := _first_rich_text(child)
+		if found != null:
+			return found
+	return null
 
 ## The faction vitals block's RAW BBCode — the `[url]` metas and the `[color]` tags included, since
 ## some claims are about a link existing and some about a number being absent. The first

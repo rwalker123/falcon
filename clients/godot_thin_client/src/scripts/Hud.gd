@@ -788,8 +788,13 @@ func _reconcile_pending() -> void:
 ## Re-render whichever hosts can be showing a disclosure caret, so it flips with the popover. Both
 ## hosts, unconditionally — that is the `is_panel` fork this change exists to remove.
 func _refresh_disclosure_hosts() -> void:
-    if _bandpanel.has_panel() and not _band_labor.panel_band().is_empty():
-        _bandpanel.render_band(_band_labor.panel_band())
+    # **`rerender`, NEVER `render_band` — this must re-render whichever SUBJECT the panel is on.**
+    # Opening a disclosure re-renders its hosts so the caret can flip ▸→▾, and rendering a BAND here
+    # threw the FACTION page away every time one of its own carets was clicked: that page deliberately
+    # keeps `panel_band()` intact (it is what the cycler walks back into), so the old guard was
+    # satisfied and the panel silently changed subject instead of opening the popover. `rerender` is
+    # the routing method that exists for exactly this, and it carries both guards internally.
+    _bandpanel.rerender()
     _drawer.render_subject_drawer()
 
 # ---- THE COMPOSE SHEET: the two reflective delegators -----------------------------------------
