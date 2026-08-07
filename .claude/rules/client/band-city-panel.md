@@ -923,6 +923,96 @@ shell it is about to get.
 is this panel's design invariant and `band_panel_preview` asserts it per state. Making the card scroll
 would retire both, and that is its own arc.
 
+## A horizontal dock grows in WIDTH; a vertical one grows in HEIGHT
+
+The panel reserves its **cross** axis — width on a vertical dock, height on a horizontal one. Growing
+along the axis you reserve re-emits `reservation_changed` → `MapView.set_reserved_inset` → cache
+invalidation, i.e. the map flicker the fixed cross-axis size exists to prevent. Growing along the
+**long** axis costs nothing and nobody downstream needs telling. So the UX rule and the architectural
+invariant are the same rule, and it is the reason width growth is safe to build on and height growth
+is not.
+
+A vertical dock already obeyed it — 380 wide, content flowing down. A horizontal dock did not: the
+card is content-width, but its *content* declared a fixed 380 band flank of stacked blocks, so it
+never asked for the width and paid in height it did not have. On a wide monitor the card used well
+under half the window while the strip stayed a full 360.
+
+**`band_zone_columns()` is PURELY GEOMETRIC** — `(available span − chrome − parties − one work column
+− separators) / ZONE_BAND_WIDTH`, clamped to `BAND_ZONE_MAX_COLUMNS` (2). Not one term is content, and
+that is load-bearing: a count that varied with what the band holds would make the strip height
+content-dependent and reopen the flicker bug. It is the `set_work_columns` / `_affordable_work_columns`
+idiom one flank over, and `_band_flank_width()` is the single definition `_card_width()`,
+`work_zone_size()` and `_affordable_work_columns()` all read.
+
+**The two-column flank costs the work board one column.** That is the trade, and it is deliberate: the
+work zone is already constrained and pages itself, while the band flank had no way to spend width at
+all.
+
+A TOP dock stays at one column — the lateral bounds cost it 704px — which is the geometric rule
+working, not an exception.
+
+## `PANEL_HEIGHT_WIDE` cannot shrink, and the band zone is not why
+
+The 360 was tried at 230 once the two-column flank needed only 148, and it failed 18 ways. **Two
+constraints bind it, and neither is the band zone:**
+
+| what binds it | measured |
+|---|---|
+| The **parties** zone's worst case — the seven-line inspector strip | **294px** of body; +44 header +22 card chrome **is** 360 |
+| The **parked chrome** stack (`DockRowController._required_height`): nav 164 + turn orb 128 + separation | **~322px** of strip — below it the reflow gate declines and a BOTTOM dock silently keeps the minimap and turn orb, undoing issue #324 |
+
+The band flank at 299 of a 300px box was merely the **closest** to the ceiling, never the thing setting
+it. So the width work's recovered 151px has nowhere to go on the strip — **it is spent inside the zone
+instead** (below), and the tile-column clipping a horizontal dock causes is not reduced by any of it.
+
+## The band zone's tier reads the whole STACKING BUDGET, and the split is authored
+
+`_band_zone_tier_height()` is the zone box **times the column count**. Both terms are geometric, so the
+tier stays content-independent; **one column multiplies by one**, which is what makes every
+single-column layout arithmetically identical to before. At two columns 300 × 2 = 600 → TALL, which
+restores the food-outlook chart and the role cards' hint text that SHORT hides. Without it the widened
+flank filled 49% of the room and rendered bare `Scout` / `− 2 +` steppers — the width complaint
+answered by moving the emptiness rather than removing it.
+
+**The blocks are heterogeneous, so which column each lands in is AUTHORED, never reflowed** — and
+raising the tier forced the pairing to change. Of four authored candidates measured at TALL against a
+300px box, exactly one fits:
+
+| split | measured |
+|---|---|
+| vitals + PEOPLE \| WORKFORCE | 316 / 193 — overflows |
+| vitals + PEOPLE \| outlook + WORKFORCE | 200 / 321 — overflows |
+| vitals \| PEOPLE + outlook + WORKFORCE | 130 / 391 — overflows |
+| **vitals + outlook \| PEOPLE + WORKFORCE** | **246 / 263** — fits |
+
+It reads as *the larder | the people*, which is defensible on its own terms, but **that is a happy
+accident: it is the only one that fits.** Do not treat the pairing as a design principle that would
+survive the blocks changing size — re-measure all four.
+
+**A band with no food history builds no chart, and that is turn one** — the first frame of every new
+game. Under the charted split that column is the vitals alone, 130 against 263. So there is a **second
+authored layout**, selected by one boolean (`people_column = PEOPLE if outlook != null else LARDER`):
+PEOPLE is the only block that moves. Measured **200 / 193** chartless, **246 / 263** charted. Both are
+hand-authored and hand-measured — a declared variant chosen by a predicate, the same shape as the tier
+itself — and the split feeds no geometry, so the flicker invariant is not in play.
+
+**The measured numbers do not decompose by subtraction** — separations and spacing differ per grouping,
+and both predictions made that way were wrong (188 vs the actual 200; 258 vs the actual 246).
+Re-measure; never derive.
+
+**66% is the chartless flank's CEILING, not a shortfall.** Its three blocks total 393px against the
+600px two columns offer, and the total is the total however it is dealt out. What the second split buys
+is *where* the emptiness sits — ~100px under each column instead of 170 under one and none under the
+other.
+
+Blocks are emitted in **build** order for one column and by **column** field for two, so the flat stack
+stays vitals · PEOPLE · outlook · WORKFORCE.
+
+**The fill assertion measures the WHOLE FLANK against the WHOLE room, plus a separate balance claim.**
+Measuring only the deepest column passed the 130/263 flank at 88% — the short column was invisible to
+it. Two independent failure modes (uniformly empty = a tier that did not rise; lopsided = the wrong
+split) need two claims.
+
 ## Work rows and the two hunt products (issue #337)
 
 A board row's rate column is a single fixed width, so it shows the product the source actually PAYS:

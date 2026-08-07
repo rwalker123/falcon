@@ -113,6 +113,10 @@ var _work_zone_band: Dictionary = {}
 ## `_on_zones_resized` — the one straddle the band and work halves shared, resolved by keeping BOTH
 ## ends in this controller.
 var _band_zone_tier: int = HudWorkVocab.BAND_ZONE_TIER_TALL
+## How many columns the band zone was last BUILT across, beside the tier and read the same way: a
+## column change needs the zones rebuilt (the split is authored, so it cannot be re-flowed in place),
+## exactly as a tier change does.
+var _band_zone_columns: int = 1
 ## The parties compose sheet: open, and which mission has been picked ("" = none yet, which is what
 ## keeps the party size / floor / forecast fields hidden until the mission decides them).
 var _party_compose_open: bool = false
@@ -340,20 +344,115 @@ func _confirm_destructive(body: String, ok_text: String, on_confirm: Callable) -
 ## Zone `band`: vitals · people · food outlook · workforce (+ the two role cards).
 ## `with_vitals` is false for the legacy flat host, whose Occupants card already renders the very
 ## same Food/Morale/Position rows in its own `%OccupantDetail` drawer above this.
+## **ON A HORIZONTAL DOCK THE BAND ZONE GROWS WIDE, NOT TALL** — the design rule for the whole panel
+## ("vertical docking favours height, horizontal favours width"), and it is the architecture's rule as
+## much as a preference: the panel reserves its CROSS axis, so growth along the LONG one is the one
+## direction that cannot re-emit `reservation_changed` and re-invalidate the map's cache.
+##
+## **THE SPLIT IS AUTHORED HERE, NOT REFLOWED.** These blocks are heterogeneous — a wrapped BBCode
+## label, two composition bars each with its own key, a row of role cards — so a generic "fill column A
+## then spill into B" would separate a bar from its key and break the pairs that read together. The
+## PANEL decides how many columns there are (`band_zone_columns()`, purely geometric); this decides
+## what goes in them.
+##
+## **THERE ARE TWO AUTHORED SPLITS AND ONE BOOLEAN CHOOSES BETWEEN THEM: does this band have a food
+## history to chart?** Both are hand-authored and hand-measured — a declared variant selected by a
+## predicate, the same shape as the tier itself, and not a reflow. The split feeds NO geometry: it
+## moves no column count and no reservation, so the flicker invariant is not in play here at all.
+##
+##   * **chart present — THE LARDER | THE PEOPLE** (vitals + outlook | PEOPLE + WORKFORCE), measured
+##     **246 / 263** of a 300px box.
+##   * **chart absent — vitals + PEOPLE | WORKFORCE**, measured **200 / 193**.
+##
+## Both pairs are MEASURED, not derived by subtracting the chart's height from the charted numbers:
+## the separations and the vitals label's wrapping differ per grouping, so the arithmetic does not
+## decompose and the predicted 258 / 188 both came out wrong by ~12px.
+##
+## PEOPLE is the only block that moves, and that is the entire difference between them.
+##
+## **THE PAIRING IS FORCED BY MEASUREMENT, not chosen for tidiness.** At 380px on the TALL tier the
+## blocks come out vitals 130 · PEOPLE 58 · outlook 116 · WORKFORCE 193, and with the chart present
+## only one of the four candidates fits a 300px box:
+##
+##   * vitals + PEOPLE | WORKFORCE ………………… **316** / 193 — OVERFLOWS by 16 (`band_panel_arrivals_bottom`)
+##   * vitals + PEOPLE | outlook + WORKFORCE … 200 / **321** — overflows
+##   * vitals | PEOPLE + outlook + WORKFORCE … 130 / **391** — overflows
+##   * vitals + outlook | PEOPLE + WORKFORCE … 258 / **263** — fits, and near-balanced
+##
+## Take the chart away and that winner becomes 130 against 263 — one full column beside a third-full
+## one, and **that is turn one**, the first frame a new player ever sees, since a band with no history
+## has nothing to chart. The overflowing candidate is the one that balances once the chart's height
+## leaves with it, which is why the chartless variant is the split the chart broke.
+##
+## **ONE column is byte-identical to the flat build**, deliberately: the blocks are emitted in BUILD
+## order there, not column order, so the flat stack is still vitals · PEOPLE · outlook · WORKFORCE and
+## every existing frame and every tier threshold is untouched.
 func build_band_zone(band: Dictionary, with_vitals: bool = true) -> VBoxContainer:
     var col := HudWidgets.make_zone_column()
-    _band_zone_tier = _band_zone_tier_for(_zone_box().y)
-    if with_vitals:
-        col.add_child(_build_vitals_label(band))
+    # COUNT FIRST, then the tier: the tier is chosen against the flank's whole stacking budget, which
+    # is the column count times the box (see `_band_zone_tier_height`).
+    _band_zone_columns = _band_zone_column_count()
+    _band_zone_tier = _band_zone_tier_for(_band_zone_tier_height())
+    # `{control, column}` in BUILD order. The two orders are deliberately separate: the flat
+    # one-column stack follows this list as-is, while the split reads the `column` field — so the
+    # authored pairing can put two blocks together without reordering the stack that does not use it.
+    var vitals: Control = _build_vitals_label(band) if with_vitals else null
     var people := _build_people_block(band)
-    if people != null:
-        col.add_child(people)
+    var outlook: Control = null
     if _band_zone_tier != HudWorkVocab.BAND_ZONE_TIER_SHORT:
-        var outlook := _build_food_outlook_block(band, _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_COMPACT)
-        if outlook != null:
-            col.add_child(outlook)
-    col.add_child(_build_workforce_block(band, _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT))
+        outlook = _build_food_outlook_block(band, _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_COMPACT)
+    var workforce := _build_workforce_block(band, _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT)
+    # **PEOPLE IS THE ONE BLOCK THAT MOVES, and its column is the WHOLE of the second split.** With a
+    # chart the larder column already carries two blocks and PEOPLE belongs with WORKFORCE; without
+    # one it would be a lone vitals label against the pair, so PEOPLE crosses over to keep the two
+    # columns level. One boolean, two hand-measured layouts — not a reflow.
+    var people_column: int = BAND_COLUMN_PEOPLE if outlook != null else BAND_COLUMN_LARDER
+    var blocks: Array[Dictionary] = []
+    if vitals != null:
+        blocks.append({"control": vitals, "column": BAND_COLUMN_LARDER})
+    if people != null:
+        blocks.append({"control": people, "column": people_column})
+    if outlook != null:
+        blocks.append({"control": outlook, "column": BAND_COLUMN_LARDER})
+    blocks.append({"control": workforce, "column": BAND_COLUMN_PEOPLE})
+    if _band_zone_columns <= 1:
+        for block in blocks:
+            col.add_child(block["control"])
+        return col
+    var row := HBoxContainer.new()
+    row.name = "BandZoneColumns"
+    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    row.add_theme_constant_override("separation", HudWidgets.ZONE_SECTION_SEPARATION)
+    row.add_child(_band_zone_column(blocks, BAND_COLUMN_LARDER))
+    row.add_child(_band_zone_column(blocks, BAND_COLUMN_PEOPLE))
+    col.add_child(row)
     return col
+
+## The two authored columns of a widened band flank, named for what they are ABOUT rather than by
+## index: what the band has to eat, and who the band is. See `build_band_zone` for the measurement
+## that forces this pairing over the other three.
+const BAND_COLUMN_LARDER := 0
+const BAND_COLUMN_PEOPLE := 1
+
+## One column of a multi-column band zone. `EXPAND_FILL` on both, so the two share the flank evenly
+## whatever their content demands: the flank's width is the PANEL's decision and neither column may
+## claim more of it by being the busier one.
+func _band_zone_column(blocks: Array[Dictionary], which: int) -> VBoxContainer:
+    var column := HudWidgets.make_zone_column()
+    for block in blocks:
+        if int(block["column"]) == which:
+            column.add_child(block["control"])
+    return column
+
+## How many columns the band zone lays out across. **The PANEL answers it**: the count is geometric —
+## what the span affords — and the panel is what knows the span. Asking the CONTENT would put the
+## strip's height, and therefore the map's inset, on the snapshot's critical path. One for the no-dock
+## fallback host, which has no span to answer with.
+func _band_zone_column_count() -> int:
+    if _panel == null:
+        return 1
+    return _panel.band_zone_columns()
 
 ## The vitals readout — Food, Fodder, Trade, Morale and Growth, of which Food / Trade / Morale /
 ## Growth carry the click-to-expand disclosures (Fodder is a plain row, and there is no Output row:
@@ -576,10 +675,36 @@ func build_work_zone(band: Dictionary) -> VBoxContainer:
 ## rebuilt rather than the board re-paged — otherwise a tall-shell band zone lands in a short box and
 ## is silently clipped by its host.
 func _on_zones_resized() -> void:
-    if _band_zone_tier != _band_zone_tier_for(_zone_box().y):
+    # The COLUMN COUNT is the second reason to rebuild rather than re-page, and for the same reason as
+    # the tier: the band zone's split across columns is AUTHORED at build time, so a flank that has
+    # gained or lost a column cannot be re-flowed in place — it would keep a layout built for a
+    # different geometry, one column of it clipped by a host that no longer matches.
+    if _band_zone_tier != _band_zone_tier_for(_band_zone_tier_height()) \
+            or _band_zone_columns != _band_zone_column_count():
         rerender()
         return
     _repage_work_zone()
+
+## The height the band zone's TIER is chosen against: the box times the number of columns the flank
+## lays out across.
+##
+## **A SECOND COLUMN IS A SECOND COLUMN'S WORTH OF STACKING ROOM**, and the tier is the question "how
+## much room do these blocks have?" — so the budget it is asked about has to be the whole flank's, not
+## one column's. Measured at 1920 on a bottom dock: one column packs vitals + PEOPLE + WORKFORCE into
+## 299px of a 300px box and can afford only the SHORT tier's reductions; two columns carry 148px each
+## and leave 152px of every column blank, which is the same emptiness the widening was supposed to
+## remove, moved down the card. Times the count, that 300px box reads as the 600px of stacking the
+## flank actually offers, and the tier rises to restore what SHORT hides — the food-outlook chart and
+## the role cards' descriptions.
+##
+## **STILL PURELY GEOMETRIC.** Both terms are: the box is the panel's fixed geometry and the count is
+## `band_zone_columns()`, which reads only the span. So the tier cannot become a function of the
+## snapshot, and the strip's height — hence `MapView`'s inset — stays off the content's critical path.
+##
+## **ONE column multiplies by one**, so every vertical dock, every narrow shell and every one-column
+## horizontal dock is arithmetically untouched.
+func _band_zone_tier_height() -> float:
+    return _zone_box().y * float(_band_zone_column_count())
 
 ## Which content tier the band zone's height affords (see `BAND_ZONE_*_MIN_HEIGHT`).
 func _band_zone_tier_for(zone_height: float) -> int:

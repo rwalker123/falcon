@@ -111,6 +111,21 @@ const PANEL_CHROME_H := 2.0 * (float(PANEL_CONTENT_MARGIN_H) + PANEL_BORDER_WIDT
 ## parties zone, 380 here still leaves the work board two columns at 1920 on every shipped map. 380 is
 ## already this file's vocabulary (`PANEL_WIDTH`, `ZONE_WORK_MIN_WIDTH`): one readable column of rows.
 const ZONE_BAND_WIDTH := 380.0
+## The most columns the BAND flank will lay its blocks out across on a horizontal dock.
+##
+## **GROW THE LONG AXIS, NEVER THE RESERVED ONE.** The panel reserves its CROSS axis — width on a
+## vertical dock, height on a horizontal one — so growth along the reserved axis re-emits
+## `reservation_changed`, re-insets `MapView` and invalidates its cache, which is the map flicker the
+## fixed cross-axis size exists to prevent. Growth along the LONG axis costs nothing. A horizontal
+## dock therefore spends a wide monitor on band COLUMNS rather than on a taller strip. It does NOT buy
+## the strip's height back — see `PANEL_HEIGHT_WIDE` for the two constraints that turned out to pin
+## that, neither of them this flank.
+##
+## **TWO, because the split is AUTHORED** (`BandPanelController.build_band_zone`): the blocks are
+## heterogeneous — a wrapped vitals label, two composition bars, a row of role cards — so a generic
+## reflow produces nonsense, and a third column would need a third authored split with nothing
+## measured to put in it. Measured at 380px on the SHORT tier: vitals 52, PEOPLE 58, WORKFORCE 139.
+const BAND_ZONE_MAX_COLUMNS := 2
 ## **THE PARTIES ZONE IS EXACTLY THE NARROW SHELL'S ZONE WIDTH** — the panel's strip less the card
 ## chrome — which IS the requirement: the wide shell must never hand a zone LESS room than the side
 ## dock does for the same content, and this zone's four-rung compose picker is already 2×2 at that
@@ -162,8 +177,26 @@ const WIDE_SEPARATOR_SPAN := 2.0 * RAIL_SEPARATOR_SPAN
 ## board several times NARROWER, degrading the very thing the wide shell exists to improve.
 const WIDE_SHELL_MIN_WIDTH := ZONE_BAND_WIDTH + ZONE_PARTY_WIDTH + ZONE_WORK_MIN_WIDTH \
 	+ WIDE_SEPARATOR_SPAN + PANEL_CHROME_H
+## **THE STRIP DOES NOT GET SHORTER WHEN THE BAND FLANK WIDENS, AND THAT IS MEASURED.**
+##
+## The width growth was expected to buy height back — a two-column flank needs 139px where one needs
+## 273 — so a `PANEL_HEIGHT_WIDE_TWO_COLUMN` was built and tried at 230. It cannot exist: the band
+## flank was never what pinned this budget. **TWO other things bind above it, both unrelated to the
+## band zone**, and 360 is already their minimum:
+##
+##   * **the PARTIES zone's worst case, 294px of body** — a hunt party lighting all seven inspector
+##     lines at once (`band_panel_worst_case_party`; the budget is spelled out in
+##     `band-city-panel.md` → "The parties strip's SEVEN lines"). At a 230px strip its box is 170 and
+##     it overflows by 124.
+##   * **the PARKED CHROME STACK, ~322px of strip** — `DockRowController._required_height()` is the
+##     nav cluster (164) + the turn cluster (128) + `RAIL_SLOT_SEPARATION` + the card's own chrome, and
+##     the reflow gate is `reserved >= that`. Below it the gate DECLINES, `BottomBar` keeps the minimap
+##     and orb, and a bottom dock silently loses the whole issue-#324 dock-row reflow.
+##
+## 294 + the header + the card's vertical chrome IS 360. So the flank's saved height is real and has
+## nowhere to go, and this const stays a single budget for both column counts.
 ## Safety net so a short window can never let the T/B strip eat the screen: the reserved wide-dock
-## height is `PANEL_HEIGHT_WIDE` clamped to this fraction of the window height.
+## height is the body budget clamped to this fraction of the window height.
 const MAX_WIDE_HEIGHT_FRACTION := 0.6
 ## Header height used for the interior maths before the header has laid out once (it is pure chrome —
 ## two text rows beside `ICON_BUTTON_SIZE` controls — so this is a bootstrap value, not a guess about
@@ -342,6 +375,9 @@ var _tab_badges: Dictionary = {}
 var _tab_buttons: Dictionary = {}   # zone:StringName -> Control (the tab cell)
 ## The last `work_zone_size()` reported, so `zones_resized` fires on a real change only.
 var _last_work_zone_size: Vector2 = Vector2.ZERO
+## The last `band_zone_columns()` reported, beside it — see `_notify_zones_resized` for why the work
+## box alone is not enough of a trigger.
+var _last_band_columns: int = 0
 var _dock_cells: Dictionary = {}   # edge:int -> Button
 
 func _ready() -> void:
@@ -417,7 +453,7 @@ func work_zone_size() -> Vector2:
 	var interior := _interior_size()
 	var body_height: float = maxf(interior.y - _header_height(), 0.0)
 	if _shell_is_wide():
-		var flanks := ZONE_BAND_WIDTH + ZONE_PARTY_WIDTH
+		var flanks := _band_flank_width() + ZONE_PARTY_WIDTH
 		# The card is built UP from the declared column count now (issue #377), so its interior is
 		# flanks + separators + the board — no cap to clamp against, and this comes back as exactly
 		# `_work_columns × ZONE_WORK_MIN_WIDTH`. The `max` still guards the clamped-card case, where a
@@ -906,6 +942,13 @@ func _relayout_body() -> void:
 	_body_is_wide = _shell_is_wide()
 	if _body_is_wide != was_wide:
 		_rebuild_tab_bar()
+	# The band flank is the ONE wide-shell host whose width is not a constant — it is
+	# `band_zone_columns()` of `ZONE_BAND_WIDTH` — so the host's pinned minimum is re-declared on every
+	# layout pass rather than only at `_build`. The parties host beside it is genuinely fixed and is
+	# left where `_build` put it.
+	var band_host: Control = _wide_zone_hosts.get(ZONE_BAND)
+	if band_host != null:
+		band_host.custom_minimum_size.x = _band_flank_width()
 	_reparent_zones()
 	_update_body_visibility()
 
@@ -964,7 +1007,7 @@ func _card_width() -> float:
 	if not _shell_is_wide():
 		return available
 	var work: float = float(clampi(_work_columns, 1, WORK_MAX_COLUMNS)) * ZONE_WORK_MIN_WIDTH
-	return ZONE_BAND_WIDTH + ZONE_PARTY_WIDTH + work + _wide_separator_span() + PANEL_CHROME_H
+	return _band_flank_width() + ZONE_PARTY_WIDTH + work + _wide_separator_span() + PANEL_CHROME_H
 
 ## Declare how many columns the WORK board wants — the count `BandPanelController` derives from its
 ## source list and the zone's HEIGHT. The panel then draws a card exactly that wide.
@@ -1009,7 +1052,7 @@ func _affordable_work_columns() -> int:
 	# `_available_card_span()`, not the raw strip: the HUD columns a top dock must keep clear of come off
 	# the card's room BEFORE the board gets any of it, so counting columns against the whole row builds a
 	# board the clamped card cannot hold — measured as 135px of it hanging out of a clipping zone host.
-	var room: float = _available_card_span() - PANEL_CHROME_H - ZONE_BAND_WIDTH - ZONE_PARTY_WIDTH \
+	var room: float = _available_card_span() - PANEL_CHROME_H - _band_flank_width() - ZONE_PARTY_WIDTH \
 		- _wide_separator_span()
 	return maxi(int(room / ZONE_WORK_MIN_WIDTH), 1)
 
@@ -1067,6 +1110,47 @@ func _panel_width_extent() -> float:
 func _horizontal_panel_height() -> float:
 	return minf(PANEL_HEIGHT_WIDE + _shell_chrome_height(),
 		_viewport_size().y * MAX_WIDE_HEIGHT_FRACTION)
+
+## How many `ZONE_BAND_WIDTH` columns the BAND flank lays its blocks out across.
+##
+## **PURELY GEOMETRIC — what the span AFFORDS, never what the content holds.** That is the whole
+## safety argument. Every term below is a function of the viewport, the dock edge, the rail's declared
+## span and the lateral bounds; not one of them is content, so the strip's height (which keys off this)
+## stays content-independent and the reservation cannot move when the player edits the band. A count
+## that grew with the roster would put `MapView`'s inset on the snapshot's critical path — the flicker
+## bug the fixed cross-axis size exists to prevent.
+##
+## The room measured is what is left AFTER the other two zones are paid: the wide shell exists to give
+## the work board a readable column, so a second band column is only affordable once `ZONE_PARTY_WIDTH`
+## and one `ZONE_WORK_MIN_WIDTH` are already covered. `_affordable_work_columns()`'s idiom, one flank
+## over.
+##
+## ONE on a vertical dock and one in the narrow shell, both by construction: those layouts hand the
+## band zone a single strip-width column, which is what `PANEL_WIDTH` means.
+func band_zone_columns() -> int:
+	if _is_vertical_edge(_dock_edge) or not _shell_is_wide():
+		return 1
+	var room: float = _available_card_span() - PANEL_CHROME_H - ZONE_PARTY_WIDTH \
+		- ZONE_WORK_MIN_WIDTH - _wide_separator_span()
+	return clampi(int(room / ZONE_BAND_WIDTH), 1, BAND_ZONE_MAX_COLUMNS)
+
+## What the BAND flank actually spends of the row — its column count at one readable column each. The
+## ONE definition, so `_card_width`, `work_zone_size` and `_affordable_work_columns` cannot disagree
+## about how much of the row the flank has taken, exactly as `_wide_separator_span()` is the one
+## definition of what the separators cost.
+func _band_flank_width() -> float:
+	return float(band_zone_columns()) * ZONE_BAND_WIDTH
+
+## The box the BAND zone's content may fill. Its HEIGHT is the body's, like every wide-shell zone; its
+## WIDTH is `band_zone_columns()` of `ZONE_BAND_WIDTH`. `BandPanelController` authors its split across
+## exactly that many columns, so the two cannot disagree about how many there are.
+func band_zone_size() -> Vector2:
+	var box := work_zone_size()
+	if box == Vector2.ZERO:
+		return box
+	if not _shell_is_wide():
+		return box
+	return Vector2(float(band_zone_columns()) * ZONE_BAND_WIDTH, box.y)
 
 ## What the ACTIVE shell spends on the strip's CROSS axis before any zone sees the box. The wide shell
 ## spends none — its separators are vertical hairlines, paid out of the width — while the narrow shell
@@ -1427,11 +1511,17 @@ func _on_viewport_resized() -> void:
 
 ## Re-report `work_zone_size()` when it actually moved, so Hud re-pages its work board once per real
 ## geometry change rather than on every layout pass.
+## **THE BAND FLANK'S COLUMN COUNT IS ITS OWN TRIGGER, beside the work box.** The two nearly always
+## move together — a wider flank leaves the board less — but not always: at the cap the flank stops
+## growing while the board keeps taking the rest, so a span change can hold `work_zone_size()` fixed
+## across a count change, and the band zone would then keep a split authored for the other layout.
 func _notify_zones_resized() -> void:
 	var size := work_zone_size()
-	if size.is_equal_approx(_last_work_zone_size):
+	var columns := band_zone_columns()
+	if size.is_equal_approx(_last_work_zone_size) and columns == _last_band_columns:
 		return
 	_last_work_zone_size = size
+	_last_band_columns = columns
 	zones_resized.emit()
 
 ## The current window (viewport) size, the basis for the panel's long-axis extent + the height clamp.

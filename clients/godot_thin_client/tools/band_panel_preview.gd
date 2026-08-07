@@ -2021,10 +2021,283 @@ func _render_interface_scale_states() -> void:
 		is_equal_approx(get_window().content_scale_factor, float(ClientSettings.UI_SCALE_DEFAULT)))
 
 	await _assert_declared_input_republishes()
+
+	await _render_band_column_states()
 	# Hand the tier probes back the canvas the dock-row block left them on — they re-dock and re-push
 	# their own band, but they take whatever canvas they are given.
 	await _pin_canvas(Vector2i(ULTRAWIDE_WIDTH, DOCKROW_CANVAS.y))
 	await _settle()
+
+# ---- THE BAND FLANK'S COLUMN COUNT --------------------------------------------------------------
+#
+# On a horizontal dock the band zone lays its blocks out across `BandCityPanel.band_zone_columns()`
+# columns — "vertical docking favours height, horizontal favours width". The count is PURELY
+# GEOMETRIC, and that is the invariant this block exists to hold: it is what keeps the strip's height
+# (and therefore `MapView`'s inset, and therefore its cache) off the snapshot's critical path.
+
+## The canvas that affords the band flank TWO columns on a bottom dock, and the one that affords ONE.
+## **DERIVED**: the flank's room is the strip less the chrome rail's span (321 on the seeded Standard
+## minimap), the card chrome (26), the parties flank (354), one work column (380) and the separators
+## (50) — i.e. `width - 1131`. Two columns need 760 of that, so the flip sits at 1891; the wide shell
+## itself needs a 1190 span, i.e. 1511. 1600 therefore lands squarely in the one-column band of a WIDE
+## shell, where a narrower canvas would be testing the narrow shell instead.
+const BAND_COLUMNS_TWO_CANVAS := Vector2i(1920, 1080)
+const BAND_COLUMNS_ONE_CANVAS := Vector2i(1600, 1080)
+## How many settles a geometry change is allowed before the layout must have stopped moving. The
+## count and the reservation feed each other through `Main`'s fan-out, so "it converges" is a claim
+## with a bound, not a hope — see `_assert_band_columns_converge`.
+const BAND_COLUMNS_SETTLE_PASSES := 4
+
+func _render_band_column_states() -> void:
+	# TWO columns — the wide-monitor case the rule is for.
+	await _pin_canvas(BAND_COLUMNS_TWO_CANVAS)
+	_push_bands([_band_fixture()])
+	_panel.set_dock(SIDE_BOTTOM)
+	await _settle()
+	await _save("band_panel_band_columns_two")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_band_columns("band_panel_band_columns_two", 2)
+	_assert_band_tier_rises("band_panel_band_columns_two")
+	_assert_band_flank_is_full("band_panel_band_columns_two")
+	# THE PRECONDITION FOR THE SPLIT PAIR: this state must really be the chartless one, or "the
+	# chartless split balances" is a claim about the other layout.
+	_assert_band_flank_charts("band_panel_band_columns_two", false)
+	_report_zone_content_extent("band_panel_band_columns_two")
+	var two_column_strip: float = _panel.current_reservation_size()
+	await _assert_band_columns_converge("band_panel_band_columns_two")
+	_assert_band_columns_ignore_content("band_panel_band_columns_two")
+
+	# THE CHARTED VARIANT, at the same span. **Both authored splits need their own state**: the one
+	# above is the CHARTLESS band — a fresh band has no food history to chart, so it is turn one and
+	# the first flank a new player ever sees — and without this second frame the charted pairing would
+	# regress silently, since no other two-column state in this file carries a chart.
+	_push_bands([_arrivals_band_fixture()])
+	await _settle()
+	await _save("band_panel_band_columns_two_charted")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_band_columns("band_panel_band_columns_two_charted", 2)
+	_assert_band_tier_rises("band_panel_band_columns_two_charted")
+	_assert_band_flank_is_full("band_panel_band_columns_two_charted")
+	_assert_band_flank_charts("band_panel_band_columns_two_charted", true)
+	_report_zone_content_extent("band_panel_band_columns_two_charted")
+	_push_bands([_band_fixture()])
+	await _settle()
+
+	# ONE column — the regression bar. Everything here must read exactly as it did before the flank
+	# could widen at all.
+	await _pin_canvas(BAND_COLUMNS_ONE_CANVAS)
+	_panel.set_dock(SIDE_BOTTOM)
+	await _settle()
+	await _save("band_panel_band_columns_one")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_band_columns("band_panel_band_columns_one", 1)
+	# THE REGRESSION BAR, stated as its own claim: one column must still pick the tier it always did.
+	# The tier budget is now the box TIMES the count, so a bug in that arithmetic would show up first
+	# as a one-column flank quietly promoted into a taller tier it has no room for.
+	_assert_band_panel("band_panel_band_columns_one: one column still picks the SHORT tier (%s)"
+		% _band_zone_tier_name(),
+		_hud._bandpanel._band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT)
+	_report_zone_content_extent("band_panel_band_columns_one")
+	var one_column_strip: float = _panel.current_reservation_size()
+
+	# **THE STRIP IS THE SAME HEIGHT IN BOTH, AND THAT IS THE MEASURED FINDING, not an oversight.**
+	# A two-column flank needs 148px where one needs 299, so the height was expected to come back —
+	# but the flank was never what pinned it. The PARTIES zone's worst case (294px of body) and the
+	# parked chrome stack (~322px of strip, `DockRowController._required_height`) both bind above the
+	# saving, and 294 + the header + the card's chrome IS 360. Asserted rather than noted, because a
+	# future height cut keyed on the column count would break both of those silently — the parties
+	# strip by clipping, the chrome by quietly declining to park.
+	_assert_band_panel("band columns: the strip is the same height at one column and two (%.0f / %.0f) — the parties zone and the parked chrome pin it, not the flank"
+		% [one_column_strip, two_column_strip],
+		is_equal_approx(one_column_strip, two_column_strip))
+
+	await _pin_canvas(Vector2i(ULTRAWIDE_WIDTH, DOCKROW_CANVAS.y))
+	await _settle()
+
+## The least of the room its columns offer that a widened flank may fill before it counts as empty.
+##
+## **MEASURED OVER THE WHOLE FLANK — content summed across the columns, against `columns × box` — and
+## NOT over the deepest one.** The deepest-column form was the first thing written here and it was a
+## guard that could not fail for the reason it existed: the chartless flank sat at 130 against 263 and
+## passed at 88%, because 88% was the tall column's number and the short one was invisible to it. The
+## flank's OWN emptiness is a total, so the total is what is measured.
+##
+## 0.60 clears the chartless flank's arithmetic CEILING with room to spare — its three blocks total
+## 393px against the 600px two columns of a 300px box offer, i.e. 66%, and no split can beat that,
+## because the total is the total however it is dealt out — while a SHORT-tier two-column flank fails
+## it. It is deliberately not tighter:
+## the number it must catch is a tier that failed to rise, not a block that gained a row.
+const BAND_FLANK_FILL_FLOOR := 0.60
+## How short the LESSER column may be against the taller before the flank reads as lopsided rather
+## than laid out. 0.75 passes both authored splits at their MEASURED worst (246/263 = 0.94 charted,
+## 200/193 = 0.97 chartless) and fails the charted split applied to a chartless band (130/263 = 0.49),
+## which is exactly the case the second authored split exists for.
+const BAND_FLANK_BALANCE_FLOOR := 0.75
+
+## GUARD: **the widened flank SPENDS the height it recovered.** Two columns halve what each carries,
+## so the tier must rise to put the recovered room back into content — the food-outlook chart and the
+## role cards' descriptions, both of which the SHORT tier drops.
+##
+## Asserted on the tier the render actually BUILT with (`_band_zone_tier`), not re-derived from the
+## box, so it fails if the tier-height arithmetic and the build ever disagree.
+func _assert_band_tier_rises(state_name: String) -> void:
+	var tier: int = _hud._bandpanel._band_zone_tier
+	_assert_band_panel("%s: the widened flank rises out of the SHORT tier (%s) — the chart and the role-card hints come back"
+		% [state_name, _band_zone_tier_name()],
+		tier != HudWorkVocab.BAND_ZONE_TIER_SHORT)
+
+## GUARD: …and the room it recovered is actually OCCUPIED, in BOTH columns.
+##
+## Two claims, because a flank can fail this in two independent ways and one number cannot see both:
+## it can be uniformly empty (a tier that did not rise), or it can be lopsided (one column full beside
+## a third-full one — the charted split applied to a chartless band). The FILL is the whole flank's
+## content against the whole flank's room; the BALANCE is the shorter column against the taller.
+func _assert_band_flank_is_full(state_name: String) -> void:
+	var columns := _band_flank_column_extents()
+	if columns.is_empty():
+		push_error("band_panel_preview: %s — no band flank columns to measure" % state_name)
+		return
+	var box: float = _band_flank_box_height()
+	var used := 0.0
+	var tallest := 0.0
+	var shortest := INF
+	for extent_variant in columns:
+		var extent: float = extent_variant
+		used += extent
+		tallest = maxf(tallest, extent)
+		shortest = minf(shortest, extent)
+	var room: float = box * float(columns.size())
+	_assert_band_panel("%s: the flank fills the room its columns offer (%.0f of %.0f = %d%%, floor %d%%)"
+		% [state_name, used, room, int(round(100.0 * used / room)),
+			int(round(100.0 * BAND_FLANK_FILL_FLOOR))],
+		room > 0.0 and used >= room * BAND_FLANK_FILL_FLOOR)
+	# Only a SPLIT flank can be lopsided; one column is the whole flank and balances with itself.
+	if columns.size() < 2:
+		return
+	_assert_band_panel("%s: …and its columns are level (%s of a %.0fpx box, shorter/taller = %d%%, floor %d%%)"
+		% [state_name, str(columns.map(func(e: float) -> String: return "%.0f" % e)), box,
+			int(round(100.0 * shortest / tallest)), int(round(100.0 * BAND_FLANK_BALANCE_FLOOR))],
+		tallest > 0.0 and shortest >= tallest * BAND_FLANK_BALANCE_FLOOR)
+
+## GUARD: which of the two authored splits this state is actually exercising. Named as the CHART's
+## presence because that is the boolean `build_band_zone` selects on — and stated as its own assertion
+## because both split claims are otherwise satisfiable by whichever layout happened to render.
+func _assert_band_flank_charts(state_name: String, want: bool) -> void:
+	var host := _band_flank_host()
+	# By TYPE, not by node name: the chart is added without an explicit name, so a name test would be
+	# asserting against Godot's default-naming rules rather than against the chart being there.
+	var charted: bool = host != null and _find_chart(host) != null
+	_assert_band_panel("%s: this band %s a food-outlook chart, so it is the %s split" % [
+		state_name, "has" if want else "has no",
+		"larder | people" if want else "vitals + PEOPLE | WORKFORCE"], charted == want)
+
+## The first `FoodOutlookChart` under a node, or null.
+func _find_chart(node: Node) -> FoodOutlookChart:
+	if node is FoodOutlookChart:
+		return node
+	for child in node.get_children():
+		var found := _find_chart(child)
+		if found != null:
+			return found
+	return null
+
+## Each band-flank column's content extent, deepest-first-child walk, in layout order. A ONE-column
+## flank has no split row, so its single column is the zone host itself — which is what makes the fill
+## claim above apply unchanged to both layouts.
+func _band_flank_column_extents() -> Array[float]:
+	var extents: Array[float] = []
+	var host := _band_flank_host()
+	if host == null:
+		return extents
+	var row := _find_named(host, "BandZoneColumns")
+	if row == null:
+		extents.append(_zone_content_extent(host, host))
+		return extents
+	for child in row.get_children():
+		if child is Control:
+			extents.append(_zone_content_extent(child, child))
+	return extents
+
+## The band flank's box height — the room ONE of its columns has.
+func _band_flank_box_height() -> float:
+	var host := _band_flank_host()
+	return 0.0 if host == null else (host as Control).size.y
+
+## The live band-zone host, whichever shell is up.
+func _band_flank_host() -> Control:
+	for host_variant in _find_zone_hosts(_panel):
+		var host: Control = host_variant
+		if BAND_ZONE_HOST_NAMES.has(String(host.name)):
+			return host
+	return null
+
+## GUARD: the flank laid out across the number of columns the panel affords — asserted on the RENDERED
+## tree, not just on the panel's own answer, since a count nothing consumed is a count that did nothing.
+func _assert_band_columns(state_name: String, want: int) -> void:
+	var afforded: int = _panel.band_zone_columns()
+	_assert_band_panel("%s: the span affords %d band column(s) (panel says %d)"
+		% [state_name, want, afforded], afforded == want)
+	var row := _find_named(_panel, "BandZoneColumns")
+	var built: int = 0 if row == null else row.get_child_count()
+	# One column is the FLAT build and must stay so — the split container is the thing that must not
+	# appear there, which is why this is an equality on the built count and not a `>= 1`.
+	_assert_band_panel("%s: …and the zone was BUILT with %d (%s)"
+		% [state_name, want, "flat, no split row" if row == null else "%d split columns" % built],
+		built == want if want > 1 else row == null)
+
+## GUARD: **THE COUNT IS GEOMETRIC — content cannot move it, and cannot move the reservation.**
+## The flicker invariant, and the one this whole change could have broken: a count that grew with the
+## roster would make the strip's height a function of the snapshot, re-emitting `reservation_changed`
+## into `MapView.set_reserved_inset` on every turn. Drives real content changes at a FIXED span — a
+## band with a different roster and a different optional-vitals set — and requires both numbers to sit
+## still.
+func _assert_band_columns_ignore_content(state_name: String) -> void:
+	var before_columns: int = _panel.band_zone_columns()
+	var before_reservation: float = _panel.current_reservation_size()
+	_push_bands([_vitals_worst_case_band_fixture()])
+	var after_columns: int = _panel.band_zone_columns()
+	var after_reservation: float = _panel.current_reservation_size()
+	_push_bands([_band_fixture()])
+	_assert_band_panel("%s: a content change does not move the column count (%d → %d)"
+		% [state_name, before_columns, after_columns], before_columns == after_columns)
+	_assert_band_panel("%s: …nor the reservation (%.0f → %.0f) — the flicker invariant"
+		% [state_name, before_reservation, after_reservation],
+		is_equal_approx(before_reservation, after_reservation))
+
+## GUARD: the layout reaches a FIXED POINT, and does so inside a bound.
+##
+## The hazard is a loop with three legs: the afforded count reads `_available_card_span()`, which reads
+## the lateral bounds and the rail's span; the strip's height is published and fans out through `Main`;
+## and on a bottom dock the HUD is inset by that height. `Hud.lateral_column_widths()` is
+## `max(authored, live)` and the authored floor is what should dominate — **but that is an argument,
+## and this is the measurement.** An oscillation would otherwise show up as a panel that flickers
+## between two layouts on a resize, with every other assertion green on whichever frame was captured.
+func _assert_band_columns_converge(state_name: String) -> void:
+	var counts: Array[int] = []
+	var sizes: Array[float] = []
+	for _pass in range(BAND_COLUMNS_SETTLE_PASSES):
+		await _settle()
+		counts.append(_panel.band_zone_columns())
+		sizes.append(_panel.current_reservation_size())
+	var stable := true
+	for i in range(1, counts.size()):
+		if counts[i] != counts[0] or not is_equal_approx(sizes[i], sizes[0]):
+			stable = false
+	_assert_band_panel("%s: the layout is a fixed point over %d settles (columns %s, reservation %s)"
+		% [state_name, BAND_COLUMNS_SETTLE_PASSES, str(counts), str(sizes)], stable)
+
+## First descendant with this exact name, or null. `_find_zone_hosts`' sibling for a single node.
+func _find_named(node: Node, want: String) -> Node:
+	if String(node.name) == want:
+		return node
+	for child in node.get_children():
+		var found := _find_named(child, want)
+		if found != null:
+			return found
+	return null
 
 ## The canvas the republish claim is made on, at `ui_scale` 1.0. **DERIVED**: a TOP dock's card span is
 ## the canvas less the HUD's two authored columns (360 + 344 = 704), and the narrow shell starts below
