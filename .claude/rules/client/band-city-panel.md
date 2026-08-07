@@ -605,7 +605,7 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   (`_build_allocation_panel`) — there is no second layout to maintain. It passes `with_vitals = false`,
   since the Occupants card's own drawer already prints those rows above it.
 - Verify chrome + reflow via `tools/band_panel_preview.gd`
-  (`godot --path . res://tools/band_panel_preview.tscn` → `ui_preview_out/
+  (`scripts/preview.sh res://tools/band_panel_preview.tscn` → `ui_preview_out/
   band_panel_{left,right,top,bottom,collapsed}.png`). **The ZONE states are the Part-2 frames:**
   `band_panel_people` (both bars, the dependency ratio, the two role cards) ·
   **`band_panel_people_map_path`** (the SAME block reached the OTHER way — by clicking the band ON THE

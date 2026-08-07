@@ -57,7 +57,7 @@ are grouped near the top of `MapView.gd`, after the FoW/height consts.)
 - **Zoom LOD**: below `ICON_MIN_DETAIL_RADIUS` (far zoom, tiny hexes) secondary icons + all
   count/overflow chips are suppressed; only primary tokens draw.
 
-Verify visual changes via `tools/map_preview.gd` (`godot --path . res://tools/map_preview.tscn`
+Verify visual changes via `tools/map_preview.gd` (`scripts/preview.sh res://tools/map_preview.tscn`
 → `ui_preview_out/map_band_stack.png` / `map_mixed_hex.png` / `map_far_zoom.png` /
 `map_stage_glyphs.png` (the ⛺→🛖→🏘️ progression + empty-stage neutral non-circular fallback marker) + the existing
 labor-highlight states).

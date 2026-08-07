@@ -85,12 +85,14 @@ Run it from the repo root:
 # a) Reimport if you touched ANY .gd or .tscn, or you'll render the stale version.
 #    Import needs no GPU, so --headless is fine (and faster) here:
 godot --headless --path clients/godot_thin_client --import
-# b) Render the preview states to PNGs. Do NOT pass --headless: on Godot 4.5 it
-#    selects the dummy rendering backend, which has no viewport texture to read
-#    back — the render then HANGS on the first capture (frame_post_draw never
-#    posts). Running windowed opens a Godot window for a few seconds and writes
-#    real PNGs:
-godot --path clients/godot_thin_client res://tools/ui_preview.tscn
+# b) Render the preview states to PNGs, THROUGH THE WRAPPER. Do NOT pass
+#    --headless: it selects the dummy rendering backend, which has no viewport
+#    texture to read back — the render then HANGS on the first capture
+#    (frame_post_draw never posts). And do NOT run bare `godot`: the window it
+#    opens is project.godot's PLAYER window, fullscreen and focus-grabbing, which
+#    yanks the keyboard out of whatever other session is being worked in. The
+#    wrapper overrides this run's window to windowed + no-focus and puts it back:
+scripts/preview.sh res://tools/ui_preview.tscn
 ```
 
 Then **actually look** — `Read` the relevant PNG(s) in
@@ -130,6 +132,13 @@ Append within a chapter rather than reordering.
   null texture). The harness now fails fast with a warning instead of hanging in
   that case, but you still get zero PNGs. Render windowed to capture. Only the
   `--import` step (step a) uses `--headless`.
+- **Every windowed harness goes through `scripts/preview.sh`** — `ui_preview`,
+  `map_preview`, `blend_probe`, `band_panel_preview`, `menu_preview`,
+  `workbench_preview`. Bare `godot` steals the keyboard from the human's other
+  sessions, and a Godot display flag cannot fix it (`-w` is ignored when
+  `project.godot` declares fullscreen). Details, and the stranded-override
+  failure mode, in `.claude/rules/client/test-harnesses.md` → "The harness window
+  is quiet, the GAME's is not".
 - This is HUD-only. Seeing the whole app against a live sim is a different,
   heavier path (`scripts/run_stack.sh --client-only` with a server up). For
   "what does the UI look like," the preview harness is the fast loop — prefer it.
