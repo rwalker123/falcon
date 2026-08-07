@@ -4998,19 +4998,21 @@ func _collect_rung_labels(node: Node, out: Array) -> void:
 ## source (the wolf), not "the first row", which is the forage patch.
 func _open_work_inspector_for_herd(herd_id: String) -> void:
 	var band: Dictionary = _hud._band_labor._panel_band
-	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+	var models: Array = _hud._bandpanel._work_source_models(band, 0)
+	for model_variant in models:
 		var model: Dictionary = model_variant
 		if String(model.get("herd_id", "")) != herd_id:
 			continue
 		_hud._bandpanel._toggle_work_inspector(String(model.get("key", "")))
 		return
-	push_error("band_panel_preview: no work row hunting '%s' — fixture drifted?" % herd_id)
+	push_error("band_panel_preview: %s" % _work_row_absence_report(herd_id, band, models))
 
 ## **Keyed on the HERD, not on the rung.** Both rows stand on the same stance now (issue #442 — the
 ## build verb moved to its own field), so a rung is no longer an identity; the source is.
 func _open_work_policy_picker_for_herd(herd_id: String) -> void:
 	var band: Dictionary = _hud._band_labor._panel_band
-	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+	var models: Array = _hud._bandpanel._work_source_models(band, 0)
+	for model_variant in models:
 		var model: Dictionary = model_variant
 		if String(model.get("herd_id", "")) != herd_id:
 			continue
@@ -5018,7 +5020,40 @@ func _open_work_policy_picker_for_herd(herd_id: String) -> void:
 		_hud._bandpanel._work_floor_open = true
 		_hud._bandpanel._repage_work_zone()
 		return
-	push_error("band_panel_preview: no work row hunting '%s' — fixture drifted?" % herd_id)
+	push_error("band_panel_preview: %s" % _work_row_absence_report(herd_id, band, models))
+
+## WHY A WORK ROW IS MISSING, in the terms the two helpers above can actually be wrong about.
+## The message they used to share — "fixture drifted?" — named the ONE cause that is checked into the
+## repo and therefore the one cause that cannot vary between two runs of the same tree. Every other
+## cause is a SUBJECT mismatch: the panel is showing a band other than the one just pushed (the roster
+## push never reached `render_band`, or `_resolve_panel_band` kept the previous subject), or the
+## board's models were built off a stale one. So the report names the subject at each hop — the band
+## the panel holds, the roster it was resolved out of, the assignments on it and the models the board
+## actually built — and a reader can tell those apart at a glance instead of re-deriving them.
+func _work_row_absence_report(herd_id: String, band: Dictionary, models: Array) -> String:
+	var assignment_ids: Array = []
+	for a in HudBandLaborState.labor_assignments_of(band):
+		if not (a is Dictionary):
+			continue
+		var assignment: Dictionary = a
+		assignment_ids.append("%s/%s" % [
+			String(assignment.get("kind", "?")),
+			String(assignment.get("fauna_id", "-"))])
+	var model_ids: Array = []
+	for m in models:
+		var model: Dictionary = m
+		model_ids.append("%s/%s" % [
+			String(model.get("kind", "?")), String(model.get("herd_id", "-"))])
+	var roster_ids: Array = []
+	for b in _hud._band_labor.player_bands():
+		roster_ids.append(int((b as Dictionary).get("entity", -1)))
+	return ("no work row hunting '%s' — panel band entity %d (%s), roster %s, %d assignment(s) %s," +
+		" %d work model(s) %s, %d pending edit(s)") % [
+			herd_id, int(band.get("entity", -1)),
+			"empty" if band.is_empty() else String(band.get("id", "?")),
+			str(roster_ids), assignment_ids.size(), str(assignment_ids),
+			model_ids.size(), str(model_ids),
+			_hud._band_labor.pending_assigns_for(int(band.get("entity", -1))).size()]
 
 ## The open inspector strip: the work zone host's PanelContainer (the board and chips are boxes).
 func _work_inspector_strip() -> PanelContainer:
