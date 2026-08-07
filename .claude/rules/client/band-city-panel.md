@@ -973,13 +973,32 @@ So the rule is conditional: **the HUD yields iff the card could NOT afford the w
 bounds applied.** `Main.band_dock_overlays_hud(edge, size, hud, panel)` is its ONE home — deliberately
 `static` and node-free so the harnesses can call it instead of restating it. Two clauses: the bottom
 bar must have left the strip, and `BandCityPanel.affords_wide_shell_with_bounds()` must hold. The fork
-sits at a logical width of **2432**.
+sits at a logical width of **1871** — `1190 + rail 321 + leading ceiling 360`, confirmed by sweep
+(*yields* at 1870, *keeps* at 1871).
 
-| | 1920 | 2560 | 3440 |
-|---|---|---|---|
-| HUD | yields (status quo) | **keeps** | **keeps** |
-| column bottom | 720 of 1080 | **1080 of 1080** | full height |
-| band flank | 2 cols | **1 col** | 2 cols |
+| | 1600 | 1920 | 2560 | 3440 |
+|---|---|---|---|---|
+| HUD | yields | **keeps** | keeps | keeps |
+| column bottom | stops at the strip | **1080 of 1080** | full height | full height |
+| band flank | 2 cols | **1 col** | 2 cols | 2 cols |
+
+**A BOTTOM dock charges NO trailing bound** (`_trailing_bound_for`, the one definition, read by both
+`_available_card_span()` and the predicate so the layout and the verdict cannot charge different
+columns). The right column cannot reach a bottom strip in either branch — below the fork the HUD
+yields and `layout_root` is inset wholesale, above it the right dock is clearanced. **The LEADING
+bound stays**, because the left column deliberately does run to the window bottom. **A TOP dock
+charges both**: the HUD is exempt there (issue #377) and the top-right readouts genuinely share the
+strip's row.
+
+That asymmetry is also what fixed the card's centring — residual **0px**, down from 419. No placement
+code changed; the card was off-centre *because* `_available_card_span()` was not the true gap.
+
+**1920 pays for its full-height tile column with band-zone density.** Keeping the strip there costs
+the card the leading 360, the flank drops 2 columns → 1, and the zone falls from TALL to SHORT: no
+food-outlook chart, no role-card hint text, Trade merged away. It is the documented flank trade
+extended down, not a new failure mode — but it is a visible content loss at the commonest resolution,
+and **the lever for it is the fork, not the centring**. Above 2432 the change gives back instead:
+2432–2560 returns to two columns and 3440's work board goes 3 → 4.
 
 **The predicate reads a column CEILING, never the live width and never the reservation — and the
 distinction between those three is the whole of this rule.** They answer different questions:
@@ -1009,6 +1028,14 @@ stages every readout at its widest simultaneously and checks the ceiling still c
 reading exactly `561 / 561`. A readout that grows fails the run instead of silently re-opening the
 band. What it cannot see is a *new kind* of readout nobody measured.
 
+`left_column_ceiling()` needs no constant of its own, and that is **measured, not assumed**: with a
+~400-character terrain label in the tile card the left column is still exactly 360 (region 360, stack
+336 inside it), because `LeftScroll` is a `ScrollContainer` with horizontal scrolling live, so its
+minimum width does not include its child and **no card can widen the column**. The right column needed
+`RIGHT_COLUMN_CEILING` because it holds a SECOND region, `TurnBlock`, which is in no scroll container
+and renders 419 against a 344 authored minimum. There is no such second region on the left. With the
+trailing charge gone the slack is now **zero** — the card gets exactly 1190 at the fork — so what holds
+it is `_assert_ceilings_cover_the_columns` (reading `360 / 360`) and the promise walk, not headroom.
 `left_column_ceiling()` returns the left dock's reservation unchanged — that column measures its
 authored 360 live — and exists as a named pair so a future left-column overrun has a home rather than
 a call site to rewrite. **The event dock still bounds off `right_column_width()`**, deliberately: it
@@ -1045,11 +1072,10 @@ sat at "strip end less `_bound_trailing`" — phrased in terms of the implementa
 whichever way the bound was applied. It now claims the **viewport's** right edge, which fails against
 the inboard pinning and passes against the flush one.
 
-**Still to know:** the second band column is lost between the fork and ~**2595** — the bounds cost the
-span on exactly the monitors wide enough to have afforded two. (The lower edge of that band IS the
-fork by construction: below it no bounds apply, so the flank is untouched — which is why moving the
-fork from 2215 to 2432 narrowed the trade without needing a re-measurement.) Above ~2600 the flank
-keeps both and the work board pays a column instead.
+**Still to know:** the second band column is lost between the fork and the width where the remaining
+leading bound stops mattering — the lower edge of that band IS the fork by construction, since below it
+no bounds apply. Dropping the trailing charge shrank the band sharply: 2432–2560 now keeps two
+columns, where it lost one before. What is left of the trade sits just above 1871.
 
 **At high `ui_scale` the clipping returns, and that is the intended fallback.** On a 2560 canvas,
 `ui_scale` 1.0 gives a 1535 span and keeps the strip; 1.35 gives a logical 1896, a span of 871, and

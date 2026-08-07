@@ -973,6 +973,13 @@ func _position_card_and_rail() -> void:
 	# Centred in the room the chrome cluster and the HUD columns leave — and OFFSET past the leading
 	# bound, so "centred" means centred in the gap rather than centred on the screen with a column
 	# underneath one end of it.
+	#
+	# **THE CENTRING IS ONLY AS TRUE AS `_available_card_span()`.** The gap runs from the leading bound to
+	# whatever really stands at the trailing end, and this centres in `available` starting at that bound —
+	# so any term in the span the strip does not actually charge shows up here as an off-centre card, not
+	# as a narrow one. A trailing bound the right column no longer needs put the card 419px short of its
+	# own gap at 2560, i.e. ~210px off centre; `_trailing_bound_for` is where that was fixed, and nothing
+	# in this block had to change for it.
 	var available: float = _available_card_span()
 	var card_width: float = minf(_card_width(), available)
 	var lead: float = _bound_leading + 0.5 * maxf(available - card_width, 0.0)
@@ -1039,8 +1046,44 @@ func set_lateral_bounds(leading: float, trailing: float) -> void:
 ## The span of strip a horizontal card may actually use: the whole row less the chrome cluster and less
 ## whatever HUD column sits at either end. The ONE definition, so `_card_width`, `_interior_size` and
 ## `_position_card_and_rail` cannot disagree about how much room there is.
+##
+## **It is also what makes the card CENTRED**: `_position_card_and_rail` centres in this span offset past
+## the leading bound, so the span and the gap the card really has must be the same number. A trailing
+## term the strip does not actually charge would centre the card in a sub-region of its own gap and leave
+## it visibly off to one side.
 func _available_card_span() -> float:
-	return maxf(_panel_width_extent() - _rail_span() - _bound_leading - _bound_trailing, 0.0)
+	return maxf(_panel_width_extent() - _rail_span() - _bound_leading
+		- _trailing_bound_for(_dock_edge, _bound_trailing), 0.0)
+
+## What the card must really leave at the TRAILING end of a horizontal strip — **ZERO on a BOTTOM dock**.
+##
+## `Main` declares both HUD columns (`set_lateral_bounds`); this is where the panel decides which of them
+## it is actually charged for, and it is the ONE definition, read by `_available_card_span()` and by
+## `affords_wide_shell_with_bounds()` alike.
+##
+## **The right-hand column cannot reach a BOTTOM dock's strip in EITHER branch of the yield rule**, so a
+## bound against it reserves room for a collision that cannot happen. Where the HUD yields, `LayoutRoot`
+## is inset wholesale and the column stops at the strip's top edge; where it keeps, the right dock's cards
+## are held above that edge by `Hud.set_right_column_bottom_clearance` — which exists because the parked
+## chrome owns that corner. The top-bar readouts, the column's other region, are at the far end of the
+## screen and share no vertical band with the strip at all. Measured, the bound was costing the card 419px
+## at 2560 and leaving it centred ~90px left of its own gap.
+##
+## **The LEADING bound stays, and the asymmetry is the design.** The left column deliberately runs to the
+## window's bottom edge wherever the HUD keeps its strip — that is the whole point of the conditional
+## inset — so the card really does have to clear it.
+##
+## **A TOP dock pays BOTH**, unchanged: the HUD is exempt there (issue #377) and the top-right readout
+## block genuinely shares that strip's row with the card.
+##
+## Both terms are PARAMETERS rather than reads of `_dock_edge` / `_bound_trailing`, because the two
+## callers hold different ones: the layout asks about the bound `Main` last pushed, while the
+## affordability predicate asks about a CEILING it was handed and must not read live state for (see
+## `affords_wide_shell_with_bounds`).
+func _trailing_bound_for(edge: int, trailing: float) -> float:
+	if edge == SIDE_BOTTOM:
+		return 0.0
+	return maxf(trailing, 0.0)
 
 ## **COULD the card stand in the WIDE shell if it had to keep clear of these two columns?** The question
 ## `Main.band_dock_overlays_hud` asks before it lets the HUD keep its strip on a BOTTOM dock: yielding the
@@ -1073,8 +1116,12 @@ func _available_card_span() -> float:
 func affords_wide_shell_with_bounds(leading: float, trailing: float, rail_width: float) -> bool:
 	if _collapsed or not _shown or _is_vertical_edge(_dock_edge):
 		return false
+	# `_trailing_bound_for` is what makes this and `_available_card_span()` ask the SAME question: a
+	# predicate charging the card for a column the layout does not charge it for would refuse the trade
+	# on exactly the widths where the card could in fact have paid. It drops the trailing term on a
+	# BOTTOM dock, which is what moved the fork from a logical 2432 to 1871.
 	var span: float = _panel_width_extent() - _rail_span_of(rail_width) \
-		- maxf(leading, 0.0) - maxf(trailing, 0.0)
+		- maxf(leading, 0.0) - _trailing_bound_for(_dock_edge, trailing)
 	return span >= WIDE_SHELL_MIN_WIDTH
 
 ## How wide the CARD draws. A vertical dock is the fixed strip; a horizontal one is exactly what its

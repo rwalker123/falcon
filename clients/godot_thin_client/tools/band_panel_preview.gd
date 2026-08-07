@@ -1862,14 +1862,26 @@ func _render_dock_row_states() -> void:
 	_assert_zone_content_fits()
 	_assert_chrome_parked(true, "band_panel_dockrow_bottom")
 	_assert_parked_chrome_fits("band_panel_dockrow_bottom")
-	_assert_parked_chrome_margin("band_panel_dockrow_bottom")
+	_assert_parked_chrome_margin("band_panel_dockrow_bottom", 1)
 	_assert_shell_is_wide(true, "band_panel_dockrow_bottom")
-	# **1920 IS THE STATUS QUO AND MUST STAY IT.** The HUD yields this strip here — with the two authored
-	# columns applied the card would have 895 against the 1190 three zones need — so the tile column is
-	# still cut short at the strip and the card still has the whole row. The wide-canvas branch, where
-	# that trade goes the other way, is `band_panel_dockrow_bottom_yield` below.
-	_assert_hud_yields_the_strip(true, "band_panel_dockrow_bottom")
-	_assert_lateral_columns_reach_the_bottom(false, "band_panel_dockrow_bottom")
+	# **1920 IS PAST THE FORK NOW, AND THAT IS THE POINT OF THIS STATE.** It used to be the status-quo
+	# side — the HUD yielded here, because with BOTH authored columns applied the card had 895 against
+	# the 1190 the three zones need. The trailing column no longer reaches a bottom dock's strip, so the
+	# card pays only the leading 360 and has 1239: enough. The fork fell from a logical 2432 to 1871, and
+	# what 1920 buys is the defect this whole rule exists for — the tile column runs the window's full
+	# height. What it COSTS is measured and deliberate: the band flank drops from two columns to one, so
+	# the strip is 360 rather than 335 and the band zone renders at the SHORT tier.
+	_assert_hud_yields_the_strip(false, "band_panel_dockrow_bottom")
+	_assert_lateral_columns_reach_the_bottom(true, "band_panel_dockrow_bottom")
+	# 1920 is the commonest window this panel ever draws in, and it is now a bounded strip — so the two
+	# island claims and the column clearance are asked here as well as at the wide canvas below.
+	_assert_card_clears_lateral_columns("band_panel_dockrow_bottom")
+	_assert_rail_is_right_justified("band_panel_dockrow_bottom")
+	_assert_card_is_centred("band_panel_dockrow_bottom")
+	# …and the corner claim, staged, HERE as well as at the wide canvas — 1920 is the narrowest strip the
+	# rule keeps, so it is where the card comes closest to the right dock's x-range (65px into it) and
+	# where the clearance is doing the most work.
+	await _assert_right_dock_clears_the_parked_chrome("band_panel_dockrow_bottom")
 	print("band_panel_preview: dockrow bottom — rail %.0fpx + %.0f gutter = %.0f span (nav %.0f, turn %.0f), stack needs %.0f of a %.0f strip, work zone %.0fpx" % [
 		_panel._rail_width(), BandCityPanel.RAIL_SEPARATOR_SPAN, _panel._rail_span(),
 		_hud.nav_backing.get_combined_minimum_size().x, _hud.turn_orb.get_combined_minimum_size().x,
@@ -2123,35 +2135,40 @@ func _assert_lateral_columns_reach_the_bottom(expected: bool, state_name: String
 ## is at the other end of the screen and shares no vertical band with the card, so a claim made against
 ## it would be true for free.
 ##
-## **It takes the same negative control**: with the bounds cleared the card must genuinely reach a
-## column, or the pass is a card too small to have collided with anything. The harness's own reservation
-## listener has to come off the wire for that (it pushes the bounds straight back — `Main`'s behaviour,
-## not an artifact).
+## **It takes the same negative control**: with the LEADING bound cleared the card must genuinely reach
+## the left column, or the pass is a card too small to have collided with anything. The harness's own
+## reservation listener has to come off the wire for that (it pushes the bounds straight back — `Main`'s
+## behaviour, not an artifact).
+##
+## **THE TWO COLUMNS ARE MEASURED DIFFERENTLY, AND THAT IS THE POINT.** The left dock is bounded as a
+## REGION, because it really is full-height and its cards may draw anywhere in it. The right dock is
+## bounded as its DRAWN CONTENT (`_right_dock_content_reach`, i.e. clipped to `RightScroll`), because its
+## region still spans the whole row while its cards stop above the strip — so a region-shaped claim there
+## would forbid the card room the HUD is not using, which is exactly the reserve the trailing bound was
+## and why it was dropped. The card is free to run under the right column's empty lower reach; what it
+## may not do is touch anything painted there.
 func _assert_card_clears_lateral_columns(state_name: String) -> void:
-	var columns := {
-		"the left dock": _hud.left_dock_region.get_global_rect(),
-		"the right dock": _hud.right_dock_region.get_global_rect(),
-	}
+	var left := _hud.left_dock_region.get_global_rect()
 	var card := _panel._panel.get_global_rect()
 	_panel.reservation_changed.disconnect(_reservation_listener)
 	_panel.set_lateral_bounds(0.0, 0.0)
 	var unbound := _panel._panel.get_global_rect()
-	var would_collide := false
-	for rect_variant in columns.values():
-		if unbound.intersects(rect_variant):
-			would_collide = true
+	var would_collide: bool = unbound.intersects(left)
 	var live: Vector2 = _hud.lateral_column_widths()
 	_panel.set_lateral_bounds(live.x, live.y)
 	_panel.reservation_changed.connect(_reservation_listener)
+	var reach: Dictionary = _right_dock_content_reach()
 	var failures: Array[String] = []
 	if not would_collide:
-		failures.append("the UNBOUND card %s clears both columns anyway, so this state proves nothing — stage a busier band or a narrower canvas" % unbound)
-	for name_variant in columns:
-		var rect: Rect2 = columns[name_variant]
-		if card.intersects(rect):
-			failures.append("the card %s is drawn over %s %s" % [card, name_variant, rect])
+		failures.append("the UNBOUND card %s clears the left column %s anyway, so this state proves nothing — stage a busier band or a narrower canvas" % [unbound, left])
+	if card.intersects(left):
+		failures.append("the card %s is drawn over the left dock %s" % [card, left])
+	if int(reach["cards"]) > 0 and card.intersects(Rect2(reach["painted"])):
+		failures.append("the card %s is drawn over the right dock's painted content %s" % [
+			card, str(reach["painted"])])
 	if failures.is_empty():
-		print("band_panel_preview: assert OK — %s the card clears both full-height HUD columns (and would collide unbound)" % state_name)
+		print("band_panel_preview: assert OK — %s the card clears the full-height left column (and would collide unbound) and the right dock's drawn content, which stops at %.0f" % [
+			state_name, float(reach["bottom"])])
 		return
 	for failure in failures:
 		push_error("band_panel_preview: %s — %s" % [state_name, failure])
@@ -2244,8 +2261,14 @@ func _assert_bottom_yield_keeps_its_promise(state_name: String) -> void:
 	var edge: int = _panel.get_dock()
 	var size: float = _panel.current_reservation_size()
 	var rail_span: float = _panel._rail_span_of(_hud.bottom_chrome_rail_width(edge, size))
+	# **THE TRAILING TERM GOES THROUGH `_trailing_bound_for`, NOT STRAIGHT IN.** The rule charges a
+	# BOTTOM dock's card for the leading column only, so a walk that restated `left + right` would derive
+	# 2432 while the fork sat at 1871 and probe a band 560px clear of it — passing, and measuring
+	# nothing. Reading the panel's own definition is what keeps the walk pointed at the fork when the
+	# rule's terms move, which is exactly what this docstring claims for it.
 	var fork: float = BandCityPanel.WIDE_SHELL_MIN_WIDTH + rail_span \
-		+ _hud.left_column_ceiling() + _hud.right_column_ceiling()
+		+ _hud.left_column_ceiling() \
+		+ _panel._trailing_bound_for(edge, _hud.right_column_ceiling())
 	_assert_ceilings_cover_the_columns(state_name, "this state's readouts")
 	await _assert_ceilings_cover_the_widest_readouts(state_name)
 	var broken: Array[String] = []
@@ -2340,8 +2363,11 @@ func _report_bottom_yield_at_high_scale() -> void:
 		_apply_ui_scale(scale)
 		await _settle()
 		var logical: Vector2 = get_viewport().get_visible_rect().size
+		# Same reading of the trailing term as the promise walk's fork, for the same reason: a printed
+		# span that charged a column the rule does not would report the fallback at the wrong scale.
 		var span: float = _panel._panel_width_extent() - _panel._rail_span() \
-			- _hud.left_column_ceiling() - _hud.right_column_ceiling()
+			- _hud.left_column_ceiling() \
+			- _panel._trailing_bound_for(_panel.get_dock(), _hud.right_column_ceiling())
 		print("band_panel_preview: bottom-dock yield at ui_scale %.2f on a %dpx canvas — logical viewport %.0f, span with the column ceilings %.0f of the %.0f the wide shell needs → the HUD %s its strip" % [
 			scale, BOTTOM_YIELD_CANVAS.x, logical.x, span, BandCityPanel.WIDE_SHELL_MIN_WIDTH,
 			"KEEPS" if MAIN_SCRIPT.band_dock_overlays_hud(_panel.get_dock(),
@@ -2446,6 +2472,26 @@ func _assert_right_dock_clears_the_parked_chrome(state_name: String) -> void:
 	_assert_band_panel("%s: no right-dock card is drawn over the parked chrome %s (%d overlapping)"
 		% [state_name, str(_panel._rail.get_global_rect()), int(held["over_rail"])],
 		int(held["over_rail"]) == 0)
+	# **THE CARD IS THE SECOND ISLAND IN THAT CORNER, AND IT ONLY BECAME ONE WHEN THE TRAILING BOUND WAS
+	# DROPPED.** While the card held the right column clear it could not reach the right dock's x-range
+	# at all; it now runs to one gutter short of the rail, which overlaps that range by ~65px at 1920 —
+	# so the only thing keeping the two apart is this clearance, and it has to be asserted about the card
+	# as well as the chrome. It is asked HERE rather than beside the card's own column claim because the
+	# right dock has to be STAGED tall for it to mean anything: at the fixtures' near-empty right dock
+	# the content stops ~400px above the strip whatever the clearance does.
+	#
+	# **IT CURRENTLY PASSES ON THE HORIZONTAL AXIS TOO, BY 1.5px AT 1920 — WHICH IS WHY THE GAP IS
+	# PRINTED.** `_card_width()` is quantised to whole zone columns, so the card stops a little short of
+	# the span it is allowed; the span itself reaches `extent - rail_span`, which is 23px INSIDE the
+	# right dock's painted x-range, so a card whose column arithmetic ever gave it those 23px would be
+	# relying on the vertical clearance alone. A future reader must be able to see how thin that is
+	# rather than read a green line.
+	var card := _panel._panel.get_global_rect()
+	var painted := Rect2(held["painted"])
+	_assert_band_panel("%s: the band card %s is not drawn over the right dock's painted content %s (%.0fpx of horizontal daylight, %.0f vertical)"
+		% [state_name, str(card), str(painted), painted.position.x - card.end.x,
+			painted.position.y - card.end.y],
+		int(held["cards"]) > 0 and not card.intersects(painted))
 
 	# Hand the right dock back exactly as it was found: legend emptied AND re-suppressed, Victory hidden.
 	_hud.update_overlay_legend({})
@@ -2471,6 +2517,7 @@ func _right_dock_content_reach() -> Dictionary:
 	var bottom := -INF
 	var cards := 0
 	var over_rail := 0
+	var painted := Rect2()
 	for child in _hud.right_stack.get_children():
 		var card := child as Control
 		if card == null or not card.visible:
@@ -2478,11 +2525,15 @@ func _right_dock_content_reach() -> Dictionary:
 		var drawn := card.get_global_rect().intersection(clip)
 		if drawn.size.y <= 0.0 or drawn.size.x <= 0.0:
 			continue
+		painted = drawn if cards == 0 else painted.merge(drawn)
 		cards += 1
 		bottom = maxf(bottom, drawn.end.y)
 		if drawn.intersects(rail):
 			over_rail += 1
-	return {"bottom": bottom, "cards": cards, "over_rail": over_rail, "clip": clip}
+	# `painted` is the union of the DRAWN card rects — what another island in this corner may not touch.
+	# An empty right dock leaves it a zero rect, which intersects nothing, and the `cards` count beside
+	# it is what stops that reading as a pass.
+	return {"bottom": bottom, "cards": cards, "over_rail": over_rail, "clip": clip, "painted": painted}
 
 # ---- THE PANEL AT A HIGH INTERFACE SCALE ------------------------------------------------------
 #
@@ -2566,12 +2617,22 @@ func _render_interface_scale_states() -> void:
 # (and therefore `MapView`'s inset, and therefore its cache) off the snapshot's critical path.
 
 ## The canvas that affords the band flank TWO columns on a bottom dock, and the one that affords ONE.
-## **DERIVED**: the flank's room is the strip less the chrome rail's span (321 on the seeded Standard
-## minimap), the card chrome (26), the parties flank (354), one work column (380) and the separators
-## (50) — i.e. `width - 1131`. Two columns need 760 of that, so the flip sits at 1891; the wide shell
-## itself needs a 1190 span, i.e. 1511. 1600 therefore lands squarely in the one-column band of a WIDE
-## shell, where a narrower canvas would be testing the narrow shell instead.
-const BAND_COLUMNS_TWO_CANVAS := Vector2i(1920, 1080)
+##
+## **DERIVED, and the derivation now has a branch in it — which is the whole content of the fork.** The
+## flank's room is the strip less the chrome rail's span (321 on the seeded Standard minimap), the card
+## chrome (26), the parties flank (354), one work column (380), the separators (50) **and whatever
+## lateral bound the card is paying**. Below the fork (1871) the HUD yields and there is no bound, so the
+## room is `width - 1131` and two columns (760) would arrive at 1891; above it the HUD keeps its strip
+## and the card pays the leading column, so the room is `width - 1491` and two columns arrive at
+## **2251**. The first of those is unreachable — 1891 is already past the fork — so the two-column band
+## starts at 2251, and 2560 is the first real monitor width past it (QHD), clearing it by 309.
+##
+## It used to read 1920, which is now a ONE-column canvas: dropping the trailing bound moved the fork
+## below 1920, so that width went from "yields, unbounded, two columns" to "keeps, bounded, one".
+##
+## 1600 is unchanged and still lands squarely in the one-column band of a WIDE shell (the shell itself
+## needs a 1190 span, i.e. 1511), where a narrower canvas would be testing the narrow shell instead.
+const BAND_COLUMNS_TWO_CANVAS := Vector2i(2560, 1080)
 const BAND_COLUMNS_ONE_CANVAS := Vector2i(1600, 1080)
 ## How many settles a geometry change is allowed before the layout must have stopped moving. The
 ## count and the reservation feed each other through `Main`'s fan-out, so "it converges" is a claim
@@ -2590,6 +2651,10 @@ func _render_band_column_states() -> void:
 	_assert_band_columns("band_panel_band_columns_two", 2)
 	_assert_band_tier_rises("band_panel_band_columns_two")
 	_assert_band_flank_is_full("band_panel_band_columns_two")
+	# THE TWO-COLUMN BUDGET'S PARK GATE, which lives wherever two columns do. It rode
+	# `band_panel_dockrow_bottom` until the fork moved below 1920 and took that canvas back to one
+	# column; 335 is the tighter of the two budgets and is the one that can decline the gate.
+	_assert_parked_chrome_margin("band_panel_band_columns_two", 2)
 	# THE PRECONDITION FOR THE SPLIT PAIR: this state must really be the chartless one, or "the
 	# chartless split balances" is a claim about the other layout.
 	_assert_band_flank_charts("band_panel_band_columns_two", false)
@@ -3034,19 +3099,28 @@ func _parked_chrome_pairs() -> Array:
 ##
 ## Three claims, and the third is what makes the first two mean something: the strip clears the
 ## requirement, the chrome is REALLY parked (a margin computed on a state where the gate never applied
-## is arithmetic about nothing), and the flank really has TWO columns (on one column the strip is still
-## 360 and the margin is the one this panel has always had). The margin is PRINTED as well as asserted —
-## a comfortable clearance and a one-pixel squeak are the same green line otherwise.
-func _assert_parked_chrome_margin(state_name: String) -> void:
+## is arithmetic about nothing), and the flank really has `expected_columns` (the budget is picked off
+## that count, so a margin quoted without it is a number whose budget nobody can reconstruct). The
+## margin is PRINTED as well as asserted — a comfortable clearance and a one-pixel squeak are the same
+## green line otherwise.
+##
+## **BOTH BUDGETS ARE ASSERTED, at their own canvases, and that pairing is what the fork move forced.**
+## The two-column budget (335) is the tighter one and used to ride the 1920 state; dropping the trailing
+## bound on a bottom dock moved the fork to 1871, so 1920 now keeps the HUD's strip, pays the leading
+## column and comes back to ONE column and the 360 budget. The 335 claim therefore moved to
+## `band_panel_band_columns_two`'s canvas, which is where two columns now live, and 1920 keeps the claim
+## at the budget it actually has. Asserting only one of them would leave the other budget's park gate
+## unmeasured.
+func _assert_parked_chrome_margin(state_name: String, expected_columns: int) -> void:
 	var reserved: float = _panel.current_reservation_size()
 	var required: float = _hud._dockrow._required_height()
 	var columns: int = _panel.band_zone_columns()
-	_assert_band_panel("%s: the flank really has two columns, so this margin is the two-column budget's (%d)"
-		% [state_name, columns], columns == 2)
+	_assert_band_panel("%s: the flank really has %d column(s), so this margin is that budget's (%d)"
+		% [state_name, expected_columns, columns], columns == expected_columns)
 	_assert_band_panel("%s: …and the chrome is really parked, so the gate this margin is about actually applied"
 		% state_name, not _hud.bottom_bar.visible)
-	_assert_band_panel("%s: the two-column strip clears the parked chrome stack — %.0f of %.0f needed, margin %.0fpx"
-		% [state_name, reserved, required, reserved - required], reserved >= required)
+	_assert_band_panel("%s: the %d-column strip clears the parked chrome stack — %.0f of %.0f needed, margin %.0fpx"
+		% [state_name, expected_columns, reserved, required, reserved - required], reserved >= required)
 
 func _assert_parked_chrome_fits(state_name: String) -> void:
 	var failures: Array[String] = []
@@ -3210,21 +3284,37 @@ func _assert_card_clears_hud_columns(state_name: String) -> void:
 ## the right half of an ultrawide. It is the CARD being measured now, not its content column — the
 ## column simply fills the card since the card itself became the thing that narrows.
 ##
-## **CENTRED IN THE GAP, not on the screen** — `_position_card_and_rail`'s own words. The two lateral
-## bounds come off before the margins are compared, because a card centred on the screen with an
-## unequal pair of HUD columns beside it would be sitting under one of them. With no bounds (a bottom
-## dock whose HUD yielded) both terms are 0 and this is the claim it always was.
+## **CENTRED IN THE GAP, not on the screen** — `_position_card_and_rail`'s own words. The leading bound
+## comes off before the margins are compared, because a card centred on the screen with a full-height
+## HUD column beside it would be sitting under one of them.
+##
+## **THE TRAILING EDGE OF THAT GAP IS MEASURED OFF WHAT ACTUALLY STANDS THERE, NEVER OFF
+## `_bound_trailing`.** It was the bound for one commit, and phrasing the claim in the panel's own terms
+## is what let a card sitting 210px off centre pass: the assertion subtracted the very bound that had
+## displaced it, so both sides moved together and the margins matched. On a BOTTOM dock the thing at the
+## trailing end is the PARKED CHROME — flush to the screen, one gutter clear of the card — and the
+## right-hand HUD column is deliberately NOT in the sum, because it no longer reaches that strip
+## (`Hud.set_right_column_bottom_clearance`). On a TOP dock there is no rail and the readout block really
+## is the trailing occupant, so the bound is right there and is what is used.
 func _assert_card_is_centred(state_name: String) -> void:
 	var card := _panel._panel.get_global_rect()
 	var strip := _panel._root.get_global_rect()
+	var trail_edge: float
+	var trail_what: String
+	if _panel._rail_width() > 0.0:
+		trail_edge = _panel._rail.get_global_rect().position.x - BandCityPanel.RAIL_SEPARATOR_SPAN
+		trail_what = "the parked chrome"
+	else:
+		trail_edge = strip.end.x - _panel._bound_trailing
+		trail_what = "a %.0fpx HUD column" % _panel._bound_trailing
 	var lead_margin: float = card.position.x - (strip.position.x + _panel._bound_leading)
-	var trail_margin: float = (strip.end.x - _panel._bound_trailing - _panel._rail_span()) - card.end.x
+	var trail_margin: float = trail_edge - card.end.x
 	if absf(lead_margin - trail_margin) > ZONE_BOUNDS_TOLERANCE:
-		push_error("band_panel_preview: %s — the card is not centred in its row: %.0fpx of margin leading, %.0fpx trailing (HUD columns %.0f / %.0f)" % [
-			state_name, lead_margin, trail_margin, _panel._bound_leading, _panel._bound_trailing])
+		push_error("band_panel_preview: %s — the card is not centred in its gap: %.0fpx of margin leading (past a %.0fpx HUD column) and %.0fpx trailing (up to %s at %.0f)" % [
+			state_name, lead_margin, _panel._bound_leading, trail_margin, trail_what, trail_edge])
 		return
-	print("band_panel_preview: assert OK — %s the card is centred in its row (%.0fpx either side, past HUD columns %.0f / %.0f)" % [
-		state_name, lead_margin, _panel._bound_leading, _panel._bound_trailing])
+	print("band_panel_preview: assert OK — %s the card is centred in its gap (%.0fpx either side, between a %.0fpx HUD column and %s)" % [
+		state_name, lead_margin, _panel._bound_leading, trail_what])
 
 ## GUARD: THE OPEN MAP EITHER SIDE OF THE CARD IS STILL CLICKABLE (issue #377).
 ##
