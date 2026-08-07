@@ -7,9 +7,13 @@ extends Node
 ## selection-panel / targeting styling without a running server or manual
 ## screenshots. Not part of the game — run explicitly:
 ##
-##   godot --path . res://tools/ui_preview.tscn
+##   scripts/preview.sh res://tools/ui_preview.tscn
 ##
-## then read ui_preview_out/*.png.
+## then read ui_preview_out/*.png. Run it through the wrapper rather than bare `godot`: the
+## harness cannot use `--headless` (no readable viewport), so it opens a REAL window, and
+## `project.godot`'s is the player's — fullscreen and focus-grabbing. The wrapper's override makes
+## this run's window quiet without touching how the game boots. See
+## `.claude/rules/client/test-harnesses.md` → "The harness window is quiet, the GAME's is not".
 
 ## The chapters of the state walk, in RUN ORDER — the single place that order is stated.
 ##
@@ -481,11 +485,11 @@ func _ensure_canvas() -> void:
 ## on the way, which is what closes the last of the drift.
 ##
 ## Whether a run passes through a monitor-sized window is a coin flip the pixels REMEMBER, and the
-## deliberate maximize is what settles it. `project.godot` used to open MAXIMIZED and macOS applied that
-## asynchronously, which is the coin flip this was written against; the project now boots WINDOWED (see
-## `.claude/rules/client/test-harnesses.md` → "The tool window is quiet by DEFAULT"), and the maximize
-## stays because a WM still resizes on its own schedule and because every frame set on record was
-## rendered on this path. Measured over four runs with the clock already frozen and the canvas pinned: runs that
+## deliberate maximize is what settles it. The BOOT mode is not one thing: `project.godot` opens the
+## player's fullscreen window, and `scripts/preview.sh` overrides a harness run to windowed (see
+## `.claude/rules/client/test-harnesses.md` → "The harness window is quiet, the GAME's is not"), so
+## the maximize is what makes both paths render the same frames — and every frame set on record was
+## taken on it. Measured over four runs with the clock already frozen and the canvas pinned: runs that
 ## never maximized and runs that did formed two byte-DISTINCT clusters, differing by ±1 on the
 ## antialiased edges of ~85 frames (`window/stretch` is `canvas_items` with an `expand` aspect, so the
 ## stretch scale swings 0.78 → 2.67 → 0.78 across a maximize and the rasterized-glyph/coverage state

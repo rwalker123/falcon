@@ -8,7 +8,7 @@ extends Node2D
 ## hunted-herd ring + link) without a server. Run windowed (NOT headless —
 ## the dummy renderer can't read back the viewport):
 ##
-##   godot --path . res://tools/map_preview.tscn
+##   scripts/preview.sh res://tools/map_preview.tscn
 ##
 ## then read ui_preview_out/map_*.png.
 

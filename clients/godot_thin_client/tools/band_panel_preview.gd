@@ -8,7 +8,7 @@ extends Node
 ## PNG per state so the chrome + the HUD reflow can be eyeballed without a server.
 ## The full MAP reflow/clip is only exercised in the running client.
 ##
-##   godot --path . res://tools/band_panel_preview.tscn
+##   scripts/preview.sh res://tools/band_panel_preview.tscn
 ##
 ## then read ui_preview_out/band_panel_*.png.
 

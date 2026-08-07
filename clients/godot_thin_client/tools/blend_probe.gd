@@ -16,7 +16,8 @@ extends Node2D
 ##      blend keeps a hex intact or tears holes in its interior. Every blend change MUST be judged here.
 ##      Rendered once per tuning variant (the V6 sweep) plus a labelled contact sheet.
 ##
-##   godot --path . res://tools/blend_probe.tscn     (NOT --headless — the dummy renderer can't read back)
+##   scripts/preview.sh res://tools/blend_probe.tscn   (NOT --headless — the dummy renderer can't read back,
+##                                                      and the wrapper is what keeps the window quiet)
 ##
 ## then read ui_preview_out/blend_*.png and ui_preview_out/V6_*.png.
 

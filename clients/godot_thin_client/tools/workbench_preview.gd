@@ -8,7 +8,7 @@ extends Node
 ## ships. Run from the repo root:
 ##
 ##   godot --headless --path clients/godot_thin_client --import        # if scenes/scripts changed
-##   godot --path clients/godot_thin_client res://tools/workbench_preview.tscn   # NOT --headless
+##   scripts/preview.sh res://tools/workbench_preview.tscn                       # NOT --headless
 ##
 ## then read ui_preview_out/workbench_*.png.
 
