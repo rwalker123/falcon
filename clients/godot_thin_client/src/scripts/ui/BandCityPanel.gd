@@ -248,6 +248,11 @@ signal zones_resized
 var _dock_edge: int = SIDE_LEFT
 var _collapsed: bool = false
 var _shown: bool = true
+## The cross-axis size last published through `reservation_changed`, so `_republish_reservation_if_changed`
+## can tell a size the panel merely re-derived from one nobody downstream has been told about. Seeded to a
+## value no reservation can take, so the first republish after a declared input arrives is never suppressed
+## by a coincidence with an unset member.
+var _published_reservation: float = -1.0
 # Leading (inboard) offset from the docked edge, pushed by Main = Σ sizes of co-edge reservers
 # inboard of this panel (today: the Inspector's strip when both dock left). Keeps co-edge panels
 # stacked, not overlapping. Does NOT change what this panel reserves (the map/HUD inset is the
@@ -932,6 +937,7 @@ func set_lateral_bounds(leading: float, trailing: float) -> void:
 	_bound_leading = lead
 	_bound_trailing = trail
 	_apply_dock_layout()
+	_republish_reservation_if_changed()
 	_notify_zones_resized()
 
 ## The span of strip a horizontal card may actually use: the whole row less the chrome cluster and less
@@ -1231,10 +1237,17 @@ func rail_slot_host(slot: int) -> Control:
 
 ## Declare the rail column's width — the `max` over the parked clusters, computed by the HUD, which owns
 ## them. NOT measured here. `width <= 0` retires the rail. Re-chooses the shell and re-reports
-## `work_zone_size()`; it can NEVER re-emit `reservation_changed`, because the reservation is the CROSS
-## axis (`_cross_axis_size`, which reads only the collapse flag, the dock edge and the viewport — never a
-## rail width) and the rail only spends the LONG one. That is what stops a feedback loop: the HUD pushes
-## a width -> the panel relayouts -> no reservation emit -> no `Main` fan-out -> no HUD reflow.
+## `work_zone_size()`.
+##
+## **IT COULD ONCE NEVER RE-EMIT `reservation_changed`, AND THAT IS NO LONGER TRUE.** The claim rested
+## on the reservation being a pure function of the collapse flag, the dock edge and the viewport — the
+## rail spending only the LONG axis while the reservation is the CROSS one. Since the cross axis carries
+## the active shell's own chrome (`_shell_chrome_height`), and the shell is chosen from the span the rail
+## comes out of, a rail width can flip the shell and move the strip by the tab bar's height. So it
+## republishes through `_republish_reservation_if_changed`, which read the old guarantee's PURPOSE rather
+## than its letter: the loop it prevented (HUD pushes a width -> panel relayouts -> emit -> `Main` fan-out
+## -> HUD reflow -> pushes a width) still terminates, because that second push lands on the same number
+## and is dropped by the early-out above, and the republish itself is silent on an unchanged size.
 func set_rail_width(width: float) -> void:
 	var declared: float = maxf(width, 0.0)
 	if is_equal_approx(declared, _rail_declared_width):
@@ -1246,6 +1259,7 @@ func set_rail_width(width: float) -> void:
 	# anchored at whatever width it had when the dock was last applied — measured as a 296px rail
 	# hanging 180px off the end of a 1920px strip.
 	_apply_dock_layout()
+	_republish_reservation_if_changed()
 	_notify_zones_resized()
 
 ## Size + show the rail for the current dock. The rail exists only on a HORIZONTAL dock: a vertical strip
@@ -1501,7 +1515,30 @@ func _on_cycle_pressed(delta: int) -> void:
 	cycle_requested.emit(delta)
 
 func _emit_reservation() -> void:
-	reservation_changed.emit(_dock_edge, current_reservation_size())
+	_published_reservation = current_reservation_size()
+	reservation_changed.emit(_dock_edge, _published_reservation)
+
+## Publish the reservation again IF the cross-axis size has moved since the last emission — and stay
+## silent otherwise.
+##
+## **THE PANEL'S RESERVED SIZE IS WHERE THE EVENT DOCK'S BAR STARTS**, through `_reservations` →
+## `Main._update_event_dock_edge_offset`, so a size this panel draws at but never published is a bar
+## drawn straight through the card. That could not happen while the cross axis was a pure function of
+## the collapse flag, the dock edge and the viewport, because the three paths that change those all
+## emit. It can now: the axis carries the active SHELL's chrome, and the shell is chosen from
+## `_available_card_span()`, whose other two terms — the lateral bounds and the rail's span — arrive
+## DECLARED, on setters that relayout without emitting. Measured on a TOP dock at `ui_scale` 1.35: the
+## panel drew 395 while `Main` still held 360, and the bar sat 35px inside the card's lower edge.
+##
+## **EVERY EXISTING `_emit_reservation()` CALL SITE STAYS UNCONDITIONAL, and that is deliberate.**
+## `Main._apply_reservation` is not only how the size travels — it is the hook that re-pushes the
+## lateral bounds and recomputes the event dock's perpendicular insets, both of which read live HUD
+## geometry that a viewport resize can move without moving this panel at all. Deduplicating those
+## emissions would silently stop that recomputation; this is strictly additive.
+func _republish_reservation_if_changed() -> void:
+	if is_equal_approx(current_reservation_size(), _published_reservation):
+		return
+	_emit_reservation()
 
 # ---- helpers ---------------------------------------------------------------
 

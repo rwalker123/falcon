@@ -361,10 +361,52 @@ command center**: shown whenever ≥1 player band exists, always displaying a
     changed: the seam accents the map-facing edge of the STRIP, which is right only while the card fills
     it, so a horizontal dock hides it rather than ruling a line across the monitor above a small floating
     card.
-  - **`set_rail_width` can NEVER re-emit `reservation_changed`**, and that is what stops a feedback loop
-    (HUD pushes a width → panel relayouts → no emit → no `Main` fan-out → no HUD reflow). The rail spends
-    only the LONG axis; the reservation is the CROSS one (`_cross_axis_size`, which reads only the
-    collapse flag, the dock edge and the viewport).
+  - **`set_rail_width` COULD once never re-emit `reservation_changed`, and that is no longer true.**
+    The old guarantee rested on the rail spending only the LONG axis while the reservation is the CROSS
+    one, and on that cross axis reading nothing but the collapse flag, the dock edge and the viewport.
+    Since it carries the active shell's chrome (`_shell_chrome_height`) and the shell is chosen from the
+    span the rail comes out of, **a rail width can flip the shell and move the strip by the tab bar's
+    height** — so `set_rail_width` and `set_lateral_bounds` both call `_republish_reservation_if_changed`.
+    The loop the old rule protected still terminates: the HUD's second push lands on the same number and
+    is dropped by `set_rail_width`'s own early-out, and the republish is silent on an unchanged size.
+
+### A size the panel DRAWS but never PUBLISHES is a bar drawn through the card
+
+`Main` does not poll this panel. It stores what `reservation_changed` carried, and
+`_update_event_dock_edge_offset` sums that to decide where a co-edge event-dock bar starts. So the
+published number and the drawn number must not diverge.
+
+They could not, while the cross axis was a pure function of the collapse flag, the dock edge and the
+viewport — the three paths that move those all emit. **They can now.** The axis carries the shell's own
+chrome, the shell is chosen from `_available_card_span()`, and that span's other two terms — the lateral
+bounds and the rail's span — arrive **DECLARED**, on setters that relayout without emitting.
+`set_lateral_bounds` is re-pushed on every snapshot on a TOP dock. Measured at `ui_scale` 1.35, band
+panel and event dock both docked TOP: the panel drew **395** while `Main` still held **360**, and the bar
+sat 35px inside the card, cutting through the role cards.
+
+**This was a regression introduced by the `_shell_chrome_height` term itself.** Before it, a shell flip
+could not change the reservation, so the missing emission on those two setters was latent and harmless;
+making the reservation shell-dependent turned it into a live 35px error.
+
+`_republish_reservation_if_changed` compares against `_published_reservation` (seeded to `-1.0`, a value
+no reservation can take, so the first republish is never suppressed by a coincidence with an unset
+member). **Every pre-existing `_emit_reservation()` call site stays UNCONDITIONAL, deliberately**:
+`Main._apply_reservation` is not only how the size travels, it is the hook that re-pushes the lateral
+bounds and recomputes the event dock's perpendicular insets, both of which read live HUD geometry a
+viewport resize can move without moving this panel at all. Deduplicating them would silently stop that
+recomputation; the republish is strictly additive.
+
+**The guard is asserted by CONSUMING `reservation_changed`, never by polling
+`current_reservation_size()`** — polled, it passes with the defect in, because the poll re-derives the
+very number that was never published.
+
+### The horizontal card already takes its whole span
+
+Measured on a TOP dock at 1.35: `_bound_leading` 360, `_bound_trailing` 344, `_available_card_span()`
+718.2, `_card_width()` **718.2** — equal, at 1.0 and 1.35 alike. A gap between the card and the screen
+edge on a horizontal dock is the HUD's authored lateral column (`Hud.lateral_column_widths()`, a
+`max(authored, live)`), which the card is holding clear on purpose. It is not the card failing to
+stretch, and widening it into that gap would put it over a live HUD column.
 - **Zone `band` — vitals · PEOPLE · food outlook · WORKFORCE + role cards** (`BandPanelController.build_band_zone`).
   The Food/Trade/Morale/Growth rows are the disclosures — and their breakdowns open in a
   POPOVER, never inline (see Band food status: inline growth is what clipped this very zone).

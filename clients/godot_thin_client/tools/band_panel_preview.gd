@@ -379,6 +379,9 @@ var _pinned_size := PREVIEW_SIZE
 var _pinned_canvas := Vector2i.ZERO
 var _hud: HudLayer
 var _panel: BandCityPanel
+## `Main._apply_reservation`'s fan-out, restated (see `_ready`). Held so a probe that needs the panel
+## UNBOUND can take it off `reservation_changed` for the length of the measurement.
+var _reservation_listener: Callable
 ## The hang guard from the scene, or `null` if it has gone — a safety net, never a dependency.
 var _watchdog: Node = null
 ## The last state `_save`d, so an assertion failure names the frame it fired on.
@@ -676,12 +679,18 @@ func _ready() -> void:
 	# live client does not, and a card free to sit where the live one is bounded. `Main` is not instanced
 	# here, so the two rules are restated; `Main._reserver_overlays_hud` /
 	# `Main._update_band_panel_lateral_bounds` are the authority.
-	_panel.reservation_changed.connect(func(edge: int, size: float):
+	# HELD IN A MEMBER, not connected anonymously: this listener PUSHES THE LATERAL BOUNDS BACK, so any
+	# probe that wants to see the panel WITHOUT them has to take it off the wire for the duration —
+	# see `_assert_card_clears_hud_columns`. (Before the panel republished its reservation on a
+	# bounds-driven shell flip, clearing the bounds emitted nothing and the probe's mutation simply
+	# stuck; it does not any more, which is `Main`'s live behaviour and not a harness artifact.)
+	_reservation_listener = func(edge: int, size: float):
 		var hud_yields: bool = edge != SIDE_TOP
 		if _hud.has_method("set_reserved_inset"):
 			_hud.set_reserved_inset(&"band_panel", edge, size if hud_yields else 0.0)
 		var columns: Vector2 = Vector2.ZERO if hud_yields else _hud.lateral_column_widths()
-		_panel.set_lateral_bounds(columns.x, columns.y))
+		_panel.set_lateral_bounds(columns.x, columns.y)
+	_panel.reservation_changed.connect(_reservation_listener)
 
 	await get_tree().process_frame
 	await get_tree().process_frame
@@ -2010,10 +2019,69 @@ func _render_interface_scale_states() -> void:
 	_apply_ui_scale(ClientSettings.UI_SCALE_DEFAULT)
 	_assert_band_panel("the interface scale is restored, so no later state inherits it",
 		is_equal_approx(get_window().content_scale_factor, float(ClientSettings.UI_SCALE_DEFAULT)))
+
+	await _assert_declared_input_republishes()
 	# Hand the tier probes back the canvas the dock-row block left them on — they re-dock and re-push
 	# their own band, but they take whatever canvas they are given.
 	await _pin_canvas(Vector2i(ULTRAWIDE_WIDTH, DOCKROW_CANVAS.y))
 	await _settle()
+
+## The canvas the republish claim is made on, at `ui_scale` 1.0. **DERIVED**: a TOP dock's card span is
+## the canvas less the HUD's two authored columns (360 + 344 = 704), and the narrow shell starts below
+## `WIDE_SHELL_MIN_WIDTH` (1190) — so a canvas under 1894 flips when `Main` pushes those bounds and
+## stands in the wide shell without them. 1400 sits well clear of both edges, where a few pixels of
+## chrome drift cannot move the probe into the shell it is not testing.
+const REPUBLISH_PROBE_WIDTH := 1400
+
+## GUARD: **WHAT THE PANEL DRAWS IS WHAT THE PANEL PUBLISHED**, after a DECLARED input has moved the
+## shell.
+##
+## The reserved size is the whole of where the event dock's bar starts (`Main._reservations` →
+## `_update_event_dock_edge_offset`), and `Main` does not poll it — it stores what
+## `reservation_changed` carried. `set_lateral_bounds` and `set_rail_width` relayout WITHOUT emitting,
+## and both feed `_available_card_span()` → the shell → (since the strip's cross axis carries the
+## active shell's chrome) the reserved size itself. So a stale publication is a bar drawn through the
+## card, and neither is visible in a frame.
+##
+## **IT IS ASSERTED AT `ui_scale` 1.0, ON A PINNED CANVAS**, because that is where the mechanism lives:
+## the flip is a WINDOW-SIZE property and the scale is only one way a player reaches it. `ui_preview`
+## cannot make this claim — it pins the window but not `content_scale_size`, so its canvas floors at
+## the 1920 base and the wide shell holds — which is why the consequence (the bar's own rect) is
+## asserted there at 1.35 and the cause is asserted here.
+##
+## **The invariant is stated as published-vs-drawn rather than as a call count**, deliberately: the
+## HUD's own reflow listener re-pushes the bounds when the reservation moves, so the emission ORDER is
+## a settling loop and any assertion about who emitted what, when, would be pinning that loop's shape
+## rather than the property that matters.
+func _assert_declared_input_republishes() -> void:
+	await _pin_canvas(Vector2i(REPUBLISH_PROBE_WIDTH, SHELL_THRESHOLD_HEIGHT))
+	_panel.set_dock(SIDE_TOP)
+	# The per-snapshot push (`Main._update_band_panel_lateral_bounds`). The harness's own reservation
+	# listener re-pushes these too, so what settles is the loop's fixed point — which is the whole
+	# point: the invariant has to hold there, not at some instant inside it.
+	var columns: Vector2 = _hud.lateral_column_widths()
+	_panel.set_lateral_bounds(columns.x, columns.y)
+	await _settle()
+	var drawn: float = _panel._root.get_global_rect().size.y
+
+	# PRECONDITION, stated as a COMPUTATION rather than by holding the panel unbound for a frame: the
+	# bounds cannot be cleared any more without the listener above pushing them straight back (that IS
+	# `Main`'s behaviour, not a harness artifact), so the claim is that the bounds are what put this
+	# panel in the narrow shell — the strip WITHOUT them clears the threshold and the span WITH them
+	# does not. On a canvas where the shell never moves, every claim below holds for free, which is the
+	# state ~every other canvas in this harness is in and precisely why this defect had none.
+	var unbound_span: float = _panel._panel_width_extent() - _panel._rail_span()
+	var bounded_span: float = _panel._available_card_span()
+	_assert_band_panel("republish: the bounds are what put this panel in the narrow shell (span %.0f unbound / %.0f bound, threshold %.0f)"
+		% [unbound_span, bounded_span, BandCityPanel.WIDE_SHELL_MIN_WIDTH],
+		unbound_span >= BandCityPanel.WIDE_SHELL_MIN_WIDTH
+			and bounded_span < BandCityPanel.WIDE_SHELL_MIN_WIDTH)
+	_assert_band_panel("republish: the size the panel PUBLISHED is the size it draws (%.0f published, %.0f drawn)"
+		% [_panel._published_reservation, drawn],
+		is_equal_approx(_panel._published_reservation, drawn))
+	_assert_band_panel("republish: …and it is what `current_reservation_size()` answers, so Main and the panel agree (%.0f)"
+		% _panel.current_reservation_size(),
+		is_equal_approx(_panel._published_reservation, _panel.current_reservation_size()))
 
 ## Push a scale the way the Options slider does — through `ClientSettings.changed`, so `UiScaler`
 ## applies it on its own real subscription. **The MEMBER is assigned, never `set_ui_scale`**: the
@@ -2251,6 +2319,12 @@ func _assert_card_clears_hud_columns(state_name: String) -> void:
 		"the right readouts": _hud.turn_block.get_global_rect(),
 	}
 	# NEGATIVE CONTROL: unbound, this band's card must actually reach at least one of them.
+	# **THE HARNESS'S OWN RESERVATION LISTENER HAS TO COME OFF THE WIRE FOR IT.** Clearing the bounds
+	# can flip the shell, which moves the reserved size, which is published — and this harness restates
+	# `Main._update_band_panel_lateral_bounds` on that signal, so the bounds are pushed straight back
+	# and the "unbound" rect measured below is the BOUNDED one (measured: a 1141px card, which is
+	# exactly the bounded span, silently failing the control instead of the claim).
+	_panel.reservation_changed.disconnect(_reservation_listener)
 	_panel.set_lateral_bounds(0.0, 0.0)
 	var unbound := _panel._panel.get_global_rect()
 	var would_collide := false
@@ -2259,6 +2333,7 @@ func _assert_card_clears_hud_columns(state_name: String) -> void:
 			would_collide = true
 	var live: Vector2 = _hud.lateral_column_widths()
 	_panel.set_lateral_bounds(live.x, live.y)
+	_panel.reservation_changed.connect(_reservation_listener)
 	var failures: Array[String] = []
 	if not would_collide:
 		failures.append("the UNBOUND card %s clears both columns anyway, so this state proves nothing — stage a busier band" % unbound)
