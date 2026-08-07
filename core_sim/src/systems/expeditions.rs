@@ -192,8 +192,15 @@ pub fn advance_expeditions(
         // not left at the intrinsic bare-handed tier. `exposure`, `engage_multiplier` and
         // `dispersion` ride beside it — a raid carrying a stand-off kit takes no injuries and scares
         // nothing off, exactly as a resident band with the same kit does.
-        let hunting_party = fauna::HuntingParty {
-            hunter: equipment_cfg.hunter_profile(person_profile, &party_kit, &party_wear),
+        // **A FACTORY, for the reason `advance_labor_allocation`'s is** — a mass-bounded weapon is
+        // only a weapon against quarry it can hold, so the attack tier waits for the target.
+        let party_for = |body_mass: f32| fauna::HuntingParty {
+            hunter: equipment_cfg.hunter_profile_against(
+                person_profile,
+                &party_kit,
+                &party_wear,
+                body_mass,
+            ),
             tuning: combat_tuning,
             injury_damage_per_animal: combat_config.hunt_injury_damage_per_animal
                 * equipment_cfg.exposure(&party_kit, &party_wear),
@@ -331,6 +338,10 @@ pub fn advance_expeditions(
                     // the pack, so the room converts to an unbounded biomass collection.
                     let scout_yield = herd_hunt_yield(&herds.herds[idx], &fauna);
                     let carry_room = carry_room_biomass(room, &scout_yield);
+                    // The quarry's mass, read before the mutable borrow — a mass-bounded weapon is
+                    // only a weapon against animals it can hold, so the party's attack tier waits
+                    // for it exactly as the resident band's does.
+                    let scout_quarry_mass = herds.herds[idx].body_mass;
                     // Composed BEFORE the mutable borrow — the seed reads the herd's id, and the
                     // take needs the herd mutably.
                     let seed = fauna::retreat_seed(
@@ -348,7 +359,7 @@ pub fn advance_expeditions(
                         DEFAULT_ESCAPEMENT_FLOOR,
                         NO_IMPROVEMENT_UNDERWAY,
                         per_worker_biomass,
-                        &hunting_party,
+                        &party_for(scout_quarry_mass),
                         &fauna,
                         &ladder,
                         carry_room,
@@ -574,7 +585,7 @@ pub fn advance_expeditions(
                             engage_rate,
                             wariness,
                             quarry_fight,
-                            &hunting_party,
+                            &party_for(body_mass),
                             fauna::HuntDraw::Seeded(seed),
                             stop,
                             &mut herd.hunt_credit,

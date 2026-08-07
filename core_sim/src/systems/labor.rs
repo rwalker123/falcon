@@ -339,14 +339,25 @@ pub fn advance_labor_allocation(
             // nothing), `engage_multiplier` multiplies how many animals one hunter reaches (the term
             // that actually binds on light game), and `exposure` multiplies the hunt's baseline
             // injury hazard (a stand-off instrument wears out instead of its user getting hurt).
-            let hunting_party = fauna::HuntingParty {
-                hunter: equipment_cfg.hunter_profile(person_profile, &crew_kit, &band_kit),
+            //
+            // **A FACTORY, not a value, because the ATTACK TIER DEPENDS ON THE QUARRY.** A
+            // mass-bounded weapon (a snare) is only a weapon against animals it can hold, so the
+            // profile cannot be resolved before the assignment's target is known. Everything else
+            // about the party is quarry-blind and is captured once.
+            let party_for = |body_mass: f32| fauna::HuntingParty {
+                hunter: equipment_cfg.hunter_profile_against(
+                    person_profile,
+                    &crew_kit,
+                    &band_kit,
+                    body_mass,
+                ),
                 tuning: combat_tuning,
                 injury_damage_per_animal: hunt_injury_damage
                     * equipment_cfg.exposure(&crew_kit, &band_kit),
                 engage_multiplier: equipment_cfg.engage_multiplier(&crew_kit, &band_kit),
                 dispersion: equipment_cfg.dispersion(&crew_kit, &band_kit),
             };
+
             match &assignment.target {
                 LaborTarget::Forage {
                     tile,
@@ -1143,7 +1154,7 @@ pub fn advance_labor_allocation(
                         &fauna,
                         &ladder,
                         hunt_per_worker_biomass,
-                        &hunting_party,
+                        &party_for(herd.body_mass),
                         mult_f,
                         workers,
                         *floor,
@@ -1427,7 +1438,7 @@ pub fn advance_labor_allocation(
                             &fauna,
                             &ladder,
                             hunt_per_worker_biomass,
-                            &hunting_party,
+                            &party_for(herd.body_mass),
                             mult_f,
                             workers,
                             *floor,
@@ -1496,7 +1507,7 @@ pub fn advance_labor_allocation(
                         *floor,
                         improvement,
                         hunt_per_worker_biomass,
-                        &hunting_party,
+                        &party_for(herd.body_mass),
                         &fauna,
                         &ladder,
                         f32::INFINITY,
@@ -1777,7 +1788,7 @@ pub fn advance_labor_allocation(
                         &fauna,
                         &ladder,
                         hunt_per_worker_biomass,
-                        &hunting_party,
+                        &party_for(herd.body_mass),
                         mult_f,
                         workers,
                         *floor,

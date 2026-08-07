@@ -86,6 +86,42 @@ before the effects model existed.
   stand-off instrument: it wears out **instead of** its user getting hurt, which is the trade rather
   than a free lunch.
 
+### An effect can be bounded by the quarry's BODY MASS
+
+**`dispersion` alone does not make traps small-game-only, and believing it did shipped a bug.**
+Dispersion answers *does the animal bolt before you reach it*; it says nothing about *what a snare can
+physically hold*. Traps shipped with a flat `attack 8`, which cleared a Red Deer's `defense 1` exactly
+as it cleared a rabbit's `0`, and a trap line quietly became a universal upgrade.
+
+An effect may therefore carry **`min_body_mass` / `max_body_mass`**, and `traps` ships `max 1.0`.
+Above the bound the item grants **nothing**, the party falls back to the bare hand's `attack 1`, and
+`max(0, 1 − defense)` is the **existing gate** refusing the hunt — there is no "you cannot trap that"
+branch anywhere.
+
+**It reads `body_mass`, which the roster already authors — not a size CATEGORY.** A `size_class` here
+would be a second authority to drift from the masses, exactly as `dispersion` reads `wariness` rather
+than a "jumpy" flag. The roster separates cleanly, which is why one number does it: every `defense 0`
+row is `0.13..=0.67` and the next species up is a Desert Gazelle at `3.3`, so **any** ceiling in that
+gap behaves identically.
+
+`min_body_mass` is the same field's other end — a bow is poor against something small and fast — and
+is reserved for #501. Nothing ships one.
+
+**Only `attack` is resolved against a quarry, and a bound on any other stat is REJECTED at validate**
+rather than silently ignored (`config-loading.md`'s "looks live but isn't").
+
+**Two named resolvers, so a take path cannot get the display answer by leaving an argument off:**
+`hunter_profile_against(…, body_mass)` is the only form a take or forecast may use;
+`hunter_profile_unbounded` is *"the best this kit can do against something"* and is for surfaces with
+no target — the published kit roster and a band's own `hunterAttack` row.
+
+> **The hunt job's DEFAULT kit must carry no mass-bounded attack, and `validate` enforces it.**
+> `snapshot/capture.rs` builds **one** party to price **every** herd's estimate tables, so it cannot
+> carry a per-quarry attack and resolves unbounded. A bounded default weapon would make every table
+> quote a kitted take against animals it cannot touch — wrong in the *reassuring* direction, on the
+> surface a player commits from. The fix when that day comes is to resolve per herd inside
+> `herd_snapshot_entries`; the check is what makes that a decision rather than a bug found in play.
+
 ### A kit resolves a multiplier as the MAX of what its LIVE items DECLARE
 
 Two clauses, both load-bearing, both in `KitChoice::multiplier`:

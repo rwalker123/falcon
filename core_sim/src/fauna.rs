@@ -5293,7 +5293,7 @@ impl HuntingParty {
         let kit = equipment.default_kit(crate::equipment_config::KitJob::Hunt);
         let fresh = crate::components::BandEquipment::default();
         Self {
-            hunter: equipment.hunter_profile(
+            hunter: equipment.hunter_profile_unbounded(
                 crate::creatures_config::CreaturesConfig::builtin().person(),
                 &kit,
                 &fresh,

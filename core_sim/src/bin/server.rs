@@ -1744,10 +1744,11 @@ fn seed_source_yield(
             // system, so a band whose spears are gone brings down less — or, past a quarry's
             // `defense`, nothing at all — and the seed has to say so.
             let hunting_party = HuntingParty {
-                hunter: equipment_cfg.hunter_profile(
+                hunter: equipment_cfg.hunter_profile_against(
                     app.world.resource::<CreaturesConfigHandle>().get().person(),
                     &crew_kit,
                     &band_wear,
+                    herd.body_mass,
                 ),
                 tuning: app.world.resource::<CombatConfigHandle>().get().tuning(),
                 injury_damage_per_animal: app
@@ -2900,17 +2901,26 @@ fn outfit_raiding_party(
 ///
 /// **Quoted at the CHOSEN kit, not at "equipped"** — a raid sent out bare-handed must be quoted
 /// bare-handed, or the launch line promises a slaughter the party cannot perform.
-fn launch_forecast_party(app: &bevy::prelude::App, kit: &KitChoice) -> HuntingParty {
+///
+/// **It takes the QUARRY'S MASS** because a mass-bounded weapon is only a weapon against animals it
+/// can hold: a raid sent with traps after a mammoth must be quoted at the bare hand's attack, which
+/// is the gate refusing the raid — the same answer the take will give.
+fn launch_forecast_party(
+    app: &bevy::prelude::App,
+    kit: &KitChoice,
+    quarry_body_mass: f32,
+) -> HuntingParty {
     let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
     let combat = app.world.resource::<CombatConfigHandle>().get();
     // A fresh ledger: the launch line quotes the KIT the party is being sent with, before it has worn
     // any of it. The party's own wear then moves its tiers turn by turn once it is in flight.
     let fresh = BandEquipment::default();
     HuntingParty {
-        hunter: equipment_cfg.hunter_profile(
+        hunter: equipment_cfg.hunter_profile_against(
             app.world.resource::<CreaturesConfigHandle>().get().person(),
             kit,
             &fresh,
+            quarry_body_mass,
         ),
         tuning: {
             let mut tuning = combat.tuning();
@@ -3178,10 +3188,12 @@ fn handle_send_hunt_expedition(
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
         // **Quoted at the kit the party is being sent with**, both halves: the fight through
         // `party` and the haul through `per_worker_haul`.
-        let party = launch_forecast_party(app, &kit);
         let per_worker_haul = launch_forecast_haul(app, &kit);
         let registry = app.world.resource::<HerdRegistry>();
         registry.find(&fauna_id).map(|herd| {
+            // Resolved INSIDE the herd lookup: the attack tier is a fact about this party against
+            // THIS animal, not about the party alone.
+            let party = launch_forecast_party(app, &kit, herd.body_mass);
             hunt_trip_forecast(
                 party_workers,
                 herd,
@@ -3368,10 +3380,12 @@ fn handle_send_denial_raid(
             .forecast_range_sigmas;
         // Quoted at the kit the raid is being sent with — the verdict rests on kills, which the
         // fight owns, so a bare-handed raid is told it cannot do the job rather than promised it can.
-        let party = launch_forecast_party(app, &kit);
         let per_worker_haul = launch_forecast_haul(app, &kit);
         let registry = app.world.resource::<HerdRegistry>();
         registry.find(&fauna_id).map(|herd| {
+            // Resolved INSIDE the herd lookup: the attack tier is a fact about this party against
+            // THIS animal, not about the party alone.
+            let party = launch_forecast_party(app, &kit, herd.body_mass);
             denial_forecast(
                 party_workers,
                 herd,

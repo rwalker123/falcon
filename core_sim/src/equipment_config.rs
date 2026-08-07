@@ -143,7 +143,8 @@ impl EffectTier {
     }
 }
 
-/// One entry in an item's `effects` list: a stat, and the value it takes.
+/// One entry in an item's `effects` list: a stat, the value it takes, and optionally **the size of
+/// quarry it applies to**.
 ///
 /// **An effect names a VALUE, never a delta or a multiplier stacking on something else.** That is
 /// what keeps *flat until expiry, then a step down* structurally true rather than a rule a future
@@ -153,6 +154,39 @@ pub struct EquipmentEffect {
     pub stat: EquipmentStat,
     #[serde(flatten)]
     pub tier: EffectTier,
+    /// **The lightest quarry this effect reaches** — a bow is poor against something small and fast.
+    /// Absent = no lower bound. Reserved for the ranged work on #501; nothing ships one yet.
+    #[serde(default)]
+    pub min_body_mass: Option<f32>,
+    /// **The heaviest quarry this effect reaches.** A snare holds a hare and not a deer, so `traps`
+    /// ships `1.0`.
+    ///
+    /// **This is what stops a flat `attack` from making a trap universal**, and it is the correction
+    /// to a real mistake: `dispersion` answers *does the animal bolt before you reach it*, which is a
+    /// different question from *what can this thing physically hold*. Collapsing the two made traps
+    /// take Red Deer, because `attack 8` clears a deer's `defense 1` like everything else's.
+    ///
+    /// **It reads `body_mass`, which the roster already authors — not a size CATEGORY.** A
+    /// `size_class` here would be a second authority to drift from the masses, exactly as
+    /// `dispersion` reads `wariness` rather than a "jumpy" flag. The shipped roster separates
+    /// cleanly: every `defense 0` row is `0.13..=0.67` and the next species up is a Desert Gazelle at
+    /// `3.3`, so any ceiling in that gap behaves identically and `1.0` is the round number in it.
+    #[serde(default)]
+    pub max_body_mass: Option<f32>,
+}
+
+impl EquipmentEffect {
+    /// **Does this effect reach quarry of this mass?** Unbounded effects reach everything, which is
+    /// what keeps every shipped item but `traps` byte-identical.
+    pub fn reaches(&self, body_mass: f32) -> bool {
+        self.min_body_mass.is_none_or(|min| body_mass >= min)
+            && self.max_body_mass.is_none_or(|max| body_mass <= max)
+    }
+
+    /// Whether this effect names a size of quarry at all.
+    pub fn is_mass_bounded(&self) -> bool {
+        self.min_body_mass.is_some() || self.max_body_mass.is_some()
+    }
 }
 
 /// **What one use of an item IS** — the quantum wear is charged against.
@@ -265,6 +299,31 @@ pub struct DefaultKitsConfig {
     pub forage: String,
 }
 
+/// **What the kit is being resolved AGAINST** — the argument a mass-bounded effect is tested on.
+///
+/// It is an enum rather than an `Option<f32>` so the two readings cannot be confused at a call site.
+/// [`Quarry::Any`] is *"nothing specific is in view — give me the best this kit can do"*, which is
+/// the honest answer for a **display** surface with no target (the published kit roster, a band's own
+/// `hunterAttack` row). A **take** path must never pass it: it would hand a trapping party its
+/// small-game attack against a mammoth, which is precisely the bug the bound exists to prevent.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Quarry {
+    /// A specific animal, by `body_mass`.
+    Mass(f32),
+    /// No quarry in view. Every bounded effect counts.
+    Any,
+}
+
+impl Quarry {
+    /// Does this quarry fall inside the effect's size bounds?
+    fn within(self, effect: &EquipmentEffect) -> bool {
+        match self {
+            Quarry::Mass(mass) => effect.reaches(mass),
+            Quarry::Any => true,
+        }
+    }
+}
+
 /// **A chosen kit, resolved once against the roster** — an id plus the set of items it stands for.
 ///
 /// It is the **only** way anything asks "is this gear serving?": [`Self::item_live`] is
@@ -363,11 +422,17 @@ impl KitChoice {
         stat: EquipmentStat,
         wear: &crate::components::BandEquipment,
         config: &EquipmentConfig,
+        quarry: Quarry,
     ) -> Option<f32> {
         self.live_items(wear, config)
-            .filter_map(|item| match item.effect(stat) {
-                Some(EffectTier::Equipped(value)) => Some(value),
-                _ => None,
+            .filter_map(|item| {
+                item.effects
+                    .iter()
+                    .filter(|effect| effect.stat == stat && quarry.within(effect))
+                    .find_map(|effect| match effect.tier {
+                        EffectTier::Equipped(value) => Some(value),
+                        EffectTier::Unequipped(_) => None,
+                    })
             })
             .fold(None::<f32>, |best, value| {
                 Some(best.map_or(value, |best| best.max(value)))
@@ -573,13 +638,40 @@ impl EquipmentConfig {
     /// **Defense, range and wariness are untouched here** — a weapon is a weapon. Armour is the
     /// Warrior role's kit, which this slice deliberately does not ship, and the retreat's `wariness` is
     /// the *quarry's*, moved by [`EquipmentStat::Dispersion`] at the retreat rather than here.
-    pub fn hunter_profile(
+    /// **Against a SPECIFIC animal** — the only form a take or a forecast may use, because a
+    /// mass-bounded weapon is only a weapon against quarry it reaches. A trapping party handed a
+    /// mammoth resolves to the bare hand's `attack`, and `max(0, 1 − 12)` is the gate refusing it.
+    pub fn hunter_profile_against(
+        &self,
+        intrinsic: CombatStats,
+        kit: &KitChoice,
+        wear: &crate::components::BandEquipment,
+        body_mass: f32,
+    ) -> CombatStats {
+        self.hunter_profile_for(intrinsic, kit, wear, Quarry::Mass(body_mass))
+    }
+
+    /// **With no quarry in view** — the best this kit can do against *something*. For DISPLAY only
+    /// (the published kit roster, a band's own `hunterAttack` row): both are facts about the kit, not
+    /// about a hunt, and neither has an animal to ask about. Named apart from
+    /// [`Self::hunter_profile_against`] so a take path cannot reach it by leaving an argument off.
+    pub fn hunter_profile_unbounded(
         &self,
         intrinsic: CombatStats,
         kit: &KitChoice,
         wear: &crate::components::BandEquipment,
     ) -> CombatStats {
-        match kit.declares_equipped(EquipmentStat::Attack, wear, self) {
+        self.hunter_profile_for(intrinsic, kit, wear, Quarry::Any)
+    }
+
+    fn hunter_profile_for(
+        &self,
+        intrinsic: CombatStats,
+        kit: &KitChoice,
+        wear: &crate::components::BandEquipment,
+        quarry: Quarry,
+    ) -> CombatStats {
+        match kit.declares_equipped(EquipmentStat::Attack, wear, self, quarry) {
             Some(attack) => CombatStats {
                 attack,
                 ..intrinsic
@@ -712,6 +804,7 @@ impl EquipmentConfig {
                         reason: format!("item '{id}' declares the same stat twice"),
                     });
                 }
+                Self::validate_mass_bounds(id, index, effect)?;
             }
         }
         // **The two-tier stats must be declared by at most ONE item each**, because `declared_tier`
@@ -734,7 +827,93 @@ impl EquipmentConfig {
                 });
             }
         }
-        self.validate_roster()
+        self.validate_roster()?;
+        self.validate_default_hunt_kit_is_quarry_blind()
+    }
+
+    /// **THE HUNT JOB'S DEFAULT KIT MUST CARRY NO MASS-BOUNDED ATTACK**, and this is a structural
+    /// debt of the snapshot rather than a design preference.
+    ///
+    /// `snapshot/capture.rs` builds **one** party to price **every** herd's estimate tables — they
+    /// are ~95% of snapshot capture and a per-herd kit resolution multiplies them (see
+    /// `.claude/rules/core_sim/equipment.md` → "The two estimate tables are NOT repriced per kit").
+    /// One party cannot carry a per-quarry attack, so it resolves *unbounded*. If the default kit's
+    /// weapon were mass-bounded, every table would quote a kitted take against animals that weapon
+    /// cannot touch — a lie in the reassuring direction, on the surface a player commits from.
+    ///
+    /// Rejecting the config is the loud form of that limit; silently quoting the wrong number is the
+    /// failure `.claude/rules/core_sim/config-loading.md` exists to close. The fix, when a bounded
+    /// weapon does become a default, is to resolve the profile per herd inside
+    /// `herd_snapshot_entries` — and this check is what makes that a deliberate decision rather than
+    /// a bug found in play.
+    fn validate_default_hunt_kit_is_quarry_blind(&self) -> Result<(), EquipmentConfigError> {
+        let default = self.default_kit(KitJob::Hunt);
+        for item in default.uses() {
+            let Some(def) = self.item(item) else { continue };
+            for effect in &def.effects {
+                if effect.stat == EquipmentStat::Attack && effect.is_mass_bounded() {
+                    return Err(EquipmentConfigError::InvalidRoster {
+                        reason: format!(
+                            "the hunt job's default kit '{}' uses '{item}', whose attack is bounded by body mass — the per-herd estimate tables resolve ONE party for every herd and cannot express that",
+                            default.id()
+                        ),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// **A body-mass bound must be usable, and must be HONOURED where it is written.**
+    ///
+    /// Only [`EquipmentStat::Attack`] is resolved through a [`Quarry`] today, so a bound on any other
+    /// stat would parse, validate, and then do **nothing** — the "looks live but isn't" failure
+    /// `.claude/rules/core_sim/config-loading.md` exists to close. It is rejected loudly instead, and
+    /// the message says which stats do honour one so the author knows what to do about it. Widening
+    /// this is the natural follow-on when the ranged work (#501) gives `hit_chance` a quarry.
+    fn validate_mass_bounds(
+        id: &str,
+        index: usize,
+        effect: &EquipmentEffect,
+    ) -> Result<(), EquipmentConfigError> {
+        if !effect.is_mass_bounded() {
+            return Ok(());
+        }
+        if effect.stat != EquipmentStat::Attack {
+            return Err(EquipmentConfigError::InvalidRoster {
+                reason: format!(
+                    "item '{id}' bounds effect[{index}] ({:?}) by body mass, but only `attack` is \
+                     resolved against a quarry — the bound would be silently ignored",
+                    effect.stat
+                ),
+            });
+        }
+        for (label, bound) in [
+            ("min_body_mass", effect.min_body_mass),
+            ("max_body_mass", effect.max_body_mass),
+        ] {
+            if let Some(value) = bound {
+                if !value.is_finite() || value < 0.0 {
+                    return Err(EquipmentConfigError::Invalid {
+                        field: format!("items.{id}.effects[{index}].{label}"),
+                        constraint: "be finite and not negative".to_string(),
+                        value: value.to_string(),
+                    });
+                }
+            }
+        }
+        // An inverted window reaches NOTHING, which is an item that silently does not work.
+        if let (Some(min), Some(max)) = (effect.min_body_mass, effect.max_body_mass) {
+            if min > max {
+                return Err(EquipmentConfigError::InvalidRoster {
+                    reason: format!(
+                        "item '{id}' bounds effect[{index}] to body mass {min}..={max}, which reaches \
+                         no quarry at all"
+                    ),
+                });
+            }
+        }
+        Ok(())
     }
 
     fn require_positive(field: String, value: f32) -> Result<(), EquipmentConfigError> {
@@ -979,7 +1158,7 @@ mod tests {
     /// quarry. Every one of those four is a *different* stat, which is the point: without the effects
     /// model an item could set exactly one.
     #[test]
-    fn the_trapping_kit_buys_reach_and_stealth_and_safety_but_no_damage() {
+    fn the_trapping_kit_buys_reach_stealth_and_safety_on_quarry_it_can_hold() {
         let equipment = EquipmentConfig::builtin();
         let trapping = equipment
             .kit("trapping")
@@ -987,12 +1166,25 @@ mod tests {
         let intrinsic = CreaturesConfig::builtin().person();
         let fresh = fresh();
 
+        // **THE ATTACK IS BOUNDED BY THE QUARRY'S MASS, and that is the whole of what keeps a trap
+        // line from being a universal upgrade.** A flat attack shipped once and cleared a Red Deer's
+        // `defense 1` exactly as it cleared a rabbit's `0`.
+        const A_HARE: f32 = 0.6; // inside the bound
+        const A_DEER: f32 = 15.0; // far outside it
+        assert!(
+            equipment
+                .hunter_profile_against(intrinsic, &trapping, &fresh, A_HARE)
+                .attack
+                > intrinsic.attack,
+            "traps must actually kill what they can hold, or the kit is a decoy"
+        );
         assert_eq!(
             equipment
-                .hunter_profile(intrinsic, &trapping, &fresh)
+                .hunter_profile_against(intrinsic, &trapping, &fresh, A_DEER)
                 .attack,
             intrinsic.attack,
-            "traps clear no defence — a trapper fights at the bare hand's attack"
+            "above the bound the item grants NOTHING — the party is bare-handed and the fight's own \
+             gate refuses the hunt, with no 'cannot trap that' branch anywhere"
         );
         assert!(
             equipment.engage_multiplier(&trapping, &fresh) > 1.0,
@@ -1112,7 +1304,7 @@ mod tests {
     fn the_hunter_profile_swaps_only_the_attack_tier() {
         let equipment = EquipmentConfig::builtin();
         let bare = CreaturesConfig::builtin().person();
-        let kitted = equipment.hunter_profile(bare, &kit_of(&[SPEARS]), &fresh());
+        let kitted = equipment.hunter_profile_unbounded(bare, &kit_of(&[SPEARS]), &fresh());
         assert_eq!(
             kitted.attack,
             equipped_of(&equipment, SPEARS, EquipmentStat::Attack)
@@ -1122,7 +1314,10 @@ mod tests {
         assert_eq!(kitted.range, RangeBand::Melee);
         assert_eq!(kitted.wariness, bare.wariness);
         // Unequipped is the intrinsic row itself — the tier it drops back to.
-        assert_eq!(equipment.hunter_profile(bare, &kit_of(&[]), &fresh()), bare);
+        assert_eq!(
+            equipment.hunter_profile_unbounded(bare, &kit_of(&[]), &fresh()),
+            bare
+        );
     }
 
     #[test]
@@ -1284,7 +1479,7 @@ mod tests {
         let intrinsic = CreaturesConfig::builtin().person();
         assert_eq!(
             equipment
-                .hunter_profile(intrinsic, &big_game, &fresh)
+                .hunter_profile_unbounded(intrinsic, &big_game, &fresh)
                 .attack,
             equipped_of(&equipment, SPEARS, EquipmentStat::Attack)
         );
@@ -1321,7 +1516,9 @@ mod tests {
         let labor = crate::labor_config::LaborConfig::builtin();
         let intrinsic = CreaturesConfig::builtin().person();
         assert_eq!(
-            equipment.hunter_profile(intrinsic, &none, &fresh).attack,
+            equipment
+                .hunter_profile_unbounded(intrinsic, &none, &fresh)
+                .attack,
             intrinsic.attack,
             "a party carrying no spears fights bare-handed"
         );

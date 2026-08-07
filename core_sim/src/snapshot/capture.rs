@@ -1815,7 +1815,7 @@ fn kit_roster_states(
                     .map(|job| job.as_str().to_string())
                     .collect(),
                 attack: equipment
-                    .hunter_profile(kit_levers.hunter_intrinsic, &choice, &fresh)
+                    .hunter_profile_unbounded(kit_levers.hunter_intrinsic, &choice, &fresh)
                     .attack,
                 hunt_carry_per_worker_biomass: equipment.hunt_per_worker_biomass_capacity(
                     labor.hunt.per_worker_biomass_capacity,
@@ -2193,12 +2193,31 @@ pub fn capture_snapshot(
                     // so the ETA projects the take the party can actually make: bare-handed if it
                     // left bare-handed, and stepped down once its spears are gone.
                     let party_wear = equipment.cloned().unwrap_or_default();
+                    // **The party's TARGET, so a mass-bounded weapon is judged against the animal it
+                    // was actually sent after.** A party whose mission names no herd (a scout) has no
+                    // quarry, and its ETA is a travel figure rather than a take — the unbounded
+                    // reading is the honest one there.
+                    let expedition_quarry_mass = match &exp.mission {
+                        crate::components::ExpeditionMission::Hunt { fauna_id, .. }
+                        | crate::components::ExpeditionMission::Deny { fauna_id, .. } => {
+                            herd_registry.find(fauna_id).map(|herd| herd.body_mass)
+                        }
+                        _ => None,
+                    };
                     let party = crate::fauna::HuntingParty {
-                        hunter: equipment_config.hunter_profile(
-                            kit_levers.hunter_intrinsic,
-                            &exp.kit,
-                            &party_wear,
-                        ),
+                        hunter: match expedition_quarry_mass {
+                            Some(mass) => equipment_config.hunter_profile_against(
+                                kit_levers.hunter_intrinsic,
+                                &exp.kit,
+                                &party_wear,
+                                mass,
+                            ),
+                            None => equipment_config.hunter_profile_unbounded(
+                                kit_levers.hunter_intrinsic,
+                                &exp.kit,
+                                &party_wear,
+                            ),
+                        },
                         tuning: expedition_combat_tuning,
                         injury_damage_per_animal: combat_config.hunt_injury_damage_per_animal
                             * equipment_config.exposure(&exp.kit, &party_wear),
@@ -2577,7 +2596,12 @@ pub fn capture_snapshot(
         // kit rather than any band's wear on it; with the shipped `big_game` default this is
         // bit-for-bit the hardcoded `equipped = true` it replaced.
         party: crate::fauna::HuntingParty {
-            hunter: equipment_config.hunter_profile(
+            // **UNBOUNDED, and `validate` is what keeps that honest.** This ONE party prices every
+            // herd row, so it cannot carry a per-quarry attack — and a mass-bounded weapon in the
+            // hunt job's default kit would therefore be quoted against animals it cannot touch.
+            // `EquipmentConfig::validate` rejects exactly that config, so the case is a boot failure
+            // rather than a table that lies. See "the default hunt kit carries no mass bound".
+            hunter: equipment_config.hunter_profile_unbounded(
                 kit_levers.hunter_intrinsic,
                 &quoted_kit,
                 &quoted_wear,

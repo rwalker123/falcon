@@ -873,7 +873,7 @@ fn the_fixtures_read_the_shipped_roster() {
     }
 }
 
-/// **THE TRAPPING KIT MUST ACTUALLY BEAT SPEARS ON SMALL GAME — AND LOSE ON EVERYTHING ELSE.**
+/// **THE TRAPPING KIT MUST BEAT SPEARS ON SMALL GAME — AND TAKE NO LARGE GAME AT ALL.**
 ///
 /// This is the whole player-facing claim of the trapping kit, and the first version of it shipped
 /// **backwards**: traps declared no `attack`, so a trapper fell back to the bare hand's `1`, and
@@ -887,17 +887,17 @@ fn the_fixtures_read_the_shipped_roster() {
 ///
 /// Both arms are measured at the SAME party size, so headcount cannot flatter either one.
 #[test]
-fn the_trapping_kit_beats_spears_on_small_game_and_loses_on_defended_game() {
+fn the_trapping_kit_beats_spears_on_small_game_and_takes_no_large_game_at_all() {
     let equipment = EquipmentConfig::builtin();
     let fauna = FaunaConfig::builtin();
     let combat = CombatConfig::builtin();
     let intrinsic = CreaturesConfig::builtin().person();
     let fresh = BandEquipment::default();
 
-    let party_for = |kit_id: &str| {
+    let party_for = |kit_id: &str, body_mass: f32| {
         let kit = equipment.kit(kit_id).expect("the roster ships this kit");
         HuntingParty {
-            hunter: equipment.hunter_profile(intrinsic, &kit, &fresh),
+            hunter: equipment.hunter_profile_against(intrinsic, &kit, &fresh, body_mass),
             tuning: combat.tuning(),
             injury_damage_per_animal: combat.hunt_injury_damage_per_animal
                 * equipment.exposure(&kit, &fresh),
@@ -913,10 +913,10 @@ fn the_trapping_kit_beats_spears_on_small_game_and_loses_on_defended_game() {
     const HUNTERS: u32 = 20;
     // A herd fat enough that only reach / retreat / the fight can bind.
     let take_of = |kit_id: &str, species: &str| -> f32 {
-        let party = party_for(kit_id);
         let def = fauna
             .species_by_display(species)
             .unwrap_or_else(|| panic!("the roster ships {species}"));
+        let party = party_for(kit_id, def.body_mass);
         let quarry = QuarryFight {
             profile: def.combat,
             ferocity: def.ferocity,
@@ -948,21 +948,40 @@ fn the_trapping_kit_beats_spears_on_small_game_and_loses_on_defended_game() {
         "the speared arm must actually take rabbits, or the comparison is vacuous"
     );
 
-    // ...and the other half, which is what keeps traps from becoming a universal upgrade. Red Deer
-    // carries the roster's LOWEST non-zero defence (1), so it is the tightest case: if spears win
-    // here they win on everything above it too.
-    let deer_trapped = take_of("trapping", "Red Deer");
-    let deer_speared = take_of("big_game", "Red Deer");
-    assert!(
-        deer_speared > deer_trapped,
-        "spears must beat traps on the LEAST defended big game, or traps are a free upgrade: \
-         big_game {deer_speared} vs trapping {deer_trapped} deer per turn at {HUNTERS} hunters"
-    );
-
-    // And nothing with real armour is trappable at all.
-    assert_eq!(
-        take_of("trapping", "Thunder Mammoths"),
-        0.0,
-        "a trap line does not bring down a mammoth at any headcount"
-    );
+    // **AND THE OTHER HALF: A TRAP LINE TAKES NO LARGE GAME AT ALL.** Not "less than spears" —
+    // *none*. Reported from play: with a flat `attack 8` traps cleared a Red Deer's `defense 1` like
+    // everything else's and quietly became a universal upgrade, because attack is quarry-blind.
+    //
+    // `traps` now bounds its attack by `max_body_mass`, so above it the item grants nothing, the
+    // party falls back to the bare hand's `1`, and `max(0, 1 − defense)` is the EXISTING gate
+    // refusing the hunt. No "you cannot trap that" branch was added anywhere.
+    //
+    // **Swept across every species above the bound**, not just the tightest one, because the bound is
+    // on MASS while the gate is on DEFENCE — checking Red Deer alone would pass a config whose
+    // ceiling had drifted up past a lighter animal.
+    for species in [
+        "Desert Gazelle", // the lightest species above the bound (3.3), and the tightest case
+        "Wild Sheep",
+        "Wild Boar",
+        "Red Deer",
+        "Wild Horses",
+        "Wild Aurochs",
+        // **Thunder Mammoths are deliberately NOT here.** A mammoth's 500 durability needs more than
+        // one turn from 20 speared hunters (the accumulator, not the gate — `combat::DamageLedger`),
+        // so the spear arm reads `0` and the liveness assertion below could not tell "traps cannot"
+        // from "nobody can in one turn". The mammoth's own case is
+        // `no_headcount_of_bare_hands_kills_a_mammoth` in this file.
+    ] {
+        assert_eq!(
+            take_of("trapping", species),
+            0.0,
+            "a trap line must take no {species} at all, at any headcount"
+        );
+        // Liveness per row: spears must actually take this species, or "traps take none" is the
+        // trivial truth about quarry nobody can hunt.
+        assert!(
+            take_of("big_game", species) > 0.0,
+            "the speared arm must take {species}, or the trapping claim above is vacuous"
+        );
+    }
 }

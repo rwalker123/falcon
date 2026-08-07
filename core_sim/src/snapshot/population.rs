@@ -287,7 +287,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         .collect();
     let hunter_attack = kit_levers
         .config
-        .hunter_profile(kit_levers.hunter_intrinsic, &hunt_choice, &kit)
+        .hunter_profile_unbounded(kit_levers.hunter_intrinsic, &hunt_choice, &kit)
         .attack;
     let hunt_carry_per_worker_biomass = kit_levers.config.hunt_per_worker_biomass_capacity(
         kit_levers.equipped_haul_rate,
