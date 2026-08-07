@@ -13,8 +13,9 @@
 
 use core_sim::{
     animals_engaged, herd_capacity, hunt_take, quantise_animal_take, resolve_hunt_fight,
-    CombatStats, FaunaConfig, FaunaConfigHandle, Herd, HuntDraw, HuntingParty, LaborConfig,
-    LadderConfig, SizeClass,
+    BandEquipment, CombatConfig, CombatStats, CreaturesConfig, DamageLedger, EquipmentConfig,
+    FaunaConfig, FaunaConfigHandle, Herd, HuntDraw, HuntingParty, LaborConfig, LadderConfig,
+    QuarryFight, SizeClass,
 };
 
 /// Standing stock far above anything a party can take, so **the escapement never binds** and the take
@@ -870,4 +871,98 @@ fn the_fixtures_read_the_shipped_roster() {
             "{species} must be in the shipped roster"
         );
     }
+}
+
+/// **THE TRAPPING KIT MUST ACTUALLY BEAT SPEARS ON SMALL GAME — AND LOSE ON EVERYTHING ELSE.**
+///
+/// This is the whole player-facing claim of the trapping kit, and the first version of it shipped
+/// **backwards**: traps declared no `attack`, so a trapper fell back to the bare hand's `1`, and
+/// `units_down = damage / durability` made that `0.5` rabbits a hunter-turn against the spear's
+/// `2.5`. Five times WORSE on the exact quarry it was designed for.
+///
+/// **The error was reasoning about the GATE and forgetting the RATE.** `max(0, attack − defense)` at
+/// `defense 0` *is* the attack, and that number is the damage — so `attack` drives throughput at
+/// every defence level, not merely at the gate. "Small game has no defence, so attack buys nothing"
+/// is false, and this test exists so nobody re-derives it.
+///
+/// Both arms are measured at the SAME party size, so headcount cannot flatter either one.
+#[test]
+fn the_trapping_kit_beats_spears_on_small_game_and_loses_on_defended_game() {
+    let equipment = EquipmentConfig::builtin();
+    let fauna = FaunaConfig::builtin();
+    let combat = CombatConfig::builtin();
+    let intrinsic = CreaturesConfig::builtin().person();
+    let fresh = BandEquipment::default();
+
+    let party_for = |kit_id: &str| {
+        let kit = equipment.kit(kit_id).expect("the roster ships this kit");
+        HuntingParty {
+            hunter: equipment.hunter_profile(intrinsic, &kit, &fresh),
+            tuning: combat.tuning(),
+            injury_damage_per_animal: combat.hunt_injury_damage_per_animal
+                * equipment.exposure(&kit, &fresh),
+            engage_multiplier: equipment.engage_multiplier(&kit, &fresh),
+            dispersion: equipment.dispersion(&kit, &fresh),
+        }
+    };
+
+    // **A REAL PARTY, not one hunter.** `brought_down` is floored to WHOLE animals, and one hunter
+    // cannot finish a 25-durability deer in a turn — both arms read `0` and the comparison says
+    // nothing. Twenty is enough for every arm here to put something on the ground, and it is the
+    // same twenty on both sides so the comparison stays fair.
+    const HUNTERS: u32 = 20;
+    // A herd fat enough that only reach / retreat / the fight can bind.
+    let take_of = |kit_id: &str, species: &str| -> f32 {
+        let party = party_for(kit_id);
+        let def = fauna
+            .species_by_display(species)
+            .unwrap_or_else(|| panic!("the roster ships {species}"));
+        let quarry = QuarryFight {
+            profile: def.combat,
+            ferocity: def.ferocity,
+            wounds: DamageLedger::default(),
+        };
+        let reached = party.reach(HUNTERS, def.engage_rate, 1.0);
+        let stayed = party.stayers(reached, def.combat.wariness, HuntDraw::EXPECTED);
+        resolve_hunt_fight(
+            stayed,
+            f32::from(HUNTERS as u16),
+            &party,
+            &quarry,
+            HuntDraw::EXPECTED,
+        )
+        .brought_down
+    };
+
+    let rabbit_trapped = take_of("trapping", "Rabbit Warren");
+    let rabbit_speared = take_of("big_game", "Rabbit Warren");
+    assert!(
+        rabbit_trapped > rabbit_speared,
+        "traps must OUT-TAKE spears on defenceless small game, or the kit is a decoy: \
+         trapping {rabbit_trapped} vs big_game {rabbit_speared} rabbits per turn at {HUNTERS} hunters"
+    );
+
+    // Liveness: without it "traps win" would pass on two zeroes.
+    assert!(
+        rabbit_speared > 0.0,
+        "the speared arm must actually take rabbits, or the comparison is vacuous"
+    );
+
+    // ...and the other half, which is what keeps traps from becoming a universal upgrade. Red Deer
+    // carries the roster's LOWEST non-zero defence (1), so it is the tightest case: if spears win
+    // here they win on everything above it too.
+    let deer_trapped = take_of("trapping", "Red Deer");
+    let deer_speared = take_of("big_game", "Red Deer");
+    assert!(
+        deer_speared > deer_trapped,
+        "spears must beat traps on the LEAST defended big game, or traps are a free upgrade: \
+         big_game {deer_speared} vs trapping {deer_trapped} deer per turn at {HUNTERS} hunters"
+    );
+
+    // And nothing with real armour is trappable at all.
+    assert_eq!(
+        take_of("trapping", "Thunder Mammoths"),
+        0.0,
+        "a trap line does not bring down a mammoth at any headcount"
+    );
 }

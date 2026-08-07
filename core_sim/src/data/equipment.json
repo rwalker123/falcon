@@ -30,6 +30,7 @@
       "starting_durability": 100.0,
       "wear": { "per": "kill", "amount": 0.2 },
       "effects": [
+        { "stat": "attack", "equipped": 8.0 },
         { "stat": "engage_multiplier", "equipped": 4.0 },
         { "stat": "dispersion", "equipped": 0.0 },
         { "stat": "exposure", "equipped": 0.0 }

@@ -89,7 +89,12 @@ const BAND_TRADE_ROW_FORMAT := "Trade: %.1f · [color=#%s]%s[/color]"
 # bar, and never a number scaled by what is left, because performance is FLAT until expiry and any
 # gradient drawn here would claim a taper the model does not have. What each kit actually DOES lives
 # one click down, where there is room to say it and to say that it stops.
-const BAND_KIT_ROW_PREFIX := "Kit: "
+# **"Gear", not "Kit" — the row lists ITEMS.** A kit is the named loadout a crew is SENT OUT WITH
+# and is chosen in the compose sheet's Kit picker; this row is the condition of the equipment the
+# band owns. Labelling item conditions "Kit" is the same two-nouns confusion the config carried until
+# the items were renamed off `*_kit`, and it read as "your kit is Spears, Sled, Baskets" — which is
+# not a kit at all.
+const BAND_KIT_ROW_PREFIX := "Gear: "
 const BAND_KIT_ROW_SEPARATOR := " · "
 const BAND_KIT_ROW_ENTRY_FORMAT := "%s [color=#%s]%s[/color]"
 
