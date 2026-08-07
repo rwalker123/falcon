@@ -237,8 +237,10 @@ func _hunt_avg_window_turns(herd: Dictionary, floor: float, improvement: String)
 ## leaves the crew, the dip and the quantisation exactly where they are, so the burst and the steady
 ## rate are the same computation asked twice. A separate steady-state formula would be free to drop
 ## the whole-animal branch and print a smooth number beside a bodies-per-turn one.
-func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float, workers: int,
+func _hunt_delivered_and_waste(band: Dictionary, herd_raw: Dictionary, floor: float, workers: int,
         improvement: String, holding: bool = false) -> Dictionary:
+    var herd := _kit_priced_source(herd_raw, HudComposeVocab.BARE_FORECAST_PREFIX, band,
+        KitRoster.JOB_HUNT, _compose.hunt_kit_id(), "hunt_carry")
     # PER COMPONENT, on the one this species pays (issue #337). The three terms must come from the SAME
     # axis or the arithmetic is nonsense: a wolf's per-animal FOOD quantum is 0 (divide by zero) while
     # its per-animal TRADE quantum is real. `herd_axis_rates` is the single place that choice is made,
@@ -381,8 +383,35 @@ func _local_hunt_preview_bbcode(band: Dictionary, herd: Dictionary, floor: float
 ## twin's rule, on the animal web. The TAKE carries it (the sim pays a building crew
 ## `workers × per_worker × build_dip`, and it is the crew's collection that is then quantised into whole
 ## animals); the SUSTAIN reference below must not.
-func _hunt_yield_model(band: Dictionary, herd: Dictionary, floor: float, workers: int,
+## **THE SOURCE AS THE CHOSEN KIT PRICES IT** — the one seam the compose sheet's numbers move
+## through when the player switches kits, and the reason neither yield model below knows a kit
+## exists.
+##
+## `carry_key` names which of the kit's two carry tiers this source is measured in; everything else
+## is arithmetic `KitRoster.repriced_source` does on the wire's own terms. A source that publishes no
+## retreat (a patch, a pen) is unaffected by the second half of that substitution, so the same call
+## serves both webs.
+##
+## **The tiers are the BAND's, not the kit's fresh ones** — `KitRoster.effective_tiers` steps a tier
+## down when the band has worn that item out, so a dry-basketed band is quoted bare-handed even while
+## the picker shows what a fresh gathering kit would grant.
+func _kit_priced_source(src: Dictionary, prefix: String, band: Dictionary, job: String,
+        kit_id: String, carry_key: String) -> Dictionary:
+    var kits: Array = _band_labor.kits()
+    var resolved := KitRoster.resolve_selection(kits, job, _band_labor.default_kit_id(job), kit_id)
+    var kit := KitRoster.kit_by_id(kits, resolved)
+    if kit.is_empty():
+        return src
+    var tiers := KitRoster.effective_tiers(kits, kit, band)
+    return KitRoster.repriced_source(src, prefix, float(tiers.get(carry_key, 0.0)),
+        float(kit.get("dispersion", 1.0)))
+
+func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, workers: int,
         improvement: String, reaches: bool = false) -> Dictionary:
+    # **PRICED AT THE KIT THE CREW WILL BE SENT WITH**, before a single term is read — so the
+    # sustainability bar, the take, the waste and the crew targets are all one kit's story.
+    var herd := _kit_priced_source(herd_raw, HudComposeVocab.BARE_FORECAST_PREFIX, band,
+        KitRoster.JOB_HUNT, _compose.hunt_kit_id(), "hunt_carry")
     # **THE SUSTAINABILITY BAR IS THE FOOD PEAK'S CEILING**, on the SAME axis the take is measured on
     # (comparing a trade take against a food ceiling would flag every wolf hunt as an overdraw, or
     # none of them). It is the floor at which the herd settles on its most productive biomass, so a
@@ -558,9 +587,13 @@ const YIELD_MODEL_WASTE := "waste"
 ## muted row and the sentence explaining it are two readings of one model dict: whoever evaluates this
 ## model at a given floor and crew gets both, and neither can be composed without the other.
 const YIELD_MODEL_LOCKED_REASON := "locked_reason"
-func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
+func _forage_yield_model(band: Dictionary, tile_raw: Dictionary, floor: float,
         workers: int, improvement: String = SourceForecast.IMPROVEMENT_NONE,
         reaches: bool = false) -> Dictionary:
+    # The plant twin, through the SAME seam — a patch publishes no retreat, so only the carry half of
+    # the substitution has anything to bite on.
+    var tile_info := _kit_priced_source(tile_raw, HudComposeVocab.FORAGE_FORECAST_PREFIX, band,
+        KitRoster.JOB_FORAGE, _compose.forage_kit_id(), "forage_carry")
     # The FOOD-PEAK ceiling is the patch's sustainable yield (what it will pay forever), so a take
     # above it draws the patch down — the same bar the hunt version uses, for the same reason.
     var sustain := SourceForecast.forecast_inputs(tile_info, SourceForecast.SOURCE_KIND_FORAGE,

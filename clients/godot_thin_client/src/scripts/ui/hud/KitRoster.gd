@@ -178,6 +178,78 @@ static func unequipped_tier(kits: Array, axis_key: String) -> float:
 		lowest = minf(lowest, float((entry_variant as Dictionary).get(axis_key, 0.0)))
 	return lowest
 
+## The wire keys this repricing substitutes. The per-worker family is one throughput in four
+## currencies, so they scale together or the sheet quotes a food rate off one kit and a trade rate off
+## another.
+const SOURCE_PER_WORKER_BIOMASS := "per_worker_biomass"
+const SOURCE_PER_WORKER_KEYS := [
+	"per_worker_biomass", "per_worker", "per_worker_trade", "per_worker_fodder",
+]
+const SOURCE_ENGAGE_RATE := "engage_rate"
+## `1 − wariness` — the fraction of what a party reaches that stays to be fought. Absent on a source
+## with no retreat stage (a pen, the whole plant web), which reads as "nothing breaks off".
+const SOURCE_STAY_FRACTION := "stay_fraction"
+const STAY_FRACTION_NONE_BREAKS_OFF := 1.0
+
+## **THE SOURCE, REPRICED FOR THE KIT THE CREW IS BEING SENT WITH** — a copy of the wire's own terms
+## with two substitutions, handed to the ordinary forecast so **every** consumer downstream (the take,
+## the waste, the crew targets, the chart) picks the kit up without knowing it exists.
+##
+## **It is pure arithmetic on published terms, and deliberately knows nothing about hunting or
+## gathering.** A source that publishes no engagement and no retreat — a patch, a pen — simply has no
+## key for the second substitution, so the same call does the right thing on both webs.
+##
+## 1. **Per-worker throughput scales by `carry / published_carry`.** The wire's `per_worker_biomass`
+##    is the EQUIPPED REFERENCE rate (a herd has no band to resolve a tier against), so the ratio is
+##    what turns it into *this* crew's rate. All four currencies scale together — they are one
+##    throughput expressed four ways.
+## 2. **`engage_rate` scales by the effective stay fraction**, `1 − (1 − stay) × dispersion`. Folding
+##    the retreat into the reach term is exact rather than convenient: everything downstream uses
+##    `engage_rate` to mean *animals brought into contact*, and the ones that bolt were never in
+##    contact. It also makes the CREW COUNT right for free — to bring down N you must engage
+##    `N / stay` — which a separate retreat factor applied only to the take would have missed.
+##
+## **This is where the trapping kit's whole advantage lands.** A spear party on a `wariness 0.75`
+## warren keeps one animal in four; a device that is not there to be seen (`dispersion 0`) keeps all
+## of them, and that is the difference the sheet has to show.
+##
+## The non-linear halves stay the sim's answer — the whole-animal quantiser and the fight — exactly as
+## `yield-forecast.md`'s "THE BOUNDARY" requires; nothing here re-derives a take.
+static func repriced_source(src: Dictionary, prefix: String, carry: float,
+		dispersion: float) -> Dictionary:
+	var published := float(src.get(prefix + SOURCE_PER_WORKER_BIOMASS, 0.0))
+	var out := src.duplicate()
+	# **A zero published rate is a real reading** (a dead-season patch moves no biomass), so there is
+	# no ratio to take and no repricing to do — never a division that would land an INF in four keys.
+	if published > 0.0 and carry > 0.0 and not is_equal_approx(carry, published):
+		var ratio := carry / published
+		for key in SOURCE_PER_WORKER_KEYS:
+			var full: String = prefix + String(key)
+			if out.has(full):
+				out[full] = float(out[full]) * ratio
+	# The retreat. Absent = no retreat stage, and a neutral dispersion leaves it alone, so both cases
+	# skip without a special branch.
+	if out.has(SOURCE_STAY_FRACTION) and not is_equal_approx(dispersion, 1.0):
+		var stay := clampf(float(out[SOURCE_STAY_FRACTION]), 0.0, 1.0)
+		var effective := clampf(1.0 - (1.0 - stay) * maxf(dispersion, 0.0), 0.0, 1.0)
+		if out.has(SOURCE_ENGAGE_RATE) and stay > 0.0:
+			out[SOURCE_ENGAGE_RATE] = float(out[SOURCE_ENGAGE_RATE]) * (effective / stay)
+		out[SOURCE_STAY_FRACTION] = effective
+	return out
+
+## **THE KIT'S ATTACK AGAINST THIS QUARRY** — the kit's own number inside its size window, and the
+## band's unequipped attack outside it.
+##
+## A snare holds a hare and not a deer, so asking a kit for its attack without naming the animal gets
+## the kit's BEST case — which would tell a player the trapping kit can take a Red Deer. `0` on a
+## bound means unbounded, which every weapon but the passive device is.
+static func attack_against(kit: Dictionary, body_mass: float, unequipped_attack: float) -> float:
+	var low := float(kit.get("attack_min_body_mass", 0.0))
+	var high := float(kit.get("attack_max_body_mass", 0.0))
+	if (low > 0.0 and body_mass < low) or (high > 0.0 and body_mass > high):
+		return unequipped_attack
+	return float(kit.get(KIT_ATTACK_KEY, unequipped_attack))
+
 ## **WHAT THIS BAND ACTUALLY GETS UNDER THIS KIT** — `{attack, hunt_carry, forage_carry, stated}`.
 ##
 ## `KitOption`'s numbers are for a FRESH kit; the band's real condition is on its own cohort. A

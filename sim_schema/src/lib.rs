@@ -54,7 +54,10 @@ mod tests {
                 attack: BARE_ATTACK,
                 hunt_carry_per_worker_biomass: BARE_HUNT_CARRY,
                 forage_carry_per_worker_biomass: BARE_FORAGE_CARRY,
-                // `none` carries nothing, so every multiplier reads its neutral.
+                // `none` carries nothing, so every multiplier reads its neutral and its attack —
+                // the bare hand's — is bounded by nothing.
+                attack_min_body_mass: 0.0,
+                attack_max_body_mass: 0.0,
                 dispersion: 1.0,
                 exposure: 1.0,
             }],

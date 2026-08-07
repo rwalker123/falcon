@@ -2326,6 +2326,31 @@ table HerdTelemetryState {
   // sim's `hunt_engage_workers` returns no crew for it. A **pen** is the other unbounded case and
   // publishes `0` for the same reason: a penned animal is not stalked.
   engageRate:float = 0;
+  // --- THE RETREAT, AS A TERM (appended) --------------------------------------------------------
+  // **What FRACTION of the animals a party reaches actually stay to be fought** — `1 - wariness`
+  // (`SpeciesDef.combat.wariness`, 0.10 on a mammoth that stands and fights up to 0.85 on a gazelle
+  // that survives by not being there). A pre-commit reading is incomplete without it: a spear party
+  // on a Rabbit Warren reaches ten animals a hunter and keeps two and a half.
+  //
+  // IT SHIPS AS A TERM FOR THE SAME REASON `engageRate` DOES, and the distinction matters because
+  // the schema previously refused to publish `wariness`: what was refused was a client-side copy of
+  // the TAKE MODEL. This is one linear factor on the engagement -
+  //
+  //   stayers(workers, rung) = workers * engageRate * <rung>BuildFraction * stayFraction
+  //
+  // - exactly the shape of the carry and engagement terms beside it, and a client evaluating it
+  //   lands where the sim would. THE NON-LINEAR HALVES REMAIN THE SIM'S ANSWER: the whole-animal
+  //   quantiser's floor(), the fight's damage/durability division, and `combat_config.hit_chance`,
+  //   which is still deliberately NOT published. See "THE BOUNDARY" in
+  //   `.claude/rules/core_sim/yield-forecast.md`.
+  //
+  // A KIT MULTIPLIES IT through `KitOption.dispersion`: effective = clamp(1 - (1 - stayFraction) *
+  // dispersion, 0, 1). A device that is not there to be seen (dispersion 0) keeps everything it
+  // reaches, which is the whole difference between the trapping kit and a spear party.
+  //
+  // `1` MEANS NOTHING BREAKS OFF and is the honest reading for a source with no retreat stage - a
+  // pen, and the entire plant web, which never publishes this field at all.
+  stayFraction:float = 1;
   // --- DURABILITY (appended, docs/plan_hunt_through_combat.md 4.2 / 6.5) -------------------------
   // HOW MUCH DAMAGE ONE ANIMAL OF THIS SPECIES SOAKS BEFORE IT GOES DOWN (SpeciesDef.combat
   // .durability). The last term needed to explain the combat gate BEFORE a hunt is launched, which
@@ -2639,6 +2664,19 @@ table KitOption {
   //     never in reach of the animal, and which pays its cost in durability instead of in people.
   dispersion:float = 1;
   exposure:float = 1;
+  // --- THE ATTACK'S SIZE BOUNDS (appended) -------------------------------------------------------
+  // **The range of quarry `attack` above actually applies to**, by `HerdTelemetryState.bodyMass`.
+  // Outside it the kit grants NO attack and the party falls back to the bare hand's - which is what
+  // makes `max(0, attack - defense)` refuse the hunt, with no separate "cannot" flag.
+  //
+  // A snare holds a hare and not a deer, so the passive device ships `attackMaxBodyMass 1.0`. `0`
+  // means UNBOUNDED on either end (the shipped default), so a kit that says nothing about size
+  // applies everywhere - which is every weapon but the device.
+  //
+  // Without these the client's pre-launch gate would resolve a trapping party's attack against a Red
+  // Deer and report a hunt it cannot make.
+  attackMinBodyMass:float = 0;
+  attackMaxBodyMass:float = 0;
 }
 
 table SubsistenceSection {

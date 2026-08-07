@@ -473,6 +473,18 @@ pub struct HerdTelemetryState {
     /// [`Self::body_mass`]. `0` for a species the roster cannot resolve. Appended (append-only).
     #[serde(default)]
     pub durability: f32,
+    /// **What fraction of the animals a party reaches actually STAYS to be fought** — `1 − wariness`.
+    ///
+    /// It ships as a **term** for the same reason `engage_rate` does: `stayers = reached ×
+    /// stay_fraction` is one linear factor, exactly the shape of the carry and engagement terms
+    /// beside it. What the schema previously refused to publish was a client-side copy of the *take
+    /// model*; the non-linear halves — the whole-animal quantiser, the fight's damage/durability
+    /// division, and `hit_chance` — remain the sim's answer and `hit_chance` is still unpublished.
+    ///
+    /// A kit multiplies it through `KitOptionState::dispersion`. `1.0` = nothing breaks off, which is
+    /// the honest reading for a pen and for the whole plant web.
+    #[serde(default)]
+    pub stay_fraction: f32,
     /// **The sim's pre-launch estimates for a DENIAL RAID against this herd** — one entry per party
     /// size, with no floor axis and no fill-target axis because the mission carries neither
     /// (`docs/plan_denial_raid.md`). The denial twin of [`Self::hunt_trip_estimates`]; empty for a
@@ -592,6 +604,10 @@ impl Default for HerdTelemetryState {
             // nothing has described.
             engage_rate: 0.0,
             durability: 0.0,
+            // **`1.0` — nothing breaks off.** The honest default for a source with no retreat stage
+            // (a pen, the whole plant web); a `0.0` default would read as "every animal flees" and
+            // silently zero a take.
+            stay_fraction: 1.0,
             denial_estimates: Vec::new(),
             // A herd nothing has described quotes no party — the same "no viable party" reading the
             // capture publishes for an unraidable one.
@@ -983,6 +999,14 @@ pub struct KitOptionState {
     /// Per-gatherer throughput (biomass/turn, **before** the tile's seasonal weight) under this kit —
     /// the baskets' tier.
     pub forage_carry_per_worker_biomass: f32,
+    /// **The range of quarry [`Self::attack`] applies to**, by body mass. `0` on either end means
+    /// unbounded. Outside the range the kit grants no attack at all and the party falls back to the
+    /// bare hand's, so the ordinary `max(0, attack − defense)` gate refuses the hunt.
+    #[serde(default)]
+    pub attack_min_body_mass: f32,
+    /// See [`Self::attack_min_body_mass`].
+    #[serde(default)]
+    pub attack_max_body_mass: f32,
     /// **What this kit multiplies the quarry's own `wariness` by** at the retreat — `1.0` leaves the
     /// species' flight response alone, `0` means nothing breaks off at contact.
     ///

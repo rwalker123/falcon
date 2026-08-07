@@ -1827,6 +1827,17 @@ fn kit_roster_states(
                     &choice,
                     &fresh,
                 ),
+                // **The attack's size window**, so the client's pre-launch gate resolves this kit
+                // against the quarry in front of it rather than against the kit's best case. `0` on
+                // either end is unbounded, which every weapon but the passive device is.
+                attack_min_body_mass: equipment
+                    .attack_mass_bounds(&choice, &fresh)
+                    .0
+                    .unwrap_or(0.0),
+                attack_max_body_mass: equipment
+                    .attack_mass_bounds(&choice, &fresh)
+                    .1
+                    .unwrap_or(0.0),
                 dispersion: equipment.dispersion(&choice, &fresh),
                 exposure: equipment.exposure(&choice, &fresh),
             }

@@ -783,6 +783,12 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // how many counting hits a body takes. The client composes both — it already holds
                 // the band's own `hunterAttack` — so no "can this band win" answer is exported.
                 durability: species_def.map(|def| def.combat.durability).unwrap_or(0.0),
+                // **`1 − wariness`, the retreat as a term.** `1.0` for a species the roster cannot
+                // resolve — nothing breaks off — which is the same reading a pen and the plant web
+                // give and keeps an unresolved row from silently zeroing a take.
+                stay_fraction: species_def
+                    .map(|def| (1.0 - def.combat.wariness).clamp(0.0, 1.0))
+                    .unwrap_or(1.0),
                 ferocity: species_def.map(|def| def.ferocity).unwrap_or(0.0),
                 aggression: species_def.map(|def| def.aggression).unwrap_or(0.0),
                 // Predators Phase 1a — the herd's prey-sensing radius, but ONLY for a carnivore

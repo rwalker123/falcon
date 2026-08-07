@@ -735,6 +735,53 @@ impl EquipmentConfig {
         kit.multiplier(EquipmentStat::Dispersion, wear, self)
     }
 
+    /// **The size window this kit's `attack` applies within**, as `(min, max)` body mass — the
+    /// **widest** window its live weapons cover, because the kit can reach whatever its best weapon
+    /// reaches. `None` on an end means unbounded there.
+    ///
+    /// Published so a **client** can resolve the pre-launch gate against the quarry in front of it.
+    /// Without it a picker asks *"can this kit hurt a Red Deer"*, gets the passive device's
+    /// `attack 20`, and answers **yes** about a hunt that would take nothing.
+    ///
+    /// A kit with no live weapon at all returns `(None, None)`: there is no attack to bound, and the
+    /// party is bare-handed everywhere rather than nowhere.
+    pub fn attack_mass_bounds(
+        &self,
+        kit: &KitChoice,
+        wear: &crate::components::BandEquipment,
+    ) -> (Option<f32>, Option<f32>) {
+        let mut window: Option<(Option<f32>, Option<f32>)> = None;
+        for item in kit.live_items(wear, self) {
+            for effect in item
+                .effects
+                .iter()
+                .filter(|e| e.stat == EquipmentStat::Attack)
+            {
+                // **An unbounded weapon widens the window to everything and ends the search** — a
+                // kit carrying one bounded and one unbounded attack reaches every quarry.
+                if !effect.is_mass_bounded() {
+                    return (None, None);
+                }
+                window = Some(match window {
+                    None => (effect.min_body_mass, effect.max_body_mass),
+                    Some((min, max)) => (
+                        // `None` is "no bound", which is WIDER than any number — so a union with it
+                        // stays `None` rather than collapsing to the other side's value.
+                        match (min, effect.min_body_mass) {
+                            (Some(a), Some(b)) => Some(a.min(b)),
+                            _ => None,
+                        },
+                        match (max, effect.max_body_mass) {
+                            (Some(a), Some(b)) => Some(a.max(b)),
+                            _ => None,
+                        },
+                    ),
+                });
+            }
+        }
+        window.unwrap_or((None, None))
+    }
+
     /// **How much the hunt's baseline injury hazard is multiplied by** — `0` for a party whose whole
     /// kit keeps it out of reach of the animal.
     pub fn exposure(&self, kit: &KitChoice, wear: &crate::components::BandEquipment) -> f32 {

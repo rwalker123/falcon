@@ -1410,6 +1410,7 @@ func _ready() -> void:
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
 	_assert_kit_picker_closed()
+	_assert_kit_reprices_the_source()
 
 	# **OPEN.** The roster grows toward a dozen kits and a pill row cannot hold that in a 354px column,
 	# so the control is an `OptionButton` — a native selector, which also MARKS the current entry
@@ -2653,13 +2654,19 @@ func _assert_map_path_states_kit() -> void:
 	# `SourceForecast` actually read, so the claim is "what the panel asks for arrived".
 	var missing: Array[String] = []
 	for toe_key in [
-		DetailFormat.KIT_DURABILITY_KEY_SPEARS, DetailFormat.KIT_DURABILITY_KEY_SLED,
-		DetailFormat.KIT_DURABILITY_KEY_BASKETS, DetailFormat.KIT_TIER_KEY_HUNT_CARRY,
+		DetailFormat.KIT_ITEM_CONDITIONS_KEY, DetailFormat.KIT_TIER_KEY_HUNT_CARRY,
 		DetailFormat.KIT_TIER_KEY_FORAGE_CARRY, SourceForecast.BAND_HUNTER_ATTACK_KEY,
 	]:
 		if not band.has(toe_key):
 			missing.append(String(toe_key))
-	_assert_band_panel("the map-click payload carries the Minimal TOE's six (missing %s)" % str(missing),
+	# **The condition list must arrive with ROWS, not merely with a key.** An empty array is what a
+	# dropped copy looks like, and `DetailFormat.band_states_kit` reads exactly that emptiness as
+	# "this band states no kit" — so the Kit row would vanish rather than render wrong, which is the
+	# failure a `has()` check cannot see.
+	var conditions: Array = band.get(DetailFormat.KIT_ITEM_CONDITIONS_KEY, [])
+	if conditions.is_empty():
+		missing.append("%s (present but EMPTY)" % DetailFormat.KIT_ITEM_CONDITIONS_KEY)
+	_assert_band_panel("the map-click payload carries the TOE the panel reads (missing %s)" % str(missing),
 		missing.is_empty())
 	# …and the payload is the WHOLE cohort, which is the invariant that stops a fourth leak: the marker
 	# is `entry.duplicate()` plus declared stamps, so every key the fixture cohort carries is here.
@@ -2674,10 +2681,15 @@ func _assert_map_path_states_kit() -> void:
 	# …and they arrive as the FLOATS the wire carries. Presence cannot see an `int()` narrowing, which
 	# is the second bug class `marker_field_guard` exists for and which is live-visible here: the
 	# marker IS the selection payload for a band clicked on the map.
-	var spears := float(_kit_band_fixture().get(DetailFormat.KIT_DURABILITY_KEY_SPEARS, 0.0))
+	# The condition of ONE named item, pulled out of the list the wire now carries. The fixture's own
+	# number is the expectation, so the assertion cannot be satisfied by re-deriving it through the
+	# code under test.
+	var spears := DetailFormat.kit_condition(_kit_band_fixture(),
+		DetailFormat.KIT_DURABILITY_KEY_SPEARS)
+	var copied := DetailFormat.kit_condition(band, DetailFormat.KIT_DURABILITY_KEY_SPEARS)
 	_assert_band_panel("…un-narrowed, spears reading %s against the fixture's %s"
-			% [str(band.get(DetailFormat.KIT_DURABILITY_KEY_SPEARS, 0.0)), str(spears)],
-		is_equal_approx(float(band.get(DetailFormat.KIT_DURABILITY_KEY_SPEARS, 0.0)), spears))
+			% [str(copied), str(spears)],
+		is_equal_approx(copied, spears))
 	# The RENDER half — the row the report was actually about. The needle carries the VALUE as well as
 	# the label, so it cannot be satisfied by a row that rendered the kit's name over a defaulted
 	# reading; and it is composed from the FIXTURE's number rather than asked of `kit_condition_face`,
@@ -5159,6 +5171,69 @@ func _pick_kit(kit_id: String) -> void:
 ## nothing. The carry is the BARE tier while the roster publishes 40 for this kit, so a hint quoting
 ## the fresh number fails here and nowhere else; the attack is the EQUIPPED one on the same line,
 ## which is what stops "quote the bare tier for everything" passing instead.
+## **SWITCHING KITS MOVES THE SHEET'S NUMBERS** — the substitution the whole compose readout rides on,
+## asserted as arithmetic on a synthetic source rather than through a rendered panel, because what has
+## to be right is the math and a screenshot cannot say whether it was.
+##
+## Reported from play: picking the Trapping kit changed nothing on the hunt sheet. The preview read
+## the HERD's own terms — which are the equipped REFERENCE rates, since a herd has no band to resolve
+## a tier against — and never the crew's chosen kit.
+##
+## Both halves are checked because they fail differently. **Carry** is the obvious one and moves every
+## source. **The retreat** is the one that matters for the kit a player is actually comparing:
+## `big_game` and `trapping` carry the same sled, so their carry is IDENTICAL and only the retreat
+## separates them. A repricing that did carry alone would look correct and still leave the two kits
+## quoting the same take.
+func _assert_kit_reprices_the_source() -> void:
+	const PUBLISHED_CARRY := 40.0
+	const BARE_CARRY := 12.0
+	const PUBLISHED_ENGAGE := 10.0
+	# `1 - wariness` for a Rabbit Warren at 0.75: a spear party keeps one animal in four.
+	const STAY := 0.25
+	var src := {
+		"per_worker_biomass": PUBLISHED_CARRY,
+		"per_worker": 8.0,
+		"engage_rate": PUBLISHED_ENGAGE,
+		"stay_fraction": STAY,
+	}
+
+	# --- CARRY: a sledless crew hauls a third as much, in every currency at once.
+	var bare := KitRoster.repriced_source(src, "", BARE_CARRY, 1.0)
+	var ratio := BARE_CARRY / PUBLISHED_CARRY
+	_assert_band_panel("a kit's carry reprices the source's per-worker biomass (%s)"
+			% str(bare["per_worker_biomass"]),
+		is_equal_approx(float(bare["per_worker_biomass"]), BARE_CARRY))
+	_assert_band_panel("…and the yield currencies scale with it, not independently (%s)"
+			% str(bare["per_worker"]),
+		is_equal_approx(float(bare["per_worker"]), 8.0 * ratio))
+
+	# --- THE RETREAT: a device that is not there to be seen keeps everything it reaches.
+	var trapped := KitRoster.repriced_source(src, "", PUBLISHED_CARRY, 0.0)
+	_assert_band_panel("dispersion 0 means nothing breaks off (%s)" % str(trapped["stay_fraction"]),
+		is_equal_approx(float(trapped["stay_fraction"]), 1.0))
+	# Folded into the reach term, so the take AND the crew count are both right without a second
+	# factor applied anywhere: reaching `1/STAY` times as many is exactly what keeping all of them is.
+	_assert_band_panel("…and it rides the ENGAGEMENT term, so one substitution serves both (%s)"
+			% str(trapped["engage_rate"]),
+		is_equal_approx(float(trapped["engage_rate"]), PUBLISHED_ENGAGE / STAY))
+	# The claim that motivated all of it: same carry, different take.
+	_assert_band_panel("…so two kits with the SAME carry still quote different takes",
+		not is_equal_approx(float(trapped["engage_rate"]), PUBLISHED_ENGAGE))
+
+	# --- A NEUTRAL KIT CHANGES NOTHING, or the shipped game moved.
+	var neutral := KitRoster.repriced_source(src, "", PUBLISHED_CARRY, 1.0)
+	_assert_band_panel("a kit at the published carry and a neutral dispersion is a no-op",
+		is_equal_approx(float(neutral["per_worker_biomass"]), PUBLISHED_CARRY)
+			and is_equal_approx(float(neutral["engage_rate"]), PUBLISHED_ENGAGE)
+			and is_equal_approx(float(neutral["stay_fraction"]), STAY))
+
+	# --- A SOURCE WITH NO RETREAT STAGE (a patch, a pen) is untouched by that half.
+	var patch := {"patch_per_worker_biomass": 8.0, "patch_per_worker": 6.0}
+	var gathered := KitRoster.repriced_source(patch, "patch_", 1.6, 0.0)
+	_assert_band_panel("a source that publishes no retreat is repriced on carry alone",
+		is_equal_approx(float(gathered["patch_per_worker_biomass"]), 1.6)
+			and not gathered.has("stay_fraction"))
+
 func _assert_kit_picker_closed() -> void:
 	var picker := _find_meta_control(_panel, KitRoster.KIT_PICKER_META) as OptionButton
 	_assert_band_panel("the denial sheet carries a Kit picker", picker != null)
