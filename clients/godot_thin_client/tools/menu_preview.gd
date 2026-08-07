@@ -5,7 +5,7 @@ extends Node
 ## no network — the actual render code against the real HudStyle. Run from the repo root:
 ##
 ##   godot --headless --path clients/godot_thin_client --import     # if scenes/scripts changed
-##   godot --path clients/godot_thin_client res://tools/menu_preview.tscn   # NOT --headless
+##   scripts/preview.sh res://tools/menu_preview.tscn                       # NOT --headless
 ##
 ## then read ui_preview_out/menu_landing.png and menu_pause.png.
 

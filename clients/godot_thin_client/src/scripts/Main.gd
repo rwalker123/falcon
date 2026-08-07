@@ -526,8 +526,11 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         _hud_invoke("update_build_info", [String(snapshot["server_build"])])
     if snapshot.has("sedentarization") and SnapshotSections.changed(snapshot, "sedentarization"):
         _hud_invoke("update_sedentarization", [snapshot["sedentarization"]])
-    if snapshot.has("demographics") and SnapshotSections.changed(snapshot, "demographics"):
-        _hud_invoke("update_demographics", [snapshot["demographics"]])
+    # **`demographics` IS DISPATCHED NOWHERE — the wire field has no client reader at all** since the
+    # top bar's `Pop 100 👶34 🛠16 🧓5` line was retired (issue #450). The faction page's PEOPLE bar
+    # answers the same question and answers it from the BANDS, apportioned once across the roster, so
+    # a second per-faction total would be a second source of truth for the head count. The sim still
+    # publishes the section; it joins `accessibleStockpile` as an unread wire table.
     if snapshot.has("intensification_knowledge") and SnapshotSections.changed(snapshot, "intensification_knowledge"):
         _hud_invoke("update_intensification", [snapshot["intensification_knowledge"]])
     if snapshot.has("discovered_sites") and SnapshotSections.changed(snapshot, "discovered_sites"):
@@ -1301,7 +1304,7 @@ func _reserver_overlays_map(id: StringName, edge: int) -> bool:
 ##
 ## **BUT THE INSET WAS SILENTLY DOING A SECOND JOB, and a bare exemption loses it.** The card only clears
 ## the lateral columns because those columns are SHORT — with the bounds applied instead, a 1920 bottom
-## dock's card span falls 1599 → 895, under `WIDE_SHELL_MIN_WIDTH` (1190), and the dock drops out of the
+## dock's card span falls 1599 → 895, under `wide_shell_min_width()` (1190), and the dock drops out of the
 ## wide shell into the tabbed one. So the yield is traded, not removed: the HUD keeps its strip only where
 ## the card can pay the two bounds and STILL stand in the wide shell. Below that width the status quo is
 ## exactly preserved — at 1920 and under, this returns `false` on `SIDE_BOTTOM` as it always did.

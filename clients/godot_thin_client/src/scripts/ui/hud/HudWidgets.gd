@@ -32,7 +32,7 @@ class_name HudWidgets
 ##
 ## CONSTS LIVE IN THE TOPIC VOCAB MODULES (`HudConst` / the matching `Hud*Vocab`) and are read as
 ## `Module.X`. Word/format VOCABULARY lives next door in
-## `HudFormat`, which this file calls freely (both are static); the split is so `TopBarReadouts` can
+## `HudFormat`, which this file calls freely (both are static); the split is so `FactionReadouts` can
 ## depend on the formatting without importing a widget factory.
 
 ## A "<label>   − N +" worker-count row. `on_change` is called with the new count

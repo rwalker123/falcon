@@ -22,20 +22,6 @@ size_flags_horizontal = 3
 size_flags_vertical = 3
 mouse_filter = 2
 
-[node name="TopBar" type="HBoxContainer" parent="LayoutRoot/RootColumn"]
-size_flags_horizontal = 3
-custom_minimum_size = Vector2(0, 96)
-mouse_filter = 2
-
-[node name="TopSpacer" type="Control" parent="LayoutRoot/RootColumn/TopBar"]
-size_flags_horizontal = 3
-mouse_filter = 2
-
-[node name="TurnBlock" type="VBoxContainer" parent="LayoutRoot/RootColumn/TopBar"]
-size_flags_horizontal = 1
-custom_minimum_size = Vector2(344, 0)
-mouse_filter = 2
-
 [node name="ContentRow" type="HBoxContainer" parent="LayoutRoot/RootColumn"]
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -143,40 +129,6 @@ mouse_filter = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 mouse_filter = 2
-
-[node name="TurnLabel" type="Label" parent="LayoutRoot/RootColumn/TopBar/TurnBlock"]
-theme_override_colors/font_color = Color(1, 1, 1, 1)
-text = "Turn 0"
-
-[node name="MetricsLabel" type="Label" parent="LayoutRoot/RootColumn/TopBar/TurnBlock"]
-theme_override_colors/font_color = Color(0.8, 0.95, 1, 1)
-text = "Units: 0"
-
-[node name="SedentarizationLabel" type="Label" parent="LayoutRoot/RootColumn/TopBar/TurnBlock"]
-unique_name_in_owner = true
-theme_override_colors/font_color = Color(0.616, 0.69, 0.678, 1)
-visible = false
-
-[node name="DemographicsLabel" type="Label" parent="LayoutRoot/RootColumn/TopBar/TurnBlock"]
-unique_name_in_owner = true
-theme_override_colors/font_color = Color(0.616, 0.69, 0.678, 1)
-visible = false
-
-[node name="DiscoveriesRow" type="HBoxContainer" parent="LayoutRoot/RootColumn/TopBar/TurnBlock"]
-unique_name_in_owner = true
-visible = false
-
-[node name="DiscoveriesLabel" type="Label" parent="LayoutRoot/RootColumn/TopBar/TurnBlock/DiscoveriesRow"]
-unique_name_in_owner = true
-theme_override_colors/font_color = Color(0.616, 0.69, 0.678, 1)
-
-[node name="DiscoveriesStrip" type="HBoxContainer" parent="LayoutRoot/RootColumn/TopBar/TurnBlock/DiscoveriesRow"]
-unique_name_in_owner = true
-
-[node name="IntensificationLabel" type="Label" parent="LayoutRoot/RootColumn/TopBar/TurnBlock"]
-unique_name_in_owner = true
-theme_override_colors/font_color = Color(0.616, 0.69, 0.678, 1)
-visible = false
 
 [node name="TellingPanel" type="PanelContainer" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack"]
 script = ExtResource("4")

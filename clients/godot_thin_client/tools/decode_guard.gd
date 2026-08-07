@@ -104,6 +104,31 @@ const TILES_KEY := "tiles"
 ## before it. So this is the only witness here that can testify about that line.
 const WHOLE_SECTION_WITNESS := {"key": "demographics", "id": "faction", "probe": "children"}
 
+## **THE SECOND WHOLE-SECTION WITNESS, and it pins one thing `demographics` cannot: that the decoder
+## republishes this field OPAQUE.**
+##
+## `SubsistenceSection.equipmentConfigJson` is the sim's whole effective `EquipmentConfig` as one
+## `serde_json` string, and the Workbench's Equipment and Kits pages parse it themselves and walk it
+## blind — which is what lets a field added to `equipment.json` reach the surface with no client edit
+## (`.claude/rules/client/workbench.md` → "The two config pages PRINT the config"). So it is asserted
+## by **equality on the whole string**, never `contains`: the delta's value is a JSON OBJECT, and its
+## braces and quotes surviving verbatim IS the "never parsed, never re-serialised, never trimmed"
+## contract. A decoder that unpacked it into typed keys and rebuilt it would fail here even if every
+## field came back.
+##
+## It is also the whole-section field the CLIENT's own gate depends on: both pages read
+## `SnapshotSections.changed(data, "equipment_config_json")`, which is the delta manifest, so the
+## manifest naming it on the frame that carries it — and NOT naming it on the frame that does not — is
+## asserted alongside the value.
+const OPAQUE_WITNESS_KEY := "equipment_config_json"
+## What the BASELINE states it as: the decode fixture's saturation-path sentinel, which gives every
+## string field its own wire path as its value.
+const OPAQUE_WITNESS_BASELINE := "equipment_config_json"
+## …and what DELTA 1 replaces it with. **Deliberately not the baseline's value**: if the two matched,
+## a decoder that ignored the delta entirely and republished the baseline would satisfy every claim
+## below.
+const OPAQUE_WITNESS_AFTER_DELTA := "{\"fixture\":\"delta.equipment_config_json\"}"
+
 ## The delta frame's change manifest, and the section the fixture's delta deliberately leaves
 ## untouched — absence from the manifest is only meaningful if something IS absent from it.
 const CHANGED_SECTIONS_KEY := "changed_sections"
@@ -283,6 +308,17 @@ func _assert_delta_chain(decoder: Object, baseline: Dictionary) -> bool:
 	for section in MERGED_SECTIONS:
 		baseline_rows[section["key"]] = _rows_by_id(baseline.get(section["key"], []), section["id"])
 
+	# THE OPAQUE WITNESS'S PRECONDITION. Both claims about it below are "the delta's value replaced
+	# the baseline's and then stayed", which say nothing at all unless the baseline established one
+	# first — and unless the two values genuinely differ.
+	var opaque_baseline := str(baseline.get(OPAQUE_WITNESS_KEY, ""))
+	if opaque_baseline != OPAQUE_WITNESS_BASELINE:
+		_die("the baseline frame states %s as '%s', not the fixture's '%s' — the delta assertions below would be comparing against nothing. Regenerate with cargo xtask decode-fixture." % [OPAQUE_WITNESS_KEY, opaque_baseline, OPAQUE_WITNESS_BASELINE])
+		return false
+	if OPAQUE_WITNESS_BASELINE == OPAQUE_WITNESS_AFTER_DELTA:
+		_die("the fixture's baseline and delta values for %s are the SAME string — a decoder that ignored the delta entirely and republished the baseline would pass both assertions below." % OPAQUE_WITNESS_KEY)
+		return false
+
 	var frame1 := _decode_delta_or_die(decoder, DELTA_FIXTURE_PATH, "the DELTA envelope", baseline)
 	if _died:
 		return false
@@ -311,6 +347,22 @@ func _assert_delta_chain(decoder: Object, baseline: Dictionary) -> bool:
 		return false
 	if not (frame1.get(CHANGED_SECTIONS_KEY, PackedStringArray()) as PackedStringArray).has(witness_key):
 		_die("delta 1's %s does not name %s even though it carried it — the manifest must name a whole-section replacement." % [CHANGED_SECTIONS_KEY, witness_key])
+		return false
+
+	# --- ASSERTION 1: the delta's own value reached the merged frame, VERBATIM ----------------
+	# This is the leg that a delta path never wired up fails on: `snapshot_to_dict` alone leaves the
+	# baseline's value standing for the life of the world, which is the `food_modules` /
+	# `faction_inventory` staleness reached one more way. Equality on the WHOLE string, not
+	# `contains` — the value is a JSON object, so its braces and quotes surviving is also the
+	# "republished opaque, never parsed" contract.
+	var opaque_after_1 := str(frame1.get(OPAQUE_WITNESS_KEY, ""))
+	if opaque_after_1 != OPAQUE_WITNESS_AFTER_DELTA:
+		var stale := opaque_after_1 == OPAQUE_WITNESS_BASELINE
+		var note := " — that is the BASELINE's value, so the delta path never read this field at all and the client would run the whole world on the config it booted with" if stale else ""
+		_die("delta 1's merged frame states %s as '%s', not the '%s' the delta carried%s. Every whole-section field must be decoded in BOTH snapshot_to_dict and decode_delta_against." % [OPAQUE_WITNESS_KEY, opaque_after_1, OPAQUE_WITNESS_AFTER_DELTA, note])
+		return false
+	if not (frame1.get(CHANGED_SECTIONS_KEY, PackedStringArray()) as PackedStringArray).has(OPAQUE_WITNESS_KEY):
+		_die("delta 1's %s does not name %s even though it carried it — the Workbench's config pages gate on SnapshotSections.changed() for exactly this key, so an unnamed replacement is one they skip." % [CHANGED_SECTIONS_KEY, OPAQUE_WITNESS_KEY])
 		return false
 
 	var frame2 := _decode_delta_or_die(decoder, DELTA2_FIXTURE_PATH, "the SECOND DELTA envelope", frame1)
@@ -356,9 +408,25 @@ func _assert_delta_chain(decoder: Object, baseline: Dictionary) -> bool:
 		_die("%s reads %s after the second delta but delta 1 had set it to %s%s. Delta 2 does not carry this section at all, so its value can only come from the frame delta 1 published — every merge must start from `cache.dict` AFTER the previous merge replaced it." % [witness_key, str(witness_after_2), str(witness_after_1), note])
 		return false
 
-	print("decode_guard: delta chain merged (frame %d then %d on the baseline's %d; %d of delta 1's rows survived delta 2)" % [
+	# --- ASSERTION 2: the delta's value SURVIVED a delta that does not carry it ---------------
+	# **This is the one that earns its keep.** Delta 2 carries no `equipment_config_json` at all, so
+	# the only thing that can keep delta 1's value on the frame is the second merge starting from the
+	# frame BEFORE it rather than re-basing on the baseline. Assertion 1 passes against a re-based
+	# merge; this one sees it — the same property `demographics` is the existing witness for, on a
+	# field whose staleness would be silent for the life of the world.
+	if (frame2.get(CHANGED_SECTIONS_KEY, PackedStringArray()) as PackedStringArray).has(OPAQUE_WITNESS_KEY):
+		_die("delta 2's %s names %s, but the fixture's delta 2 must not carry it — that absence is what makes the persistence assertion below meaningful (cargo xtask decode-fixture)." % [CHANGED_SECTIONS_KEY, OPAQUE_WITNESS_KEY])
+		return false
+	var opaque_after_2 := str(frame2.get(OPAQUE_WITNESS_KEY, ""))
+	if opaque_after_2 != opaque_after_1:
+		var reverted := opaque_after_2 == OPAQUE_WITNESS_BASELINE
+		var note := " — that is the BASELINE's value, so the second merge re-based the frame DICTIONARY on the original baseline instead of the frame before it" if reverted else ""
+		_die("%s reads '%s' after the second delta but delta 1 had set it to '%s'%s. Delta 2 does not carry this field at all, so its value can only come from the frame delta 1 published." % [OPAQUE_WITNESS_KEY, opaque_after_2, opaque_after_1, note])
+		return false
+
+	print("decode_guard: delta chain merged (frame %d then %d on the baseline's %d; %d of delta 1's rows survived delta 2, and so did %s and %s)" % [
 		int(frame1.get(FRAME_SEQ_KEY, -1)), int(frame2.get(FRAME_SEQ_KEY, -1)),
-		int(baseline.get(FRAME_SEQ_KEY, -1)), carried,
+		int(baseline.get(FRAME_SEQ_KEY, -1)), carried, witness_key, OPAQUE_WITNESS_KEY,
 	])
 	return true
 

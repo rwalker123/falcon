@@ -1,2 +1,7 @@
 # Rendered output from the tools/ui_preview.gd HUD preview harness.
 ui_preview_out/
+
+# Written and removed by scripts/preview.sh for the duration of a render-harness run, so the
+# harness window does not take the keyboard. Never committed: it would boot the GAME windowed
+# and unfocusable.
+override.cfg

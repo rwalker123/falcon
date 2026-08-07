@@ -249,6 +249,22 @@ CLIENT_EXIT_CODE=0
 
 if [[ "$RUN_CLIENT" == true || "$RUN_GODOT" == true ]]; then
   echo "[run_stack] Launching thin client..."
+  # `scripts/preview.sh` drops an override.cfg so a RENDER HARNESS gets a windowed, no-focus
+  # window; it removes it again on exit, including on Ctrl-C. A SIGKILL or a crash can still
+  # strand one, and a stranded override boots the GAME windowed and UNFOCUSABLE -- an app you
+  # cannot click into, with nothing on screen saying why. This is the self-heal: the game's own
+  # launcher clears any override it recognises as the harness's.
+  #
+  # It CANNOT tell a stranded override from one a harness is using right now, and it deletes
+  # either -- an unfocusable game is worse than a loud preview. A harness already running has
+  # read the file at boot and is unaffected; only one that starts after this point renders with
+  # the focus-grabbing window. The message says what happened rather than claiming the file was
+  # stale, because it does not know that.
+  preview_override="$ROOT_DIR/clients/godot_thin_client/override.cfg"
+  if [[ -e "$preview_override" ]] && grep -q 'written by scripts/preview.sh' "$preview_override"; then
+    rm -f "$preview_override"
+    echo "[run_stack] Removed a scripts/preview.sh override.cfg so the client boots fullscreen"
+  fi
   set +e
   if [[ "$RUN_GODOT" == true ]]; then
     env \

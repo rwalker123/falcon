@@ -135,21 +135,29 @@ by reserver id, so multiple panels can reserve (possibly different) edges at onc
 
 ### The HUD's own side columns are AUTHORED, and a horizontal panel must respect them
 
-A panel that spans the HUD's width draws over the left dock, the right dock and
-the top-bar readout block — none of which are reservers, so bounding against the
-reservation registry alone is not enough. `Hud.left_column_width()` /
-`right_column_width()` publish those widths, and they read `custom_minimum_size.x`
-off the scene's own regions rather than measuring content:
+A panel that spans the HUD's width draws over the left dock and the right dock —
+neither of which is a reserver, so bounding against the reservation registry
+alone is not enough. `Hud.left_column_width()` / `right_column_width()` publish
+those widths, and they read `custom_minimum_size.x` off the scene's own regions
+rather than measuring content:
 
 | Region | Authored | Why it cannot drift |
 |---|---|---|
 | `LeftDock` | 360 | `PanelDock` zeroes the stack's horizontal minimum on construction, so no card can widen the column |
 | `RightDock` | 344 | its card minimum (320) plus its authored margins (8 + 16), authored as the outer minimum so the published number is the one it renders at |
-| `TurnBlock` | 344 | authored to match the dock beneath it — it had **no** minimum of its own and was pure text width, which is exactly the measurement that must not decide a panel's edge |
 
-`TurnBlock` is the **only** content in `TopBar` besides the expanding spacer that pushes it right —
-the campaign title block that used to sit at its left end is gone, so the bar's authored 96px height
-is now carrying one right-aligned readout column and nothing else.
+**THE THIRD REGION IS GONE, AND IT WAS THE ONE THIS RULE WAS WRITTEN FOR.** `TurnBlock` — the
+top-right readout column carrying `Turn N`, `Units · Logistics · Sentiment`, the Sedentarization
+meter, the `Pop …` demographics line, the discovered-sites strip and the `⚒ Your people know:`
+strip — is retired outright (issue #450), and `TopBar` with it, the block having been its only
+content besides the spacer that pushed it right. It is why the rule exists: the block had **no**
+minimum of its own, was pure text width, and rendered 419px against the 344 it was later authored
+to — a measured width deciding a panel's edge, which is exactly what must not happen.
+
+Two consequences: `right_column_width()` is one region's authored minimum rather than the wider of a
+pair, and the `ContentRow` now starts at the top of the screen, so **a TOP-edge bar or card shares a
+vertical band with the RIGHT DOCK** where it used to share one with the readouts. The clearance
+claims moved with it, not away.
 
 **A bar whose edge tracked a MEASURED width is the flicker rule again**: it would
 jump when the player selects a tile and the selection card appears, or when a

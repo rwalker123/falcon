@@ -22,7 +22,7 @@ for the scripts it covers. The boot/menu/settings rows stay above.
 | `hud-modules.md` | `Hud.gd` + every `ui/hud/` module and vocabulary leaf | `Hud.gd`, `ui/hud/**` |
 | `labor-ui.md` | The compose sheet, labor allocation, source forecasts, arrivals | `ComposeSheet.gd`, `ComposeState.gd`, `SourceForecast.gd` |
 | `selection-card.md` | ONE card, ONE list, ONE drawer; the land as a subject | `SelectionCardController.gd`, `SubjectDrawerController.gd` |
-| `band-readouts.md` | Demographics, food, morale, wellbeing, habitability, climate | `BandDetailLines.gd`, `TopBarReadouts.gd`, `BandFoodStatus.gd` |
+| `band-readouts.md` | Demographics, food, morale, wellbeing, habitability, climate | `BandDetailLines.gd`, `FactionReadouts.gd`, `BandFoodStatus.gd` |
 | `herd-readouts.md` | Fog gate, herd ecology, husbandry, corral, the pen | `PenStatus.gd`, `FaunaPanel.gd` |
 | `land-readouts.md` | Forage, "what grows here", the crop picker, pasture, the meters | `hud_flora_vocab.gd`, `FoodIcons.gd` |
 | `turn-orb.md` | Band alerts and the attention model | `AttentionController.gd`, `TurnOrbController.gd` |
@@ -46,7 +46,7 @@ for the scripts it covers. The boot/menu/settings rows stay above.
 | `native-extension.md` | The GDExtension module map | `native/src/**` |
 | `scripting-capability.md` | The scripting capability model | `src/scripts/scripting/**` |
 | `../core_sim/ports.md` | Endpoint discovery, the ports handshake file (the server owns this contract) | `ServerPortsFile.gd`, `Main.gd`, `LogsPanel.gd` |
-| `../core_sim/world-handoff.md` | Which world a frame belongs to: the reveal gate, retry-until-answered, resetting per-world caches (spans both halves) | `Main.gd`, `Hud.gd`, `MapView.gd`, `TopBarReadouts.gd`, `TellingPanel.gd` |
+| `../core_sim/world-handoff.md` | Which world a frame belongs to: the reveal gate, retry-until-answered, resetting per-world caches (spans both halves) | `Main.gd`, `Hud.gd`, `MapView.gd`, `FactionReadouts.gd`, `TellingPanel.gd` |
 
 **Cross-reference convention.** A quoted phrase like `see "Map markers"` names a
 *section heading*, not a file. Resolve it with

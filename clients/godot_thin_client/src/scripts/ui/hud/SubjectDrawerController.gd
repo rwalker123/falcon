@@ -106,11 +106,17 @@ func _is_player_unit(unit: Dictionary) -> bool:
 
 ## The single drawer, filled by whichever subject row is lit. Exactly one of the three content
 ## paths is visible at a time — that is what bounds the card's height.
-func render_subject_drawer() -> void:
+##
+## **`from_selection` SAYS WHETHER THE PLAYER JUST PICKED THIS OCCUPANT**, and it is the whole of what
+## the band branch below uses to tell a SELECTION from a RESTATE. Only `Hud.show_unit_selection`'s
+## render passes `true`; every re-render for a reason other than the player's pick — a disclosure
+## caret flipping its hosts, the per-snapshot `reapply_selection`, a pending-edit restate — takes the
+## default, because the faction page must survive all three.
+func render_subject_drawer(from_selection: bool = false) -> void:
     if _selection.subject() == HudSelectionState.SUBJECT_LAND:
         _render_land_drawer()
     else:
-        _render_occupant_drawer()
+        _render_occupant_drawer(from_selection)
     # An OPEN compose sheet re-renders IN PLACE against the fresh subject. This is the SNAPSHOT path
     # (`reapply_selection` → here, every turn), and it must NOT close the sheet — closing would make
     # it unusable under autoplay (§15). A SELECTION change has already closed the sheet by the time it
@@ -482,7 +488,9 @@ func _stock_value(biomass: float, capacity: float, phase: String, stock_known: b
 
 ## The detail drawer + action buttons for the currently-selected occupant. Shares the one drawer
 ## with the land, so it hides the land's content first — exactly one subject fills it.
-func _render_occupant_drawer() -> void:
+##
+## `from_selection` is `render_subject_drawer`'s — see the band branch below, which is its only reader.
+func _render_occupant_drawer(from_selection: bool = false) -> void:
     if _occupant_detail == null:
         return
     if _tile_detail != null:
@@ -501,7 +509,26 @@ func _render_occupant_drawer() -> void:
     # band detail (the roster still lists it). Falls back to the legacy in-card drawer only when no
     # panel is injected (e.g. the HUD-only ui_preview harness).
     if is_player_band and _bandpanel.has_panel():
-        _bandpanel.render_band(_selection.unit())
+        # **A SELECTION WINS; A PASSIVE RE-RENDER DOES NOT.** This branch re-asserts the selected band
+        # as the panel's subject on EVERY render, and the drawer is re-rendered for reasons that have
+        # nothing to do with the selection — a disclosure toggle re-renders its hosts so a caret can
+        # flip, and a snapshot restates the whole card every turn. So with a band selected, opening any
+        # faction row threw the page away and landed on that band. Reported from play; it is the second
+        # half of the same defect `_refresh_disclosure_hosts` carried, and it hid behind the first
+        # because both need a band SELECTED to show up.
+        #
+        # **A BARE "not on the faction page" GATE WAS TOO WIDE**, though, and that was the other half of
+        # the report: with the page up, clicking a player band's marker moved the map ring and rendered
+        # the pointer below while the panel went on showing the rollup, so only the cycler could leave
+        # the page. `from_selection` is what tells the two apart — the player picking an occupant is the
+        # explicit "make this the subject" act, and it wins exactly as the cycler's ▶ does.
+        # `render_band` clears the page flag itself, so nothing else is needed here.
+        #
+        # The panel is deliberately decoupled from the selection already ("selecting a herd or an empty
+        # tile leaves `panel_band` intact — the panel persists across selection changes"); this branch
+        # was the one exception, and the faction page is where that exception starts doing damage.
+        if from_selection or not _bandpanel.is_faction_page():
+            _bandpanel.render_band(_selection.unit())
         # The drawer is now VISIBLE furniture rather than a hidden card, so an empty one reads as a
         # rendering fault. Point at where the band's detail actually went instead of leaving a gap.
         _occupant_detail.visible = true

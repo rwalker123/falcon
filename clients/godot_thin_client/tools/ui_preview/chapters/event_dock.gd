@@ -778,8 +778,9 @@ func run(harness) -> void:
 	# **EACH CLAIM IS MADE WHERE IT IS NON-VACUOUS, and `_assert_bar_clears` enforces that.** The
 	# HUD's regions occupy different vertical bands, so most bar/region pairs never share any y at
 	# all and "they do not overlap" is true of them for free: a BOTTOM bar sits in the BottomBar's
-	# band (nav backing + turn orb), a TOP bar in the TopBar's (the readout block), and only a bar
-	# tall enough to reach the ContentRow can touch the two docks. Asserting the wrong pair passes
+	# band (nav backing + turn orb), and a TOP bar in the ContentRow's — which since issue #450 deleted
+	# the `TopBar` is where the two DOCKS start, the readout block that used to occupy that band having
+	# gone with it. Asserting the wrong pair passes
 	# with the fix reverted — which is exactly what the first version of this block did.
 	_assert_bar_clears(event_dock, h._hud.nav_backing, "the bottom-left nav backing (minimap + zoom rail)")
 	_assert_bar_clears(event_dock, h._hud.turn_orb, "the bottom-right turn orb")
@@ -791,15 +792,20 @@ func run(harness) -> void:
 		h._hud.left_dock_region.get_global_rect().size.x <= h._hud.left_column_width())
 	h._assert_hud("the RIGHT dock renders no wider than the authored column (%.0f)" % h._hud.right_column_width(),
 		h._hud.right_dock_region.get_global_rect().size.x <= h._hud.right_column_width())
-	h._assert_hud("…and so does the readout block, which has no authored width of its own by default",
-		h._hud.turn_block.get_global_rect().size.x <= h._hud.right_column_width())
+	# **THE THIRD REGION IS GONE WITH THE BLOCK IT MEASURED** (issue #450). It asserted that the
+	# top-bar readout block rendered no wider than the authored column; that block — `Turn N` /
+	# `Units` / `Sedentarization` / `Pop` / the knowledge strip — is retired, and its 344px `TurnBlock`
+	# with it, so `right_column_width()` is the dock's own authored minimum and the claim above is the
+	# whole of the right side.
 
-	# THE REPORTED CASE ITSELF: a TOP bar shares the TopBar's vertical band with the readout block,
-	# which is where `Turn N` / `Units` / `Sedentarization` / `Pop` live. Nothing is docked left or
-	# right, so a bound that only knew about reservers puts the bar straight over them.
+	# **THE REPORTED CASE, RE-AIMED AT WHAT NOW OCCUPIES THAT BAND.** A TOP bar used to share the
+	# `TopBar`'s vertical band with the readout block; with the top bar deleted the RIGHT DOCK begins
+	# at y = 0, so the dock is what a top bar can now be drawn over — and it is the region the bound is
+	# computed from either way. Nothing is docked left or right, so a bound that only knew about
+	# reservers puts the bar straight over it.
 	event_dock.set_dock(SIDE_TOP)
 	await h._settle()
-	_assert_bar_clears(event_dock, h._hud.turn_block, "the top-bar readout block (Turn / Units / Pop)")
+	_assert_bar_clears(event_dock, h._hud.right_dock_region, "the HUD's right dock (the story card)")
 
 	# **NOTHING MOVES DOWN**, asserted HERE with the dock actually on `SIDE_TOP` — `offset_top` is
 	# the offset a TOP strip would move, and made on the bottom edge the claim is true for free.
@@ -911,8 +917,8 @@ func run(harness) -> void:
 	h._assert_hud("inset: …and it overlaps neither the docked panel nor the HUD's left dock",
 		not event_dock._root.get_global_rect().intersects(inset_panel._root.get_global_rect())
 			and not event_dock._root.get_global_rect().intersects(h._hud.left_dock_region.get_global_rect()))
-	h._assert_hud("inset: …and it still clears the readout block on the far side",
-		not event_dock._root.get_global_rect().intersects(h._hud.turn_block.get_global_rect()))
+	h._assert_hud("inset: …and it still clears the HUD's right dock on the far side",
+		not event_dock._root.get_global_rect().intersects(h._hud.right_dock_region.get_global_rect()))
 
 	# The BOTTOM edge takes the same inset — the bug was about the horizontal axis, so both edges
 	# must be fixed and a fix that only reached `SIDE_TOP` has to fail here.

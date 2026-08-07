@@ -821,16 +821,26 @@ func run(harness) -> void:
 	# that stood here searched the WHOLE SHEET for the word "Penning" and was matching the Sustain
 	# HINT's craft clause, not the gate reason it claimed to test — the shape this sweep exists to
 	# remove. Each half below names its own surface, so a regression says which one moved.
-	h._assert_hud("the FACTION's craft lives in the top-bar strip",
-		h._hud.intensification_label.visible
-		and h._hud.intensification_label.text.contains(
-			String(TopBarReadouts.KNOWLEDGE_TRACK_LABELS[HudFloraVocab.KNOWLEDGE_TRACK_PENNING])))
+	# **THE FACTION HALF IS ASKED OF THE MODEL NOW.** It read the top-bar `⚒ Your people know:` strip,
+	# which is retired with the top-right block (issue #450); the craft's surface is the Band/City
+	# dock's KNOWLEDGE tab, which this harness does not instantiate. What the split actually claims is
+	# that the craft is held FACTION-SCOPED while the animal's own progress is held per-herd, and the
+	# cache is where the faction scope now lives — so the pairing below is unweakened, and the leak
+	# half (the third assertion) never depended on a strip at all.
+	# By EQUALITY against the fixture's own PART-LEARNED value, which is the split itself: the faction
+	# is 45% of the way to Penning while THIS animal is fully tamed, so the two meters cannot be
+	# confused for one reading. The strip's own test was mere presence (it renders a track at any
+	# progress above zero) — the number is the stronger claim and the one the fixture was built for.
+	h._assert_hud("the FACTION's craft is held faction-scoped at %d%%, off any one animal" % int(
+			TWO_METER_PENNING * HudConst.PROGRESS_PERCENT_SCALE),
+		is_equal_approx(h._hud._topbar.faction_knowledge(HudConst.PLAYER_FACTION_ID,
+			HudFloraVocab.KNOWLEDGE_TRACK_PENNING), TWO_METER_PENNING))
 	h._assert_hud("…and THIS HERD's own progress lives in its own drawer's Husbandry row",
 		Q.has_label_containing(h._hud.occupant_detail,
 			DetailFormat.husbandry_label(DetailFormat.HUSBANDRY_PROGRESS_COMPLETE)))
 	h._assert_hud("…and no knowledge percent leaks into the drawer, where it would read as a stat of the animal",
 		not Q.has_label_containing(h._hud.occupant_detail,
-			String(TopBarReadouts.KNOWLEDGE_TRACK_LABELS[HudFloraVocab.KNOWLEDGE_TRACK_PENNING])))
+			String(FactionReadouts.KNOWLEDGE_TRACK_LABELS[HudFloraVocab.KNOWLEDGE_TRACK_PENNING])))
 	# **THE GATED-CORRAL BRIDGE ASSERTION IS REMOVED, NOT WEAKENED.** It read the gated Corral control's
 	# own face — "Your people know Penning 45% — ♻ hunt a tamed herd to learn it" — and the compose
 	# sheet renders no control at all for a knowledge-only gate, so its subject no longer occurs here.

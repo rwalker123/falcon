@@ -530,14 +530,15 @@ top of `Turn N` / `Units` / `Sedentarization` / `Pop`. The columns live INSIDE w
 docks reserved, so the two terms **add**: `inset = reservation total + Hud.{left,right}_column_width()`.
 
 Both column widths are **authored, not measured** (`panel-framework.md` → "The HUD's own side columns
-are AUTHORED" has the table and the reasons). The right side is two regions in one column — the dock
-and, above it, the readout block — so `right_column_width()` is the wider authored minimum of the
-pair; the readout block had no minimum of its own and was pure text width, which is precisely the
-measurement that must not decide a panel's edge.
+are AUTHORED" has the table and the reasons). The right side used to be two regions in one column —
+the dock and, above it, the readout block, so `right_column_width()` was the wider authored minimum of
+the pair. **The readout block is retired (issue #450)**, so it is one region now; the block is still
+why the rule is authored rather than measured, having had no minimum of its own and been pure text
+width, which is precisely the measurement that must not decide a panel's edge.
 
 ### The bar never pushes the HUD down
 
-The HUD keeps its full height: the readouts and the right dock sit exactly where they did before the
+The HUD keeps its full height: the right dock sits exactly where it did before the
 dock existed, because the bar lives BESIDE the HUD's furniture rather than above it.
 
 Reported live in between: the bar reserved `SIDE_TOP` against the HUD, `LayoutRoot` absorbed it, and
@@ -593,9 +594,10 @@ live panel's own `get_dock()` / `current_reservation_size()`, and with no priori
 
 **Each clearance claim is made where it BITES**, through `_assert_bar_clears`, which refuses to pass
 on a pair that shares no vertical band. The HUD's regions sit in different bands — a bottom bar is in
-the `BottomBar`'s (nav backing, turn orb), a top bar in the `TopBar`'s (the readout block), and only a
-bar tall enough to reach the `ContentRow` can touch the two docks — so "these rects do not overlap" is
-true for free of most pairs, and the first version of that block passed with the fix reverted. The
+the `BottomBar`'s (nav backing, turn orb), and a top bar in the `ContentRow`'s — which since issue #450
+deleted the `TopBar` is where the two DOCKS begin, so the TOP claim is made against the RIGHT DOCK
+where it used to be made against the readout block above it. "These rects do not overlap" is true for
+free of most pairs, and the first version of that block passed with the fix reverted. The
 "nothing moves down" assertion had the same defect for the same reason (it was taken while the dock
 was on the BOTTOM edge, where `offset_top` is not the offset at risk) and is now taken on `SIDE_TOP`
 against both offsets, with the negative control that another reserver's strip DOES move the HUD.
@@ -627,7 +629,7 @@ because a notification the player has to go and find is the thing this arc exist
   Commands tab that used to mirror it has since been deleted, so the dock is the only surface a
   player sees it on.
 - **The three controllers that posted a client-side note take a `Callable` note sink** rather than a
-  `CommandFeedController` reference (`TopBarReadouts`' knowledge unlock, `TurnOrbController`'s
+  `CommandFeedController` reference (`FactionReadouts`' knowledge unlock, `TurnOrbController`'s
   unanswered fork, `TargetingController`'s two quarry refusals). It resolves to
   `HudLayer.note_system_event` → the `system_note_requested` signal → `Main` → the dock. The HUD
   emits rather than reaching for a panel it does not own — the coordinator mediates, as everywhere

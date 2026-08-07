@@ -72,7 +72,7 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 A dev-only scene (`res://tools/ui_preview.tscn`, driven by
 `tools/ui_preview.gd`) instances the real `HudLayer.tscn`, feeds it canned
 fixture Dictionaries through the HUD's public methods
-(`update_demographics`, `update_sedentarization`, `show_unit_selection`,
+(`update_sedentarization`, `update_intensification`, `show_unit_selection`,
 `show_herd_selection`, targeting, …), renders each state, and dumps one PNG per
 state. No server, no network — the actual render code against fixtures shaped
 exactly like the native decoder's output. It also doubles as a full-context
@@ -85,12 +85,14 @@ Run it from the repo root:
 # a) Reimport if you touched ANY .gd or .tscn, or you'll render the stale version.
 #    Import needs no GPU, so --headless is fine (and faster) here:
 godot --headless --path clients/godot_thin_client --import
-# b) Render the preview states to PNGs. Do NOT pass --headless: on Godot 4.5 it
-#    selects the dummy rendering backend, which has no viewport texture to read
-#    back — the render then HANGS on the first capture (frame_post_draw never
-#    posts). Running windowed opens a Godot window for a few seconds and writes
-#    real PNGs:
-godot --path clients/godot_thin_client res://tools/ui_preview.tscn
+# b) Render the preview states to PNGs, THROUGH THE WRAPPER. Do NOT pass
+#    --headless: it selects the dummy rendering backend, which has no viewport
+#    texture to read back — the render then HANGS on the first capture
+#    (frame_post_draw never posts). And do NOT run bare `godot`: the window it
+#    opens is project.godot's PLAYER window, fullscreen and focus-grabbing, which
+#    yanks the keyboard out of whatever other session is being worked in. The
+#    wrapper overrides this run's window to windowed + no-focus and puts it back:
+scripts/preview.sh res://tools/ui_preview.tscn
 ```
 
 Then **actually look** — `Read` the relevant PNG(s) in
@@ -109,10 +111,17 @@ different arcs would otherwise collide in one file.
 
 ```gdscript
 # in tools/ui_preview/chapters/band_expedition.gd, inside `run(harness)`:
-h._hud.update_demographics([{ "faction": 0, "children": 34, "working": 51, "elders": 15 }])
+h._hud.update_sedentarization([{ "faction": 0, "score": 62.0, "stage": "soft" }])
 await h._settle()      # process_frame → frame_post_draw → process_frame, so the render lands
-await h._save("demographics")   # writes ui_preview_out/demographics.png
+await h._save("sedentarization")   # writes ui_preview_out/sedentarization.png
 ```
+
+**Check the method still exists before copying a snippet from here.** These entry
+points are `has_method`-probed by `Main` and reached by name from the harnesses, so
+a retired one fails at the CALL rather than at load: `update_demographics` was on
+this list until the HUD's top-right block was retired (issue #450), and a chapter
+that calls a deleted method does not fail politely — it aborts that chapter
+mid-way and surfaces as missing `PASS` lines several chapters later.
 That `update_*/show_*` → `_settle` → `_save` triple is the whole contract; `h`
 is the harness node the chapter is handed. A fixture used by ONE chapter is a
 method on that chapter; one shared across chapters belongs in
@@ -130,6 +139,13 @@ Append within a chapter rather than reordering.
   null texture). The harness now fails fast with a warning instead of hanging in
   that case, but you still get zero PNGs. Render windowed to capture. Only the
   `--import` step (step a) uses `--headless`.
+- **Every windowed harness goes through `scripts/preview.sh`** — `ui_preview`,
+  `map_preview`, `blend_probe`, `band_panel_preview`, `menu_preview`,
+  `workbench_preview`. Bare `godot` steals the keyboard from the human's other
+  sessions, and a Godot display flag cannot fix it (`-w` is ignored when
+  `project.godot` declares fullscreen). Details, and the stranded-override
+  failure mode, in `.claude/rules/client/test-harnesses.md` → "The harness window
+  is quiet, the GAME's is not".
 - This is HUD-only. Seeing the whole app against a live sim is a different,
   heavier path (`scripts/run_stack.sh --client-only` with a server up). For
   "what does the UI look like," the preview harness is the fast loop — prefer it.

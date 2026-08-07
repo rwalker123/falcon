@@ -10,8 +10,9 @@ class_name BandCityPanel
 ## settlement cycler, a 4-cell dock chooser, and a collapse toggle, plus dock +
 ## tab persistence.
 ##
-## THE BODY IS **THREE NAMED ZONES AT A FIXED CROSS-AXIS SIZE** (`set_zones`):
-## `band` (vitals), `work` (the paged work board) and `parties`. Nothing is
+## THE BODY IS **AN ORDERED LIST OF NAMED ZONES AT A FIXED CROSS-AXIS SIZE**, declared by the SUBJECT
+## (`set_zone_layout`) and filled by it (`set_zones`). A band declares three — `band` (vitals), `work`
+## (the paged work board) and `parties`; the faction page declares four, adding `knowledge`. Nothing is
 ## balanced, so no content can migrate between zones; nothing is fitted to
 ## content, so the reservation this panel reports changes ONLY on dock / collapse
 ## / hide / viewport-resize — never on a content edit. That is the whole point of
@@ -21,12 +22,17 @@ class_name BandCityPanel
 ##
 ## Two SHELLS host those zones, chosen by the panel's own WIDTH (never by dock
 ## edge, so a resizable dock needs no special case):
-##   * WIDE  (width >= `WIDE_SHELL_MIN_WIDTH`, DERIVED from what the wide shell needs — in practice
-##     a T/B dock on a wide window): the three
-##     zones side by side, band + parties fixed-width, work taking the rest,
+##   * WIDE  (width >= `wide_shell_min_width()`, DERIVED from what the LIVE zone list needs — in
+##     practice a T/B dock on a wide window): every
+##     zone side by side, the flanks fixed-width, work taking the rest,
 ##     hairline separators between. No tab bar.
 ##   * NARROW (otherwise, in practice a L/R dock): a tab bar under the header and
 ##     exactly one zone beneath it filling the panel.
+##
+## **THE THRESHOLD IS PER-SUBJECT, and that follows from it being derived.** A four-zone page needs a
+## wider panel than a three-zone one, so on a window between the two the faction page correctly tabs
+## while a band's page stays abreast. That is why the layout is DECLARED BEFORE the zones are built —
+## see `set_zone_layout`.
 ##
 ## There is deliberately **no ScrollContainer anywhere in this panel except the
 ## parties zone's list** — the design is no-scroll (the work zone pages itself
@@ -143,6 +149,12 @@ const BAND_ZONE_MAX_COLUMNS := 2
 ## ONE column, which is the very thing the wide shell exists to prevent. The ceiling that keeps two
 ## columns there is 371; 354 clears it by 17px. Raise this only with that measurement re-run.
 const ZONE_PARTY_WIDTH := PANEL_WIDTH - PANEL_CHROME_H
+## The faction page's KNOWLEDGE column takes the SAME floor as the parties column, and for the same
+## rule rather than by imitation: no wide-shell zone may be narrower than the one the NARROW shell
+## hands a side dock, because a layout with a whole screen to spend must never give the same rows less
+## room than a 380px strip does. Written as `ZONE_PARTY_WIDTH` so the floor has one home — if that
+## measurement ever moves, both flanks move with it.
+const ZONE_KNOWLEDGE_WIDTH := ZONE_PARTY_WIDTH
 ## The NARROWEST the WORK zone may be for the wide shell to be worth choosing: one readable board
 ## column. MIRRORS Hud's `WORK_COLUMN_MIN_WIDTH` (380) — the width below which `_work_board_capacity`
 ## clamps to a single column, and a single column crammed into less than that clips its row labels.
@@ -168,22 +180,6 @@ const ZONE_SEPARATION := 12
 ## (`_rail_span()`), so the rail's gutter costs the same as any inter-zone gutter by construction
 ## rather than by a matching pair of literals.
 const RAIL_SEPARATOR_SPAN := ZONE_SEPARATOR_THICKNESS + 2.0 * float(ZONE_SEPARATION)
-## What the TWO separators + their gaps cost the wide shell's interior width — written as two of the
-## above so the two can never disagree. A `const` (not just `_wide_separator_span()`) because
-## `WIDE_SHELL_MIN_WIDTH` below is itself a const and cannot call a function; the function returns this
-## so the threshold, the content cap and `work_zone_size` can never disagree about how much width the
-## chrome eats.
-const WIDE_SEPARATOR_SPAN := 2.0 * RAIL_SEPARATOR_SPAN
-## The panel switches to the wide (3-zones-side-by-side) shell once its own WIDTH reaches this;
-## below it the narrow (tabbed, one-zone) shell is used. A WIDTH test, never a dock-edge test, so a
-## resizable dock or a narrow window needs no special case. DERIVED, never hand-picked: the wide
-## shell is only worth choosing when it can still give the work zone one readable column, so this is
-## exactly what the three zones + the separators + the card chrome need (380 + 354 + 380 + 50 + 26 =
-## 1190). It is compared against the OUTER `_panel_extent().x`, hence the chrome term — below it the
-## narrow shell would hand the board the panel's whole interior, so flipping wide too early makes the
-## board several times NARROWER, degrading the very thing the wide shell exists to improve.
-const WIDE_SHELL_MIN_WIDTH := ZONE_BAND_WIDTH + ZONE_PARTY_WIDTH + ZONE_WORK_MIN_WIDTH \
-	+ WIDE_SEPARATOR_SPAN + PANEL_CHROME_H
 ## The tallest content a **TWO-column** band flank has to hold: its CHARTED split (vitals + outlook |
 ## PEOPLE + WORKFORCE) at the TALL tier, measured **263px** on `band_panel_band_columns_two_charted`.
 ##
@@ -245,18 +241,58 @@ const MAX_WIDE_HEIGHT_FRACTION := 0.6
 ## content).
 const HEADER_HEIGHT_FALLBACK := 44.0
 
-# ---- narrow-shell tab bar ---------------------------------------------------
-## Zone keys. The same keys index `set_zones`' slots, the tab bar and `set_tab_badge`.
+# ---- the zone layout + the narrow-shell tab bar ------------------------------
+## Zone keys. The same keys index the layout's slots, `set_zones`' contents, the tab bar and
+## `set_tab_badge`. The panel owns the KEYS (they index a persisted preference and a badge table);
+## the SUBJECT owns the words — see `set_zone_layout`.
 const ZONE_BAND := &"band"
 const ZONE_WORK := &"work"
+const ZONE_KNOWLEDGE := &"knowledge"
 const ZONE_PARTIES := &"parties"
-## Tab order + display labels, in the prototype's order (Band · Work · Parties).
-const TAB_ORDER: Array[StringName] = [ZONE_BAND, ZONE_WORK, ZONE_PARTIES]
-const TAB_LABELS := {
-	ZONE_BAND: "Band",
-	ZONE_WORK: "Work",
-	ZONE_PARTIES: "Parties",
-}
+## Every zone key the panel knows. **The persisted tab is validated against THIS rather than against
+## the live layout**, because prefs load before any subject has declared one — a player who left on
+## the faction page's `knowledge` tab must not have that selection thrown away by the bootstrap
+## layout, which is a band's. A key the live layout lacks is handled by `_effective_tab`, which falls
+## back to the first zone that has content.
+const ZONE_KEYS: Array[StringName] = [ZONE_BAND, ZONE_WORK, ZONE_KNOWLEDGE, ZONE_PARTIES]
+## A zone descriptor's fields (`set_zone_layout`). Named consts rather than bare strings, the
+## `HudWidgets.MENU_ENTRY_*` idiom: a mistyped key in a Dictionary literal is silent.
+const ZONE_SPEC_KEY := "key"
+const ZONE_SPEC_LABEL := "label"
+const ZONE_SPEC_WIDTH := "width"
+## **HOW MANY COLUMNS OF `ZONE_SPEC_WIDTH` THIS ZONE MAY LAY ITS BLOCKS OUT ACROSS**, when the row can
+## pay for them. Absent means ONE, so every zone that has never asked is bit-identical to before.
+##
+## **A DECLARED WIDTH IS A BASE, NOT AN EXTENT — that is the whole of how a variable-width zone fits
+## the ordered-list model.** `ZONE_SPEC_WIDTH` stays the width of ONE readable column and is what
+## `wide_shell_min_width()` sums, because the threshold asks the minimum the shell needs to be worth
+## choosing; `_zone_span()` multiplies it by what `zone_columns()` GRANTED and is what every width
+## reader takes. Writing the granted extent into the spec instead would put a function of the card's
+## own span inside the sum the shell test reads, i.e. a cycle.
+##
+## **THE CAP IS THE SUBJECT'S TO DECLARE, because the SPLIT IS AUTHORED.** A band's `band` zone
+## declares `BAND_ZONE_MAX_COLUMNS` and `BandPanelController.build_band_zone` authors a two-way split
+## to fill it; the faction page's `band` zone is `FactionRollup`'s, which authors none, so it declares
+## nothing and stays at one — a widened flank with a one-column builder in it renders half a box of
+## blank card, which is the emptiness the widening exists to remove rather than move.
+const ZONE_SPEC_MAX_COLUMNS := "max_columns"
+## What an undeclared `ZONE_SPEC_MAX_COLUMNS` means, and the floor `zone_columns()` clamps to.
+const ZONE_COLUMNS_MIN := 1
+## A zone whose wide-shell width is `ZONE_WIDTH_EXPAND` takes whatever the fixed flanks leave. Exactly
+## one zone in a layout should carry it — the work board, whose column count is what the card's width
+## is built up from (`set_work_columns`).
+const ZONE_WIDTH_EXPAND := 0.0
+## The BOOTSTRAP layout, standing until the first subject declares one. It exists so the panel has a
+## sane geometry (hosts, card width, shell threshold) from `_build` — before any controller has
+## rendered — and it carries **no labels at all**, deliberately: the tab bar is never visible before a
+## subject has spoken (`_update_body_visibility` gates it on `_band_present`, which only `set_zones`
+## turns on), and a default word here would be a second home for a label the subject already owns.
+const DEFAULT_ZONE_LAYOUT: Array[Dictionary] = [
+	{ZONE_SPEC_KEY: ZONE_BAND, ZONE_SPEC_LABEL: "", ZONE_SPEC_WIDTH: ZONE_BAND_WIDTH,
+		ZONE_SPEC_MAX_COLUMNS: BAND_ZONE_MAX_COLUMNS},
+	{ZONE_SPEC_KEY: ZONE_WORK, ZONE_SPEC_LABEL: "", ZONE_SPEC_WIDTH: ZONE_WIDTH_EXPAND},
+	{ZONE_SPEC_KEY: ZONE_PARTIES, ZONE_SPEC_LABEL: "", ZONE_SPEC_WIDTH: ZONE_PARTY_WIDTH},
+]
 ## The tab a fresh session opens on: work is the zone the player acts in.
 const DEFAULT_TAB := ZONE_WORK
 const TAB_FONT_SIZE := 12
@@ -278,6 +314,8 @@ const EXPAND_GLYPH := "▸"     # ▸  restore
 const CYCLE_PREV_GLYPH := "◀" # ◀
 const CYCLE_NEXT_GLYPH := "▶" # ▶
 const DEFAULT_STAGE_GLYPH := "⛺" # ⛺  nomadic fallback
+## The subject cluster's affordance, cleared while the subject is not jumpable (`set_subject_jumpable`).
+const SUBJECT_JUMP_TOOLTIP := "Jump to this band on the map"
 
 # ---- persistence (decision 5 — first client user-pref file) ----------------
 const CONFIG_PATH := "user://band_city_dock.cfg"
@@ -359,11 +397,12 @@ var _count_label: Label
 var _collapse_button: Button
 var _rail_expand_button: Button
 # Body layout: `_body_host` holds the two alternative SHELLS, exactly one visible at a time (chosen by
-# panel width — see `_shell_is_wide`). The wide shell is an HBox of three zone hosts (band + parties
-# fixed-width, work expanding) with hairline separators; the narrow shell is a tab bar over a single
-# zone host. `_zones` holds the three Hud-built zone Controls the panel OWNS (freed on the next
-# `set_zones`); `_reparent_zones` homes them into whichever hosts are active, so a shell flip needs no
-# Hud re-render. Nothing here measures content — the shells fill a card whose size is fixed per dock.
+# panel width — see `_shell_is_wide`). The wide shell is an HBox of one zone host per DECLARED zone
+# (the flanks fixed-width, work expanding) with hairline separators; the narrow shell is a tab bar
+# over a single zone host. `_zones` holds the Hud-built zone Controls the panel OWNS (freed on the
+# next `set_zones` or layout change); `_reparent_zones` homes them into whichever hosts are active, so
+# a shell flip needs no Hud re-render. Nothing here measures content — the shells fill a card whose
+# size is fixed per dock.
 ## The card's whole content column (header + body). It always FILLS its card: since issue #377 the CARD
 ## is the thing sized to its content, and the centring happens one level up on the card as a whole.
 var _panel_column: VBoxContainer
@@ -406,15 +445,22 @@ var _narrow_zone_host: Control
 var _body_is_wide: bool = false
 var _band_present: bool = false
 var _empty_state: Label
-## The three zone contents the panel currently owns (zone:StringName -> Control). A zone may be absent
+## The zone contents the panel currently owns (zone:StringName -> Control). A zone may be absent
 ## or null → that zone renders empty.
 var _zones: Dictionary = {}
+## The LIVE zone layout — the subject's ordered descriptors (`set_zone_layout`). It is what the wide
+## shell's columns, the tab bar, the fixed-width sum and the shell threshold are all read off, so the
+## body has exactly one statement of "which zones are there, in what order, how wide".
+var _zone_layout: Array[Dictionary] = DEFAULT_ZONE_LAYOUT
 ## Narrow-shell tab state: the selected zone key (persisted) and each tab's badge (`{text, hot}`).
 var _active_tab: StringName = DEFAULT_TAB
 ## The WORK board's persisted sort, opaque to this panel. `""` = the player has never chosen one, so
 ## the controller keeps its own default.
 var _work_sort_pref: String = ""
 var _tab_badges: Dictionary = {}
+## Whether the header's subject cluster offers a map jump (`set_subject_jumpable`). A band does; the
+## pinned faction page does not, having no tile.
+var _subject_jumpable: bool = true
 var _tab_buttons: Dictionary = {}   # zone:StringName -> Control (the tab cell)
 ## The last `work_zone_size()` reported, so `zones_resized` fires on a real change only.
 var _last_work_zone_size: Vector2 = Vector2.ZERO
@@ -468,14 +514,66 @@ func set_cycler(index: int, count: int) -> void:
 	else:
 		_count_label.text = "%d / %d" % [index + 1, count]
 
-## Hand the panel its three zone contents. The panel takes OWNERSHIP (frees the previous set) and
-## parents them into whichever shell is active. Any may be null → that zone renders empty.
-func set_zones(band: Control, work: Control, parties: Control) -> void:
+## Declare the BODY the current subject wants: an ordered list of DESCRIPTORS — one wide-shell column
+## and one narrow-shell tab each, in the order given.
+##
+## **THE SUBJECT NAMES ITS OWN KEYS AND ITS OWN LABELS.** A band declares Band · Work · Parties; the
+## faction page declares Faction · Work · Know · Parties. That is what replaced a per-zone label
+## OVERRIDE (`set_tab_label`, which existed only to rename `Band` to `Faction`): a tab bar picks a
+## ZONE, and a zone's name states the scope its content is at, which is a fact about the subject
+## rather than a patch on a default.
+##
+## **IT MUST BE CALLED BEFORE THE ZONE CONTENTS ARE BUILT, NOT WITH THEM.** The layout is what
+## `wide_shell_min_width()` sums over, so declaring it can flip the shell — and the contents are paged
+## against `zone_size()`, which the flip moves. A subject that built its zones first and declared the
+## layout second would page a board against the previous subject's shell.
+##
+## **IT REFRESHES THE CACHED ZONE SIZE SILENTLY — no `zones_resized`** — which is `set_work_columns`'
+## contract for the same reason: the caller is the controller at the START of a render and is about to
+## build every zone against the new box, and emitting would re-enter that render from inside itself.
+##
+## A repeat declaration early-outs, so a band-to-band cycle costs one Array compare.
+func set_zone_layout(specs: Array) -> void:
+	var next: Array[Dictionary] = []
+	for spec_variant in specs:
+		if not (spec_variant is Dictionary):
+			continue
+		var spec: Dictionary = spec_variant
+		if ZONE_KEYS.has(StringName(spec.get(ZONE_SPEC_KEY, &""))):
+			next.append(spec)
+	if next.is_empty() or next == _zone_layout:
+		return
+	# The previous subject's contents belong to the previous subject's HOSTS, which are about to be
+	# freed — so they are dropped here rather than left to `set_zones`, whose free would otherwise run
+	# after their parents had gone.
 	_free_zones()
-	_zones[ZONE_BAND] = band
-	_zones[ZONE_WORK] = work
-	_zones[ZONE_PARTIES] = parties
-	if band == null and work == null and parties == null:
+	_zone_layout = next
+	_rebuild_wide_shell()
+	_rebuild_tab_bar()
+	_apply_dock_layout()
+	_last_work_zone_size = work_zone_size()
+
+## Hand the panel the zone CONTENTS for the layout it was just given, keyed by zone. The panel takes
+## OWNERSHIP (frees the previous set) and parents them into whichever shell is active. A zone the
+## dictionary omits (or maps to null) renders empty.
+##
+## **A CONTENT FOR AN UNDECLARED ZONE IS FREED, NOT DROPPED.** Ownership passes on the call, so
+## silently ignoring it would leak a whole zone's control tree — which is exactly what a subject that
+## built four zones and declared three would do, once per render.
+func set_zones(contents: Dictionary) -> void:
+	_free_zones()
+	var declared := _zone_order()
+	var any := false
+	for key in contents:
+		var content_variant: Variant = contents[key]
+		if not (content_variant is Control):
+			continue
+		if declared.has(StringName(key)):
+			_zones[StringName(key)] = content_variant
+			any = true
+		else:
+			(content_variant as Node).queue_free()
+	if not any:
 		set_band_present(false)
 		return
 	_band_present = true
@@ -486,35 +584,39 @@ func set_zones(band: Control, work: Control, parties: Control) -> void:
 	_reparent_zones()
 	_update_body_visibility()
 
-## The box the Work zone's content may fill, in canvas px — the zone's INTERIOR, after the panel's own
-## chrome (card border + content margins + header, and in the narrow shell the tab bar). Hud sizes its
-## paged work board from this. Purely a function of the dock edge, the collapse state and the window;
-## it never consults the content.
-func work_zone_size() -> Vector2:
+## The box a ZONE's content may fill, in canvas px — the zone's INTERIOR, after the panel's own
+## chrome (card border + content margins + header, and in the narrow shell the tab bar). Purely a
+## function of the layout, the dock edge, the collapse state and the window; it never consults the
+## content.
+##
+## **KEYED, not one accessor per zone.** Every wide-shell zone shares the card's one body HEIGHT and
+## differs only in WIDTH — a fixed flank states its own, and the expanding zone takes what the flanks
+## and separators leave — so there is one answer with one parameter rather than a named function per
+## zone that a fourth zone would have to add a fifth of. The NARROW shell hands its one zone the whole
+## interior, so every key answers the same box there.
+func zone_size(zone: StringName) -> Vector2:
 	if _collapsed or not _shown:
 		return Vector2.ZERO
 	var interior := _interior_size()
 	var body_height: float = maxf(interior.y - _header_height(), 0.0)
-	if _shell_is_wide():
-		var flanks := _band_flank_width() + ZONE_PARTY_WIDTH
-		# The card is built UP from the declared column count now (issue #377), so its interior is
-		# flanks + separators + the board — no cap to clamp against, and this comes back as exactly
-		# `_work_columns × ZONE_WORK_MIN_WIDTH`. The `max` still guards the clamped-card case, where a
-		# window narrower than the content leaves less than the flanks alone want.
-		return Vector2(maxf(interior.x - flanks - _wide_separator_span(), 0.0), body_height)
-	return Vector2(interior.x, maxf(body_height - _tab_bar_height(), 0.0))
+	if not _shell_is_wide():
+		return Vector2(interior.x, maxf(body_height - _tab_bar_height(), 0.0))
+	# A FIXED zone's width is its declared column times however many columns it was GRANTED, so this is
+	# also the answer for the band flank once it widens — there is no second accessor for that.
+	var fixed := _zone_fixed_width(zone)
+	if fixed > 0.0:
+		return Vector2(fixed, body_height)
+	# The card is built UP from the declared column count (issue #377), so its interior is the fixed
+	# flanks + the separators + the board — no cap to clamp against, and this comes back as exactly
+	# `_work_columns × ZONE_WORK_MIN_WIDTH`. The `max` still guards the clamped-card case, where a
+	# window narrower than the content leaves less than the flanks alone want.
+	return Vector2(maxf(interior.x - _fixed_zone_span() - _wide_separator_span(), 0.0), body_height)
 
-## The box the PARTIES zone's content may fill, in canvas px. Its HEIGHT is the body's, i.e. exactly
-## what `work_zone_size` reports — every wide-shell zone shares the card's one body height — and its
-## WIDTH is this zone's own FIXED flank rather than the work board's expanding column, which is the
-## whole difference between the two answers. `BandPanelController` measures the compose sheet against
-## it (see `BandComposeFloat`), so reading the work board's width there would tell a 380px-wide sheet
-## it had a 1520px column.
-func parties_zone_size() -> Vector2:
-	var box := work_zone_size()
-	if box == Vector2.ZERO:
-		return box
-	return Vector2(ZONE_PARTY_WIDTH if _shell_is_wide() else box.x, box.y)
+## The WORK zone's box — the one `zones_resized` reports and Hud pages its board against. A named
+## reader of `zone_size` rather than a second answer: this zone is the expanding one, so its width is
+## the only one that moves with the card, which makes it the box worth watching.
+func work_zone_size() -> Vector2:
+	return zone_size(ZONE_WORK)
 
 ## The CARD's global rect — the island the strip holds, not the strip (`_root`) itself. Published for
 ## the free-floating compose card, which anchors itself to the card's map-facing edge and must never
@@ -523,10 +625,47 @@ func parties_zone_size() -> Vector2:
 func card_rect() -> Rect2:
 	return _panel.get_global_rect() if _panel != null else Rect2()
 
+## Declare whether the header's subject cluster is a "jump to it on the map" affordance.
+##
+## **A FACTION HAS NO TILE**, so the pinned faction page (issue #450) turns this off: the cluster stops
+## taking the mouse (hence no hover tint and no `subject_activated`), drops the pointing-hand cursor and
+## drops the tooltip that promises a jump. Leaving it live and no-oping the handler would have left a
+## header that offers a jump, lights up under the pointer and then does nothing — the worst of the
+## three states.
+##
+## The emit is gated on the flag as well as on the filter, so the rule reads at the emit rather than
+## depending on a `mouse_filter` value set 300 lines away.
+func set_subject_jumpable(jumpable: bool) -> void:
+	if jumpable == _subject_jumpable:
+		return
+	_subject_jumpable = jumpable
+	if _subject_cluster == null:
+		return
+	_subject_cluster.mouse_filter = Control.MOUSE_FILTER_STOP if jumpable else Control.MOUSE_FILTER_IGNORE
+	_subject_cluster.mouse_default_cursor_shape = \
+		Control.CURSOR_POINTING_HAND if jumpable else Control.CURSOR_ARROW
+	_subject_cluster.tooltip_text = SUBJECT_JUMP_TOOLTIP if jumpable else ""
+	# An IGNORE cluster receives no `mouse_exited`, so a hover latched at the moment of the swap would
+	# never be cleared and the header would keep its tint for the rest of the session.
+	if not jumpable:
+		_set_subject_hover(false)
+
+## A tab's label — the word the SUBJECT declared for that zone (`set_zone_layout`). There is no
+## default and no override: a zone not in the live layout has no tab to label.
+func _tab_label_text(zone: StringName) -> String:
+	for spec in _zone_layout:
+		if StringName(spec.get(ZONE_SPEC_KEY, &"")) == zone:
+			return String(spec.get(ZONE_SPEC_LABEL, ""))
+	return ""
+
 ## Push a tab's badge (narrow shell only; ignored in the wide shell, which has no tab bar).
 ## `hot` tints it WARN. An empty `text` clears the badge.
+##
+## Keyed on `ZONE_KEYS` rather than on the LIVE layout, so a subject may push its badges in any order
+## relative to its layout; the tab bar iterates the layout, so a badge for a zone that is not on it
+## simply never renders.
 func set_tab_badge(zone: StringName, text: String, hot: bool) -> void:
-	if not TAB_LABELS.has(zone):
+	if not ZONE_KEYS.has(zone):
 		return
 	_tab_badges[zone] = {"text": text, "hot": hot}
 	if not _body_is_wide:
@@ -690,8 +829,9 @@ func _build() -> void:
 	_empty_state.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_body_host.add_child(_empty_state)
 
-	# WIDE shell: the three zones side by side, band + parties fixed-width, work taking the rest,
-	# hairline separators between. No tab bar — every zone is visible at once.
+	# WIDE shell: every zone side by side, the flanks fixed-width, work taking the rest, hairline
+	# separators between. No tab bar — every zone is visible at once. Its columns are built from the
+	# LIVE layout, so a subject with a fourth zone needs no structural change here.
 	_wide_shell = HBoxContainer.new()
 	_wide_shell.name = "WideShell"
 	_wide_shell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -699,11 +839,7 @@ func _build() -> void:
 	_wide_shell.add_theme_constant_override("separation", ZONE_SEPARATION)
 	_wide_shell.visible = false
 	_body_host.add_child(_wide_shell)
-	_wide_zone_hosts[ZONE_BAND] = _add_wide_zone_host(ZONE_BAND, ZONE_BAND_WIDTH)
-	_wide_shell.add_child(_make_zone_separator())
-	_wide_zone_hosts[ZONE_WORK] = _add_wide_zone_host(ZONE_WORK, 0.0)
-	_wide_shell.add_child(_make_zone_separator())
-	_wide_zone_hosts[ZONE_PARTIES] = _add_wide_zone_host(ZONE_PARTIES, ZONE_PARTY_WIDTH)
+	_rebuild_wide_shell()
 
 	# NARROW shell: a tab bar directly under the header + exactly one zone filling the rest.
 	_narrow_shell = VBoxContainer.new()
@@ -742,7 +878,7 @@ func _build_header_full() -> HBoxContainer:
 	_subject_cluster.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_subject_cluster.mouse_filter = Control.MOUSE_FILTER_STOP
 	_subject_cluster.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	_subject_cluster.tooltip_text = "Jump to this band on the map"
+	_subject_cluster.tooltip_text = SUBJECT_JUMP_TOOLTIP
 	_subject_cluster.add_theme_stylebox_override("panel", _subject_stylebox(false))
 	_subject_cluster.gui_input.connect(_on_subject_gui_input)
 	_subject_cluster.mouse_entered.connect(func(): _set_subject_hover(true))
@@ -825,8 +961,12 @@ func _set_subject_hover(hover: bool) -> void:
 	if _subject_cluster != null:
 		_subject_cluster.add_theme_stylebox_override("panel", _subject_stylebox(hover))
 
-## Left-click anywhere on the subject cluster → "jump to my band".
+## Left-click anywhere on the subject cluster → "jump to my band". Silent while the subject is not
+## jumpable (the faction page has no tile) — an `IGNORE` cluster gets no input anyway, and the gate is
+## here so the rule reads where the promise is made.
 func _on_subject_gui_input(event: InputEvent) -> void:
+	if not _subject_jumpable:
+		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		subject_activated.emit()
 
@@ -1001,21 +1141,53 @@ func _relayout_body() -> void:
 	_body_is_wide = _shell_is_wide()
 	if _body_is_wide != was_wide:
 		_rebuild_tab_bar()
-	# The band flank is the ONE wide-shell host whose width is not a constant — it is
-	# `band_zone_columns()` of `ZONE_BAND_WIDTH` — so the host's pinned minimum is re-declared on every
-	# layout pass rather than only at `_build`. The parties host beside it is genuinely fixed and is
-	# left where `_build` put it.
-	var band_host: Control = _wide_zone_hosts.get(ZONE_BAND)
-	if band_host != null:
-		band_host.custom_minimum_size.x = _band_flank_width()
+	# A multi-column zone's host width is not a constant — it is its declared column times the count
+	# `zone_columns()` grants — so every FIXED host's pinned minimum is re-declared on each layout pass
+	# rather than only at `_build`. A single-column zone re-declares the same number it already had, so
+	# this is a no-op for the parties and knowledge flanks.
+	for spec in _zone_layout:
+		var host: Control = _wide_zone_hosts.get(StringName(spec.get(ZONE_SPEC_KEY, &"")))
+		if host != null and _spec_width(spec) > 0.0:
+			host.custom_minimum_size.x = _zone_span(spec)
 	_reparent_zones()
 	_update_body_visibility()
 
-## What the two separators + their gaps cost. The value lives in `WIDE_SEPARATOR_SPAN` (a `const`, so
-## `WIDE_SHELL_MIN_WIDTH` can use it too); this is the call-site form, shared by `_card_width` and
-## `work_zone_size`, so the three can never disagree about how much width the chrome eats.
+## What the wide shell's separators + their gaps cost its interior width: **ONE `RAIL_SEPARATOR_SPAN`
+## per GAP between adjacent columns**, so the term follows the live zone list instead of being pinned
+## at the two gaps three zones happen to have. Shared by the threshold, `_card_width`,
+## `_affordable_work_columns` and `zone_size`, so none of them can disagree about how much width the
+## chrome eats.
 func _wide_separator_span() -> float:
-	return WIDE_SEPARATOR_SPAN
+	return float(maxi(_zone_layout.size() - 1, 0)) * RAIL_SEPARATOR_SPAN
+
+## The panel switches to the wide (zones-side-by-side) shell once its own WIDTH reaches this; below it
+## the narrow (tabbed, one-zone) shell is used. A WIDTH test, never a dock-edge test, so a resizable
+## dock or a narrow window needs no special case.
+##
+## **DERIVED FROM THE LIVE ZONE LIST, never hand-picked and never a fixed set of terms.** The wide
+## shell is only worth choosing when it can still give the expanding zone one readable column, so this
+## is exactly what every zone + the separators + the card chrome need: a band's three come to
+## `380 + 380 + 354 + 2×25 + 26 = 1190`, and the faction page's four to
+## `380 + 380 + 354 + 354 + 3×25 + 26 = 1569`. It is compared against the OUTER `_panel_extent().x`,
+## hence the chrome term — below it the narrow shell would hand the board the panel's whole interior,
+## so flipping wide too early makes the board several times NARROWER, degrading the very thing the
+## wide shell exists to improve. It shipped hand-picked at 900 once and silently broke every window
+## between 900 and 1055.
+##
+## An EXPANDING zone contributes `ZONE_WORK_MIN_WIDTH` — the one readable board column that is the
+## whole point of the test — and a fixed one contributes ONE of its declared columns.
+##
+## **IT SUMS `_spec_width`, NEVER `_zone_span`, and that is what keeps the layout acyclic.** A
+## multi-column zone's granted count is a function of `_available_card_span()`, which is tested against
+## THIS — so folding the grant in would make the threshold call the count that calls the threshold. It
+## is also the right answer on its own terms: this is the MINIMUM the shell needs to be worth
+## choosing, and one band column is exactly that minimum.
+func wide_shell_min_width() -> float:
+	var span := _wide_separator_span() + PANEL_CHROME_H
+	for spec in _zone_layout:
+		var width := _spec_width(spec)
+		span += width if width > 0.0 else ZONE_WORK_MIN_WIDTH
+	return span
 
 ## Declare the room the card must leave at each end of a horizontal strip — the HUD columns it must not
 ## be drawn over. `Main` owns the widths; the panel owns what to do with them.
@@ -1111,6 +1283,14 @@ func _trailing_bound_for(edge: int, trailing: float) -> float:
 ## trailing one) against a live 419, and the band was 75px wide. The caller passes ceilings now
 ## (`Hud.right_column_ceiling`); what belongs here is why the caller may not pass anything smaller.
 ##
+## **IT ASKS `wide_shell_min_width()`, SO THE VERDICT IS PER-SUBJECT — and it must be.** The threshold
+## is a sum over the LIVE zone list (issue #450), so a four-zone faction page needs 379px more than a
+## band's three. A predicate frozen at the three-zone number would tell the HUD to keep its strip while
+## the four-zone page then laid out NARROW — the predicate/consumer mismatch this rule already shipped
+## once with the columns' reservations, one subject along. The consequence is that the fork MOVES when
+## the player cycles onto the faction page, which is correct: a wider body genuinely needs a wider
+## window before the trade is worth taking.
+##
 ## A collapsed or hidden panel draws no card at all, and a vertical dock's card is a fixed `PANEL_WIDTH`
 ## strip — none of them is a wide shell, so none of them can afford one.
 func affords_wide_shell_with_bounds(leading: float, trailing: float, rail_width: float) -> bool:
@@ -1122,7 +1302,7 @@ func affords_wide_shell_with_bounds(leading: float, trailing: float, rail_width:
 	# BOTTOM dock, which is what moved the fork from a logical 2432 to 1871.
 	var span: float = _panel_width_extent() - _rail_span_of(rail_width) \
 		- maxf(leading, 0.0) - _trailing_bound_for(_dock_edge, trailing)
-	return span >= WIDE_SHELL_MIN_WIDTH
+	return span >= wide_shell_min_width()
 
 ## How wide the CARD draws. A vertical dock is the fixed strip; a horizontal one is exactly what its
 ## content needs, which is what stops a bottom dock spanning an ultrawide.
@@ -1134,7 +1314,7 @@ func affords_wide_shell_with_bounds(leading: float, trailing: float, rail_width:
 ## card, so nothing here can feed back into the choice that produced it.
 ##
 ## The narrow shell takes the whole available strip: it is reached only when there is too little room
-## for three zones, i.e. exactly when there is nothing to give back.
+## for the declared zones abreast, i.e. exactly when there is nothing to give back.
 func _card_width() -> float:
 	if _is_vertical_edge(_dock_edge):
 		return PANEL_WIDTH
@@ -1142,7 +1322,7 @@ func _card_width() -> float:
 	if not _shell_is_wide():
 		return available
 	var work: float = float(clampi(_work_columns, 1, WORK_MAX_COLUMNS)) * ZONE_WORK_MIN_WIDTH
-	return _band_flank_width() + ZONE_PARTY_WIDTH + work + _wide_separator_span() + PANEL_CHROME_H
+	return _fixed_zone_span() + work + _wide_separator_span() + PANEL_CHROME_H
 
 ## Declare how many columns the WORK board wants — the count `BandPanelController` derives from its
 ## source list and the zone's HEIGHT. The panel then draws a card exactly that wide.
@@ -1187,24 +1367,27 @@ func _affordable_work_columns() -> int:
 	# `_available_card_span()`, not the raw strip: the HUD columns a top dock must keep clear of come off
 	# the card's room BEFORE the board gets any of it, so counting columns against the whole row builds a
 	# board the clamped card cannot hold — measured as 135px of it hanging out of a clipping zone host.
-	var room: float = _available_card_span() - PANEL_CHROME_H - _band_flank_width() - ZONE_PARTY_WIDTH \
+	var room: float = _available_card_span() - PANEL_CHROME_H - _fixed_zone_span() \
 		- _wide_separator_span()
 	return maxi(int(room / ZONE_WORK_MIN_WIDTH), 1)
 
-## True when the panel is wide enough for the three zones side by side. A WIDTH test, never a
-## dock-edge test — see `WIDE_SHELL_MIN_WIDTH`.
+## True when the panel is wide enough for the LIVE zone list side by side. A WIDTH test, never a
+## dock-edge test — see `wide_shell_min_width()`.
 ## The panel must NEVER enter the wide shell with a work zone below `ZONE_WORK_MIN_WIDTH` — the exact
-## failure the hand-picked 900 threshold caused. `WIDE_SHELL_MIN_WIDTH` is zones + separators +
+## failure the hand-picked 900 threshold caused. The threshold is zones + separators +
 ## `PANEL_CHROME_H` and is tested against the OUTER width, so the chrome rail (which spends that same
 ## outer width before the zones see any of it — its column AND its separator gutter) must come off first.
 func _shell_is_wide() -> bool:
 	if _is_vertical_edge(_dock_edge):
-		return _panel_width_extent() - _rail_span() >= WIDE_SHELL_MIN_WIDTH
+		# `_panel_width_extent()`, never `_panel_extent()`: the cross axis now depends on which shell is
+		# active (`_shell_chrome_height`), so building the whole extent here would call the height,
+		# which calls this test.
+		return _panel_width_extent() - _rail_span() >= wide_shell_min_width()
 	# `_available_card_span()` on a horizontal dock, because the HUD columns a top dock keeps clear of
 	# come off the CARD's room before any zone sees it (issue #377). Testing the raw strip put the panel
 	# into the wide shell on a 1920 top dock whose card could only have 1141 — a 331px work zone against
-	# a 380px minimum, i.e. exactly the invariant `WIDE_SHELL_MIN_WIDTH` was derived to protect.
-	return _available_card_span() >= WIDE_SHELL_MIN_WIDTH
+	# a 380px minimum, i.e. exactly the invariant `wide_shell_min_width()` was derived to protect.
+	return _available_card_span() >= wide_shell_min_width()
 
 ## The RESERVED STRIP for the current dock: fixed on the cross axis, the window on the other. It was the
 ## card's outer size until issue #377, when the card stopped filling a horizontal strip; it is the region
@@ -1261,7 +1444,8 @@ func _horizontal_panel_height() -> float:
 func _body_budget() -> float:
 	return PANEL_HEIGHT_WIDE_TWO_COLUMN if band_zone_columns() > 1 else PANEL_HEIGHT_WIDE
 
-## How many `ZONE_BAND_WIDTH` columns the BAND flank lays its blocks out across.
+## How many columns of its DECLARED width a zone lays its blocks out across, capped by the
+## `ZONE_SPEC_MAX_COLUMNS` its subject declared (see that const for why the cap is the subject's).
 ##
 ## **PURELY GEOMETRIC — what the span AFFORDS, never what the content holds.** That is the whole
 ## safety argument. Every term below is a function of the viewport, the dock edge, the rail's declared
@@ -1270,37 +1454,35 @@ func _body_budget() -> float:
 ## that grew with the roster would put `MapView`'s inset on the snapshot's critical path — the flicker
 ## bug the fixed cross-axis size exists to prevent.
 ##
-## The room measured is what is left AFTER the other two zones are paid: the wide shell exists to give
-## the work board a readable column, so a second band column is only affordable once `ZONE_PARTY_WIDTH`
-## and one `ZONE_WORK_MIN_WIDTH` are already covered. `_affordable_work_columns()`'s idiom, one flank
-## over.
+## The room measured is what is left AFTER EVERY OTHER declared zone is paid at ONE column: the wide
+## shell exists to give the work board a readable column, so a second band column is only affordable
+## once the parties flank (and, on the faction page, knowledge) and one `ZONE_WORK_MIN_WIDTH` are
+## already covered. `_affordable_work_columns()`'s idiom, one flank over.
 ##
-## ONE on a vertical dock and one in the narrow shell, both by construction: those layouts hand the
-## band zone a single strip-width column, which is what `PANEL_WIDTH` means.
-func band_zone_columns() -> int:
+## **THAT SUM IS `wide_shell_min_width()` LESS THIS ZONE'S OWN COLUMN, never a hand-listed pair of
+## flanks** — which is what makes the count correct for a four-zone page without a second formula, and
+## what stops the two drifting the way the retired `WIDE_SEPARATOR_SPAN` pair did.
+##
+## ONE on a vertical dock and one in the narrow shell, both by construction: those layouts hand a zone
+## a single strip-width column, which is what `PANEL_WIDTH` means. ONE also for any zone that declared
+## no `ZONE_SPEC_MAX_COLUMNS`, and for the EXPANDING zone, which spends the row's remainder rather than
+## a count of columns (`set_work_columns`).
+func zone_columns(zone: StringName) -> int:
+	var spec := _spec_for(zone)
+	var cap: int = maxi(int(spec.get(ZONE_SPEC_MAX_COLUMNS, ZONE_COLUMNS_MIN)), ZONE_COLUMNS_MIN)
+	var column: float = _spec_width(spec)
+	if cap <= ZONE_COLUMNS_MIN or column <= 0.0:
+		return ZONE_COLUMNS_MIN
 	if _is_vertical_edge(_dock_edge) or not _shell_is_wide():
-		return 1
-	var room: float = _available_card_span() - PANEL_CHROME_H - ZONE_PARTY_WIDTH \
-		- ZONE_WORK_MIN_WIDTH - _wide_separator_span()
-	return clampi(int(room / ZONE_BAND_WIDTH), 1, BAND_ZONE_MAX_COLUMNS)
+		return ZONE_COLUMNS_MIN
+	var room: float = _available_card_span() - (wide_shell_min_width() - column)
+	return clampi(int(room / column), ZONE_COLUMNS_MIN, cap)
 
-## What the BAND flank actually spends of the row — its column count at one readable column each. The
-## ONE definition, so `_card_width`, `work_zone_size` and `_affordable_work_columns` cannot disagree
-## about how much of the row the flank has taken, exactly as `_wide_separator_span()` is the one
-## definition of what the separators cost.
-func _band_flank_width() -> float:
-	return float(band_zone_columns()) * ZONE_BAND_WIDTH
-
-## The box the BAND zone's content may fill. Its HEIGHT is the body's, like every wide-shell zone; its
-## WIDTH is `band_zone_columns()` of `ZONE_BAND_WIDTH`. `BandPanelController` authors its split across
-## exactly that many columns, so the two cannot disagree about how many there are.
-func band_zone_size() -> Vector2:
-	var box := work_zone_size()
-	if box == Vector2.ZERO:
-		return box
-	if not _shell_is_wide():
-		return box
-	return Vector2(float(band_zone_columns()) * ZONE_BAND_WIDTH, box.y)
+## How many `ZONE_BAND_WIDTH` columns the BAND flank lays its blocks out across — a NAMED reader of the
+## generic answer above, kept because `BandPanelController.build_band_zone` authors its split against
+## this one zone and `_body_budget()` keys the strip's height off it.
+func band_zone_columns() -> int:
+	return zone_columns(ZONE_BAND)
 
 ## What the ACTIVE shell spends on the strip's CROSS axis before any zone sees the box. The wide shell
 ## spends none — its separators are vertical hairlines, paid out of the width — while the narrow shell
@@ -1341,19 +1523,21 @@ func _tab_bar_height() -> float:
 ## The tab the narrow shell actually shows: the selected one when it has content, else the first zone
 ## that does. A selected tab whose zone was handed in as null must not black the panel out — and this
 ## is what keeps the Part-1 shim (which fills only the BAND zone) previewable under the `work` default.
+## **It is also what makes a per-subject layout safe**: the persisted tab may name a zone this
+## subject does not declare (`knowledge` on a band's page), and that resolves to a zone it does.
 func _effective_tab() -> StringName:
 	if _zones.get(_active_tab) is Control:
 		return _active_tab
-	for zone in TAB_ORDER:
+	for zone in _zone_order():
 		if _zones.get(zone) is Control:
 			return zone
 	return _active_tab
 
-## Home each owned zone Control into the active shell's host: all three side by side in the wide
-## shell, only the selected tab's zone in the narrow one (the other two are detached but still owned,
+## Home each owned zone Control into the active shell's host: every zone side by side in the wide
+## shell, only the selected tab's zone in the narrow one (the rest are detached but still owned,
 ## so a tab switch is a reparent rather than a Hud re-render).
 func _reparent_zones() -> void:
-	for zone in TAB_ORDER:
+	for zone in _zone_order():
 		var zone_variant: Variant = _zones.get(zone)
 		if not (zone_variant is Control):
 			continue
@@ -1382,8 +1566,72 @@ func _update_body_visibility() -> void:
 
 # ---- wide shell scaffolding ------------------------------------------------
 
-## One wide-shell zone column. `fixed_width > 0` pins the column (band / parties); 0 makes it the
-## expanding one (work).
+## Rebuild the wide shell's columns from the LIVE layout: one host per zone in declared order, with a
+## hairline separator in every gap between them. Called from `_build` and again whenever
+## `set_zone_layout` changes the list.
+##
+## **THE ZONE CONTENTS MUST ALREADY BE GONE.** A host owns whatever `_reparent_zones` put in it, so
+## freeing the hosts with content still parented would take the contents with them behind the panel's
+## own ownership bookkeeping. `set_zone_layout` frees them first, which is why this is private.
+func _rebuild_wide_shell() -> void:
+	if _wide_shell == null:
+		return
+	for child in _wide_shell.get_children():
+		_wide_shell.remove_child(child)
+		child.queue_free()
+	_wide_zone_hosts.clear()
+	for i in range(_zone_layout.size()):
+		if i > 0:
+			_wide_shell.add_child(_make_zone_separator())
+		var zone := StringName(_zone_layout[i].get(ZONE_SPEC_KEY, &""))
+		_wide_zone_hosts[zone] = _add_wide_zone_host(zone, _spec_width(_zone_layout[i]))
+
+## The layout's zone keys, in declared order — what the tab bar, the reparenting and the effective-tab
+## fallback all walk.
+func _zone_order() -> Array[StringName]:
+	var keys: Array[StringName] = []
+	for spec in _zone_layout:
+		keys.append(StringName(spec.get(ZONE_SPEC_KEY, &"")))
+	return keys
+
+## A descriptor's ONE-column wide-shell width: its declared flank, or `ZONE_WIDTH_EXPAND` for the
+## expanding zone. **The BASE, not the extent** — `_zone_span()` below is what the zone actually
+## spends; see `ZONE_SPEC_MAX_COLUMNS` for why the two are separate.
+func _spec_width(spec: Dictionary) -> float:
+	return maxf(float(spec.get(ZONE_SPEC_WIDTH, ZONE_WIDTH_EXPAND)), 0.0)
+
+## The live descriptor for a zone key, or an empty Dictionary where the layout does not declare it —
+## so every reader takes the same defaults through `get`.
+func _spec_for(zone: StringName) -> Dictionary:
+	for spec in _zone_layout:
+		if StringName(spec.get(ZONE_SPEC_KEY, &"")) == zone:
+			return spec
+	return {}
+
+## What ONE fixed zone actually spends of the row: its declared column times the count `zone_columns()`
+## granted it. **The ONE definition**, so `_card_width`, `zone_size` and `_affordable_work_columns`
+## cannot disagree about how wide a widened flank is — exactly as `_wide_separator_span()` is the one
+## definition of what the separators cost. The expanding zone answers `ZONE_WIDTH_EXPAND` unchanged.
+func _zone_span(spec: Dictionary) -> float:
+	var column := _spec_width(spec)
+	if column <= 0.0:
+		return ZONE_WIDTH_EXPAND
+	return column * float(zone_columns(StringName(spec.get(ZONE_SPEC_KEY, &""))))
+
+## One zone's FIXED wide-shell width, or `ZONE_WIDTH_EXPAND` if it is the expanding one (or absent).
+func _zone_fixed_width(zone: StringName) -> float:
+	return _zone_span(_spec_for(zone))
+
+## What the layout's FIXED flanks cost the wide shell's interior width, summed over the live list —
+## never a pair of named constants, which is what made a fourth zone a rewrite rather than a row.
+func _fixed_zone_span() -> float:
+	var span := 0.0
+	for spec in _zone_layout:
+		span += _zone_span(spec)
+	return span
+
+## One wide-shell zone column. `fixed_width > 0` pins the column (band / parties / knowledge);
+## `ZONE_WIDTH_EXPAND` makes it the expanding one (work).
 func _add_wide_zone_host(zone: StringName, fixed_width: float) -> Control:
 	var host := _make_zone_host("Zone_%s" % String(zone), fixed_width)
 	_wide_shell.add_child(host)
@@ -1550,15 +1798,22 @@ func _make_zone_separator() -> ColorRect:
 
 # ---- narrow shell tab bar --------------------------------------------------
 
-## Rebuild the tab row (Band · Work · Parties) from the current selection + badges. Cheap enough to
-## redo wholesale, and it keeps the active/inactive styling in exactly one place.
+## Rebuild the tab row from the LIVE layout + the current selection + badges. Cheap enough to redo
+## wholesale, and it keeps the active/inactive styling in exactly one place.
+##
+## **`remove_child` BEFORE `queue_free`.** A queued node stays a child until the frame's idle pass, so
+## a second rebuild in the SAME frame appends its tabs beside the dying ones and the bar renders every
+## tab twice. That was latent while the only same-frame pair was `_relayout_body` + `set_zones`, which
+## both build the identical row; a subject switch now rebuilds it from `set_zone_layout` and again
+## from `set_zones`, with a DIFFERENT row on either side of the pair.
 func _rebuild_tab_bar() -> void:
 	if _tab_bar == null:
 		return
 	for child in _tab_bar.get_children():
+		_tab_bar.remove_child(child)
 		child.queue_free()
 	_tab_buttons.clear()
-	for zone in TAB_ORDER:
+	for zone in _zone_order():
 		var tab: Control = _make_tab_button(zone)
 		_tab_bar.add_child(tab)
 		_tab_buttons[zone] = tab
@@ -1572,7 +1827,7 @@ func _make_tab_button(zone: StringName) -> Control:
 	tab.name = "Tab_%s" % String(zone)
 	tab.mouse_filter = Control.MOUSE_FILTER_STOP
 	tab.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	tab.tooltip_text = TAB_LABELS[zone]
+	tab.tooltip_text = _tab_label_text(zone)
 	tab.add_theme_stylebox_override("panel", _tab_stylebox(active))
 	tab.gui_input.connect(func(event: InputEvent): _on_tab_gui_input(event, zone))
 
@@ -1583,7 +1838,7 @@ func _make_tab_button(zone: StringName) -> Control:
 	tab.add_child(row)
 
 	var label := Label.new()
-	label.text = TAB_LABELS[zone]
+	label.text = _tab_label_text(zone)
 	label.add_theme_font_size_override("font_size", TAB_FONT_SIZE)
 	label.add_theme_color_override("font_color", HudStyle.SIGNAL if active else HudStyle.INK_FAINT)
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1647,9 +1902,11 @@ func _tab_badge_stylebox(hot: bool) -> StyleBoxFlat:
 	return sb
 
 ## Select a narrow-shell tab. Persisted, so a reopened session lands where the player left it. The
-## wide shell shows all three zones, so this only changes what the narrow shell will show.
+## wide shell shows every zone, so this only changes what the narrow shell will show.
+## Guarded on `ZONE_KEYS`, not on the live layout: the selection outlives a subject switch (see
+## `_effective_tab`), so a caller may name a zone the current subject does not declare.
 func set_active_tab(zone: StringName) -> void:
-	if not TAB_LABELS.has(zone) or zone == _active_tab:
+	if not ZONE_KEYS.has(zone) or zone == _active_tab:
 		return
 	_active_tab = zone
 	_save_prefs()
@@ -1913,7 +2170,7 @@ func _load_prefs() -> void:
 		_dock_edge = edge
 	_collapsed = bool(cfg.get_value(CONFIG_SECTION, CONFIG_KEY_COLLAPSED, false))
 	var tab := StringName(str(cfg.get_value(CONFIG_SECTION, CONFIG_KEY_TAB, String(DEFAULT_TAB))))
-	if TAB_LABELS.has(tab):
+	if ZONE_KEYS.has(tab):
 		_active_tab = tab
 	# Deliberately UNVALIDATED — the work-sort vocabulary is `BandPanelController`'s, and it is what
 	# rejects an unknown value when it adopts this.

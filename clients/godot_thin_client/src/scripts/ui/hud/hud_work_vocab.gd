@@ -151,6 +151,179 @@ const ZONE_HEADER_WORK := "Work"
 
 const ZONE_HEADER_PARTIES := "Parties"
 
+## THE NARROW SHELL'S TAB LABELS, declared per SUBJECT (`BandCityPanel.set_zone_layout`). A tab picks
+## a ZONE, and a zone's name states the scope its content is at — so a band's first tab reads `Band`
+## and the faction page's reads `Faction`. They are their own words rather than the `ZONE_HEADER_*`
+## section heads above: a head titles a block INSIDE a zone and a tab names the zone, and the two
+## coinciding on `Work` is a coincidence rather than a shared fact.
+const ZONE_TAB_BAND := "Band"
+
+const ZONE_TAB_WORK := "Work"
+
+const ZONE_TAB_PARTIES := "Parties"
+
+## THE FACTION PAGE — the cycler's pinned first entry (issue #450), whose zones answer the
+## band zones' own questions one rung up: who the faction IS, what it is DOING, what it KNOWS, and
+## who is OUT.
+const ZONE_TAB_FACTION := "Faction"
+
+## Abbreviated deliberately: the narrow shell fits four tabs across a 354px strip, and `Knowledge`
+## is the longest word of the set. Pending playtest.
+const ZONE_TAB_KNOWLEDGE := "Know"
+
+const FACTION_HEADER_KNOWLEDGE := "Knowledge"
+
+## The KNOWLEDGE zone's other two blocks (issue #450, the four-zone body). **Settling is the
+## sedentarization score under the player-facing word the manual uses**, and it lands here rather than
+## beside the stores for the same reason the craft tracks do: it is not a stock and not a population —
+## it is what the faction has BECOME, and what it unlocks is what its hands may attempt.
+const FACTION_HEADER_SETTLING := "Settling"
+
+const FACTION_HEADER_DISCOVERIES := "Discoveries"
+
+## **THE SIM'S SEDENTARIZATION STAGE IS A WIRE TOKEN, AND THIS TABLE IS THE ONLY PLACE IT BECOMES A
+## WORD.** `SedentarizationStage::as_str()` spells the three stages `none` / `soft` / `hard`, and
+## `FactionReadouts.SEDENTARIZATION_STAGE_NONE` says outright that they are "not a word anyone sees" —
+## so the SETTLING row rendered its key as a lowercase enum (`soft  ▰▰▰▱▱  62/100`) beside the
+## capitalised `Nomadic` the below-threshold case already had. The words come from the sim's own
+## prompts: the soft threshold asks whether to "establish a seasonal base", the hard one whether to
+## "invest in storehouses and settle".
+##
+## **PROVISIONAL, pending playtest** — the same footing `ZONE_TAB_KNOWLEDGE`'s abbreviation is on.
+const FACTION_SETTLING_STAGE_LABELS := {
+    "none": "Nomadic",
+    "soft": "Seasonal base",
+    "hard": "Ready to settle",
+}
+
+## What an absent, `none` or UNRECOGNISED stage reads as — never the raw token, which is the whole
+## point of the table above. It reads the table rather than restating the word, so `Nomadic` has one
+## home and the fallback cannot drift from the `none` row.
+const FACTION_SETTLING_NOMADIC: String = FACTION_SETTLING_STAGE_LABELS["none"]
+
+## `▰▰▱▱▱  62/100` — the SETTLING row's VALUE: the meter and the score against the scale the sim
+## reports it on. The stage word is the row's KEY, not part of this.
+const FACTION_SETTLING_VALUE_FORMAT := "%s  %d/%d"
+
+const FACTION_SETTLING_SCALE := 100
+
+## **THE FACTION PAGE'S ROW SIZE — the `band` zone's vitals rows, which every other zone matches.**
+## Those rows are a bare `RichTextLabel` carrying no size override, so this is Godot's stock default
+## written down; the harness asserts the two are equal at render time rather than trusting the
+## number. See `FactionRollup.STAT_ROW_FONT_SIZE` for why this is NOT the work board's 13.
+const FACTION_STAT_ROW_FONT_SIZE := 16
+
+## A discovery row's value: how many INSTANCES of that site kind the faction has found. The head's
+## readout is the instance TOTAL, so a kind found three times reads `3` on one row rather than as
+## three rows — the top bar's own "N is instances, the strip is kinds" split, stated in full here
+## because this page has the room the strip does not.
+const FACTION_DISCOVERY_COUNT_FORMAT := "%d"
+
+## **THE KNOWLEDGE ZONE'S HEIGHT TIER.** All three of its blocks measured **336px** at the page's row
+## size against the ~300px a horizontal dock offers, and the zone CLIPS — so a box below this drops
+## DISCOVERIES and keeps Settling + the craft tracks (`FactionRollup.build_knowledge_zone`).
+##
+## **IT IS A REAL "CAN THIS BOX HOLD THE FULL BLOCK?" TEST, not a round number between two docks.**
+## The full block measures **452px** at its worst case (five craft tracks, the sites list at its cap
+## plus its `+N more`), so a box that only just clears this threshold still holds it with 28px to
+## spare. The two boxes the panel actually offers are nowhere near either side — ~300 and ~1055 — so
+## the margin is what protects a box that is not one of those two, and it is what shrinks as the
+## block grows.
+## **Re-measure before adding a row to this zone**; `band_panel_preview._report_zone_content_extent`
+## prints the full block's extent on `band_panel_faction_knowledge` and the tiered one on
+## `band_panel_faction_wide`, and this threshold must stay above the first.
+const FACTION_KNOWLEDGE_FULL_MIN_HEIGHT := 480.0
+
+## A discovered site whose catalog row carries no display name — the site_id is a worse name than
+## none at all is a lie, so the id stands.
+const FACTION_DISCOVERY_UNNAMED := "Unnamed site"
+
+## **THE ALERT CLAUSE — what a faction row says where an aggregate would lie.** A runway is one larder
+## against one band's drain and a kit condition is three durabilities per band; neither has a faction
+## value, so those rows state HOW MANY bands are in trouble and the drill-down states which. The count
+## and nothing more: naming the band here would make the row as long as the list it replaces.
+const FACTION_ALERT_GLYPH := "⚠"
+
+const FACTION_ALERT_ONE := "1 band"
+
+const FACTION_ALERT_MANY := "%d bands"
+
+## The Kit row's two states. It carries NO durabilities — a mean of three per band describes no band
+## that exists — so it is the alert, or the word saying there is none.
+const FACTION_KIT_ALL_EQUIPPED := "all equipped"
+
+const FACTION_KIT_DRY_NOTE := "a kit has run out"
+
+## **THE SUMMARY TABS' VOCABULARY.** Work and Parties are one idea in two scopes — a row per thing,
+## flagged when it wants attention — so they share every word below rather than each growing its own.
+## The flag is the ORB's glyph and the orb's two severities; this page invents no third.
+const FACTION_FLAG_GLYPH := "●"
+
+## A zone head that has something to report: `2 of 5`. It reads as a fraction rather than a bare count
+## because the count alone (`2`) is indistinguishable from the roster size on a small faction.
+const FACTION_FLAGGED_FORMAT := "%d of %d"
+
+## A band's one-line work summary. Counts rather than names: a row is one line and a band works up to
+## 34 sources.
+## Singular is spelled out rather than left to a `%d sources` that reads "1 sources" — which is the
+## COMMON case here, not an edge one: a young band works one patch, and that is the first thing a new
+## player sees on this tab.
+const FACTION_SOURCES_FORMAT := "%d sources"
+
+const FACTION_SOURCES_ONE := "1 source"
+
+const FACTION_PENS_FORMAT := "%d pens"
+
+const FACTION_PENS_ONE := "1 pen"
+
+const FACTION_SUMMARY_SEPARATOR := " · "
+
+## The faction's own alerts — the unworked-rung producer's, whose patches belong to the FACTION and so
+## have no band's row to sit on.
+const FACTION_LAND_ROW := "The land"
+
+## An expanded band's worked sources, and an expanded party's own facts.
+const FACTION_SOURCE_FORAGE_FORMAT := "Forage (%d, %d)"
+
+const FACTION_SOURCE_HUNT_FORMAT := "Hunt %s"
+
+const FACTION_SOURCE_CREW_FORMAT := "%d · %s"
+
+const FACTION_PARTY_MISSION := "Mission"
+
+const FACTION_PARTY_CREW := "Crew"
+
+const FACTION_PARTY_PHASE := "Phase"
+
+## A bare percentage in a drill-down row, where the row's own key already says what it is a percentage
+## OF (the band page's `GROWTH_ROW_FORMAT` spells `of normal` because it stands alone; here the
+## faction row above the list has already said it).
+const FACTION_PERCENT_FORMAT := "%d%%"
+
+## The faction's trade STOCK, at the one decimal the per-band Trade row already prints it at.
+const FACTION_TRADE_STOCK_FORMAT := "%.1f"
+
+## The PEOPLE key's trailing chip on the faction page, where a band's page carries its dependency
+## count: how many bands the bar is summed over, so a total is never read as one band's.
+const FACTION_BANDS_CHIP_FORMAT := "%d bands"
+
+const FACTION_BANDS_CHIP_ONE := "1 band"
+
+## The faction page's per-band and per-party lists are CAPPED — the zones clip rather than scroll, and
+## neither list has a pager (the work BOARD's pager belongs to a band's own sources). What the cap
+## drops is stated, never silently truncated.
+const FACTION_LIST_ROWS_MAX := 6
+
+const FACTION_LIST_MORE_FORMAT := "+%d more"
+
+## A faction with no party out. The band page's parties zone says this with a disabled footer button;
+## this page has no footer, so it says it in words.
+const FACTION_PARTIES_EMPTY := "No parties out"
+
+## A knowledge track the faction has finished. `HudFormat.meter_bar` would draw a full bar, which
+## reads as "still climbing, nearly there" — the top-bar strip's own reasoning for its `✔ known`.
+const FACTION_KNOWLEDGE_KNOWN := "known"
+
 ## The composition KEY's chip gap and type size. The bar/swatch geometry travelled to `HudWidgets`
 ## with `build_composition_bar` / `build_composition_key`; these two stay because the parties zone's
 ## link row and the dependency chip read them outside those builders.
