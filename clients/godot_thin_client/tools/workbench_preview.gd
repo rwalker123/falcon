@@ -1052,8 +1052,8 @@ func _settle() -> void:
 	await get_tree().process_frame
 
 
-## How many times a capture is re-taken when the window has escaped its pin. The maximize lands once
-## and is undone once, so one retry is the expected cost; the rest is slack.
+## How many times a capture is re-taken when the window has escaped its pin. The WM's own resize
+## lands once and is undone once, so one retry is the expected cost; the rest is slack.
 const CAPTURE_RETRIES := 4
 
 func _save(name: String) -> void:

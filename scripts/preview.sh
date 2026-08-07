@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 #
 # Run one of the client's RENDER harnesses in a window that does not steal the keyboard.
+# Invoke it from the REPO ROOT (it cd's there itself, but the path you type to reach it does not).
 #
 #   scripts/preview.sh res://tools/ui_preview.tscn
-#   scripts/preview.sh res://tools/blend_probe.tscn --  --write-golden
+#   scripts/preview.sh res://tools/blend_probe.tscn -- --only=G
+#
+# RENDER harnesses only. The `--headless` guards (decode_guard, marker_field_guard,
+# snapshot_alias_guard, …) open no window, so they have no focus to take and want the dummy
+# renderer this wrapper's override would not give them -- run those bare, or through their
+# `cargo xtask` entry point.
 #
 # WHY THIS EXISTS. A harness that captures pixels cannot run `--headless`: that selects the
 # headless display driver, whose only rendering driver is `dummy`, so there is no viewport
@@ -45,9 +51,18 @@ The exit status is the harness's own.
 EOF
 }
 
-if [[ $# -eq 0 || "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   usage
   exit 0
+fi
+
+# A MISSING scene is not a help request, and it must not exit 0. `client-dev` gates its render
+# step on this status, so an invocation whose scene argument expanded empty would otherwise print
+# usage, render nothing, and report a clean pass.
+if [[ $# -eq 0 ]]; then
+  echo "[preview] no scene given." >&2
+  usage >&2
+  exit 2
 fi
 
 SCENE="$1"
@@ -61,9 +76,15 @@ fi
 
 # Only the run that CREATES the override removes it, so a second concurrent harness cannot pull
 # the file out from under a third one that has not booted yet.
+#
+# The marker is re-checked HERE and not just at the entry test above, so "this script never
+# clobbers an override it did not write" holds for the whole run rather than only at its start.
+# The file can legitimately change underneath a long render: `run_stack.sh` clears a marked
+# override whenever the client launches, and a human is then free to write their own. Removing by
+# path alone would delete theirs on the way out.
 OWNS_OVERRIDE=false
 cleanup() {
-  if [[ "$OWNS_OVERRIDE" == true ]]; then
+  if [[ "$OWNS_OVERRIDE" == true && -e "$OVERRIDE" ]] && grep -qF "$MARKER" "$OVERRIDE"; then
     rm -f "$OVERRIDE"
   fi
 }

@@ -5,7 +5,7 @@ extends Node
 ## Instances the real HudLayer with canned selection data, renders each state,
 ## and saves a PNG to `ui_preview_out/` in the project. Lets us iterate on HUD /
 ## selection-panel / targeting styling without a running server or manual
-## screenshots. Not part of the game — run explicitly:
+## screenshots. Not part of the game — run explicitly, FROM THE REPO ROOT:
 ##
 ##   scripts/preview.sh res://tools/ui_preview.tscn
 ##

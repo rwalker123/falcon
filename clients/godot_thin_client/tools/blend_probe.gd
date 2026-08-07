@@ -16,6 +16,8 @@ extends Node2D
 ##      blend keeps a hex intact or tears holes in its interior. Every blend change MUST be judged here.
 ##      Rendered once per tuning variant (the V6 sweep) plus a labelled contact sheet.
 ##
+## Run FROM THE REPO ROOT:
+##
 ##   scripts/preview.sh res://tools/blend_probe.tscn   (NOT --headless — the dummy renderer can't read back,
 ##                                                      and the wrapper is what keeps the window quiet)
 ##
@@ -1752,8 +1754,8 @@ func _shore_sweep_overrides(variant: Dictionary) -> Dictionary:
 func _refit(target_radius: float) -> void:
 	## Fit, settle, and assert the achieved hex radius — the blend look is radius-relative, so a frame is
 	## only an honest proxy for the game when it was rendered at the game's on-screen radius.
-	# Re-pin the canvas first: the WM can still push the window back to the project's MAXIMIZED mode after
-	# _ready has run (see _pin_canvas), and a maximized viewport throws every radius off target.
+	# Re-pin the canvas first: the WM can still resize the window out from under the pin after _ready has
+	# run (see _pin_canvas), and a monitor-sized viewport throws every radius off target.
 	_pin_canvas(get_window())
 	await _settle()
 	_map._fit_map_to_view()

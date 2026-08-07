@@ -6,7 +6,7 @@ extends Node2D
 ## player band, renders each state, and saves a PNG to ui_preview_out/. Lets us visually
 ## verify the selected-band labor highlights (work-range ring / worked forage tiles /
 ## hunted-herd ring + link) without a server. Run windowed (NOT headless —
-## the dummy renderer can't read back the viewport):
+## the dummy renderer can't read back the viewport). FROM THE REPO ROOT:
 ##
 ##   scripts/preview.sh res://tools/map_preview.tscn
 ##

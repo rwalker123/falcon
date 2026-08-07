@@ -6,7 +6,7 @@ extends Node
 ## reservation onto the HUD (mirroring Main's `_apply_reservation` fan-out for the
 ## `hud` surface), then docks the panel to each edge (+ collapsed) and dumps one
 ## PNG per state so the chrome + the HUD reflow can be eyeballed without a server.
-## The full MAP reflow/clip is only exercised in the running client.
+## The full MAP reflow/clip is only exercised in the running client. FROM THE REPO ROOT:
 ##
 ##   scripts/preview.sh res://tools/band_panel_preview.tscn
 ##
