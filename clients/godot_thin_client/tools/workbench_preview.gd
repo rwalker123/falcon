@@ -121,8 +121,10 @@ func _ready() -> void:
 	_assert_equipment_states_the_bands_own_tiers()
 	_assert_equipment_quotes_each_tier_at_its_own_kit()
 	_assert_equipment_renders_the_players_bands()
-	# LAST of the equipment block: it empties the page, so nothing may read it afterwards.
+	# LAST TWO of the equipment block, in this order: the reset empties the page, which is exactly the
+	# precondition the catch-up assertion needs — and nothing else may read the page after it.
 	_assert_equipment_drops_the_world()
+	_assert_equipment_catches_up_on_page_switch()
 
 	# Back to the tuning page for the last assertion: `_tuning_page` finds the page in the TREE, and
 	# the shell detaches a page it is not showing.
@@ -658,6 +660,47 @@ func _assert_equipment_drops_the_world() -> void:
 			% WorkbenchVocab.EQUIPMENT_NO_ROSTER)
 	if failed == 0:
 		print("workbench_preview: assert OK — reset_pages() drops the equipment page's roster and both cohorts")
+
+
+## **A PAGE ACTIVATED BETWEEN FRAMES MUST CATCH UP ON THE FRAME ALREADY IN HAND, and no picture can
+## carry that**: a page that has never been fed and a page fed with an empty world render the same
+## thing — the roster's "no kit roster yet" line above the bands' "no player bands" one — so the
+## defect and the fix are the same frame.
+##
+## It is the shell's claim, not the page's. `update_snapshot` fans at the ACTIVE page only, and
+## snapshots arrive on turn resolution and world-mutating commands, with no heartbeat behind them; so
+## before `show_page` replayed the cached frame, opening Equipment mid-turn showed its degraded state
+## until the next turn resolved. Driven the way a designer reaches it: a frame lands while ANOTHER
+## page is up, then the rail switches here.
+##
+## Its precondition is the reset immediately above, which is why it runs last — the page must be empty
+## first, or a page that never caught up passes on what the previous state left behind.
+func _assert_equipment_catches_up_on_page_switch() -> void:
+	var page := _equipment_page()
+	if page == null:
+		return
+	if _tier_label(page, WorkbenchVocab.EQUIPMENT_HUNT_TIER_META, EQUIPMENT_RESIDENT_ENTITY) != null:
+		push_error("workbench_preview: the equipment page is not empty before the page-switch replay — the catch-up claim would pass vacuously")
+		return
+
+	# The frame arrives while the TUNING page is active, so it is fanned at that page and never at this
+	# one; the rail switch afterwards is the only thing that can put it here.
+	_shell.show_page(TUNING_PAGE)
+	_shell.update_snapshot(_equipment_frame(), true)
+	_shell.show_page(EQUIPMENT_PAGE)
+
+	var failed := 0
+	if _tier_label(page, WorkbenchVocab.EQUIPMENT_HUNT_TIER_META, EQUIPMENT_RESIDENT_ENTITY) == null:
+		failed += 1
+		push_error("workbench_preview: band #%d is missing after switching to the equipment page — the page never saw the frame that landed while another page was active"
+			% EQUIPMENT_RESIDENT_ENTITY)
+	if _has_label_with_text(page, WorkbenchVocab.EQUIPMENT_NO_ROSTER):
+		failed += 1
+		push_error("workbench_preview: the equipment page still says '%s' after the page switch — the roster did not come back with the replayed frame"
+			% WorkbenchVocab.EQUIPMENT_NO_ROSTER)
+	if failed == 0:
+		print("workbench_preview: assert OK — a page switched to between frames catches up on the cached frame (roster + band #%d)"
+			% EQUIPMENT_RESIDENT_ENTITY)
 
 
 func _has_label_with_text(page: EquipmentPage, text: String) -> bool:

@@ -161,9 +161,6 @@ const EQUIPMENT_CONDITION_DRY_FORMAT := HudComposeVocab.KIT_HINT_DRY_FORMAT
 const EQUIPMENT_COMPONENT_SPEARS := HudComposeVocab.KIT_COMPONENT_SPEARS
 const EQUIPMENT_COMPONENT_SLED := HudComposeVocab.KIT_COMPONENT_SLED
 const EQUIPMENT_COMPONENT_BASKETS := HudComposeVocab.KIT_COMPONENT_BASKETS
-## Said when a cohort states no condition at all — the keys are ABSENT, which is not the same as `0`
-## (a real reading, meaning dry). The tiers beside it are then the roster's, unworn.
-const EQUIPMENT_NO_CONDITION := "no condition stated"
 
 ## **THE TWO TIER LINES, AND THEY NAME THEIR KITS SEPARATELY.** `PopulationCohortState.kitId` answers
 ## for the HUNT tiers; a resident band's forage tier resolves through the world's forage default, so

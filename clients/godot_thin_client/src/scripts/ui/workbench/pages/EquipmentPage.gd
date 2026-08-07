@@ -103,22 +103,35 @@ static func _block_column() -> VBoxContainer:
 
 # ---- ingest ----------------------------------------------------------------
 
-## **THE ROSTER IS INGESTED ONLY WHEN THE FRAME CARRIES IT, AND ITS DEFAULTS COME WITH IT.**
+## **PRESENCE IS NOT A CHANGE SIGNAL; `changed_sections` IS.** `SnapshotDecoder::decode_delta` builds
+## a merged frame as `cache.dict.duplicate_shallow()` overwritten with the delta's keys, so **every
+## baseline key rides every merged frame** — `data.has(KITS_KEY)` is true on all of them, and a gate
+## resting on absence never skips. The manifest is the replacement signal (`SnapshotSections.changed`,
+## which reads a frame carrying no manifest — a full snapshot — as "everything changed", so the frame
+## that must repaint is never starved). `Main` gates this same key exactly this way.
 ##
-## `SubsistenceSection.kits` is a per-world constant: it diffs out on every frame after the first and
-## is re-sent only on a world rebuild, so on a merged delta the key is simply ABSENT. Absence is
-## therefore the signal — overwriting on every frame would blank the roster one frame after it
-## arrived. The two defaults are taken from the same frame for the reason `Main.update_kit_roster`
-## takes them together: a roster ingested without them names no default anywhere.
+## `SubsistenceSection.kits` is a per-world CONSTANT: its manifest entry moves only on a world rebuild,
+## which is what makes the roster half of `reset()` real.
+##
+## **THE "…OR I AM HOLDING NOTHING" CLAUSE IS LOAD-BEARING — it is what makes the shell's page-switch
+## replay work.** A replayed cached frame reports `kits` unchanged, so under a `changed`-only gate a
+## page activated between turns would sit empty until the next one; the same clause re-seeds the page
+## after `reset()`. The four cases it resolves: first full snapshot (changed → ingest), steady delta
+## (unchanged, holding data → skip), page-switch replay or post-reset (unchanged, holding nothing →
+## ingest), world rebuild (changed → ingest).
+##
+## The two defaults are taken from the same frame for the reason `Main.update_kit_roster` takes them
+## together: a roster ingested without them names no default anywhere.
 func apply_update(data: Dictionary, _full_snapshot: bool) -> void:
 	var moved := false
-	if data.has(KITS_KEY):
+	if data.has(KITS_KEY) and (SnapshotSections.changed(data, KITS_KEY) or _kits.is_empty()):
 		var kits: Variant = data.get(KITS_KEY, [])
 		_kits = kits if kits is Array else []
 		_default_hunt_kit_id = String(data.get(DEFAULT_HUNT_KIT_KEY, ""))
 		_default_forage_kit_id = String(data.get(DEFAULT_FORAGE_KIT_KEY, ""))
 		moved = true
-	if data.has(POPULATIONS_KEY):
+	if data.has(POPULATIONS_KEY) \
+			and (SnapshotSections.changed(data, POPULATIONS_KEY) or _cohorts.is_empty()):
 		_cohorts = _player_cohorts(data.get(POPULATIONS_KEY, []))
 		moved = true
 	if moved:
@@ -294,16 +307,10 @@ static func _band_head(cohort: Dictionary, entity: int) -> String:
 		WorkbenchVocab.EQUIPMENT_BAND_SIZE_FORMAT % int(cohort.get(COHORT_SIZE_KEY, 0))])
 
 
-## Remaining condition in each component, on the 0-100 scale; `0` reads as DRY. **A cohort that
-## states no condition at all is a different thing from one at zero** — the keys are absent rather
-## than zero, and the tiers beside it are then the roster's, unworn — so it renders its own line
-## instead of three fictitious zeroes.
+## Remaining condition in each component, on the 0-100 scale. **`0` is a real reading and means DRY**,
+## not "unstated": `native/src/dict/population.rs` writes all three durability keys on every cohort, so
+## every component always has a number to state.
 static func _condition_line(cohort: Dictionary) -> String:
-	var stated := false
-	for component in COMPONENTS:
-		stated = stated or cohort.has(String(component["condition"]))
-	if not stated:
-		return WorkbenchVocab.EQUIPMENT_NO_CONDITION
 	var parts: Array[String] = []
 	for component in COMPONENTS:
 		var label := String(component["label"])

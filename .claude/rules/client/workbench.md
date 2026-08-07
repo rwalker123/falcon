@@ -103,9 +103,10 @@ world it described. That is the whole scope of the hook: **snapshot-derived stat
 page holds.
 
 `EquipmentPage` is the ordinary case and shows what the hook is for: its roster is the ended world's
-config and its cohorts are that world's bands, so it drops both. The roster half is the one that
-bites — `SubsistenceSection.kits` is re-sent **only** on a world rebuild, so a page that kept it
-would go on showing the previous world's kits indefinitely rather than for one frame.
+config and its cohorts are that world's bands, so it drops both. What it buys is **the gap** — a
+world boundary is not a frame, and between `reset_pages()` and the next snapshot a page that kept its
+state would render the dead world's bands as though they were the new one's. The page re-seeds from
+that next frame either way; the point is that it says nothing rather than something wrong in between.
 
 `ConfigTuningPage.reset()` is therefore a **documented no-op**, and the exception is the load-bearing
 part. Its state is the designer's intent and the server's staged file — neither belongs to the world,
@@ -166,6 +167,36 @@ version open on stale panels.
 Anything that ACCUMULATES must stay above the gate. Nothing on the surface does today; the test for
 a new one is not "is it cheap" but "is it reconstructible from the next full frame?"
 
+**The fan-out is at the ACTIVE page only, so `show_page` catches the new one up from the cache.**
+Without that, a page activated between two frames sits on its empty state until the next one — and
+frames arrive on turn resolution and world-mutating commands, with no heartbeat, so "open the surface,
+click a page" means *the rest of the turn*. `ConfigTuningPage` consumes no snapshot, so `EquipmentPage`
+was the first page able to show the gap, and it showed it as a page reporting that the world had sent
+nothing. The replay is the same shape as the visibility one — cached frame, `full_snapshot = true`,
+skipped while hidden, and `_hidden_frame_pending` left alone — and it is **coordinator fan-out, not
+page knowledge**, so the shell still names no page. `workbench_preview`'s
+`_assert_equipment_catches_up_on_page_switch` pins it by feeding a frame while a *different* page is
+active and then switching.
+
+**A page's own ingest gate has to admit that replay**, which is what the "or I am holding nothing"
+clause in `EquipmentPage.apply_update` is for — see the next section.
+
+## Presence is not a change signal, on this surface either
+
+**Every baseline key rides every merged delta.** The decoder builds a merged frame as a shallow
+duplicate of the cached world and overwrites it with the delta's keys, so `snapshot.has(key)` is true
+on every frame whether or not anything moved; `changed_sections` is the manifest, and it is **absent
+on a full snapshot, meaning everything changed**. `SnapshotSections.gd` carries the general rule and
+`Main` already gated the kit roster this way — the equipment page's first cut did not, and rebuilt
+both of its groups every turn on a roster that changes only when the world does.
+
+The gate a snapshot-reading page wants is therefore **"the frame carries it AND (the manifest says it
+changed OR this page is holding nothing for it)"**. The second clause is not belt-and-braces: a
+replayed cached frame (above) reports the roster unchanged, so a `changed`-only gate would leave a
+freshly-switched-to page permanently empty, and the same clause is what re-seeds a page after
+`reset()`. The four cases it has to cover are the first full snapshot, a steady delta, a
+replay-or-post-reset, and a world rebuild.
+
 ## A row that does not fit swells the whole column, silently
 
 Parameter labels have autowrap **off**, so a long one raises its row's minimum width; the
@@ -182,9 +213,17 @@ usually where the slack is.
 **Every page owes the same measurement, and the column check is the part that transfers.** The
 per-row checks above are shaped around a parameter row; `_assert_equipment_fits` is the equipment
 page's own version, measuring the same content column and then walking every label the page draws
-with autowrap **off** — which on that page is deliberately only two of them, a kit's display name and
-a band's head row. **The lever for a new page is to put the long text in a wrapping caption**, which
-is why every other line there is one.
+with autowrap **off**. On that page they are of three kinds, and the lever differs by kind:
+
+- **A page's own content** — a kit's display name, a band's head row. These are deliberately the only
+  two content lines that do not wrap, and **the lever is to put long text in a wrapping caption**,
+  which is why every other line there is one.
+- **The group headings `build_group` draws.** `WorkbenchWidgets.build_section_label` sets no
+  `autowrap_mode`, so a heading is measured like anything else — and a caption is not an option for
+  one. **The lever there is the heading text itself**, in `WorkbenchVocab`.
+
+So the count the assertion prints is headings plus content lines, not content alone: a reader
+matching it against the page's rows will be over by one per group.
 
 ## A new glyph must be RENDERED before it is trusted
 
