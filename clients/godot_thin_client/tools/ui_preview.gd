@@ -44,6 +44,7 @@ const CHAPTERS := [
 	"res://tools/ui_preview/chapters/world_reset.gd",
 	"res://tools/ui_preview/chapters/event_dock.gd",
 	"res://tools/ui_preview/chapters/button_faces.gd",
+	"res://tools/ui_preview/chapters/interface_scale.gd",
 ]
 
 ## The one method a chapter owes the harness (see the chapter contract in
@@ -311,6 +312,15 @@ func _ready() -> void:
 	# The Telling panel restores its collapsed state in its constructor, so pin it expanded BEFORE
 	# the HUD instantiates (into the scratch file, now that the override is set).
 	TellingPanel.save_collapsed(false)
+	# PIN THE INTERFACE SCALE, the fourth determinism source and the same one `map_preview` records
+	# for the speed sliders: `ClientSettings` is an autoload that has already read the developer's real
+	# `user://client_settings.cfg`, and `UiScaler` has already pushed whatever it found onto the
+	# window's `content_scale_factor` — which re-projects EVERY frame. Assign the MEMBER, never
+	# `set_ui_scale`, which would `_save()` over that same file; re-emit `changed` so `UiScaler`
+	# applies the pin through its own real path. `chapters/interface_scale.gd` walks the extremes and
+	# restores this value.
+	ClientSettings.ui_scale = ClientSettings.UI_SCALE_DEFAULT
+	ClientSettings.changed.emit()
 
 	_hud = HUD_SCENE.instantiate()
 	add_child(_hud)

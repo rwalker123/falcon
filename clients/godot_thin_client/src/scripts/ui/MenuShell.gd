@@ -527,6 +527,18 @@ func _build_options_pane() -> void:
 	_add_pane_header("Options", "Client settings")
 	_speed_sliders.clear()
 	_option_toggles.clear()
+	# FIRST in the pane, because it governs the legibility of every row under it. Same boundary rule
+	# as the fog row: this writes `ClientSettings` and stops. `UiScaler` (an autoload, so it also
+	# holds on the landing screen) turns it into the window's `content_scale_factor`, and `MapView`
+	# counter-scales itself off the same setting so the map is unaffected.
+	_pane_body.add_child(_make_speed_slider_row(
+		"Interface scale",
+		ClientSettings.ui_scale,
+		ClientSettings.UI_SCALE_DEFAULT,
+		ClientSettings.UI_SCALE_MIN,
+		ClientSettings.UI_SCALE_MAX,
+		ClientSettings.UI_SCALE_STEP,
+		ClientSettings.set_ui_scale))
 	# Fog of war is a SERVER setting, but this row writes only `ClientSettings` — MenuShell has no
 	# handle to Main/Inspector/CommandClient and must not grow one. `Main` listens on
 	# `ClientSettings.changed` and is the single place that sends `set_fog`, which is also why the
@@ -542,6 +554,7 @@ func _build_options_pane() -> void:
 		ClientSettings.PAN_SPEED_DEFAULT,
 		ClientSettings.PAN_SPEED_MIN,
 		ClientSettings.PAN_SPEED_MAX,
+		ClientSettings.SPEED_STEP,
 		ClientSettings.set_pan_speed_multiplier))
 	_pane_body.add_child(_make_speed_slider_row(
 		"Zoom speed",
@@ -549,6 +562,7 @@ func _build_options_pane() -> void:
 		ClientSettings.ZOOM_SPEED_DEFAULT,
 		ClientSettings.ZOOM_SPEED_MIN,
 		ClientSettings.ZOOM_SPEED_MAX,
+		ClientSettings.SPEED_STEP,
 		ClientSettings.set_zoom_speed_multiplier))
 	var actions := _make_actions_row()
 	var restore := Button.new()
@@ -559,10 +573,14 @@ func _build_options_pane() -> void:
 	_pane_body.add_child(actions)
 
 
-## One "title / slider + value readout" row for a speed multiplier. Applies live +
+## One "title / slider + value readout" row for a CONTINUOUS setting. Applies live +
 ## persists via `on_changed` (a `ClientSettings.set_*` Callable); the slider is kept in
 ## `_speed_sliders` (with its default in meta) so "Restore defaults" can reset it.
-func _make_speed_slider_row(title: String, value: float, default_value: float, min_v: float, max_v: float, on_changed: Callable) -> Control:
+##
+## `step` is a parameter rather than a hard-wired `ClientSettings.SPEED_STEP` because this is the
+## pane's general slider-row builder now — the interface scale is not a speed and carries its own
+## granularity — and it keeps the name only because `_speed_sliders`' reset contract is named for it.
+func _make_speed_slider_row(title: String, value: float, default_value: float, min_v: float, max_v: float, step: float, on_changed: Callable) -> Control:
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", SPEED_ROW_SEPARATION)
 	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -581,7 +599,7 @@ func _make_speed_slider_row(title: String, value: float, default_value: float, m
 	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	slider.min_value = min_v
 	slider.max_value = max_v
-	slider.step = ClientSettings.SPEED_STEP
+	slider.step = step
 	slider.value = value
 	slider.set_meta(SPEED_DEFAULT_META, default_value)
 	row.add_child(slider)

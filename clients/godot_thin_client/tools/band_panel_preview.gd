@@ -656,6 +656,16 @@ func _ready() -> void:
 	BandCityPanel.config_path_override = PREVIEW_DOCK_PREFS_PATH
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(PREVIEW_DOCK_PREFS_PATH))
 
+	# PIN THE INTERFACE SCALE, out of that same real `user://client_settings.cfg` and by the same rule
+	# `map_preview` states for the speed sliders: `ClientSettings` is an autoload that has already read
+	# the developer's file, and `UiScaler` has already pushed whatever it found onto the window's
+	# `content_scale_factor` — which shrinks the LOGICAL viewport, so every canvas pin, every dock
+	# threshold probe and every frame here would be measured at a width this panel never ships at.
+	# Assign the MEMBER, never `set_ui_scale` (the setter `_save`s over that file); re-emit `changed`
+	# so `UiScaler` applies the pin through its own real path.
+	ClientSettings.ui_scale = ClientSettings.UI_SCALE_DEFAULT
+	ClientSettings.changed.emit()
+
 	_hud = HUD_SCENE.instantiate()
 	add_child(_hud)
 
