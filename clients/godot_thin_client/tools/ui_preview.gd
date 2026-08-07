@@ -338,7 +338,6 @@ func _ready() -> void:
 	_hud.update_sedentarization([{"faction": 0, "score": 62.0, "stage": "soft"}])
 
 	# Top-bar demographics readout (faction 0 age structure + dependency ratio).
-	_hud.update_demographics([{"faction": 0, "children": 34, "working": 51, "elders": 15}])
 
 	# Top-bar intensification-knowledge meters (faction 0): Cultivation still learning
 	# (block-glyph bar + "learning"), Herding fully mastered ("✔ known"). Visible across frames.

@@ -97,15 +97,6 @@ var _server_build: String = "?"
 @onready var layout_root: Control = $LayoutRoot
 @onready var left_dock_region: MarginContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock
 @onready var right_dock_region: MarginContainer = $LayoutRoot/RootColumn/ContentRow/RightDock
-@onready var turn_block: VBoxContainer = $LayoutRoot/RootColumn/TopBar/TurnBlock
-@onready var turn_label: Label = $LayoutRoot/RootColumn/TopBar/TurnBlock/TurnLabel
-@onready var metrics_label: Label = $LayoutRoot/RootColumn/TopBar/TurnBlock/MetricsLabel
-@onready var sedentarization_label: Label = %SedentarizationLabel
-@onready var demographics_label: Label = %DemographicsLabel
-@onready var discoveries_row: HBoxContainer = %DiscoveriesRow
-@onready var discoveries_label: Label = %DiscoveriesLabel
-@onready var discoveries_strip: HBoxContainer = %DiscoveriesStrip
-@onready var intensification_label: Label = %IntensificationLabel
 @onready var bottom_bar: HBoxContainer = $LayoutRoot/RootColumn/BottomBar
 @onready var nav_backing: PanelContainer = $LayoutRoot/RootColumn/BottomBar/NavBacking
 @onready var zoom_rail: VBoxContainer = $LayoutRoot/RootColumn/BottomBar/NavBacking/NavCluster/ZoomRail
@@ -326,14 +317,15 @@ func _ready() -> void:
     # `SourceForecast`, not in the model.
     _compose = ComposeState.new(SourceForecast.DEFAULT_HARVEST_FLOOR)
     _legend = LegendController.new(terrain_legend_panel, terrain_legend_scroll, terrain_legend_list, terrain_legend_description)
-    # Top-bar faction readouts. The meter glyph and percent formatter are `HudFormat.meter_bar` /
-    # `HudFormat.progress_percent` now, which the cluster calls directly — no Callable injection.
-    # The one injection left is `_note_sink`: the knowledge-unlock nudge is a System-channel note,
-    # and the panel it lands on is `Main`'s, not the HUD's.
-    _topbar = TopBarReadouts.new(
-        turn_label, metrics_label, sedentarization_label, demographics_label,
-        discoveries_row, discoveries_label, discoveries_strip, intensification_label,
-        _note_sink)
+    # The faction readouts cluster. **IT OWNS NO NODES AT ALL SINCE THE TOP-RIGHT BLOCK WAS RETIRED**
+    # (issue #450): the Sedentarization meter, the demographics line, the discovered-sites strip and
+    # the knowledge strip were the eight Labels it rendered into, and the faction page's `band` and
+    # `knowledge` zones say all of it better. What survives is the INGEST — the per-faction snapshot
+    # arrays, filtered to the player and retained, which that page reads back through
+    # `faction_tracks` / `faction_sedentarization` / `faction_discovered_sites`.
+    # The one injection is `_note_sink`: the knowledge-unlock nudge is a System-channel note, and the
+    # panel it lands on is `Main`'s, not the HUD's.
+    _topbar = TopBarReadouts.new(_note_sink)
     # The telling GROWS TO FIT its current page, capped at `PAGE_MAX_HEIGHT` (docs/plan_the_telling_book_ux.md),
     # so it no longer needs a dock-scroll ceiling to fit against — a page is bounded (one turn's beats), and
     # the right dock's own scroll stacks it above Victory + Terrain Types with no bespoke height math.
@@ -539,10 +531,15 @@ func update_victory_state(state: Dictionary) -> void:
     _refresh_victory_status()
 
 func update_overlay(turn: int, metrics: Dictionary) -> void:
-    # A HudLayer fan-out: the top-bar labels render through the TopBarReadouts controller; the turn orb
-    # and the authoritative snapshot turn (which drives optimistic-pending reconciliation — see
-    # _reconcile_pending, called from update_band_alerts later in the same snapshot cycle) stay here.
-    _topbar.render_overlay(turn, metrics)
+    # **`metrics` HAS NO READER LEFT, and the parameter stays because `Main` reaches this BY NAME.**
+    # It fed the top bar's `Units: N | Logistics: … | Sentiment: …` line, which is retired outright
+    # (issue #450) — it named three faction aggregates the player can do nothing with, and nothing
+    # replaced it. `Main._hud_invoke` probes this method with `has_method` and a failed probe fails
+    # SILENTLY, so the signature is part of the contract even when half of it is unread.
+    #
+    # The turn is the live half: the orb's face carries it now, and the authoritative snapshot turn
+    # drives optimistic-pending reconciliation (`_reconcile_pending`, from `update_band_alerts` later
+    # in the same snapshot cycle).
     _band_labor.set_turn(turn)
     _turnorb.set_turn(turn)
 
@@ -552,9 +549,6 @@ func update_overlay(turn: int, metrics: Dictionary) -> void:
 
 func update_sedentarization(sedentarization_variant: Variant) -> void:
     _topbar.update_sedentarization(sedentarization_variant)
-
-func update_demographics(demographics_variant: Variant) -> void:
-    _topbar.update_demographics(demographics_variant)
 
 func update_intensification(intensification_variant: Variant) -> void:
     _topbar.update_intensification(intensification_variant)
@@ -847,7 +841,11 @@ func update_overlay_legend(legend: Dictionary) -> void:
     _legend.update(legend)
 func get_upper_stack_height() -> float:
     var max_bottom := 0.0
-    for label in [turn_label, metrics_label, victory_status_label]:
+    # **THE TOP-BAR TERMS WENT WITH THE TOP BAR** (issue #450). This measured the `Turn N` / `Units`
+    # readouts' bottom edge, and those Labels no longer exist; what is left is the Victory card, which
+    # lives in the RIGHT DOCK and is hidden by default — so on an ordinary frame this falls through to
+    # the `max_bottom <= 0` floor, which is the honest answer for a HUD with no top furniture at all.
+    for label in [victory_status_label]:
         if label == null:
             continue
         var top: float = label.position.y
@@ -1227,14 +1225,11 @@ func update_band_alerts(populations_variant: Variant) -> void:
 func left_column_width() -> float:
     return left_dock_region.custom_minimum_size.x if left_dock_region != null else 0.0
 
-## The right side is TWO regions in one column — the right dock and, above it, the top-bar readout
-## block — so this is the wider authored minimum of the pair rather than either one alone. In Ray's
-## report the readouts were the wider of the two; they are authored to the dock's width now, so the
-## column is one number whichever grows first.
+## The right side is ONE region now — the right dock. It was the wider authored minimum of a PAIR, the
+## dock and the top-bar readout block above it (in Ray's report the readouts were the wider); the block
+## is retired with the top bar (issue #450), so there is nothing left to take a `max` against.
 func right_column_width() -> float:
-    var dock: float = right_dock_region.custom_minimum_size.x if right_dock_region != null else 0.0
-    var readouts: float = turn_block.custom_minimum_size.x if turn_block != null else 0.0
-    return maxf(dock, readouts)
+    return right_dock_region.custom_minimum_size.x if right_dock_region != null else 0.0
 
 ## The room the two HUD side columns actually occupy, as `(leading, trailing)` — what a panel sharing
 ## the HUD's strip must keep clear of (issue #377, `Main._update_band_panel_lateral_bounds`).
@@ -1242,13 +1237,17 @@ func right_column_width() -> float:
 ## **It takes the LIVE rect where that exceeds the authored minimum, unlike `left_column_width` /
 ## `right_column_width` above, and the difference is deliberate.** Those two bound the EVENT DOCK's edge,
 ## which must not move every turn — so they are authored, and a column that draws wider than its minimum
-## merely overlaps a little. This bound decides whether a CARD is drawn over the readouts, where being a
-## little wrong is not a cosmetic difference: measured live at 1920, the readouts render 419px against a
-## 344px authored minimum (the metrics line — `Units: 0 | Logistics: 0.00 | Sentiment: 0.00` — is simply
-## longer than the minimum allows for), so an authored bound puts the card straight through them.
+## merely overlaps a little. This bound decides whether a CARD is drawn THROUGH a column, where being a
+## little wrong is not cosmetic.
 ##
-## The band card re-lays-out per snapshot anyway, so tracking the live width costs it nothing; the event
-## dock's no-jitter rule is about a different surface with a different cadence.
+## **The case that made it live is gone, and the rule is not.** It was the top-bar readouts: measured at
+## 1920 they rendered 419px against a 344px authored minimum, because `Units: 0 | Logistics: 0.00 |
+## Sentiment: 0.00` is simply longer than the minimum allows for, so an authored bound put the card
+## straight through them. That block is retired (issue #450) and the surviving regions are the two
+## DOCKS, whose stacks have their horizontal minimum zeroed by `PanelDock` — so today the live read
+## rarely exceeds the authored one. Keep it live anyway: a card is what this bounds, a dock card that
+## outgrows its column is the same failure one surface along, and the band card re-lays-out per
+## snapshot regardless so tracking the live width costs it nothing.
 func lateral_column_widths() -> Vector2:
     var lead: float = left_column_width()
     if left_dock_region != null:
@@ -1256,8 +1255,6 @@ func lateral_column_widths() -> Vector2:
     var trail: float = right_column_width()
     if right_dock_region != null:
         trail = maxf(trail, right_dock_region.get_global_rect().size.x)
-    if turn_block != null:
-        trail = maxf(trail, turn_block.get_global_rect().size.x)
     return Vector2(lead, trail)
 
 ## A CLIENT-SIDE note — a refusal, a nudge, a knowledge unlock. It used to land in the left-dock

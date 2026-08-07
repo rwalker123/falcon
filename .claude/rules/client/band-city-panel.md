@@ -215,14 +215,21 @@ command center**: shown whenever ≥1 player band exists, always displaying a
     Two consequences follow and both are arithmetic, not regressions: `_affordable_work_columns` counts
     against the bounded span (counting against the raw row builds a board the clamped card cannot hold,
     measured at 135px of overflow into a clipping host), and **`_shell_is_wide` tests the bounded span
-    too**, so a 1920 top dock correctly picks the NARROW tabbed shell — 1920 − 360 − 419 = 1141 against
-    the 1190 three zones need. The alternative to tabbing there is drawing over the readouts.
+    too. **That flipped when the readouts were retired** (issue #450): a 1920 top dock used to pick the
+    NARROW tabbed shell — 1920 − 360 − 419 = 1141 against the 1190 three zones need, where 419 was the
+    readout block's LIVE width — and with the block gone the trailing bound is the right dock's own
+    ~344, leaving 1216. The card gets the wide shell there now, with the board's readable column
+    intact; the alternative to tabbing was never "draw over the readouts", it was "have less room".
   - **The bound is the LIVE column width, not the authored minimum** (`HudLayer.lateral_column_widths`),
     and that is the opposite of `left_column_width` / `right_column_width`, which the event dock uses.
     Those bound an EDGE that must not move every turn, so authored is right and a column drawing wider
     merely overlaps a little. This bound decides whether a CARD is drawn over the readouts: measured at
-    1920 they render **419px against a 344px authored minimum** (the metrics line is simply longer than
-    the minimum allows), so an authored bound puts the card through them. The band card re-lays-out per
+    1920 they rendered **419px against a 344px authored minimum** (the metrics line was simply longer
+    than the minimum allowed), so an authored bound put the card through them. **That block is retired
+    (issue #450) and the rule outlived it**: the surviving regions are the two DOCKS, whose stacks have
+    a zeroed horizontal minimum, so the live read rarely exceeds the authored one today — but a dock
+    card that outgrows its column is the same failure one surface along, and the band card re-lays-out
+    per snapshot anyway. The band card re-lays-out per
     snapshot anyway, so tracking the live width costs it nothing.
     **A live bound has to be RE-SAMPLED, and that is the other half**: `Main` pushes it from
     `_apply_reservation` *and* from the end of `_apply_snapshot`'s fan-out, because the panel's

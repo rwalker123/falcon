@@ -722,7 +722,6 @@ func _ready() -> void:
 	# Seed the top bar so the HUD reflow reads against real content.
 	_hud.update_sedentarization([{"faction": 0,
 		"score": TOPBAR_SEDENTARIZATION_SCORE, "stage": TOPBAR_SEDENTARIZATION_STAGE}])
-	_hud.update_demographics([{"faction": 0, "children": 34, "working": 51, "elders": 15}])
 
 	# Slice 3: inject the panel into the HUD and push a player band through the real snapshot
 	# path (update_band_alerts → _refresh_panel_band), so the FULL band detail relocates into the
@@ -1963,14 +1962,15 @@ func _render_dock_row_states() -> void:
 	_assert_chrome_parked(false, "band_panel_dockrow_top")
 	_assert_no_rail_width("band_panel_dockrow_top")
 	_assert_chrome_home_exact("band_panel_dockrow_top")
-	# The NARROW shell here, and that is arithmetic rather than a regression: a top dock keeps the HUD's
-	# strip, so its card has 1920 − 360 (left dock) − 419 (readouts) = 1141px, under the 1190 the wide
-	# shell needs for three zones. The alternative to tabbing is drawing the card over the readouts, which
-	# is the bug this state exists to prove is gone. A top dock reaches the wide shell on a wider window —
-	# `band_panel_dockrow_ultrawide` is bottom-docked, where the HUD yields and the whole row is the
-	# card's.
-	_assert_shell_is_wide(false, "band_panel_dockrow_top")
-	_assert_card_clears_hud_columns("band_panel_dockrow_top")
+	# **THE WIDE SHELL HERE, AND IT FLIPPED WHEN THE READOUTS WENT** (issue #450). It was NARROW, and
+	# that was arithmetic too: a top dock keeps the HUD's strip, and the trailing bound was the
+	# top-bar readout block's LIVE 419px, so the card had 1920 − 360 (left dock) − 419 = 1141, under
+	# the 1190 three zones need. With the block retired the trailing bound is the right dock's own
+	# ~344, which leaves 1216 — over the threshold, and `_assert_work_zone_readable` above confirms
+	# the board really gets its readable column rather than a squeezed one. The card gaining a shell
+	# is the retirement's one geometric dividend, and this state is where it is stated.
+	_assert_shell_is_wide(true, "band_panel_dockrow_top")
+	await _assert_card_clears_hud_columns("band_panel_dockrow_top")
 
 	# LEFT — THE CONTROL. A vertical dock keeps today's behaviour exactly: the chrome is back in
 	# `BottomBar` and the rails contribute nothing. The work-zone baseline captured here is what the
@@ -2225,22 +2225,36 @@ func _assert_card_follows_its_content(busy_width: float, busy_columns: int, stat
 
 ## GUARD: a TOP-docked card is drawn over NEITHER HUD column (issue #377).
 ##
-## The top dock is the one edge where the HUD keeps its strip — its right-hand column of readouts belongs
-## BESIDE the card, not pushed under the map — so it is also the one edge where the card can be drawn
-## over something. The claim is made as rect non-overlap against the live regions rather than as "the
+## The top dock is the one edge where the HUD keeps its strip — its right-hand column belongs BESIDE
+## the card, not pushed under the map — so it is also the one edge where the card can be drawn over
+## something. That column was the top-bar readouts AND the dock beneath them; since issue #450 retired
+## the readouts it is the dock alone, which now begins at the top of the screen. The claim is made as rect non-overlap against the live regions rather than as "the
 ## bound was applied", because a bound that is set and then ignored reads identically to one that works.
 ##
 ## **It takes a negative control first, on the same two live rects**: with the bounds cleared the card
 ## genuinely DOES overlap, so a pass cannot be satisfied by two rects that happen never to meet — which
 ## is what a sparse band would give for free, and exactly how the half-fix looked complete.
-func _assert_card_clears_hud_columns(state_name: String) -> void:
+func _assert_card_clears_hud_columns(state_name: String) -> void:  # coroutine: it re-renders twice
 	var card := _panel._panel.get_global_rect()
 	var columns := {
 		"the left dock": _hud.left_dock_region.get_global_rect(),
-		"the right readouts": _hud.turn_block.get_global_rect(),
+		# The RIGHT DOCK, not the retired top-bar readout block (issue #450): with the top bar gone the
+		# dock starts at y = 0, so it is the region a TOP-docked card now shares a vertical band with —
+		# and the one whose live rect this bound is computed from.
+		"the right dock": _hud.right_dock_region.get_global_rect(),
 	}
-	# NEGATIVE CONTROL: unbound, this band's card must actually reach at least one of them.
+	# **NEGATIVE CONTROL: unbound, this band's card must actually reach at least one of them — and it
+	# has to RE-RENDER to find out.** The card's width is built up from a column count the CONTROLLER
+	# declares (`set_work_columns`), and `_affordable_work_columns` caps that count against the bounded
+	# span — so clearing the bounds and re-reading the rect answers with the count granted UNDER the
+	# bounds and the card barely moves. Measured after the top-bar readouts were retired (issue #450):
+	# the 34-source band was granted ONE column inside its 1216px bound, so the "unbound" card was the
+	# same content-sized 1190 and cleared both columns, and the control correctly refused to prove
+	# anything. Re-rendering re-grants the count against the full 1920, which is what the bound is
+	# actually holding back.
 	_panel.set_lateral_bounds(0.0, 0.0)
+	_hud._bandpanel.rerender()
+	await _settle()
 	var unbound := _panel._panel.get_global_rect()
 	var would_collide := false
 	for rect_variant in columns.values():
@@ -2248,6 +2262,12 @@ func _assert_card_clears_hud_columns(state_name: String) -> void:
 			would_collide = true
 	var live: Vector2 = _hud.lateral_column_widths()
 	_panel.set_lateral_bounds(live.x, live.y)
+	_hud._bandpanel.rerender()
+	await _settle()
+	# The columns are re-read after the restore: the card moved twice and these rects are what the
+	# CLAIM below is made against, not the ones the control was taken with.
+	columns["the left dock"] = _hud.left_dock_region.get_global_rect()
+	columns["the right dock"] = _hud.right_dock_region.get_global_rect()
 	var failures: Array[String] = []
 	if not would_collide:
 		failures.append("the UNBOUND card %s clears both columns anyway, so this state proves nothing — stage a busier band" % unbound)

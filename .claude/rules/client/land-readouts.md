@@ -342,33 +342,44 @@ paths:
   **not** the camelCase schema fields above. Exactly as the plant web's three split; see "Fog splits
   a stock from its CAPACITY" below. How the row itself reads — and why it sits directly under
   `Foraging` — is "The tile card's TWO FOOD-WEB ROWS" above.
-- **Sedentarization meter** (`Hud.gd` `update_sedentarization`, dispatched from `Main.gd`):
-  the player faction's `SedentarizationState.score` (snapshot `sedentarization[]`) shows as a
-  compact top-bar block-glyph meter (`▰▰▰▰▰▱▱ 62/100 · soft`, `SedentarizationLabel` in
-  `TurnBlock`), tinted amber (soft) / cyan (hard) by stage and hidden until the score is
-  meaningful. The soft/hard threshold prompts themselves arrive in the command feed
+- **Sedentarization — the faction page's SETTLING block** (`Hud.gd` `update_sedentarization`,
+  dispatched from `Main.gd`, INGESTED by `TopBarReadouts` and rendered by
+  `FactionRollup._build_settling_block`): the player faction's `SedentarizationState.score` (snapshot
+  `sedentarization[]`) reads as a head plus one row, the row keyed by the STAGE and valued by a
+  block-glyph meter — `Settling / soft ▰▰▰▱▱ 62/100`.
+  **It was a compact top-bar meter** (`SedentarizationLabel` in `TurnBlock`) until issue #450 retired
+  that block. Two of its rules went with the label and one did not: the amber/cyan stage tint and the
+  `score < 1.0` hide are gone (both were presentation choices for a one-line strip — the accessor
+  hands the raw entry over and the zone decides), while `HudFormat.meter_bar` still takes a **0–100
+  SCORE** and the score is already on that scale, so it goes in RAW. Its wider `METER_BAR_CELLS`
+  companion went with the strip; the zone draws at the knowledge tracks' 5.
+  The soft/hard threshold prompts themselves arrive in the command feed
   (`CommandEventKind::SedentarizationPrompt`). See `core_sim` Campaign Loop — Sedentarization.
 - **The Intensification Ladder — THE TWO-METER SPLIT** (`docs/plan_intensification_ladder.md` §4.1;
   the arc's root fix). Two meters advance from one action and they are **different kinds of thing**;
   the client's whole job here is to never let them read as two numbers in a list:
-  - **FACTION KNOWLEDGE — the top-bar strip, and the ONLY place a knowledge meter appears.**
-    `Hud.update_intensification` (dispatched from `Main.gd`) renders all **four** tracks of
+  - **FACTION KNOWLEDGE — the faction page's KNOWLEDGE zone, and the ONLY place a knowledge meter
+    appears.** `Hud.update_intensification` (dispatched from `Main.gd`) INGESTS all **five** tracks of
     `IntensificationKnowledgeState` (`intensification_knowledge[]`, decoded in `native/src/lib.rs
-    intensification_knowledge_to_array`) — `cultivation` / `seed_selection` / `herding` / `penning`,
-    in `KNOWLEDGE_TRACK_LABELS` order (each web's ladder, bottom rung first, so the strip reads as
-    two ladders climbing). Prefixed **`⚒ Your people know:`** (`KNOWLEDGE_STRIP_PREFIX`) — that
-    prefix is load-bearing: it is what stops the strip reading as a stat of whatever is selected.
-    A track is hidden until the faction begins it (the row is sparse), reads a bare `✔`
-    (`KNOWLEDGE_KNOWN_BADGE` — the prefix already supplies "know") once complete, else a
-    **5-cell** bar + the live percent. **The narrow bar + the bare ✔ are not cosmetic**: at the
-    shared 10-cell `HudFormat.meter_bar` width plus the word "learning", four tracks overflowed the top bar
-    and clipped the last one off-screen (caught in `two_meter_split.png`). `HudFormat.meter_bar(score, cells)`
-    takes the width as an explicit param, so Sedentarization is untouched. **AND the strip WRAPS** —
-    even narrowed, four tracks on one line ran off the right edge (the "Penning clipped" playtest
-    report), so `update_intensification` groups the tracks into rows of `KNOWLEDGE_STRIP_TRACKS_PER_LINE`
-    (2) joined by explicit `\n` (the prefix rides the first row). The label lives in the content-sized
-    right-docked `TurnBlock`, so Godot autowrap can't engage without a bounded width — the explicit rows
-    are what guarantee no track is ever lost off the edge, at any window width or ladder length.
+    intensification_knowledge_to_array`) — `cultivation` / `seed_selection` / `herding` / `penning` /
+    `foddering` — and `FactionRollup._build_knowledge_block` renders one row each, in
+    `KNOWLEDGE_TRACK_LABELS` order (each web's ladder, bottom rung first, so the block reads as two
+    ladders climbing). A track is hidden until the faction begins it (the row is sparse), reads
+    `known` once complete, else a **5-cell** bar + the live percent.
+    **THIS WAS A TOP-BAR STRIP** — `⚒ Your people know: Cultivation ✔ · Herding ▰▰▱▱▱ 41%`,
+    `IntensificationLabel` in `TurnBlock` — until issue #450 retired that block, and three of its
+    rules were the strip's own and went with it: the `⚒ Your people know:` PREFIX (load-bearing there,
+    because a bare strip read as a stat of whatever was selected; a zone under its own `KNOWLEDGE`
+    head needs no such disclaimer), the bare `✔` badge the prefix's verb allowed, and the
+    `KNOWLEDGE_STRIP_TRACKS_PER_LINE` wrap. That wrap is worth remembering as a HAZARD rather than a
+    rule: the label lived in a content-sized block where Godot autowrap could not engage, so four
+    tracks on one line ran off the right edge (the "Penning clipped" playtest report) and the fix was
+    explicit rows. A zone is one row per track and cannot reach that failure.
+    **The 5-cell bar survived and is now shared by name**: `FactionRollup.KNOWLEDGE_METER_CELLS` reads
+    `TopBarReadouts`' own const, so the page and the ingest cannot disagree about what half-learned
+    looks like. **`HudFormat.meter_bar` grades a 0–100 SCORE**, so a `0..1` track is scaled by
+    `PROGRESS_PERCENT_SCALE` on the way in — passing the bare fraction fills zero cells below 0.5, and
+    that is exactly how every meter on the faction page shipped empty once.
   - **PER-SOURCE PROGRESS — the source's own drawer row, never the strip.** A herd's `Husbandry`
     (`domestication`) + `Corral` (`corral_progress`); a patch's `Cultivation` (`cultivation_progress`)
     + `Field` (`patch_field_progress`). Local to ONE source, decays if abandoned.

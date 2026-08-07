@@ -526,8 +526,11 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         _hud_invoke("update_build_info", [String(snapshot["server_build"])])
     if snapshot.has("sedentarization") and SnapshotSections.changed(snapshot, "sedentarization"):
         _hud_invoke("update_sedentarization", [snapshot["sedentarization"]])
-    if snapshot.has("demographics") and SnapshotSections.changed(snapshot, "demographics"):
-        _hud_invoke("update_demographics", [snapshot["demographics"]])
+    # **`demographics` IS DISPATCHED NOWHERE — the wire field has no client reader at all** since the
+    # top bar's `Pop 100 👶34 🛠16 🧓5` line was retired (issue #450). The faction page's PEOPLE bar
+    # answers the same question and answers it from the BANDS, apportioned once across the roster, so
+    # a second per-faction total would be a second source of truth for the head count. The sim still
+    # publishes the section; it joins `accessibleStockpile` as an unread wire table.
     if snapshot.has("intensification_knowledge") and SnapshotSections.changed(snapshot, "intensification_knowledge"):
         _hud_invoke("update_intensification", [snapshot["intensification_knowledge"]])
     if snapshot.has("discovered_sites") and SnapshotSections.changed(snapshot, "discovered_sites"):
