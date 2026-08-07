@@ -97,6 +97,25 @@ const LOG_HEIGHT := 260.0
 ## Cross-axis only, the same rule as the perpendicular insets: it moves where the strip is DRAWN,
 ## never what it reserves.
 const MAX_STRIP_WIDTH := 1280.0
+## **THE NARROWEST THE STRIP MAY BE — the OTHER half of the measurement above, applied from below.**
+##
+## The cap's own rule is "no content is ever squeezed"; nothing was enforcing it downward. The strip
+## takes whatever the perpendicular insets leave, and those are three FIXED logical widths — a docked
+## panel's reservation plus the HUD's two authored columns (360 + 344) — so the band collapses as the
+## logical viewport shrinks. Measured with the Band panel docked LEFT at `ui_scale` 1.35: a 1422px
+## viewport, insets 740 / 344, **a 338px band** — against a card whose own combined minimum is 406, so
+## the card drew 68px OUTSIDE the strip it was given while `EventRows` (`clip_contents`) silently cut
+## its labels. Reachable at `ui_scale` 1.0 in a window near 1200px wide, for the same arithmetic.
+##
+## It is the 654 the cap's own derivation names — the widest shipped row (537) plus the expander (86)
+## and the card chrome (31) — so the two bounds are one measurement read from both ends, and re-measure
+## BOTH there if the font sizes move.
+##
+## **BELOW IT THE STRIP OVERHANGS ITS INSETS RATHER THAN CLIPPING ITS ROWS**, symmetrically about the
+## band it was offered and then clamped inside the viewport. That is a deliberate trade and the only
+## one available: a band under 654 has no arrangement in which the bar both clears every HUD column and
+## states a row, and a bar that has stopped being readable has stopped being a notification.
+const MIN_STRIP_WIDTH := 654.0
 ## The strip may never cover more than this share of the window. It no longer RESERVES anything, so
 ## this is not about leaving the map room to lay out in — it is about how much live map the overlay
 ## is allowed to hide. The map is the game; a notification bar that buries it has stopped being a
@@ -1177,11 +1196,20 @@ func _apply_dock_layout() -> void:
 		return
 	var cross := _cross_axis_size()
 	# The strip stops short of whatever is docked left/right (`set_perpendicular_insets`) and is then
-	# CAPPED and CENTRED inside the band that leaves (`MAX_STRIP_WIDTH`). Both anchors sit at 0 so the
-	# offsets are absolute from the left edge — the width is computed, not derived from the window.
-	var band := maxf(_viewport_size().x - _inset_left - _inset_right, 0.0)
-	var width := minf(band, MAX_STRIP_WIDTH)
+	# BOUNDED AT BOTH ENDS inside the band that leaves — capped at `MAX_STRIP_WIDTH` and floored at
+	# `MIN_STRIP_WIDTH` — and centred in it. Both anchors sit at 0 so the offsets are absolute from the
+	# left edge: the width is computed, not derived from the window.
+	var window := _viewport_size()
+	var band := maxf(window.x - _inset_left - _inset_right, 0.0)
+	# The FLOOR yields to the window, never the other way round: a viewport narrower than one row has
+	# nowhere to put the overhang, and a strip hanging off the screen edge loses the same text the
+	# floor exists to save.
+	var width := clampf(band, minf(MIN_STRIP_WIDTH, window.x), MAX_STRIP_WIDTH)
+	# `band - width` is NEGATIVE exactly when the floor bound, so the same expression that centres a
+	# capped strip in a wide band overhangs a floored one symmetrically into the columns either side.
+	# The clamp then keeps it on screen.
 	var leading := _inset_left + (band - width) * 0.5
+	leading = clampf(leading, 0.0, maxf(window.x - width, 0.0))
 	_root.anchor_left = 0.0
 	_root.anchor_right = 0.0
 	_root.offset_left = leading

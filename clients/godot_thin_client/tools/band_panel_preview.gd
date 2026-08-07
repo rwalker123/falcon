@@ -1766,6 +1766,8 @@ func _ready() -> void:
 
 	await _render_dock_row_states()
 
+	await _render_interface_scale_states()
+
 	# ---- THE BAND-ZONE TIERS, LAST, AND DELIBERATELY SO ------------------------------------------
 	# The SHORT tier merges Growth onto the Morale line; TALL and COMPACT must not. Both probes RESIZE
 	# THE CANVAS and re-dock, and a panel left in another shell silently re-renders every state after
@@ -1942,6 +1944,131 @@ func _render_dock_row_states() -> void:
 	# The state with the MOST open map around its card, so the gaps this probes are the ones a player
 	# actually loses when the strip eats their clicks.
 	await _assert_open_strip_reaches_the_map("band_panel_dockrow_ultrawide_empty")
+
+# ---- THE PANEL AT A HIGH INTERFACE SCALE ------------------------------------------------------
+#
+# `Window.content_scale_factor` shrinks the LOGICAL viewport by exactly the scale, so a 1920x1080
+# window at `ui_scale` 1.35 lays the HUD out in 1422x800 — and every one of this panel's breakpoints
+# is a LOGICAL constant, correctly so. What that reaches is the NARROW shell on a HORIZONTAL dock:
+# measured, a bottom dock's `_available_card_span()` falls to 1101 against the 1190 the three zones
+# need. That combination had no frame and no assertion in this file, and the box it hands its one
+# zone was 35px SHORT of the box every tier threshold is tuned against — sliced silently, since the
+# zone hosts clip.
+#
+# **It is not a scale feature, it is a WINDOW-SIZE one.** The identical shell is reached at
+# `ui_scale` 1.0 in a window under ~1511px wide; the scale is simply the way a player gets there on
+# a 1920 monitor, and the way the defect was reported.
+#
+# THE SCALE IS RESTORED BEFORE THIS RETURNS, and asserted to be: `content_scale_factor` is WINDOW
+# state, not scene state, so a leak silently re-projects every later frame with nothing failing —
+# the discipline `tools/ui_preview/chapters/interface_scale.gd` carries for the same reason.
+
+## The scale these states render at — the one the two docked-panel defects were reported at. On
+## `DOCKROW_CANVAS` it yields a 1422x800 logical viewport, which is what puts a BOTTOM dock's card
+## span (1101) under `WIDE_SHELL_MIN_WIDTH` and so into the narrow shell.
+const SCALE_STATE_UI_SCALE := 1.35
+## How far a rect may sit outside the viewport and still count as contained. A pixel, the
+## `ZONE_BOUNDS_TOLERANCE` reason: these are float rects off a scaled canvas, not integers.
+const SCALE_BOUNDS_TOLERANCE := 1.0
+## A badge to push at the reservation-independence guard. Its VALUE is irrelevant — what is under
+## test is that pushing one cannot move the strip's cross-axis size.
+const SCALE_BADGE_TEXT := "3"
+
+func _render_interface_scale_states() -> void:
+	await _pin_canvas(DOCKROW_CANVAS)
+	_push_bands([_band_fixture()])
+	_apply_ui_scale(SCALE_STATE_UI_SCALE)
+
+	# BOTTOM — the reported dock. The strip is horizontal and the card span has fallen under the
+	# threshold, so this is the narrow shell in a height-capped strip: the one configuration in which
+	# the shell's own tab bar used to be paid for out of the zone's box.
+	_panel.set_dock(SIDE_BOTTOM)
+	# The BAND tab explicitly: the narrow shell renders ONE zone, the run above leaves whichever tab it
+	# last selected, and the band zone is the tall one — the role cards at the end of it are what the
+	# report saw cut off.
+	_panel.set_active_tab(&"band")
+	await _settle()
+	await _save("band_panel_scale_bottom")
+	_assert_shell_is_wide(false, "band_panel_scale_bottom")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_panel_within_window("band_panel_scale_bottom")
+	await _assert_badge_cannot_move_the_reservation("band_panel_scale_bottom")
+	_report_zone_content_extent("band_panel_scale_bottom")
+
+	# LEFT — the other dock in the report. A vertical strip is `PANEL_WIDTH` at every scale, so the
+	# claim here is the containment one: the fixed 380px column and its full-height card must still
+	# lie inside a viewport that is now 800px tall.
+	_panel.set_dock(SIDE_LEFT)
+	await _settle()
+	await _save("band_panel_scale_left")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_panel_within_window("band_panel_scale_left")
+	_report_zone_content_extent("band_panel_scale_left")
+
+	_apply_ui_scale(ClientSettings.UI_SCALE_DEFAULT)
+	_assert_band_panel("the interface scale is restored, so no later state inherits it",
+		is_equal_approx(get_window().content_scale_factor, float(ClientSettings.UI_SCALE_DEFAULT)))
+	# Hand the tier probes back the canvas the dock-row block left them on — they re-dock and re-push
+	# their own band, but they take whatever canvas they are given.
+	await _pin_canvas(Vector2i(ULTRAWIDE_WIDTH, DOCKROW_CANVAS.y))
+	await _settle()
+
+## Push a scale the way the Options slider does — through `ClientSettings.changed`, so `UiScaler`
+## applies it on its own real subscription. **The MEMBER is assigned, never `set_ui_scale`**: the
+## setter `_save()`s, and this harness has no `ClientSettings` path override, so it would write the
+## developer's own `user://client_settings.cfg` (the `_ready` prologue's rule, from `map_preview`).
+func _apply_ui_scale(value: float) -> void:
+	ClientSettings.ui_scale = value
+	ClientSettings.changed.emit()
+
+## GUARD: the panel never exceeds its edge's share of the window — its strip AND its card both lie
+## inside the viewport.
+##
+## **BOTH RECTS, because they are set by different mechanisms and only one of them is anchored.**
+## `_root` is anchored to the edge, so it is contained by construction; the CARD is a
+## `PanelContainer`, i.e. a real Container, and a `Control` clamps its own size UP to its combined
+## minimum — so a card whose content demanded more than the strip would draw past it while every
+## anchor stayed correct (the `panel-framework.md` "a card fitted too short does not fail, it lies"
+## shape). A frame cannot tell the two apart: the overflow is off-canvas.
+func _assert_panel_within_window(state_name: String) -> void:
+	var window := Rect2(Vector2.ZERO, get_viewport().get_visible_rect().size)
+	var failures: Array[String] = []
+	for pair in [["strip", _panel._root], ["card", _panel._panel]]:
+		var name_part: String = pair[0]
+		var control: Control = pair[1]
+		var rect: Rect2 = control.get_global_rect()
+		if rect.position.x < -SCALE_BOUNDS_TOLERANCE or rect.position.y < -SCALE_BOUNDS_TOLERANCE \
+				or rect.end.x > window.end.x + SCALE_BOUNDS_TOLERANCE \
+				or rect.end.y > window.end.y + SCALE_BOUNDS_TOLERANCE:
+			failures.append("the %s is %s, outside the %s window" % [
+				name_part, str(rect), str(window.size)])
+	if failures.is_empty():
+		print("band_panel_preview: assert OK — %s strip %s and card %s inside the %s window" % [
+			state_name, str(_panel._root.get_global_rect().size),
+			str(_panel._panel.get_global_rect().size), str(window.size)])
+		return
+	for failure in failures:
+		push_error("band_panel_preview: %s — %s" % [state_name, failure])
+
+## GUARD: the strip's cross-axis size is CONTENT-INDEPENDENT, still — the invariant that keeps
+## `current_reservation_size()` (and therefore MapView's inset and its cache) constant while the
+## player edits the band.
+##
+## It is asserted HERE because the narrow shell's strip now includes its own tab bar's measured
+## height, and a tab bar carries BADGES: a badge tall enough to grow the bar would make the
+## reservation a function of the snapshot, re-emitting `reservation_changed` every turn — which is
+## precisely the map flicker `set_zones` exists to remove, re-entered through a new door.
+func _assert_badge_cannot_move_the_reservation(state_name: String) -> void:
+	var before: float = _panel.current_reservation_size()
+	_panel.set_tab_badge(BandCityPanel.ZONE_WORK, SCALE_BADGE_TEXT, true)
+	await _settle()
+	var with_badge: float = _panel.current_reservation_size()
+	_panel.set_tab_badge(BandCityPanel.ZONE_WORK, "", false)
+	await _settle()
+	_assert_band_panel("%s: a tab badge does not move the reservation (%.1f → %.1f)" % [
+		state_name, before, with_badge], is_equal_approx(before, with_badge))
 
 ## Put a REAL embedded minimap in the HUD's `MinimapContainer` before the dock-row states render.
 ## Without it those frames judge the reflow against an EMPTY container — the left rail collapses to the

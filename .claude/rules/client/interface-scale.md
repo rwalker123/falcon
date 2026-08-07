@@ -47,6 +47,21 @@ edge unless every root Control is resized by hand. That is a per-layer correctio
 plus every popover that reads the viewport, to buy nothing `content_scale_factor` does not already
 give.
 
+## Responsive breakpoints are NOT compensated for the scale
+
+The UI's layout thresholds — `BandCityPanel.WIDE_SHELL_MIN_WIDTH`, `EventDockPanel`'s
+`MIN_STRIP_WIDTH` / `MAX_STRIP_WIDTH`, the zone widths, the HUD's authored column widths — are in
+logical units and **stay there**. Dividing one by `ui_scale` is the tempting fix and it is wrong: it
+would let the layout pretend the window had not shrunk, which guarantees overflow rather than
+preventing it. **A responsive fallback firing at a high interface scale is the system working.**
+
+What the setting does do is make the narrow end of the responsive range reachable on an ordinary
+monitor, and that is how it found two real defects in the fallbacks themselves — a bottom-docked band
+panel whose narrow shell paid for its own tab bar out of the zone box
+(`band-city-panel.md` → "`PANEL_HEIGHT_WIDE` is the BODY's budget"), and an event-dock strip with no
+lower bound at all (`event-dock.md` → "…and FLOORED"). **Both are reachable at `ui_scale` 1.0 in a
+narrow enough window**; neither was a scale bug, and neither was fixed by scaling a constant.
+
 ## The map counter-scales, and that is the whole point
 
 `content_scale_factor` is viewport-global: the map is a `Node2D` (`MapLayer`, running `MapView.gd`)

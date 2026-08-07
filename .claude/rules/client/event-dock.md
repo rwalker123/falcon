@@ -400,6 +400,34 @@ it the strip stops growing.
 equals the band (1216) and at an ultrawide it equals the cap and is centred — because a cap
 hard-wired on fails the first and one hard-wired off fails the second.
 
+### …and FLOORED, which is the same measurement read from below
+
+The cap's rule is "no content is ever squeezed", and **nothing was enforcing it downward**. The strip
+takes whatever the perpendicular insets leave, and those are three FIXED logical widths — a docked
+panel's reservation plus the HUD's two authored columns (360 + 344) — so the band collapses as the
+logical viewport shrinks. Measured with the Band panel docked LEFT at `ui_scale` 1.35: a 1422px
+viewport, insets 740 / 344, **a 338px band**, against a card whose own combined minimum is **406**. The
+card drew 68px outside the strip it was given and `EventRows` (`clip_contents`) silently cut its
+labels. As with the panel above this surfaced through issue #490 but is not a scale defect — the same
+arithmetic reaches it at 1.0 in a window near 1200px.
+
+`MIN_STRIP_WIDTH` is **654** — the very number the cap's own derivation names (widest shipped row 537
++ expander 86 + chrome 31), so **the two bounds are one measurement read from both ends**. Re-measure
+both together if the font sizes move.
+
+**Below the floor the strip OVERHANGS its insets rather than clipping its rows**, symmetrically about
+the band it was offered, then clamped inside the viewport. `band - width` goes negative exactly when
+the floor binds, so the one expression that centres a capped strip in a wide band overhangs a floored
+one. The floor also yields to the window (`minf(MIN_STRIP_WIDTH, window.x)`): a viewport narrower than
+one row has nowhere to put the overhang, and a strip hanging off the screen edge loses the same text
+the floor exists to save.
+
+**That overhang is a deliberate trade, and it is the only one available.** A band under 654 has no
+arrangement in which the bar both clears every HUD column and states a row, so the choice is between
+overlapping a column and printing an unreadable sliver — and a bar that cannot be read has stopped
+being a notification. It is the one place the strip's "clears every column" property is knowingly
+given up.
+
 ## The strip yields to the map, and the reservation never depends on content
 
 Two separate rules, both learned elsewhere in this HUD:

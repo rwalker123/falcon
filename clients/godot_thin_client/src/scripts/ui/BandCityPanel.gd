@@ -43,6 +43,11 @@ const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 const PANEL_WIDTH := 380.0
 ## Cross-axis size of the expanded panel when docked T/B. Likewise fixed; tall enough for the three
 ## zones' rows without eating the map.
+##
+## **IT IS THE BODY'S BUDGET, NOT THE STRIP'S HEIGHT** — `_horizontal_panel_height()` adds whatever the
+## ACTIVE SHELL spends on its own chrome (the narrow shell's tab bar) before clamping to
+## `MAX_WIDE_HEIGHT_FRACTION`, so both shells hand their zones the same box. Read as a flat strip
+## height it is 35px short in the narrow shell, which is the zone the tab bar used to be paid out of.
 const PANEL_HEIGHT_WIDE := 360.0
 ## Cross-axis size when collapsed to a thin rail (both orientations).
 const COLLAPSED_SIZE := 46.0
@@ -933,7 +938,7 @@ func set_lateral_bounds(leading: float, trailing: float) -> void:
 ## whatever HUD column sits at either end. The ONE definition, so `_card_width`, `_interior_size` and
 ## `_position_card_and_rail` cannot disagree about how much room there is.
 func _available_card_span() -> float:
-	return maxf(_panel_extent().x - _rail_span() - _bound_leading - _bound_trailing, 0.0)
+	return maxf(_panel_width_extent() - _rail_span() - _bound_leading - _bound_trailing, 0.0)
 
 ## How wide the CARD draws. A vertical dock is the fixed strip; a horizontal one is exactly what its
 ## content needs, which is what stops a bottom dock spanning an ultrawide.
@@ -1010,7 +1015,7 @@ func _affordable_work_columns() -> int:
 ## outer width before the zones see any of it — its column AND its separator gutter) must come off first.
 func _shell_is_wide() -> bool:
 	if _is_vertical_edge(_dock_edge):
-		return _panel_extent().x - _rail_span() >= WIDE_SHELL_MIN_WIDTH
+		return _panel_width_extent() - _rail_span() >= WIDE_SHELL_MIN_WIDTH
 	# `_available_card_span()` on a horizontal dock, because the HUD columns a top dock keeps clear of
 	# come off the CARD's room before any zone sees it (issue #377). Testing the raw strip put the panel
 	# into the wide shell on a 1920 top dock whose card could only have 1141 — a 331px work zone against
@@ -1026,12 +1031,44 @@ func _panel_extent() -> Vector2:
 	var window := _viewport_size()
 	if _is_vertical_edge(_dock_edge):
 		return Vector2(PANEL_WIDTH, window.y)
-	return Vector2(window.x, _wide_panel_height())
+	return Vector2(window.x, _horizontal_panel_height())
 
-## The T/B cross-axis size: the fixed `PANEL_HEIGHT_WIDE`, clamped to a fraction of the window so a
-## short window can never let the strip eat the screen.
-func _wide_panel_height() -> float:
-	return minf(PANEL_HEIGHT_WIDE, _viewport_size().y * MAX_WIDE_HEIGHT_FRACTION)
+## The strip's extent along the axis the CARD's WIDTH is measured on — `_panel_extent().x`, split out
+## as its own reader.
+##
+## **The split is what keeps the layout ACYCLIC**, not tidiness: the cross axis now depends on which
+## SHELL is active (`_shell_chrome_height`), and the shell is chosen from this width — so a shell test
+## that built the whole extent would call the height, which calls the shell test, which builds the
+## extent. Every width reader takes this; only `_panel_extent()` itself pairs it with the height.
+func _panel_width_extent() -> float:
+	return PANEL_WIDTH if _is_vertical_edge(_dock_edge) else _viewport_size().x
+
+## The T/B cross-axis size: the fixed body budget `PANEL_HEIGHT_WIDE` PLUS whatever the ACTIVE SHELL
+## spends on its own chrome, clamped to a fraction of the window so a short window can never let the
+## strip eat the screen.
+##
+## **THE SHELL TERM IS THE FIX FOR A ZONE SLICED BY THE STRIP'S OWN TAB BAR.** `PANEL_HEIGHT_WIDE` is
+## the budget the zones' content is tuned against — the band zone's SHORT tier reads 299px of the
+## 300px box a wide horizontal dock offers — and it was spent as a FLAT strip height, so the narrow
+## shell paid for its tab bar out of the zone: measured, a 265px box for content that needs 273
+## (`band_panel_scale_bottom`), which the `clip_contents` zone host then sliced with no scrollbar and
+## no affordance. On a BOTTOM dock that cut lands at the window's own edge, which is what makes it
+## read as the panel "running off the bottom of the screen" rather than as a clipped zone.
+##
+## It is deliberately NOT a scale question — the narrow shell is reached at `ui_scale` 1.0 in a window
+## under ~1511px too, and paid the same 35px there. The two shells now hand their zones the SAME box,
+## which is the only arrangement under which one set of tier thresholds can be right for both.
+func _horizontal_panel_height() -> float:
+	return minf(PANEL_HEIGHT_WIDE + _shell_chrome_height(),
+		_viewport_size().y * MAX_WIDE_HEIGHT_FRACTION)
+
+## What the ACTIVE shell spends on the strip's CROSS axis before any zone sees the box. The wide shell
+## spends none — its separators are vertical hairlines, paid out of the width — while the narrow shell
+## carries the tab bar and the gap beneath it. Read through `_shell_is_wide()` rather than the cached
+## `_body_is_wide`, so a dock layout that arrives before `_relayout_body` has re-chosen the shell still
+## sizes the strip for the shell it is about to get.
+func _shell_chrome_height() -> float:
+	return 0.0 if _shell_is_wide() else _tab_bar_height()
 
 ## The card's INTERIOR box — what the card DRAWS AT, less the border and the content margins it draws
 ## with (`panel_card_stylebox`). Chrome only; never content.
@@ -1476,7 +1513,7 @@ func _cross_axis_size() -> float:
 		return COLLAPSED_SIZE
 	if _is_vertical_edge(_dock_edge):
 		return PANEL_WIDTH
-	return _wide_panel_height()
+	return _horizontal_panel_height()
 
 ## True when the dock reserves a vertical strip (left/right → width on the x-axis).
 func _is_vertical_edge(edge: int) -> bool:

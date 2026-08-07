@@ -34,6 +34,13 @@ const ULTRAWIDE_WINDOW_SIZE := Vector2i(2560, 900)
 ## worst-case bright field behind the rows, and a screenshot of actual desert would be less extreme.
 const BRIGHT_TERRAIN_COLOR := Color(0.90, 0.86, 0.76)
 
+## The LEFT reservation the floor probe pushes. Chosen so the band it leaves on
+## `PREVIEW_CANVAS_SIZE_BASE` is the **338px** the live report produced (a 1422px logical viewport at
+## `ui_scale` 1.35 with the Band panel docked LEFT), rather than merely "some small number": the claim
+## is about the configuration that was reported, and a squeeze picked for arithmetic convenience would
+## drift away from it the first time either HUD column's authored width moved.
+const FLOOR_PROBE_RESERVED_LEFT := 878.0
+
 ## The largest bar the dock offers, referenced rather than written as a 4 so the state and the
 ## panel's own `RECENT_COUNT_MAX` cannot drift.
 const EVENT_DOCK_MAX_ROWS := EventDockPanel.RECENT_COUNT_MAX
@@ -978,6 +985,46 @@ func run(harness) -> void:
 		print("ui_preview: saved event_dock_ultrawide.png")
 	h._pin_canvas(h.get_window())
 	await h._settle()
+
+	# ---- …AND THE FLOOR, WHICH IS THE SAME RULE READ FROM BELOW --------------------------------
+	# The cap's own derivation says "no content is ever squeezed"; nothing enforced it downward. The
+	# band is `viewport − insets`, and the insets are three FIXED logical widths (a docked panel's
+	# reservation + the HUD's two authored columns), so it collapses as the logical viewport does.
+	# Reported at `ui_scale` 1.35 with the Band panel docked LEFT: a 1422px viewport, insets 740/344,
+	# **a 338px band** — under the dock card's own 406px minimum, so the card drew outside the strip
+	# and `EventRows` (`clip_contents`) cut its labels.
+	#
+	# **REPRODUCED BY RESERVATION, NOT BY A SCALE, and deliberately.** The strip's rule reads the
+	# BAND and knows nothing about `content_scale_factor`; the arithmetic that squeezes the band is
+	# identical whether the viewport shrank or a wider panel docked. Pushing a scale here would be
+	# window state in the middle of a chapter — the one thing `interface_scale.gd` runs last to avoid.
+	_preview_push_event_dock_insets(event_dock, FLOOR_PROBE_RESERVED_LEFT, 0.0)
+	await h._settle()
+	var squeezed_band: float = float(PREVIEW_CANVAS_SIZE_BASE.x) \
+		- event_dock._inset_left - event_dock._inset_right
+	h._assert_hud("precondition: the squeezed band (%.0f) is genuinely under the floor (%.0f)"
+			% [squeezed_band, EventDockPanel.MIN_STRIP_WIDTH],
+		squeezed_band < EventDockPanel.MIN_STRIP_WIDTH)
+	h._assert_hud("under the floor the strip stops shrinking at %.0f instead of taking the %.0f band"
+			% [event_dock._root.size.x, squeezed_band],
+		is_equal_approx(event_dock._root.size.x, EventDockPanel.MIN_STRIP_WIDTH))
+	# It overhangs its INSETS — that is the trade — but never the window: a strip hanging off the
+	# screen edge loses exactly the text the floor exists to save.
+	h._assert_hud("…and the floored strip is still wholly on screen (%.0f..%.0f of %d)"
+			% [event_dock._root.offset_left, event_dock._root.offset_right,
+				PREVIEW_CANVAS_SIZE_BASE.x],
+		event_dock._root.offset_left >= -CO_EDGE_RECT_EPSILON
+			and event_dock._root.offset_right <= float(PREVIEW_CANVAS_SIZE_BASE.x) + CO_EDGE_RECT_EPSILON)
+	# THE PAIRED NEGATIVE, and without it a floor hard-wired ON passes everything above: with the
+	# squeeze released the strip must go straight back to filling its band.
+	_preview_push_event_dock_insets(event_dock, 0.0, 0.0)
+	await h._settle()
+	var released_band: float = float(PREVIEW_CANVAS_SIZE_BASE.x) \
+		- event_dock._inset_left - event_dock._inset_right
+	h._assert_hud("…and with the squeeze released it FILLS its band again (%.0f of %.0f, floor %.0f)"
+			% [event_dock._root.size.x, released_band, EventDockPanel.MIN_STRIP_WIDTH],
+		is_equal_approx(event_dock._root.size.x, released_band)
+			and released_band > EventDockPanel.MIN_STRIP_WIDTH)
 
 	# THE STRIP DOES NOT BURY THE MAP. It reserves nothing now, so this is no longer about leaving the
 	# map room to lay out in — it is about how much LIVE MAP the overlay hides, which is the same
