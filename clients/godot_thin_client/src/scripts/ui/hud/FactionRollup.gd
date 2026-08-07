@@ -39,17 +39,23 @@ extends RefCounted
 
 const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 
-## **EVERY ROW ON THIS PAGE IS A ROW UNDER A `zone_head`, AND THE PANEL HAS EXACTLY ONE OTHER SUCH
-## THING: THE WORK BOARD.** So a stat row takes the board's own row size, and the page's whole scale is
-## the board's — heads at `ZONE_HEAD_FONT_SIZE` (10), key chips at `COMPOSITION_KEY_FONT_SIZE` (11),
-## rows at 13.
+## **A ROW ON THIS PAGE IS THE SIZE THE FACTION TAB'S OWN ROWS ARE.** The `band` zone's vitals — Food,
+## Trade, Kit, Morale, Growth — are the page's reference row, and every other zone's rows match them,
+## so a player moving between the four tabs is reading one list at one size.
 ##
-## **The band zone's VITALS LABEL is the wrong counterpart, and matching it was a shipped mistake.**
-## `_build_vitals_label` is a bare `RichTextLabel` at the stock default (~16) — but it sits under NO
-## head at all, so borrowing its size put a 10pt heading over a 16pt row and made `FOOD` smaller than
-## the `Larder` beneath it: a hierarchy this panel never has, and reported on sight. What is shared
-## with a surface is its RELATIONSHIP to the thing above it, not its absolute size.
-const STAT_ROW_FONT_SIZE := HudWorkVocab.WORK_ROW_FONT_SIZE
+## **THIS REVERSES AN EARLIER RULE, and the reversal was reported by eye.** The rows were pinned to the
+## WORK BOARD's 13 on the argument that what a surface shares with its model is its RELATIONSHIP to the
+## thing above it rather than its absolute size — which made a 10pt head over a 13pt row the "correct
+## step" and a 10pt head over a 16pt row a defect. Against the vitals rows two tabs away, 13 simply
+## reads SMALL: the page's own reference is not the board, it is the other three zones of the same
+## page. A small-caps section head over larger rows is this panel's ordinary idiom (`PEOPLE`,
+## `WORKFORCE`), so the head→row step being wide is not a hierarchy fault.
+##
+## The vitals label carries NO size override — it is a bare `RichTextLabel` at Godot's stock default —
+## so this const is that default written down. `band_panel_preview._assert_faction_type_scale` reads
+## the LIVE rendered size off both and requires them equal, which is what stops the two drifting if
+## the engine default ever moves.
+const STAT_ROW_FONT_SIZE := HudWorkVocab.FACTION_STAT_ROW_FONT_SIZE
 
 ## The gap between a stat row's key and its value. The value is right-aligned by an expanding spacer,
 ## exactly as `HudWidgets.zone_head` right-aligns its readout, so this is a floor rather than the gap.
@@ -387,8 +393,19 @@ static func build_work_zone(labor: HudBandLaborState, attention: Array,
 ## in all three cases: an unstarted track is noise, an unsettled faction has no meter worth a row, and
 ## a faction that has found nothing gets no heading over an empty list. A page that renders every
 ## heading regardless states three facts a new game does not have yet.
+##
+## **`full` IS A HEIGHT TIER, AND DISCOVERIES IS WHAT YIELDS.** At the page's row size the three blocks
+## measure 336px against the ~300px a HORIZONTAL dock's zone offers, and this zone CLIPS — so the
+## height-capped shell drops one, the `_build_food_outlook_block` idiom. Discoveries is the one to
+## drop on two counts: it is the only list here with no ceiling of its own (Settling is one row and
+## the craft ladder is five), and it is permanent geographic knowledge rather than a call to act —
+## the top bar's own `◈ Discoveries N` still carries the count. What survives is what the player might
+## DO something about: how settled they are, and what their hands may attempt.
+##
+## The caller decides the tier from the box the panel is offering this zone — see
+## `BandPanelController.render_faction` and `HudWorkVocab.FACTION_KNOWLEDGE_FULL_MIN_HEIGHT`.
 static func build_knowledge_zone(knowledge: Dictionary, sedentarization: Dictionary,
-        sites: Array) -> VBoxContainer:
+        sites: Array, full: bool) -> VBoxContainer:
     var col := HudWidgets.make_zone_column()
     var settling := _build_settling_block(sedentarization)
     if settling != null:
@@ -396,6 +413,8 @@ static func build_knowledge_zone(knowledge: Dictionary, sedentarization: Diction
     var tracks := _build_knowledge_block(knowledge)
     if tracks != null:
         col.add_child(tracks)
+    if not full:
+        return col
     var discoveries := _build_discoveries_block(sites)
     if discoveries != null:
         col.add_child(discoveries)
@@ -545,15 +564,17 @@ static func _build_people_block(bands: Array) -> VBoxContainer:
 ## HOW FAR THE FACTION HAS SETTLED — the sedentarization score as a meter, under the player-facing
 ## word the manual uses (`Settling`) rather than the sim's own.
 ##
-## **IT IS A HEAD AND ITS READOUT, WITH NO ROW UNDER IT**, which is `_build_workforce_block`'s shape
-## and taken for its reason: this block states exactly ONE fact, and a head plus a one-row block is
-## two lines for it — with the row's key either restating the head (`SETTLING` over `Sedentarization`)
-## or carrying the stage word, which the readout can hold outright. **It is also 22px of a 300px box
-## the zone was 20px over**; see `band-city-panel.md` → the four-zone budget for the measurement.
+## **IT IS A REAL HEAD WITH THE READING ON A ROW BENEATH IT**, like every other block on this page.
+## It was briefly a head carrying its whole readout on the head LINE — one line for a block that
+## states one fact, and 22px of a box the zone was over. Reported by eye: that is not what a head is.
+## A head names the section and the row states the reading, and a block with one row is still a block;
+## the height it costs is paid for by the zone's own height TIER instead (see the zone builder).
 ##
-## A faction the sim reports no stage for reads `Nomadic`, which is what a score below the first
-## threshold means. Returns null when the snapshot has carried no sedentarization at all — never a
-## `0/100` meter, which claims a measurement that was not made.
+## **THE ROW IS KEYED BY THE STAGE**, not by a word restating the head above it: `SETTLING` over
+## `Sedentarization` would be a row with no information in its left column, and the stage is the one
+## fact the meter does not already carry. A faction the sim reports no stage for reads `Nomadic`,
+## which is what a score below the first threshold means. Returns null when the snapshot has carried
+## no sedentarization at all — never a `0/100` meter, which claims a measurement that was not made.
 static func _build_settling_block(sedentarization: Dictionary) -> VBoxContainer:
     if sedentarization.is_empty():
         return null
@@ -564,15 +585,16 @@ static func _build_settling_block(sedentarization: Dictionary) -> VBoxContainer:
     if stage == "" or stage == TopBarReadouts.SEDENTARIZATION_STAGE_NONE:
         stage = HudWorkVocab.FACTION_SETTLING_NOMADIC
     var block := HudWidgets.make_zone_block()
+    block.add_child(HudWidgets.zone_head(HudWorkVocab.FACTION_HEADER_SETTLING, ""))
     # **`HudFormat.meter_bar` TAKES A 0–100 SCORE, NOT A FRACTION**, and sedentarization is already on
     # that scale — so the score goes in RAW and `FACTION_SETTLING_SCALE` names only what the `62/100`
     # beside the bar is out of. A fraction here fills zero cells at every score below 50, which is
     # exactly how the knowledge block below shipped its bars empty.
-    block.add_child(HudWidgets.zone_head(HudWorkVocab.FACTION_HEADER_SETTLING,
-        HudWorkVocab.FACTION_SETTLING_VALUE_FORMAT % [stage,
+    block.add_child(_stat_row(stage,
+        HudWorkVocab.FACTION_SETTLING_VALUE_FORMAT % [
             HudFormat.meter_bar(score, KNOWLEDGE_METER_CELLS),
             int(round(score)), HudWorkVocab.FACTION_SETTLING_SCALE],
-        null, HudStyle.INK_DIM))
+        HudStyle.INK_DIM))
     return block
 
 ## THE WONDROUS SITES THE FACTION HAS FOUND — one row per site KIND with how many of it, under a head
@@ -615,7 +637,7 @@ static func _build_discoveries_block(sites: Array) -> VBoxContainer:
     var block := HudWidgets.make_zone_block()
     block.add_child(HudWidgets.zone_head(HudWorkVocab.FACTION_HEADER_DISCOVERIES,
         str(sites.size()), null, HudStyle.SIGNAL))
-    var shown: int = mini(order.size(), HudWorkVocab.FACTION_DISCOVERY_ROWS_MAX)
+    var shown: int = mini(order.size(), HudWorkVocab.FACTION_LIST_ROWS_MAX)
     for i in range(shown):
         var key: String = order[i]
         block.add_child(_stat_row(String(names[key]),
@@ -797,13 +819,15 @@ static func _build_knowledge_block(knowledge: Dictionary) -> VBoxContainer:
 
 ## One `key ……… value` readout row: a dim key, an expanding spacer, then the value in its own tint.
 ##
-## The same shape `HudWidgets.zone_head` gives a section head, one type size down — this page is a
-## column of readouts, and a row that measured like a head would leave the section heads meaningless.
+## The same shape `HudWidgets.zone_head` gives a section head, several type sizes UP — a small-caps
+## head over larger rows is this panel's ordinary idiom (`PEOPLE`, `WORKFORCE`), and the rows are what
+## the player is here to read.
 ## Both labels route their tooltip through `HudWidgets.set_label_tooltip`, since a bare `tooltip_text`
 ## on a `Label` is a SILENT no-op at Godot's `MOUSE_FILTER_IGNORE` default.
-## **ONE SIZE FOR EVERY ROW ON THE PAGE** — there is deliberately no per-zone size parameter. Every one
-## of these rows is a row under a `zone_head`, so they are all the same kind of thing, and a page whose
-## zones disagreed about how big a row is would read as two designs sharing a card.
+## **ONE SIZE FOR EVERY ROW ON THE PAGE** — there is deliberately no per-zone size parameter, and the
+## size is the `band` zone's vitals rows' (see `STAT_ROW_FONT_SIZE`). Every one of these rows is a row
+## under a `zone_head`, so they are all the same kind of thing, and a page whose zones disagreed about
+## how big a row is would read as two designs sharing a card.
 static func _stat_row(key: String, value: String, value_color: Color,
         tooltip: String = "") -> HBoxContainer:
     var row := HBoxContainer.new()

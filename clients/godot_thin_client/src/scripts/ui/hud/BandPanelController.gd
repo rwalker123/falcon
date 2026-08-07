@@ -296,6 +296,20 @@ func _faction_settling() -> Dictionary:
 func _faction_discoveries() -> Array:
     return _topbar.faction_discovered_sites() if _topbar != null else []
 
+## Can the KNOWLEDGE zone's box hold all three of its blocks? Read off the panel's own answer for THAT
+## zone rather than off the dock edge — a short window and a collapsed-to-nothing box hit the same
+## wall as a horizontal dock, and an edge test misses both. **An unknown box answers `true`**: the
+## no-dock fallback and the frame before the first layout pass are not evidence of a small box, and
+## the drastic branch (silently dropping a block) must be positively justified — the same asymmetry
+## `_party_compose_floats` takes.
+func _faction_knowledge_is_full() -> bool:
+    if _panel == null:
+        return true
+    var box: Vector2 = _panel.zone_size(BandCityPanel.ZONE_KNOWLEDGE)
+    if box.y <= 0.0:
+        return true
+    return box.y >= HudWorkVocab.FACTION_KNOWLEDGE_FULL_MIN_HEIGHT
+
 # ---- Typed adapters over the two injected HudLayer helpers -------------------------------------
 
 ## Issue a labor assignment. Retained on HudLayer because it owns the `assign_labor_requested` emit,
@@ -2692,9 +2706,12 @@ func render_faction() -> void:
         BandCityPanel.ZONE_WORK:
             HudWidgets.wrap_zone(FactionRollup.build_work_zone(_band_labor,
                 attention, _faction_open_row, _toggle_faction_row, jump_to_band_entity)),
+        # The knowledge zone's TIER is read off the box the panel is offering it, which the
+        # `set_zone_layout` above has just settled — a horizontal dock's ~300px cannot hold all three
+        # of its blocks at the page's row size, so DISCOVERIES yields there.
         BandCityPanel.ZONE_KNOWLEDGE:
             HudWidgets.wrap_zone(FactionRollup.build_knowledge_zone(_player_knowledge(),
-                _faction_settling(), _faction_discoveries())),
+                _faction_settling(), _faction_discoveries(), _faction_knowledge_is_full())),
         BandCityPanel.ZONE_PARTIES:
             HudWidgets.wrap_zone(FactionRollup.build_parties_zone(_band_labor, _herd_label_for_id,
                 attention, _faction_open_row, _toggle_faction_row, _jump_to_party_entity)),

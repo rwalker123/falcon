@@ -185,11 +185,17 @@ const FACTION_HEADER_DISCOVERIES := "Discoveries"
 ## always names where the faction stands rather than leaving the meter unlabelled.
 const FACTION_SETTLING_NOMADIC := "Nomadic"
 
-## `soft  ▰▰▱▱▱  62/100` — the SETTLING head's whole readout: the stage word, the meter, and the
-## score against the scale the sim reports it on. ONE line, because the block states one fact.
-const FACTION_SETTLING_VALUE_FORMAT := "%s  %s  %d/%d"
+## `▰▰▱▱▱  62/100` — the SETTLING row's VALUE: the meter and the score against the scale the sim
+## reports it on. The stage word is the row's KEY, not part of this.
+const FACTION_SETTLING_VALUE_FORMAT := "%s  %d/%d"
 
 const FACTION_SETTLING_SCALE := 100
+
+## **THE FACTION PAGE'S ROW SIZE — the `band` zone's vitals rows, which every other zone matches.**
+## Those rows are a bare `RichTextLabel` carrying no size override, so this is Godot's stock default
+## written down; the harness asserts the two are equal at render time rather than trusting the
+## number. See `FactionRollup.STAT_ROW_FONT_SIZE` for why this is NOT the work board's 13.
+const FACTION_STAT_ROW_FONT_SIZE := 16
 
 ## A discovery row's value: how many INSTANCES of that site kind the faction has found. The head's
 ## readout is the instance TOTAL, so a kind found three times reads `3` on one row rather than as
@@ -197,12 +203,20 @@ const FACTION_SETTLING_SCALE := 100
 ## because this page has the room the strip does not.
 const FACTION_DISCOVERY_COUNT_FORMAT := "%d"
 
-## The discovery list's own cap, tighter than `FACTION_LIST_ROWS_MAX`: this zone carries three blocks
-## against the work zone's two, and the sites list is the ONLY one of the three with no ceiling of its
-## own — Settling is a head and the craft ladder is five rows, while a faction can find every site on
-## the map. **Measured: two rows is what the 300px box affords** — see `band-city-panel.md` → the
-## four-zone budget, and raise it only with that measurement re-run.
-const FACTION_DISCOVERY_ROWS_MAX := 2
+## **THE KNOWLEDGE ZONE'S HEIGHT TIER.** All three of its blocks measured **336px** at the page's row
+## size against the ~300px a horizontal dock offers, and the zone CLIPS — so a box below this drops
+## DISCOVERIES and keeps Settling + the craft tracks (`FactionRollup.build_knowledge_zone`).
+##
+## **IT IS A REAL "CAN THIS BOX HOLD THE FULL BLOCK?" TEST, not a round number between two docks.**
+## The full block measures **452px** at its worst case (five craft tracks, the sites list at its cap
+## plus its `+N more`), so a box that only just clears this threshold still holds it with 28px to
+## spare. The two boxes the panel actually offers are nowhere near either side — ~300 and ~1055 — so
+## the margin is what protects a box that is not one of those two, and it is what shrinks as the
+## block grows.
+## **Re-measure before adding a row to this zone**; `band_panel_preview._report_zone_content_extent`
+## prints the full block's extent on `band_panel_faction_knowledge` and the tiered one on
+## `band_panel_faction_wide`, and this threshold must stay above the first.
+const FACTION_KNOWLEDGE_FULL_MIN_HEIGHT := 480.0
 
 ## A discovered site whose catalog row carries no display name — the site_id is a worse name than
 ## none at all is a lie, so the id stands.
