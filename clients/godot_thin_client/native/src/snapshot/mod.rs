@@ -1441,6 +1441,15 @@ pub(crate) fn snapshot_to_dict(
     if let Some(default_forage_kit) = snapshot.subsistence().and_then(|s| s.defaultForageKitId()) {
         let _ = dict.insert("default_forage_kit_id", default_forage_kit);
     }
+    // **THE WHOLE EFFECTIVE `EquipmentConfig`, `serde_json`-serialized** — carried as one opaque
+    // string and republished as one, never parsed here. The Workbench's Equipment and Kits pages
+    // parse it themselves and walk it blind, which is what lets a field added to `equipment.json`
+    // reach the surface with no client edit; a decoder that unpacked it into typed keys would put
+    // the field list back, one layer lower down. Same whole-section contract as the two defaults
+    // above, so it is decoded on BOTH paths.
+    if let Some(equipment_config) = snapshot.subsistence().and_then(|s| s.equipmentConfigJson()) {
+        let _ = dict.insert("equipment_config_json", equipment_config);
+    }
 
     if let Some(intensification) = snapshot
         .subsistence()

@@ -105,6 +105,85 @@ const TUNING_HINT_SEPARATOR := "·"
 ## default that does not land exactly on the step grid cannot make an untouched row read as dirty.
 const TUNING_MODIFIED_STEP_FRACTION := 0.5
 
+# ---- the equipment config, and the two pages that print it -----------------
+## The snapshot key the sim's whole effective `EquipmentConfig` rides on, `serde_json`-serialized and
+## decoded onto the frame as a plain `String`. Both config pages parse it themselves; neither holds
+## any state derived from it beyond the parsed object, which is what makes their `reset()` real.
+const CONFIG_JSON_KEY := "equipment_config_json"
+
+## **THE ONLY TWO CONFIG KEY NAMES ANY CLIENT CODE KNOWS, AND THE ONE PLACE TO CHANGE THEM.**
+##
+## They exist to decide WHICH PAGE a top-level entry lands on and nothing else: the Kits page draws
+## these two, the Equipment page draws every other top-level entry whatever it is, and everything
+## below the top level is walked blind by `WorkbenchWidgets.build_config_object`. So a fourth gear
+## block added to `equipment.json` appears on the Equipment page with no edit here, a renamed gear
+## block changes nothing at all, and only a restructuring of the config's TOP LEVEL — the kit roster
+## or the job defaults moving or being renamed — reaches this file. A page holding a list of field
+## names is what this arrangement exists to prevent; it goes stale the moment the sim renames one,
+## and it does so silently, by simply drawing nothing.
+const CONFIG_KITS_KEY := "kits"
+const CONFIG_DEFAULT_KITS_KEY := "default_kits"
+
+## **THE ONE BOUNDED EXCEPTION, AND IT MUST NOT BECOME A WHITELIST.** The Kits page PROMOTES these two
+## keys of a roster entry into the block's title: `kits[0]` is a coordinate that tells a reader
+## nothing, while `Big-game kit (big_game)` names the thing they are looking at. Having said them in
+## the title the page then hides **only the keys the title actually used** — every other key in the
+## entry still renders blind, so a field added to a kit definition tomorrow still appears with no edit
+## here. Promotion is a rendering of two values the page already drew, not a list of the fields a kit
+## may have; the moment a third key is added because it "should be shown", that distinction is gone.
+##
+## With `CONFIG_KITS_KEY` / `CONFIG_DEFAULT_KITS_KEY` above, these are the ONLY config key names any
+## client code holds, and this is the one place to change them.
+const CONFIG_KIT_DISPLAY_NAME_KEY := "display_name"
+const CONFIG_KIT_ID_KEY := "id"
+## `display_name (id)` — both, when the entry states both. A roster entry may be edited into any
+## shape, so the page degrades rather than assuming: only `id` → the id alone, only `display_name` →
+## the name alone, neither → the walker's own `kits[N]`, with only the promoted key(s) suppressed in
+## each case.
+const KITS_TITLE_FORMAT := "%s (%s)"
+
+## Said in place of a value that has nothing in it — an empty object, an empty array, an empty string,
+## a JSON `null`. Rendered explicitly rather than left blank, because a blank right-hand column reads
+## as a rendering bug rather than as the config's own answer.
+const CONFIG_EMPTY := "—"
+## Said in place of a subtree deeper than `CONFIG_MAX_DEPTH`. The tree walker knows nothing about the
+## config's shape, so the depth is bounded rather than trusted: a self-referential or pathologically
+## nested document would otherwise build controls until the client died.
+const CONFIG_TOO_DEEP := "…"
+## How many nesting levels the walker will descend. The shipped config is three deep
+## (`kits[0].uses`), so this is roughly double it — deep enough that no honest config is truncated,
+## shallow enough that a runaway one stops on screen instead of in a crash report.
+const CONFIG_MAX_DEPTH := 6
+## How one element of an array of objects is named: `kits[0]`, `kits[1]`. The INDEX is the only
+## identity the walker has — it cannot know that a kit calls itself `display_name` — and it doubles as
+## the reader's own coordinate into the file they are about to go and search.
+const CONFIG_INDEX_FORMAT := "%s[%d]"
+## What joins an array of scalars rendered onto one row (`hunt, forage`).
+const CONFIG_LIST_SEPARATOR := ", "
+
+const EQUIPMENT_PAGE_TITLE := "Equipment"
+const EQUIPMENT_PAGE_SUBTITLE := "Every config block outside the kit roster"
+const EQUIPMENT_HEADING := "CONFIG"
+## Said when the config carries nothing but the kit roster and the job defaults, i.e. the Kits page
+## has everything. Its own line rather than a bare "—", so the page is not mistaken for one that
+## failed to read the wire.
+const EQUIPMENT_NO_BLOCKS := "This config carries nothing outside the kit roster and the job defaults."
+
+const KITS_PAGE_TITLE := "Kits"
+const KITS_PAGE_SUBTITLE := "The kit roster and each job's default"
+const KITS_ROSTER_HEADING := "KIT ROSTER"
+const KITS_DEFAULTS_HEADING := "JOB DEFAULTS"
+
+## The degraded state both pages owe. They must come up with no server at all (the preview harness
+## runs without one), so each says what is missing rather than rendering an empty well. Worded per
+## page rather than shared, so the reader is told which surface is empty.
+const EQUIPMENT_NO_CONFIG := "No equipment config on the wire yet — it arrives with the first "\
+	+ "snapshot of a world."
+const KITS_NO_CONFIG := "No kit roster on the wire yet — it arrives with the first snapshot of a world."
+## …and the Kits page's SECOND well, which is degraded by the same absence but must not print the same
+## sentence twice on one page: two wells repeating one line reads as a rendering fault.
+const KITS_NO_DEFAULTS := "No job defaults yet — they arrive with the roster."
+
 # ---- services --------------------------------------------------------------
 ## Names under which the host (`Main`) files the Callables it lends the surface, and the ONLY thing
 ## a page and its host have to agree on.

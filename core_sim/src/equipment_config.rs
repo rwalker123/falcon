@@ -48,7 +48,7 @@ use std::{
 };
 
 use bevy::prelude::Resource;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::combat::CombatStats;
@@ -59,7 +59,7 @@ pub const BUILTIN_EQUIPMENT_CONFIG: &str = include_str!("data/equipment.json");
 /// **The hunting kit** — spears. What makes a hunter's `attack` a real number, and the half of the
 /// TOE that opens `docs/plan_hunt_through_combat.md` §4.2's gate
 /// (`effective_attack = max(0, attack − defense)`).
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct HuntingKitConfig {
     /// **The equipped per-hunter `attack`** — an absolute tier, not a bonus, because the model is
     /// two tiers and the unequipped one is the `person` row's intrinsic `attack` (`1.0`). Shipped at
@@ -87,7 +87,7 @@ pub struct HuntingKitConfig {
 /// **It is a flat per-hunter multiplier and it needs NO PULLERS — SETTLED** (§4.8, §11). A crew cost
 /// would make the hunt's carry non-linear in party size, and `hunt_haul_workers`, the fill target's
 /// arithmetic and §5.1's trip length all assume that linearity.
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct SledKitConfig {
     /// **The unequipped per-hunter haul rate**, in biomass/turn — what a sledless party drags home
     /// by hand. The *equipped* tier is `labor_config.json`'s `hunt.per_worker_biomass_capacity`
@@ -114,7 +114,7 @@ pub struct SledKitConfig {
 /// **Berries are loose, divisible and bounded entirely by what you can hold**, which is exactly what
 /// a basket fixes (§4.8). Before the three-kit split the forage web had no kit at all: its
 /// `forage.per_worker_biomass_capacity` sat at its shipped value whatever the band carried.
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct BasketKitConfig {
     /// **The unequipped per-gatherer throughput**, in biomass/turn before the seasonal weight — what
     /// two cupped hands and the fold of a hide bring back. The *equipped* tier is
@@ -139,7 +139,7 @@ pub struct BasketKitConfig {
 /// JSON block keys, so a roster entry naming a component that has no block cannot deserialize —
 /// "every `uses` entry names a real component block" is enforced by the type rather than by a
 /// validation pass someone has to remember to extend.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum KitComponent {
     HuntingKit,
@@ -150,7 +150,7 @@ pub enum KitComponent {
 /// **A job a kit may be sent out on** — the two verbs that resolve a tier off the TOE. The scouting
 /// and warrior roles are deliberately absent: they consume no component, so there is no kit axis to
 /// choose along and no default to name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum KitJob {
     Hunt,
@@ -169,7 +169,7 @@ impl KitJob {
 }
 
 /// One roster entry: a **named mask** over the component blocks above.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KitDefinition {
     /// Stable id — what a command names and what the wire carries. Unique across the roster.
     pub id: String,
@@ -186,7 +186,7 @@ pub struct KitDefinition {
 
 /// The kit each verb reaches for when the player names none. Validated to name a real roster entry
 /// whose `jobs` covers that verb, so [`EquipmentConfig::default_kit`] cannot fail after load.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DefaultKitsConfig {
     pub hunt: String,
     pub forage: String,
@@ -267,7 +267,7 @@ pub enum KitSelectionError {
 /// is what makes the cross-checks in this module's tests (baskets do not touch the hunt; the sled
 /// does not touch foraging) statements about the *type*, not about a convention someone has to
 /// remember.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EquipmentConfig {
     pub hunting_kit: HuntingKitConfig,
     pub sled_kit: SledKitConfig,

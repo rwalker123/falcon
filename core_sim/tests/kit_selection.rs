@@ -589,6 +589,122 @@ fn the_published_snapshot_carries_the_roster_and_names_the_kit_the_tables_are_qu
     );
 }
 
+/// **The designer surface's catalogue is the config the sim runs — it ROUND-TRIPS.**
+///
+/// `SubsistenceSection.equipmentConfigJson` is this schema's one deliberate blob: the Workbench
+/// prints the TOE configuration key by key, so a dial added to `equipment.json` appears with no
+/// client edit and no schema edit. That only holds if what is published is *the config*, not a
+/// lossy projection of it — and the way it silently stops holding is a field that **serializes
+/// under a different name than it deserializes**, which no compiler and no equality check on the
+/// live struct would notice.
+///
+/// So the assertion is on the **published string**, taken off the encoded envelope rather than the
+/// in-process snapshot, fed back through `EquipmentConfig::from_json_str` — which validates — and
+/// compared against the config the sim is running. A renamed field fails at the parse (`missing
+/// field`); a re-pointed one fails on the values below.
+#[test]
+fn the_published_equipment_config_json_round_trips_to_the_config_the_sim_runs() {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let mut app = placid_world();
+    recapture_snapshot_in_place(&mut app.world);
+
+    let bytes = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .encode_flat();
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let published = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .subsistence()
+        .and_then(|section| section.equipmentConfigJson())
+        .expect("the subsistence section carries the designer catalogue");
+    assert!(
+        !published.is_empty(),
+        "an empty string is the serialization-failed reading — the catalogue never reached the wire"
+    );
+
+    // `from_json_str` validates, so a parse that succeeds is also a config the sim would boot on.
+    let parsed = EquipmentConfig::from_json_str(published)
+        .expect("the published catalogue parses back as an EquipmentConfig, and validates");
+    let live = equipment(&app);
+
+    assert_eq!(
+        parsed.hunting_kit.equipped_attack,
+        live.hunting_kit.equipped_attack
+    );
+    assert_eq!(
+        parsed.hunting_kit.starting_durability,
+        live.hunting_kit.starting_durability
+    );
+    assert_eq!(
+        parsed.hunting_kit.wear_per_kill,
+        live.hunting_kit.wear_per_kill
+    );
+    assert_eq!(
+        parsed.sled_kit.unequipped_per_worker_biomass_capacity,
+        live.sled_kit.unequipped_per_worker_biomass_capacity
+    );
+    assert_eq!(
+        parsed.sled_kit.starting_durability,
+        live.sled_kit.starting_durability
+    );
+    assert_eq!(
+        parsed.sled_kit.wear_per_biomass_hauled,
+        live.sled_kit.wear_per_biomass_hauled
+    );
+    assert_eq!(
+        parsed.basket_kit.unequipped_per_worker_biomass_capacity,
+        live.basket_kit.unequipped_per_worker_biomass_capacity
+    );
+    assert_eq!(
+        parsed.basket_kit.starting_durability,
+        live.basket_kit.starting_durability
+    );
+    assert_eq!(
+        parsed.basket_kit.wear_per_biomass_gathered,
+        live.basket_kit.wear_per_biomass_gathered
+    );
+
+    // The roster, in file order — and each entry compared through the MASK it resolves to, so the
+    // `uses` list is asserted as the thing it means rather than as a list of names.
+    assert_eq!(
+        parsed.kits().len(),
+        live.kits().len(),
+        "every roster entry survives the round trip"
+    );
+    for (round_tripped, shipped) in parsed.kits().iter().zip(live.kits()) {
+        assert_eq!(round_tripped.id, shipped.id);
+        assert_eq!(round_tripped.display_name, shipped.display_name);
+        assert_eq!(round_tripped.jobs, shipped.jobs);
+        assert_eq!(
+            parsed.kit(&shipped.id),
+            live.kit(&shipped.id),
+            "kit `{}` resolves to the same component mask on both sides",
+            shipped.id
+        );
+    }
+    assert_eq!(
+        parsed.default_kit_id(KitJob::Hunt),
+        live.default_kit_id(KitJob::Hunt)
+    );
+    assert_eq!(
+        parsed.default_kit_id(KitJob::Forage),
+        live.default_kit_id(KitJob::Forage)
+    );
+
+    // The file's `_comment*` keys are not struct fields, so serializing the STRUCT is what keeps
+    // them off the wire — the designer page prints dials, not prose.
+    assert!(
+        !published.contains("_comment"),
+        "the catalogue is the struct the sim runs, not the text of `equipment.json`"
+    );
+}
+
 /// **Every labor row publishes the kit it is priced at, resolved** — the sim never ships
 /// "unspecified". A crew that named nothing reads the job's default; a band-wide role, which has no
 /// kit axis at all, reads `""` rather than a kit it is not using.

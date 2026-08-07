@@ -110,27 +110,13 @@ func _load_manifest_kinds() -> Array:
 
 ## One config kind: a sunk well headed by the kind's label, holding a row per parameter.
 func _build_group(kind: Dictionary) -> PanelContainer:
-	var panel := PanelContainer.new()
-	panel.add_theme_stylebox_override("panel", WorkbenchWidgets.group_stylebox())
-
-	var body := VBoxContainer.new()
-	body.add_theme_constant_override("separation", WorkbenchWidgets.GROUP_HEADER_GAP)
-	panel.add_child(body)
-
-	body.add_child(WorkbenchWidgets.build_section_label(kind.get("label", "")))
-	var rule := PanelContainer.new()
-	rule.custom_minimum_size.y = 1.0
-	rule.add_theme_stylebox_override("panel", HudStyle.hairline_stylebox())
-	body.add_child(rule)
-
 	var rows := VBoxContainer.new()
 	rows.add_theme_constant_override("separation", WorkbenchWidgets.ROW_GAP)
-	body.add_child(rows)
 
 	var kind_id: String = kind.get("kind", "")
 	for param in kind.get("params", []):
 		rows.add_child(_build_row(kind_id, param))
-	return panel
+	return WorkbenchWidgets.build_group(kind.get("label", ""), rows)
 
 
 ## One parameter: its control and its dot, built here and threaded into the shared row drawing, plus
