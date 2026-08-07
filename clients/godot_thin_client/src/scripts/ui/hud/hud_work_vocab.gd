@@ -151,13 +151,62 @@ const ZONE_HEADER_WORK := "Work"
 
 const ZONE_HEADER_PARTIES := "Parties"
 
-## THE FACTION PAGE — the cycler's pinned first entry (issue #450), whose three zones answer the
-## band zones' own three questions one rung up: who the faction IS, what it is DOING, and who is OUT.
-## `ZONE_TAB_FACTION` overrides the narrow shell's `Band` tab label while that page is the subject —
-## a tab reading "Band" over a faction rollup names the wrong scope.
+## THE NARROW SHELL'S TAB LABELS, declared per SUBJECT (`BandCityPanel.set_zone_layout`). A tab picks
+## a ZONE, and a zone's name states the scope its content is at — so a band's first tab reads `Band`
+## and the faction page's reads `Faction`. They are their own words rather than the `ZONE_HEADER_*`
+## section heads above: a head titles a block INSIDE a zone and a tab names the zone, and the two
+## coinciding on `Work` is a coincidence rather than a shared fact.
+const ZONE_TAB_BAND := "Band"
+
+const ZONE_TAB_WORK := "Work"
+
+const ZONE_TAB_PARTIES := "Parties"
+
+## THE FACTION PAGE — the cycler's pinned first entry (issue #450), whose zones answer the
+## band zones' own questions one rung up: who the faction IS, what it is DOING, what it KNOWS, and
+## who is OUT.
 const ZONE_TAB_FACTION := "Faction"
 
+## Abbreviated deliberately: the narrow shell fits four tabs across a 354px strip, and `Knowledge`
+## is the longest word of the set. Pending playtest.
+const ZONE_TAB_KNOWLEDGE := "Know"
+
 const FACTION_HEADER_KNOWLEDGE := "Knowledge"
+
+## The KNOWLEDGE zone's other two blocks (issue #450, the four-zone body). **Settling is the
+## sedentarization score under the player-facing word the manual uses**, and it lands here rather than
+## beside the stores for the same reason the craft tracks do: it is not a stock and not a population —
+## it is what the faction has BECOME, and what it unlocks is what its hands may attempt.
+const FACTION_HEADER_SETTLING := "Settling"
+
+const FACTION_HEADER_DISCOVERIES := "Discoveries"
+
+## A faction that has not settled at all — what an absent or `none` stage reads as, so the readout
+## always names where the faction stands rather than leaving the meter unlabelled.
+const FACTION_SETTLING_NOMADIC := "Nomadic"
+
+## `soft  ▰▰▱▱▱  62/100` — the SETTLING head's whole readout: the stage word, the meter, and the
+## score against the scale the sim reports it on. ONE line, because the block states one fact.
+const FACTION_SETTLING_VALUE_FORMAT := "%s  %s  %d/%d"
+
+const FACTION_SETTLING_SCALE := 100
+
+## A discovery row's value: how many INSTANCES of that site kind the faction has found. The head's
+## readout is the instance TOTAL, so a kind found three times reads `3` on one row rather than as
+## three rows — the top bar's own "N is instances, the strip is kinds" split, stated in full here
+## because this page has the room the strip does not.
+const FACTION_DISCOVERY_COUNT_FORMAT := "%d"
+
+## The discovery list's own cap, tighter than `FACTION_LIST_ROWS_MAX`: this zone carries three blocks
+## against the work zone's two, and the sites list is the ONLY one of the three with no ceiling of its
+## own — Settling is a head and the craft ladder is five rows, while a faction can find every site on
+## the map. **Measured: two rows is what the 300px box affords** — see `band-city-panel.md` → the
+## four-zone budget, and raise it only with that measurement re-run.
+const FACTION_DISCOVERY_ROWS_MAX := 2
+
+## A discovered site whose catalog row carries no display name — the site_id is a worse name than
+## none at all is a lie, so the id stands.
+const FACTION_DISCOVERY_UNNAMED := "Unnamed site"
 
 ## **THE ALERT CLAUSE — what a faction row says where an aggregate would lie.** A runway is one larder
 ## against one band's drain and a kit condition is three durabilities per band; neither has a faction

@@ -353,9 +353,29 @@ const ULTRAWIDE_HEIGHT := 900
 # The two shell-threshold probe windows. The panel is bottom-docked in both, so the window width IS
 # `_panel_extent().x`, the value `_shell_is_wide` tests — one pixel below the derived threshold (must
 # pick the NARROW tabbed shell) and exactly at it (the narrowest legitimate WIDE shell). Derived from
-# the panel's own const so they can never drift from the threshold they bracket.
+# the panel's OWN LIVE answer (`wide_shell_min_width()`, a sum over the declared zones) so they can
+# never drift from the threshold they bracket.
 const SHELL_THRESHOLD_UNDERSHOOT := 1
 const SHELL_THRESHOLD_HEIGHT := 900
+## THE FACTION PAGE's whole tab strip, in declared order. Spelled out here rather than read back off
+## `FACTION_ZONE_LAYOUT` — quoting the layout under test would only assert that it equals itself, and
+## the claim is that the page reads `Faction · Work · Know · Parties` to a player.
+const FACTION_TAB_LABELS: Array[String] = ["Faction", "Work", "Know", "Parties"]
+## The top bar's sedentarization seed, named because the faction page's SETTLING row renders the SAME
+## figure — the page reads `TopBarReadouts`' retained entry, so the strip and the row cannot disagree,
+## and the assertion has to know which number it is asserting.
+const TOPBAR_SEDENTARIZATION_SCORE := 62.0
+const TOPBAR_SEDENTARIZATION_STAGE := "soft"
+## `HudFormat.meter_bar`'s filled cell. Spelled here rather than read off the formatter — the claim is
+## that a meter at 62% draws SOMETHING, and asking the formatter what it draws would agree with itself.
+const METER_FILLED_CELL := "▰"
+## The FOUR-zone shell threshold, restated from the panel's named widths rather than asked of the
+## method that computes it: `ZONE_BAND_WIDTH + work + ZONE_KNOWLEDGE_WIDTH + ZONE_PARTY_WIDTH`, three
+## gutters and the card chrome. It is the number the whole generalization turns on — one gutter per
+## GAP rather than the two a three-zone body has — so it is stated once, here, and compared.
+const FACTION_SHELL_MIN_WIDTH := BandCityPanel.ZONE_BAND_WIDTH + BandCityPanel.ZONE_WORK_MIN_WIDTH \
+	+ BandCityPanel.ZONE_KNOWLEDGE_WIDTH + BandCityPanel.ZONE_PARTY_WIDTH \
+	+ 3.0 * BandCityPanel.RAIL_SEPARATOR_SPAN + BandCityPanel.PANEL_CHROME_H
 ## The canvas the DOCK-ROW states render at (issue #324). 1080p with a bottom dock is the case the
 ## issue is about, and the canvas — not just the window — has to be pinned: `project.godot` stretches
 ## `canvas_items`, so a bare window pin renders at the 1920 base width whatever the window says.
@@ -700,7 +720,8 @@ func _ready() -> void:
 	_hud.turn_orb._pulse_time = TurnOrb.PULSE_PERIOD * TURN_ORB_PULSE_MIDPOINT_FRACTION
 
 	# Seed the top bar so the HUD reflow reads against real content.
-	_hud.update_sedentarization([{"faction": 0, "score": 62.0, "stage": "soft"}])
+	_hud.update_sedentarization([{"faction": 0,
+		"score": TOPBAR_SEDENTARIZATION_SCORE, "stage": TOPBAR_SEDENTARIZATION_STAGE}])
 	_hud.update_demographics([{"faction": 0, "children": 34, "working": 51, "elders": 15}])
 
 	# Slice 3: inject the panel into the HUD and push a player band through the real snapshot
@@ -1152,8 +1173,7 @@ func _ready() -> void:
 	#
 	# Knowledge is pushed FIRST: the mark reads `RungGates` against the top bar's row, so without it
 	# every source is honestly "not ready" and the board renders a frame with nothing to look at.
-	_hud.update_intensification([{"faction": 0,
-		"cultivation": 1.0, "seed_selection": 1.0, "herding": 1.0, "penning": 1.0}])
+	_hud.update_intensification([_standing_knowledge_row()])
 	_hud.update_food_modules([{"x": 71, "y": 18, "module": "savanna_grassland", "kind": "gather"}])
 	_set_forage_patches(_ready_patch_fixtures())
 	_set_world_herds(_ready_herd_fixtures())
@@ -1727,6 +1747,16 @@ func _ready() -> void:
 	# party's own quarry lives in the base set, and a herd list that dropped it would leave the parties
 	# row naming a raw `game_deer_79` id instead of the species.
 	_set_world_herds(_herd_fixtures() + _under_herded_work_herd_fixtures())
+	# **THE KNOWLEDGE ZONE'S THREE BLOCKS ARE STAGED AT THEIR WORST CASE, and that is the whole reason
+	# the seeding is here rather than left to whatever the run happened to leave up.** Each block on
+	# this page OMITS ITSELF when it has nothing to say and the zone CLIPS, so an unseeded fixture
+	# measures a zone with two of its three blocks missing and calls the fit green. All FIVE craft
+	# tracks (the ladder's ceiling, one finished so the `known` word renders beside four meters) and
+	# MORE discovered kinds than the list will show, so the `+N more` row is in the measurement too.
+	# SETTLING needs no push — `_ready`'s top-bar seed is a real score with a stage, and pushing a
+	# second one here would only change the top bar under every frame below.
+	_hud.update_intensification([_faction_knowledge_fixture()])
+	_hud.update_discoveries([_faction_discoveries_fixture()])
 	_push_bands(_faction_roster())
 	_hud.cycle_panel_band(BandCityPanel.CYCLE_PREV)
 	_panel.set_dock(SIDE_LEFT)
@@ -1738,25 +1768,46 @@ func _ready() -> void:
 	_report_zone_content_extent("band_panel_faction")
 	_assert_faction_page()
 
-	# The WORK tab — the workforce bar, the per-band roster and the knowledge tracks. A separate frame
-	# because the narrow shell renders exactly ONE zone, so the state above cannot show it at all.
+	# The WORK tab — the workforce bar and the per-band roster. A separate frame because the narrow
+	# shell renders exactly ONE zone, so the state above cannot show it at all.
 	_panel.set_active_tab(&"work")
 	await _settle()
 	await _save("band_panel_faction_work")
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 
-	# WIDE: all three zones abreast, which is the only layout in which the page can be read as a whole.
+	# The KNOW tab — the fourth zone (issue #450's option A1), which exists on this subject and on no
+	# other. Its own frame for the work tab's reason, and the tab is reachable at all only because the
+	# faction subject DECLARED it: a band's layout has three zones and no `knowledge` key.
+	_panel.set_active_tab(BandCityPanel.ZONE_KNOWLEDGE)
+	await _settle()
+	await _save("band_panel_faction_knowledge")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_faction_knowledge_zone()
+
+	# WIDE: all FOUR zones abreast, which is the only layout in which the page can be read as a whole.
 	_panel.set_dock(SIDE_BOTTOM)
 	await _settle()
 	await _save("band_panel_faction_wide")
 	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
 	_assert_zone_content_fits()
 	_report_zone_content_extent("band_panel_faction_wide")
+	_assert_faction_zone_layout()
+	await _assert_faction_shell_threshold()
 
 	# The ROUTING claims, none of which a PNG can carry — and the last of them leaves the panel back on
 	# a band, without which every state below would re-render as the rollup on its next snapshot.
 	_assert_faction_cycler()
+
+	# **PUT THE TOP BAR BACK.** Both pushes above land in `TopBarReadouts`, whose strips are captured in
+	# every frame below this one — and `_ingest_intensification` REPLACES a faction's row, so the fifth
+	# track would otherwise ride the knowledge strip for the rest of the run. Restored to the standing
+	# row rather than cleared, because an EMPTY intensification array is a no-op merge and would leave
+	# the five-track row standing.
+	_hud.update_intensification([_standing_knowledge_row()])
+	_hud.update_discoveries([])
 
 	# ULTRAWIDE: past the width the three zones can USE, the wide shell CENTRES at its content cap
 	# instead of stretching, leaving equal margins either side. Without it a single work row is strung
@@ -1773,7 +1824,7 @@ func _ready() -> void:
 	print("band_panel_preview: ultrawide — work zone %.0fpx of a %dpx panel (capped + centred)" % [
 		_panel.work_zone_size().x, ULTRAWIDE_WIDTH])
 
-	# THE SHELL THRESHOLD, bracketed. `WIDE_SHELL_MIN_WIDTH` is DERIVED from what the wide shell needs
+	# THE SHELL THRESHOLD, bracketed. `wide_shell_min_width()` is DERIVED from what the wide shell needs
 	# (both flanks + one readable work column + the separators + the card chrome), and nothing else in
 	# this harness renders anywhere near it — 1500 and 3440 are both comfortably past it, so a
 	# too-low threshold was invisible here. These two frames are the before/after of the flip.
@@ -1785,10 +1836,15 @@ func _ready() -> void:
 	# `_rail_span()`, not `_rail_width()`: the rail also costs a `RAIL_SEPARATOR_SPAN` gutter, and probing
 	# against the bare width would bracket the threshold 25px off.
 	var rail_span: float = _panel._rail_span()
-	var shell_threshold_width := int(ceil(BandCityPanel.WIDE_SHELL_MIN_WIDTH + rail_span))
+	# **THE THRESHOLD IS THE PANEL'S OWN, ASKED OF THE LIVE LAYOUT** — it is a sum over the declared
+	# zones now, not a `const`, so a band subject answers 1190 and the four-zone faction page 1569. The
+	# panel is on a BAND here (`_many_sources_band_fixture` above), so this brackets the three-zone
+	# derivation; the four-zone one is bracketed by `_assert_faction_shell_threshold`.
+	var shell_threshold: float = _panel.wide_shell_min_width()
+	var shell_threshold_width := int(ceil(shell_threshold + rail_span))
 	print("band_panel_preview: shell threshold probes at %d / %d (threshold %.0f + rail span %.0f)" % [
 		shell_threshold_width - SHELL_THRESHOLD_UNDERSHOOT, shell_threshold_width,
-		BandCityPanel.WIDE_SHELL_MIN_WIDTH, rail_span])
+		shell_threshold, rail_span])
 	# One pixel BELOW: the wide shell could not give the board a readable column, so the panel must
 	# choose the NARROW tabbed shell — which hands the board the panel's WHOLE interior.
 	await _pin_canvas(Vector2i(shell_threshold_width - SHELL_THRESHOLD_UNDERSHOOT, SHELL_THRESHOLD_HEIGHT))
@@ -2646,7 +2702,7 @@ func _hud_dialog_count() -> int:
 ## GUARD: whenever the WIDE shell is active, the work zone must be at least one readable board column
 ## (`ZONE_WORK_MIN_WIDTH`) — otherwise Hud's `_work_board_capacity` clamps to a single column too
 ## narrow for its own row labels, and the NARROW shell would have given the board strictly MORE room.
-## That is the invariant a hand-picked `WIDE_SHELL_MIN_WIDTH` violated across a whole band of widths,
+## That is the invariant a hand-picked `wide_shell_min_width()` violated across a whole band of widths,
 ## and the recursive zone-bounds assertion cannot catch it: a CLIPPED label still sits inside its rect.
 func _assert_work_zone_readable() -> void:
 	if not _panel._shell_is_wide():
@@ -3446,7 +3502,7 @@ func _is_descendant_of(node: Node, root: Node) -> bool:
 
 ## **AN UNKNOWN ZONE BOX MUST NOT FLOAT — and no picture can carry this.** Reported from play: the
 ## sheet floated in a TALL left dock, where the zone offers ~1055px and the empty form wanted a couple
-## of hundred. `BandCityPanel.parties_zone_size()` answers `Vector2.ZERO` whenever the panel is
+## of hundred. `BandCityPanel.zone_size(ZONE_PARTIES)` answers `Vector2.ZERO` whenever the panel is
 ## collapsed, hidden, or simply has not laid out yet, and the predicate used to fall back to
 ## `ZONE_FALLBACK_SIZE` (340×360) — so "I do not know yet" decided as "this overflows", and the
 ## high-water mark latched it ON for the rest of the composing act.
@@ -3682,6 +3738,35 @@ func _has_label_containing(node: Node, text: String) -> bool:
 			return true
 	return false
 
+## THE STANDING knowledge row every state outside the faction block renders against — the four
+## rung-transition tracks fully learned, which is what the rung-ready board needs. It is a function
+## rather than a literal at its two call sites because the faction block REPLACES the row (a push
+## overwrites a faction's whole row) and has to put this exact one back afterwards.
+func _standing_knowledge_row() -> Dictionary:
+	return {"faction": 0, "cultivation": 1.0, "seed_selection": 1.0, "herding": 1.0, "penning": 1.0}
+
+## THE KNOWLEDGE ZONE's craft tracks at the ladder's CEILING — all five, one of them FINISHED so the
+## `known` word renders beside four live meters. Five is the most rows that block can ever draw
+## (`TopBarReadouts.KNOWLEDGE_TRACK_LABELS` is the whole ladder), which is what makes the zone's
+## measured extent the worst case rather than a sample.
+func _faction_knowledge_fixture() -> Dictionary:
+	return {"faction": 0, "cultivation": 1.0, "seed_selection": 0.62, "herding": 0.41,
+		"penning": 0.28, "foddering": 0.07}
+
+## THE KNOWLEDGE ZONE's discovered sites: FOUR distinct kinds against a list that shows
+## `FACTION_DISCOVERY_ROWS_MAX`, so the `+N more` row is inside the measurement — and one kind found
+## TWICE, so the head's INSTANCE total (5) and the row count (4) are different numbers. That gap is
+## the block's own claim: a rollup that collapsed the two would read `4` in both places and pass a
+## test that only counted rows.
+func _faction_discoveries_fixture() -> Dictionary:
+	return {"faction": 0, "sites": [
+		{"site_id": "great_peak", "display_name": "Great Peak", "x": 61, "y": 12, "glyph": "⛰"},
+		{"site_id": "great_peak", "display_name": "Great Peak", "x": 44, "y": 30, "glyph": "⛰"},
+		{"site_id": "sky_arch", "display_name": "Sky Arch", "x": 70, "y": 22, "glyph": "⛰"},
+		{"site_id": "salt_spring", "display_name": "Salt Spring", "x": 66, "y": 26, "glyph": "💧"},
+		{"site_id": "bone_field", "display_name": "Bone Field", "x": 58, "y": 33, "glyph": "🦴"},
+	]}
+
 ## THE FACTION PAGE's roster — TWO resident bands and one detached party.
 ##
 ## **Two bands is the fixture's whole point.** Every total this page prints is a sum, and on a
@@ -3783,7 +3868,11 @@ func _assert_faction_page() -> void:
 	# answer** — otherwise the weighting is asserted by a number it would produce either way.
 	_assert_faction_weighted_morale(vitals)
 
-	_assert_faction_type_scale(work_zone)
+	# **THE TYPE SCALE IS ASKED OF THE KNOWLEDGE ZONE, not the work one, and that is where the page's
+	# stat rows now live.** The work zone's own rows are `build_inline_link` BUTTONS (a row's name jumps
+	# to its band), so the Label-pair walk finds heads there and no rows at all — which is exactly what
+	# it reported the moment the tracks moved out, and a claim that measures nothing is worse than none.
+	_assert_faction_type_scale(_panel._zones.get(BandCityPanel.ZONE_KNOWLEDGE))
 
 	# **A CARET MUST OPEN ITS POPOVER, NOT CHANGE THE PANEL'S SUBJECT.** Reported from play: every
 	# faction caret jumped straight to a band. The disclosure re-renders its hosts so the caret can
@@ -3816,8 +3905,16 @@ func _assert_faction_page() -> void:
 	_assert_band_panel("faction page: the header's jump tooltip is gone with the jump",
 		_panel._subject_cluster.tooltip_text == "")
 
-	_assert_band_panel("faction page: the narrow shell's first tab reads '%s'" % HudWorkVocab.ZONE_TAB_FACTION,
-		_panel._tab_label_text(BandCityPanel.ZONE_BAND) == HudWorkVocab.ZONE_TAB_FACTION)
+	# **THE WHOLE TAB STRIP, BY EQUALITY** — the subject declares its own zone keys AND its own labels
+	# (`BandCityPanel.set_zone_layout`), so what is asserted is the layout it declared and not a single
+	# renamed word. This replaced a claim about `set_tab_label`, the per-zone label OVERRIDE that
+	# existed solely to turn `Band` into `Faction`; asserting only that one word would now pass on a
+	# page that had lost its `Know` tab entirely.
+	var tabs: Array[String] = []
+	for zone in _panel._zone_order():
+		tabs.append(_panel._tab_label_text(zone))
+	_assert_band_panel("faction page: the narrow shell's tabs read %s" % str(FACTION_TAB_LABELS),
+		tabs == FACTION_TAB_LABELS)
 
 	# The parties zone names the band each party LEFT — the "where they are" half of the rollup that a
 	# one-line summary row can honestly carry.
@@ -3986,6 +4083,13 @@ func _assert_faction_weighted_morale(vitals: String) -> void:
 ## the stock default" — which is exactly how the second version went wrong — is measured as what it
 ## actually draws at rather than as an absent property.
 func _assert_faction_type_scale(zone: Node) -> void:
+	# **A NULL ZONE IS A REPORTED FAILURE, NOT A CRASH.** The walk below dereferences the node, and an
+	# unhandled error inside this harness's one long `await`ing `_ready()` ABORTS the whole run — so a
+	# subject that had stopped declaring the zone this reads would take every later state with it
+	# instead of naming itself.
+	if zone == null:
+		_assert_band_panel("faction page: the type-scale zone was declared", false)
+		return
 	var heads: Array = []
 	var rows: Array = []
 	_collect_faction_type_sizes(zone, heads, rows)
@@ -4032,6 +4136,116 @@ func _collect_faction_type_sizes(node: Node, heads: Array, rows: Array) -> void:
 					rows.append(label.get_theme_font_size("font_size"))
 	for child in node.get_children():
 		_collect_faction_type_sizes(child, heads, rows)
+
+## THE KNOWLEDGE ZONE's three blocks, each asserted through the thing only it can say.
+##
+## **EVERY BLOCK OMITS ITSELF WHEN ITS DATA IS ABSENT, so "the zone rendered" is not the claim** — a
+## zone that had lost two of its three blocks passes both geometric assertions comfortably, an empty
+## box fitting anything. What is asserted is that each block's own heading AND a row only that block
+## produces are on screen.
+func _assert_faction_knowledge_zone() -> void:
+	var zone: Node = _panel._zones.get(BandCityPanel.ZONE_KNOWLEDGE)
+	if zone == null:
+		_assert_band_panel("faction knowledge: the zone exists (the subject declared four)", false)
+		return
+	# SETTLING. The row is keyed by the STAGE, never by a word restating the head — so the stage from
+	# `_ready`'s top-bar seed is what the key must read, and the meter's `62/100` is the value beside it.
+	# SETTLING is a HEAD AND ITS READOUT with no row under it, so the whole block is asserted through
+	# that readout: the stage word AND the score, since the stage alone would pass on a block that had
+	# lost its meter and the score alone on one that had lost the word.
+	var settling := _zone_head_readout(zone, HudWorkVocab.FACTION_HEADER_SETTLING)
+	_assert_band_panel("faction knowledge: SETTLING reads the stage '%s' and %d/%d (got '%s')" % [
+			TOPBAR_SEDENTARIZATION_STAGE, int(round(TOPBAR_SEDENTARIZATION_SCORE)),
+			HudWorkVocab.FACTION_SETTLING_SCALE, settling],
+		settling.begins_with(TOPBAR_SEDENTARIZATION_STAGE) and settling.ends_with(
+			"%d/%d" % [int(round(TOPBAR_SEDENTARIZATION_SCORE)), HudWorkVocab.FACTION_SETTLING_SCALE]))
+	# KNOWLEDGE. The fixture finishes exactly one track, so `known` and a live meter must BOTH render —
+	# either alone passes on a block that renders one shape for every track.
+	var finished := _faction_stat_value(zone, String(TopBarReadouts.KNOWLEDGE_TRACK_LABELS["cultivation"]))
+	var climbing := _faction_stat_value(zone, String(TopBarReadouts.KNOWLEDGE_TRACK_LABELS["seed_selection"]))
+	_assert_band_panel("faction knowledge: a FINISHED track reads '%s' (got '%s')" % [
+			HudWorkVocab.FACTION_KNOWLEDGE_KNOWN, finished],
+		finished == HudWorkVocab.FACTION_KNOWLEDGE_KNOWN)
+	# **THE BAR MUST HAVE A FILLED CELL, and that half is not pedantry.** `HudFormat.meter_bar` grades a
+	# 0–100 SCORE while a track's progress is 0..1, so a caller that forgets the scale fills zero cells
+	# at every value under 0.5 — an empty meter beside a live `62%`, which is what BOTH blocks on this
+	# page shipped. `ends_with("%")` alone passes on it comfortably.
+	_assert_band_panel("faction knowledge: a track still climbing reads a FILLED meter and a percent (got '%s')" % climbing,
+		climbing.ends_with("%") and climbing != HudWorkVocab.FACTION_KNOWLEDGE_KNOWN
+			and climbing.contains(METER_FILLED_CELL))
+	_assert_band_panel("faction knowledge: the SETTLING meter is filled too (got '%s')" % settling,
+		settling.contains(METER_FILLED_CELL))
+	# DISCOVERIES. The head counts INSTANCES and the rows are KINDS, and the fixture makes those two
+	# DIFFERENT numbers on purpose — a block that collapsed them would read `4` in both places.
+	var sites: Array = _faction_discoveries_fixture()["sites"]
+	var kinds := {}
+	for site_variant in sites:
+		kinds[String((site_variant as Dictionary)["site_id"])] = true
+	_assert_band_panel("faction knowledge: DISCOVERIES heads the INSTANCE count (%d), not the kind count (%d)" % [
+			sites.size(), kinds.size()],
+		_zone_head_readout(zone, HudWorkVocab.FACTION_HEADER_DISCOVERIES) == str(sites.size()))
+	# The twice-found kind, named from the FIXTURE rather than by a literal, so the two cannot drift.
+	var repeated := String((sites[0] as Dictionary)["display_name"])
+	_assert_band_panel("faction knowledge: the twice-found kind '%s' reads its own count (2)" % repeated,
+		_faction_stat_value(zone, repeated) == "2")
+	# **THE CAP IS STATED, NEVER SILENT** — the fixture carries more kinds than the list shows, so the
+	# `+N more` row must be there. A truncated list with nothing under it reads as the whole roster.
+	_assert_band_panel("faction knowledge: the capped list states what it dropped (+%d more)" % (
+			kinds.size() - HudWorkVocab.FACTION_DISCOVERY_ROWS_MAX),
+		_has_label_containing(zone, HudWorkVocab.FACTION_LIST_MORE_FORMAT % (
+			kinds.size() - HudWorkVocab.FACTION_DISCOVERY_ROWS_MAX)))
+
+## THE FOUR-ZONE BODY ITSELF: the panel really is hosting four columns, in the declared order, and the
+## KNOWLEDGE column takes the flank width the layout gave it.
+##
+## Asked of the wide shell's own HOSTS rather than of the layout array, because the layout is the
+## INPUT: a `set_zone_layout` that accepted four specs and built three columns would satisfy any
+## assertion made against `_zone_layout` and none made against the tree.
+func _assert_faction_zone_layout() -> void:
+	var hosts: Array[String] = []
+	for child in _panel._wide_shell.get_children():
+		if String(child.name).begins_with("Zone_"):
+			hosts.append(String(child.name))
+	_assert_band_panel("faction layout: the wide shell hosts FOUR zone columns in order (got %s)" % str(hosts),
+		hosts == ["Zone_band", "Zone_work", "Zone_knowledge", "Zone_parties"])
+	var box: Vector2 = _panel.zone_size(BandCityPanel.ZONE_KNOWLEDGE)
+	_assert_band_panel("faction layout: the knowledge column is its declared %.0fpx flank (got %.0f)" % [
+			BandCityPanel.ZONE_KNOWLEDGE_WIDTH, box.x],
+		is_equal_approx(box.x, BandCityPanel.ZONE_KNOWLEDGE_WIDTH))
+
+## THE FOUR-ZONE SHELL THRESHOLD, bracketed one pixel apart — the claim the whole generalization turns
+## on, and the one the three-zone pair of frames above structurally cannot make.
+##
+## **A THRESHOLD LEFT AT THE THREE-ZONE VALUE IS INVISIBLE IN EVERY FRAME THIS HARNESS RENDERS.** The
+## faction states sit on windows that clear 1569 comfortably, so a page that flipped wide 379px too
+## early renders a perfectly plausible board there. Only a window BETWEEN the two thresholds can tell
+## them apart, and this is that window.
+##
+## PNG-less: which shell a given width picks is a boolean, and both answers draw a plausible panel.
+func _assert_faction_shell_threshold() -> void:
+	var derived: float = _panel.wide_shell_min_width()
+	# By EQUALITY against the widths restated in `FACTION_SHELL_MIN_WIDTH`, so the SEPARATOR COUNT is
+	# pinned: three gaps between four columns, not the two a three-zone body has. That term is the one
+	# the old `WIDE_SEPARATOR_SPAN` const hard-wired, and an off-by-one there is 25px — small enough to
+	# survive a bracket that only tested "wide above, narrow below" against its own answer.
+	_assert_band_panel("faction threshold: the four-zone derivation is %.0f (got %.0f)" % [
+			FACTION_SHELL_MIN_WIDTH, derived],
+		is_equal_approx(derived, FACTION_SHELL_MIN_WIDTH))
+	var rail_span: float = _panel._rail_span()
+	var at := int(ceil(derived + rail_span))
+	print("band_panel_preview: faction shell threshold probes at %d / %d (threshold %.0f + rail span %.0f)" % [
+		at - SHELL_THRESHOLD_UNDERSHOOT, at, derived, rail_span])
+	await _pin_canvas(Vector2i(at - SHELL_THRESHOLD_UNDERSHOOT, SHELL_THRESHOLD_HEIGHT))
+	_panel.set_dock(SIDE_BOTTOM)
+	await _settle()
+	_assert_shell_is_wide(false, "faction threshold (one pixel below)")
+	await _pin_canvas(Vector2i(at, SHELL_THRESHOLD_HEIGHT))
+	_panel.set_dock(SIDE_BOTTOM)
+	await _settle()
+	_assert_shell_is_wide(true, "faction threshold (exactly at)")
+	# …and the wide shell it just entered must still give the board one readable column, which is the
+	# invariant the threshold is DERIVED from rather than a second fact about it.
+	_assert_work_zone_readable()
 
 ## A faction stat row's VALUE, found by its KEY. The row is an `HBoxContainer` whose first Label is the
 ## key and whose last is the value — the same structural shape `_zone_head_readout` reads, and it

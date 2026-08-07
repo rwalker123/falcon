@@ -1,8 +1,10 @@
 class_name FactionRollup
 extends RefCounted
 
-## **ALL-`static`, STATELESS** — the FACTION PAGE's three zone builders (issue #450), the all-band
-## rollup the Band/City dock's cycler pins as its first entry.
+## **ALL-`static`, STATELESS** — the FACTION PAGE's FOUR zone builders (issue #450), the all-band
+## rollup the Band/City dock's cycler pins as its first entry. A band's page declares three zones and
+## this one declares four, the extra being `knowledge`; the panel's body is an ordered list rather
+## than a fixed triple precisely so a subject can (`BandCityPanel.set_zone_layout`).
 ##
 ## **WHY A SHARED LAYER RATHER THAN A CONTROLLER.** This page is a READOUT: no steppers, no compose
 ## sheet, no open/closed row, nothing that survives a snapshot. It therefore has no per-cluster state
@@ -348,14 +350,6 @@ static func _trend_glyph(delta: float) -> String:
         HudStyle.HEALTHY_HEX if delta > 0.0 else HudStyle.DANGER_HEX,
         BandDetailLines.MORALE_TREND_RISING_GLYPH if delta > 0.0 else BandDetailLines.MORALE_TREND_FALLING_GLYPH]
 
-## Zone `work` — WHAT THE FACTION IS DOING: the whole workforce as one bar, where those hands are
-## band by band, and what the faction's craft knowledge is.
-##
-## **KNOWLEDGE LIVES HERE RATHER THAN IN THE BAND ZONE, and that is the one placement worth
-## defending.** A track is not a stock and not a population — it is what the faction's hands may
-## ATTEMPT, and every rung it gates is a row on a work board. Putting it beside the workforce also
-## keeps the band zone inside a horizontal dock's box without a tier gate (see `build_band_zone`),
-## where a five-row knowledge block would have forced one.
 ## Zone `work` — WHERE THE HANDS ARE AND WHAT WANTS ATTENTION: the whole workforce as one bar, then
 ## one row per band carrying its work summary and its alert flag, expandable to the detail.
 ##
@@ -368,14 +362,43 @@ static func _trend_glyph(delta: float) -> String:
 ## `open_owner` is which band's detail is expanded (`OPEN_NONE` for none) and `on_toggle` is how a row
 ## reports a click — the `_work_open_key` idiom, since the open row is per-render state and this layer
 ## holds none.
-static func build_work_zone(labor: HudBandLaborState, knowledge: Dictionary, attention: Array,
+##
+## **THE KNOWLEDGE TRACKS LEFT THIS ZONE for a zone of their own** — see `build_knowledge_zone`.
+static func build_work_zone(labor: HudBandLaborState, attention: Array,
         open_owner: int, on_toggle: Callable, on_jump: Callable) -> VBoxContainer:
     var col := HudWidgets.make_zone_column()
     col.add_child(_build_workforce_block(labor))
     col.add_child(_build_bands_block(labor, attention, open_owner, on_toggle, on_jump))
+    return col
+
+## Zone `knowledge` — WHAT THE FACTION HAS LEARNED, BECOME AND FOUND: its craft tracks, how far it has
+## SETTLED, and the Wondrous Sites it has discovered.
+##
+## **IT IS A ZONE RATHER THAN A BLOCK BECAUSE THREE THINGS ANSWER ONE QUESTION.** The tracks were the
+## work zone's last block, and the placement argument for them there still stands as far as it went —
+## a track is not a stock and not a population, it is what the faction's hands may ATTEMPT, and every
+## rung it gates is a row on a work board. What broke it is the other two: Settling and Discoveries
+## are the same KIND of fact (what the faction is and what it knows, neither of which any band owns),
+## and a work zone carrying all three would have been the roster of hands plus a second page stapled
+## under it, in a box that clips. The four-zone body is what the panel grew to hold them —
+## `BandCityPanel.set_zone_layout`.
+##
+## **THE THREE BLOCKS ARE EACH OMITTED WHEN THEY HAVE NOTHING TO SAY**, the top-bar strip's own rule
+## in all three cases: an unstarted track is noise, an unsettled faction has no meter worth a row, and
+## a faction that has found nothing gets no heading over an empty list. A page that renders every
+## heading regardless states three facts a new game does not have yet.
+static func build_knowledge_zone(knowledge: Dictionary, sedentarization: Dictionary,
+        sites: Array) -> VBoxContainer:
+    var col := HudWidgets.make_zone_column()
+    var settling := _build_settling_block(sedentarization)
+    if settling != null:
+        col.add_child(settling)
     var tracks := _build_knowledge_block(knowledge)
     if tracks != null:
         col.add_child(tracks)
+    var discoveries := _build_discoveries_block(sites)
+    if discoveries != null:
+        col.add_child(discoveries)
     return col
 
 ## Group an attention array by the entity each entry is ABOUT. Entries with no owner (the
@@ -515,6 +538,89 @@ static func _build_people_block(bands: Array) -> VBoxContainer:
     # hides the band that is in trouble — the same reasoning that took the figure off the top bar.
     # What the slot carries instead is the one thing a TOTAL needs, which is how many bands it spans.
     block.add_child(HudWidgets.build_composition_key(segments, _bands_chip(bands.size())))
+    return block
+
+# ---- knowledge zone blocks --------------------------------------------------
+
+## HOW FAR THE FACTION HAS SETTLED — the sedentarization score as a meter, under the player-facing
+## word the manual uses (`Settling`) rather than the sim's own.
+##
+## **IT IS A HEAD AND ITS READOUT, WITH NO ROW UNDER IT**, which is `_build_workforce_block`'s shape
+## and taken for its reason: this block states exactly ONE fact, and a head plus a one-row block is
+## two lines for it — with the row's key either restating the head (`SETTLING` over `Sedentarization`)
+## or carrying the stage word, which the readout can hold outright. **It is also 22px of a 300px box
+## the zone was 20px over**; see `band-city-panel.md` → the four-zone budget for the measurement.
+##
+## A faction the sim reports no stage for reads `Nomadic`, which is what a score below the first
+## threshold means. Returns null when the snapshot has carried no sedentarization at all — never a
+## `0/100` meter, which claims a measurement that was not made.
+static func _build_settling_block(sedentarization: Dictionary) -> VBoxContainer:
+    if sedentarization.is_empty():
+        return null
+    var score := float(sedentarization.get("score", 0.0))
+    var stage := String(sedentarization.get("stage", "")).strip_edges()
+    # `none` is the sim's own spelling of "no stage reached", so it and the empty string are the same
+    # answer and must render as the same word.
+    if stage == "" or stage == TopBarReadouts.SEDENTARIZATION_STAGE_NONE:
+        stage = HudWorkVocab.FACTION_SETTLING_NOMADIC
+    var block := HudWidgets.make_zone_block()
+    # **`HudFormat.meter_bar` TAKES A 0–100 SCORE, NOT A FRACTION**, and sedentarization is already on
+    # that scale — so the score goes in RAW and `FACTION_SETTLING_SCALE` names only what the `62/100`
+    # beside the bar is out of. A fraction here fills zero cells at every score below 50, which is
+    # exactly how the knowledge block below shipped its bars empty.
+    block.add_child(HudWidgets.zone_head(HudWorkVocab.FACTION_HEADER_SETTLING,
+        HudWorkVocab.FACTION_SETTLING_VALUE_FORMAT % [stage,
+            HudFormat.meter_bar(score, KNOWLEDGE_METER_CELLS),
+            int(round(score)), HudWorkVocab.FACTION_SETTLING_SCALE],
+        null, HudStyle.INK_DIM))
+    return block
+
+## THE WONDROUS SITES THE FACTION HAS FOUND — one row per site KIND with how many of it, under a head
+## carrying the INSTANCE total.
+##
+## **THE TWO NUMBERS MEAN DIFFERENT THINGS AND BOTH ARE RIGHT**, which is the top bar's own rule
+## (`TopBarReadouts.update_discoveries`) stated in full rather than as a strip: the head's `N` counts
+## INSTANCES found, and the rows are KINDS — three peaks are one row reading `3`. The top bar shows
+## the pair as a count beside a strip of marks and is regularly misread as disagreeing with itself;
+## with a row per kind there is nothing left to reconcile.
+##
+## **KEYED ON `site_id`, NOT on the glyph** — the same rule `SecondaryMarkerRenderer`, `WonderSprites`
+## and the top-bar strip follow: two distinct sites may share one emoji, and deduping on presentation
+## collapses them into one row that then disagrees with the count above it. A catalog-pruned site with
+## no id falls back to its TILE, i.e. instance identity, so it gets its own row rather than being
+## merged with every other id-less site.
+static func _build_discoveries_block(sites: Array) -> VBoxContainer:
+    if sites.is_empty():
+        return null
+    # First-seen order, which is discovery order — the list reads as a history rather than as a
+    # ranking, and nothing here has a magnitude worth ranking by.
+    var order: Array[String] = []
+    var counts := {}
+    var names := {}
+    for site_variant in sites:
+        if not (site_variant is Dictionary):
+            continue
+        var site: Dictionary = site_variant
+        var key := String(site.get("site_id", "")).strip_edges()
+        if key == "":
+            key = "%d,%d" % [int(site.get("x", 0)), int(site.get("y", 0))]
+        if not counts.has(key):
+            order.append(key)
+            counts[key] = 0
+            var display := String(site.get("display_name", "")).strip_edges()
+            names[key] = display if display != "" else HudWorkVocab.FACTION_DISCOVERY_UNNAMED
+        counts[key] = int(counts[key]) + 1
+    if order.is_empty():
+        return null
+    var block := HudWidgets.make_zone_block()
+    block.add_child(HudWidgets.zone_head(HudWorkVocab.FACTION_HEADER_DISCOVERIES,
+        str(sites.size()), null, HudStyle.SIGNAL))
+    var shown: int = mini(order.size(), HudWorkVocab.FACTION_DISCOVERY_ROWS_MAX)
+    for i in range(shown):
+        var key: String = order[i]
+        block.add_child(_stat_row(String(names[key]),
+            HudWorkVocab.FACTION_DISCOVERY_COUNT_FORMAT % int(counts[key]), HudStyle.INK_DIM))
+    _append_more_row(block, order.size() - shown)
     return block
 
 # ---- work zone blocks -------------------------------------------------------
@@ -674,9 +780,14 @@ static func _build_knowledge_block(knowledge: Dictionary) -> VBoxContainer:
     for row in rows:
         var progress: float = row[1]
         var known := progress >= HudConst.KNOWLEDGE_COMPLETE
+        # **THE SCALE CONVERSION IS THE POINT OF THIS LINE.** A track's progress is `0..1` and
+        # `HudFormat.meter_bar` grades a `0..100` score, so a bare `progress` fills zero cells at every
+        # value under 0.5 — which is how every meter on this page shipped EMPTY, indistinguishable
+        # from an unstarted track beside a live percent. `TopBarReadouts._knowledge_meter_text` scales
+        # the same way for the same reason; the two draw one track at one resolution.
         var value := HudWorkVocab.FACTION_KNOWLEDGE_KNOWN if known \
             else KNOWLEDGE_VALUE_FORMAT % [
-                HudFormat.meter_bar(progress, KNOWLEDGE_METER_CELLS),
+                HudFormat.meter_bar(progress * HudConst.PROGRESS_PERCENT_SCALE, KNOWLEDGE_METER_CELLS),
                 HudFormat.progress_percent(progress)]
         block.add_child(_stat_row(String(row[0]), value,
             HudStyle.SIGNAL if known else HudStyle.INK_DIM))

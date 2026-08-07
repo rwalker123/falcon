@@ -24,6 +24,11 @@ extends RefCounted
 # per top-bar line — at the standard width the line overflowed and clipped its last track off-screen.
 const METER_BAR_CELLS := 10
 const KNOWLEDGE_METER_CELLS := 5
+## The sim's own spelling of "no sedentarization stage reached" — a WIRE token, not a word anyone
+## sees, and the same answer as an absent `stage`. Public because the faction page's SETTLING row
+## makes the identical test and two spellings of a wire value is how two surfaces come to disagree
+## about whether a faction has settled at all.
+const SEDENTARIZATION_STAGE_NONE := "none"
 
 # --- Discovered Wondrous-Sites strip ---
 # Top-bar glyph for the discovered-sites readout (a faceted-gem marker).
@@ -112,6 +117,17 @@ var _note_sink: Callable
 var _intensification_knowledge: Dictionary = {}
 # "<faction>:<track>" keys already announced, so the nudge fires once.
 var _knowledge_announced: Dictionary = {}
+## The player faction's own sedentarization entry (`{score, stage}`) and discovered sites from the
+## latest snapshot — RETAINED, not merely rendered, because the Band/City panel's faction page draws
+## both in its KNOWLEDGE zone (issue #450) and must read the same answer this strip does.
+##
+## **THIS CLUSTER IS WHERE THE PLAYER-FACTION FILTER LIVES**, which is the whole reason the page reads
+## them from here rather than off the snapshot itself: both wire fields are PER-FACTION arrays, and a
+## second walk of them looking for `PLAYER_FACTION_ID` is a second chance to disagree about which
+## faction is being reported. Stored as the raw entry / raw array, so what a reader gets is what the
+## snapshot said.
+var _sedentarization: Dictionary = {}
+var _discovered_sites: Array = []
 
 func _init(
 	turn_label_: Label,
@@ -170,21 +186,24 @@ func render_overlay(turn: int, metrics: Dictionary) -> void:
 ## Show the player faction's Sedentarization pressure as a compact top-bar text meter.
 ## Hidden until the score is meaningful; tinted amber (soft) / cyan (hard) as it climbs.
 func update_sedentarization(sedentarization_variant: Variant) -> void:
-	if sedentarization_label == null:
-		return
-	var score := 0.0
-	var stage := ""
+	# The player-faction filter runs BEFORE the label guard, and that ordering is what makes
+	# `faction_sedentarization()` honest: the faction page reads this cache, and a cache filled only
+	# when a top-bar Label happens to be wired would be empty in exactly the hosts that have no top bar.
+	_sedentarization = {}
 	if sedentarization_variant is Array:
 		for entry in sedentarization_variant:
 			if entry is Dictionary and int(entry.get("faction", -1)) == HudConst.PLAYER_FACTION_ID:
-				score = float(entry.get("score", 0.0))
-				stage = String(entry.get("stage", ""))
+				_sedentarization = entry
 				break
+	if sedentarization_label == null:
+		return
+	var score := float(_sedentarization.get("score", 0.0))
+	var stage := String(_sedentarization.get("stage", ""))
 	if score < 1.0:
 		sedentarization_label.visible = false
 		return
 	sedentarization_label.visible = true
-	var suffix := "" if stage == "" or stage == "none" else " · %s" % stage
+	var suffix := "" if stage == "" or stage == SEDENTARIZATION_STAGE_NONE else " · %s" % stage
 	sedentarization_label.text = "Sedentarization  %s  %d/100%s" % [HudFormat.meter_bar(score, METER_BAR_CELLS), int(round(score)), suffix]
 	sedentarization_label.add_theme_color_override("font_color", _sedentarization_color(stage))
 
@@ -232,8 +251,7 @@ func update_demographics(demographics_variant: Variant) -> void:
 ## (the fixture's `sky_arch` reuses ⛰), and deduping on the glyph collapsed them into a single strip
 ## entry that then silently disagreed with the count beside it.
 func update_discoveries(discovered_variant: Variant) -> void:
-	if discoveries_row == null or discoveries_label == null or discoveries_strip == null:
-		return
+	# Filtered BEFORE the label guard, for `update_sedentarization`'s reason.
 	var sites: Array = []
 	if discovered_variant is Array:
 		for entry in discovered_variant:
@@ -242,6 +260,9 @@ func update_discoveries(discovered_variant: Variant) -> void:
 				if faction_sites is Array:
 					sites = faction_sites
 				break
+	_discovered_sites = sites
+	if discoveries_row == null or discoveries_label == null or discoveries_strip == null:
+		return
 	if sites.is_empty():
 		discoveries_row.visible = false
 		return
@@ -424,6 +445,22 @@ func faction_knowledge(faction: int, track: String) -> float:
 ## ingest in `_ingest_intensification` is the sole writer.
 func faction_tracks(faction: int) -> Dictionary:
 	return _intensification_knowledge.get(faction, {})
+
+## The PLAYER faction's sedentarization entry (`{score, stage, …}`) as the snapshot sent it, or `{}`
+## when it has sent none. Public for the Band/City panel's faction page, whose KNOWLEDGE zone draws
+## the same figure this strip does — see `_sedentarization` for why the read belongs here and not on
+## the snapshot. Returned BY REFERENCE, this HUD's accessor convention; every reader is read-only.
+##
+## **NOT gated on the strip's own `score < 1.0` hide rule.** That threshold is a TOP-BAR presentation
+## choice — a nearly-zero score is noise on a one-line strip — and a zone with a heading has a
+## different answer available to it. The caller decides what an unsettled faction reads as.
+func faction_sedentarization() -> Dictionary:
+	return _sedentarization
+
+## The PLAYER faction's discovered Wondrous Sites as the snapshot sent them (`[]` when none). Public
+## for the same reason and with the same reference semantics as `faction_sedentarization`.
+func faction_discovered_sites() -> Array:
+	return _discovered_sites
 
 ## One knowledge track's readout: a compact block-glyph bar + the live percent while in progress, a
 ## "✔ known" badge once complete. `progress` is 0..1.
