@@ -123,6 +123,15 @@ var _band_zone_tier: int = HudWorkVocab.BAND_ZONE_TIER_TALL
 ## controller. `_band_labor.panel_band()` is deliberately left ALONE while it is true, so cycling off
 ## the faction page returns to the band the player was on rather than to the roster's first.
 var _panel_is_faction: bool = false
+## Which row of the faction page's Work / Parties summaries is expanded, by the entity it is about
+## (`FACTION_ROW_NONE` for none). One key for BOTH tabs: the narrow shell shows one zone at a time and
+## the wide shell's two lists are about different things, so a row open in each cannot arise.
+var _faction_open_row: int = FACTION_ROW_NONE
+
+## No row expanded. Not `AttentionController.OWNER_NONE` (-1), which is a REAL row on this page — the
+## faction's own land alerts — so the two sentinels must differ or opening that row is indistinguishable
+## from opening none.
+const FACTION_ROW_NONE := -2
 ## The faction page is PINNED FIRST in the cycler, and costs the walk one entry. Pinned rather than
 ## merely present so its position cannot drift as bands are founded or lost — a page that moved would
 ## have to be hunted for, which is the opposite of what a standing overview is for.
@@ -210,6 +219,15 @@ func _init(band_labor: HudBandLaborState, compose: ComposeState,
 ## reason `DrawerComposeController` holds it. A typed collaborator rather than a Callable injection,
 ## per the extraction rules; do not grow other reads through it.
 var _topbar: TopBarReadouts = null
+
+## `_attention` is held for `build_band_attention` ONLY — the faction page's Work and Parties tabs
+## group that array by owner. A typed collaborator, and read for nothing else: the alerts are the
+## attention model's answer, and this controller must not grow a second opinion about them.
+var _attention: AttentionController = null
+
+## Injected by `HudLayer._ready`, once `_attention` exists there.
+func set_attention(attention: AttentionController) -> void:
+    _attention = attention
 
 ## The player faction's {track: progress} row, threaded into every `RungGates` call.
 func _player_knowledge() -> Dictionary:
@@ -2595,10 +2613,16 @@ func render_faction() -> void:
     _work_zone_host = null
     _work_zone_band = {}
     _parties_zone_col = null
+    # The faction's alerts, read from the ONE model the turn orb reads — so the orb, the map and this
+    # page can never disagree about which band needs the player.
+    var attention := _attention.build_band_attention(
+        _band_labor.player_bands(), _band_labor.player_expeditions())
     _panel.set_zones(
         HudWidgets.wrap_zone(FactionRollup.build_band_zone(_band_labor, _disclosures)),
-        HudWidgets.wrap_zone(FactionRollup.build_work_zone(_band_labor, _player_knowledge())),
-        HudWidgets.wrap_zone(FactionRollup.build_parties_zone(_band_labor, _herd_label_for_id)))
+        HudWidgets.wrap_zone(FactionRollup.build_work_zone(_band_labor, _player_knowledge(),
+            attention, _faction_open_row, _toggle_faction_row, jump_to_band_entity)),
+        HudWidgets.wrap_zone(FactionRollup.build_parties_zone(_band_labor, _herd_label_for_id,
+            attention, _faction_open_row, _toggle_faction_row, _jump_to_party_entity)))
     _push_faction_zone_badges()
     # No stage id ⇒ no bundled art resolves and the emoji stands; the band count takes the stage word's
     # slot, and the empty position label hides the coordinate slot outright.
@@ -2785,6 +2809,21 @@ func set_panel(panel: BandCityPanel) -> void:
     # controller's job — the disclosure controller must not know the band panel exists.
     if _disclosures != null:
         _disclosures.set_faction_band_jump(jump_to_band_entity)
+
+## Expand or collapse a faction summary row. ONE row open at a time — the zones clip, and two open
+## details would push the second list off the bottom of a horizontal dock's box.
+func _toggle_faction_row(owner: int) -> void:
+    _faction_open_row = FACTION_ROW_NONE if _faction_open_row == owner else owner
+    rerender()
+
+## Jump to a PARTY from the faction page's Parties row — the same routing the band page's own parties
+## rows use (`select_expedition`), so a party is reached identically from both.
+func _jump_to_party_entity(entity: int) -> void:
+    for party_variant in _band_labor.player_expeditions():
+        var party: Dictionary = party_variant
+        if int(party.get("entity", -1)) == entity:
+            select_expedition(entity, int(party.get("current_x", -1)), int(party.get("current_y", -1)))
+            return
 
 ## Make a band the panel's subject, by entity — the faction page's drill-down rows route here, so a
 ## popover row reaches a band the same way the cycler does (recenter, pin, render), rather than by a

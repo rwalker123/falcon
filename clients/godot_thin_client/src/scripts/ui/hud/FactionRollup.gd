@@ -53,6 +53,13 @@ const STAT_ROW_FONT_SIZE := HudWorkVocab.WORK_ROW_FONT_SIZE
 ## exactly as `HudWidgets.zone_head` right-aligns its readout, so this is a floor rather than the gap.
 const STAT_ROW_SEPARATION := 8
 
+## A summary row's gaps, and its FLAG's fixed slot. The slot is reserved on every row including the
+## calm ones — that is what makes a scan down the left edge answer "does anything need me?" without
+## reading, and a slot that appeared only on flagged rows would ragged every name beside it.
+const SUMMARY_ROW_SEPARATION := 6
+
+const SUMMARY_FLAG_WIDTH := 14.0
+
 ## The knowledge meter's cell count on this page. It reads `TopBarReadouts`' own rather than declaring
 ## a second one: the top bar and this page draw the SAME track at the same resolution, and two
 ## constants is how they come to disagree about what half-learned looks like.
@@ -245,6 +252,59 @@ static func _growth_line(bands: Array, disclosures: DisclosureController) -> Str
         int(round((total / weight) * 100.0)) if weight > 0.0 else 0,
         _alert_clause(concerning, HudStyle.WARN_HEX)]
 
+## ONE SUMMARY ROW — the shape Work and Parties share, so the two tabs read as one idea.
+##
+## **THE FLAG LEADS AND ITS SLOT IS FIXED-WIDTH, on every row including the calm ones.** A scan down
+## the left edge answers "does anything need me?" before a word is read, and a slot that appeared only
+## on flagged rows would ragged the names and destroy exactly that. It costs 14px of a 354px row.
+static func _summary_row(name: String, summary: String, severity: String, owner: int,
+        on_toggle: Callable, on_jump: Callable) -> Control:
+    var row := HBoxContainer.new()
+    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.add_theme_constant_override("separation", SUMMARY_ROW_SEPARATION)
+    var flag := Label.new()
+    flag.text = HudWorkVocab.FACTION_FLAG_GLYPH if severity != "" else ""
+    flag.custom_minimum_size = Vector2(SUMMARY_FLAG_WIDTH, 0.0)
+    flag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    flag.add_theme_font_size_override("font_size", STAT_ROW_FONT_SIZE)
+    flag.add_theme_color_override("font_color", _severity_color(severity))
+    row.add_child(flag)
+    # The NAME jumps to the subject; the rest of the row toggles its detail. Two different acts, so
+    # two different targets rather than one control that has to guess which the player meant.
+    var jump := HudWidgets.build_inline_link(name, HudStyle.SIGNAL, on_jump.bind(owner))
+    jump.add_theme_font_size_override("font_size", STAT_ROW_FONT_SIZE)
+    row.add_child(jump)
+    var body := HudWidgets.build_inline_link(summary, HudStyle.INK_DIM, on_toggle.bind(owner))
+    body.add_theme_font_size_override("font_size", STAT_ROW_FONT_SIZE)
+    body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.add_child(body)
+    return row
+
+## A summary row's expanded detail: its own lines first, then its alerts. The ALERTS come last because
+## the lines are context and the alerts are the ask — a reader who has expanded a flagged row is
+## looking for what to do, and it should be the thing their eye stops on.
+static func _summary_detail(lines: Array, alerts: Array) -> VBoxContainer:
+    var box := HudWidgets.make_zone_block()
+    for line in lines:
+        box.add_child(_stat_row("    " + String((line as Array)[0]), String((line as Array)[1]),
+            HudStyle.INK_DIM))
+    for alert_variant in alerts:
+        var alert: Dictionary = alert_variant
+        box.add_child(_stat_row(
+            "    %s %s" % [HudWorkVocab.FACTION_FLAG_GLYPH, String(alert.get("label", ""))],
+            String(alert.get("detail", "")),
+            _severity_color(String(alert.get("severity", "")))))
+    return box
+
+## The orb's own two severities, in the orb's own colours — there is no third, and a page that
+## invented one would be describing a state the attention model cannot produce.
+static func _severity_color(severity: String) -> Color:
+    if severity == HudAttentionVocab.ATTENTION_SEVERITY_CRITICAL:
+        return HudStyle.DANGER
+    if severity == "":
+        return HudStyle.INK_FAINT
+    return HudStyle.WARN
+
 ## One band's three kit conditions, composed from the SAME leaves `BandDetailLines._band_kit_line`
 ## uses — `kit_condition_face` spells a dry kit as the WORD, and `kit_is_equipped` decides its ink, so
 ## a drill-down row and the band's own Kit row can never describe one kit differently.
@@ -296,44 +356,109 @@ static func _trend_glyph(delta: float) -> String:
 ## ATTEMPT, and every rung it gates is a row on a work board. Putting it beside the workforce also
 ## keeps the band zone inside a horizontal dock's box without a tier gate (see `build_band_zone`),
 ## where a five-row knowledge block would have forced one.
-static func build_work_zone(labor: HudBandLaborState, knowledge: Dictionary) -> VBoxContainer:
+## Zone `work` — WHERE THE HANDS ARE AND WHAT WANTS ATTENTION: the whole workforce as one bar, then
+## one row per band carrying its work summary and its alert flag, expandable to the detail.
+##
+## **THE ALERTS ARE READ, NEVER RE-DERIVED.** `AttentionController.build_band_attention` is already the
+## faction's one answer to "which band needs you", and the turn orb already renders it — so this page
+## groups that same array by `owner` rather than asking the same questions again. Two surfaces
+## computing "is this band in trouble" is how they come to disagree, and the orb is the one the player
+## already trusts.
+##
+## `open_owner` is which band's detail is expanded (`OPEN_NONE` for none) and `on_toggle` is how a row
+## reports a click — the `_work_open_key` idiom, since the open row is per-render state and this layer
+## holds none.
+static func build_work_zone(labor: HudBandLaborState, knowledge: Dictionary, attention: Array,
+        open_owner: int, on_toggle: Callable, on_jump: Callable) -> VBoxContainer:
     var col := HudWidgets.make_zone_column()
     col.add_child(_build_workforce_block(labor))
-    col.add_child(_build_bands_block(labor))
+    col.add_child(_build_bands_block(labor, attention, open_owner, on_toggle, on_jump))
     var tracks := _build_knowledge_block(knowledge)
     if tracks != null:
         col.add_child(tracks)
     return col
+
+## Group an attention array by the entity each entry is ABOUT. Entries with no owner (the
+## unworked-rung producer, whose patches belong to the faction rather than to any band) collect under
+## `AttentionController.OWNER_NONE`, where the caller renders them as their own row.
+static func group_attention(attention: Array) -> Dictionary:
+    var by_owner := {}
+    for entry_variant in attention:
+        if not (entry_variant is Dictionary):
+            continue
+        var entry: Dictionary = entry_variant
+        var owner := int(entry.get("owner", AttentionController.OWNER_NONE))
+        if not by_owner.has(owner):
+            by_owner[owner] = []
+        (by_owner[owner] as Array).append(entry)
+    return by_owner
+
+## The most severe severity in a set of alerts — what the row's FLAG shows, since a row carries one
+## mark and a critical alert must not be hidden behind a warn one.
+static func worst_severity(entries: Array) -> String:
+    var worst := ""
+    for entry_variant in entries:
+        var severity := String((entry_variant as Dictionary).get("severity", ""))
+        if severity == HudAttentionVocab.ATTENTION_SEVERITY_CRITICAL:
+            return severity
+        if severity != "":
+            worst = severity
+    return worst
 
 ## Zone `parties` — WHO IS OUT: every detached party across every band, and which band it went from.
 ##
 ## `herd_label_for_id` is the caller's own herd-name resolver, threaded in the way
 ## `HudFormat.panel_expedition_summary` (which this reuses verbatim) already takes it — a stateless
 ## layer must not reach for the roster, the selection and the herd list that resolver reads.
-static func build_parties_zone(labor: HudBandLaborState, herd_label_for_id: Callable) -> VBoxContainer:
+static func build_parties_zone(labor: HudBandLaborState, herd_label_for_id: Callable, attention: Array,
+        open_owner: int, on_toggle: Callable, on_jump: Callable) -> VBoxContainer:
     var col := HudWidgets.make_zone_column()
     var parties := labor.player_expeditions()
+    var by_owner := group_attention(attention)
     var block := HudWidgets.make_zone_block()
+    var flagged := 0
+    for party_variant in parties:
+        if by_owner.has(int((party_variant as Dictionary).get("entity", -1))):
+            flagged += 1
     block.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_PARTIES,
-        str(parties.size()) if not parties.is_empty() else ""))
+        HudWorkVocab.FACTION_FLAGGED_FORMAT % [flagged, parties.size()] if flagged > 0 \
+            else (str(parties.size()) if not parties.is_empty() else ""),
+        null, HudStyle.WARN if flagged > 0 else HudStyle.INK_DIM))
     if parties.is_empty():
         block.add_child(HudWidgets.alloc_hint_label(HudWorkVocab.FACTION_PARTIES_EMPTY))
         col.add_child(block)
         return col
-    # The party's HOME BAND is the "where they are" half of the issue's ask that a summary row can
-    # actually carry: a party's own tile changes every turn and means nothing without the map, while
-    # the band it left is what the player cycles to in order to act on it.
+    # The party's HOME BAND is the "where is it" a summary row can honestly carry: a party's own tile
+    # changes every turn and means nothing without the map, while the band it left is what the player
+    # cycles to in order to act on it — so the NAME jumps to that band.
     var names := _band_names_by_entity(labor)
     var shown: int = mini(parties.size(), HudWorkVocab.FACTION_LIST_ROWS_MAX)
     for i in range(shown):
         var party: Dictionary = parties[i]
-        block.add_child(_stat_row(
-            HudFormat.panel_expedition_summary(party, herd_label_for_id),
+        var entity := int(party.get("entity", -1))
+        var alerts: Array = by_owner.get(entity, [])
+        block.add_child(_summary_row(
             String(names.get(int(party.get("home_band_entity", -1)), "")),
-            HudStyle.INK_FAINT))
+            HudFormat.panel_expedition_summary(party, herd_label_for_id),
+            worst_severity(alerts), entity, on_toggle, on_jump))
+        if entity == open_owner:
+            block.add_child(_summary_detail(_party_detail_lines(party), alerts))
     _append_more_row(block, parties.size() - shown)
     col.add_child(block)
     return col
+
+## A party's expanded detail — its mission, what it is carrying and how long it has been out. Read off
+## the party's own cohort dict; the full in-flight readout stays on the band's parties zone, which has
+## the room and the controls for it.
+static func _party_detail_lines(party: Dictionary) -> Array:
+    var lines: Array = []
+    lines.append([HudWorkVocab.FACTION_PARTY_MISSION,
+        DetailFormat.expedition_mission_label(String(party.get("expedition_mission", "")))])
+    lines.append([HudWorkVocab.FACTION_PARTY_CREW, str(int(party.get("size", 0)))])
+    var phase := String(party.get("expedition_phase", "")).strip_edges()
+    if phase != "":
+        lines.append([HudWorkVocab.FACTION_PARTY_PHASE, HudFormat.expedition_phase_label(phase)])
+    return lines
 
 # ---- band zone blocks -------------------------------------------------------
 
@@ -448,20 +573,85 @@ static func _build_workforce_block(labor: HudBandLaborState) -> VBoxContainer:
 ## Idle is tinted SIGNAL on a band with hands to spend, exactly as the WORKFORCE head above it tints
 ## its own idle readout — this row is the reason the player cycles to that band, so it must be
 ## findable at a glance rather than read row by row.
-static func _build_bands_block(labor: HudBandLaborState) -> VBoxContainer:
+static func _build_bands_block(labor: HudBandLaborState, attention: Array, open_owner: int,
+        on_toggle: Callable, on_jump: Callable) -> VBoxContainer:
     var bands := labor.player_bands()
+    var by_owner := group_attention(attention)
     var block := HudWidgets.make_zone_block()
-    block.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_WORK, str(bands.size())))
+    var flagged := 0
+    for band_variant in bands:
+        if by_owner.has(int((band_variant as Dictionary).get("entity", -1))):
+            flagged += 1
+    block.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_WORK,
+        HudWorkVocab.FACTION_FLAGGED_FORMAT % [flagged, bands.size()] if flagged > 0 else str(bands.size()),
+        null, HudStyle.WARN if flagged > 0 else HudStyle.INK_DIM))
     var shown: int = mini(bands.size(), HudWorkVocab.FACTION_LIST_ROWS_MAX)
     for i in range(shown):
         var band: Dictionary = bands[i]
-        var idle := labor.effective_idle(band)
-        block.add_child(_stat_row(
-            HudFormat.band_display_name(band, i + 1),
-            HudWorkVocab.FACTION_BAND_ROW_FORMAT % [int(band.get("working_age", 0)), idle],
-            HudStyle.SIGNAL if idle > 0 else HudStyle.INK_FAINT))
+        var entity := int(band.get("entity", -1))
+        var alerts: Array = by_owner.get(entity, [])
+        block.add_child(_summary_row(HudFormat.band_display_name(band, i + 1),
+            _work_summary(labor, band), worst_severity(alerts), entity, on_toggle, on_jump))
+        if entity == open_owner:
+            block.add_child(_summary_detail(_work_detail_lines(labor, band), alerts))
     _append_more_row(block, bands.size() - shown)
+    # The faction's own alerts — a patch is owned by the FACTION, so an unworked rung has no band whose
+    # row it could sit on. Its own row rather than dropped: it is a real call to act, and the turn orb
+    # already raises it, so a Work tab that silently omitted it would disagree with the orb.
+    var orphans: Array = by_owner.get(AttentionController.OWNER_NONE, [])
+    if not orphans.is_empty():
+        block.add_child(_summary_row(HudWorkVocab.FACTION_LAND_ROW, "",
+            worst_severity(orphans), AttentionController.OWNER_NONE, on_toggle, on_jump))
+        if open_owner == AttentionController.OWNER_NONE:
+            block.add_child(_summary_detail([], orphans))
     return block
+
+## What a band is DOING, in one clipped line: how many sources it works and what it keeps. The COUNTS
+## rather than the names — a row is one line and a band works up to 34 sources.
+static func _work_summary(labor: HudBandLaborState, band: Dictionary) -> String:
+    var sources := 0
+    var pens := 0
+    for assignment_variant in HudBandLaborState.labor_assignments_of(band):
+        var assignment: Dictionary = assignment_variant
+        var kind := String(assignment.get("kind", ""))
+        if kind != SourceForecast.LABOR_KIND_FORAGE and kind != SourceForecast.LABOR_KIND_HUNT:
+            continue
+        sources += 1
+        var herd_id := String(assignment.get("fauna_id", "")).strip_edges()
+        if herd_id.is_empty():
+            continue
+        var herd := labor.find_world_herd(herd_id)
+        if not herd.is_empty() and bool(herd.get("corralled", false)):
+            pens += 1
+    var parts: Array[String] = [HudWorkVocab.FACTION_SOURCES_ONE if sources == 1 \
+        else HudWorkVocab.FACTION_SOURCES_FORMAT % sources]
+    if pens > 0:
+        parts.append(HudWorkVocab.FACTION_PENS_ONE if pens == 1 \
+            else HudWorkVocab.FACTION_PENS_FORMAT % pens)
+    return HudWorkVocab.FACTION_SUMMARY_SEPARATOR.join(parts)
+
+## A band's expanded WORK detail: one line per worked source, and its pens and herds — which is where
+## the pen and herd alerts sit, beside the thing they are about rather than as a floating warning.
+static func _work_detail_lines(labor: HudBandLaborState, band: Dictionary) -> Array:
+    var lines: Array = []
+    for assignment_variant in HudBandLaborState.labor_assignments_of(band):
+        var assignment: Dictionary = assignment_variant
+        var kind := String(assignment.get("kind", ""))
+        if kind != SourceForecast.LABOR_KIND_FORAGE and kind != SourceForecast.LABOR_KIND_HUNT:
+            continue
+        var herd_id := String(assignment.get("fauna_id", "")).strip_edges()
+        var name := ""
+        if herd_id.is_empty():
+            name = HudWorkVocab.FACTION_SOURCE_FORAGE_FORMAT % [
+                int(assignment.get("target_x", -1)), int(assignment.get("target_y", -1))]
+        else:
+            var herd := labor.find_world_herd(herd_id)
+            name = HudWorkVocab.FACTION_SOURCE_HUNT_FORMAT % (
+                SourceForecast.herd_display_name(herd) if not herd.is_empty() else herd_id)
+        lines.append([name, HudWorkVocab.FACTION_SOURCE_CREW_FORMAT % [
+            int(assignment.get("workers", 0)),
+            SourceForecast.format_signed(float(assignment.get("actual_yield", 0.0)))]])
+    return lines
 
 ## The faction's craft knowledge — one row per track being learned, in the intensification ladder's
 ## own order, off the SAME `TopBarReadouts.faction_tracks` row the top-bar strip and every rung gate

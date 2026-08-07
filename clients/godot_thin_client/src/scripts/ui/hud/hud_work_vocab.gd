@@ -175,6 +175,47 @@ const FACTION_KIT_ALL_EQUIPPED := "all equipped"
 
 const FACTION_KIT_DRY_NOTE := "a kit has run out"
 
+## **THE SUMMARY TABS' VOCABULARY.** Work and Parties are one idea in two scopes — a row per thing,
+## flagged when it wants attention — so they share every word below rather than each growing its own.
+## The flag is the ORB's glyph and the orb's two severities; this page invents no third.
+const FACTION_FLAG_GLYPH := "●"
+
+## A zone head that has something to report: `2 of 5`. It reads as a fraction rather than a bare count
+## because the count alone (`2`) is indistinguishable from the roster size on a small faction.
+const FACTION_FLAGGED_FORMAT := "%d of %d"
+
+## A band's one-line work summary. Counts rather than names: a row is one line and a band works up to
+## 34 sources.
+## Singular is spelled out rather than left to a `%d sources` that reads "1 sources" — which is the
+## COMMON case here, not an edge one: a young band works one patch, and that is the first thing a new
+## player sees on this tab.
+const FACTION_SOURCES_FORMAT := "%d sources"
+
+const FACTION_SOURCES_ONE := "1 source"
+
+const FACTION_PENS_FORMAT := "%d pens"
+
+const FACTION_PENS_ONE := "1 pen"
+
+const FACTION_SUMMARY_SEPARATOR := " · "
+
+## The faction's own alerts — the unworked-rung producer's, whose patches belong to the FACTION and so
+## have no band's row to sit on.
+const FACTION_LAND_ROW := "The land"
+
+## An expanded band's worked sources, and an expanded party's own facts.
+const FACTION_SOURCE_FORAGE_FORMAT := "Forage (%d, %d)"
+
+const FACTION_SOURCE_HUNT_FORMAT := "Hunt %s"
+
+const FACTION_SOURCE_CREW_FORMAT := "%d · %s"
+
+const FACTION_PARTY_MISSION := "Mission"
+
+const FACTION_PARTY_CREW := "Crew"
+
+const FACTION_PARTY_PHASE := "Phase"
+
 ## A bare percentage in a drill-down row, where the row's own key already says what it is a percentage
 ## OF (the band page's `GROWTH_ROW_FORMAT` spells `of normal` because it stands alone; here the
 ## faction row above the list has already said it).

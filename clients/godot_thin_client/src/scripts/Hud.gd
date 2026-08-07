@@ -422,6 +422,10 @@ func _ready() -> void:
     _attention = AttentionController.new(_band_labor, _bandpanel, _herd_label_for_id)
     _attention.alert_focus_requested.connect(
         func(x: int, y: int) -> void: alert_focus_requested.emit(x, y))
+    # The faction page's Work and Parties tabs read the same alerts the orb does. Handed over HERE
+    # rather than in `_bandpanel`'s construction because `_attention` takes `_bandpanel` itself, so the
+    # two cannot both be constructed with the other in hand.
+    _bandpanel.set_attention(_attention)
     _turnorb.focus_requested.connect(_attention.on_turn_orb_focus)
     # The selection drawer's render dispatch. Constructed AFTER `_bandpanel` + `_drawercompose` (it
     # dispatches into both) and handed the SAME selection/labor models, the sibling controllers, the

@@ -3822,8 +3822,11 @@ func _assert_faction_page() -> void:
 	# The parties zone names the band each party LEFT — the "where they are" half of the rollup that a
 	# one-line summary row can honestly carry.
 	var parties_zone: Node = _panel._zones.get(BandCityPanel.ZONE_PARTIES)
+	# `_has_label_containing` walks Labels only, and a summary row's name is a `build_inline_link`
+	# BUTTON — it has to be, since clicking it jumps to that band — so the search has to know about
+	# both. That is the whole difference between this row and the stat row it replaced.
 	_assert_band_panel("faction page: a party row names the band it left",
-		parties_zone != null and _has_label_containing(parties_zone, HudFormat.band_display_name({}, 1)))
+		parties_zone != null and _has_text_containing(parties_zone, HudFormat.band_display_name({}, 1)))
 
 ## The ROUTING claims — reached by driving the real cycler, since none of them is visible in a frame.
 ##
@@ -3904,6 +3907,19 @@ func _first_rich_text(node: Node) -> RichTextLabel:
 		if found != null:
 			return found
 	return null
+
+## Does any Label OR Button under `node` carry `text`? The faction summary rows are built from
+## `HudWidgets.build_inline_link`, which returns a `Button` — so a Label-only walk cannot see a band's
+## name on one, and the row's name has to be a button because clicking it jumps to that band.
+func _has_text_containing(node: Node, text: String) -> bool:
+	if node is Label and (node as Label).text.contains(text):
+		return true
+	if node is Button and (node as Button).text.contains(text):
+		return true
+	for child in node.get_children():
+		if _has_text_containing(child, text):
+			return true
+	return false
 
 ## The faction vitals block's RAW BBCode — the `[url]` metas and the `[color]` tags included, since
 ## some claims are about a link existing and some about a number being absent. The first
