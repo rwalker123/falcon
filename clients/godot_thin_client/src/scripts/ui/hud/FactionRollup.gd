@@ -265,8 +265,15 @@ static func _growth_line(bands: Array, disclosures: DisclosureController) -> Str
 ## **THE FLAG LEADS AND ITS SLOT IS FIXED-WIDTH, on every row including the calm ones.** A scan down
 ## the left edge answers "does anything need me?" before a word is read, and a slot that appeared only
 ## on flagged rows would ragged the names and destroy exactly that. It costs 14px of a 354px row.
+##
+## **THE TWO ACTS TAKE TWO OWNERS, and on the Parties tab they are DIFFERENT ENTITIES.** `owner` keys
+## the toggle (it is what `BandPanelController._faction_open_row` matches, so it must be the thing the
+## row is ABOUT); `jump_owner` keys the name link. A party's row is named for the band it LEFT and
+## jumps there — one owner for both would have made the link read one subject and select another,
+## which is exactly how it shipped. The Work tab passes the same entity twice, a row about a band
+## jumping to that band.
 static func _summary_row(name: String, summary: String, severity: String, owner: int,
-        on_toggle: Callable, on_jump: Callable) -> Control:
+        jump_owner: int, on_toggle: Callable, on_jump: Callable) -> Control:
     var row := HBoxContainer.new()
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_theme_constant_override("separation", SUMMARY_ROW_SEPARATION)
@@ -277,9 +284,10 @@ static func _summary_row(name: String, summary: String, severity: String, owner:
     flag.add_theme_font_size_override("font_size", STAT_ROW_FONT_SIZE)
     flag.add_theme_color_override("font_color", _severity_color(severity))
     row.add_child(flag)
-    # The NAME jumps to the subject; the rest of the row toggles its detail. Two different acts, so
-    # two different targets rather than one control that has to guess which the player meant.
-    var jump := HudWidgets.build_inline_link(name, HudStyle.SIGNAL, on_jump.bind(owner))
+    # The NAME jumps to the subject it names; the rest of the row toggles its detail. Two different
+    # acts, so two different targets rather than one control that has to guess which the player meant
+    # — and two different OWNERS, since the thing a row names is not always the thing it is about.
+    var jump := HudWidgets.build_inline_link(name, HudStyle.SIGNAL, on_jump.bind(jump_owner))
     jump.add_theme_font_size_override("font_size", STAT_ROW_FONT_SIZE)
     row.add_child(jump)
     var body := HudWidgets.build_inline_link(summary, HudStyle.INK_DIM, on_toggle.bind(owner))
@@ -452,6 +460,10 @@ static func worst_severity(entries: Array) -> String:
 ## `herd_label_for_id` is the caller's own herd-name resolver, threaded in the way
 ## `HudFormat.panel_expedition_summary` (which this reuses verbatim) already takes it — a stateless
 ## layer must not reach for the roster, the selection and the herd list that resolver reads.
+##
+## **`on_jump` IS HANDED A BAND ENTITY HERE, NOT A PARTY'S** — the row is named for the band the party
+## left, so its link must select that band (`BandPanelController.jump_to_band_entity`). `on_toggle`
+## still gets the party's.
 static func build_parties_zone(labor: HudBandLaborState, herd_label_for_id: Callable, attention: Array,
         open_owner: int, on_toggle: Callable, on_jump: Callable) -> VBoxContainer:
     var col := HudWidgets.make_zone_column()
@@ -473,6 +485,12 @@ static func build_parties_zone(labor: HudBandLaborState, herd_label_for_id: Call
     # The party's HOME BAND is the "where is it" a summary row can honestly carry: a party's own tile
     # changes every turn and means nothing without the map, while the band it left is what the player
     # cycles to in order to act on it — so the NAME jumps to that band.
+    #
+    # **THE ROW'S TWO OWNERS ARE DIFFERENT ENTITIES HERE, and that is the whole reason `_summary_row`
+    # takes them separately.** The TOGGLE is keyed on the PARTY, which is what the row's detail is
+    # about and what `_faction_open_row` matches; the NAME's jump is keyed on the HOME BAND, which is
+    # what the name says. Binding one entity to both made a link reading `Band 2` select the
+    # expedition — the row named one subject and delivered another.
     var names := _band_names_by_entity(labor)
     var shown: int = mini(parties.size(), HudWorkVocab.FACTION_LIST_ROWS_MAX)
     for i in range(shown):
@@ -482,7 +500,8 @@ static func build_parties_zone(labor: HudBandLaborState, herd_label_for_id: Call
         block.add_child(_summary_row(
             String(names.get(int(party.get("home_band_entity", -1)), "")),
             HudFormat.panel_expedition_summary(party, herd_label_for_id),
-            worst_severity(alerts), entity, on_toggle, on_jump))
+            worst_severity(alerts), entity, int(party.get("home_band_entity", -1)),
+            on_toggle, on_jump))
         if entity == open_owner:
             block.add_child(_summary_detail(_party_detail_lines(party), alerts))
     _append_more_row(block, parties.size() - shown)
@@ -575,15 +594,24 @@ static func _build_people_block(bands: Array) -> VBoxContainer:
 ## fact the meter does not already carry. A faction the sim reports no stage for reads `Nomadic`,
 ## which is what a score below the first threshold means. Returns null when the snapshot has carried
 ## no sedentarization at all — never a `0/100` meter, which claims a measurement that was not made.
+##
+## **THE STAGE ARRIVES AS A WIRE TOKEN AND IS MAPPED THROUGH A TABLE.** `SedentarizationStage::as_str()`
+## spells it `none` / `soft` / `hard`, which is a database value and not a word anyone should see —
+## it rendered as a lowercase enum key beside the capitalised `Nomadic` the empty case already got.
+## `HudWorkVocab.FACTION_SETTLING_STAGE_LABELS` is the one home for those words, and an unknown or
+## absent stage falls back to the `none` row rather than passing the raw token through.
 static func _build_settling_block(sedentarization: Dictionary) -> VBoxContainer:
     if sedentarization.is_empty():
         return null
     var score := float(sedentarization.get("score", 0.0))
-    var stage := String(sedentarization.get("stage", "")).strip_edges()
-    # `none` is the sim's own spelling of "no stage reached", so it and the empty string are the same
-    # answer and must render as the same word.
-    if stage == "" or stage == FactionReadouts.SEDENTARIZATION_STAGE_NONE:
-        stage = HudWorkVocab.FACTION_SETTLING_NOMADIC
+    var token := String(sedentarization.get("stage", "")).strip_edges()
+    # `none` is the sim's own spelling of "no stage reached" and an absent `stage` is the same answer,
+    # normalized here through the ONE const both surfaces share rather than a second spelling of the
+    # wire value. Anything this build does not recognise falls through the table to the same word.
+    if token == "":
+        token = FactionReadouts.SEDENTARIZATION_STAGE_NONE
+    var stage := String(HudWorkVocab.FACTION_SETTLING_STAGE_LABELS.get(
+        token, HudWorkVocab.FACTION_SETTLING_NOMADIC))
     var block := HudWidgets.make_zone_block()
     block.add_child(HudWidgets.zone_head(HudWorkVocab.FACTION_HEADER_SETTLING, ""))
     # **`HudFormat.meter_bar` TAKES A 0–100 SCORE, NOT A FRACTION**, and sedentarization is already on
@@ -719,7 +747,7 @@ static func _build_bands_block(labor: HudBandLaborState, attention: Array, open_
         var entity := int(band.get("entity", -1))
         var alerts: Array = by_owner.get(entity, [])
         block.add_child(_summary_row(HudFormat.band_display_name(band, i + 1),
-            _work_summary(labor, band), worst_severity(alerts), entity, on_toggle, on_jump))
+            _work_summary(labor, band), worst_severity(alerts), entity, entity, on_toggle, on_jump))
         if entity == open_owner:
             block.add_child(_summary_detail(_work_detail_lines(labor, band), alerts))
     _append_more_row(block, bands.size() - shown)
@@ -729,7 +757,8 @@ static func _build_bands_block(labor: HudBandLaborState, attention: Array, open_
     var orphans: Array = by_owner.get(AttentionController.OWNER_NONE, [])
     if not orphans.is_empty():
         block.add_child(_summary_row(HudWorkVocab.FACTION_LAND_ROW, "",
-            worst_severity(orphans), AttentionController.OWNER_NONE, on_toggle, on_jump))
+            worst_severity(orphans), AttentionController.OWNER_NONE, AttentionController.OWNER_NONE,
+            on_toggle, on_jump))
         if open_owner == AttentionController.OWNER_NONE:
             block.add_child(_summary_detail([], orphans))
     return block

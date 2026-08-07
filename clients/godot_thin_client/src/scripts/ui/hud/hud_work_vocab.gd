@@ -181,9 +181,25 @@ const FACTION_HEADER_SETTLING := "Settling"
 
 const FACTION_HEADER_DISCOVERIES := "Discoveries"
 
-## A faction that has not settled at all — what an absent or `none` stage reads as, so the readout
-## always names where the faction stands rather than leaving the meter unlabelled.
-const FACTION_SETTLING_NOMADIC := "Nomadic"
+## **THE SIM'S SEDENTARIZATION STAGE IS A WIRE TOKEN, AND THIS TABLE IS THE ONLY PLACE IT BECOMES A
+## WORD.** `SedentarizationStage::as_str()` spells the three stages `none` / `soft` / `hard`, and
+## `FactionReadouts.SEDENTARIZATION_STAGE_NONE` says outright that they are "not a word anyone sees" —
+## so the SETTLING row rendered its key as a lowercase enum (`soft  ▰▰▰▱▱  62/100`) beside the
+## capitalised `Nomadic` the below-threshold case already had. The words come from the sim's own
+## prompts: the soft threshold asks whether to "establish a seasonal base", the hard one whether to
+## "invest in storehouses and settle".
+##
+## **PROVISIONAL, pending playtest** — the same footing `ZONE_TAB_KNOWLEDGE`'s abbreviation is on.
+const FACTION_SETTLING_STAGE_LABELS := {
+    "none": "Nomadic",
+    "soft": "Seasonal base",
+    "hard": "Ready to settle",
+}
+
+## What an absent, `none` or UNRECOGNISED stage reads as — never the raw token, which is the whole
+## point of the table above. It reads the table rather than restating the word, so `Nomadic` has one
+## home and the fallback cannot drift from the `none` row.
+const FACTION_SETTLING_NOMADIC: String = FACTION_SETTLING_STAGE_LABELS["none"]
 
 ## `▰▰▱▱▱  62/100` — the SETTLING row's VALUE: the meter and the score against the scale the sim
 ## reports it on. The stage word is the row's KEY, not part of this.
@@ -292,10 +308,6 @@ const FACTION_TRADE_STOCK_FORMAT := "%.1f"
 const FACTION_BANDS_CHIP_FORMAT := "%d bands"
 
 const FACTION_BANDS_CHIP_ONE := "1 band"
-
-## A per-band row in the faction WORK zone: its workforce, and how much of it is unspent. Idle is the
-## number a player acts on, which is why it trails rather than leading.
-const FACTION_BAND_ROW_FORMAT := "%d workers · %d idle"
 
 ## The faction page's per-band and per-party lists are CAPPED — the zones clip rather than scroll, and
 ## neither list has a pager (the work BOARD's pager belongs to a band's own sources). What the cap

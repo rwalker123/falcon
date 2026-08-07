@@ -150,8 +150,14 @@ Two asymmetries worth keeping:
   clearing the renderer's mirror as well would let the banner and the reticle desync.
 
 **Verify with `ui_preview`'s `world_reset` state**, which is a behavioural guard rather than a picture:
-it seeds a knowledge strip and a book of beats, asserts both are present, calls
-`Hud.reset_world_state()`, then asserts the strip is hidden and the Telling's `_entries` is empty. A PNG
-alone could not carry that claim — a hidden strip and a strip that was never seeded look identical.
-`band.png` from the same run shows the strip populated, which is what makes `world_reset.png`'s empty
-top bar mean something.
+it seeds faction knowledge and a book of beats, asserts both are present, calls
+`Hud.reset_world_state()`, then asserts `FactionReadouts.faction_tracks` is empty and so is the
+Telling's `_entries`.
+
+**IT ASKS THE CACHE, NOT A RENDERED SURFACE, and it has to.** It used to read the top-bar knowledge
+strip's Label visibility, and the argument for a behavioural guard was that a PNG could not tell a
+hidden strip from one that was never seeded. That strip is gone — issue #450 deleted the whole
+top-right block, `TopBar` and `TurnBlock` included — so there is no longer any rendered surface in
+this harness to read: the faction's knowledge draws on the Band/City dock's KNOWLEDGE tab, which
+`ui_preview` does not instantiate. The cache is the better witness in any case, being precisely what
+`reset_world_state` exists to clear.

@@ -9,8 +9,8 @@ class_name FactionAggregate
 ## owns both the weight and the mean.
 ##
 ## **THE FORMULA IS NOT HARD-CODED AT ITS CALL SITES — that is the whole point of the file.** Callers
-## ask `weighted_mean(bands, key)` and never see how a band is weighted, so a second axis is a term
-## function plus a config key here, and no reader of Morale or Growth changes at all.
+## ask `weighted_mean(bands, key)` and never see how a band is weighted, so a second axis is confined
+## to this file and no reader of Morale or Growth changes at all.
 ##
 ## **POPULATION IS THE ONLY AXIS TODAY, AND ITS WEIGHT IS THEREFORE MATHEMATICALLY INERT.** With one
 ## term, `Σ(w·v)/Σ(w)` gives the identical answer for any positive `w` — the weight cancels. It is
@@ -20,12 +20,20 @@ class_name FactionAggregate
 ## population term would have to be found and rewritten. Do not read the config key as a live tuning
 ## lever until there are two axes; it is structure, not a dial.
 ##
-## **AN AXIS WITH NO TERM FUNCTION IS IGNORED, NEVER SILENTLY ZERO-WEIGHTED.** `AXIS_TERMS` is the
-## registry, and a config key absent from it is skipped with its weight — so a config naming an axis
-## this build does not implement degrades to the axes it does, rather than quietly dividing every
-## band's weight by a term that is always zero. A band whose every axis reads zero (a cohort that has
-## published no size yet) falls back to `FALLBACK_WEIGHT` so it still counts as one voice rather than
-## dropping out of its own faction's average.
+## **AN AXIS THIS BUILD DOES NOT IMPLEMENT IS IGNORED, NEVER SILENTLY ZERO-WEIGHTED.** `band_weight`
+## walks the CONFIG's keys and `match`es each against the axis names it knows; an unmatched key hits
+## the `_` arm and is skipped **with its weight**, so a config naming an axis this build has no term
+## for degrades to the axes it does, rather than quietly dividing every band's weight by a term that
+## is always zero. A band whose every axis reads zero (a cohort that has published no size yet) falls
+## back to `FALLBACK_WEIGHT` so it still counts as one voice rather than dropping out of its own
+## faction's average.
+##
+## **ADDING AN AXIS IS TWO EDITS, BOTH IN THIS FILE'S SIGHT: a `match` arm in `band_weight` (calling a
+## private `_axis_<name>` reader beside `_axis_population`) and a key in the config.** In that order —
+## an arm with no config key is never visited, since the walk is over the CONFIG and not over the
+## known axes. There is deliberately no registry Dictionary: a `const` cannot hold a `Callable` to a
+## static function in GDScript, so a table here would be name→name indirection over a `match` that
+## already reads as one.
 
 const CONFIG_PATH := "res://src/config/faction_aggregate_config.json"
 
@@ -33,17 +41,12 @@ const CONFIG_PATH := "res://src/config/faction_aggregate_config.json"
 ## silently excluded from a mean it is a member of.
 const FALLBACK_WEIGHT := 1.0
 
-## The default weight of an axis the config does not mention.
-const DEFAULT_AXIS_WEIGHT := 0.0
-
 ## The shipped default, mirroring `faction_aggregate_config.json` so a missing or malformed file
 ## degrades to the behaviour the file describes rather than to no weighting at all.
 const DEFAULT_WEIGHTS := {"population": 1.0}
 
-## The AXIS REGISTRY: a config key is an axis iff it names a term here. Each entry is the band-dict
-## reader for that axis, returning the axis's raw magnitude for one band.
-## **Adding an axis is an entry here plus a key in the config** — in that order, since a term with no
-## config key simply carries `DEFAULT_AXIS_WEIGHT` (0.0) and is inert until the key exists.
+## The one axis this build implements, spelled once: the config key AND the `match` arm in
+## `band_weight` read it, so a rename cannot leave the two disagreeing about which key is live.
 const AXIS_POPULATION := "population"
 
 static var _loaded := false
@@ -67,8 +70,8 @@ static func _ensure_loaded() -> void:
     if weights_variant is Dictionary:
         _weights = (weights_variant as Dictionary).duplicate()
 
-## One axis's raw magnitude for one band. The registry `AXIS_TERMS` maps to these; a caller never
-## reaches one directly.
+## One axis's raw magnitude for one band. `band_weight`'s `match` is what reaches these; a caller
+## never does.
 static func _axis_population(band: Dictionary) -> float:
     return maxf(float(band.get("size", 0)), 0.0)
 
@@ -107,12 +110,3 @@ static func weighted_mean(bands: Array, key: String) -> float:
         total += float(band[key]) * weight
         weight_sum += weight
     return total / weight_sum if weight_sum > 0.0 else 0.0
-
-## True when at least one band publishes `key` — the gate every weighted row needs, since
-## `weighted_mean` answers `0.0` both for "the faction's mean is zero" and for "nobody published one",
-## and those two must not render the same way.
-static func any_band_states(bands: Array, key: String) -> bool:
-    for band_variant in bands:
-        if band_variant is Dictionary and (band_variant as Dictionary).has(key):
-            return true
-    return false

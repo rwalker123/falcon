@@ -368,6 +368,11 @@ const FACTION_TAB_LABELS: Array[String] = ["Faction", "Work", "Know", "Parties"]
 ## top-right block, and the seed stays because the faction page now renders off the same cache.)
 const TOPBAR_SEDENTARIZATION_SCORE := 62.0
 const TOPBAR_SEDENTARIZATION_STAGE := "soft"
+## Slack allowed between a stat-row key's laid-out width and the width its own font measures for its
+## own string (`_faction_keyless_rows`). It absorbs the sub-pixel disagreement between the container's
+## rounded layout and the text server's float measurement, and nothing wider: a CLIPPED key comes back
+## one pixel wide against a key that needs tens, so the two cases are nowhere near this margin.
+const KEYLESS_KEY_WIDTH_TOLERANCE := 1.0
 ## `HudFormat.meter_bar`'s filled cell. Spelled here rather than read off the formatter — the claim is
 ## that a meter at 62% draws SOMETHING, and asking the formatter what it draws would agree with itself.
 const METER_FILLED_CELL := "▰"
@@ -3822,9 +3827,9 @@ func _faction_discoveries_fixture() -> Dictionary:
 func _faction_roster() -> Array:
 	var second := _concerning_food_band_fixture()
 	# **THE SECOND BAND KEEPS A HERD**, the corralled aurochs `_under_herded_work_herd_fixtures` stages.
-	# Every other fixture band in this file hunts WILD game, and a wild hunted herd is correctly not
-	# KEPT — so without this the Herds block reads `0 / 0` and a page that had stopped counting kept
-	# herds altogether would render identically.
+	# Every other fixture band in this file hunts WILD game, so on an all-wild roster no band on this
+	# page pays a pen's feed — and the pen feed below is a real term of `band_net_food`, which is the
+	# headline the `band` zone's Food row is built on.
 	second["labor_assignments"] = [
 		{"kind": "hunt", "workers": 4, "fauna_id": UNDER_HERDED_WORK_HERD_ID, "floor": 0.5,
 			"target_x": 70, "target_y": 17, "actual_yield": 0.30, "sustainable_yield": 0.30},
@@ -3927,7 +3932,7 @@ func _assert_faction_page() -> void:
 	# flip ▸→▾, and that re-render rendered a BAND unconditionally — the page keeps `panel_band()`
 	# intact for the cycler, so nothing stopped it. Driven through the REAL `meta_clicked` with the
 	# very meta the row's own text carries, because the bug was in the re-render and not in the row.
-	_assert_faction_caret_keeps_the_page(band_zone)
+	_assert_faction_caret_keeps_the_page()
 
 	# THE HEADER. A faction has no settlement stage and no tile, so the stage slot carries the band
 	# COUNT — the identity fact at this scale — and the coordinate slot hides itself outright.
@@ -3972,6 +3977,65 @@ func _assert_faction_page() -> void:
 	# both. That is the whole difference between this row and the stat row it replaced.
 	_assert_band_panel("faction page: a party row names the band it left",
 		parties_zone != null and _has_text_containing(parties_zone, HudFormat.band_display_name({}, 1)))
+	_assert_faction_party_row_jumps_home(parties_zone)
+
+## **THE PARTIES ROW'S NAME LINK GOES WHERE THE NAME SAYS.** The row is named for the band the party
+## LEFT and the link used to be bound to the PARTY's entity, so a link reading `Band 2` selected the
+## expedition — the row named one subject and delivered another. No frame can carry this: both
+## renderings draw the identical row, and the difference is only in what a press does.
+##
+## Driven through the row's REAL `pressed` handler, and the link is found STRUCTURALLY (a summary row
+## is flag Label → name Button → body Button, so the row's FIRST button is the name) rather than by its
+## face — the face is the very thing under test, so matching on it could only confirm the assumption.
+##
+## **It leaves the panel on a BAND, so it puts the page back.** Every state below this one is rendered
+## as the faction page.
+func _assert_faction_party_row_jumps_home(parties_zone: Node) -> void:
+	var link := _faction_summary_name_link(parties_zone)
+	if link == null:
+		_assert_band_panel("faction page: the party row's name link is reachable", false)
+		return
+	var home := int(_hunt_expedition_fixture().get("home_band_entity", -1))
+	var party := int(_hunt_expedition_fixture().get("entity", -1))
+	link.emit_signal("pressed")
+	# **TWO CLAIMS, because the two failures look nothing alike and one of them is silent.** Binding the
+	# PARTY's entity to this link routes it through `jump_to_band_entity`, which cannot resolve a party
+	# in the band roster and NO-OPS — leaving the page up with the previous subject still under it, so a
+	# subject-only assertion reads the right entity for entirely the wrong reason.
+	var left_page := not _hud._bandpanel._panel_is_faction
+	var subject := int(_hud._bandpanel._band_labor.panel_band().get("entity", -1))
+	_assert_band_panel(
+		"faction page: the party row's NAME leaves the page — a jump is a subject change", left_page)
+	_assert_band_panel(
+		"faction page: the party row's NAME selects its HOME BAND (%d), not the party (%d) — got %d" % [
+			home, party, subject],
+		left_page and subject == home)
+	# Back to the page for the states that follow. Conditional so a build whose link no-ops does not
+	# cycle OFF the page it never left and take every state below down with it — the restore is
+	# housekeeping, and the claim about it is the assertion under this line.
+	if left_page:
+		_hud.cycle_panel_band(BandCityPanel.CYCLE_PREV)
+	_assert_band_panel("faction page: the page is restored after the party-row jump",
+		_hud._bandpanel._panel_is_faction)
+
+## A faction SUMMARY row's name link: the FIRST `Button` of the first `HBoxContainer` holding two of
+## them. `_summary_row` builds exactly that shape — a fixed-width flag Label, the name link, then the
+## body link — and the two buttons are what tells a summary row from every other row on the page.
+func _faction_summary_name_link(node: Node) -> Button:
+	if node == null:
+		return null
+	if node is HBoxContainer:
+		var buttons: Array = []
+		for child in node.get_children():
+			if child is Button:
+				buttons.append(child)
+		if buttons.size() >= 2:
+			return buttons[0] as Button
+	for child in node.get_children():
+		var found := _faction_summary_name_link(child)
+		if found != null:
+			return found
+	return null
 
 ## The ROUTING claims — reached by driving the real cycler, since none of them is visible in a frame.
 ##
@@ -4023,11 +4087,7 @@ func _assert_faction_cycler() -> void:
 ## It drives the REAL `meta_clicked` with the meta the row's own text carries — the same idiom
 ## `_click_disclosure` uses for a band row — because the defect was in the RE-RENDER the click
 ## triggers, not in the row, so poking `_open_popover` directly would have proved nothing.
-func _assert_faction_caret_keeps_the_page(zone: Node) -> void:
-	var label := _first_rich_text(zone)
-	if label == null:
-		_assert_band_panel("faction caret: the vitals label is reachable", false)
-		return
+func _assert_faction_caret_keeps_the_page() -> void:
 	var meta := "%s%s" % [HudDisclosureVocab.BREAKDOWN_TOGGLE_META_PREFIX,
 		DetailFormat.breakdown_key(HudDisclosureVocab.BREAKDOWN_KIND_FOOD, {})]
 	# **WITH A BAND SELECTED, which is the configuration the second half of this defect needs.** The
@@ -4035,7 +4095,22 @@ func _assert_faction_caret_keeps_the_page(zone: Node) -> void:
 	# as the panel's subject on every render — so a caret click stole the page whenever the selected hex
 	# happened to hold a band. Reported from play AFTER the first fix, because with nothing selected the
 	# drawer takes no band branch at all and the guard passed.
+	#
+	# **THE ORDER IS LOAD-BEARING: SELECT FIRST, THEN REACH THE PAGE.** A selection is the player's
+	# explicit "make this band the subject" act and it correctly LEAVES the page (that is the other half
+	# of the rule — a bare "not on the faction page" gate froze the panel on the rollup while a marker
+	# click moved the map ring), so selecting AFTER the page is up would stage the opposite state and
+	# this assertion would be about a band's own page. The play report's own order is this one.
 	_hud.show_unit_selection(_faction_roster()[0])
+	_hud.cycle_panel_band(BandCityPanel.CYCLE_PREV)
+	_assert_band_panel("faction caret: the setup reached the page with a band selected",
+		_hud._bandpanel._panel_is_faction and not _hud._selection.unit().is_empty())
+	# Re-read the vitals label AFTER that walk: reaching the page rebuilt every zone, so a handle taken
+	# before it points at a freed tree.
+	var label := _first_rich_text(_panel._zones.get(BandCityPanel.ZONE_BAND))
+	if label == null:
+		_assert_band_panel("faction caret: the vitals label is reachable", false)
+		return
 	label.meta_clicked.emit(meta)
 	_assert_band_panel("faction caret: the page survives its own caret (still the faction subject)",
 		_hud._bandpanel._panel_is_faction)
@@ -4218,9 +4293,13 @@ func _assert_faction_knowledge_zone() -> void:
 	# matches nothing rendered) and the row is keyed by the STAGE and valued by the meter.
 	_assert_band_panel("faction knowledge: SETTLING is a real head, not a row's key",
 		_has_label_containing(zone, HudWorkVocab.FACTION_HEADER_SETTLING.to_upper()))
-	var settling := _faction_stat_value(zone, TOPBAR_SEDENTARIZATION_STAGE)
-	_assert_band_panel("faction knowledge: the SETTLING row is keyed by the stage '%s' and reads %d/%d (got '%s')" % [
-			TOPBAR_SEDENTARIZATION_STAGE, int(round(TOPBAR_SEDENTARIZATION_SCORE)),
+	# **THE KEY IS THE STAGE'S LABEL, NEVER THE WIRE TOKEN.** `SedentarizationStage::as_str()` spells the
+	# stage `soft`, which is a database value; the row must render the player word the vocabulary maps it
+	# to. Asserting the raw token here is what let a lowercase enum key ship on this row.
+	var stage_label := String(HudWorkVocab.FACTION_SETTLING_STAGE_LABELS[TOPBAR_SEDENTARIZATION_STAGE])
+	var settling := _faction_stat_value(zone, stage_label)
+	_assert_band_panel("faction knowledge: the SETTLING row is keyed by the stage word '%s' (wire '%s') and reads %d/%d (got '%s')" % [
+			stage_label, TOPBAR_SEDENTARIZATION_STAGE, int(round(TOPBAR_SEDENTARIZATION_SCORE)),
 			HudWorkVocab.FACTION_SETTLING_SCALE, settling],
 		settling.ends_with("%d/%d" % [int(round(TOPBAR_SEDENTARIZATION_SCORE)),
 			HudWorkVocab.FACTION_SETTLING_SCALE]))
@@ -4259,6 +4338,21 @@ func _assert_faction_knowledge_zone() -> void:
 			kinds.size() - HudWorkVocab.FACTION_LIST_ROWS_MAX),
 		_has_label_containing(zone, HudWorkVocab.FACTION_LIST_MORE_FORMAT % (
 			kinds.size() - HudWorkVocab.FACTION_LIST_ROWS_MAX)))
+	# **EVERY STAT ROW RENDERS ITS KEY**, measured on the laid-out WIDTH rather than on `.text`: a
+	# `clip_text` key Label is squeezed to nothing by the row's expanding spacer, so the block draws as a
+	# column of right-aligned numbers with no names — and the text is set correctly in that build too, so
+	# only the geometry can see it. It shipped that way once; both geometric assertions pass on it
+	# comfortably, a zero-width Label being inside its zone and inside its box.
+	#
+	# **IT IS ASKED HERE RATHER THAN ON `_assert_faction_page`, and that is a constraint of the shell.**
+	# The narrow shell parents ONLY the active tab's zone (`BandCityPanel._reparent_zones` DETACHES the
+	# rest), so a zone read from another tab has never been laid out and every one of its rows measures
+	# zero — the scan would report every row keyless. This is the state where the KNOWLEDGE tab is up and
+	# its zone is in the tree, and it is also where all three of its blocks render, so it is the widest
+	# set of stat rows the page ever lays out at once.
+	var keyless := _faction_keyless_rows(zone)
+	_assert_band_panel("faction knowledge: every stat row renders its key (%d keyless)" % keyless,
+		keyless == 0)
 
 ## THE KNOWLEDGE ZONE'S HEIGHT TIER, on the height-capped horizontal dock: DISCOVERIES is dropped and
 ## the two blocks that survive are still there. **The second half is what stops this passing on a zone
@@ -4343,10 +4437,16 @@ func _faction_stat_value(node: Node, key: String) -> String:
 			return found
 	return ""
 
-## How many of a zone's stat rows render NO key — the failure a zero-width `clip_text` Label produces,
+## How many of a zone's stat rows render a key too narrow to READ — the failure `clip_text` produces,
 ## which is invisible to every geometric assertion here. Measured on the WIDTH the label was laid out
 ## at, not on its `text`: the text is set correctly in both the working and the broken build, and it is
 ## the rendered column that differs.
+##
+## **IT IS COMPARED AGAINST THE TEXT'S OWN MEASURED WIDTH, NOT AGAINST ZERO, and that distinction is
+## what makes it a test at all.** `clip_text` does NOT zero a `Label`'s minimum — Godot floors it at
+## ONE PIXEL — so a `<= 0.0` scan reports a fully clipped column as perfectly healthy: verified by
+## sabotage, which passed with `0 keyless` and the key squeezed to nothing. A key renders iff the row
+## granted it at least the width its own font needs for its own string.
 func _faction_keyless_rows(node: Node) -> int:
 	var nameless := 0
 	if node is HBoxContainer:
@@ -4356,11 +4456,21 @@ func _faction_keyless_rows(node: Node) -> int:
 				labels.append(child)
 		if labels.size() >= 2:
 			var key_label: Label = labels[0]
-			if not key_label.text.is_empty() and key_label.size.x <= 0.0:
+			if not key_label.text.is_empty() \
+					and key_label.size.x < _label_text_width(key_label) - KEYLESS_KEY_WIDTH_TOLERANCE:
 				nameless += 1
 	for child in node.get_children():
 		nameless += _faction_keyless_rows(child)
 	return nameless
+
+## The width this Label's own font needs for its own text, at the size it actually renders at. A label
+## the row laid out narrower than this has had its key clipped away.
+func _label_text_width(label: Label) -> float:
+	var font := label.get_theme_font("font")
+	if font == null:
+		return 0.0
+	return font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1.0,
+		label.get_theme_font_size("font_size")).x
 
 ## A `HudWidgets.zone_head`'s right-hand readout, found by its TITLE — the head is an `HBoxContainer`
 ## whose first Label is the uppercased section name and whose last is the readout. Structural rather

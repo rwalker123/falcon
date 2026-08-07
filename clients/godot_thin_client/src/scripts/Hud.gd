@@ -793,6 +793,8 @@ func _refresh_disclosure_hosts() -> void:
     # satisfied and the panel silently changed subject instead of opening the popover. `rerender` is
     # the routing method that exists for exactly this, and it carries both guards internally.
     _bandpanel.rerender()
+    # No `from_selection` here, deliberately: a caret flip is the archetypal PASSIVE re-render, and the
+    # drawer's band branch must not re-assert the selected band as the panel's subject on one.
     _drawer.render_subject_drawer()
 
 # ---- THE COMPOSE SHEET: the two reflective delegators -----------------------------------------
@@ -927,7 +929,10 @@ func show_unit_selection(unit_data: Dictionary) -> void:
         tile_info = _selection.tile_info()
     _selection.set_tile_info(tile_info)
     _selection.select_unit(unit_data.duplicate(true))
-    _render_selection_panel(tile_info, _selection.unit(), {})
+    # **THE ONE `from_selection` CALLER.** This is the player picking an occupant — a map-marker click,
+    # a roster pick relayed from the map, the cycler's own hop through `_select_band_on_map` — so a
+    # player band chosen here becomes the Band/City panel's subject even if the faction page is up.
+    _render_selection_panel(tile_info, _selection.unit(), {}, true)
 
 func show_herd_selection(herd_data: Dictionary) -> void:
     # A selection change invalidates the subject being composed (§15).
@@ -1011,7 +1016,13 @@ func _adopt_tile_info_from(occupant: Dictionary) -> void:
     if ti_variant is Dictionary and not (ti_variant as Dictionary).is_empty():
         _selection.set_tile_info((ti_variant as Dictionary).duplicate(true))
 
-func _render_selection_panel(_tile_info: Dictionary, _unit_data: Dictionary, _herd_data: Dictionary) -> void:
+## **`from_selection` MARKS THE ONE CALLER WHERE THE PLAYER JUST PICKED THE OCCUPANT.** The drawer's
+## player-band branch makes the selected band the Band/City panel's subject, and that must win over a
+## standing faction page — but only when it IS a pick. Every other caller here is a RESTATE of the
+## same selection (a snapshot's `reapply_selection`, a pending-edit re-render, a deselect), and a
+## restate must leave the page alone. See `SubjectDrawerController.render_subject_drawer`.
+func _render_selection_panel(_tile_info: Dictionary, _unit_data: Dictionary, _herd_data: Dictionary,
+        from_selection: bool = false) -> void:
     if tile_panel == null or tile_detail == null:
         return
     # No tint context is reset here any more: it is no longer a member that outlives a render. Each
@@ -1020,7 +1031,7 @@ func _render_selection_panel(_tile_info: Dictionary, _unit_data: Dictionary, _he
     # The identity/list half — roster assembly, tile-card header + chips, auto-select, subject list —
     # lives in the controller (HUD decomposition Phase 2b); the DRAWER stays here (Phase 2c).
     _selectioncard.render(_selection.tile_info())
-    _drawer.render_subject_drawer()
+    _drawer.render_subject_drawer(from_selection)
 
 ## The controller changed the lit subject via a roster/land CLICK. Re-render BOTH halves: close the
 ## compose sheet (a selection change invalidates the subject being composed, §15) then re-run the whole

@@ -2712,9 +2712,13 @@ func render_faction() -> void:
         BandCityPanel.ZONE_KNOWLEDGE:
             HudWidgets.wrap_zone(FactionRollup.build_knowledge_zone(_player_knowledge(),
                 _faction_settling(), _faction_discoveries(), _faction_knowledge_is_full())),
+        # **THE PARTIES ROW'S JUMP GOES TO THE HOME BAND, which is what the row is NAMED for.** A
+        # party's own tile means nothing without the map and there is nothing to DO to a party from
+        # here — acting on it means cycling to the band it left, so that is where its link lands. The
+        # row's TOGGLE still keys on the party (`FactionRollup.build_parties_zone`).
         BandCityPanel.ZONE_PARTIES:
             HudWidgets.wrap_zone(FactionRollup.build_parties_zone(_band_labor, _herd_label_for_id,
-                attention, _faction_open_row, _toggle_faction_row, _jump_to_party_entity)),
+                attention, _faction_open_row, _toggle_faction_row, jump_to_band_entity)),
     })
     _push_faction_zone_badges()
     # No stage id ⇒ no bundled art resolves and the emoji stands; the band count takes the stage word's
@@ -2913,15 +2917,6 @@ func is_faction_page() -> bool:
 func _toggle_faction_row(owner: int) -> void:
     _faction_open_row = FACTION_ROW_NONE if _faction_open_row == owner else owner
     rerender()
-
-## Jump to a PARTY from the faction page's Parties row — the same routing the band page's own parties
-## rows use (`select_expedition`), so a party is reached identically from both.
-func _jump_to_party_entity(entity: int) -> void:
-    for party_variant in _band_labor.player_expeditions():
-        var party: Dictionary = party_variant
-        if int(party.get("entity", -1)) == entity:
-            select_expedition(entity, int(party.get("current_x", -1)), int(party.get("current_y", -1)))
-            return
 
 ## Make a band the panel's subject, by entity — the faction page's drill-down rows route here, so a
 ## popover row reaches a band the same way the cycler does (recenter, pin, render), rather than by a
