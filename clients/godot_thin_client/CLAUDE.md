@@ -42,7 +42,19 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 
 # Gate the FlatBuffers -> Dictionary decode path (run after ANY snapshot-field change)
 cargo xtask decode-guard
+
+# Rebuild the global class registry (run after RENAMING or MOVING a `class_name`d script)
+godot --headless --path clients/godot_thin_client --import
 ```
+
+**RENAMING A `class_name`d SCRIPT NEEDS THAT IMPORT, and the error blames the wrong thing.**
+`.godot/global_script_class_cache.cfg` maps every global class name to its path and only the import
+pass rewrites it, so until you re-import the engine still believes the OLD name and every reference
+to the new one fails with `Parse Error: Could not find type "NewName" in the current scope` — which
+reads as "the rename did not apply" when the file is in fact correct. The same cache is why a fresh
+checkout or WORKTREE needs one import before any scene runs at all (`.godot/` is a build artifact no
+worktree starts with; `cargo xtask decode-guard` does it for you, judging it by the file it writes
+rather than by the exit code, since Godot 4.7's headless import crashes on shutdown here).
 
 **Sockets** (defaults — the client resolves each as env var → ports file → this constant):
 - Snapshot stream: `127.0.0.1:41002` (FlatBuffers via `SimulationConfig::snapshot_flat_bind`)
@@ -127,7 +139,7 @@ for the scripts it covers. The boot/menu/settings rows stay above.
 | `hud-modules.md` | `Hud.gd` + every `ui/hud/` module and vocabulary leaf | `Hud.gd`, `ui/hud/**` |
 | `labor-ui.md` | The compose sheet, labor allocation, source forecasts, arrivals | `ComposeSheet.gd`, `ComposeState.gd`, `SourceForecast.gd` |
 | `selection-card.md` | ONE card, ONE list, ONE drawer; the land as a subject | `SelectionCardController.gd`, `SubjectDrawerController.gd` |
-| `band-readouts.md` | Demographics, food, morale, wellbeing, habitability, climate | `BandDetailLines.gd`, `TopBarReadouts.gd`, `BandFoodStatus.gd` |
+| `band-readouts.md` | Demographics, food, morale, wellbeing, habitability, climate | `BandDetailLines.gd`, `FactionReadouts.gd`, `BandFoodStatus.gd` |
 | `herd-readouts.md` | Fog gate, herd ecology, husbandry, corral, the pen | `PenStatus.gd`, `FaunaPanel.gd` |
 | `land-readouts.md` | Forage, "what grows here", the crop picker, pasture, the meters | `hud_flora_vocab.gd`, `FoodIcons.gd` |
 | `turn-orb.md` | Band alerts and the attention model | `AttentionController.gd`, `TurnOrbController.gd` |
@@ -150,7 +162,7 @@ for the scripts it covers. The boot/menu/settings rows stay above.
 | `native-extension.md` | The GDExtension module map | `native/src/**` |
 | `scripting-capability.md` | The scripting capability model | `src/scripts/scripting/**` |
 | `../core_sim/ports.md` | Endpoint discovery, the ports handshake file (the server owns this contract) | `ServerPortsFile.gd`, `Main.gd`, `LogsPanel.gd` |
-| `../core_sim/world-handoff.md` | Which world a frame belongs to: the reveal gate, retry-until-answered, resetting per-world caches (spans both halves) | `Main.gd`, `Hud.gd`, `MapView.gd`, `TopBarReadouts.gd`, `TellingPanel.gd` |
+| `../core_sim/world-handoff.md` | Which world a frame belongs to: the reveal gate, retry-until-answered, resetting per-world caches (spans both halves) | `Main.gd`, `Hud.gd`, `MapView.gd`, `FactionReadouts.gd`, `TellingPanel.gd` |
 
 **Cross-reference convention.** A quoted phrase like `see "Map markers"` names a
 *section heading*, not a file. Resolve it with

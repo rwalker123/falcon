@@ -601,7 +601,7 @@ because a notification the player has to go and find is the thing this arc exist
   Commands tab that used to mirror it has since been deleted, so the dock is the only surface a
   player sees it on.
 - **The three controllers that posted a client-side note take a `Callable` note sink** rather than a
-  `CommandFeedController` reference (`TopBarReadouts`' knowledge unlock, `TurnOrbController`'s
+  `CommandFeedController` reference (`FactionReadouts`' knowledge unlock, `TurnOrbController`'s
   unanswered fork, `TargetingController`'s two quarry refusals). It resolves to
   `HudLayer.note_system_event` → the `system_note_requested` signal → `Main` → the dock. The HUD
   emits rather than reaching for a panel it does not own — the coordinator mediates, as everywhere

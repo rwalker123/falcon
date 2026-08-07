@@ -174,15 +174,15 @@ is dissolved **first**, in place, before any code moves files.
     - **(ii) DONE — widget factories → `HudWidgets` + `HudFormat`.** Two all-static
       modules, not one: the scoping found `_progress_percent` and the status/tooltip
       vocabulary are *formatting*, not widgets, and splitting them is what lets
-      `TopBarReadouts` depend on the formatters without importing a widget factory.
+      `FactionReadouts` depend on the formatters without importing a widget factory.
       `HudWidgets` took the stepper family, zone chrome, the policy picker and the
       label leaves; `HudFormat` took the percent + status/tooltip/policy-face
       vocabulary. Stragglers folded in rather than left for a later pass —
       `_add_stepper_controls` turned out **more** shared than `_build_worker_stepper`
       itself (5 sites, 4 clusters), plus `_zone_head`, `_build_inline_link`,
       `_build_section_menu`. Three injections deleted: `SelectionCardController`'s
-      `alloc_hint_label` Callable, `TopBarReadouts`' `progress_percent_fn`, and
-      **`TopBarReadouts`' verbatim private copy of `_set_label_tooltip`** — a prior
+      `alloc_hint_label` Callable, `FactionReadouts`' `progress_percent_fn`, and
+      **`FactionReadouts`' verbatim private copy of `_set_label_tooltip`** — a prior
       extraction had duplicated it rather than reach back into `HudLayer`, which is
       the clearest evidence the shared layer was overdue. Left behind deliberately:
       `_build_extend_pen_control` (emits `extend_pen_requested`, one drawer-only

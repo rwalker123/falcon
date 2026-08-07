@@ -5,7 +5,7 @@ paths:
   - "clients/godot_thin_client/src/scripts/GameLaunch.gd"
   - "clients/godot_thin_client/src/scripts/Hud.gd"
   - "clients/godot_thin_client/src/scripts/MapView.gd"
-  - "clients/godot_thin_client/src/scripts/ui/hud/TopBarReadouts.gd"
+  - "clients/godot_thin_client/src/scripts/ui/hud/FactionReadouts.gd"
   - "clients/godot_thin_client/src/scripts/ui/{TellingPanel,AnnotationRenderer,BandOverlayRenderer}.gd"
 ---
 
@@ -101,7 +101,7 @@ Even with a perfect gate, the reset in (3) above is still required, and it fixes
 gate never touched. "A field absent from a delta means *unchanged*" is correct **within** one world
 and wrong **across** worlds, and several surfaces merge rather than replace:
 
-- **`TopBarReadouts._ingest_intensification`** iterates the payload. A fresh world sends
+- **`FactionReadouts._ingest_intensification`** iterates the payload. A fresh world sends
   `intensification_knowledge: []`, the loop body never runs, and `Herding ✓` from the previous game
   renders forever.
 - **`TellingPanel`** is deliberately never reset on a full snapshot (its de-dup makes re-ingesting
@@ -123,7 +123,7 @@ the knowledge rows, the herd list), so resetting *after* the dispatch would wipe
 
 `Main` decides only WHEN. Each surface owns its own reset, reached by the usual silent `has_method`
 probe — `hud.reset_world_state()` (a **coordinator delegator**; `HudLayer` grows no feature logic, it
-calls `TopBarReadouts.reset_world_state` / `TellingPanel.reset` / `cancel_active_targeting`) and
+calls `FactionReadouts.reset_world_state` / `TellingPanel.reset` / `cancel_active_targeting`) and
 `map_view.reset_world_state()` (which fans out to `AnnotationRenderer` / `BandOverlayRenderer`). `Main`
 also clears `_campaign_label_signature` / `_victory_analytics_signature`, which print once per
 *distinct* value and would otherwise stay silent in a new world that happened to match the old one.

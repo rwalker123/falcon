@@ -505,7 +505,7 @@ EOF
   - "$C/src/scripts/ui/{FoodIcons,TileHabitability,TileClimate}.gd"
 EOF
 ;;      band-readouts) cat <<EOF
-  - "$C/src/scripts/ui/hud/{BandDetailLines,TopBarReadouts,DetailFormat}.gd"
+  - "$C/src/scripts/ui/hud/{BandDetailLines,FactionReadouts,DetailFormat}.gd"
   - "$C/src/scripts/ui/{BandFoodStatus,TileHabitability,TileClimate}.gd"
 EOF
 ;;      turn-orb) cat <<EOF

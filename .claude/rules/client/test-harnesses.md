@@ -127,6 +127,18 @@ alive after 59 minutes, and it is invisible to every check we have. The three pa
   there was no consumer to break. (`band_panel_preview` is unchanged on this point: it still prints
   no `FAIL` token and still exits 0 on a red run. Count `ERROR: band_panel_preview` there.)
 
+**ONE HANG SHAPE THE WATCHDOG STRUCTURALLY CANNOT CATCH: a stall BEFORE the scene loads.** It arms
+from its own `_ready`, so a run that never reaches the scene never arms it — and the symptom is
+indistinguishable from a slow run: no `FAIL watchdog`, no exit, no PNGs. Observed once for 26 minutes
+after an editor `godot --import` pass, where the next WINDOWED launch stalled during window creation;
+the log stopped at the OpenGL line, with neither the `[TerrainDefinitions]` load nor `watchdog armed`
+after it. **Those two lines are the diagnostic**: a log carrying them has a live scene and a live
+guard, so the run is merely slow; a log without them is stuck outside both and will sit there
+forever. `--headless` sidesteps it — the compile gate and every non-capture assertion still run
+(measured: 163 of the windowed 194 `assert OK`, the rest belonging to states that need a viewport,
+plus one expected `the window never held the pinned canvas` error) — which makes it the fast way to
+answer "does this still compile?" without waiting on a display.
+
 **Every other hang shape is caught by `preview_watchdog.gd`**, a sibling node in both preview scenes
 — see its row in the table above.
 

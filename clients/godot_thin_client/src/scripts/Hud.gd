@@ -185,7 +185,7 @@ var _legend: LegendController = null
 ## `CommandFeedController` reference until that feed retired; a Callable onto `note_system_event`
 ## now, because the panel those notes land on is not the HUD's to hold.
 var _note_sink: Callable = Callable(self, "note_system_event")
-var _topbar: TopBarReadouts = null
+var _topbar: FactionReadouts = null
 var _telling: TellingPanel = null
 # Victory's counterpart to the legend's `legend_suppressed` — the player-hidden state of a dock
 # card, distinct from "no victory data to show".
@@ -325,7 +325,7 @@ func _ready() -> void:
     # `faction_tracks` / `faction_sedentarization` / `faction_discovered_sites`.
     # The one injection is `_note_sink`: the knowledge-unlock nudge is a System-channel note, and the
     # panel it lands on is `Main`'s, not the HUD's.
-    _topbar = TopBarReadouts.new(_note_sink)
+    _topbar = FactionReadouts.new(_note_sink)
     # The telling GROWS TO FIT its current page, capped at `PAGE_MAX_HEIGHT` (docs/plan_the_telling_book_ux.md),
     # so it no longer needs a dock-scroll ceiling to fit against — a page is bounded (one turn's beats), and
     # the right dock's own scroll stacks it above Victory + Terrain Types with no bespoke height math.
@@ -543,7 +543,7 @@ func update_overlay(turn: int, metrics: Dictionary) -> void:
     _band_labor.set_turn(turn)
     _turnorb.set_turn(turn)
 
-## Top-bar faction readouts — thin delegators to the TopBarReadouts controller (`_topbar`), which owns
+## Top-bar faction readouts — thin delegators to the FactionReadouts controller (`_topbar`), which owns
 ## the Sedentarization / demographics / discoveries / intensification rendering. These
 ## names stay on HudLayer because Main reaches them by reflection (`_hud_invoke` → has_method+callv).
 

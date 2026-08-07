@@ -68,10 +68,10 @@ const SUMMARY_ROW_SEPARATION := 6
 
 const SUMMARY_FLAG_WIDTH := 14.0
 
-## The knowledge meter's cell count on this page. It reads `TopBarReadouts`' own rather than declaring
+## The knowledge meter's cell count on this page. It reads `FactionReadouts`' own rather than declaring
 ## a second one: the top bar and this page draw the SAME track at the same resolution, and two
 ## constants is how they come to disagree about what half-learned looks like.
-const KNOWLEDGE_METER_CELLS := TopBarReadouts.KNOWLEDGE_METER_CELLS
+const KNOWLEDGE_METER_CELLS := FactionReadouts.KNOWLEDGE_METER_CELLS
 
 ## The knowledge row's `<bar> <percent>%` value.
 const KNOWLEDGE_VALUE_FORMAT := "%s %d%%"
@@ -582,7 +582,7 @@ static func _build_settling_block(sedentarization: Dictionary) -> VBoxContainer:
     var stage := String(sedentarization.get("stage", "")).strip_edges()
     # `none` is the sim's own spelling of "no stage reached", so it and the empty string are the same
     # answer and must render as the same word.
-    if stage == "" or stage == TopBarReadouts.SEDENTARIZATION_STAGE_NONE:
+    if stage == "" or stage == FactionReadouts.SEDENTARIZATION_STAGE_NONE:
         stage = HudWorkVocab.FACTION_SETTLING_NOMADIC
     var block := HudWidgets.make_zone_block()
     block.add_child(HudWidgets.zone_head(HudWorkVocab.FACTION_HEADER_SETTLING, ""))
@@ -601,7 +601,7 @@ static func _build_settling_block(sedentarization: Dictionary) -> VBoxContainer:
 ## carrying the INSTANCE total.
 ##
 ## **THE TWO NUMBERS MEAN DIFFERENT THINGS AND BOTH ARE RIGHT**, which is the top bar's own rule
-## (`TopBarReadouts.update_discoveries`) stated in full rather than as a strip: the head's `N` counts
+## (`FactionReadouts.update_discoveries`) stated in full rather than as a strip: the head's `N` counts
 ## INSTANCES found, and the rows are KINDS — three peaks are one row reading `3`. The top bar shows
 ## the pair as a count beside a strip of marks and is regularly misread as disagreeing with itself;
 ## with a row per kind there is nothing left to reconcile.
@@ -782,7 +782,7 @@ static func _work_detail_lines(labor: HudBandLaborState, band: Dictionary) -> Ar
     return lines
 
 ## The faction's craft knowledge — one row per track being learned, in the intensification ladder's
-## own order, off the SAME `TopBarReadouts.faction_tracks` row the top-bar strip and every rung gate
+## own order, off the SAME `FactionReadouts.faction_tracks` row the top-bar strip and every rung gate
 ## read. A finished track reads the word rather than a full meter.
 ##
 ## **A track the faction has not begun is HIDDEN**, the top-bar strip's own rule: the snapshot row is
@@ -790,11 +790,11 @@ static func _work_detail_lines(labor: HudBandLaborState, band: Dictionary) -> Ar
 ## heading over nothing.
 static func _build_knowledge_block(knowledge: Dictionary) -> VBoxContainer:
     var rows: Array = []
-    for track in TopBarReadouts.KNOWLEDGE_TRACK_LABELS:
+    for track in FactionReadouts.KNOWLEDGE_TRACK_LABELS:
         var progress := float(knowledge.get(track, 0.0))
         if progress <= 0.0:
             continue
-        rows.append([String(TopBarReadouts.KNOWLEDGE_TRACK_LABELS[track]), progress])
+        rows.append([String(FactionReadouts.KNOWLEDGE_TRACK_LABELS[track]), progress])
     if rows.is_empty():
         return null
     var block := HudWidgets.make_zone_block()
@@ -805,7 +805,7 @@ static func _build_knowledge_block(knowledge: Dictionary) -> VBoxContainer:
         # **THE SCALE CONVERSION IS THE POINT OF THIS LINE.** A track's progress is `0..1` and
         # `HudFormat.meter_bar` grades a `0..100` score, so a bare `progress` fills zero cells at every
         # value under 0.5 — which is how every meter on this page shipped EMPTY, indistinguishable
-        # from an unstarted track beside a live percent. `TopBarReadouts._knowledge_meter_text` scales
+        # from an unstarted track beside a live percent. `FactionReadouts._knowledge_meter_text` scales
         # the same way for the same reason; the two draw one track at one resolution.
         var value := HudWorkVocab.FACTION_KNOWLEDGE_KNOWN if known \
             else KNOWLEDGE_VALUE_FORMAT % [

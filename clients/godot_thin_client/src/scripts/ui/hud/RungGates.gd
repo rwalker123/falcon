@@ -16,7 +16,7 @@ extends RefCounted
 ##
 ## **STATELESS IS THE INVARIANT** — no node, no `_hud`, no snapshot cache. The one piece of HUD
 ## state the gates need, **faction knowledge**, is threaded in as a `knowledge` PARAMETER: a
-## `{track_key: float}` dict the caller reads off `TopBarReadouts.faction_knowledge` (the compose
+## `{track_key: float}` dict the caller reads off `FactionReadouts.faction_knowledge` (the compose
 ## sheet through its `_topbar`, the board through the HUD's). Reaching for it here would weld a
 ## pure layer to the top-bar controller and give the map no way in at all.
 

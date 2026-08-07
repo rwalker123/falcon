@@ -343,7 +343,7 @@ paths:
   a stock from its CAPACITY" below. How the row itself reads — and why it sits directly under
   `Foraging` — is "The tile card's TWO FOOD-WEB ROWS" above.
 - **Sedentarization — the faction page's SETTLING block** (`Hud.gd` `update_sedentarization`,
-  dispatched from `Main.gd`, INGESTED by `TopBarReadouts` and rendered by
+  dispatched from `Main.gd`, INGESTED by `FactionReadouts` and rendered by
   `FactionRollup._build_settling_block`): the player faction's `SedentarizationState.score` (snapshot
   `sedentarization[]`) reads as a head plus one row, the row keyed by the STAGE and valued by a
   block-glyph meter — `Settling / soft ▰▰▰▱▱ 62/100`.
@@ -376,7 +376,7 @@ paths:
     tracks on one line ran off the right edge (the "Penning clipped" playtest report) and the fix was
     explicit rows. A zone is one row per track and cannot reach that failure.
     **The 5-cell bar survived and is now shared by name**: `FactionRollup.KNOWLEDGE_METER_CELLS` reads
-    `TopBarReadouts`' own const, so the page and the ingest cannot disagree about what half-learned
+    `FactionReadouts`' own const, so the page and the ingest cannot disagree about what half-learned
     looks like. **`HudFormat.meter_bar` grades a 0–100 SCORE**, so a `0..1` track is scaled by
     `PROGRESS_PERCENT_SCALE` on the way in — passing the bare fraction fills zero cells below 0.5, and
     that is exactly how every meter on the faction page shipped empty once.

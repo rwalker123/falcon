@@ -8,7 +8,7 @@ class_name HudFormat
 ## one-line party summary), the largest-remainder people apportionment + the dependency tooltip, and
 ## the one 0..1 → whole-percent conversion.
 ##
-## WHY IT IS SEPARATE FROM `HudWidgets`. `TopBarReadouts` needs `progress_percent` and nothing else;
+## WHY IT IS SEPARATE FROM `HudWidgets`. `FactionReadouts` needs `progress_percent` and nothing else;
 ## the drawer and the Band panel need the whole status chain AND the widget factory. Keeping the words
 ## in their own file means the top-bar cluster can depend on the vocabulary without pulling in a
 ## builder of Controls it never builds. `HudWidgets` depends on THIS, never the other way round.
@@ -317,9 +317,9 @@ static func panel_expedition_summary(exp: Dictionary, herd_label_for_id: Callabl
         PANEL_EXPEDITION_SCOUT_GLYPH, x, y, floor_suffix, phase_suffix]
 
 ## A block-glyph bar for a 0–100 score. `cells` is passed by every caller — the Sedentarization meter
-## (via TopBarReadouts) at the standard width, the knowledge strip narrower, the herd-drawer danger
+## (via FactionReadouts) at the standard width, the knowledge strip narrower, the herd-drawer danger
 ## rows narrower still. Lives here (the pure format layer) because THREE clusters read it and it
-## touches no member; DetailFormat's danger bars and TopBarReadouts' meters call it as
+## touches no member; DetailFormat's danger bars and FactionReadouts' meters call it as
 ## `HudFormat.meter_bar` rather than taking a Callable injection.
 static func meter_bar(score: float, cells: int) -> String:
     var filled := int(round(clampf(score / 100.0, 0.0, 1.0) * float(cells)))

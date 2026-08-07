@@ -8,7 +8,7 @@ extends RefCounted
 ## here (`_render_occupant_drawer`), the legacy flat `%AllocationPanel` host (`_build_allocation_panel`,
 ## which now just stacks this controller's three public zone builders), and the targeting machinery.
 ##
-## Built on the LegendController / TopBarReadouts / TurnOrbController / SelectionCardController /
+## Built on the LegendController / FactionReadouts / TurnOrbController / SelectionCardController /
 ## DrawerComposeController idiom: `HudLayer` holds one as `_bandpanel`, hands it the shared `RefCounted`
 ## state models BY REFERENCE (the SAME `HudBandLaborState` / `ComposeState` instances), keeps thin
 ## delegators for the three methods reached BY NAME (`set_band_city_panel` / `cycle_panel_band` /
@@ -249,7 +249,7 @@ func _init(band_labor: HudBandLaborState, compose: ComposeState,
         selectioncard: SelectionCardController, disclosures: DisclosureController,
         banddetail: BandDetailLines, host: Node,
         emit_assign_labor: Callable, herd_label_for_id: Callable,
-        targeting: TargetingController, topbar: TopBarReadouts) -> void:
+        targeting: TargetingController, topbar: FactionReadouts) -> void:
     _topbar = topbar
     _band_labor = band_labor
     _compose = compose
@@ -270,7 +270,7 @@ func _init(band_labor: HudBandLaborState, compose: ComposeState,
 ## **The set is bounded by what that cluster IS, not by a count.** It is the FACTION-scope readout
 ## cluster; a read of anything else — a label node, a per-band figure, the turn — is a different
 ## collaborator's and does not belong here.
-var _topbar: TopBarReadouts = null
+var _topbar: FactionReadouts = null
 
 ## `_attention` is held for `build_band_attention` ONLY — the faction page's Work and Parties tabs
 ## group that array by owner. A typed collaborator, and read for nothing else: the alerts are the

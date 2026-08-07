@@ -1,6 +1,6 @@
 ---
 paths:
-  - "clients/godot_thin_client/src/scripts/ui/hud/{BandDetailLines,TopBarReadouts,DetailFormat}.gd"
+  - "clients/godot_thin_client/src/scripts/ui/hud/{BandDetailLines,FactionReadouts,DetailFormat}.gd"
   - "clients/godot_thin_client/src/scripts/ui/{BandFoodStatus,TileHabitability,TileClimate}.gd"
 ---
 
@@ -80,7 +80,7 @@ which is a property of the tier and not of the merge.
 - **RETIRED — the demographics readout, and the wire section with no client reader.** The player
   faction's age structure (`PopulationDemographicsState`, snapshot `demographics[]`) rendered as the
   top-bar line `Pop 100  👶34 🛠51 🧓15`, and issue #450 deleted it along with the whole top-right
-  block — **`Hud.update_demographics`, the `TopBarReadouts` ingest and `Main`'s dispatch are all
+  block — **`Hud.update_demographics`, the `FactionReadouts` ingest and `Main`'s dispatch are all
   gone**, so the section joins `accessibleStockpile` as a wire table the client no longer reads.
   **The faction page's PEOPLE bar is what replaced it, and it is a better answer to the same
   question**: it sums the BANDS and apportions the fractional brackets ONCE across the roster

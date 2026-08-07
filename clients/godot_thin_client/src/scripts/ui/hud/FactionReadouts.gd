@@ -1,16 +1,17 @@
-class_name TopBarReadouts
+class_name FactionReadouts
 extends RefCounted
 
 ## Owns the PLAYER FACTION's per-faction snapshot readouts (docs/plan_hud_decomposition.md): its
 ## sedentarization, its discovered Wondrous Sites and its intensification-ladder knowledge. HudLayer
 ## holds one as `_topbar` and delegates the snapshot `update_*` handlers to it.
 ##
-## > **⚠ THE NAME IS A LEFTOVER: THIS CLUSTER OWNS NO TOP BAR AND NO NODES AT ALL.** It rendered eight
-## > Labels in the HUD's top-right block — the Sedentarization meter, the `Pop …` demographics line,
-## > the `◈ Discoveries N` strip and the `⚒ Your people know:` strip — and issue #450 retired that
-## > whole block, because the Band/City dock's FACTION PAGE says all of it better: the PEOPLE bar for
-## > the demographics, the KNOWLEDGE zone for the other three. What is left is the INGEST, and the
-## > cluster is now a pure MODEL. Renaming it (`FactionReadouts`) is a mechanical follow-up.
+## **IT OWNS NO NODES — it is a pure MODEL, and it was `TopBarReadouts` until it stopped being one.**
+## It rendered eight Labels in the HUD's top-right block: the Sedentarization meter, the `Pop …`
+## demographics line, the `◈ Discoveries N` strip, the `⚒ Your people know:` strip, plus `Turn N` and
+## the `Units · Logistics · Sentiment` metrics line. Issue #450 retired that whole block — the
+## Band/City dock's FACTION PAGE says all of it better (the PEOPLE bar for the demographics, the
+## KNOWLEDGE zone for the other three, the turn orb's own face for `Turn N`) — and the name was
+## renamed with it rather than left describing where the data used to be drawn.
 ##
 ## **THE INGEST IS THE POINT, AND IT IS WHY THE FILTER LIVES HERE.** All three wire fields are
 ## per-faction ARRAYS; this is the one place they are filtered to `PLAYER_FACTION_ID` and retained, so

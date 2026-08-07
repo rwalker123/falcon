@@ -840,7 +840,7 @@ func run(harness) -> void:
 			DetailFormat.husbandry_label(DetailFormat.HUSBANDRY_PROGRESS_COMPLETE)))
 	h._assert_hud("…and no knowledge percent leaks into the drawer, where it would read as a stat of the animal",
 		not Q.has_label_containing(h._hud.occupant_detail,
-			String(TopBarReadouts.KNOWLEDGE_TRACK_LABELS[HudFloraVocab.KNOWLEDGE_TRACK_PENNING])))
+			String(FactionReadouts.KNOWLEDGE_TRACK_LABELS[HudFloraVocab.KNOWLEDGE_TRACK_PENNING])))
 	# **THE GATED-CORRAL BRIDGE ASSERTION IS REMOVED, NOT WEAKENED.** It read the gated Corral control's
 	# own face — "Your people know Penning 45% — ♻ hunt a tamed herd to learn it" — and the compose
 	# sheet renders no control at all for a knowledge-only gate, so its subject no longer occurs here.

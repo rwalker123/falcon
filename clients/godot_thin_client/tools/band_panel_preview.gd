@@ -362,8 +362,10 @@ const SHELL_THRESHOLD_HEIGHT := 900
 ## the claim is that the page reads `Faction · Work · Know · Parties` to a player.
 const FACTION_TAB_LABELS: Array[String] = ["Faction", "Work", "Know", "Parties"]
 ## The top bar's sedentarization seed, named because the faction page's SETTLING row renders the SAME
-## figure — the page reads `TopBarReadouts`' retained entry, so the strip and the row cannot disagree,
-## and the assertion has to know which number it is asserting.
+## figure — the page reads `FactionReadouts`' retained entry, which is the ONE place the wire array is
+## filtered to the player faction, and the assertion has to know which number it is asserting.
+## (It was seeded for the top bar's own Sedentarization meter; that meter is retired with the
+## top-right block, and the seed stays because the faction page now renders off the same cache.)
 const TOPBAR_SEDENTARIZATION_SCORE := 62.0
 const TOPBAR_SEDENTARIZATION_STAGE := "soft"
 ## `HudFormat.meter_bar`'s filled cell. Spelled here rather than read off the formatter — the claim is
@@ -1812,11 +1814,15 @@ func _ready() -> void:
 	# a band, without which every state below would re-render as the rollup on its next snapshot.
 	_assert_faction_cycler()
 
-	# **PUT THE TOP BAR BACK.** Both pushes above land in `TopBarReadouts`, whose strips are captured in
-	# every frame below this one — and `_ingest_intensification` REPLACES a faction's row, so the fifth
-	# track would otherwise ride the knowledge strip for the rest of the run. Restored to the standing
-	# row rather than cleared, because an EMPTY intensification array is a no-op merge and would leave
-	# the five-track row standing.
+	# **PUT THE STANDING KNOWLEDGE ROW BACK.** `_ingest_intensification` REPLACES a faction's row, so
+	# the five-track faction fixture would otherwise stand for the rest of the run — and the WORK
+	# BOARD's ⌃ rung-ready marks are derived from that row (`RungGates.next_rung_ready`), so a state
+	# below this one would mark a different set of rows as climbable.
+	#
+	# **The reason USED to be the top bar**, whose knowledge and discoveries strips were captured in
+	# every frame below this; that block is retired (issue #450), so the restore now serves the board
+	# alone. Restored to the standing row rather than cleared, because an EMPTY intensification array
+	# is a no-op merge and would leave the five-track row standing.
 	_hud.update_intensification([_standing_knowledge_row()])
 	_hud.update_discoveries([])
 
@@ -3779,7 +3785,7 @@ func _standing_knowledge_row() -> Dictionary:
 
 ## THE KNOWLEDGE ZONE's craft tracks at the ladder's CEILING — all five, one of them FINISHED so the
 ## `known` word renders beside four live meters. Five is the most rows that block can ever draw
-## (`TopBarReadouts.KNOWLEDGE_TRACK_LABELS` is the whole ladder), which is what makes the zone's
+## (`FactionReadouts.KNOWLEDGE_TRACK_LABELS` is the whole ladder), which is what makes the zone's
 ## measured extent the worst case rather than a sample.
 func _faction_knowledge_fixture() -> Dictionary:
 	return {"faction": 0, "cultivation": 1.0, "seed_selection": 0.62, "herding": 0.41,
@@ -4220,8 +4226,8 @@ func _assert_faction_knowledge_zone() -> void:
 			HudWorkVocab.FACTION_SETTLING_SCALE]))
 	# KNOWLEDGE. The fixture finishes exactly one track, so `known` and a live meter must BOTH render —
 	# either alone passes on a block that renders one shape for every track.
-	var finished := _faction_stat_value(zone, String(TopBarReadouts.KNOWLEDGE_TRACK_LABELS["cultivation"]))
-	var climbing := _faction_stat_value(zone, String(TopBarReadouts.KNOWLEDGE_TRACK_LABELS["seed_selection"]))
+	var finished := _faction_stat_value(zone, String(FactionReadouts.KNOWLEDGE_TRACK_LABELS["cultivation"]))
+	var climbing := _faction_stat_value(zone, String(FactionReadouts.KNOWLEDGE_TRACK_LABELS["seed_selection"]))
 	_assert_band_panel("faction knowledge: a FINISHED track reads '%s' (got '%s')" % [
 			HudWorkVocab.FACTION_KNOWLEDGE_KNOWN, finished],
 		finished == HudWorkVocab.FACTION_KNOWLEDGE_KNOWN)
