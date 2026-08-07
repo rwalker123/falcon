@@ -2596,7 +2596,7 @@ func render_faction() -> void:
     _work_zone_band = {}
     _parties_zone_col = null
     _panel.set_zones(
-        HudWidgets.wrap_zone(FactionRollup.build_band_zone(_band_labor)),
+        HudWidgets.wrap_zone(FactionRollup.build_band_zone(_band_labor, _disclosures)),
         HudWidgets.wrap_zone(FactionRollup.build_work_zone(_band_labor, _player_knowledge())),
         HudWidgets.wrap_zone(FactionRollup.build_parties_zone(_band_labor, _herd_label_for_id)))
     _push_faction_zone_badges()
@@ -2781,6 +2781,19 @@ func set_panel(panel: BandCityPanel) -> void:
     # Re-PAGE the work board on it — the other two zones are unaffected by a box change.
     if panel != null and not panel.zones_resized.is_connected(_on_zones_resized):
         panel.zones_resized.connect(_on_zones_resized)
+    # A faction drill-down row is a link to a BAND, and making that band the panel's subject is this
+    # controller's job — the disclosure controller must not know the band panel exists.
+    if _disclosures != null:
+        _disclosures.set_faction_band_jump(jump_to_band_entity)
+
+## Make a band the panel's subject, by entity — the faction page's drill-down rows route here, so a
+## popover row reaches a band the same way the cycler does (recenter, pin, render), rather than by a
+## second path that could drift from it. Unknown entity ⇒ no-op.
+func jump_to_band_entity(entity: int) -> void:
+    var band := _band_labor.player_band_by_entity(entity)
+    if band.is_empty():
+        return
+    _select_band_on_map(band)
 
 ## Walk to the next/prev subject (cycler ◀/▶) over `[the faction page] + player_bands()`.
 ##

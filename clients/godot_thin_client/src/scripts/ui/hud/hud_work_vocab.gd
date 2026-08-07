@@ -157,26 +157,31 @@ const ZONE_HEADER_PARTIES := "Parties"
 ## a tab reading "Band" over a faction rollup names the wrong scope.
 const ZONE_TAB_FACTION := "Faction"
 
-const FACTION_HEADER_FOOD := "Food"
-
-const FACTION_HEADER_TRADE := "Trade"
-
-const FACTION_HEADER_HERDS := "Herds"
-
 const FACTION_HEADER_KNOWLEDGE := "Knowledge"
 
-## The faction band zone's stat-row keys — one STOCK row per account, each headed by its own rate.
-## **There are deliberately no `Income` / `Eaten` / `Pen feed` rows**: a band states its ledger on one
-## line and puts the breakdown behind a disclosure, and this page follows it (see
-## `FactionRollup._build_food_block`).
-const FACTION_ROW_LARDER := "Larder"
+## **THE ALERT CLAUSE — what a faction row says where an aggregate would lie.** A runway is one larder
+## against one band's drain and a kit condition is three durabilities per band; neither has a faction
+## value, so those rows state HOW MANY bands are in trouble and the drill-down states which. The count
+## and nothing more: naming the band here would make the row as long as the list it replaces.
+const FACTION_ALERT_GLYPH := "⚠"
 
-const FACTION_ROW_PER_TURN := "Per turn"
+const FACTION_ALERT_ONE := "1 band"
+
+const FACTION_ALERT_MANY := "%d bands"
+
+## The Kit row's two states. It carries NO durabilities — a mean of three per band describes no band
+## that exists — so it is the alert, or the word saying there is none.
+const FACTION_KIT_ALL_EQUIPPED := "all equipped"
+
+const FACTION_KIT_DRY_NOTE := "a kit has run out"
+
+## A bare percentage in a drill-down row, where the row's own key already says what it is a percentage
+## OF (the band page's `GROWTH_ROW_FORMAT` spells `of normal` because it stands alone; here the
+## faction row above the list has already said it).
+const FACTION_PERCENT_FORMAT := "%d%%"
 
 ## The faction's trade STOCK, at the one decimal the per-band Trade row already prints it at.
 const FACTION_TRADE_STOCK_FORMAT := "%.1f"
-
-const FACTION_ROW_PENS := "Pens"
 
 ## The PEOPLE key's trailing chip on the faction page, where a band's page carries its dependency
 ## count: how many bands the bar is summed over, so a total is never read as one band's.

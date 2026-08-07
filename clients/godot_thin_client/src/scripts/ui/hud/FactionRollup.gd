@@ -12,13 +12,23 @@ extends RefCounted
 ## state it needs threaded in as a PARAMETER: the `HudBandLaborState` model itself, which is where
 ## every per-snapshot fact this page sums already lives.
 ##
-## **IT RE-DERIVES NOTHING.** Every total is a SUM over answers the per-band surfaces already give —
-## `DetailFormat.band_net_food` / `band_provisions` / `band_trade_stock`,
-## `HudBandLaborState.effective_idle` / `effective_role_workers` / `band_party_workers`,
-## `TopBarReadouts.faction_tracks` — so a band's own page and this one can never disagree about a
-## number. A rollup that computed its own food ledger would be a second source of truth for the
-## identity `larder_delta == income − consumption − pen_feed − raid_forfeit` the whole food arc keeps
-## closed.
+## **IT IS THE BAND PAGE'S VITALS BLOCK, ONE SCALE UP.** The same five rows in the same order through
+## the same `DetailFormat.detail_bbcode` renderer — Food, Trade, Kit, Morale, Growth — so the two
+## pages cannot drift into different vocabularies for the same facts. What the faction page spends its
+## disclosures on is the thing only it can answer: **which band each total came from**, one clickable
+## row per band.
+##
+## **AN AGGREGATE WHERE ONE IS MEANINGFUL, AN ALERT WHERE IT IS NOT.** A larder and a trade stock sum,
+## so those rows carry numbers. A RUNWAY does not — it is one larder against one band's drain — and a
+## KIT does not either, being three durabilities per band; so those rows carry `⚠ N bands` and the
+## drill-down carries which. Morale and Growth are percentages and go through `FactionAggregate`.
+##
+## **IT RE-DERIVES NOTHING.** Every figure is a SUM or a weighted mean over answers the per-band
+## surfaces already give — `DetailFormat.band_net_food` / `band_provisions` / `band_trade_stock` /
+## `band_fertility` / `kit_condition_face`, `HudBandLaborState.effective_idle` — so a band's own page
+## and this one can never disagree about a number. A rollup that computed its own food ledger would be
+## a second source of truth for the identity
+## `larder_delta == income − consumption − pen_feed − raid_forfeit` the whole food arc keeps closed.
 ##
 ## **THE PAGE IS READ-ONLY, DELIBERATELY.** The issue's scope is "counts and where they are, not
 ## per-worker controls": role steppers, labor assignment and the compose sheets stay on the per-band
@@ -64,16 +74,219 @@ const KNOWLEDGE_VALUE_FORMAT := "%s %d%%"
 ## height-capped box; this page's four blocks measure ~260px of the ~300px a horizontal dock offers,
 ## so there is nothing to give up. **Re-measure before adding a fifth block** — `band_panel_preview`'s
 ## `_report_zone_content_extent` prints the number, and the band zone has been at the edge twice.
-static func build_band_zone(labor: HudBandLaborState) -> VBoxContainer:
+static func build_band_zone(labor: HudBandLaborState, disclosures: DisclosureController) -> VBoxContainer:
     var col := HudWidgets.make_zone_column()
     var bands := labor.player_bands()
+    col.add_child(_build_vitals_label(bands, disclosures))
     var people := _build_people_block(bands)
     if people != null:
         col.add_child(people)
-    col.add_child(_build_food_block(bands))
-    col.add_child(_build_trade_block(bands))
-    col.add_child(_build_herds_block(labor))
     return col
+
+## THE FACTION'S VITALS — the band page's own five rows, one scale up, through the band page's own
+## renderer. A fresh `RichTextLabel` each render, so its `meta_clicked` is wired here (bound to ITSELF
+## as the popover's anchor), exactly as `BandPanelController._build_vitals_label` does.
+##
+## **AN AGGREGATE WHERE ONE IS MEANINGFUL, AN ALERT WHERE IT IS NOT.** That is the rule the whole page
+## is built on, and it is why the rows are not uniform: a larder and a trade stock genuinely SUM, so
+## those rows carry numbers; a runway is one larder against one band's drain and a kit condition is
+## three durabilities per band, so neither has a faction value to state and those rows carry the
+## ALERT instead. The detail is one click away in every case.
+static func _build_vitals_label(bands: Array, disclosures: DisclosureController) -> RichTextLabel:
+    var label := RichTextLabel.new()
+    label.bbcode_enabled = true
+    label.fit_content = true
+    label.scroll_active = false
+    label.autowrap_mode = TextServer.AUTOWRAP_WORD
+    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    disclosures.wire_label(label)
+    var ctx := DetailFormat.Context.new()
+    var lines := _faction_summary_lines(bands, disclosures)
+    # The carets are read from the CONTROLLER, not from a context the producer filled — every row
+    # here registers its own disclosure as it is built, so the state is complete only after the last
+    # of them. `BandDetailLines` hit exactly this ordering trap on the merged Growth clause.
+    ctx.disclosures = disclosures.state()
+    label.text = DetailFormat.detail_bbcode(lines, ctx)
+    return label
+
+## The five rows, in the band page's order, registering each row's per-band drill-down as it goes.
+static func _faction_summary_lines(bands: Array, disclosures: DisclosureController) -> Array[String]:
+    var lines: Array[String] = []
+    lines.append(_food_line(bands, disclosures))
+    lines.append(_trade_line(bands, disclosures))
+    lines.append(_kit_line(bands, disclosures))
+    lines.append(_morale_line(bands, disclosures))
+    var growth := _growth_line(bands, disclosures)
+    if growth != "":
+        lines.append(growth)
+    return lines
+
+## `Food: 229 · −5.86 /turn` (+ the alert clause). **NO RUNWAY.** Turns-of-food is one larder against
+## one band's drain; a faction figure would be an average that hides the band that is starving, so the
+## runway stays on the per-band rows and its ALERT is what reaches this one.
+static func _food_line(bands: Array, disclosures: DisclosureController) -> String:
+    var larder := 0.0
+    var net := 0.0
+    var rows: Array[String] = []
+    var starving := 0
+    for i in range(bands.size()):
+        var band: Dictionary = bands[i]
+        larder += DetailFormat.band_provisions(band)
+        # Summed from each band's own `band_net_food`, never recomposed — that identity carries the
+        # episodic `raid_forfeit` and the pen feed, and a rebuilt net would drift from the band pages.
+        net += DetailFormat.band_net_food(band)
+        var turns := float(band.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
+        if BandFoodStatus.is_critical(turns):
+            starving += 1
+        rows.append(_band_row(band, i, "%s · %s" % [
+            SourceForecast.format_stock(DetailFormat.band_provisions(band)),
+            SourceForecast.format_signed(DetailFormat.band_net_food(band))],
+            DetailFormat.food_turns_text(turns)))
+    disclosures.register_faction(HudDisclosureVocab.DETAIL_ROW_FOOD,
+        HudDisclosureVocab.BREAKDOWN_KIND_FOOD, rows, starving > 0)
+    return "%s%s%s · [color=#%s]%s[/color]%s" % [
+        HudDisclosureVocab.DETAIL_ROW_FOOD, DetailFormat.DETAIL_KV_SEPARATOR,
+        SourceForecast.format_stock(larder),
+        HudStyle.HEALTHY_HEX if net >= 0.0 else HudStyle.DANGER_HEX,
+        SourceForecast.format_yield(net),
+        _alert_clause(starving, HudStyle.DANGER_HEX)]
+
+## `Trade: 15.6 · +0.39 /turn`. Both terms sum and nothing consumes trade goods, so this is the one
+## row with no alert to carry — the same reason a band's Trade row is never concerning.
+static func _trade_line(bands: Array, disclosures: DisclosureController) -> String:
+    var stock := 0.0
+    var rate := 0.0
+    var rows: Array[String] = []
+    for i in range(bands.size()):
+        var band: Dictionary = bands[i]
+        stock += DetailFormat.band_trade_stock(band)
+        rate += DetailFormat.band_trade_income(band)
+        rows.append(_band_row(band, i, "%s · %s" % [
+            HudWorkVocab.FACTION_TRADE_STOCK_FORMAT % DetailFormat.band_trade_stock(band),
+            SourceForecast.format_signed(DetailFormat.band_trade_income(band))], ""))
+    disclosures.register_faction(HudDisclosureVocab.DETAIL_ROW_TRADE,
+        HudDisclosureVocab.BREAKDOWN_KIND_TRADE, rows, false)
+    return "%s%s%s · [color=#%s]%s[/color]" % [
+        HudDisclosureVocab.DETAIL_ROW_TRADE, DetailFormat.DETAIL_KV_SEPARATOR,
+        HudWorkVocab.FACTION_TRADE_STOCK_FORMAT % stock,
+        HudStyle.HEALTHY_HEX if SourceForecast.has_component(rate) else HudStyle.INK_DIM_HEX,
+        SourceForecast.format_yield(rate)]
+
+## `Kit: ⚠ 2 bands` / `Kit: all equipped`. **THE DURABILITIES DO NOT AGGREGATE AT ALL** — three per
+## band, and a mean of them describes no band that exists — so this row is the alert and nothing else.
+## Which band is bare-handed is the fact to act on, and it is one click away.
+static func _kit_line(bands: Array, disclosures: DisclosureController) -> String:
+    var rows: Array[String] = []
+    var dry := 0
+    for i in range(bands.size()):
+        var band: Dictionary = bands[i]
+        if not DetailFormat.band_states_kit(band):
+            continue
+        var is_dry := DetailFormat.band_kit_is_dry(band)
+        if is_dry:
+            dry += 1
+        rows.append(_band_row(band, i, _kit_face(band),
+            HudWorkVocab.FACTION_KIT_DRY_NOTE if is_dry else ""))
+    if rows.is_empty():
+        return ""
+    disclosures.register_faction(HudDisclosureVocab.DETAIL_ROW_KIT,
+        HudDisclosureVocab.BREAKDOWN_KIND_KIT, rows, dry > 0)
+    var value := _alert_text(dry, HudStyle.DANGER_HEX) if dry > 0 \
+        else "[color=#%s]%s[/color]" % [HudStyle.INK_DIM_HEX, HudWorkVocab.FACTION_KIT_ALL_EQUIPPED]
+    return "%s%s%s" % [HudDisclosureVocab.DETAIL_ROW_KIT, DetailFormat.DETAIL_KV_SEPARATOR, value]
+
+## `Morale: 78% ▼` (+ the alert clause). Population-weighted through `FactionAggregate`, and the ARROW
+## is the weighted mean of the bands' own `morale_delta` — NOT a diff of this mean against last turn's,
+## which would swing every time a band is founded or lost and report a trend that never happened.
+static func _morale_line(bands: Array, disclosures: DisclosureController) -> String:
+    var mean := FactionAggregate.weighted_mean(bands, "morale")
+    var delta := FactionAggregate.weighted_mean(bands, "morale_delta")
+    var rows: Array[String] = []
+    var concerning := 0
+    for i in range(bands.size()):
+        var band: Dictionary = bands[i]
+        if DetailFormat.morale_is_concerning(band):
+            concerning += 1
+        rows.append(_band_row(band, i, "%d%%%s" % [
+            int(round(float(band.get("morale", 0.0)) * 100.0)), _trend_glyph(float(band.get("morale_delta", 0.0)))],
+            DetailFormat.morale_cause_label(int(band.get("morale_cause", DetailFormat.MORALE_CAUSE_NONE)))))
+    disclosures.register_faction(HudDisclosureVocab.DETAIL_ROW_MORALE,
+        HudDisclosureVocab.BREAKDOWN_KIND_MORALE, rows, concerning > 0)
+    return "%s%s%d%%%s%s" % [
+        HudDisclosureVocab.DETAIL_ROW_MORALE, DetailFormat.DETAIL_KV_SEPARATOR,
+        int(round(mean * 100.0)), _trend_glyph(delta),
+        _alert_clause(concerning, HudStyle.WARN_HEX)]
+
+## `Growth: 74% of normal` (+ the alert clause). Weighted exactly as Morale is — the two rows must
+## agree about what an average of a percentage means, or one of them is lying.
+## Renders NOTHING when no band has a projected reading: no data is not a stalled faction.
+static func _growth_line(bands: Array, disclosures: DisclosureController) -> String:
+    var rows: Array[String] = []
+    var concerning := 0
+    var total := 0.0
+    var weight := 0.0
+    for i in range(bands.size()):
+        var band: Dictionary = bands[i]
+        if not BandFoodStatus.fertility_is_projected(band):
+            continue
+        var w := FactionAggregate.band_weight(band)
+        total += DetailFormat.band_fertility(band) * w
+        weight += w
+        if DetailFormat.growth_is_concerning(band):
+            concerning += 1
+        rows.append(_band_row(band, i, HudWorkVocab.FACTION_PERCENT_FORMAT % int(
+            round(DetailFormat.band_fertility(band) * 100.0)), ""))
+    if rows.is_empty():
+        return ""
+    disclosures.register_faction(HudDisclosureVocab.DETAIL_ROW_GROWTH,
+        HudDisclosureVocab.BREAKDOWN_KIND_GROWTH, rows, concerning > 0)
+    return "%s%s%d%% of normal%s" % [
+        HudDisclosureVocab.DETAIL_ROW_GROWTH, DetailFormat.DETAIL_KV_SEPARATOR,
+        int(round((total / weight) * 100.0)) if weight > 0.0 else 0,
+        _alert_clause(concerning, HudStyle.WARN_HEX)]
+
+## One band's three kit conditions, composed from the SAME leaves `BandDetailLines._band_kit_line`
+## uses — `kit_condition_face` spells a dry kit as the WORD, and `kit_is_equipped` decides its ink, so
+## a drill-down row and the band's own Kit row can never describe one kit differently.
+static func _kit_face(band: Dictionary) -> String:
+    var entries: Array[String] = []
+    for kit in [
+        [DetailFormat.KIT_LABEL_SPEARS, DetailFormat.KIT_DURABILITY_KEY_SPEARS],
+        [DetailFormat.KIT_LABEL_SLED, DetailFormat.KIT_DURABILITY_KEY_SLED],
+        [DetailFormat.KIT_LABEL_BASKETS, DetailFormat.KIT_DURABILITY_KEY_BASKETS],
+    ]:
+        var key := String(kit[1])
+        entries.append("[color=#%s]%s[/color]" % [
+            HudStyle.INK_HEX if DetailFormat.kit_is_equipped(band, key) else HudStyle.DANGER_HEX,
+            DetailFormat.kit_condition_face(band, key)])
+    return BandDetailLines.BAND_KIT_ROW_SEPARATOR.join(entries)
+
+## One row of a drill-down: the band's name, its value, and an optional dim note. The NAME is a
+## clickable `[url]` so the popover doubles as the page's second, better way to reach a band.
+static func _band_row(band: Dictionary, index: int, value: String, note: String) -> String:
+    var suffix := "  [color=#%s]%s[/color]" % [HudStyle.INK_DIM_HEX, note] if note != "" else ""
+    return "%s%s%d][color=#%s]%s[/color][/url]  %s%s" % [
+        DetailFormat.DISCLOSURE_URL_OPEN, HudDisclosureVocab.FACTION_BAND_JUMP_META_PREFIX,
+        int(band.get("entity", -1)), HudStyle.SIGNAL_HEX,
+        HudFormat.band_display_name(band, index + 1), value, suffix]
+
+## `  ⚠ 2 bands` — the alert clause a row appends when some band is in trouble. The COUNT and nothing
+## more: which band it is lives one click away, which is the whole division of labour on this page.
+static func _alert_clause(count: int, hex: String) -> String:
+    return "  " + _alert_text(count, hex) if count > 0 else ""
+
+static func _alert_text(count: int, hex: String) -> String:
+    var word := HudWorkVocab.FACTION_ALERT_ONE if count == 1 else HudWorkVocab.FACTION_ALERT_MANY % count
+    return "[color=#%s]%s %s[/color]" % [hex, HudWorkVocab.FACTION_ALERT_GLYPH, word]
+
+## The band page's own trend arrow, on a delta this page composed. Silent inside the epsilon, so a
+## faction that is merely holding steady does not wear an arrow that means nothing.
+static func _trend_glyph(delta: float) -> String:
+    if absf(delta) < DetailFormat.MORALE_TREND_EPSILON:
+        return ""
+    return " [color=#%s]%s[/color]" % [
+        HudStyle.HEALTHY_HEX if delta > 0.0 else HudStyle.DANGER_HEX,
+        BandDetailLines.MORALE_TREND_RISING_GLYPH if delta > 0.0 else BandDetailLines.MORALE_TREND_FALLING_GLYPH]
 
 ## Zone `work` — WHAT THE FACTION IS DOING: the whole workforce as one bar, where those hands are
 ## band by band, and what the faction's craft knowledge is.
@@ -177,100 +390,6 @@ static func _build_people_block(bands: Array) -> VBoxContainer:
     # hides the band that is in trouble — the same reasoning that took the figure off the top bar.
     # What the slot carries instead is the one thing a TOTAL needs, which is how many bands it spans.
     block.add_child(HudWidgets.build_composition_key(segments, _bands_chip(bands.size())))
-    return block
-
-## The faction larder: what is stored, headed by what it gains or loses a turn.
-##
-## **THE LEDGER IS NOT BROKEN OUT, and that is the band page's own shape rather than a cut for room.**
-## A band states `Food: 74 (93 turns) · -0.81 /turn` on ONE line and puts Gathered / Hunted / Eaten /
-## Pen feed behind a disclosure popover; this page had grown a four-row inline ledger the per-band
-## surface deliberately does not have. Both figures the rollup owes are still here — the STOCK on the
-## row and the RATE on the head — and the breakdown is one cycle away, on the band that owns it.
-##
-## Measured, that is also what keeps the zone inside a horizontal dock: the four-row form read **328px
-## of a 300px box** at the vitals type size, and this one reads 247. **Every row here is now
-## unconditional**, so that figure is the zone's height rather than its best case.
-##
-## **THERE IS NO FACTION-WIDE RUNWAY**, the `(93 turns)` a band's own row carries. Turns-of-food is a
-## property of one larder against one band's drain; averaged across bands it hides the band that is
-## starving behind the ones that are not — the same reason the top bar's dependency figure was taken
-## off it.
-static func _build_food_block(bands: Array) -> VBoxContainer:
-    var larder := 0.0
-    var net := 0.0
-    for band_variant in bands:
-        if not (band_variant is Dictionary):
-            continue
-        var band: Dictionary = band_variant
-        larder += DetailFormat.band_provisions(band)
-        # **THE NET IS SUMMED FROM EACH BAND'S OWN `band_net_food`**, never recomposed from separate
-        # income and drain totals — so this page can never quote a net the band pages do not add up to.
-        # It carries all four terms of the larder identity, `pen_feed` and the EPISODIC `raid_forfeit`
-        # included, which is the other reason not to rebuild it out of the two figures on screen.
-        net += DetailFormat.band_net_food(band)
-    var block := HudWidgets.make_zone_block()
-    block.add_child(HudWidgets.zone_head(HudWorkVocab.FACTION_HEADER_FOOD,
-        SourceForecast.format_signed(net), null,
-        HudStyle.HEALTHY if net >= 0.0 else HudStyle.DANGER))
-    block.add_child(_stat_row(HudWorkVocab.FACTION_ROW_LARDER,
-        SourceForecast.format_stock(larder), HudStyle.INK))
-    return block
-
-## The faction's trade goods: the stock its bands hold between them, and what they earn a turn.
-##
-## Rendered UNCONDITIONALLY, at `+0.00` when the faction earns none — the per-band Trade row's own
-## rule, and for its reason: a row that vanished at zero read in playtest as "this cannot trade at
-## all" rather than "it earns none right now".
-static func _build_trade_block(bands: Array) -> VBoxContainer:
-    var stock := 0.0
-    var rate := 0.0
-    for band_variant in bands:
-        if not (band_variant is Dictionary):
-            continue
-        var band: Dictionary = band_variant
-        stock += DetailFormat.band_trade_stock(band)
-        rate += DetailFormat.band_trade_income(band)
-    var block := HudWidgets.make_zone_block()
-    # The stock carries ONE decimal, the per-band Trade row's own rule: the sim accumulates sub-unit
-    # trade income rather than rounding it off each turn, so an integer readout would show a `0` stuck
-    # for ~100 turns beside a visibly non-zero rate.
-    block.add_child(HudWidgets.zone_head(HudWorkVocab.FACTION_HEADER_TRADE,
-        HudWorkVocab.FACTION_TRADE_STOCK_FORMAT % stock))
-    block.add_child(_stat_row(HudWorkVocab.FACTION_ROW_PER_TURN,
-        SourceForecast.format_signed(rate), HudStyle.INK))
-    return block
-
-## What the faction KEEPS: the managed herds its bands staff, and how many of those are penned.
-##
-## **A KEPT HERD IS ONE THE SIM ASKS FOR KEEPERS ON** (`herders_needed > 0`), resolved through the
-## bands' own hunt assignments — which is what makes the count unambiguously THIS faction's. A wild
-## herd being hunted is not kept, and `world_herds()` alone cannot answer whose a managed herd is.
-## The herd is re-resolved LIVE through `find_world_herd`, never read off the assignment's launch-time
-## target: herds migrate, and the rung travels with the animals.
-static func _build_herds_block(labor: HudBandLaborState) -> VBoxContainer:
-    var seen := {}
-    var pens := 0
-    for band_variant in labor.player_bands():
-        if not (band_variant is Dictionary):
-            continue
-        for assignment_variant in HudBandLaborState.labor_assignments_of(band_variant as Dictionary):
-            if not (assignment_variant is Dictionary):
-                continue
-            var assignment: Dictionary = assignment_variant
-            if String(assignment.get("kind", "")) != SourceForecast.LABOR_KIND_HUNT:
-                continue
-            var herd_id := String(assignment.get("fauna_id", "")).strip_edges()
-            if herd_id.is_empty() or seen.has(herd_id):
-                continue
-            var herd := labor.find_world_herd(herd_id)
-            if herd.is_empty() or int(herd.get("herders_needed", 0)) <= 0:
-                continue
-            seen[herd_id] = true
-            if bool(herd.get("corralled", false)):
-                pens += 1
-    var block := HudWidgets.make_zone_block()
-    block.add_child(HudWidgets.zone_head(HudWorkVocab.FACTION_HEADER_HERDS, str(seen.size())))
-    block.add_child(_stat_row(HudWorkVocab.FACTION_ROW_PENS, str(pens), HudStyle.INK))
     return block
 
 # ---- work zone blocks -------------------------------------------------------

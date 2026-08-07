@@ -270,6 +270,15 @@ const UNDER_HERDED_WORK_HERDERS_NEEDED := 4
 ## fixtures already quote, so the row measures what a live one does.
 const FACTION_PEN_FEED_UPKEEP := 1.74
 
+## The faction roster's SECOND band — deliberately smaller and unhappier than the first, so a
+## population-weighted mean and a plain one give different answers. See `_faction_roster`.
+const FACTION_SECOND_BAND_SIZE := 12
+
+const FACTION_SECOND_BAND_MORALE := 0.30
+
+## …and its age brackets scaled to match that size, since they are the same band counted twice.
+const FACTION_SECOND_BAND_SCALE := 0.4
+
 ## THE HERDER-FLOOR ROW (`band_panel_work_herder_floor`) — a MANAGED herd whose crew requirement is
 ## LARGER than what its take saturates, which is the only shape that can expose the bug: the row flags
 ## the herd under-herded and, without the floor, disables the very `+` that would staff the 3rd herder.
@@ -3699,6 +3708,19 @@ func _faction_roster() -> Array:
 	# zone at **328px of its 300px box** when the rows were briefly a four-row ledger at the vitals type
 	# size, which is why the fixture keeps paying it.
 	second["pen_feed_upkeep"] = FACTION_PEN_FEED_UPKEEP
+	# **IT IS A SMALLER BAND WITH WORSE MORALE, and both halves are load-bearing.** Population-weighted
+	# and plain means agree exactly when every band is the same size, so a roster of two 30-person bands
+	# makes `_assert_faction_weighted_morale` vacuous — it would pass under either rule. At 12 people and
+	# 0.30 morale against 30 and 0.82 the two answers separate (67% weighted, 56% plain), which is the
+	# only configuration in which that assertion says anything.
+	second["size"] = FACTION_SECOND_BAND_SIZE
+	second["morale"] = FACTION_SECOND_BAND_MORALE
+	# The age brackets are scaled with it. They are a SECOND counting of the same band, and
+	# `band_panel_people`'s own rule is that the two must agree — a band of 12 carrying a 30-person age
+	# structure is a fixture no server can produce, and the PEOPLE assertion reads these floats.
+	for bracket in ["age_children", "age_working", "age_elders"]:
+		second[bracket] = float(second[bracket]) * FACTION_SECOND_BAND_SCALE
+	second["working_age"] = int(round(float(second["working_age"]) * FACTION_SECOND_BAND_SCALE))
 	return [_band_fixture(), second, _hunt_expedition_fixture()]
 
 ## The faction page's rendered claims: the total really is the faction's, the header names the right
@@ -3721,32 +3743,47 @@ func _assert_faction_page() -> void:
 			+ float(band.get("age_elders", 0.0))
 	var expected := roundi(raw)
 	var band_zone: Node = _panel._zones.get(BandCityPanel.ZONE_BAND)
+	var work_zone: Node = _panel._zones.get(BandCityPanel.ZONE_WORK)
 	var people := _zone_head_readout(band_zone, HudWorkVocab.ZONE_HEADER_PEOPLE) if band_zone != null else ""
 	_assert_band_panel(
 		"faction page: PEOPLE reads the whole faction (%d) — not one band's (%d), not the per-band sum (%d)" % [
 			expected, roundi(raw / float(maxi(bands.size(), 1))), bands.size() * 30],
 		people == str(expected))
 
-	# **A HEADING MUST NEVER RENDER LARGER THAN THE ROW IT LABELS.** Reported twice by eye and invisible
-	# to every other assertion here — a mis-sized Label sits inside its zone and fits its box, and at
-	# the harness's canvas scale the difference is a couple of pixels. See `_assert_faction_type_scale`.
-	_assert_faction_type_scale(band_zone)
+	# **THE VITALS ARE THE BAND PAGE'S FIVE ROWS, ONE SCALE UP.** Asserted on the rendered BBCode rather
+	# than on a frame: the rows are a `RichTextLabel`'s text, and a picture cannot tell a row that is
+	# missing from one that scrolled. The KEYS are what is checked — their values are the aggregation
+	# rules, which have their own assertions below.
+	var vitals := _faction_vitals_text(band_zone)
+	for row in [HudDisclosureVocab.DETAIL_ROW_FOOD, HudDisclosureVocab.DETAIL_ROW_TRADE,
+			HudDisclosureVocab.DETAIL_ROW_KIT, HudDisclosureVocab.DETAIL_ROW_MORALE,
+			HudDisclosureVocab.DETAIL_ROW_GROWTH]:
+		# The KEY alone, not `key + ": "` — `detail_bbcode` splits the pair and emits the key into its
+		# own `[cell]`, so the separator never survives into the rendered text.
+		_assert_band_panel("faction page: the vitals carry the %s row" % row, vitals.contains(row))
 
-	# **THE HERDS BLOCK COUNTS WHAT THE FACTION KEEPS**, which is why the roster's second band works a
-	# CORRALLED herd: a wild hunted herd is correctly not kept, so on an all-wild roster this block
-	# reads `0 / 0` and a page that had stopped counting would look identical.
-	_assert_band_panel("faction page: HERDS counts the kept herd",
-		_zone_head_readout(band_zone, HudWorkVocab.FACTION_HEADER_HERDS) == "1")
-	_assert_band_panel("faction page: the Pens row counts the corral",
-		_faction_stat_value(band_zone, HudWorkVocab.FACTION_ROW_PENS) == "1")
+	# **AN AGGREGATE WHERE ONE IS MEANINGFUL, AN ALERT WHERE IT IS NOT.** The roster's second band is
+	# below the critical runway, so Food must carry the alert clause — and must NOT carry a faction
+	# runway, which is the figure that would have hidden it behind two healthy bands.
+	_assert_band_panel("faction page: Food alerts on the starving band",
+		vitals.contains(HudWorkVocab.FACTION_ALERT_GLYPH))
+	# The runway renders as a PARENTHETICAL (`78 (19 turns)`), and no faction row carries a parenthetical
+	# of any kind — so the absence of `(` is the test. Matching on the unit word itself does not work:
+	# `FOOD_RUNWAY_UNIT` is "turn", which is a substring of the `/turn` every rate on this row ends in.
+	_assert_band_panel("faction page: Food states NO faction runway",
+		not vitals.contains("("))
 
-	# **EVERY STAT ROW RENDERS ITS KEY.** A `clip_text` key is squeezed to nothing by the expanding
-	# spacer beside it, leaving a column of right-aligned numbers with no names — and a zero-width
-	# Label passes the zone-bounds AND content-fits assertions comfortably, so nothing else here can
-	# see it. That shipped once.
-	var keyless := _faction_keyless_rows(band_zone)
-	_assert_band_panel("faction page: every stat row names itself (%d nameless rows)" % keyless,
-		keyless == 0)
+	# **THE KIT ROW CARRIES NO DURABILITIES**, a mean of three per band describing no band that exists.
+	# Asserted as an ABSENCE against the fixture's own spear condition, which the band page's Kit row
+	# would print — so a Kit row that quietly went back to summarising fails here.
+	_assert_band_panel("faction page: Kit states no faction durability",
+		not vitals.contains(str(KIT_SHARED_SPEARS_CONDITION)))
+
+	# **MORALE IS POPULATION-WEIGHTED, and the fixture is built so that a PLAIN mean gives a different
+	# answer** — otherwise the weighting is asserted by a number it would produce either way.
+	_assert_faction_weighted_morale(vitals)
+
+	_assert_faction_type_scale(work_zone)
 
 	# THE HEADER. A faction has no settlement stage and no tile, so the stage slot carries the band
 	# COUNT — the identity fact at this scale — and the coordinate slot hides itself outright.
@@ -3822,6 +3859,50 @@ func _assert_faction_cycler() -> void:
 	_hud.cycle_panel_band(BandCityPanel.CYCLE_NEXT)
 	_assert_band_panel("faction cycler: left on a band for the states that follow",
 		not _hud._bandpanel._panel_is_faction)
+
+## The faction vitals block's RAW BBCode — the `[url]` metas and the `[color]` tags included, since
+## some claims are about a link existing and some about a number being absent. The first
+## `RichTextLabel` under the zone is it; the zone has no other.
+func _faction_vitals_text(zone: Node) -> String:
+	if zone is RichTextLabel:
+		return (zone as RichTextLabel).text
+	for child in zone.get_children():
+		var found := _faction_vitals_text(child)
+		if found != "":
+			return found
+	return ""
+
+## MORALE IS POPULATION-WEIGHTED, asserted against the PLAIN mean the same fixture would give.
+##
+## **The two must differ, or the claim is satisfiable by either rule.** The roster is built for it —
+## its two bands differ in BOTH size and morale — so a plain mean lands on one number and the weighted
+## one on another, and the assertion names both. This is the only thing in the harness that can see
+## `FactionAggregate`'s weighting at all; every other reading it feeds is a single band's own value.
+func _assert_faction_weighted_morale(vitals: String) -> void:
+	var bands: Array = []
+	for entry in _faction_roster():
+		if not bool((entry as Dictionary).get("is_expedition", false)):
+			bands.append(entry)
+	var plain := 0.0
+	var weighted := 0.0
+	var weight := 0.0
+	for band_variant in bands:
+		var band: Dictionary = band_variant
+		var morale := float(band.get("morale", 0.0))
+		var size := float(band.get("size", 0))
+		plain += morale
+		weighted += morale * size
+		weight += size
+	var plain_pct := int(round((plain / float(bands.size())) * 100.0))
+	var weighted_pct := int(round((weighted / weight) * 100.0))
+	if plain_pct == weighted_pct:
+		_assert_band_panel(
+			"faction morale: the fixture must separate weighted from plain (both read %d%%)" % plain_pct,
+			false)
+		return
+	_assert_band_panel("faction morale: population-weighted (%d%%), not a plain mean (%d%%)" % [
+			weighted_pct, plain_pct],
+		vitals.contains("%d%%" % weighted_pct) and not vitals.contains("%d%%" % plain_pct))
 
 ## THE PAGE'S TYPE SCALE: every zone head at `ALLOC_SECTION_FONT_SIZE`, every row at the work board's
 ## `WORK_ROW_FONT_SIZE` — the page's claim is that it uses the board's scale, so that is what is
