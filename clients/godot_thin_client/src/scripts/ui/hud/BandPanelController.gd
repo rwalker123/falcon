@@ -113,6 +113,22 @@ var _work_zone_band: Dictionary = {}
 ## `_on_zones_resized` — the one straddle the band and work halves shared, resolved by keeping BOTH
 ## ends in this controller.
 var _band_zone_tier: int = HudWorkVocab.BAND_ZONE_TIER_TALL
+## **THE PANEL'S SUBJECT IS THE FACTION PAGE, not a band** (issue #450). The pinned first entry of the
+## cycler, and the one bit of state that decides which of `render_band` / `render_faction` every
+## re-entry into this panel resolves to — `refresh_snapshot`, `rerender` and `_on_zones_resized`'s
+## tier branch all route through it, so a snapshot tick can never drop the player back onto a band.
+##
+## It lives HERE rather than on `HudBandLaborState` because it is a fact about what this PANEL is
+## showing, not about the world — the same test that keeps `_band_zone_tier` and `_work_page` on the
+## controller. `_band_labor.panel_band()` is deliberately left ALONE while it is true, so cycling off
+## the faction page returns to the band the player was on rather than to the roster's first.
+var _panel_is_faction: bool = false
+## The faction page is PINNED FIRST in the cycler, and costs the walk one entry. Pinned rather than
+## merely present so its position cannot drift as bands are founded or lost — a page that moved would
+## have to be hunted for, which is the opposite of what a standing overview is for.
+const FACTION_CYCLER_INDEX := 0
+
+const FACTION_CYCLER_ENTRIES := 1
 ## The parties compose sheet: open, and which mission has been picked ("" = none yet, which is what
 ## keeps the party size / floor / forecast fields hidden until the mission decides them).
 var _party_compose_open: bool = false
@@ -576,6 +592,13 @@ func build_work_zone(band: Dictionary) -> VBoxContainer:
 ## rebuilt rather than the board re-paged — otherwise a tall-shell band zone lands in a short box and
 ## is silently clipped by its host.
 func _on_zones_resized() -> void:
+    # The faction page has no height tier and no paged board — its two lists are bounded by a row COUNT
+    # rather than measured against the box — so a resize is simply a re-render. Falling through would
+    # compare against the tier the last BAND render left behind and, on a match, re-page a work host
+    # this page does not own.
+    if _panel_is_faction:
+        rerender()
+        return
     if _band_zone_tier != _band_zone_tier_for(_zone_box().y):
         rerender()
         return
@@ -2485,6 +2508,16 @@ func _on_recall_expedition_pressed(expedition: Dictionary) -> void:
 func render_band(unit: Dictionary) -> void:
     if _panel == null or unit.is_empty():
         return
+    # Leaving the faction page is a subject change like any other, so the composing act it interrupted
+    # is closed on the way back the same way a band-to-band cycle closes one. The page itself composes
+    # nothing, but the player may have opened a sheet, cycled away to read the rollup and cycled back.
+    if _panel_is_faction:
+        _panel_is_faction = false
+        _clear_party_quarry()
+        _party_compose_open = false
+        _party_compose_mission = ""
+        _party_compose_needed = 0.0
+        _party_compose_measured_box = Vector2.ZERO
     # A quarry is chosen FOR a band (its travel time and useful party size are band-relative), so the
     # cycler swapping the panel subject must not carry one across — and neither may the rest of the
     # composing act: the party size, the mission and the MEASURED requirement that floated the sheet
@@ -2520,13 +2553,83 @@ func render_band(unit: Dictionary) -> void:
     var index := _index_of_player_band(int(_band_labor.panel_band().get("entity", -1)))
     _panel.set_header(stage_id, glyph, HudFormat.band_display_name(_band_labor.panel_band(), index + 1), stage_label,
         _panel_position_label(_band_labor.panel_band()))
-    _panel.set_cycler(index, _band_labor.player_bands().size())
+    _panel.set_cycler(_cycler_index_of_band(index), _cycler_count())
+    # A band HAS a tile, and its `band` zone is a band's, so both header affordances come back on. Both
+    # setters early-out on an unchanged value, so a band-to-band cycle costs nothing.
+    _panel.set_subject_jumpable(true)
+    _panel.set_tab_label(BandCityPanel.ZONE_BAND, "")
     # `set_zones` above already flipped the panel to band-present; just make sure it is shown.
     _panel.set_shown(true)
     # THE TRIGGER'S MEASUREMENT, taken a frame from now against the tree this render just handed over
     # — see `_party_compose_needed`. Armed unconditionally: it costs one awaited frame and answers
     # immediately when no sheet is open.
     _measure_party_compose()
+
+## Render the FACTION PAGE — the all-band rollup pinned as the cycler's first entry (issue #450).
+##
+## It fills the SAME three zones a band does, one scale up: `band` is who the faction is and what it
+## holds, `work` is the whole workforce plus where those hands are and what the faction knows, and
+## `parties` is everyone who is out. The arithmetic is `FactionRollup`'s — an all-`static` layer, this
+## page carrying no state of its own — and every total it prints is a SUM over the per-band answers,
+## so a band's page and this one cannot disagree about a number.
+##
+## **`_band_labor.panel_band()` IS DELIBERATELY LEFT ALONE.** It is what the cycler walks back into, so
+## cycling faction → next returns to the band the player was reading rather than to the roster's first,
+## and `_resolve_panel_band` still has a subject to re-resolve when the page is left.
+func render_faction() -> void:
+    if _panel == null or _band_labor.player_bands().is_empty():
+        return
+    _panel_is_faction = true
+    # A composing act belongs to the BAND it was opened on, so leaving that band for this page ends it
+    # — the identical rule `render_band` applies to a band-to-band cycle, and the float must come down
+    # with it (it lives outside the panel and no zone rebuild reaches it).
+    _clear_party_quarry()
+    _party_compose_open = false
+    _party_compose_mission = ""
+    _party_compose_needed = 0.0
+    _party_compose_measured_box = Vector2.ZERO
+    _party_compose_sheet = null
+    _dismiss_compose_float()
+    # This page builds no work BOARD, so the re-page path must have nothing to re-page: `_on_zones_resized`
+    # would otherwise rebuild the previous band's board into a host `set_zones` is about to free.
+    _work_zone_host = null
+    _work_zone_band = {}
+    _parties_zone_col = null
+    _panel.set_zones(
+        HudWidgets.wrap_zone(FactionRollup.build_band_zone(_band_labor)),
+        HudWidgets.wrap_zone(FactionRollup.build_work_zone(_band_labor, _player_knowledge())),
+        HudWidgets.wrap_zone(FactionRollup.build_parties_zone(_band_labor, _herd_label_for_id)))
+    _push_faction_zone_badges()
+    # No stage id ⇒ no bundled art resolves and the emoji stands; the band count takes the stage word's
+    # slot, and the empty position label hides the coordinate slot outright.
+    _panel.set_header("", HudFormat.FACTION_PAGE_GLYPH, HudFormat.FACTION_PAGE_NAME,
+        HudFormat.faction_bands_label(_band_labor.player_bands().size()), "")
+    _panel.set_cycler(FACTION_CYCLER_INDEX, _cycler_count())
+    # A faction has no tile to jump to, and the narrow shell's `Band` tab would name the wrong scope.
+    _panel.set_subject_jumpable(false)
+    _panel.set_tab_label(BandCityPanel.ZONE_BAND, HudWorkVocab.ZONE_TAB_FACTION)
+    _panel.set_shown(true)
+
+## The tab badges for the faction page: the totals its three zones answer, so the narrow shell states
+## them without the player having to open each tab. `work` counts BANDS rather than sources — this
+## zone's list is the roster, not a board — and `parties` keeps the band page's `hot` rule, an awaiting
+## party being a demand on the player wherever it is standing.
+func _push_faction_zone_badges() -> void:
+    if _panel == null:
+        return
+    var population := 0
+    for band_variant in _band_labor.player_bands():
+        if band_variant is Dictionary:
+            population += int((band_variant as Dictionary).get("size", 0))
+    _panel.set_tab_badge(BandCityPanel.ZONE_BAND, str(population) if population > 0 else "", false)
+    _panel.set_tab_badge(BandCityPanel.ZONE_WORK, str(_band_labor.player_bands().size()), false)
+    var parties := _band_labor.player_expeditions()
+    var awaiting := false
+    for party in parties:
+        if HudFormat.expedition_phase_key(party) == HudExpeditionVocab.EXPEDITION_PHASE_AWAITING:
+            awaiting = true
+    _panel.set_tab_badge(BandCityPanel.ZONE_PARTIES,
+        str(parties.size()) if not parties.is_empty() else "", awaiting)
 
 ## The band's hex coordinates for the panel header — the ONE place they are resolved, because the two
 ## paths that reach this panel spell them DIFFERENTLY and used to render differently because of it.
@@ -2600,7 +2703,15 @@ func _focus_hunt_source(herd_id: String, fallback_x: int, fallback_y: int) -> vo
 ## selection). The panel's own allocation rebuilds (optimistic pending, etc.) route through this so
 ## they stay pinned to the panel's subject even when a foreign hex is selected.
 func rerender() -> void:
-    if _panel == null or _band_labor.panel_band().is_empty():
+    if _panel == null:
+        return
+    # The faction page is a SUBJECT, not a band, so every re-render path has to ask which one is up:
+    # falling through to `render_band` here would drop the player back onto a band on a caret click, a
+    # zone resize or any other in-place refresh.
+    if _panel_is_faction:
+        render_faction()
+        return
+    if _band_labor.panel_band().is_empty():
         return
     render_band(_band_labor.panel_band())
 
@@ -2612,6 +2723,10 @@ func refresh_snapshot() -> void:
         return
     if _band_labor.player_bands().is_empty():
         _band_labor.set_panel_band({})
+        # A faction with no band has no rollup either — the page is pinned to the cycler, and the
+        # cycler is gone with the panel. Cleared here so a later band does not bring the page back as
+        # the panel's subject without the player having asked for it.
+        _panel_is_faction = false
         _panel.set_band_present(false)
         _panel.set_shown(false)
         # No band ⇒ no zones are rebuilt, so the footer builder's teardown never runs. The float is
@@ -2622,6 +2737,11 @@ func refresh_snapshot() -> void:
         _party_compose_measured_box = Vector2.ZERO
         _party_compose_sheet = null
         _dismiss_compose_float()
+        return
+    # The page SURVIVES a snapshot, exactly as a band subject does — its totals are what the tick just
+    # moved, so a tick is precisely when it must re-render rather than hand the panel back to a band.
+    if _panel_is_faction:
+        render_faction()
         return
     render_band(_resolve_panel_band())
 
@@ -2662,23 +2782,56 @@ func set_panel(panel: BandCityPanel) -> void:
     if panel != null and not panel.zones_resized.is_connected(_on_zones_resized):
         panel.zones_resized.connect(_on_zones_resized)
 
-## Walk to the next/prev player band (cycler ◀/▶). Routes through the SAME band-selection a roster
-## click uses — recenter + select the band's hex (rebuilding that hex's roster), then pin the exact
-## band — so the map ring, Tile card, roster, and this panel all land on the cycled band.
+## Walk to the next/prev subject (cycler ◀/▶) over `[the faction page] + player_bands()`.
+##
+## A band routes through the SAME band-selection a roster click uses — recenter + select the band's hex
+## (rebuilding that hex's roster), then pin the exact band — so the map ring, Tile card, roster and this
+## panel all land on the cycled band.
+##
+## **THE FACTION PAGE MOVES NO CAMERA, and that is a documented exception to decision 2 of
+## `docs/plan_band_city_dock.md`** ("panel cycling recenters the map on the cycled settlement"). It has
+## no tile: there is nothing to centre on, and recentring on the band the player happened to leave
+## would move the map for a page that says nothing about where it is.
 func cycle_band(delta: int) -> void:
-    if _panel == null or _band_labor.player_bands().size() <= 1:
+    if _panel == null:
         return
-    var idx := _index_of_player_band(int(_band_labor.panel_band().get("entity", -1)))
-    if idx < 0:
-        idx = 0
-    var n := _band_labor.player_bands().size()
-    var next_band: Dictionary = _band_labor.player_bands()[((idx + delta) % n + n) % n]
-    _select_band_on_map(next_band)
+    var n := _cycler_count()
+    # One band ⇒ two entries, so the cycler is live where it used to be dead: the faction page is
+    # reachable from the first band a faction ever has.
+    if n <= 1:
+        return
+    var next := ((_cycler_index() + delta) % n + n) % n
+    if next == FACTION_CYCLER_INDEX:
+        render_faction()
+        return
+    _select_band_on_map(_band_labor.player_bands()[next - FACTION_CYCLER_ENTRIES])
+
+## How many entries the cycler walks: every player band plus the pinned faction page.
+func _cycler_count() -> int:
+    return _band_labor.player_bands().size() + FACTION_CYCLER_ENTRIES
+
+## Where the panel's current subject sits in that walk.
+func _cycler_index() -> int:
+    if _panel_is_faction:
+        return FACTION_CYCLER_INDEX
+    return _cycler_index_of_band(_index_of_player_band(int(_band_labor.panel_band().get("entity", -1))))
+
+## A band's roster index as a CYCLER index — the pinned page's entries shift every band along by one.
+## A band absent from the roster (mid-swap, or a marker click on one the snapshot has since dropped)
+## resolves to the first, which is `_resolve_panel_band`'s own fallback.
+func _cycler_index_of_band(roster_index: int) -> int:
+    return FACTION_CYCLER_ENTRIES + (roster_index if roster_index >= 0 else 0)
 
 ## Jump to the panel band on the map (the header title is a "jump to my band" affordance): recenter
 ## + select its hex and move the ring, WITHOUT changing which band the panel shows (it's already
 ## `_band_labor.panel_band()`). No-op when there is no panel band.
+##
+## Silent on the faction page. The panel already refuses the click there (`set_subject_jumpable`), so
+## this is the second half of one rule rather than the only guard — but `focus_panel_band` is reached
+## BY NAME through `Main`'s `has_method` probe, so the verb must be safe to call in every state.
 func focus_band() -> void:
+    if _panel_is_faction:
+        return
     _select_band_on_map(_band_labor.panel_band())
 
 ## Select a band's hex on the map — recenter + select the hex (rebuilding its roster) via

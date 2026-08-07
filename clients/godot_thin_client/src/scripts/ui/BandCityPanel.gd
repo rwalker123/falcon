@@ -198,6 +198,8 @@ const EXPAND_GLYPH := "▸"     # ▸  restore
 const CYCLE_PREV_GLYPH := "◀" # ◀
 const CYCLE_NEXT_GLYPH := "▶" # ▶
 const DEFAULT_STAGE_GLYPH := "⛺" # ⛺  nomadic fallback
+## The subject cluster's affordance, cleared while the subject is not jumpable (`set_subject_jumpable`).
+const SUBJECT_JUMP_TOOLTIP := "Jump to this band on the map"
 
 # ---- persistence (decision 5 — first client user-pref file) ----------------
 const CONFIG_PATH := "user://band_city_dock.cfg"
@@ -329,6 +331,11 @@ var _active_tab: StringName = DEFAULT_TAB
 ## the controller keeps its own default.
 var _work_sort_pref: String = ""
 var _tab_badges: Dictionary = {}
+## Per-subject tab-LABEL overrides (`set_tab_label`); absent ⇒ the zone's `TAB_LABELS` default.
+var _tab_label_overrides: Dictionary = {}
+## Whether the header's subject cluster offers a map jump (`set_subject_jumpable`). A band does; the
+## pinned faction page does not, having no tile.
+var _subject_jumpable: bool = true
 var _tab_buttons: Dictionary = {}   # zone:StringName -> Control (the tab cell)
 ## The last `work_zone_size()` reported, so `zones_resized` fires on a real change only.
 var _last_work_zone_size: Vector2 = Vector2.ZERO
@@ -433,6 +440,52 @@ func parties_zone_size() -> Vector2:
 ## for why the two rects stopped being the same one.
 func card_rect() -> Rect2:
 	return _panel.get_global_rect() if _panel != null else Rect2()
+
+## Declare whether the header's subject cluster is a "jump to it on the map" affordance.
+##
+## **A FACTION HAS NO TILE**, so the pinned faction page (issue #450) turns this off: the cluster stops
+## taking the mouse (hence no hover tint and no `subject_activated`), drops the pointing-hand cursor and
+## drops the tooltip that promises a jump. Leaving it live and no-oping the handler would have left a
+## header that offers a jump, lights up under the pointer and then does nothing — the worst of the
+## three states.
+##
+## The emit is gated on the flag as well as on the filter, so the rule reads at the emit rather than
+## depending on a `mouse_filter` value set 300 lines away.
+func set_subject_jumpable(jumpable: bool) -> void:
+	if jumpable == _subject_jumpable:
+		return
+	_subject_jumpable = jumpable
+	if _subject_cluster == null:
+		return
+	_subject_cluster.mouse_filter = Control.MOUSE_FILTER_STOP if jumpable else Control.MOUSE_FILTER_IGNORE
+	_subject_cluster.mouse_default_cursor_shape = \
+		Control.CURSOR_POINTING_HAND if jumpable else Control.CURSOR_ARROW
+	_subject_cluster.tooltip_text = SUBJECT_JUMP_TOOLTIP if jumpable else ""
+	# An IGNORE cluster receives no `mouse_exited`, so a hover latched at the moment of the swap would
+	# never be cleared and the header would keep its tint for the rest of the session.
+	if not jumpable:
+		_set_subject_hover(false)
+
+## Override a tab's LABEL for the current subject (narrow shell only). `""` restores the default.
+##
+## The faction page renames `Band` to `Faction`: the tab bar picks a ZONE, and the zone's default name
+## states the scope its content is at — which is the band's on every other page and the faction's on
+## that one. It is the `set_tab_badge` contract deliberately, not a new mechanism: same guard, same
+## key, same narrow-shell-only rebuild.
+func set_tab_label(zone: StringName, text: String) -> void:
+	if not TAB_LABELS.has(zone):
+		return
+	var previous := _tab_label_text(zone)
+	if text.is_empty():
+		_tab_label_overrides.erase(zone)
+	else:
+		_tab_label_overrides[zone] = text
+	if _tab_label_text(zone) != previous and not _body_is_wide:
+		_rebuild_tab_bar()
+
+## A tab's live label — the caller's override if one stands, else `TAB_LABELS`'.
+func _tab_label_text(zone: StringName) -> String:
+	return String(_tab_label_overrides.get(zone, TAB_LABELS[zone]))
 
 ## Push a tab's badge (narrow shell only; ignored in the wide shell, which has no tab bar).
 ## `hot` tints it WARN. An empty `text` clears the badge.
@@ -653,7 +706,7 @@ func _build_header_full() -> HBoxContainer:
 	_subject_cluster.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_subject_cluster.mouse_filter = Control.MOUSE_FILTER_STOP
 	_subject_cluster.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	_subject_cluster.tooltip_text = "Jump to this band on the map"
+	_subject_cluster.tooltip_text = SUBJECT_JUMP_TOOLTIP
 	_subject_cluster.add_theme_stylebox_override("panel", _subject_stylebox(false))
 	_subject_cluster.gui_input.connect(_on_subject_gui_input)
 	_subject_cluster.mouse_entered.connect(func(): _set_subject_hover(true))
@@ -736,8 +789,12 @@ func _set_subject_hover(hover: bool) -> void:
 	if _subject_cluster != null:
 		_subject_cluster.add_theme_stylebox_override("panel", _subject_stylebox(hover))
 
-## Left-click anywhere on the subject cluster → "jump to my band".
+## Left-click anywhere on the subject cluster → "jump to my band". Silent while the subject is not
+## jumpable (the faction page has no tile) — an `IGNORE` cluster gets no input anyway, and the gate is
+## here so the rule reads where the promise is made.
 func _on_subject_gui_input(event: InputEvent) -> void:
+	if not _subject_jumpable:
+		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		subject_activated.emit()
 
@@ -1282,7 +1339,7 @@ func _make_tab_button(zone: StringName) -> Control:
 	tab.name = "Tab_%s" % String(zone)
 	tab.mouse_filter = Control.MOUSE_FILTER_STOP
 	tab.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	tab.tooltip_text = TAB_LABELS[zone]
+	tab.tooltip_text = _tab_label_text(zone)
 	tab.add_theme_stylebox_override("panel", _tab_stylebox(active))
 	tab.gui_input.connect(func(event: InputEvent): _on_tab_gui_input(event, zone))
 
@@ -1293,7 +1350,7 @@ func _make_tab_button(zone: StringName) -> Control:
 	tab.add_child(row)
 
 	var label := Label.new()
-	label.text = TAB_LABELS[zone]
+	label.text = _tab_label_text(zone)
 	label.add_theme_font_size_override("font_size", TAB_FONT_SIZE)
 	label.add_theme_color_override("font_color", HudStyle.SIGNAL if active else HudStyle.INK_FAINT)
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE

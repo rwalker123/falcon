@@ -151,6 +151,63 @@ const ZONE_HEADER_WORK := "Work"
 
 const ZONE_HEADER_PARTIES := "Parties"
 
+## THE FACTION PAGE — the cycler's pinned first entry (issue #450), whose three zones answer the
+## band zones' own three questions one rung up: who the faction IS, what it is DOING, and who is OUT.
+## `ZONE_TAB_FACTION` overrides the narrow shell's `Band` tab label while that page is the subject —
+## a tab reading "Band" over a faction rollup names the wrong scope.
+const ZONE_TAB_FACTION := "Faction"
+
+const FACTION_HEADER_FOOD := "Food"
+
+const FACTION_HEADER_TRADE := "Trade"
+
+const FACTION_HEADER_HERDS := "Herds"
+
+const FACTION_HEADER_KNOWLEDGE := "Knowledge"
+
+## The faction band zone's stat-row keys. They deliberately mirror the Food disclosure's own breakdown
+## words (`DetailFormat.FOOD_LABEL_*`) rather than inventing a second vocabulary for the same terms —
+## a player who has opened one band's Food popover already knows what `Eaten` and `Pen feed` mean.
+const FACTION_ROW_LARDER := "Larder"
+
+const FACTION_ROW_INCOME := "Income"
+
+const FACTION_ROW_EATEN := "Eaten"
+
+const FACTION_ROW_PEN_FEED := "Pen feed"
+
+const FACTION_ROW_PER_TURN := "Per turn"
+
+## The faction's trade STOCK, at the one decimal the per-band Trade row already prints it at.
+const FACTION_TRADE_STOCK_FORMAT := "%.1f"
+
+const FACTION_ROW_PENS := "Pens"
+
+## The PEOPLE key's trailing chip on the faction page, where a band's page carries its dependency
+## count: how many bands the bar is summed over, so a total is never read as one band's.
+const FACTION_BANDS_CHIP_FORMAT := "%d bands"
+
+const FACTION_BANDS_CHIP_ONE := "1 band"
+
+## A per-band row in the faction WORK zone: its workforce, and how much of it is unspent. Idle is the
+## number a player acts on, which is why it trails rather than leading.
+const FACTION_BAND_ROW_FORMAT := "%d workers · %d idle"
+
+## The faction page's per-band and per-party lists are CAPPED — the zones clip rather than scroll, and
+## neither list has a pager (the work BOARD's pager belongs to a band's own sources). What the cap
+## drops is stated, never silently truncated.
+const FACTION_LIST_ROWS_MAX := 6
+
+const FACTION_LIST_MORE_FORMAT := "+%d more"
+
+## A faction with no party out. The band page's parties zone says this with a disabled footer button;
+## this page has no footer, so it says it in words.
+const FACTION_PARTIES_EMPTY := "No parties out"
+
+## A knowledge track the faction has finished. `HudFormat.meter_bar` would draw a full bar, which
+## reads as "still climbing, nearly there" — the top-bar strip's own reasoning for its `✔ known`.
+const FACTION_KNOWLEDGE_KNOWN := "known"
+
 ## The composition KEY's chip gap and type size. The bar/swatch geometry travelled to `HudWidgets`
 ## with `build_composition_bar` / `build_composition_key`; these two stay because the parties zone's
 ## link row and the dependency chip read them outside those builders.

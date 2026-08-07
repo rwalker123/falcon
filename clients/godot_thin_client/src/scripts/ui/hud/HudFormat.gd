@@ -47,6 +47,31 @@ const BAND_DISPLAY_NAME_FORMAT := "Band %d"
 ## parenthesised pair here rather than as a labelled `Position:` row in the band zone's vitals.
 const BAND_HEADER_POSITION_FORMAT := "(%d, %d)"
 
+## THE FACTION PAGE's header identity (issue #450), beside the band header vocabulary above because
+## the two fill the SAME three header slots and must be read together. The panel's header takes a
+## stage id, a glyph, a name and a stage word; a faction has no settlement stage and no tile, so it
+## supplies an empty stage id (no bundled art resolves, `StageSprites.for_stage("")` answers null),
+## its own glyph, and its BAND COUNT where a band puts its stage word — the identity fact at that
+## scale. It supplies no position label, so the header's coordinate slot hides itself.
+## **The glyph is deliberately NOT `⚑`**, which is the scouting mission's on the parties rows, nor any
+## of the settlement stages' `⛺ 🛖 🏘️` — a faction page marked with a settlement stage would read as
+## one more band in the cycle, which is precisely the thing it is not.
+const FACTION_PAGE_GLYPH := "❖"
+
+## "Your people", the voice the knowledge strip already speaks in (`⚒ Your people know:`) rather than
+## a bare "Faction" — the panel names a thing the player commands, not a database row.
+const FACTION_PAGE_NAME := "Your people"
+
+const FACTION_BANDS_LABEL_FORMAT := "%d bands"
+
+const FACTION_BANDS_LABEL_ONE := "1 band"
+
+## The faction header's second line: how many bands this page is summing. Singular is spelled out
+## rather than left to a `%d bands` that would read "1 bands" the whole of the early game, which is
+## every player's first hour.
+static func faction_bands_label(count: int) -> String:
+    return FACTION_BANDS_LABEL_ONE if count == 1 else FACTION_BANDS_LABEL_FORMAT % count
+
 ## The food-module display names. This table came here WITH `food_module_label`, its only reader —
 ## the words belong to the vocabulary layer, not to the compose builders that print them.
 const FOOD_MODULE_LABELS := {

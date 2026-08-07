@@ -19,6 +19,7 @@ paths:
 | `ui/hud/BandPanelController.gd` | `RefCounted` controller (HUD decomposition Phase 2d, `docs/plan_hud_decomposition.md`) owning the **BAND/CITY PANEL's whole render path** — the last big mass to leave `Hud.gd`. It holds the panel HANDLE (`_panel`), the three public **zone builders** `build_band_zone` / `build_work_zone` / `build_parties_zone` and everything under them (the band zone's vitals/PEOPLE/food-outlook/WORKFORCE + role cards; the work zone's paged board, filter chips, pager, inspector strip and source models; the parties zone's rows, inspector strip, footer and the mission compose sheet), the panel's **cycler + snapshot refresh** (`render_band` / `refresh_snapshot` / `rerender` / `cycle_band` / `focus_band` / `select_expedition` / `focus_labor_source` / `confirm_recall_expedition` / `_push_zone_badges`), and the **zone state that survives a snapshot** — `_work_filter` / `_work_sort` / `_work_page` / `_work_open_key` / `_work_policy_open` / `_work_zone_host` / `_work_zone_band` / `_band_zone_tier` / `_party_open_key` / `_party_compose_open` / `_party_compose_mission` / `_send_expedition_count` / `_send_hunt_policy` — ~1,580 lines, 72 moved functions. **`_band_zone_tier` is why the band and work halves are ONE controller**: it is a bare `int` written by `build_band_zone` and read by `_on_zones_resized`, so splitting them would have straddled it. Hud holds it as `_bandpanel`, constructed in `_ready` after `_disclosures` (the vitals row wires its carets through it). **THE PANEL HANDLE IS PRIVATE** — the two non-moving `HudLayer` readers (`_refresh_disclosure_hosts`, `_render_occupant_drawer`) only ever asked "is a panel injected?", so they ask **`has_panel()`** instead of holding the node. **The injection surface is TWO Callables** (it was nine, then six; the three detail-line ones went with `BandDetailLines`, and the four send-expedition/quarry targeting ones went with `TargetingController`), each retained on HudLayer by the "an injection you still have to hold is relocated, not eliminated" test: `_emit_assign_labor` (owns the `assign_labor_requested` emit + optimistic pending write, so `assign_labor` stays INDIRECT) · `_herd_label_for_id`. Each is reached through a **typed adapter**. The parties zone's send-expedition + quarry verbs (`begin_send_expedition` / `begin_pick_quarry` / `cancel_pick_quarry` / `is_expedition_quarry`) are a typed **`TargetingController`** collaborator now, not four Callables. `_is_player_unit` is a trivial private COPY (the `SelectionCardController` precedent). Collaborators: the SAME `_band_labor` / `_compose` model instances BY REFERENCE, `_selectioncard` (roster lookup + map pinning, for the cycler / labor-source / party jump routing, **plus `selected_terrain_label()`** — the one selection read the vitals rows need), `_disclosures` for `wire_label` ONLY, **`_banddetail` (a typed `BandDetailLines` ref — the vitals label and the parties inspector strip render through it; the three `*_fn` members `_unit_summary_lines_fn` / `_expedition_summary_lines_fn` / `_expedition_row_tooltip_fn` and their adapter wrappers are DELETED, the tooltip being a static `DetailFormat.expedition_row_tooltip` call now)**, and the HUD CanvasLayer as the **host** it `add_child`s its `ConfirmationDialog` into (a `RefCounted` cannot parent — the `TurnOrbController` pattern). **It emits FIVE signals, all RELAYED by HudLayer** (the controller never emits a HudLayer signal): `cancel_order_requested` · `send_hunt_expedition_requested` · `recall_expedition_requested` · `alert_focus_requested` · `roster_occupant_selected`. **`set_band_city_panel` / `cycle_panel_band` / `focus_panel_band` MUST stay callable on the HUD node** — `Main._wire_band_city_panel` probes all three with `has_method` and binds the latter two to `BandCityPanel`'s `cycle_requested` / `subject_activated`, and a failed probe fails SILENTLY — so HudLayer keeps them as thin delegators. **`_build_allocation_panel` does NOT live on this controller**: it writes the drawer's `%AllocationPanel` node, so it stays with the drawer render dispatch (it moved to `SubjectDrawerController` with that dispatch in Phase 2c-3, still a thin function stacking this controller's three public zone builders; its two siblings on that host, `_build_band_move_actions` / `_build_expedition_panel`, are branches of `_render_occupant_drawer` and travelled with it for the same reason). Word tables, formats and thresholds stay on `HudLayer` and are read back as `HudLayer.X`, the `HudWidgets`/`HudFormat`/`SelectionCardController`/`DrawerComposeController` convention. Behaviour identical to the old inlined band-panel code |
 | `ui/BandCityPanel.gd` / `.tscn` | The dockable **Band/City command center** CanvasLayer — persistent whenever ≥1 player band exists, dockable to any of the 4 edges (default left, persisted to `user://band_city_dock.cfg`) + collapse-to-rail. Header (stage glyph/name/label + the band's hex coordinates + `◀ n/N ▶` cycler + 2×2 dock chooser + collapse), body hosts **THREE NAMED ZONES AT A FIXED CROSS-AXIS SIZE** via **`set_zones(band, work, parties)`** (keys `&"band"`/`&"work"`/`&"parties"`; the panel OWNS and frees them). Two shells, chosen by the panel's own **WIDTH** (`WIDE_SHELL_MIN_WIDTH` — never a dock-edge test, so a resizable dock needs no special case). **That threshold is DERIVED, never hand-picked**: `ZONE_BAND_WIDTH + ZONE_PARTY_WIDTH + ZONE_WORK_MIN_WIDTH + WIDE_SEPARATOR_SPAN + PANEL_CHROME_H` = 380 + 354 + 380 + 50 + 26 = **1190**. `ZONE_WORK_MIN_WIDTH` (380) MIRRORS Hud's `WORK_COLUMN_MIN_WIDTH` — one readable board column — exactly as `ZONE_WORK_MAX_WIDTH` (1520) mirrors `WORK_COLUMN_MIN_WIDTH × WORK_MAX_COLUMNS`; the two are a PAIR with Hud's column consts and move with them. The chrome term is load-bearing because the threshold is tested against the panel's OUTER `_panel_extent().x` while the zones live in `_interior_size()`. It shipped hand-picked at **900**, which broke the whole 900–1055 band (the derived threshold was 1056 then, before the flanks widened): the work zone came out 224px, Hud clamped to one column, its labels clipped — and the NARROW shell would have given the board the full 874px, so flipping wide early made it ~4× narrower, degrading the thing the wide shell exists to improve. `WIDE_SEPARATOR_SPAN` / `PANEL_CHROME_H` are `const`s (a `const` cannot call `_wide_separator_span()`), shared by the threshold, `_wide_separator_span()`, `_card_width()` and `_interior_size()` so they cannot drift. **wide** (in practice T/B) = the three zones side by side, band/parties fixed `ZONE_BAND_WIDTH` (380) / `ZONE_PARTY_WIDTH` (`PANEL_WIDTH − PANEL_CHROME_H` = 354 — see "The wide shell's flanks are never narrower than the narrow shell's zone"), work EXPAND_FILL, `LINE_SOFT` hairlines between, no tab bar; **narrow** (in practice L/R) = a Band·Work·Parties tab bar under the header + exactly one zone beneath it (active tab = SIGNAL ink + a 2px SIGNAL underline, badges via `set_tab_badge(zone, text, hot)`, selection persisted as `CONFIG_KEY_TAB`). **The cross-axis size is FIXED** — `PANEL_WIDTH` 380 (L/R) / `PANEL_HEIGHT_WIDE` 360 clamped to `MAX_WIDE_HEIGHT_FRACTION` of the window (T/B) — so `current_reservation_size()` changes ONLY on dock/collapse/hide/viewport-resize and a content edit can no longer re-emit `reservation_changed` → `MapView.set_reserved_inset` → cache invalidation (the map flicker on every `+` press). **There is deliberately no `ScrollContainer` anywhere in the panel** (no-scroll by design; the work zone pages itself against **`work_zone_size()`**, the zone's interior after chrome — e.g. 354×1107 in a 380 L dock, 789×300 in a 1920 bottom dock with the chrome rail sharing that row — and re-pages on the **`zones_resized`** signal). **Zone hosts are plain `Control`s, not containers**, so an over-wide zone content cannot push the card past its fixed cross-axis size; `clip_contents` keeps overflow inside its own zone. Reserves its edge via `reservation_changed(edge, size)` → `Main._apply_reservation(&"band_panel", …)`, which since issue #377 fans a HORIZONTAL dock's reservation to the map at 0 (the card floats over live map) and a TOP dock's to the HUD at 0 as well (its readouts belong beside the card, not below the strip). On a **BOTTOM** dock the strip also carries **a trailing CHROME RAIL** the HUD parks its stacked bottom-bar chrome into (`rail_slot_host` / `set_rail_width`, issue #324) — a SIBLING of the card, not a cell of its row, and bottom-only since #377 (a top dock never displaces `BottomBar`, so its chrome stays home). See "Band/City dockable panel". See "Band/City dockable panel" + `docs/plan_band_city_dock.md` |
 | `ui/hud/BandComposeFloat.gd` | **The parties compose sheet, floated off the panel when its zone cannot hold it** — see "A COMPOSE SHEET THE ZONE CANNOT HOLD LEAVES THE ZONE" for the trigger. An **`AutoSizingPanel`**, not `PanelCard` + `DockScrollFit`: this card is measured against the VIEWPORT rather than against a dock's remaining height, which is the free-floating half of that pair (`panel-framework.md`). Both axes are fitted explicitly, because the node is a plain `Control` and no child minimum ever reaches it. **It is the card and NOTHING more — there is deliberately no full-screen catcher.** `ComposeSheet`, the herd drawer's floating sheet, is a catcher with a card inside it so a click anywhere outside dismisses; that is exactly wrong here, because the DOCK's sheet stays open through a map pick — the targeting banner and the herd glow ride on the sheet still being open while the player clicks a herd — and a catcher would eat that click. `PanelRoot`'s autopsy applies in reverse: a `STOP` control the pointer finds makes the Viewport mark the press handled before `MapView._unhandled_input` sees it, so every pixel this node claims is a pixel of dead map, and it claims only its own rect (`band_panel_preview._assert_float_leaves_the_map_clickable` drives that through `Viewport.push_input`, never off a `mouse_filter` value). **It never overlaps the card it came from, structurally rather than by a clamp**: `_room()` is the viewport inside `VIEWPORT_MARGIN` cut back to the MAP-FACING side of the panel card (`MAP_FACING_SIDE`, the opposite of the docked edge) with `ANCHOR_GAP` of clearance, and the width fit, the height fit and the placement all read that ONE rect — a card too tall for it scrolls, it does not creep back across the seam. **`target_width` is the ZONE width plus this card's own chrome**, never the zone width itself: `AutoSizingPanel`'s width is the OUTER one, and a sheet handed the zone width minus a border, two content margins and a scroll gutter re-wraps, which would falsify the very measurement that floated it. `mount` applies that width BEFORE the frame `refit` waits, or the height fit reads the previous width's wrapping and leaves the card ~100px taller than its content (measured). Its ONE `ScrollContainer` is not a breach of the panel's no-scroll rule — that rule is about content whose height feeds back into a FIXED reservation, and this ceiling is real viewport room — and it stays DISABLED unless `fit_to_content` finds the content taller than the room. It draws in `BandCityPanel.panel_card_stylebox()`, the panel's own, so it reads as the panel's surface rather than a second kind of card |
+| `ui/hud/FactionRollup.gd` | **All-`static`, stateless** builder of the FACTION PAGE's three zones (issue #450) — the all-band rollup the cycler pins first. `build_band_zone` (the summed PEOPLE bar + Food / Trade / Herds), `build_work_zone` (the whole workforce as one bar, the per-band roster, the knowledge tracks) and `build_parties_zone` (every party and the band it left), plus the `_stat_row` leaf they are built from. **It is a shared LAYER rather than a controller because the page is a READOUT** — no steppers, no compose sheet, no open row, nothing that survives a snapshot — so it has no per-cluster state to own, which is the whole of what makes a controller one (`hud-modules.md`). The one thing it needs is threaded in as a PARAMETER: the `HudBandLaborState` instance, plus the faction's `{track: progress}` row and the caller's `herd_label_for_id` Callable (the treatment `HudFormat.panel_expedition_summary` already takes — a stateless layer must not reach for the roster/selection/herd-list state that resolver reads). **IT RE-DERIVES NOTHING**: every total is a SUM over answers the per-band surfaces already give (`DetailFormat.band_net_food` / `band_provisions` / `band_trade_stock` / `band_trade_income`, `HudBandLaborState.effective_idle` / `effective_worker_map` / `effective_role_workers` / `band_party_workers`, `TopBarReadouts.faction_tracks`), so a band's own page and this one cannot disagree about a number — a rollup with its own food ledger would be a second source of truth for the identity `larder_delta == income − consumption − pen_feed − raid_forfeit` the food arc keeps closed. Dependency direction: it reads `HudWidgets` / `HudFormat` / `DetailFormat` / `SourceForecast` / `HudStyle` / the vocab leaves and `TopBarReadouts`' track table, and none of them may read it back |
 | `ui/PenStatus.gd` | Single source of truth for **"is this pen's herd starving?"** — `FULLY_FED` / `FED_EPSILON` + `fed_fraction(herd)` / `is_starving(fed)`, reading `HerdTelemetryState.penFedFraction` (`< 1` ⇒ the keeper underpaid the pen's feed, so the herd is SHRINKING every turn). Plus `herd_is_starving(herd)` for a caller holding only the herd dict. The ONE test all three surfaces ask — the herd drawer (`DetailFormat.corral_label` + the Pen feed row), the map's distress badge (`MapView._draw_herd`) and the turn orb's `starving_pen` producer — so they can never disagree about which pen is dying |
 ## Band/City dockable panel
 
@@ -748,6 +749,121 @@ command center**: shown whenever ≥1 player band exists, always displaying a
 
 
 ---
+
+## THE FACTION PAGE IS A SUBJECT, NOT A FOURTH ZONE (issue #450)
+
+The all-band rollup — population, food and trade stores and rates, herds and pens, knowledge, and a
+SUMMARY of workers and parties — is a **pinned first entry in the panel's existing cycler**, rendered
+through the same three-zone shell a band uses. `BandPanelController.render_faction` is its
+`render_band`, `FactionRollup` is its zone builders, and `_panel_is_faction` is the one bit of state
+that says which of the two every re-entry resolves to.
+
+**It is a subject rather than a panel or a tab strip because the shell already fits it.** The body's
+three zones ask *who is this*, *what is it doing* and *who is out*, and those are the same three
+questions one scale up — so the page is a different SUBJECT rendered through the same body, which is
+exactly what the cycler selects. A second tab strip would collide with the narrow shell's
+`Band·Work·Parties` bar (that bar picks a ZONE; a second one picking a subject makes one control mean
+two things), and its own panel would mean a second edge reservation, a second dock preference and a
+duplicate copy of the header, dock chooser and collapse toggle — a great deal of machinery for a
+read-only summary. Unpinned, its position would drift as bands are founded and lost, so it would have
+to be hunted for, which is the opposite of what a standing overview is for.
+
+**THE PAGE IS READ-ONLY, DELIBERATELY.** The issue's scope is "counts and where they are, not
+per-worker controls": role steppers, labor assignment and both compose sheets stay on the per-band
+pages, and the cycler is how a player reaches the band a row makes them want to act on. Nothing on the
+page emits a signal, which is also what lets its builders be `static` at all.
+
+**THE CYCLER READS ONE HIGHER ON EVERY BAND NOW**, and that is the change's one visible effect on
+every surface it did not add: a lone band went from `1 / 1` to `2 / 2`, because the page is entry one.
+The `◀`/`▶` are consequently LIVE on a single-band faction, where they used to be dead —
+`cycle_band` returns early on `_cycler_count() <= 1`, which one band no longer satisfies. Every
+pre-existing `band_panel_*` frame moved in that readout and in nothing else.
+
+### The three exceptions a band's subject does not need
+
+- **CYCLING ONTO IT MOVES NO CAMERA**, and that is a documented exception to decision 2 of
+  `docs/plan_band_city_dock.md` ("panel cycling recenters the map on the cycled settlement"). The
+  faction has no tile; recentring on whichever band the player happened to leave would move the map
+  for a page that says nothing about where it is. **Asserted as a PAIR with the walk back onto a
+  band**, which must still recentre — a cycler that had stopped recentring entirely satisfies the
+  first claim alone.
+- **THE HEADER'S JUMP AFFORDANCE IS OFF** (`BandCityPanel.set_subject_jumpable`). The subject cluster
+  stops taking the mouse, drops the pointing-hand cursor and drops the tooltip promising a jump.
+  Leaving it live and no-oping `focus_band` would have left a header that offers a jump, lights under
+  the pointer and then does nothing — the worst of the three states. `focus_band` guards anyway,
+  because `focus_panel_band` is reached BY NAME through `Main`'s silent `has_method` probe and must be
+  safe to call in every state.
+- **THE NARROW SHELL'S FIRST TAB READS `Faction`** (`set_tab_label`, `""` restores the default). The
+  tab bar picks a zone, and a zone's name states the scope its content is at — the band's on every
+  other page and the faction's on this one. It is the `set_tab_badge` contract deliberately, not a new
+  mechanism.
+
+### What the zones hold, and the one placement worth defending
+
+| zone | holds |
+|---|---|
+| `band` | the summed PEOPLE bar · Food (larder / income / eaten / pen feed, headed by the net) · Trade (stock, headed; rate) · Herds (kept, headed; pens) |
+| `work` | the whole WORKFORCE bar · one row per band (`14 workers · 3 idle`) · the knowledge tracks |
+| `parties` | one row per party — its mission summary and the band it LEFT |
+
+**KNOWLEDGE LIVES IN THE WORK ZONE, not beside the stores.** A track is not a stock and not a
+population: it is what the faction's hands may ATTEMPT, and every rung it gates is a row on a work
+board. It also keeps the band zone inside a horizontal dock's box without a tier gate — and that is
+the whole of the margin, not a comfort: **measured, the band zone's four blocks read 269px of its
+300px box, 31 spare**, where the knowledge block alone is ~110px. The work zone reads 259 of 300 and
+the parties zone 44. **There is no room for a fifth block in the band zone and re-measuring is not
+optional** — `_report_zone_content_extent` prints all three on `band_panel_faction_wide`, and this
+zone has been at the edge twice before.
+
+**THE PARTIES ROW NAMES THE HOME BAND, not the party's tile.** A party's own coordinates change every
+turn and mean nothing without the map; the band it left is what the player cycles to in order to act
+on it, and it is the "where they are" half of the ask a one-line summary row can honestly carry.
+
+### The three arithmetic rules
+
+- **THE PEOPLE BRACKETS ARE SUMMED FRACTIONAL AND APPORTIONED ONCE**, never apportioned per band and
+  added. `HudFormat.apportion_people` apportions to `roundi(Σ parts)`, so summing first leaves ONE
+  remainder to distribute — apportioning each band and adding the results reproduces the very
+  off-by-one that function exists to remove, once per band. On the harness's two-band roster the two
+  compositions differ by a whole person (61 against 60), which is what makes the assertion a
+  discriminator rather than an identity.
+- **THE NET IS SUMMED FROM EACH BAND'S OWN `band_net_food`**, never recomposed from the three totals
+  above it. `raid_forfeit` is a fourth, EPISODIC term of that identity and belongs in the net without
+  earning a standing row, so a recomposed net would quietly disagree with the band pages.
+- **BOTH LISTS ARE CAPPED, AND THE CAP IS STATED.** The zones clip and neither list pages (the work
+  board's pager belongs to a band's own sources), so a bounded list ends in `+N more`. A truncated
+  list with nothing under it reads as the whole roster — the one way a rollup can lie about a total
+  it is printing directly above.
+
+### Frames
+
+`band_panel_faction` (the tall LEFT dock, band tab) · `band_panel_faction_work` (the work tab, which
+the narrow shell's one-zone body cannot show in the frame above) · `band_panel_faction_wide` (the
+bottom dock, all three zones abreast — the only layout the page reads as a whole in). The fixture is
+**two resident bands and one party** (`_faction_roster`), and two bands is the whole point: on a
+one-band faction every total is that band's own, so a page that had stopped summing would render
+identically and every assertion would pass.
+
+**THE SECOND BAND KEEPS A CORRALLED HERD**, because every other fixture band in that file hunts WILD
+game — which is correctly *not* kept — so on an all-wild roster the Herds block reads `0 / 0` and a
+page that had stopped counting kept herds would render identically.
+
+**EVERY STAT ROW IS ASSERTED TO RENDER ITS KEY**, and that is not belt-and-braces: `clip_text` zeroes
+a Label's minimum width, and the spacer beside it is the row's only expanding child, so a clipped key
+is squeezed to **nothing** and the block renders as a column of right-aligned numbers with no names.
+It shipped that way once. Both geometric assertions pass on it comfortably — a zero-width Label is
+inside its zone and fits its box — so `_faction_keyless_rows` measures the laid-out WIDTH rather than
+the `text`, which is set correctly in the broken build too.
+
+`_assert_faction_page` carries the rendered claims (the PEOPLE total against a figure composed from
+the fixtures' own floats, the Herds pair, the keyless-row scan, the header's three slots, the cycler's
+`1 / N+1`, the dead jump affordance driven through the REAL press handler, the tab word, the party
+row's home band);
+`_assert_faction_cycler` carries the routing ones, which no frame can hold — the pinned entry is
+REACHED through `Hud.cycle_panel_band` rather than by calling `render_faction`, the camera pair above,
+and that a snapshot leaves the page up rather than handing the panel back to a band under the player.
+Its last act returns the panel to a band, without which every state below it would re-render as the
+rollup on its next `_push_bands`.
 
 ## The parties strip's SEVEN lines, and the two things that paid for them
 
