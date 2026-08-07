@@ -359,6 +359,170 @@ static func build_hint_line(hint: String, default_readout: String) -> RichTextLa
 	return text
 
 
+## Width the config tree's VALUE column reserves — `CONTROL_WIDTH`'s idea for a read-only surface, so
+## every value in a group lines up whatever its key does.
+##
+## **The value label WRAPS inside this column rather than widening it.** That is the difference
+## between a long value costing a second line and a long value pushing the whole content column out
+## over the map (see the rule's "A row that does not fit swells the whole column"). The tree walks a
+## config nobody has vetted for length, so it cannot rely on every value being short.
+const CONFIG_VALUE_WIDTH := 132.0
+## What one nesting level indents by. Deliberately smaller than `GROUP_PADDING_H`: the well already
+## insets the whole tree once, and a full step at every level walks a `CONFIG_MAX_DEPTH` document off
+## the right-hand side of the column.
+const CONFIG_INDENT := 10
+## The OpenType feature that makes digits share one advance width, so a column of values aligns on its
+## figures instead of on whatever the glyphs happen to measure. A font that does not carry the feature
+## ignores it — this is a request, not a second font choice, which is why the variation declares no
+## `base_font` and inherits whatever the theme resolves.
+const TABULAR_FIGURES_FEATURE := "tnum"
+
+static var _tabular_figures_font: FontVariation = null
+
+
+## The shared tabular-figures font, built once. Static because every value row in every config group
+## wants the same object and a `FontVariation` per row would be thousands of identical resources.
+static func tabular_figures_font() -> FontVariation:
+	if _tabular_figures_font == null:
+		_tabular_figures_font = FontVariation.new()
+		_tabular_figures_font.opentype_features = {TABULAR_FIGURES_FEATURE: 1}
+	return _tabular_figures_font
+
+
+## ONE CONFIG OBJECT, RENDERED BLIND — the shared drawing both equipment config pages are built on.
+##
+## The pages know exactly two key names between them (`WorkbenchVocab.CONFIG_KITS_KEY` /
+## `CONFIG_DEFAULT_KITS_KEY`, which decide which PAGE a top-level entry lands on) and nothing whatever
+## about what is under them. Everything below that is walked here:
+##
+##   - a scalar is one row — **the key exactly as the config spells it**, value right-aligned;
+##   - an object is a named block with its children indented one level;
+##   - an array of scalars is one comma-joined row;
+##   - an array of containers is one block per element, keyed `name[0]`, `name[1]`;
+##   - an empty object or array says `—` rather than nothing at all.
+##
+## **A field added to the sim's config therefore appears on the surface with no client edit**, and a
+## renamed one renames itself on screen. The key is never prettified, because the reader's next move
+## is to search the config file for the string they just read.
+##
+## `depth` is the nesting level these entries sit at and is threaded through as a PARAMETER, never
+## held — this layer keeps no state about the tree it is drawing.
+static func build_config_object(object: Dictionary, depth: int) -> VBoxContainer:
+	var column := VBoxContainer.new()
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# Blocks at the top level are separate things and get the gap between rows; nested lines belong to
+	# one block and get the tighter gap, so a block reads as a unit.
+	column.add_theme_constant_override("separation", ROW_GAP if depth == 0 else ROW_LINE_GAP)
+	if object.is_empty():
+		column.add_child(build_caption(WorkbenchVocab.CONFIG_EMPTY))
+		return column
+	for key in object:
+		for control in build_config_entries(String(key), object[key], depth):
+			column.add_child(control)
+	return column
+
+
+## The control(s) one `key: value` pair renders as. It answers an ARRAY because one pair is not always
+## one control: an array of objects is one block per element, which is the `kits` roster's shape.
+static func build_config_entries(key: String, value: Variant, depth: int) -> Array[Control]:
+	var out: Array[Control] = []
+	if depth >= WorkbenchVocab.CONFIG_MAX_DEPTH:
+		out.append(build_config_row(key, WorkbenchVocab.CONFIG_TOO_DEEP))
+		return out
+	if value is Dictionary:
+		var object: Dictionary = value
+		if object.is_empty():
+			out.append(build_config_row(key, WorkbenchVocab.CONFIG_EMPTY))
+		else:
+			out.append(_config_block(key, build_config_object(object, depth + 1)))
+		return out
+	if value is Array:
+		var list: Array = value
+		if list.is_empty():
+			out.append(build_config_row(key, WorkbenchVocab.CONFIG_EMPTY))
+			return out
+		if _config_list_is_scalar(list):
+			out.append(build_config_row(key, _config_list_face(list)))
+			return out
+		# A container element gets its own entry AT THIS LEVEL, keyed by index — rendering `kits` as a
+		# heading over `kits[0]`, `kits[1]` would state the same name twice.
+		for index in list.size():
+			out.append_array(build_config_entries(
+				WorkbenchVocab.CONFIG_INDEX_FORMAT % [key, index], list[index], depth))
+		return out
+	out.append(build_config_row(key, config_value_face(value)))
+	return out
+
+
+## A named subtree: the block's own name, then its body indented one level.
+##
+## **The name is the only non-wrapping label the tree draws.** Everything else is a caption, which is
+## what keeps an unvetted config from swelling the content column; a block name is short by
+## construction (a config key, or a key plus an index) and reads as a heading rather than as prose.
+static func _config_block(name: String, body: Control) -> VBoxContainer:
+	var block := VBoxContainer.new()
+	block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	block.add_theme_constant_override("separation", ROW_LINE_GAP)
+	block.add_child(build_row_label(name))
+
+	var indent := MarginContainer.new()
+	indent.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	indent.add_theme_constant_override("margin_left", CONFIG_INDENT)
+	indent.add_child(body)
+	block.add_child(indent)
+	return block
+
+
+## ONE SCALAR: the config's own key on the left, the value right-aligned in its own column.
+static func build_config_row(key: String, face: String) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_theme_constant_override("separation", ROW_COLUMN_GAP)
+
+	var name_label := build_caption(key, HudStyle.INK_DIM)
+	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(name_label)
+
+	var value_label := build_caption(face, HudStyle.INK)
+	value_label.custom_minimum_size.x = CONFIG_VALUE_WIDTH
+	value_label.size_flags_horizontal = Control.SIZE_SHRINK_END
+	# Top-aligned, not centred: a key long enough to wrap makes the row two lines tall, and a centred
+	# value then sits between them, beside neither.
+	value_label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	value_label.add_theme_font_override("font", tabular_figures_font())
+	row.add_child(value_label)
+	return row
+
+
+## One scalar's face. Numbers and booleans go through `str()`, which prints a JSON float at the
+## precision it arrived with (`0.02` stays `0.02`) rather than at a decimal count this surface would
+## have had to invent; a string is drawn bare, since quoting it would be a second rendering of a
+## config the page is claiming to print verbatim.
+static func config_value_face(value: Variant) -> String:
+	if value == null:
+		return WorkbenchVocab.CONFIG_EMPTY
+	if value is String:
+		var text: String = value
+		return text if not text.is_empty() else WorkbenchVocab.CONFIG_EMPTY
+	return str(value)
+
+
+## Is every element of this array a scalar? Decides between one comma-joined row and a block apiece.
+static func _config_list_is_scalar(list: Array) -> bool:
+	for element in list:
+		if element is Dictionary or element is Array:
+			return false
+	return true
+
+
+static func _config_list_face(list: Array) -> String:
+	var faces: Array[String] = []
+	for element in list:
+		faces.append(config_value_face(element))
+	return WorkbenchVocab.CONFIG_LIST_SEPARATOR.join(faces)
+
+
 ## Format a parameter value for display: whole units for an `int`, otherwise enough decimal places
 ## to represent the parameter's own step (so a 0.005-step param does not read as "0.01").
 static func format_value(value: float, step: float, is_int: bool, unit: String = "") -> String:

@@ -253,14 +253,28 @@ each one's section:
 |---|---|---|
 | `SubsistenceSection.kits:[KitOption]` | `kits` (array of `{id, display_name, jobs, attack, hunt_carry_per_worker_biomass, forage_carry_per_worker_biomass}`) | `dict/subsistence.rs` → `kits_to_array` |
 | `SubsistenceSection.defaultHuntKitId` / `defaultForageKitId` | `default_hunt_kit_id` / `default_forage_kit_id` | `snapshot/mod.rs` + `bridge/decoder.rs` |
+| `SubsistenceSection.equipmentConfigJson` | `equipment_config_json` — the whole effective `EquipmentConfig`, `serde_json`-serialized | `snapshot/mod.rs` + `bridge/decoder.rs` |
 | `PopulationCohortState.kitId` | `kit_id` on the band dict | `dict/population.rs` |
 | `LaborAssignment.kitId` | `kit_id` on the assignment entry | `dict/population.rs` |
 | `HerdTelemetryState.huntTripEstimatesKitId` / `denialEstimatesKitId` | `hunt_trip_estimates_kit_id` / `denial_estimates_kit_id` | `dict/subsistence.rs` → `herds_to_array` |
 
-**The roster and its two defaults are WHOLE-SECTION fields, so they are decoded on BOTH paths** —
-`snapshot_to_dict` and `decode_delta_against` — which is the rule the `food_modules` /
-`faction_inventory` staleness above records. A whole-section field read only on the full path
-republishes the baseline's value for the life of the world.
+**The roster, its two defaults and the serialized config are WHOLE-SECTION fields, so they are
+decoded on BOTH paths** — `snapshot_to_dict` and `decode_delta_against` — which is the rule the
+`food_modules` / `faction_inventory` staleness above records. A whole-section field read only on the
+full path republishes the baseline's value for the life of the world. The sim diffs each of them as a
+`Whole<_>`, so it rides a delta ONLY when it moved: presence on the delta IS the change signal there,
+which is why all four go through `insert_changed` and not `insert_always`.
+
+**`equipmentConfigJson` is republished as ONE OPAQUE STRING and is deliberately never parsed here.**
+The Workbench's Equipment and Kits pages parse it themselves and walk it blind, which is what lets a
+field added to `equipment.json` reach the surface with no client edit (`workbench.md` → "The two
+config pages PRINT the config"). A decoder that unpacked it into typed keys would put the hardcoded
+field list back, one layer lower down where nothing on the GDScript side would catch it.
+
+**The delta fixtures carry none of these four**, so `decode-guard` exercises them on the full path
+only — the golden gains their line, and the chain assertions never see them. That is not an argument
+that the delta half is optional; it is the reason the delta half has to be written by rule rather than
+by the guard going red.
 
 **`KitOption`'s three tiers are the FRESH-kit ones, and they are not any band's numbers.** What a
 given band's wear does to them is the band's own cohort row (`hunter_attack` /

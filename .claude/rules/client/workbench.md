@@ -26,10 +26,11 @@ invisible yet still holding its reservation. It goes away with the Inspector.
 | `ui/workbench/WorkbenchShell.gd` | Coordinator ONLY: rail, content host, pinned footer region, page routing, edge reservation, snapshot fan-out with a hidden-surface gate. It never names or `preload`s a page |
 | `ui/workbench/WorkbenchPages.gd` | The page registry — rows of `{id, title, subtitle, section, glyph, script}`. An empty `script` is a declared-but-unbuilt page and renders the placeholder |
 | `ui/workbench/WorkbenchPage.gd` | The page contract: `build`, `build_actions`, `apply_update`, `reset` (world-scoped — see below), and the service hooks |
-| `ui/workbench/WorkbenchWidgets.gd` | All-`static`, stateless shared drawing — surface/rail chrome, `build_group` (the sunk well: heading, hairline, the caller's own body threaded in), the banner, the parameter row, the number field, the modified dot |
+| `ui/workbench/WorkbenchWidgets.gd` | All-`static`, stateless shared drawing — surface/rail chrome, `build_group` (the sunk well: heading, hairline, the caller's own body threaded in), the banner, the parameter row, the number field, the modified dot, and **the generic config tree** (`build_config_object` / `build_config_entries` / `build_config_row`) both equipment config pages draw with |
 | `ui/workbench/WorkbenchVocab.gd` | ALL-`const` labels, glyphs, geometry, font sizes. Zero funcs, zero vars |
 | `ui/workbench/pages/ConfigTuningPage.gd` | Page one — the manifest-driven config tuning surface |
-| `ui/workbench/pages/EquipmentPage.gd` | Page two — the TOE roster and each player band's live kit state, read side only. A second reader of `ui/hud/KitRoster.gd`, never a second copy of it |
+| `ui/workbench/pages/EquipmentPage.gd` | Page two — every top-level block of the sim's effective `EquipmentConfig` EXCEPT the kit roster and the job defaults. It names no field |
+| `ui/workbench/pages/KitsPage.gd` | Page three — the other two: the kit roster and the job defaults, drawn with the same generic tree |
 | `src/config/tuning_manifest.json` | What is tunable: per config kind a `kind`/`label`/`env_var` and rows of `{pointer, label, type, min, max, step, default, unit?, hint}` |
 | `tools/workbench_preview.gd` / `.tscn` | PNG preview harness for the surface (see `test-harnesses.md`) |
 | `tools/workbench_shell_budget.gd` / `.tscn` | The decomposition guard — see "The shell cannot grow" |
@@ -102,11 +103,13 @@ The shell calls `reset_pages()` from `Main`'s per-world reset, so a page's state
 world it described. That is the whole scope of the hook: **snapshot-derived state**, not everything a
 page holds.
 
-`EquipmentPage` is the ordinary case and shows what the hook is for: its roster is the ended world's
-config and its cohorts are that world's bands, so it drops both. What it buys is **the gap** — a
-world boundary is not a frame, and between `reset_pages()` and the next snapshot a page that kept its
-state would render the dead world's bands as though they were the new one's. The page re-seeds from
-that next frame either way; the point is that it says nothing rather than something wrong in between.
+`EquipmentPage` and `KitsPage` are the ordinary case and show what the hook is for: the parsed config
+each holds is the ENDED world's, so both drop it. What it buys is **the gap** — a world boundary is
+not a frame, and between `reset_pages()` and the next snapshot a page that kept its state would render
+the dead world's tunables as though they were the new one's. The page re-seeds from that next frame
+either way; the point is that it says nothing rather than something wrong in between. The config is
+re-sent only on a world rebuild, which is what makes "indefinitely" rather than "for a frame" the
+alternative.
 
 `ConfigTuningPage.reset()` is therefore a **documented no-op**, and the exception is the load-bearing
 part. Its state is the designer's intent and the server's staged file — neither belongs to the world,
@@ -187,12 +190,13 @@ clause in `EquipmentPage.apply_update` is for — see the next section.
 duplicate of the cached world and overwrites it with the delta's keys, so `snapshot.has(key)` is true
 on every frame whether or not anything moved; `changed_sections` is the manifest, and it is **absent
 on a full snapshot, meaning everything changed**. `SnapshotSections.gd` carries the general rule and
-`Main` already gated the kit roster this way — the equipment page's first cut did not, and rebuilt
-both of its groups every turn on a roster that changes only when the world does.
+`Main` already gated the kit roster this way — the equipment page's first cut did not, and re-parsed
+the whole config and rebuilt its groups every turn, on a document that changes only when the world
+does.
 
 The gate a snapshot-reading page wants is therefore **"the frame carries it AND (the manifest says it
 changed OR this page is holding nothing for it)"**. The second clause is not belt-and-braces: a
-replayed cached frame (above) reports the roster unchanged, so a `changed`-only gate would leave a
+replayed cached frame (above) reports the section unchanged, so a `changed`-only gate would leave a
 freshly-switched-to page permanently empty, and the same clause is what re-seeds a page after
 `reset()`. The four cases it has to cover are the first full snapshot, a steady delta, a
 replay-or-post-reset, and a world rebuild.
@@ -211,19 +215,23 @@ label text or `CONTROL_WIDTH` — the number fields hold at most six characters,
 usually where the slack is.
 
 **Every page owes the same measurement, and the column check is the part that transfers.** The
-per-row checks above are shaped around a parameter row; `_assert_equipment_fits` is the equipment
-page's own version, measuring the same content column and then walking every label the page draws
-with autowrap **off**. On that page they are of three kinds, and the lever differs by kind:
+per-row checks above are shaped around a parameter row; `_assert_equipment_fits` is the config pages'
+version, measuring the same content column and then walking every label the page draws with autowrap
+**off**. It takes the page as a PARAMETER and both pages are asked, because the config's shape is the
+sim's to choose: the roster and the gear blocks nest differently and reach different widths, so
+measuring one says nothing about the other. The labels are of two kinds, and the lever differs by kind:
 
-- **A page's own content** — a kit's display name, a band's head row. These are deliberately the only
-  two content lines that do not wrap, and **the lever is to put long text in a wrapping caption**,
-  which is why every other line there is one.
+- **A block's own name** — `hunting_kit`, `kits[0]`. The only non-wrapping label the config tree
+  draws, and short by construction (a config key, or a key plus an index). Every other line the tree
+  draws is a caption, including the VALUE column, which wraps *inside* its fixed
+  `WorkbenchWidgets.CONFIG_VALUE_WIDTH` rather than widening it — so an unvetted config's long value
+  costs a second line instead of pushing the column over the map.
 - **The group headings `build_group` draws.** `WorkbenchWidgets.build_section_label` sets no
   `autowrap_mode`, so a heading is measured like anything else — and a caption is not an option for
   one. **The lever there is the heading text itself**, in `WorkbenchVocab`.
 
-So the count the assertion prints is headings plus content lines, not content alone: a reader
-matching it against the page's rows will be over by one per group.
+So the count the assertion prints is headings plus block names, not rows: a reader matching it against
+what is on screen will find it far smaller than the number of lines.
 
 ## A new glyph must be RENDERED before it is trusted
 
@@ -233,44 +241,61 @@ a couple of pixels tall. That is unreadable precisely where the glyph is all the
 both shipped that way and were caught in `workbench_preview`'s collapsed-rail frame. Check a new one
 there the same way.
 
-## The equipment page quotes each tier at ITS OWN kit, and they are not the same kit
+**Coverage is not the only way to fail that frame, and the second way looks identical.** The Kits
+page's first pick was `▤` (U+25A4), a fully covered glyph that draws its horizontal rules cleanly at
+30px — and in the collapsed rail, at `FONT_SIZE_GLYPH` in `INK_DIM` under the project's fractional
+canvas scale, those rules smear into a solid block indistinguishable from tofu, sitting next to
+Equipment's `▣`. So the test is legibility in the SHIPPED frame, not presence in the font: a glyph
+carrying hairline strokes is the shape to avoid, and `◧` (U+25E7) — same square family, no fine
+detail — is what shipped. A font-level probe (`Font.has_char`) answers `false` for every one of these,
+including the ones that demonstrably render, because the rail draws through TextServer's system
+fallback; it is not a usable check.
 
-The page draws two sets of tiers a centimetre apart in identical units and formats — the roster's,
-which are what a **fresh** kit grants, and each band's **resolved** ones — so everything about it is
-arranged to keep a number from being read against the wrong thing. Three of those arrangements are
-load-bearing rather than tidy:
+## The two config pages PRINT the config; they do not describe it
 
-**`PopulationCohortState.kitId` answers for the HUNT tiers only.** For a resident band it is the hunt
-job's default; the forage tier resolves through the world's forage default, which rides the wire once
-as `SubsistenceSection.defaultForageKitId`. Quoting the gather rate under `kitId` reads a gathering
-number off `big_game`, which has no basket component at all — a plausible row that is simply wrong,
-and one the sim already refuses to publish (the `kit_selection` test
-`a_resident_bands_published_kit_answers_for_the_hunt_tiers_only`).
-**An in-flight party is the exception**: it carries one kit, decided at
-launch, so that kit covers its forage tier too and `kitId` is the honest answer for both lines. Both
-directions are asserted (`_assert_equipment_quotes_each_tier_at_its_own_kit`), and the fixture's hunt
-and forage defaults are **different kits** on purpose — with one default for both jobs, the fix and
-the bug render the same sentence.
+Equipment and Kits between them render the sim's whole effective `EquipmentConfig`, which rides the
+wire once per world as `SubsistenceSection.equipmentConfigJson` — a `serde_json` string, decoded onto
+the frame as `equipment_config_json` — and is parsed by each page with `JSON.parse_string`. **Neither
+page names a field.** The tree under every entry is walked blind by
+`WorkbenchWidgets.build_config_object`: a scalar is a row keyed by the config's own spelling, an object
+is a named block with its children indented, an array of scalars is one comma-joined row, an array of
+containers is one block per element keyed `kits[0]`, and an empty object or array says `—`.
 
-**A cohort's tier keys are NOT the roster's**, and only two thirds of that is obvious. Both carry
-axes happen to share a spelling with the roster's keys; the attack axis does not — a kit publishes
-`attack`, a cohort publishes `hunterAttack` — so reading all three through `KitRoster`'s keys renders
-a whole, plausible line in which the attack is the `0.0` of a missing key, drawn beside two correct
-numbers. That shipped for exactly one render and a screenshot caught it. The page spells its three
-cohort keys out rather than borrowing them on the strength of two coinciding, and
-`_assert_equipment_states_the_bands_own_tiers` pins the rendered numbers against a **worn** fixture
-band — a fresh band's resolved tiers equal its kit's, so the assertion would prove nothing on one.
+**The whole design is one property: a field added to the config appears here with no client edit, and
+a renamed one renames itself on screen.** The page this replaced listed the fields by hand, and a
+hand-written list fails in the one direction that is invisible — a renamed key simply stops drawing,
+leaving a page that looks entirely correct. That is not hypothetical: the gear blocks were being
+renamed in a parallel branch while this was written.
 
-**The two carry tiers are separate fields on the wire and stay separate here.** A band can be out of
-baskets with its sled untouched, and rendering one on the other web's row is the defect the sim-side
-split corrected.
+**The split between the two pages is the ONLY config knowledge the client holds**, and it is two
+consts in `WorkbenchVocab` (`CONFIG_KITS_KEY` / `CONFIG_DEFAULT_KITS_KEY`) with a comment saying so.
+Kits draws those two; **Equipment is defined by subtraction** — "every other top-level entry, whatever
+it is" — so a fourth gear block lands there by construction. Only a restructuring of the config's TOP
+LEVEL reaches any client file.
 
-The page is bounded to the **player's** cohorts (a rival's bands render identically, so the filter is
-asserted rather than eyeballed), and its only non-wrapping labels are a kit's display name and a
-band's head row — every other line is a wrapping caption, which is what keeps the content column from
-swelling. `HerdTelemetryState.huntTripEstimatesKitId` / `denialEstimatesKitId` are **not** consumed
-here; they exist so a client can refuse to present an estimate table as an answer for a kit it was not
-computed at, which is the compose sheets' job, not this page's.
+Two consequences worth stating because they are easy to undo:
+
+- **The keys are never prettified.** `wear_per_biomass_hauled` is drawn exactly like that, because the
+  reader's next move is to search `equipment.json` for the string they just read. A title-cased
+  rendering would break that and read as an improvement.
+- **There is deliberately no rule skipping `_`-prefixed keys.** The wire carries the serialized
+  STRUCT, so `equipment.json`'s `_comment` blocks never reach the client; a guard against something
+  that cannot arrive is dead code, and this repo has no shipped saves to need one.
+
+`workbench_preview` pins the property rather than the pictures. The fixture carries a field
+(`wear_per_turn_carried`, inside a real gear block) and a whole block (`windbreak_kit`) that **no
+shipped GDScript names**, and `_assert_the_pages_print_a_config_no_script_names` asserts both render
+with their own values — plus a scan of the four shipped scripts confirming neither string appears in
+any of them. It is the only thing standing between this design and a hardcoded field list creeping
+back, and it was sabotage-verified against exactly that (an allow-list in the renderer fails it alone,
+naming the key it could not find, with the other eight assertions green).
+`_assert_the_pages_partition_the_config` covers the other half — that the roster is on Kits and NOT on
+Equipment, and a gear block on Equipment and NOT on Kits — which no frame can carry, since each page
+renders a plausible tree of config keys and the claim is about the *other* page.
+
+The live kit state a band resolves to is **not** here. It belongs to the Band panel, which already has
+it, and drawing a roster's fresh tiers a centimetre from a band's worn ones in identical units was a
+standing invitation to read one against the other.
 
 ## The tuning manifest is curated, and its patches are sparse
 

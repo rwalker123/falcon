@@ -24,6 +24,7 @@ const MAP_TONE := Color(0.10, 0.15, 0.16)
 ## The page each state opens. `logs` is registered with no script, so it is the placeholder state.
 const TUNING_PAGE := &"config_tuning"
 const EQUIPMENT_PAGE := &"equipment"
+const KITS_PAGE := &"kits"
 const PLACEHOLDER_PAGE := &"logs"
 
 ## The dirty state's edits, as `param label -> value`. Each value is a whole number of steps from its
@@ -106,23 +107,31 @@ func _ready() -> void:
 	await _settle()
 	await _save("workbench_placeholder")
 
-	# The equipment page with NO WORLD — the degradation every page owes this harness, which runs
-	# with no server at all. Rendered before the fixture so it cannot be reached only by luck of
+	# Both config pages with NO WORLD — the degradation every page owes this harness, which runs with
+	# no server at all. Rendered before the fixture so they cannot be reached only by luck of
 	# ordering: a page that crashed or came up blank here could not be iterated on.
 	_shell.show_page(EQUIPMENT_PAGE)
 	await _settle()
 	await _save("workbench_equipment_empty")
+	_shell.show_page(KITS_PAGE)
+	await _settle()
+	await _save("workbench_kits_empty")
 
-	# …and with one. `update_snapshot` fans at the ACTIVE page only, so the page is shown first.
-	_shell.update_snapshot(_equipment_frame(), true)
+	# …and with one. `update_snapshot` fans at the ACTIVE page only, so the frame lands on Kits here
+	# and reaches Equipment through the page-switch replay on the line after the save.
+	_shell.update_snapshot(_equipment_config_frame(), true)
+	await _settle()
+	await _save("workbench_kits")
+	_assert_equipment_fits(_kits_page(), KITS_PAGE)
+
+	_shell.show_page(EQUIPMENT_PAGE)
 	await _settle()
 	await _save("workbench_equipment")
-	_assert_equipment_fits()
-	_assert_equipment_states_the_bands_own_tiers()
-	_assert_equipment_quotes_each_tier_at_its_own_kit()
-	_assert_equipment_renders_the_players_bands()
-	# LAST TWO of the equipment block, in this order: the reset empties the page, which is exactly the
-	# precondition the catch-up assertion needs — and nothing else may read the page after it.
+	_assert_equipment_fits(_equipment_page(), EQUIPMENT_PAGE)
+	_assert_the_pages_print_a_config_no_script_names()
+	_assert_the_pages_partition_the_config()
+	# LAST TWO of the config block, in this order: the reset empties both pages, which is exactly the
+	# precondition the catch-up assertion needs — and nothing else may read them after it.
 	_assert_equipment_drops_the_world()
 	_assert_equipment_catches_up_on_page_switch()
 
@@ -408,268 +417,390 @@ func _content_scroll() -> ScrollContainer:
 	return null
 
 
-# ---- the equipment page ----------------------------------------------------
+# ---- the two config pages --------------------------------------------------
 
-## THE FIXTURE'S IDS. The two job defaults are DIFFERENT kits, and that is the load-bearing part: a
-## page that quoted the band's gather rate under `kitId` renders an identical-looking line when the
-## hunt and forage defaults happen to agree, so a fixture with one default for both jobs could not
-## tell the fix from the bug. The party's kit is a THIRD id again, for the same reason on the other
-## side — it is the one cohort whose forage tier really is quoted at `kitId`.
-const EQUIPMENT_HUNT_KIT_ID := "big_game"
-const EQUIPMENT_FORAGE_KIT_ID := "baskets"
-const EQUIPMENT_PARTY_KIT_ID := "none"
-const EQUIPMENT_RESIDENT_ENTITY := 301
-const EQUIPMENT_PARTY_ENTITY := 412
-## A rival band, so the player-faction filter has something to exclude. Without it the filter passes
-## on a page that renders every cohort it is given.
-const EQUIPMENT_RIVAL_ENTITY := 907
-const EQUIPMENT_RIVAL_FACTION := 3
-
-
-## The roster, in wire shape and wire ORDER — `none` last, exactly as `equipment.json` authors it.
-## Every entry states all three tiers, publishing the BARE-HANDED value on each axis its kit does not
-## use, which is the shape `KitRoster.unequipped_tier` reads the bare tier off.
-static func _equipment_kits() -> Array:
-	return [
-		{
-			"id": EQUIPMENT_HUNT_KIT_ID, "display_name": "Big Game Kit", "jobs": ["hunt"],
-			"attack": 20.0, "hunt_carry_per_worker_biomass": 40.0,
-			"forage_carry_per_worker_biomass": 1.6,
-		},
-		{
-			"id": EQUIPMENT_FORAGE_KIT_ID, "display_name": "Basket Kit", "jobs": ["forage"],
-			"attack": 1.0, "hunt_carry_per_worker_biomass": 12.0,
-			"forage_carry_per_worker_biomass": 8.0,
-		},
-		{
-			"id": EQUIPMENT_PARTY_KIT_ID, "display_name": "Bare-handed", "jobs": ["hunt", "forage"],
-			"attack": 1.0, "hunt_carry_per_worker_biomass": 12.0,
-			"forage_carry_per_worker_biomass": 1.6,
-		},
-	]
-
-
-## One full frame carrying the roster, its two defaults and three cohorts: a WORN resident band, an
-## in-flight party, and a rival the page must not draw.
+## **THE INVENTED KEYS, AND THEY ARE THE POINT OF THIS WHOLE FIXTURE.**
 ##
-## **The resident band's spears are SPENT and its sled is not**, which is the shape the whole page
-## exists for — one role dropped to the bare-handed tier while the other holds — and it is also what
-## makes the tier assertion below bite: its resolved attack (1.0, bare) differs from the fresh 20.0
-## its own kit publishes, so a line rendering the ROSTER's number where the BAND's belongs is a
-## different string rather than the same one. Its baskets are dry too, so the dry wording renders.
-static func _equipment_frame() -> Dictionary:
+## `wear_per_turn_carried` and `windbreak_kit` are not in `equipment.json` and are named by NO
+## GDScript on the shipped surface — a field inside a gear block and a whole top-level block that
+## exist only here. Both must render, because that is the entire claim the two pages make: they print
+## whatever the config contains, so a field the sim adds tomorrow arrives with no client edit and a
+## renamed one renames itself on screen. A page holding a list of field names would draw the three
+## real keys of `hunting_kit` perfectly and silently skip the fourth, which looks exactly like a
+## correct page.
+##
+## `spare_kit` is an empty object and `none`'s `uses` is an empty array — the two shapes that must
+## render an explicit `—` rather than a blank right-hand column, which reads as a rendering fault
+## rather than as the config's own answer.
+const CONFIG_INVENTED_FIELD := "wear_per_turn_carried"
+const CONFIG_INVENTED_BLOCK := "windbreak_kit"
+const CONFIG_EMPTY_BLOCK := "spare_kit"
+## A gear block and a kit id the REAL config carries, so the fixture is recognisably the shipped
+## shape and the partition assertion has something honest to point at.
+const CONFIG_GEAR_BLOCK := "hunting_kit"
+const CONFIG_HUNT_KIT_ID := "big_game"
+const CONFIG_HUNT_JOB := "hunt"
+## The roster field carrying both array shapes the tree has to tell apart: two components on `big_game`
+## (comma-joined onto one row) and none at all on `none`, which is an ordinary roster member and not a
+## sentinel — so its empty array has to say `—`.
+const CONFIG_USES_KEY := "uses"
+
+
+## The whole effective `EquipmentConfig` in its serialized shape — the Rust struct's own field names,
+## the three shipped gear blocks, the roster and the job defaults, PLUS the invented field and the
+## invented block above.
+static func _equipment_config() -> Dictionary:
 	return {
-		"kits": _equipment_kits(),
-		"default_hunt_kit_id": EQUIPMENT_HUNT_KIT_ID,
-		"default_forage_kit_id": EQUIPMENT_FORAGE_KIT_ID,
-		"populations": [
+		CONFIG_GEAR_BLOCK: {
+			"equipped_attack": 20.0,
+			"starting_durability": 100.0,
+			"wear_per_kill": 0.4,
+			CONFIG_INVENTED_FIELD: 0.05,
+		},
+		"sled_kit": {
+			"unequipped_per_worker_biomass_capacity": 12.0,
+			"starting_durability": 100.0,
+			"wear_per_biomass_hauled": 0.02,
+		},
+		"basket_kit": {
+			"unequipped_per_worker_biomass_capacity": 1.6,
+			"starting_durability": 100.0,
+			"wear_per_biomass_gathered": 0.04,
+		},
+		CONFIG_INVENTED_BLOCK: {
+			"equipped_cold_tolerance": 6.0,
+			"starting_durability": 100.0,
+			"wear_per_turn_sheltered": 0.1,
+		},
+		CONFIG_EMPTY_BLOCK: {},
+		WorkbenchVocab.CONFIG_KITS_KEY: [
 			{
-				"entity": EQUIPMENT_RESIDENT_ENTITY, "faction": HudConst.PLAYER_FACTION_ID,
-				"size": 16, "is_expedition": false, "kit_id": EQUIPMENT_HUNT_KIT_ID,
-				"hunting_kit_durability": 0.0, "sled_kit_durability": 58.0,
-				"basket_kit_durability": 0.0,
-				"hunter_attack": 1.0, "hunt_carry_per_worker_biomass": 40.0,
-				"forage_carry_per_worker_biomass": 1.6,
-				"labor_assignments": [
-					{"kind": "hunt", "kit_id": EQUIPMENT_HUNT_KIT_ID},
-					{"kind": "forage", "kit_id": EQUIPMENT_FORAGE_KIT_ID},
-					{"kind": "scout", "kit_id": ""},
-				],
+				"id": CONFIG_HUNT_KIT_ID, "display_name": "Big-game kit",
+				"jobs": [CONFIG_HUNT_JOB], CONFIG_USES_KEY: [CONFIG_GEAR_BLOCK, "sled_kit"],
 			},
 			{
-				"entity": EQUIPMENT_PARTY_ENTITY, "faction": HudConst.PLAYER_FACTION_ID,
-				"size": 5, "is_expedition": true, "kit_id": EQUIPMENT_PARTY_KIT_ID,
-				"hunting_kit_durability": 12.0, "sled_kit_durability": 0.0,
-				"basket_kit_durability": 0.0,
-				"hunter_attack": 1.0, "hunt_carry_per_worker_biomass": 12.0,
-				"forage_carry_per_worker_biomass": 1.6,
-				"labor_assignments": [],
+				"id": "gathering", "display_name": "Gathering kit",
+				"jobs": ["forage"], CONFIG_USES_KEY: ["basket_kit"],
 			},
 			{
-				"entity": EQUIPMENT_RIVAL_ENTITY, "faction": EQUIPMENT_RIVAL_FACTION,
-				"size": 9, "is_expedition": false, "kit_id": EQUIPMENT_HUNT_KIT_ID,
-				"hunting_kit_durability": 40.0, "sled_kit_durability": 40.0,
-				"basket_kit_durability": 40.0,
-				"hunter_attack": 20.0, "hunt_carry_per_worker_biomass": 40.0,
-				"forage_carry_per_worker_biomass": 8.0,
-				"labor_assignments": [],
+				"id": "none", "display_name": "No kit",
+				"jobs": [CONFIG_HUNT_JOB, "forage"], CONFIG_USES_KEY: [],
 			},
 		],
+		WorkbenchVocab.CONFIG_DEFAULT_KITS_KEY: {
+			CONFIG_HUNT_JOB: CONFIG_HUNT_KIT_ID,
+			"forage": "gathering",
+		},
 	}
+
+
+## One full frame carrying that config the way the wire carries it: a `serde_json` STRING under
+## `SubsistenceSection.equipmentConfigJson`, decoded onto the frame dict as `equipment_config_json`.
+## Both pages parse it themselves, so the harness hands over the string and nothing else.
+##
+## **`sort_keys` is OFF deliberately.** It defaults to TRUE, which would hand the pages an
+## alphabetised config no server can produce — `serde_json` writes a struct in its declared field
+## order, and the pages render in the order they are given, so a sorted fixture would render a frame
+## the live client never shows.
+static func _equipment_config_frame() -> Dictionary:
+	return {WorkbenchVocab.CONFIG_JSON_KEY: JSON.stringify(_equipment_config(), "", false)}
+
+
+## **THE PAGES ARE FOUND BY TYPE WHILE ON SCREEN AND REMEMBERED AFTERWARDS.** The shell DETACHES the
+## page it is not showing, so a plain tree search only ever finds the ACTIVE one — and two of the
+## claims below are precisely about a page that is not active: `reset_pages()` fans out at every BUILT
+## page, and the catch-up replay is asked of a page that was away when the frame landed. Remembering
+## the node is what keeps the harness out of the shell's private page table, which it hands to nobody.
+var _remembered_equipment_page: EquipmentPage = null
+var _remembered_kits_page: KitsPage = null
 
 
 func _equipment_page() -> EquipmentPage:
-	for node in _shell.find_children("*", "", true, false):
-		if node is EquipmentPage:
-			return node
-	push_error("workbench_preview: equipment page not found")
-	return null
+	if _remembered_equipment_page == null:
+		for node in _shell.find_children("*", "", true, false):
+			if node is EquipmentPage:
+				_remembered_equipment_page = node
+				break
+	if _remembered_equipment_page == null:
+		push_error("workbench_preview: equipment page not found")
+	return _remembered_equipment_page
 
 
-## The tier line for one cohort, reached by the meta handle the page stamps rather than by its face —
-## both lines carry live numbers and a kit's display name, so a text search finds either or neither.
-func _tier_label(page: EquipmentPage, meta: String, entity: int) -> Label:
+func _kits_page() -> KitsPage:
+	if _remembered_kits_page == null:
+		for node in _shell.find_children("*", "", true, false):
+			if node is KitsPage:
+				_remembered_kits_page = node
+				break
+	if _remembered_kits_page == null:
+		push_error("workbench_preview: kits page not found")
+	return _remembered_kits_page
+
+
+## Does this page draw a Label whose text is EXACTLY `text`? The tree prints a config key verbatim,
+## so an exact match on a key is an exact match on the row that key labels — a `contains` would let
+## `wear_per_kill` satisfy a claim about `wear_per_kill_bonus`.
+func _page_states(page: WorkbenchPage, text: String) -> bool:
+	if page == null:
+		return false
 	for node in page.find_children("*", "Label", true, false):
-		var label: Label = node
-		if label.has_meta(meta) and int(label.get_meta(meta)) == entity:
-			return label
+		if (node as Label).text == text:
+			return true
+	return false
+
+
+## Every VALUE rendered opposite a row keyed `key`, anywhere under `root`, in render order.
+##
+## **The key is the row's FIRST label and the value its second, and reading the row positionally is
+## not fussiness.** A value is often a string that some other row uses as a KEY — the fixture's
+## `kits[0].jobs` renders the value `hunt` while `default_kits` renders the key `hunt` — so a search
+## for "the Label whose text is `hunt`, then its sibling" answers `jobs` and asserts the opposite of
+## what it was asked. `root` is a `Node` rather than a page so a claim can be scoped to ONE block:
+## `starting_durability` occurs in four of them, and a page-wide search would answer whichever came
+## first.
+func _config_row_faces(root: Node, key: String) -> Array[String]:
+	var out: Array[String] = []
+	if root == null:
+		return out
+	for node in root.find_children("*", "HBoxContainer", true, false):
+		var labels: Array[Label] = []
+		for child in (node as HBoxContainer).get_children():
+			if child is Label:
+				labels.append(child)
+		if labels.size() == 2 and labels[0].text == key:
+			out.append(labels[1].text)
+	return out
+
+
+## The single value opposite `key` under `root`, or `""` when no such row rendered.
+func _config_row_face(root: Node, key: String) -> String:
+	var faces := _config_row_faces(root, key)
+	return faces[0] if not faces.is_empty() else ""
+
+
+## The body of the named block — the subtree an assertion scopes itself to when a key it is asking
+## about is spelled the same in several blocks. A block is a `VBoxContainer` whose FIRST child is its
+## own name Label, which is the shape `WorkbenchWidgets._config_block` builds.
+func _config_block_body(page: WorkbenchPage, name: String) -> Node:
+	if page == null:
+		return null
+	for node in page.find_children("*", "VBoxContainer", true, false):
+		var block: VBoxContainer = node
+		if block.get_child_count() == 0:
+			continue
+		var head := block.get_child(0)
+		if head is Label and (head as Label).text == name:
+			return block
 	return null
 
 
-## **THE ONE CLAIM THIS PAGE WAS POSITIONED TO GET WRONG**, and no frame can carry it: both tier
-## lines render a plausible sentence naming a real kit, and which kit is a NAME, not a picture.
+## The name the tree gives element `index` of the roster's array — `kits[0]`, the block heading the
+## partition assertion looks for. Composed through the SAME format the renderer uses, since the two
+## agreeing is the premise here and not the claim.
+static func _roster_block_name(index: int) -> String:
+	return WorkbenchVocab.CONFIG_INDEX_FORMAT % [WorkbenchVocab.CONFIG_KITS_KEY, index]
+
+
+## The shipped scripts a hardcoded field list could hide in. The harness itself is deliberately NOT
+## in this list: it is the thing that invents the keys.
+const CONFIG_PAGE_SOURCES := [
+	"res://src/scripts/ui/workbench/pages/EquipmentPage.gd",
+	"res://src/scripts/ui/workbench/pages/KitsPage.gd",
+	"res://src/scripts/ui/workbench/WorkbenchWidgets.gd",
+	"res://src/scripts/ui/workbench/WorkbenchVocab.gd",
+]
+
+
+## **THE ASSERTION THIS WHOLE DESIGN RESTS ON, AND THE ONLY THING STANDING BETWEEN IT AND SOMEONE
+## QUIETLY REINTRODUCING A HARDCODED FIELD LIST.**
 ##
-## Three legs, plus the vacuity guard that makes them mean anything:
-##   - the two job defaults must be DIFFERENT kits, or every leg below passes on a page that quotes
-##     one id for both jobs;
-##   - a RESIDENT band's forage line names the world's forage default and NOT the kit its `kitId`
-##     names — `kitId` answers for the hunt tiers alone, and `big_game` has no basket component;
-##   - its hunt line does name that `kitId`, without which the fix "never use kitId" would pass;
-##   - an IN-FLIGHT PARTY's forage line names the party's OWN kit and not the forage default, which
-##     is the other direction and the reason `_forage_kit_id` branches at all.
-func _assert_equipment_quotes_each_tier_at_its_own_kit() -> void:
+## The pages must print whatever the config contains. The fixture therefore carries a field no
+## GDScript anywhere names (`wear_per_turn_carried`, inside a real gear block) and a whole top-level
+## block no GDScript anywhere names (`windbreak_kit`), and both must render. A page that walked a
+## hand-written list of field names would draw the three real keys of `hunting_kit` and silently drop
+## the fourth — a page that looks entirely correct, which is exactly why no picture can carry this
+## claim and why the previous page's roster had to go: another session is renaming the config's gear
+## blocks right now, and a list of field names breaks on their merge without saying so.
+##
+## Three legs plus the two vacuity guards:
+##   - the invented FIELD renders, with the value it was given;
+##   - the invented BLOCK renders, with its own children under it;
+##   - neither string appears in any shipped script, so the render above cannot have come from a page
+##     that happens to name them (this leg cannot see an allow-list of REAL key names — the rendered
+##     legs are what catch that — but it does catch the allow-list that names the new key too);
+##   - the guards: the fixture really does carry both, in the shapes claimed.
+func _assert_the_pages_print_a_config_no_script_names() -> void:
 	var page := _equipment_page()
 	if page == null:
 		return
-	var kits := _equipment_kits()
-	var hunt_kit := KitRoster.display_name_for_id(kits, EQUIPMENT_HUNT_KIT_ID)
-	var forage_kit := KitRoster.display_name_for_id(kits, EQUIPMENT_FORAGE_KIT_ID)
-	var party_kit := KitRoster.display_name_for_id(kits, EQUIPMENT_PARTY_KIT_ID)
-	if hunt_kit == forage_kit or hunt_kit == party_kit or forage_kit == party_kit:
-		push_error("workbench_preview: the fixture's three kits do not have distinct display names ('%s' / '%s' / '%s') — the quoting assertions cannot tell one from another"
-			% [hunt_kit, forage_kit, party_kit])
+	var config := _equipment_config()
+	var gear: Dictionary = config.get(CONFIG_GEAR_BLOCK, {})
+	if not gear.has(CONFIG_INVENTED_FIELD):
+		push_error("workbench_preview: the fixture's '%s' block does not carry the invented field '%s' — this assertion would prove nothing"
+			% [CONFIG_GEAR_BLOCK, CONFIG_INVENTED_FIELD])
+		return
+	if not config.has(CONFIG_INVENTED_BLOCK):
+		push_error("workbench_preview: the fixture carries no invented top-level block '%s' — this assertion would prove nothing"
+			% CONFIG_INVENTED_BLOCK)
 		return
 
 	var failed := 0
-	var band_forage := _tier_label(page, WorkbenchVocab.EQUIPMENT_FORAGE_TIER_META,
-		EQUIPMENT_RESIDENT_ENTITY)
-	var band_hunt := _tier_label(page, WorkbenchVocab.EQUIPMENT_HUNT_TIER_META,
-		EQUIPMENT_RESIDENT_ENTITY)
-	var party_forage := _tier_label(page, WorkbenchVocab.EQUIPMENT_FORAGE_TIER_META,
-		EQUIPMENT_PARTY_ENTITY)
-	if band_forage == null or band_hunt == null or party_forage == null:
-		push_error("workbench_preview: the equipment page rendered no tier lines for the fixture's cohorts — the meta handles moved")
-		return
-
-	if not band_forage.text.contains(forage_kit) or band_forage.text.contains(hunt_kit):
+	var gear_body := _config_block_body(page, CONFIG_GEAR_BLOCK)
+	var expected_field_face := WorkbenchWidgets.config_value_face(gear[CONFIG_INVENTED_FIELD])
+	var field_face := _config_row_face(gear_body, CONFIG_INVENTED_FIELD)
+	if field_face != expected_field_face:
 		failed += 1
-		push_error("workbench_preview: a resident band's FORAGE tier must be quoted at the forage default '%s' and never at its kitId '%s' — got: %s"
-			% [forage_kit, hunt_kit, band_forage.text])
-	if not band_hunt.text.contains(hunt_kit):
+		push_error("workbench_preview: the config field '%s.%s' — which no GDScript names — did not render its value (wanted '%s', got '%s'). A hardcoded field list is back."
+			% [CONFIG_GEAR_BLOCK, CONFIG_INVENTED_FIELD, expected_field_face, field_face])
+	var invented_body := _config_block_body(page, CONFIG_INVENTED_BLOCK)
+	if invented_body == null:
 		failed += 1
-		push_error("workbench_preview: a resident band's HUNT tier must be quoted at its kitId '%s' — got: %s"
-			% [hunt_kit, band_hunt.text])
-	if not party_forage.text.contains(party_kit) or party_forage.text.contains(forage_kit):
-		failed += 1
-		push_error("workbench_preview: an in-flight party carries ONE kit, so its FORAGE tier is quoted at '%s' and never at the forage default '%s' — got: %s"
-			% [party_kit, forage_kit, party_forage.text])
-	if failed == 0:
-		print("workbench_preview: assert OK — each tier line is quoted at its own kit (band forage at '%s', band hunt at '%s', party at '%s')"
-			% [forage_kit, hunt_kit, party_kit])
-
-
-## **THE TIER LINES QUOTE THE BAND'S OWN RESOLVED NUMBERS, NOT THE ROSTER'S.** A cohort states
-## `hunterAttack` where a kit states `attack`, and the two carry axes happen to share their spelling
-## with the roster's — so reading all three through `KitRoster`'s keys renders a whole, plausible
-## line in which the attack is the `0.0` of a missing key: a party that cannot hurt anything, drawn
-## beside two correct numbers. It shipped that way for one render and only a screenshot caught it.
-##
-## The vacuity guard is the band being WORN: with a fresh band every published tier equals its kit's,
-## and a line rendering either would read identically.
-func _assert_equipment_states_the_bands_own_tiers() -> void:
-	var page := _equipment_page()
-	if page == null:
-		return
-	var cohort: Dictionary = _equipment_frame()["populations"][0]
-	var kit := KitRoster.kit_by_id(_equipment_kits(), EQUIPMENT_HUNT_KIT_ID)
-	if is_equal_approx(float(cohort["hunter_attack"]), float(kit[KitRoster.KIT_ATTACK_KEY])):
-		push_error("workbench_preview: the fixture band's attack equals its kit's fresh attack (%s) — a tier line reading the ROSTER would look identical, so this assertion proves nothing"
-			% cohort["hunter_attack"])
-		return
-
-	var failed := 0
-	var expected := {
-		WorkbenchVocab.EQUIPMENT_HUNT_TIER_META: [
-			float(cohort["hunter_attack"]), float(cohort["hunt_carry_per_worker_biomass"])],
-		WorkbenchVocab.EQUIPMENT_FORAGE_TIER_META: [
-			float(cohort["forage_carry_per_worker_biomass"])],
-	}
-	for meta in expected:
-		var label := _tier_label(page, meta, EQUIPMENT_RESIDENT_ENTITY)
-		if label == null:
-			failed += 1
-			push_error("workbench_preview: no '%s' line for band #%d" % [meta, EQUIPMENT_RESIDENT_ENTITY])
-			continue
-		for value in expected[meta]:
-			var face := String.num(value, WorkbenchVocab.EQUIPMENT_TIER_DECIMALS)
-			if not label.text.contains(face):
+		push_error("workbench_preview: the whole config block '%s' — which no GDScript names — did not render at all. A hardcoded block list is back."
+			% CONFIG_INVENTED_BLOCK)
+	else:
+		var invented_block: Dictionary = config.get(CONFIG_INVENTED_BLOCK, {})
+		for child_key in invented_block:
+			var wanted := WorkbenchWidgets.config_value_face(invented_block[child_key])
+			var got := _config_row_face(invented_body, String(child_key))
+			if got != wanted:
 				failed += 1
-				push_error("workbench_preview: band #%d's '%s' line does not state its own tier %s — got: %s"
-					% [EQUIPMENT_RESIDENT_ENTITY, meta, face, label.text])
+				push_error("workbench_preview: '%s.%s' did not render (wanted '%s', got '%s')"
+					% [CONFIG_INVENTED_BLOCK, child_key, wanted, got])
+
+	for path in CONFIG_PAGE_SOURCES:
+		var source := FileAccess.get_file_as_string(path)
+		if source.is_empty():
+			failed += 1
+			push_error("workbench_preview: could not read %s — the source scan is asserting nothing" % path)
+			continue
+		for invented in [CONFIG_INVENTED_FIELD, CONFIG_INVENTED_BLOCK]:
+			if source.contains(invented):
+				failed += 1
+				push_error("workbench_preview: %s names '%s'. These two keys exist ONLY in this fixture; a shipped script naming one means the pages have started listing fields again."
+					% [path, invented])
+
+	# The empty shapes, asserted here because they are the other half of "print what is there": an
+	# empty object and an empty array must SAY they are empty rather than draw a blank column.
+	if _config_row_face(page, CONFIG_EMPTY_BLOCK) != WorkbenchVocab.CONFIG_EMPTY:
+		failed += 1
+		push_error("workbench_preview: the empty block '%s' renders '%s', not the explicit '%s'"
+			% [CONFIG_EMPTY_BLOCK, _config_row_face(page, CONFIG_EMPTY_BLOCK),
+				WorkbenchVocab.CONFIG_EMPTY])
 	if failed == 0:
-		print("workbench_preview: assert OK — the tier lines state band #%d's own resolved tiers (attack %s, worn off its kit's %s)"
-			% [EQUIPMENT_RESIDENT_ENTITY, cohort["hunter_attack"], kit[KitRoster.KIT_ATTACK_KEY]])
+		print("workbench_preview: assert OK — the pages printed '%s' and '%s', which no shipped script names (%d sources scanned)"
+			% [CONFIG_INVENTED_FIELD, CONFIG_INVENTED_BLOCK, CONFIG_PAGE_SOURCES.size()])
 
 
-## The page is bounded to the PLAYER's cohorts. Asserted rather than eyeballed because a rival band
-## renders exactly like a player one, so the frame that shows two blocks and the frame that shows
-## three are equally plausible pictures.
-func _assert_equipment_renders_the_players_bands() -> void:
-	var page := _equipment_page()
-	if page == null:
+## **THE TWO PAGES PARTITION THE CONFIG'S TOP LEVEL, AND NO FRAME CAN SAY SO** — each page renders a
+## plausible tree of config keys, and whether the roster is on the right one of them is a question
+## about the OTHER page, which is not in the picture.
+##
+## Kits owns exactly `kits` and `default_kits`; Equipment owns everything else, whatever it turns out
+## to be. Both directions are asserted, because a page that drew the whole config would satisfy either
+## half alone, and each leg carries its own positive so a page that rendered nothing cannot pass.
+func _assert_the_pages_partition_the_config() -> void:
+	var equipment := _equipment_page()
+	var kits := _kits_page()
+	if equipment == null or kits == null:
 		return
-	if _tier_label(page, WorkbenchVocab.EQUIPMENT_HUNT_TIER_META, EQUIPMENT_RESIDENT_ENTITY) == null:
-		push_error("workbench_preview: the player's own band did not render — the filter claim below would pass vacuously")
-		return
-	if _tier_label(page, WorkbenchVocab.EQUIPMENT_HUNT_TIER_META, EQUIPMENT_RIVAL_ENTITY) != null:
-		push_error("workbench_preview: faction %d's band #%d rendered on a page bounded to the player's cohorts"
-			% [EQUIPMENT_RIVAL_FACTION, EQUIPMENT_RIVAL_ENTITY])
-		return
-	print("workbench_preview: assert OK — the equipment page renders the player's 2 cohorts and not faction %d's"
-		% EQUIPMENT_RIVAL_FACTION)
+	var roster_block := _roster_block_name(0)
+
+	var failed := 0
+	if not _page_states(kits, roster_block):
+		failed += 1
+		push_error("workbench_preview: the Kits page does not render the roster entry '%s'" % roster_block)
+	if _config_row_face(kits, CONFIG_HUNT_JOB) != CONFIG_HUNT_KIT_ID:
+		failed += 1
+		push_error("workbench_preview: the Kits page does not state the '%s' job default as '%s' (got '%s')"
+			% [CONFIG_HUNT_JOB, CONFIG_HUNT_KIT_ID, _config_row_face(kits, CONFIG_HUNT_JOB)])
+	if _page_states(equipment, roster_block):
+		failed += 1
+		push_error("workbench_preview: the kit roster ('%s') rendered on the Equipment page, which owns everything the Kits page does NOT"
+			% roster_block)
+
+	if not _page_states(equipment, CONFIG_INVENTED_BLOCK):
+		failed += 1
+		push_error("workbench_preview: the gear block '%s' does not render on the Equipment page"
+			% CONFIG_INVENTED_BLOCK)
+	if _page_states(kits, CONFIG_INVENTED_BLOCK):
+		failed += 1
+		push_error("workbench_preview: the gear block '%s' rendered on the Kits page, which owns only '%s' and '%s'"
+			% [CONFIG_INVENTED_BLOCK, WorkbenchVocab.CONFIG_KITS_KEY,
+				WorkbenchVocab.CONFIG_DEFAULT_KITS_KEY])
+
+	# The roster's `uses` rows carry BOTH array shapes: `kits[0]` uses two components and must render
+	# them comma-joined on ONE row, while the bare kit uses none and must say `—` rather than draw a
+	# blank column. Both are asserted here because the roster is the only place either shape occurs,
+	# and the Kits page is the only page the roster reaches.
+	var roster: Array = _equipment_config()[WorkbenchVocab.CONFIG_KITS_KEY]
+	var uses_faces := _config_row_faces(kits, CONFIG_USES_KEY)
+	if uses_faces.size() != roster.size():
+		failed += 1
+		push_error("workbench_preview: the Kits page rendered %d '%s' rows for a roster of %d entries"
+			% [uses_faces.size(), CONFIG_USES_KEY, roster.size()])
+	var joined: String = WorkbenchVocab.CONFIG_LIST_SEPARATOR.join(
+		PackedStringArray(roster[0][CONFIG_USES_KEY]))
+	if not uses_faces.has(joined):
+		failed += 1
+		push_error("workbench_preview: '%s.%s' does not render its components on one row as '%s' — got %s"
+			% [_roster_block_name(0), CONFIG_USES_KEY, joined, uses_faces])
+	if not uses_faces.has(WorkbenchVocab.CONFIG_EMPTY):
+		failed += 1
+		push_error("workbench_preview: the bare kit's empty '%s' array renders no explicit '%s' — got %s"
+			% [CONFIG_USES_KEY, WorkbenchVocab.CONFIG_EMPTY, uses_faces])
+	if failed == 0:
+		print("workbench_preview: assert OK — Kits draws the roster and the defaults, Equipment draws the %d other block(s), and neither draws the other's"
+			% (_equipment_config().size() - 2))
 
 
-## **`reset()` IS REAL ON THIS PAGE, which is the counter-case to `ConfigTuningPage`'s documented
-## no-op** — and a doc claim with no test is how the two get confused. Everything the page holds came
-## from the world that just ended, and the roster half is the one that bites: `SubsistenceSection.kits`
-## is re-sent ONLY on a world rebuild, so a page that kept it would show the previous world's kits
-## indefinitely rather than for a frame.
+## **`reset()` IS REAL ON BOTH CONFIG PAGES, which is the counter-case to `ConfigTuningPage`'s
+## documented no-op** — and a doc claim with no test is how the two get confused. Everything either
+## page holds is the ended world's config, and it is re-sent ONLY on a world rebuild, so a page that
+## kept it would show the previous world's tunables indefinitely rather than for a frame.
 ##
 ## Driven through the SHELL's `reset_pages()`, the way `Main`'s per-world reset reaches it, rather
-## than by calling the page's hook directly — the fan-out at every BUILT page is part of the contract.
-## The precondition is that there was something to drop, or an empty page passes for free.
+## than by calling either page's hook directly — the fan-out at every BUILT page is part of the
+## contract, and the Kits page is not even on screen when this runs, which is precisely the case that
+## fan-out exists for. The precondition is that there was something to drop.
 func _assert_equipment_drops_the_world() -> void:
-	var page := _equipment_page()
-	if page == null:
+	var equipment := _equipment_page()
+	var kits := _kits_page()
+	if equipment == null or kits == null:
 		return
-	if _tier_label(page, WorkbenchVocab.EQUIPMENT_HUNT_TIER_META, EQUIPMENT_RESIDENT_ENTITY) == null:
-		push_error("workbench_preview: nothing was on the equipment page to drop — the reset claim would pass vacuously")
+	if not _page_states(equipment, CONFIG_INVENTED_BLOCK) \
+			or not _page_states(kits, _roster_block_name(0)):
+		push_error("workbench_preview: nothing was on the config pages to drop — the reset claim would pass vacuously")
 		return
 
 	_shell.reset_pages()
 
 	var failed := 0
-	for entity in [EQUIPMENT_RESIDENT_ENTITY, EQUIPMENT_PARTY_ENTITY]:
-		if _tier_label(page, WorkbenchVocab.EQUIPMENT_HUNT_TIER_META, entity) != null:
-			failed += 1
-			push_error("workbench_preview: cohort #%d survived the world boundary on the equipment page"
-				% entity)
-	if not _has_label_with_text(page, WorkbenchVocab.EQUIPMENT_NO_ROSTER):
+	if _page_states(equipment, CONFIG_INVENTED_BLOCK):
 		failed += 1
-		push_error("workbench_preview: the roster outlived its world — the page does not say '%s' after reset_pages()"
-			% WorkbenchVocab.EQUIPMENT_NO_ROSTER)
+		push_error("workbench_preview: the gear block '%s' survived the world boundary on the Equipment page"
+			% CONFIG_INVENTED_BLOCK)
+	if _page_states(kits, _roster_block_name(0)):
+		failed += 1
+		push_error("workbench_preview: the kit roster survived the world boundary on the Kits page")
+	if not _page_states(equipment, WorkbenchVocab.EQUIPMENT_NO_CONFIG):
+		failed += 1
+		push_error("workbench_preview: the Equipment page does not say '%s' after reset_pages()"
+			% WorkbenchVocab.EQUIPMENT_NO_CONFIG)
+	if not _page_states(kits, WorkbenchVocab.KITS_NO_CONFIG):
+		failed += 1
+		push_error("workbench_preview: the Kits page does not say '%s' after reset_pages()"
+			% WorkbenchVocab.KITS_NO_CONFIG)
 	if failed == 0:
-		print("workbench_preview: assert OK — reset_pages() drops the equipment page's roster and both cohorts")
+		print("workbench_preview: assert OK — reset_pages() drops the config on both pages, including the one that is not on screen")
 
 
 ## **A PAGE ACTIVATED BETWEEN FRAMES MUST CATCH UP ON THE FRAME ALREADY IN HAND, and no picture can
-## carry that**: a page that has never been fed and a page fed with an empty world render the same
-## thing — the roster's "no kit roster yet" line above the bands' "no player bands" one — so the
-## defect and the fix are the same frame.
+## carry that**: a page that has never been fed and a page fed an empty world render the same thing —
+## the degraded "nothing on the wire yet" line — so the defect and the fix are the same frame.
 ##
 ## It is the shell's claim, not the page's. `update_snapshot` fans at the ACTIVE page only, and
 ## snapshots arrive on turn resolution and world-mutating commands, with no heartbeat behind them; so
-## before `show_page` replayed the cached frame, opening Equipment mid-turn showed its degraded state
+## before `show_page` replayed the cached frame, opening this page mid-turn showed its degraded state
 ## until the next turn resolved. Driven the way a designer reaches it: a frame lands while ANOTHER
 ## page is up, then the rail switches here.
 ##
@@ -679,53 +810,49 @@ func _assert_equipment_catches_up_on_page_switch() -> void:
 	var page := _equipment_page()
 	if page == null:
 		return
-	if _tier_label(page, WorkbenchVocab.EQUIPMENT_HUNT_TIER_META, EQUIPMENT_RESIDENT_ENTITY) != null:
-		push_error("workbench_preview: the equipment page is not empty before the page-switch replay — the catch-up claim would pass vacuously")
+	if _page_states(page, CONFIG_INVENTED_BLOCK):
+		push_error("workbench_preview: the Equipment page is not empty before the page-switch replay — the catch-up claim would pass vacuously")
 		return
 
 	# The frame arrives while the TUNING page is active, so it is fanned at that page and never at this
 	# one; the rail switch afterwards is the only thing that can put it here.
 	_shell.show_page(TUNING_PAGE)
-	_shell.update_snapshot(_equipment_frame(), true)
+	_shell.update_snapshot(_equipment_config_frame(), true)
 	_shell.show_page(EQUIPMENT_PAGE)
 
 	var failed := 0
-	if _tier_label(page, WorkbenchVocab.EQUIPMENT_HUNT_TIER_META, EQUIPMENT_RESIDENT_ENTITY) == null:
+	if not _page_states(page, CONFIG_INVENTED_BLOCK):
 		failed += 1
-		push_error("workbench_preview: band #%d is missing after switching to the equipment page — the page never saw the frame that landed while another page was active"
-			% EQUIPMENT_RESIDENT_ENTITY)
-	if _has_label_with_text(page, WorkbenchVocab.EQUIPMENT_NO_ROSTER):
+		push_error("workbench_preview: the gear block '%s' is missing after switching to the Equipment page — the page never saw the frame that landed while another page was active"
+			% CONFIG_INVENTED_BLOCK)
+	if _page_states(page, WorkbenchVocab.EQUIPMENT_NO_CONFIG):
 		failed += 1
-		push_error("workbench_preview: the equipment page still says '%s' after the page switch — the roster did not come back with the replayed frame"
-			% WorkbenchVocab.EQUIPMENT_NO_ROSTER)
+		push_error("workbench_preview: the Equipment page still says '%s' after the page switch — the config did not come back with the replayed frame"
+			% WorkbenchVocab.EQUIPMENT_NO_CONFIG)
 	if failed == 0:
-		print("workbench_preview: assert OK — a page switched to between frames catches up on the cached frame (roster + band #%d)"
-			% EQUIPMENT_RESIDENT_ENTITY)
+		print("workbench_preview: assert OK — a page switched to between frames catches up on the cached frame ('%s')"
+			% CONFIG_INVENTED_BLOCK)
 
 
-func _has_label_with_text(page: EquipmentPage, text: String) -> bool:
-	for node in page.find_children("*", "Label", true, false):
-		if (node as Label).text == text:
-			return true
-	return false
-
-
-## The equipment page's half of "a row that does not fit swells the whole column".
+## A config page's half of "a row that does not fit swells the whole column".
 ##
-## **THE COLUMN WIDTH IS THE DECISIVE CHECK, and on this page it is very nearly the only one that can
-## fire.** Every line the page draws except two is a `build_caption`, which wraps; what does not wrap
-## is the kit's display name and the band's head row, and an over-long one of those raises its block's
-## minimum width, the `ScrollContainer` grows to it, and the content column swells past
-## `SURFACE_WIDTH` and draws over the map. That reads as a slightly wide panel, not as a broken row.
-## The per-label clip check rides beside it for the opposite failure — a label squeezed under its own
-## minimum, i.e. a truncated name with no ellipsis to admit it.
-func _assert_equipment_fits() -> void:
-	var page := _equipment_page()
+## **THE COLUMN WIDTH IS THE DECISIVE CHECK, and on these pages it is very nearly the only one that
+## can fire.** Every line the tree draws except one is a `build_caption`, which wraps; what does not
+## wrap is a BLOCK NAME, and an over-long one raises its block's minimum width, the `ScrollContainer`
+## grows to it, and the content column swells past `SURFACE_WIDTH` and draws over the map. That reads
+## as a slightly wide panel, not as a broken row. The per-label clip check rides beside it for the
+## opposite failure — a label squeezed under its own minimum, i.e. a truncated name with no ellipsis
+## to admit it.
+##
+## **It is asked of a page rather than of THE page**, because the config's shape is the sim's to
+## choose: the roster and the gear blocks nest differently and reach different widths, so measuring
+## one of them says nothing about the other.
+func _assert_equipment_fits(page: WorkbenchPage, id: StringName) -> void:
 	if page == null:
 		return
 	var scroll := _content_scroll()
 	if scroll == null:
-		push_error("workbench_preview: no content scroll to measure the equipment page against")
+		push_error("workbench_preview: no content scroll to measure the %s page against" % id)
 		return
 
 	var failed := 0
@@ -733,8 +860,8 @@ func _assert_equipment_fits() -> void:
 		- 2.0 * WorkbenchVocab.CONTENT_PADDING
 	if scroll.size.x > nominal_width + FIT_TOLERANCE:
 		failed += 1
-		push_error("workbench_preview: the equipment page's content column is %.1fpx wider than the surface allows (%.1f > %.1f) — a label does not fit"
-			% [scroll.size.x - nominal_width, scroll.size.x, nominal_width])
+		push_error("workbench_preview: the %s page's content column is %.1fpx wider than the surface allows (%.1f > %.1f) — a label does not fit"
+			% [id, scroll.size.x - nominal_width, scroll.size.x, nominal_width])
 
 	var checked := 0
 	var widest := 0.0
@@ -746,14 +873,15 @@ func _assert_equipment_fits() -> void:
 		widest = maxf(widest, label.get_minimum_size().x)
 		if label.size.x + FIT_TOLERANCE < label.get_minimum_size().x:
 			failed += 1
-			push_error("workbench_preview: equipment label is clipped (%.1f < %.1f): '%s'"
-				% [label.size.x, label.get_minimum_size().x, label.text])
+			push_error("workbench_preview: %s label is clipped (%.1f < %.1f): '%s'"
+				% [id, label.size.x, label.get_minimum_size().x, label.text])
 	if checked == 0:
-		push_error("workbench_preview: no equipment labels measured — the block shape moved")
+		push_error("workbench_preview: no non-wrapping %s labels measured — the block shape moved" % id)
 		return
 	if failed == 0:
-		print("workbench_preview: assert OK — %d non-wrapping equipment labels fit (the widest needs %.0f of %.0fpx)"
-			% [checked, widest, nominal_width])
+		print("workbench_preview: assert OK — %d non-wrapping %s labels fit (the widest needs %.0f of %.0fpx)"
+			% [checked, id, widest, nominal_width])
+
 
 
 # ---- capture ---------------------------------------------------------------

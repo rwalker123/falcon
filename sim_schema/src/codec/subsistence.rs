@@ -22,6 +22,7 @@ pub(crate) fn serialize_subsistence_section<'a>(
     let kits = create_kits(builder, &snapshot.kits);
     let default_hunt_kit_id = builder.create_string(&snapshot.default_hunt_kit_id);
     let default_forage_kit_id = builder.create_string(&snapshot.default_forage_kit_id);
+    let equipment_config_json = builder.create_string(&snapshot.equipment_config_json);
     fb::SubsistenceSection::create(
         builder,
         &fb::SubsistenceSectionArgs {
@@ -33,6 +34,9 @@ pub(crate) fn serialize_subsistence_section<'a>(
             kits: Some(kits),
             defaultHuntKitId: Some(default_hunt_kit_id),
             defaultForageKitId: Some(default_forage_kit_id),
+            // The designer surface's read-only catalogue — the whole TOE config as one JSON string.
+            // Workbench-only; see the schema comment.
+            equipmentConfigJson: Some(equipment_config_json),
         },
     )
 }
@@ -73,6 +77,10 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
         .default_forage_kit_id
         .as_ref()
         .map(|id| builder.create_string(id));
+    let equipment_config_json = delta
+        .equipment_config_json
+        .as_ref()
+        .map(|json| builder.create_string(json));
     fb::SubsistenceSection::create(
         builder,
         &fb::SubsistenceSectionArgs {
@@ -84,6 +92,7 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
             kits,
             defaultHuntKitId: default_hunt_kit_id,
             defaultForageKitId: default_forage_kit_id,
+            equipmentConfigJson: equipment_config_json,
         },
     )
 }
