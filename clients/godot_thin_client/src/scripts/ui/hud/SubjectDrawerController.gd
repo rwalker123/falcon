@@ -501,7 +501,18 @@ func _render_occupant_drawer() -> void:
     # band detail (the roster still lists it). Falls back to the legacy in-card drawer only when no
     # panel is injected (e.g. the HUD-only ui_preview harness).
     if is_player_band and _bandpanel.has_panel():
-        _bandpanel.render_band(_selection.unit())
+        # **A DRAWER RENDER MUST NOT STEAL THE FACTION PAGE.** This branch re-asserts the selected band
+        # as the panel's subject on EVERY render, and the drawer is re-rendered for reasons that have
+        # nothing to do with the selection — a disclosure toggle re-renders its hosts so a caret can
+        # flip. So with a band selected, opening any faction row threw the page away and landed on that
+        # band. Reported from play; it is the second half of the same defect `_refresh_disclosure_hosts`
+        # carried, and it hid behind the first because both need a band SELECTED to show up.
+        #
+        # The panel is deliberately decoupled from the selection already ("selecting a herd or an empty
+        # tile leaves `panel_band` intact — the panel persists across selection changes"); this branch
+        # was the one exception, and the faction page is where that exception starts doing damage.
+        if not _bandpanel.is_faction_page():
+            _bandpanel.render_band(_selection.unit())
         # The drawer is now VISIBLE furniture rather than a hidden card, so an empty one reads as a
         # rendering fault. Point at where the band's detail actually went instead of leaving a gap.
         _occupant_detail.visible = true

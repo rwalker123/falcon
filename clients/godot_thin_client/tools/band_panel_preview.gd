@@ -3885,6 +3885,12 @@ func _assert_faction_caret_keeps_the_page(zone: Node) -> void:
 		return
 	var meta := "%s%s" % [HudDisclosureVocab.BREAKDOWN_TOGGLE_META_PREFIX,
 		DetailFormat.breakdown_key(HudDisclosureVocab.BREAKDOWN_KIND_FOOD, {})]
+	# **WITH A BAND SELECTED, which is the configuration the second half of this defect needs.** The
+	# disclosure re-renders BOTH hosts, and the drawer's player-band branch re-asserts the selected band
+	# as the panel's subject on every render — so a caret click stole the page whenever the selected hex
+	# happened to hold a band. Reported from play AFTER the first fix, because with nothing selected the
+	# drawer takes no band branch at all and the guard passed.
+	_hud.show_unit_selection(_faction_roster()[0])
 	label.meta_clicked.emit(meta)
 	_assert_band_panel("faction caret: the page survives its own caret (still the faction subject)",
 		_hud._bandpanel._panel_is_faction)

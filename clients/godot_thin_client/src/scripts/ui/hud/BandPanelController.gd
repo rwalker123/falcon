@@ -2810,6 +2810,11 @@ func set_panel(panel: BandCityPanel) -> void:
     if _disclosures != null:
         _disclosures.set_faction_band_jump(jump_to_band_entity)
 
+## Is the panel showing the FACTION page? Asked by the drawer, which otherwise re-asserts the selected
+## band as the panel's subject on every render and would steal the page out from under a caret click.
+func is_faction_page() -> bool:
+    return _panel_is_faction
+
 ## Expand or collapse a faction summary row. ONE row open at a time — the zones clip, and two open
 ## details would push the second list off the bottom of a horizontal dock's box.
 func _toggle_faction_row(owner: int) -> void:
@@ -2893,6 +2898,13 @@ func focus_band() -> void:
 func _select_band_on_map(band: Dictionary) -> void:
     if band.is_empty():
         return
+    # **LEAVING THE FACTION PAGE IS THE FIRST THING THIS DOES, and the order matters.** This is the
+    # explicit "make this band the subject" act — the cycler's ▶, a drill-down link, the header jump.
+    # Its usual route is `roster_occupant_selected` → the drawer → the drawer's band branch, and that
+    # branch is now GATED on the panel not being on the faction page (a passive re-render must not
+    # steal the page). Clearing the flag here is what tells the gate this render is the wanted one;
+    # without it the cycler walked off the page and the panel silently stayed on it.
+    _panel_is_faction = false
     var entity := int(band.get("entity", -1))
     var x := int(band.get("current_x", -1))
     var y := int(band.get("current_y", -1))
