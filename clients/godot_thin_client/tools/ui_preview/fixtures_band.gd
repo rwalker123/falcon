@@ -6,6 +6,12 @@
 
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 
+## The shipped `expedition_config.hunt.forecast_horizon_turns` — how far the sim simulates a raid before
+## giving up on it, echoed onto every cohort as `expedition_forecast_horizon_turns`. **It is not a trip
+## length**: it bounds the HUNTING only, so an unbounded raid's floor is this PLUS the round-trip travel
+## the band's own position implies. Named here so every band fixture in every chapter states one number.
+const FORECAST_HORIZON_TURNS := 60
+
 static func band_fixture() -> Dictionary:
 	return {
 		"id": "Band 2",
@@ -48,6 +54,9 @@ static func band_fixture() -> Dictionary:
 		# Band = flow arithmetic; expedition = lookup.
 		"hunt_per_worker_provisions": 0.8,
 		"expedition_viability_warn_turns": 20,
+		#   expedition_forecast_horizon_turns — the SCALE the "never completed" sentinels are relative
+		#     to, so an unbounded raid can be quoted a floor instead of "many turns".
+		"expedition_forecast_horizon_turns": FORECAST_HORIZON_TURNS,
 		# Per-worker carry (shipped 4.0): the forecast shows the HAUL a filled pack delivers as
 		# party × this (blessed party×lever arithmetic, NOT the turns-to-fill lookup).
 		"expedition_per_worker_carry": 4.0,

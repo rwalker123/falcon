@@ -163,8 +163,10 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `SourceForecast.hunt_forecast_line_bbcode` · `SourceForecast.style_send_hunt_button` · `SourceForecast.hunt_empty_refusal_reason`), so the two entry
   points structurally cannot quote different numbers. The line reads cyan
   `delivers ≈N <Herd> over ≈M turns · ~F food` (+ amber `· ⚠ P% wasted`) for a brisk raid, WARN-amber `⚠ … — a slow raid` past `expeditionViabilityWarnTurns` (or `delivers ≈N <Herd>
-  over many turns … — a slow raid` for a **long** raid, `turnsToFill == 0`, that ran the whole horizon still
-  delivering), amber denial `<Herd> — denial mission … brings nothing home` (an INEDIBLE quarry that pays
+  over more than M turns (more than H hunting + T travel) … — a slow raid` for a **long** raid,
+  `turnsToFill == 0`, that ran the whole horizon still delivering — `M` being
+  `expeditionForecastHorizonTurns + round-trip travel`, never the bare horizon; see `labor-ui.md` →
+  "An unbounded raid quotes a FLOOR"), amber denial `<Herd> — denial mission … brings nothing home` (an INEDIBLE quarry that pays
   neither product — **never** the Eradicate rung, which delivers its whole-stock windfall like every
   other rung, #337), and DANGER-red
   `⚠ <Herd> is too lean to raid — its surplus is spent` when **`deliveredFood == 0`** (the herd at/below the
@@ -217,8 +219,9 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   + `expedition_launch_policy_sustain`; herd-panel expedition states `herd_hunt_forecast_viable` (the
   partial-with-waste Thunder Mammoth: `~4 food · ⚠ 75% wasted`, button ENABLED) / `_slow` / `_surplus` /
   `_no_surplus` (`deliveredFood 0` everywhere → disabled "too lean") / `_eradicate` (a real delivery —
-  `delivers ≈12 Red Deer over many turns · ~24 food · ⇄ ~6 trade goods — a slow raid`, amber "Send Anyway
-  (long raid)"),
+  `delivers ≈12 Red Deer over ≈11 turns · ~24 food · ⇄ ~6 trade goods`, ordinary Send — a strip-bare raid
+  COMPLETES) / `_horizon` + `herd_hunt_horizon_travel` (the raid that genuinely does not finish, quoting
+  its floor: `Send Anyway (more than 68 turns)`),
   the raid set `herd_hunt_boar_raid` (clean, no waste) / `herd_hunt_max_useful` / `herd_hunt_raid_travel`
   (travel-inclusive `over ≈16 turns (8 hunting + 8 travel)`, and the picker caps correctly lower) /
   `herd_hunt_expedition_automax` (a policy click fills the Party to max-useful).

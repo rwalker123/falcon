@@ -196,6 +196,16 @@ pub fn delta2_fixture_path() -> PathBuf {
     fixture_dir().join("snapshot_delta2_envelope.bin")
 }
 
+/// Where the PARTY-ARRIVAL delta lands — the one that appends a player band and its detached party.
+pub fn party_delta_fixture_path() -> PathBuf {
+    fixture_dir().join("snapshot_party_delta_envelope.bin")
+}
+
+/// Where the PARTY-REMOVAL delta lands — the one that names that party in `removedPopulations`.
+pub fn party_removal_delta_fixture_path() -> PathBuf {
+    fixture_dir().join("snapshot_party_removal_delta_envelope.bin")
+}
+
 fn fixture_dir() -> PathBuf {
     Path::new("clients")
         .join("godot_thin_client")
@@ -332,6 +342,13 @@ pub fn write_delta_fixtures() -> Result<(), Box<dyn Error>> {
         &build_fixture_delta2(&snapshot, &first),
         delta2_fixture_path(),
         "chained delta",
+    )?;
+    let arrival = build_fixture_party_delta(&snapshot);
+    write_delta(&arrival, party_delta_fixture_path(), "party arrival delta")?;
+    write_delta(
+        &build_fixture_party_removal_delta(&arrival),
+        party_removal_delta_fixture_path(),
+        "party removal delta",
     )
 }
 
@@ -483,6 +500,141 @@ fn build_planned_delta(
         // Carried on every delta rather than diffed (see `WorldDelta::fog_enabled`); the derived
         // `Default` says `false`, which would silently flip the merged world's fog.
         fog_enabled: snapshot.fog_enabled,
+        ..Default::default()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The PARTY-REMOVAL pair (`tools/party_removal_guard.gd`)
+// ---------------------------------------------------------------------------
+//
+// A party that a `send_hunt_expedition` spawned and an in-camp `recall_expedition` despawned inside
+// one tick used to be published on a HELD frame and then never retracted, so the client carried a
+// ghost row the sim refused every order for. The sim sends the removal now; these two deltas are
+// what let the client half be ASSERTED rather than read — arrival on one frame, removal on the
+// next, which is the two-frame shape the live bug wore.
+//
+// The rows are APPENDED by a delta rather than seeded into the baseline snapshot on purpose. The
+// saturated baseline's cohorts carry a path-hashed `faction` (always ≥ 1, see `saturate`), so the
+// client's player-faction filter never sees them and the golden the baseline is diffed against does
+// not move; a delta appending rows the baseline never held is also the very `SectionCache::patch`
+// branch a spawned party takes in play.
+
+/// The player faction. Mirrors the client's `HudConst.PLAYER_FACTION_ID` — the roster split in
+/// `HudLayer.update_band_alerts` drops every cohort that is not this faction, so a party staged at
+/// any other value would never reach the panel and every assertion downstream would be vacuous.
+const PARTY_FIXTURE_FACTION: u32 = 0;
+
+/// The home band's ECS entity and its durable `band_id`. **Deliberately different values**, the
+/// `command_guard` rule: a fixture whose two handles agree cannot show a surface reading the wrong
+/// one. Numbered far above the baseline's `100 + i` cohorts so an appended row can never collide.
+const PARTY_FIXTURE_BAND_ENTITY: u64 = 9001;
+const PARTY_FIXTURE_BAND_ID: u64 = 79001;
+
+/// The detached party's pair — this entity is what the removal delta names in `removedPopulations`,
+/// and what the guard hunts for afterwards in the panel, the map and the selection.
+const PARTY_FIXTURE_PARTY_ENTITY: u64 = 9002;
+const PARTY_FIXTURE_PARTY_ID: u64 = 79002;
+
+/// Where the two stand. Both inside the 4×3 fixture grid, and **different tiles**: co-location is
+/// what the client's `party_cancels_in_camp` reads, so a party sharing its home band's hex would
+/// quietly change which recall verb the row renders and make the fixture about something else.
+const PARTY_FIXTURE_BAND_X: u32 = 1;
+const PARTY_FIXTURE_BAND_Y: u32 = 1;
+const PARTY_FIXTURE_PARTY_X: u32 = 2;
+const PARTY_FIXTURE_PARTY_Y: u32 = 1;
+
+/// The band's head-count, its whole assignable workers, and how many of those are unassigned. The
+/// idle count is what the parties zone's footer gates its Scout/Hunt buttons on, so it is non-zero.
+const PARTY_FIXTURE_BAND_SIZE: u32 = 30;
+const PARTY_FIXTURE_BAND_WORKING_AGE: u32 = 16;
+const PARTY_FIXTURE_BAND_IDLE_WORKERS: u32 = 6;
+
+/// The party's head-count — the number the parties header's `n out · m workers` clause states, so
+/// it is distinct from every other count in the fixture and cannot be matched by accident.
+const PARTY_FIXTURE_PARTY_SIZE: u32 = 4;
+
+/// `Scalar::SCALE` = 1.0 output. The derived `Default` says `0`, i.e. a band that produces nothing —
+/// legal on the wire and misleading in a panel.
+const PARTY_FIXTURE_OUTPUT_MULTIPLIER: i64 = 1_000_000;
+
+/// The herd the party is hunting. A string id, matching `HerdRegistry`'s fauna ids — the panel row
+/// resolves it against the (absent) herd roster and falls back to the id, which is fine: what the
+/// guard reads off the row is the party's identity, not its quarry's label.
+const PARTY_FIXTURE_TARGET_HERD: &str = "game_boar_04";
+
+/// The delta that brings the player band and its detached party into the world.
+///
+/// Applies to [`build_fixture_snapshot`]'s baseline, exactly like [`build_fixture_delta`] — it is an
+/// alternative first frame, not a continuation, so the two never appear in the same chain.
+pub fn build_fixture_party_delta(snapshot: &WorldSnapshot) -> WorldDelta {
+    let mut header = snapshot.header.clone();
+    header.tick = snapshot.header.tick + 1;
+    header.base_frame_seq = snapshot.header.frame_seq;
+    header.frame_seq = snapshot.header.frame_seq + 1;
+    WorldDelta {
+        header,
+        populations: vec![party_fixture_band(), party_fixture_party()],
+        // Carried on every delta rather than diffed, same as `build_planned_delta`.
+        fog_enabled: snapshot.fog_enabled,
+        ..Default::default()
+    }
+}
+
+/// The delta that RETRACTS the party — the frame the sim now sends and the client has never been
+/// asserted against.
+///
+/// It carries the removal and **nothing else**: no `populations` rows at all. That is the honest
+/// shape (the sim's `diff_removed` emits exactly this) and it is also the sharper fixture — a
+/// consumer that rebuilt its roster from the sparse `population_updates` list rather than from the
+/// merged `populations` array would see an empty update list and leave the ghost standing.
+pub fn build_fixture_party_removal_delta(arrival: &WorldDelta) -> WorldDelta {
+    let mut header = arrival.header.clone();
+    header.tick = arrival.header.tick + 1;
+    header.base_frame_seq = arrival.header.frame_seq;
+    header.frame_seq = arrival.header.frame_seq + 1;
+    WorldDelta {
+        header,
+        removed_populations: vec![PARTY_FIXTURE_PARTY_ENTITY],
+        fog_enabled: arrival.fog_enabled,
+        ..Default::default()
+    }
+}
+
+/// The resident band the party is homed on. Sparse by design: only the fields the parties zone, the
+/// map marker and the selection card actually read.
+fn party_fixture_band() -> PopulationCohortState {
+    PopulationCohortState {
+        entity: PARTY_FIXTURE_BAND_ENTITY,
+        band_id: PARTY_FIXTURE_BAND_ID,
+        faction: PARTY_FIXTURE_FACTION,
+        size: PARTY_FIXTURE_BAND_SIZE,
+        current_x: PARTY_FIXTURE_BAND_X,
+        current_y: PARTY_FIXTURE_BAND_Y,
+        working_age: PARTY_FIXTURE_BAND_WORKING_AGE,
+        idle_workers: PARTY_FIXTURE_BAND_IDLE_WORKERS,
+        output_multiplier: PARTY_FIXTURE_OUTPUT_MULTIPLIER,
+        ..Default::default()
+    }
+}
+
+/// The detached hunting party, grouped under the band above by `home_band_entity` — which is the
+/// key `HudBandLaborState.band_parties` groups on and therefore the field that puts the row in the
+/// parties zone at all.
+fn party_fixture_party() -> PopulationCohortState {
+    PopulationCohortState {
+        entity: PARTY_FIXTURE_PARTY_ENTITY,
+        band_id: PARTY_FIXTURE_PARTY_ID,
+        faction: PARTY_FIXTURE_FACTION,
+        size: PARTY_FIXTURE_PARTY_SIZE,
+        current_x: PARTY_FIXTURE_PARTY_X,
+        current_y: PARTY_FIXTURE_PARTY_Y,
+        is_expedition: true,
+        expedition_mission: "hunt".to_string(),
+        expedition_phase: "hunting".to_string(),
+        expedition_target_herd: PARTY_FIXTURE_TARGET_HERD.to_string(),
+        home_band_entity: PARTY_FIXTURE_BAND_ENTITY,
+        output_multiplier: PARTY_FIXTURE_OUTPUT_MULTIPLIER,
         ..Default::default()
     }
 }
@@ -1298,6 +1450,84 @@ mod tests {
                  manifest does not name it"
             );
         }
+    }
+
+    /// The PARTY-REMOVAL pair must stay **applicable**, must stay **staged**, and must stay **the
+    /// only player-faction cohorts in the world** — the half of `tools/party_removal_guard.gd` that
+    /// reaches CI, where the Godot-side panel assertions cannot.
+    ///
+    /// Every clause rots into a VACUOUS guard rather than a failing one, which is why each is
+    /// asserted here rather than left to the harness:
+    ///
+    /// - a base sequence that stopped naming its predecessor makes the client DROP the frame, and
+    ///   every panel assertion downstream would then be made against a party that never arrived;
+    /// - a removal list that stopped naming the party would leave the guard asserting that a row
+    ///   nobody asked to remove is still present — a green run proving nothing;
+    /// - the removal delta must carry **no `populations` rows at all**, because that is the sim's
+    ///   own shape *and* the sharper fixture: a consumer rebuilding its roster from the sparse
+    ///   `population_updates` list rather than from the merged array would see an empty list and
+    ///   leave the ghost standing;
+    /// - and the baseline must contribute **no** player-faction cohort of its own, or the harness's
+    ///   "the home band survived" assertion could be satisfied by a row this fixture never staged.
+    #[test]
+    fn the_party_fixtures_chain_and_stage_exactly_one_removable_party() {
+        let snapshot = build_fixture_snapshot().expect("snapshot fixture builds");
+        let arrival = build_fixture_party_delta(&snapshot);
+        let removal = build_fixture_party_removal_delta(&arrival);
+
+        assert_eq!(
+            arrival.header.base_frame_seq, snapshot.header.frame_seq,
+            "the arrival delta must name the snapshot's frame as its base, or the client drops it"
+        );
+        assert_eq!(
+            removal.header.base_frame_seq, arrival.header.frame_seq,
+            "the removal delta must name the ARRIVAL delta's frame as its base — it retracts a row \
+             only that frame introduced"
+        );
+        for delta in [&arrival, &removal] {
+            assert_eq!(
+                delta.header.world_epoch, snapshot.header.world_epoch,
+                "a delta from another world is never merged"
+            );
+        }
+
+        assert_eq!(
+            arrival.populations.len(),
+            2,
+            "the arrival delta stages exactly the home band and its party"
+        );
+        let party = arrival
+            .populations
+            .iter()
+            .find(|cohort| cohort.entity == PARTY_FIXTURE_PARTY_ENTITY)
+            .expect("the arrival delta must carry the party");
+        assert!(
+            party.is_expedition,
+            "the party must be an EXPEDITION cohort"
+        );
+        assert_eq!(
+            party.home_band_entity, PARTY_FIXTURE_BAND_ENTITY,
+            "the party must be homed on the fixture's band — `band_parties` groups on exactly this"
+        );
+
+        assert!(
+            removal.populations.is_empty(),
+            "the removal delta must carry NO population rows — see this test's doc comment"
+        );
+        assert_eq!(
+            removal.removed_populations,
+            vec![PARTY_FIXTURE_PARTY_ENTITY],
+            "the removal delta must name the party, and only the party"
+        );
+
+        assert!(
+            snapshot
+                .populations
+                .iter()
+                .all(|cohort| cohort.faction != PARTY_FIXTURE_FACTION),
+            "the saturated baseline must contribute no player-faction cohort of its own, or the \
+             guard's roster assertions could be satisfied by a row this fixture never staged"
+        );
     }
 
     /// Saturation must be **deterministic**, or the committed golden would drift with no decoder

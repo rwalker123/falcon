@@ -1072,6 +1072,50 @@ and `herd_hunt_forecast_horizon` (a slow breeder at the food peak the party can 
 exhaust) are the corpus's only delivering rows on the two branches, so *"never says `many turns`"*
 would otherwise pass on a client that could no longer say it at all.
 
+#### An unbounded raid quotes a FLOOR, and the floor is `horizon + round-trip travel`
+
+The three surfaces above no longer hedge. `PopulationCohortState.expeditionForecastHorizonTurns` —
+`expedition_config.hunt.forecast_horizon_turns`, echoed onto every cohort in the
+`expeditionViabilityWarnTurns` idiom and read here through `SourceForecast.forecast_horizon_turns` —
+is the scale every "never completed" sentinel on this wire is relative to, and ONE lever serves both
+raid tables (the sim's `denial_projection_at` and `hunt_trip_forecast_seeded` read the same field), so
+there is nothing for a client to pick wrongly between.
+
+> **IT IS NOT A TRIP LENGTH.** The horizon bounds the **hunting** alone — `turnsToFill` excludes travel
+> — and the round trip is a separate, already-known term, so the floor on the whole trip is
+> `horizon + round_trip_travel_turns`. The bounded verdict reads *"Away ≈36 turns — 18 hunting, 18
+> travel"*; the unbounded one must be a lower bound on **that same span** or the two cannot be compared
+> and the player is no better off than with "many". Quoting the bare horizon understates the trip by
+> the entire walk, and **a number wrong in the reassuring direction is worse than the hedge it
+> replaces**.
+
+`hunt_trip_forecast` composes both floors on the long branch — `RAID_HUNT_TURNS_FLOOR_KEY` (the
+horizon) and `RAID_TURNS_FLOOR_KEY` (that plus the travel it has just added) — and
+`raid_floor_is_known` is their ONE reading, the `raid_is_unbounded` rule one layer along: the line, the
+verdict and the button must not answer three ways. The copy:
+
+| surface | bounded | unbounded |
+|---|---|---|
+| one-line form | `delivers ≈5 Wild Boar over ≈12 turns (7 hunting + 5 travel)` | `delivers ≈6 Steppe Bison over more than 68 turns (more than 60 hunting + 8 travel)` |
+| trip verdict | `Away ≈12 turns — 7 hunting, 5 travel.` | `Away more than 68 turns — more than 60 hunting, 8 travel. Still delivering at the end of the forecast.` |
+| Send button | `Send Anyway (≈54 turns)` | `Send Anyway (more than 68 turns)` |
+
+The hunting half wears *"more than"* and the travel half does not — travel is exact, and hedging it
+would claim less than the client knows. `TRIP_BOUND_CLAUSES[horizon]` still renders NOTHING, on the
+understanding that the verdict itself carries *"still delivering at the end of the forecast"*.
+
+**A cohort carrying no horizon keeps the hedge** (`FORECAST_HORIZON_UNKNOWN`, `0` — the sim pins the
+published value positive). *"More than 0 turns"* is the one reading worse than *"many"*, so the
+`*_NO_HORIZON_*` fallbacks exist for a fixture that predates the lever and for nothing else.
+
+**The frame that can tell the fix from the bug is `herd_hunt_horizon_travel`**, and its pairing half
+cannot: `herd_hunt_forecast_horizon`'s band carries no move rate, so its trip is all hunting and
+`horizon` and `horizon + travel` are the same number. The travel frame raids the same
+never-completing Steppe Bison from the 8-tiles-out band, and asserts all three surfaces by
+**EQUALITY** against sentences spelled out in the chapter — a `contains` would pass on a line quoting
+the horizon alone, those two lines sharing every word. Sabotage-verified by returning the bare
+horizon as `turns_floor`: exactly those three fail, each naming both the wanted and the found string.
+
 ### §7.7: a zero belongs to an account the source actually pays
 
 The render-only-when-non-zero rule always kept ONE zero — a component that exists and paid nothing
@@ -2082,8 +2126,9 @@ discard is precisely what this axis split removed.
     (the SAME Red Deer on Surplus: a deeper floor → more animals, brisk turns) /
     `herd_hunt_forecast_no_surplus` (collapsing Wild Fowl at its floor → animalsTaken 0 → red "too lean
     to raid" + disabled button) / `herd_hunt_forecast_eradicate` (a REAL delivery, not a denial —
-    `delivers ≈12 Red Deer over many turns · ~24 food · ⇄ ~6 trade goods — a slow raid` + amber "Send
-    Anyway (long raid)"), the RAID + max-useful set `herd_hunt_boar_raid` (the server's measured Wild Boar,
+    a real payload over a REAL total, ordinary Send — a floor-`0` raid completes by emptying the range;
+    `herd_hunt_forecast_horizon` / `herd_hunt_horizon_travel` are the raids that do not, and they quote
+    `Send Anyway (more than N turns)`), the RAID + max-useful set `herd_hunt_boar_raid` (the server's measured Wild Boar,
     1 hunter → "delivers ≈5 Wild Boar over ≈7 turns · ~20 food", ascending per-policy compact `≈N` picker
     buttons — glyph + metric, name-in-tooltip) / `herd_hunt_max_useful` (2 hunters → "delivers ≈8 … over ≈8 turns"; a 3rd raids no more, so
     the stepper caps at 2 with "max 2 workers useful here — more would be idle") /

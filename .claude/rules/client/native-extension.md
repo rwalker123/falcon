@@ -202,6 +202,16 @@ baskets with its sled untouched, so `hunt_carry_per_worker_biomass` and
 corrected sim-side. The golden gives every field a DISTINCT saturated value, which is what makes a
 swapped accessor visible in the diff rather than merely different.
 
+It also decodes **`expedition_forecast_horizon_turns`** ← `cohort.expeditionForecastHorizonTurns()`, a
+plain `uint` echoed on every cohort beside `expedition_viability_warn_turns` — the SCALE every "never
+completed" sentinel on this wire is relative to (`turns_to_fill == 0`,
+`turns_to_collapse{,_low,_high} == 0`, `expedition_trip_bound == "horizon"`). **It is not a trip
+length**: it bounds the hunting alone, so a client quoting it as one understates the trip by the whole
+walk — the floor on a hunt's span is `this + round-trip travel` (`labor-ui.md` → "An unbounded raid
+quotes a FLOOR"). Because the MARKER is a structural `duplicate()` of the cohort, it reaches the
+in-flight denial readout — whose caller has no band and reads the horizon off the launched party —
+without a stamp; `marker_field_guard` carries it so the copy stays honest.
+
 `herds_to_array` (`dict/subsistence.rs`) decodes the DENIAL raid's pre-launch table,
 `HerdTelemetryState.denialEstimates` (`docs/plan_denial_raid.md`), as **`denial_estimates` — a Godot
 ARRAY of row dictionaries, not a keyed dict like its `hunt_trip_estimates` sibling**. The hunt table

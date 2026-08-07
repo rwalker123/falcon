@@ -2490,3 +2490,69 @@ fn a_returning_party_with_no_home_band_left_does_not_haunt_the_map() {
          turns — it has no home to walk to, so it must fold back where it stands"
     );
 }
+
+// ---------------------------------------------------------------------------------------------------
+// THE FORECAST HORIZON IS PUBLISHED, so the client can put a NUMBER on the projections' sentinels.
+//
+// Every raid projection in a snapshot reports "it never finished" as a bare `0` — `turnsToFill`,
+// `turnsToCollapse{,Low,High}` — and the in-flight twin reports it as `expeditionTripBound ==
+// "horizon"`. Without the horizon beside them the client cannot say more than "away many turns",
+// which is not a bound a player can act on.
+// ---------------------------------------------------------------------------------------------------
+
+/// The published horizon must be the lever the projections were actually run over, and it must be
+/// **positive**: a `0` on the wire would let the client render *"more than 0 turns"*, which is the
+/// exact failure this field exists to prevent.
+///
+/// Asserted on the **exported snapshot** — a field that never reached the codec still satisfies an
+/// in-process assertion on `WorldSnapshot`.
+#[test]
+fn every_cohort_publishes_the_forecast_horizon_on_the_wire() {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let mut app = deterministic_headless_app();
+    app.update();
+
+    let (herd_id, herd_pos) = pin_frozen_full_big_herd(&mut app);
+    let home = spawn_home_band(&mut app, herd_pos);
+    // A party as well as a resident band: the lever rides EVERY cohort, because the outfit UI is
+    // read off the resident band while the "away many turns" line is drawn for the party.
+    spawn_hunt_party(&mut app, home, herd_pos, &herd_id, PEAK_FLOOR);
+
+    let horizon = expedition_config(&app).hunt.forecast_horizon_turns;
+    assert!(
+        horizon > 0,
+        "`ExpeditionConfig::validate` pins the horizon above zero — a zero here would make the \
+         assertion below vacuous"
+    );
+
+    recapture_snapshot_in_place(&mut app.world);
+    let bytes = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .encode_flat();
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let cohorts = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the snapshot carries a population section");
+
+    assert!(
+        !cohorts.is_empty(),
+        "the fixture published cohorts — otherwise this test proves nothing"
+    );
+    for cohort in cohorts.iter() {
+        assert_eq!(
+            cohort.expeditionForecastHorizonTurns(),
+            horizon,
+            "cohort {} published horizon {} on the wire, but the raid projections ran over {horizon}",
+            cohort.entity(),
+            cohort.expeditionForecastHorizonTurns()
+        );
+    }
+}

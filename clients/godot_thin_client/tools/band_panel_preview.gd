@@ -5922,6 +5922,9 @@ func _band_fixture() -> Dictionary:
 		# move rate the client adds round-trip travel from. Without them the compose sheet's forecast
 		# degrades to hunting turns only and can never read "slow" — i.e. it would prove less.
 		"expedition_viability_warn_turns": 20,
+		# …and the horizon the "never completed" sentinels are relative to, without which the denial
+		# sheet's horizon verdict falls back to naming a clock the player cannot see.
+		"expedition_forecast_horizon_turns": BandFx.FORECAST_HORIZON_TURNS,
 		"band_move_tiles_per_turn": 2.0,
 		"work_range": 2,
 		# Deliberately SHORT: the quarry fixtures straddle it (Wild Boar 4 tiles out = a party's job,

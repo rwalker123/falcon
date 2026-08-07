@@ -53,6 +53,12 @@ const DENIAL_PARTY_SIZE := 5
 ## The species the shared world-herd list names, i.e. what the verdict must be phrased about.
 const DENIAL_TARGET_QUARRY := "Red Deer"
 
+## How long the sim's raid projection runs (`expeditionForecastHorizonTurns`) and a walk out to the
+## quarry, for the driven `horizon`-verdict claims. They are deliberately DIFFERENT numbers, so a
+## sentence that shifted by the wrong term — or by none — is a different string.
+const DENIAL_HORIZON_TURNS := BandFx.FORECAST_HORIZON_TURNS
+const DENIAL_HORIZON_OUTBOUND_TURNS := 7
+
 ## The two row KEYS a denial party must NOT render, each because the mission has no such thing: the
 ## hunt party's ORDERS row — a floor it never chose — and a delivery it is not making.
 const DENIAL_ABSENT_ORDERS_KEY := EXPEDITION_ORDERS_DETAIL_KEY
@@ -697,6 +703,36 @@ func run(harness) -> void:
 				== SourceForecast.DENIAL_TURNS_ONE_FORMAT % 4
 			and SourceForecast.denial_turns_phrase({"low": 3, "high": 0, "turns": 0})
 				== SourceForecast.DENIAL_TURNS_ONE_FORMAT % 3)
+	# (d) **THE HORIZON VERDICT SAYS HOW LONG THE FORECAST IS, IN ITS OWN SPAN.** "Still standing when
+	# the forecast runs out" names a clock the player cannot see — the same hedge the hunt sheet's
+	# "away many turns" was — so where the cohort carries the lever the sentence quotes it. Two
+	# spans, one lever, asserted by EQUALITY against sentences spelled out HERE: the in-flight drawer
+	# has no band and so states the RAIDING turns unshifted, while a launch sheet adds the outbound
+	# walk and says "from launch". The pair is the claim — a builder that ignored `travel` satisfies
+	# the first alone, and one that always shifted satisfies the second alone.
+	var horizon_in_flight := {
+		"available": true, "outcome": SourceForecast.DENIAL_OUTCOME_HORIZON,
+		"turns": 0, "low": 0, "high": 0, "animals": 0, "food": 0.0, "trade": 0.0, "wasted": 0.0,
+		SourceForecast.DENIAL_TRAVEL_KEY: SourceForecast.DENIAL_TRAVEL_UNKNOWN,
+		SourceForecast.DENIAL_HORIZON_TURNS_KEY: DENIAL_HORIZON_TURNS,
+	}
+	var horizon_from_launch := horizon_in_flight.duplicate()
+	horizon_from_launch[SourceForecast.DENIAL_TRAVEL_KEY] = DENIAL_HORIZON_OUTBOUND_TURNS
+	h._assert_hud("a horizon verdict states the forecast's LENGTH, in the span it is quoting",
+		SourceForecast.denial_verdict_text(horizon_in_flight, DENIAL_TARGET_QUARRY)
+				== "%s is still standing after %d turns of raiding" % [
+					DENIAL_TARGET_QUARRY, DENIAL_HORIZON_TURNS]
+			and SourceForecast.denial_verdict_text(horizon_from_launch, DENIAL_TARGET_QUARRY)
+				== "%s is still standing after %d turns from launch" % [
+					DENIAL_TARGET_QUARRY, DENIAL_HORIZON_TURNS + DENIAL_HORIZON_OUTBOUND_TURNS])
+	# …and with no lever on the wire it keeps the hedge rather than quoting a zero — the one reading
+	# worse than "when the forecast runs out".
+	var horizon_no_lever := horizon_in_flight.duplicate()
+	horizon_no_lever[SourceForecast.DENIAL_HORIZON_TURNS_KEY] = SourceForecast.FORECAST_HORIZON_UNKNOWN
+	h._assert_hud("…and falls back to the hedge where the cohort carries no horizon at all",
+		SourceForecast.denial_verdict_text(horizon_no_lever, DENIAL_TARGET_QUARRY)
+			== String(SourceForecast.DENIAL_VERDICTS[
+				SourceForecast.DENIAL_OUTCOME_HORIZON]["line"]) % DENIAL_TARGET_QUARRY)
 
 	# State 1k — the hunt launch policy picker: an idle band (short allocation panel) showing the
 	# "Send expedition" outfit block — the party stepper, the scout + hunt send buttons, and the hunt

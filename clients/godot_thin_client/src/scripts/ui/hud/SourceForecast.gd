@@ -730,9 +730,14 @@ const HUNT_RATE_UNAVAILABLE := -1.0
 # NOT "turns to fill the pack" (a big party leaves a partial pack once it strips the surplus).
 const HUNT_FORECAST_DELIVERS_FORMAT := "delivers ≈%d %s over ≈%d turns"
 # `turnsToFill == 0` no longer means "won't fill" — under the raid model it means the raid ran the whole
-# forecast horizon still delivering (a slow breeder a big party can neither fill nor exhaust). The
-# client has no horizon lever, so it words this "over many turns" rather than a bare number.
-const HUNT_FORECAST_LONG_RAID_FORMAT := "delivers ≈%d %s over many turns"
+# forecast horizon still delivering (a slow breeder a big party can neither fill nor exhaust). The client
+# now HAS the horizon (`expeditionForecastHorizonTurns`), so it quotes a FLOOR on the trip instead of the
+# hedge it used to word this as: `over more than 78 turns`, in the SAME span the bounded line's `over ≈36
+# turns` is in, so the two are comparable at a glance.
+const HUNT_FORECAST_LONG_RAID_FORMAT := "delivers ≈%d %s over more than %d turns"
+# The band carries no horizon at all (a fixture that predates the lever) — there is no floor to quote, so
+# the line falls back to the hedge. **Quoting `0` here is the one outcome worse than "many".**
+const HUNT_FORECAST_LONG_RAID_NO_HORIZON_FORMAT := "delivers ≈%d %s over many turns"
 # **THE WIRE'S "THE RAID HAD NOT FINISHED WHEN THE PROJECTION RAN OUT", AND IT NOW MEANS `horizon` AND
 # NOTHING ELSE.** `HuntTripForecast::turns_to_fill` is `Option<u32>`, `None` rendered as `0` here, and
 # the sim reserves `None` for [`HuntTripBound::Horizon`] alone: a raid that ends by driving the herd
@@ -755,6 +760,44 @@ const RAID_TURNS_UNBOUNDED := 0
 ## `herd_lost` bound) can never take a "many turns" branch on any of them.
 static func raid_is_unbounded(hunt_turns: int) -> bool:
     return hunt_turns <= RAID_TURNS_UNBOUNDED
+
+# **THE SCALE EVERY "NEVER COMPLETED" SENTINEL ON THIS WIRE IS RELATIVE TO** — how many turns the sim's
+# raid projection runs before giving up (`expedition_config.hunt.forecast_horizon_turns`), echoed onto
+# EVERY cohort in the `expeditionViabilityWarnTurns` idiom. ONE lever serves both raid tables (the sim's
+# `denial_projection_at` and `hunt_trip_forecast_seeded` read the same field), so `turnsToFill == 0`,
+# `turnsToCollapse{,Low,High} == 0` and `expeditionTripBound == "horizon"` are all measured against this
+# one number and there is nothing here to pick wrongly between.
+#
+# **IT IS NOT A TRIP LENGTH, AND QUOTING IT AS ONE IS WORSE THAN THE HEDGE IT REPLACES.** It bounds the
+# HUNTING alone — `turnsToFill` excludes travel — while the round trip out and back is a separate,
+# already-known term, so the floor on the WHOLE trip is `horizon + round_trip_travel_turns`: *"Away more
+# than 78 turns"*, never *"more than 60"*. A number wrong in the REASSURING direction sends the player
+# out on a raid they would not have taken.
+const COHORT_FORECAST_HORIZON_KEY := "expedition_forecast_horizon_turns"
+# The lever is absent (a fixture that predates it). A real horizon is always positive — the sim pins that
+# on the exported snapshot — so `0` reads unambiguously as "no bound to quote", and every surface falls
+# back to its hedge rather than printing "more than 0 turns".
+const FORECAST_HORIZON_UNKNOWN := 0
+
+## **HOW FAR THE SIM'S RAID PROJECTION RAN, off whichever cohort the caller has in hand** — the BAND on a
+## launch sheet, the launched PARTY in the in-flight drawer. It is a global lever echoed on every cohort,
+## so any cohort answers it; `FORECAST_HORIZON_UNKNOWN` when the dict carries none.
+static func forecast_horizon_turns(cohort: Dictionary) -> int:
+    return maxi(FORECAST_HORIZON_UNKNOWN,
+        int(cohort.get(COHORT_FORECAST_HORIZON_KEY, FORECAST_HORIZON_UNKNOWN)))
+
+## Does this unbounded forecast carry a FLOOR the copy can quote? `false` = no horizon on the wire, so
+## every surface says "many turns" rather than inventing one. The ONE reading of the floor keys below,
+## for the reason `raid_is_unbounded` is the one reading of the sentinel: the line, the verdict and the
+## Send button must not answer it three ways.
+static func raid_floor_is_known(forecast: Dictionary) -> bool:
+    return int(forecast.get(RAID_TURNS_FLOOR_KEY, FORECAST_HORIZON_UNKNOWN)) > FORECAST_HORIZON_UNKNOWN
+
+# The floor on the WHOLE trip (`horizon + round-trip travel`) and on its hunting half (`horizon` alone).
+# They are separate keys rather than a re-use of `turns` / `hunt_turns` because those two are EXACT on the
+# bounded branch, and a consumer reading a floor as an exact figure is the failure this arc is fixing.
+const RAID_TURNS_FLOOR_KEY := "turns_floor"
+const RAID_HUNT_TURNS_FLOOR_KEY := "hunt_turns_floor"
 # The FOOD the delivered animals are worth, appended so the party-size tradeoff reads BOTH ways: a
 # bigger party takes more animals AND more food.
 const HUNT_FORECAST_FOOD_FORMAT := " · ~%d food"
@@ -770,8 +813,11 @@ const HUNT_FORECAST_SLOW_SUFFIX := " — a slow raid"
 # band_move_tiles_per_turn), the SAME formula the server's launch feed uses. When travel > 0 the headline
 # turns is the TOTAL and this breakdown spells the split out; when 0 the headline is just the hunting turns.
 const HUNT_FORECAST_TRAVEL_BREAKDOWN := " (%d hunting + %d travel)"
-# The long-raid line has no bounded hunting-turn count ("over many turns"), so travel rides as a trailing
-# "(+T travel)" rather than a two-part split.
+# The long raid's split, in the bounded breakdown's own shape so the two lines compare term for term. The
+# hunting half wears "more than" (the horizon is a floor on it); the travel half is EXACT and must not,
+# or the line would claim less than the client actually knows.
+const HUNT_FORECAST_LONG_TRAVEL_BREAKDOWN := " (more than %d hunting + %d travel)"
+# The horizon-less fallback: no hunting floor to state, so travel rides as a trailing "(+T travel)".
 const HUNT_FORECAST_LONG_TRAVEL_SUFFIX := " (+%d travel)"
 # The ONE non-viable case under the raid model: the party comes home with nothing in either currency.
 # The SENTENCE it renders is not one sentence — see `HUNT_EMPTY_REFUSALS`, which keys it off the sim's
@@ -803,9 +849,16 @@ const EXPEDITION_TRIP_ROW_HEADER := "this trip"
 # beside its quarry has none, and "18 turns — 18 hunting, 0 travel" would be three numbers for one.
 const EXPEDITION_TRIP_VERDICT_FORMAT := "Away ≈%d turns."
 const EXPEDITION_TRIP_VERDICT_SPLIT_FORMAT := "Away ≈%d turns — %d hunting, %d travel."
-# `turns_to_fill == 0` is the sim saying the raid ran the whole forecast horizon still delivering, so
-# there is no total to quote — the same "many turns" the one-line form words it as. Travel is still
-# known (the client adds it), so it is named rather than folded into an unbounded total.
+# `turns_to_fill == 0` is the sim saying the raid ran the whole forecast horizon still delivering. There
+# is no TOTAL to quote, but there is a FLOOR — the horizon bounds the hunting and the round trip is known
+# — so the verdict states it in the SAME span and the SAME shape the bounded pair above states theirs:
+# "Away more than 78 turns — more than 60 hunting, 18 travel." The two are then comparable, which is the
+# whole point of quoting a number instead of "many". The bound clause table renders NOTHING for `horizon`
+# on the understanding that this sentence carries "still delivering at the end of the forecast" — keep it.
+const EXPEDITION_TRIP_LONG_VERDICT_FORMAT := "Away more than %d turns. Still delivering at the end of the forecast."
+const EXPEDITION_TRIP_LONG_VERDICT_SPLIT_FORMAT := "Away more than %d turns — more than %d hunting, %d travel. Still delivering at the end of the forecast."
+# The horizon-less fallback pair: no floor on the wire, so the hedge stands and travel is named beside it
+# rather than folded into a total that cannot be computed.
 const EXPEDITION_TRIP_LONG_VERDICT := "Away many turns — still delivering at the end of the forecast."
 const EXPEDITION_TRIP_LONG_VERDICT_TRAVEL_FORMAT := "Away many turns — still delivering at the end of the forecast, after %d turns of travel."
 
@@ -916,7 +969,10 @@ const HUNT_EMPTY_REFUSALS := {
 const SEND_HUNTING_EXPEDITION_BUTTON := "Send Expedition"
 const SEND_HUNT_ANYWAY_TURNS_FORMAT := "Send Anyway (≈%d turns)"
 # A LONG raid (`turnsToFill == 0`, ran the whole horizon still delivering) still lands animals — enabled,
-# but the button names it a long haul rather than quoting a turn count the client can't bound.
+# and the button now names the FLOOR on the trip in the same clause its bounded twin names the total, so a
+# player choosing between two quarries compares two numbers rather than a number and a word.
+const SEND_HUNT_LONG_RAID_FORMAT := "Send Anyway (more than %d turns)"
+# The horizon-less fallback: no floor to quote, so the button names the haul without a figure.
 const SEND_HUNT_LONG_RAID_BUTTON := "Send Anyway (long raid)"
 # The ONE blocked case: the raid comes home with nothing in either currency. That is a mistake with no
 # upside (unlike a slow-but-delivering raid), so the button is DISABLED and says why plus the way out —
@@ -1999,6 +2055,10 @@ const DENIAL_TRAVEL_SPLIT_FORMAT := " (%d of them travel)"
 # walk and must still read "from launch".
 const DENIAL_TRAVEL_KEY := "travel"
 const DENIAL_TRAVEL_UNKNOWN := -1
+# **HOW LONG THE FORECAST THAT "RAN OUT" ACTUALLY IS** — `expeditionForecastHorizonTurns`, carried onto
+# the forecast so the `horizon` verdict can say it. `FORECAST_HORIZON_UNKNOWN` (`0`) when the caller had
+# no cohort carrying the lever, in which case the verdict keeps its hedge.
+const DENIAL_HORIZON_TURNS_KEY := "horizon_turns"
 # The caveat, in the panel's own hint register. It is what keeps the band from reading as a guarantee.
 const DENIAL_ESTIMATE_CAVEAT := "An estimate over many raids — the fight is chancy, so a lucky run finishes sooner."
 
@@ -2049,8 +2109,16 @@ const DENIAL_VERDICTS := {
     },
     # **A VERDICT ABOUT THE CLOCK.** The projection ran its whole length; the party may well get there
     # after it. Deliberately worded so it cannot be mistaken for the party being outmatched.
+    #
+    # **`line_bounded` SAYS HOW LONG THAT LENGTH IS, IN THIS SHEET'S OWN SPAN.** "When the forecast runs
+    # out" names a clock the player cannot see, so where the horizon is on the wire the sentence quotes
+    # it — shifted onto the launch clock by the same outbound walk `denial_turns_clause` shifts its
+    # figures by, and closed by the same `from launch` / `of raiding` words, or the two spans on one
+    # sheet would mean different things. `%s` quarry, `%d` turns, `%s` span. The bare `line` stands where
+    # no cohort carried the lever: a hedge beats a number that is wrong in the reassuring direction.
     DENIAL_OUTCOME_HORIZON: {
         "line": "%s is still standing when the forecast runs out",
+        "line_bounded": "%s is still standing after %d turns%s",
         "turns": false,
         "button": "Send Anyway (no collapse in sight)",
         "severity": VERDICT_SLOW,
@@ -3371,6 +3439,14 @@ static func hunt_trip_forecast(band: Dictionary, herd: Dictionary, floor: float,
     var total := hunt_turns + travel
     var warn_turns := int(band.get("expedition_viability_warn_turns", 0))
     var slow: bool = not long_raid and warn_turns > 0 and total > warn_turns
+    # **THE FLOOR ON AN UNBOUNDED RAID, IN THE SAME SPAN `total` IS IN.** The horizon bounds the HUNTING
+    # only, so the trip's floor is it PLUS the very round trip added one line above — quoting the horizon
+    # alone would understate the trip by the whole walk. Zero on a bounded raid (there is a real total)
+    # and zero when the band carries no horizon (nothing to quote), which `raid_floor_is_known` reads.
+    var horizon := forecast_horizon_turns(band)
+    var hunt_turns_floor := horizon if long_raid else FORECAST_HORIZON_UNKNOWN
+    var turns_floor := (hunt_turns_floor + travel) if hunt_turns_floor > FORECAST_HORIZON_UNKNOWN \
+        else FORECAST_HORIZON_UNKNOWN
     # Waste fraction: killed-but-not-carried food over total killed. A small party on big game raids one
     # animal and hauls only the pack's worth, wasting the rest — a high % here is informative, not a block.
     var wasted_food := float(estimate.get("wasted_food", 0.0))
@@ -3381,6 +3457,7 @@ static func hunt_trip_forecast(band: Dictionary, herd: Dictionary, floor: float,
         QUOTED_PARTY_KEY: quoted_party,
         "animals": animals, "turns": total, "hunt_turns": hunt_turns, "travel": travel,
         "long_raid": long_raid, "slow": slow, TRIP_BOUND_KEY: bound,
+        RAID_TURNS_FLOOR_KEY: turns_floor, RAID_HUNT_TURNS_FLOOR_KEY: hunt_turns_floor,
         # The delivered PAYLOAD in food — what the party actually LANDS (a partial for a small party),
         # straight from the sim's forward-simulated raid, NOT animals × food_per_animal (which counts the
         # whole kill and overstates a partial). It may be 0 on an inedible quarry, whose whole payload
@@ -3425,11 +3502,21 @@ static func hunt_forecast_line_bbcode(forecast: Dictionary, herd_name: String) -
         waste = "[color=#%s]%s[/color]" % [
             HudStyle.WARN_HEX, HUNT_WASTE_SUFFIX_FORMAT % int(round(waste_pct * 100.0))]
     if bool(forecast.get("long_raid", false)):
-        # Ran the whole horizon still delivering (no bounded turn count) — a slow but real haul (amber).
-        var long_text: String = HUNT_FORECAST_LONG_RAID_FORMAT % [animals, herd_name]
+        # Ran the whole horizon still delivering — a slow but real haul (amber). No exact total, so the
+        # line quotes the FLOOR (`horizon + travel`) in the bounded form's own span and shape; without a
+        # horizon on the wire there is no floor and it falls back to the hedge.
         var long_travel := int(forecast.get("travel", 0))
-        if long_travel > 0:
-            long_text += HUNT_FORECAST_LONG_TRAVEL_SUFFIX % long_travel
+        var long_text: String
+        if raid_floor_is_known(forecast):
+            long_text = HUNT_FORECAST_LONG_RAID_FORMAT % [
+                animals, herd_name, int(forecast.get(RAID_TURNS_FLOOR_KEY, 0))]
+            if long_travel > 0:
+                long_text += HUNT_FORECAST_LONG_TRAVEL_BREAKDOWN % [
+                    int(forecast.get(RAID_HUNT_TURNS_FLOOR_KEY, 0)), long_travel]
+        else:
+            long_text = HUNT_FORECAST_LONG_RAID_NO_HORIZON_FORMAT % [animals, herd_name]
+            if long_travel > 0:
+                long_text += HUNT_FORECAST_LONG_TRAVEL_SUFFIX % long_travel
         return "[color=#%s]%s%s%s[/color]%s" % [
             HudStyle.WARN_HEX, long_text, food, HUNT_FORECAST_SLOW_SUFFIX, waste,
         ]
@@ -3495,10 +3582,21 @@ static func hunt_trip_verdict(forecast: Dictionary) -> Dictionary:
     var travel := int(forecast.get("travel", 0))
     var clause := trip_bound_clause(forecast)
     if bool(forecast.get("long_raid", false)):
+        # The floor on the whole span, split exactly as the bounded verdict splits its total — so "Away
+        # ≈36 turns — 18 hunting, 18 travel" and "Away more than 78 turns — more than 60 hunting, 18
+        # travel" answer the same question and can be read against each other.
+        var long_text: String
+        if raid_floor_is_known(forecast):
+            var floor_total := int(forecast.get(RAID_TURNS_FLOOR_KEY, 0))
+            long_text = EXPEDITION_TRIP_LONG_VERDICT_SPLIT_FORMAT % [
+                floor_total, int(forecast.get(RAID_HUNT_TURNS_FLOOR_KEY, 0)), travel] if travel > 0 \
+                else EXPEDITION_TRIP_LONG_VERDICT_FORMAT % floor_total
+        else:
+            long_text = EXPEDITION_TRIP_LONG_VERDICT_TRAVEL_FORMAT % travel if travel > 0 \
+                else EXPEDITION_TRIP_LONG_VERDICT
         return {
             "severity": VERDICT_SLOW,
-            "text": _with_bound_clause(EXPEDITION_TRIP_LONG_VERDICT_TRAVEL_FORMAT % travel \
-                if travel > 0 else EXPEDITION_TRIP_LONG_VERDICT, clause),
+            "text": _with_bound_clause(long_text, clause),
         }
     var turns := int(forecast.get("turns", 0))
     var text := EXPEDITION_TRIP_VERDICT_SPLIT_FORMAT % [
@@ -3580,8 +3678,14 @@ static func denial_estimate_row(rows: Array, workers: int) -> Dictionary:
 ##
 ## `available == false` = the snapshot carries no denial row for this party size (a non-huntable herd,
 ## a party larger than the sim sampled) → the caller renders NO verdict at all rather than a blank.
+## **`horizon_cohort` IS FOR THE CALLER WITH NO BAND, AND IT IS READ FOR THE HORIZON ONLY.** The forecast
+## horizon is a global lever echoed onto EVERY cohort, so the launch sheet's `band` already answers it and
+## passes nothing here; the in-flight drawer, which deliberately passes no band (see the travel note
+## above), hands in the launched PARTY's own cohort. It is never consulted for travel — a launched party's
+## remaining walk is not on the wire, which is the whole reason that caller passes no band.
 static func denial_forecast(herd: Dictionary, workers: int, band: Dictionary = {},
-        grid_width: int = 0, wrap_horizontal: bool = false) -> Dictionary:
+        grid_width: int = 0, wrap_horizontal: bool = false,
+        horizon_cohort: Dictionary = {}) -> Dictionary:
     var rows_variant: Variant = herd.get(HERD_DENIAL_ESTIMATES_KEY, [])
     if workers <= 0 or not (rows_variant is Array):
         return {"available": false}
@@ -3607,6 +3711,9 @@ static func denial_forecast(herd: Dictionary, workers: int, band: Dictionary = {
         "high": _denial_turns_from_launch(
             int(row.get("turns_to_collapse_high", DENIAL_TURNS_BEYOND_HORIZON)), travel),
         DENIAL_TRAVEL_KEY: travel,
+        # The lever off whichever cohort the caller had — the band on a launch sheet, the party in flight.
+        DENIAL_HORIZON_TURNS_KEY: forecast_horizon_turns(
+            horizon_cohort if not horizon_cohort.is_empty() else band),
         "animals": int(row.get("animals_killed", 0)),
         "food": float(row.get("delivered_food", 0.0)),
         "trade": float(row.get("delivered_trade", 0.0)),
@@ -3692,8 +3799,7 @@ static func denial_turns_clause(forecast: Dictionary) -> String:
     if phrase == "":
         return ""
     var travel := int(forecast.get(DENIAL_TRAVEL_KEY, DENIAL_TRAVEL_UNKNOWN))
-    var span := DENIAL_SPAN_OF_RAIDING if travel == DENIAL_TRAVEL_UNKNOWN \
-        else DENIAL_SPAN_FROM_LAUNCH
+    var span := denial_span(forecast)
     var turns := int(forecast.get("turns", DENIAL_TURNS_BEYOND_HORIZON))
     var low := int(forecast.get("low", DENIAL_TURNS_BEYOND_HORIZON))
     var high := int(forecast.get("high", DENIAL_TURNS_BEYOND_HORIZON))
@@ -3723,10 +3829,34 @@ static func denial_verdict_text(forecast: Dictionary, herd_name: String) -> Stri
     if not bool(forecast.get("available", false)):
         return ""
     var entry := denial_verdict(forecast)
-    var text := String(entry["line"]) % herd_name
+    # An outcome whose SENTENCE carries the forecast's own length (the `horizon` verdict) composes it here
+    # rather than through the turn clause: the clause states the collapse figures, and this outcome has
+    # none — what it states is how long the projection ran before giving up.
+    var bounded := _denial_bounded_line(entry, forecast, herd_name)
+    var text := bounded if bounded != "" else String(entry["line"]) % herd_name
     if bool(entry["turns"]):
         text += denial_turns_clause(forecast)
     return text
+
+## **WHICH CLOCK THIS SHEET IS QUOTING** — `from launch` where the outbound walk is known, `of raiding`
+## where it is not (the in-flight drawer). The ONE resolution, so the turn clause and the horizon sentence
+## cannot name two different spans in one verdict.
+static func denial_span(forecast: Dictionary) -> String:
+    return DENIAL_SPAN_OF_RAIDING \
+        if int(forecast.get(DENIAL_TRAVEL_KEY, DENIAL_TRAVEL_UNKNOWN)) == DENIAL_TRAVEL_UNKNOWN \
+        else DENIAL_SPAN_FROM_LAUNCH
+
+## The outcome's sentence with the forecast's own LENGTH in it, or `""` when this outcome has no bounded
+## form or the wire carried no horizon. The figure is shifted onto the launch clock by
+## `_denial_turns_from_launch` — the same shift the collapse figures take — so the sentence and the clause
+## beneath it are on one clock; where travel is unknown it stays the raiding-turn count and says so.
+static func _denial_bounded_line(entry: Dictionary, forecast: Dictionary, herd_name: String) -> String:
+    var format := String(entry.get("line_bounded", ""))
+    var horizon := int(forecast.get(DENIAL_HORIZON_TURNS_KEY, FORECAST_HORIZON_UNKNOWN))
+    if format == "" or horizon <= FORECAST_HORIZON_UNKNOWN:
+        return ""
+    var travel := int(forecast.get(DENIAL_TRAVEL_KEY, DENIAL_TRAVEL_UNKNOWN))
+    return format % [herd_name, _denial_turns_from_launch(horizon, travel), denial_span(forecast)]
 
 ## …and the same sentence tinted: SIGNAL cyan for a raid that gets there, WARN amber for one that does
 ## not. It never reads DANGER — a denial raid that cannot break the herd is a bad bargain, not a
@@ -4073,7 +4203,10 @@ static func style_send_hunt_button(button: Button, forecast: Dictionary, reason:
         HudStyle.apply_button(button, "armed")
         return
     if bool(forecast.get("long_raid", false)):
-        button.text = SEND_HUNT_LONG_RAID_BUTTON
+        # The FLOOR on the trip, in the same clause the slow face states its total — so the last control
+        # the player looks at before clicking carries a number rather than the word "long".
+        button.text = (SEND_HUNT_LONG_RAID_FORMAT % int(forecast.get(RAID_TURNS_FLOOR_KEY, 0))) \
+            if raid_floor_is_known(forecast) else SEND_HUNT_LONG_RAID_BUTTON
         HudStyle.apply_button(button, "armed")
         return
     if bool(forecast.get("slow", false)):

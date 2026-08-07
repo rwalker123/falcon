@@ -594,6 +594,38 @@ pub struct PopulationCohortState {
     /// [`LaborAssignmentState::kit_id`] beside that row's own yields. Never empty. Appended last.
     #[serde(default)]
     pub kit_id: String,
+    /// **How far every pre-launch raid projection in this snapshot was simulated before giving up**
+    /// (`expedition_config.hunt.forecast_horizon_turns`). Global config echoed per-cohort — same idiom
+    /// as [`Self::expedition_viability_warn_turns`] / [`Self::hunt_per_worker_provisions`] /
+    /// [`Self::expedition_per_worker_carry`] — and populated for **every** cohort, since the
+    /// outfit/hunt UI lives on the resident-band panel.
+    ///
+    /// It is the **scale for the projections' "never completed" sentinels**, which are all
+    /// horizon-relative and none of which carried the horizon before this field:
+    /// [`HuntTripEstimateState::turns_to_fill`](crate::state::subsistence::HuntTripEstimateState::turns_to_fill)
+    /// `== 0`,
+    /// [`DenialEstimateState::turns_to_collapse`](crate::state::subsistence::DenialEstimateState::turns_to_collapse)
+    /// (and its two range ends) `== 0`, and [`Self::expedition_trip_bound`] `== "horizon"`. **One
+    /// lever serves all of them**: the denial forecast and the hunt forecast run over the *same*
+    /// horizon (`core_sim`'s `denial_projection_at` and `hunt_trip_forecast_seeded` both read this
+    /// one config field), so there is deliberately no second horizon on the wire.
+    ///
+    /// **It is NOT the trip length and must never be quoted as one.** A bounded raid reads *"Away
+    /// ≈36 turns — 18 hunting, 18 travel"*; the unbounded case has to be a **lower bound on that
+    /// same span** or the two are not comparable and the player is worse off than with *"many"*. The
+    /// hunting alone is at least this many turns and the round-trip travel is a separate,
+    /// already-known term (`ceil(2 × hex_distance / band_move_tiles_per_turn)`), so the floor on the
+    /// whole trip is
+    ///
+    /// ```text
+    /// forecast_horizon_turns + round-trip travel      e.g. "Away more than 78 turns"
+    /// ```
+    ///
+    /// Quoting the horizon alone understates the trip by the entire walk — a number wrong in the
+    /// *reassuring* direction, which is worse than the "many" it replaces. Appended last
+    /// (append-only).
+    #[serde(default)]
+    pub expedition_forecast_horizon_turns: u32,
 }
 
 /// Presentation view of a band's resolved settlement stage (mirror of the `SettlementStageView`

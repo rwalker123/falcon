@@ -173,8 +173,11 @@ const FIXTURE_ENTRY := {
 	# Recall/Cancel button reads OFF THE MARKER (`_selected_unit` is the map-click payload), so it has
 	# to survive the copy like every other panel-consumed field.
 	"pending_reveal_count": 3,
-	# Pre-launch hunt-trip forecast levers (global config echoed on every cohort).
+	# Pre-launch hunt-trip forecast levers (global config echoed on every cohort). The horizon is the
+	# scale every "never completed" sentinel is relative to, and the IN-FLIGHT denial readout reads it
+	# off this marker (a launched party's own cohort), so it has to survive the copy like the warn line.
 	"expedition_viability_warn_turns": 20,
+	"expedition_forecast_horizon_turns": 60,
 }
 
 var _failures: Array[String] = []
@@ -245,6 +248,7 @@ func _ready() -> void:
 	_expect_int(marker, "home_band_entity", 7777)
 	_expect_int(marker, "pending_reveal_count", 3)
 	_expect_int(marker, "expedition_viability_warn_turns", 20)
+	_expect_int(marker, "expedition_forecast_horizon_turns", 60)
 	_expect_int(marker, "expedition_eta_turns", 6)
 	if not bool(marker.get("is_expedition", false)):
 		_fail("is_expedition did not round-trip to true (defaulted?)")

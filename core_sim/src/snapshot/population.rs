@@ -169,6 +169,13 @@ pub(crate) struct ExpeditionLevers {
     pub(crate) hunt_per_worker_carry: f32,
     pub(crate) hunt_per_worker_provisions: f32,
     pub(crate) hunt_viability_warn_turns: u32,
+    /// `expedition_config.hunt.forecast_horizon_turns` — how far *every* raid projection in the
+    /// snapshot was simulated before giving up, echoed per-cohort so the client has a scale for the
+    /// horizon-relative `0` sentinels (`turns_to_fill`, `turns_to_collapse*`) and for the
+    /// `"horizon"` trip bound. The same lever drives the hunt and denial forecasts, so this one echo
+    /// answers for both. **Not a trip length** — see
+    /// [`sim_schema::state::PopulationCohortState::expedition_forecast_horizon_turns`].
+    pub(crate) hunt_forecast_horizon_turns: u32,
     /// `labor_config.band_move_tiles_per_turn` — a band's move speed, echoed per-cohort so the client
     /// can add a raid's round-trip travel (`ceil(2 × hex_distance / this)`) to the band-agnostic
     /// pre-launch `huntTripEstimates`. Same global-config-surfaced-per-band idiom as the others.
@@ -509,6 +516,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // reads them off the selected resident band).
         hunt_per_worker_provisions: expedition_levers.hunt_per_worker_provisions,
         expedition_viability_warn_turns: expedition_levers.hunt_viability_warn_turns,
+        expedition_forecast_horizon_turns: expedition_levers.hunt_forecast_horizon_turns,
         expedition_per_worker_carry: expedition_levers.hunt_per_worker_carry,
         band_move_tiles_per_turn: expedition_levers.band_move_tiles_per_turn as f32,
         // In-flight hunt-party delivery forecast (`0`/false for a scout, a normal band, or a party
@@ -672,6 +680,7 @@ mod tests {
             hunt_per_worker_carry: cfg.hunt.per_worker_carry,
             hunt_per_worker_provisions: 0.0,
             hunt_viability_warn_turns: cfg.hunt.viability_warn_turns,
+            hunt_forecast_horizon_turns: cfg.hunt.forecast_horizon_turns,
             band_move_tiles_per_turn: 1,
         }
     }

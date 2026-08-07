@@ -1538,7 +1538,11 @@ static func expedition_collapse_line(exp: Dictionary, target_herd: Dictionary) -
     # The party's own size is the table's only axis — `size` is the cohort's head count, which for a
     # detached party IS its workers (the same reading `HudBandLaborState.band_party_workers` takes).
     var party := int(exp.get("size", 0))
-    var forecast := SourceForecast.denial_forecast(target_herd, party)
+    # **THE PARTY IS HANDED IN FOR THE FORECAST HORIZON AND FOR NOTHING ELSE** — still no band, so still no
+    # travel term and still the "…of raiding" span. The horizon is a global lever echoed onto every
+    # cohort, so this launched party answers it exactly as its home band would; without it the verdict
+    # falls back to naming a clock the player cannot see.
+    var forecast := SourceForecast.denial_forecast(target_herd, party, {}, 0, false, exp)
     var verdict := SourceForecast.denial_verdict_bbcode(forecast,
         SourceForecast.herd_display_name(target_herd))
     if verdict == "":

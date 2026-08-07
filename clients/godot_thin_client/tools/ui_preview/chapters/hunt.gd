@@ -103,6 +103,11 @@ const RAID_TRAVEL_HUNT_TURNS := 8
 # collapsed fixtures where the raid also lands 0 animals.
 const NEVER_FILLS_TRIP_TURNS := 0
 
+## The quarry `_horizon_raid_herd` builds — a slow breeder a big party can neither fill nor exhaust. Named
+## because the unbounded-raid copy assertions quote it by EQUALITY and a hand-typed second spelling is
+## how a rename turns a real claim into a comparison of two wrong strings.
+const HORIZON_QUARRY_NAME := "Steppe Bison"
+
 ## `floor_chart_model`'s `lesson_known` for a probe reading the VERDICT rather than the aside: the
 ## faction has NOT learned this source's lesson, so the teaching line is the one it always carried.
 const LESSON_NOT_YET_LEARNED := false
@@ -166,14 +171,19 @@ func _assert_trip_readout(state_name: String) -> void:
 			# bare 0. **The pairing half of the strip-bare claims above**: without a frame that still
 			# reaches this branch, "never says `many turns`" would pass on a client that could no longer
 			# say it at all.
-			h._assert_hud("an unbounded raid states no total, and still reads SLOW",
+			# **THIS BAND CARRIES NO MOVE RATE, so its trip is all hunting and the floor IS the
+			# horizon** — which is exactly why it cannot tell `horizon` from `horizon + travel`.
+			# `herd_hunt_horizon_travel` is the frame that can; this one pins that the branch is still
+			# reachable and that it no longer hedges.
+			h._assert_hud("an unbounded raid bounds itself with the horizon, and still reads SLOW",
 				Readout.verdict_severity(sheet) == SourceForecast.VERDICT_SLOW
-					and Readout.verdict_text(sheet).contains(
-						SourceForecast.EXPEDITION_TRIP_LONG_VERDICT))
+					and Readout.verdict_text(sheet) == "%s Away more than %d turns. Still delivering at the end of the forecast." % [
+						HudWidgets.VERDICT_DOT, BandFx.FORECAST_HORIZON_TURNS])
 			var horizon_send := Q.find_meta_node(sheet, HudWidgets.SEND_HUNT_CONFIRM_META) as Button
-			h._assert_hud("…and its Send names the long haul it cannot bound",
+			h._assert_hud("…and its Send names that same floor rather than the word \"long\"",
 				horizon_send != null
-					and horizon_send.text == SourceForecast.SEND_HUNT_LONG_RAID_BUTTON)
+					and horizon_send.text == "Send Anyway (more than %d turns)"
+						% BandFx.FORECAST_HORIZON_TURNS)
 		"herd_hunt_forecast_no_surplus":
 			# **A REFUSED RAID RENDERS NO BOX AT ALL.** It has no payload to lay out in rows, and an
 			# empty well would read as a raid delivering nothing measurable rather than one the panel
@@ -340,7 +350,7 @@ func _hunt_assign_forecast_states() -> Array:
 ## cell, because `HerdFx.forecast_herd` pairs every delivering row with a stop that HAS a turn, which
 ## is now true of its floor-`0` row too.
 func _horizon_raid_herd() -> Dictionary:
-	var herd := HerdFx.assign_preview_herd("game_bison_44", "Steppe Bison", "thriving", 0.30,
+	var herd := HerdFx.assign_preview_herd("game_bison_44", HORIZON_QUARRY_NAME, "thriving", 0.30,
 		DEER_SUSTAIN_TRIP_TURNS, DEER_SURPLUS_TRIP_TURNS,
 		DEER_SUSTAIN_ANIMALS, DEER_SURPLUS_ANIMALS)
 	# The stance-keyed table has not been floorified yet (`_show_herd` does that), so the peak floor is
@@ -392,6 +402,7 @@ func _hunt_preview_far_band() -> Dictionary:
 		"hunt_reach": 7, "work_range": 2, "max_expedition_party_size": 8,
 		"hunt_per_worker_provisions": 0.8,
 		"expedition_viability_warn_turns": 20,
+		"expedition_forecast_horizon_turns": BandFx.FORECAST_HORIZON_TURNS,
 		# Per-worker carry (shipped 4.0) → the forecast's HAUL = party × this.
 		"expedition_per_worker_carry": 4.0,
 		"activity": "forage", "labor_assignments": [],
@@ -409,6 +420,7 @@ func _raid_travel_band() -> Dictionary:
 		"hunt_reach": 7, "work_range": 2, "max_expedition_party_size": 8,
 		"hunt_per_worker_provisions": 0.8,
 		"expedition_viability_warn_turns": 20,
+		"expedition_forecast_horizon_turns": BandFx.FORECAST_HORIZON_TURNS,
 		"expedition_per_worker_carry": 4.0,
 		"band_move_tiles_per_turn": 2,
 		"activity": "forage", "labor_assignments": [],
@@ -1982,3 +1994,76 @@ func _unkillable_quarry_states() -> void:
 	h._hud._band_labor._player_band = BandFx.band_fixture()
 	h._hud._compose.reset_hunt_source()
 	h._hud._compose.set_hunt_band(-1)
+
+	# ---- THE UNBOUNDED RAID QUOTES A FLOOR, AND THE FLOOR INCLUDES THE WALK ----------------------
+	# **The pairing half of `herd_hunt_forecast_horizon`, and the only frame that can tell the fix from
+	# the bug it replaces.** That state's band carries no move rate, so its trip is all hunting and
+	# `horizon` and `horizon + travel` are the same number — a client quoting the bare horizon renders
+	# it identically. Here the SAME never-completing Steppe Bison is raided from the travel band (8
+	# tiles out at 2 tiles a turn → a round trip of `RAID_TRAVEL_TURNS`), so the two answers differ by
+	# the whole walk and the copy has to say which one it means.
+	#
+	# The rule the sim's own field states: the horizon bounds the HUNTING alone, so the floor on the
+	# TRIP is `horizon + round-trip travel`. A number wrong in the reassuring direction is worse than
+	# the "many turns" it replaces, which is why every claim below is an EQUALITY.
+	h._hud._band_labor._player_bands = [_raid_travel_band()]
+	h._hud._band_labor._player_band = h._hud._band_labor._player_bands[0]
+	var horizon_travel_herd := _horizon_raid_herd()
+	h._hud._compose.reset_hunt_source()
+	h._hud._compose.set_hunt_band(-1)
+	h._show_herd(horizon_travel_herd)
+	h._compose_herd(horizon_travel_herd, HerdFx.HUNT_FORECAST_PARTY,
+		SourceForecast.FLOOR_FOOD_PEAK)
+	await h._settle()
+	await h._save("herd_hunt_horizon_travel")
+	_assert_horizon_floor_is_the_whole_trip()
+
+	# Reset again for whatever renders after this chapter.
+	h._hud._band_labor._player_bands = []
+	h._hud._band_labor._player_band = BandFx.band_fixture()
+	h._hud._compose.reset_hunt_source()
+	h._hud._compose.set_hunt_band(-1)
+
+
+## The three surfaces that used to say "many turns", each asserted by EQUALITY against a sentence
+## spelled out HERE rather than re-composed through `SourceForecast`'s own formats — a claim about copy
+## that borrows the copy under test can only ever agree with itself. A `contains` would not do either:
+## the failure being guarded is a line quoting the HORIZON where it owes the horizon PLUS the walk, and
+## those two lines share every word.
+func _assert_horizon_floor_is_the_whole_trip() -> void:
+	var sheet: Control = h._hud._drawercompose._compose_sheet
+	var trip_floor := BandFx.FORECAST_HORIZON_TURNS + RAID_TRAVEL_TURNS
+	# 1. THE TRIP VERDICT — the sentence the defect was reported against ("Away many turns — still
+	#    delivering at the end of the forecast, after 18 turns of travel"), now a bound in the same span
+	#    and the same shape its bounded twin ("Away ≈36 turns — 18 hunting, 18 travel") states.
+	var expected_verdict := ("%s Away more than %d turns — more than %d hunting, %d travel. "
+		+ "Still delivering at the end of the forecast.") % [
+			HudWidgets.VERDICT_DOT, trip_floor, BandFx.FORECAST_HORIZON_TURNS, RAID_TRAVEL_TURNS]
+	var got_verdict := Readout.verdict_text(sheet)
+	h._assert_hud("an unbounded raid's verdict bounds the WHOLE trip — want \"%s\", got \"%s\""
+			% [expected_verdict, got_verdict],
+		got_verdict == expected_verdict)
+	h._assert_hud("…and still reads SLOW, the severity the line and the button already carry",
+		Readout.verdict_severity(sheet) == SourceForecast.VERDICT_SLOW)
+	# 2. THE SEND BUTTON — the last control the player looks at before committing, so it names the same
+	#    figure rather than the word "long".
+	var send := Q.find_meta_node(sheet, HudWidgets.SEND_HUNT_CONFIRM_META) as Button
+	var expected_send := "Send Anyway (more than %d turns)" % trip_floor
+	h._assert_hud("…and the Send names the same floor — want \"%s\", got \"%s\""
+			% [expected_send, "" if send == null else send.text],
+		send != null and not send.disabled and send.text == expected_send)
+	# 3. THE ONE-LINE FORM (the targeting banner's and the dock sheet's sentence — the compose sheet
+	#    renders the box instead, so it is asserted on the producer). The payload tail is the fixture's
+	#    and is not the claim, so the equality is on the whole HEAD through the travel split.
+	var forecast := SourceForecast.hunt_trip_forecast(
+		h._hud._band_labor._player_band, h._hud._selection.herd(),
+		SourceForecast.FLOOR_FOOD_PEAK, HerdFx.HUNT_FORECAST_PARTY,
+		h._hud._band_labor.grid_width(), h._hud._band_labor.wrap_horizontal())
+	var expected_head := ("[color=#%s]delivers ≈%d %s over more than %d turns "
+		+ "(more than %d hunting + %d travel)") % [
+			HudStyle.WARN_HEX, int(forecast.get("animals", 0)), HORIZON_QUARRY_NAME,
+			trip_floor, BandFx.FORECAST_HORIZON_TURNS, RAID_TRAVEL_TURNS]
+	var got_line := SourceForecast.hunt_forecast_line_bbcode(forecast, HORIZON_QUARRY_NAME)
+	h._assert_hud("…and the one-line form opens on the same floor and split — want \"%s\", got \"%s\""
+			% [expected_head, got_line],
+		got_line.begins_with(expected_head))

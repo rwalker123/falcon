@@ -511,6 +511,20 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "expedition_viability_warn_turns",
         cohort.expeditionViabilityWarnTurns() as i64,
     );
+    // **HOW LONG THE SIM'S RAID PROJECTION RUNS** — the SCALE every "never completed" sentinel this
+    // subsystem publishes is relative to (`turns_to_fill == 0`, `turns_to_collapse{,_low,_high} == 0`,
+    // `expedition_trip_bound == "horizon"`). ONE lever serves both raid tables (the sim's
+    // `denial_projection_at` and `hunt_trip_forecast_seeded` read the same
+    // `expedition_config.hunt.forecast_horizon_turns`), so there is nothing here for a client to pick
+    // wrongly between.
+    //
+    // **IT IS NOT A TRIP LENGTH.** It bounds the HUNTING only — `turns_to_fill` excludes travel — so a
+    // client quoting it as a trip figure understates the trip by the entire walk. The floor on a hunt's
+    // whole span is `this + round-trip travel`; see `SourceForecast.RAID_TURNS_UNBOUNDED`.
+    let _ = dict.insert(
+        "expedition_forecast_horizon_turns",
+        cohort.expeditionForecastHorizonTurns() as i64,
+    );
     // Per-worker carry the pack fills to: an expedition delivers `party_workers ×
     // expeditionPerWorkerCarry` food when it fills. This IS a display number the client may multiply
     // by the party size (the same blessed party×lever arithmetic as the band ceiling — NOT the

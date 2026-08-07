@@ -1218,6 +1218,39 @@ is about and adding it would over-state the wait for the thing being promised.
   and adding the leg from the HOME BAND's tile would quote a distance the party may have finished turns
   ago. Closing that needs a per-party arrival on the wire — server-side work.
 
+### The `horizon` verdict says HOW LONG the forecast is
+
+*"Wild Aurochs is still standing when the forecast runs out"* names a clock the player cannot see — the
+same hedge the hunt sheet's *"away many turns"* was, and unactionable for the same reason. Where the
+cohort carries `expeditionForecastHorizonTurns` the sentence quotes it:
+**`%s is still standing after %d turns%s`**, `line_bounded` on the `DENIAL_VERDICTS[horizon]` entry.
+
+- **The figure rides the SAME clock the turn clause would have.** It is shifted by
+  `_denial_turns_from_launch` and closed by `denial_span` — the ONE resolution of *from launch* vs *of
+  raiding*, extracted so the sentence and the clause beneath it cannot name two spans in one verdict.
+  A launch sheet reads *"…after 68 turns from launch"*; the in-flight drawer, which passes no band,
+  reads *"…after 60 turns of raiding"* — **the HUNTING bound, named as such**, rather than a trip
+  figure it has no travel term to support.
+- **No `≈`, unlike every collapse figure on this sheet.** The band is an estimate over stochastic
+  draws; the horizon is a config constant and the walk is arithmetic, so the number is exact and
+  wearing the estimate glyph would misdescribe it.
+- **The `turns` flag stays `false`.** This outcome has no collapse figures to quote, and the clause
+  states the collapse band; what the sentence states is how long the projection ran before giving up.
+  The composition therefore lives in `denial_verdict_text` via `_denial_bounded_line`, not in the
+  clause.
+- **`denial_forecast` takes the horizon off whichever cohort the caller has** — the band on a launch
+  sheet, the launched party through the trailing `horizon_cohort` argument in the in-flight drawer
+  (`DetailFormat.expedition_collapse_line`). It is a global lever echoed on every cohort, so any
+  cohort answers it; `horizon_cohort` is read for the horizon ONLY and never for travel, which is the
+  whole reason that caller passes no band.
+- **A cohort carrying no horizon keeps the bare `line`.** `0` would render *"after 0 turns"*, which is
+  worse than the hedge.
+- **PNG-less, driven, and asserted as a set** in `ui_preview`'s `chapters/band_expedition.gd`: the two
+  spans by EQUALITY against sentences spelled out there (the pair is the claim — a builder ignoring
+  `travel` satisfies the first alone, one that always shifted satisfies the second alone) plus the
+  no-lever fallback. There is no rendered `horizon` denial row in either harness, and a sentence is a
+  string: a frame would show a plausible verdict whichever clock it quoted.
+
 ### The waste is STATED, and it is not dressed as a warning
 
 On a hunt an unhauled kill is an occasional overflow and wears `HUNT_FORECAST_WARN_GLYPH`'s `⚠`; on a

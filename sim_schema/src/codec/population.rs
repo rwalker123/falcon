@@ -393,6 +393,9 @@ fn create_populations<'a>(
                     forageCarryPerWorkerBiomass: cohort.forage_carry_per_worker_biomass,
                     // The kit the three tiers above are resolved through — appended last.
                     kitId: Some(kit_id),
+                    // The projections' horizon, so the client can put a number on their
+                    // "never completed" sentinels — appended after the kit.
+                    expeditionForecastHorizonTurns: cohort.expedition_forecast_horizon_turns,
                 },
             )
         })

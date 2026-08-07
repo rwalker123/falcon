@@ -836,6 +836,32 @@ table PopulationCohortState {
   // per-cohort copy of it.
   // Never empty: it always names a real roster entry.
   kitId:string;
+  // --- THE SCALE BEHIND THE "NEVER COMPLETED" SENTINELS (appended last) -------------------------
+  // expedition_config.hunt.forecast_horizon_turns — HOW FAR every pre-launch raid projection in this
+  // snapshot was simulated before it gave up. A global config lever echoed per-cohort, same idiom as
+  // expeditionViabilityWarnTurns / huntPerWorkerProvisions / expeditionPerWorkerCarry, populated for
+  // EVERY cohort because the outfit/hunt UI lives on the resident-band panel.
+  //
+  // It exists so the client can put a NUMBER on the projections' "it never finished" sentinels, all
+  // of which are horizon-relative and none of which carry the horizon:
+  //   - HuntTripEstimate.turnsToFill == 0        (never filled the pack within the horizon)
+  //   - DenialEstimate.turnsToCollapse{,Low,High} == 0 (never past recovery within the horizon)
+  //   - PopulationCohortState.expeditionTripBound == "horizon" (in-flight: no stop found)
+  // ONE lever serves all of them: the denial forecast and the hunt forecast run over the SAME
+  // horizon (core_sim `denial_projection_at` and `hunt_trip_forecast_seeded` both read this field),
+  // so there is deliberately no second horizon on the wire.
+  //
+  // *** IT IS NOT THE TRIP LENGTH, AND MUST NEVER BE QUOTED AS ONE. *** A bounded raid reads
+  // "Away ~36 turns - 18 hunting, 18 travel"; the unbounded case has to be a LOWER BOUND ON THE SAME
+  // SPAN or the two are not comparable and the player is worse off than with "many". The hunting
+  // alone is at least this many turns, and the round-trip travel is a separate, already-known term
+  // (ceil(2 x hex_distance / bandMoveTilesPerTurn)), so the floor on the whole trip is
+  //
+  //   forecast_horizon_turns + round-trip travel        e.g. "Away more than 78 turns"
+  //
+  // Quoting the horizon alone would understate the trip by the entire walk — a number wrong in the
+  // REASSURING direction, which is worse than the "many" it replaces.
+  expeditionForecastHorizonTurns:uint = 0;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).

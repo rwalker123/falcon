@@ -202,8 +202,7 @@ pub(crate) fn hunt_trip_estimate_entries(
             entries.push(HuntTripEstimateState {
                 floor,
                 party_workers,
-                // `0` = the raid never completes within `hunt.forecast_horizon_turns`.
-                turns_to_fill: forecast.turns_to_fill.unwrap_or(0),
+                turns_to_fill: forecast.turns_to_fill.unwrap_or(NEVER_FILLED),
                 bound: forecast.bound.as_str().to_string(),
                 delivers_food: forecast.delivers_food,
                 delivers_trade: forecast.delivers_trade,
@@ -216,6 +215,17 @@ pub(crate) fn hunt_trip_estimate_entries(
     }
     entries
 }
+
+/// **The wire's "this raid never fills the pack"** — the `0` sentinel on
+/// [`HuntTripEstimateState::turns_to_fill`]. Named for the reason its denial twin
+/// [`NEVER_PAST_RECOVERY`] is: a bare `0` beside a turn count reads as *"immediately"*, which is the
+/// opposite of what it means; the row's `bound` carries the reason.
+///
+/// **It is horizon-relative, and the scale it is relative to rides the wire** as
+/// `PopulationCohortState::expedition_forecast_horizon_turns` — so a client can say *"more than N
+/// turns"* rather than *"many"*. Read that field's doc before quoting it: the horizon bounds the
+/// **hunting** only, and the trip's floor is `horizon + round-trip travel`.
+const NEVER_FILLED: u32 = 0;
 
 /// The **pre-launch DENIAL-RAID table** for one herd: the rows the client's launch sheet looks up,
 /// and the party size it **opens on**.
@@ -406,6 +416,12 @@ fn denial_estimate_entries(
 /// [`DenialEstimateState::turns_to_collapse`] and its two range ends. Named because a bare `0` beside
 /// a turn count reads as *"immediately"*, which is the opposite of what it means; the row's `outcome`
 /// carries the reason.
+///
+/// **The denial forecast runs over the SAME horizon the hunt forecast does** —
+/// `denial_projection_at` and `hunt_trip_forecast_seeded` both read
+/// `expedition_config.hunt.forecast_horizon_turns` — so the one published lever
+/// `PopulationCohortState::expedition_forecast_horizon_turns` is the scale for this sentinel and for
+/// [`NEVER_FILLED`] alike, and no second horizon belongs on the wire.
 const NEVER_PAST_RECOVERY: u32 = 0;
 
 /// Display herd telemetry for the client, plus each herd's **pre-commit yield forecast**
