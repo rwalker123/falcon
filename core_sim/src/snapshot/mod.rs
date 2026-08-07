@@ -181,7 +181,7 @@ pub(crate) enum Baseline {
 /// how many baseline entries the capture still carries, and only when that count falls short of the
 /// baseline's size does [`diff_removed`] sweep for the keys that vanished.
 fn diff_indexed<K, T, Key, Same>(
-    baseline: &mut HashMap<K, T>,
+    slot: &mut Indexed<K, T>,
     current: &[T],
     key: Key,
     same: Same,
@@ -193,13 +193,21 @@ where
     Key: Fn(&T) -> K,
     Same: Fn(&T, &T) -> bool,
 {
+    let Indexed { baseline, held } = slot;
     let baseline_len = baseline.len();
+    let held_len = held.len();
     let mut sent = Vec::new();
     // How many entries of `current` the baseline already held. Counted before any insert, so a
     // newly-appeared entry does not mask a removal.
     let mut retained = 0usize;
+    // The same count for `held`, so a row that only ever existed on a held frame is seen to vanish.
+    let mut held_retained = 0usize;
     for state in current {
         let id = key(state);
+        let was_held = held_len > 0 && held.contains(&id);
+        if was_held {
+            held_retained += 1;
+        }
         let unchanged = match baseline.get(&id) {
             Some(previous) => {
                 retained += 1;
@@ -207,48 +215,136 @@ where
             }
             None => false,
         };
-        if unchanged {
+        if unchanged && !was_held {
             continue;
         }
         sent.push(state.clone());
-        if write == Baseline::Advance {
-            baseline.insert(id, state.clone());
+        match write {
+            Baseline::Advance => {
+                if !unchanged {
+                    baseline.insert(id, state.clone());
+                }
+            }
+            // The per-row form of [`diff_whole`]'s Hold arm: a changed row leaves the client off
+            // this baseline, an unchanged-but-held one puts it back on.
+            Baseline::Hold => {
+                if unchanged {
+                    held.remove(&id);
+                } else {
+                    held.insert(id);
+                }
+            }
         }
     }
 
-    if retained == baseline_len {
+    if retained == baseline_len && held_retained == held_len {
+        if write == Baseline::Advance {
+            held.clear();
+        }
         return (sent, Vec::new());
     }
-    let removed = diff_removed(baseline, current, &key);
+    let removed = diff_removed(baseline, held, current, &key);
+    for id in &removed {
+        held.remove(id);
+    }
     if write == Baseline::Advance {
         for id in &removed {
             baseline.remove(id);
         }
+        held.clear();
     }
     (sent, removed)
 }
 
-/// The rare second walk: which baseline keys the captured collection no longer carries.
+/// The rare second walk: which published keys the captured collection no longer carries.
 ///
-/// Reached only when [`diff_indexed`]'s pass found fewer baseline hits than the baseline holds, i.e.
-/// when something really was removed. A steady turn never calls it.
-fn diff_removed<K, T, Key>(baseline: &HashMap<K, T>, current: &[T], key: Key) -> Vec<K>
+/// Reached only when [`diff_indexed`]'s pass found fewer baseline (or held) hits than there are
+/// entries, i.e. when something really was removed. A steady turn never calls it.
+///
+/// **It sweeps the held set as well as the baseline**, because a row added on a held frame is in no
+/// baseline at all — see [`Indexed`].
+fn diff_removed<K, T, Key>(
+    baseline: &HashMap<K, T>,
+    held: &HashSet<K>,
+    current: &[T],
+    key: Key,
+) -> Vec<K>
 where
     K: Eq + Hash + Copy,
     Key: Fn(&T) -> K,
 {
     let present: HashSet<K> = current.iter().map(&key).collect();
-    baseline
+    let mut removed: Vec<K> = baseline
         .keys()
         .filter(|id| !present.contains(id))
         .copied()
-        .collect()
+        .collect();
+    removed.extend(
+        held.iter()
+            .filter(|id| !present.contains(id) && !baseline.contains_key(id))
+            .copied(),
+    );
+    removed
+}
+
+/// A keyed section's published baseline **plus the ids that went out on a held frame**.
+///
+/// The row-keyed twin of [`Whole`]'s `held` flag, and it closes a hole that flag cannot reach. A
+/// [`Baseline::Hold`] frame publishes rows *without storing them*, so an entry that appears on one
+/// held frame and is gone by the next lives in **no baseline at all**: the removal sweep has nothing
+/// to find, and neither does the next turn's [`Baseline::Advance`] diff, because the baseline never
+/// learned the entry existed. The client is left holding a row the sim will never mention again.
+///
+/// **This class does not self-heal**, which is what separates it from the within-tick reverts a
+/// keyed section shrugs off. The worked example is the one that found it: `send_hunt_expedition`
+/// spawns a detached party (published on a held frame), `recall_expedition` cancels it in camp and
+/// despawns it in the same tick (published on the next held frame) — and every frame from then on,
+/// forever, is silent about it. The party row stays on the client's Band panel, its ✕ sends the
+/// `BandId` it still holds, and the sim answers `Expedition N does not exist in the simulation` on
+/// turn after turn.
+///
+/// The wrapper exists so a **new** keyed section cannot be added without the set — the baseline
+/// field's type carries it rather than a convention someone has to remember, exactly as [`Whole`]
+/// does for a whole section.
+pub(crate) struct Indexed<K, T> {
+    baseline: HashMap<K, T>,
+    /// Ids published on a held frame since the last [`Baseline::Advance`]. See the type's doc.
+    held: HashSet<K>,
+}
+
+impl<K, T> Default for Indexed<K, T> {
+    fn default() -> Self {
+        Self {
+            baseline: HashMap::new(),
+            held: HashSet::new(),
+        }
+    }
+}
+
+impl<K: Eq + Hash, T> Indexed<K, T> {
+    /// Re-baseline on `baseline` and forget every held id.
+    ///
+    /// The one caller is a rollback (`PublishState::reset_to_entry`), which hands the client a full
+    /// snapshot and commits it in the same breath — so afterwards there is nothing the client could
+    /// be holding that this baseline does not know about.
+    pub(crate) fn reset(&mut self, baseline: HashMap<K, T>) {
+        self.baseline = baseline;
+        self.held.clear();
+    }
+
+    /// The last committed rows. Nothing in the publisher reads a baseline outside
+    /// [`diff_indexed`] — this exists so the diff's tests can assert on what was committed, which
+    /// is the only place the deadband rule ("an unchanged entry is not rewritten") is visible.
+    #[cfg(test)]
+    pub(crate) fn baseline(&self) -> &HashMap<K, T> {
+        &self.baseline
+    }
 }
 
 /// [`diff_indexed`] on exact equality — the rule for every per-entity collection except tiles and
 /// culture layers.
 fn diff_new<K, T, Key>(
-    baseline: &mut HashMap<K, T>,
+    baseline: &mut Indexed<K, T>,
     current: &[T],
     key: Key,
     write: Baseline,
@@ -277,7 +373,7 @@ where
 /// rather than testing `|a - b| < eps` — a relative band would let sub-band steps accumulate
 /// unbounded error, which is why it is not one.)
 fn diff_new_tiles(
-    baseline: &mut HashMap<u64, TileState>,
+    baseline: &mut Indexed<u64, TileState>,
     current: &[TileState],
     write: Baseline,
 ) -> (Vec<TileState>, Vec<u64>) {
@@ -293,7 +389,7 @@ fn diff_new_tiles(
 /// [`diff_new_tiles`] for culture layers — same reasoning, same deadband rule; see
 /// `CultureLayerState::same_published_state`.
 fn diff_new_culture_layers(
-    baseline: &mut HashMap<u32, CultureLayerState>,
+    baseline: &mut Indexed<u32, CultureLayerState>,
     current: &[CultureLayerState],
     write: Baseline,
 ) -> (Vec<CultureLayerState>, Vec<u32>) {
@@ -525,6 +621,14 @@ mod indexed_diff_tests {
         }
     }
 
+    /// A tile baseline already carrying `states`, committed — the starting point every case below
+    /// diffs against.
+    fn indexed<const N: usize>(states: [TileState; N]) -> Indexed<u64, TileState> {
+        let mut slot = Indexed::default();
+        slot.reset(states.into_iter().map(|s| (s.entity, s)).collect());
+        slot
+    }
+
     /// **An unchanged entry is not rewritten** — not with the old value, and above all not with the
     /// fresh one.
     ///
@@ -535,8 +639,7 @@ mod indexed_diff_tests {
     /// carrying the ORIGINAL relief after a diff that judged the tile unchanged.
     #[test]
     fn an_unchanged_entry_leaves_the_baseline_holding_its_last_published_value() {
-        let mut baseline: HashMap<u64, TileState> = HashMap::new();
-        baseline.insert(1, tile(1, 1.0));
+        let mut baseline = indexed([tile(1, 1.0)]);
 
         let captured = vec![tile(1, 1.0 + SUB_DEADBAND_DRIFT)];
         let (sent, removed) = diff_new_tiles(&mut baseline, &captured, Baseline::Advance);
@@ -544,7 +647,8 @@ mod indexed_diff_tests {
         assert!(sent.is_empty(), "a sub-deadband step publishes nothing");
         assert!(removed.is_empty());
         assert_eq!(
-            baseline[&1].mountain_relief, 1.0,
+            baseline.baseline()[&1].mountain_relief,
+            1.0,
             "the baseline must still hold the last PUBLISHED value — storing the fresh one would \
              restart the deadband every turn and freeze an accumulating drift out of the delta"
         );
@@ -554,14 +658,13 @@ mod indexed_diff_tests {
     /// turn's comparison is against what the client now holds.
     #[test]
     fn a_changed_entry_is_sent_and_advances_the_baseline() {
-        let mut baseline: HashMap<u64, TileState> = HashMap::new();
-        baseline.insert(1, tile(1, 1.0));
+        let mut baseline = indexed([tile(1, 1.0)]);
 
         let captured = vec![tile(1, 2.0)];
         let (sent, _) = diff_new_tiles(&mut baseline, &captured, Baseline::Advance);
 
         assert_eq!(sent.len(), 1);
-        assert_eq!(baseline[&1].mountain_relief, 2.0);
+        assert_eq!(baseline.baseline()[&1].mountain_relief, 2.0);
     }
 
     /// `Baseline::Hold` computes the same delta and advances nothing — the mid-tick recapture path,
@@ -569,15 +672,15 @@ mod indexed_diff_tests {
     /// stop being cumulative.
     #[test]
     fn holding_the_baseline_still_reports_the_change_but_does_not_commit_it() {
-        let mut baseline: HashMap<u64, TileState> = HashMap::new();
-        baseline.insert(1, tile(1, 1.0));
+        let mut baseline = indexed([tile(1, 1.0)]);
 
         let captured = vec![tile(1, 2.0)];
         let (sent, _) = diff_new_tiles(&mut baseline, &captured, Baseline::Hold);
 
         assert_eq!(sent.len(), 1, "the delta is the same either way");
         assert_eq!(
-            baseline[&1].mountain_relief, 1.0,
+            baseline.baseline()[&1].mountain_relief,
+            1.0,
             "a held baseline is unmoved, so the next diff re-reports the same change"
         );
     }
@@ -586,17 +689,68 @@ mod indexed_diff_tests {
     /// reported once and leaves the baseline.
     #[test]
     fn a_vanished_entry_is_reported_and_dropped_from_the_baseline() {
-        let mut baseline: HashMap<u64, TileState> = HashMap::new();
-        baseline.insert(1, tile(1, 1.0));
-        baseline.insert(2, tile(2, 1.0));
+        let mut baseline = indexed([tile(1, 1.0), tile(2, 1.0)]);
 
         let captured = vec![tile(1, 1.0)];
         let (sent, removed) = diff_new_tiles(&mut baseline, &captured, Baseline::Advance);
 
         assert!(sent.is_empty());
         assert_eq!(removed, vec![2]);
-        assert!(!baseline.contains_key(&2));
-        assert_eq!(baseline.len(), 1);
+        assert!(!baseline.baseline().contains_key(&2));
+        assert_eq!(baseline.baseline().len(), 1);
+    }
+
+    /// **A row that only ever existed on HELD frames is still reported when it vanishes.**
+    ///
+    /// A held frame publishes without storing, so an entry added on one and gone by the next is in
+    /// no baseline at all: the removal sweep had nothing to find, and so did every later diff,
+    /// because the baseline never learned the row existed. That is the ghost — it does not
+    /// self-heal, unlike the within-tick reverts a keyed section shrugs off. See [`Indexed`].
+    #[test]
+    fn a_row_added_and_removed_across_held_frames_is_still_reported_as_removed() {
+        let mut baseline = indexed([tile(1, 1.0)]);
+
+        let (sent, removed) =
+            diff_new_tiles(&mut baseline, &[tile(1, 1.0), tile(2, 1.0)], Baseline::Hold);
+        assert_eq!(sent.len(), 1, "the held frame publishes the new row");
+        assert!(removed.is_empty());
+
+        let (_, removed) = diff_new_tiles(&mut baseline, &[tile(1, 1.0)], Baseline::Hold);
+        assert_eq!(
+            removed,
+            vec![2],
+            "the next frame must say the row is gone, though no baseline ever held it"
+        );
+
+        let (_, removed) = diff_new_tiles(&mut baseline, &[tile(1, 1.0)], Baseline::Advance);
+        assert!(
+            removed.is_empty(),
+            "and it is reported once — the client has been told, so the held id is forgotten"
+        );
+    }
+
+    /// The row-keyed twin of `Whole::held`'s restatement: a value changed on a held frame and back
+    /// to the baseline's on the next must be **re-sent**, because the client is holding the
+    /// intermediate value and no comparison against the baseline can see that.
+    #[test]
+    fn a_row_reverted_within_a_tick_is_restated() {
+        let mut baseline = indexed([tile(1, 1.0)]);
+
+        let (sent, _) = diff_new_tiles(&mut baseline, &[tile(1, 2.0)], Baseline::Hold);
+        assert_eq!(sent.len(), 1, "the held frame publishes the change");
+
+        let (sent, _) = diff_new_tiles(&mut baseline, &[tile(1, 1.0)], Baseline::Hold);
+        assert_eq!(
+            sent.len(),
+            1,
+            "reverting to the baseline's value must be restated — the client holds the other one"
+        );
+
+        let (sent, _) = diff_new_tiles(&mut baseline, &[tile(1, 1.0)], Baseline::Hold);
+        assert!(
+            sent.is_empty(),
+            "and once restated the client is back on the baseline, so nothing more is owed"
+        );
     }
 
     /// A whole section that did not move is neither cloned nor written back.

@@ -722,6 +722,15 @@ const SEND_HUNT_CONFIRM_META := "send_hunt_confirm"
 ## command grammar rejects one). Its face is the collapse verdict, so text is not matchable either.
 const SEND_DENIAL_CONFIRM_META := "send_denial_confirm"
 
+## A parties-footer MISSION LAUNCH button (`⚑ Scout` / `🏹 Hunt` / `💀 Deny`), as `Button` meta, carrying
+## the MISSION key it opens the compose sheet on. It is the entry point to a composing act — the press
+## a player makes and the only path that opens a sheet with nothing filled in — so a harness that
+## cannot reach it can only ever stage the compose sheet by writing `_party_compose_open` directly,
+## which is how the EMPTY form in a tall dock went uncovered through two reports of the same defect.
+## Keyed on the mission rather than a bare `true` because all three buttons are built by one builder
+## and their faces (which carry the mission glyph) are exactly what a harness must not match on.
+const MISSION_LAUNCH_META := "mission_launch"
+
 ## A compose sheet's COMMIT button, as `Button` meta — set by both sheets' builders. Its face is the
 ## thing under test whenever the crew noun moves (`Forage` / `Tend` / `Unassign` on the plant web,
 ## `Hunt Here` / the raid verdict on the animal one), so a harness that found it BY text could only

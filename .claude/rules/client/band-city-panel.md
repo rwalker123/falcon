@@ -639,7 +639,13 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   the raid line below it delivers `~52 food · ⇄ ~7 trade goods` under an ordinary primary Send — no
   denial anywhere, #337) ·
   `band_panel_compose_hunt_no_quarry` (the empty state: `Choose…`, the hint, a disabled Send, nothing
-  below) · `band_panel_compose_scout` (the same sheet under Scout — no quarry row, no policy picker). A
+  below — reached by CLEARING a composed quarry, so it inherits the full form's mark) ·
+  **`band_panel_compose_hunt_empty`** (the same form reached the way a PLAYER reaches it — a band with
+  no parties, the composing act closed and reopened through the REAL `🏹 Hunt` footer button, in the
+  tall LEFT dock. It is the state that was missing when the floating-sheet defect was reported the
+  second time: every other compose fixture writes `_party_compose_open` and picks a quarry first, so
+  the harness never rendered the smallest the sheet ever is) ·
+  `band_panel_compose_scout` (the same sheet under Scout — no quarry row, no policy picker). A
   BEHAVIOURAL assertion rides beside them: `_assert_quarry_eligibility` drives the real
   `_try_pick_quarry` with a herd INSIDE the fixture band's `hunt_reach` (must leave
   `_send_party_quarry_id` empty and stay armed) and one beyond it (must set it) — verified to FAIL
@@ -1364,14 +1370,33 @@ columns makes a THIRD layout of a form two recent passes made identical across i
   answers `false` there. **The asymmetry is the point** — floating is the drastic, instantly-visible
   branch and must be positively justified, where the worst case of staying inline is one clipped frame,
   which is what shipped for months.
-- **A MEASUREMENT TAKEN BEFORE THE COLUMN IS LAID OUT IS NOT RECORDED AT ALL.** The mark never falls
-  during a composing act, so ONE bad reading latches until the sheet closes — which is what made the
-  defect above stick rather than self-correct on the next frame. `_party_compose_measurable` is the
-  guard, and both of its terms are about whether a number taken now could be honest: the panel must be
-  able to state the box the mark will be compared against, and the parties column must have a
-  laid-out rect (`COMPOSE_MEASURE_MIN_COLUMN_WIDTH` — a zero/degenerate width shapes every autowrap
-  `Label` at wrap width 0, the same hundreds-of-px over-report the frame wait exists to avoid).
-  Skipping the frame costs one more `process_frame`; latching costs the rest of the composition.
+- **A MEASUREMENT TAKEN BEFORE THE LAYOUT PASS IS NOT RECORDED AT ALL, AND IT IS THE SHEET THAT SAYS
+  SO.** The mark never falls during a composing act, so ONE bad reading latches until the sheet closes
+  — which is what made the defect above stick rather than self-correct on the next frame.
+  `_party_compose_measurable` is the guard and it has three terms: the panel must be able to state the
+  box the mark will be compared against, the parties column must have a rect at all
+  (`COMPOSE_MEASURE_MIN_COLUMN_WIDTH`), and **the sheet must have been FITTED to that column**
+  (`sheet.size.x >= col.size.x`).
+  - **The third term is the fix for the SECOND report of this defect, and the first two do not
+    substitute for it.** A column width says nothing about whether the column's contents are laid out,
+    because the two are set by different mechanisms: the column is anchored `PRESET_FULL_RECT` into its
+    zone host, so Godot gives it the host's width SYNCHRONOUSLY on reparent, while everything inside it
+    is sized by the DEFERRED container sort. Measured in that window on the empty hunt form:
+    `col.size.x == 356` — perfectly plausible — beside `col.get_combined_minimum_size().y == **1278**`,
+    where the laid-out answer is **207**, every autowrap `Label` under it shaping one word per line.
+    1278px floats that sheet out of every dock this client has (the tall LEFT dock's box is 1055), and
+    the high-water mark holds it there for the rest of the act. **A bare width floor on the SHEET does
+    not close it either** — an unsorted `Control` still clamps its size up to its own combined minimum,
+    so the unlaid-out sheet reports a non-zero 220×903. Only the RELATION between the two widths
+    separates "laid out" from "clamped to its own minimum".
+- **THE WAIT IS A BOUNDED RETRY, NOT A SINGLE LOOK** (`COMPOSE_MEASURE_MAX_FRAMES`). One
+  `process_frame` is the normal cost, but whether the deferred sort has been flushed by the time the
+  coroutine resumes depends on where in the frame the render that armed it ran — which is precisely
+  what the harness's timing never reproduced. Waiting another frame is cheap; recording a phantom costs
+  the rest of the composing act, and simply returning leaves the mark unmeasured until some later
+  render arms a new one. Bounded rather than open, so a sheet whose zone never lays out cannot spin a
+  coroutine for the session; giving up leaves the sheet INLINE, the direction the whole fork is biased
+  toward.
 - **THE MARK BELONGS TO ONE BOX, AND A BOX CHANGE DROPS IT.** `_party_compose_measured_box` records
   which column the requirement was measured against, and `_note_parties_zone_box` — called from the
   ZONE BUILDER, i.e. every render, so no path can forget it — clears the mark when the box moves. A

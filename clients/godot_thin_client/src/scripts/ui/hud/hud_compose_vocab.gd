@@ -673,13 +673,36 @@ const COMPOSE_MISSION_LABEL_DENY := "💀 Deny"
 const COMPOSE_FLOAT_SLACK := 1.0
 
 ## **THE NARROWEST PARTIES COLUMN A COMPOSE MEASUREMENT MAY BE BELIEVED AT**
-## (`BandPanelController._party_compose_measurable`). The measurement's whole premise is that the
-## container has SORTED the column, so the sheet's autowrap labels shape at a real wrap width; a column
-## narrower than this has not been laid out, and every wrapping label in it reports one word per line —
-## hundreds of px of phantom requirement, latched into a high-water mark that then floats a sheet the
-## dock holds easily. It is a NOT-YET-LAID-OUT test rather than a design minimum: the shipped zone
-## columns are ~354px (side dock flank) and wider, so no real column is anywhere near it.
+## (`BandPanelController._party_compose_measurable`). A column with no width at all has not been
+## anchored into a zone host yet, and nothing measured under it means anything. It is a
+## NOT-YET-LAID-OUT test rather than a design minimum: the shipped zone columns are ~354px (side dock
+## flank) and wider, so no real column is anywhere near it.
+##
+## **IT IS ONLY HALF THE TEST, AND THE HALF IT IS NOT IS WHY THIS DEFECT WAS REPORTED TWICE.** A column
+## width says NOTHING about whether the column's contents have been laid out, because the two are
+## established by different mechanisms: the column is anchored `PRESET_FULL_RECT` into its zone host,
+## so Godot hands it the host's width SYNCHRONOUSLY the instant it is reparented, while everything
+## inside it is sized by the container sort, which is DEFERRED through the message queue. Measured on
+## the empty hunt form in the instant between the two: `col.size.x == 356`, a wholly plausible reading,
+## beside `col.get_combined_minimum_size().y == 1278` where the laid-out answer is **207** — every
+## autowrap `Label` under it shaping one word per line. 1278px floats that sheet out of every dock this
+## client has, and the high-water mark then holds it there for the rest of the composing act: the
+## reported picture exactly, `Quarry: Choose…` and a disabled Send floating out of a dock with 800px to
+## spare. The other half of the test is the SHEET having been FITTED to this column — see
+## `_party_compose_measurable`. **A bare width floor on the sheet does not do it either**: an unsorted
+## Control still clamps its own size up to its own combined minimum, so the unlaid-out sheet measures a
+## perfectly non-zero 220×903. Only the RELATION between the two widths distinguishes the states.
 const COMPOSE_MEASURE_MIN_COLUMN_WIDTH := 1.0
+
+## **HOW MANY FRAMES THE DEFERRED MEASUREMENT WILL WAIT FOR A LAYOUT PASS** before giving up on this
+## composing act's render (`BandPanelController._measure_party_compose`). One `process_frame` is the
+## normal cost and covers every path measured here; the retry exists because ONE bad reading latches
+## for the rest of the composition, so "wait another frame" has to be cheaper than "record it anyway",
+## and because the alternative to waiting — returning — leaves the mark unmeasured until the next
+## render arms a new one. Bounded rather than open so a sheet whose zone never lays out (a collapsed
+## panel, a hidden dock) cannot spin a coroutine for the session; giving up leaves the sheet INLINE,
+## which is the safe direction the whole fork is biased toward.
+const COMPOSE_MEASURE_MAX_FRAMES := 4
 
 const COMPOSE_TITLE_SCOUT := "Setup a scouting party…"
 

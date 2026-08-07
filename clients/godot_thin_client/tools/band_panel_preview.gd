@@ -1341,6 +1341,35 @@ func _ready() -> void:
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
 
+	# **THE EMPTY FORM OPENED THE WAY A PLAYER OPENS IT, IN THE TALL DOCK — the state that was missing
+	# when this defect was reported the second time.** Every compose fixture above stages its sheet by
+	# writing `_party_compose_open` and picking a quarry first, so the harness never once rendered the
+	# SMALLEST the sheet ever is: the form the player sees the instant they press `🏹 Hunt`, on a band
+	# with no parties out. That is the exact picture that came back from play, floating out of a dock
+	# with hundreds of px to spare. The whole composing act is restarted here — closed, then reopened
+	# through the REAL footer button — because the phantom this exists to catch is taken on the render
+	# that the press arms, and a sheet already open has already been measured.
+	_hud._bandpanel._close_party_compose()
+	_push_bands([_band_fixture()])
+	_panel.set_active_tab(&"parties")
+	await _settle()
+	await _assert_empty_compose_opens_in_the_zone("band_panel_compose_hunt_empty")
+	# Asked at the STATE rather than inside the block above, so it is still asked when that block
+	# refuses its own precondition — a trigger stuck ON floats the sheet, which takes the phantom
+	# reading out of the parties column and would otherwise let this claim go unasked.
+	await _settle()
+	_assert_zone_holds_its_compose_sheet("band_panel_compose_hunt_empty")
+	await _save("band_panel_compose_hunt_empty")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	# Restore the roster the states below read: `update_band_alerts` keeps a losing-population diff
+	# against the last roster pushed, and the parties rows are what the scout/deny frames render above
+	# their sheets.
+	_push_bands([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
+	_hud._bandpanel.rerender()
+	await _settle()
+
 	# Same sheet under Scout: scouting title, NO quarry row, NO policy picker, "Send scouting party…".
 	_hud._bandpanel._party_compose_mission = "scout"
 	_hud._bandpanel.rerender()
@@ -3269,6 +3298,93 @@ func _assert_compose_in_zone(state_name: String) -> void:
 	_assert_band_panel("%s — the zone HOLDS the sheet it has room for (no float)" % state_name,
 		not _hud._bandpanel.compose_is_floating()
 			and _find_meta_control(_panel, HudWidgets.SEND_HUNT_CONFIRM_META) != null)
+
+## **OPEN THE EMPTY HUNT FORM THROUGH THE FOOTER BUTTON, AND JUDGE THE MEASUREMENT ITSELF** — the
+## regression guard for the second report of the floating empty sheet. It is deliberately NOT a
+## picture: a sheet floating on a phantom measurement and one floating on a real one render
+## identically, and a sheet sitting in the zone on a mark that HAPPENS to be under the box is
+## indistinguishable from one sitting there because the mark is honest.
+##
+## The mechanism, measured: between the render and the deferred container sort, the parties column has
+## already been given its host's width by its anchors while nothing under it has been fitted, so
+## `get_combined_minimum_size()` sums a column of autowrap `Label`s all shaping at wrap width 0 —
+## **1278px where the laid-out answer is 207**. Recording that latches the float for the rest of the
+## composing act, since the mark is a high-water mark. So the claim is made in that window and in the
+## one after it, as a PAIR: unmeasurable before the layout pass, measurable after, and the mark that
+## survives is the laid-out number. Either half alone passes on a guard wired to one answer.
+func _assert_empty_compose_opens_in_the_zone(state_name: String) -> void:
+	var launch := _find_meta_control_valued(_panel, HudWidgets.MISSION_LAUNCH_META,
+		HudComposeVocab.COMPOSE_MISSION_HUNT) as Button
+	if launch == null or launch.disabled:
+		push_error("band_panel_preview: %s — no live 🏹 Hunt launch button, so nothing below is driven" % state_name)
+		return
+	# The REAL press. Everything until the next `await` runs inside the pre-layout window the phantom
+	# lives in — the sheet is built and parented, and no container has sorted.
+	launch.emit_signal("pressed")
+	var col: VBoxContainer = _hud._bandpanel._parties_zone_col
+	var box: Vector2 = _hud._bandpanel._parties_zone_box_known()
+	var phantom: float = col.get_combined_minimum_size().y
+	# **THE VACUITY GUARD.** If the unsorted reading would not have floated the sheet anyway, refusing
+	# to record it proves nothing about this defect.
+	if phantom <= box.y + HudComposeVocab.COMPOSE_FLOAT_SLACK:
+		push_error(("band_panel_preview: %s — VACUOUS: the pre-layout column reads %.0fpx against a "
+			+ "%.0fpx box, so recording it would not have floated the sheet either way") % [
+			state_name, phantom, box.y])
+		return
+	_assert_band_panel(("%s — a sheet the layout has not fitted is NOT measurable (column %.0fpx wide "
+		+ "reports %.0fpx of requirement, which WOULD float it out of its %.0fpx box)") % [
+		state_name, col.size.x, phantom, box.y], not _hud._bandpanel._party_compose_measurable())
+	await _settle()
+	# …and the paired positive, without which a guard stuck at "never measurable" passes above.
+	var settled: float = _hud._bandpanel._parties_zone_col.get_combined_minimum_size().y
+	_assert_band_panel("%s — …and IS measurable once it has been (%.0fpx now)" % [state_name, settled],
+		_hud._bandpanel._party_compose_measurable())
+	_assert_band_panel(("%s — the mark that survived is the LAID-OUT number, not the phantom "
+		+ "(%.0fpx recorded, %.0fpx laid out, %.0fpx unsorted)") % [
+		state_name, _hud._bandpanel._party_compose_needed, settled, phantom],
+		is_equal_approx(_hud._bandpanel._party_compose_needed, settled))
+
+## **A ZONE THAT CAN HOLD THE SHEET NEVER FLOATS IT, stated against the measured numbers rather than
+## the dock edge.** `_assert_compose_in_zone` says a particular tall dock kept its sheet; this says the
+## RULE — whatever the mark and whatever the box, the sheet is in the zone exactly when the zone has
+## room for it. The precondition is the room, so a state where it does not fit refuses to claim
+## anything here rather than passing as "correctly floated".
+##
+## The sheet is located by NODE IDENTITY (the controller's own `_party_compose_sheet`, walked up to
+## whichever surface owns it), never by a face: the empty form's Send is disabled and carries no
+## confirm meta, being a reason rather than a confirm.
+func _assert_zone_holds_its_compose_sheet(state_name: String) -> void:
+	var needed: float = _hud._bandpanel._party_compose_needed
+	var box: Vector2 = _hud._bandpanel._parties_zone_box_known()
+	if box == Vector2.ZERO or needed > box.y + HudComposeVocab.COMPOSE_FLOAT_SLACK:
+		push_error(("band_panel_preview: %s — VACUOUS: the zone (%.0fpx) cannot hold this sheet "
+			+ "(%.0fpx), so 'a zone with room keeps its sheet' is not what is being tested") % [
+			state_name, box.y, needed])
+		return
+	var sheet: Control = _hud._bandpanel._party_compose_sheet
+	_assert_band_panel(("%s — the zone has room (%.0fpx of a %.0fpx box, %.0fpx spare) and so it KEEPS "
+		+ "its sheet") % [state_name, needed, box.y, box.y - needed],
+		sheet != null and is_instance_valid(sheet) and _is_descendant_of(sheet, _panel)
+			and not _hud._bandpanel.compose_is_floating())
+
+## Find a Control carrying `meta` with a specific VALUE — the identity handle on one of a family of
+## controls built by a shared builder (the three parties-footer mission launchers).
+func _find_meta_control_valued(node: Node, meta: String, value: Variant) -> Control:
+	if node is Control and (node as Control).has_meta(meta) and (node as Control).get_meta(meta) == value:
+		return node as Control
+	for child in node.get_children():
+		var found := _find_meta_control_valued(child, meta, value)
+		if found != null:
+			return found
+	return null
+
+func _is_descendant_of(node: Node, root: Node) -> bool:
+	var walk: Node = node
+	while walk != null:
+		if walk == root:
+			return true
+		walk = walk.get_parent()
+	return false
 
 ## **AN UNKNOWN ZONE BOX MUST NOT FLOAT — and no picture can carry this.** Reported from play: the
 ## sheet floated in a TALL left dock, where the zone offers ~1055px and the empty form wanted a couple

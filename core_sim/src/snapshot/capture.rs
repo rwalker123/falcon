@@ -186,22 +186,22 @@ pub(crate) struct PublishState {
     /// constructs a brand-new `App` and therefore a brand-new history — which is also what makes
     /// "first publication" simply mean `frame_seq == 0`.
     frame_seq: u64,
-    tiles: HashMap<u64, TileState>,
-    logistics: HashMap<u64, LogisticsLinkState>,
-    trade_links: HashMap<u64, TradeLinkState>,
-    populations: HashMap<u64, PopulationCohortState>,
-    power: HashMap<u64, PowerNodeState>,
+    tiles: Indexed<u64, TileState>,
+    logistics: Indexed<u64, LogisticsLinkState>,
+    trade_links: Indexed<u64, TradeLinkState>,
+    populations: Indexed<u64, PopulationCohortState>,
+    power: Indexed<u64, PowerNodeState>,
     power_metrics: Whole<PowerTelemetryState>,
-    generations: HashMap<u16, GenerationState>,
-    influencers: HashMap<u32, InfluentialIndividualState>,
-    culture_layers: HashMap<u32, CultureLayerState>,
+    generations: Indexed<u16, GenerationState>,
+    influencers: Indexed<u32, InfluentialIndividualState>,
+    culture_layers: Indexed<u32, CultureLayerState>,
     culture_tensions: Whole<Vec<CultureTensionState>>,
-    discovery_progress: HashMap<(u32, u32), DiscoveryProgressEntry>,
-    great_discoveries: HashMap<(u32, u16), GreatDiscoveryState>,
+    discovery_progress: Indexed<(u32, u32), DiscoveryProgressEntry>,
+    great_discoveries: Indexed<(u32, u16), GreatDiscoveryState>,
     great_discovery_definitions: Whole<HashMap<u16, GreatDiscoveryDefinitionState>>,
-    great_discovery_progress: HashMap<(u32, u16), GreatDiscoveryProgressState>,
+    great_discovery_progress: Indexed<(u32, u16), GreatDiscoveryProgressState>,
     great_discovery_telemetry: Whole<GreatDiscoveryTelemetryState>,
-    knowledge_ledger: HashMap<u64, KnowledgeLedgerEntryState>,
+    knowledge_ledger: Indexed<u64, KnowledgeLedgerEntryState>,
     knowledge_metrics: Whole<KnowledgeMetricsState>,
     knowledge_timeline: Whole<Vec<KnowledgeTimelineEventState>>,
     crisis_telemetry: Whole<CrisisTelemetryState>,
@@ -326,7 +326,7 @@ struct TileParts {
 
 /// The map's tiles: the largest single collection, one entry per hex.
 fn diff_tiles(
-    baseline: &mut HashMap<u64, TileState>,
+    baseline: &mut Indexed<u64, TileState>,
     snapshot: &WorldSnapshot,
     write: Baseline,
 ) -> TileParts {
@@ -344,7 +344,7 @@ struct CultureParts {
 /// Culture: the per-tile layer grid (map-sized, on the published-state deadband) and the tension
 /// roster that rides with it.
 fn diff_culture(
-    layers: &mut HashMap<u32, CultureLayerState>,
+    layers: &mut Indexed<u32, CultureLayerState>,
     tensions: &mut Whole<Vec<CultureTensionState>>,
     snapshot: &WorldSnapshot,
     write: Baseline,
@@ -366,7 +366,7 @@ struct PowerParts {
 
 /// Power: one node per tile, so map-sized like the two above, plus the grid's telemetry block.
 fn diff_power(
-    nodes: &mut HashMap<u64, PowerNodeState>,
+    nodes: &mut Indexed<u64, PowerNodeState>,
     metrics: &mut Whole<PowerTelemetryState>,
     snapshot: &WorldSnapshot,
     write: Baseline,
@@ -444,12 +444,12 @@ struct KnowledgeParts {
 
 /// The baselines the knowledge section owns.
 struct KnowledgeBaselines<'a> {
-    ledger: &'a mut HashMap<u64, KnowledgeLedgerEntryState>,
+    ledger: &'a mut Indexed<u64, KnowledgeLedgerEntryState>,
     metrics: &'a mut Whole<KnowledgeMetricsState>,
     timeline: &'a mut Whole<Vec<KnowledgeTimelineEventState>>,
-    discovery_progress: &'a mut HashMap<(u32, u32), DiscoveryProgressEntry>,
-    great_discoveries: &'a mut HashMap<(u32, u16), GreatDiscoveryState>,
-    great_discovery_progress: &'a mut HashMap<(u32, u16), GreatDiscoveryProgressState>,
+    discovery_progress: &'a mut Indexed<(u32, u32), DiscoveryProgressEntry>,
+    great_discoveries: &'a mut Indexed<(u32, u16), GreatDiscoveryState>,
+    great_discovery_progress: &'a mut Indexed<(u32, u16), GreatDiscoveryProgressState>,
     great_discovery_definitions: &'a mut Whole<HashMap<u16, GreatDiscoveryDefinitionState>>,
     great_discovery_telemetry: &'a mut Whole<GreatDiscoveryTelemetryState>,
 }
@@ -659,11 +659,11 @@ struct PeopleParts {
 
 /// The baselines the people-and-network section owns.
 struct PeopleBaselines<'a> {
-    logistics: &'a mut HashMap<u64, LogisticsLinkState>,
-    trade_links: &'a mut HashMap<u64, TradeLinkState>,
-    populations: &'a mut HashMap<u64, PopulationCohortState>,
-    generations: &'a mut HashMap<u16, GenerationState>,
-    influencers: &'a mut HashMap<u32, InfluentialIndividualState>,
+    logistics: &'a mut Indexed<u64, LogisticsLinkState>,
+    trade_links: &'a mut Indexed<u64, TradeLinkState>,
+    populations: &'a mut Indexed<u64, PopulationCohortState>,
+    generations: &'a mut Indexed<u16, GenerationState>,
+    influencers: &'a mut Indexed<u32, InfluentialIndividualState>,
     axis_bias: &'a mut Whole<AxisBiasState>,
     sentiment: &'a mut Whole<SentimentTelemetryState>,
     corruption: &'a mut Whole<CorruptionLedger>,
@@ -736,22 +736,22 @@ impl PublishState {
             sink: None,
             last_publish_profile: Vec::new(),
             frame_seq: 0,
-            tiles: HashMap::new(),
-            logistics: HashMap::new(),
-            trade_links: HashMap::new(),
-            populations: HashMap::new(),
-            power: HashMap::new(),
+            tiles: Indexed::default(),
+            logistics: Indexed::default(),
+            trade_links: Indexed::default(),
+            populations: Indexed::default(),
+            power: Indexed::default(),
             power_metrics: Whole::default(),
-            generations: HashMap::new(),
-            influencers: HashMap::new(),
-            culture_layers: HashMap::new(),
+            generations: Indexed::default(),
+            influencers: Indexed::default(),
+            culture_layers: Indexed::default(),
             culture_tensions: Whole::default(),
-            discovery_progress: HashMap::new(),
-            great_discoveries: HashMap::new(),
+            discovery_progress: Indexed::default(),
+            great_discoveries: Indexed::default(),
             great_discovery_definitions: Whole::default(),
-            great_discovery_progress: HashMap::new(),
+            great_discovery_progress: Indexed::default(),
             great_discovery_telemetry: Whole::default(),
-            knowledge_ledger: HashMap::new(),
+            knowledge_ledger: Indexed::default(),
             knowledge_metrics: Whole::default(),
             knowledge_timeline: Whole::default(),
             crisis_telemetry: Whole::default(),
@@ -1186,48 +1186,62 @@ impl PublishState {
     }
 
     pub(crate) fn reset_to_entry(&mut self, entry: &StoredSnapshot) {
-        self.tiles = entry
-            .snapshot
-            .tiles
-            .iter()
-            .map(|state| (state.entity, state.clone()))
-            .collect();
-        self.logistics = entry
-            .snapshot
-            .logistics
-            .iter()
-            .map(|state| (state.entity, state.clone()))
-            .collect();
-        self.populations = entry
-            .snapshot
-            .populations
-            .iter()
-            .map(|state| (state.entity, state.clone()))
-            .collect();
-        self.power = entry
-            .snapshot
-            .power
-            .iter()
-            .map(|state| (state.entity, state.clone()))
-            .collect();
-        self.generations = entry
-            .snapshot
-            .generations
-            .iter()
-            .map(|state| (state.id, state.clone()))
-            .collect();
-        self.influencers = entry
-            .snapshot
-            .influencers
-            .iter()
-            .map(|state| (state.id, state.clone()))
-            .collect();
-        self.culture_layers = entry
-            .snapshot
-            .culture_layers
-            .iter()
-            .map(|state| (state.id, state.clone()))
-            .collect();
+        self.tiles.reset(
+            entry
+                .snapshot
+                .tiles
+                .iter()
+                .map(|state| (state.entity, state.clone()))
+                .collect(),
+        );
+        self.logistics.reset(
+            entry
+                .snapshot
+                .logistics
+                .iter()
+                .map(|state| (state.entity, state.clone()))
+                .collect(),
+        );
+        self.populations.reset(
+            entry
+                .snapshot
+                .populations
+                .iter()
+                .map(|state| (state.entity, state.clone()))
+                .collect(),
+        );
+        self.power.reset(
+            entry
+                .snapshot
+                .power
+                .iter()
+                .map(|state| (state.entity, state.clone()))
+                .collect(),
+        );
+        self.generations.reset(
+            entry
+                .snapshot
+                .generations
+                .iter()
+                .map(|state| (state.id, state.clone()))
+                .collect(),
+        );
+        self.influencers.reset(
+            entry
+                .snapshot
+                .influencers
+                .iter()
+                .map(|state| (state.id, state.clone()))
+                .collect(),
+        );
+        self.culture_layers.reset(
+            entry
+                .snapshot
+                .culture_layers
+                .iter()
+                .map(|state| (state.id, state.clone()))
+                .collect(),
+        );
         self.corruption.reset(entry.snapshot.corruption.clone());
         self.axis_bias.reset(entry.snapshot.axis_bias.clone());
         self.sentiment.reset(entry.snapshot.sentiment.clone());
@@ -1249,12 +1263,14 @@ impl PublishState {
             .reset(entry.snapshot.moisture_raster.clone());
         self.culture_tensions
             .reset(entry.snapshot.culture_tensions.clone());
-        self.discovery_progress = entry
-            .snapshot
-            .discovery_progress
-            .iter()
-            .map(|state| ((state.faction, state.discovery), state.clone()))
-            .collect();
+        self.discovery_progress.reset(
+            entry
+                .snapshot
+                .discovery_progress
+                .iter()
+                .map(|state| ((state.faction, state.discovery), state.clone()))
+                .collect(),
+        );
         self.victory.reset(entry.snapshot.victory.clone());
         self.faction_inventory
             .reset(entry.snapshot.faction_inventory.clone());
@@ -1291,31 +1307,37 @@ impl PublishState {
             .reset(entry.snapshot.default_hunt_kit_id.clone());
         self.default_forage_kit_id
             .reset(entry.snapshot.default_forage_kit_id.clone());
-        self.great_discoveries = entry
-            .snapshot
-            .great_discoveries
-            .iter()
-            .map(|state| ((state.faction, state.id), state.clone()))
-            .collect();
-        self.great_discovery_progress = entry
-            .snapshot
-            .great_discovery_progress
-            .iter()
-            .map(|state| ((state.faction, state.discovery), state.clone()))
-            .collect();
+        self.great_discoveries.reset(
+            entry
+                .snapshot
+                .great_discoveries
+                .iter()
+                .map(|state| ((state.faction, state.id), state.clone()))
+                .collect(),
+        );
+        self.great_discovery_progress.reset(
+            entry
+                .snapshot
+                .great_discovery_progress
+                .iter()
+                .map(|state| ((state.faction, state.discovery), state.clone()))
+                .collect(),
+        );
         self.great_discovery_telemetry
             .reset(entry.snapshot.great_discovery_telemetry.clone());
-        self.knowledge_ledger = entry
-            .snapshot
-            .knowledge_ledger
-            .iter()
-            .map(|state| {
-                (
-                    encode_ledger_key(FactionId(state.owner_faction), state.discovery_id),
-                    state.clone(),
-                )
-            })
-            .collect();
+        self.knowledge_ledger.reset(
+            entry
+                .snapshot
+                .knowledge_ledger
+                .iter()
+                .map(|state| {
+                    (
+                        encode_ledger_key(FactionId(state.owner_faction), state.discovery_id),
+                        state.clone(),
+                    )
+                })
+                .collect(),
+        );
         self.knowledge_metrics
             .reset(entry.snapshot.knowledge_metrics.clone());
         self.knowledge_timeline

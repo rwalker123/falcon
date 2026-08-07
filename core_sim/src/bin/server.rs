@@ -7875,6 +7875,264 @@ mod tests {
         );
     }
 
+    /// **The party's `band_id` AS THE CLIENT READS IT** — decoded off an encoded frame, the way the
+    /// Godot client decodes it (envelope → snapshot payload → population section), never read off
+    /// the `BandId` component.
+    ///
+    /// The whole failure mode a recall round trip can have is the published id and the resolvable id
+    /// disagreeing, so a fixture that read the component would assert the two halves agree by
+    /// construction and prove nothing.
+    ///
+    /// **It publishes through `publish_full_frame`, not `StoredSnapshot::encode_flat`.** A recapture
+    /// refreshes the ring entry's `snapshot` but deliberately leaves its cached bytes alone (see
+    /// `.claude/rules/core_sim/turn-profiling.md`), so `encode_flat` on a recaptured entry hands back
+    /// the *world's first* frame — one that predates every command since. `publish_full_frame` is the
+    /// seam a `Resync` answers through, and it re-encodes.
+    fn published_party_band_id(app: &mut bevy::prelude::App) -> u64 {
+        use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+        recapture_snapshot_in_place(&mut app.world);
+        let entry = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured");
+        let bytes = app
+            .world
+            .resource_mut::<SnapshotHistory>()
+            .publish_full_frame(&entry);
+        let envelope =
+            fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+        assert_eq!(
+            envelope.payload_type(),
+            fb::SnapshotPayload::snapshot,
+            "a full frame carries a snapshot payload"
+        );
+        let parties: Vec<u64> = envelope
+            .payload_as_snapshot()
+            .expect("the envelope carries a snapshot")
+            .population()
+            .and_then(|section| section.populations())
+            .expect("the snapshot carries a population section")
+            .iter()
+            .filter(|cohort| cohort.isExpedition())
+            .map(|cohort| cohort.bandId())
+            .collect();
+        assert_eq!(
+            parties.len(),
+            1,
+            "exactly one detached party is on the wire; this fixture launches one"
+        );
+        parties[0]
+    }
+
+    /// The population rows and removals of the **delta the recapture just broadcast** — the frame a
+    /// live client actually receives after a world-mutating command (a full snapshot goes out only
+    /// on a world's first publication). Rows as `(entity, band_id, is_expedition)`.
+    fn recaptured_population_delta(
+        app: &mut bevy::prelude::App,
+    ) -> (Vec<(u64, u64, bool)>, Vec<u64>) {
+        use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+        recapture_snapshot_in_place(&mut app.world);
+        let bytes = app
+            .world
+            .resource::<SnapshotHistory>()
+            .encoded_delta_flat()
+            .expect("the recapture broadcast a delta");
+        let envelope =
+            fb::root_as_envelope(bytes.as_ref()).expect("the delta encodes to a valid envelope");
+        assert_eq!(
+            envelope.payload_type(),
+            fb::SnapshotPayload::delta,
+            "a recapture publishes a delta"
+        );
+        let section = envelope
+            .payload_as_delta()
+            .expect("the envelope carries a delta")
+            .population()
+            .expect("the delta carries a population section");
+        let rows = section
+            .populations()
+            .map(|rows| {
+                rows.iter()
+                    .map(|row| (row.entity(), row.bandId(), row.isExpedition()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let removed = section
+            .removedPopulations()
+            .map(|ids| ids.iter().collect())
+            .unwrap_or_default();
+        (rows, removed)
+    }
+
+    /// **A party launched and cancelled inside ONE tick must be published as REMOVED.**
+    ///
+    /// This is the ghost the playtest found. A mid-tick recapture diffs with `Baseline::Hold`, so
+    /// the launch frame publishes the party *without storing it*; the cancel frame then found the
+    /// party in no baseline, had nothing to report as vanished, and every later turn's diff had
+    /// nothing to report either — the baseline never learned the row existed. The client kept the
+    /// party row on its Band panel indefinitely, its ✕ kept sending the `BandId` it still held, and
+    /// the sim kept answering `Expedition N does not exist in the simulation`, turn after turn.
+    ///
+    /// Asserted on the **encoded delta**, because the whole defect is a row the sim knows is gone
+    /// and the wire never says so — an in-process check of the world would pass throughout.
+    #[test]
+    fn a_party_cancelled_in_the_tick_it_launched_is_published_as_removed() {
+        let mut app = build_world_app();
+        app.world
+            .insert_resource(CommandSenderResource(unbounded::<Command>().0));
+        let faction = FactionId(0);
+        // Resolve a turn first, so the baseline the recaptures below hold is a committed one.
+        resolve_turn_with_auto_orders(&mut app);
+
+        let (_band, party, _working_before) = launch_a_hunting_party(&mut app, faction);
+        let party_entity = party.to_bits();
+        let party_band_id = *app
+            .world
+            .get::<BandId>(party)
+            .expect("a detached party is a band and carries a BandId");
+
+        let (launched, _) = recaptured_population_delta(&mut app);
+        assert!(
+            launched
+                .iter()
+                .any(|(entity, _, is_expedition)| *entity == party_entity && *is_expedition),
+            "the launch frame must put the party on the client's roster, or the removal below              proves nothing"
+        );
+
+        handle_recall_expedition(&mut app, faction, party_band_id.0);
+        assert!(
+            !app.world.entities().contains(party),
+            "an in-camp recall folds the party back at once — that is what makes this one tick"
+        );
+
+        let (_, removed) = recaptured_population_delta(&mut app);
+        assert!(
+            removed.contains(&party_entity),
+            "the frame that follows the cancel must tell the client the party is gone; without it              the row is a permanent ghost whose recall the sim can only refuse"
+        );
+    }
+
+    /// **The id the snapshot publishes is the id the sim resolves** — the recall round trip, end to
+    /// end, through the real handlers.
+    ///
+    /// A playtest reported the party row's ✕ doing nothing on turn after turn, with the feed saying
+    /// `Expedition 2 does not exist in the simulation` — `resolve_expedition_entity`'s `no_such_band`
+    /// arm. The client echoes back the `band_id` off the party's snapshot row, so the claim under
+    /// test is a *round trip*: launch through `handle_send_hunt_expedition`, read the id off the
+    /// **encoded** frame, and recall with exactly that value.
+    ///
+    /// Asserted across the states the report implicates — the id is read again after a turn has
+    /// resolved and after the party has moved off camp, because "it failed on T2 and again on T3" is
+    /// a claim about a party that has been alive for a while, not about the instant of launch.
+    #[test]
+    fn a_party_is_recalled_by_the_band_id_its_snapshot_row_published() {
+        const TILES_FROM_CAMP: u32 = 5;
+
+        let mut app = build_world_app();
+        app.world
+            .insert_resource(CommandSenderResource(unbounded::<Command>().0));
+        let faction = FactionId(0);
+        let (_band, party, _working_before) = launch_a_hunting_party(&mut app, faction);
+
+        let at_launch = published_party_band_id(&mut app);
+        assert_ne!(
+            at_launch, 0,
+            "a detached party publishes its own durable id, never the `unwrap_or_default` sentinel \
+             that means it carries no `BandId` at all"
+        );
+
+        // Cross a turn boundary and put the party out in the field, so the recall is a walk home
+        // rather than an in-camp cancel — the two states the report's repeated failures cover.
+        resolve_turn_with_auto_orders(&mut app);
+        let camp = app
+            .world
+            .get::<PopulationCohort>(party)
+            .expect("the party has a cohort")
+            .current_tile;
+        let camp = app
+            .world
+            .get::<Tile>(camp)
+            .expect("camp is a tile")
+            .position;
+        let out_there = app
+            .world
+            .resource::<TileRegistry>()
+            .index(camp.x + TILES_FROM_CAMP, camp.y)
+            .expect("a tile that many steps east of camp");
+        app.world
+            .get_mut::<PopulationCohort>(party)
+            .expect("the party has a cohort")
+            .current_tile = out_there;
+
+        let published = published_party_band_id(&mut app);
+        assert_eq!(
+            published, at_launch,
+            "a party's published id must be the same number a turn later — the client holds the one \
+             it was last shown"
+        );
+
+        handle_recall_expedition(&mut app, faction, published);
+
+        assert_eq!(
+            app.world
+                .get::<Expedition>(party)
+                .expect("the party still exists")
+                .phase,
+            ExpeditionPhase::Returning,
+            "the id the snapshot published must resolve to the party it names and turn it for home"
+        );
+    }
+
+    /// **A denial party is addressable by its published id too** — the second spawn site allocates a
+    /// `BandId` exactly as the hunt's does, and the recall verb makes no distinction between the
+    /// three missions, so neither may the round trip.
+    #[test]
+    fn a_denial_party_is_recalled_by_the_band_id_its_snapshot_row_published() {
+        let mut app = build_world_app();
+        app.world
+            .insert_resource(CommandSenderResource(unbounded::<Command>().0));
+        let faction = FactionId(0);
+        let herd_id = app
+            .world
+            .resource::<HerdRegistry>()
+            .herds
+            .first()
+            .expect("worldgen seeded a herd")
+            .id
+            .clone();
+        handle_send_denial_raid(
+            &mut app,
+            faction,
+            None,
+            PARTY_ON_A_RECALLED_RAID,
+            herd_id,
+            None,
+        );
+        let party = {
+            let mut query = app.world.query_filtered::<Entity, With<Expedition>>();
+            query
+                .iter(&app.world)
+                .next()
+                .expect("the launch spawned a detached party")
+        };
+
+        let published = published_party_band_id(&mut app);
+        assert_ne!(published, 0, "a denial party carries its own durable id");
+
+        handle_recall_expedition(&mut app, faction, published);
+
+        // The party never left camp, so the recall is the in-camp cancel — which is still the proof
+        // the id resolved: the `no_such_band` arm despawns nothing and folds nothing back.
+        assert!(
+            !app.world.entities().contains(party),
+            "a denial party recalled where it stands folds back at once, which it cannot do unless \
+             its published id resolved"
+        );
+    }
+
     /// **A rollback reaches an early tick however many commands have happened since.**
     ///
     /// This guards a specific past failure, and it is written against the *reach* rather than the

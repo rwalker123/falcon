@@ -137,11 +137,13 @@ var _party_compose_sheet: Control = null
 ## room to spare. A container's combined minimum has no such feedback: it is the sum the layout would
 ## need, spacer contributing nothing.
 ##
-## **IT IS MEASURED LIVE AND ONE FRAME LATE, because Godot has no synchronous layout.** A detached
+## **IT IS MEASURED LIVE AND A FRAME LATE, because Godot has no synchronous layout.** An unsorted
 ## control tree reports an autowrap `Label`'s minimum at a wrap width of ZERO — every word on its own
 ## line — so a build-time measurement of this sheet over-reports by hundreds of pixels and would float
-## it in a side dock that holds it comfortably. `_measure_party_compose` therefore waits one
-## `process_frame` and reads the column the panel actually laid out.
+## it in a side dock that holds it comfortably (measured: **1278px against a laid-out 207**).
+## `_measure_party_compose` therefore waits for the deferred layout pass and reads the column the panel
+## actually laid out — and it decides that the pass has happened by the SHEET's own width, never the
+## column's, the column being anchored and so sized synchronously whether or not anything under it is.
 ##
 ## **IT IS A HIGH-WATER MARK for one composing act**, and it is reset by every path that ends that act
 ## — `_close_party_compose`, a panel-band change, the panel losing its last band. The sheet grows as
@@ -1696,6 +1698,7 @@ func _build_mission_launch_button(mission: String, label: String, hint: String,
     HudStyle.apply_button(btn, "primary")
     btn.tooltip_text = hint
     btn.disabled = idle <= 0
+    btn.set_meta(HudWidgets.MISSION_LAUNCH_META, mission)
     btn.pressed.connect(func() -> void:
         _party_compose_open = true
         _party_compose_mission = mission
@@ -2339,11 +2342,11 @@ func compose_is_floating() -> bool:
 func compose_float() -> BandComposeFloat:
     return _compose_float
 
-## **MEASURE THE SHEET WHERE THE PANEL ACTUALLY PUT IT, ONE FRAME LATER.** Godot lays out through the
-## message queue, so nothing built during a render has a rect (or, for an autowrap `Label`, an honest
-## minimum height — a detached one shapes at a wrap width of ZERO and reports every word on its own
-## line). One `process_frame` is all it takes: by then the zone column has been sorted, the sheet has
-## its real width, and `get_combined_minimum_size()` re-shapes against it.
+## **MEASURE THE SHEET WHERE THE PANEL ACTUALLY PUT IT, ONCE IT HAS BEEN LAID OUT.** Godot lays out
+## through the message queue, so nothing built during a render has a rect (or, for an autowrap `Label`,
+## an honest minimum height — a detached one shapes at a wrap width of ZERO and reports every word on
+## its own line). Waiting for the deferred sort is what gives the sheet its real width and makes
+## `get_combined_minimum_size()` re-shape against it.
 ##
 ## Only the IN-ZONE render is measured. A floated sheet is measured at the float's own column, which is
 ## never narrower than the zone's, so trusting it could report a height the zone would not reproduce
@@ -2351,27 +2354,43 @@ func compose_float() -> BandComposeFloat:
 ## While floating, the latched requirement stands and the fork is re-decided against the live box, so a
 ## zone that GROWS (a dock change, a taller window) takes its sheet back on the very next render.
 ##
-## **A READING TAKEN BEFORE THE COLUMN IS LAID OUT IS NOT RECORDED AT ALL.** The mark is a high-water
-## mark for one composing act (it must be, or the sheet hops back into the zone as a field clears —
-## a layout change under the player's hands), so a single bad reading latches until the sheet closes.
-## The two ways to take one are the two guards below: a zone box the panel cannot state yet, and a
-## column with no honest rect — a degenerate width shapes every autowrap `Label` at wrap width ZERO,
-## which is the same over-report by hundreds of px this function's own frame wait exists to avoid.
-## Skipping the frame costs one more `process_frame`; latching costs the rest of the composition.
+## **A READING TAKEN BEFORE THE LAYOUT PASS IS NOT RECORDED AT ALL, AND IT IS THE SHEET THAT SAYS SO.**
+## The mark is a high-water mark for one composing act (it must be, or the sheet hops back into the
+## zone as a field clears — a layout change under the player's hands), so ONE bad reading latches until
+## the sheet closes. The two ways to take one are the two guards in `_party_compose_measurable`: a zone
+## box the panel cannot state yet, and a sheet with no honest rect.
+##
+## **ASKING THE ZONE COLUMN INSTEAD IS WHAT LET THIS DEFECT BE REPORTED TWICE.** The column is anchored
+## `PRESET_FULL_RECT` into its zone host, so Godot hands it the host's width SYNCHRONOUSLY the instant
+## it is reparented; everything under it is sized by the container sort, which is DEFERRED. So the two
+## are established by different mechanisms and the column's width says nothing about whether its
+## contents have been laid out — measured on the empty hunt form, `col.size.x == 356` (a wholly
+## plausible reading) beside `col.get_combined_minimum_size().y == 1278`, where the laid-out answer is
+## 207. 1278 floats that sheet out of every dock this client has, and the high-water mark then holds it
+## there for the rest of the composition, which is exactly the reported picture: `Quarry: Choose…`, one
+## hint, a disabled Send, floating out of a dock with 800px to spare.
+##
+## **AND IT WAITS RATHER THAN GIVING UP AFTER ONE FRAME.** One `process_frame` is the normal cost, but
+## whether the deferred sort has been flushed by the time this coroutine resumes depends on where in
+## the frame the render that armed it ran — so the wait is a bounded RETRY
+## (`COMPOSE_MEASURE_MAX_FRAMES`) rather than a single look. Waiting another frame is cheap; recording
+## a phantom costs the rest of the composing act, and returning unmeasured leaves the mark to whatever
+## render happens to arm it next.
 func _measure_party_compose() -> void:
     if _party_compose_measuring or _host == null:
         return
     _party_compose_measuring = true
-    await _host.get_tree().process_frame
+    var measurable := false
+    for _frame in range(HudComposeVocab.COMPOSE_MEASURE_MAX_FRAMES):
+        await _host.get_tree().process_frame
+        if not _party_compose_still_measuring():
+            _party_compose_measuring = false
+            return
+        if _party_compose_measurable():
+            measurable = true
+            break
     _party_compose_measuring = false
-    if not _party_compose_open or compose_is_floating():
-        return
-    if _party_compose_sheet == null or not is_instance_valid(_party_compose_sheet):
-        return
-    if not _party_compose_sheet.is_inside_tree() or _parties_zone_col == null \
-            or not is_instance_valid(_parties_zone_col) or not _parties_zone_col.is_inside_tree():
-        return
-    if not _party_compose_measurable():
+    if not measurable:
         return
     var needed: float = _parties_zone_col.get_combined_minimum_size().y
     if needed <= _party_compose_needed:
@@ -2381,14 +2400,38 @@ func _measure_party_compose() -> void:
     if _party_compose_floats():
         rerender()
 
-## May the deferred measurement be RECORDED this frame? Both terms are about whether a number taken now
-## could be honest at all, never about its size: the panel must be able to state the box the mark will
-## be compared against, and the parties column must have a laid-out rect (a zero/degenerate width is a
-## column the container has not sorted, which shapes autowrap labels at wrap width 0).
+## Is there still an in-zone sheet to measure? Re-asked every frame of the retry above, because a
+## composing act can end (or float) while the coroutine is waiting for a layout pass.
+func _party_compose_still_measuring() -> bool:
+    if not _party_compose_open or compose_is_floating():
+        return false
+    if _party_compose_sheet == null or not is_instance_valid(_party_compose_sheet) \
+            or not _party_compose_sheet.is_inside_tree():
+        return false
+    return _parties_zone_col != null and is_instance_valid(_parties_zone_col) \
+        and _parties_zone_col.is_inside_tree()
+
+## May the deferred measurement be RECORDED this frame? All three terms are about whether a number
+## taken now could be honest at all, never about its size: the panel must be able to state the box the
+## mark will be compared against, the parties column must have a rect at all, and **THE SHEET MUST HAVE
+## BEEN FITTED TO THAT COLUMN**.
+##
+## That last term is the one that decides it, and it is a RELATION rather than a floor. The column's
+## own width is set synchronously by its anchors and says nothing about the deferred container sort
+## (see `COMPOSE_MEASURE_MIN_COLUMN_WIDTH`), and a bare floor on the SHEET does not close it either —
+## an unsorted `Control` still clamps its size up to its own combined minimum, so the unlaid-out sheet
+## reports a plausible 220px against a 356px column, wide enough to pass any floor and narrow enough
+## that its labels are still wrapping at the wrong width. Once the sort has run, a `VBoxContainer`
+## fits every child to its own width, so `sheet.size.x >= col.size.x` holds exactly — and it is the
+## only reading that distinguishes "laid out" from "clamped to its own minimum".
 func _party_compose_measurable() -> bool:
     if _parties_zone_box_known() == Vector2.ZERO:
         return false
-    return _parties_zone_col.size.x >= HudComposeVocab.COMPOSE_MEASURE_MIN_COLUMN_WIDTH
+    if _party_compose_sheet == null or not is_instance_valid(_party_compose_sheet):
+        return false
+    if _parties_zone_col.size.x < HudComposeVocab.COMPOSE_MEASURE_MIN_COLUMN_WIDTH:
+        return false
+    return _party_compose_sheet.size.x >= _parties_zone_col.size.x
 
 ## Drop the latched requirement when the parties zone's BOX changes — a dock move, a collapse, a window
 ## resize. The mark answers "what did this sheet demand of THAT column", so carried across a box change
