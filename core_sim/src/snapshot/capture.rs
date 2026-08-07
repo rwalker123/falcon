@@ -1828,7 +1828,6 @@ fn kit_roster_states(
                     &fresh,
                 ),
                 dispersion: equipment.dispersion(&choice, &fresh),
-                engage_multiplier: equipment.engage_multiplier(&choice, &fresh),
                 exposure: equipment.exposure(&choice, &fresh),
             }
         })
@@ -2221,8 +2220,6 @@ pub fn capture_snapshot(
                         tuning: expedition_combat_tuning,
                         injury_damage_per_animal: combat_config.hunt_injury_damage_per_animal
                             * equipment_config.exposure(&exp.kit, &party_wear),
-                        engage_multiplier: equipment_config
-                            .engage_multiplier(&exp.kit, &party_wear),
                         dispersion: equipment_config.dispersion(&exp.kit, &party_wear),
                     };
                     // And the same kit's haul tier — the ETA has to project what THIS party can drag
@@ -2609,7 +2606,6 @@ pub fn capture_snapshot(
             tuning: combat_config.tuning(),
             injury_damage_per_animal: combat_config.hunt_injury_damage_per_animal
                 * equipment_config.exposure(&quoted_kit, &quoted_wear),
-            engage_multiplier: equipment_config.engage_multiplier(&quoted_kit, &quoted_wear),
             dispersion: equipment_config.dispersion(&quoted_kit, &quoted_wear),
         },
         quoted_per_worker_haul: equipment_config.hunt_per_worker_biomass_capacity(

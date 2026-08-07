@@ -189,9 +189,9 @@ pub fn advance_expeditions(
             &party_wear,
         );
         // The weapon decides what the party can hurt at all (§4.2's gate), so it is resolved here and
-        // not left at the intrinsic bare-handed tier. `exposure`, `engage_multiplier` and
-        // `dispersion` ride beside it — a raid carrying a stand-off kit takes no injuries and scares
-        // nothing off, exactly as a resident band with the same kit does.
+        // not left at the intrinsic bare-handed tier. `exposure` and `dispersion` ride beside it —
+        // a raid carrying a stand-off kit takes no injuries and scares nothing off, exactly as a
+        // resident band with the same kit does.
         // **A FACTORY, for the reason `advance_labor_allocation`'s is** — a mass-bounded weapon is
         // only a weapon against quarry it can hold, so the attack tier waits for the target.
         let party_for = |body_mass: f32| fauna::HuntingParty {
@@ -204,7 +204,6 @@ pub fn advance_expeditions(
             tuning: combat_tuning,
             injury_damage_per_animal: combat_config.hunt_injury_damage_per_animal
                 * equipment_cfg.exposure(&party_kit, &party_wear),
-            engage_multiplier: equipment_cfg.engage_multiplier(&party_kit, &party_wear),
             dispersion: equipment_cfg.dispersion(&party_kit, &party_wear),
         };
         // Home band's LIVE tile (bands are nomadic): drives the comm check, the return target, and

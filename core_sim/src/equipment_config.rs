@@ -19,7 +19,7 @@
 //! | **spears** | `attack` (equipped), plus `dispersion`/`exposure` at their neutral `1.0` — see [`KitChoice::multiplier`] for why declaring the neutral is load-bearing |
 //! | **sled** | `hunt_carry` (unequipped) — a carcass is one lumpy object you *drag* out whole |
 //! | **baskets** | `forage_carry` (unequipped) — berries are loose, divisible, bounded by what you can hold |
-//! | **traps** | `engage_multiplier`, and `dispersion`/`exposure` at `0` — a stand-off instrument that wears out instead of its user getting hurt |
+//! | **traps** — the passive device | `attack` bounded by `max_body_mass`, and `dispersion`/`exposure` at `0` — set down and walked away from, so nothing bolts and nobody is hurt |
 //!
 //! # Four rules this module exists to keep
 //!
@@ -98,24 +98,18 @@ pub enum EquipmentStat {
     /// *species* decides how much a noisy approach costs, which is what lets one spear line scatter a
     /// warren and contain a mammoth with no per-target authoring.
     Dispersion,
-    /// **Multiplies the species' `engage_rate`** — how many animals one hunter reaches in a turn.
-    /// Neutral at `1.0`. This is the term that actually binds on light game, which is why a trap
-    /// raises it rather than raising `attack` (small game has no `defense` to clear).
-    EngageMultiplier,
     /// **Multiplies the hunt's baseline injury hazard** (`fauna::hunt_injuries`). Neutral at `1.0`; a
     /// stand-off instrument ships `0.0` and wears out instead of its users getting hurt.
     Exposure,
 }
 
 impl EquipmentStat {
-    /// The neutral value — what the stat reads when **no** item declares it. Only the three
-    /// multiplier stats have one; the tiered stats resolve against a rate the caller already holds,
-    /// so asking for their neutral value is a category error the type refuses to answer.
+    /// The neutral value — what the stat reads when **no** item declares it. Only the multiplier
+    /// stats have one; the tiered stats resolve against a rate the caller already holds, so asking
+    /// for their neutral value is a category error the type refuses to answer.
     pub fn neutral(self) -> Option<f32> {
         match self {
-            EquipmentStat::Dispersion
-            | EquipmentStat::EngageMultiplier
-            | EquipmentStat::Exposure => Some(1.0),
+            EquipmentStat::Dispersion | EquipmentStat::Exposure => Some(1.0),
             EquipmentStat::Attack | EquipmentStat::HuntCarry | EquipmentStat::ForageCarry => None,
         }
     }
@@ -741,16 +735,6 @@ impl EquipmentConfig {
         kit.multiplier(EquipmentStat::Dispersion, wear, self)
     }
 
-    /// **How much the species' `engage_rate` is multiplied by** — the term that actually binds on
-    /// light game, which is why a trap raises it rather than raising `attack`.
-    pub fn engage_multiplier(
-        &self,
-        kit: &KitChoice,
-        wear: &crate::components::BandEquipment,
-    ) -> f32 {
-        kit.multiplier(EquipmentStat::EngageMultiplier, wear, self)
-    }
-
     /// **How much the hunt's baseline injury hazard is multiplied by** — `0` for a party whose whole
     /// kit keeps it out of reach of the animal.
     pub fn exposure(&self, kit: &KitChoice, wear: &crate::components::BandEquipment) -> f32 {
@@ -1190,17 +1174,6 @@ mod tests {
             intrinsic.attack,
             "above the bound the item grants NOTHING — the party is bare-handed and the fight's own \
              gate refuses the hunt, with no 'cannot trap that' branch anywhere"
-        );
-        // **THE DEVICE DECLARES NO REACH MULTIPLIER, and that is a measured decision.** A x4 was
-        // authored here and turned out to be inert: the fight binds before reach does on every
-        // small-game row (reach/worker `engage_rate x mult` against fight/worker
-        // `attack / durability` is 40 against 10 on a rabbit, 60 against 10 on a catfish), so it
-        // changed no outcome anywhere. A lever with no effect is worse than no lever.
-        assert_eq!(
-            equipment.engage_multiplier(&trapping, &fresh),
-            1.0,
-            "the passive device wins by not being SEEN, not by covering more ground — a reach \
-             multiplier here is inert while the fight binds first"
         );
         assert_eq!(
             equipment.dispersion(&trapping, &fresh),

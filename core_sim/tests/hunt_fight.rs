@@ -901,7 +901,6 @@ fn the_passive_device_beats_spears_on_every_small_game_row_and_takes_no_large_ga
             tuning: combat.tuning(),
             injury_damage_per_animal: combat.hunt_injury_damage_per_animal
                 * equipment.exposure(&kit, &fresh),
-            engage_multiplier: equipment.engage_multiplier(&kit, &fresh),
             dispersion: equipment.dispersion(&kit, &fresh),
         }
     };
@@ -922,7 +921,7 @@ fn the_passive_device_beats_spears_on_every_small_game_row_and_takes_no_large_ga
             ferocity: def.ferocity,
             wounds: DamageLedger::default(),
         };
-        let reached = party.reach(HUNTERS, def.engage_rate, 1.0);
+        let reached = animals_engaged(HUNTERS, def.engage_rate, 1.0);
         let stayed = party.stayers(reached, def.combat.wariness, HuntDraw::EXPECTED);
         resolve_hunt_fight(
             stayed,

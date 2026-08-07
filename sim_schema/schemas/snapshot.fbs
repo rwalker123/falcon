@@ -2635,13 +2635,9 @@ table KitOption {
   //     DO NOT render it as a flat "scares N% away" - it is a multiplier, so the same kit costs a
   //     gazelle (wariness 0.85) almost its whole engagement and a mammoth (0.10) nearly nothing.
   //     Pair it with the herd's own reading to say anything about a specific hunt.
-  //   - engageMultiplier multiplies the species' engage_rate - how many animals one hunter reaches.
-  //     This is the term that binds on LIGHT game, where attack buys nothing because there is no
-  //     defense to clear; it is why a trap raises reach rather than damage.
   //   - exposure multiplies the hunt's baseline injury hazard. 0 is a STAND-OFF kit whose users are
   //     never in reach of the animal, and which pays its cost in durability instead of in people.
   dispersion:float = 1;
-  engageMultiplier:float = 1;
   exposure:float = 1;
 }
 

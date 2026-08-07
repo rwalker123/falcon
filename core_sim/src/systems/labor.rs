@@ -333,12 +333,11 @@ pub fn advance_labor_allocation(
             // resolves through — so a crew sent out with no spears stops being able to hurt anything
             // with a `defense`, and the seed it was assigned on says so on the same tier.
             //
-            // **Three more kit-resolved terms ride beside it**, all neutral at `1.0` so a kit that
-            // declares none of them is priced bit-for-bit as it was before the effects model:
-            // `dispersion` multiplies the quarry's own `wariness` at the retreat (a trap line scares
-            // nothing), `engage_multiplier` multiplies how many animals one hunter reaches (the term
-            // that actually binds on light game), and `exposure` multiplies the hunt's baseline
-            // injury hazard (a stand-off instrument wears out instead of its user getting hurt).
+            // **Two more kit-resolved terms ride beside it**, both neutral at `1.0` so a kit that
+            // declares neither is priced bit-for-bit as it was before the effects model:
+            // `dispersion` multiplies the quarry's own `wariness` at the retreat (a device that is
+            // not there scares nothing), and `exposure` multiplies the hunt's baseline injury hazard
+            // (a stand-off instrument wears out instead of its user getting hurt).
             //
             // **A FACTORY, not a value, because the ATTACK TIER DEPENDS ON THE QUARRY.** A
             // mass-bounded weapon (a snare) is only a weapon against animals it can hold, so the
@@ -354,7 +353,6 @@ pub fn advance_labor_allocation(
                 tuning: combat_tuning,
                 injury_damage_per_animal: hunt_injury_damage
                     * equipment_cfg.exposure(&crew_kit, &band_kit),
-                engage_multiplier: equipment_cfg.engage_multiplier(&crew_kit, &band_kit),
                 dispersion: equipment_cfg.dispersion(&crew_kit, &band_kit),
             };
 

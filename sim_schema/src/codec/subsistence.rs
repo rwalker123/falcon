@@ -117,7 +117,6 @@ fn create_kits<'a>(
                 // What the kit DOES beyond the tiers — all three neutral at 1.0, so a kit declaring
                 // none of them encodes exactly as it did before they existed.
                 dispersion: state.dispersion,
-                engageMultiplier: state.engage_multiplier,
                 exposure: state.exposure,
             },
         ));

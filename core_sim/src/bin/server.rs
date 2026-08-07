@@ -1757,7 +1757,6 @@ fn seed_source_yield(
                     .get()
                     .hunt_injury_damage_per_animal
                     * equipment_cfg.exposure(&crew_kit, &band_wear),
-                engage_multiplier: equipment_cfg.engage_multiplier(&crew_kit, &band_wear),
                 dispersion: equipment_cfg.dispersion(&crew_kit, &band_wear),
             };
             hunt_source_yield_preview(
@@ -2929,7 +2928,6 @@ fn launch_forecast_party(
         },
         injury_damage_per_animal: combat.hunt_injury_damage_per_animal
             * equipment_cfg.exposure(kit, &fresh),
-        engage_multiplier: equipment_cfg.engage_multiplier(kit, &fresh),
         dispersion: equipment_cfg.dispersion(kit, &fresh),
     }
 }

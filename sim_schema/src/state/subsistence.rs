@@ -991,11 +991,6 @@ pub struct KitOptionState {
     /// nearly nothing. Pair it with the herd's own reading to say anything about a specific hunt.
     #[serde(default)]
     pub dispersion: f32,
-    /// **What this kit multiplies the species' `engage_rate` by** — how many animals one hunter
-    /// reaches per turn. `1.0` is neutral. This is the term that binds on light game, where `attack`
-    /// buys nothing because there is no `defense` to clear.
-    #[serde(default)]
-    pub engage_multiplier: f32,
     /// **What this kit multiplies the hunt's baseline injury hazard by.** `1.0` is neutral; `0` is a
     /// stand-off kit whose users are never in reach of the animal, and which therefore pays its cost
     /// in durability instead of in people.

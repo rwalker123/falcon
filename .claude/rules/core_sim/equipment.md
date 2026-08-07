@@ -101,11 +101,19 @@ animals in four to the retreat and this loses none — that *is* the 50 → 200 
 what is scarce, so the device must not win by hitting harder. `max_body_mass` is what keeps it off
 everything else.
 
-**It declares NO reach multiplier, and that is measured rather than assumed.** A `×4` was authored
-and turned out inert: the fight binds before reach does on every small-game row (reach per worker
-`engage_rate × mult` against fight per worker `attack / durability` is 40 vs 10 on a rabbit, 60 vs 10
-on a catfish), so it changed no outcome anywhere. **`EquipmentStat::EngageMultiplier` therefore has
-no declaring item today** — the stat and its plumbing remain, neutral at `1.0`.
+**There is no reach multiplier, and its removal was measured rather than assumed.** A `×4` was
+authored on this item and turned out inert: the fight binds before reach does on every small-game row
+(reach per worker `engage_rate × mult` against fight per worker `attack / durability` is 40 vs 10 on a
+rabbit, 60 vs 10 on a catfish), so it changed no outcome anywhere. **`EquipmentStat::EngageMultiplier`
+was deleted outright** rather than shipped neutral — a lever with no reader is what `fauna.md` already
+flags for removal on the `follow.*` keys.
+
+**It was invented for a premise that turned out false** — *"small game has no `defense`, so `attack`
+buys nothing and reach must be what binds"* — and both halves are wrong: at `defense 0` the gate *is*
+the attack, and reach never binds there anyway. **It is not a combined-arms mechanism.** The thing it
+superficially resembles — an archer loosing at quarry it cannot close with — is `RangeBand` on the
+combat resolver, already reserved for the ranged pre-phase (#501). Re-add a reach stat the day
+something genuinely raises reach (dogs, a drive), with its own justification and its own test.
 
 Measured per turn at 20 hunters, and pinned across **every** small-game row by
 `hunt_fight::the_passive_device_beats_spears_on_every_small_game_row_and_takes_no_large_game`:
