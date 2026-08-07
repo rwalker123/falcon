@@ -1322,9 +1322,12 @@ func run(harness) -> void:
 	h._assert_hud("…and the preset tooltips quote the hay ceiling again, all three clauses",
 		_policy_rung_tooltip(h._hud._drawercompose._compose_sheet,
 			SourceForecast.FLOOR_PRESET_PEAK).contains(HAY_PEAK_TOOLTIP))
-	h._assert_hud("…and the strip names the fifth track, which is a capability and not a rung",
-		h._hud._topbar.intensification_label.text.contains(
-			String(TopBarReadouts.KNOWLEDGE_TRACK_LABELS[HudFloraVocab.KNOWLEDGE_TRACK_FODDERING])))
+	# The strip that used to name it is retired (issue #450), so this asks the cache the faction page's
+	# KNOWLEDGE zone reads: the fifth track is CARRIED, which is what makes it a capability the ladder
+	# tracks rather than a rung nobody records.
+	h._assert_hud("…and the faction carries the fifth track, which is a capability and not a rung",
+		h._hud._topbar.faction_tracks(HudConst.PLAYER_FACTION_ID).has(
+			HudFloraVocab.KNOWLEDGE_TRACK_FODDERING))
 
 	# State forage_fodder_committed — THE SAME PATCH COMMITTED to its hay, with Foddering back at 0.
 	# THIS is the half that pins `species.is_some()`: the credit is open with the knowledge fully

@@ -1923,7 +1923,7 @@ func reset_world_state() -> void:
 	# `.claude/rules/core_sim/world-handoff.md` names as needing a clear. A new world knows nothing,
 	# and stale knowledge here would mark its wild sources as ready to climb.
 	# REBIND, never `.clear()`: this dict is the HUD's OWN row held BY REFERENCE
-	# (`TopBarReadouts.faction_tracks()` returns `_intensification_knowledge[faction]` uncopied,
+	# (`FactionReadouts.faction_tracks()` returns `_intensification_knowledge[faction]` uncopied,
 	# `Hud` emits that same object on `faction_knowledge_changed`, `set_faction_knowledge` stores it
 	# as-is), so clearing would reach back through the reference and empty the live knowledge strip.
 	# Today only the call ORDER in `Main._reset_per_world_state` — HUD reset before MapView's —

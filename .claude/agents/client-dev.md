@@ -72,7 +72,7 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 A dev-only scene (`res://tools/ui_preview.tscn`, driven by
 `tools/ui_preview.gd`) instances the real `HudLayer.tscn`, feeds it canned
 fixture Dictionaries through the HUD's public methods
-(`update_demographics`, `update_sedentarization`, `show_unit_selection`,
+(`update_sedentarization`, `update_intensification`, `show_unit_selection`,
 `show_herd_selection`, targeting, …), renders each state, and dumps one PNG per
 state. No server, no network — the actual render code against fixtures shaped
 exactly like the native decoder's output. It also doubles as a full-context
@@ -111,10 +111,17 @@ different arcs would otherwise collide in one file.
 
 ```gdscript
 # in tools/ui_preview/chapters/band_expedition.gd, inside `run(harness)`:
-h._hud.update_demographics([{ "faction": 0, "children": 34, "working": 51, "elders": 15 }])
+h._hud.update_sedentarization([{ "faction": 0, "score": 62.0, "stage": "soft" }])
 await h._settle()      # process_frame → frame_post_draw → process_frame, so the render lands
-await h._save("demographics")   # writes ui_preview_out/demographics.png
+await h._save("sedentarization")   # writes ui_preview_out/sedentarization.png
 ```
+
+**Check the method still exists before copying a snippet from here.** These entry
+points are `has_method`-probed by `Main` and reached by name from the harnesses, so
+a retired one fails at the CALL rather than at load: `update_demographics` was on
+this list until the HUD's top-right block was retired (issue #450), and a chapter
+that calls a deleted method does not fail politely — it aborts that chapter
+mid-way and surfaces as missing `PASS` lines several chapters later.
 That `update_*/show_*` → `_settle` → `_save` triple is the whole contract; `h`
 is the harness node the chapter is handed. A fixture used by ONE chapter is a
 method on that chapter; one shared across chapters belongs in

@@ -4,7 +4,7 @@ extends RefCounted
 ## Owns the TURN-ORB / ATTENTION / FORK cluster (HUD decomposition Phase 1b, docs/plan_hud_decomposition.md):
 ## the bottom-right turn orb's wiring, the narrative-fork panel (The Telling), and the attention-registry
 ## ASSEMBLY (the band/expedition half cached by HudLayer + the snapshot-driven fork producer). Built on the
-## LegendController/TopBarReadouts idiom — HudLayer holds one as `_turnorb`, keeps thin
+## LegendController/FactionReadouts idiom — HudLayer holds one as `_turnorb`, keeps thin
 ## reflective delegators for the five methods Main reaches by reflection, and RELAYS this controller's own
 ## signals onto the HudLayer signals Main connects to (the controller never emits a HudLayer signal directly).
 ##

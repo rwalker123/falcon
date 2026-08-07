@@ -1,6 +1,6 @@
 ---
 paths:
-  - "clients/godot_thin_client/src/scripts/ui/hud/{BandDetailLines,TopBarReadouts,DetailFormat}.gd"
+  - "clients/godot_thin_client/src/scripts/ui/hud/{BandDetailLines,FactionReadouts,DetailFormat}.gd"
   - "clients/godot_thin_client/src/scripts/ui/{BandFoodStatus,TileHabitability,TileClimate}.gd"
 ---
 
@@ -77,25 +77,36 @@ which is a property of the tier and not of the merge.
 |--------|---------|
 | `ui/hud/BandDetailLines.gd` | `RefCounted` producer (HUD decomposition, `docs/plan_hud_decomposition.md`) owning the **STATEFUL band/party detail-line producers** — the rows a BAND or a PARTY shows in whichever detail surface hosts it: `unit_summary_lines(unit, terrain_label, ctx, compact, with_position)` (Food · Fodder · **Trade** · Morale · Growth · Position, registering the Food/Morale/Growth/Trade disclosures through `DisclosureController` as it emits them) and `expedition_summary_lines(unit, ctx)` (Mission · Target + its live `(x, y)` · **Orders** · Phase · Carried/Provisions · Next delivery · the trip-bound clause · Position — the **Orders** row being the floor alone since issue #491 retired the fill target it was merged with, still ONE row via `DetailFormat.expedition_orders_line` because this producer's output lands in a `clip_contents` strip capped at ~300px; see `band-city-panel.md` → "The parties strip's SEVEN lines"), plus the private row builders `_band_food_line` / `_band_trade_line` / **`_band_kit_line`** (the three consumable kits and how much is left of each, registering a fifth `Kit` disclosure — see "The band's KIT" below) / `_band_morale_line` / `_morale_breakdown_lines` and the shared gate `_band_has_fodder_economy`. **The two trailing flags are DIFFERENT QUESTIONS and must not be folded together**: `compact` is the band zone's HEIGHT TIER (the SHORT tier drops Trade and merges Fodder onto the Food line), while `with_position` is the host saying whether it states the band's coordinates somewhere ELSE — the Band/City dock does, in its panel header, in every tier. **There is no `_band_output_line`**: productivity reads on the WORK zone's head now (see the Civilization Wellbeing bullet below). **It is the stateful HALF of a three-way split**: the PURE producers became `DetailFormat` statics (`herd_summary_lines`, the expedition tooltip trio). (`_format_stockpile_label` was the third piece of that split, via `HudFormat.stockpile_label`; both it and the accessible-stockpile rows it served are retired — see the accessible-stockpile note further down this file.) Hud holds it as `_banddetail`, constructed in `_ready` AFTER `_disclosures` and BEFORE `_bandpanel`; **both detail hosts share the one instance** — the Occupants-card drawer (`Hud._render_occupant_drawer`) and `BandPanelController`'s vitals label + parties inspector strip, which is what retired three of that controller's nine Callable injections. **THE INJECTION SURFACE IS ONE CALLABLE** — `_herd_label_for_id`, which cannot fold onto `HudBandLaborState` because it reads THREE collaborators (`_selectioncard.find_roster_herd` AND `_selection.herd()` AND `_band_labor.find_world_herd`); `_is_player_unit` is a trivial private COPY (the `SelectionCardController` / `BandPanelController` precedent). **IT NEVER SEES THE SELECTION MODEL**: the old producers read `_selection` at exactly two sites, both `tile_info()["terrain_label"]` for the morale row's "it's the hex you're on" payload, so that ONE display string is now a `terrain_label` PARAMETER and both hosts resolve it through the new `SelectionCardController.selected_terrain_label()`. It also owns `_food_flow_present`, which is a **private handshake between `_band_food_line` (writer) and `unit_summary_lines` (its only reader)** — the formatter has never seen it, so it is deliberately not on the `DetailFormat.Context`. Consts follow the `DetailFormat` rule (a const lives here iff every reader moved here): the Fodder/FULL-badge/morale-arrow/contribution-label vocabulary came (the stockpile-row vocabulary went with those rows). The disclosure `DETAIL_ROW_*` / `BREAKDOWN_KIND_*` protocol vocabulary lives in `hud_disclosure_vocab.gd` and `MORALE_CAUSE_*` in `DetailFormat.gd` — read back as `HudDisclosureVocab.X` / `DetailFormat.X`, NOT as `HudLayer.X`; `Hud.gd` defines none of them |
 | `ui/BandFoodStatus.gd` | Single source of truth for band food-supply thresholds (`band_status_config.json`) + the days→green/amber/red color / BBCode-hex mapping (plus the parallel morale and output warn/critical thresholds; morale carries the `color_for_morale`/`hex_for_morale` pair because it really has both a `Label` host and a BBCode host, while **output carries `color_for_output` ALONE** — its one surface is the WORK zone head, which is `Label`s), shared by MapView's band dot and Hud's food/morale lines + alerts |
-- **Demographics readout** (`Hud.gd` `update_demographics`, dispatched from `Main.gd`): the player
-  faction's age structure from `PopulationDemographicsState` (snapshot `demographics[]`) shows as a
-  top-bar line (`Pop 100  👶34 🛠51 🧓15  dep 96/100`, `DemographicsLabel` in `TurnBlock`) — total
-  head-count, the three brackets, and the **dependency ratio** `(children+elders)/working` per 100
-  workers, tinted amber when dependents outnumber workers / cyan on a healthy labor surplus. Hidden
-  until the faction has population. See `core_sim` Campaign Loop — Population & Demographics.
+- **RETIRED — the demographics readout, and the wire section with no client reader.** The player
+  faction's age structure (`PopulationDemographicsState`, snapshot `demographics[]`) rendered as the
+  top-bar line `Pop 100  👶34 🛠51 🧓15`, and issue #450 deleted it along with the whole top-right
+  block — **`Hud.update_demographics`, the `FactionReadouts` ingest and `Main`'s dispatch are all
+  gone**, so the section joins `accessibleStockpile` as a wire table the client no longer reads.
+  **The faction page's PEOPLE bar is what replaced it, and it is a better answer to the same
+  question**: it sums the BANDS and apportions the fractional brackets ONCE across the roster
+  (`FactionRollup._build_people_block`), so the head count cannot disagree with the bands it is made
+  of — where a per-faction total beside it would have been a second source of truth.
+  The **dependency ratio** had already left this line before that (a faction average hides the band
+  that is in trouble — see the PEOPLE block in `band-city-panel.md`), which left it stating a
+  composition the bar draws. See `core_sim` Campaign Loop — Population & Demographics.
 - **Wondrous Sites (discovered)** (snapshot `discovered_sites[]`, per-faction like
   `sedentarization`/`demographics`; each entry `{faction, sites:[{x,y,site_id,category,display_name,
   glyph}]}` with `category`/`display_name`/`glyph` resolved server-side — client renders the provided
   glyph/name, no client-side site config; undiscovered sites are never sent). Decoded in
   `native/src/lib.rs discovered_sites_to_array` into both the full-snapshot and delta dicts under
   `discovered_sites`. Surfaced three ways, all filtered to `PLAYER_FACTION_ID`:
-  (1) **Top-bar readout** (`Hud.gd update_discoveries`, dispatched from `Main.gd`): a compact
-  `◈ Discoveries N` line followed by a **strip of one mark per distinct site KIND**
-  (`DiscoveriesRow` in `TurnBlock` — a `Label` for the text + a sibling `DiscoveriesStrip` HBox for the
-  marks; the row hides/shows as one unit, cyan), hidden when 0. **THE TWO NUMBERS MEAN DIFFERENT THINGS
-  AND ARE BOTH RIGHT:** `N` is `sites.size()`, the count of INSTANCES found (a site's identity is its
-  tile `(x, y)`); the strip shows KINDS, so three peaks read `N = 3` behind one peak mark. Never
-  "reconcile" them to a unique count.
+  (1) **The faction page's KNOWLEDGE zone** (`FactionRollup._build_discoveries_block`), reading the
+  cache `Hud.update_discoveries` fills. **It was a top-bar readout** — a compact `◈ Discoveries N`
+  line plus a strip of one mark per distinct site KIND, `DiscoveriesRow` in `TurnBlock` — until issue
+  #450 retired that block; the INGEST and its player-faction filter stayed exactly where they were, so
+  only the rendering moved. **THE TWO NUMBERS MEAN DIFFERENT THINGS AND ARE BOTH RIGHT:** `N` is
+  `sites.size()`, the count of INSTANCES found (a site's identity is its tile `(x, y)`), while the
+  KINDS are what get one entry each — so three peaks read `N = 3` behind one peak. Never "reconcile"
+  them to a unique count. **The zone states both in full** — the head counts instances, the rows count
+  kinds — which is what the strip had no room to do and why the pair was regularly misread there.
+  The strip's art precedence (`WonderSprites` → the server glyph → `DISCOVERIES_UNKNOWN_GLYPH`) went
+  with it: the zone is a column of text rows and resolves no art. `WonderSprites` keeps its map-marker
+  consumer, which is (2) below.
   **KEYED ON `site_id`, LIKE THE MAP RENDERER** — this was the last consumer in the client still keying
   site presentation on the `glyph` string, and it had both failure modes that choice implies: two
   distinct site types sharing one glyph (the fixture's `sky_arch` reuses `great_peak`'s ⛰) **collapsed
