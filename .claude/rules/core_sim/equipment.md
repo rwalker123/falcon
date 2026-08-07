@@ -56,10 +56,17 @@ has always started kitted. Copying any of them here would give a shipped number 
 drift from. `equipment.json` carries only what the *kits themselves* own: what they do, and how long
 they last.
 
-**All three wear rates are on `plan_early_game_labor`'s ~15–20-turn kit-duration clock**, against the
-shipped ~16-worker band: hunting Red Deer it reaches 16 animals / 240 biomass a turn (250/16 ≈ 15.6
-turns of spears, 5000/240 ≈ 20.8 turns of sled); gathering it reaches 16 × 8 = 128 biomass a turn
-(2500/128 ≈ 19.5 turns of baskets).
+**The BASKET is on `plan_early_game_labor`'s ~15–20-turn kit-duration clock; the two HUNT kits
+overshoot it by ~3×.** Against the shipped ~16-worker band, gathering reaches 16 × 8 = 128 biomass a
+turn, so 2500/128 ≈ **19.5 turns of baskets** — on target. Hunting Red Deer the band *engages* 16
+animals a turn, but engaged is not killed: Red Deer ship `combat.wariness 0.65`, so the retreat leaves
+**~5.6** of them (`~84` biomass) and the kits last 250/5.6 ≈ **45 turns of spears**, 5000/84 ≈ **60
+turns of sled**. The ≈15.6 / ≈20.8 this section used to quote were computed at `wariness 0`, before
+slice 7 authored the roster's values.
+
+**The wear rates are NOT retuned for it.** Closing a 3× gap is a balance change against numbers the
+hunt arc is still moving; it rides with the hunt-effectiveness tuning on **issue #491**, and
+`equipment.json`'s `_comment_durability` says so at the dials.
 
 ## The three rules
 
@@ -284,7 +291,7 @@ The kit selection adds five more slots, all append-only:
 |---|---|
 | `SubsistenceSection.kits:[KitOption]` | **The roster, once per world** — `id`, `displayName`, `jobs`, and the three tiers each kit grants a party whose components are **fresh** (`attack`, `huntCarryPerWorkerBiomass`, `forageCarryPerWorkerBiomass`), so the picker renders real numbers without a second copy of the TOE table |
 | `SubsistenceSection.defaultHuntKitId` / `defaultForageKitId:string` | What each verb runs on when the player names none |
-| `PopulationCohortState.kitId:string` | Which kit the six fields above are quoted at — an in-flight party's **own** kit, a resident band's **job default** (a band has one kit per assignment and this row is per cohort) |
+| `PopulationCohortState.kitId:string` | Which kit the two **hunt** tiers above are quoted at — an in-flight party's **own** kit (one kit, so it covers that party's forage tier too), a resident band's **hunt job default** (a band has one kit per assignment and this row is per cohort). **It does not name a resident band's forage kit**: `forageCarryPerWorkerBiomass` resolves through the *forage* default, so pairing the two reads a gathering rate off `big_game`, which has no basket component. The forage default rides the wire once, as `defaultForageKitId`; pinned by `kit_selection::a_resident_bands_published_kit_answers_for_the_hunt_tiers_only` |
 | `LaborAssignment.kitId:string` | The kit that row's yields are priced at, **resolved** — never "unspecified". `""` on a band-wide role, which has no kit axis |
 | `HerdTelemetryState.huntTripEstimatesKitId` / `denialEstimatesKitId:string` | Which kit each estimate table was computed at — see above |
 
@@ -294,11 +301,20 @@ The shipped opening is **unchanged** — a start-kitted band hunts and gathers a
 always did. What is new is the state below each cliff. Measured on the shipped ~16-worker starting
 band, one turn:
 
-| hunt (Red Deer, `engage_rate 1`, `body_mass 15`, fat herd) | sledded | sledless |
+| hunt (Red Deer, `engage_rate 1`, `body_mass 15`, `wariness 0.65`, fat herd) | sledded | sledless |
 |---|---|---|
 | per-worker haul rate | 40.0 | 12.0 |
-| biomass hauled home | 240 | 180 |
-| food income | 4.80 | 3.60 |
+| animals engaged → animals that stay | 16 → ~5.6 | 16 → ~5.6 |
+| whole animals the pack can seat | 42 | 12 |
+| biomass hauled home | ~84 | ~84 |
+| food income | ~1.68 | ~1.68 |
+
+**On THIS species at THIS party size the sled cliff does not bite, and the retreat is why.** The
+sledless pack seats 12 whole deer and the retreat leaves ~5.6, so both tiers haul the same take —
+where at `wariness 0` all 16 stayed and the sledless pack bound at 12 (the 240 / 180 split this table
+used to show). The cliff still bites wherever the stayers outnumber the sledless seat: a bigger party,
+a lighter body, or a species the roster made less wary. **Not compensated here** — same reason, same
+issue (**#491**).
 
 | gather (the starting band's own patch, floor `0.0`) | with baskets | bare-handed |
 |---|---|---|
@@ -307,9 +323,10 @@ band, one turn:
 | food income | 8.49 | 1.70 |
 
 **A known config skew, not a model problem:** a per-kill charge is species-blind, so a party on
-`Wild Fowl` (10 engaged per hunter, 160 kills a turn) burns the same hunting kit in under two turns
-where the deer party gets ~15. The lever if that proves to wreck pacing is a per-species use cost,
-never a turn clock.
+`Wild Fowl` (10 engaged per hunter → 160 engaged, `wariness 0.65` → ~56 kills a turn) burns the same
+hunting kit in **~4.5 turns** where the deer party gets ~45 — an order of magnitude, whatever the
+absolute figures settle at. The lever if that proves to wreck pacing is a per-species use cost, never
+a turn clock.
 
 **The roster is a per-world constant**, so it diffs out on every frame after the first
 (`Whole<Vec<KitOptionState>>` in `snapshot/capture.rs`) and is re-sent only when the world is rebuilt

@@ -243,10 +243,12 @@ importance one.
   conversion that differs by path (a raid applies no output multiplier, a band applies its own), and
   the food a band banked is already on its assignment row; the biomass is the unambiguous physical
   fact the event owes.
-- **`bound` is why this event exists at all.** `fauna::hunt_take_bound` names which of the take's four
-  limits ran out first — reach, the floor, carry, or the fight — read off the same terms
-  `quantise_animal_take` was handed, through the same `whole_animals` helper, with the tie precedence
-  `Floor → Carry → Fight/Engagement` stated on the function. `plan_hunt_through_combat.md` §11's first
+- **`bound` is why this event exists at all.** `fauna::hunt_take_bound` names which of the take's five
+  limits ran out first — reach, the floor, the party's own **throughput**, carry, or the fight — read
+  off the same terms `quantise_animal_take` was handed, through the same `whole_animals` helper, with
+  the tie precedence `Floor/Throughput → Carry → Fight/Engagement` stated on the function.
+  `bound=throughput` is a **detached party only** (a resident band banks nothing between the herd and
+  the crew) and it is the reading that used to arrive as `bound=floor` — see `fauna.md`. `plan_hunt_through_combat.md` §11's first
   open question is that an `engage_rate` authored too low silently becomes a **second floor**;
   `bound=engagement` is what makes that legible instead of mysterious.
 

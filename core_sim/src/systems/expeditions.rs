@@ -1194,8 +1194,19 @@ fn expedition_take_biomass(
         engaged,
         fled: (engaged - stayed).max(NOTHING_ENGAGED),
         // Read off the very terms the quantiser above was handed, so the report cannot name a bound
-        // the take did not hit.
-        bound: fauna::hunt_take_bound(ceiling, room, body_mass, stayed, fight.brought_down, stop),
+        // the take did not hit — plus `standing_surplus`, which is what separates *the herd has
+        // nothing left* from *the bank has not readied a body yet*. The two are the same number only
+        // once the bank has caught up with the surplus; until then `ceiling` is the party's limit and
+        // reporting it as the floor would blame the herd for the party's own throughput.
+        bound: fauna::hunt_take_bound(
+            ceiling,
+            standing_surplus,
+            room,
+            body_mass,
+            stayed,
+            fight.brought_down,
+            stop,
+        ),
     }
 }
 
@@ -1471,8 +1482,11 @@ pub fn hunt_take(
         engaged,
         fled: (engaged - stayed).max(NOTHING_ENGAGED),
         // The same four terms the quantiser was handed — one reading, not a second computation of
-        // what "affordable" and "carryable" mean.
+        // what "affordable" and "carryable" mean. **The ceiling is passed twice on purpose**: a
+        // resident band banks no throughput, so the number bounding its take *is* the herd's
+        // escapement room, and `HuntTakeBound::Throughput` is unreachable here by construction.
         bound: fauna::hunt_take_bound(
+            ceiling,
             ceiling,
             collection,
             herd.body_mass,

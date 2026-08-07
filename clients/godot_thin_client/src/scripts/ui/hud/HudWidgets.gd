@@ -612,10 +612,19 @@ static func _fill_menu_popup(popup: PopupMenu, entries: Array) -> void:
         if id >= 0 and id < picks.size() and picks[id].is_valid():
             picks[id].call())
 
+## The PARTY the stepper row was built with, as `HBoxContainer` meta — the `CREW_TARGET_COUNT_META`
+## idiom, and needed for the same reason: the number lives in a child `Label` that
+## `add_stepper_controls` places between two unlabelled buttons, so a harness has no `row.text` to
+## read and a positional walk over the children would pass silently on the wrong node. This is the
+## SETTLED count, since the row is built from whatever the caller clamped — which is what makes it
+## the honest thing to compare a chart's `HarvestFloorChart.crew()` against.
+const PARTY_STEPPER_COUNT_META := "party_stepper_count"
+
 ## The party stepper row, shared by both missions so they cannot drift apart in shape.
 static func build_party_stepper_row(count: int, party_max: int, on_change: Callable) -> HBoxContainer:
     var row := HBoxContainer.new()
     row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    row.set_meta(PARTY_STEPPER_COUNT_META, count)
     var key := Label.new()
     key.text = HudComposeVocab.COMPOSE_FIELD_PARTY
     key.size_flags_horizontal = Control.SIZE_EXPAND_FILL

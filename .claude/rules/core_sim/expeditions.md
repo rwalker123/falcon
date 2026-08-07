@@ -871,7 +871,8 @@ applied to a turn count instead of a biomass (`docs/plan_hunt_through_combat.md`
   `2.7` — the raid cannot cross it by taking a fraction of a goat: it kills whole animals off a stock
   that regrows continuously, so the crossing happens on whichever kill leaves a remainder under the
   line, and a herd standing between the line and one body mass is simply waited out
-  (`animals_affordable == 0`, the take reports `HuntTakeBound::Floor`). It makes the projected turn
+  (`animals_affordable == 0`, the take reports `HuntTakeBound::Floor` — genuinely the floor here,
+  since the bank has caught up with a surplus that holds no whole body). It makes the projected turn
   count lumpy on a herd of two or three, which is honest — a party cannot half-kill a goat.
 
 **Wire:** `HerdTelemetryState.denialEstimates` — one `DenialEstimate` per party size on

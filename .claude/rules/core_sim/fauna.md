@@ -567,11 +567,25 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >     and for why all six take/forecast paths call the one helper.
 >
 >     **WHICH bound actually ran out is an OUTPUT now** — `fauna::hunt_take_bound` →
->     `HuntTakeBound { Engagement, Floor, Carry, Fight }`, carried on `HuntOutcome` beside `engaged`
->     and `fled` and published on the `hunt_report` feed line (`event-feed.md`). It is a *reading* of
->     the same terms `quantise_animal_take` was handed, through the same `whole_animals` helper, so
->     the named bound and the paid take cannot disagree about what "affordable" or "carryable" mean;
->     ties resolve `Floor → Carry → Fight/Engagement`, stated on the function. It exists for §11's
+>     `HuntTakeBound { Engagement, Floor, Throughput, Carry, Fight }`, carried on `HuntOutcome` beside
+>     `engaged` and `fled` and published on the `hunt_report` feed line (`event-feed.md`). It is a
+>     *reading* of the same terms `quantise_animal_take` was handed, through the same `whole_animals`
+>     helper, so the named bound and the paid take cannot disagree about what "affordable" or
+>     "carryable" mean; ties resolve `Floor/Throughput → Carry → Fight/Engagement`, stated on the
+>     function.
+>
+>     **`Throughput` is split out of `Floor`, and the function takes a SECOND ceiling to do it.** A
+>     detached party's take ceiling is its kill-credit bank clamped to the herd's escapement room
+>     (`systems::expedition_take_biomass`), not the room itself — so a raid banking toward one
+>     800-unit mammoth body reported *"the herd could not spare another whole animal"* with fifteen
+>     mammoths standing there. `hunt_take_bound` therefore takes `escapement_room` beside
+>     `take_ceiling` and compares the two **in whole animals**: fewer affordable than sparable means
+>     the party's own throughput bound the turn. The two readings have opposite remedies — `Floor`
+>     says *leave*, `Throughput` says *bring more hands*. A resident band passes its ceiling for both
+>     (its ceiling **is** the escapement stock), so `Throughput` is unreachable for it by construction
+>     rather than by a flag. Pinned by
+>     `denial_raid::a_bank_bound_raid_reports_its_throughput_and_not_the_herds_floor`, which read
+>     `floor` on 60 of 60 reports before the split. It exists for §11's
 >     first open question: for most species the escapement floor binds long before engagement does, so
 >     an `engage_rate` authored too low silently becomes a **second floor** — and `bound=engagement`
 >     is what makes that visible rather than mysterious.

@@ -1743,14 +1743,16 @@ func _combat_gate_states() -> void:
 #  THE FORECAST REPORTS A RANGE (`docs/plan_hunt_through_combat.md` §6.4)
 # =====================================================================================
 # `actualYield` became the take's EXPECTATION over the retreat seed, and the pair around it says how
-# far the real take can land from it. **It ships DEGENERATE** — wariness is `0` across the roster and
-# `hit_chance` is `1.0`, so every stage takes its exact identity at every quantile and `low == actual
-# == high` bit-for-bit — which means the range UI has to be correct and currently near-invisible.
-# Slice 7 authors wariness and it turns on with no further client work.
+# far the real take can land from it. **A LIVE BAND IS THE SHIPPED CASE ON A HUNT** — wariness is
+# authored across the roster (0.10–0.85), so the retreat binomial spreads a raid's take and a range
+# on a herd row is the feature, not a defect to go hunting for. What is still degenerate is the plant
+# web (a patch publishes no retreat stage), a resolved row, and a spread too narrow to survive the
+# formatter's own rounding.
 #
 # **SO THE PAIR OF STATES IS THE CLAIM.** A band renders where the bounds differ, and NO band renders
-# where they agree; the second is what stops the first passing on a readout that decorates every row,
-# and it is the case every source in the game is in today.
+# where they agree; the second is what stops the first passing on a readout that decorates every row.
+# Both halves are CONSTRUCTED here — the fixtures state the two bounds directly — so neither frame
+# depends on what the roster happens to author this month.
 
 ## A real band on this turn's take — the spec's own worked example, *"6–11, likely 9"*, in the food
 ## units a deer hunt actually pays. `actual` sits between them because it is the EXPECTATION, which is
@@ -1794,9 +1796,10 @@ func _yield_range_states() -> void:
 	h._assert_hud("a stochastic take states its band beside the expectation — \"%s\"" % band_clause,
 		Q.has_label_containing(h._hud, band_clause))
 
-	# State range-b — **THE DEGENERATE CASE, PINNED.** Every source in the game reports this today, so
-	# a band appearing here is a defect rather than a rarity — and without this half the state above
-	# passes just as well on a readout that draws a range unconditionally.
+	# State range-b — **THE DEGENERATE CASE, PINNED.** A forage patch and every resolved row report it,
+	# and without this half the state above passes just as well on a readout that draws a range
+	# unconditionally. The bounds are collapsed onto the expectation HERE rather than staged off a
+	# wariness-free species, so the claim is about the readout and not about the roster.
 	var point := _range_band(RANGE_ACTUAL, RANGE_ACTUAL)
 	h._hud._band_labor._player_bands = [point]
 	h._hud._band_labor._player_band = point

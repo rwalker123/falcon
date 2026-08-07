@@ -1249,12 +1249,19 @@ func _ready() -> void:
 	_hud._compose.set_party_quarry(QUARRY_FAR_HERD_ID)
 	# Picking a quarry fills the party to its max-useful cap (the one-shot `TargetingController._try_pick_quarry` sets);
 	# seed it here too so the frame shows the shipped default (the party at the cap, not a stray 1).
+	# **THE COUNT IS PUT BACK ON ITS FLOOR FIRST, and that is what makes the ordering claim below
+	# testable rather than lucky.** Autofill only moves the party if the party is not already at the
+	# cap, so a state-order change that left a big count behind would silently turn
+	# `_assert_chart_reads_the_settled_party` into a tautology. It costs the frame nothing: the very
+	# next line arms the fill, so what renders is the cap either way.
+	_hud._bandpanel._send_expedition_count = COMPOSE_HUNT_SEED_PARTY
 	_hud._compose.arm_party_autofill()
 	_hud._bandpanel.rerender()
 	await _settle()
 	await _save("band_panel_compose_hunt")
 	_report_compose_widths("band_panel_compose_hunt")
 	_assert_hunt_sheet_chart(true, "band_panel_compose_hunt")
+	_assert_chart_reads_the_settled_party("band_panel_compose_hunt", COMPOSE_HUNT_SEED_PARTY)
 	# The tall side dock is where the sheet must NOT leave the zone — the other half of the fork the
 	# height-capped state below asserts. See `_assert_compose_in_zone`.
 	_assert_compose_in_zone("band_panel_compose_hunt")
@@ -3370,6 +3377,43 @@ const FLOAT_EDGE_PROBE_OFFSET := 3.0
 ## every box a dock can offer (a zone box is a fraction of the window); 4 leaves the claim legible in
 ## the printed numbers rather than sitting a pixel over the line.
 const IMPOSSIBLE_MARK_VIEWPORTS := 4.0
+
+## The party `band_panel_compose_hunt` is seeded to before it arms autofill — the stepper's own floor,
+## i.e. the smallest party the form can express, so the fill has somewhere to move FROM whatever the
+## states above left behind. `HudConst.WORKER_STEP` rather than a literal 1: it is the step the sheet's
+## own `clampi` floors on, so the seed cannot drift out from under that clamp.
+const COMPOSE_HUNT_SEED_PARTY := HudConst.WORKER_STEP
+
+## GUARD: **THE PARTY CAP IS RESOLVED BEFORE THE FLOOR CHART IS COMPOSED** (`labor-ui.md` → "THE CAP IS
+## RESOLVED BEFORE THE CHART ON BOTH SHEETS"). The chart's projection, its two crew targets and its
+## verdict are all read against a CREW, so a sheet that composes the model ahead of its own
+## `clampi`/autofill states a verdict for a party the stepper beneath then refuses to show.
+##
+## **IT CANNOT BE A PICTURE, and that is why it is here.** The disagreement lasts exactly one frame —
+## the render on which autofill arms — and the next rerender resolves it, so a capture taken after the
+## settle shows a chart and a stepper that have already been reconciled. What can see it is the two
+## RENDERED numbers compared against each other: `HarvestFloorChart.crew()` (read off the live model,
+## so a chart refreshed in place cannot answer staler than it draws) against the stepper row's
+## `PARTY_STEPPER_COUNT_META` (the count the row was BUILT with, hence exactly the digit on screen).
+## Neither side is a controller field, so the claim survives a sheet that clamps its member correctly
+## and still hands the old number to the chart.
+##
+## The VACUITY guard rides first: autofill must really have moved the party off `seeded`, or the two
+## numbers agree for free and the ordering is untested.
+func _assert_chart_reads_the_settled_party(state_name: String, seeded: int) -> void:
+	var surface := _compose_surface()
+	var chart := _find_meta_control(surface, HudWidgets.FLOOR_CHART_META)
+	var stepper := _find_meta_control(surface, HudWidgets.PARTY_STEPPER_COUNT_META)
+	if chart == null or stepper == null:
+		push_error("band_panel_preview: %s renders no %s — the cap-before-chart claim cannot be made" % [
+			state_name, "floor chart" if chart == null else "party stepper"])
+		return
+	var settled := int(stepper.get_meta(HudWidgets.PARTY_STEPPER_COUNT_META))
+	var drawn_for := (chart as HarvestFloorChart).crew()
+	_assert_band_panel("%s — autofill moved the party off its seed (%d → %d), so the order is testable"
+			% [state_name, seeded, settled], settled != seeded)
+	_assert_band_panel("%s — the chart is drawn for the party the stepper shows (chart %d, stepper %d)"
+			% [state_name, drawn_for, settled], drawn_for == settled)
 
 ## GUARD: the dock hunt sheet's floor CHART is gated on the zone having room — present at TALL, absent
 ## at SHORT, where the parties zone is height-capped and clips. **Both halves are asserted**: a gate

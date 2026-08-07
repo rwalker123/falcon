@@ -661,3 +661,70 @@ fn every_labor_row_publishes_the_kit_it_is_priced_at() {
         "a band-wide role has no kit axis — that is `no selection to make`, not `no kit`"
     );
 }
+
+/// **`PopulationCohortState.kitId` answers for the two HUNT tiers, and a client must not read the
+/// forage tier against it.**
+///
+/// A resident band resolves `hunt_carry_per_worker_biomass`/`hunter_attack` through the **hunt**
+/// job's default and `forage_carry_per_worker_biomass` through the **forage** job's — two different
+/// kits — while the row publishes only the first. The `.fbs` used to describe the field as *"which
+/// kit the three tiers above are quoted at"*, which is true of two of the three: a client pairing
+/// `forageCarryPerWorkerBiomass` with `kits[kitId]` reads its gathering rate off `big_game`, a kit
+/// that carries no basket component at all.
+///
+/// This test pins the divergence as a **fact of the wire** rather than the narrowed wording as a
+/// promise — the numbers are what a client would actually mis-pair — and pairs it with the
+/// in-flight-party case, where a party's single kit makes the two genuinely coincide.
+#[test]
+fn a_resident_bands_published_kit_answers_for_the_hunt_tiers_only() {
+    let mut app = placid_world();
+    let (_id, pos) = pin_herd(&mut app);
+    let tile = tile_at(&app, pos);
+    let band = app
+        .world
+        .spawn((cohort(tile, CREW), ResidentBand, BandEquipment::default()))
+        .id();
+    recapture_snapshot_in_place(&mut app.world);
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let state = snapshot
+        .populations
+        .iter()
+        .find(|state| state.entity == band.to_bits())
+        .expect("the fixture band is on the wire");
+
+    let cfg = equipment(&app);
+    assert_eq!(
+        state.kit_id,
+        cfg.default_kit_id(KitJob::Hunt),
+        "a resident band's row is quoted at the HUNT job's default"
+    );
+    // The trap, stated in numbers: the roster entry the field names does not carry this band's
+    // gathering rate, so looking one up against the other reads the wrong tier.
+    let named = snapshot
+        .kits
+        .iter()
+        .find(|option| option.id == state.kit_id)
+        .expect("the published kit id names a real roster entry");
+    assert_ne!(
+        named.forage_carry_per_worker_biomass, state.forage_carry_per_worker_biomass,
+        "if these agreed the field's narrowed scope would be untestable — and the whole reason the \
+         `.fbs` now says the forage tier is NOT quoted at this id is that they do not"
+    );
+    assert_eq!(
+        state.forage_carry_per_worker_biomass,
+        snapshot
+            .kits
+            .iter()
+            .find(|option| option.id == cfg.default_kit_id(KitJob::Forage))
+            .expect("the forage default is on the roster")
+            .forage_carry_per_worker_biomass,
+        "…and the tier it IS quoted at is the FORAGE job's default, which rides the wire as \
+         `default_forage_kit_id`"
+    );
+}

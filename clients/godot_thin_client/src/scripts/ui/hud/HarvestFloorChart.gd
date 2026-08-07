@@ -167,6 +167,19 @@ func set_model(model: Dictionary) -> void:
 func _has_floor_axis() -> bool:
 	return bool(_model.get("known", false))
 
+## What `crew()` answers for a model that names no crew — an unknown source, which returns before the
+## key is written. A SENTINEL rather than `0`, because "no crew stated" and "a crew of nobody" are
+## different findings and an assertion comparing this against a stepper must fail loudly on the first.
+const CREW_ABSENT := -1
+
+## **THE CREW THIS CHART IS CURRENTLY DRAWN AGAINST**, read off the live model rather than remembered
+## at build time, so a live refresh (`set_model` without a rebuild) can never leave it stale. It is
+## public for the harnesses: the sheets must resolve their worker cap BEFORE composing this model, and
+## the only assertion that can see a sheet which did not is chart-crew against the settled stepper
+## value — a disagreement that lasts one frame and is invisible in a capture.
+func crew() -> int:
+	return int(_model.get("workers", CREW_ABSENT))
+
 func _draw() -> void:
 	var plot := _plot_rect()
 	if plot.size.x <= 0.0 or plot.size.y <= 0.0:

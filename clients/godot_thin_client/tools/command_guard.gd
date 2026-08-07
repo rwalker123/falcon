@@ -26,10 +26,17 @@ extends Node
 ##    payload off the HUD's own signal.
 ## 3. Format each captured payload with `Main`'s own `format_*` builders — the pure statics
 ##    `Main._on_hud_*` calls — so the recorded text is byte-for-byte what the client transmits.
-## 4. Write those lines to `ui_preview_out/emitted_band_commands.json`, where **`cargo xtask
-##    command-guard` parses every one with the REAL server-side parser**
-##    (`sim_runtime::command_text::parse_command_line`, the same function the native `CommandBridge`
-##    runs) and asserts the band handle equals the fixture's `band_id`.
+## 4. Write those lines to `ui_preview_out/emitted_band_commands.json` — each as
+##    `{kind, line, expected_kit}` — where **`cargo xtask command-guard` parses every one with the
+##    REAL server-side parser** (`sim_runtime::command_text::parse_command_line`, the same function
+##    the native `CommandBridge` runs) and asserts the band handle equals the fixture's `band_id`
+##    AND the parsed kit equals `expected_kit`.
+##
+## **THE KIT TAIL IS ASSERTED FOR THE HANDLE'S OWN REASON.** `Main._kit_token` omits `kit <id>`
+## whenever the selection equals the job default, so a line that merely PARSES says nothing about the
+## kit: if `_kit_token` regressed to `""`, every drive below would still parse, `EXPECTED_KINDS` would
+## still count, and this harness would report PASS while no kit ever left the client. `_record`
+## therefore states, per line, which kit the parser must recover.
 ##
 ## **THE FIXTURE'S `entity` AND `band_id` ARE DELIBERATELY DIFFERENT VALUES.** If they agreed this
 ## harness would prove nothing at all — sending the wrong handle would produce the right number.
@@ -338,13 +345,39 @@ func _connect_recorders() -> void:
 	_hud.cancel_order_requested.connect(func(band: Dictionary, scope: String) -> void:
 		_record("cancel_order", band, MAIN_SCRIPT.format_cancel_order(band, scope)))
 
+## The commands whose grammar carries a `kit <id>` tail. Every OTHER kind records `expected_kit` as
+## `""` — a command with no kit axis names no kit, which is what the Rust half's `NotKitBearing`
+## answer means.
+const KIT_BEARING_KINDS := {
+	"assign_labor": true,
+	"send_hunt_expedition": true,
+	"send_denial_raid": true,
+}
+
 ## Record one emitted command. A builder that DECLINES (empty dict) is itself a failure here: every
 ## drive below is a well-formed order, so "nothing to send" means a handle went missing.
+##
+## **It records the kit the line is EXPECTED to carry**, and `cargo xtask command-guard` asserts the
+## real server parser recovers exactly that. Without it the four kit drives proved only that a line
+## PARSES: `Main._kit_token` regressed to `""` would leave every line valid, every `EXPECTED_KINDS`
+## count intact, and the gate green while no kit ever left the client.
+##
+## The expectation is the DRIVE'S OWN `kit_id`, taken off the payload it composed — not a second copy
+## of `_kit_token`'s rule. The one case that would make it circular is a drive composing the job
+## DEFAULT, where the token is legitimately omitted and the assertion could never fail; that is a
+## fixture error and fails here rather than passing quietly.
 func _record(kind: String, payload: Dictionary, formatted: Dictionary) -> void:
 	if formatted.is_empty():
 		_fail("%s: Main declined to build a line — a required field was missing from %s" % [kind, payload])
 		return
-	_emitted.append({"kind": kind, "line": String(formatted["line"])})
+	var expected_kit := ""
+	if KIT_BEARING_KINDS.has(kind):
+		expected_kit = String(payload.get("kit_id", "")).strip_edges()
+		var job_default := String(payload.get("default_kit_id", "")).strip_edges()
+		if expected_kit != "" and expected_kit == job_default:
+			_fail("%s: the drive composed the JOB DEFAULT (%s), so `Main._kit_token` omits the tail and this line asserts nothing about the kit" % [kind, expected_kit])
+			return
+	_emitted.append({"kind": kind, "line": String(formatted["line"]), "expected_kit": expected_kit})
 
 ## The commands this guard must see. Missing one is a failure: a driver that quietly stopped
 ## reaching its emit site would otherwise turn this guard green by producing nothing to check.

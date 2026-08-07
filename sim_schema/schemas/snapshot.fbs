@@ -820,12 +820,20 @@ table PopulationCohortState {
   // perWorkerBiomass stays the EQUIPPED reference rate (a patch has no band to resolve against).
   forageCarryPerWorkerBiomass:float = 0;
   // --- THE KIT THIS COHORT IS QUOTED AT (appended last) -----------------------------------------
-  // The `equipment.json` roster id the three tiers above are resolved through.
+  // The `equipment.json` roster id THE TWO HUNT TIERS above (hunterAttack, huntCarryPerWorkerBiomass)
+  // are resolved through.
   //   - AN IN-FLIGHT PARTY: the kit it was SENT OUT WITH, decided at launch and carried for its
-  //     whole life. This is the drawer's answer to "what did I send them with?" and it is the tier
+  //     whole life. A party has ONE kit, so this also names what forageCarryPerWorkerBiomass is
+  //     quoted at. This is the drawer's answer to "what did I send them with?" and it is the tier
   //     the party really fights and hauls at — a party sent with "none" reads attack 1 here.
-  //   - A RESIDENT BAND: the JOB'S DEFAULT, because a band has one kit per assignment and this row
-  //     is per cohort. The per-crew truth is LaborAssignment.kitId beside that row's own yields.
+  //   - A RESIDENT BAND: the HUNT JOB'S DEFAULT, because a band has one kit per assignment and this
+  //     row is per cohort. The per-crew truth is LaborAssignment.kitId beside that row's own yields.
+  // IT DOES NOT NAME A RESIDENT BAND'S FORAGE KIT, and a reader must not look
+  // forageCarryPerWorkerBiomass up against it: that tier resolves through the FORAGE job's default
+  // (a basket kit), so quoting 8.0 against `big_game` — which carries no basket component at all —
+  // attributes a gathering rate to a kit whose forage tier is 1.6. The forage default rides the wire
+  // already, once, as SubsistenceSnapshot.defaultForageKitId; there is deliberately no second
+  // per-cohort copy of it.
   // Never empty: it always names a real roster entry.
   kitId:string;
 }

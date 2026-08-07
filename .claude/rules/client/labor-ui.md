@@ -210,11 +210,31 @@ harness captures `Readout.yields_text` before driving `floor_changed(f, committe
 differ after (sabotage-verified by taking the yields host back out of the set — exactly that one
 assertion fails, the chart-survives and verdict-re-read pair beside it still passing).
 
-**THE CAP IS RESOLVED BEFORE THE CHART ON BOTH SHEETS.** The chart, the crew targets and the verdict
-are all read against a CREW, so composing them ahead of `clamp_*_count` made the panel state a verdict
-for a crew the stepper then refused to show (a full patch reading *"already at the floor"* beside a
-stepper the same pass had zeroed). The hunt sheet always resolved its cap first; the forage sheet does
-now. Frame + assertion: `floor_chart_full`.
+**THE CAP IS RESOLVED BEFORE THE CHART ON ALL THREE SHEETS.** The chart, the crew targets and the
+verdict are all read against a CREW, so composing them ahead of `clamp_*_count` made the panel state a
+verdict for a crew the stepper then refused to show (a full patch reading *"already at the floor"*
+beside a stepper the same pass had zeroed). The drawer's two branches resolve first —
+`DrawerComposeController`'s hunt one always did, its forage one since that fix — and the DOCK's hunt
+form (`BandPanelController._fill_hunt_compose_sheet`) does now: it composed `floor_chart_model` from
+`_send_expedition_count` while `expedition_useful_cap`, `consume_party_autofill` and the `clampi` that
+settle that count all ran ~30 lines below the chart. **The mount order is unchanged and must stay** —
+presets → chart → floor hint → stepper → kit — so what moved is the RESOLUTION, not the row: the cap
+block sits above the chart and the stepper row is built from the already-settled count further down.
+
+**THE ASSERTION IS RENDERED-AGAINST-RENDERED, because the disagreement lasts ONE FRAME.** It shows on
+the render where autofill arms (a floor click, a committed drag, a fresh quarry) and the next rerender
+reconciles it, so a capture taken after the settle is clean — measured: the dock frame is
+**byte-identical with the defect restored**. `floor_chart_model` therefore carries the crew it was
+composed against (`workers`), `HarvestFloorChart.crew()` reads it back off the LIVE model (never a
+build-time copy, so a chart refreshed in place cannot answer staler than it draws), and the party
+stepper row carries the count it was BUILT with as `HudWidgets.PARTY_STEPPER_COUNT_META` — neither
+side a controller field, so a sheet that clamps its member correctly and still hands the old number to
+the chart fails. Frames + assertions: `floor_chart_full` (forage) and
+`band_panel_preview._assert_chart_reads_the_settled_party` on `band_panel_compose_hunt` (the dock hunt
+form), which seeds the party back to `WORKER_STEP` before arming the fill and asserts the fill really
+moved it — without that vacuity guard the two numbers agree for free. Sabotage-verified by restoring
+the compose-then-clamp order: exactly the crew claim fails (`chart 1, stepper 2`) with the vacuity
+guard still green.
 
 ### THE GROWTH CURVE IS SAMPLED, AND THE CLIENT INTERPOLATES IT
 

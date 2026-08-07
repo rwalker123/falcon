@@ -1877,3 +1877,113 @@ fn a_denial_raids_waste_is_reported_in_both_products() {
 /// take a handful of roundings each; a thousandth is orders of magnitude below any real disagreement
 /// (a mis-accumulated component would be off by a whole term, not by a rounding).
 const WASTE_VECTOR_TOLERANCE: f32 = 1e-3;
+
+// ---------------------------------------------------------------------------------------------------
+// …and the report names the party's OWN throughput, never the herd's floor
+// ---------------------------------------------------------------------------------------------------
+
+/// **A herd whose bodies are heavier than the party can process in a turn, on range that holds
+/// dozens of them.** That combination is the whole fixture: `standing_surplus` is enormous, so the
+/// only thing keeping the take down is the party's kill-credit bank climbing toward one body.
+///
+/// Sized off the shipped `hunt.per_worker_biomass_capacity` (40): [`BANK_BOUND_PARTY`] banks
+/// `8 × 40 = 320` biomass a turn against a `200`-unit body, so a whole animal comes ready every turn
+/// and is never *quite* the two the surplus could spare — the state the report used to call `floor`.
+const BANK_BOUND_HERD: RaidQuarry = RaidQuarry {
+    body_mass: 200.0,
+    // Two hundred bodies standing, and deep enough that the whole horizon's kills are a fraction of
+    // the stock — `collapse_fraction × K` stays far below it throughout, so "the herd could not
+    // spare another whole animal" is false on every turn of the run.
+    carrying_capacity: 40_000.0,
+    biomass_fraction: 1.0,
+    regrowth_rate: 0.10,
+};
+
+/// The party of the bank fixture — eight hunters, enough to engage far more than the bank can pay
+/// for ([`HARMLESS_QUARRY`]'s `engage_rate 10` reaches 80 animals) so engagement cannot be mistaken
+/// for the bound.
+const BANK_BOUND_PARTY: u32 = 8;
+
+/// **A raid held up by its OWN throughput does not blame the herd** (the `bound` field's whole job,
+/// `docs/plan_hunt_through_combat.md` §6.6).
+///
+/// `expedition_take_biomass` hands the quantiser `(credit + rate).clamp(0, standing_surplus)` — the
+/// party's banked processing throughput, **not** the herd's escapement room — and then read the bound
+/// off that one number. So every turn the bank climbed toward the next body published
+/// `bound=floor`, whose documented meaning is *"the herd could not spare another whole animal"*,
+/// while forty bodies stood on the range. The two readings have opposite remedies: `floor` says
+/// *leave*, `throughput` says *bring more hands*.
+///
+/// The liveness half is the herd's own stock: the assertion below would be satisfiable by a raid that
+/// genuinely ran the herd down, so the fixture also pins that the stock never comes near the
+/// collapse line.
+#[test]
+fn a_bank_bound_raid_reports_its_throughput_and_not_the_herds_floor() {
+    let mut app = placid_world();
+    let (id, herd_pos) = pin_raid_herd(&mut app, BANK_BOUND_HERD);
+    let home = spawn_home_band(&mut app, herd_pos);
+    let party = spawn_party(&mut app, home, herd_pos, BANK_BOUND_PARTY, deny(&id));
+
+    let horizon = expedition_cfg(&app).hunt.forecast_horizon_turns;
+    let bounds = drive_raid_bounds(&mut app, party, horizon);
+
+    assert!(
+        !bounds.is_empty(),
+        "the raid must publish hunt reports at all, or there is no `bound` to read"
+    );
+    // **The claim.** Not one report may name the floor: the herd could spare more on every turn.
+    assert!(
+        !bounds.iter().any(|bound| bound == "floor"),
+        "a raid on a herd of two hundred bodies is never floor-bound; reports read {bounds:?}"
+    );
+    // …and the bound it *does* name is the party's own throughput, which is the reading the split
+    // exists to produce rather than merely the absence of the wrong one.
+    assert!(
+        bounds.iter().any(|bound| bound == "throughput"),
+        "the bank is what held this raid back, so at least one report must say so: {bounds:?}"
+    );
+    // The liveness half: the herd is still standing, well clear of the line a `floor` reading would
+    // have to be true at.
+    let standing = herd_biomass(&app, &id).expect("the herd survives its own raid");
+    assert!(
+        standing > point_of_no_return(&app, &id) + BANK_BOUND_HERD.body_mass,
+        "the fixture must leave the herd with animals to spare, or `floor` would be honest: \
+         {standing} standing against a line at {}",
+        point_of_no_return(&app, &id)
+    );
+}
+
+/// Drive `party`'s raid and collect the `bound=` token of every hunt report it published — the
+/// shipped statement, read off the feed rather than recomputed by the test.
+fn drive_raid_bounds(app: &mut App, party: bevy::prelude::Entity, turns: u32) -> Vec<String> {
+    let mut bounds = Vec::new();
+    let mut read_through = 0_u64;
+    for _ in 1..=turns {
+        drive_turn(app);
+        for entry in app.world.resource::<CommandEventLog>().iter() {
+            if entry.seq <= read_through {
+                continue;
+            }
+            read_through = entry.seq;
+            if entry.kind.as_str() != "hunt_report" {
+                continue;
+            }
+            if let Some(bound) = detail_token(&entry.detail.clone().unwrap_or_default(), "bound") {
+                bounds.push(bound);
+            }
+        }
+        if phase(app, party) != Some(ExpeditionPhase::Hunting) {
+            break;
+        }
+    }
+    bounds
+}
+
+/// Read one `key=value` token off a feed entry's detail as **text** — the twin of [`detail_value`]
+/// for the tokens that are not numbers.
+fn detail_token(detail: &str, key: &str) -> Option<String> {
+    detail
+        .split_whitespace()
+        .find_map(|token| token.strip_prefix(&format!("{key}=")))
+        .map(str::to_string)
+}

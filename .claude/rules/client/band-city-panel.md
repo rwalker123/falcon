@@ -1286,6 +1286,17 @@ Party / Kit / forecast / Send** — off the same builders.
   (an empty box is worse than the sentence it replaces); `trip_bound_clause` keeps its `DetailFormat`
   reader and the verdict's own.
 
+- **THE PARTY CAP IS RESOLVED ABOVE THE CHART, AND THE STEPPER ROW IS STILL MOUNTED BELOW IT.**
+  `expedition_useful_cap`, `consume_party_autofill` and the `clampi` that settle `_send_expedition_count`
+  run before `floor_chart_model` is composed; only the RESOLUTION moved, so the form still reads
+  presets → chart → floor hint → Party → Kit. Composing the chart first drew its projection, its crew
+  targets and its verdict for a party the stepper beneath then clamped away — on the render where
+  autofill arms, which is a floor click, a committed drag or a fresh quarry. **The frame is
+  byte-identical either way**, so the guard is `_assert_chart_reads_the_settled_party`
+  (`HarvestFloorChart.crew()` against the stepper row's `HudWidgets.PARTY_STEPPER_COUNT_META`) and not
+  a picture; the invariant across all three compose sheets, and the model key that carries the crew,
+  are in `labor-ui.md` → "THE CAP IS RESOLVED BEFORE THE CHART ON ALL THREE SHEETS".
+
 **Frames:** `band_panel_compose_hunt` (TALL — the chart present, the presets one row across) and
 **`band_panel_compose_hunt_short`** (the tier gate, the only state that renders it: chart absent).
 `_assert_hunt_sheet_chart` asserts BOTH halves, since a gate stuck on and a gate that never fires are

@@ -253,6 +253,10 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // assignment, and this row is per *cohort* — so it is quoted at the job's **default** kit, the
     // same reading the per-herd estimate tables take. The per-assignment truth rides
     // `LaborAssignmentState::kit_id` and that row's own yields.
+    //
+    // **The two choices diverge for a band and coincide for a party**, which is why only the hunt
+    // one is published (see `kit_id` below): a party carries one kit across both jobs, a band does
+    // not.
     let hunt_choice = expedition.map(|exp| exp.kit.clone()).unwrap_or_else(|| {
         kit_levers
             .config
@@ -551,10 +555,17 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         hunter_attack,
         hunt_carry_per_worker_biomass,
         forage_carry_per_worker_biomass,
-        // **Which roster kit the three tiers above are quoted at** — the party's own for an
-        // expedition, the job's default for a resident band. The hunt job's is named because the two
-        // hunt tiers are the ones a player compares; a resident band's forage tier is the forage
-        // default by the same rule, and its per-crew truth is the assignment row's `kit_id`.
+        // **Which roster kit the two HUNT tiers above are quoted at** — the party's own for an
+        // expedition (a party has one kit, so it covers the forage tier too), the **hunt** job's
+        // default for a resident band.
+        //
+        // **It deliberately does not answer for a resident band's forage tier.** `forage_choice`
+        // above is a *different* kit for a band, so pairing `forage_carry_per_worker_biomass` with
+        // this id would quote a gathering rate against `big_game`, which carries no basket component
+        // at all. A second `forage_kit_id` field was considered and rejected: the forage default
+        // already rides the wire once as `SubsistenceSnapshot::default_forage_kit_id`, and the
+        // per-crew truth is the assignment row's own `kit_id`, so a per-cohort copy would be a third
+        // home for a fact that has two. The `.fbs` states the narrowed scope for readers.
         kit_id: hunt_choice.id().to_string(),
     }
 }

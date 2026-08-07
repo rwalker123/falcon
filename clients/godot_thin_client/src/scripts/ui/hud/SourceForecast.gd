@@ -976,16 +976,23 @@ static func has_component(rate: float) -> bool:
 # =====================================================================================
 # `actual_yield` stopped being a promise and became an EXPECTATION: the take the sim pays lies inside
 # `[actual_yield_low, actual_yield_high]`, and `trade_yield` carries the same pair in the other
-# product. **Where nothing is stochastic the distribution is DEGENERATE** — low == actual == high,
-# bit-for-bit — and that is the shipped case on every source today, because wariness is `0` across
-# the roster and `hit_chance` is `1.0`, so both binomials take their exact identities at every
-# quantile. It is also true by construction of every RESOLVED row: the take happened, so there is no
-# distribution left to report.
+# product. **A BAND ON A HUNT IS SHIPPED BEHAVIOUR, NOT A BUG** — wariness is authored across the
+# whole roster (fauna_config's `combat.wariness`, 0.10 on a mammoth that stands and fights up to 0.85
+# on a gazelle that simply is not there), so the RETREAT binomial is live and a raid's reported low
+# and high genuinely differ. `hit_chance` still ships `1.0`, so the damage binomial contributes
+# nothing to the spread; the width comes from animals breaking off before contact, which is why the
+# clause this client writes says *likely* rather than naming a combat roll.
 #
-# **SO THE READOUT MUST RENDER ONE NUMBER WHEN THE BOUNDS AGREE**, and the range only when they
-# differ. Slice 7 authors wariness and the band turns on with no further change on this side; until
-# then a band appearing anywhere is a defect, which is why the degenerate case is pinned rather than
-# merely expected to be rare.
+# **THE DISTRIBUTION IS STILL DEGENERATE IN THREE PLACES, and each is a real state rather than a
+# leftover**: a RESOLVED row (the take happened, so there is nothing left to distribute), a source
+# that publishes no retreat stage at all (every forage patch — the plant web has no wariness), and a
+# spread narrow enough that both bounds round to one printed string, which `has_yield_range` treats as
+# one number by design.
+#
+# **SO THE READOUT RENDERS ONE NUMBER WHEN THE BOUNDS AGREE**, and the range only when they differ.
+# The degenerate case is PINNED rather than merely expected, because that is the half a readout
+# decorating every row would still satisfy — see `chapters/hunt.gd`'s `herd_hunt_yield_range` /
+# `herd_hunt_yield_point` pair.
 #
 # **The band is an ANSWER, never a term.** The take passes through the whole-animal quantiser's
 # `floor()`, so a band on the animals brought down is not a band on the food; the client renders the
@@ -2312,6 +2319,14 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
     var quarry := herd_display_name(src) if kind == SOURCE_KIND_HERD else ""
     return {
         "known": true,
+        # **THE CREW EVERYTHING BELOW WAS COMPOSED AGAINST**, carried on the model rather than left
+        # implicit at the call site. The walk, the settled fraction and the verdict are all functions
+        # of it, so a sheet that composes this model BEFORE it clamps its own stepper draws a chart
+        # for a crew the row beneath refuses to show — a one-frame disagreement no capture can see.
+        # Carrying it makes that comparison a rendered-against-rendered assertion
+        # (`HarvestFloorChart.crew()` against the stepper's `PARTY_STEPPER_COUNT_META`) instead of a
+        # claim about a controller field.
+        "workers": workers,
         "capacity": capacity,
         "stock_fraction": clampf(biomass / capacity, 0.0, 1.0),
         # **THE PHASE THE SOURCE REPORTS, NOT ONE DERIVED HERE.** The chart tints the standing-stock

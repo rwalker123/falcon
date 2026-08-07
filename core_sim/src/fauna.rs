@@ -60,6 +60,26 @@ const HERD_MOVEMENT_SEED_SALT: u64 = 0x4D0E_9A17_C0FF_EE21;
 /// Composed from `(map_seed, tick, herd, party)` by [`retreat_seed`], which is order-independent.
 const RETREAT_SEED_SALT: u64 = 0x5CA7_7E12_D00D_1E55;
 
+/// XOR sub-seed salt for the **fight's** strike draws, applied by [`HuntDraw::seed`] on top of the
+/// retreat's own seed — so the two stochastic stages of one hunt draw from **independent** streams.
+///
+/// # Why one value cannot feed both stages
+///
+/// Every draw site here reseeds a *fresh* `SmallRng` from a `u64`; nothing hands one advancing stream
+/// down the pipeline. So [`animals_that_stay`] and [`crate::combat::landed_strikes`] handed the *same*
+/// `u64` do not take turns on one stream — they replay the **same underlying uniforms in the same
+/// order**. The k-th retreat Bernoulli and the k-th strike Bernoulli then compare one uniform against
+/// two thresholds, which makes *"animal k stayed"* and *"hunter k landed"* nested events rather than
+/// independent ones, and the two counts become rank-correlated for every draw.
+///
+/// `docs/plan_hunt_through_combat.md` §4.7 asks for variance **binomial in force size**, which is a
+/// statement about two independent stages: a party that reaches few animals *and* misses them is a
+/// different distribution from one where the two coincide by construction. The defect is invisible at
+/// the shipped `hit_chance` of `1.0` — [`crate::combat::attacks_landed`] short-circuits before it
+/// draws — and authoring a sub-1 chance is exactly what `combat_config.json` calls the next tuning
+/// step, so it is salted apart now rather than after it starts biasing takes.
+const FIGHT_SEED_SALT: u64 = 0xF16E_5EED_C0DE_1A75;
+
 /// RNG salt for the per-turn neglect-escape shed jitter (`docs/plan_fauna_neglect_escape.md` §3.1),
 /// kept distinct from the movement/immigration streams so the shed's ±band doesn't correlate with a
 /// herd's wander. Combined with `map_seed ^ tick ^ hash(herd.id)`, exactly like the movement RNG, so
@@ -5107,11 +5127,18 @@ impl HuntDraw {
         }
     }
 
-    /// The stream seed a live fight draws from. A forecast makes no draw, so it hands over
-    /// [`FORECAST_FIGHT_SEED`] and nothing reads it.
+    /// The stream seed a live fight draws from — **the event's seed salted apart from the retreat's**
+    /// ([`FIGHT_SEED_SALT`]). A forecast makes no draw, so it hands over [`FORECAST_FIGHT_SEED`] and
+    /// nothing reads it.
+    ///
+    /// **The salt is what makes the hunt's two stages independent.** Both stages reseed a fresh
+    /// `SmallRng` from a `u64` rather than sharing one advancing stream, so handing the retreat's seed
+    /// straight to the fight would replay the same uniforms in the same order and lock *"animal k
+    /// stayed"* to *"hunter k landed"*. See [`FIGHT_SEED_SALT`] for why that matters the moment
+    /// `hit_chance` drops below `1.0`.
     pub fn seed(self) -> u64 {
         match self {
-            HuntDraw::Seeded(seed) => seed,
+            HuntDraw::Seeded(seed) => seed ^ FIGHT_SEED_SALT,
             HuntDraw::Quantile { .. } => FORECAST_FIGHT_SEED,
         }
     }
@@ -5630,7 +5657,7 @@ pub fn quantise_animal_take(
     }
 }
 
-/// **WHICH of the take's four bounds actually stopped this hunt**
+/// **WHICH of the take's five bounds actually stopped this hunt**
 /// (`docs/plan_hunt_through_combat.md` §6.6) — a fact the resolution produces, carried on the hunt
 /// report so a player can tell *"there was nothing left to take"* from *"we could not reach them"*.
 ///
@@ -5645,6 +5672,19 @@ pub enum HuntTakeBound {
     /// **The escapement floor** — the herd could not spare another whole animal above where the crew
     /// stops. Also the bound of a turn that takes nothing at all and waits for regrowth.
     Floor,
+    /// **The party's own throughput** — the herd could spare another animal and the crew simply could
+    /// not process one yet, because its kill-credit bank (`systems::expedition_take_biomass`) has not
+    /// banked a whole body.
+    ///
+    /// **It is split out of [`Self::Floor`] because the two have opposite remedies**, and conflating
+    /// them was a real defect: an 8-hunter raid on a full Thunder Mammoth herd banks toward one
+    /// 800-unit body for several turns while fifteen mammoths stand there, and reporting *"the herd
+    /// could not spare another whole animal"* there is simply false. `Floor` says *leave, there is
+    /// nothing here*; `Throughput` says *bring more hands*.
+    ///
+    /// Only a **detached party** can report it — a resident band's ceiling is the escapement stock
+    /// itself, with no bank between the herd and the crew (`systems::hunt_take`).
+    Throughput,
     /// **Carry** — more went down than the party could haul, so the remainder is
     /// [`AnimalTake::wasted`].
     Carry,
@@ -5659,6 +5699,7 @@ impl HuntTakeBound {
         match self {
             HuntTakeBound::Engagement => "engagement",
             HuntTakeBound::Floor => "floor",
+            HuntTakeBound::Throughput => "throughput",
             HuntTakeBound::Carry => "carry",
             HuntTakeBound::Fight => "fight",
         }
@@ -5669,16 +5710,33 @@ impl HuntTakeBound {
 /// same [`whole_animals`] helper — so the reported bound and the paid take cannot disagree about
 /// what "affordable" or "carryable" mean.
 ///
-/// **Precedence on a tie is `Floor → Carry → Fight/Engagement`, and it is stated rather than
-/// incidental.** Ties are common (a crew sized exactly to its ceiling), and the first arm is the one
-/// that is true of the *source*: when the herd has nothing more to spare, that is the fact the player
-/// needs whatever else was also tight.
+/// **Precedence on a tie is `Floor/Throughput → Carry → Fight/Engagement`, and it is stated rather
+/// than incidental.** Ties are common (a crew sized exactly to its ceiling), and the first arm is the
+/// one that is true of the *source*: when the herd has nothing more to spare, that is the fact the
+/// player needs whatever else was also tight.
 ///
 /// The last two arms split one `min`: `brought_down` is capped by `stayed` from above, so bringing
 /// down **everything that stayed** means reach was the limit, and bringing down less means the fight
 /// was.
+///
+/// # The first arm splits too, on `escapement_room`
+///
+/// `take_ceiling` is what the quantiser was handed, and on a **detached party** that is not the herd's
+/// escapement room: it is the party's kill-credit bank clamped to that room
+/// (`systems::expedition_take_biomass`). Reading the ceiling alone therefore cannot tell *"the herd
+/// has nothing left"* from *"the crew has not banked a body yet"* — it called both `Floor`, on a herd
+/// with fifteen animals standing in it. `escapement_room` is the herd-side number the ceiling was
+/// clamped against, and comparing the two **in whole animals** is what splits them: the bank only
+/// costs the party a kill when it holds back a *whole* body, which is the same granularity the take
+/// itself pays at.
 pub fn hunt_take_bound(
-    policy_ceiling: f32,
+    // What [`quantise_animal_take`] was handed — the same term, so the report cannot name a bound the
+    // take did not hit.
+    take_ceiling: f32,
+    // **The herd's own room above the floor**, which `take_ceiling` may be smaller than. A resident
+    // band passes its ceiling here unchanged: its ceiling *is* the escapement stock, so `Throughput`
+    // is unreachable for it by construction rather than by a flag.
+    escapement_room: f32,
     collection: f32,
     body_mass: f32,
     stayed: f32,
@@ -5688,7 +5746,10 @@ pub fn hunt_take_bound(
     if !body_mass.is_finite() || body_mass <= 0.0 {
         return HuntTakeBound::Floor;
     }
-    let affordable = whole_animals(policy_ceiling.max(0.0), body_mass);
+    let affordable = whole_animals(take_ceiling.max(0.0), body_mass);
+    // What the HERD could have spared. `<= affordable` (a band, or a raid whose bank has caught up
+    // with the surplus) leaves the first arm reading `Floor` exactly as it did.
+    let sparable = whole_animals(escapement_room.max(0.0), body_mass);
     // The same `max(1.0)` the quantiser applies: a party that cannot carry a whole animal still takes
     // one, so carry does not *bind* below one body — it produces waste instead.
     //
@@ -5701,7 +5762,13 @@ pub fn hunt_take_bound(
     };
     let brought_down = brought_down.max(0.0);
     if affordable <= carryable.min(brought_down) {
-        HuntTakeBound::Floor
+        // The ceiling bound the take — but WHOSE ceiling? The bank held back a whole animal the herd
+        // could have spared, or it did not and the herd is genuinely the limit.
+        if affordable < sparable {
+            HuntTakeBound::Throughput
+        } else {
+            HuntTakeBound::Floor
+        }
     } else if carryable <= brought_down {
         HuntTakeBound::Carry
     } else if brought_down < stayed.max(0.0) {
@@ -7119,19 +7186,38 @@ mod tests {
         /// Any of the three quantiser terms, made large enough not to bind.
         const SLACK: f32 = 1_000.0;
 
-        // Each case: (ceiling, collection, stayed, brought_down) with exactly one term tight.
+        // Each case: (ceiling, escapement room, collection, stayed, brought_down) with exactly one
+        // term tight. **The first two differ only in the room**, which is the whole point of the
+        // split: the same four-animal ceiling is the herd's limit when the herd has no more to spare
+        // and the party's when it has.
         let cases = [
-            (4.0 * BODY, SLACK, SLACK, SLACK, HuntTakeBound::Floor),
-            (SLACK, 4.0 * BODY, SLACK, SLACK, HuntTakeBound::Carry),
+            (
+                4.0 * BODY,
+                4.0 * BODY,
+                SLACK,
+                SLACK,
+                SLACK,
+                HuntTakeBound::Floor,
+            ),
+            (
+                4.0 * BODY,
+                SLACK,
+                SLACK,
+                SLACK,
+                SLACK,
+                HuntTakeBound::Throughput,
+            ),
+            (SLACK, SLACK, 4.0 * BODY, SLACK, SLACK, HuntTakeBound::Carry),
             // Reached ten, put four on the ground — the fight is the shortfall.
-            (SLACK, SLACK, 10.0, 4.0, HuntTakeBound::Fight),
+            (SLACK, SLACK, SLACK, 10.0, 4.0, HuntTakeBound::Fight),
             // Reached four and killed all four — reach is the shortfall.
-            (SLACK, SLACK, 4.0, 4.0, HuntTakeBound::Engagement),
+            (SLACK, SLACK, SLACK, 4.0, 4.0, HuntTakeBound::Engagement),
         ];
-        for (ceiling, collection, stayed, brought_down, expected) in cases {
+        for (ceiling, room, collection, stayed, brought_down, expected) in cases {
             assert_eq!(
                 hunt_take_bound(
                     ceiling,
+                    room,
                     collection,
                     BODY,
                     stayed,
@@ -7139,7 +7225,7 @@ mod tests {
                     EngagementStop::WhenPackFull
                 ),
                 expected,
-                "({ceiling}, {collection}, {stayed}, {brought_down}) must name {expected:?}"
+                "({ceiling}, {room}, {collection}, {stayed}, {brought_down}) must name {expected:?}"
             );
             let tight = quantise_animal_take(
                 ceiling,
@@ -7151,7 +7237,9 @@ mod tests {
             // **Liveness / the relation**: relaxing the named term raises the take. Without this the
             // table above would only be asserting against itself.
             let relaxed = match expected {
-                HuntTakeBound::Floor => quantise_animal_take(
+                // Both ceiling-side bounds relax the same way — they differ in *whose* ceiling it is,
+                // not in which term the quantiser read.
+                HuntTakeBound::Floor | HuntTakeBound::Throughput => quantise_animal_take(
                     ceiling * 2.0,
                     collection,
                     BODY,
@@ -7200,6 +7288,9 @@ mod tests {
         assert_eq!(
             hunt_take_bound(
                 BODY / 2.0,
+                // The herd's room IS the ceiling here — a resident band's wait turn, where half a
+                // body standing above the floor is genuinely all there is.
+                BODY / 2.0,
                 f32::INFINITY,
                 BODY,
                 f32::INFINITY,
@@ -7225,6 +7316,103 @@ mod tests {
         assert_ne!(a, retreat_seed(7, 3, "game_deer_2", 5), "herd must matter");
         assert_ne!(a, retreat_seed(7, 4, "game_deer_1", 5), "tick must matter");
         assert_ne!(a, retreat_seed(7, 3, "game_deer_1", 6), "party must matter");
+    }
+
+    /// **The retreat draw and the fight's strike draws must be INDEPENDENT** — §4.7's variance is
+    /// binomial in force size, which is a claim about two stages that do not know about each other.
+    ///
+    /// # Why this is measured rather than asserted
+    ///
+    /// Every draw site reseeds a *fresh* `SmallRng` from a `u64`; nothing passes one advancing stream
+    /// along. So a fight handed the retreat's own seed replays the **same uniforms in the same
+    /// order**, and `gen_bool(wariness)` / `gen_bool(hit_chance)` become two thresholds on one
+    /// uniform — nested events, not independent ones. "They use different code paths" is exactly the
+    /// reasoning that would miss it, so this test computes the Pearson correlation of the two stages'
+    /// counts across many events and requires it to be near zero.
+    ///
+    /// **The unsalted arm is the liveness half, and it is not decoration**: it re-runs the identical
+    /// experiment with the retreat's raw seed handed to the fight — what the code did before
+    /// [`FIGHT_SEED_SALT`] — and requires a *large* correlation. Without it a bug that made either
+    /// stage constant would sail through the first assertion with `r ≈ 0`.
+    ///
+    /// **Measured**: the shared-stream arm reads `r = −1.000` — with `wariness == hit_chance` the
+    /// two indicators are *exact complements* of one uniform, so `landed == engaged − stayed` every
+    /// event — and the salted arm reads `r = +0.002`. The coupling is total, not marginal.
+    ///
+    /// It runs at `hit_chance 0.5`, deliberately **not** the shipped `1.0`: at `1.0`
+    /// [`crate::combat::attacks_landed`] returns before it draws, so the whole defect is inert and
+    /// unmeasurable — which is precisely why it survived to be found by review.
+    #[test]
+    fn the_retreat_and_the_fight_draw_from_independent_streams() {
+        /// Enough events for the sample correlation's own noise (`≈ 1/√n`) to sit an order of
+        /// magnitude under [`INDEPENDENT_CORRELATION`].
+        const EVENTS: u64 = 4_000;
+        /// The one map every event is drawn on; the tick is what moves.
+        const MAP_SEED: u64 = 0x51A5_11ED_1234_5678;
+        /// Both stages take the same *count* so their draws line up one-for-one — the alignment that
+        /// makes a shared stream maximally correlated, i.e. the worst case rather than a lucky one.
+        const ENGAGED: f32 = 24.0;
+        /// Mid-range on both dials: a Bernoulli's variance peaks at `0.5`, so any coupling shows.
+        const WARINESS: f32 = 0.5;
+        const HIT_CHANCE: f32 = 0.5;
+        /// What "decorrelated" is allowed to mean for a sample of [`EVENTS`] draws.
+        const INDEPENDENT_CORRELATION: f64 = 0.1;
+        /// What the shared-stream arm must exceed for this test to have teeth.
+        const COUPLED_CORRELATION: f64 = 0.5;
+
+        let tuning = combat::CombatTuning {
+            hit_chance: HIT_CHANCE,
+            draw: combat::StrikeDraw::Seeded,
+            ..Default::default()
+        };
+        // Pearson's r over the (stayed, landed) pairs the two stages produce for one seed each.
+        let correlation = |fight_seed: fn(HuntDraw) -> u64| {
+            let samples: Vec<(f64, f64)> = (0..EVENTS)
+                .map(|event| {
+                    // One map, one party, one turn per event — `retreat_seed` XORs its map seed and
+                    // its tick, so varying *both* together would cancel and hold the seed constant.
+                    let draw = HuntDraw::Seeded(retreat_seed(MAP_SEED, event, "game_deer_1", 12));
+                    let stayed = animals_that_stay(ENGAGED, WARINESS, draw);
+                    let landed = combat::landed_strikes_seeded(ENGAGED, &tuning, fight_seed(draw));
+                    (f64::from(stayed), f64::from(landed))
+                })
+                .collect();
+            let n = samples.len() as f64;
+            let mean = |pick: fn(&(f64, f64)) -> f64| samples.iter().map(pick).sum::<f64>() / n;
+            let (mean_x, mean_y) = (mean(|s| s.0), mean(|s| s.1));
+            let mut covariance = 0.0;
+            let (mut var_x, mut var_y) = (0.0, 0.0);
+            for (x, y) in &samples {
+                covariance += (x - mean_x) * (y - mean_y);
+                var_x += (x - mean_x).powi(2);
+                var_y += (y - mean_y).powi(2);
+            }
+            assert!(
+                var_x > 0.0 && var_y > 0.0,
+                "both stages must actually vary, or a correlation of 0 would prove nothing \
+                 (var_stayed={var_x}, var_landed={var_y})"
+            );
+            covariance / (var_x * var_y).sqrt()
+        };
+
+        // The bug: the retreat's own seed handed straight to the fight, as `HuntDraw::seed` did.
+        let coupled = correlation(|draw| match draw {
+            HuntDraw::Seeded(seed) => seed,
+            HuntDraw::Quantile { .. } => FORECAST_FIGHT_SEED,
+        });
+        // The fix: the same event, salted apart.
+        let salted = correlation(HuntDraw::seed);
+
+        assert!(
+            coupled.abs() > COUPLED_CORRELATION,
+            "the shared-stream arm must stay strongly correlated or this test proves nothing; \
+             measured r={coupled}"
+        );
+        assert!(
+            salted.abs() < INDEPENDENT_CORRELATION,
+            "the retreat and the fight must decorrelate once salted apart; measured r={salted} \
+             (shared-stream arm r={coupled})"
+        );
     }
 
     // ---- The engagement bound ------------------------------------------------------------------

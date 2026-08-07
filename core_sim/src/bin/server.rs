@@ -2473,8 +2473,16 @@ fn handle_assign_labor(
     // substitution answers a different question than the one asked. The band-wide roles carry no
     // kit at all — `kit_job()` is `None` for them, and a kit named there is ignored exactly as
     // `species` and `floor` are.
-    let crew_kit = match target.kit_job() {
-        Some(job) => {
+    //
+    // **Unassigning (`workers == 0`) resolves NO kit**, the same rule the policy validation above
+    // follows and for the same reason: a player must be able to abandon an investment even if what
+    // it was staffed with has since lapsed. `LaborAllocation::set_assignment` *drops* the assignment
+    // at zero workers and never reads the kit, so refusing here refused a command whose kit could
+    // not be used either way — and a roster edit that removed an id left every crew still holding it
+    // unclearable, locked in by a kit that no longer exists.
+    let crew_kit = match (workers, target.kit_job()) {
+        (0, _) | (_, None) => None,
+        (_, Some(job)) => {
             let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
             match equipment_cfg.resolve_kit_for_job(kit_id.as_deref(), job) {
                 Ok(kit) => Some(kit),
@@ -2489,7 +2497,6 @@ fn handle_assign_labor(
                 }
             }
         }
-        None => None,
     };
 
     let Some(band) = select_starting_band(app, faction, band_id, "assign_labor", event_kind) else {
@@ -2727,10 +2734,12 @@ fn handle_send_expedition(
             expedition_band_id,
             LaborAllocation::default(),
             // **The party leaves OUTFITTED** — a detached party is a band in its own right, so it
-            // carries the same full kit a band spawns with. This slice does not *wear* an
-            // expedition's kit (`advance_expeditions` still prices its haul at the equipped rate);
-            // without the component the party would publish a dry kit beside an equipped haul rate,
-            // which is a contradiction on the wire.
+            // carries the same full kit a band spawns with, and `advance_expeditions` then **wears**
+            // it: `BandEquipment::wear_hunting` per animal killed and `wear_sled` per unit hauled,
+            // charged on a scout's opportunistic roadside kill exactly as on a raid's take
+            // (`.claude/rules/core_sim/equipment.md`). Without the component there would be nothing
+            // for that wear to land on, and the party would publish a dry kit beside an equipped
+            // haul rate — a contradiction on the wire.
             BandEquipment::default(),
             StartingUnit::new(unit_kind, unit_tags),
             Expedition {
@@ -2838,7 +2847,22 @@ fn outfit_raiding_party(
 
     // **The band is the bound, and the only one** — see `handle_send_expedition` above, and
     // `ExpeditionConfig::estimate_party_sizes` for the lever that used to also live here.
-    let max_party = available_workers(app.world.get::<PopulationCohort>(band.entity)?.working);
+    //
+    // **A band with no cohort REFUSES LOUDLY** (both reads below). It is unreachable through the
+    // gates above — `select_starting_band` resolves a band by its cohort — but a bare `?` here
+    // answered `None` with no feed entry at all, so the command would vanish while every other
+    // refusal in this function published a reason. A command log that can drop an order silently is
+    // worse than one that reports an impossible state.
+    let Some(cohort) = app.world.get::<PopulationCohort>(band.entity).cloned() else {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            format!("{verb}: {} has no population to outfit from.", band.label),
+        );
+        return None;
+    };
+    let max_party = available_workers(cohort.working);
     if party_workers < 1 || party_workers > max_party {
         emit_command_failure(
             app,
@@ -2852,7 +2876,6 @@ fn outfit_raiding_party(
         return None;
     }
 
-    let cohort = app.world.get::<PopulationCohort>(band.entity)?.clone();
     let (unit_kind, unit_tags) = app
         .world
         .get::<StartingUnit>(band.entity)
@@ -3018,6 +3041,12 @@ fn round_trip_travel_turns(
 /// herd's live tile. Draws **no** provisions — a raiding party lives off its kills — and leaves
 /// **outfitted**, because a detached party is a band in its own right and carries the same full kit
 /// one spawns with (which `advance_expeditions` then wears per animal killed and per unit hauled).
+///
+/// **`None` when the home band's cohort is gone, and the caller must publish a FAILURE.** It used to
+/// answer `Entity::PLACEHOLDER`, which the callers then stamped into a
+/// `status=applied mission=… expedition=<placeholder bits>` feed line — *"the order worked"* for a
+/// party that was never spawned. That is the one shape a command log must never produce, so the
+/// impossible state is now a refusal rather than a sentinel entity.
 fn launch_detached_party(
     app: &mut bevy::prelude::App,
     outfit: OutfittedParty,
@@ -3027,7 +3056,7 @@ fn launch_detached_party(
     // party's whole life and is never re-resolved against the home band's later stock — a party sent
     // out bare would otherwise silently re-arm the moment the band's spears were counted again.
     kit: KitChoice,
-) -> bevy::prelude::Entity {
+) -> Option<bevy::prelude::Entity> {
     let OutfittedParty {
         band,
         herd_pos,
@@ -3038,9 +3067,9 @@ fn launch_detached_party(
     // Remove the party from the band's pool — but draw NO provisions (it lives off its kills).
     let party_scalar = Scalar::from_u32(party_workers);
     {
-        let Some(mut band_cohort) = app.world.get_mut::<PopulationCohort>(band.entity) else {
-            return bevy::prelude::Entity::PLACEHOLDER;
-        };
+        // Nothing is spawned and nothing is drawn — the caller refuses instead. Bail BEFORE the
+        // spawn below, so a refusal cannot leave a party standing with no home band.
+        let mut band_cohort = app.world.get_mut::<PopulationCohort>(band.entity)?;
         band_cohort.working -= party_scalar;
         band_cohort.sync_size();
     }
@@ -3057,7 +3086,8 @@ fn launch_detached_party(
 
     // A detached party is a band in its own right, so it takes its own durable id.
     let expedition_band_id = app.world.resource_mut::<BandIdAllocator>().allocate();
-    app.world
+    let expedition_entity = app
+        .world
         .spawn((
             cohort,
             expedition_band_id,
@@ -3075,7 +3105,8 @@ fn launch_detached_party(
             },
             BandTravel { target: herd_pos },
         ))
-        .id()
+        .id();
+    Some(expedition_entity)
 }
 
 /// Outfit and launch a hunting expedition (PR 2): draw `party_workers` off the resolved home band
@@ -3239,7 +3270,9 @@ fn handle_send_hunt_expedition(
     };
 
     let band_label = outfit.band.label.clone();
-    let expedition_entity = launch_detached_party(
+    // **A launch that did not happen publishes a FAILURE, never an `applied` line** — see
+    // `launch_detached_party`, which answers `None` rather than a placeholder entity.
+    let Some(expedition_entity) = launch_detached_party(
         app,
         outfit,
         party_workers,
@@ -3248,7 +3281,15 @@ fn handle_send_hunt_expedition(
             floor,
         },
         kit.clone(),
-    );
+    ) else {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            format!("send_hunt_expedition: {band_label} has no population to outfit from."),
+        );
+        return;
+    };
 
     let tick = app.world.resource::<SimulationTick>().0;
     push_command_event(
@@ -3404,7 +3445,9 @@ fn handle_send_denial_raid(
     };
 
     let band_label = outfit.band.label.clone();
-    let expedition_entity = launch_detached_party(
+    // **A launch that did not happen publishes a FAILURE, never an `applied` line** — see
+    // `launch_detached_party`, which answers `None` rather than a placeholder entity.
+    let Some(expedition_entity) = launch_detached_party(
         app,
         outfit,
         party_workers,
@@ -3412,7 +3455,15 @@ fn handle_send_denial_raid(
             fauna_id: fauna_id.clone(),
         },
         kit.clone(),
-    );
+    ) else {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            format!("send_denial_raid: {band_label} has no population to outfit from."),
+        );
+        return;
+    };
 
     let tick = app.world.resource::<SimulationTick>().0;
     push_command_event(
@@ -3432,18 +3483,34 @@ fn handle_send_denial_raid(
 }
 
 /// The collapse verdict's turn window as prose — *"4 turns"* when the distribution is degenerate,
-/// *"3–5 turns"* when it is not, and *"3+ turns"* when the pessimistic end never gets there at all.
+/// *"3–5 turns"* when it is not, *"3+ turns"* when the pessimistic end never gets there at all, and
+/// *"up to 5 turns"* when only the pessimistic end did.
 ///
 /// **A range that is a point must READ as a point** — the rule every range on this wire follows: the
 /// sim publishes three numbers and *"say 4, not 4–4"* is the reader's comparison, not a stored flag.
+///
+/// # The prose may not contradict any of the three numbers beside it
+///
+/// `likely` is a **separate projection** ([`core_sim::denial_forecast`] runs one per quantile), so it
+/// is not bound to sit between `low` and `high`: the take is quantised to whole animals, and a
+/// lumpier schedule can put the expected run outside the two extremes it was not derived from. The
+/// degenerate arm used to test only `low == high` and then print `likely`, so `low = high = 3` beside
+/// `likely = 4` rendered *"4 turns"* against a published band of 3–3 — prose disagreeing with the
+/// `low=`/`high=` tokens in the very same feed entry.
+///
+/// So the window is the span of **all three** published numbers, and it collapses to a point only
+/// when all three agree.
 fn describe_collapse_window(low: Option<u32>, likely: u32, high: Option<u32>) -> String {
     match (low, high) {
-        (Some(low), Some(high)) if low == high => format!("{likely} turns"),
-        (Some(low), Some(high)) => format!("{low}–{high} turns"),
+        (Some(low), Some(high)) if low == likely && likely == high => format!("{likely} turns"),
+        (Some(low), Some(high)) => format!("{}–{} turns", low.min(likely), high.max(likely)),
         // The pessimistic draw never gets there inside the horizon — an honest open-ended window
         // rather than a second number the projection did not produce.
-        (Some(low), None) => format!("{low}+ turns"),
-        _ => format!("{likely} turns"),
+        (Some(low), None) => format!("{}+ turns", low.min(likely)),
+        // The mirror case: only the pessimistic end reached the line. Stating it as a *ceiling*
+        // keeps the number the projection did produce, where the default below discarded it.
+        (None, Some(high)) => format!("up to {} turns", high.max(likely)),
+        (None, None) => format!("{likely} turns"),
     }
 }
 
@@ -9344,6 +9411,93 @@ mod tests {
                 .any(|allocation| !allocation.assignments.is_empty());
             assert!(!staffed, "a refused {role} assignment staffs nobody");
         }
+    }
+
+    /// **A crew can always be cleared, even by a kit id that no longer resolves** — the same rule
+    /// the policy validation thirteen lines above already follows (*"a player must be able to abandon
+    /// an investment even if its gates have since lapsed"*).
+    ///
+    /// The kit was resolved **before** the worker count was consulted, so `assign_labor … 0 kit
+    /// <id-since-removed>` was refused outright and the band was locked into an assignment by a kit
+    /// that had been edited out of `equipment.json`. Nothing downstream even wanted the answer:
+    /// `LaborAllocation::set_assignment` drops the assignment at zero workers and never reads the
+    /// kit.
+    ///
+    /// The band is staffed by the fixture rather than by a second command, so the precondition
+    /// cannot fail for a reason that has nothing to do with kits — and it is asserted, because an
+    /// unassign that found nothing there would pass this test with the defect intact.
+    #[test]
+    fn an_unassign_is_not_blocked_by_a_kit_id_that_no_longer_exists() {
+        /// A roster id `equipment.json` does not carry — what a kit removed by a config edit looks
+        /// like to a command composed against the old roster.
+        const RETIRED_KIT: &str = "obsidian_spears";
+
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let herd_id = seed_herd(&mut app, UVec2::new(1, 1), Some(faction));
+        spawn_addressable_band(&mut app, faction, &herd_id);
+        let staffed = |app: &mut bevy::prelude::App| {
+            app.world
+                .query::<&LaborAllocation>()
+                .iter(&app.world)
+                .any(|allocation| !allocation.assignments.is_empty())
+        };
+
+        assert!(
+            staffed(&mut app),
+            "the fixture must actually staff a hunt crew first"
+        );
+        handle_assign_labor(
+            &mut app,
+            faction,
+            Some(FIXTURE_BAND_ID),
+            "hunt".to_string(),
+            0,
+            Some(1),
+            Some(1),
+            Some(herd_id.clone()),
+            None,
+            None,
+            Some(RETIRED_KIT.to_string()),
+        );
+        assert!(
+            !staffed(&mut app),
+            "unassigning names a kit the roster no longer carries — the crew must still clear, or \
+             the player is locked into an assignment by a kit that does not exist"
+        );
+    }
+
+    /// **The collapse window's prose may not contradict the three numbers published beside it.**
+    ///
+    /// The `low == high` arm printed `likely`, so a band of 3–3 beside a likely of 4 rendered
+    /// *"4 turns"* — prose disagreeing with the `low=`/`high=` tokens in the same feed entry. And
+    /// `(None, Some(high))` fell to the same default, throwing away a bound the projection *did*
+    /// produce.
+    ///
+    /// The three quantiles are separate projections over a whole-animal take, so `likely` outside
+    /// `low..=high` is a reachable state rather than a hypothetical — which is why the window is the
+    /// span of all three and collapses to a point only when all three agree.
+    #[test]
+    fn the_collapse_window_never_prints_a_count_its_own_range_contradicts() {
+        // The degenerate reading survives: three numbers that agree read as one number.
+        assert_eq!(
+            describe_collapse_window(Some(4), 4, Some(4)),
+            "4 turns",
+            "a range that is a point must read as a point"
+        );
+        // The defect: a point band beside a likely outside it.
+        assert_eq!(
+            describe_collapse_window(Some(3), 4, Some(3)),
+            "3–4 turns",
+            "the prose must contain every number published beside it"
+        );
+        assert_eq!(describe_collapse_window(Some(3), 4, Some(5)), "3–5 turns");
+        // Only the optimistic end reached the line: an open-ended window, not a second number.
+        assert_eq!(describe_collapse_window(Some(3), 4, None), "3+ turns");
+        // …and its mirror, which used to discard the one bound it had.
+        assert_eq!(describe_collapse_window(None, 4, Some(6)), "up to 6 turns");
+        // Neither end reached it: the point estimate is all there is to say.
+        assert_eq!(describe_collapse_window(None, 4, None), "4 turns");
     }
 
     /// **A raiding party is bounded by the BAND, and by nothing else** (`docs/plan_denial_raid.md`

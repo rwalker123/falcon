@@ -1829,6 +1829,28 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
         _compose.arm_party_autofill()
         rerender(), _send_hunt_floor,
         SourceForecast.expedition_policy_takes(band, herd, _band_labor.grid_width(), _band_labor.wrap_horizontal()) if trip_quoted else {}))
+    # Party size, capped at the raid's max-useful plateau for THIS herd + floor (the herd drawer's
+    # own cap), so extra hunters can no longer be sent to stand idle at the kill. **The SUPPLY side is
+    # the band's idle workers alone** — `max_expedition_party_size` is a sampling axis, not a rules
+    # cap — and `expedition_useful_cap` is the DEMAND side the stepper takes the tighter of.
+    #
+    # **THE DEMAND SIDE IS ALSO A READING OF THE TABLE**, so under a kit mismatch the stepper falls
+    # back to supply alone: with no table for this kit the plateau is unknown, and clamping to another
+    # kit's plateau would refuse a party this one may well need.
+    #
+    # **THE CAP IS RESOLVED HERE, ABOVE THE CHART, AND THE ROW IT FEEDS IS MOUNTED FURTHER DOWN.** The
+    # chart's projection, its two crew targets and its verdict are all read against a CREW, so
+    # composing them ahead of the clamp states a verdict for a party the stepper beneath then refuses
+    # to show — visible for exactly one frame, on the render where autofill arms (a floor click, a
+    # committed drag, a fresh quarry), which is the render a player is always looking at. The forage
+    # sheet's twin ordering, and the assertion that judges both, are in `labor-ui.md`.
+    var assignable := idle
+    var capped := SourceForecast.expedition_useful_cap(band, herd, _send_hunt_floor, assignable) \
+        if trip_quoted else {"cap": assignable, "note": ""}
+    var cap: int = maxi(int(capped["cap"]), HudConst.WORKER_STEP)
+    if _compose.consume_party_autofill():
+        _send_expedition_count = cap
+    _send_expedition_count = clampi(_send_expedition_count, HudConst.WORKER_STEP, cap)
     # **THE CHART AND ITS DRAGGABLE FLOOR — the same builder and the same model the herd drawer's raid
     # uses**, because the two entry points compose one decision and had no business presenting it two
     # ways. `improvement` is `IMPROVEMENT_NONE` and the crew noun is the party's: a detached party
@@ -1857,21 +1879,8 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
                     rerender()))
     sheet.add_child(HudWidgets.alloc_hint_label(
         HudFormat.floor_hint(_send_hunt_floor, SourceForecast.LABOR_KIND_HUNT, true)))
-    # Party size, capped at the raid's max-useful plateau for THIS herd + floor (the herd drawer's
-    # own cap), so extra hunters can no longer be sent to stand idle at the kill. **The SUPPLY side is
-    # the band's idle workers alone** — `max_expedition_party_size` is a sampling axis, not a rules
-    # cap — and `expedition_useful_cap` is the DEMAND side the stepper takes the tighter of.
-    #
-    # **THE DEMAND SIDE IS ALSO A READING OF THE TABLE**, so under a kit mismatch the stepper falls
-    # back to supply alone: with no table for this kit the plateau is unknown, and clamping to another
-    # kit's plateau would refuse a party this one may well need.
-    var assignable := idle
-    var capped := SourceForecast.expedition_useful_cap(band, herd, _send_hunt_floor, assignable) \
-        if trip_quoted else {"cap": assignable, "note": ""}
-    var cap: int = maxi(int(capped["cap"]), HudConst.WORKER_STEP)
-    if _compose.consume_party_autofill():
-        _send_expedition_count = cap
-    _send_expedition_count = clampi(_send_expedition_count, HudConst.WORKER_STEP, cap)
+    # The stepper ROW, mounted where the form reads it — under the chart the settled count above was
+    # composed into, and above the kit picker the party carries.
     sheet.add_child(HudWidgets.build_party_stepper_row(_send_expedition_count, cap,
         func(n: int) -> void:
             _send_expedition_count = clampi(n, HudConst.WORKER_STEP, cap)
