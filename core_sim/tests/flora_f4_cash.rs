@@ -302,14 +302,21 @@ fn first_patch_tile(app: &App) -> (bevy::prelude::Entity, UVec2) {
     panic!("the pinned map must carry at least one forage patch");
 }
 
-/// Turn the patch at `coord` into a completed cotton **Field** standing at `biomass`.
-fn seat_cotton_field(app: &mut App, coord: UVec2, biomass: f32) {
+/// Turn the patch at `coord` into a completed **Field** of `species` standing at `biomass`. Written
+/// straight onto the registry: what is under test is the *harvest routing* of a finished rung, not
+/// the build that gets there.
+fn seat_field(app: &mut App, coord: UVec2, species: &str, biomass: f32) {
     let mut registry = app.world.resource_mut::<ForageRegistry>();
     let patch = registry.patch_mut(coord).expect("patch exists");
-    patch.species = Some("cotton".to_string());
+    patch.species = Some(species.to_string());
     patch.field_progress = 1.0;
     patch.carrying_capacity = biomass;
     patch.biomass = biomass;
+}
+
+/// Turn the patch at `coord` into a completed cotton **Field** standing at `biomass`.
+fn seat_cotton_field(app: &mut App, coord: UVec2, biomass: f32) {
+    seat_field(app, coord, "cotton", biomass);
 }
 
 fn spawn_forager(
@@ -424,6 +431,66 @@ fn a_cash_field_credits_trade_goods_and_leaves_food_and_fodder_alone() {
         cohort.stores.get(FODDER),
         scalar_zero(),
         "a cash crop pays no fodder"
+    );
+}
+
+/// **A HAY FIELD'S WHOLE PRODUCT RIDES ITS OWN ROW** (issue #449) — the case the third account was
+/// added for, and the mirror of the cash Field above.
+///
+/// `hay_grass` pays no provisions and no trade, so before `SourceYield::fodder` existed the row for
+/// a fully productive Field read `actual 0 · trade 0` and every compact yield readout in the client
+/// rendered `+0.00` — a live source indistinguishable from dead ground. The row now states its
+/// fodder, and states **the number the band's `FODDER` store was actually credited**: asserted as
+/// the store's own movement rather than against a re-derivation of `field_fodder`, per the §4.3
+/// rule, so a readout that recomputed its own quote would fail here.
+#[test]
+fn a_hay_field_publishes_the_fodder_it_credits_and_nothing_in_the_other_two_accounts() {
+    let mut app = spawn_world();
+    let (tile, coord) = first_patch_tile(&app);
+    let capacity = {
+        let labor = app.world.resource::<LaborConfigHandle>().get();
+        let ground = app.world.get::<Tile>(tile).expect("tile exists");
+        tile_forage_capacity(&labor.forage, ground)
+    };
+    seat_field(&mut app, coord, "hay_grass", capacity);
+    let keeper = spawn_forager(&mut app, tile, coord);
+
+    app.world.run_system_once(advance_labor_allocation);
+
+    let credited = app
+        .world
+        .get::<PopulationCohort>(keeper)
+        .expect("the keeper band still exists")
+        .stores
+        .get(FODDER)
+        .to_f32();
+    assert!(
+        credited > 0.0,
+        "the fixture must actually harvest hay, or the row assertions below are vacuous"
+    );
+
+    let row = app
+        .world
+        .get::<LaborAllocation>(keeper)
+        .expect("the band forages")
+        .last_yields
+        .first()
+        .expect("the Field assignment has a yield row")
+        .clone();
+    assert!(
+        (row.fodder - credited).abs() <= EPSILON,
+        "the row must publish the credited fodder, not recompute it: {} vs {credited}",
+        row.fodder
+    );
+    assert_eq!(
+        (row.actual, row.trade),
+        (0.0, 0.0),
+        "hay is no food and no cash — this is the row that read +0.00"
+    );
+    assert!(
+        band_trade_goods(&app, keeper) <= EPSILON,
+        "and the fodder must not have leaked into the trade store: {}",
+        band_trade_goods(&app, keeper)
     );
 }
 

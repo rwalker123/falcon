@@ -27,6 +27,12 @@ const EQUIPMENT_PAGE := &"equipment"
 const KITS_PAGE := &"kits"
 const PLACEHOLDER_PAGE := &"logs"
 
+## The run's exit status. **A clean run exits 0 and a run with any `FAIL` in it exits non-zero**, so
+## the status and the output agree — a harness that printed an error and still exited 0 was
+## indistinguishable from a green one to anything but a human reading stdout.
+const EXIT_OK := 0
+const EXIT_FAILED := 1
+
 ## The dirty state's edits, as `param label -> value`. Each value is a whole number of steps from its
 ## default, which is what a real click on the stepper produces.
 ##
@@ -45,6 +51,8 @@ const DIRTY_EDITS := {
 var _root: Control
 var _bg: ColorRect
 var _shell: WorkbenchShell
+# How many times `_fail` fired this run — the ONE input to the exit status (see `_finish`).
+var _failures := 0
 
 
 func _ready() -> void:
@@ -141,7 +149,24 @@ func _ready() -> void:
 	_shell.show_page(TUNING_PAGE)
 	await _settle()
 	_assert_staged_survives_un_edit()
-	get_tree().quit()
+	_finish()
+
+
+## The ONE failure sink, so `_failures` cannot drift from what was printed. Every caller passes the
+## text AFTER the `FAIL` token, which is what the output scanning keys on.
+func _fail(message: String) -> void:
+	_failures += 1
+	push_error("workbench_preview: FAIL — %s" % message)
+
+
+## **THE ONLY WAY OUT OF THIS HARNESS.** Every path that ends the run comes through here, so the
+## status is derived from the run's own tally in exactly one place.
+func _finish() -> void:
+	if _failures > 0:
+		print("workbench_preview: RUN FAILED — %d failure(s); see the FAIL lines above" % _failures)
+	else:
+		print("workbench_preview: run complete — no failures")
+	get_tree().quit(EXIT_FAILED if _failures > 0 else EXIT_OK)
 
 
 # ---- state driving ---------------------------------------------------------
@@ -152,7 +177,7 @@ func _tuning_page() -> ConfigTuningPage:
 	for node in _shell.find_children("*", "", true, false):
 		if node is ConfigTuningPage:
 			return node
-	push_error("workbench_preview: config tuning page not found")
+	_fail("config tuning page not found")
 	return null
 
 
@@ -169,7 +194,7 @@ func _apply_dirty_edits() -> void:
 			spin.value = DIRTY_EDITS[label]
 			moved += 1
 	if moved != DIRTY_EDITS.size():
-		push_error("workbench_preview: moved %d of %d dirty edits — labels drifted from the manifest"
+		_fail("moved %d of %d dirty edits — labels drifted from the manifest"
 			% [moved, DIRTY_EDITS.size()])
 
 
@@ -214,11 +239,11 @@ func _assert_patch_is_sparse() -> void:
 	page.overrides_requested.connect(func(patches: Dictionary) -> void: emitted.append(patches))
 	page._on_apply_pressed()
 	if emitted.size() != 1:
-		push_error("workbench_preview: expected 1 overrides_requested, got %d" % emitted.size())
+		_fail("expected 1 overrides_requested, got %d" % emitted.size())
 		return
 	var patches: Dictionary = emitted[0]
 	if patches != EXPECTED_PATCHES:
-		push_error("workbench_preview: patch is not the expected sparse shape:\n  got      %s\n  expected %s"
+		_fail("patch is not the expected sparse shape:\n  got      %s\n  expected %s"
 			% [patches, EXPECTED_PATCHES])
 		return
 	print("workbench_preview: assert OK — patch is sparse (%d kinds, %d pointers)"
@@ -250,7 +275,7 @@ func _assert_staged_survives_un_edit() -> void:
 	var sent := _install_fake_transport()
 	var spin := _spin_for(page, STAGED_PARAM)
 	if spin == null:
-		push_error("workbench_preview: no '%s' row — the manifest moved" % STAGED_PARAM)
+		_fail("no '%s' row — the manifest moved" % STAGED_PARAM)
 		return
 	var failed := 0
 
@@ -258,25 +283,25 @@ func _assert_staged_survives_un_edit() -> void:
 	page._on_apply_pressed()
 	if sent.size() != 1 or not sent[0].begins_with(WorkbenchVocab.COMMAND_SET_CONFIG_OVERRIDE):
 		failed += 1
-		push_error("workbench_preview: Apply sent %s, expected one %s"
+		_fail("Apply sent %s, expected one %s"
 			% [sent, WorkbenchVocab.COMMAND_SET_CONFIG_OVERRIDE])
 	if not page._apply_button.disabled:
 		failed += 1
-		push_error("workbench_preview: Apply is still live with nothing unsent")
+		_fail("Apply is still live with nothing unsent")
 
 	# The un-edit: back to the shipped default, which used to read as "nothing to do".
 	spin.value = STAGED_PARAM_DEFAULT
 	if page._revert_button.disabled:
 		failed += 1
-		push_error("workbench_preview: 'Revert all' is DEAD while the server still holds an override — it is the only control that can clear it")
+		_fail("'Revert all' is DEAD while the server still holds an override — it is the only control that can clear it")
 	if page._status.text == WorkbenchVocab.TUNING_CLEAN_STATUS:
 		failed += 1
-		push_error("workbench_preview: the status line claims '%s' while the server holds a staged override"
+		_fail("the status line claims '%s' while the server holds a staged override"
 			% WorkbenchVocab.TUNING_CLEAN_STATUS)
 	var patch: Dictionary = page.build_patches()
 	if not patch.get(STAGED_PARAM_KIND, {}).has(STAGED_PARAM_POINTER):
 		failed += 1
-		push_error("workbench_preview: the returned-to-default row is OMITTED from the patch (%s) — the server would keep the staged value" % patch)
+		_fail("the returned-to-default row is OMITTED from the patch (%s) — the server would keep the staged value" % patch)
 
 	# SECOND LEG: apply that un-edit. Now every row matches both its default AND what the server was
 	# told, so the only fact left is that the server is holding a file — which nothing about the rows
@@ -284,13 +309,13 @@ func _assert_staged_survives_un_edit() -> void:
 	page._on_apply_pressed()
 	if not page._apply_button.disabled:
 		failed += 1
-		push_error("workbench_preview: Apply is live with every row applied and at its default")
+		_fail("Apply is live with every row applied and at its default")
 	if page._revert_button.disabled:
 		failed += 1
-		push_error("workbench_preview: 'Revert all' is DEAD with all rows clean but the server still holding a staged override file — clearing it is unreachable")
+		_fail("'Revert all' is DEAD with all rows clean but the server still holding a staged override file — clearing it is unreachable")
 	if page._status.text != WorkbenchVocab.TUNING_STAGED_CLEARED_STATUS:
 		failed += 1
-		push_error("workbench_preview: status reads '%s', expected the staged-but-defaulted line '%s'"
+		_fail("status reads '%s', expected the staged-but-defaulted line '%s'"
 			% [page._status.text, WorkbenchVocab.TUNING_STAGED_CLEARED_STATUS])
 	if failed == 0:
 		print("workbench_preview: assert OK — an un-edited row keeps Revert reachable, the status honest, and the patch explicit")
@@ -348,7 +373,7 @@ func _assert_rows_fit() -> void:
 		return
 	var scroll := _content_scroll()
 	if scroll == null:
-		push_error("workbench_preview: no content scroll to measure rows against")
+		_fail("no content scroll to measure rows against")
 		return
 
 	var failed := 0
@@ -358,7 +383,7 @@ func _assert_rows_fit() -> void:
 		- 2.0 * WorkbenchVocab.CONTENT_PADDING
 	if scroll.size.x > nominal_width + FIT_TOLERANCE:
 		failed += 1
-		push_error("workbench_preview: content column is %.1fpx wider than the surface allows (%.1f > %.1f) — a row does not fit"
+		_fail("content column is %.1fpx wider than the surface allows (%.1f > %.1f) — a row does not fit"
 			% [scroll.size.x - nominal_width, scroll.size.x, nominal_width])
 	var row_limit := scroll.size.x - scroll.get_v_scroll_bar().size.x
 
@@ -374,18 +399,18 @@ func _assert_rows_fit() -> void:
 		checked += 1
 		if label.get_line_count() > 1:
 			failed += 1
-			push_error("workbench_preview: row label wraps to %d lines: '%s'"
+			_fail("row label wraps to %d lines: '%s'"
 				% [label.get_line_count(), label.text])
 		if label.size.x + FIT_TOLERANCE < label.get_minimum_size().x:
 			failed += 1
-			push_error("workbench_preview: row label is clipped (%.1f < %.1f): '%s'"
+			_fail("row label is clipped (%.1f < %.1f): '%s'"
 				% [label.size.x, label.get_minimum_size().x, label.text])
 		if line.size.x > row_limit + FIT_TOLERANCE:
 			failed += 1
-			push_error("workbench_preview: row runs under the scrollbar (%.1f > %.1f): '%s'"
+			_fail("row runs under the scrollbar (%.1f > %.1f): '%s'"
 				% [line.size.x, row_limit, label.text])
 	if checked == 0:
-		push_error("workbench_preview: no rows measured — the row shape moved")
+		_fail("no rows measured — the row shape moved")
 		return
 	if failed == 0:
 		print("workbench_preview: assert OK — %d rows fit at control width %.0f (widest row has %.0fpx to spare)"
@@ -555,7 +580,7 @@ func _equipment_page() -> EquipmentPage:
 				_remembered_equipment_page = node
 				break
 	if _remembered_equipment_page == null:
-		push_error("workbench_preview: equipment page not found")
+		_fail("equipment page not found")
 	return _remembered_equipment_page
 
 
@@ -566,7 +591,7 @@ func _kits_page() -> KitsPage:
 				_remembered_kits_page = node
 				break
 	if _remembered_kits_page == null:
-		push_error("workbench_preview: kits page not found")
+		_fail("kits page not found")
 	return _remembered_kits_page
 
 
@@ -675,15 +700,15 @@ func _assert_the_pages_print_a_config_no_script_names() -> void:
 	var roster: Array = config[WorkbenchVocab.CONFIG_KITS_KEY]
 	var first_kit: Dictionary = roster[0]
 	if not gear.has(CONFIG_INVENTED_FIELD):
-		push_error("workbench_preview: the fixture's '%s' block does not carry the invented field '%s' — this assertion would prove nothing"
+		_fail("the fixture's '%s' block does not carry the invented field '%s' — this assertion would prove nothing"
 			% [CONFIG_GEAR_BLOCK, CONFIG_INVENTED_FIELD])
 		return
 	if not config.has(CONFIG_INVENTED_BLOCK):
-		push_error("workbench_preview: the fixture carries no invented top-level block '%s' — this assertion would prove nothing"
+		_fail("the fixture carries no invented top-level block '%s' — this assertion would prove nothing"
 			% CONFIG_INVENTED_BLOCK)
 		return
 	if not first_kit.has(CONFIG_INVENTED_KIT_FIELD):
-		push_error("workbench_preview: the fixture's first roster entry does not carry the invented field '%s' — nothing would then pin the KITS page's body as generic"
+		_fail("the fixture's first roster entry does not carry the invented field '%s' — nothing would then pin the KITS page's body as generic"
 			% CONFIG_INVENTED_KIT_FIELD)
 		return
 
@@ -693,12 +718,12 @@ func _assert_the_pages_print_a_config_no_script_names() -> void:
 	var field_face := _config_row_face(gear_body, CONFIG_INVENTED_FIELD)
 	if field_face != expected_field_face:
 		failed += 1
-		push_error("workbench_preview: the config field '%s.%s' — which no GDScript names — did not render its value (wanted '%s', got '%s'). A hardcoded field list is back."
+		_fail("the config field '%s.%s' — which no GDScript names — did not render its value (wanted '%s', got '%s'). A hardcoded field list is back."
 			% [CONFIG_GEAR_BLOCK, CONFIG_INVENTED_FIELD, expected_field_face, field_face])
 	var invented_body := _config_block_body(page, CONFIG_INVENTED_BLOCK)
 	if invented_body == null:
 		failed += 1
-		push_error("workbench_preview: the whole config block '%s' — which no GDScript names — did not render at all. A hardcoded block list is back."
+		_fail("the whole config block '%s' — which no GDScript names — did not render at all. A hardcoded block list is back."
 			% CONFIG_INVENTED_BLOCK)
 	else:
 		var invented_block: Dictionary = config.get(CONFIG_INVENTED_BLOCK, {})
@@ -707,7 +732,7 @@ func _assert_the_pages_print_a_config_no_script_names() -> void:
 			var got := _config_row_face(invented_body, String(child_key))
 			if got != wanted:
 				failed += 1
-				push_error("workbench_preview: '%s.%s' did not render (wanted '%s', got '%s')"
+				_fail("'%s.%s' did not render (wanted '%s', got '%s')"
 					% [CONFIG_INVENTED_BLOCK, child_key, wanted, got])
 
 	# …and the same claim on the KITS page, inside the block whose title consumed two other keys: the
@@ -715,32 +740,32 @@ func _assert_the_pages_print_a_config_no_script_names() -> void:
 	var kit_body := _config_block_body(kits, CONFIG_HUNT_KIT_TITLE)
 	if kit_body == null:
 		failed += 1
-		push_error("workbench_preview: no roster block titled '%s' on the Kits page" % CONFIG_HUNT_KIT_TITLE)
+		_fail("no roster block titled '%s' on the Kits page" % CONFIG_HUNT_KIT_TITLE)
 	else:
 		var wanted_kit_face := WorkbenchWidgets.config_value_face(first_kit[CONFIG_INVENTED_KIT_FIELD])
 		var kit_face := _config_row_face(kit_body, CONFIG_INVENTED_KIT_FIELD)
 		if kit_face != wanted_kit_face:
 			failed += 1
-			push_error("workbench_preview: the kit field '%s' — which no GDScript names — did not render its value under '%s' (wanted '%s', got '%s'). The Kits page's title promotion has become a whitelist."
+			_fail("the kit field '%s' — which no GDScript names — did not render its value under '%s' (wanted '%s', got '%s'). The Kits page's title promotion has become a whitelist."
 				% [CONFIG_INVENTED_KIT_FIELD, CONFIG_HUNT_KIT_TITLE, wanted_kit_face, kit_face])
 
 	for path in CONFIG_PAGE_SOURCES:
 		var source := FileAccess.get_file_as_string(path)
 		if source.is_empty():
 			failed += 1
-			push_error("workbench_preview: could not read %s — the source scan is asserting nothing" % path)
+			_fail("could not read %s — the source scan is asserting nothing" % path)
 			continue
 		for invented in [CONFIG_INVENTED_FIELD, CONFIG_INVENTED_BLOCK, CONFIG_INVENTED_KIT_FIELD]:
 			if source.contains(invented):
 				failed += 1
-				push_error("workbench_preview: %s names '%s'. These three keys exist ONLY in this fixture; a shipped script naming one means the pages have started listing fields again."
+				_fail("%s names '%s'. These three keys exist ONLY in this fixture; a shipped script naming one means the pages have started listing fields again."
 					% [path, invented])
 
 	# The empty shapes, asserted here because they are the other half of "print what is there": an
 	# empty object and an empty array must SAY they are empty rather than draw a blank column.
 	if _config_row_face(page, CONFIG_EMPTY_BLOCK) != WorkbenchVocab.CONFIG_EMPTY:
 		failed += 1
-		push_error("workbench_preview: the empty block '%s' renders '%s', not the explicit '%s'"
+		_fail("the empty block '%s' renders '%s', not the explicit '%s'"
 			% [CONFIG_EMPTY_BLOCK, _config_row_face(page, CONFIG_EMPTY_BLOCK),
 				WorkbenchVocab.CONFIG_EMPTY])
 	if failed == 0:
@@ -768,23 +793,23 @@ func _assert_the_pages_partition_the_config() -> void:
 	var failed := 0
 	if not _page_states(kits, roster_block):
 		failed += 1
-		push_error("workbench_preview: the Kits page does not render the roster entry '%s'" % roster_block)
+		_fail("the Kits page does not render the roster entry '%s'" % roster_block)
 	if _config_row_face(kits, CONFIG_HUNT_JOB) != CONFIG_HUNT_KIT_ID:
 		failed += 1
-		push_error("workbench_preview: the Kits page does not state the '%s' job default as '%s' (got '%s')"
+		_fail("the Kits page does not state the '%s' job default as '%s' (got '%s')"
 			% [CONFIG_HUNT_JOB, CONFIG_HUNT_KIT_ID, _config_row_face(kits, CONFIG_HUNT_JOB)])
 	if _page_states(equipment, roster_block):
 		failed += 1
-		push_error("workbench_preview: the kit roster ('%s') rendered on the Equipment page, which owns everything the Kits page does NOT"
+		_fail("the kit roster ('%s') rendered on the Equipment page, which owns everything the Kits page does NOT"
 			% roster_block)
 
 	if not _page_states(equipment, CONFIG_INVENTED_BLOCK):
 		failed += 1
-		push_error("workbench_preview: the gear block '%s' does not render on the Equipment page"
+		_fail("the gear block '%s' does not render on the Equipment page"
 			% CONFIG_INVENTED_BLOCK)
 	if _page_states(kits, CONFIG_INVENTED_BLOCK):
 		failed += 1
-		push_error("workbench_preview: the gear block '%s' rendered on the Kits page, which owns only '%s' and '%s'"
+		_fail("the gear block '%s' rendered on the Kits page, which owns only '%s' and '%s'"
 			% [CONFIG_INVENTED_BLOCK, WorkbenchVocab.CONFIG_KITS_KEY,
 				WorkbenchVocab.CONFIG_DEFAULT_KITS_KEY])
 
@@ -796,17 +821,17 @@ func _assert_the_pages_partition_the_config() -> void:
 	var uses_faces := _config_row_faces(kits, CONFIG_USES_KEY)
 	if uses_faces.size() != roster.size():
 		failed += 1
-		push_error("workbench_preview: the Kits page rendered %d '%s' rows for a roster of %d entries"
+		_fail("the Kits page rendered %d '%s' rows for a roster of %d entries"
 			% [uses_faces.size(), CONFIG_USES_KEY, roster.size()])
 	var joined: String = WorkbenchVocab.CONFIG_LIST_SEPARATOR.join(
 		PackedStringArray(roster[0][CONFIG_USES_KEY]))
 	if not uses_faces.has(joined):
 		failed += 1
-		push_error("workbench_preview: '%s.%s' does not render its components on one row as '%s' — got %s"
+		_fail("'%s.%s' does not render its components on one row as '%s' — got %s"
 			% [CONFIG_HUNT_KIT_TITLE, CONFIG_USES_KEY, joined, uses_faces])
 	if not uses_faces.has(WorkbenchVocab.CONFIG_EMPTY):
 		failed += 1
-		push_error("workbench_preview: the bare kit's empty '%s' array renders no explicit '%s' — got %s"
+		_fail("the bare kit's empty '%s' array renders no explicit '%s' — got %s"
 			% [CONFIG_USES_KEY, WorkbenchVocab.CONFIG_EMPTY, uses_faces])
 	if failed == 0:
 		print("workbench_preview: assert OK — Kits draws the roster and the defaults, Equipment draws the %d other block(s), and neither draws the other's"
@@ -855,7 +880,7 @@ func _assert_the_kits_page_titles_each_entry_by_its_own_name() -> void:
 		var entry: Dictionary = roster[indices[slot]]
 		var wanted: Array = shapes[titles[slot]]
 		if entry.has(display_key) != bool(wanted[0]) or entry.has(id_key) != bool(wanted[1]):
-			push_error("workbench_preview: roster entry %d is not the shape '%s' stands for (display_name %s, id %s) — that title branch is untested"
+			_fail("roster entry %d is not the shape '%s' stands for (display_name %s, id %s) — that title branch is untested"
 				% [indices[slot], titles[slot], entry.has(display_key), entry.has(id_key)])
 			return
 
@@ -866,7 +891,7 @@ func _assert_the_kits_page_titles_each_entry_by_its_own_name() -> void:
 		var body := _config_block_body(kits, title)
 		if body == null:
 			failed += 1
-			push_error("workbench_preview: no roster block titled '%s' — the Kits page did not compose the title for entry %d"
+			_fail("no roster block titled '%s' — the Kits page did not compose the title for entry %d"
 				% [title, indices[slot]])
 			continue
 		# A key the title USED must be gone from the body; a key it could not use must still be there.
@@ -876,17 +901,17 @@ func _assert_the_kits_page_titles_each_entry_by_its_own_name() -> void:
 			var present := not _config_row_faces(body, key).is_empty()
 			if promoted and present:
 				failed += 1
-				push_error("workbench_preview: '%s' still carries a '%s' row — the title already said it, so the row is a repetition"
+				_fail("'%s' still carries a '%s' row — the title already said it, so the row is a repetition"
 					% [title, key])
 			elif not promoted and _entry_states(roster[indices[slot]], key) and not present:
 				failed += 1
-				push_error("workbench_preview: '%s' lost its '%s' row, which the title never used — the promotion is suppressing more than it promoted"
+				_fail("'%s' lost its '%s' row, which the title never used — the promotion is suppressing more than it promoted"
 					% [title, key])
 		# Every entry keeps the keys the title had no claim on.
 		for kept in ["jobs", CONFIG_USES_KEY]:
 			if _config_row_faces(body, kept).is_empty():
 				failed += 1
-				push_error("workbench_preview: '%s' has no '%s' row — the block body is not the generic tree"
+				_fail("'%s' has no '%s' row — the block body is not the generic tree"
 					% [title, kept])
 	if failed == 0:
 		print("workbench_preview: assert OK — the Kits page titles all %d entries by their own names (both keys, id only, name only, and the '%s' fallback), suppressing only what each title used"
@@ -913,7 +938,7 @@ func _assert_equipment_drops_the_world() -> void:
 		return
 	if not _page_states(equipment, CONFIG_INVENTED_BLOCK) \
 			or not _page_states(kits, CONFIG_HUNT_KIT_TITLE):
-		push_error("workbench_preview: nothing was on the config pages to drop — the reset claim would pass vacuously")
+		_fail("nothing was on the config pages to drop — the reset claim would pass vacuously")
 		return
 
 	_shell.reset_pages()
@@ -921,18 +946,18 @@ func _assert_equipment_drops_the_world() -> void:
 	var failed := 0
 	if _page_states(equipment, CONFIG_INVENTED_BLOCK):
 		failed += 1
-		push_error("workbench_preview: the gear block '%s' survived the world boundary on the Equipment page"
+		_fail("the gear block '%s' survived the world boundary on the Equipment page"
 			% CONFIG_INVENTED_BLOCK)
 	if _page_states(kits, CONFIG_HUNT_KIT_TITLE):
 		failed += 1
-		push_error("workbench_preview: the kit roster survived the world boundary on the Kits page")
+		_fail("the kit roster survived the world boundary on the Kits page")
 	if not _page_states(equipment, WorkbenchVocab.EQUIPMENT_NO_CONFIG):
 		failed += 1
-		push_error("workbench_preview: the Equipment page does not say '%s' after reset_pages()"
+		_fail("the Equipment page does not say '%s' after reset_pages()"
 			% WorkbenchVocab.EQUIPMENT_NO_CONFIG)
 	if not _page_states(kits, WorkbenchVocab.KITS_NO_CONFIG):
 		failed += 1
-		push_error("workbench_preview: the Kits page does not say '%s' after reset_pages()"
+		_fail("the Kits page does not say '%s' after reset_pages()"
 			% WorkbenchVocab.KITS_NO_CONFIG)
 	if failed == 0:
 		print("workbench_preview: assert OK — reset_pages() drops the config on both pages, including the one that is not on screen")
@@ -955,7 +980,7 @@ func _assert_equipment_catches_up_on_page_switch() -> void:
 	if page == null:
 		return
 	if _page_states(page, CONFIG_INVENTED_BLOCK):
-		push_error("workbench_preview: the Equipment page is not empty before the page-switch replay — the catch-up claim would pass vacuously")
+		_fail("the Equipment page is not empty before the page-switch replay — the catch-up claim would pass vacuously")
 		return
 
 	# The frame arrives while the TUNING page is active, so it is fanned at that page and never at this
@@ -967,11 +992,11 @@ func _assert_equipment_catches_up_on_page_switch() -> void:
 	var failed := 0
 	if not _page_states(page, CONFIG_INVENTED_BLOCK):
 		failed += 1
-		push_error("workbench_preview: the gear block '%s' is missing after switching to the Equipment page — the page never saw the frame that landed while another page was active"
+		_fail("the gear block '%s' is missing after switching to the Equipment page — the page never saw the frame that landed while another page was active"
 			% CONFIG_INVENTED_BLOCK)
 	if _page_states(page, WorkbenchVocab.EQUIPMENT_NO_CONFIG):
 		failed += 1
-		push_error("workbench_preview: the Equipment page still says '%s' after the page switch — the config did not come back with the replayed frame"
+		_fail("the Equipment page still says '%s' after the page switch — the config did not come back with the replayed frame"
 			% WorkbenchVocab.EQUIPMENT_NO_CONFIG)
 	if failed == 0:
 		print("workbench_preview: assert OK — a page switched to between frames catches up on the cached frame ('%s')"
@@ -996,7 +1021,7 @@ func _assert_equipment_fits(page: WorkbenchPage, id: StringName) -> void:
 		return
 	var scroll := _content_scroll()
 	if scroll == null:
-		push_error("workbench_preview: no content scroll to measure the %s page against" % id)
+		_fail("no content scroll to measure the %s page against" % id)
 		return
 
 	var failed := 0
@@ -1004,7 +1029,7 @@ func _assert_equipment_fits(page: WorkbenchPage, id: StringName) -> void:
 		- 2.0 * WorkbenchVocab.CONTENT_PADDING
 	if scroll.size.x > nominal_width + FIT_TOLERANCE:
 		failed += 1
-		push_error("workbench_preview: the %s page's content column is %.1fpx wider than the surface allows (%.1f > %.1f) — a label does not fit"
+		_fail("the %s page's content column is %.1fpx wider than the surface allows (%.1f > %.1f) — a label does not fit"
 			% [id, scroll.size.x - nominal_width, scroll.size.x, nominal_width])
 
 	var checked := 0
@@ -1017,10 +1042,10 @@ func _assert_equipment_fits(page: WorkbenchPage, id: StringName) -> void:
 		widest = maxf(widest, label.get_minimum_size().x)
 		if label.size.x + FIT_TOLERANCE < label.get_minimum_size().x:
 			failed += 1
-			push_error("workbench_preview: %s label is clipped (%.1f < %.1f): '%s'"
+			_fail("%s label is clipped (%.1f < %.1f): '%s'"
 				% [id, label.size.x, label.get_minimum_size().x, label.text])
 	if checked == 0:
-		push_error("workbench_preview: no non-wrapping %s labels measured — the block shape moved" % id)
+		_fail("no non-wrapping %s labels measured — the block shape moved" % id)
 		return
 	if failed == 0:
 		print("workbench_preview: assert OK — %d non-wrapping %s labels fit (the widest needs %.0f of %.0fpx)"
@@ -1074,10 +1099,10 @@ func _save(name: String) -> void:
 		if image == null:
 			return
 	if image.get_size() != PREVIEW_SIZE:
-		push_error("workbench_preview: %s captured at %s after %d retries, not %s — the frame is not comparable with the others"
+		_fail("%s captured at %s after %d retries, not %s — the frame is not comparable with the others"
 			% [name, image.get_size(), CAPTURE_RETRIES, PREVIEW_SIZE])
 	var err := image.save_png("%s/%s.png" % [OUT_DIR, name])
 	if err != OK:
-		push_error("workbench_preview: failed to save %s (err %d)" % [name, err])
+		_fail("failed to save %s (err %d)" % [name, err])
 	else:
 		print("workbench_preview: saved ", name, ".png")

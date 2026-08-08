@@ -340,6 +340,18 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 "realized_trade_yield",
                 assignment.realizedTradeYield() as f64,
             );
+            // The FEED currency (issue #449) — the third account beside the food and trade pairs
+            // above, exactly the fodder the band's `FODDER` store was credited with. PLANT-ONLY:
+            // no animal pays fodder, so a hunt row's `0` here is a structural zero rather than a
+            // gap, and a sown hay Field (no provisions, no trade) states its whole product through
+            // this key alone instead of reading `+0.00`.
+            // **There is no `realized_fodder_yield` twin, deliberately.** `realized_trade_yield`
+            // exists because the ANIMAL web projects a steady rate; fodder is paid by the PLANT web
+            // alone, whose projection is the documented gap that already leaves `realized_trade_yield`
+            // at 0 on every forage source — so a projected-fodder field would be a constant zero on
+            // the only web that can pay it. This actual IS the honest rate, and the client reads it
+            // with no fallback (`SourceForecast.fodder_rate_of`).
+            let _ = entry.insert("fodder_yield", assignment.fodderYield() as f64);
             // WHEN that steady average actually lands: index i = the food delivered i+1 turns from
             // now, length = arrivals_horizon_turns (20), 0.0 on a turn nothing arrives. A big-game
             // hunt reads lumpy (gaps between hauls); a forage patch is positive in every slot. EMPTY

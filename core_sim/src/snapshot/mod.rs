@@ -1395,6 +1395,8 @@ mod tests {
                 SourceYield {
                     trade: 0.0,
                     realized_trade: 0.0,
+                    // A staple gather: no fodder crop in the basket.
+                    fodder: 0.0,
                     actual: 2.5,
                     sustainable: 2.5,
                     wasted: 0.0,
@@ -1410,6 +1412,8 @@ mod tests {
                 SourceYield {
                     trade: 0.0,
                     realized_trade: 0.0,
+                    // A hunt: no animal pays fodder.
+                    fodder: 0.0,
                     actual: 0.5,
                     sustainable: 0.25,
                     wasted: 0.0,
@@ -1464,6 +1468,92 @@ mod tests {
         // The steady realized rate carries onto each row too (the client's headline "Food /turn").
         assert!((state.labor_assignments[0].realized_yield - 2.5).abs() < 1e-5);
         assert!((state.labor_assignments[1].realized_yield - 0.25).abs() < 1e-5);
+    }
+
+    /// **A fodder-only source publishes its fodder and moves `food_income` by nothing** (issue #449).
+    ///
+    /// The shape the field exists for, in miniature: a sown hay Field pays no provisions and no trade
+    /// and real fodder, so its row must state that fodder rather than the `+0.00` every compact
+    /// readout showed. And it must state it *beside* the ledger, never in it — `food_income` is one
+    /// side of the pinned larder identity
+    /// `larder_delta == food_income − food_consumption − pen_feed_upkeep`, and fodder credits the
+    /// band's `FODDER` store without ever touching the larder, so the income here is the hunt's
+    /// alone. The hunt row is the control: no animal pays fodder, so its `0.0` is structural.
+    #[test]
+    fn a_fodder_only_source_publishes_its_fodder_without_moving_food_income() {
+        /// The whole product of a sown hay Field — no provisions, no trade, real fodder.
+        const HAY_FODDER: f32 = 3.25;
+        /// The food the hunt beside it lands: the ONLY contributor to `food_income` in this fixture,
+        /// so any fodder that leaked into the larder sum would show up as a mismatch here.
+        const HUNT_FOOD: f32 = 0.5;
+        /// Float slack on a ledger sum of two published `f32`s.
+        const LEDGER_EPSILON: f32 = 1e-5;
+
+        let allocation = LaborAllocation {
+            assignments: vec![
+                LaborAssignment {
+                    target: LaborTarget::Forage {
+                        tile: UVec2::new(0, 0),
+                        floor: 0.5,
+                        species: Some("hay_grass".to_string()),
+                    },
+                    workers: 10,
+                    improvement: None,
+                    kit: None,
+                },
+                LaborAssignment {
+                    target: LaborTarget::Hunt {
+                        fauna_id: "game_1".to_string(),
+                        floor: 0.5,
+                    },
+                    workers: 5,
+                    improvement: None,
+                    kit: None,
+                },
+            ],
+            last_yields: vec![
+                SourceYield {
+                    fodder: HAY_FODDER,
+                    ..SourceYield::ZERO
+                },
+                SourceYield {
+                    actual: HUNT_FOOD,
+                    ..SourceYield::ZERO
+                },
+            ],
+            last_pen_feed_upkeep: 0.0,
+            last_raid_forfeit: 0.0,
+        };
+        let (cohort, allocation) = food_test_cohort(
+            Scalar::from_f32(0.0),
+            Scalar::from_f32(30.0),
+            Scalar::from_f32(0.0),
+            allocation,
+        );
+        let state = capture_food_state(&cohort, &allocation);
+
+        assert!(
+            (state.labor_assignments[0].fodder_yield - HAY_FODDER).abs() < LEDGER_EPSILON,
+            "the hay row must publish the fodder it was credited: {}",
+            state.labor_assignments[0].fodder_yield
+        );
+        assert_eq!(
+            (
+                state.labor_assignments[0].actual_yield,
+                state.labor_assignments[0].trade_yield
+            ),
+            (0.0, 0.0),
+            "a hay Field's whole product is fodder — this is the row that read +0.00"
+        );
+        assert_eq!(
+            state.labor_assignments[1].fodder_yield, 0.0,
+            "no animal pays fodder, so a hunt row's zero is structural"
+        );
+        assert!(
+            (state.food_income - HUNT_FOOD).abs() < LEDGER_EPSILON,
+            "food_income stays Σ actual — fodder never joins the larder sum: {}",
+            state.food_income
+        );
     }
 
     /// An allocation with no telemetry yet (empty `last_yields`) reports zero food income and zero

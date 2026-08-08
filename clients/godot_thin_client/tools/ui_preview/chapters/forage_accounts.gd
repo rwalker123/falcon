@@ -6,6 +6,7 @@ extends RefCounted
 ## lists it. **The order is load-bearing** — states render into one long-lived `HudLayer`, so a
 ## chapter moved is a set of frames changed. See `.claude/rules/client/test-harnesses.md`.
 
+const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
@@ -580,6 +581,50 @@ func _committed_hay_meadow_tile_fixture() -> Dictionary:
 	tile["patch_committed_species"] = "hay_grass"
 	tile["patch_committed_display_name"] = "Hay Grass"
 	return tile
+
+## ---- THE FODDER-ONLY WORKED SOURCE (issue #449) ------------------------------------------------
+## What the sim pays this crew per turn. It is the ONLY account the assignment carries, which is the
+## whole point: a sown hay Field publishes zero provisions and zero trade, and the compact readouts
+## rendered that as `+0.00 /turn` — a tile that reads as dead while it fills the band's fodder store.
+const FODDER_STANDING_RATE := 0.40
+## The crew on it. Three rather than one, so the summary's `N foragers` is plural and the row cannot be
+## mistaken for the single-worker degenerate case.
+const FODDER_STANDING_FORAGERS := 3
+## The readout's whole `label_suffix`, spelled out rather than composed through `yield_components` —
+## a needle built by the code under test agrees with whatever that code emits. The LEADING SPACE is the
+## readout's own (it joins the suffix to the crew clause), and the fodder magnitude is UNSIGNED, which
+## is `yield_components`' rule for this account and not an omission.
+const FODDER_STANDING_SUFFIX := " 0.40 fodder"
+## The same clause as the rendered drawer line carries it.
+const FODDER_STANDING_CLAUSE := "0.40 fodder"
+## The tooltip's fodder clause, which reuses the rung tooltips' own wording rather than spelling the
+## account a fourth way — hence the sign and the unit that the compact face does without.
+const FODDER_STANDING_TOOLTIP_CLAUSE := "+0.40 fodder/turn"
+
+## THE ASSIGNMENT ITSELF, so the band fixture and the readout assertion cannot describe two different
+## crews. `has_yield` is the one key `source_yield_readout` reads that is not on the wire assignment;
+## the drawer derives it from `actual_yield`'s presence, so the zero has to be PRESENT rather than
+## absent — a source that produced no food is not a source the wire never described.
+func _fodder_field_assignment() -> Dictionary:
+	return {
+		"kind": SourceForecast.LABOR_KIND_FORAGE, "workers": FODDER_STANDING_FORAGERS,
+		"workers_needed": FODDER_STANDING_FORAGERS,
+		"target_x": int(_hay_meadow_tile_fixture()["x"]), "target_y": int(_hay_meadow_tile_fixture()["y"]),
+		"floor": SourceForecast.FLOOR_FOOD_PEAK,
+		"actual_yield": 0.0, "sustainable_yield": 0.0, "realized_yield": 0.0,
+		# Both trade keys present and zero, the way the wire ships them, so the fodder term is reached
+		# through the ordinary render-only-when-non-zero gate rather than through an absent key.
+		"trade_yield": 0.0, "realized_trade_yield": 0.0,
+		"fodder_yield": FODDER_STANDING_RATE,
+		"overdraws": false, "has_yield": true,
+	}
+
+## The player band WORKING that Field, and nothing else — so the drawer's standing summary on the hay
+## meadow is the frame's whole subject.
+func _fodder_field_band_fixture() -> Dictionary:
+	var band: Dictionary = BandFx.forage_range_bands()[0]
+	band["labor_assignments"] = [_fodder_field_assignment()]
+	return band
 
 func run(harness) -> void:
 	h = harness
@@ -1371,3 +1416,39 @@ func run(harness) -> void:
 	}])
 	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
 	h._hud._compose.set_forage_species("")
+
+	# State forage_fodder_standing — THE COMPACT READOUT ON A FODDER-ONLY SOURCE (issue #449), i.e. the
+	# state every surface in this arc exists for: a WORKED hay meadow whose take is feed and neither
+	# provisions nor trade. The drawer's closed standing summary composes from the SAME
+	# `SourceForecast.source_yield_readout` the Band panel's work rows do, so this frame and that board
+	# cannot state different products for one assignment — and before this it read `+0.00 /turn` on a
+	# tile that was filling the band's fodder store every turn.
+	var standing_band: Dictionary = h._hud._band_labor._player_band
+	var standing_roster: Array = h._hud._band_labor._player_bands
+	h._hud.close_compose_sheet()
+	h._hud._band_labor._player_bands = []
+	h._hud._band_labor._player_band = _fodder_field_band_fixture()
+	h._hud._compose.reset_forage_source()
+	h._hud._compose.set_forage_band(-1)
+	h._show_tile(wild_hay)
+	await h._settle()
+	await h._save("forage_fodder_standing")
+	var fodder_readout := SourceForecast.source_yield_readout(
+		_fodder_field_assignment(), SourceForecast.LABOR_KIND_FORAGE)
+	# EQUALITY, not `contains`: half the claim is what the suffix must NOT also say. A `+0.00 /turn`
+	# leading it is exactly the reading this arc removed, and a containment test passes with it there.
+	h._assert_hud("a fodder-only source's readout states its feed rate ALONE (got \"%s\")"
+		% String(fodder_readout["label_suffix"]),
+		String(fodder_readout["label_suffix"]) == FODDER_STANDING_SUFFIX)
+	h._assert_hud("…and its tooltip names the account it credits (got \"%s\")"
+		% String(fodder_readout["tooltip"]),
+		String(fodder_readout["tooltip"]).contains(FODDER_STANDING_TOOLTIP_CLAUSE))
+	h._assert_hud("…and the rendered drawer summary carries it",
+		Q.has_label_containing(h._hud, FODDER_STANDING_CLAUSE))
+	# Hand the chapter's own subject and roster back, so the states after this one render against the
+	# band and the tile this block borrowed rather than against a hay Field nobody after it works.
+	h._hud._band_labor._player_bands = standing_roster
+	h._hud._band_labor._player_band = standing_band
+	h._hud._compose.reset_forage_source()
+	h._show_tile(committed_hay)
+	await h._settle()

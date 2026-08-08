@@ -32,6 +32,9 @@ pub(crate) fn labor_assignment_to_state(
         // The other currency, beside the food it never joins (issue #337).
         trade_yield: yields.trade,
         realized_trade_yield: yields.realized_trade,
+        // The feed currency (#449) — the value the band's `FODDER` store was credited, published
+        // verbatim so the compact readout can state a hay Field's whole product.
+        fodder_yield: yields.fodder,
         // **The band the two scalars above sit in the middle of** (§6.4). A seeded row carries the
         // real distribution; a resolved row carries the point it paid.
         actual_yield_low: yields.range.low,

@@ -1613,11 +1613,29 @@ produce anything. **A band with no trade-paying source renders exactly as it did
 `_work_component_sum(models, key)` is the zone's ONE summing primitive, so head and chips add the same
 rows the same way.
 
-**"Sort by yield" is TWO TIERS, not a raw magnitude sort** (`_work_sorts_before`): food-paying sources
-first by their food figure descending, then trade-only sources by their trade figure descending.
-Sorting on food *alone* was the bug — it interleaved every trade-only source among the zero-food rows
-at the bottom of the board, off page one on a busy band, the same "an inedible quarry is worth
-nothing" reading the per-row work removed. But ranking them by raw displayed magnitude is a DIFFERENT
+**THE FODDER TOTAL IS A THIRD SIBLING (issue #449), on exactly that argument one account further out.**
+Fodder credits the band's `FODDER` store and never the larder, so folding it into the food figure would
+break the same identity — and leaving it out made the header visibly not add up on a band working a
+sown hay Field, whose one source pays feed every turn and read as producing nothing. So the head can
+carry all three (`2 sources +0.20 /turn ⇄ +0.04 +0.40 fodder`, `WORK_FODDER_TOTAL_TOOLTIP` making the
+beside-not-in point in the trade tooltip's own words), each rendered only when non-zero, and a chip
+covering only hay-bearing patches reads `🌿 1 · 0.40 fodder`. **The word, never a glyph** — fodder has
+none. **A hunt row's fodder is a structural zero**, no animal being harvested for feed, so nothing on
+the animal web moves. Frames: `band_panel_work_fodder` for the positive (its board carries the Field
+AND an ordinary deer hunt, so all three siblings are in one head) and `band_panel_work_trade_totals`
+for the paired negative — a head that rendered the total unconditionally passes every claim made on a
+band that actually grows hay.
+
+**"Sort by yield" is ONE TIER PER ACCOUNT, not a raw magnitude sort** (`_work_sorts_before`):
+food-paying sources first by their food figure descending, then trade payers by their trade figure
+descending, then fodder payers by theirs — with the sources paying nothing in any account last, where
+they belong. Sorting on food *alone* was the bug — it interleaved every trade-only source among the
+zero-food rows at the bottom of the board, off page one on a busy band, the same "an inedible quarry
+is worth nothing" reading the per-row work removed. **The tier list grows with the accounts, and
+issue #449 is the proof**: while the sort was food-then-trade, a sown hay Field published `0.00` in
+both and sank into the pays-nothing tie at the bottom of the board — the same failure, against the
+same control, one account later. A new account means a new tier here, in the same order the readouts
+state them. But ranking them by raw displayed magnitude is a DIFFERENT
 error and must not be "fixed" back to it: a wolf's `0.22` trade above a patch's `0.15` food compares
 two quantities the sim publishes **no exchange rate** between, and under a control labelled *sort by
 yield* that asserts the wolf is the more productive source — a claim the game does not make and the
@@ -1656,17 +1674,21 @@ patch, a herd and a Tended Patch as **Forage → Hunt → Tend**: the forage kin
 hunt block wedged between. `WORK_FILTER_FORAGE` selects on `kind == "forage"` — *both* labels — so
 that board contradicts the very chips above it. `band_panel_rung_ready` already stages this mix.
 
-Sorting on `kind` means no third label prefix can break it. The kind test is the same **boolean-tier
-idiom** `_work_sorts_before` uses, which is exact for the two kinds that exist; a third would need an
-explicit rank, since a boolean cannot express one.
+Sorting on `kind` means no third label prefix can break it. The kind test is a **boolean tier**, which
+is exact for the two kinds that exist; a third kind would need an explicit rank, since a boolean
+cannot express one. `_work_sorts_before` was the same idiom until fodder made it three — which is the
+worked example of that limit, not an exception to it: its tiers are now a cascade of
+`has_component` tests, one per account, precisely because a bool could not say "food, else trade,
+else fodder".
 
 **BOTH comparators tiebreak on the model's `key`, and that is a correctness fix, not tidiness.**
 `sort_custom` is **not stable** in Godot, and a tie is reachable in each mode: two herds can carry the
 same label (two "Wild Boar" herds produce identical `"Hunt %s"` strings), and two sources can carry
-the same rate — two patches at one food figure in the food tier, and every source paying **neither**
-component sitting at `0.0` together in the trade tier. (Not "every source paying no trade": the tier
-test is `has_component(rate)`, the FOOD figure, so a patch paying food and no trade is in the food
-tier and never reaches the trade comparison.) Without the tiebreak neither sort is a total order, so
+the same rate — two patches at one food figure in the food tier, and every source paying **nothing in
+any** account sitting at `0.0` together in the LAST tier. (Not "every source paying no food": each
+tier's test is `has_component` on *that tier's own* figure, so a patch paying food and no trade is in
+the food tier and never reaches the trade comparison, and a hay Field paying only feed is in the
+fodder tier and never reaches the pays-nothing tie.) Without the tiebreak neither sort is a total order, so
 tied rows could swap on any unrelated re-render — a snapshot tick, a zone resize — which is the same
 jump this section exists to remove, just triggered by something other than the pointer. `key` is the
 source identity
