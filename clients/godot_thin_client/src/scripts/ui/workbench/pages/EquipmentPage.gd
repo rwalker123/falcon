@@ -7,14 +7,17 @@ class_name EquipmentPage
 ##
 ## **IT NAMES NO FIELD.** The page is defined by subtraction — "everything that is not
 ## `WorkbenchVocab.CONFIG_KITS_KEY` or `CONFIG_DEFAULT_KITS_KEY`" — and the tree under each entry is
-## walked blind by `WorkbenchWidgets.build_config_object`. A fourth gear block added to
-## `equipment.json` therefore appears here with no edit, a renamed one renames itself on screen, and
-## a new field inside an existing block arrives with its own row. The page it replaced listed the
-## fields by hand, which is a list that goes stale silently: a renamed key simply stops drawing.
+## walked blind by `WorkbenchWidgets.build_config_object`. A new ITEM added to `equipment.json`'s
+## `items` table therefore appears here with no edit, a renamed one renames itself on screen, an
+## `effects` entry that gains a mass bound arrives with its own row, and so would a whole new
+## top-level block. The page it replaced listed the fields by hand, which is a list that goes stale
+## silently: a renamed key simply stops drawing. **That is not hypothetical — the three named blocks
+## it was written against (`hunting_kit` / `sled_kit` / `basket_kit`) were replaced by the `items`
+## table one release later, and this page needed no edit at all.**
 ##
-## The keys are printed EXACTLY as the config spells them (`wear_per_biomass_hauled`, never
-## "Wear per biomass hauled"), because the reader's next move is to search the config file for the
-## string they just read.
+## The keys are printed EXACTLY as the config spells them (`starting_durability`, never "Starting
+## durability"), because the reader's next move is to search the config file for the string they
+## just read.
 ##
 ## Pure read side: no command, no schema, no sim. The live kit state a band resolves to is the Band
 ## panel's, not this surface's.

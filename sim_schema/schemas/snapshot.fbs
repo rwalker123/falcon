@@ -795,8 +795,11 @@ table PopulationCohortState {
   // remaining condition.
   //
   // Remaining condition on the equipment.json 0-100 scale. 0 = dry.
-  huntingKitDurability:float = 0;   // spears; wears per ANIMAL KILLED
-  sledKitDurability:float = 0;      // sled;   wears per BIOMASS HAULED HOME FROM A HUNT
+  // RETIRED, replaced by kitItemConditions below (one row per item, config-driven). Marked
+  // deprecated rather than deleted because FlatBuffers field ids are POSITIONAL: removing one
+  // renumbers every field after it and silently mis-reads an old buffer.
+  huntingKitDurability:float = 0 (deprecated);
+  sledKitDurability:float = 0 (deprecated);
   // The RESOLVED tiers, so the client renders the band's real numbers rather than re-deriving them
   // from the durabilities and the config it does not have.
   //   - hunterAttack: this band's per-hunter combat `attack` (creatures.json person = 1 unequipped,
@@ -812,7 +815,7 @@ table PopulationCohortState {
   // The forage web's half. It is NOT a second reading of the two fields above: a band can be out of
   // baskets with its sled untouched, and a client that renders huntCarryPerWorkerBiomass on a
   // gathering row is repeating the defect this split corrected.
-  basketKitDurability:float = 0;        // baskets; wears per BIOMASS GATHERED
+  basketKitDurability:float = 0 (deprecated);   // see kitItemConditions
   // This band's per-GATHERER throughput, BEFORE the tile's seasonal weight (multiply by the food
   // module's seasonalWeight for the effective rate, exactly as ForagePatchState.perWorkerBiomass
   // already is). Equipped = labor_config forage.per_worker_biomass_capacity (8.0); bare-handed =
@@ -862,6 +865,11 @@ table PopulationCohortState {
   // Quoting the horizon alone would understate the trip by the entire walk — a number wrong in the
   // REASSURING direction, which is worse than the "many" it replaces.
   expeditionForecastHorizonTurns:uint = 0;
+  // --- THE TOE, ONE ROW PER ITEM (appended last) -------------------------------------------------
+  // Replaces huntingKitDurability / sledKitDurability / basketKitDurability above, which are now
+  // deprecated. See the KitItemCondition table for what a row means and what must NOT be inferred
+  // from it.
+  kitItemConditions:[KitItemCondition];
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).
@@ -2318,6 +2326,31 @@ table HerdTelemetryState {
   // sim's `hunt_engage_workers` returns no crew for it. A **pen** is the other unbounded case and
   // publishes `0` for the same reason: a penned animal is not stalked.
   engageRate:float = 0;
+  // --- THE RETREAT, AS A TERM (appended) --------------------------------------------------------
+  // **What FRACTION of the animals a party reaches actually stay to be fought** — `1 - wariness`
+  // (`SpeciesDef.combat.wariness`, 0.10 on a mammoth that stands and fights up to 0.85 on a gazelle
+  // that survives by not being there). A pre-commit reading is incomplete without it: a spear party
+  // on a Rabbit Warren reaches ten animals a hunter and keeps two and a half.
+  //
+  // IT SHIPS AS A TERM FOR THE SAME REASON `engageRate` DOES, and the distinction matters because
+  // the schema previously refused to publish `wariness`: what was refused was a client-side copy of
+  // the TAKE MODEL. This is one linear factor on the engagement -
+  //
+  //   stayers(workers, rung) = workers * engageRate * <rung>BuildFraction * stayFraction
+  //
+  // - exactly the shape of the carry and engagement terms beside it, and a client evaluating it
+  //   lands where the sim would. THE NON-LINEAR HALVES REMAIN THE SIM'S ANSWER: the whole-animal
+  //   quantiser's floor(), the fight's damage/durability division, and `combat_config.hit_chance`,
+  //   which is still deliberately NOT published. See "THE BOUNDARY" in
+  //   `.claude/rules/core_sim/yield-forecast.md`.
+  //
+  // A KIT MULTIPLIES IT through `KitOption.dispersion`: effective = clamp(1 - (1 - stayFraction) *
+  // dispersion, 0, 1). A device that is not there to be seen (dispersion 0) keeps everything it
+  // reaches, which is the whole difference between the trapping kit and a spear party.
+  //
+  // `1` MEANS NOTHING BREAKS OFF and is the honest reading for a source with no retreat stage - a
+  // pen, and the entire plant web, which never publishes this field at all.
+  stayFraction:float = 1;
   // --- DURABILITY (appended, docs/plan_hunt_through_combat.md 4.2 / 6.5) -------------------------
   // HOW MUCH DAMAGE ONE ANIMAL OF THIS SPECIES SOAKS BEFORE IT GOES DOWN (SpeciesDef.combat
   // .durability). The last term needed to explain the combat gate BEFORE a hunt is launched, which
@@ -2581,6 +2614,25 @@ table PopulationSection {
 // "none" IS AN ORDINARY ROSTER ENTRY, not a sentinel: it grants nothing, so its tiers are the
 // unequipped ones throughout and a party sent with it spends no durability on any component.
 // Do not special-case its id.
+// ONE ITEM'S REMAINING CONDITION in a band's TOE - a row of
+// PopulationCohortState.kitItemConditions, replacing the three fixed hunting/sled/basket floats.
+//
+// A LIST because the item table is CONFIG: the trapping kit's `traps` could not have been added
+// to a fixed field set without a schema edit, and the next item cannot either. A client should
+// render whatever rows arrive rather than looking for known ids.
+//
+// Driven by the CONFIG's item table, not by the band's sparse wear ledger, so an item the band
+// has never used reads as FULL rather than going missing.
+//
+// remaining is on equipment.json's 0-100 scale, clamped at 0. 0 = DRY: the role has stepped down
+// to its unequipped tier and STAYS there (nothing replenishes an item this slice). Performance is
+// FLAT until expiry - durability and performance are orthogonal axes - so do NOT scale any
+// readout by this number. It says how much life is left, never how well the item works.
+table KitItemCondition {
+  itemId:string;
+  remaining:float = 0;
+}
+
 table KitOption {
   // Stable roster id — what `assign_labor kit <id>` / `send_hunt_expedition kit <id>` name, and what
   // LaborAssignment.kitId / PopulationCohortState.kitId / the estimate-table kit ids carry.
@@ -2600,6 +2652,31 @@ table KitOption {
   // Per-gatherer throughput (biomass/turn, BEFORE the tile's seasonal weight) under this kit — the
   // baskets' tier.
   forageCarryPerWorkerBiomass:float = 0;
+  // --- WHAT THIS KIT DOES BESIDES THE TIERS (appended) ------------------------------------------
+  // All three are MULTIPLIERS, neutral at 1.0. A kit declaring none of them is priced exactly as
+  // it was before they existed.
+  //   - dispersion multiplies the QUARRY'S OWN wariness at the retreat: 1.0 leaves the species'
+  //     flight response alone, 0 means nothing breaks off at contact (a trap line scares nothing).
+  //     DO NOT render it as a flat "scares N% away" - it is a multiplier, so the same kit costs a
+  //     gazelle (wariness 0.85) almost its whole engagement and a mammoth (0.10) nearly nothing.
+  //     Pair it with the herd's own reading to say anything about a specific hunt.
+  //   - exposure multiplies the hunt's baseline injury hazard. 0 is a STAND-OFF kit whose users are
+  //     never in reach of the animal, and which pays its cost in durability instead of in people.
+  dispersion:float = 1;
+  exposure:float = 1;
+  // --- THE ATTACK'S SIZE BOUNDS (appended) -------------------------------------------------------
+  // **The range of quarry `attack` above actually applies to**, by `HerdTelemetryState.bodyMass`.
+  // Outside it the kit grants NO attack and the party falls back to the bare hand's - which is what
+  // makes `max(0, attack - defense)` refuse the hunt, with no separate "cannot" flag.
+  //
+  // A snare holds a hare and not a deer, so the passive device ships `attackMaxBodyMass 1.0`. `0`
+  // means UNBOUNDED on either end (the shipped default), so a kit that says nothing about size
+  // applies everywhere - which is every weapon but the device.
+  //
+  // Without these the client's pre-launch gate would resolve a trapping party's attack against a Red
+  // Deer and report a hunt it cannot make.
+  attackMinBodyMass:float = 0;
+  attackMaxBodyMass:float = 0;
 }
 
 table SubsistenceSection {

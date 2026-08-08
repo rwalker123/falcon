@@ -110,13 +110,9 @@ const FRACTIONAL_ROUND_TRIP_KEYS := {
 	"hunt_per_worker_provisions": 0.8125,
 	"expedition_per_worker_carry": 4.375,
 	"band_move_tiles_per_turn": 3.5,
-	# The MINIMAL TOE's six — `float` in the schema end to end, so all six qualify under the rule
-	# above. The durabilities are the `equipment.json` 0–100 scale and deliberately carry a half:
-	# `87.5` copied through `int()` is 87, which is the exact shape this list exists to catch and
-	# which the presence half above cannot see. The other three are resolved rates.
-	"hunting_kit_durability": 87.5,
-	"sled_kit_durability": 62.25,
-	"basket_kit_durability": 41.75,
+	# The TOE's three resolved rates — `float` in the schema end to end, so all three qualify under
+	# the rule above. The per-ITEM CONDITIONS are a nested LIST and cannot ride this dict (it is
+	# swept through `float()`); they get their own assertion, `_assert_kit_conditions_round_trip`.
 	"hunter_attack": 1.6875,
 	"hunt_carry_per_worker_biomass": 2.3125,
 	"forage_carry_per_worker_biomass": 1.5625,
@@ -178,6 +174,15 @@ const FIXTURE_ENTRY := {
 	# off this marker (a launched party's own cohort), so it has to survive the copy like the warn line.
 	"expedition_viability_warn_turns": 20,
 	"expedition_forecast_horizon_turns": 60,
+	# The TOE, one row per item — a NESTED LIST, which is the shape a marker copy is most likely to
+	# drop or flatten. The remainders deliberately carry halves (`87.5` through `int()` is 87), and
+	# one item is DRY so the fixture exercises both sides of the cliff rather than four healthy rows.
+	"kit_item_conditions": [
+		{"item_id": "spears", "remaining": 87.5},
+		{"item_id": "sled", "remaining": 62.25},
+		{"item_id": "baskets", "remaining": 0.0},
+		{"item_id": "traps", "remaining": 55.0},
+	],
 }
 
 var _failures: Array[String] = []
@@ -265,6 +270,8 @@ func _ready() -> void:
 			_fail("%s did NOT round-trip: fed %s, marker returned %s (narrowed with int()?)"
 					% [key, str(want), str(got)])
 
+	_assert_kit_conditions_round_trip(marker)
+
 	# labor_assignments must round-trip as a non-empty, value-preserving copy (the
 	# allocation panel iterates it to build the per-source steppers + per-source yields).
 	var la_variant: Variant = marker.get("labor_assignments", null)
@@ -317,3 +324,35 @@ func _finish() -> void:
 		for msg in _failures:
 			printerr("  - ", msg)
 		get_tree().quit(1)
+
+
+## **THE TOE'S PER-ITEM CONDITIONS SURVIVE THE MARKER COPY**, row for row and value for value.
+##
+## It is asserted separately from the scalar sweep because it is a **nested list of dictionaries**,
+## which the fractional guard's `float()` cannot even read — and because the two failure modes here
+## are ones a scalar check has no analogue for: the list arriving **empty** (the Kit row's presence
+## gate reads exactly that, so an empty list silently hides the whole row) and a row arriving with a
+## **narrowed** remainder (`87.5 → 87`).
+##
+## A missing row is a failure rather than a zero, for the reason `DetailFormat.kit_is_equipped` errs
+## the same way: `0` means DRY, which is a real and actionable reading, so a dropped row must never
+## be able to masquerade as one.
+func _assert_kit_conditions_round_trip(marker: Dictionary) -> void:
+	var want: Array = FIXTURE_ENTRY["kit_item_conditions"]
+	var got: Array = marker.get("kit_item_conditions", [])
+	if got.size() != want.size():
+		_fail("kit_item_conditions did NOT round-trip: fed %d rows, marker returned %d"
+				% [want.size(), got.size()])
+		return
+	for index in want.size():
+		var want_row: Dictionary = want[index]
+		var got_row: Dictionary = got[index]
+		if String(got_row.get("item_id", "")) != String(want_row["item_id"]):
+			_fail("kit_item_conditions[%d].item_id did NOT round-trip: fed %s, marker returned %s"
+					% [index, want_row["item_id"], got_row.get("item_id", "<missing>")])
+			continue
+		var want_remaining := float(want_row["remaining"])
+		var got_remaining := float(got_row.get("remaining", -1.0))
+		if absf(got_remaining - want_remaining) > FRACTIONAL_EPSILON:
+			_fail("kit_item_conditions[%s].remaining did NOT round-trip: fed %s, marker returned %s (narrowed with int()?)"
+					% [want_row["item_id"], str(want_remaining), str(got_remaining)])

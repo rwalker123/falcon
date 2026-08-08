@@ -2248,7 +2248,23 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     # goes with it:
     # since slice 4b there is no plain-slider control left to keep, the chart's own floor flag IS the
     # dial (see `HudWidgets.build_floor_chart`).
-    var chart_model := SourceForecast.floor_chart_model(herd, SourceForecast.SOURCE_KIND_HERD,
+    #
+    # **AND IT IS THE ONE FIGURE ON THIS SHEET THE KIT CAN HONESTLY MOVE**, so it is priced through
+    # `KitRoster.priced_source` — the same seam the drawer's sheets use, never a second resolve. Every
+    # other number here is a `huntTripEstimates` lookup, and that table is quoted at the hunt job's
+    # DEFAULT kit and not repriced (see the honesty gate above): the trip readout, the preset metrics
+    # and the demand-side party cap therefore cannot carry a kit and are suppressed outright when one
+    # is mismatched. The chart is composed CLIENT-SIDE from the herd's own wire terms, so it can and
+    # must — which also makes it, beside the combat gate, one of the two things still answering for the
+    # player's actual selection on a mismatched sheet.
+    #
+    # The kit reaches the curve two ways and both are real for a raid: its CARRY scales the party's
+    # throughput, and its `dispersion` scales the quarry's retreat (`advance_expeditions` resolves the
+    # party's own kit and runs `HuntParty::stayers` exactly as a resident hunt does).
+    var priced_herd := KitRoster.priced_source(herd, HudComposeVocab.BARE_FORECAST_PREFIX, kits,
+        KitRoster.JOB_HUNT, default_kit, kit_id, band)
+    var chart_model := SourceForecast.floor_chart_model(priced_herd,
+        SourceForecast.SOURCE_KIND_HERD,
         HudComposeVocab.BARE_FORECAST_PREFIX, _send_hunt_floor, _send_expedition_count,
         SourceForecast.IMPROVEMENT_NONE, HudComposeVocab.COMPOSE_FIELD_PARTY.to_lower(),
         SourceForecast.rung_lesson_known(SourceForecast.SOURCE_KIND_HERD, herd,

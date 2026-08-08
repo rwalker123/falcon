@@ -312,7 +312,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
                 home,
                 current,
                 labor: entity.get::<LaborAllocation>().cloned(),
-                equipment: entity.get::<BandEquipment>().copied().unwrap_or_default(),
+                equipment: entity.get::<BandEquipment>().cloned().unwrap_or_default(),
                 resident: entity.contains::<ResidentBand>(),
                 starting_unit: entity.get::<StartingUnit>().cloned(),
                 travel: entity.get::<BandTravel>().copied(),
@@ -474,8 +474,12 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
         cohort.home = home;
         cohort.current_tile = current;
 
-        let mut entity =
-            world.spawn((cohort, record.id, record.flow_accumulator, record.equipment));
+        let mut entity = world.spawn((
+            cohort,
+            record.id,
+            record.flow_accumulator,
+            record.equipment.clone(),
+        ));
         if let Some(labor) = &record.labor {
             entity.insert(labor.clone());
         }

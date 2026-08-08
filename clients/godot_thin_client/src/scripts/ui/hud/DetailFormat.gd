@@ -151,11 +151,39 @@ const KIT_LABEL_SPEARS := "Spears"
 const KIT_LABEL_SLED := "Sled"
 const KIT_LABEL_BASKETS := "Baskets"
 
-# The three wire keys, beside the labels they belong to. A cohort from a snapshot that predates the
-# TOE carries none of them, which is what the Kit row's presence gate reads.
-const KIT_DURABILITY_KEY_SPEARS := "hunting_kit_durability"
-const KIT_DURABILITY_KEY_SLED := "sled_kit_durability"
-const KIT_DURABILITY_KEY_BASKETS := "basket_kit_durability"
+# The item ids the labels belong to, and the list the conditions arrive in. The wire carries ONE ROW
+# PER ITEM (`{item_id, remaining}`) rather than three fixed floats, because the item table is server
+# config — a fixed field set could not have carried the trapping kit's `traps`. A cohort from a
+# snapshot that predates the TOE carries an empty list, which is what the Kit row's presence gate
+# reads.
+const KIT_ITEM_CONDITIONS_KEY := "kit_item_conditions"
+const KIT_ITEM_ID_KEY := "item_id"
+const KIT_ITEM_REMAINING_KEY := "remaining"
+const KIT_DURABILITY_KEY_SPEARS := "spears"
+const KIT_DURABILITY_KEY_SLED := "sled"
+const KIT_DURABILITY_KEY_BASKETS := "baskets"
+const KIT_DURABILITY_KEY_TRAPS := "traps"
+const KIT_LABEL_TRAPS := "Traps"
+
+# What a trap line is FOR, on the disclosure row. It sets no tier the cohort publishes — reach and
+# stand-off are properties of the kit, not of the band — so unlike the other three this row states
+# its role in words rather than quoting a resolved number.
+const KIT_ROLE_TRAPS := "reach on small game, no risk to the trapper"
+
+# Item id → the label the two kit surfaces print. **An id with no entry falls back to the id itself**
+# rather than being skipped: the item table is server config, so a client build can legitimately be
+# older than the roster it is handed, and showing `bows 62` is honest where showing nothing would
+# hide a whole item the band is carrying.
+const KIT_ITEM_LABELS := {
+    "spears": KIT_LABEL_SPEARS,
+    "sled": KIT_LABEL_SLED,
+    "baskets": KIT_LABEL_BASKETS,
+    "traps": KIT_LABEL_TRAPS,
+}
+
+## The display label for an item id — the id itself when this build has no name for it.
+static func kit_item_label(item_id: String) -> String:
+    return String(KIT_ITEM_LABELS.get(item_id, item_id))
 
 # The RESOLVED tiers each kit sets. **`hunt_carry_per_worker_biomass` and
 # `forage_carry_per_worker_biomass` ARE NOT TWO READINGS OF ONE NUMBER** — a band can be out of
@@ -1230,29 +1258,44 @@ static func fertility_breakdown_row(factor: float, label: String) -> String:
 ## important reading and only an ABSENT field means "not stated". One test behind the Kit row and its
 ## disclosure, so a band cannot show one without the other.
 static func band_states_kit(band: Dictionary) -> bool:
-    return band.has(KIT_DURABILITY_KEY_SPEARS)
+    return not (band.get(KIT_ITEM_CONDITIONS_KEY, []) as Array).is_empty()
 
 ## **HAS ANY KIT RUN OUT?** — what tints the Kit row's caret WARN, and the row's own value. It is the
 ## whole of what "concerning" means here: running dry is a permanent step down to bare hands, and a
 ## kit merely wearing is not a fact to shout about, because nothing the player can do changes its
 ## rate. `false` for a band that states no kit at all.
+## **It sweeps whatever the server published**, rather than the three items this file happens to have
+## labels for — an item the client cannot name is still an item the band can run out of, and reading
+## only the known ones would hide exactly the cliff this warning exists for.
 static func band_kit_is_dry(band: Dictionary) -> bool:
     if not band_states_kit(band):
         return false
-    return not kit_is_equipped(band, KIT_DURABILITY_KEY_SPEARS) \
-        or not kit_is_equipped(band, KIT_DURABILITY_KEY_SLED) \
-        or not kit_is_equipped(band, KIT_DURABILITY_KEY_BASKETS)
+    for row in band.get(KIT_ITEM_CONDITIONS_KEY, []):
+        if float(row.get(KIT_ITEM_REMAINING_KEY, KIT_DRY)) <= KIT_DRY:
+            return true
+    return false
 
-## Is this kit still equipped? The schema's own rule and the only test there is (see `KIT_DRY`).
-static func kit_is_equipped(band: Dictionary, durability_key: String) -> bool:
-    return float(band.get(durability_key, KIT_DRY)) > KIT_DRY
+## Is this item still equipped? The schema's own rule and the only test there is (see `KIT_DRY`).
+##
+## **An item with no published row reads as DRY, not as equipped.** A missing row means the server
+## never confirmed the gear; promising a kitted tier on that silence is the failure this whole model
+## exists to prevent, so it errs toward the unequipped answer.
+static func kit_is_equipped(band: Dictionary, item_id: String) -> bool:
+    return kit_condition(band, item_id) > KIT_DRY
+
+## One item's remaining condition, `KIT_DRY` when the band publishes no row for it.
+static func kit_condition(band: Dictionary, item_id: String) -> float:
+    for row in band.get(KIT_ITEM_CONDITIONS_KEY, []):
+        if String(row.get(KIT_ITEM_ID_KEY, "")) == item_id:
+            return float(row.get(KIT_ITEM_REMAINING_KEY, KIT_DRY))
+    return KIT_DRY
 
 ## One kit's condition as the Kit ROW says it — the whole number, or the word for a kit that has run
 ## out. **Never a bar, never a fraction of a maximum**: performance is flat until expiry, so a filled
 ## gauge would draw a taper the model does not have.
-static func kit_condition_face(band: Dictionary, durability_key: String) -> String:
-    return String.num(float(band.get(durability_key, KIT_DRY)), KIT_CONDITION_DECIMALS) \
-        if kit_is_equipped(band, durability_key) else KIT_DRY_FACE
+static func kit_condition_face(band: Dictionary, item_id: String) -> String:
+    return String.num(kit_condition(band, item_id), KIT_CONDITION_DECIMALS) \
+        if kit_is_equipped(band, item_id) else KIT_DRY_FACE
 
 ## One `    ▲ Spears 87 — attack 20` breakdown row. Green while the kit is equipped, amber once it is
 ## dry — through the SAME ▲/▼ sign glyphs the food and morale breakdowns tint by, so the popover has
@@ -1261,13 +1304,13 @@ static func kit_condition_face(band: Dictionary, durability_key: String) -> Stri
 ## `role` is composed by the caller from THAT KIT's own tier. It is a parameter rather than a lookup
 ## here on purpose: the wrong pairing (a sled quoting the forage carry) is the defect this arc keeps
 ## reproducing, so the pairing is written once per kit at the one call site and is assertable there.
-static func kit_breakdown_row(band: Dictionary, durability_key: String, label: String,
+static func kit_breakdown_row(band: Dictionary, item_id: String, label: String,
         role: String) -> String:
-    var equipped := kit_is_equipped(band, durability_key)
+    var equipped := kit_is_equipped(band, item_id)
     var glyph := MORALE_CONTRIB_POSITIVE_GLYPH if equipped else MORALE_CONTRIB_NEGATIVE_GLYPH
     var suffix := "" if equipped else KIT_BARE_HANDS_SUFFIX
     return KIT_BREAKDOWN_ROW_FORMAT % [MORALE_BREAKDOWN_INDENT, glyph, label,
-        kit_condition_face(band, durability_key), role + suffix]
+        kit_condition_face(band, item_id), role + suffix]
 
 ## One `    ▲ +0.48  Gathered`-style breakdown row (morale-indent + sign glyph → shared tint path).
 static func food_breakdown_row(value: float, label: String) -> String:

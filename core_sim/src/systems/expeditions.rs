@@ -174,24 +174,37 @@ pub fn advance_expeditions(
         // **This party's two kit tiers, resolved ONCE per party per turn** — the same discipline
         // `advance_labor_allocation` applies to a resident band, through the same
         // `EquipmentConfig` seams. An absent component reads as a full kit (wear, not stock).
-        let party_wear = party_equipment.as_deref().copied().unwrap_or_default();
+        let party_wear = party_equipment.as_deref().cloned().unwrap_or_default();
         // **The kit this party was SENT OUT WITH** — stored on the `Expedition` at launch and read
         // from there, never re-resolved against the home band's current stock. A party sent out with
         // `none` stays bare-handed for its whole life; re-reading the band's spears each turn would
         // silently re-arm it.
         let party_kit = expedition.kit.clone();
-        // **The two effective predicates, resolved once per party per turn** — each decides a tier
-        // *and* gates that component's wear below, so a party using nothing spends nothing.
-        let sled_equipped = party_kit.sled_equipped(&party_wear, &equipment_cfg);
-        let hunting_equipped = party_kit.hunting_equipped(&party_wear, &equipment_cfg);
-        let per_worker_biomass =
-            equipment_cfg.hunt_per_worker_biomass_capacity(equipped_haul_rate, sled_equipped);
-        // The hunting kit decides what the party can hurt at all (§4.2's gate), so it is resolved
-        // here and not left at the intrinsic bare-handed tier.
-        let hunting_party = fauna::HuntingParty {
-            hunter: equipment_cfg.hunter_profile(person_profile, hunting_equipped),
+        // **Every tier resolved once per party per turn**, through the kit mask and the party's own
+        // wear — so a party using nothing runs unequipped and, because wear rides the same mask,
+        // spends nothing either.
+        let per_worker_biomass = equipment_cfg.hunt_per_worker_biomass_capacity(
+            equipped_haul_rate,
+            &party_kit,
+            &party_wear,
+        );
+        // The weapon decides what the party can hurt at all (§4.2's gate), so it is resolved here and
+        // not left at the intrinsic bare-handed tier. `exposure` and `dispersion` ride beside it —
+        // a raid carrying a stand-off kit takes no injuries and scares nothing off, exactly as a
+        // resident band with the same kit does.
+        // **A FACTORY, for the reason `advance_labor_allocation`'s is** — a mass-bounded weapon is
+        // only a weapon against quarry it can hold, so the attack tier waits for the target.
+        let party_for = |body_mass: f32| fauna::HuntingParty {
+            hunter: equipment_cfg.hunter_profile_against(
+                person_profile,
+                &party_kit,
+                &party_wear,
+                body_mass,
+            ),
             tuning: combat_tuning,
-            injury_damage_per_animal: combat_config.hunt_injury_damage_per_animal,
+            injury_damage_per_animal: combat_config.hunt_injury_damage_per_animal
+                * equipment_cfg.exposure(&party_kit, &party_wear),
+            dispersion: equipment_cfg.dispersion(&party_kit, &party_wear),
         };
         // Home band's LIVE tile (bands are nomadic): drives the comm check, the return target, and
         // the hunt drop-off. An orphaned expedition (home band gone) simply can't report/deliver.
@@ -324,6 +337,10 @@ pub fn advance_expeditions(
                     // the pack, so the room converts to an unbounded biomass collection.
                     let scout_yield = herd_hunt_yield(&herds.herds[idx], &fauna);
                     let carry_room = carry_room_biomass(room, &scout_yield);
+                    // The quarry's mass, read before the mutable borrow — a mass-bounded weapon is
+                    // only a weapon against animals it can hold, so the party's attack tier waits
+                    // for it exactly as the resident band's does.
+                    let scout_quarry_mass = herds.herds[idx].body_mass;
                     // Composed BEFORE the mutable borrow — the seed reads the herd's id, and the
                     // take needs the herd mutably.
                     let seed = fauna::retreat_seed(
@@ -341,7 +358,7 @@ pub fn advance_expeditions(
                         DEFAULT_ESCAPEMENT_FLOOR,
                         NO_IMPROVEMENT_UNDERWAY,
                         per_worker_biomass,
-                        &hunting_party,
+                        &party_for(scout_quarry_mass),
                         &fauna,
                         &ladder,
                         carry_room,
@@ -354,12 +371,23 @@ pub fn advance_expeditions(
                     // Each charge gated on the predicate that chose its own tier: a party using
                     // no spears blunts none, and a party dragging by hand wears no sled.
                     if let Some(kit) = party_equipment.as_mut() {
-                        if hunting_equipped {
-                            kit.wear_hunting(&equipment_cfg, take.killed);
-                        }
-                        if sled_equipped {
-                            kit.wear_sled(&equipment_cfg, take.carried);
-                        }
+                        // **Named by QUANTUM, not by item.** Every item in the party's kit that
+                        // wears per kill is charged for the kills, every item that wears per
+                        // biomass hauled for the haul — so an item added to a kit is charged
+                        // here without editing this call, and an item the kit does not carry is
+                        // never charged at all.
+                        kit.wear_kit(
+                            &equipment_cfg,
+                            &party_kit,
+                            crate::equipment_config::WearQuantum::Kill,
+                            take.killed as f32,
+                        );
+                        kit.wear_kit(
+                            &equipment_cfg,
+                            &party_kit,
+                            crate::equipment_config::WearQuantum::BiomassHauled,
+                            take.carried,
+                        );
                     }
                     // A scout that picked a fight it could not win still pays for it. Gated on a
                     // **death**, like the resident band's line: the hunt's baseline injury risk
@@ -556,7 +584,7 @@ pub fn advance_expeditions(
                             engage_rate,
                             wariness,
                             quarry_fight,
-                            &hunting_party,
+                            &party_for(body_mass),
                             fauna::HuntDraw::Seeded(seed),
                             stop,
                             &mut herd.hunt_credit,
@@ -575,12 +603,23 @@ pub fn advance_expeditions(
                         // Each charge gated on the predicate that chose its own tier — a party
                         // sent out with no kit spends no durability on any component.
                         if let Some(kit) = party_equipment.as_mut() {
-                            if hunting_equipped {
-                                kit.wear_hunting(&equipment_cfg, take.killed);
-                            }
-                            if sled_equipped {
-                                kit.wear_sled(&equipment_cfg, take.carried);
-                            }
+                            // **Named by QUANTUM, not by item.** Every item in the party's kit that
+                            // wears per kill is charged for the kills, every item that wears per
+                            // biomass hauled for the haul — so an item added to a kit is charged
+                            // here without editing this call, and an item the kit does not carry is
+                            // never charged at all.
+                            kit.wear_kit(
+                                &equipment_cfg,
+                                &party_kit,
+                                crate::equipment_config::WearQuantum::Kill,
+                                take.killed as f32,
+                            );
+                            kit.wear_kit(
+                                &equipment_cfg,
+                                &party_kit,
+                                crate::equipment_config::WearQuantum::BiomassHauled,
+                                take.carried,
+                            );
                         }
                         // **The fight already happened — inside the take** (§0.1). This path used
                         // to resolve the party's casualties in a *second* `resolve_fight` beside a

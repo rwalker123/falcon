@@ -232,7 +232,7 @@ pub fn advance_labor_allocation(
         // *before* the assignment loop so every source this band works is priced on one kit state: a
         // kit that expires part-way through the loop must not pay two different rates to two herds in
         // the same turn.
-        let band_kit = band_equipment.as_deref().copied().unwrap_or_default();
+        let band_kit = band_equipment.as_deref().cloned().unwrap_or_default();
         // Normalize each turn: if `working` shrank, trim assignments so Σ ≤ available.
         let available = available_workers(cohort.working);
         let faction = cohort.faction;
@@ -308,37 +308,54 @@ pub fn advance_labor_allocation(
             // expires part-way through the loop cannot pay two different rates to two herds in the
             // same turn; only the *mask* varies per assignment.
             let crew_kit = assignment.kit_choice(&equipment_cfg);
-            // **The three EFFECTIVE predicates, resolved once for this crew.** Each one decides a
-            // tier *and* gates that component's wear below — one value, both answers, because a crew
-            // that is not using a component must not be charged for it. Get that split wrong and a
-            // bare-handed comparison consumes the very kit it is being compared against.
-            let hunting_equipped = crew_kit
-                .as_ref()
-                .is_some_and(|kit| kit.hunting_equipped(&band_kit, &equipment_cfg));
-            let sled_equipped = crew_kit
-                .as_ref()
-                .is_some_and(|kit| kit.sled_equipped(&band_kit, &equipment_cfg));
-            let basket_equipped = crew_kit
-                .as_ref()
-                .is_some_and(|kit| kit.basket_equipped(&band_kit, &equipment_cfg));
-            // This crew's HUNT haul tier — the **sled**, if its kit carries one.
-            let hunt_per_worker_biomass =
-                equipment_cfg.hunt_per_worker_biomass_capacity(equipped_haul_rate, sled_equipped);
-            // **And its BASKET tier** — the forage web's carry, which before §4.8's "one kit, one
+            // **A crew with no kit at all resolves every tier at its unequipped value**, which is
+            // what `EquipmentConfig::default_kit`'s empty-`uses` sibling `none` already means — so
+            // the fallback here is the roster's own "no kit", never a bespoke bare-handed branch.
+            let crew_kit = crew_kit.unwrap_or_else(|| equipment_cfg.no_kit());
+            // This crew's HUNT haul tier — the **sled**, if its kit carries one and the band still
+            // has condition in it.
+            let hunt_per_worker_biomass = equipment_cfg.hunt_per_worker_biomass_capacity(
+                equipped_haul_rate,
+                &crew_kit,
+                &band_kit,
+            );
+            // **And its GATHER tier** — the forage web's carry, which before §4.8's "one kit, one
             // job" correction had no kit at all. It is the undipped, pre-seasonal per-gatherer
             // throughput every `forage_take`, gather forecast and staffing inversion below is capped
-            // by; the sled is never consulted for it.
-            let forage_per_worker_capacity = equipment_cfg
-                .forage_per_worker_biomass_capacity(equipped_gather_rate, basket_equipped);
-            // **And its FIGHTING tier** (`docs/plan_hunt_through_combat.md` §4). The hunting kit
-            // swaps the whole `attack` tier (`1` bare-handed, `20` speared), which is the gate every
-            // take resolves through — so a crew sent out with no spears stops being able to hurt
-            // anything with a `defense`, and the seed it was assigned on says so on the same tier.
-            let hunting_party = fauna::HuntingParty {
-                hunter: equipment_cfg.hunter_profile(person_profile, hunting_equipped),
+            // by; a hunt item can never reach it, because the two declare different stats.
+            let forage_per_worker_capacity = equipment_cfg.forage_per_worker_biomass_capacity(
+                equipped_gather_rate,
+                &crew_kit,
+                &band_kit,
+            );
+            // **And its FIGHTING tier** (`docs/plan_hunt_through_combat.md` §4). The kit swaps the
+            // whole `attack` tier (`1` bare-handed, `20` speared), which is the gate every take
+            // resolves through — so a crew sent out with no spears stops being able to hurt anything
+            // with a `defense`, and the seed it was assigned on says so on the same tier.
+            //
+            // **Two more kit-resolved terms ride beside it**, both neutral at `1.0` so a kit that
+            // declares neither is priced bit-for-bit as it was before the effects model:
+            // `dispersion` multiplies the quarry's own `wariness` at the retreat (a device that is
+            // not there scares nothing), and `exposure` multiplies the hunt's baseline injury hazard
+            // (a stand-off instrument wears out instead of its user getting hurt).
+            //
+            // **A FACTORY, not a value, because the ATTACK TIER DEPENDS ON THE QUARRY.** A
+            // mass-bounded weapon (a snare) is only a weapon against animals it can hold, so the
+            // profile cannot be resolved before the assignment's target is known. Everything else
+            // about the party is quarry-blind and is captured once.
+            let party_for = |body_mass: f32| fauna::HuntingParty {
+                hunter: equipment_cfg.hunter_profile_against(
+                    person_profile,
+                    &crew_kit,
+                    &band_kit,
+                    body_mass,
+                ),
                 tuning: combat_tuning,
-                injury_damage_per_animal: hunt_injury_damage,
+                injury_damage_per_animal: hunt_injury_damage
+                    * equipment_cfg.exposure(&crew_kit, &band_kit),
+                dispersion: equipment_cfg.dispersion(&crew_kit, &band_kit),
             };
+
             match &assignment.target {
                 LaborTarget::Forage {
                     tile,
@@ -783,9 +800,14 @@ pub fn advance_labor_allocation(
                     //
                     // **Gated on the SAME predicate that chose the tier** — a crew whose kit carries
                     // no baskets gathered by hand, so there is nothing to wear out.
-                    if basket_equipped {
+                    {
                         if let Some(kit) = band_equipment.as_mut() {
-                            kit.wear_baskets(&equipment_cfg, take);
+                            kit.wear_kit(
+                                &equipment_cfg,
+                                &crew_kit,
+                                crate::equipment_config::WearQuantum::BiomassGathered,
+                                take,
+                            );
                         }
                     }
                     // **THE earn path, rungs 1–2** — the drawn-down half of the split above. A crew
@@ -1130,7 +1152,7 @@ pub fn advance_labor_allocation(
                         &fauna,
                         &ladder,
                         hunt_per_worker_biomass,
-                        &hunting_party,
+                        &party_for(herd.body_mass),
                         mult_f,
                         workers,
                         *floor,
@@ -1337,9 +1359,14 @@ pub fn advance_labor_allocation(
                         // same reason this branch passes no engagement bound to the quantiser.
                         // Gated on the same predicate that chose the haul tier: a keeper with no
                         // sled dragged the carcass by hand and wore nothing out doing it.
-                        if sled_equipped {
+                        {
                             if let Some(kit) = band_equipment.as_mut() {
-                                kit.wear_sled(&equipment_cfg, take.carried);
+                                kit.wear_kit(
+                                    &equipment_cfg,
+                                    &crew_kit,
+                                    crate::equipment_config::WearQuantum::BiomassHauled,
+                                    take.carried,
+                                );
                             }
                         }
                         // **A pen changes the INTENSITY, never the PRODUCT** — the keeper is paid
@@ -1409,7 +1436,7 @@ pub fn advance_labor_allocation(
                             &fauna,
                             &ladder,
                             hunt_per_worker_biomass,
-                            &hunting_party,
+                            &party_for(herd.body_mass),
                             mult_f,
                             workers,
                             *floor,
@@ -1478,7 +1505,7 @@ pub fn advance_labor_allocation(
                         *floor,
                         improvement,
                         hunt_per_worker_biomass,
-                        &hunting_party,
+                        &party_for(herd.body_mass),
                         &fauna,
                         &ladder,
                         f32::INFINITY,
@@ -1504,11 +1531,19 @@ pub fn advance_labor_allocation(
                     // **Each charge is gated on the predicate that chose its own tier**, and the two
                     // are independent: a kit with spears but no sled blunts spears only.
                     if let Some(kit) = band_equipment.as_mut() {
-                        if hunting_equipped {
-                            kit.wear_hunting(&equipment_cfg, take.killed);
-                        }
-                        if sled_equipped {
-                            kit.wear_sled(&equipment_cfg, take.carried);
+                        kit.wear_kit(
+                            &equipment_cfg,
+                            &crew_kit,
+                            crate::equipment_config::WearQuantum::Kill,
+                            take.killed as f32,
+                        );
+                        {
+                            kit.wear_kit(
+                                &equipment_cfg,
+                                &crew_kit,
+                                crate::equipment_config::WearQuantum::BiomassHauled,
+                                take.carried,
+                            );
                         }
                     }
                     // **THE earn path, rungs 1–2** — the drawn-down half of the split above, and the
@@ -1751,7 +1786,7 @@ pub fn advance_labor_allocation(
                         &fauna,
                         &ladder,
                         hunt_per_worker_biomass,
-                        &hunting_party,
+                        &party_for(herd.body_mass),
                         mult_f,
                         workers,
                         *floor,

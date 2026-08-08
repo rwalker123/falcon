@@ -89,7 +89,12 @@ const BAND_TRADE_ROW_FORMAT := "Trade: %.1f · [color=#%s]%s[/color]"
 # bar, and never a number scaled by what is left, because performance is FLAT until expiry and any
 # gradient drawn here would claim a taper the model does not have. What each kit actually DOES lives
 # one click down, where there is room to say it and to say that it stops.
-const BAND_KIT_ROW_PREFIX := "Kit: "
+# **"Gear", not "Kit" — the row lists ITEMS.** A kit is the named loadout a crew is SENT OUT WITH
+# and is chosen in the compose sheet's Kit picker; this row is the condition of the equipment the
+# band owns. Labelling item conditions "Kit" is the same two-nouns confusion the config carried until
+# the items were renamed off `*_kit`, and it read as "your kit is Spears, Sled, Baskets" — which is
+# not a kit at all.
+const BAND_KIT_ROW_PREFIX := "Gear: "
 const BAND_KIT_ROW_SEPARATOR := " · "
 const BAND_KIT_ROW_ENTRY_FORMAT := "%s [color=#%s]%s[/color]"
 
@@ -491,19 +496,43 @@ func _band_trade_line(unit_data: Dictionary) -> String:
 ##
 ## **IT SURVIVES THE `compact` TIER**, unlike Trade. The Trade row is a rate the WORK zone's head
 ## restates; a spent kit is stated nowhere else in the client at all, and it is not recoverable.
+## How many items the compact kit row can show before it wraps and overflows `Zone_band`. Three is
+## what the zone was sized for and what it carried for the whole of the minimal TOE; a fourth entry
+## overflowed it by 22px. **Raising it means re-measuring the zone**, not just changing this number.
+const BAND_KIT_ROW_MAX_ENTRIES := 3
+
 func _band_kit_line(unit_data: Dictionary) -> String:
     var entries: Array[String] = []
-    for kit in [
-        [DetailFormat.KIT_LABEL_SPEARS, DetailFormat.KIT_DURABILITY_KEY_SPEARS],
-        [DetailFormat.KIT_LABEL_SLED, DetailFormat.KIT_DURABILITY_KEY_SLED],
-        [DetailFormat.KIT_LABEL_BASKETS, DetailFormat.KIT_DURABILITY_KEY_BASKETS],
-    ]:
-        var label := String(kit[0])
-        var key := String(kit[1])
-        var hex := HudStyle.INK_HEX if DetailFormat.kit_is_equipped(unit_data, key) \
+    # **THE ROW IS A FIXED-HEIGHT ZONE AND CANNOT GROW PER ITEM.** Listing every item the server
+    # publishes wrapped it to a second line and overflowed `Zone_band` by 22px the moment `traps`
+    # was added (caught by `band_panel_preview`'s `_assert_zone_content_fits`, not by eye) — and the
+    # item table is config, so the next item would do it again.
+    #
+    # So the row is a SUMMARY with a bounded budget: the items that need a decision first, then
+    # whatever fits. **Dry items lead**, because running dry is a permanent step down to bare hands
+    # and it is the only kit fact the player can still act on; the rest fill the remaining slots in
+    # roster order. The full per-item breakdown is the disclosure
+    # (`DisclosureController.kit_breakdown_lines`), which scrolls and therefore can carry them all.
+    #
+    # Nothing is hidden silently: `DetailFormat.band_kit_is_dry` — what tints the caret WARN —
+    # sweeps EVERYTHING the server published, so an item pushed off this row still raises the
+    # warning that sends the player to the breakdown.
+    var conditions: Array = unit_data.get(DetailFormat.KIT_ITEM_CONDITIONS_KEY, [])
+    var ordered: Array = []
+    for row in conditions:
+        if float(row.get(DetailFormat.KIT_ITEM_REMAINING_KEY, DetailFormat.KIT_DRY)) \
+                <= DetailFormat.KIT_DRY:
+            ordered.append(row)
+    for row in conditions:
+        if not ordered.has(row):
+            ordered.append(row)
+    for row in ordered.slice(0, BAND_KIT_ROW_MAX_ENTRIES):
+        var item_id := String(row.get(DetailFormat.KIT_ITEM_ID_KEY, ""))
+        var hex := HudStyle.INK_HEX if DetailFormat.kit_is_equipped(unit_data, item_id) \
             else HudStyle.DANGER_HEX
         entries.append(BAND_KIT_ROW_ENTRY_FORMAT % [
-            label, hex, DetailFormat.kit_condition_face(unit_data, key)])
+            DetailFormat.kit_item_label(item_id), hex,
+            DetailFormat.kit_condition_face(unit_data, item_id)])
     return BAND_KIT_ROW_PREFIX + BAND_KIT_ROW_SEPARATOR.join(entries)
 
 ## Selection-panel band morale row: "Morale: 41% ▼ — harsh terrain (Karst Cavern Mouth)".

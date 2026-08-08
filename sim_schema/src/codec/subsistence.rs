@@ -123,6 +123,12 @@ fn create_kits<'a>(
                 attack: state.attack,
                 huntCarryPerWorkerBiomass: state.hunt_carry_per_worker_biomass,
                 forageCarryPerWorkerBiomass: state.forage_carry_per_worker_biomass,
+                // What the kit DOES beyond the tiers — all three neutral at 1.0, so a kit declaring
+                // none of them encodes exactly as it did before they existed.
+                attackMinBodyMass: state.attack_min_body_mass,
+                attackMaxBodyMass: state.attack_max_body_mass,
+                dispersion: state.dispersion,
+                exposure: state.exposure,
             },
         ));
     }
@@ -326,6 +332,7 @@ fn create_herds<'a>(
                 engageRate: herd.engage_rate,
                 // The attrition denominator — appended last, so the slot stays positional.
                 durability: herd.durability,
+                stayFraction: herd.stay_fraction,
                 // The denial raid's pre-launch table — appended last.
                 denialEstimates: denial_estimates,
                 // The party that table's sheet opens on — appended last, so the slot stays

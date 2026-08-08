@@ -60,4 +60,7 @@ const DETAIL_ROW_GROWTH := "Growth"
 
 const DETAIL_ROW_TRADE := "Trade"
 
-const DETAIL_ROW_KIT := "Kit"
+# **"Gear", not "Kit"** — this row and its disclosure list the condition of the ITEMS the band owns.
+# The KIT is the named loadout a crew is sent out with, and it is picked in the compose sheet
+# (`HudComposeVocab.COMPOSE_FIELD_KIT`, which correctly stays "Kit"). Two different nouns.
+const DETAIL_ROW_KIT := "Gear"

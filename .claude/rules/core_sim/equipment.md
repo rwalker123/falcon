@@ -1,6 +1,7 @@
 ---
 paths:
   - "core_sim/src/{equipment_config,creatures_config}.rs"
+  - "clients/godot_thin_client/src/scripts/ui/hud/KitRoster.gd"
   - "core_sim/src/data/{equipment,creatures}.json"
   - "integration_tests/tests/equipment_toe.rs"
   - "core_sim/tests/kit_selection.rs"
@@ -14,15 +15,42 @@ Authoritative design: `docs/plan_early_game_labor.md` → "Equipment / TOE" (sli
 resolves through combat — a bare-handed hunter's `attack` is `1`, below every megafauna's `defense`,
 so without a spear the fight's gate `max(0, attack − defense)` is the entire game.
 
-## One kit, one job
+## Two nouns, and they are not the same
 
-Three kits ship, and the pairing is **physical**, which is the whole of §4.8's correction:
+An **ITEM** is a piece of equipment. It owns what it does (its `effects`), how long it lasts
+(`starting_durability`) and what wears it (its `wear.per` quantum). A **KIT** is a roster entry that
+*lists* the items a party is sent out with.
 
-| kit | raises | its use quantum |
+The items used to be named `hunting_kit` / `sled_kit` / `basket_kit` while the kits were
+`big_game` / `gathering` / `none` — one word for two concepts, which made a kit look like a leaf and
+cost a whole design conversation to unpick. **"Kit" now means only the roster entry.**
+
+| item | declares | its use quantum |
 |---|---|---|
-| **spears** (`hunting_kit`) | a hunter's `attack` | per **animal killed** |
-| **sled** (`sled_kit`) — travois, drag harness | the **hunt's** carry | per **biomass hauled home from a hunt** |
-| **baskets** (`basket_kit`) | the **forage** web's carry | per **biomass gathered** |
+| **`spears`** | `attack` **20** (equipped) | per **animal killed** |
+| **`sled`** — travois, drag harness | `hunt_carry` **12** (unequipped) | per **biomass hauled home from a hunt** |
+| **`baskets`** | `forage_carry` **1.6** (unequipped) | per **biomass gathered** |
+| **`traps`** — the passive device (snares, nets, weirs) | `attack` **20** bounded to `max_body_mass` **1.0**, `dispersion` **0**, `exposure` **0** | per **animal killed** |
+
+Shipped kits: **`big_game`** (`spears` + `sled`), **`trapping`** (`traps` + `sled`),
+**`gathering`** (`baskets`), **`none`** (nothing).
+
+**An EFFECT names the value a stat TAKES — never a delta, never a multiplier stacking on something
+else.** `EquipmentEffect` has no representation for a taper, which is what makes "flat until expiry,
+then a step down" structural rather than a rule someone has to remember.
+
+**Which TIER an effect declares is one-home-per-fact showing through**, not free choice: the other
+tier already had a home and keeps it. `spears` declares the **equipped** `attack` because the bare
+hand's `1.0` is `creatures.json`'s `person` row; the two carry items declare the **unequipped** side
+because the equipped rates are `labor_config.json`'s and the shipped game has always run kitted.
+
+**Quality tiers (flint against bronze) are deliberately ABSENT.** Nothing can craft one, so the
+structure would ship with no way to exercise it. They ride the crafting slice (**#494**), which is
+also what forces the equipped rates out of `labor_config.json` and into the tier.
+
+## One item, one job
+
+The pairing is **physical**, which is the whole of §4.8's correction:
 
 **A carcass is one lumpy object you drag out whole**, so a container does not help you move a deer —
 a sled does. **Berries are the opposite**: loose, divisible, bounded entirely by what you can hold,
@@ -36,6 +64,147 @@ against a basketful — so its ratio is large (`8.0 → 1.6`, exactly a fifth). 
 (`40.0 → 12.0`, under a third). Pinned as an ordering *between the ratios* by
 `losing_your_baskets_costs_proportionally_more_than_losing_your_sled`.
 
+## Dispersion, exposure and reach — the three multipliers
+
+All three are **neutral at `1.0`**, so an item declaring none of them is priced exactly as it was
+before the effects model existed.
+
+> **`1` has to be spelled out THREE TIMES on the wire, once per defaulting mechanism, and they have
+> no compiler relationship to each other.** `KitOptionState`'s `dispersion` / `exposure` and
+> `HerdTelemetryState`'s `stay_fraction` are each reachable through the FlatBuffers schema's `= 1`,
+> `serde`'s missing-field default, and the Rust `Default` impl — and a bare `#[serde(default)]` or a
+> `#[derive(Default)]` answers **`0`**, which on two of them is wrong *in the reassuring direction*:
+> `dispersion 0` says the party scares nothing and `exposure 0` says nobody can be hurt, i.e. a field
+> that failed to arrive would hand every kit the passive device's entire advantage. Hence the named
+> `multiplier_neutral()` helper and the hand-written `Default` impls in
+> `sim_schema/src/state/subsistence.rs`, and
+> `the_retreat_and_hazard_multipliers_are_neutral_at_one_on_every_defaulting_path`, which pins all
+> three doors and is sabotage-verified to fail on each alone.
+>
+> **`attack_min_body_mass` / `attack_max_body_mass` are the deliberate exception**: `0` is their
+> *sentinel* for "unbounded", it is their schema default too, and it is what every weapon but the
+> passive device ships. A sweep that "fixed" them to `1.0` would silently bound every weapon at 1 kg,
+> so the same test pins them at `0`.
+
+- **`dispersion` multiplies the QUARRY'S OWN `wariness`** at the retreat:
+  `effective_wariness = clamp(wariness × dispersion, 0, 1)`, and `stayers = engaged × (1 −
+  effective_wariness)`. A trap ships `0` — nothing breaks off at contact.
+
+  **A multiplier rather than a subtraction, so the SPECIES decides how much a noisy approach costs.**
+  At `wariness 0.85` a gazelle loses almost its whole engagement to one; at `0.10` a mammoth barely
+  notices. That is what lets a single spear line scatter a warren and *contain* a mammoth with no
+  per-target authoring — **and it is why equipment needs no size-class or "targets" axis at all**.
+  `wariness 0` is already an exact identity in the retreat (no draw is made), so `dispersion 0` lands
+  in a regime the sim has always had.
+- **`engage_multiplier` multiplies the species' `engage_rate`** — how many animals one hunter reaches.
+  **This is the term that binds on light game**, where `attack` buys nothing because there is no
+  `defense` to clear, and it is why a trap raises reach rather than damage.
+- **`exposure` multiplies the hunt's baseline injury hazard** (`fauna::hunt_injuries`). `0` is a
+  stand-off instrument: it wears out **instead of** its user getting hurt, which is the trade rather
+  than a free lunch.
+
+### Snares, nets and weirs are ONE item, and it wins by not being seen
+
+**At this game's abstraction they are one thing**: something you set down, walk away from, and come
+back to. Whether a device holds one animal or a whole run, and whether it is discriminate, is detail
+the game never surfaces — and two items separated by numbers that mean nothing would be worse than
+one honest one. So `traps` is *the passive device*, and a "net" is not a second item.
+
+**Its whole advantage is `dispersion 0`.** It is not there to be seen, so nothing bolts and the party
+keeps everything it reaches. Against a Rabbit Warren at `wariness 0.75` a spear party loses three
+animals in four to the retreat and this loses none — that *is* the 50 → 200 gap, measured.
+
+**Its `attack` is the spear's own number, and that is the point.** At 0.13–0.67 kg the weapon is not
+what is scarce, so the device must not win by hitting harder. `max_body_mass` is what keeps it off
+everything else.
+
+**There is no reach multiplier, and its removal was measured rather than assumed.** A `×4` was
+authored on this item and turned out inert: the fight binds before reach does on every small-game row
+(reach per worker `engage_rate × mult` against fight per worker `attack / durability` is 40 vs 10 on a
+rabbit, 60 vs 10 on a catfish), so it changed no outcome anywhere. **`EquipmentStat::EngageMultiplier`
+was deleted outright** rather than shipped neutral — a lever with no reader is what `fauna.md` already
+flags for removal on the `follow.*` keys.
+
+**It was invented for a premise that turned out false** — *"small game has no `defense`, so `attack`
+buys nothing and reach must be what binds"* — and both halves are wrong: at `defense 0` the gate *is*
+the attack, and reach never binds there anyway. **It is not a combined-arms mechanism.** The thing it
+superficially resembles — an archer loosing at quarry it cannot close with — is `RangeBand` on the
+combat resolver, already reserved for the ranged pre-phase (#501). Re-add a reach stat the day
+something genuinely raises reach (dogs, a drive), with its own justification and its own test.
+
+Measured per turn at 20 hunters, and pinned across **every** small-game row by
+`hunt_fight::the_passive_device_beats_spears_on_every_small_game_row_and_takes_no_large_game`:
+
+| quarry | body mass | `big_game` | `trapping` |
+|---|---|---|---|
+| Wild Fowl | 0.13 | 70 | **200** |
+| Rabbit Warren | 0.27 | 50 | **200** |
+| Forest Grouse | 0.47 | 64 | **133** |
+| Snow Hare Warren | 0.60 | 50 | **133** |
+| Silt Catfish | 0.67 | 180 | **200** |
+| Desert Gazelle and everything above | ≥ 3.3 | wins | **0** |
+
+**Silt Catfish is the row that found the tuning bug.** `engage_rate 15` and `wariness 0.40` make it
+the easiest small game to spear, so it is where a device tuned only against rabbits quietly comes
+second — which is why the test sweeps all five rather than one.
+
+### An effect can be bounded by the quarry's BODY MASS
+
+**`dispersion` alone does not make traps small-game-only, and believing it did shipped a bug.**
+Dispersion answers *does the animal bolt before you reach it*; it says nothing about *what a snare can
+physically hold*. Traps shipped with a flat `attack 8`, which cleared a Red Deer's `defense 1` exactly
+as it cleared a rabbit's `0`, and a trap line quietly became a universal upgrade.
+
+An effect may therefore carry **`min_body_mass` / `max_body_mass`**, and `traps` ships `max 1.0`.
+Above the bound the item grants **nothing**, the party falls back to the bare hand's `attack 1`, and
+`max(0, 1 − defense)` is the **existing gate** refusing the hunt — there is no "you cannot trap that"
+branch anywhere.
+
+**It reads `body_mass`, which the roster already authors — not a size CATEGORY.** A `size_class` here
+would be a second authority to drift from the masses, exactly as `dispersion` reads `wariness` rather
+than a "jumpy" flag. The roster separates cleanly, which is why one number does it: every `defense 0`
+row is `0.13..=0.67` and the next species up is a Desert Gazelle at `3.3`, so **any** ceiling in that
+gap behaves identically.
+
+`min_body_mass` is the same field's other end — a bow is poor against something small and fast — and
+is reserved for #501. Nothing ships one.
+
+**Only `attack` is resolved against a quarry, and a bound on any other stat is REJECTED at validate**
+rather than silently ignored (`config-loading.md`'s "looks live but isn't").
+
+**Two named resolvers, so a take path cannot get the display answer by leaving an argument off:**
+`hunter_profile_against(…, body_mass)` is the only form a take or forecast may use;
+`hunter_profile_unbounded` is *"the best this kit can do against something"* and is for surfaces with
+no target — the published kit roster and a band's own `hunterAttack` row.
+
+> **The hunt job's DEFAULT kit must carry no mass-bounded attack, and `validate` enforces it.**
+> `snapshot/capture.rs` builds **one** party to price **every** herd's estimate tables, so it cannot
+> carry a per-quarry attack and resolves unbounded. A bounded default weapon would make every table
+> quote a kitted take against animals it cannot touch — wrong in the *reassuring* direction, on the
+> surface a player commits from. The fix when that day comes is to resolve per herd inside
+> `herd_snapshot_entries`; the check is what makes that a decision rather than a bug found in play.
+
+### A kit resolves a multiplier as the MAX of what its LIVE items DECLARE
+
+Two clauses, both load-bearing, both in `KitChoice::multiplier`:
+
+1. **Only declared values participate.** An item that says nothing about a stat contributes nothing —
+   *not* the neutral `1.0`. Without that clause a **sled**, carry gear nobody approaches an animal
+   with, would drag a trapping party's dispersion back to `1.0` simply by being in the kit, and traps
+   would never work.
+2. **The MAXIMUM, not the minimum**, for the stats that describe *how the party hunts*. If you are
+   also running up and throwing spears you are scaring the herd and you are in reach of it, however
+   many traps you also set.
+
+**This is why `spears` declares `dispersion 1.0` and `exposure 1.0` explicitly although both are the
+neutral value.** The declaration is what makes a hypothetical spears-and-traps kit resolve to *loud
+and exposed* instead of inheriting the trap's stand-off for free. Nothing shipped pairs them today;
+the declaration keeps the answer right the day something does.
+
+**Combined arms — two weapons genuinely in play at once — is NOT this.** It is issue **#501** under
+the **#500** Combat engine arc, and it needs the resolver's reserved ranged pre-phase, wound-driven
+degradation and per-item hit chance. None of it is required for anything above.
+
 **The sledless hunt needs no new mechanic.** A party that cannot haul its kill leaves more of it,
 which `AnimalTake::wasted` has always computed and the client already displays — see "Waste came
 back" below.
@@ -44,11 +213,20 @@ back" below.
 
 | File | Purpose |
 |---|---|
-| `src/data/equipment.json` | **The TOE kit table** (loader `equipment_config.rs`, env override `EQUIPMENT_CONFIG_PATH`, validated inside `from_json_str` so every load path is covered). Three blocks: **`hunting_kit`** — `equipped_attack` (**20.0**), `starting_durability` (**100.0**), `wear_per_kill` (**0.4** → 250 kills); **`sled_kit`** — `unequipped_per_worker_biomass_capacity` (**12.0**), `starting_durability` (**100.0**), `wear_per_biomass_hauled` (**0.02** → 5000 biomass); **`basket_kit`** — `unequipped_per_worker_biomass_capacity` (**1.6**), `starting_durability` (**100.0**), `wear_per_biomass_gathered` (**0.04** → 2500 biomass). `validate` rejects any of the nine as non-finite or `<= 0`: a kit with **no wear rate is not consumable** and one with no durability is **born dry**. A missing *block* is a parse error, so a file that forgot `basket_kit` cannot silently leave the forage web unkitted again. **Plus the KIT ROSTER**: `kits` — a list of `{ id, display_name, jobs, uses }`, where `uses` names the component blocks above and `jobs` is `hunt` / `forage`; and `default_kits` — `{ hunt, forage }`, what each verb runs on when the player names none. Shipped: **`big_game`** (`hunt`; `hunting_kit` + `sled_kit`), **`gathering`** (`forage`; `basket_kit`), **`none`** (both jobs; nothing). `validate` rejects a duplicate id, a kit listing no jobs, a default naming no roster entry, and a default whose `jobs` omit its own job; a `uses` entry naming a component block that does not exist fails to **deserialize**, because `KitComponent`'s variants *are* the block keys. See "A kit is a MASK". |
+| `src/data/equipment.json` | **The TOE** (loader `equipment_config.rs`, env override `EQUIPMENT_CONFIG_PATH`, validated inside `from_json_str` so every load path is covered). Two blocks. **`items`** — a map of id → `{ starting_durability, wear: { per, amount }, effects: [{ stat, equipped\|unequipped }] }`. `stat` is one of `attack` / `hunt_carry` / `forage_carry` / `dispersion` / `engage_multiplier` / `exposure`; `per` is `kill` / `biomass_hauled` / `biomass_gathered` — **there is no `turn` variant, and that is `docs/plan_denial_raid.md` §1.2 enforced by the type**. Shipped: `spears` (100 durability, 0.4/kill → 250 kills), `sled` (100, 0.02/biomass → 5000), `baskets` (100, 0.04/biomass → 2500), `traps` (100, 0.2/kill → 500 — twice the spear's life per kill because a trap is *worked* rather than thrown, and on the **same quantum** so a trapping party cannot hunt for free). **`kits`** — `{ id, display_name, jobs, uses }`, where `uses` names items and `jobs` is `hunt` / `forage`; plus `default_kits`. **`validate` rejects**: an empty item table; any non-finite or `<= 0` durability or wear amount (an item with no wear rate is not consumable, one with no durability is born dry); an item with no effects; a negative or non-finite effect value; **an item declaring the same stat twice** (`effect()` takes the first match, so the second would be silently dead); **two items declaring the same carry stat** (the unequipped fallback searches the whole table and takes the first match, so it would resolve by `BTreeMap` order — i.e. alphabetically); a duplicate kit id; a kit listing no jobs; a default naming no roster entry or not covering its own job; and **a `uses` entry naming an item the table does not carry**. That last one is a DEBT, not a nicety — see below. |
 | `src/data/creatures.json` | The creatures roster — intrinsic `CombatStats` for non-fauna units. `person.combat.attack` (**1.0**) is the hunting kit's **unequipped** tier. See `combat.md` for the roster's role in the fight. |
 
-**Only the unequipped side lives in `equipment.json`, and that is one-home-per-fact, not an
-oversight.** Every *equipped* tier already had a home and stays there: the bare hand's `attack 1` is
+### `UnknownItem` pays back a guarantee the model used to get for free
+
+The retired `KitComponent` enum's three variants **were** the JSON block keys, so a roster naming a
+component with no block **could not deserialize** — the invariant was carried by the type, at no
+cost, on every load path. An item id is a `String`, so nothing stops a config naming `spearz`, and
+the only thing between that file and a running sim is now `validate`'s `UnknownItem` check. A kit
+that silently granted nothing and wore nothing is exactly the failure §4.8 corrects, so
+`a_kit_using_an_item_that_does_not_exist_is_rejected` must not be deleted.
+
+**Only the unequipped side of the two CARRIES lives in `equipment.json`, and that is
+one-home-per-fact, not an oversight.** Every *equipped* tier already had a home and stays there: the bare hand's `attack 1` is
 the `creatures.json` `person` row, the kitted haul rate `40` is `labor_config.json`'s
 `hunt.per_worker_biomass_capacity`, and the kitted gather rate `8` is its
 `forage.per_worker_biomass_capacity` — the rates the shipped game has always run on, because a band
@@ -87,14 +265,31 @@ hunt arc is still moving; it rides with the hunt-effectiveness tuning on **issue
 
 ## The band carries WEAR, not stock
 
-`components::BandEquipment { hunting_wear, sled_wear, basket_wear }` — and storing *wear* rather than
-*stock* is what makes "the band starts kitted" free: `Default` is zero wear, so a spawn site inserts a
-full kit without reading config, and an **absent** component reads as *no wear recorded* — a full kit
-— via the same `copied().unwrap_or_default()` reading `SimState` gives `DemographicFlowAccumulator`.
-There is deliberately **no third "carries no kit at all" state**; dry is expressed as wear reaching
-`starting_durability` (strictly-below is equipped, so a kit worn exactly to its limit is spent). Both
-carry kits floor a wear charge at zero through one shared `usable_biomass` helper — a negative take
-must never *restore* a kit, and neither kit may grow its own rule for that.
+`components::BandEquipment` is a **`BTreeMap<String, f32>` of wear per item id** — three named floats
+until the effects model, which could not have carried `traps`. Storing *wear* rather than *stock* is
+what makes "the band starts kitted" free: `Default` is an empty ledger, so a spawn site inserts a full
+kit without reading config, and an **absent entry reads as no wear recorded — a full item**, which is
+also what keeps a band spawned before the config gained an item from being born with it already
+spent. There is deliberately **no "carries no kit at all" state**; dry is expressed as wear reaching
+`starting_durability` (strictly-below is equipped, so an item worn exactly to its limit is spent).
+`BTreeMap` rather than `HashMap` so the checkpoint and the wire serialize in a stable order — a
+rollback that reordered this would diff as a change every frame.
+
+**Every charge goes through `wear_item`**, which floors a non-finite or negative `uses` at zero, so no
+item can grow a private flooring rule: a degenerate take must never *restore* a kit.
+
+**`wear_kit` names the QUANTUM, not the items.** A wear site says *"this party just made N kills"* and
+every item in its kit that wears per kill is charged — so **an item added to a kit is charged with no
+call-site edit**, and an item the kit does not carry is never charged at all. That last clause is what
+makes the bare-handed comparison free to run: otherwise running the comparison would consume the very
+kit it is being compared against.
+
+> **`wear_kit` also gates on CONDITION, and that is not redundant with the mask.** A spent item is
+> already paying its cost — the role has stepped down — so charging it again would let a ledger run
+> arbitrarily far past its own durability, and any future crafting would have to buy back that
+> invisible overdraft before the item came back at all. Caught by
+> `kit_selection::a_kitted_partys_own_wear_still_steps_it_down` when the quantum refactor first
+> dropped the gate.
 
 Inserted by `spawn_profile_population` (`systems/worldgen.rs`), by both expedition-outfitting paths
 in `bin/server.rs`, and restored by `sim_state.rs` (`BandRecord::equipment`, carried unconditionally
@@ -172,27 +367,41 @@ party that never engaged.
   binds on deer — while a Wild Horse's is `20.0`, which is why
   `both_hunt_carry_tiers_are_live_and_a_sledless_party_hauls_less` measures horses.
 
-## A kit is a MASK over the three predicates — nothing else
+## A kit is a MASK over the item table — nothing else
 
 A party is **sent out with a named kit** from the roster rather than implicitly using whatever the
 band owns. The whole mechanism is one line:
 
 ```text
-effective_equipped(component) = kit_uses(component) AND band_has_condition(component)
+item_live(item) = kit_uses(item) AND band_has_condition(item)
 ```
 
-- **`big_game`** uses `hunting_kit` + `sled_kit` — the pair every hunt path used to consult
-  unconditionally, so it is **bit-identical** to the pre-roster game.
-- **`gathering`** uses `basket_kit` — likewise for every gather path.
-- **`none`** uses nothing, so every predicate reads false and the party runs at the three
-  *unequipped* tiers throughout.
+- **`big_game`** uses `spears` + `sled` — the pair every hunt path used to consult unconditionally,
+  so it is **bit-identical** to the pre-roster game.
+- **`gathering`** uses `baskets` — likewise for every gather path.
+- **`trapping`** uses `traps` + `sled`. It is the first kit that is **not** a subset of the old
+  behaviour: traps clear no `defense`, so a trapper falls back to the bare hand's `attack 1` and can
+  take **only quarry with no defence at all** — rabbit, fowl, grouse, snow hare, catfish. On exactly
+  that quarry it is the better instrument, because reach and not damage is what binds there. It
+  carries the sled too: a trapper still has to get the catch home.
+- **`none`** uses nothing, so every predicate reads false and the party runs at every *unequipped*
+  tier throughout.
 
-`KitChoice` (`equipment_config.rs`) is the id plus that mask, and its three predicates
-`hunting_equipped` / `sled_equipped` / `basket_equipped` take `(&BandEquipment, &EquipmentConfig)`.
-**They are the only way anything asks the question**: `BandEquipment`'s own condition tests are
-`pub(crate)` and renamed `has_*_condition`, so the *condition* half cannot be read alone by a caller
-that has forgotten to consult the mask — which is exactly the reading that silently re-arms a party
-sent out bare.
+`KitChoice` (`equipment_config.rs`) is the id plus that mask, and **`item_live` is the only way
+anything asks the question**: `BandEquipment::has_condition` is `pub(crate)`, so the *condition* half
+cannot be read alone by a caller that has forgotten to consult the mask — which is exactly the
+reading that silently re-arms a party sent out bare.
+
+**`EquipmentConfig::no_kit()` is SYNTHETIC, not a lookup of the roster's `none`.** The roster is
+config and a file is free to drop that entry, but "this crew carries no kit" is a state the sim
+reaches on its own — a band-wide role like Scout or Warrior has no kit axis at all. Resolving it
+through the roster would let a config edit panic the labor loop. Its id is empty, which is what
+`LaborAssignment.kitId` already publishes for a row with no kit axis.
+
+**Nothing resolves a stat by naming an item.** `hunter_profile` asks the kit for the best *equipped*
+`attack` among its live items; the carries ask whether any live item *supplies* their stat and fall
+back to what the table declares. So a future bow is a config row, not a code change — and the only
+place an item id is spelled in the sim is a test fixture.
 
 **`none` is an ORDINARY roster member, not a sentinel.** Nothing branches on its id anywhere; it is a
 kit whose `uses` list is empty, and every behaviour attributed to it falls out of that. A future
@@ -267,15 +476,13 @@ compose seeds (`hunt_source_yield_preview` / `forage_source_yield_preview`).
 
 ## On the wire
 
-`PopulationCohortState` carries six append-only kit fields (`sim_schema/schemas/snapshot.fbs`,
+`PopulationCohortState` carries four append-only kit fields (`sim_schema/schemas/snapshot.fbs`,
 captured in `snapshot/population.rs` through the `BandKitLevers` bundle so the resolution happens in
 one place):
 
 | Field | Meaning |
 |---|---|
-| `huntingKitDurability:float` | Remaining condition, 0–100 scale; `0` = dry |
-| `sledKitDurability:float` | ditto, the sled |
-| `basketKitDurability:float` | ditto, the baskets |
+| `kitItemConditions:[KitItemCondition]` | **One row per item the config carries** — `itemId` + `remaining` on the 0–100 scale, `0` = dry. It replaced three fixed floats (`huntingKitDurability` / `sledKitDurability` / `basketKitDurability`), which are **`(deprecated)` in the schema rather than deleted**: FlatBuffers field ids are positional, so removing one renumbers every field after it. **Driven by the CONFIG's item table, not the band's sparse ledger** — an item the band has never used reads as *full* rather than going missing |
 | `hunterAttack:float` | The band's resolved per-hunter `attack` (1 bare / 20 kitted) — the left side of the fight's gate against a herd's `HerdTelemetryState.defense` |
 | `huntCarryPerWorkerBiomass:float` | The band's resolved per-worker **hunt** haul rate (40 sledded / 12 sledless) |
 | `forageCarryPerWorkerBiomass:float` | The band's resolved per-**gatherer** throughput, *before* the tile's seasonal weight (8 with baskets / 1.6 bare-handed) |

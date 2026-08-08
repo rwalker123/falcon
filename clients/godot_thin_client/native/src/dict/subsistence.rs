@@ -480,6 +480,10 @@ pub(crate) fn herds_to_array(
         // `body_mass`. `0` for a herd whose species the roster cannot resolve. It is the newest slot
         // on `HerdTelemetryState`, decoded beside the `engage_rate` it follows.
         let _ = dict.insert("durability", herd.durability());
+        // **The retreat, as a term** — `1 - wariness`, the fraction of what a party reaches that
+        // stays to be fought. A kit's `dispersion` multiplies the FLIGHT half of it. `1` is "nothing
+        // breaks off", which is a pen and the whole plant web.
+        let _ = dict.insert("stay_fraction", herd.stayFraction());
         // **WHICH KIT THE TWO ESTIMATE TABLES ABOVE ARE QUOTED FOR** (`docs/plan_denial_raid.md`) —
         // the hunt job's DEFAULT roster id, on every herd, always. Neither table is repriced per kit
         // (they are ~95% of snapshot capture), and these exist so the client can SAY SO: when the
@@ -535,6 +539,14 @@ pub(crate) fn kits_to_array(kits: Vector<'_, ForwardsUOffset<fb::KitOption<'_>>>
             "forage_carry_per_worker_biomass",
             kit.forageCarryPerWorkerBiomass() as f64,
         );
+        // What the kit does BESIDES the tiers. `dispersion` multiplies the quarry's own retreat and
+        // `exposure` the hunt's injury hazard, both neutral at 1. The two mass bounds say which
+        // quarry `attack` above actually applies to — 0 on an end is unbounded — so a picker can
+        // resolve the gate against the animal in front of it rather than the kit's best case.
+        let _ = dict.insert("dispersion", kit.dispersion() as f64);
+        let _ = dict.insert("exposure", kit.exposure() as f64);
+        let _ = dict.insert("attack_min_body_mass", kit.attackMinBodyMass() as f64);
+        let _ = dict.insert("attack_max_body_mass", kit.attackMaxBodyMass() as f64);
         array.push(&dict.to_variant());
     }
     array

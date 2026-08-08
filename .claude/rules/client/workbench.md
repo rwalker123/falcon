@@ -221,7 +221,7 @@ version, measuring the same content column and then walking every label the page
 sim's to choose: the roster and the gear blocks nest differently and reach different widths, so
 measuring one says nothing about the other. The labels are of two kinds, and the lever differs by kind:
 
-- **A block's own name** — `hunting_kit`, `kits[0]`. The only non-wrapping label the config tree
+- **A block's own name** — `items`, `kits[0]`. The only non-wrapping label the config tree
   draws, and short by construction (a config key, or a key plus an index). Every other line the tree
   draws is a caption, including the VALUE column, which wraps *inside* its fixed
   `WorkbenchWidgets.CONFIG_VALUE_WIDTH` rather than widening it — so an unvetted config's long value
@@ -303,7 +303,7 @@ them.
 
 Two consequences worth stating because they are easy to undo:
 
-- **The keys are never prettified.** `wear_per_biomass_hauled` is drawn exactly like that, because the
+- **The keys are never prettified.** `starting_durability` is drawn exactly like that, because the
   reader's next move is to search `equipment.json` for the string they just read. A title-cased
   rendering would break that and read as an improvement.
 - **There is deliberately no rule skipping `_`-prefixed keys.** The wire carries the serialized

@@ -994,7 +994,7 @@ fn a_denial_raid_burns_more_kit_than_a_hunt_and_only_for_kills() {
         app.world
             .get::<BandEquipment>(party)
             .expect("the party carries its kit")
-            .hunting_wear
+            .wear_of("spears")
     };
 
     let denial = spear_wear(deny);
@@ -1026,7 +1026,7 @@ fn a_denial_raid_burns_more_kit_than_a_hunt_and_only_for_kills() {
     let idle_wear = app
         .world
         .get::<BandEquipment>(party)
-        .map(|kit| kit.hunting_wear)
+        .map(|kit| kit.wear_of("spears"))
         // A herd that despawned takes the party home; either way nothing was killed.
         .unwrap_or(0.0);
     assert_eq!(
@@ -1037,8 +1037,13 @@ fn a_denial_raid_burns_more_kit_than_a_hunt_and_only_for_kills() {
     // not measuring two zeroes.
     let equipment = app.world.resource::<EquipmentConfigHandle>().get();
     assert!(
-        equipment.hunting_kit.wear_per_kill > 0.0,
-        "the hunting kit must actually wear per kill, or this whole fixture asserts nothing"
+        equipment
+            .item("spears")
+            .expect("the roster ships spears")
+            .wear
+            .amount
+            > 0.0,
+        "spears must actually wear per kill, or this whole fixture asserts nothing"
     );
 }
 

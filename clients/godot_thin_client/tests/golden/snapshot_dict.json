@@ -753,6 +753,7 @@
       "route_length": 176,
       "size_class": "herds[0].size_class",
       "species": "herds[0].species",
+      "stay_fraction": 26.790001,
       "stressed_fraction": 81.589996,
       "tame_build_fraction": 71.720001,
       "trade_per_animal": 89.330002,
@@ -867,6 +868,7 @@
       "route_length": 161,
       "size_class": "herds[1].size_class",
       "species": "herds[1].species",
+      "stay_fraction": 64.949997,
       "stressed_fraction": 10.21,
       "tame_build_fraction": 59.450001,
       "trade_per_animal": 4.15,
@@ -1010,7 +1012,11 @@
   "kits": [
     {
       "attack": 8.2,
+      "attack_max_body_mass": 94.639999,
+      "attack_min_body_mass": 90.690002,
+      "dispersion": 14.48,
       "display_name": "kits[0].display_name",
+      "exposure": 90.550003,
       "forage_carry_per_worker_biomass": 88.019997,
       "hunt_carry_per_worker_biomass": 30.709999,
       "id": "kits[0].id",
@@ -1021,7 +1027,11 @@
     },
     {
       "attack": 15.85,
+      "attack_max_body_mass": 40.040001,
+      "attack_min_body_mass": 98.889999,
+      "dispersion": 18.49,
       "display_name": "kits[1].display_name",
+      "exposure": 14.74,
       "forage_carry_per_worker_biomass": 15.04,
       "hunt_carry_per_worker_biomass": 39.080002,
       "id": "kits[1].id",
@@ -1453,7 +1463,6 @@
       "age_working": 0.000131,
       "band_id": 141,
       "band_move_tiles_per_turn": 65.150002,
-      "basket_kit_durability": 39.75,
       "current_x": 0,
       "current_y": 0,
       "discontent_fraction": 0.00013,
@@ -1486,11 +1495,28 @@
       "hunt_per_worker_provisions": 29.4,
       "hunt_reach": 171,
       "hunter_attack": 45.5,
-      "hunting_kit_durability": 87.099998,
       "idle_workers": 54,
       "is_expedition": true,
       "is_traveling": true,
       "kit_id": "populations[0].kit_id",
+      "kit_item_conditions": [
+        {
+          "item_id": "spears",
+          "remaining": 93.019997
+        },
+        {
+          "item_id": "sled",
+          "remaining": 61.540001
+        },
+        {
+          "item_id": "baskets",
+          "remaining": 68.699997
+        },
+        {
+          "item_id": "traps",
+          "remaining": 67.139999
+        }
+      ],
       "knowledge_fragments": [
         {
           "discovery": 18,
@@ -1591,7 +1617,6 @@
       "settlement_stage_id": "populations[0].settlement_stage.id",
       "settlement_stage_label": "populations[0].settlement_stage.label",
       "size": 115,
-      "sled_kit_durability": 53.66,
       "stores": {
         "populations[0].stores[0].item": 0.000025,
         "populations[0].stores[1].item": 0.000072
@@ -1623,7 +1648,6 @@
       "age_working": 0.00008,
       "band_id": 42,
       "band_move_tiles_per_turn": 61.23,
-      "basket_kit_durability": 56.169998,
       "current_x": 1,
       "current_y": 1,
       "discontent_fraction": 0.000061,
@@ -1656,11 +1680,28 @@
       "hunt_per_worker_provisions": 38.400002,
       "hunt_reach": 130,
       "hunter_attack": 43.43,
-      "hunting_kit_durability": 111.32,
       "idle_workers": 151,
       "is_expedition": true,
       "is_traveling": true,
       "kit_id": "populations[1].kit_id",
+      "kit_item_conditions": [
+        {
+          "item_id": "spears",
+          "remaining": 18.620001
+        },
+        {
+          "item_id": "sled",
+          "remaining": 42.900002
+        },
+        {
+          "item_id": "baskets",
+          "remaining": 24.540001
+        },
+        {
+          "item_id": "traps",
+          "remaining": 1.56
+        }
+      ],
       "knowledge_fragments": [
         {
           "discovery": 89,
@@ -1761,7 +1802,6 @@
       "settlement_stage_id": "populations[1].settlement_stage.id",
       "settlement_stage_label": "populations[1].settlement_stage.label",
       "size": 14,
-      "sled_kit_durability": 29.459999,
       "stores": {
         "populations[1].stores[0].item": 0.000168,
         "populations[1].stores[1].item": 0.000153

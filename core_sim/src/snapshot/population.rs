@@ -254,7 +254,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // by the remaining condition. **Three kits, three independent readouts** (§4.8): the sled's tier
     // says nothing about the basket's, so they are published as separate fields rather than one
     // "carry" number the client would have to guess the job of.
-    let kit = equipment.copied().unwrap_or_default();
+    let kit = equipment.cloned().unwrap_or_default();
     // **WHICH kit these tiers are quoted for.** A detached party has one, decided at launch, so its
     // row states the tier it will actually fight and haul at. A **resident band** has one per
     // assignment, and this row is per *cohort* — so it is quoted at the job's **default** kit, the
@@ -274,21 +274,30 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             .config
             .default_kit(crate::equipment_config::KitJob::Forage)
     });
-    let hunting_equipped = hunt_choice.hunting_equipped(&kit, kit_levers.config);
-    let hunting_kit_durability = kit.hunting_remaining(kit_levers.config);
-    let sled_kit_durability = kit.sled_remaining(kit_levers.config);
-    let basket_kit_durability = kit.basket_remaining(kit_levers.config);
+    // **One row per ITEM the config carries, not three named floats.** The band's ledger is sparse
+    // (an absent entry is zero wear), so the list is driven by the *config* — otherwise an item the
+    // band has never used would simply be missing from the readout rather than showing as full.
+    let kit_item_conditions = kit_levers
+        .config
+        .items()
+        .map(|(id, _)| sim_schema::state::KitItemConditionState {
+            item_id: id.to_string(),
+            remaining: kit.remaining(id, kit_levers.config),
+        })
+        .collect();
     let hunter_attack = kit_levers
         .config
-        .hunter_profile(kit_levers.hunter_intrinsic, hunting_equipped)
+        .hunter_profile_unbounded(kit_levers.hunter_intrinsic, &hunt_choice, &kit)
         .attack;
     let hunt_carry_per_worker_biomass = kit_levers.config.hunt_per_worker_biomass_capacity(
         kit_levers.equipped_haul_rate,
-        hunt_choice.sled_equipped(&kit, kit_levers.config),
+        &hunt_choice,
+        &kit,
     );
     let forage_carry_per_worker_biomass = kit_levers.config.forage_per_worker_biomass_capacity(
         kit_levers.equipped_gather_rate,
-        forage_choice.basket_equipped(&kit, kit_levers.config),
+        &forage_choice,
+        &kit,
     );
     let migration = cohort.migration.as_ref().map(pending_migration_to_state);
     let (travel_target_x, travel_target_y) = travel_target.map(|t| (t.x, t.y)).unwrap_or((0, 0));
@@ -557,9 +566,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         raid_radius,
         // The minimal TOE — the three kits' remaining condition and the three tiers they resolve to
         // (resolved above, off the band's own wear).
-        hunting_kit_durability,
-        sled_kit_durability,
-        basket_kit_durability,
+        kit_item_conditions,
         hunter_attack,
         hunt_carry_per_worker_biomass,
         forage_carry_per_worker_biomass,

@@ -18,11 +18,11 @@ use bevy::math::UVec2;
 use core_sim::{
     advance_expeditions, advance_herds, advance_labor_allocation, advance_tick, build_headless_app,
     recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero, BandEquipment,
-    EquipmentConfig, EquipmentConfigHandle, Expedition, ExpeditionMission, ExpeditionPhase,
-    FactionId, FaunaConfigHandle, GenerationId, HerdRegistry, HerdTelemetry, KitChoice, KitJob,
-    LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MoraleCause, PopulationCohort,
-    ResidentBand, SimulationConfig, SnapshotHistory, SourceYield, StartingUnit, TileRegistry,
-    DEFAULT_ESCAPEMENT_FLOOR,
+    EffectTier, EquipmentConfig, EquipmentConfigHandle, EquipmentStat, Expedition,
+    ExpeditionMission, ExpeditionPhase, FactionId, FaunaConfigHandle, GenerationId, HerdRegistry,
+    HerdTelemetry, KitChoice, KitJob, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
+    MoraleCause, PopulationCohort, ResidentBand, SimulationConfig, SnapshotHistory, SourceYield,
+    StartingUnit, TileRegistry, DEFAULT_ESCAPEMENT_FLOOR,
 };
 
 /// The crew every fixture in this file staffs, so two arms are only ever comparable to each other.
@@ -209,9 +209,10 @@ fn spawn_home_band(app: &mut App, herd_pos: UVec2) -> bevy::prelude::Entity {
 }
 
 fn wear_of(app: &App, entity: bevy::prelude::Entity) -> BandEquipment {
-    *app.world
+    app.world
         .get::<BandEquipment>(entity)
         .expect("the fixture spawned a wear ledger")
+        .clone()
 }
 
 fn first_yield(app: &App, band: bevy::prelude::Entity) -> SourceYield {
@@ -283,7 +284,7 @@ fn naming_the_jobs_own_kit_reproduces_the_default_take_bit_for_bit() {
     );
     // Liveness: a comparison of two zeros would pass while the feature was dead.
     assert!(
-        named_yield.actual > 0.0 && named_wear.hunting_wear > 0.0,
+        named_yield.actual > 0.0 && named_wear.wear_of("spears") > 0.0,
         "the fixture must actually hunt and actually wear its spears: {named_yield:?} {named_wear:?}"
     );
 }
@@ -321,7 +322,7 @@ fn a_crew_with_no_kit_takes_less_and_spends_no_durability_on_any_component() {
          makes a bare-handed comparison free to run"
     );
     assert!(
-        kitted_wear.hunting_wear > 0.0 && kitted_wear.sled_wear > 0.0,
+        kitted_wear.wear_of("spears") > 0.0 && kitted_wear.wear_of("sled") > 0.0,
         "…and the kitted arm beside it must genuinely wear both, or the assertion above is vacuous: \
          {kitted_wear:?}"
     );
@@ -405,14 +406,15 @@ fn a_gather_crew_wears_only_the_baskets_and_a_kitless_one_wears_nothing() {
     let (bare_yield, bare_wear) = arm(&mut app, "none");
 
     assert!(
-        kitted_wear.basket_wear > 0.0,
+        kitted_wear.wear_of("baskets") > 0.0,
         "a kitted gather wears its baskets: {kitted_wear:?}"
     );
     assert_eq!(
-        kitted_wear.hunting_wear, 0.0,
+        kitted_wear.wear_of("spears"),
+        0.0,
         "…and nothing else — a gather blunts no spears"
     );
-    assert_eq!(kitted_wear.sled_wear, 0.0, "…and drags no sled");
+    assert_eq!(kitted_wear.wear_of("sled"), 0.0, "…and drags no sled");
     assert_eq!(
         bare_wear,
         BandEquipment::default(),
@@ -453,9 +455,9 @@ fn a_partys_kit_survives_the_home_bands_stock_changing_under_it() {
             .world
             .get_mut::<BandEquipment>(home)
             .expect("the home band carries a wear ledger");
-        band_kit.hunting_wear = cfg.hunting_kit.starting_durability;
-        band_kit.sled_wear = cfg.sled_kit.starting_durability;
-        band_kit.basket_wear = cfg.basket_kit.starting_durability;
+        band_kit.restore_wear("spears", item_durability(&cfg, "spears"));
+        band_kit.restore_wear("sled", item_durability(&cfg, "sled"));
+        band_kit.restore_wear("baskets", item_durability(&cfg, "baskets"));
     }
     for _ in 0..2 {
         drive_party_turn(&mut app);
@@ -489,28 +491,28 @@ fn a_kitted_partys_own_wear_still_steps_it_down() {
     let party = spawn_party(&mut app, home, pos, &id, kitted);
 
     drive_party_turn(&mut app);
-    let fresh_take = wear_of(&app, party).hunting_wear;
+    let fresh_take = wear_of(&app, party).wear_of("spears");
     assert!(fresh_take > 0.0, "a kitted party blunts its spears");
 
     // Run the party's own spears to the cliff and give it another turn.
     {
-        let durability = equipment(&app).hunting_kit.starting_durability;
+        let durability = item_durability(&equipment(&app), "spears");
         let mut wear = app
             .world
             .get_mut::<BandEquipment>(party)
             .expect("the party carries a wear ledger");
-        wear.hunting_wear = durability;
+        wear.restore_wear("spears", durability);
     }
-    let sled_before = wear_of(&app, party).sled_wear;
+    let sled_before = wear_of(&app, party).wear_of("sled");
     drive_party_turn(&mut app);
     let after = wear_of(&app, party);
     assert_eq!(
-        after.hunting_wear,
-        equipment(&app).hunting_kit.starting_durability,
+        after.wear_of("spears"),
+        item_durability(&equipment(&app), "spears"),
         "spent spears are not charged again — the predicate that chose the tier gates the charge"
     );
     assert!(
-        after.sled_wear >= sled_before,
+        after.wear_of("sled") >= sled_before,
         "…while the sled, which is still serving, goes on being charged for what it hauls"
     );
 }
@@ -560,18 +562,18 @@ fn the_published_snapshot_carries_the_roster_and_names_the_kit_the_tables_are_qu
         .expect("the roster ships `none`");
     assert_eq!(
         bare.hunt_carry_per_worker_biomass,
-        cfg.sled_kit.unequipped_per_worker_biomass_capacity
+        unequipped_carry(&cfg, "sled")
     );
     assert_eq!(
         bare.forage_carry_per_worker_biomass,
-        cfg.basket_kit.unequipped_per_worker_biomass_capacity
+        unequipped_carry(&cfg, "baskets")
     );
     let kitted = snapshot
         .kits
         .iter()
         .find(|option| option.id == "big_game")
         .expect("the roster ships `big_game`");
-    assert_eq!(kitted.attack, cfg.hunting_kit.equipped_attack);
+    assert_eq!(kitted.attack, equipped_attack(&cfg));
     assert!(kitted.jobs.iter().any(|job| job == "hunt"));
 
     let herd = snapshot
@@ -633,41 +635,18 @@ fn the_published_equipment_config_json_round_trips_to_the_config_the_sim_runs() 
         .expect("the published catalogue parses back as an EquipmentConfig, and validates");
     let live = equipment(&app);
 
-    assert_eq!(
-        parsed.hunting_kit.equipped_attack,
-        live.hunting_kit.equipped_attack
+    // The ITEM TABLE, compared WHOLE rather than field by field. The three named blocks this
+    // replaced (`hunting_kit` / `sled_kit` / `basket_kit`) could be listed by hand because their
+    // fields were fixed; an item's are not — `effects` is a list, an effect may carry mass bounds,
+    // and the next item adds an axis. A hand-listed comparison would go stale silently, which is
+    // the exact failure this whole field exists to prevent.
+    assert!(
+        !live.items.is_empty(),
+        "the item table is non-empty, or comparing it says nothing"
     );
     assert_eq!(
-        parsed.hunting_kit.starting_durability,
-        live.hunting_kit.starting_durability
-    );
-    assert_eq!(
-        parsed.hunting_kit.wear_per_kill,
-        live.hunting_kit.wear_per_kill
-    );
-    assert_eq!(
-        parsed.sled_kit.unequipped_per_worker_biomass_capacity,
-        live.sled_kit.unequipped_per_worker_biomass_capacity
-    );
-    assert_eq!(
-        parsed.sled_kit.starting_durability,
-        live.sled_kit.starting_durability
-    );
-    assert_eq!(
-        parsed.sled_kit.wear_per_biomass_hauled,
-        live.sled_kit.wear_per_biomass_hauled
-    );
-    assert_eq!(
-        parsed.basket_kit.unequipped_per_worker_biomass_capacity,
-        live.basket_kit.unequipped_per_worker_biomass_capacity
-    );
-    assert_eq!(
-        parsed.basket_kit.starting_durability,
-        live.basket_kit.starting_durability
-    );
-    assert_eq!(
-        parsed.basket_kit.wear_per_biomass_gathered,
-        live.basket_kit.wear_per_biomass_gathered
+        parsed.items, live.items,
+        "every item's durability, wear quantum and effects survive the round trip"
     );
 
     // The roster, in file order — and each entry compared through the MASK it resolves to, so the
@@ -843,4 +822,36 @@ fn a_resident_bands_published_kit_answers_for_the_hunt_tiers_only() {
         "…and the tier it IS quoted at is the FORAGE job's default, which rides the wire as \
          `default_forage_kit_id`"
     );
+}
+
+/// **The shipped durability of one item**, by id — the tests read dials off the item table now that
+/// `equipment.json` has one, rather than off three named blocks.
+fn item_durability(cfg: &EquipmentConfig, id: &str) -> f32 {
+    cfg.item(id)
+        .unwrap_or_else(|| panic!("the shipped roster must carry '{id}'"))
+        .starting_durability
+}
+
+/// The **unequipped** carry rate a carry item declares — the tier a party without it falls back to.
+fn unequipped_carry(cfg: &EquipmentConfig, id: &str) -> f32 {
+    let stat = if id == "sled" {
+        EquipmentStat::HuntCarry
+    } else {
+        EquipmentStat::ForageCarry
+    };
+    match cfg.item(id).and_then(|item| item.effect(stat)) {
+        Some(EffectTier::Unequipped(value)) => value,
+        other => panic!("'{id}' must declare an unequipped {stat:?}, got {other:?}"),
+    }
+}
+
+/// The **equipped** `attack` a speared party fights at.
+fn equipped_attack(cfg: &EquipmentConfig) -> f32 {
+    match cfg
+        .item("spears")
+        .and_then(|item| item.effect(EquipmentStat::Attack))
+    {
+        Some(EffectTier::Equipped(value)) => value,
+        other => panic!("spears must declare an equipped attack, got {other:?}"),
+    }
 }
