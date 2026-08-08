@@ -419,12 +419,12 @@ func _local_hunt_preview_bbcode(band: Dictionary, herd: Dictionary, floor: float
 ## top and never hands a priced dict to another producer that prices too.
 func _hunt_priced_herd(herd: Dictionary, band: Dictionary) -> Dictionary:
     return _kit_priced_source(herd, HudComposeVocab.BARE_FORECAST_PREFIX, band, KitRoster.JOB_HUNT,
-        _compose.hunt_kit_id(), KitRoster.KIT_HUNT_CARRY_KEY)
+        _compose.hunt_kit_id())
 
 ## The plant twin. A patch publishes no retreat, so only the carry half of the substitution bites.
 func _forage_priced_patch(tile_info: Dictionary, band: Dictionary) -> Dictionary:
     return _kit_priced_source(tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX, band,
-        KitRoster.JOB_FORAGE, _compose.forage_kit_id(), KitRoster.KIT_FORAGE_CARRY_KEY)
+        KitRoster.JOB_FORAGE, _compose.forage_kit_id())
 
 ## The hunt forecast, priced — and the ONLY way this sheet builds one. Pairing the repricing with the
 ## construction is what makes "some call sites were missed" unrepresentable rather than a thing to
@@ -441,16 +441,13 @@ func _forage_forecast(tile_info: Dictionary, band: Dictionary, floor: float,
         SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX, floor,
         improvement)
 
+## The two SNAPSHOT reads `KitRoster.priced_source` must not make for itself (it is stateless), and
+## nothing else. The resolve, the axis and the arithmetic all live there, so the dock's raid sheet
+## prices its chart through the identical code rather than a second copy of this.
 func _kit_priced_source(src: Dictionary, prefix: String, band: Dictionary, job: String,
-        kit_id: String, carry_key: String) -> Dictionary:
-    var kits: Array = _band_labor.kits()
-    var resolved := KitRoster.resolve_selection(kits, job, _band_labor.default_kit_id(job), kit_id)
-    var kit := KitRoster.kit_by_id(kits, resolved)
-    if kit.is_empty():
-        return src
-    var tiers := KitRoster.effective_tiers(kits, kit, band)
-    return KitRoster.repriced_source(src, prefix, float(tiers.get(carry_key, 0.0)),
-        KitRoster.equipped_tier(kits, carry_key), float(kit.get("dispersion", 1.0)))
+        kit_id: String) -> Dictionary:
+    return KitRoster.priced_source(src, prefix, _band_labor.kits(), job,
+        _band_labor.default_kit_id(job), kit_id, band)
 
 func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, workers: int,
         improvement: String, reaches: bool = false) -> Dictionary:

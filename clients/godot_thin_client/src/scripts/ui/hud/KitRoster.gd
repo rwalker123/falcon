@@ -41,6 +41,11 @@ const KIT_ATTACK_KEY := "attack"
 const KIT_HUNT_CARRY_KEY := "hunt_carry_per_worker_biomass"
 const KIT_FORAGE_CARRY_KEY := "forage_carry_per_worker_biomass"
 
+## **WHAT THE KIT DOES TO THE QUARRY'S RETREAT** — a multiplier on the species' own wariness, so the
+## SPECIES decides what a noisy approach costs (`equipment.md`). Neutral at `1.0`; a trap ships `0`.
+const KIT_DISPERSION_KEY := "dispersion"
+const DISPERSION_NEUTRAL := 1.0
+
 ## The BAND's remaining condition per ITEM — one row per item the server's config carries, as
 ## `{item_id, remaining}` on `equipment.json`'s 0-100 scale (`0` = dry). A dry item steps its role
 ## down to the unequipped tier and STAYS there — there is no replenishment path yet — and performance
@@ -84,6 +89,20 @@ const HERD_DENIAL_ESTIMATES_KIT_KEY := "denial_estimates_kit_id"
 ## role and the roster filter can never drift into three spellings of one word.
 const JOB_HUNT := SourceForecast.LABOR_KIND_HUNT
 const JOB_FORAGE := SourceForecast.LABOR_KIND_FORAGE
+
+## **THE CARRY AXIS EACH JOB IS PRICED ON** — "one item, one job" (`equipment.md`): a SLED raises the
+## hunt's haul, BASKETS raise the forage web's, and no kit raises both.
+##
+## **`priced_source` DERIVES the axis from the job rather than taking it, and that is the whole point
+## of the table.** A caller that can name the axis can name the WRONG one, and one did: the compose
+## seam passed the key `effective_tiers` answered (`"forage_carry"`) to a roster lookup that spells it
+## `forage_carry_per_worker_biomass`, so the reference resolved to `0`, the repricing short-circuited,
+## and every kit on every sheet quoted identical numbers with only the hint line moving. Reported from
+## play. A job is what a call site actually knows; the axis is this layer's business.
+const JOB_CARRY_AXES := {
+	JOB_HUNT: KIT_HUNT_CARRY_KEY,
+	JOB_FORAGE: KIT_FORAGE_CARRY_KEY,
+}
 
 ## The `OptionButton` the kit row mounts, as meta — the stable handle for the preview harnesses. A
 ## node-type search finds the compose sheets' `Band:` picker too (and, before the control became an
@@ -288,6 +307,36 @@ static func repriced_source(src: Dictionary, prefix: String, carry: float, refer
 		var stay := clampf(float(out[stay_key]), 0.0, 1.0)
 		out[stay_key] = clampf(1.0 - (1.0 - stay) * maxf(dispersion, 0.0), 0.0, 1.0)
 	return out
+
+## **THE COMPOSE SHEETS' ONE PRICING SEAM — resolve the kit, then reprice the source at it.**
+##
+## `repriced_source` above is pure arithmetic on two tiers; this is the step that decides WHICH tiers,
+## and it is the half that has twice been where the feature died. It lives here rather than on a
+## controller because BOTH controllers need it: `DrawerComposeController` prices the herd/land drawer's
+## compose sheets and `BandPanelController` prices the dock's raid chart, and a second copy of a
+## resolve-then-reprice is exactly how one entry point comes to quote a kit the other does not.
+##
+## **STATELESS, so the roster and the job default arrive as PARAMETERS** — they are snapshot data and
+## live on `HudBandLaborState`, which this layer must never reach for.
+##
+## **The AXIS is derived from the JOB** (`JOB_CARRY_AXES`), so a caller cannot hand it a key no roster
+## entry carries — see that table for the bug this closes.
+##
+## Answers `src` UNCHANGED where there is nothing to price against: a job with no carry axis, or a
+## roster that cannot resolve the selection at all (a world rebuilt under the open sheet). Never a
+## guess, and never a partial substitution.
+static func priced_source(src: Dictionary, prefix: String, kits: Array, job: String,
+		default_kit_id: String, composed_kit_id: String, band: Dictionary) -> Dictionary:
+	var carry_key: String = String(JOB_CARRY_AXES.get(job, ""))
+	if carry_key.is_empty():
+		return src
+	var kit := kit_by_id(kits, resolve_selection(kits, job, default_kit_id, composed_kit_id))
+	if kit.is_empty():
+		return src
+	var tiers := effective_tiers(kits, kit, band)
+	return repriced_source(src, prefix, float(tiers.get(carry_key, 0.0)),
+		equipped_tier(kits, carry_key),
+		float(kit.get(KIT_DISPERSION_KEY, DISPERSION_NEUTRAL)))
 
 ## **THE KIT'S ATTACK AGAINST THIS QUARRY** — the kit's own number inside its size window, and the
 ## band's unequipped attack outside it.

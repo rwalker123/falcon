@@ -1265,6 +1265,7 @@ func _ready() -> void:
 	# The tall side dock is where the sheet must NOT leave the zone — the other half of the fork the
 	# height-capped state below asserts. See `_assert_compose_in_zone`.
 	_assert_compose_in_zone("band_panel_compose_hunt")
+	_assert_dock_chart_carries_the_kit()
 	_assert_party_past_the_rungs_is_quoted()
 	_assert_party_ladder_rounding()
 
@@ -5192,6 +5193,94 @@ func _pick_kit(kit_id: String) -> void:
 ## **Every key below is taken from `SourceForecast`'s constants, never typed**, which is the guard
 ## against the first one recurring; the retreat and reference assertions pin the other two by naming
 ## the sim's own expressions.
+## **THE DOCK'S RAID CHART CARRIES THE KIT — and `dispersion` is what it carries.**
+##
+## The dock's hunt form is almost entirely `huntTripEstimates`: the trip readout, the preset metrics
+## and the demand-side party cap are all lookups into a table the sim quotes at the hunt job's DEFAULT
+## kit and does not reprice, so none of them may move with a selection (the honesty gate). The CHART is
+## the exception — it is composed client-side from the herd's own wire terms — which makes it, beside
+## the combat gate, the only thing on that sheet still answering for the kit the player picked.
+##
+## **THE TWO KITS DIFFER ONLY IN `dispersion`.** Same carry on both, so the carry half of the
+## substitution cannot account for a single unit of the difference and what is left is the retreat.
+## A locally-built roster rather than `BandFx.kit_roster_fixture()`, which ships no `dispersion` at all
+## — asserting through that one would be comparing a kit against itself.
+##
+## **THE PAIR IS THE CLAIM, and the second half is the sim boundary.** The drawdown answers (the
+## projection the curve draws, and the *clear* crew the verdict names) MUST move: a party keeping one
+## animal in four needs four times the hands to pull a herd to a floor. The HOLD crew must NOT — on a
+## whole-animal source it is `take_workers`, the client mirror of `fauna::hunt_take_workers`, and
+## `max_useful_workers` floors the stepper cap on it, so a retreat reaching it would put the sheet at
+## odds with the sim's own `workersNeeded`.
+func _assert_dock_chart_carries_the_kit() -> void:
+	const DOCK_KIT_CARRY := 40.0
+	const DOCK_KIT_ENGAGE := 4.0
+	# `1 - wariness` at 0.75 — three animals in four bolt before contact, so a device that is not
+	# there to be seen is worth four times a spear party on this quarry.
+	const DOCK_KIT_STAY := 0.25
+	const DOCK_KIT_PARTY := 3
+	var roster := [
+		{
+			KitRoster.KIT_ID_KEY: "spear_line", KitRoster.KIT_JOBS_KEY: [KitRoster.JOB_HUNT],
+			KitRoster.KIT_HUNT_CARRY_KEY: DOCK_KIT_CARRY,
+			KitRoster.KIT_FORAGE_CARRY_KEY: DOCK_KIT_CARRY,
+			KitRoster.KIT_DISPERSION_KEY: KitRoster.DISPERSION_NEUTRAL,
+		},
+		{
+			KitRoster.KIT_ID_KEY: "passive_device", KitRoster.KIT_JOBS_KEY: [KitRoster.JOB_HUNT],
+			KitRoster.KIT_HUNT_CARRY_KEY: DOCK_KIT_CARRY,
+			KitRoster.KIT_FORAGE_CARRY_KEY: DOCK_KIT_CARRY,
+			KitRoster.KIT_DISPERSION_KEY: 0.0,
+		},
+	]
+	var quarry := {
+		SourceForecast.FORECAST_BIOMASS_KEY: 300.0,
+		SourceForecast.FORECAST_CAPACITY_KEY: 400.0,
+		SourceForecast.FORECAST_BODY_MASS_KEY: 2.0,
+		SourceForecast.FORECAST_FOOD_PER_ANIMAL_KEY: 0.2,
+		SourceForecast.FORECAST_PROVISIONS_PER_BIOMASS_KEY: 0.1,
+		SourceForecast.FORECAST_PER_WORKER_BIOMASS_KEY: DOCK_KIT_CARRY,
+		SourceForecast.FORECAST_PER_WORKER_KEY: DOCK_KIT_CARRY * 0.1,
+		SourceForecast.FORECAST_ENGAGE_RATE_KEY: DOCK_KIT_ENGAGE,
+		KitRoster.SOURCE_STAY_FRACTION: DOCK_KIT_STAY,
+		SourceForecast.FORECAST_REGROWTH_SAMPLES_KEY: PackedFloat32Array([
+			0.0, 6.0, 9.0, 8.0, 4.0, 0.0]),
+	}
+	var speared := _dock_chart_at_kit(quarry, roster, "spear_line", DOCK_KIT_PARTY)
+	var trapped := _dock_chart_at_kit(quarry, roster, "passive_device", DOCK_KIT_PARTY)
+	# The precondition both claims stand on: a chart answering `known == false` would make every
+	# comparison below a comparison of two absent numbers.
+	_assert_band_panel("precondition: the dock's raid chart is known under both kits",
+		bool(speared.get("known", false)) and bool(trapped.get("known", false)))
+	# **THE CURVE ITSELF** — what the player sees. `settled_fraction` is where the walk ends, i.e. the
+	# stock this party leaves standing, and it is the number the whole chart is drawn around.
+	_assert_band_panel("the passive device draws the herd further down than the spear line (%s against %s)"
+			% [str(trapped.get("settled_fraction")), str(speared.get("settled_fraction"))],
+		float(trapped.get("settled_fraction", 1.0))
+			< float(speared.get("settled_fraction", 1.0)) - STOCK_FRACTION_MARGIN)
+	# **AND THE REMEDY THE VERDICT NAMES MOVES WITH IT.** `crew_to_clear` floors on `crew_that_reaches`,
+	# so this covers both drawdown answers at once — a spear party needs strictly more hands to pull the
+	# same herd to the same floor.
+	_assert_band_panel("…and the spear line needs more hands to clear the same room (%d against %d)"
+			% [int(speared.get("crew_to_clear", 0)), int(trapped.get("crew_to_clear", 0))],
+		int(speared.get("crew_to_clear", 0)) > int(trapped.get("crew_to_clear", 0)))
+	# **THE SIM-MIRROR HALF.** `crew_to_hold` is `fauna::hunt_take_workers` and the stepper cap floors
+	# on it; it must read the RAW reach whatever the kit is.
+	_assert_band_panel("…while the HOLD crew is the sim's own and does not move (%d)"
+			% int(speared.get("crew_to_hold", -1)),
+		int(speared.get("crew_to_hold", -1)) == int(trapped.get("crew_to_hold", -2)))
+
+## The dock's own chart composition, at one kit — `KitRoster.priced_source` then `floor_chart_model`,
+## the two calls `_fill_hunt_compose_sheet` makes in that order.
+func _dock_chart_at_kit(quarry: Dictionary, roster: Array, kit_id: String,
+		party: int) -> Dictionary:
+	return SourceForecast.floor_chart_model(
+		KitRoster.priced_source(quarry, HudComposeVocab.BARE_FORECAST_PREFIX, roster,
+			KitRoster.JOB_HUNT, "spear_line", kit_id, {}),
+		SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX,
+		SourceForecast.floor_for_preset(SourceForecast.FLOOR_PRESET_PEAK), party,
+		SourceForecast.IMPROVEMENT_NONE, HudComposeVocab.COMPOSE_FIELD_PARTY.to_lower(), false)
+
 func _assert_kit_reprices_the_source() -> void:
 	const PUBLISHED_CARRY := RETREAT_REFERENCE_CARRY
 	const BARE_CARRY := 12.0
@@ -5991,6 +6080,10 @@ const KIT_FRAME_SPEARS_CONDITION := 74.5
 ## scope because the retreat's end-to-end helpers below `_assert_kit_reprices_the_source` price against
 ## it too, and a second copy is how a reference and a published rate start disagreeing.
 const RETREAT_REFERENCE_CARRY := 40.0
+
+## Slack on a stock-fraction comparison — the projection walks 60 turns of float arithmetic, so two
+## genuinely different settle points must differ by more than the accumulated noise to count.
+const STOCK_FRACTION_MARGIN := 0.001
 const KIT_FRAME_SLED_DRY := 0.0
 ## The baskets are irrelevant to a hunt sheet and are left healthy, so nothing on these frames can
 ## pass by reading the forage component on the hunt's row — the defect the three-kit split corrected.

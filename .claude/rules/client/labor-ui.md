@@ -1467,24 +1467,59 @@ wire's own `1` — which `animals_stayed` short-circuits on, so an unbounded eng
 through. Measured: with the whole substitution live, **zero of `ui_preview`'s 590 assertions move**, no
 fixture in that harness publishing the field.
 
-**KNOWN GAP — the DOCK's hunt and denial forms reprice nothing.** `_kit_priced_source` is
-`DrawerComposeController`'s alone, so `BandPanelController`'s raid sheets build their floor chart on the
-RAW herd. Most of what those forms show is estimate-table lookup, which is quoted at the hunt job's
-default kit BY DESIGN and says so (see "THE HONESTY RULE" below) — but the chart is composed
-client-side from the herd's own terms and could be repriced honestly. It is left alone because its crew
-stepper caps on `expedition_useful_cap`, which IS table-derived: pricing the pills without the stepper
-would put the two at odds, which is the defect this section exists to remove. **Measured consequence:
-the repricing fix moved 83 of `ui_preview`'s 343 frames and ZERO of `band_panel_preview`'s 74.**
+### THE DOCK'S RAID CHART IS PRICED TOO, AND IT IS THE ONLY THING ON THAT SHEET THAT CAN BE
 
-**KNOWN GAP — the chart's PROJECTION is still pre-retreat.** `project_stock`'s engagement bound
-(`floor_chart_model`, `take_draws_down`, `crew_that_reaches`' probe walks) reads `engaged_quantum`
-without the stay term, so the drawn curve, the settle verdict and the ⚠ overdraw gate all walk a take
-larger than the one the readout quotes. It is left whole rather than half-closed **because
-`crew_that_reaches` feeds `max_useful_workers`' `reach_crew` floor**, i.e. the stepper cap — retreat-
-bounding it would put the sheet back at odds with the sim's `workersNeeded`, which is the regression
-this whole section exists to prevent. Closing it means separating that crew answer from the walk it is
-derived through. It is the same family as the two gaps recorded below (the local per-turn readout and
-the raid sheet's chart are both blind to the FIGHT), and it closes the same way.
+`KitRoster.priced_source` is the resolve-then-reprice seam and **both controllers call it** —
+`DrawerComposeController` for the drawer's three sheets, `BandPanelController._fill_hunt_compose_sheet`
+for the dock's raid chart. It lives in `KitRoster` rather than on a controller for the reason that
+layer exists at all: a second copy of a resolve is how one entry point comes to quote a kit the other
+does not, and this arc has now paid for that twice.
+
+**The dock's OTHER figures cannot carry a kit, and that is the honesty rule rather than an omission.**
+The trip readout, the preset metrics and the demand-side party cap are all readings of
+`huntTripEstimates`, which the sim quotes at the hunt job's DEFAULT kit and does not reprice — so under
+a mismatched selection they are suppressed outright. The chart is the exception because it is composed
+CLIENT-SIDE from the herd's own wire terms, which makes it, beside the combat gate, the only thing on
+that sheet still answering for the kit the player actually picked.
+
+**Both halves of the substitution are real for a raid.** `advance_expeditions` resolves the party's own
+kit and runs `HuntParty::stayers` exactly as a resident hunt does, so `dispersion` belongs there; the
+carry tier scales the party's throughput the same way.
+
+### THE PROJECTION CARRIES THE RETREAT — and the line between it and the sim is `crew_to_hold`
+
+`dispersion` reaches a chart at all only because `project_stock`'s engagement bound now takes the stay
+term. Without it the dock's sheet could be priced and still render identically for every kit, the
+curve being the one thing it draws.
+
+**The split is by WHOSE QUESTION the number answers, not by which function computes it:**
+
+| retreat-aware — a DRAWDOWN answer, no sim twin | RAW reach — a SIM MIRROR |
+|---|---|
+| `project_stock`'s bound at all three walks (`floor_chart_model`, `take_draws_down`, `crew_that_reaches`' probes) | `animals_engaged`, `engagement_per_worker` |
+| `engagement_carry`, hence `crew_to_clear` and `crew_that_reaches` | `engage_workers` (`fauna::hunt_engage_workers`) |
+| — | `take_workers` (`fauna::hunt_take_workers`), hence **`crew_to_hold`** |
+
+**`crew_to_hold` IS `take_workers` ON A WHOLE-ANIMAL SOURCE, and `max_useful_workers` floors the
+stepper cap on it** — so a retreat reaching it would put the sheet at odds with the sim's own
+`workersNeeded`, which is the regression the `engage_rate` fold shipped and this table exists to keep
+closed. The other two crew answers have no sim twin: they ask how many hands pull a stock DOWN to a
+floor, and a party keeping one animal in four genuinely needs four times as many. The file already
+records that the two disagreeing is correct — *"Two different questions about two different stocks —
+the numbers agreeing would be the bug."*
+
+**Measured on one herd (`wariness 0.75`, `engageRate 4`, a party of 3):** the passive device walks the
+herd to its floor (`settled_fraction` 0.50) where the spear line settles at **0.70**, and *clear it
+now* reads **50 hands against 13** — while `crew_to_hold` is **2 either way**. Guarded by
+`band_panel_preview._assert_dock_chart_carries_the_kit`, whose two kits differ in `dispersion` ALONE
+(same carry, so the carry half cannot account for a unit of it) over a locally-built roster —
+`BandFx.kit_roster_fixture()` ships no `dispersion` at all, so asserting through it would compare a kit
+against itself.
+
+**It moved ZERO frames and ZERO assertions in either harness**, measured by stashing the change and
+re-rendering: no rendered fixture on either side publishes `stayFraction`, so `animals_stayed`
+short-circuits and every existing number is untouched. Which is also why the claim had to be a driven
+one — see the liveness section below for the general form of that trap.
 
 **Assertions, in `band_panel_preview._assert_kit_reprices_the_source`** — the whole substitution is
 arithmetic, so it is unit-tested rather than rendered. The reference claim needs a source whose

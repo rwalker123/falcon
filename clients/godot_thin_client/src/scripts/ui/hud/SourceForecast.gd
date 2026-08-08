@@ -1663,11 +1663,23 @@ static func engagement_per_worker(engage_rate: float, dip: float) -> float:
 ## `ENGAGEMENT_UNBOUNDED` for a source with no engagement stage AND for one with no body to count
 ## (every forage patch), so `min(carry, …)` collapses to the carry alone and the plant web and the pens
 ## are byte-identical to before this arm existed. That is the regression that matters most here.
-static func engagement_carry(body_mass: float, engage_rate: float, dip: float) -> float:
+##
+## **IT IS WHAT A WORKER BRINGS DOWN, SO IT CARRIES THE RETREAT** — `stay` defaults to the wire's
+## "nothing breaks off", and both callers (`crew_to_clear`, `crew_that_reaches`) are DRAWDOWN answers:
+## how many hands it takes to pull a stock to a floor. A party that keeps one animal in four needs four
+## times the hands to do that, and quoting the raw reach there names a crew that never arrives — the
+## same defect the carry-only reading had before the engagement arm existed.
+##
+## **THE SIM-MIRROR SIDE MUST NOT CALL THIS.** `engage_workers` / `take_workers` size a crew on
+## `engagement_per_worker`, the RAW reach, because `fauna::hunt_engage_workers` does; they answer the
+## sim's `workersNeeded` and a retreat there would put the stepper cap at odds with it.
+static func engagement_carry(body_mass: float, engage_rate: float, dip: float,
+        stay: float = STAY_FRACTION_NONE_BREAKS_OFF) -> float:
     if body_mass <= 0.0:
         return ENGAGEMENT_UNBOUNDED
     var reach := engagement_per_worker(engage_rate, dip)
-    return ENGAGEMENT_UNBOUNDED if is_inf(reach) else body_mass * reach
+    return ENGAGEMENT_UNBOUNDED if is_inf(reach) \
+        else body_mass * animals_stayed(reach, stay)
 
 ## **THE TAKE-SIDE CREW FOR A WHOLE-ANIMAL SOURCE** — `max(haul, engage)`, the client mirror of the
 ## sim's `fauna::hunt_take_workers`, and the one place that `max` is written down. Two jobs, one crew,
@@ -1740,12 +1752,13 @@ static func animals_stayed(engaged: float, stay: float) -> float:
 ## cap that had already become engagement-aware. A source with no engagement stage answers
 ## `ENGAGEMENT_UNBOUNDED`, so the `min` collapses to the carry and forage and pens are unmoved.
 static func crew_to_clear(room: float, carry: float, reaching: int,
-        body_mass: float, engage_rate: float, dip: float) -> int:
+        body_mass: float, engage_rate: float, dip: float,
+        stay: float = STAY_FRACTION_NONE_BREAKS_OFF) -> int:
     if not can_price_crew(carry):
         return NO_CREW_ANSWER
     if room <= 0.0:
         return 0
-    var per_worker := minf(carry, engagement_carry(body_mass, engage_rate, dip))
+    var per_worker := minf(carry, engagement_carry(body_mass, engage_rate, dip, stay))
     return maxi(maxi(1, ceili(room / per_worker)), maxi(reaching, 0))
 
 ## ***HOLD IT AFTER*** — the crew that takes exactly what grows back at the floor, so the stock sits
@@ -1817,7 +1830,8 @@ static func reach_crew(src: Dictionary, kind: String, prefix: String, floor: flo
         float(src.get(prefix + FORECAST_CAPACITY_KEY, 0.0)), floor,
         per_worker_biomass(src, prefix) * dip,
         float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)),
-        float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)), dip)
+        float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)), dip,
+        float(src.get(prefix + FORECAST_STAY_FRACTION_KEY, STAY_FRACTION_NONE_BREAKS_OFF)))
     return maxi(crew, 0)
 
 ## **THE PROJECTION** — the stock's trajectory under this crew at this floor, one turn at a time:
@@ -1879,8 +1893,11 @@ static func project_stock(samples: PackedFloat32Array, biomass: float, capacity:
 ## closed form divides by `min(carry, engagement_carry)` and each probe walks a projection carrying
 ## the same bound. Dividing by the carry alone named a crew that cannot draw the herd down at all,
 ## which is the number the verdict offers as the remedy and the number the *clear* target floors on.
+## **THE CLOSED FORM AND THE PROBE WALKS MUST CARRY THE SAME `stay`**, or the seed lands below the
+## answer and the probe spends its budget climbing back to it.
 static func crew_that_reaches(samples: PackedFloat32Array, biomass: float, capacity: float,
-        floor: float, carry: float, body_mass: float, engage_rate: float, dip: float) -> int:
+        floor: float, carry: float, body_mass: float, engage_rate: float, dip: float,
+        stay: float = STAY_FRACTION_NONE_BREAKS_OFF) -> int:
     if not can_price_crew(carry) or capacity <= 0.0:
         return NO_CREW_ANSWER
     var start_fraction := clampf(biomass / capacity, 0.0, 1.0)
@@ -1888,11 +1905,11 @@ static func crew_that_reaches(samples: PackedFloat32Array, biomass: float, capac
     if start_fraction <= floor_fraction:
         return 0
     var peak := peak_regrowth_between(samples, floor_fraction, start_fraction)
-    var per_worker := minf(carry, engagement_carry(body_mass, engage_rate, dip))
+    var per_worker := minf(carry, engagement_carry(body_mass, engage_rate, dip, stay))
     var need := maxi(1, floori(maxf(peak, 0.0) / per_worker) + 1)
     for _step in range(CREW_PROBE_STEPS):
         var walk := project_stock(samples, biomass, capacity, floor, float(need) * carry,
-            engaged_quantum(need, body_mass, engage_rate, dip))
+            engaged_quantum(need, body_mass, engage_rate, dip, stay))
         if int(walk["reached_turn"]) != PROJECTION_REACHED_NONE:
             return need
         need += 1
@@ -1935,7 +1952,9 @@ static func take_draws_down(src: Dictionary, kind: String, prefix: String, floor
     var walk := project_stock(samples, biomass, capacity, clamp_floor(floor),
         float(crew) * carry,
         engaged_quantum(crew, float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)),
-            float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)), dip))
+            float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)), dip,
+            float(src.get(prefix + FORECAST_STAY_FRACTION_KEY,
+                STAY_FRACTION_NONE_BREAKS_OFF))))
     return float(walk["settled_fraction"]) \
         < clampf(biomass / capacity, 0.0, 1.0) - STOCK_FRACTION_EPSILON
 
@@ -2413,11 +2432,23 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
     # such field and a pen publishes `NO_ENGAGEMENT_STAGE`, so both read as unbounded and every number
     # composed below is exactly what it was before the arm existed.
     var engage_rate := float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE))
+    # **THE RETREAT, BOUND ONCE BESIDE THE REACH** — the kit's own effective one, `repriced_source`
+    # having already folded its `dispersion` into the source's `stay_fraction`. It is what makes a kit
+    # visible on a sheet whose every other figure is an estimate-table lookup quoted at ONE kit: the
+    # curve, the settle point and the verdict are composed here, from the herd's own wire terms.
+    var stay := float(src.get(prefix + FORECAST_STAY_FRACTION_KEY, STAY_FRACTION_NONE_BREAKS_OFF))
     var walk := project_stock(samples, biomass, capacity, floor_value, float(workers) * carry,
-        engaged_quantum(workers, body_mass, engage_rate, dip))
+        engaged_quantum(workers, body_mass, engage_rate, dip, stay))
+    # **`crew_to_hold` TAKES NO RETREAT AND THE OTHER TWO DO, which is the sim boundary rather than an
+    # inconsistency.** On a whole-animal source the hold crew IS `take_workers`, the client mirror of
+    # `fauna::hunt_take_workers`, and `max_useful_workers` floors the stepper cap on it — so a retreat
+    # there would put the cap at odds with the sim's own `workersNeeded`. The other two are DRAWDOWN
+    # answers with no sim twin: how many hands pull a stock to a floor, which a party losing three
+    # animals in four genuinely needs more of. The file already records that the two disagreeing is
+    # correct — "Two different questions about two different stocks".
     var hold := crew_to_hold(samples, floor_value, carry, body_mass, engage_rate, dip)
     var reaching := crew_that_reaches(samples, biomass, capacity, floor_value, carry, body_mass,
-        engage_rate, dip)
+        engage_rate, dip, stay)
     var quarry := herd_display_name(src) if kind == SOURCE_KIND_HERD else ""
     return {
         "known": true,
@@ -2452,7 +2483,7 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
         "quarry": quarry,
         "learn_multiplier": learn_multiplier(floor_value),
         "crew_to_clear": crew_to_clear(escapement_room(src, prefix, floor_value), carry, reaching,
-            body_mass, engage_rate, dip),
+            body_mass, engage_rate, dip, stay),
         "crew_to_hold": hold,
         # **THE DIP THE TWO TARGETS ABOVE WERE DIVIDED BY** (§3.1), carried so the crew row can SAY
         # it. Every impossible-looking number on a building sheet follows from it — six foragers move
