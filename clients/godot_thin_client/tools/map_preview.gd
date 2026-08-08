@@ -64,6 +64,21 @@ const WORK_DRAWDOWN_FLOOR := 0.15
 # How many DISTINCT floor marks the worked-band fixture must render. Two is the smallest number that
 # makes the mark falsifiable at all; the guard is `_assert_work_floor_marks`.
 const WORK_FLOOR_MARKS_MIN := 2
+# ---- THE YIELD LABEL'S ONE SLOT (issue #449) ----------------------------------------------------
+# The three account rates `_assert_yield_label_component` drives the fall-through with, and the faces
+# they must produce. Deliberately DISTINCT values, so a branch that returned the wrong account is
+# visible as the wrong NUMBER rather than only as the wrong wording, and the faces are written out
+# rather than composed through the renderer's own formatter — a needle built by the code under test
+# agrees with whatever that code emits.
+const YIELD_LABEL_FOOD_RATE := 0.31
+const YIELD_LABEL_FOOD_FACE := "+0.31"
+const YIELD_LABEL_TRADE_RATE := 0.22
+const YIELD_LABEL_TRADE_FACE := "+0.22"
+const YIELD_LABEL_FODDER_RATE := 0.40
+const YIELD_LABEL_FODDER_FACE := "+0.40 fodder"
+# What a source paying into NO account still prints: the food zero, which is the honest reading of a
+# worked tile that produced nothing this turn and is what this label has always said.
+const YIELD_LABEL_EMPTY_FACE := "+0.00"
 # Canned settlement-stage tokens (the native bridge doesn't run here, so preview band dicts must
 # carry settlement_stage_* directly). Icons are opaque sim strings — the emoji here just mirror the
 # current config so the map token glyphs render. EMPTY exercises the neutral non-circular fallback marker (square).
@@ -518,6 +533,7 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_band_work")
 	_assert_work_floor_marks()
+	_assert_yield_label_component()
 
 	# State A-overlap — the draw-ORDER guard for the yield labels. Every layer that used to paint OVER
 	# them is forced to collide with one here: a herd parked ON a worked forage tile (its glyph lands in
@@ -1475,6 +1491,32 @@ func _assert_work_floor_marks() -> void:
 		marks.size() >= WORK_FLOOR_MARKS_MIN)
 	_assert_map("worked-band floor marks — every floored assignment resolves to a mark (no blank zone)",
 		not marks.has(""))
+
+## **THE ONE-SLOT FALL-THROUGH, food → trade → FODDER** (issue #449). A map label has room for exactly
+## one rate, so which account it states is the whole claim — and a PNG cannot carry it: `+0.00` and
+## `+0.40 fodder` are the same badge at map scale, and every fall-through renders a perfectly plausible
+## label. So the CHOICE is asked of the renderer directly (`_yield_label_rate_text`), over values rather
+## than over a fixture, and each case is paired with the one that must NOT change: a source paying food
+## keeps its food figure whatever else it pays, which is what stops "always show fodder" passing.
+##
+## `_entry_fodder` is asked beside them, because the fall-through is only reachable if the entry's feed
+## rate is read at all — and it has NO realized fallback to make, fodder being plant-only.
+func _assert_yield_label_component() -> void:
+	var overlays: BandOverlayRenderer = _map._band_overlays
+	_assert_map("yield label — a fodder-only source states its feed rate, not +0.00",
+		overlays._yield_label_rate_text(0.0, 0.0, YIELD_LABEL_FODDER_RATE) == YIELD_LABEL_FODDER_FACE)
+	_assert_map("yield label — food still leads wherever there is food",
+		overlays._yield_label_rate_text(YIELD_LABEL_FOOD_RATE, 0.0, YIELD_LABEL_FODDER_RATE)
+			== YIELD_LABEL_FOOD_FACE)
+	_assert_map("yield label — trade still wins the slot ahead of fodder",
+		overlays._yield_label_rate_text(0.0, YIELD_LABEL_TRADE_RATE, YIELD_LABEL_FODDER_RATE)
+			== FoodIcons.TRADE_GOODS_GLYPH + YIELD_LABEL_TRADE_FACE)
+	_assert_map("yield label — a source paying nothing still prints its food zero",
+		overlays._yield_label_rate_text(0.0, 0.0, 0.0) == YIELD_LABEL_EMPTY_FACE)
+	_assert_map("yield label — the feed rate is read off the entry with no realized fallback",
+		is_equal_approx(overlays._entry_fodder({"fodder_yield": YIELD_LABEL_FODDER_RATE}),
+			YIELD_LABEL_FODDER_RATE)
+		and is_equal_approx(overlays._entry_fodder({}), 0.0))
 
 func _settle() -> void:
 	await _ensure_canvas()

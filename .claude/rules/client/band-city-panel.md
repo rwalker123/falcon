@@ -1613,6 +1613,19 @@ produce anything. **A band with no trade-paying source renders exactly as it did
 `_work_component_sum(models, key)` is the zone's ONE summing primitive, so head and chips add the same
 rows the same way.
 
+**THE FODDER TOTAL IS A THIRD SIBLING (issue #449), on exactly that argument one account further out.**
+Fodder credits the band's `FODDER` store and never the larder, so folding it into the food figure would
+break the same identity — and leaving it out made the header visibly not add up on a band working a
+sown hay Field, whose one source pays feed every turn and read as producing nothing. So the head can
+carry all three (`2 sources +0.20 /turn ⇄ +0.04 +0.40 fodder`, `WORK_FODDER_TOTAL_TOOLTIP` making the
+beside-not-in point in the trade tooltip's own words), each rendered only when non-zero, and a chip
+covering only hay-bearing patches reads `🌿 1 · 0.40 fodder`. **The word, never a glyph** — fodder has
+none. **A hunt row's fodder is a structural zero**, no animal being harvested for feed, so nothing on
+the animal web moves. Frames: `band_panel_work_fodder` for the positive (its board carries the Field
+AND an ordinary deer hunt, so all three siblings are in one head) and `band_panel_work_trade_totals`
+for the paired negative — a head that rendered the total unconditionally passes every claim made on a
+band that actually grows hay.
+
 **"Sort by yield" is TWO TIERS, not a raw magnitude sort** (`_work_sorts_before`): food-paying sources
 first by their food figure descending, then trade-only sources by their trade figure descending.
 Sorting on food *alone* was the bug — it interleaved every trade-only source among the zero-food rows
