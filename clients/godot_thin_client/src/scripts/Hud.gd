@@ -1318,33 +1318,84 @@ func right_column_width() -> float:
 ## acyclic and jitter-free (both properties the live pair lacks) while making it CONSERVATIVE — where
 ## it says the card can afford the bounds, the card really can, with the ceiling's own slack to spare.
 ##
-## **THE BLOCK 561 WAS MEASURED AGAINST IS DELETED (issue #450), AND THE VALUE IS NOW HEADROOM RATHER
-## THAN A DERIVATION.** It was the top-bar KNOWLEDGE STRIP's first row — `⚒ Your people know:` plus two
-## in-progress tracks with meters and percents — which was the widest line the retired readouts could
-## produce; `TurnBlock`, `TopBar` and all eight of their Labels are gone from `HudLayer.tscn`, so no
-## surface in the client renders that line any more.
+## **IT IS DERIVED FROM THE SCENE'S OWN AUTHORED WIDTHS, WHICH IS WHY IT CAN BE EXACT.** It was `561.0`
+## for a long time, and that number measured a surface that no longer exists: the top-bar KNOWLEDGE
+## STRIP's first row (`⚒ Your people know:` plus two in-progress tracks with meters and percents), the
+## widest line the retired readouts could produce. `TurnBlock`, `TopBar` and all eight of their Labels
+## are gone from `HudLayer.tscn` (issue #450), so nothing in the client renders that line, and 561
+## carried ~209px of headroom that measured nothing at all.
 ##
-## **What the column IS now is the RIGHT DOCK alone**, whose region is `RightScroll`'s authored 320
-## plus the dock's own 8 + 16 horizontal margins = the 344 `right_column_width()` reports empty. A card
-## wider than that scroll pushes the region out: measured at the widest content the dock can be staged
-## with — the Victory card beside a Terrain Types legend long enough to reach
-## `LegendController.LEGEND_MAX_HEIGHT` — it occupies **352**. So 561 covers what the column can reach
-## with **209px to spare**, and that spare is no longer a measurement of anything.
+## **What the column IS now is the RIGHT DOCK alone, and it stacks in exactly three terms:**
 ##
-## **NOTHING CURRENTLY CHARGES IT, WHICH IS WHY THE VALUE WAS LEFT ALONE RATHER THAN TIGHTENED.** Its
-## one consumer is `Main.band_dock_overlays_hud`, which reaches `affords_wide_shell_with_bounds` only
-## on a **BOTTOM** dock (a top dock answers `true` before that line, every other edge `false`) — and
+## | term | what it is |
+## |---|---|
+## | `RIGHT_DOCK_WIDEST_CARD_MIN_WIDTH` | the widest AUTHORED card minimum in `RightStack` — `TellingPanel.custom_minimum_size.x` |
+## | `RIGHT_DOCK_SCROLLBAR_SPAN` | `RightScroll`'s vertical scrollbar, which its own minimum width includes while the stack overflows |
+## | `RIGHT_DOCK_MARGIN_SPAN` | `RightDock`'s authored horizontal margins, `margin_left` 8 + `margin_right` 16 |
+##
+## `PanelDock._configure_scroll` disables HORIZONTAL scrolling on `RightScroll` and zeroes the stack's
+## horizontal minimum, so the scroll's minimum width is its widest visible CARD's minimum plus its
+## scrollbar, and the region is that plus its margins. The first and third terms are also exactly the
+## `344` authored on `RightDock.custom_minimum_size.x` — i.e. the reservation is this derivation
+## MINUS the scrollbar, which is the whole of the gap between `right_column_width()` and this.
+##
+## **THE COLUMN IS CONTENT-DERIVED ABOVE THAT FLOOR, AND THE SWEEP SAYS WHERE THE CONTENT STOPS.**
+## `lateral_column_widths().y` read **344** in every one of `band_panel_preview`'s 84 states and every
+## one of `ui_preview`'s 274, at every viewport those harnesses stage (1280→2560 logical) and at
+## `ui_scale` 1.0 and 1.35 alike — the scrollbar is absent until the stack overflows. Staged at the
+## widest content the dock can hold (the Victory card beside a Terrain Types legend long enough to
+## reach `LegendController.LEGEND_MAX_HEIGHT`) it reads **352**, which is this derivation exactly.
+## Measured beside the Telling panel's 320 in that state: the Victory card's minimum is **50** and the
+## legend's **228**, so the Telling panel's authored minimum is the binding term and the other two are
+## nowhere near it.
+##
+## **A HARNESS SWEEP BOUNDS THE FIXTURES, NOT THE SNAPSHOT — so the content paths were probed
+## individually, and all but one are structurally bounded.** A legend row's label is a plain `Label`
+## whose minimum IS its text width, which looks like an unbounded path and is not: `LegendScroll`
+## leaves horizontal scrolling on `AUTO`, so a row's width never reaches the card. The Victory card's
+## `RichTextLabel` sets no `fit_content`, so its minimum ignores its text. Probed with pathological
+## content — 11 rows of 75-character terrain names, and a 120-character unbroken victory string — the
+## column did not move off 352.
+##
+## **THE ONE PATH THAT CAN EXCEED IT IS A CARD TITLE.** `PanelCard._header` is a `RichTextLabel` with
+## `fit_content = true` and `AUTOWRAP_OFF`, so a title's full unwrapped width is a hard minimum on its
+## card. Probed: a 58-character legend title took the column to **509**. Every title the client can
+## actually author was then swept through the real card — the legend's `Terrain Types` / `Terrain Tags`
+## / `Provinces` / `No Overlay` plus all thirteen overlay-channel labels the native decoder ships, the
+## longest being `Forage (Human Food Capacity)` — and the widest of them leaves the legend card at
+## **253**, i.e. 67px BELOW the Telling panel's 320 and contributing nothing. So the title path has real
+## slack today and no margin is bought for it here: a margin cannot bound a string, and an unexplained
+## pad is exactly what 561 became.
+##
+## **THE DANGEROUS DIRECTION IS DOWN.** Too high only makes `affords_wide_shell_with_bounds`
+## conservative — it refuses the wide shell in windows where the card would have fitted, costing layout
+## quality. Too low means a column that renders wider than the bound gets DRAWN THROUGH by the card.
+## So when a right-dock card is authored wider than 320 — or a card title is written long enough to
+## push one past it — the fix is to raise `RIGHT_DOCK_WIDEST_CARD_MIN_WIDTH`, not to pad this.
+##
+## **NOTHING CHARGES IT TODAY, so the retune moved no behaviour.** Its one consumer is
+## `Main.band_dock_overlays_hud`, which reaches `affords_wide_shell_with_bounds` only on a **BOTTOM**
+## dock (a top dock answers `true` before that line, every other edge `false`) — and
 ## `BandCityPanel._trailing_bound_for` charges a bottom dock NO trailing bound, so the number is passed
-## in and discarded. The fork sits at `wide_shell_min_width() + rail span + the LEADING ceiling` and
-## does not contain this term at all. Retiring the pair, or re-deriving the value against the dock
-## cards, is therefore a decision with no behaviour riding on it either way.
+## in and discarded. The fork is `wide_shell_min_width() + rail span + the LEADING ceiling` and does not
+## contain this term at all.
 ##
 ## **The guard that can see an overrun does not depend on the value**:
-## `band_panel_preview._assert_ceilings_cover_the_widest_right_column` stages the dock at its widest
-## and asserts the ceiling still covers what the column occupies, so a card that outgrew it fails the
-## run rather than silently re-opening the band the day something charges this again.
-const RIGHT_COLUMN_CEILING := 561.0
+## `band_panel_preview._assert_ceilings_cover_the_widest_right_column` stages the dock at its widest and
+## asserts the ceiling still covers what the column occupies, so a card that outgrew it fails the run
+## rather than silently re-opening the band the day something charges this again. It reads `352 / 352`
+## now, where against 561 it passed with 209px of slack and tested nothing.
+const RIGHT_DOCK_WIDEST_CARD_MIN_WIDTH := 320.0
+const RIGHT_DOCK_SCROLLBAR_SPAN := 8.0
+const RIGHT_DOCK_MARGIN_SPAN := 24.0
+const RIGHT_COLUMN_CEILING := RIGHT_DOCK_WIDEST_CARD_MIN_WIDTH \
+    + RIGHT_DOCK_SCROLLBAR_SPAN + RIGHT_DOCK_MARGIN_SPAN
 
+## The `maxf` cannot bind while the derivation above holds — the constant is the reservation PLUS the
+## scrollbar, so it is the larger of the two by construction. It stays as the floor guard for the case
+## that breaks that: a scene edit that raises `RightDock.custom_minimum_size.x` without raising
+## `RIGHT_DOCK_WIDEST_CARD_MIN_WIDTH` with it, where a ceiling under its own reservation would be the
+## dangerous direction.
 func right_column_ceiling() -> float:
     return maxf(right_column_width(), RIGHT_COLUMN_CEILING)
 

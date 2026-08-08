@@ -1404,30 +1404,51 @@ trade this rule exists to refuse. It is stable and reproducible, not a race; the
 into it because a mid-flight resize swept the band. Sabotage with `RIGHT_COLUMN_CEILING := 0.0`
 reproduces it deterministically and names the widths.
 
-**`RIGHT_COLUMN_CEILING` is 561, and it is NOT a scene minimum.** Authoring
-`TurnBlock.custom_minimum_size.x` was tried first and measured: `TopBar` packs the block against the
-right edge behind an expanding spacer with its labels left-aligned, so a 561 node minimum pins the
-column's LEFT edge and floats the readouts 142px clear of the screen. It moved all 80 frames and cost
-four top-dock states their wide shell. **The ceiling therefore lives where the bound is consumed, not
-in the scene** — only one of the two is a layout instruction.
+**`RIGHT_COLUMN_CEILING` is 352, and it is DERIVED FROM THE SCENE rather than measured off a render.**
+It sums three named authored terms — `RIGHT_DOCK_WIDEST_CARD_MIN_WIDTH` (320, `TellingPanel`'s own
+minimum, the widest card in `RightStack`) + `RIGHT_DOCK_SCROLLBAR_SPAN` (8) +
+`RIGHT_DOCK_MARGIN_SPAN` (24) — which is exactly the 344 the column reserves empty, plus the vertical
+scrollbar that appears when the stack overflows.
 
-**561 NO LONGER MEASURES ANYTHING THAT EXISTS, and nothing rides on it today.** Issue #450 retired the
-top-bar block it was taken from; the right column is now the right dock alone — `RightScroll`'s
-authored 320 plus the dock's margins = the **344** it reports empty, **352** under the widest content
-the harness can stage. And its only consumer, `Main.band_dock_overlays_hud`, reaches
-`affords_wide_shell_with_bounds` on a BOTTOM dock alone, where `_trailing_bound_for` charges no
-trailing bound — so the number is passed in and discarded. It is kept at its old value deliberately: a
-ceiling that is too large only makes the predicate conservative, and re-deriving it from an incomplete
-sweep would be worse than leaving it. What holds the invariant is
-`_assert_ceilings_cover_the_widest_right_column`, which fails on an overrun whatever the constant
-reads. **Retire the pair or re-derive it from a real per-card sweep; do not trust the number below.**
+**The ceiling still lives where the bound is CONSUMED, not in the scene**, and that is a separate
+point from where it is derived. Authoring `TurnBlock.custom_minimum_size.x` was tried and measured:
+`TopBar` packed that block against the right edge behind an expanding spacer with left-aligned
+labels, so a node minimum pinned the column's LEFT edge and floated the readouts 142px clear of the
+screen — it moved all 80 frames and cost four top-dock states their wide shell. A bound and a layout
+instruction are not interchangeable.
 
-Historically, 561 was measured against the top-bar **knowledge strip's first row** (`⚒ Your people know:` plus two
-in-progress tracks with meters and percents); the runners-up are far behind — metrics 384,
-Sedentarization 346, demographics 260, turn 78. **The headroom is asserted, not reported**: the guard
-stages every readout at its widest simultaneously and checks the ceiling still covers the column,
-reading exactly `561 / 561`. A readout that grows fails the run instead of silently re-opening the
-band. What it cannot see is a *new kind* of readout nobody measured.
+**It was 561 until the interface-scale arc, and that number had gone stale.** Issue #450 retired the
+top-bar knowledge strip it was measured against (`⚒ Your people know:` plus two in-progress tracks;
+the runners-up were metrics 384, Sedentarization 346, demographics 260, turn 78), leaving the right
+column as the right dock alone. It survived the merge deliberately — a ceiling that is too large only
+makes the predicate conservative, and re-deriving it from an incomplete sweep mid-merge would have
+been worse — and was then re-derived properly.
+
+**WHICH DIRECTION IS DANGEROUS IS NOT SYMMETRIC.** Too high costs layout quality: the predicate
+refuses the wide shell in windows where the card would fit. Too low is a correctness bug: a readout
+wider than the bound is **overdrawn by the card**. So this comes down to the true maximum and no
+further, and it carries **no safety margin on purpose** — a margin cannot bound a string, and an
+unexplained pad is precisely what 561 became.
+
+**The sweep is evidence, not proof, and the probes are what close the gap.** Both harnesses read
+`344.0` in every one of their states (84/84 and 274/274, across four viewports and at `ui_scale`
+1.35 — logical widths are scale-invariant), a distribution with no tail at all; 352 appears only in
+the deliberately-staged worst case. Fixtures bound fixtures, so the content paths were probed
+individually instead of trusted: legend row labels look unbounded but are not (`LegendScroll` leaves
+horizontal scroll `AUTO`, so row width never reaches the card — 11 rows of 75-char names moved
+nothing), and Victory's `RichTextLabel` has no `fit_content`. **The one genuinely unbounded path is a
+card TITLE**: `PanelCard._header` is `fit_content` + `AUTOWRAP_OFF`, so a title's unwrapped width is a
+hard card minimum — a 58-char legend title takes the column to 509. Sweeping every title the client
+can actually author (the four MapView legend titles and all thirteen overlay-channel labels from the
+native decoder, longest `Forage (Human Food Capacity)`) leaves the legend card at 253, 67px under
+Telling's 320 and contributing nothing.
+
+**The headroom is asserted, not reported**: `_assert_ceilings_cover_the_widest_right_column` stages
+the widest dock content and checks the ceiling still covers the column, now reading `352 / 352`. That
+guard was **vacuous before** — it passed with 209px of untested slack — and is load-bearing for the
+first time. To raise the ceiling, raise `RIGHT_DOCK_WIDEST_CARD_MIN_WIDTH`; the guard is what tells
+you when. What it still cannot see is a title long enough to push a card past 320; closing that means
+bounding the title in `PanelCard._header`, not enlarging this.
 
 `left_column_ceiling()` needs no constant of its own, and that is **measured, not assumed**: with a
 ~400-character terrain label in the tile card the left column is still exactly 360 (region 360, stack
