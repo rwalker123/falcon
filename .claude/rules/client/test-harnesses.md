@@ -106,9 +106,12 @@ The six render harnesses — `ui_preview`, `band_panel_preview`, `workbench_prev
 against each harness below answer a different question — whether an assertion was LOST — and they
 stay for that; they are not how a run is judged clean.
 
-**The `FAIL` token's spelling is deliberately NOT uniform.** `ui_preview` prints
-`ui_preview: FAIL <text>`; the other five print `<name>: FAIL — <text>`. Anything scanning output must
-therefore match the bare word `FAIL` and never the separator.
+**The token is `<name>: FAIL — <text>`, spelled identically in all six**, so one pattern reads the
+whole family. The `ui_preview` categories (`hud — `, `turn-orb — `, `chapter — `, `herd fields — `)
+keep a separator of their own, which is why one of its failures reads `ui_preview: FAIL — hud —
+<label>`: the first dash belongs to the token, the second to the category. They are not redundant —
+the category mirrors the `PASS <category> — ` line it fails against, so a category's passes and
+failures stay greppable as a pair.
 
 **Godot prints `ERROR:` lines on a PASSING run.** Shutdown reports `N resources still in use at exit`
 and `RID allocations … leaked at exit` after the harness's own summary, so counting `ERROR:` lines

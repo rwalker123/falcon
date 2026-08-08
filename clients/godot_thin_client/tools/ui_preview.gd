@@ -221,9 +221,16 @@ func _instantiate_chapters() -> Array:
 
 ## The ONE failure sink, so `_failures` cannot drift from what was printed. Every caller passes the
 ## text AFTER the `FAIL` token, which is what the output scanning keys on.
+##
+## **The token is spelled `FAIL — `, identically in all six render harnesses**, so one pattern reads
+## the whole family. The categorised callers (`hud — `, `turn-orb — `, `chapter — `, `herd fields — `)
+## keep their own separator on purpose: it mirrors their `PASS <category> — ` counterparts, so a
+## category's pass and fail lines stay greppable as a pair. That is why a failure reads
+## `ui_preview: FAIL — hud — <label>` — the first dash belongs to the token, the second to the
+## category.
 func _fail(message: String) -> void:
 	_failures += 1
-	push_error("ui_preview: FAIL %s" % message)
+	push_error("ui_preview: FAIL — %s" % message)
 
 
 ## **THE ONLY WAY OUT OF THIS HARNESS.** Every path that ends the run comes through here, so the
