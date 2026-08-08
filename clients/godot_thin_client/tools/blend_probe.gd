@@ -1583,7 +1583,12 @@ func _set_blend_profile(terrain_id: int, profile: Dictionary) -> void:
 	## `_set_shore_profile`.
 	var entry: Dictionary = _terrain_entry(terrain_id)
 	if entry.is_empty():
-		push_warning("blend_probe: terrain id %d missing from terrain_config" % terrain_id)
+		# **AN OVERRIDE THAT DID NOT APPLY MAKES THE FRAME LIE, so it FAILS rather than warns.** The
+		# variant still renders — at the SHIPPED profile — under a filename claiming a swept one, and a
+		# reviewer comparing two rungs that came out identical reads that sameness as a finding about
+		# the shader. The ids this is called with are fixed and present in `terrain_config.json`, so a
+		# miss is that file dropping or renumbering a terrain, never a legal configuration.
+		_fail("terrain id %d missing from terrain_config — the blend_profile override did not apply, so this variant renders the SHIPPED profile under a swept name" % terrain_id)
 		return
 	if not _shipped_blend_profiles.has(terrain_id):
 		_shipped_blend_profiles[terrain_id] = (
@@ -1668,7 +1673,9 @@ func _set_shore_profile(terrain_id: int, profile: Dictionary) -> void:
 	## layer_shore_map. The shipped block is stashed on first touch, so `_restore_shore_profiles` can undo it.
 	var entry: Dictionary = _terrain_entry(terrain_id)
 	if entry.is_empty():
-		push_warning("blend_probe: terrain id %d missing from terrain_config" % terrain_id)
+		# Fails rather than warns, for the reason spelled out in `_set_blend_profile`: the lake/cliff/
+		# beach sweeps would each render the shipped coast under a swept name.
+		_fail("terrain id %d missing from terrain_config — the shore_profile override did not apply, so this variant renders the SHIPPED profile under a swept name" % terrain_id)
 		return
 	if not _shipped_shore_profiles.has(terrain_id):
 		_shipped_shore_profiles[terrain_id] = (entry.get("shore_profile", {}) as Dictionary).duplicate(true)

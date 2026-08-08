@@ -413,6 +413,10 @@ const WINDOW_PIN_MAX_FRAMES := 30
 ## RE-applied — asynchronously, so "it is the right size once" is not the same as "it stays".
 const CANVAS_STABLE_FRAMES := 30
 const CANVAS_STABLE_MAX_FRAMES := 600
+## What `DisplayServer.get_name()` answers under `--headless` (measured, Godot 4.7 — it reads `macOS`
+## in a real window). That driver opens no window and offers only the `dummy` rendering driver, so
+## every window geometry this harness pins is a stub: see `_is_headless`.
+const HEADLESS_DISPLAY_DRIVER := "headless"
 ## Phase to seed the turn orb's calm breath at, as a fraction of `TurnOrb.PULSE_PERIOD`. The breath is
 ## `0.5 - 0.5 * cos(t)`, which is ZERO — its faintest, smallest instant — at phase 0, so freezing the
 ## clock there would render the pulse at the bottom of its range. A quarter period puts `cos` at 0,
@@ -3219,7 +3223,11 @@ func _assert_badge_cannot_move_the_reservation(state_name: String) -> void:
 func _seed_embedded_minimap() -> void:
 	var container: Control = _hud.get_minimap_container()
 	if container == null:
-		push_warning("band_panel_preview: no MinimapContainer — dock-row rail widths will be unrealistic")
+		# **A MISSING FIXTURE HOST IS A FAILURE, NOT AN ADVISORY.** Without the container there is no minimap, the chrome column
+		# collapses to the zoom rail's ~80px, and every dock-row assertion below — the rail's span, the
+		# parked cluster's fit, the card's centring — is measured against a rail the game does not have.
+		# The frames render fine and prove nothing, which is the failure this harness exists to refuse.
+		_fail("no MinimapContainer in the HUD — the dock-row states would measure a rail the game never has")
 		return
 	var option: Dictionary = MapSizes.option_for(DOCKROW_MAP)
 	var grid := Vector2i(int(option["width"]), int(option["height"]))
@@ -5116,8 +5124,6 @@ func _assert_forage_jump_names_land() -> void:
 	_assert_band_panel("forage jump — the land is the lit subject afterwards",
 		_hud._selection.subject() == HudSelectionState.SUBJECT_LAND)
 
-## Pass/fail reporting for the rung-ready assertions, in this harness's `push_error` idiom so a
-## regression fails loudly in the run log rather than waiting to be noticed in a thumbnail.
 ## A control carrying `meta`, found by IDENTITY rather than by face — the rule this harness already
 ## follows for policy rungs (`HudWidgets.POLICY_RUNG_META`). The fill-target control is a checkbox
 ## whose own text FLIPS between its two states, so a text match would find it in one state and pass
@@ -5850,6 +5856,11 @@ func _zone_head_readout(node: Node, title: String) -> String:
 			return found
 	return ""
 
+## Pass/fail reporting for this harness's assertions — the rung-ready ones among them — through
+## `_fail`, the run's ONE sink, so a regression fails loudly in the run log AND is counted against the
+## exit status rather than waiting to be noticed in a thumbnail. **Report a failure here or through
+## `_fail` itself and nowhere else**: a bare `push_error` beside them prints the same line and counts
+## for nothing, which is a red run reporting success.
 func _assert_band_panel(label: String, ok: bool) -> void:
 	if ok:
 		print("band_panel_preview: PASS — ", label)
@@ -6781,7 +6792,9 @@ const PROJECT_VIEWPORT_HEIGHT := "display/window/size/viewport_height"
 ## asserting against a width it never asked for, which is exactly what this function exists to stop.
 ##
 ## **A PIN THAT DOES NOT PIN FAILS THE RUN.** It used to `push_warning`, which is invisible in a
-## 500-line log from a harness whose whole value is bit-identity — a mis-pinned run passed.
+## 500-line log from a harness whose whole value is bit-identity — a mis-pinned run passed. The ONE
+## exception is a run with no window at all (`--headless`), which `_report_canvas_drift` warns about
+## and skips: there the pin is unanswerable rather than broken.
 ##
 ## `strict` is `false` for exactly one caller, `_stabilize_canvas`, which is DELIBERATELY driving the
 ## window through a maximize and converging over up to `CANVAS_STABLE_MAX_FRAMES`; a transient miss
@@ -6806,9 +6819,9 @@ func _pin_window(size: Vector2i, strict: bool = true) -> void:
 	if not strict:
 		return
 	if window.size != size:
-		_fail("window pinned to %s but reports %s — every width this state asserts is measured against the canvas that window projects" % [size, window.size])
+		_report_canvas_drift("window pinned to %s but reports %s — every width this state asserts is measured against the canvas that window projects" % [size, window.size])
 	elif not _canvas_is_projected():
-		_fail("window is %s but the logical viewport is %s, not the %s canvas it was pinned to" % [
+		_report_canvas_drift("window is %s but the logical viewport is %s, not the %s canvas it was pinned to" % [
 			size, get_viewport().get_visible_rect().size, _expected_canvas()])
 
 ## Does the LOGICAL viewport match the canvas this state pinned? True (vacuously) before any canvas
@@ -6866,7 +6879,7 @@ func _stabilize_canvas() -> void:
 			# own terminal error below.
 			await _pin_window(PREVIEW_SIZE, false)
 		await get_tree().process_frame
-	_fail("the window never held the pinned %s canvas — frames will drift" % PREVIEW_SIZE)
+	_report_canvas_drift("the window never held the pinned %s canvas — frames will drift" % PREVIEW_SIZE)
 
 ## The viewport image, GUARANTEED to be at the size this state pinned (or an integer HiDPI multiple of
 ## it). The WM's deferred maximize can resize the render target between a settle and a capture, so
@@ -6915,6 +6928,26 @@ func _fail(message: String) -> void:
 	_failures += 1
 	push_error("band_panel_preview: FAIL — %s" % message)
 
+## Is this run using the headless display driver, i.e. is there no window behind `_pin_window`?
+##
+## **A CONDITION THAT FAILS ONLY BECAUSE THERE IS NO RENDERER IS NOT A FAILURE.** `--headless` is the
+## documented fast "does this still compile?" pass over this harness, and under it the window never
+## leaves its stub geometry — it reports `MODE_MINIMIZED` and never accepts `MODE_WINDOWED` — so the
+## canvas claims are unanswerable rather than false. They warn and skip; `_capture`'s null-image arm
+## is the precedent. Every assertion that does not need a window still runs and still counts.
+func _is_headless() -> bool:
+	return DisplayServer.get_name() == HEADLESS_DISPLAY_DRIVER
+
+## Report a window/canvas the pin would not hold. A real failure in a window — every width this
+## harness asserts is measured against that canvas — and a skip under `--headless`, where the stub
+## window can never hold it and reporting one would fail every clean run.
+func _report_canvas_drift(message: String) -> void:
+	if _is_headless():
+		push_warning("band_panel_preview: %s (no window under the %s display driver — skipped; run windowed to capture)"
+			% [message, HEADLESS_DISPLAY_DRIVER])
+		return
+	_fail(message)
+
 ## **THE ONLY WAY OUT OF THIS HARNESS.** Every path that ends the run comes through here, so the
 ## status is derived from the run's own tally in exactly one place and the hang guard is stood down
 ## before shutdown (a slow shutdown is not a stall).
@@ -6958,7 +6991,11 @@ func _click_disclosure(key: String) -> void:
 	var meta := HudDisclosureVocab.BREAKDOWN_TOGGLE_META_PREFIX + key
 	var label := _find_meta_label(_panel, meta)
 	if label == null:
-		push_warning("band_panel_preview: no vitals label offering '%s' — disclosure not rendered?" % meta)
+		# **A CLICK THAT NEVER HAPPENED IS A FAILED PRECONDITION, NOT AN ADVISORY.** Every assertion the
+		# disclosure states rides on this press, and each of them reads "the breakdown is not inline" —
+		# i.e. passes on a panel that rendered no disclosure at all. Warning here printed a line nobody
+		# reads and left the block claiming its result vacuously.
+		_fail("no vitals label offering '%s' — the disclosure was never rendered, so nothing was clicked" % meta)
 		return
 	label.meta_clicked.emit(meta)
 
@@ -7063,8 +7100,9 @@ func _guard_frame_herd_fields(state: String) -> void:
 	_guard_herd_fields(_hud._selection._roster_herds, state)
 	_guard_herd_fields(_hud._selection._selected_tile_info, state)
 
-## The field-pair guard's verdict, ONE line for the whole run (each violation has already been
-## push_error'd against the frame it rendered in). The scanned count is part of the claim: a guard that
+## The field-pair guard's verdict, ONE line for the whole run (each violation has already gone through
+## `_fail` against the frame it rendered in, so it is already counted against the run's exit status and
+## this line only states the total). The scanned count is part of the claim: a guard that
 ## walked nothing would pass vacuously, and "0 herd dicts scanned" says so out loud.
 func _assert_herd_field_pairs() -> void:
 	if _herd_pair_violations > 0:

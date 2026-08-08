@@ -1453,25 +1453,25 @@ func _assert_zoom_ladder() -> void:
 		walk.append("%.1f" % _map.zoom_factor)
 	print("map_preview: zoom ladder = ", " → ".join(walk))
 
-## Same shape as `ui_preview`'s `_assert_hud`: PASS prints, FAIL prints AND raises, so a regression is
-## visible in the run log next to the neighbouring states' `push_warning`s rather than needing a diff.
+## Same shape as `ui_preview`'s `_assert_hud`: PASS prints, FAIL goes through `_fail` — the harness's
+## ONE sink, so the run's exit status counts this claim. It used to print its own `FAIL` line and
+## `push_warning` beside it, which is the whole defect the sink exists to remove: every assertion in
+## this harness reaches the log through here, so the run printed the family's `FAIL` token and then
+## exited 0. The `zoom-ladder — ` category mirrors the `PASS zoom-ladder — ` line it fails against, the
+## way `ui_preview`'s `hud — ` category does.
 func _assert_ladder(label: String, actual: float, expected: float) -> void:
 	if is_equal_approx(actual, expected):
 		print("map_preview: PASS zoom-ladder — %s (%.2f)" % [label, actual])
 	else:
-		var message := "map_preview: FAIL zoom-ladder — %s: got %.4f, expected %.4f" % [label, actual, expected]
-		print(message)
-		push_warning(message)
+		_fail("zoom-ladder — %s: got %.4f, expected %.4f" % [label, actual, expected])
 
-## The general form of the above, for a claim that is already a bool. Same PASS/FAIL wording, so one
-## grep reads every assertion in this harness.
+## The general form of the above, for a claim that is already a bool. Same PASS/FAIL wording and the
+## same sink, so one grep reads every assertion in this harness and `$?` agrees with it.
 func _assert_map(label: String, condition: bool) -> void:
 	if condition:
 		print("map_preview: PASS — %s" % label)
 	else:
-		var message := "map_preview: FAIL — %s" % label
-		print(message)
-		push_warning(message)
+		_fail(label)
 
 ## **THE WORKED-BAND FRAMES RENDER MORE THAN ONE HARVEST MARK.** A picture cannot carry this: every
 ## zone mark is a plausible-looking glyph on a yield label, so a renderer that answered ONE mark for

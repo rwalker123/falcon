@@ -112,6 +112,10 @@ const CANVAS_PIN_MAX_FRAMES := 60
 # RE-applied — asynchronously, so "it is the right size once" is not the same as "it stays".
 const CANVAS_STABLE_FRAMES := 30
 const CANVAS_STABLE_MAX_FRAMES := 600
+# What `DisplayServer.get_name()` answers under `--headless` (measured, Godot 4.7 — it reads `macOS`
+# in a real window). That driver opens no window and offers only the `dummy` rendering driver, so
+# every geometry the canvas states depend on is a stub: see `_is_headless`.
+const HEADLESS_DISPLAY_DRIVER := "headless"
 # One manual step longer than any tween in the client, so `_settle`'s flush always reaches the end
 # state (and fires the finished-callback) in a single `custom_step`.
 const TWEEN_FLUSH_SECONDS := 3600.0
@@ -231,6 +235,29 @@ func _instantiate_chapters() -> Array:
 func _fail(message: String) -> void:
 	_failures += 1
 	push_error("ui_preview: FAIL — %s" % message)
+
+
+## Is this run using the headless display driver, i.e. is there no window and no renderer behind it?
+##
+## **A CONDITION THAT FAILS ONLY BECAUSE THERE IS NO RENDERER IS NOT A FAILURE.** `--headless` is the
+## documented fast "does this still compile?" pass over the harness (`test-harnesses.md`), and under
+## it the window never leaves its stub geometry and the viewport reads back a null texture — so every
+## canvas and pixel claim in this file is unanswerable rather than false. Those sites warn and skip;
+## `_capture`'s null-image arm is the precedent. Everything that does NOT depend on a renderer still
+## runs, and still counts, so the compile pass keeps its whole verdict.
+func _is_headless() -> bool:
+	return DisplayServer.get_name() == HEADLESS_DISPLAY_DRIVER
+
+
+## Report a canvas the window would not hold. A real failure in a window — the frames drift, which is
+## this harness's one product — and a skip under `--headless`, where the stub window can never hold it
+## and reporting one would fail every clean run.
+func _report_canvas_drift(message: String) -> void:
+	if _is_headless():
+		push_warning("ui_preview: %s (no window under the %s display driver — skipped; run windowed to capture)"
+			% [message, HEADLESS_DISPLAY_DRIVER])
+		return
+	_fail(message)
 
 
 ## **THE ONLY WAY OUT OF THIS HARNESS.** Every path that ends the run comes through here, so the
@@ -418,8 +445,9 @@ func _ready() -> void:
 	await _settle()
 	await _save("food_icons")
 
-	# The herd field-pair guard's verdict, ONE line for the whole run (each violation has already been
-	# push_error'd against the frame it rendered in). The scanned count is part of the claim: a guard
+	# The herd field-pair guard's verdict, ONE line for the whole run (each violation has already gone
+	# through `_fail` against the frame it rendered in, so it is already counted against the run's exit
+	# status and this line only states the total). The scanned count is part of the claim: a guard
 	# that walked nothing would pass vacuously, and "0 herd dicts scanned" says so out loud.
 	_assert_hud("every herd fixture keeps the herders_needed pair consistent (%d herd dicts carrying it)"
 		% _herd_pair_scans, _herd_pair_violations == 0)
@@ -531,7 +559,7 @@ func _stabilize_canvas() -> void:
 			stable = 0
 			_pin_canvas(get_window())
 		await get_tree().process_frame
-	_fail("the window never held the pinned %s canvas — frames will drift" % PREVIEW_CANVAS_SIZE)
+	_report_canvas_drift("the window never held the pinned %s canvas — frames will drift" % PREVIEW_CANVAS_SIZE)
 
 ## The viewport image, GUARANTEED to be the pinned canvas (or an integer HiDPI multiple of it). The
 ## WM's deferred maximize can resize the render target between a settle and a capture, so re-pin and
