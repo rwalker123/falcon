@@ -436,6 +436,57 @@ fn wild_fodder_is_gated_on_foddering_and_a_committed_hay_patch_is_not() {
     );
 }
 
+/// **THE ROW REPORTS THE CREDIT, GATE AND ALL** (issue #449) — `SourceYield::fodder` is the number
+/// the band's `FODDER` store was actually moved by, not a second derivation of it.
+///
+/// This is the invariant the readout exists to keep, and the **gate** is what makes it a real test
+/// rather than a restatement: a row that recomputed `tended_take_fodder` would publish a positive
+/// hay rate to a faction that has not learned Foddering and was therefore paid **nothing** — a
+/// compact readout stating income the band never received. Swept over the same four cases the gate
+/// itself is pinned on, so the equality has to hold on both sides of it.
+#[test]
+fn the_published_fodder_is_the_fodder_the_band_was_actually_credited() {
+    let credited_and_published = |crop: Option<&str>, knows_foddering: bool| -> (f32, f32) {
+        let mut app = spawn_standard_world();
+        let (tile_entity, coord) = a_patch_tile_growing(&mut app, Some("hay_grass"));
+        seat_patch(&mut app, coord, crop);
+        if knows_foddering {
+            app.world
+                .resource_mut::<DiscoveryProgressLedger>()
+                .add_progress(FactionId(0), FODDERING_DISCOVERY_ID, scalar_one());
+        }
+        let band = spawn_forager(&mut app, tile_entity, coord, 0.5);
+        app.world.run_system_once(advance_labor_allocation);
+        let credited = app
+            .world
+            .get::<PopulationCohort>(band)
+            .expect("the band forages")
+            .stores
+            .get(FODDER)
+            .to_f32();
+        (credited, published_fodder(&app, band))
+    };
+
+    let mut saw_a_live_credit = false;
+    for crop in [None, Some("hay_grass")] {
+        for knows_foddering in [false, true] {
+            let (credited, published) = credited_and_published(crop, knows_foddering);
+            saw_a_live_credit |= credited > 0.0;
+            assert!(
+                (published - credited).abs() <= EPSILON,
+                "{crop:?} / foddering={knows_foddering}: the row must state the credit, \
+                 not recompute it: published {published} vs credited {credited}"
+            );
+        }
+    }
+    // **Liveness**: an equality between two zeros is satisfied by a feature that never fires, and a
+    // gate that refused everything would pass the sweep above unnoticed.
+    assert!(
+        saw_a_live_credit,
+        "at least one case must credit real fodder, or the equality above is vacuous"
+    );
+}
+
 /// **The WIRE publishes the patch's EFFECTIVE basket, not the tile's raw one.** `ForagePatchState`
 /// keeps its shape — no schema change — but the numbers on it now move with the rung, so the tile
 /// card can show a commitment taking hold: a tended patch's basket visibly collapses toward its crop,
@@ -1013,6 +1064,18 @@ fn published_trade(app: &App, band: bevy::prelude::Entity) -> f32 {
         .first()
         .expect("the forage assignment has a yield row")
         .trade
+}
+
+/// The published per-source **fodder** quote (`SourceYield::fodder`, issue #449) — the twin of
+/// [`published_trade`] in the feed currency, and what the compact yield readouts render.
+fn published_fodder(app: &App, band: bevy::prelude::Entity) -> f32 {
+    app.world
+        .get::<LaborAllocation>(band)
+        .expect("the band forages")
+        .last_yields
+        .first()
+        .expect("the forage assignment has a yield row")
+        .fodder
 }
 
 fn spawn_forager(

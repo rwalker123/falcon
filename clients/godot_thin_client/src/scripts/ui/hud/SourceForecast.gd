@@ -1232,6 +1232,26 @@ static func trade_rate_of(source: Dictionary) -> float:
     var realized := float(source.get("realized_trade_yield", 0.0))
     return realized if realized > 0.0 else float(source.get("trade_yield", 0.0))
 
+## THE ONE DEFINITION of a worked source's FODDER rate (issue #449), read off the same
+## labor-assignment / worker-map dict — the third account beside `trade_rate_of` above, and the reason
+## a sown hay Field stops reading `+0.00` on every compact readout in the HUD.
+##
+## **A PLAIN READ IS THE WHOLE OF IT, and the contrast with `trade_rate_of` is the point.** That one
+## has to test the VALUE `> 0` because `realized_trade_yield` ships UNCONDITIONALLY and is `0.0` on
+## every forage source — a sentinel it must dodge to reach the actual beneath it. Fodder has no such
+## twin to dodge: there is deliberately no `realized_fodder_yield`, because a realized rate is a
+## FORWARD PROJECTION and only the ANIMAL web projects one. Fodder is paid by the PLANT web alone,
+## whose projection is the documented gap (`core_sim/src/forage.rs`
+## `PLANT_TRADE_FORECAST_NOT_YET_PROJECTED`) that leaves `realized_trade_yield` at `0.0` there in the
+## first place — so a projected-fodder field would be a constant zero on the only web that can pay it.
+## **The actual IS the honest rate here**, which is exactly where `trade_rate_of`'s fallback already
+## lands for every forage source.
+##
+## Plant-only, structurally: no animal pays fodder, so a hunt row reads `0.0` and every hunt-side
+## surface renders exactly as it did before this existed.
+static func fodder_rate_of(source: Dictionary) -> float:
+    return float(source.get("fodder_yield", 0.0))
+
 ## THE RENDER-ONLY-WHEN-NON-ZERO JOINER for a per-turn readout: `+0.31 /turn · ⇄ +0.12` (both),
 ## `+0.31 /turn` (food only), `⇄ +0.12` (trade only — a wolf), `+0.08 /turn · 0.40 fodder` (a hay
 ## meadow). One definition, so every surface that states a source's per-turn products states them the
@@ -1264,14 +1284,19 @@ static func yield_components(food: float, trade: float, fodder: float = 0.0,
 ## render-only-when-non-zero rule and same food-leads order, but BARE MAGNITUDES: a chip states a
 ## count and that kind's total, and a `+` beside a count would read as a change rather than a level.
 ## The point of the pair here is aggregate honesty — a hunt chip covering one deer and one wolf must
-## not report only the deer, and a chip whose whole set pays trade alone shows the trade total rather
-## than a `0.00` asserting its sources produce nothing.
-static func magnitude_components(food: float, trade: float) -> String:
+## not report only the deer, and a chip whose whole set pays trade OR FODDER alone shows that total
+## rather than a `0.00` asserting its sources produce nothing.
+##
+## The fodder term wears the WORD, not a glyph, for `yield_components`' reason: fodder has none. It is
+## plant-only, so every hunt-side caller leaves it defaulted and its chip reads exactly as before.
+static func magnitude_components(food: float, trade: float, fodder: float = 0.0) -> String:
     var parts: Array[String] = []
-    if has_component(food) or not has_component(trade):
+    if has_component(food) or not (has_component(trade) or has_component(fodder)):
         parts.append(format_magnitude(food))
     if has_component(trade):
         parts.append(TRADE_COMPONENT_FORMAT % [FoodIcons.TRADE_GOODS_GLYPH, format_magnitude(trade)])
+    if has_component(fodder):
+        parts.append(PICKER_FODDER_PRODUCT_FORMAT % format_magnitude(fodder))
     return COMPACT_COMPONENT_SEPARATOR.join(parts)
 
 ## A `{compact, full}` metric pair for an EXTRACTIVE rung, over the source's whole yield VECTOR — the
@@ -3123,6 +3148,9 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
     var rate := 0.0
     # Its trade twin — 0 for a source that pays no trade, which is exactly what suppresses the line.
     var trade_rate := 0.0
+    # And its FODDER twin (issue #449) — 0 on every hunt row (no animal pays feed) and on any patch
+    # growing nothing a pen eats, which is what suppresses the term everywhere it does not belong.
+    var fodder_rate := 0.0
     if bool(m.get("has_yield", false)):
         var actual := float(m.get("actual_yield", 0.0))
         var sustainable := float(m.get("sustainable_yield", 0.0))
@@ -3166,7 +3194,17 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
         if has_component(trade_rate):
             tooltip += TRADE_COMPONENT_SEPARATOR + (TRADE_TOOLTIP_FORMAT % [
                 FoodIcons.TRADE_GOODS_GLYPH, format_signed(trade_rate)])
-        label_suffix = " " + yield_components(rate, trade_rate)
+        # THE THIRD PRODUCT (issue #449), under the SAME render-only-when-non-zero gate: a sown hay
+        # Field pays no provisions and no trade, so without this its row headlined `+0.00 /turn` while
+        # it fed the band's pens every turn. The word rather than a glyph — fodder has none, the reason
+        # `yield_components` gives — and the tooltip reuses the rung tooltips' own fodder wording
+        # rather than spelling the account a fourth way.
+        fodder_rate = fodder_rate_of(m)
+        if has_component(fodder_rate):
+            tooltip += TRADE_COMPONENT_SEPARATOR + (POLICY_CAP_FODDER_FORMAT % format_signed(fodder_rate))
+        # `zero_account` stays defaulted: a source that produced nothing in ANY account still prints
+        # its `+0.00 /turn`, which is a fact worth reading and is what this row has always said.
+        label_suffix = " " + yield_components(rate, trade_rate, fodder_rate)
     # Overstaffing: fewer workers were needed than are assigned, so the remainder produced nothing
     # here. `workers_needed == 0` means "unknown" (rehydrated) → no note.
     var note := ""
@@ -3214,6 +3252,10 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
         # The trade component, so a caller that renders its own sentence (the work inspector) states
         # the same two products the row headline does instead of only the food one.
         "trade_rate": trade_rate,
+        # Its FODDER twin, carried for the same reason (#449): a surface composing its own string —
+        # the work row's one-slot rate, the WORK header's totals — states the third account rather
+        # than reading a hay Field as a dead tile.
+        "fodder_rate": fodder_rate,
     }
 
 ## A hunt source is MANAGED (its crew are herders/keepers, not a hunt party) once the herd is penned,

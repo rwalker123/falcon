@@ -381,7 +381,12 @@ func reconcile_pending(turn: int) -> bool:
 ## "no band published" and "the band is a point" the same rendered answer by construction rather than
 ## by luck. Both products, read as one vector beside their scalars.
 const OPTIONAL_YIELD_KEYS: Array[String] = [
-	"realized_yield", "trade_yield", "realized_trade_yield",
+	# `fodder_yield` is the THIRD account (issue #449) and it rides this list for the plain reason the
+	# others do — a key not copied here does not exist as far as the work board is concerned, and a
+	# sown hay Field's whole product is this one number. It is the one entry whose absence carries no
+	# second meaning: there is no `realized_fodder_yield` to fall back from, so an absent key and a
+	# published zero are the same reading (`SourceForecast.fodder_rate_of` says why at length).
+	"realized_yield", "trade_yield", "realized_trade_yield", "fodder_yield",
 	SourceForecast.YIELD_RANGE_LOW_KEY, SourceForecast.YIELD_RANGE_HIGH_KEY,
 	SourceForecast.TRADE_RANGE_LOW_KEY, SourceForecast.TRADE_RANGE_HIGH_KEY,
 ]

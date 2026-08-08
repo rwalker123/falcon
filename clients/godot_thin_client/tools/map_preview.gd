@@ -54,6 +54,16 @@ const FORAGE_A_Y := 6
 const OVERLAP_HERD_ID := "game_boar_11"   # the herd parked on the worked forage tile
 const OVERLAP_MOVE_X := 10                # pending-move target; band→target dash crosses forage tile B's label
 const OVERLAP_MOVE_Y := 10
+# THE HAY FIELD — the work fixture's THIRD worked forage tile (issue #449), and the only source in
+# either preview harness whose yield label states its FEED rate. It shares a row with forage tile B
+# (three hexes west of it) rather than touching it: `+0.40 fodder ♻` is roughly 2.5× the width of
+# the widest label this plate had ever drawn, and `_draw_pill_plate` sizes to the measured run, so
+# what a frame has to answer is how far the plate REACHES — a question two touching hexes could not
+# separate from ordinary neighbour crowding, and which a claim about WHICH account was chosen
+# (`_assert_yield_label_component`) cannot see at all.
+const FODDER_FIELD_X := 6
+const FODDER_FIELD_Y := 8
+const FODDER_FIELD_RATE := 0.40
 # ---- THE WORKED BAND'S ESCAPEMENT FLOORS --------------------------------------------------------
 # Where each worked source's crew stops, as a fraction of that source's capacity
 # (`docs/plan_harvest_floor.md`). Every yield label on the map ends in the ZONE MARK of its
@@ -70,6 +80,21 @@ const WORK_DRAWDOWN_FLOOR := 0.15
 # How many DISTINCT floor marks the worked-band fixture must render. Two is the smallest number that
 # makes the mark falsifiable at all; the guard is `_assert_work_floor_marks`.
 const WORK_FLOOR_MARKS_MIN := 2
+# ---- THE YIELD LABEL'S ONE SLOT (issue #449) ----------------------------------------------------
+# The three account rates `_assert_yield_label_component` drives the fall-through with, and the faces
+# they must produce. Deliberately DISTINCT values, so a branch that returned the wrong account is
+# visible as the wrong NUMBER rather than only as the wrong wording, and the faces are written out
+# rather than composed through the renderer's own formatter — a needle built by the code under test
+# agrees with whatever that code emits.
+const YIELD_LABEL_FOOD_RATE := 0.31
+const YIELD_LABEL_FOOD_FACE := "+0.31"
+const YIELD_LABEL_TRADE_RATE := 0.22
+const YIELD_LABEL_TRADE_FACE := "+0.22"
+const YIELD_LABEL_FODDER_RATE := 0.40
+const YIELD_LABEL_FODDER_FACE := "+0.40 fodder"
+# What a source paying into NO account still prints: the food zero, which is the honest reading of a
+# worked tile that produced nothing this turn and is what this label has always said.
+const YIELD_LABEL_EMPTY_FACE := "+0.00"
 # Canned settlement-stage tokens (the native bridge doesn't run here, so preview band dicts must
 # carry settlement_stage_* directly). Icons are opaque sim strings — the emoji here just mirror the
 # current config so the map token glyphs render. EMPTY exercises the neutral non-circular fallback marker (square).
@@ -526,6 +551,7 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_band_work")
 	_assert_work_floor_marks()
+	_assert_yield_label_component()
 
 	# State A-overlap — the draw-ORDER guard for the yield labels. Every layer that used to paint OVER
 	# them is forced to collide with one here: a herd parked ON a worked forage tile (its glyph lands in
@@ -1501,6 +1527,32 @@ func _assert_work_floor_marks() -> void:
 	_assert_map("worked-band floor marks — every floored assignment resolves to a mark (no blank zone)",
 		not marks.has(""))
 
+## **THE ONE-SLOT FALL-THROUGH, food → trade → FODDER** (issue #449). A map label has room for exactly
+## one rate, so which account it states is the whole claim — and a PNG cannot carry it: `+0.00` and
+## `+0.40 fodder` are the same badge at map scale, and every fall-through renders a perfectly plausible
+## label. So the CHOICE is asked of the renderer directly (`_yield_label_rate_text`), over values rather
+## than over a fixture, and each case is paired with the one that must NOT change: a source paying food
+## keeps its food figure whatever else it pays, which is what stops "always show fodder" passing.
+##
+## `_entry_fodder` is asked beside them, because the fall-through is only reachable if the entry's feed
+## rate is read at all — and it has NO realized fallback to make, fodder being plant-only.
+func _assert_yield_label_component() -> void:
+	var overlays: BandOverlayRenderer = _map._band_overlays
+	_assert_map("yield label — a fodder-only source states its feed rate, not +0.00",
+		overlays._yield_label_rate_text(0.0, 0.0, YIELD_LABEL_FODDER_RATE) == YIELD_LABEL_FODDER_FACE)
+	_assert_map("yield label — food still leads wherever there is food",
+		overlays._yield_label_rate_text(YIELD_LABEL_FOOD_RATE, 0.0, YIELD_LABEL_FODDER_RATE)
+			== YIELD_LABEL_FOOD_FACE)
+	_assert_map("yield label — trade still wins the slot ahead of fodder",
+		overlays._yield_label_rate_text(0.0, YIELD_LABEL_TRADE_RATE, YIELD_LABEL_FODDER_RATE)
+			== FoodIcons.TRADE_GOODS_GLYPH + YIELD_LABEL_TRADE_FACE)
+	_assert_map("yield label — a source paying nothing still prints its food zero",
+		overlays._yield_label_rate_text(0.0, 0.0, 0.0) == YIELD_LABEL_EMPTY_FACE)
+	_assert_map("yield label — the feed rate is read off the entry with no realized fallback",
+		is_equal_approx(overlays._entry_fodder({"fodder_yield": YIELD_LABEL_FODDER_RATE}),
+			YIELD_LABEL_FODDER_RATE)
+		and is_equal_approx(overlays._entry_fodder({}), 0.0))
+
 func _settle() -> void:
 	await _ensure_canvas()
 	await get_tree().process_frame
@@ -2087,6 +2139,15 @@ func _snapshot_work() -> Dictionary:
 		# shows the product the species PAYS — `⇄+0.22` — rather than the `+0.00` that said the pack
 		# was worth nothing. The deer label beside it is the control: it still reads its food rate.
 		{"kind": "hunt", "workers": 2, "fauna_id": "game_wolf_03", "floor": WORK_DRAWDOWN_FLOOR, "target_x": 11, "target_y": 4, "actual_yield": 0.0, "sustainable_yield": 0.0, "realized_trade_yield": 0.22, "trade_yield": 0.22, "overdraws": false},
+		# THE SOWN HAY FIELD's label (issue #449), the same argument one account further out: a Field
+		# pays FEED and neither provisions nor trade, so every food and trade field here is honestly 0
+		# and the label falls through to `+0.40 fodder`. Both trade keys are present and zero, the way
+		# the wire ships them, so the fall-through is reached through the ordinary
+		# render-only-when-non-zero gate rather than through absence. It is also the only rendered
+		# fodder label in either preview harness — `_assert_yield_label_component` pins WHICH account
+		# fills the one slot, and only a frame can say whether the chosen string FITS beside its
+		# neighbours (the widest run this plate has ever drawn).
+		{"kind": "forage", "workers": 2, "target_x": FODDER_FIELD_X, "target_y": FODDER_FIELD_Y, "floor": WORK_PEAK_FLOOR, "actual_yield": 0.0, "sustainable_yield": 0.0, "realized_yield": 0.0, "trade_yield": 0.0, "realized_trade_yield": 0.0, "fodder_yield": FODDER_FIELD_RATE, "overdraws": false},
 		{"kind": "warrior", "workers": 2},
 	]
 	# work_range 2 (forage green), scout radius 4 (azure) → three DISTINCT nested range borders in one
@@ -2100,6 +2161,11 @@ func _snapshot_work() -> Dictionary:
 	snap["food_modules"] = [
 		{"x": FORAGE_A_X, "y": FORAGE_A_Y, "module": "berry_patch", "kind": "forage"},
 		{"x": 9, "y": 8, "module": "berry_patch", "kind": "forage"},
+		# The hay Field's own site, for the same load-bearing reason: no site, no marker to ring.
+		# `savanna_grassland` rather than the berry patch beside it — grassland is where hay comes
+		# from, and it resolves to a DIFFERENT bundled sprite, so the fodder tile is identifiable in
+		# the frame as something other than a third berry patch.
+		{"x": FODDER_FIELD_X, "y": FODDER_FIELD_Y, "module": "savanna_grassland", "kind": "forage"},
 	]
 	return snap
 

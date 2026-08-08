@@ -725,6 +725,12 @@ pub fn advance_labor_allocation(
                             // `min(production, collection)` the band's trade store was credited with.
                             trade: trade_production.min(trade_collection),
                             realized_trade: crate::forage::PLANT_TRADE_FORECAST_NOT_YET_PROJECTED,
+                            // **The credited value, not a recomputation** (issue #449) — the very
+                            // `fodder` scalar added to the `FODDER` store above, so a hay Field's
+                            // compact readout states what the band was actually paid rather than a
+                            // parallel derivation that could drift from it. A grain Field's is `0`
+                            // because `field_fodder` is, with no role branch here.
+                            fodder: fodder.to_f32(),
                             // A managed harvest never draws the stock down, so it can never overdraw.
                             sustainable: paid,
                             // The forward-projected steady headline (computed pre-take above).
@@ -1072,6 +1078,13 @@ pub fn advance_labor_allocation(
                         // `forage::PLANT_TRADE_FORECAST_NOT_YET_PROJECTED`. The trade a gather
                         // *actually* earned is reported above; only the projection is missing.
                         realized_trade: crate::forage::PLANT_TRADE_FORECAST_NOT_YET_PROJECTED,
+                        // **The credited value, not a recomputation** (issue #449) — the very
+                        // `fodder` scalar added to the `FODDER` store above, **including the
+                        // `fodder_permitted` gate**: a faction that has not learned Foddering was
+                        // credited nothing on an uncommitted patch, so the row must read `0.0` too.
+                        // Re-deriving `tended_take_fodder` here would publish a number nobody was
+                        // ever paid, which is precisely what this readout exists not to do.
+                        fodder: fodder.to_f32(),
                         sustainable,
                         // The forward-projected steady headline (computed pre-take above).
                         realized: forage_realized,
@@ -1448,6 +1461,9 @@ pub fn advance_labor_allocation(
                             // A penned wolf pays pelts; the pen changes the intensity, not the product.
                             trade: paid.trade_goods,
                             realized_trade: hunt_realized.trade_goods,
+                            // No animal pays fodder, so this arm credits the `FODDER` store nothing
+                            // and the row reports the same nothing (see [`SourceYield::fodder`]).
+                            fodder: 0.0,
                             sustainable: tended,
                             // The forward-projected steady headline (computed pre-take above; a pen
                             // projects its managed yield, already smooth).
@@ -1799,6 +1815,9 @@ pub fn advance_labor_allocation(
                         // (`docs/plan_hunt_yield_model.md` §9) — that would break the larder identity.
                         trade: paid.trade_goods,
                         realized_trade: hunt_realized.trade_goods,
+                        // No animal pays fodder, so this arm credits the `FODDER` store nothing and
+                        // the row reports the same nothing (see [`SourceYield::fodder`]).
+                        fodder: 0.0,
                         sustainable,
                         wasted: hunt_yield.apply(take.wasted, mult_f).provisions,
                         workers_needed,

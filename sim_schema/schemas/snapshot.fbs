@@ -1020,6 +1020,28 @@ table LaborAssignment {
   // row. "" on a band-wide role (scout / warrior), which consumes no kit component and therefore has
   // no kit axis to choose along — read that as "no selection to make", not as "no kit".
   kitId:string;
+  // --- THE FEED CURRENCY (appended last, issue #449) ---------------------------------------------
+  // The FODDER this source produced this turn — the third account beside actualYield/tradeYield, and
+  // exactly the min(production, collection) the band's FODDER store was credited with, the wild
+  // credit's Foddering knowledge gate included (a gated-off row reports 0 because the band was paid
+  // 0). Reported, never recomputed.
+  //
+  // PLANT-ONLY, structurally rather than by omission: no animal pays fodder, so every hunt row is an
+  // honest 0. What this exists for is the opposite case — a sown hay Field (flora_config.json's
+  // hay_grass: no provisions, no trade, positive fodder) whose compact readout said +0.00 while it
+  // fed the band's herds every turn.
+  //
+  // NOT FOOD INCOME, the same rule tradeYield carries: foodIncome stays Sum(actualYield); fodder
+  // credits the band's FODDER store and never touches the larder, so folding it in would break the
+  // pinned larder identity.
+  //
+  // There is deliberately NO realizedFodderYield twin. realizedTradeYield exists because the ANIMAL
+  // web projects a steady rate; fodder is paid by the PLANT web alone, whose projection is the known
+  // gap realizedTradeYield is already 0 for — so a projected-fodder field would be a constant zero
+  // on the only web that can pay it. Read this actual, exactly as a client already falls back to
+  // tradeYield on every forage source. No fodder BAND either: every forage row's range is a point
+  // (nothing on the plant web is stochastic), so bounds would only restate this.
+  fodderYield:float = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
