@@ -123,7 +123,8 @@ the knowledge rows, the herd list), so resetting *after* the dispatch would wipe
 
 `Main` decides only WHEN. Each surface owns its own reset, reached by the usual silent `has_method`
 probe — `hud.reset_world_state()` (a **coordinator delegator**; `HudLayer` grows no feature logic, it
-calls `FactionReadouts.reset_world_state` / `TellingPanel.reset` / `cancel_active_targeting`) and
+calls `FactionReadouts.reset_world_state` / `TellingPanel.reset` / `cancel_active_targeting` /
+`ForecastQuery.reset`) and
 `map_view.reset_world_state()` (which fans out to `AnnotationRenderer` / `BandOverlayRenderer`). `Main`
 also clears `_campaign_label_signature` / `_victory_analytics_signature`, which print once per
 *distinct* value and would otherwise stay silent in a new world that happened to match the old one.
@@ -133,8 +134,13 @@ from each snapshot. Three shapes qualify — it **merges** (the knowledge strip 
 an id and erases only on ABSENCE** (`herd_trails`, `culture_layer_map`); or it was **pushed IN from
 another surface** keyed by an id the new world reuses (`BandOverlayRenderer._labor_pending` from the
 HUD, `AnnotationRenderer._selected_trade_entity` (pushed by the Trade tab until issue #381 retired it; the overlay toggle moved to `MapPanel` and no longer pushes a selection), MapView's culture highlight from
-the Culture tab, and the selection triplet `selected_unit_id` / `selected_herd_id` / `selected_tile` +
-`cycle_index`). Everything `display_snapshot` clears-and-refills — the `tile_*` lookups, `food_sites`,
+the Culture tab, the selection triplet `selected_unit_id` / `selected_herd_id` / `selected_tile` +
+`cycle_index`, and the HUD's **forecast-query seam** — `ForecastQuery`'s answers are keyed by kind +
+band id + herd id and a new world hands out BOTH again, band ids restarting low and herd ids being
+derived from species + index (`herd_red_deer_00`), so a held answer matches the new world's composed
+key exactly and renders the previous world's numbers as a live forecast; a held REFUSAL is worse,
+`ask` declining to re-put a question it holds a server token for). Everything `display_snapshot`
+clears-and-refills — the `tile_*` lookups, `food_sites`,
 `discovered_sites`, `forage_patch_lookup`, `harvest_sites`/`scout_sites`, `units`/`herds`, the overlay
 channels, every `TerrainRenderer` raster, `SecondaryMarkerRenderer`'s per-frame slots — heals itself and
 is deliberately **absent** from the reset, as are the genuine view PREFERENCES (`active_overlay_key`,
@@ -152,7 +158,11 @@ Two asymmetries worth keeping:
 **Verify with `ui_preview`'s `world_reset` state**, which is a behavioural guard rather than a picture:
 it seeds faction knowledge and a book of beats, asserts both are present, calls
 `Hud.reset_world_state()`, then asserts `FactionReadouts.faction_tracks` is empty and so is the
-Telling's `_entries`.
+Telling's `_entries`. **The forecast seam's half is a chapter of its own**
+(`ui_preview/chapters/forecast_seam.gd`, PNG-less and last), for the same reason and one more: a stale
+answer renders as a perfectly ordinary forecast, so the fix is invisible in every frame the harness
+takes. It seeds an ANSWER and a REFUSAL through the real `ask`/`deliver` round trip, asserts both are
+held, resets, and asserts the seam answers `STATE_PENDING` and puts the question again.
 
 **IT ASKS THE CACHE, NOT A RENDERED SURFACE, and it has to.** It used to read the top-bar knowledge
 strip's Label visibility, and the argument for a behavioural guard was that a PNG could not tell a

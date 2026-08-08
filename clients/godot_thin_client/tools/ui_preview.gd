@@ -49,6 +49,7 @@ const CHAPTERS := [
 	"res://tools/ui_preview/chapters/event_dock.gd",
 	"res://tools/ui_preview/chapters/button_faces.gd",
 	"res://tools/ui_preview/chapters/interface_scale.gd",
+	"res://tools/ui_preview/chapters/forecast_seam.gd",
 ]
 
 ## The one method a chapter owes the harness (see the chapter contract in

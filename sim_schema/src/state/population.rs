@@ -484,8 +484,9 @@ pub struct PopulationCohortState {
     /// capture. Appended last.
     #[serde(default)]
     pub food_consumption: f32,
-    /// Hunt levers — global config echoed per-cohort (same idiom as `max_expedition_party_size`, and
-    /// populated for **every** cohort, since the outfit/hunt UI lives on the resident-band panel).
+    /// Hunt levers — global config echoed per-cohort (same idiom as
+    /// [`Self::expedition_viability_warn_turns`], and populated for **every** cohort, since the
+    /// outfit/hunt UI lives on the resident-band panel).
     ///
     /// The pre-launch **expedition** trip length is **not** computed from these: the client **asks**
     /// for the sim's simulated answer (`sim_runtime`'s `QueryCommand`, answered by
@@ -507,7 +508,8 @@ pub struct PopulationCohortState {
     /// per-hunter food rate against them is a contradiction. The per-herd, species-aware rates are
     /// `HerdTelemetryState::per_worker_yield` / `per_worker_trade` — clamp a band preview with THOSE.
     /// This survives as the expedition **outfit** lever (rough carry arithmetic before a target is
-    /// chosen); for a chosen target the sim exports the answer in `hunt_trip_estimates`.
+    /// chosen); for a chosen target the client asks for the answer (`sim_runtime`'s `QueryCommand`,
+    /// answered by `core_sim::forecast_query`), exactly as the prose above describes.
     #[serde(default)]
     pub hunt_per_worker_provisions: f32,
     /// Turns-to-fill past which a trip is flagged NOT VIABLE
@@ -533,21 +535,21 @@ pub struct PopulationCohortState {
     pub pen_feed_upkeep: f32,
     /// One worker's carry contribution to a hunt expedition's haul
     /// (`expedition_config.hunt.per_worker_carry`). Global config echoed per-cohort (same idiom as
-    /// [`Self::max_expedition_party_size`] / `expedition_viability_warn_turns` /
-    /// `hunt_per_worker_provisions`), populated for **every** cohort since the outfit UI lives on the
-    /// resident-band panel. The client computes a hypothetical party's pre-launch HAUL as
+    /// [`Self::expedition_viability_warn_turns`] / [`Self::hunt_per_worker_provisions`]), populated
+    /// for **every** cohort since the outfit UI lives on the resident-band panel. The client computes a hypothetical party's pre-launch HAUL as
     /// `party_workers × expedition_per_worker_carry` (the carry cap the pack fills to before
     /// auto-Delivering; a launched party's own echo is [`Self::expedition_carry_cap`]). Appended.
     #[serde(default)]
     pub expedition_per_worker_carry: f32,
     /// A band's move speed (`labor_config.band_move_tiles_per_turn`). Global config echoed per-cohort
-    /// (same idiom as the levers above). The client adds a raid's round-trip travel to the
-    /// band-agnostic pre-launch `hunt_trip_estimates` as
-    /// `ceil(2 × hex_distance(selected_band, herd) / band_move_tiles_per_turn)`. Appended.
+    /// (same idiom as the levers above). The client adds a raid's round-trip travel to the queried
+    /// pre-launch forecast as
+    /// `ceil(2 × hex_distance(selected_band, herd) / band_move_tiles_per_turn)` — the forecast
+    /// projects the hunting itself, never the walk. Appended.
     #[serde(default)]
     pub band_move_tiles_per_turn: f32,
-    /// In-flight hunt-party delivery forecast — the in-flight twin of the pre-launch
-    /// `hunt_trip_estimates`. Turns until the carried food reaches the home larder (`0` = unknown /
+    /// In-flight hunt-party delivery forecast — the in-flight twin of the queried pre-launch
+    /// forecast. Turns until the carried food reaches the home larder (`0` = unknown /
     /// n/a). Computed at capture by `systems::expeditions::expedition_delivery`. Appended.
     #[serde(default)]
     pub expedition_eta_turns: u32,

@@ -156,7 +156,6 @@ impl ExpeditionConfig {
     /// demand, which is an operator's call rather than an invariant).
     pub fn validate(&self) -> Result<(), ExpeditionConfigError> {
         // Negative/NaN would saturate to `0` in `effective_comm_range`'s `as u32` cast, silently
-        // Negative/NaN would saturate to `0` in `effective_comm_range`'s `as u32` cast, silently
         // zeroing the comm range whatever `comm_range_tiles` says.
         require_positive_finite("comm_range_tech_factor", self.comm_range_tech_factor)?;
         // A scout that observes nothing is not a scout.

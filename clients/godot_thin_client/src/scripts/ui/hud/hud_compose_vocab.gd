@@ -882,13 +882,14 @@ const CANCEL_SCOPE_ROLES := "roles"
 #       `carryingCapacity` and the herd's per-biomass yield vector: `max(0, B − floor·K) × rate`,
 #       which is linear and exact, so the client lands on the number the sim would at ANY floor.
 #       With the cohort's levers that makes the LOCAL hunt preview pure arithmetic.
-#   `hunt_trip_estimates`  {"<floor>:<workers>" → {floor, party_workers, turns_to_fill,
-#       delivers_food, delivers_trade, …}} — the sim's PRE-LAUNCH TRIP ESTIMATE, forward-simulated
-#       server-side. An expedition's trip length is NOT a rate division: above the peak the ceiling is
-#       a *stock*, so the party strips the headroom in a turn or two and then crawls at the herd's
-#       regrowth trickle. A re-derived `carryCap / rate` closed form is wrong, and wrong by a lot — on
-#       a FULL Rabbit Warren a LONE hunter fills in 23 turns while a party of 4 never fills within the
-#       sim's horizon. So the client does ZERO arithmetic here — it looks the answer up.
+#   the EXPEDITION's trip is ASKED FOR (`ForecastQuery` → `HuntTripForecastReply.at_composed`:
+#       {floor, party_workers, turns_to_fill, delivers_food, delivers_trade, …}), forward-simulated
+#       server-side for the exact band, kit, party and floor the sheet composed. A trip length is NOT
+#       a rate division: above the peak the ceiling is a *stock*, so the party strips the headroom in
+#       a turn or two and then crawls at the herd's regrowth trickle. A re-derived `carryCap / rate`
+#       closed form is wrong, and wrong by a lot — on a FULL Rabbit Warren a LONE hunter fills in 23
+#       turns while a party of 4 never fills within the sim's horizon. So the client does ZERO
+#       arithmetic here — it asks, and reads the answer.
 # **THIS IS THE BOUNDARY OF THE CLIENT-COMPOSES-THE-CEILING EXCEPTION.** The ceiling is composable
 # because it is linear; a raid's trip has no closed form, and a hunt's TAKE is rounded to whole
 # animals (`floor(ceiling / bodyMass)`), which is not linear either. The client draws the curve; the
@@ -899,10 +900,10 @@ const CANCEL_SCOPE_ROLES := "roles"
 # DENIAL raid is one that lands nothing in EITHER currency, which is a property of the SPECIES;
 # `SourceForecast.hunt_trip_forecast` owns that test.)
 #
-# **THE SAMPLED FLOORS ARE MARKS ON A DIAL, NOT A SET OF OPTIONS.** The sim samples the continuum
-# (`snapshot::RAID_FORECAST_FLOOR_SAMPLES`) because it cannot ship a formula for a forward
-# simulation; the launch command accepts ANY floor in `0.0..=1.0`, and the preview quotes the nearest
-# sampled row. Treating a sample as an offered stance would undo the whole arc.
+# **THE THREE PRESET FLOORS ARE MARKS ON A DIAL, NOT A SET OF OPTIONS.** The floor is continuous, the
+# launch command accepts ANY value in `0.0..=1.0`, and a question carries whatever the chart was
+# dragged to — the presets ride the ask as `preset_floors` purely so the three buttons get a face in
+# the same round trip. Treating one of them as an offered stance would undo the whole arc.
 #
 # The only thing the client computes for a raid is the display verdict:
 #     viable = turns <= expedition_viability_warn_turns   (the band's own exported lever)

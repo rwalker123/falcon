@@ -1369,9 +1369,9 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     var is_expedition := distance >= 0 and distance > reach
     # Local hunt caps at the band's assignable hunt workers; an expedition caps at the party ceiling.
     var assignable := SourceForecast.expedition_party_cap(band) if is_expedition else _band_labor.assignable_hunt_workers(band, herd_id)
-    # **THE KIT, RESOLVED HERE AND MOUNTED UNDER THE CREW ROW.** Its selection decides whether the
-    # sim's `huntTripEstimates` table applies to this raid at all, and every reading below is priced
-    # against that answer — so the resolve leads and the ROW lands beside the crew it describes.
+    # **THE KIT, RESOLVED HERE AND MOUNTED UNDER THE CREW ROW.** It is part of the question the sim is
+    # asked, so every reading below is priced for it — the resolve leads and the ROW lands beside the
+    # crew it describes.
     var kits := _band_labor.kits()
     var default_kit := _band_labor.default_kit_id(KitRoster.JOB_HUNT)
     var kit_id := KitRoster.resolve_selection(kits, KitRoster.JOB_HUNT, default_kit,
@@ -1427,9 +1427,9 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # It reads the IMPROVEMENT axis to pick the ownership-gated vs would-be crew field; the rationale
     # for that split lives on the helper. The expedition party has no herding crew, so
     # `SourceForecast.expedition_useful_cap` is left alone.
-    # **THE DEMAND-SIDE CAP IS A READING OF THE TABLE TOO**, so under a kit mismatch the party falls
-    # back to supply alone: with no table for this kit the payload's plateau is unknown, and clamping
-    # to another kit's plateau would refuse a party this one may well need.
+    # **THE DEMAND-SIDE CAP RIDES THE ANSWER TOO**, so until one lands the party falls back to supply
+    # alone: with no reply the payload's plateau is unknown, and clamping to a plateau nobody has quoted
+    # would refuse a party this raid may well need.
     var capped := {"cap": assignable, "note": ""}
     if is_expedition:
         # The plateau is the reply's (`useful_cap`); the engagement-crew floor and the `assignable`
@@ -1465,9 +1465,9 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # "up to X/turn" button metric, DESCENDING as the floor rises (take everything > best harvest >
     # learn from it). Worker-independent on both branches (the expedition's is the max over party sizes
     # of delivered / trip_turns, so it never changes as the Party stepper steps).
-    # **THE PRESET METRICS GO WITH THE TABLE THEY COME FROM.** `expedition_policy_takes` is a reading
-    # of `huntTripEstimates`, so under a kit mismatch it would put a figure priced at another kit on a
-    # sheet whose own note says none are quoted. `{}` is the picker's supported degrade (a herd the
+    # **THE PRESET METRICS COME FROM THE SAME ANSWER AS EVERY OTHER FIGURE HERE** — `per_preset`, one
+    # row per preset in the order they were asked for, priced for the party and kit this sheet is
+    # composing. `{}` until the reply lands, which is the picker's supported degrade (as is a herd the
     # wire does not describe), so the rungs render bare rather than wrong.
     var floor_takes := {}
     if is_expedition:

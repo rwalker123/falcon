@@ -55,6 +55,24 @@ const STATE_FAILED := "failed"
 ## "quietly showing a number for a party you are not sending": beyond it the sheet says it is waiting.
 const STALE_AFTER_MSEC := 400
 
+## **HOW LONG A TRANSPORT FAILURE STANDS BEFORE THE SAME QUESTION MAY BE PUT AGAIN.**
+##
+## A refusal the SERVER spelled (`sim_runtime::commands::query_error` — `unknown_herd`, `unknown_kit`,
+## `kit_wrong_job`, `invalid_floor`, `invalid_party`, `unknown_band`, `no_active_world`) is a statement
+## about the QUESTION, and the sheet composed that question out of the band, herd, kit and party it is
+## already rendering. Re-asking cannot change the answer, so a server token is never re-asked at all —
+## `ask` runs once per render, and retrying there would spin the socket instead of fixing anything.
+##
+## `QUERY_ERROR_TRANSPORT` says nothing about the question. A refused connect, the worker's read
+## timeout, a decode error, a HUD standing up before `Main` has a command client — every one of them
+## heals on its own, and none of them is evidence that this question is bad. Held forever, a server
+## restarted with a compose sheet open leaves that sheet reading `No forecast available (transport)`
+## for the rest of the session, and the player's only escape is to change kit, party or floor. So it
+## is asked again once this has elapsed since the failure landed: long enough that an unreachable
+## server costs one question every few seconds rather than one per frame, short enough that a server
+## coming back is picked up while the sheet is still open.
+const TRANSPORT_RETRY_AFTER_MSEC := 2000
+
 ## The id of a request that was never made. `0` is never issued — the sequence starts at 1 — so it can
 ## be told apart from a real reply.
 const NO_REQUEST_ID := 0
@@ -62,7 +80,7 @@ const NO_REQUEST_ID := 0
 var _sender: Callable = Callable()
 var _next_request_id: int = NO_REQUEST_ID
 ## subject -> {"answer": Dictionary, "answer_key": String, "asked_key": String, "asked_id": int,
-##             "asked_at": int, "error": String, "error_key": String}
+##             "asked_at": int, "error": String, "error_key": String, "error_at": int}
 var _subjects: Dictionary = {}
 ## request_id -> subject, for the reply that has not landed yet.
 var _inflight: Dictionary = {}
@@ -92,9 +110,9 @@ func ask(kind: String, subject: String, key: String, params: Dictionary) -> void
 	var entry: Dictionary = _subjects.get(subject, {})
 	if String(entry.get("answer_key", "")) == key or String(entry.get("asked_key", "")) == key:
 		return
-	if String(entry.get("error_key", "")) == key:
-		# A refused question is not re-asked on every rebuild. The refusals are all client bugs (the
-		# sheet composes the request itself), so retrying one would spin the socket rather than fix it.
+	if String(entry.get("error_key", "")) == key and not _retry_is_due(entry):
+		# A question the SERVER refused is not re-asked at all, and a round trip that FAILED is not
+		# re-asked on every rebuild — see `TRANSPORT_RETRY_AFTER_MSEC` for which is which.
 		return
 	if not _sender.is_valid():
 		return
@@ -169,8 +187,20 @@ func expire_stale() -> void:
 			_subjects[subject] = entry
 			answered.emit(String(subject))
 
-## Forget everything. A new world's ids describe different bands and herds, so an answer held across
-## one would be quoted against a subject that no longer exists.
+## **FORGET EVERYTHING — the world boundary** (`HudLayer.reset_world_state`, itself driven by
+## `Main._reset_per_world_state`; the shared contract is `.claude/rules/core_sim/world-handoff.md`).
+##
+## **THE COMPOSED KEY CANNOT TELL TWO WORLDS APART, and neither half of it is unlucky enough to.** A
+## subject is kind + band + herd: band ids restart low in a new world, and a herd id is derived from
+## its species and index (`herd_red_deer_00`), so a fresh world hands out the same handles the last one
+## used. Opening that band's sheet at the same kit, party and floor therefore matches `answer_key`
+## exactly, and the sheet renders the PREVIOUS world's numbers as `STATE_READY`. A held failure is
+## worse: `ask` refuses to re-put a question it holds a server refusal for, so one stale `unknown_herd`
+## would stick to the new world's sheet for good.
+##
+## `_next_request_id` deliberately does NOT reset — the sequence stays monotonic across worlds, so a
+## reply from the old world cannot collide with a new request's id. It is dropped either way, `deliver`
+## answering only ids still in `_inflight`.
 func reset() -> void:
 	_subjects.clear()
 	_inflight.clear()
@@ -202,10 +232,26 @@ func _deliver_one(reply: Dictionary) -> void:
 	_subjects[subject] = entry
 	answered.emit(subject)
 
+## **MAY THE FAILURE THIS ENTRY HOLDS BE ASKED AGAIN?** — the transport token, and only once
+## `TRANSPORT_RETRY_AFTER_MSEC` has passed since it landed. Every other token is the server's own
+## refusal vocabulary and is held for good.
+##
+## **A RETRY DOES NOT CLEAR THE FAILURE**, and `ask` deliberately leaves `error_key` standing: `view`
+## answers `STATE_FAILED` for as long as it is there, so the sheet keeps showing the terse failure
+## until an answer actually lands. A server coming back is then ONE transition on screen rather than a
+## flicker out to the pending placeholder and back.
+func _retry_is_due(entry: Dictionary) -> bool:
+	if String(entry.get("error", "")) != HudComposeVocab.QUERY_ERROR_TRANSPORT:
+		return false
+	return Time.get_ticks_msec() - int(entry.get("error_at", 0)) >= TRANSPORT_RETRY_AFTER_MSEC
+
 func _fail(subject: String, key: String, token: String) -> void:
 	var entry: Dictionary = _subjects.get(subject, {})
 	entry["error"] = token
 	entry["error_key"] = key
+	# When the failure landed, which is what the transport retry counts from. Re-stamped on every
+	# failure, so a retry that fails again waits the whole interval out rather than the remains of it.
+	entry["error_at"] = Time.get_ticks_msec()
 	entry["asked_key"] = ""
 	entry["asked_id"] = NO_REQUEST_ID
 	# The previous answer goes with the failure: it was for another party, and standing it beside a

@@ -512,15 +512,16 @@ message HuntTripRow {
   float floor = 1;
   uint32 party_workers = 2;
   // Turns of hunting until the party comes home. `0` = never completed inside the forecast horizon —
-  // the same NEVER_FILLED sentinel the estimate table publishes; `bound` says which kind of never.
+  // the same NEVER_FILLED sentinel the retired estimate tables published; `bound` says which kind of
+  // never.
   uint32 turns_to_fill = 3;
   // A `HuntTripBound` key: which stop ended the trip.
   string bound = 4;
   bool delivers_food = 5;
   bool delivers_trade = 6;
-  // WHOLE animals killed, so uint32 — the same type the estimate table publishes and the same type
-  // `DenialRow.animals_killed` carries. A float here would let a client render "2.0 animals" and
-  // would type one quantity two ways inside a single reply.
+  // WHOLE animals killed, so uint32 — the same type the retired estimate tables published and the
+  // same type `DenialRow.animals_killed` carries. A float here would let a client render "2.0
+  // animals" and would type one quantity two ways inside a single reply.
   uint32 animals_taken = 7;
   float delivered_food = 8;
   float delivered_trade = 9;
@@ -532,14 +533,19 @@ message HuntTripForecastReply {
   HuntTripRow at_composed = 1;
   // One row per `preset_floors` entry, in the SAME order. Empty if none were asked for.
   repeated HuntTripRow per_preset = 2;
-  // **The max-useful party plateau** — the smallest party at which the delivered payload stops
-  // rising with party size, scanned over `expedition_config.estimate_party_sizes` at the composed
-  // floor. `0` = the scan found no plateau (the payload never rises above zero, or it was still
-  // rising at the last rung), which the client reads as "no usefulness cap to name".
+  // **The max-useful party plateau** — the LAST party at which the delivered payload was still
+  // rising with party size, scanned contiguously over `1..=max_party_workers` at the composed floor.
+  // It is the largest party still worth sending, so a stepper seeds ON it, not one worker above:
+  // `useful_cap + 1` is by construction the first party that adds nothing.
   //
-  // Server-side because the client can no longer find it: the plateau is a property of a table, and
-  // the query replaces the table. It is the SCAN only — the engagement-crew floor the client maxes
-  // into it is derivable from fields the herd row already carries, and stays there with the prose.
+  // `0` = **no usefulness cap to name** — the scan found no plateau because the payload never rose
+  // above zero, or was still rising at the band's last fieldable worker, or no scan was asked for
+  // (`max_party_workers = 0`).
+  //
+  // Server-side because the client can no longer find it: reading a plateau needs a row per party
+  // size, and the pre-computed table that used to carry that axis is what the query replaced. It is
+  // the SCAN only — the engagement-crew floor the client maxes into it is derivable from fields the
+  // herd row already carries, and stays there with the prose.
   uint32 useful_cap = 3;
 }
 

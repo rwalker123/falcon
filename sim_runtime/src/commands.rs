@@ -362,8 +362,8 @@ pub mod query_error {
     pub const INVALID_PARTY: &str = "invalid_party";
 }
 
-/// One answered hunt-trip forecast. The wire twin of a `HuntTripEstimateState` row, plus the echoed
-/// `floor` / `party_workers` that make it self-describing.
+/// One answered hunt-trip forecast. The wire twin of a row of the retired `HuntTripEstimateState`
+/// table, plus the echoed `floor` / `party_workers` that make it self-describing.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HuntTripRow {
     pub floor: f32,
@@ -373,8 +373,8 @@ pub struct HuntTripRow {
     pub bound: String,
     pub delivers_food: bool,
     pub delivers_trade: bool,
-    /// **Whole** animals killed — a count, typed as one, exactly as `HuntTripEstimateState` and
-    /// [`DenialRow::animals_killed`] type it.
+    /// **Whole** animals killed — a count, typed as one, exactly as the retired
+    /// `HuntTripEstimateState` typed it and as [`DenialRow::animals_killed`] types it.
     pub animals_taken: u32,
     pub delivered_food: f32,
     pub delivered_trade: f32,
@@ -387,8 +387,9 @@ pub struct HuntTripForecastReply {
     pub at_composed: HuntTripRow,
     /// One row per queried preset floor, in the same order.
     pub per_preset: Vec<HuntTripRow>,
-    /// The max-useful party plateau; `0` = no plateau found. See the proto for what the number is
-    /// and what the client still owns.
+    /// The max-useful party plateau — the LAST party at which the payload still rose, so a stepper
+    /// seeds ON it; `0` = no plateau found. See the proto for what the number is and what the client
+    /// still owns.
     pub useful_cap: u32,
 }
 

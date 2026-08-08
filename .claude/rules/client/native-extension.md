@@ -213,37 +213,39 @@ quotes a FLOOR"). Because the MARKER is a structural `duplicate()` of the cohort
 in-flight denial readout — whose caller has no band and reads the horizon off the launched party —
 without a stamp; `marker_field_guard` carries it so the copy stays honest.
 
-`herds_to_array` (`dict/subsistence.rs`) decodes the DENIAL raid's pre-launch table,
-`HerdTelemetryState.denialEstimates` (`docs/plan_denial_raid.md`), as **`denial_estimates` — a Godot
-ARRAY of row dictionaries, not a keyed dict like its `hunt_trip_estimates` sibling**. The hunt table
-needs a composite `"<floor>:<party>"` key because it is sampled on TWO axes, and that key is the
-source of the Rust-`f32`-Display trap its own comment records; denial carries no floor and no fill
-target, so party size is the only axis, a row's `party_workers` IS its identity, and an array cannot
-reproduce the trap. Each row carries `party_workers` / `turns_to_collapse` / `turns_to_collapse_low` /
-`turns_to_collapse_high` / `outcome` / `animals_killed` / `delivered_food` / `wasted_food` /
-`delivered_trade` / `wasted_trade`. **A `0` on any turn field means "not within the horizon on that
-end", never "immediately"**, and `outcome` is what the client renders instead of a blank — decode all
-four together or the consumer cannot tell a repelled party from an expired clock.
+**THE PRE-LAUNCH RAID FORECASTS ARE NOT ON THE SNAPSHOT, SO `herds_to_array` DECODES NO ESTIMATE
+TABLE.** `HerdTelemetryState`'s `huntTripEstimates` / `denialEstimates` / `denialPartyNeeded` and the
+two `*EstimatesKitId` fields are `(deprecated)` slots in `snapshot.fbs` that the sim no longer
+writes: a herd row is a fact about a *herd*, and a raid's numbers depend on the asking band's kit and
+live equipment wear, which no per-herd row can carry. The client **asks** instead — see
+`.claude/rules/core_sim/expeditions.md` → "The forecast is ASKED FOR".
 
-**THE WASTE IS A PAIR, AND BOTH HALVES ARE DECODED** — `wastedTrade` is appended last on the table
-and is the twin `deliveredTrade` already had. The sim prices both out of ONE `HuntYield::apply` over
-the wasted biomass, so a kill left on the range takes its hides with it; decoding the food half alone
-reported a raid whose quarry pays pelts as wasting nothing, on the one mission whose entire readout is
-what it destroys and does not bring home. It is the appended-field drop this file records for its own
-sake, and the same food-only blindness issue #337 removed elsewhere.
+`bridge/query.rs` owns that exchange. It encodes a `QueryCommand` (`sim_runtime/proto/command.proto`)
+and reads back a `QueryReplyEnvelope` on **the command socket**, which is bidirectional: the reply
+frames share the read path's 4-byte little-endian length prefix and the same
+`sim_runtime::MAX_PROTO_FRAME` bound, and that bound has one definition precisely because both ends
+must agree on it. Replies cross to the main thread through `CommandBridge.poll_query_replies` rather
+than a signal off the worker, so a render never observes a half-applied answer.
 
-Beside the table it decodes `HerdTelemetryState.denialPartyNeeded` as **`denial_party_needed`**, the
-smallest party in that table whose raid SUCCEEDED (`past_recovery` / `herd_lost`, never `horizon`,
-whose projection merely ran out) — the party the compose sheet's stepper opens
-on and the count its repelled refusal names. **Inserted UNCONDITIONALLY, unlike `denial_estimates`**:
-it is a scalar with a real meaning at `0`, so a herd carrying no table still answers the question.
-**`0` means no quoted party drives this herd down and is never "send nobody"** — three honest
-situations reach it (wariness ≥ 1, a requirement past the LAST RUNG of
-`expedition_config.estimate_party_sizes` — the sole quoting bound, having absorbed the retired
-`deny.max_party_quoted` — and regrowth out-running the whole table), all told apart by the rows' own
-`outcome`. It may legitimately EXCEED the band's idle
-workers, so it is not a cap and is never clamped here; only the stepper, which knows the band, clamps
-it.
+**A QUERY TRIGGERS NO SNAPSHOT.** The server answers and skips the recapture — the query changed
+nothing, and that recapture is the expensive half of a turn. Nothing downstream may wait on a frame
+to render an answer; the reply is the whole of it.
+
+**THE WASTE IS A PAIR, AND BOTH HALVES ARE DECODED** — `wasted_trade` is the twin `delivered_trade`
+already had, and it rides `DenialRow` on the reply for the reason it rode the retired table: the sim
+prices both out of ONE `HuntYield::apply` over the wasted biomass, so a kill left on the range takes
+its hides with it. Decoding the food half alone reported a raid whose quarry pays pelts as wasting
+nothing — on the one mission whose entire readout is what it destroys and does not bring home.
+
+**A `0` ON ANY TURN FIELD MEANS "not within the horizon on that end", never "immediately"**, and
+`outcome` is what the client renders instead of a blank — decode them together or the consumer cannot
+tell a repelled party from an expired clock.
+
+`DenialRaidForecastReply.party_needed` is the smallest party whose raid SUCCEEDED (`past_recovery` /
+`herd_lost`, never `horizon`, whose projection merely ran out) — the party the compose sheet's
+stepper opens on. **`0` means no party the band can field drives this herd down**, because the
+search walks contiguously to the band's last fieldable worker rather than stopping at a sampled rung;
+it is never "send nobody", and it can no longer name a party the band had no hope of raising.
 
 ## THE KIT ROSTER — six additions, three homes (`docs/plan_denial_raid.md`)
 
@@ -252,12 +254,13 @@ each one's section:
 
 | wire | key | module |
 |---|---|---|
-| `SubsistenceSection.kits:[KitOption]` | `kits` (array of `{id, display_name, jobs, attack, hunt_carry_per_worker_biomass, forage_carry_per_worker_biomass}`) | `dict/subsistence.rs` → `kits_to_array` |
+| `SubsistenceSection.kits:[KitOption]` | `kits` (array of `{id, display_name, jobs, attack, hunt_carry_per_worker_biomass, forage_carry_per_worker_biomass, item_ids, …}`) | `dict/subsistence.rs` → `kits_to_array` |
+| `KitOption.itemIds` | `item_ids` — the kit's `uses` list verbatim, in config order | `dict/subsistence.rs` → `kits_to_array` |
 | `SubsistenceSection.defaultHuntKitId` / `defaultForageKitId` | `default_hunt_kit_id` / `default_forage_kit_id` | `snapshot/mod.rs` + `bridge/decoder.rs` |
 | `SubsistenceSection.equipmentConfigJson` | `equipment_config_json` — the whole effective `EquipmentConfig`, `serde_json`-serialized | `snapshot/mod.rs` + `bridge/decoder.rs` |
 | `PopulationCohortState.kitId` | `kit_id` on the band dict | `dict/population.rs` |
 | `LaborAssignment.kitId` | `kit_id` on the assignment entry | `dict/population.rs` |
-| `HerdTelemetryState.huntTripEstimatesKitId` / `denialEstimatesKitId` | `hunt_trip_estimates_kit_id` / `denial_estimates_kit_id` | `dict/subsistence.rs` → `herds_to_array` |
+| `PopulationCohortState.kitTiers:[BandKitTiers]` | `kit_tiers` on the band dict — per kit id, that band's tiers resolved against its LIVE equipment wear | `dict/population.rs` |
 
 **The roster, its two defaults and the serialized config are WHOLE-SECTION fields, so they are
 decoded on BOTH paths** — `snapshot_to_dict` and `decode_delta_against` — which is the rule the
@@ -298,10 +301,12 @@ band with dry spears is the defect class this arc keeps correcting.
 its tiers are the unequipped ones throughout. It is authored last in `equipment.json` and the decode
 preserves that order, which is the whole of why it sorts last in the picker.
 
-**The two herd ids exist so the client can say the tables are not repriced.** Both name the hunt
-job's default on every herd; when the player's selection differs, the sheet must refuse to present
-`huntTripEstimates` / `denialEstimates` as the answer rather than quoting a kitted raid's numbers to
-a bare-handed party.
+**`kitTiers` is the RESOLVED answer, and nothing here may re-derive a tier from the roster plus
+`kitItemConditions`.** The derivation is impossible rather than merely redundant: the axis→item
+mapping is per kit — `big_game` supplies `attack` from `spears`, `trapping` from `traps` — so
+`itemIds` says what a kit carries but not what each item is *for*, and set-cover, positional order,
+any-item-live and all-items-dry each fail a shipped case. The sim resolves it once against the band's
+own wear and publishes the result.
 
 **The whole path is gated by `tools/decode_guard.gd`** (see its Key Scripts row) — the answer to
 "`VarDictionary` cannot be built outside a live engine", which is why the coverage here was a single

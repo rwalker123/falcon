@@ -2205,9 +2205,9 @@ func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
         return sheet
     # SCOUT — a single input. Its only question is party size, and nothing about a scouting party
     # depends on where it is going, so the destination is still picked on the map after the send.
-    # **THE CEILING IS THE BAND'S IDLE WORKERS**, as it is on all three launch verbs: the sim carries
-    # no rules cap on party size, and `max_expedition_party_size` is the wire echo of the estimate
-    # tables' sampling axis rather than a limit anyone may send under.
+    # **THE CEILING IS THE BAND'S IDLE WORKERS**, as it is on all three launch verbs: the sim carries no
+    # rules cap on party size, and `max_expedition_party_size` — which nothing here reads — echoed how
+    # far the retired estimate tables were sampled, never a limit anyone may send under.
     var party_max := idle
     _send_expedition_count = clampi(_send_expedition_count, HudConst.WORKER_STEP, party_max)
     sheet.add_child(HudWidgets.build_party_stepper_row(_send_expedition_count, party_max,
@@ -2255,11 +2255,11 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
         HudStyle.apply_button(blocked, "ghost")
         sheet.add_child(blocked)
         return
-    # **THE KIT, RESOLVED BEFORE ANYTHING IS QUOTED AND MOUNTED UNDER THE PARTY STEPPER.** Its
-    # selection decides whether the sim's `huntTripEstimates` table applies to this raid at all, and
-    # the picker's ROW belongs beneath the crew it describes — so the resolve is here and the mount is
-    # further down. `party_kit_id` is shared with the denial mission (one sheet, two missions, both on
-    # the `hunt` job) and re-validated every render.
+    # **THE KIT, RESOLVED BEFORE ANYTHING IS QUOTED AND MOUNTED UNDER THE PARTY STEPPER.** It is part
+    # of the question the sim is asked, so every figure below is priced for it — and the picker's ROW
+    # belongs beneath the crew it describes, so the resolve is here and the mount is further down.
+    # `party_kit_id` is shared with the denial mission (one sheet, two missions, both on the `hunt`
+    # job) and re-validated every render.
     var kits := _band_labor.kits()
     var default_kit := _band_labor.default_kit_id(KitRoster.JOB_HUNT)
     var kit_id := KitRoster.resolve_selection(kits, KitRoster.JOB_HUNT, default_kit,
@@ -2276,10 +2276,10 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     # With a herd in hand the presets finally carry their metric — the same
     # `SourceForecast.expedition_policy_takes` the herd drawer feeds its picker.
     #
-    # **THE METRICS GO WITH THE TABLE THEY COME FROM.** `expedition_policy_takes` is a reading of
-    # `huntTripEstimates`, so under a kit the table is not quoted for it would put a fourth figure
-    # priced at a different kit on a sheet whose own note says none are. `{}` is the picker's supported
-    # degrade (a herd the wire does not describe), so the rungs render bare rather than wrong.
+    # **THE METRICS COME FROM THE SAME ANSWER AS EVERYTHING ELSE HERE** — `per_preset`, one row per
+    # preset in the order they were asked for, so all four figures on the sheet are priced for the one
+    # party and kit it is composing. `{}` until the reply lands, which is the picker's supported degrade
+    # (as is a herd the wire does not describe), so the rungs render bare rather than wrong.
     #
     # **THREE ACROSS, the shared default** — the zone's own 2-column clamp is retired. It existed
     # because the long preset faces (`💀 Take everything`) could not fit three in a 354px column and
@@ -2295,12 +2295,12 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
             _band_labor.grid_width(), _band_labor.wrap_horizontal())))
     # Party size, capped at the raid's max-useful plateau for THIS herd + floor (the herd drawer's
     # own cap), so extra hunters can no longer be sent to stand idle at the kill. **The SUPPLY side is
-    # the band's idle workers alone** — `max_expedition_party_size` is a sampling axis, not a rules
-    # cap — and `expedition_useful_cap` is the DEMAND side the stepper takes the tighter of.
+    # the band's idle workers alone** — nothing on the wire caps a party — and `expedition_useful_cap`
+    # is the DEMAND side the stepper takes the tighter of.
     #
-    # **THE DEMAND SIDE IS ALSO A READING OF THE TABLE**, so under a kit mismatch the stepper falls
-    # back to supply alone: with no table for this kit the plateau is unknown, and clamping to another
-    # kit's plateau would refuse a party this one may well need.
+    # **THE DEMAND SIDE RIDES THE ANSWER**, so until one lands the plateau contributes 0 and supply
+    # alone binds. That is the honest degrade: a party clamped to a plateau nobody has quoted yet would
+    # refuse hands this raid may well need.
     #
     # **THE CAP IS RESOLVED HERE, ABOVE THE CHART, AND THE ROW IT FEEDS IS MOUNTED FURTHER DOWN.** The
     # chart's projection, its two crew targets and its verdict are all read against a CREW, so
@@ -2331,14 +2331,12 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     # since slice 4b there is no plain-slider control left to keep, the chart's own floor flag IS the
     # dial (see `HudWidgets.build_floor_chart`).
     #
-    # **AND IT IS THE ONE FIGURE ON THIS SHEET THE KIT CAN HONESTLY MOVE**, so it is priced through
-    # `KitRoster.priced_source` — the same seam the drawer's sheets use, never a second resolve. Every
-    # other number here is a `huntTripEstimates` lookup, and that table is quoted at the hunt job's
-    # DEFAULT kit and not repriced (see the honesty gate above): the trip readout, the preset metrics
-    # and the demand-side party cap therefore cannot carry a kit and are suppressed outright when one
-    # is mismatched. The chart is composed CLIENT-SIDE from the herd's own wire terms, so it can and
-    # must — which also makes it, beside the combat gate, one of the two things still answering for the
-    # player's actual selection on a mismatched sheet.
+    # **AND THE KIT REACHES IT CLIENT-SIDE**, through `KitRoster.priced_source` — the same seam the
+    # drawer's sheets use, never a second resolve. The chart is composed HERE out of the herd's own wire
+    # terms, so it is the one figure on the sheet the client itself has to price for the selected kit;
+    # every other number is the sim's answer to a question that already named the kit, and arrives
+    # priced. The two must therefore agree by construction rather than by luck, which is why the client
+    # side goes through the shared seam.
     #
     # The kit reaches the curve two ways and both are real for a raid: its CARRY scales the party's
     # throughput, and its `dispersion` scales the quarry's retreat (`advance_expeditions` resolves the
@@ -2512,16 +2510,15 @@ func _fill_denial_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: in
     # delivered payload PLATEAUS once the herd's surplus binds, and a denial raid has no payload to
     # plateau. More hands always break the herd sooner, which is the whole lever this form offers.
     #
-    # **`max_expedition_party_size` IS NOT A RULES CAP AND MUST NOT BE APPLIED HERE**
-    # (`snapshot.fbs` → `denialEstimates`). It is the wire echo of the LAST RUNG of
-    # `expedition_config.estimate_party_sizes` — the top of the estimate tables' SAMPLED party axis, and
-    # the sole quoting bound (it absorbed the retired `deny.max_party_quoted`) — and the sim deleted the
-    # rules cap for all three launch verbs, so the client's own clamp was the last thing enforcing it. A
-    # party past the top rung is quoted at that rung with a note naming it, never refused; and a band with 16 idle
-    # workers was clamped to 8 while this sheet told it to send more hunters. All three launch forms
-    # read the supply the same way now, which is why the `_scout_party_max` helper no longer exists.
+    # **`max_expedition_party_size` IS NOT A RULES CAP AND MUST NOT BE APPLIED HERE.** It echoed how far
+    # the retired pre-launch estimate tables had been sampled, and nothing in the client reads it any
+    # more: the sim answers the party this sheet composed, over a search bounded by the band's own idle
+    # workforce (`max_party_workers`), and it holds no rules cap on any of the three launch verbs. The
+    # client's own clamp was the last thing enforcing one — a band with 16 idle workers was held at 8
+    # while this very sheet told it to send more hunters. All three launch forms read the supply the
+    # same way now, which is why the `_scout_party_max` helper no longer exists.
     var party_max := idle
-    # **SEEDED ON THE SIM'S OWN REQUIREMENT, ONCE PER QUARRY.** Below `denialPartyNeeded` a raid
+    # **SEEDED ON THE SIM'S OWN REQUIREMENT, ONCE PER QUARRY.** Below the reply's `party_needed` a raid
     # accomplishes literally nothing however long it runs, and nothing else on the sheet said which
     # number crossed that line — so the stepper opens there rather than on a guess. The one-shot is
     # the hunt form's `arm_party_autofill` (armed by `TargetingController.choose_quarry`, the ONE
@@ -2590,9 +2587,9 @@ func _fill_denial_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: in
             else HudComposeVocab.FORECAST_FAILED_FORMAT % String(deny_view["error"])))
         SourceForecast.style_send_denial_button(confirm, {}, false)
     else:
-        # THE COLLAPSE VERDICT — the sim's `denialEstimates` row for this party size, on the clock the
-        # player is on. **The band and the grid pair are passed for the OUTBOUND WALK**: the table
-        # counts raiding turns, and this sheet's hunt form has always headlined a round-trip total, so
+        # THE COLLAPSE VERDICT — the reply's row for this party size, on the clock the player is on.
+        # **The band and the grid pair are passed for the OUTBOUND WALK**: the row counts raiding
+        # turns, and this sheet's hunt form has always headlined a round-trip total, so
         # a verdict quoting bare raiding turns beside it named a shorter span in the same words.
         var forecast := SourceForecast.denial_forecast(herd, deny_answer.get("at_composed", {}),
             band, _band_labor.grid_width(), _band_labor.wrap_horizontal())

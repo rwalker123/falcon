@@ -983,6 +983,11 @@ func reset_world_state() -> void:
     # Targeting addresses a band/tile of the world being replaced. Cancelling through the normal path
     # also clears MapView's reticle (via `targeting_changed`), so the two can't desync.
     cancel_active_targeting()
+    # The forecast seam holds answers keyed by band + herd id, and a NEW WORLD REUSES BOTH — band ids
+    # restart low and herd ids are derived from species + index — so a held answer matches the new
+    # world's composed key exactly and renders the old world's numbers as a live forecast. See
+    # `ForecastQuery.reset`.
+    _forecast_query.reset()
 func show_tile_selection(tile_info: Dictionary) -> void:
     # A selection change invalidates the subject being composed (§15).
     close_compose_sheet()
