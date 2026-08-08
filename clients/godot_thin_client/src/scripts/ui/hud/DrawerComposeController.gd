@@ -419,12 +419,12 @@ func _local_hunt_preview_bbcode(band: Dictionary, herd: Dictionary, floor: float
 ## top and never hands a priced dict to another producer that prices too.
 func _hunt_priced_herd(herd: Dictionary, band: Dictionary) -> Dictionary:
     return _kit_priced_source(herd, HudComposeVocab.BARE_FORECAST_PREFIX, band, KitRoster.JOB_HUNT,
-        _compose.hunt_kit_id(), "hunt_carry")
+        _compose.hunt_kit_id(), KitRoster.KIT_HUNT_CARRY_KEY)
 
 ## The plant twin. A patch publishes no retreat, so only the carry half of the substitution bites.
 func _forage_priced_patch(tile_info: Dictionary, band: Dictionary) -> Dictionary:
     return _kit_priced_source(tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX, band,
-        KitRoster.JOB_FORAGE, _compose.forage_kit_id(), "forage_carry")
+        KitRoster.JOB_FORAGE, _compose.forage_kit_id(), KitRoster.KIT_FORAGE_CARRY_KEY)
 
 ## The hunt forecast, priced — and the ONLY way this sheet builds one. Pairing the repricing with the
 ## construction is what makes "some call sites were missed" unrepresentable rather than a thing to

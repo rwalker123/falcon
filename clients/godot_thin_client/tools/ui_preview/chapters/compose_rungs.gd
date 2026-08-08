@@ -40,6 +40,12 @@ const REOPEN_WORKING_AGE := 24
 # Corral on FIRST, so it is the source of the improvement the NEXT herd's header must not inherit. Its
 # id is deliberately distinct from `HerdFx.herd_fixture`'s, since a same-id re-open is not a source change and
 # would not stage the bug.
+## The crew the kit-liveness block prices its two takes at. Deliberately small enough that LABOUR is
+## the binding arm of `min(workers × per_worker, ceiling)` — at a crew that saturates the patch's own
+## ceiling both kits quote the ceiling and the take stops moving, which would make the claim pass on a
+## dead repricing again.
+const KIT_LIVENESS_FORAGERS := 2
+
 const CREW_NOUN_PEN_HERD_ID := "game_aurochs_crewnoun"
 
 ## The crew the WILD herd of that pair would owe if it were ever tamed — its ownership-gated count is 0.
@@ -406,3 +412,80 @@ func run(harness) -> void:
 	# every herd the HUD holds as each later frame renders, so emptying it here would quietly retire
 	# those scans from the last states of the run.
 	h._set_world_herds(HerdFx.world_herds_fixture())
+
+	# --- **THE KIT MOVES THE SHEET'S NUMBERS — the LIVENESS half of the repricing** ---------------
+	#
+	# Reported from play, twice over: `Gathering kit` and `No kit` rendered IDENTICAL per-turn takes
+	# and identical *clear it now* / *hold it after* pills, with only the hint line above them moving.
+	# Both times the repricing was silently DEAD, and both times every existing assertion stayed green
+	# — because a dead repricing returns the source unchanged, which is exactly what the fixtures were
+	# tuned against. **A frame cannot see this either**: a sheet quoting one kit's numbers under
+	# another kit's name is a perfectly plausible sheet.
+	#
+	# `band_panel_preview._assert_kit_reprices_the_source` cannot see it: it calls
+	# `KitRoster.repriced_source` DIRECTLY with numeric arguments, so it exercises the arithmetic and
+	# never the seam that feeds it. The second death was in that feed — `_kit_priced_source` read the
+	# effective tier under one spelling and the roster's reference under another, so the reference came
+	# back `0` and the substitution short-circuited. So the claim here is deliberately made through
+	# `DrawerComposeController`'s own producers, at the REAL roster, and it is a claim that the numbers
+	# MOVE rather than that they equal anything: what a kit is worth is the roster's business.
+	var kit_band: Dictionary = h._hud._band_labor.player_band()
+	var kit_patch := ForageFx.floorify(BaseFx.food_tile_fixture(),
+		HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	var forage_kit_before: String = h._hud._compose.forage_kit_id()
+	h._hud._compose.set_forage_kit_id(BandFx.KIT_ID_GATHERING)
+	var basketed: Dictionary = h._hud._drawercompose._forage_priced_patch(kit_patch, kit_band)
+	var basketed_take: Dictionary = h._hud._drawercompose._forage_yield_model(kit_band, kit_patch,
+		SourceForecast.FLOOR_FOOD_PEAK, KIT_LIVENESS_FORAGERS)
+	var basketed_cap := SourceForecast.max_useful_workers(
+		h._hud._drawercompose._forage_forecast(kit_patch, kit_band, SourceForecast.FLOOR_FOOD_PEAK))
+	h._hud._compose.set_forage_kit_id(BandFx.KIT_ID_NONE)
+	var bare: Dictionary = h._hud._drawercompose._forage_priced_patch(kit_patch, kit_band)
+	var bare_take: Dictionary = h._hud._drawercompose._forage_yield_model(kit_band, kit_patch,
+		SourceForecast.FLOOR_FOOD_PEAK, KIT_LIVENESS_FORAGERS)
+	var bare_cap := SourceForecast.max_useful_workers(
+		h._hud._drawercompose._forage_forecast(kit_patch, kit_band, SourceForecast.FLOOR_FOOD_PEAK))
+	h._hud._compose.set_forage_kit_id(forage_kit_before)
+	# **THE SUBSTITUTION ITSELF**, by the ratio the ROSTER states — the basket's tier over the bare
+	# hand's. Asserted as a ratio rather than as two magnitudes so a re-tuned `equipment.json` moves the
+	# fixture and the expectation together.
+	var basketed_carry := float(basketed.get(HudComposeVocab.FORAGE_FORECAST_PREFIX
+		+ SourceForecast.FORECAST_PER_WORKER_KEY, 0.0))
+	var bare_carry := float(bare.get(HudComposeVocab.FORAGE_FORECAST_PREFIX
+		+ SourceForecast.FORECAST_PER_WORKER_KEY, 0.0))
+	h._assert_hud("precondition: the basketed patch states a per-worker rate at all (%s)"
+		% str(basketed_carry), basketed_carry > 0.0)
+	h._assert_hud("a bare-handed crew is repriced to the roster's own bare tier (%s against %s)"
+			% [str(bare_carry), str(basketed_carry)],
+		is_equal_approx(bare_carry * BandFx.KIT_FORAGE_CARRY_EQUIPPED,
+			basketed_carry * BandFx.KIT_FORAGE_CARRY_BARE))
+	# **AND IT REACHES BOTH SURFACES THE REPORT NAMED** — the per-turn readout and the crew targets.
+	# The pair is the claim: the first death moved neither, the second moved neither, and a fix that
+	# repriced the forecast while leaving the take on the raw patch would satisfy only the second.
+	h._assert_hud("…so the PER TURN take moves with the kit (%s against %s)"
+			% [String(bare_take.get(h._hud._drawercompose.YIELD_MODEL_TEXT, "")),
+				String(basketed_take.get(h._hud._drawercompose.YIELD_MODEL_TEXT, ""))],
+		String(bare_take.get(h._hud._drawercompose.YIELD_MODEL_TEXT, ""))
+			!= String(basketed_take.get(h._hud._drawercompose.YIELD_MODEL_TEXT, "")))
+	h._assert_hud("…and so does the crew the sheet asks for (%d against %d)"
+		% [bare_cap, basketed_cap], bare_cap != basketed_cap)
+	# **THE HUNT TWIN, on the same seam** — one `_kit_priced_source`, so a spelling that dies on one web
+	# dies on both, and only a per-web assertion can say which.
+	# `herd_fixture` rather than a `world_herds_fixture` row: those rows are ROSTER entries (id, species,
+	# position) and state no per-worker rate, so the ratio would be `0` against `0` — which the
+	# precondition beside the claim caught on the first run, and which is the whole reason it is there.
+	var kit_herd: Dictionary = HerdFx.herd_fixture()
+	var hunt_kit_before: String = h._hud._compose.hunt_kit_id()
+	h._hud._compose.set_hunt_kit_id(BandFx.KIT_ID_BIG_GAME)
+	var sledded: Dictionary = h._hud._drawercompose._hunt_priced_herd(kit_herd, kit_band)
+	h._hud._compose.set_hunt_kit_id(BandFx.KIT_ID_NONE)
+	var sledless: Dictionary = h._hud._drawercompose._hunt_priced_herd(kit_herd, kit_band)
+	h._hud._compose.set_hunt_kit_id(hunt_kit_before)
+	var sledded_carry := float(sledded.get(SourceForecast.FORECAST_PER_WORKER_KEY, 0.0))
+	var sledless_carry := float(sledless.get(SourceForecast.FORECAST_PER_WORKER_KEY, 0.0))
+	h._assert_hud("precondition: the sledded herd states a per-worker rate at all (%s)"
+		% str(sledded_carry), sledded_carry > 0.0)
+	h._assert_hud("a sledless party is repriced on the hunt web too (%s against %s)"
+			% [str(sledless_carry), str(sledded_carry)],
+		is_equal_approx(sledless_carry * BandFx.KIT_HUNT_CARRY_EQUIPPED,
+			sledded_carry * BandFx.KIT_HUNT_CARRY_BARE))

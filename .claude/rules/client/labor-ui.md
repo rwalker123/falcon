@@ -1503,6 +1503,55 @@ reach moves both and would satisfy the first half alone.
 > `stay_fraction` to a `ui_preview` herd fixture would move that herd's frames, so the guard stays
 > here, where it is arithmetic and free.
 
+### THE REPRICING NEEDS A LIVENESS GUARD, AND EVERY OTHER ASSERTION IS BLIND TO IT
+
+**A dead repricing returns the source unchanged, which is exactly what every fixture was tuned
+against** — so it goes green everywhere, and a frame cannot see it either: a sheet quoting one kit's
+numbers under another kit's name is a perfectly plausible sheet. It has now died twice.
+
+1. The ratio divided by the SOURCE's published rate. On a canned fixture that is recovered from the
+   fixture's own rates, so it was a meaningless number rather than no number — five assertions failed
+   and the cause read as unrelated.
+2. Fixing (1) introduced the silent one. `effective_tiers` answered short keys (`"forage_carry"`)
+   while the roster spelled them `forage_carry_per_worker_biomass`; `_kit_priced_source` read the
+   tier with the short key and `equipped_tier` with the same string, which no roster entry carries,
+   so **the reference came back `0` and the substitution short-circuited entirely**. Every kit on
+   every compose sheet quoted identical numbers with only the hint line above them moving. Reported
+   from play. The whole `ui_preview` suite was green at 590/590 — *because* the feature was dead.
+
+**`band_panel_preview._assert_kit_reprices_the_source` structurally cannot catch either**: it calls
+`KitRoster.repriced_source` DIRECTLY with numeric arguments, so it exercises the arithmetic and never
+the seam that feeds it. Both deaths were in the feed.
+
+So `compose_rungs.gd` carries a PNG-less block that drives `DrawerComposeController`'s OWN producers
+at the REAL roster and asserts the numbers **MOVE** between two kits — the basketed patch against the
+bare-handed one, and the sledded herd against the sledless one:
+
+- **It asserts a RATIO, never magnitudes** (`bare × equipped == basketed × unequipped`), so a re-tuned
+  `equipment.json` moves the fixture and the expectation together.
+- **Both surfaces the report named**, because the two deaths moved neither and a fix that repriced the
+  forecast while leaving the take on the raw source would satisfy only one: the PER TURN take
+  (`_forage_yield_model`) and the crew the sheet asks for (`max_useful_workers`).
+- **Each half opens with a PRECONDITION that the source states a per-worker rate at all.** That is not
+  ceremony — the first draft priced a `world_herds_fixture()` row, which is a ROSTER entry carrying no
+  rate, and the ratio claim passed vacuously at `0.0 against 0.0`. The precondition caught it on the
+  first run.
+- **The crew is `KIT_LIVENESS_FORAGERS` (2) deliberately**: at a crew that saturates the patch's own
+  ceiling both kits quote the ceiling and the take stops moving, which would make the claim pass on a
+  dead repricing again.
+
+Measured live: forage `0.064` against `0.32` (the basket's 8.0 over the bare hand's 1.6), take
+`+0.13 /turn` against `+0.64 /turn`, crew **15 against 3**; hunt `0.09` against `0.3`.
+Sabotage-verified by restoring the mis-spelled key — the three forage claims fail reading
+`0.32 against 0.32`, `+0.64 against +0.64` and `3 against 3`, which is the reported screenshot exactly,
+while the hunt half correctly stays green (a different call site).
+
+> **THE RENDERED FRAMES ARE NOT THE GUARD AND CANNOT BE.** Every `ui_preview` compose state composes at
+> its job's DEFAULT kit, where the ratio is 1 and repricing is a legitimate no-op — so of 343 frames,
+> **exactly ONE** (`herd_hunt_gate_blocked`, whose band has run its kit dry) differs between a live
+> repricing and a dead one. Judging this feature by frames means judging it by one frame that moves for
+> a reason adjacent to it.
+
 ### The hint states the EFFECTIVE tier, never the fresh one
 
 `KitOption`'s numbers are for a FRESH kit. The band's real condition is on its own cohort

@@ -317,20 +317,33 @@ static func attack_against(kit: Dictionary, body_mass: float, unequipped_attack:
 ## `stated` is false when the band says nothing about its condition at all (the key is absent, not
 ## zero — `0` is a real reading meaning DRY). Then the fresh tiers stand and the hint prints no
 ## condition clause, the same "absent terms render no line" convention `hunt_gate_model` takes.
+##
+## **IT IS KEYED BY THE ROSTER'S OWN AXIS CONSTANTS, so a tier and the roster entry it came from are
+## reachable by ONE name.** It used to answer short keys (`"hunt_carry"` / `"forage_carry"`) while the
+## roster spelled them `hunt_carry_per_worker_biomass` / `forage_carry_per_worker_biomass`, and that
+## split shipped a silent bug the moment a caller needed BOTH: `_kit_priced_source` read this dict with
+## the short key and `equipped_tier` with the same string, which no roster entry carries — so the
+## reference came back `0`, the repricing short-circuited, and every kit on every compose sheet quoted
+## identical numbers. Reported from play. `attack` was always the wire's own spelling and is unchanged;
+## one name per axis is what makes the two lookups impossible to spell apart.
 static func effective_tiers(kits: Array, kit: Dictionary, band: Dictionary) -> Dictionary:
 	var fresh_attack := float(kit.get(KIT_ATTACK_KEY, 0.0))
 	var fresh_hunt := float(kit.get(KIT_HUNT_CARRY_KEY, 0.0))
 	var fresh_forage := float(kit.get(KIT_FORAGE_CARRY_KEY, 0.0))
 	var conditions: Array = band.get(BAND_ITEM_CONDITIONS_KEY, [])
 	if conditions.is_empty():
-		return {"attack": fresh_attack, "hunt_carry": fresh_hunt, "forage_carry": fresh_forage,
-			"stated": false}
+		return {
+			KIT_ATTACK_KEY: fresh_attack,
+			KIT_HUNT_CARRY_KEY: fresh_hunt,
+			KIT_FORAGE_CARRY_KEY: fresh_forage,
+			"stated": false,
+		}
 	return {
-		"attack": _tier_after_wear(kits, KIT_ATTACK_KEY, fresh_attack,
+		KIT_ATTACK_KEY: _tier_after_wear(kits, KIT_ATTACK_KEY, fresh_attack,
 			condition_of(band, KIT_ATTACK_KEY)),
-		"hunt_carry": _tier_after_wear(kits, KIT_HUNT_CARRY_KEY, fresh_hunt,
+		KIT_HUNT_CARRY_KEY: _tier_after_wear(kits, KIT_HUNT_CARRY_KEY, fresh_hunt,
 			condition_of(band, KIT_HUNT_CARRY_KEY)),
-		"forage_carry": _tier_after_wear(kits, KIT_FORAGE_CARRY_KEY, fresh_forage,
+		KIT_FORAGE_CARRY_KEY: _tier_after_wear(kits, KIT_FORAGE_CARRY_KEY, fresh_forage,
 			condition_of(band, KIT_FORAGE_CARRY_KEY)),
 		"stated": true,
 	}
@@ -379,13 +392,14 @@ static func tier_hint(kits: Array, kit: Dictionary, band: Dictionary, job: Strin
 	var parts: Array[String] = []
 	if job == JOB_FORAGE:
 		parts.append(HudComposeVocab.KIT_HINT_FORAGE_CARRY_FORMAT % _tier_face(
-			float(tiers["forage_carry"])))
+			float(tiers[KIT_FORAGE_CARRY_KEY])))
 		_append_condition(parts, kits, kit, band, tiers, KIT_FORAGE_CARRY_KEY,
 			HudComposeVocab.KIT_COMPONENT_BASKETS)
 	else:
-		parts.append(HudComposeVocab.KIT_HINT_ATTACK_FORMAT % _tier_face(float(tiers["attack"])))
+		parts.append(HudComposeVocab.KIT_HINT_ATTACK_FORMAT % _tier_face(
+			float(tiers[KIT_ATTACK_KEY])))
 		parts.append(HudComposeVocab.KIT_HINT_HUNT_CARRY_FORMAT % _tier_face(
-			float(tiers["hunt_carry"])))
+			float(tiers[KIT_HUNT_CARRY_KEY])))
 		_append_condition(parts, kits, kit, band, tiers, KIT_ATTACK_KEY,
 			HudComposeVocab.KIT_COMPONENT_SPEARS)
 		_append_condition(parts, kits, kit, band, tiers, KIT_HUNT_CARRY_KEY,
