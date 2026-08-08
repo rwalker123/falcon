@@ -1904,7 +1904,7 @@ mod tests {
     /// item table, not the roster, and a kit-carrying entry per role would put three more items in
     /// every one of them.
     const ROSTER_JSON: &str = r#""kits": [
-                { "id": "big_game", "display_name": "Big-game kit", "jobs": ["hunt"], "uses": ["spears", "sled"] },
+                { "id": "big_game", "display_name": "Stalking kit", "jobs": ["hunt"], "uses": ["spears", "sled"] },
                 { "id": "gathering", "display_name": "Gathering kit", "jobs": ["forage"], "uses": ["baskets"] },
                 { "id": "none", "display_name": "No kit", "jobs": ["hunt", "forage", "scout", "warrior"], "uses": [] }
             ],

@@ -59,6 +59,27 @@ const KIT_SCOUT_VANTAGE_KEY := "scout_vantage_range"
 const KIT_DISPERSION_KEY := "dispersion"
 const DISPERSION_NEUTRAL := 1.0
 
+## **THE SIZE WINDOW A WEAPON'S `attack` IS BOUNDED TO** (`equipment.md` — "An effect can be bounded
+## by the quarry's BODY MASS"). A snare holds a hare and not a deer, and above its ceiling the item
+## grants **nothing**: the party falls back to the bare hand and the fight's own `max(0, attack −
+## defense)` refuses the hunt, with no "you cannot trap that" branch anywhere.
+##
+## **`0` IS THE SENTINEL FOR UNBOUNDED ON BOTH ENDS, NOT A 0 kg BOUND** — it is these two fields'
+## schema default and what every weapon but the passive device ships, which is why `equipment.md`
+## names them the deliberate exception to the wire's "the neutral is `1`" rule.
+const KIT_ATTACK_MIN_MASS_KEY := "attack_min_body_mass"
+const KIT_ATTACK_MAX_MASS_KEY := "attack_max_body_mass"
+const MASS_BOUND_UNBOUNDED := 0.0
+
+## **THE TWO TERMS OF THE QUARRY THIS LAYER READS OFF THE SOURCE IT IS HANDED** — one animal's mass
+## (against a weapon's size window above) and whether the herd is PENNED. Both are already on the wire
+## (`native/src/dict/subsistence.rs`), which is what makes "can this kit change this source's outcome?"
+## a question answerable here rather than a new field to ask the sim for. The fight's own `defense` /
+## `durability` are NOT spelled here: `SourceForecast.hunt_gate_model_at` owns that pair, and asking it
+## is how the offer test and the gate line cannot come to disagree about what a closed gate is.
+const QUARRY_BODY_MASS_KEY := "body_mass"
+const QUARRY_CORRALLED_KEY := "corralled"
+
 ## The BAND's remaining condition per ITEM — one row per item the server's config carries, as
 ## `{item_id, remaining}` on `equipment.json`'s 0-100 scale (`0` = dry). A dry item steps its role
 ## down to the unequipped tier and STAYS there — there is no replenishment path yet — and performance
@@ -126,11 +147,12 @@ const JOB_WARRIOR := "warrior"
 ## and every kit on every sheet quoted identical numbers with only the hint line moving. Reported from
 ## play. A job is what a call site actually knows; the axis is this layer's business.
 ## **A hunt row prices on the SLED's axis even when the herd is penned**, and that is a known gap
-## rather than an oversight: `priced_source` derives the axis from the JOB, and pen-ness is a
-## property of the herd, which this layer is not handed. The sim prices a penned herd on
-## `pen_carry_per_worker_biomass`, so a compose sheet quoting a husbandry kit against a pen reads
-## the sled's tier — the direction that UNDER-states the husbandry kit rather than over-states it.
-## Closing it means threading the herd's corral state into `priced_source`.
+## rather than an oversight: the axis comes from THIS TABLE, which is keyed by job alone. The sim
+## prices a penned herd on `pen_carry_per_worker_biomass`, so a compose sheet quoting a husbandry kit
+## against a pen reads the sled's tier — the direction that UNDER-states the husbandry kit rather than
+## over-states it. **The herd's corral state is no longer the missing term**: `priced_source` is handed
+## the source and reads `QUARRY_CORRALLED_KEY` off it for the offer test and the fight's gate. What is
+## missing is a per-SOURCE axis where this table states a per-job one.
 const JOB_CARRY_AXES := {
 	JOB_HUNT: KIT_HUNT_CARRY_KEY,
 	JOB_FORAGE: KIT_FORAGE_CARRY_KEY,
@@ -195,22 +217,38 @@ static func display_name_for_id(kits: Array, kit_id: String) -> String:
 	return kit_display_name(kit) if not kit.is_empty() else kit_id
 
 ## **THE SELECTION A SHEET OPENS ON.** The player's own composed choice when it is still a kit this
-## verb may be sent on, otherwise the job's default, otherwise the first kit the job lists. The
-## fall-through is what lets one composed id survive a world rebuild, a roster edit, and a sheet
-## switching between the hunt and denial missions (which share the `hunt` job) without ever naming a
-## kit the command would refuse.
+## verb may be sent on **and one this quarry can be worked with**, otherwise the job's default,
+## otherwise the first kit the job lists. The fall-through is what lets one composed id survive a world
+## rebuild, a roster edit, and a sheet switching between the hunt and denial missions (which share the
+## `hunt` job) without ever naming a kit the command would refuse.
+##
+## **THE QUARRY IS OPTIONAL AND ABSENT MEANS "NO APPLICABILITY QUESTION"** — the forage sheets pass
+## none and resolve exactly as they did before the offer test existed. Where one IS passed, a
+## WITHHELD kit is skipped at every step, which is what stops a trapping selection made on a warren
+## from surviving into a Red Deer's sheet as a greyed row the picker is nonetheless opened on.
+##
+## **`kit_offer` is asked at the FRESH tier, so this list never reshuffles as gear wears** — see there.
 static func resolve_selection(kits: Array, job: String, default_id: String,
-		composed_id: String) -> String:
+		composed_id: String, quarry: Dictionary = {}, prefix: String = "") -> String:
 	var offered := kits_for_job(kits, job)
 	if offered.is_empty():
 		return NO_KIT_ID
+	var selectable: Array = []
 	for kit_variant in offered:
+		if kit_is_offered(kits, kit_variant, job, quarry, prefix):
+			selectable.append(kit_variant)
+	# A roster whose every hunt kit is withheld cannot happen while it carries a null kit (one is
+	# always offered), but a config is free to drop that entry — and a picker with no entries at all
+	# would be a worse answer than an unfiltered one.
+	if selectable.is_empty():
+		selectable = offered
+	for kit_variant in selectable:
 		if String((kit_variant as Dictionary).get(KIT_ID_KEY, "")) == composed_id:
 			return composed_id
-	for kit_variant in offered:
+	for kit_variant in selectable:
 		if String((kit_variant as Dictionary).get(KIT_ID_KEY, "")) == default_id:
 			return default_id
-	return String((offered[0] as Dictionary).get(KIT_ID_KEY, ""))
+	return String((selectable[0] as Dictionary).get(KIT_ID_KEY, ""))
 
 # ---- the EFFECTIVE tier -------------------------------------------------------------------------
 
@@ -354,6 +392,17 @@ static func repriced_source(src: Dictionary, prefix: String, carry: float, refer
 ## **The AXIS is derived from the JOB** (`JOB_CARRY_AXES`), so a caller cannot hand it a key no roster
 ## entry carries — see that table for the bug this closes.
 ##
+## **THE FIGHT'S GATE IS PRICED HERE, BEFORE ANY REPRICING** (`hunt_gate_closes`). A kit whose attack
+## cannot clear this quarry's defence — because the band's weapon is spent, or because the quarry is
+## outside the weapon's size window — brings home **exactly nothing**, and a ratio applied to a take
+## that never happens is a lie in the reassuring direction. It is priced here rather than left to the
+## picker's greying because the greying is not everywhere: the Band panel's raid chart calls this
+## function with no picker in sight, so filtering the LIST cannot make the NUMBER honest.
+##
+## **THE QUARRY'S TERMS COME OFF `src`, AND THAT IS NOT A REACH FOR STATE** — on the hunt job `src`
+## IS the herd being priced. What this layer must never do is consult `HudBandLaborState`, and it
+## does not: the roster, the band and the source all arrive as parameters.
+##
 ## Answers `src` UNCHANGED where there is nothing to price against: a job with no carry axis, or a
 ## roster that cannot resolve the selection at all (a world rebuilt under the open sheet). Never a
 ## guess, and never a partial substitution.
@@ -362,26 +411,193 @@ static func priced_source(src: Dictionary, prefix: String, kits: Array, job: Str
 	var carry_key: String = String(JOB_CARRY_AXES.get(job, ""))
 	if carry_key.is_empty():
 		return src
-	var kit := kit_by_id(kits, resolve_selection(kits, job, default_kit_id, composed_kit_id))
+	var kit := kit_by_id(kits, resolve_selection(kits, job, default_kit_id, composed_kit_id,
+		src, prefix))
 	if kit.is_empty():
 		return src
+	if job == JOB_HUNT and hunt_gate_closes(kits, kit, band, src, prefix):
+		return gate_closed_source(src, prefix)
 	var tiers := effective_tiers(kits, kit, band)
 	return repriced_source(src, prefix, float(tiers.get(carry_key, 0.0)),
 		equipped_tier(kits, carry_key),
 		float(kit.get(KIT_DISPERSION_KEY, DISPERSION_NEUTRAL)))
 
-## **THE KIT'S ATTACK AGAINST THIS QUARRY** — the kit's own number inside its size window, and the
-## band's unequipped attack outside it.
+## **DOES THIS KIT'S WEAPON REACH AN ANIMAL OF THIS MASS AT ALL?** — the size window, and the ONE
+## home of it, so the fresh-tier offer test and the wear-resolved gate cannot read the bound two ways.
+## An absent or `0` bound is UNBOUNDED (`MASS_BOUND_UNBOUNDED`), which is every weapon but the passive
+## device, so a roster that states neither field behaves exactly as it did before the bound existed.
+static func attack_reaches(kit: Dictionary, body_mass: float) -> bool:
+	var low := float(kit.get(KIT_ATTACK_MIN_MASS_KEY, MASS_BOUND_UNBOUNDED))
+	var high := float(kit.get(KIT_ATTACK_MAX_MASS_KEY, MASS_BOUND_UNBOUNDED))
+	if low > MASS_BOUND_UNBOUNDED and body_mass < low:
+		return false
+	return not (high > MASS_BOUND_UNBOUNDED and body_mass > high)
+
+## **THE KIT'S FRESH ATTACK AGAINST THIS QUARRY** — the kit's own number inside its size window, and
+## the roster's unequipped attack outside it.
 ##
 ## A snare holds a hare and not a deer, so asking a kit for its attack without naming the animal gets
-## the kit's BEST case — which would tell a player the trapping kit can take a Red Deer. `0` on a
-## bound means unbounded, which every weapon but the passive device is.
+## the kit's BEST case — which would tell a player the trapping kit can take a Red Deer.
 static func attack_against(kit: Dictionary, body_mass: float, unequipped_attack: float) -> float:
-	var low := float(kit.get("attack_min_body_mass", 0.0))
-	var high := float(kit.get("attack_max_body_mass", 0.0))
-	if (low > 0.0 and body_mass < low) or (high > 0.0 and body_mass > high):
+	if not attack_reaches(kit, body_mass):
 		return unequipped_attack
 	return float(kit.get(KIT_ATTACK_KEY, unequipped_attack))
+
+## **THIS BAND'S ATTACK, UNDER THIS KIT, AGAINST THIS ANIMAL** — the composition of the two floors,
+## and the number every hunt-arm FORECAST must be gated on.
+##
+## The two reach the same bare-handed tier by different routes and both are real: wear steps a spent
+## weapon down (`effective_tiers`), and the mass bound says the weapon was never in play against this
+## animal in the first place. Outside the window there is nothing left for condition to decide, so the
+## window is tested first and the band's own condition only decides the in-window case.
+##
+## **This is the quarry-aware twin of `effective_tiers`'s `attack`, and every take path must use it.**
+## Reading the bare tier is `equipment.md`'s `hunter_profile_unbounded` — *"the best this kit can do
+## against something"* — which is honest only on a surface with no target in hand. A compose sheet has
+## one, and quoting the unbounded reading there is what let a trapping party be sold a Red Deer.
+static func effective_attack_against(kits: Array, kit: Dictionary, band: Dictionary,
+		body_mass: float) -> float:
+	var worn := float(effective_tiers(kits, kit, band).get(KIT_ATTACK_KEY, 0.0))
+	if attack_reaches(kit, body_mass):
+		return worn
+	var bare := unequipped_tier(kits, KIT_ATTACK_KEY)
+	# An unreadable roster states no bare-handed tier, so there is nothing to step down TO and the
+	# in-window reading stands — the same fail-quiet `_tier_after_wear` takes.
+	return worn if is_inf(bare) else bare
+
+# ---- IS THIS KIT ANY USE ON THIS SOURCE? --------------------------------------------------------
+
+## The offer verdict's two keys — `offered`, and the REASON a withheld kit states on its own row.
+## A greyed entry that does not say why teaches nothing, and "a snare cannot hold a Red Deer" is a
+## fact about the world worth learning once.
+const OFFER_OFFERED_KEY := "offered"
+const OFFER_REASON_KEY := "reason"
+
+## The build dip the offer test asks the source's reach at — the NEUTRAL multiplier, i.e. no dip. A
+## dip is a property of what the player is currently COMPOSING (hands gentling a herd are hands not
+## stalking it), and which kits a sheet offers must be a property of the (kit × quarry) pair alone,
+## or ticking Tame would silently reshuffle the picker. The dip cannot open or close an engagement
+## STAGE anyway; it only narrows a reach the species already has.
+const OFFER_NO_BUILD_DIP := 1.0
+
+## **DOES THIS KIT SUPPLY ANY AXIS AT ALL?** — the derived reading of "the null kit", and the reason
+## nothing here spells the id `none`. A kit that beats the roster's bare-handed tier on no axis grants
+## nothing anywhere, so there is no source it can be *inapplicable* to; it is the free bare-handed
+## comparison the whole wear model exists to protect, and it is never withheld. A future `fishing` kit
+## with an empty `uses` gets the same treatment for the same reason.
+static func kit_supplies_any(kits: Array, kit: Dictionary) -> bool:
+	for axis_key in AXIS_ITEMS:
+		if kit_uses(kits, kit, String(axis_key)):
+			return true
+	return false
+
+## **THE OFFER TEST — `{offered, reason}` for ONE kit against ONE source.**
+##
+## > Offer a kit as selectable only if something it declares can change this source's outcome.
+##
+## It introduces no config: every term is something the kit already declares against something the
+## source already publishes. Two rules, and both are about APPLICABILITY, never about wear:
+##
+## 1. **A weapon that cannot reach the quarry.** The fight's own gate, asked at the kit's FRESH attack
+##    resolved against this animal's mass. A trap rated to hold a hare grants nothing against a Red
+##    Deer, so the party is bare-handed, `max(0, 1 − 1)` is zero, and the sim refuses the hunt — the
+##    sheet used to price that party a real take, and it brought home exactly nothing.
+## 2. **A kit whose contribution is an axis this source cannot read.** `pen_carry` is read on a
+##    CORRALLED herd and nowhere else, so a kit supplying it adds nothing to a wild hunt.
+##
+## **THE PEN RULE IS ASKED FIRST, so a kit reads the same reason on every quarry.** The husbandry kit
+## fails both tests on a Red Deer (it carries no weapon either), and *"what it adds is only used on a
+## penned herd"* is the fact about the kit; *"it cannot bring one down"* is a fact about the deer that
+## would then not be stated on a rabbit, where the same kit is withheld for the same reason.
+##
+## **A PEN IS NOT FOUGHT, so rule 1 does not run on one.** A penned animal is slaughtered rather than
+## stalked and publishes no engagement stage — the same predicate the gate LINE is mounted behind —
+## and without that guard a corralled Red Deer would withhold every kit but the spear line.
+##
+## **RESOLVED AT THE FRESH TIER, AND THAT IS THE LOAD-BEARING CONSTRAINT.** Which kits are offered and
+## which is default are properties of (kit × quarry); the band's wear moves the QUOTED number and the
+## hint line and nothing else. A band whose spears are dry still sees the stalking kit listed,
+## selectable and default against a Red Deer, quoting zero, with the hint saying the spears are gone —
+## because a picker that reshuffled between turns would leave the player unable to tell a kit that
+## *cannot* work on this animal from one that has merely worn out.
+static func kit_offer(kits: Array, kit: Dictionary, job: String, quarry: Dictionary,
+		prefix: String) -> Dictionary:
+	# No quarry in hand and no hunt to have: the forage sheets, and a sheet composed before the wire
+	# named a source. Nothing to be inapplicable to.
+	if job != JOB_HUNT or kit.is_empty() or quarry.is_empty():
+		return _kit_offered()
+	if not kit_supplies_any(kits, kit):
+		return _kit_offered()
+	var penned := bool(quarry.get(QUARRY_CORRALLED_KEY, false))
+	if kit_uses(kits, kit, KIT_PEN_CARRY_KEY) and not penned:
+		return _kit_withheld(HudComposeVocab.KIT_WITHHELD_REASON_PEN_ONLY)
+	if penned:
+		return _kit_offered()
+	if not SourceForecast.has_engagement_stage(
+			float(quarry.get(prefix + SOURCE_ENGAGE_RATE, SourceForecast.NO_ENGAGEMENT_STAGE)),
+			OFFER_NO_BUILD_DIP):
+		return _kit_offered()
+	var bare := unequipped_tier(kits, KIT_ATTACK_KEY)
+	if is_inf(bare):
+		return _kit_offered()
+	var quarry_name := SourceForecast.herd_display_name(quarry)
+	var gate := SourceForecast.hunt_gate_model_at(
+		attack_against(kit, float(quarry.get(QUARRY_BODY_MASS_KEY, 0.0)), bare),
+		quarry, quarry_name)
+	# **`stated` FIRST.** A species the roster cannot resolve publishes `durability 0`, and withholding
+	# every kit on a gap in the data would refuse a hunt the sim would have allowed.
+	if bool(gate["stated"]) and bool(gate["blocked"]):
+		return _kit_withheld(HudComposeVocab.KIT_WITHHELD_REASON_CANNOT_HURT % quarry_name)
+	return _kit_offered()
+
+## The boolean half of the verdict, for callers with nothing to say about the reason.
+static func kit_is_offered(kits: Array, kit: Dictionary, job: String, quarry: Dictionary,
+		prefix: String) -> bool:
+	return bool(kit_offer(kits, kit, job, quarry, prefix)[OFFER_OFFERED_KEY])
+
+## Freshly built each call rather than returned from a `const` Dictionary — a `const` container is not
+## deeply read-only in GDScript, so one caller mutating the shared verdict would poison every later
+## one.
+static func _kit_offered() -> Dictionary:
+	return {OFFER_OFFERED_KEY: true, OFFER_REASON_KEY: ""}
+
+static func _kit_withheld(reason: String) -> Dictionary:
+	return {OFFER_OFFERED_KEY: false, OFFER_REASON_KEY: reason}
+
+## **DOES THE FIGHT REFUSE THIS PARTY OUTRIGHT?** — the same two rules as rule 1 above, asked at the
+## band's own WORN tier rather than at the fresh one, because this one decides a NUMBER rather than a
+## choice. A dry-speared band against a Red Deer kills nothing, and the sheet must say zero.
+##
+## The pen and the plant web are excluded by the same engagement-stage guard `kit_offer` takes: there
+## is no fight to lose at a pen, and a patch states no `durability` for the gate to be `stated` about.
+static func hunt_gate_closes(kits: Array, kit: Dictionary, band: Dictionary, quarry: Dictionary,
+		prefix: String) -> bool:
+	if kit.is_empty() or quarry.is_empty() or bool(quarry.get(QUARRY_CORRALLED_KEY, false)):
+		return false
+	if not SourceForecast.has_engagement_stage(
+			float(quarry.get(prefix + SOURCE_ENGAGE_RATE, SourceForecast.NO_ENGAGEMENT_STAGE)),
+			OFFER_NO_BUILD_DIP):
+		return false
+	var gate := SourceForecast.hunt_gate_model_at(effective_attack_against(kits, kit, band,
+		float(quarry.get(QUARRY_BODY_MASS_KEY, 0.0))), quarry, "")
+	return bool(gate["stated"]) and bool(gate["blocked"])
+
+## What a party that cannot hurt the quarry moves per worker. **It is not a repricing** — there is no
+## ratio that expresses "the fight is refused" — so every per-worker currency is substituted flat and
+## the ordinary forecast downstream quotes a zero take, a zero waste and a zero crew target without
+## knowing why.
+const GATE_CLOSED_PER_WORKER := 0.0
+
+## The source with its throughput zeroed, for a kit whose gate `hunt_gate_closes` says is shut. The
+## RETREAT is deliberately not substituted beside it: a stay fraction describes what a party keeps of
+## what it brings down, and this one brings nothing down.
+static func gate_closed_source(src: Dictionary, prefix: String) -> Dictionary:
+	var out := src.duplicate()
+	for key in SOURCE_PER_WORKER_KEYS:
+		var full: String = prefix + String(key)
+		if out.has(full):
+			out[full] = GATE_CLOSED_PER_WORKER
+	return out
 
 ## **WHAT THIS BAND ACTUALLY GETS UNDER THIS KIT** — `{attack, hunt_carry, forage_carry, stated}`.
 ##
@@ -566,14 +782,29 @@ static func estimates_quoted_note(kits: Array, herd: Dictionary, table_key: Stri
 ## sheet's field rows read as one form. The affordance is the control's own themed arrow, never a
 ## glyph in the face: see `HudComposeVocab.KIT_PICKER_FACE_FORMAT`.
 ##
-## There is deliberately **NO disabled/unavailable state**: every kit in the roster is always
-## selectable — a worn component degrades the tier rather than removing the kit — and the wire carries
-## no availability field to invent one from. A spent component is said in the HINT, where it belongs.
+## **WEAR NEVER DISABLES AN ENTRY, AND APPLICABILITY DOES.** These are two different axes and the
+## file used to carry only the first, so they are worth stating together:
+##
+## - **A worn component degrades the TIER, never the choice.** Every kit stays selectable however
+##   spent the band's gear is, because the step-down is already said in the HINT and a picker that
+##   dropped a kit as it wore out would reshuffle between turns.
+## - **A kit that cannot change THIS quarry's outcome is greyed** (`kit_offer`, resolved at the fresh
+##   tier) — a snare against a Red Deer, handling gear against a herd with no pen. It is greyed rather
+##   than hidden, and it states its REASON on its own row, because *"a snare cannot hold a Red Deer"*
+##   is a fact about the world worth teaching once and invisibility is what let the sheet quote a
+##   take for a hunt that brought home nothing. A greyed entry is not selectable.
+##
+## The two never contradict: the first is about the band, the second about the pair (kit × quarry),
+## and only the second is allowed to remove a choice.
+##
+## `quarry` / `prefix` are optional — a sheet with no source in hand (both forage sheets) passes none
+## and every kit is offered, exactly as before the test existed.
 ##
 ## Returns `null` when the job offers no kit at all, so a sheet whose verb the roster does not cover
 ## renders exactly as it did before the picker existed.
 static func build_kit_row(kits: Array, job: String, selected_id: String, default_id: String,
-		band: Dictionary, on_pick: Callable) -> VBoxContainer:
+		band: Dictionary, on_pick: Callable, quarry: Dictionary = {},
+		prefix: String = "") -> VBoxContainer:
 	var offered := kits_for_job(kits, job)
 	if offered.is_empty():
 		return null
@@ -597,8 +828,17 @@ static func build_kit_row(kits: Array, job: String, selected_id: String, default
 			label += HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX
 		if kit_id == selected_id:
 			selected_index = entries.size()
+		var offer := kit_offer(kits, kit, job, quarry, prefix)
+		var reason := String(offer[OFFER_REASON_KEY])
+		# The reason rides the ENTRY'S OWN FACE, not only its tooltip: a disabled popup row is the one
+		# control in this HUD a player cannot hover to interrogate on every platform, and a grey row
+		# with no words is the invisibility this test exists to end.
+		if not bool(offer[OFFER_OFFERED_KEY]):
+			label = HudComposeVocab.KIT_WITHHELD_ENTRY_FORMAT % [label, reason]
 		entries.append({
 			"label": label,
+			"disabled": not bool(offer[OFFER_OFFERED_KEY]),
+			"tooltip": reason,
 			"on_pick": func() -> void: on_pick.call(kit_id),
 		})
 	# The face carries the JOB GLYPH and no default suffix, which is why it is stated separately from

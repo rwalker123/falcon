@@ -2245,8 +2245,11 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     # the `hunt` job) and re-validated every render.
     var kits := _band_labor.kits()
     var default_kit := _band_labor.default_kit_id(KitRoster.JOB_HUNT)
+    # The HERD is passed so a kit this quarry cannot be worked with is never resolved onto — the
+    # drawer's rule, and the same fresh-tier offer test, so the two entry points cannot open on
+    # different kits for one animal.
     var kit_id := KitRoster.resolve_selection(kits, KitRoster.JOB_HUNT, default_kit,
-        _compose.party_kit_id())
+        _compose.party_kit_id(), herd, HudComposeVocab.BARE_FORECAST_PREFIX)
     _compose.set_party_kit_id(kit_id)
     # **THE HONESTY GATE.** `huntTripEstimates` is quoted for ONE kit (the hunt job's default) and is
     # not repriced per kit, so this sheet may present it as the answer only when the ids agree. Compare
@@ -2354,7 +2357,8 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     _mount_kit_row(sheet, kits, KitRoster.JOB_HUNT, kit_id, default_kit, band,
         func(picked: String) -> void:
             _compose.set_party_kit_id(picked)
-            rerender())
+            rerender(),
+        herd, HudComposeVocab.BARE_FORECAST_PREFIX)
     var quarry_id := _compose.party_quarry_id()
     var confirm := Button.new()
     confirm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -2426,9 +2430,13 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
 ## Mount the kit row where a sheet wants it — a no-op when the roster offers this job no kit at all,
 ## so a sheet rendered before the first snapshot (or against a world whose roster does not cover the
 ## verb) is byte-identical to what it was before the picker existed.
+##
+## `quarry` / `prefix` are what a kit's greying is resolved against (`KitRoster.kit_offer`); both
+## dock missions have a herd in hand by the time this is reached.
 func _mount_kit_row(sheet: VBoxContainer, kits: Array, job: String, kit_id: String,
-        default_kit: String, band: Dictionary, on_pick: Callable) -> void:
-    var row := KitRoster.build_kit_row(kits, job, kit_id, default_kit, band, on_pick)
+        default_kit: String, band: Dictionary, on_pick: Callable, quarry: Dictionary = {},
+        prefix: String = "") -> void:
+    var row := KitRoster.build_kit_row(kits, job, kit_id, default_kit, band, on_pick, quarry, prefix)
     if row != null:
         sheet.add_child(row)
 
@@ -2440,8 +2448,9 @@ func _mount_kit_row(sheet: VBoxContainer, kits: Array, job: String, kit_id: Stri
 ## two ways.
 func _mount_kit_gate_line(sheet: VBoxContainer, kits: Array, kit_id: String, band: Dictionary,
         herd: Dictionary, quarry: String) -> void:
-    var tiers := KitRoster.effective_tiers(kits, KitRoster.kit_by_id(kits, kit_id), band)
-    var gate := SourceForecast.hunt_gate_model_at(float(tiers["attack"]), herd, quarry)
+    var gate := SourceForecast.hunt_gate_model_at(KitRoster.effective_attack_against(
+        kits, KitRoster.kit_by_id(kits, kit_id), band,
+        float(herd.get(KitRoster.QUARRY_BODY_MASS_KEY, 0.0))), herd, quarry)
     # **ONLY THE REFUSAL RENDERS.** The winnable branch used to state the effort in hunter-turns; that
     # face is retired (a species constant beside a forecast that already prices the trip), so a fight
     # this party CAN take says nothing here and the sheet's remaining lines are the answer.
@@ -2533,12 +2542,15 @@ func _fill_denial_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: in
     var kits := _band_labor.kits()
     var default_kit := _band_labor.default_kit_id(KitRoster.JOB_HUNT)
     var kit_id := KitRoster.resolve_selection(kits, KitRoster.JOB_HUNT, default_kit,
-        _compose.party_kit_id())
+        _compose.party_kit_id(), herd, HudComposeVocab.BARE_FORECAST_PREFIX)
     _compose.set_party_kit_id(kit_id)
+    # **A DENIAL RAID IS STILL A FIGHT, so the offer test applies to it unchanged.** Erasing a herd
+    # you cannot hurt is not a mission — it is the same zero take with a different name on it.
     _mount_kit_row(sheet, kits, KitRoster.JOB_HUNT, kit_id, default_kit, band,
         func(picked: String) -> void:
             _compose.set_party_kit_id(picked)
-            rerender())
+            rerender(),
+        herd, HudComposeVocab.BARE_FORECAST_PREFIX)
     # **THE HONESTY GATE — COMPARE THE IDS, NEVER ASSUME THE DEFAULT IS SELECTED.** `denialEstimates`
     # is quoted for ONE kit and repricing it per kit was scoped out, so everything below that reads the
     # table — the collapse verdict, its caveat, the take line, the repelled refusal, the short-handed

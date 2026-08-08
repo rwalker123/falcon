@@ -492,6 +492,222 @@ func run(harness) -> void:
 
 	_assert_husbandry_hint_states_the_pen()
 
+	await _kit_offer_states()
+
+# =====================================================================================
+#  A KIT THAT CANNOT WORK ON THIS QUARRY IS GREYED, AND THE TAKE IT WOULD HAVE QUOTED IS ZERO
+# =====================================================================================
+# Reported from play on the expanded roster. The compose sheet offered Trapping and Husbandry against
+# a Red Deer as ordinary choices — pricing the trap's `dispersion 0` (nothing flees, so the take looks
+# BETTER) while never applying its `attackMaxBodyMass 1.0` — and quoted a real take for a hunt that
+# brings home exactly nothing: above the bound the snare grants no attack, the party falls back to the
+# bare hand's 1, and the sim's `max(0, attack − defense)` refuses the hunt.
+#
+# **A FRAME CANNOT JUDGE THE SECOND HALF AND A NUMBER CANNOT JUDGE THE FIRST**, which is why this
+# block does both. A sheet quoting a take for a kit that takes nothing is a perfectly plausible sheet;
+# an entry's DISABLED flag and the reason on its face are not in the pixels a reader can check either.
+
+## The shipped `trapping` kit's id and its two distinguishing declarations (`equipment.json`): the
+## snare is rated to hold quarry up to `attack_max_body_mass` and it scares nothing on the way in.
+const TRAPPING_KIT_ID := "trapping"
+
+const TRAPPING_MAX_BODY_MASS := 1.0
+
+const TRAPPING_DISPERSION := 0.0
+
+## The two quarries the offer test is judged on, at the shipped roster's own numbers — a **Red Deer**
+## (15 kg, `defense 1`) and a **Rabbit Warren** (0.27 kg, `defense 0`). The pair is the claim: the
+## trapping kit must be greyed on the first and selectable on the second, and a rule that greyed it
+## everywhere would satisfy the deer half alone.
+const OFFER_DEER_BODY_MASS := 15.0
+const OFFER_DEER_DEFENSE := 1.0
+const OFFER_RABBIT_BODY_MASS := 0.27
+const OFFER_RABBIT_DEFENSE := 0.0
+
+## How many counting hits either animal takes. Only its being ABOVE ZERO is load-bearing — that is the
+## gate's `stated` test, and a quarry the roster cannot resolve publishes `0` and must grey nothing.
+const OFFER_QUARRY_DURABILITY := 40.0
+
+## The engagement stage both quarries publish. A wild herd is stalked, which is what makes the weapon
+## rule apply at all; a pen publishes `NO_ENGAGEMENT_STAGE` and is deliberately exempt.
+const OFFER_QUARRY_ENGAGE_RATE := 1.0
+
+## The sim's own identity `food_per_animal = body_mass × provisions_per_biomass`, at the deer
+## fixture's 0.02 — restated for each quarry so neither states a body it could not have.
+const OFFER_PROVISIONS_PER_BIOMASS := 0.02
+
+## The crew and floor both offer frames compose at, so the two sheets differ in the ANIMAL and in
+## nothing else.
+const OFFER_HUNTERS := 3
+
+## The shared roster plus the two kits the offer test needs — the passive device (mass-bounded, silent)
+## and the husbandry kit (the pen axis). Both are absent from `BandFx.kit_roster_fixture()`, and adding
+## them there would change what every hunt picker in both harnesses lists.
+func _offer_roster() -> Array:
+	var kits := _pen_axis_roster()
+	kits.insert(kits.size() - 1, {
+		"id": TRAPPING_KIT_ID, "display_name": "Trapping kit", "jobs": ["hunt"],
+		"attack": BandFx.KIT_ATTACK_EQUIPPED,
+		"hunt_carry_per_worker_biomass": BandFx.KIT_HUNT_CARRY_EQUIPPED,
+		"forage_carry_per_worker_biomass": BandFx.KIT_FORAGE_CARRY_BARE,
+		"pen_carry_per_worker_biomass": BandFx.KIT_PEN_CARRY_BARE,
+		"scout_vantage_range": BandFx.KIT_SCOUT_VANTAGE_BARE,
+		"attack_max_body_mass": TRAPPING_MAX_BODY_MASS,
+		"dispersion": TRAPPING_DISPERSION,
+	})
+	return kits
+
+## One quarry, carrying the three terms the fight is composed from plus the mass the weapon's window
+## is tested against. Built on the shared herd fixture so the sheet renders in full.
+func _offer_quarry(id: String, species: String, size_class: String, body_mass: float,
+		defense: float) -> Dictionary:
+	var herd := HerdFx.herd_fixture()
+	herd["id"] = id
+	herd["label"] = "%s (%s)" % [species, id]
+	herd["species"] = species
+	herd["size_class"] = size_class
+	herd["body_mass"] = body_mass
+	herd["food_per_animal"] = body_mass * OFFER_PROVISIONS_PER_BIOMASS
+	herd["defense"] = defense
+	herd["durability"] = OFFER_QUARRY_DURABILITY
+	herd["engage_rate"] = OFFER_QUARRY_ENGAGE_RATE
+	herd["corralled"] = false
+	return herd
+
+## Every entry the mounted kit picker is showing, as `{text, disabled}` in roster order — read off the
+## LIVE `OptionButton` the sheet mounted, never off `KitRoster.build_kit_row` called a second time: an
+## expectation re-derived through the builder under test asserts nothing about what was rendered.
+func _picker_entries(surface: Node) -> Array:
+	var picker := Q.find_meta_node(surface, KitRoster.KIT_PICKER_META) as OptionButton
+	var rows: Array = []
+	if picker == null:
+		return rows
+	for index in picker.item_count:
+		rows.append({
+			"text": picker.get_item_text(index),
+			"disabled": picker.is_item_disabled(index),
+		})
+	return rows
+
+## The one entry whose face begins with this kit's display name, `{}` when the picker does not list it.
+## Matched on the PREFIX because a withheld entry carries its reason after the name and the default
+## carries its `(default)` mark — both of which are part of what is being asserted.
+func _picker_entry(surface: Node, display_name: String) -> Dictionary:
+	for row_variant in _picker_entries(surface):
+		var row: Dictionary = row_variant
+		if String(row["text"]).begins_with(display_name):
+			return row
+	return {}
+
+func _kit_offer_states() -> void:
+	var roster := _offer_roster()
+	h._hud.update_kit_roster(roster, BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE,
+		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR)
+	var deer := _offer_quarry("game_deer_offer", "Red Deer", "big", OFFER_DEER_BODY_MASS,
+		OFFER_DEER_DEFENSE)
+	var rabbit := _offer_quarry("game_rabbit_offer", "Rabbit Warren", "small",
+		OFFER_RABBIT_BODY_MASS, OFFER_RABBIT_DEFENSE)
+
+	# --- THE RED DEER: two of the four kits take nothing, and the sheet now says which -------------
+	h._hud._compose.reset_hunt_source()
+	h._show_herd(deer)
+	h._compose_herd(deer, OFFER_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
+	await h._settle()
+	await h._save("herd_kit_offer_red_deer")
+	var deer_sheet: Control = h._hud._drawercompose._compose_sheet
+	# **AND OPEN, because the greying LIVES IN THE POPUP.** The closed face names the selected kit
+	# alone, so the frame above cannot show a withheld row or the reason on it — which is the whole
+	# thing this state exists to make visible. Placed by hand rather than through `show_popup()`, which
+	# grabs input and can move focus mid-run; the popup is an EMBEDDED subwindow, so positioning it and
+	# calling `popup()` renders it into the same viewport the capture reads (`band_panel_preview`'s
+	# `band_panel_compose_deny_kit_open` idiom).
+	var deer_picker := Q.find_meta_node(deer_sheet, KitRoster.KIT_PICKER_META) as OptionButton
+	if deer_picker != null:
+		deer_picker.get_popup().position = Vector2i(
+			deer_picker.get_screen_position() + Vector2(0.0, deer_picker.size.y))
+		deer_picker.get_popup().popup()
+	await h._settle()
+	await h._save("herd_kit_offer_red_deer_open")
+	if deer_picker != null:
+		deer_picker.get_popup().hide()
+	var deer_rows := _picker_entries(deer_sheet)
+	# **THE PRECONDITION IS THE WHOLE ROSTER.** Every claim below is an absence or a flag, and all of
+	# them pass on a picker that listed nothing at all.
+	h._assert_hud("precondition: the Red Deer sheet lists every hunt kit the roster carries (%d)"
+		% deer_rows.size(), deer_rows.size() == 4)
+	var deer_trapping := _picker_entry(deer_sheet, "Trapping kit")
+	h._assert_hud("a snare cannot hold a Red Deer, so Trapping is greyed AND says why — \"%s\""
+			% String(deer_trapping.get("text", "")),
+		bool(deer_trapping.get("disabled", false))
+			and String(deer_trapping.get("text", "")).contains(
+				HudComposeVocab.KIT_WITHHELD_REASON_CANNOT_HURT % "Red Deer"))
+	var deer_husbandry := _picker_entry(deer_sheet, "Husbandry kit")
+	h._assert_hud("…and Husbandry is greyed on a herd with no pen, for its OWN reason — \"%s\""
+			% String(deer_husbandry.get("text", "")),
+		bool(deer_husbandry.get("disabled", false))
+			and String(deer_husbandry.get("text", "")).contains(
+				HudComposeVocab.KIT_WITHHELD_REASON_PEN_ONLY))
+	# **THE TWO POSITIVES ARE NOT DECORATION.** A rule that greyed every kit satisfies both claims
+	# above, and `none` staying selectable is what keeps the bare-handed comparison free to run.
+	var deer_stalking := _picker_entry(deer_sheet, "Stalking kit")
+	h._assert_hud("…the spear line is untouched and still the kit the sheet opens on — \"%s\""
+			% String(deer_stalking.get("text", "")),
+		not bool(deer_stalking.get("disabled", true))
+			and h._hud._compose.hunt_kit_id() == BandFx.KIT_ID_BIG_GAME)
+	h._assert_hud("…and the bare-handed comparison is NEVER withheld, whatever it can hurt",
+		not bool(_picker_entry(deer_sheet, "No kit").get("disabled", true)))
+
+	# --- THE RABBIT WARREN: the same trap, the animal it was made for ------------------------------
+	h._hud._compose.reset_hunt_source()
+	h._show_herd(rabbit)
+	h._compose_herd(rabbit, OFFER_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
+	await h._settle()
+	await h._save("herd_kit_offer_rabbit")
+	var rabbit_sheet: Control = h._hud._drawercompose._compose_sheet
+	h._assert_hud("the SAME trapping kit is selectable on a warren — the bound is the animal, not the kit",
+		not bool(_picker_entry(rabbit_sheet, "Trapping kit").get("disabled", true)))
+	h._assert_hud("…while Husbandry stays greyed there too, its pen axis being unread either way",
+		bool(_picker_entry(rabbit_sheet, "Husbandry kit").get("disabled", false)))
+
+	_assert_a_closed_gate_quotes_zero(deer)
+
+	# RESTORE the shared roster and the compose axis — the states after this one price against the
+	# roster the prologue seeded, and a chapter that left its own in place would re-list every later
+	# picker.
+	h._hud.update_kit_roster(BandFx.kit_roster_fixture(), BandFx.KIT_DEFAULT_HUNT,
+		BandFx.KIT_DEFAULT_FORAGE, BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR)
+	h._hud._drawercompose.close_compose_sheet()
+	h._hud._compose.reset_hunt_source()
+	h._hud._compose.set_hunt_kit_id(KitRoster.NO_KIT_ID)
+	h._set_world_herds(HerdFx.world_herds_fixture())
+
+## **THE SECOND HALF: THE NUMBER, NOT THE LIST.** Greying is not enough on its own — the Band panel's
+## raid chart reprices with no picker in sight (`BandPanelController` calls `KitRoster.priced_source`
+## directly) — so the quoted take has to be honest by itself.
+##
+## **WEAR IS WHAT MAKES THIS REACHABLE, and it is the case the whole design turns on.** The offer test
+## resolves at the FRESH tier, so a withheld kit is never the one priced; what a band CAN reach is its
+## own spears run dry against a Red Deer — `max(0, 1 − 1)` is zero, the party kills nothing, and the
+## sheet must quote nothing. The kit stays listed, selectable and default throughout, because the list
+## may not reshuffle as gear wears.
+##
+## Driven rather than rendered: a per-worker rate is a number, and a sheet quoting the wrong one
+## renders a perfectly plausible forecast.
+func _assert_a_closed_gate_quotes_zero(deer: Dictionary) -> void:
+	var kit_before: String = h._hud._compose.hunt_kit_id()
+	h._hud._compose.set_hunt_kit_id(BandFx.KIT_ID_BIG_GAME)
+	var speared := BandFx.with_equipped_kit(BandFx.hunt_preview_local_band())
+	var dry := BandFx.with_bare_hands(BandFx.hunt_preview_local_band())
+	var speared_rate := float(h._hud._drawercompose._hunt_priced_herd(deer, speared).get(
+		SourceForecast.FORECAST_PER_WORKER_KEY, 0.0))
+	var dry_rate := float(h._hud._drawercompose._hunt_priced_herd(deer, dry).get(
+		SourceForecast.FORECAST_PER_WORKER_KEY, 0.0))
+	h._hud._compose.set_hunt_kit_id(kit_before)
+	h._assert_hud("precondition: a speared party is quoted a real take on the Red Deer (%s)"
+		% str(speared_rate), speared_rate > 0.0)
+	h._assert_hud("a party whose spears are dry cannot hurt it, so the sheet quotes ZERO (%s)"
+		% str(dry_rate), is_zero_approx(dry_rate))
+
 ## **THE HUSBANDRY KIT'S HINT NAMES THE PEN, AND AN ORDINARY HUNT KIT'S DOES NOT.**
 ##
 ## The pen axis reached `AXIS_ITEMS` with no reader, so a player selecting Husbandry on a hunt sheet

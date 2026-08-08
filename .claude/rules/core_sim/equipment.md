@@ -444,11 +444,13 @@ party that never engaged.
 - **The compose sheets offer no kit picker on a Scout or Warrior row.** Both roles resolve their job's
   default and the tiers are live, but the client's picker is mounted only on the four hunt/forage
   compose sheets, so choosing `none` on a band-wide role is a command-line selection today.
-- **`KitRoster.priced_source` prices a hunt row on the SLED's axis even when the herd is penned.** It
-  derives the axis from the JOB, and pen-ness is a property of the herd, which that layer is not
-  handed — so a compose sheet quoting the husbandry kit against a pen reads the sled's tier. It errs
-  toward **under**-stating the husbandry kit. Closing it means threading the herd's corral state into
-  `priced_source`.
+- **`KitRoster.priced_source` prices a hunt row on the SLED's axis even when the herd is penned.**
+  `JOB_CARRY_AXES` derives the axis from the JOB alone, so a compose sheet quoting the husbandry kit
+  against a pen reads the sled's tier — the direction that **under**-states the husbandry kit. The
+  herd's corral state is no longer the missing term: `priced_source` is handed the source itself and
+  reads `corralled` off it for both the offer test and the fight's gate
+  (`.claude/rules/client/labor-ui.md` → "A KIT THAT CANNOT WORK ON THIS QUARRY IS GREYED"). What is
+  missing is a per-SOURCE carry axis where the table states a per-job one.
 - **A Field's (rung-3) managed collection cap stays on the equipped reference rate.** Rung 3's
   harvest is quoted per *account* (`managed_per_worker_yield` / `_fodder` / `_trade`) and draws no
   biomass down, so it has no single biomass quantum to charge a basket against; wiring it needs the

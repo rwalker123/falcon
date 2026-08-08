@@ -60,7 +60,7 @@
   "kits": [
     {
       "id": "big_game",
-      "display_name": "Big-game kit",
+      "display_name": "Stalking kit",
       "jobs": ["hunt"],
       "uses": ["spears", "sled"]
     },

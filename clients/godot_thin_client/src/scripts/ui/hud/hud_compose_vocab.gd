@@ -813,7 +813,22 @@ const KIT_JOB_GLYPHS := {
 ## job this table has never heard of must still render a legible face rather than an empty one.
 const KIT_JOB_GLYPH_FALLBACK := "🎒"
 
-const KIT_PICKER_TOOLTIP := "What this crew carries. A kit decides what they can hurt and how much they can haul — the line beneath it is this band's own tier, after wear."
+const KIT_PICKER_TOOLTIP := "What this crew carries. A kit decides what they can hurt and how much they can haul — the line beneath it is this band's own tier, after wear. A kit that could change nothing about this quarry is greyed out and says why."
+
+## **A KIT THAT CANNOT WORK ON THIS QUARRY IS GREYED AND STATES ITS REASON, on the entry's own face.**
+## Greyed rather than hidden: *"a snare cannot hold a Red Deer"* is a fact about the world worth
+## teaching once, and a kit that simply vanished from three of four sheets is exactly what let the
+## picker quote a real take for a hunt that brought home nothing. `%s` the kit's name (with its
+## `(default)` mark if it carries one), `%s` the reason.
+const KIT_WITHHELD_ENTRY_FORMAT := "%s — %s"
+## The WEAPON rule's reason — the kit's fresh attack, resolved against this animal's mass, cannot
+## clear its defence. `%s` the quarry. It names the ANIMAL rather than the weapon because what the
+## player is choosing between is kits, and the animal is the term that changes under them.
+const KIT_WITHHELD_REASON_CANNOT_HURT := "nothing it carries can bring down a %s"
+## The PEN rule's reason — the kit's contribution is `pen_carry`, which only a corralled herd is
+## collected on. Worded for the AXIS rather than for the husbandry kit by name: the rule is that the
+## source cannot read the stat, and a second kit supplying it tomorrow gets the same sentence.
+const KIT_WITHHELD_REASON_PEN_ONLY := "what it adds is only used on a penned herd"
 
 ## **THE JOB'S DEFAULT IS MARKED, NOT SEPARATED.** The player needs to know which kit the verb takes
 ## when they name none; that is a note on an ordinary entry, and a divider would imply the roster has

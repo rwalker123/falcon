@@ -1366,8 +1366,12 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # against that answer — so the resolve leads and the ROW lands beside the crew it describes.
     var kits := _band_labor.kits()
     var default_kit := _band_labor.default_kit_id(KitRoster.JOB_HUNT)
+    # **THE HERD IS PASSED, so a kit this quarry cannot be worked with is never resolved onto.** A
+    # trapping selection made against a warren must not survive into a Red Deer's sheet as the kit the
+    # picker opens on — the offer test is asked at the FRESH tier, so the answer moves with the quarry
+    # and never with the band's wear.
     var kit_id := KitRoster.resolve_selection(kits, KitRoster.JOB_HUNT, default_kit,
-        _compose.hunt_kit_id())
+        _compose.hunt_kit_id(), herd, HudComposeVocab.BARE_FORECAST_PREFIX)
     _compose.set_hunt_kit_id(kit_id)
     # **THE HONESTY GATE, EXPEDITION BRANCH ONLY.** A LOCAL hunt is priced from the herd's own
     # per-biomass vector and the band's ceilings — no estimate table, so no kit mismatch to have. The
@@ -1574,7 +1578,8 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     _mount_kit_row(target, kits, KitRoster.JOB_HUNT, kit_id, default_kit, band,
         func(picked: String) -> void:
             _compose.set_hunt_kit_id(picked)
-            _build_herd_assign_controls(_live_herd(herd_id, herd), target))
+            _build_herd_assign_controls(_live_herd(herd_id, herd), target),
+        herd, HudComposeVocab.BARE_FORECAST_PREFIX)
     # **THE FIGHT, STATED BEFORE THE PARTY LEAVES** (`docs/plan_hunt_through_combat.md` §2.1 / §6.5),
     # directly under the crew that will fight it — both lines answer "is this crew the right size, and
     # can it win at all", which is what the stepper one row up has just posed.
@@ -1606,8 +1611,12 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         # **IT IS ASKED AT THE SELECTED KIT'S EFFECTIVE ATTACK, NOT THE BAND'S DEFAULT-KIT TIER.** The
         # picker one row up decides what these hunters carry, so a gate quoting the band's default kit
         # would refuse — or clear — a fight the composed party is not having.
-        var gate_tiers := KitRoster.effective_tiers(kits, KitRoster.kit_by_id(kits, kit_id), band)
-        var gate := SourceForecast.hunt_gate_model_at(float(gate_tiers["attack"]), herd, quarry)
+        # **AND AT ITS ATTACK AGAINST *THIS ANIMAL*, NOT THE KIT'S BEST CASE.** A weapon bounded to a
+        # size window grants nothing above it, so a snare reads the bare hand's attack against a Red
+        # Deer — and the unbounded reading is what let a trapping sheet clear a gate the sim shuts.
+        var gate := SourceForecast.hunt_gate_model_at(KitRoster.effective_attack_against(
+            kits, KitRoster.kit_by_id(kits, kit_id), band,
+            float(herd.get(KitRoster.QUARRY_BODY_MASS_KEY, 0.0))), herd, quarry)
         if bool(gate["blocked"]):
             var gate_label := HudWidgets.forecast_label("[color=#%s]%s[/color]" % [
                 HudStyle.DANGER_HEX, String(gate["text"])])
@@ -1768,9 +1777,13 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
 ## verb) is byte-identical to what it was before the picker existed. The Band panel's dock sheets keep
 ## the identical helper; the two controllers share no base, and one Callable to reach the other's copy
 ## would be an injection that buys nothing.
+##
+## `quarry` / `prefix` are what the greying is resolved against and are omitted by the forage sheet,
+## which has no animal to be inapplicable to.
 func _mount_kit_row(target: VBoxContainer, kits: Array, job: String, kit_id: String,
-        default_kit: String, band: Dictionary, on_pick: Callable) -> void:
-    var row := KitRoster.build_kit_row(kits, job, kit_id, default_kit, band, on_pick)
+        default_kit: String, band: Dictionary, on_pick: Callable, quarry: Dictionary = {},
+        prefix: String = "") -> void:
+    var row := KitRoster.build_kit_row(kits, job, kit_id, default_kit, band, on_pick, quarry, prefix)
     if row != null:
         target.add_child(row)
 

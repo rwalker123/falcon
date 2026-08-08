@@ -305,7 +305,7 @@ const KIT_ATTACK_CLUBS := 6.0
 static func kit_roster_fixture() -> Array:
 	return [
 		{
-			"id": KIT_ID_BIG_GAME, "display_name": "Big-game kit", "jobs": ["hunt"],
+			"id": KIT_ID_BIG_GAME, "display_name": "Stalking kit", "jobs": ["hunt"],
 			"attack": KIT_ATTACK_EQUIPPED,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_EQUIPPED,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,

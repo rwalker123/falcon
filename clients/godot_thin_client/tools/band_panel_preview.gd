@@ -7959,7 +7959,7 @@ func _assert_kit_picker_closed() -> void:
 	# `OptionButton` conversion has to get right: `select()` writes the item's own text into `text`,
 	# so a face equal to the LIST entry means the override never ran, and the equality catches it.
 	var face := HudComposeVocab.KIT_PICKER_FACE_FORMAT % [
-		String(HudComposeVocab.KIT_JOB_GLYPHS[KitRoster.JOB_HUNT]), "Big-game kit"]
+		String(HudComposeVocab.KIT_JOB_GLYPHS[KitRoster.JOB_HUNT]), "Stalking kit"]
 	_assert_band_panel("…whose face names the selected kit (\"%s\")" % picker.text,
 		picker.text == face)
 	var hint := HudComposeVocab.KIT_HINT_SEPARATOR.join([
@@ -7993,7 +7993,7 @@ func _assert_kit_picker_open(picker: OptionButton) -> void:
 	# The GATHERING kit lists `forage` alone, so its absence is the filter working rather than a
 	# roster that happens to hold two entries.
 	var want_labels: Array[String] = [
-		"Big-game kit" + HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX, "No kit"]
+		"Stalking kit" + HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX, "No kit"]
 	_assert_band_panel("…listing exactly this verb's kits, the default tagged, `none` last — %s"
 			% str(labels),
 		labels == want_labels)
@@ -8002,7 +8002,7 @@ func _assert_kit_picker_open(picker: OptionButton) -> void:
 		if popup.is_item_checked(i):
 			checked.append(popup.get_item_text(i))
 	_assert_band_panel("…marking exactly the composed kit (%s)" % str(checked),
-		checked.size() == 1 and String(checked[0]).begins_with("Big-game kit"))
+		checked.size() == 1 and String(checked[0]).begins_with("Stalking kit"))
 
 ## **THE KIT-MISMATCH STATE, ASSERTED BY EQUALITY** — `none` composed against tables quoted for
 ## `big_game`.
@@ -8031,7 +8031,7 @@ func _assert_kit_mismatch_suppresses_estimates() -> void:
 		SourceForecast.HUNT_FORECAST_WARN_GLYPH, "Wild Boar",
 		String.num(BandFx.KIT_ATTACK_BARE, SourceForecast.HUNT_GATE_SCALAR_DECIMALS),
 		String.num(QUARRY_DEFENSE, SourceForecast.HUNT_GATE_SCALAR_DECIMALS)]
-	var note := HudComposeVocab.KIT_DENIAL_ESTIMATES_QUOTED_FORMAT % ["Big-game kit", "No kit"]
+	var note := HudComposeVocab.KIT_DENIAL_ESTIMATES_QUOTED_FORMAT % ["Stalking kit", "No kit"]
 	var want: Array[String] = [gate, note]
 	_assert_band_panel(("…and below it says EXACTLY the gate and the quoted-kit note — "
 			+ "no verdict, no caveat, no take, no refusal. Got %s") % str(tail),
