@@ -419,7 +419,8 @@ func _ready() -> void:
 	# sheet's Kit picker is built from it, so it is prologue rather than chapter state — a roster
 	# seeded per arc would give one chapter's sheets a picker and the next chapter's none.
 	_hud.update_kit_roster(BandFx.kit_roster_fixture(),
-		BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE)
+		BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE,
+		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR)
 	# The world's food modules (Main pushes snapshot["food_modules"]): each Forage row leads with the
 	# module's map glyph, so the panel row and the map marker read as the same resource.
 	_hud.update_food_modules([

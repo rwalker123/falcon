@@ -472,7 +472,7 @@ const CONFIG_INVENTED_KIT_FIELD := "morale_bonus"
 const CONFIG_GEAR_BLOCK := "hunting_kit"
 const CONFIG_HUNT_KIT_ID := "big_game"
 const CONFIG_HUNT_JOB := "hunt"
-const CONFIG_HUNT_KIT_DISPLAY := "Big-game kit"
+const CONFIG_HUNT_KIT_DISPLAY := "Stalking kit"
 
 ## **THE FOUR ROSTER ENTRIES ARE THE FOUR TITLE CASES**, so the Kits page's degradation is exercised
 ## rather than described. `[0]` states both keys, `[1]` only `id`, `[2]` only `display_name`, and
@@ -487,7 +487,7 @@ const CONFIG_ANONYMOUS_KIT_INDEX := 3
 ## The titles the page must compose, spelled out LITERALLY rather than rebuilt from the fixture
 ## through the page's own format and branches — a derived expectation would re-run the logic under
 ## test and agree with whatever it did.
-const CONFIG_HUNT_KIT_TITLE := "Big-game kit (big_game)"
+const CONFIG_HUNT_KIT_TITLE := "Stalking kit (big_game)"
 const CONFIG_ID_ONLY_KIT_TITLE := "gathering"
 const CONFIG_NAME_ONLY_KIT_TITLE := "No kit"
 const CONFIG_ANONYMOUS_KIT_TITLE := "kits[3]"

@@ -207,6 +207,18 @@ func begin_hunt_source(key: String, band_entity: int) -> void:
 	_hunt_key = key
 	_hunt_band = band_entity
 
+## **A DIFFERENT ANIMAL HAS A DIFFERENT DEFAULT KIT, so the composed one is dropped with the count and
+## the floor.** Called from the same `source_changed` branch `seed_hunt` is, and it is what makes the
+## per-herd default reachable at all: every render writes the RESOLVED id back here, so without this a
+## selection resolved once on a Red Deer would be the "player's own choice" on every warren after it,
+## and the herd's own default would be taken exactly once per session.
+##
+## **It resets rather than seeds, because the default is not this model's to know** — the roster and
+## the herd both live outside it, and `KitRoster.resolve_selection` answers from them on the next
+## render. `NO_KIT_ID` is the same "nothing picked yet" this field is born holding.
+func reset_hunt_kit() -> void:
+	_hunt_kit_id = KitRoster.NO_KIT_ID
+
 ## Re-seed the composed count + stance + improvement from the newly-resolved band's staffing on the
 ## new herd — the hunt twin of `seed_forage`.
 func seed_hunt(count: int, floor: float, improvement: String) -> void:
@@ -249,13 +261,20 @@ func party_quarry_id() -> String:
 
 ## The quarry is now `herd_id` — a fresh pick, a re-pick on the map, or a switch between the herds
 ## sharing one hex.
+##
+## **THE COMPOSED KIT GOES WITH IT**, the dock's twin of `reset_hunt_kit`: the default is a fact about
+## the quarry now, so a kit resolved against the last animal is not the player's choice about this one.
+## Reached only from the targeting pick (never per render), so a live selection is never wiped
+## mid-compose.
 func set_party_quarry(herd_id: String) -> void:
 	_party_quarry_id = herd_id
+	_party_kit_id = KitRoster.NO_KIT_ID
 
 ## No quarry: a fresh compose act, a cancelled one, a quarry that left the snapshot or migrated into
 ## the band's hunt reach, or a panel-band swap (a quarry is chosen FOR a band).
 func clear_party_quarry() -> void:
 	_party_quarry_id = ""
+	_party_kit_id = KitRoster.NO_KIT_ID
 
 func arm_party_autofill() -> void:
 	_party_autofill = true

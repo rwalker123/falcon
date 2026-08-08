@@ -1072,14 +1072,20 @@ impl LaborTarget {
         }
     }
 
-    /// **Which TOE job this target draws a tier from**, or `None` for a band-wide role that consumes
-    /// no component and therefore has no kit to choose. The one mapping between a labor role and
+    /// **Which TOE job this target draws a tier from.** The one mapping between a labor role and
     /// `equipment.json`'s `jobs` list, so the command's refusal and the turn's pricing agree.
-    pub fn kit_job(&self) -> Option<crate::equipment_config::KitJob> {
+    ///
+    /// **Every role answers `Some` now.** It used to be `None` for the two band-wide roles, on the
+    /// grounds that they consumed no component — but scouts have posted forward-observer vantages
+    /// (`calculate_visibility`) and warriors have been the band's defending contingent
+    /// (`advance_predator_raids`) for some time, so that was a fact about the shipped roster rather
+    /// than about the sim. It stopped being true when the roster gained gear for them.
+    pub fn kit_job(&self) -> crate::equipment_config::KitJob {
         match self {
-            LaborTarget::Forage { .. } => Some(crate::equipment_config::KitJob::Forage),
-            LaborTarget::Hunt { .. } => Some(crate::equipment_config::KitJob::Hunt),
-            LaborTarget::Scout | LaborTarget::Warrior => None,
+            LaborTarget::Forage { .. } => crate::equipment_config::KitJob::Forage,
+            LaborTarget::Hunt { .. } => crate::equipment_config::KitJob::Hunt,
+            LaborTarget::Scout => crate::equipment_config::KitJob::Scout,
+            LaborTarget::Warrior => crate::equipment_config::KitJob::Warrior,
         }
     }
 
@@ -1131,13 +1137,14 @@ pub struct LaborAssignment {
 impl LaborAssignment {
     /// **The kit this row is priced at** — its own choice, or the job's default when it named none.
     /// The one seam the resolved take, the assign-time seed and the wire all read, so a row cannot
-    /// be quoted at one tier and paid at another. `None` for a band-wide role, which has no job.
+    /// be quoted at one tier and paid at another. Infallible now that every role has a job.
     pub fn kit_choice(
         &self,
         config: &crate::equipment_config::EquipmentConfig,
-    ) -> Option<crate::equipment_config::KitChoice> {
-        let job = self.target.kit_job()?;
-        Some(self.kit.clone().unwrap_or_else(|| config.default_kit(job)))
+    ) -> crate::equipment_config::KitChoice {
+        self.kit
+            .clone()
+            .unwrap_or_else(|| config.default_kit(self.target.kit_job()))
     }
 }
 
@@ -1603,6 +1610,30 @@ impl LaborAllocation {
             .filter(|a| a.target.same_source(target))
             .map(|a| a.workers)
             .sum()
+    }
+
+    /// **The kit staffed on a SINGLETON source**, resolved through the same seam every priced row
+    /// reads ([`LaborAssignment::kit_choice`]) — or the job's default when the role is unstaffed.
+    ///
+    /// For the two band-wide roles only: they are singletons, so "the kit on this role" is a
+    /// question with one answer, where a Forage/Hunt target could be staffed twice on the same tile
+    /// only by being the same assignment. It exists because the two consumers of those roles live
+    /// **outside** the labor loop — `calculate_visibility` and `advance_predator_raids` — and each
+    /// holds a `LaborAllocation` rather than an assignment.
+    ///
+    /// **An unstaffed role still resolves its default rather than the empty kit**, which costs
+    /// nothing (both consumers gate on the head-count first) and keeps a zero-worker row from
+    /// answering a different tier than the same row with one worker on it.
+    pub fn kit_on(
+        &self,
+        target: &LaborTarget,
+        config: &crate::equipment_config::EquipmentConfig,
+    ) -> crate::equipment_config::KitChoice {
+        self.assignments
+            .iter()
+            .find(|a| a.target.same_source(target))
+            .map(|a| a.kit_choice(config))
+            .unwrap_or_else(|| config.default_kit(target.kit_job()))
     }
 
     /// Keep the derived `last_yields` the same length as `assignments` — the snapshot **zips the two

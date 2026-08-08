@@ -548,12 +548,15 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         # from the band panel's Current-actions rows, and to name it. Same array MapView renders.
         _hud_invoke("update_herds", [snapshot["herds"]])
     if snapshot.has("kits") and SnapshotSections.changed(snapshot, "kits"):
-        # The KIT ROSTER + the two job defaults, forwarded as ONE call: the compose sheets' pickers
+        # The KIT ROSTER + the FOUR job defaults, forwarded as ONE call: the compose sheets' pickers
         # need the list and the "what does the verb take when I name none" answer together, and a
         # roster ingested without its defaults would open every picker on nothing. Gated on `kits`
-        # alone — the defaults are scalars riding the same section and change with it.
+        # alone — the defaults are scalars riding the same section and change with it. The scout and
+        # warrior entries arrived with the expanded roster; before it the band-wide roles had no kit
+        # axis and so no default to name.
         _hud_invoke("update_kit_roster", [snapshot["kits"],
-            snapshot.get("default_hunt_kit_id", ""), snapshot.get("default_forage_kit_id", "")])
+            snapshot.get("default_hunt_kit_id", ""), snapshot.get("default_forage_kit_id", ""),
+            snapshot.get("default_scout_kit_id", ""), snapshot.get("default_warrior_kit_id", "")])
     if snapshot.has("forage_patches") and SnapshotSections.changed(snapshot, "forage_patches"):
         # The HUD needs the forage patches to cap each Current-actions Forage row's worker stepper at
         # the patch's max-useful (the same forecast the compose control reads off tile_info). Same
@@ -859,8 +862,15 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
                     workers, "" if workers == 1 else "s", herd_id, _floor_percent_text(payload)],
             }
         "scout", "warrior":
+            # **A BAND-WIDE ROLE CARRIES THE KIT TOKEN TOO, and it is the only optional token these
+            # two rows take.** They have no tile, no herd, no floor and no species — the sim ignores
+            # every one of those on a Scout or Warrior target — but `kit_job()` answers for all four
+            # roles now, so `assign_labor … scout 3 kit none` is a real selection rather than a token
+            # dropped on the floor. Same `_kit_token` omission rule as the other two branches, so a
+            # player who never opened the role card's picker emits the line they always did.
             return {
-                "line": "assign_labor %d %d %s %d" % [faction, band_id, kind, workers],
+                "line": "assign_labor %d %d %s %d%s" % [
+                    faction, band_id, kind, workers, _kit_token(payload)],
                 "message": "Assign %d worker%s to %s." % [workers, "" if workers == 1 else "s", kind],
             }
     return {}

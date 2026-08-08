@@ -673,6 +673,12 @@ fn decode_delta_against(
     if let Some(default_forage_kit) = delta.subsistence().and_then(|s| s.defaultForageKitId()) {
         frame.insert_changed("default_forage_kit_id", default_forage_kit);
     }
+    if let Some(default_scout_kit) = delta.subsistence().and_then(|s| s.defaultScoutKitId()) {
+        frame.insert_changed("default_scout_kit_id", default_scout_kit);
+    }
+    if let Some(default_warrior_kit) = delta.subsistence().and_then(|s| s.defaultWarriorKitId()) {
+        frame.insert_changed("default_warrior_kit_id", default_warrior_kit);
+    }
     // The whole effective `EquipmentConfig` as one `serde_json` string — the Workbench's two config
     // pages parse it themselves. `insert_changed`, like its siblings: the sim diffs it as a
     // `Whole<String>`, so it rides a delta ONLY when it moved and presence here IS the change

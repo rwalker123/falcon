@@ -5053,6 +5053,29 @@ pub fn retreat_seed(map_seed: u64, tick: u64, herd_id: &str, workers: u32) -> u6
     map_seed ^ tick ^ RETREAT_SEED_SALT ^ hasher.finish() ^ (workers as u64)
 }
 
+/// **The retreat's one composition** — `clamp(wariness × dispersion, 0, 1)`, the probability an
+/// engaged animal breaks off, with the kit's noise folded into the quarry's own flight response
+/// ([`crate::equipment_config::EquipmentStat::Dispersion`]).
+///
+/// **Clamped into `0..=1` because both factors are authored**: a species may ship `wariness 0.85`
+/// and a future kit a dispersion above `1.0` (a noisy drive), and a probability above one is not a
+/// probability. `0` is the identity the retreat has always had — no draw is made at all.
+///
+/// Stated once so the drawn form ([`HuntingParty::stayers`]) and the closed form
+/// ([`stay_fraction`], which [`per_hunter_take_biomass`] prices a kit with) cannot disagree about
+/// how loud a party is.
+pub fn effective_wariness(wariness: f32, dispersion: f32) -> f32 {
+    (wariness * dispersion.max(0.0)).clamp(0.0, 1.0)
+}
+
+/// **The share of an engagement that stays**, `1 − effective_wariness` — the retreat as a *term*
+/// rather than as a draw, for the closed forms that price a party without resolving a hunt
+/// ([`per_hunter_take_biomass`], and the wire's `HerdTelemetryState::stay_fraction`, which is this
+/// at the neutral `dispersion 1`).
+pub fn stay_fraction(wariness: f32, dispersion: f32) -> f32 {
+    1.0 - effective_wariness(wariness, dispersion)
+}
+
 /// **How many of the engaged animals stay to be fought** — the retreat stage
 /// (`docs/plan_hunt_through_combat.md` §3), between engagement and the fight.
 ///
@@ -5248,11 +5271,7 @@ impl HuntingParty {
     /// above one is not a probability. `0` is the identity the retreat has always had — no draw is
     /// made at all — so a trap line lands in a tested regime rather than a new branch.
     pub fn stayers(&self, engaged: f32, wariness: f32, draw: HuntDraw) -> f32 {
-        animals_that_stay(
-            engaged,
-            (wariness * self.dispersion.max(0.0)).clamp(0.0, 1.0),
-            draw,
-        )
+        animals_that_stay(engaged, effective_wariness(wariness, self.dispersion), draw)
     }
 
     /// **The shipped, fully-kitted party at the base tuning** — the `person` row's intrinsic profile
@@ -5301,6 +5320,135 @@ impl HuntingParty {
             dispersion: equipment.dispersion(&kit, &fresh),
         }
     }
+}
+
+/// **§4.6's per-hunter-turn take, in biomass** — what one hunter carrying `kit` brings down off this
+/// species in one turn:
+///
+/// ```text
+/// min(engage_rate, (attack − defense) / durability) × (1 − clamp(wariness × dispersion, 0, 1)) × body_mass
+/// ```
+///
+/// The three bounds a hunt actually has, in order: what one hunter **reaches**, what one hunter can
+/// **bring down**, and what **stays** to be brought down. Composed from the resolver's own
+/// primitives ([`combat::strike_damage`], [`combat::units_brought_down`]) and the retreat's own
+/// helper ([`HuntingParty::stay_fraction`]) rather than re-spelled, so it cannot become a second
+/// take model: the same `min(reach, damage/durability)` the fight pays, read as a rate.
+///
+/// **It sees no carry tier, no crew size, no escapement floor and no quantiser** — it is the
+/// *ceiling*, which is exactly what makes it a fair comparison between two kits against one quarry:
+/// every term it drops is a property of the band or the herd rather than of the kit.
+///
+/// `0` for a quarry the kit cannot hurt at all (`attack ≤ defense`) — the gate refusing the hunt,
+/// which is what makes a trapping party score zero on a Red Deer.
+///
+/// **It takes the two terms a KIT moves** — the kit-composed hunter profile and the kit's
+/// `dispersion` — rather than a whole [`HuntingParty`], because the party's other two fields
+/// (resolver tuning, the injury hazard) describe what the hunt *costs*, not what it *takes*, and
+/// requiring them would make every caller hold a [`crate::combat_config::CombatConfig`] to price a
+/// comparison neither field enters.
+pub fn per_hunter_take_biomass(hunter: CombatStats, dispersion: f32, species: &SpeciesDef) -> f32 {
+    let quarry = species.combat;
+    let damage = combat::strike_damage(hunter.attack, quarry.defense);
+    let brought_down = combat::units_brought_down(damage, &quarry, species.engage_rate);
+    brought_down * stay_fraction(quarry.wariness, dispersion) * species.body_mass.max(0.0)
+}
+
+/// **Which kit THIS QUARRY wants** — the hunt roster scored against one species, at the **fresh**
+/// tier, returning the kit a compose sheet should open on and the one `assign_labor … hunt` resolves
+/// when the player names none.
+///
+/// # Derived, never authored
+///
+/// A config predicate (`mass < X && wariness > Y`) would be a **third** copy of facts that already
+/// exist twice — the trap declares `max_body_mass 1.0` and `dispersion 0`, the species declares
+/// `body_mass`, `wariness` and `defense` — and would drift from both on the first retune, exactly as
+/// a `size_class` or a "jumpy" flag would. It would also be silently wrong on `defense`, which is
+/// what actually zeroes a trap party on Marsh Grazers. So the answer is *measured* with
+/// [`per_hunter_take_biomass`], through the same `hunter_profile_against` / `dispersion` seams a
+/// live take resolves.
+///
+/// # Wear does NOT enter
+///
+/// Every kit is scored against [`crate::components::BandEquipment::default()`] — zero wear — so a
+/// herd's default is a property of **quarry × roster**, a per-world constant, and cannot reshuffle
+/// under the player as their spears wear down. The same rule the picker's greying follows.
+///
+/// # A near-tie keeps the job default
+///
+/// The winner replaces [`crate::equipment_config::DefaultKitsConfig::hunt`] only when it scores more
+/// than `(1 + quarry_default_kit_margin) ×` the default's own score. A default that flips on a
+/// trivial retune moves under the player for reasons they cannot see. **A default that scores `0`
+/// is beaten by anything positive** — "better than nothing" needs no margin, and a margin cannot be
+/// expressed against zero anyway.
+///
+/// Ties resolve to the **earliest roster entry** (the fold keeps only a strictly greater score), so
+/// two kits that price identically answer by file order rather than by iteration order.
+pub fn quarry_default_hunt_kit(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    person: CombatStats,
+    species: &SpeciesDef,
+) -> crate::equipment_config::KitChoice {
+    let job = crate::equipment_config::KitJob::Hunt;
+    let fresh = crate::components::BandEquipment::default();
+    let score = |kit: &crate::equipment_config::KitChoice| {
+        per_hunter_take_biomass(
+            // **Against THIS animal**, so a mass-bounded weapon is scored on quarry it can actually
+            // hold — the whole reason a bounded kit may win here and may not be the job default.
+            equipment.hunter_profile_against(person, kit, &fresh, species.body_mass),
+            equipment.dispersion(kit, &fresh),
+            species,
+        )
+    };
+    let default = equipment.default_kit(job);
+    let threshold = score(&default) * (1.0 + equipment.quarry_default_kit_margin.max(0.0));
+    let mut best: Option<(crate::equipment_config::KitChoice, f32)> = None;
+    for kit in equipment.kits_for_job(job) {
+        let value = score(&kit);
+        // Strictly greater on BOTH tests: above the margin at all, and above whatever is already
+        // holding the slot — which is what makes file order the tie-break.
+        if value > threshold && best.as_ref().is_none_or(|(_, held)| value > *held) {
+            best = Some((kit, value));
+        }
+    }
+    best.map(|(kit, _)| kit).unwrap_or(default)
+}
+
+/// **Which kit THIS HERD wants** — the one seam every surface resolves a herd's no-kit-named default
+/// through: the wire's `HerdTelemetryState::default_kit_id`, `assign_labor … hunt` and both raiding
+/// verbs.
+///
+/// # A pen is a SOURCE AXIS, not a score
+///
+/// A corralled herd is collected at [`crate::equipment_config::EquipmentStat::PenCarry`], and the
+/// only kit that supplies it is the handling gear — so *"which kit does a pen want"* has a
+/// **structural** answer, and [`quarry_default_hunt_kit`] structurally cannot give it: a pen has no
+/// fight stage, so [`per_hunter_take_biomass`] scores every kit on a quarry the party never stalks
+/// and hands back the *range* winner. That is how a corralled Rabbit Warren came to publish
+/// `trapping` — a kit whose contribution at a pen is nil.
+///
+/// It is the same source-axis rule the client's picker greys on and `KitRoster.priced_source`
+/// prices on, asked of the **roster** rather than answered with an id
+/// ([`crate::equipment_config::EquipmentConfig::kit_supplying`]).
+///
+/// **A roster with no `PenCarry` hunt kit falls through to the score**, which is the honest answer:
+/// nothing can work a pen properly, so the herd keeps whatever the range comparison chose rather
+/// than publishing an empty selection.
+pub fn herd_default_hunt_kit(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    person: CombatStats,
+    species: &SpeciesDef,
+    corralled: bool,
+) -> crate::equipment_config::KitChoice {
+    let job = crate::equipment_config::KitJob::Hunt;
+    if corralled {
+        if let Some(kit) =
+            equipment.kit_supplying(job, crate::equipment_config::EquipmentStat::PenCarry)
+        {
+            return kit;
+        }
+    }
+    quarry_default_hunt_kit(equipment, person, species)
 }
 
 /// **What the fight cost the party** — the band-side casualties of one hunt, in people.

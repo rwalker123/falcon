@@ -105,6 +105,22 @@ var _work_floor_open: bool = false
 ## The party (expedition entity, as a string) whose parties-zone inspector strip is open ("" = none),
 ## the parties twin of `_work_open_key`. One at a time — clicking a row body toggles it.
 var _party_open_key: String = ""
+## **THE KIT PICKED ON A BAND-WIDE ROLE CARD**, keyed `"<band entity>:<role>"` → roster id.
+##
+## **THE ROLE CARDS HAD NOWHERE TO KEEP PER-ROW STATE, and this is what was added rather than found.**
+## The compose sheets keep theirs on `ComposeState` — the model for "what a SHEET is composing" — and
+## a role card is not a sheet: it has no open/closed act to bracket the state, no source, and it
+## commits on the press rather than at a Send. What it is instead is one more piece of ZONE state that
+## survives a snapshot, which is this controller's own remit (`_work_filter`, `_work_open_key`,
+## `_send_hunt_floor`); a field ONE cluster reads is explicitly not a state model's (`hud-modules.md`).
+##
+## **KEYED BY BAND, because the cycler walks bands and a bare string would carry band A's pick onto
+## band B's card.** Seeded from the WIRE — the role's own `LaborAssignment.kitId`, already resolved —
+## so a fresh session shows what the sim is actually running, and the composed value only ever
+## overrides it after the player has picked. Never cleared: an entry is a few bytes, and
+## `KitRoster.resolve_selection` re-validates it against the live roster on every render, so a stale
+## id from a rebuilt world falls back to the job default rather than naming a kit the command refuses.
+var _role_kit_ids: Dictionary = {}
 ## The live work-zone column + its band, so `zones_resized` can RE-PAGE the board in place instead of
 ## re-rendering all three zones.
 var _work_zone_host: VBoxContainer = null
@@ -814,18 +830,50 @@ func _band_predator_threat_present(band: Dictionary) -> bool:
             return true
     return false
 
-## One standing-role card: name · one-line hint · the SAME −/+ stepper (same `assign_labor` emit,
-## same idle gating) the role rows used to carry.
-## `alert` (Predators Phase 3) tints the hint crimson — the Warrior card wears it when a predator is
-## within raid range, so the live "Predator nearby" warning reads as danger, not routine guidance.
+## One standing-role card, top to bottom: **name · the −/+ STEPPER · the KIT PICKER · its gear line ·
+## the role's description.** Same `assign_labor` emit and same idle gating the role rows used to carry.
+## `alert` (Predators Phase 3) tints the description crimson — the Warrior card wears it when a
+## predator is within raid range, so the live "Predator nearby" warning reads as danger, not routine
+## guidance.
+##
+## **THE CONTROLS LEAD AND THE PROSE TRAILS.** A card is read every turn and acted on with two
+## controls; the description is what a player reads ONCE, to learn what the role is. Putting the
+## sentence between the title and the controls made the two cards' steppers sit at different heights
+## (Scout's description wraps to three lines, Warrior's to two), so the pair read as ragged and the
+## thing a player actually presses moved with the length of a string. Stepper first also puts both
+## cards' steppers on one line as a side effect of the ordering rather than of any alignment code.
+##
+## **THE KIT ROW IS THE COMPOSE SHEETS' OWN CONTROL** (`KitRoster.build_kit_row`), mounted here for
+## the reason it is mounted there: a kit describes the crew, so it sits with the crew and above every
+## number it moves. Two differences, both forced by the card rather than chosen — it passes NO field
+## key (the card is already headed `Scout`, and ~175px cannot spend 64 of them on a third word), and
+## its hint is the band-wide role's own (`KitRoster.role_hint`), because the carry-axis wording under
+## a compose sheet says nothing about a vantage.
+##
+## **THE GEAR LINE IS THE PICKER'S HELP TEXT, so nothing may come between them.** It states what the
+## SELECTED kit buys (`2-tile sight per vantage · Wayfinding 100`) and changes when the picker
+## changes; `build_kit_row` returns the pair as ONE block, which is what makes that adjacency
+## structural rather than a convention this function has to remember.
 func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: String, effective: Dictionary, idle: int, alert: bool = false) -> PanelContainer:
     var workers := int(effective.get("workers", 0))
     var pending := bool(effective.get("pending", false))
     var card := PanelContainer.new()
     card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    # **BOTH CARDS DRAW TO THE HEIGHT OF THE TALLER ONE, and NOTHING WAS EVER SHRINKING THEM.** The
+    # `HBoxContainer` above stretches a child to the row height wherever the child asks to FILL its
+    # cross axis, and `SIZE_FILL` is `Control`'s own default, which `PanelContainer` does not override
+    # (measured, not assumed) — so the card RECTS were level before this ordering and are level after.
+    # What read as ragged was the CONTENT: with the description second, the Scout's three-line wrap
+    # pushed its picker, gear line and stepper 17px below the Warrior's and left dead space under the
+    # Warrior's stepper. **It is written down rather than inherited** because it is load-bearing here
+    # and free everywhere else — the descriptions and the kit names both wrap, so the alternative is a
+    # hardcoded minimum height that would be wrong the next time either string changes.
+    # `band_panel_preview._assert_role_cards_are_level` is the guard, sabotage-verified against
+    # `SIZE_SHRINK_BEGIN` (Warrior 176px against Scout's 193px).
+    card.size_flags_vertical = Control.SIZE_FILL
     card.add_theme_stylebox_override("panel", HudStyle.role_card_stylebox())
-    # The hint also rides the tooltip: the label below is height-capped at two lines, so a long or a
-    # newly-alerting hint is readable on hover whatever it wraps to.
+    # The description also rides the tooltip, so a long or a newly-alerting one is readable on hover
+    # whatever it wraps to.
     card.tooltip_text = hint
     var col := VBoxContainer.new()
     col.add_theme_constant_override("separation", HudWorkVocab.ROLE_CARD_SEPARATION)
@@ -835,21 +883,103 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
     title.add_theme_font_size_override("font_size", HudWorkVocab.ROLE_CARD_NAME_FONT_SIZE)
     title.add_theme_color_override("font_color", HudStyle.WARN if pending else HudStyle.INK)
     col.add_child(title)
-    var hint_label := HudWidgets.alloc_hint_label(hint)
-    if alert:
-        hint_label.add_theme_color_override("font_color", HudStyle.THREAT_ACCENT)
-    hint_label.custom_minimum_size = Vector2(0.0, HudWorkVocab.ROLE_CARD_HINT_HEIGHT)
-    col.add_child(hint_label)
+    var kit_id := _role_kit_id(band, kind)
     var stepper := HBoxContainer.new()
     stepper.alignment = BoxContainer.ALIGNMENT_CENTER
     stepper.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     HudWidgets.add_stepper_controls(stepper, workers, idle > 0,
         # A BAND-WIDE ROLE (scout / warrior) works no source, so it has no escapement floor to set.
         # The sim ignores the token on those branches; the default is the honest thing to send.
+        # **THE KIT RIDES THE PRESS**: `_kit_token` omits it when it equals the job default, so a
+        # player who never touched the picker emits the byte-identical line they always did.
         func(n: int) -> void: _emit_assign_labor(
-            band, kind, n, -1, -1, "", SourceForecast.DEFAULT_HARVEST_FLOOR))
+            band, kind, n, -1, -1, "", SourceForecast.DEFAULT_HARVEST_FLOOR,
+            "", SourceForecast.IMPROVEMENT_NONE, kit_id))
     col.add_child(stepper)
+    var kit_row := KitRoster.build_kit_row(_band_labor.kits(), kind, kit_id,
+        _band_labor.default_kit_id(kind), band,
+        func(picked: String) -> void: _on_role_kit_picked(band, kind, picked, workers),
+        {}, "", ROLE_CARD_KIT_KEY_TEXT, true)
+    if kit_row != null:
+        col.add_child(kit_row)
+        _lift_role_gear_line(kit_row)
+    var hint_label := HudWidgets.alloc_hint_label(hint)
+    if alert:
+        hint_label.add_theme_color_override("font_color", HudStyle.THREAT_ACCENT)
+    hint_label.custom_minimum_size = Vector2(0.0, HudWorkVocab.ROLE_CARD_HINT_HEIGHT)
+    col.add_child(hint_label)
     return card
+
+## **LIFT THE GEAR LINE OUT OF THE DESCRIPTION IT NOW SITS ON.**
+##
+## Stacking the two put a LIVE readout and standing boilerplate in one treatment: both go through
+## `HudWidgets.alloc_hint_label`, so the card read as one grey paragraph and the tier — the only line
+## on it that MOVES as gear wears — was indistinguishable from copy the player reads once. Reported
+## on the prototype.
+##
+## **The gear line is lifted rather than the description dimmed**, because `INK_FAINT` is already the
+## faintest ink this HUD has: there is nowhere below it to put the boilerplate, and the readout is the
+## half that earns the emphasis anyway.
+##
+## **Scoped to the role card, and reached by META rather than by position.** The same builder mounts
+## this row on four compose sheets, where the hint stands alone with nothing to be confused with, so
+## brightening it there would move those frames for no reading. `KitRoster.KIT_HINT_META` is the
+## builder's own handle on that label; a child-index walk would silently re-tint whatever the row
+## gains next.
+func _lift_role_gear_line(kit_row: Control) -> void:
+    for child in kit_row.get_children():
+        if child is Label and (child as Label).has_meta(KitRoster.KIT_HINT_META):
+            (child as Label).add_theme_color_override("font_color", HudStyle.INK_DIM)
+            return
+
+## The role card mounts the shared kit row with NO field key — see `_build_role_card`.
+const ROLE_CARD_KIT_KEY_TEXT := ""
+
+## The `_role_kit_ids` key for one band's one role. Two terms because the cycler walks bands: a
+## per-role key alone would carry the pick made on one band onto every other band's card.
+func _role_kit_key(band: Dictionary, kind: String) -> String:
+    return "%d:%s" % [int(band.get("entity", -1)), kind]
+
+## **THE KIT THIS ROLE CARD OPENS ON** — the player's own pick where they have made one, else the kit
+## the SIM is already running this role at (the row's own resolved `LaborAssignment.kitId`), else the
+## job default. Resolved through `KitRoster.resolve_selection` like every compose sheet, so an id held
+## over from a previous world can never reach the picker or the command.
+##
+## **THE WIRE IS THE SEED, NOT THE FALLBACK ORDER'S END.** Reading the assignment first is what makes
+## a fresh session show what is actually running rather than what a default would be; an UNSTAFFED
+## role has no assignment row at all, and `resolve_selection` then lands on the job default, which is
+## exactly what the sim would resolve for the first `+`.
+func _role_kit_id(band: Dictionary, kind: String) -> String:
+    var composed := String(_role_kit_ids.get(_role_kit_key(band, kind), KitRoster.NO_KIT_ID))
+    if composed == KitRoster.NO_KIT_ID:
+        composed = _wire_role_kit_id(band, kind)
+    return KitRoster.resolve_selection(_band_labor.kits(), kind,
+        _band_labor.default_kit_id(kind), composed)
+
+## The kit the sim has this role RESOLVED to, off the band's own assignment row; `NO_KIT_ID` when the
+## role is unstaffed (no row) or the snapshot predates the band-wide kit axis.
+func _wire_role_kit_id(band: Dictionary, kind: String) -> String:
+    for entry in HudBandLaborState.labor_assignments_of(band):
+        if entry is Dictionary and String((entry as Dictionary).get("kind", "")).to_lower() == kind:
+            return String((entry as Dictionary).get("kit_id", KitRoster.NO_KIT_ID))
+    return KitRoster.NO_KIT_ID
+
+## A kit picked on a role card. **It EMITS on the press, like the work inspector's policy picker and
+## unlike a compose sheet's** — this card has no Send to commit at, so a pick that only sat in client
+## state would leave the sim running a different kit than the one the card now names, which is the
+## silent substitution the whole kit arc exists to prevent. The command re-states the role's CURRENT
+## head count; only the kit token moves.
+##
+## **AN UNSTAFFED ROLE EMITS NOTHING**, because `assign_labor … <role> 0` drops the assignment and the
+## sim resolves no kit for it (`equipment.md` → "Unassigning resolves NO kit"). The pick is held here
+## and rides the first `+`, which is the press that creates the row the kit belongs to.
+func _on_role_kit_picked(band: Dictionary, kind: String, kit_id: String, workers: int) -> void:
+    _role_kit_ids[_role_kit_key(band, kind)] = kit_id
+    if workers > 0:
+        _emit_assign_labor(band, kind, workers, -1, -1, "",
+            SourceForecast.DEFAULT_HARVEST_FLOOR, "", SourceForecast.IMPROVEMENT_NONE, kit_id)
+        return
+    rerender()
 
 # ---- zone `work` (the paged board) ------------------------------------------
 
@@ -2245,8 +2375,11 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     # the `hunt` job) and re-validated every render.
     var kits := _band_labor.kits()
     var default_kit := _band_labor.default_kit_id(KitRoster.JOB_HUNT)
+    # The HERD is passed so a kit this quarry cannot be worked with is never resolved onto — the
+    # drawer's rule, and the same fresh-tier offer test, so the two entry points cannot open on
+    # different kits for one animal.
     var kit_id := KitRoster.resolve_selection(kits, KitRoster.JOB_HUNT, default_kit,
-        _compose.party_kit_id())
+        _compose.party_kit_id(), herd, HudComposeVocab.BARE_FORECAST_PREFIX)
     _compose.set_party_kit_id(kit_id)
     # **THE HONESTY GATE.** `huntTripEstimates` is quoted for ONE kit (the hunt job's default) and is
     # not repriced per kit, so this sheet may present it as the answer only when the ids agree. Compare
@@ -2354,7 +2487,8 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     _mount_kit_row(sheet, kits, KitRoster.JOB_HUNT, kit_id, default_kit, band,
         func(picked: String) -> void:
             _compose.set_party_kit_id(picked)
-            rerender())
+            rerender(),
+        herd, HudComposeVocab.BARE_FORECAST_PREFIX)
     var quarry_id := _compose.party_quarry_id()
     var confirm := Button.new()
     confirm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -2426,9 +2560,13 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
 ## Mount the kit row where a sheet wants it — a no-op when the roster offers this job no kit at all,
 ## so a sheet rendered before the first snapshot (or against a world whose roster does not cover the
 ## verb) is byte-identical to what it was before the picker existed.
+##
+## `quarry` / `prefix` are what a kit's greying is resolved against (`KitRoster.kit_offer`); both
+## dock missions have a herd in hand by the time this is reached.
 func _mount_kit_row(sheet: VBoxContainer, kits: Array, job: String, kit_id: String,
-        default_kit: String, band: Dictionary, on_pick: Callable) -> void:
-    var row := KitRoster.build_kit_row(kits, job, kit_id, default_kit, band, on_pick)
+        default_kit: String, band: Dictionary, on_pick: Callable, quarry: Dictionary = {},
+        prefix: String = "") -> void:
+    var row := KitRoster.build_kit_row(kits, job, kit_id, default_kit, band, on_pick, quarry, prefix)
     if row != null:
         sheet.add_child(row)
 
@@ -2440,8 +2578,9 @@ func _mount_kit_row(sheet: VBoxContainer, kits: Array, job: String, kit_id: Stri
 ## two ways.
 func _mount_kit_gate_line(sheet: VBoxContainer, kits: Array, kit_id: String, band: Dictionary,
         herd: Dictionary, quarry: String) -> void:
-    var tiers := KitRoster.effective_tiers(kits, KitRoster.kit_by_id(kits, kit_id), band)
-    var gate := SourceForecast.hunt_gate_model_at(float(tiers["attack"]), herd, quarry)
+    var gate := SourceForecast.hunt_gate_model_at(KitRoster.effective_attack_against(
+        kits, KitRoster.kit_by_id(kits, kit_id), band,
+        float(herd.get(KitRoster.QUARRY_BODY_MASS_KEY, 0.0))), herd, quarry)
     # **ONLY THE REFUSAL RENDERS.** The winnable branch used to state the effort in hunter-turns; that
     # face is retired (a species constant beside a forecast that already prices the trip), so a fight
     # this party CAN take says nothing here and the sheet's remaining lines are the answer.
@@ -2533,12 +2672,15 @@ func _fill_denial_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: in
     var kits := _band_labor.kits()
     var default_kit := _band_labor.default_kit_id(KitRoster.JOB_HUNT)
     var kit_id := KitRoster.resolve_selection(kits, KitRoster.JOB_HUNT, default_kit,
-        _compose.party_kit_id())
+        _compose.party_kit_id(), herd, HudComposeVocab.BARE_FORECAST_PREFIX)
     _compose.set_party_kit_id(kit_id)
+    # **A DENIAL RAID IS STILL A FIGHT, so the offer test applies to it unchanged.** Erasing a herd
+    # you cannot hurt is not a mission — it is the same zero take with a different name on it.
     _mount_kit_row(sheet, kits, KitRoster.JOB_HUNT, kit_id, default_kit, band,
         func(picked: String) -> void:
             _compose.set_party_kit_id(picked)
-            rerender())
+            rerender(),
+        herd, HudComposeVocab.BARE_FORECAST_PREFIX)
     # **THE HONESTY GATE — COMPARE THE IDS, NEVER ASSUME THE DEFAULT IS SELECTED.** `denialEstimates`
     # is quoted for ONE kit and repricing it per kit was scoped out, so everything below that reads the
     # table — the collapse verdict, its caveat, the take line, the repelled refusal, the short-handed

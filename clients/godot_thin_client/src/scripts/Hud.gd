@@ -670,12 +670,16 @@ func update_herds(herds_variant: Variant) -> void:
 func update_food_modules(modules_variant: Variant) -> void:
     _band_labor.set_food_modules(modules_variant)
 
-## The world's KIT ROSTER and the two job defaults (`docs/plan_denial_raid.md`) — the four compose
+## The world's KIT ROSTER and the FOUR job defaults (`docs/plan_denial_raid.md`) — the four compose
 ## sheets' picker list, ingested once per world onto `_band_labor` (`kits()` / `default_kit_id()`).
-## `Main` forwards the three wire keys together because they are one fact; a roster whose defaults
-## named kits it did not contain would open every picker on an entry it cannot show.
-func update_kit_roster(kits_variant: Variant, default_hunt: Variant, default_forage: Variant) -> void:
-    _band_labor.set_kit_roster(kits_variant, String(default_hunt), String(default_forage))
+## `Main` forwards the wire keys together because they are one fact; a roster whose defaults named
+## kits it did not contain would open every picker on an entry it cannot show. Scout and Warrior
+## joined the list when the roster gained gear for them — until then the band-wide roles had no kit
+## axis and published `""`.
+func update_kit_roster(kits_variant: Variant, default_hunt: Variant, default_forage: Variant,
+        default_scout: Variant, default_warrior: Variant) -> void:
+    _band_labor.set_kit_roster(kits_variant, String(default_hunt), String(default_forage),
+        String(default_scout), String(default_warrior))
 
 ## Ingests the snapshot forage patches into the per-tile lookup the Current-actions Forage row reads
 ## to cap its worker stepper at max-useful, mirroring MapView's `forage_patch_lookup` ingest. The
@@ -756,12 +760,21 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
         # emitter fails loudly rather than being silently reinterpreted.
         "floor": SourceForecast.clamp_floor(floor),
         "species": species,
-        # **THE CREW'S KIT, AND THE JOB DEFAULT IT IS MEASURED AGAINST** (`docs/plan_denial_raid.md`).
+        # **THE CREW'S KIT, AND THE DEFAULT IT IS MEASURED AGAINST** (`docs/plan_denial_raid.md`).
         # Both travel, because `Main._kit_token` OMITS the token when the two agree — that is what
         # keeps today's command lines byte-identical where the player named no kit, and the builder
         # cannot know the default on its own (it is world data, not payload data).
+        #
+        # **IT IS THE HERD'S OWN DEFAULT ON A HUNT ROW, because that is what an ABSENT token means to
+        # the sim now** (`equipment.md` → "It is resolved SIM-side"): `handle_assign_labor` resolves
+        # `quarry_default_hunt_kit` for a Hunt target. Measuring against the JOB default instead would
+        # omit the token for a player who deliberately picked Stalking on a warren, and the sim would
+        # then run Trapping — the silent substitution the named path refuses outright, arriving
+        # through the absent-token door. `default_kit_for` answers the job default for every other
+        # role and for a herd the snapshot does not carry.
         "kit_id": kit_id,
-        "default_kit_id": _band_labor.default_kit_id(kind),
+        "default_kit_id": KitRoster.default_kit_for(kind,
+            _band_labor.find_world_herd(herd_id), _band_labor.default_kit_id(kind)),
     })
     _band_labor.record_pending_assign(entity, kind, clamped, x, y, herd_id, floor, improvement)
     _after_pending_change()

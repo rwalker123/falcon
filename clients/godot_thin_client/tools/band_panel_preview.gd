@@ -264,6 +264,9 @@ const DENIAL_OUTBOUND_TRAVEL_TURNS := 2
 const BAND_FIXTURE_DISCLOSURE_FOOD := "food:904"
 const BAND_FIXTURE_DISCLOSURE_MORALE := "morale:904"
 const BAND_FIXTURE_DISCLOSURE_TRADE := "trade:904"
+## …and its Kit row's, the gear popover this harness opens. Same shape, `HudDisclosureVocab`'s
+## `BREAKDOWN_KIND_KIT` over the same entity.
+const BAND_FIXTURE_DISCLOSURE_KIT := "kit:904"
 
 ## The work-inspector policy-picker states work TWO Hunt rows on one band. They used to be told apart
 ## by the RUNG they stood on — one on `corral`, which the four-rung picker could not highlight at all.
@@ -823,7 +826,8 @@ func _ready() -> void:
 	# sheets' Kit picker is built from it. World setup rather than per-state, exactly as the herds and
 	# food modules above are — a roster seeded per frame would give one sheet a picker and the next none.
 	_hud.update_kit_roster(BandFx.kit_roster_fixture(),
-		BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE)
+		BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE,
+		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR)
 	_push_bands([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
 	print("band_panel_preview: cycler split — player_bands=%d (expect 1), player_expeditions=%d (expect 2)" % [
 		_hud._band_labor._player_bands.size(), _hud._band_labor._player_expeditions.size()])
@@ -974,6 +978,22 @@ func _ready() -> void:
 	_assert_merged_morale_growth_fits()
 
 
+	# (b3) THE GEAR BREAKDOWN — the Kit row's popover, opened on the reference band, which carries one
+	# condition row per item the shipped config has. It is the ONLY surface that states what each item
+	# DOES for the band, and until the expanded roster's three tiers reached the wire it could say
+	# nothing at all about handling gear, wayfinding gear or clubs: a player was handed a scout kit
+	# and a warrior kit whose effects were invisible, and whose running dry was invisible with them.
+	_push_bands([_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"band")
+	await _settle()
+	_click_disclosure(BAND_FIXTURE_DISCLOSURE_KIT)
+	await _settle()
+	await _save("band_panel_kit_expanded")
+	_assert_zones_within_bounds()
+	_assert_gear_breakdown_states_every_kit()
+	_click_disclosure(BAND_FIXTURE_DISCLOSURE_KIT)   # toggle shut before the next state
+
 	# (c) CONCERNING food (net negative + low runway): the breakdown AUTO-shows (no click) under a red net.
 	_push_bands([_concerning_food_band_fixture()])
 	for state in [{"edge": SIDE_LEFT, "name": "band_panel_food_concerning_left"},
@@ -1106,6 +1126,28 @@ func _ready() -> void:
 	await _save("band_panel_people_map_path")
 	# Restore the snapshot-path band so the later states start from the same subject they always did.
 	_push_bands([_band_fixture()])
+
+	# THE BAND-WIDE ROLE CARDS' KIT PICKER + GEAR LINE. Until this, a player was handed a wayfinding
+	# kit and a warrior kit silently: the WORKFORCE cards named neither, and the picker was mounted
+	# only on the four hunt/forage compose sheets, so naming a kit on those two roles was a
+	# command-line act. The frame is the look; the two assertions under it are the claims a picture
+	# cannot make — WHICH item each row derives, and whether the command carries the pick.
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"band")
+	await _settle()
+	await _save("band_panel_role_kits")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_role_card_gear()
+	_assert_role_cards_are_level()
+	_assert_role_kit_command_carries_the_pick()
+	# Put the shared band back exactly as the later states expect it: the pick above is real zone
+	# state and its emit is a real pending assign, and either one left behind would render a `No kit`
+	# Scout card with an amber title in every band frame from here down.
+	_hud._bandpanel._role_kit_ids.clear()
+	_hud._band_labor._pending_labor.clear()
+	_push_bands([_band_fixture()])
+	await _settle()
 
 	# The paged WORK BOARD at 34 sources — far past one page in the narrow (L dock) shell, so the
 	# pager must appear and NOTHING may scroll. Its patches carry RUNG marks on a stride, so the
@@ -2931,9 +2973,14 @@ func _render_band_column_states() -> void:
 ## the number it must catch is a tier that failed to rise, not a block that gained a row.
 const BAND_FLANK_FILL_FLOOR := 0.60
 ## How short the LESSER column may be against the taller before the flank reads as lopsided rather
-## than laid out. 0.75 passes both authored splits at their MEASURED worst (246/263 = 0.94 charted,
-## 200/193 = 0.97 chartless) and fails the charted split applied to a chartless band (130/263 = 0.49),
-## which is exactly the case the second authored split exists for.
+## than laid out. 0.75 passes both authored splits at their MEASURED worst (**246/326 = 0.75 charted,
+## 200/256 = 0.78 chartless**) and fails the charted split applied to a chartless band (130/263 =
+## 0.49), which is exactly the case the second authored split exists for.
+##
+## **THE CHARTED FLANK NOW SITS EXACTLY ON IT — 1.5px of slack** (`246 >= 326 × 0.75`). It was 0.94
+## before the role cards grew their kit pickers, and this number is now the tightest constraint on the
+## band flank: the next row to land in the WORKFORCE column trips it. Re-author the split and
+## re-measure — do not lower the floor to fit.
 const BAND_FLANK_BALANCE_FLOOR := 0.75
 
 ## GUARD: **the widened flank SPENDS the height it recovered.** Two columns halve what each carries,
@@ -4134,6 +4181,257 @@ func _assert_map_path_states_kit() -> void:
 		String.num(spears, DetailFormat.KIT_CONDITION_DECIMALS)]
 	_assert_band_panel("…so the Kit row renders on the map path — \"%s\"" % want,
 		_rich_text_containing(_panel, want) != "")
+
+## **THE GEAR POPOVER STATES EVERY ITEM THE BAND CARRIES, EACH BESIDE THE TIER IT SETS** — the three
+## the expanded roster added included, which is what this assertion was written for: their tiers
+## reached the wire only just now, so before it a scout kit and a warrior kit had no readout at all.
+##
+## **PAIRING IS THE WHOLE CLAIM, so every row is asked BOTH what it must say and what it must not.**
+## `kit_id` names the HUNT job's default and answers for the hunt tiers alone, so the two rows most
+## likely to be mis-wired are the ones whose tiers resolve through a DIFFERENT job's default: a
+## wayfinding row quoting the hunt kit and a clubs row quoting `hunter_attack` are both perfectly
+## plausible-looking rows carrying another kit's number. The fixture's tiers are all distinct, so a
+## swap cannot pass — the pen collects at 12.0 where the sled hauls 40.0, and the camp is defended at
+## 6 where the hunt attacks at 20.
+##
+## Read off the popover's own RENDERED text, per line, like `ui_preview`'s kit assertions: the rows
+## share a shape, so a whole-popover `contains` would be satisfied by the WRONG row.
+func _assert_gear_breakdown_states_every_kit() -> void:
+	var popover := _kit_popover_text()
+	_assert_band_panel("the gear popover opened at all (%d chars)" % popover.length(),
+		popover.contains(DetailFormat.KIT_BREAKDOWN_CLIFF_NOTE))
+	var pen_role := DetailFormat.KIT_ROLE_PEN_CARRY_FORMAT % String.num(
+		BandFx.KIT_PEN_CARRY_BARE, DetailFormat.KIT_CARRY_DECIMALS)
+	var sled_role := DetailFormat.KIT_ROLE_PEN_CARRY_FORMAT % String.num(
+		BandFx.KIT_HUNT_CARRY_EQUIPPED, DetailFormat.KIT_CARRY_DECIMALS)
+	var gear_line := _kit_breakdown_line(popover, DetailFormat.KIT_LABEL_HUSBANDRY_GEAR)
+	_assert_band_panel("HANDLING GEAR states the PEN's collection rate (%s), never the sled's (%s) — \"%s\""
+			% [pen_role, sled_role, gear_line],
+		gear_line.contains(pen_role) and not gear_line.contains(sled_role))
+	_assert_band_panel("…beside its own condition (%s)" % String.num(
+			BandFx.KIT_CONDITION_HUSBANDRY_GEAR, DetailFormat.KIT_CONDITION_DECIMALS),
+		gear_line.contains(String.num(BandFx.KIT_CONDITION_HUSBANDRY_GEAR,
+			DetailFormat.KIT_CONDITION_DECIMALS)))
+	# **THE VANTAGE IS TILES, and the assertion says so in both directions.** A biomass-rate format
+	# string here would print `2.0`, which reads as a rate and is not one.
+	var vantage_role := DetailFormat.KIT_ROLE_SCOUT_VANTAGE_FORMAT % String.num(
+		BandFx.KIT_SCOUT_VANTAGE_EQUIPPED, DetailFormat.KIT_VANTAGE_DECIMALS)
+	var carry_shaped_vantage := String.num(BandFx.KIT_SCOUT_VANTAGE_EQUIPPED,
+		DetailFormat.KIT_CARRY_DECIMALS)
+	var wayfinding_line := _kit_breakdown_line(popover, DetailFormat.KIT_LABEL_WAYFINDING)
+	_assert_band_panel("WAYFINDING states a SIGHT RANGE IN TILES (%s), not a per-worker rate (%s) — \"%s\""
+			% [vantage_role, carry_shaped_vantage, wayfinding_line],
+		wayfinding_line.contains(vantage_role)
+			and not wayfinding_line.contains(carry_shaped_vantage))
+	_assert_band_panel("…beside its own condition (%s)" % String.num(
+			BandFx.KIT_CONDITION_WAYFINDING, DetailFormat.KIT_CONDITION_DECIMALS),
+		wayfinding_line.contains(String.num(BandFx.KIT_CONDITION_WAYFINDING,
+			DetailFormat.KIT_CONDITION_DECIMALS)))
+	# **CLUBS READ `warrior_attack`, NOT the hunt kit's `hunter_attack`** — the one `kit_id` answers
+	# for. Both needles are whole role phrases, so neither can match the SPEARS row two lines up.
+	var clubs_role := DetailFormat.KIT_ROLE_WARRIOR_ATTACK_FORMAT % String.num(
+		BandFx.KIT_ATTACK_CLUBS, DetailFormat.KIT_CONDITION_DECIMALS)
+	var hunt_kit_role := DetailFormat.KIT_ROLE_WARRIOR_ATTACK_FORMAT % String.num(
+		BandFx.KIT_ATTACK_EQUIPPED, DetailFormat.KIT_CONDITION_DECIMALS)
+	var clubs_line := _kit_breakdown_line(popover, DetailFormat.KIT_LABEL_CLUBS)
+	_assert_band_panel("CLUBS state the DEFENDERS' attack (%s), never the hunt kit's (%s) — \"%s\""
+			% [clubs_role, hunt_kit_role, clubs_line],
+		clubs_line.contains(clubs_role) and not clubs_line.contains(hunt_kit_role))
+	_assert_band_panel("…beside its own condition (%s)" % String.num(
+			BandFx.KIT_CONDITION_CLUBS, DetailFormat.KIT_CONDITION_DECIMALS),
+		clubs_line.contains(String.num(BandFx.KIT_CONDITION_CLUBS,
+			DetailFormat.KIT_CONDITION_DECIMALS)))
+	# …and the hunt rows are still paired with THEIR tiers, so the three new ones cannot have been
+	# added by making every row quote the same number.
+	var sled_line := _kit_breakdown_line(popover, DetailFormat.KIT_LABEL_SLED)
+	_assert_band_panel("…and the SLED still states the HUNT's carry (%s) — \"%s\""
+			% [String.num(BandFx.KIT_HUNT_CARRY_EQUIPPED, DetailFormat.KIT_CARRY_DECIMALS), sled_line],
+		sled_line.contains(DetailFormat.KIT_ROLE_HUNT_CARRY_FORMAT % String.num(
+			BandFx.KIT_HUNT_CARRY_EQUIPPED, DetailFormat.KIT_CARRY_DECIMALS)))
+
+## The open breakdown popover's RENDERED text — the popover is a Window and never lands in a capture,
+## so this is the only witness to what it says. Parsed, so the BBCode tags are gone.
+func _kit_popover_text() -> String:
+	var label = _hud._disclosures._breakdown_popover_label
+	return "" if label == null else String((label as RichTextLabel).get_parsed_text())
+
+## ONE breakdown row out of the popover, by the item's NAME. Split per line rather than matched over
+## the whole popover, because every row carries the same shape and a whole-popover `contains` could be
+## satisfied by the wrong item's row — the exact substitution these assertions exist to catch.
+func _kit_breakdown_line(popover: String, label: String) -> String:
+	for line in popover.split("\n"):
+		if String(line).contains(label):
+			return String(line)
+	return ""
+
+## **EACH BAND-WIDE ROLE CARD NAMES ITS OWN KIT AND ITS OWN ITEM** — the picker's closed face and the
+## gear line beneath it, asserted by EQUALITY on both cards.
+##
+## **THE ITEM IS THE CLAIM, AND IT IS WHY THE WARRIOR CARD IS HALF OF THIS.** `KitRoster.AXIS_ITEMS`
+## maps `attack` to the SPEARS, which is right on a hunt sheet and wrong here: a warrior kit buys the
+## same stat off `clubs`, so the row has to resolve its item per JOB (`KitRoster.item_for_axis`). A
+## card reading the axis table alone renders `attack 6 defending the camp · Spears 74` — a perfectly
+## plausible line, quoting the wear on gear this role never touches.
+##
+## **THE EXPECTED STRINGS NAME THEIR ITEM LABELS OUTRIGHT**, never through `item_for_axis`: composing
+## the expectation through the derivation under test would assert only that it agrees with itself.
+func _assert_role_card_gear() -> void:
+	_assert_one_role_card_gear(HudWorkVocab.ROLE_NAME_SCOUT, KitRoster.JOB_SCOUT, "Wayfinding kit",
+		DetailFormat.KIT_ROLE_SCOUT_VANTAGE_FORMAT % String.num(
+			BandFx.KIT_SCOUT_VANTAGE_EQUIPPED, DetailFormat.KIT_VANTAGE_DECIMALS),
+		DetailFormat.KIT_LABEL_WAYFINDING, BandFx.KIT_CONDITION_WAYFINDING)
+	_assert_one_role_card_gear(HudWorkVocab.ROLE_NAME_WARRIOR, KitRoster.JOB_WARRIOR, "Warrior kit",
+		DetailFormat.KIT_ROLE_WARRIOR_ATTACK_FORMAT % String.num(
+			BandFx.KIT_ATTACK_CLUBS, DetailFormat.KIT_CONDITION_DECIMALS),
+		DetailFormat.KIT_LABEL_CLUBS, BandFx.KIT_CONDITION_CLUBS)
+
+func _assert_one_role_card_gear(role_name: String, job: String, kit_name: String, effect: String,
+		item_label: String, condition: float) -> void:
+	var card := _find_role_card(role_name)
+	_assert_band_panel("the %s card carries a kit picker" % role_name, card != null)
+	if card == null:
+		return
+	var picker := _find_meta_control(card, KitRoster.KIT_PICKER_META) as OptionButton
+	if picker == null:
+		_fail("the %s card has no kit picker" % role_name)
+		return
+	var face := HudComposeVocab.KIT_PICKER_FACE_FORMAT % [
+		String(HudComposeVocab.KIT_JOB_GLYPHS[job]), kit_name]
+	_assert_band_panel("…whose face names this role's own kit (\"%s\")" % picker.text,
+		picker.text == face)
+	var hint := _find_meta_control(card, KitRoster.KIT_HINT_META) as Label
+	if hint == null:
+		_fail("the %s card has no gear line" % role_name)
+		return
+	var want := HudComposeVocab.KIT_HINT_SEPARATOR.join([effect,
+		HudComposeVocab.KIT_HINT_ROLE_ITEM_FORMAT % [item_label,
+			String.num(condition, DetailFormat.KIT_CONDITION_DECIMALS)]])
+	_assert_band_panel("…over a gear line stating what it buys and the item behind it — \"%s\""
+			% hint.text, hint.text == want)
+
+## **THE TWO ROLE CARDS DRAW TO THE SAME HEIGHT.** Reported on sight: side by side at unequal heights
+## the pair reads as ragged. Their content genuinely differs in height — the Scout's description wraps
+## to three lines against the Warrior's two, and either kit name can wrap — so the claim is that the
+## SHORTER card is padded to the taller, never that the two hold the same amount.
+##
+## **IT IS ASSERTED RATHER THAN EYEBALLED BECAUSE THE PROPERTY RESTS ON ONE SIZE FLAG** — the
+## `SIZE_FILL` the row's `HBoxContainer` stretches against, which is `Control`'s own default and so
+## appears in no diff at all until someone writes something else there. A card an eighth short still
+## draws its border, its background and every control inside it, so a PNG shows two plausible cards.
+##
+## **AND BECAUSE THE NEXT TEXT CHANGE IS WHAT WOULD REINTRODUCE IT.** A hardcoded minimum height would
+## pass this by construction and be wrong the moment a description or a kit name changes length, so
+## the assertion is deliberately a comparison of the two RENDERED heights and quotes both.
+##
+## `HEIGHT_EPSILON` is the sub-pixel disagreement between a container's rounded layout and the float
+## rects it writes — the tolerance `_faction_keyless_rows` takes for the same reason.
+func _assert_role_cards_are_level() -> void:
+	var scout := _find_role_card(HudWorkVocab.ROLE_NAME_SCOUT)
+	var warrior := _find_role_card(HudWorkVocab.ROLE_NAME_WARRIOR)
+	if scout == null or warrior == null:
+		_fail("both role cards must render to compare their heights")
+		return
+	# THE PRECONDITION. Two cards of zero height are trivially level, and so are two cards whose
+	# content happens to measure the same — the claim is only worth making where one card's CONTENT is
+	# genuinely shorter than the other's, which is what makes the padding observable.
+	var scout_content := scout.get_combined_minimum_size().y
+	var warrior_content := warrior.get_combined_minimum_size().y
+	_assert_band_panel(
+		"the two role cards hold DIFFERENT amounts (Scout wants %.0fpx, Warrior %.0fpx) — %s"
+			% [scout_content, warrior_content,
+				"so the shorter one has to be padded" if scout_content != warrior_content
+					else "NOTHING TO PROVE"],
+		scout_content != warrior_content and minf(scout_content, warrior_content) > 0.0)
+	_assert_band_panel("…and both cards RENDER at the same height (Scout %.0fpx, Warrior %.0fpx)"
+			% [scout.size.y, warrior.size.y],
+		absf(scout.size.y - warrior.size.y) <= ROLE_CARD_HEIGHT_EPSILON)
+
+## How far two role cards' rendered heights may differ before the pair reads as ragged — the sub-pixel
+## disagreement between a container's rounded layout and the float rects it writes, and nothing more.
+const ROLE_CARD_HEIGHT_EPSILON := 1.0
+
+## **THE PICK REACHES THE COMMAND, AND THE DEFAULT STILL OMITS THE TOKEN** — a PAIR, because either
+## claim alone is satisfied by a builder that gets the tail exactly backwards.
+##
+## Both halves are driven through the picker's REAL `item_selected` wiring — the signal
+## `HudWidgets.build_option_picker` connects the entry callables to — and read off the payload the
+## HUD actually emits, put through `Main.format_assign_labor`. A role card has no Send to commit at,
+## so the pick emits on the press; a pick that only moved client state would leave the sim running
+## the kit the card had stopped naming.
+func _assert_role_kit_command_carries_the_pick() -> void:
+	var card := _find_role_card(HudWorkVocab.ROLE_NAME_SCOUT)
+	var picker := _find_meta_control(card, KitRoster.KIT_PICKER_META) as OptionButton if card != null else null
+	if picker == null:
+		_fail("no Scout kit picker to drive")
+		return
+	# The entry that is NOT tagged `(default)` — the roster's `none`, which the sim would never
+	# resolve on its own, so the tail it produces cannot be an accident of the default.
+	var other := -1
+	var default_entry := -1
+	for i in picker.item_count:
+		if picker.get_item_text(i).contains(HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX):
+			default_entry = i
+		else:
+			other = i
+	_assert_band_panel("the Scout picker offers a non-default kit to pick (%d entries)"
+			% picker.item_count, other >= 0 and default_entry >= 0)
+	if other < 0 or default_entry < 0:
+		return
+	var picked := _emitted_assign_line(picker, other)
+	_assert_band_panel("picking a kit on a STAFFED role card emits at once — \"%s\"" % picked,
+		picked != "")
+	if picked == "":
+		return
+	_assert_band_panel("…and the line carries the named kit tail — \"%s\"" % picked,
+		picked.ends_with(" kit %s" % BandFx.KIT_ID_NONE))
+	_assert_band_panel("…on the band-wide role's own grammar, which takes no other token — \"%s\""
+			% picked,
+		picked.contains(" %s " % HudConst.LABOR_KIND_SCOUT))
+	# THE NEGATIVE HALF. Picking the job default back emits the line this client always emitted:
+	# `Main._kit_token` omits the tail when the choice is what the sim would resolve anyway, and a
+	# builder that appended unconditionally would pass every claim above.
+	var restored := _emitted_assign_line(picker, default_entry)
+	_assert_band_panel("…while picking the job DEFAULT back omits the tail — \"%s\"" % restored,
+		restored != "" and not restored.contains(" kit "))
+
+## Drive one entry of a live picker and hand back the command line the HUD's emit produced, `""` when
+## nothing was emitted. The picker is re-found after the pick because the card rebuilds on it.
+func _emitted_assign_line(picker: OptionButton, index: int) -> String:
+	var seen: Array[Dictionary] = []
+	var sink := func(payload: Dictionary) -> void: seen.append(payload)
+	_hud.assign_labor_requested.connect(sink)
+	picker.item_selected.emit(index)
+	_hud.assign_labor_requested.disconnect(sink)
+	if seen.is_empty():
+		return ""
+	return String(MAIN_SCRIPT.format_assign_labor(seen[0]).get("line", ""))
+
+## The WORKFORCE zone's role CARD, found by its own title label. **Never by sibling index**: the two
+## cards are built side by side and an order assumption would read the Warrior's picker for the
+## Scout's, which is the exact substitution the assertions above exist to catch. Deepest match first,
+## so an enclosing `PanelContainer` can never answer for a card inside it.
+func _find_role_card(role_name: String) -> PanelContainer:
+	var host := _band_flank_host()
+	return null if host == null else _role_card_under(host, role_name)
+
+func _role_card_under(node: Node, role_name: String) -> PanelContainer:
+	for child in node.get_children():
+		var found := _role_card_under(child, role_name)
+		if found != null:
+			return found
+	if node is PanelContainer and _has_label_titled(node, role_name):
+		return node as PanelContainer
+	return null
+
+## Does this subtree carry a Label whose whole text is `title`? EXACT, not `contains` — the role
+## card's own hint mentions "scouts", and a substring test would match the hint before the title.
+func _has_label_titled(node: Node, title: String) -> bool:
+	if node is Label and (node as Label).text == title:
+		return true
+	for child in node.get_children():
+		if _has_label_titled(child, title):
+			return true
+	return false
 
 ## The panel's SANCTIONED `ScrollContainer`s, by node name and by the zone each must sit under. Two,
 ## and the pairing is half the claim: a scroll is only safe in a zone whose builder declares a fixed
@@ -7958,7 +8256,7 @@ func _assert_kit_picker_closed() -> void:
 	# `OptionButton` conversion has to get right: `select()` writes the item's own text into `text`,
 	# so a face equal to the LIST entry means the override never ran, and the equality catches it.
 	var face := HudComposeVocab.KIT_PICKER_FACE_FORMAT % [
-		String(HudComposeVocab.KIT_JOB_GLYPHS[KitRoster.JOB_HUNT]), "Big-game kit"]
+		String(HudComposeVocab.KIT_JOB_GLYPHS[KitRoster.JOB_HUNT]), "Stalking kit"]
 	_assert_band_panel("…whose face names the selected kit (\"%s\")" % picker.text,
 		picker.text == face)
 	var hint := HudComposeVocab.KIT_HINT_SEPARATOR.join([
@@ -7992,7 +8290,7 @@ func _assert_kit_picker_open(picker: OptionButton) -> void:
 	# The GATHERING kit lists `forage` alone, so its absence is the filter working rather than a
 	# roster that happens to hold two entries.
 	var want_labels: Array[String] = [
-		"Big-game kit" + HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX, "No kit"]
+		"Stalking kit" + HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX, "No kit"]
 	_assert_band_panel("…listing exactly this verb's kits, the default tagged, `none` last — %s"
 			% str(labels),
 		labels == want_labels)
@@ -8001,7 +8299,7 @@ func _assert_kit_picker_open(picker: OptionButton) -> void:
 		if popup.is_item_checked(i):
 			checked.append(popup.get_item_text(i))
 	_assert_band_panel("…marking exactly the composed kit (%s)" % str(checked),
-		checked.size() == 1 and String(checked[0]).begins_with("Big-game kit"))
+		checked.size() == 1 and String(checked[0]).begins_with("Stalking kit"))
 
 ## **THE KIT-MISMATCH STATE, ASSERTED BY EQUALITY** — `none` composed against tables quoted for
 ## `big_game`.
@@ -8030,7 +8328,7 @@ func _assert_kit_mismatch_suppresses_estimates() -> void:
 		SourceForecast.HUNT_FORECAST_WARN_GLYPH, "Wild Boar",
 		String.num(BandFx.KIT_ATTACK_BARE, SourceForecast.HUNT_GATE_SCALAR_DECIMALS),
 		String.num(QUARRY_DEFENSE, SourceForecast.HUNT_GATE_SCALAR_DECIMALS)]
-	var note := HudComposeVocab.KIT_DENIAL_ESTIMATES_QUOTED_FORMAT % ["Big-game kit", "No kit"]
+	var note := HudComposeVocab.KIT_DENIAL_ESTIMATES_QUOTED_FORMAT % ["Stalking kit", "No kit"]
 	var want: Array[String] = [gate, note]
 	_assert_band_panel(("…and below it says EXACTLY the gate and the quoted-kit note — "
 			+ "no verdict, no caveat, no take, no refusal. Got %s") % str(tail),
@@ -8574,12 +8872,30 @@ func _map_path_snapshot() -> Dictionary:
 ## deliberately WEARING rather than round, so the row prints a real number and an `int()` narrowing is
 ## visible; none dry, so the DANGER tint keeps its meaning; `hunter_attack` above a Wild Boar's
 ## defense, so the ⚠ effective-attack gate stays quiet and its own coverage stays where it is.
+##
+## **THE EXPANDED ROSTER'S THREE ITEMS AND THEIR THREE TIERS RIDE IT TOO**, because the claim this
+## fixture backs is that the map marker carries the WHOLE cohort — a key it never states is a key the
+## partition assertion says nothing about. Every value below is DISTINCT from every other tier on the
+## band, so the gear popover's rows cannot pass with two of them swapped: the pen's rate is not the
+## sled's 2.5, and the warriors' attack is not the hunters' 2.
+const MAP_PATH_HUSBANDRY_GEAR_CONDITION := 45.0
+const MAP_PATH_WAYFINDING_CONDITION := 66.0
+const MAP_PATH_CLUBS_CONDITION := 22.0
+const MAP_PATH_PEN_CARRY := 3.5
+## Whole tiles, because that is what a posted vantage reveals at; the popover states it in tiles and
+## never at the carries' one decimal.
+const MAP_PATH_SCOUT_VANTAGE := 2.0
+const MAP_PATH_WARRIOR_ATTACK := 5.0
+
 func _kit_band_fixture() -> Dictionary:
 	var band := _band_fixture()
-	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": 74.5}, {"item_id": "sled", "remaining": 58.0}, {"item_id": "baskets", "remaining": 91.0}, {"item_id": "traps", "remaining": 83.0}]
+	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": 74.5}, {"item_id": "sled", "remaining": 58.0}, {"item_id": "baskets", "remaining": 91.0}, {"item_id": "traps", "remaining": 83.0}, {"item_id": "husbandry_gear", "remaining": MAP_PATH_HUSBANDRY_GEAR_CONDITION}, {"item_id": "wayfinding", "remaining": MAP_PATH_WAYFINDING_CONDITION}, {"item_id": "clubs", "remaining": MAP_PATH_CLUBS_CONDITION}]
 	band["hunter_attack"] = 2.0
 	band["hunt_carry_per_worker_biomass"] = 2.5
 	band["forage_carry_per_worker_biomass"] = 1.75
+	band["pen_carry_per_worker_biomass"] = MAP_PATH_PEN_CARRY
+	band["scout_vantage_range"] = MAP_PATH_SCOUT_VANTAGE
+	band["warrior_attack"] = MAP_PATH_WARRIOR_ATTACK
 	return band
 
 # ---- THE SHARED FIXTURE's kit condition (`docs/plan_hunt_through_combat.md` §4.8) ----------------
@@ -8624,11 +8940,15 @@ const KIT_FRAME_BASKETS_CONDITION := 91.0
 ## apart from it because the map-path state asserts a live `Sled 58` row.
 func _kit_worn_band_fixture() -> Dictionary:
 	var band := _band_fixture()
-	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": KIT_FRAME_SPEARS_CONDITION}, {"item_id": "sled", "remaining": KIT_FRAME_SLED_DRY}, {"item_id": "baskets", "remaining": KIT_FRAME_BASKETS_CONDITION}, {"item_id": "traps", "remaining": KIT_FRAME_SPEARS_CONDITION}]
+	# The list is REPLACED rather than extended, so the expanded roster's three are restated here —
+	# a cohort the server publishes carries one row per item in the config's table, and dropping three
+	# of them would render a band no live world produces.
+	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": KIT_FRAME_SPEARS_CONDITION}, {"item_id": "sled", "remaining": KIT_FRAME_SLED_DRY}, {"item_id": "baskets", "remaining": KIT_FRAME_BASKETS_CONDITION}, {"item_id": "traps", "remaining": KIT_FRAME_SPEARS_CONDITION}, {"item_id": "husbandry_gear", "remaining": BandFx.KIT_CONDITION_HUSBANDRY_GEAR}, {"item_id": "wayfinding", "remaining": BandFx.KIT_CONDITION_WAYFINDING}, {"item_id": "clubs", "remaining": BandFx.KIT_CONDITION_CLUBS}]
 	# The band's OWN resolved tiers, i.e. what it gets under the JOB DEFAULT. They are the cohort's
 	# statement and the `Kit` row reads them; the picker does NOT — it resolves the SELECTED kit's
 	# tiers off the roster — so they are set consistently with the conditions above rather than being
-	# what the picker's assertions read.
+	# what the picker's assertions read. The three the expanded roster added are inherited from
+	# `_band_fixture` unchanged: this fixture's twist is the SLED, and only the hunt carry moves with it.
 	band["hunter_attack"] = BandFx.KIT_ATTACK_EQUIPPED
 	band["hunt_carry_per_worker_biomass"] = BandFx.KIT_HUNT_CARRY_BARE
 	band["forage_carry_per_worker_biomass"] = BandFx.KIT_FORAGE_CARRY_EQUIPPED
@@ -8704,7 +9024,7 @@ func _band_fixture() -> Dictionary:
 		# Three DIFFERENT conditions on the 0-100 scale, so an assertion cannot pass with two
 		# accessors swapped; none dry, so the row's DANGER tint keeps its meaning and the frames that
 		# judge a spent kit stay the ones that state one.
-		"kit_item_conditions": [{"item_id": "spears", "remaining": KIT_SHARED_SPEARS_CONDITION}, {"item_id": "sled", "remaining": KIT_SHARED_SLED_CONDITION}, {"item_id": "baskets", "remaining": KIT_SHARED_BASKETS_CONDITION}, {"item_id": "traps", "remaining": KIT_SHARED_SPEARS_CONDITION}],
+		"kit_item_conditions": [{"item_id": "spears", "remaining": KIT_SHARED_SPEARS_CONDITION}, {"item_id": "sled", "remaining": KIT_SHARED_SLED_CONDITION}, {"item_id": "baskets", "remaining": KIT_SHARED_BASKETS_CONDITION}, {"item_id": "traps", "remaining": KIT_SHARED_SPEARS_CONDITION}, {"item_id": "husbandry_gear", "remaining": BandFx.KIT_CONDITION_HUSBANDRY_GEAR}, {"item_id": "wayfinding", "remaining": BandFx.KIT_CONDITION_WAYFINDING}, {"item_id": "clubs", "remaining": BandFx.KIT_CONDITION_CLUBS}],
 		# The RESOLVED tiers the sim publishes beside them. Equipped throughout, matching the
 		# conditions above — `hunter_attack` well clear of `QUARRY_DEFENSE`, so no compose sheet on
 		# this band reads the combat gate's refusal and the frames that judge that refusal stay the
@@ -8712,6 +9032,14 @@ func _band_fixture() -> Dictionary:
 		"hunter_attack": BandFx.KIT_ATTACK_EQUIPPED,
 		"hunt_carry_per_worker_biomass": BandFx.KIT_HUNT_CARRY_EQUIPPED,
 		"forage_carry_per_worker_biomass": BandFx.KIT_FORAGE_CARRY_EQUIPPED,
+		# The expanded roster's three, resolved through the SAME job defaults `BandFx.with_equipped_kit`
+		# resolves them through — one shared roster, so a band in this harness and a band in
+		# `ui_preview` cannot get different answers off the same kits. The pen tier is the BARE one
+		# because no entry of that roster equips husbandry gear (its own note records why), which is
+		# also what keeps the pen row assertable against the sled's 40.
+		"pen_carry_per_worker_biomass": BandFx.KIT_PEN_CARRY_BARE,
+		"scout_vantage_range": BandFx.KIT_SCOUT_VANTAGE_EQUIPPED,
+		"warrior_attack": BandFx.KIT_ATTACK_CLUBS,
 		# The raid-forecast levers the sim echoes on every cohort: the slow-raid warn line and the
 		# move rate the client adds round-trip travel from. Without them the compose sheet's forecast
 		# degrades to hunting turns only and can never read "slow" — i.e. it would prove less.

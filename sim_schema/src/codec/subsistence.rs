@@ -22,6 +22,8 @@ pub(crate) fn serialize_subsistence_section<'a>(
     let kits = create_kits(builder, &snapshot.kits);
     let default_hunt_kit_id = builder.create_string(&snapshot.default_hunt_kit_id);
     let default_forage_kit_id = builder.create_string(&snapshot.default_forage_kit_id);
+    let default_scout_kit_id = builder.create_string(&snapshot.default_scout_kit_id);
+    let default_warrior_kit_id = builder.create_string(&snapshot.default_warrior_kit_id);
     let equipment_config_json = builder.create_string(&snapshot.equipment_config_json);
     fb::SubsistenceSection::create(
         builder,
@@ -34,6 +36,8 @@ pub(crate) fn serialize_subsistence_section<'a>(
             kits: Some(kits),
             defaultHuntKitId: Some(default_hunt_kit_id),
             defaultForageKitId: Some(default_forage_kit_id),
+            defaultScoutKitId: Some(default_scout_kit_id),
+            defaultWarriorKitId: Some(default_warrior_kit_id),
             // The designer surface's read-only catalogue — the whole TOE config as one JSON string.
             // Workbench-only; see the schema comment.
             equipmentConfigJson: Some(equipment_config_json),
@@ -77,6 +81,14 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
         .default_forage_kit_id
         .as_ref()
         .map(|id| builder.create_string(id));
+    let default_scout_kit_id = delta
+        .default_scout_kit_id
+        .as_ref()
+        .map(|id| builder.create_string(id));
+    let default_warrior_kit_id = delta
+        .default_warrior_kit_id
+        .as_ref()
+        .map(|id| builder.create_string(id));
     let equipment_config_json = delta
         .equipment_config_json
         .as_ref()
@@ -92,6 +104,8 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
             kits,
             defaultHuntKitId: default_hunt_kit_id,
             defaultForageKitId: default_forage_kit_id,
+            defaultScoutKitId: default_scout_kit_id,
+            defaultWarriorKitId: default_warrior_kit_id,
             equipmentConfigJson: equipment_config_json,
         },
     )
@@ -123,6 +137,10 @@ fn create_kits<'a>(
                 attack: state.attack,
                 huntCarryPerWorkerBiomass: state.hunt_carry_per_worker_biomass,
                 forageCarryPerWorkerBiomass: state.forage_carry_per_worker_biomass,
+                // The pen's and the scout vantage's tiers — the two roles the roster gained with
+                // husbandry gear and wayfinding gear.
+                penCarryPerWorkerBiomass: state.pen_carry_per_worker_biomass,
+                scoutVantageRange: state.scout_vantage_range,
                 // What the kit DOES beyond the tiers — all three neutral at 1.0, so a kit declaring
                 // none of them encodes exactly as it did before they existed.
                 attackMinBodyMass: state.attack_min_body_mass,
@@ -174,6 +192,9 @@ fn create_herds<'a>(
         let hunt_trip_estimates_kit_id =
             builder.create_string(herd.hunt_trip_estimates_kit_id.as_str());
         let denial_estimates_kit_id = builder.create_string(herd.denial_estimates_kit_id.as_str());
+        // THE KIT THIS QUARRY WANTS — always written for the same reason: a consumer comparing its
+        // player's selection against an absent string would read every herd as a mismatch.
+        let default_kit_id = builder.create_string(herd.default_kit_id.as_str());
         let hunt_trip_estimates = if herd.hunt_trip_estimates.is_empty() {
             None
         } else {
@@ -340,6 +361,8 @@ fn create_herds<'a>(
                 denialPartyNeeded: herd.denial_party_needed,
                 huntTripEstimatesKitId: Some(hunt_trip_estimates_kit_id),
                 denialEstimatesKitId: Some(denial_estimates_kit_id),
+                // The quarry's own default kit — appended last, so the slot stays positional.
+                defaultKitId: Some(default_kit_id),
             },
         );
         entries.push(entry);

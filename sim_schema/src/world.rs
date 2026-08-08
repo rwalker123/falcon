@@ -202,6 +202,12 @@ pub struct WorldSnapshot {
     pub default_hunt_kit_id: String,
     #[serde(default)]
     pub default_forage_kit_id: String,
+    /// The two band-wide roles' defaults. They had no kit axis until the roster gained wayfinding
+    /// gear and clubs; both always name a roster entry now, like the two above.
+    #[serde(default)]
+    pub default_scout_kit_id: String,
+    #[serde(default)]
+    pub default_warrior_kit_id: String,
     /// **The whole effective TOE config, `serde_json`-serialized** — the designer surface's
     /// read-only catalogue, so the Workbench can print keys nobody wrote client code for. A
     /// per-world constant. Empty string = the sim failed to serialize it. **Only the Workbench may
@@ -304,6 +310,10 @@ pub struct WorldDelta {
     pub default_hunt_kit_id: Option<String>,
     #[serde(default)]
     pub default_forage_kit_id: Option<String>,
+    #[serde(default)]
+    pub default_scout_kit_id: Option<String>,
+    #[serde(default)]
+    pub default_warrior_kit_id: Option<String>,
     /// The serialized TOE config; a per-world constant, so a delta re-sends it only when the world
     /// is rebuilt. `None` means unchanged.
     #[serde(default)]
