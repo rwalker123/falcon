@@ -215,7 +215,7 @@ const HORIZONTAL_BODY_CHROME := 60.0
 ##
 ##   * **band flank** — `BAND_ZONE_TWO_COLUMN_EXTENT`, the binding one.
 ##   * **parties zone** — its fixed chrome only now: the head, the pinned Scout/Hunt/Deny row and
-##     `HudComposeVocab.PARTIES_LIST_MIN_HEIGHT`. Measured well under the flank, so it cannot bind.
+##     `HudWorkVocab.PARTIES_LIST_MIN_HEIGHT`. Measured well under the flank, so it cannot bind.
 ##   * **work zone** — pages itself against `work_zone_size()`, so a shorter box costs it a board row
 ##     rather than overflowing. It never binds by construction.
 ##

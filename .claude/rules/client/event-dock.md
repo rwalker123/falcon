@@ -411,9 +411,20 @@ card drew 68px outside the strip it was given and `EventRows` (`clip_contents`) 
 labels. As with the panel above this surfaced through issue #490 but is not a scale defect — the same
 arithmetic reaches it at 1.0 in a window near 1200px.
 
-`MIN_STRIP_WIDTH` is **654** — the very number the cap's own derivation names (widest shipped row 537
-+ expander 86 + chrome 31), so **the two bounds are one measurement read from both ends**. Re-measure
-both together if the font sizes move.
+**`MIN_STRIP_WIDTH` is the CARD's minimum, not the widest ROW's.** It is **407** —
+`CARD_BAR_MIN_WIDTH` (387) + `CARD_CHROME_WIDTH` (20), measured off the live card rather than summed
+from a fixture. The cap is a different measurement (widest shipped row 537 + expander 86 + chrome 31
+= **654**), and the two must not be conflated.
+
+It was 654 briefly, on the reasoning that the floor and the cap were "one measurement read from both
+ends". That is wrong, and it cost a defect: the failure the floor prevents is the card overflowing
+the strip it was given, and the card's minimum is 407, so setting the floor at 654 forced an
+**overhang across the whole `[407, 654)` band where none was needed**. At a 1200px logical viewport
+with nothing docked the band is 1200 − 360 − 344 = 496; `clampf(496, 654, …)` yielded 654 and hung
+the bar 79px over each HUD column — the exact overlap `Main._update_event_dock_insets` exists to
+prevent. In that band the strip both fits inside its insets and clears the card; the only cost is
+`clip_contents` truncating the longest label. **A symmetrical-looking derivation is not evidence:
+ask what the bound is protecting, and measure THAT.**
 
 **Below the floor the strip OVERHANGS its insets rather than clipping its rows**, symmetrically about
 the band it was offered, then clamped inside the viewport. `band - width` goes negative exactly when
@@ -422,11 +433,17 @@ one. The floor also yields to the window (`minf(MIN_STRIP_WIDTH, window.x)`): a 
 one row has nowhere to put the overhang, and a strip hanging off the screen edge loses the same text
 the floor exists to save.
 
-**That overhang is a deliberate trade, and it is the only one available.** A band under 654 has no
-arrangement in which the bar both clears every HUD column and states a row, so the choice is between
-overlapping a column and printing an unreadable sliver — and a bar that cannot be read has stopped
-being a notification. It is the one place the strip's "clears every column" property is knowingly
-given up.
+**That overhang is a deliberate trade, and below 407 it is the only one available.** A band under the
+card's own minimum has no arrangement in which the bar both clears every HUD column and states a row,
+so the choice is between overlapping a column and printing an unreadable sliver — and a bar that
+cannot be read has stopped being a notification. It is the one place the strip's "clears every
+column" property is knowingly given up, and the band it is given up over is now as narrow as the
+card's minimum allows. **Above 407 rows clip instead — clipping a long label is acceptable, drawing
+over a dock column is not.**
+
+`event_dock_narrow_band` is the frame that holds this: it stages the 496px band by reservation and
+asserts the strip's ends against the **viewport and the insets**, never against `MIN_STRIP_WIDTH`. An
+assertion phrased in the floor's own terms would have stayed green through the whole defect.
 
 ## The strip yields to the map, and the reservation never depends on content
 
@@ -442,18 +459,37 @@ Two separate rules, both learned elsewhere in this HUD:
   **That clamp is measured against the WHOLE viewport, and on a shared edge the displaced strip
   therefore reads `[_edge_offset, _edge_offset + cross]` with nothing bounding the pair** —
   `BandCityPanel.MAX_WIDE_HEIGHT_FRACTION` (0.6) and this one (0.5) sum to 1.1 of the window. **What
-  holds the line is that neither fraction is ever the binding term.** Both heights are dominated by
-  absolute caps: `PANEL_HEIGHT_WIDE` is 360 and the tallest strip the dock can build is a one-line
-  title bar + `LOG_HEIGHT` + the section gap = **304**, so the pair tops out at **664** — while
-  `_viewport_size().y` never drops below **1080**, because `project.godot` stretches `canvas_items`
-  from a 1920×1080 base with an `expand` aspect and the visible rect is `window / min(w/1920,
-  h/1080)`. A short WINDOW therefore yields a WIDE canvas, never a short one: measured, a 1200×650
-  window lays out at 1993×1080 and a 1500×500 one at 3240×1080. The fractions bind only below
-  viewport heights of 600 and 608 respectively, which are unreachable. **A repro stated in window
-  pixels is not a repro** — nothing in either panel's layout ever sees that number.
-  `event_dock_co_edge_expanded` is the frame that holds the sum to account, and it prints its slack
-  (488 of a 1152-px harness canvas) rather than merely passing, so the day `LOG_HEIGHT` or
-  `PANEL_HEIGHT_WIDE` grows into the floor is visible before it overflows.
+  holds the line is that neither fraction is ever the binding term** — but the margin by which that
+  is true is now thin, and both of the premises it used to rest on have been retired.
+
+  Both heights are still dominated by absolute caps. The strip's is unchanged: a one-line title bar
+  + `LOG_HEIGHT` + the section gap = **304**. The panel's is no longer `PANEL_HEIGHT_WIDE` — a
+  horizontal dock sizes itself as `_horizontal_panel_height()` = `_body_budget() +
+  _shell_chrome_height()`, whose worst case is the ONE-column body (360) plus the narrow shell's tab
+  bar, i.e. **395**. The two-column body is the shorter of the two (335), so the tall case is the
+  narrow window, which is also the case the co-edge pair cares about.
+
+  **And the viewport floor of 1080 is gone.** It used to hold because `project.godot` stretches
+  `canvas_items` from a 1920×1080 base with an `expand` aspect, so a short WINDOW yielded a WIDE
+  canvas and never a short one — a 1500×500 window laid out at 3240×1080. The interface-scale
+  setting divides that: `content_scale_factor` is `ui_scale`, so the logical viewport is the stretch
+  result over the scale, and at `UI_SCALE_MAX` (1.50) the floor is **720**, not 1080. See
+  `interface-scale.md`.
+
+  Worked at the worst case — `ui_scale` 1.5 on a 16:9 window gives a 1280×720 logical viewport; a
+  TOP dock's span is 1280 − 704 = 576, under `wide_shell_min_width()`, so the panel is in the narrow
+  shell at 395; a co-edge dock with the log open is 304. The pair occupies **699 of 720**. Neither
+  fraction binds (0.6 × 720 = 432 > 395; 0.5 × 720 = 360 > 304), so the invariant still holds — on
+  **21px** of slack rather than the 416 the old derivation enjoyed. A further ~20px in `LOG_HEIGHT`
+  or in either body budget overflows it.
+
+  **`event_dock_co_edge_expanded` cannot see this.** It runs at `ui_scale` 1.0 on a 1152-px harness
+  canvas and prints 488 of slack, which is a true number for the frame it measures and not the worst
+  case. The frame is scale-blind by construction. So the printed slack is evidence about the
+  unscaled layout only — do not read it as headroom for the pair.
+
+  **A repro stated in window pixels is still not a repro** — nothing in either panel's layout sees
+  the window; it sees the stretch result divided by the scale.
 - **The strip's cross-axis size reads only the preference, the expanded flag and the viewport** —
   never the event list. It is `recent_count` rows tall whether or not it has that many events. This
   is `BandCityPanel`'s rule, learned there as a map flicker on every `+` press; here an arriving

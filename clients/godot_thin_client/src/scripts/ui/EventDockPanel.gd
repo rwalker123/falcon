@@ -97,25 +97,47 @@ const LOG_HEIGHT := 260.0
 ## Cross-axis only, the same rule as the perpendicular insets: it moves where the strip is DRAWN,
 ## never what it reserves.
 const MAX_STRIP_WIDTH := 1280.0
-## **THE NARROWEST THE STRIP MAY BE — the OTHER half of the measurement above, applied from below.**
+## **THE NARROWEST THE STRIP MAY BE — the point below which the CARD no longer fits inside it.**
 ##
-## The cap's own rule is "no content is ever squeezed"; nothing was enforcing it downward. The strip
-## takes whatever the perpendicular insets leave, and those are three FIXED logical widths — a docked
+## Nothing bounded the strip from below at all. The strip takes whatever the perpendicular insets
+## leave, and those are three FIXED logical widths — a docked
 ## panel's reservation plus the HUD's two authored columns (360 + 344) — so the band collapses as the
 ## logical viewport shrinks. Measured with the Band panel docked LEFT at `ui_scale` 1.35: a 1422px
 ## viewport, insets 740 / 344, **a 338px band** — against a card whose own combined minimum is 406, so
 ## the card drew 68px OUTSIDE the strip it was given while `EventRows` (`clip_contents`) silently cut
 ## its labels. Reachable at `ui_scale` 1.0 in a window near 1200px wide, for the same arithmetic.
 ##
-## It is the 654 the cap's own derivation names — the widest shipped row (537) plus the expander (86)
-## and the card chrome (31) — so the two bounds are one measurement read from both ends, and re-measure
-## BOTH there if the font sizes move.
+## **IT IS THE CARD'S OWN COMBINED MINIMUM, NOT THE WIDEST SHIPPED ROW.** The failure this floor exists
+## to prevent is the CARD drawing outside the strip it was given; the widest row is a comfort figure,
+## and floored at it the strip was clamped UP through the whole `[card minimum, 654)` band and centred,
+## so it drew over the HUD dock columns `Main._update_event_dock_insets` exists to keep it off. Worked:
+## a 1200-px logical viewport with nothing docked leaves `1200 − 360 − 344` = **496**, and a 654 strip
+## in a 496 band hangs **79px over each column**. In that band the pre-floor behaviour was correct — the
+## strip fitted inside its insets AND cleared the card's minimum, and the only cost was `clip_contents`
+## trimming the longest label. **Clipping a long label is acceptable; overhanging the columns is not.**
 ##
-## **BELOW IT THE STRIP OVERHANGS ITS INSETS RATHER THAN CLIPPING ITS ROWS**, symmetrically about the
-## band it was offered and then clamped inside the viewport. That is a deliberate trade and the only
-## one available: a band under 654 has no arrangement in which the bar both clears every HUD column and
-## states a row, and a bar that has stopped being readable has stopped being a notification.
-const MIN_STRIP_WIDTH := 654.0
+## Measured off the live card (`_panel.get_combined_minimum_size().x`, the harness's own probe), and
+## re-derivable from its parts rather than trusted: the bar's minimum — one row's own **298** plus the
+## expander column's **89** (the button's 80 and the bar's `ROW_ITEM_SEPARATION`) — under the card's
+## **20** of chrome. The live report of the overhang quoted **406** for the same card; the pixel is the
+## row set it was measured against, not a disagreement about the rule.
+##
+## **654 IS STILL THE COMFORTABLE WIDTH and the cap's derivation above still names it** — the widest
+## shipped row (537) plus the expander and chrome as measured there. What changed is that it is no
+## longer a FLOOR: a band between the two draws the strip at the band, with the longest rows clipping
+## exactly as they already do above the floor.
+##
+## **BELOW THE CARD'S MINIMUM the strip still overhangs its insets rather than shrinking further**,
+## symmetrically about the band it was offered and then clamped inside the viewport. That is the one
+## deliberate trade left: under it there is no arrangement in which the bar both clears every HUD column
+## and draws a row at all, and a bar with no room for a row has stopped being a notification.
+## The bar's own combined minimum: one event ROW (298 — its glyph column, turn stamp, padding and the
+## one-pixel floor `clip_text` leaves the labels) beside the expander COLUMN (89 — the button's 80 and
+## one `ROW_ITEM_SEPARATION`).
+const CARD_BAR_MIN_WIDTH := 387.0
+## What the card adds around that bar: the `PanelContainer`'s stylebox margins and the column's own.
+const CARD_CHROME_WIDTH := 20.0
+const MIN_STRIP_WIDTH := CARD_BAR_MIN_WIDTH + CARD_CHROME_WIDTH
 ## The strip may never cover more than this share of the window. It no longer RESERVES anything, so
 ## this is not about leaving the map room to lay out in — it is about how much live map the overlay
 ## is allowed to hide. The map is the game; a notification bar that buries it has stopped being a

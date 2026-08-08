@@ -1289,8 +1289,15 @@ under half the window while the strip stayed a full 360.
 − separators) / ZONE_BAND_WIDTH`, clamped to `BAND_ZONE_MAX_COLUMNS` (2). Not one term is content, and
 that is load-bearing: a count that varied with what the band holds would make the strip height
 content-dependent and reopen the flicker bug. It is the `set_work_columns` / `_affordable_work_columns`
-idiom one flank over, and `_band_flank_width()` is the single definition `_card_width()`,
-`work_zone_size()` and `_affordable_work_columns()` all read.
+idiom one flank over, and `_zone_span(spec)` — the zone's base width times the columns
+`zone_columns()` GRANTED it — is the single definition of a flank's realized width. `_card_width()`,
+`work_zone_size()` and `_affordable_work_columns()` all reach it through `_fixed_zone_span()`, and
+`_zone_fixed_width(zone)` is the by-name reader.
+
+**`wide_shell_min_width()` is the one place that must NOT read it.** It sums `_spec_width` — the
+base, one column each — because the threshold asks what the shell needs to be worth choosing, and a
+threshold that read the granted count would depend on a width the granted count is derived from.
+That is the cycle; see the banner on `wide_shell_min_width()` itself.
 
 **The two-column flank costs the work board one column.** That is the trade, and it is deliberate: the
 work zone is already constrained and pages itself, while the band flank had no way to spend width at

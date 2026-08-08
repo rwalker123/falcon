@@ -49,9 +49,11 @@ give.
 
 ## Responsive breakpoints are NOT compensated for the scale
 
-The UI's layout thresholds — `BandCityPanel.WIDE_SHELL_MIN_WIDTH`, `EventDockPanel`'s
+The UI's layout thresholds — `BandCityPanel.wide_shell_min_width()`, `EventDockPanel`'s
 `MIN_STRIP_WIDTH` / `MAX_STRIP_WIDTH`, the zone widths, the HUD's authored column widths — are in
-logical units and **stay there**. Dividing one by `ui_scale` is the tempting fix and it is wrong: it
+logical units and **stay there**. (`wide_shell_min_width()` is a function, not a constant: it sums
+the LIVE zone list, so the fork is per-subject — a band's three zones fork narrower than the faction
+page's four. Freezing it at the three-zone number is the defect its own docstring exists to refuse.) Dividing one by `ui_scale` is the tempting fix and it is wrong: it
 would let the layout pretend the window had not shrunk, which guarantees overflow rather than
 preventing it. **A responsive fallback firing at a high interface scale is the system working.**
 

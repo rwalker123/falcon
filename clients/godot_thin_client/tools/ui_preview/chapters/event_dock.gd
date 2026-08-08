@@ -41,6 +41,17 @@ const BRIGHT_TERRAIN_COLOR := Color(0.90, 0.86, 0.76)
 ## drift away from it the first time either HUD column's authored width moved.
 const FLOOR_PROBE_RESERVED_LEFT := 878.0
 
+## The logical viewport the OVERHANG case was reported at — 1200px wide, which the HUD's two authored
+## columns (360 + 344) leave a 496px band. That band is above the card's own minimum and below the
+## comfortable width the floor used to clamp to, so it is the one range in which the strip was drawn
+## outside the insets it was given.
+const OVERHANG_PROBE_VIEWPORT_WIDTH := 1200.0
+## The LEFT reservation that stages it here. This canvas floors at 1920 (`_pin_canvas` sets the window
+## and `canvas_items` stretches from a 1920 base), so the reported viewport is reached by reserving the
+## difference away rather than by shrinking the window — the band is what the strip's rule reads, and
+## it cannot tell the two apart.
+const OVERHANG_PROBE_RESERVED_LEFT := float(PREVIEW_CANVAS_SIZE_BASE.x) - OVERHANG_PROBE_VIEWPORT_WIDTH
+
 ## The two horizontal edges the shell-flip claim is walked on. Both, because `_apply_dock_layout`
 ## writes the two against DIFFERENT anchors, so a placement correct on one can be wrong on the other —
 ## the same reason the co-edge frames above are a pair.
@@ -1308,6 +1319,40 @@ func run(harness) -> void:
 	event_dock.set_edge_offset(0.0)
 	co_edge_panel.queue_free()
 	await h.get_tree().process_frame
+	await h._settle()
+
+	# ---- A SQUEEZED STRIP STAYS INSIDE THE INSETS IT WAS GIVEN ---------------------------------
+	# The band the probe above stages (338) is under EVERY candidate floor, so it can only ever show
+	# the overhang trade. This one stages a band the floor USED to overhang and now fits inside: 496,
+	# which is what a 1200px logical viewport leaves with NOTHING docked (1200 − 360 − 344, the HUD's
+	# two authored columns) — reachable by dragging the interface scale up on an ordinary monitor.
+	#
+	# **REPRODUCED BY RESERVATION, NOT BY A SCALE**, for the reason the floor probe states: the strip's
+	# rule reads the BAND, and the arithmetic that squeezes it is identical whether the viewport shrank
+	# or a panel docked — so the reservation that shrinks this canvas to the reported viewport stages
+	# the reported band exactly.
+	#
+	# **THE CLAIM IS PHRASED IN THE VIEWPORT AND THE INSETS, never in `MIN_STRIP_WIDTH`**: an assertion
+	# written in the implementation's own terms stays green when the implementation moves, which is how
+	# a strip clamped UP to a comfortable width — and drawn 79px over each HUD column — passed every
+	# width claim in this chapter.
+	event_dock.set_dock(SIDE_TOP)
+	event_dock.set_expanded(false)
+	_preview_push_event_dock_insets(event_dock, OVERHANG_PROBE_RESERVED_LEFT, 0.0)
+	await h._settle()
+	await h._save("event_dock_narrow_band")
+	var narrow_viewport: float = event_dock._viewport_size().x
+	var narrow_band: float = narrow_viewport - event_dock._inset_left - event_dock._inset_right
+	h._assert_hud("precondition: the insets really do squeeze the band (%.0f of the %.0f canvas, insets %.0f / %.0f)"
+			% [narrow_band, narrow_viewport, event_dock._inset_left, event_dock._inset_right],
+		narrow_band > 0.0 and narrow_band < narrow_viewport)
+	h._assert_hud("the squeezed strip starts at or right of the left inset (strip %.0f, inset %.0f)"
+			% [event_dock._root.offset_left, event_dock._inset_left],
+		event_dock._root.offset_left >= event_dock._inset_left - CO_EDGE_RECT_EPSILON)
+	h._assert_hud("…and ends at or left of the right inset (strip %.0f, viewport %.0f less inset %.0f)"
+			% [event_dock._root.offset_right, narrow_viewport, event_dock._inset_right],
+		event_dock._root.offset_right <= narrow_viewport - event_dock._inset_right + CO_EDGE_RECT_EPSILON)
+	_preview_push_event_dock_insets(event_dock, 0.0, 0.0)
 	await h._settle()
 
 	event_dock.queue_free()

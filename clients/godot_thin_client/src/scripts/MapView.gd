@@ -834,7 +834,24 @@ func _apply_ui_scale() -> void:
 		# both clamp to UI_SCALE_MIN. Refuse rather than divide by ~0 and explode the map.
 		push_warning("[MapView] ignoring an unusable interface scale: %f" % ui_scale)
 		return
-	scale = Vector2.ONE / ui_scale
+	var counter_scale := Vector2.ONE / ui_scale
+	# **A NO-OP IS FREE, AND IT HAS TO BE.** `ClientSettings.changed` is ONE signal shared by all four
+	# setters, and `MenuShell._make_speed_slider_row` writes on every `value_changed` — so dragging the
+	# PAN SPEED slider with the pause menu open runs this function once per step of the drag. Each run
+	# would otherwise invalidate the map cache, which is the whole-map re-render the cache exists to
+	# avoid, for a scale that did not move.
+	#
+	# **The test is the TRANSFORM ACTUALLY IN EFFECT, not a remembered copy of `ui_scale`.** `scale` is
+	# what must be true when this returns; a cached previous value would go stale the moment anything
+	# else wrote the node's scale, and the early-out would then skip the correction that was the point.
+	#
+	# It short-circuits the `_ready`-time call too, and nothing is lost there: `scale` already IS
+	# `Vector2.ONE` at the default scale, `_cache_valid` starts `false` so there is no cache to
+	# invalidate, and `_update_layout_metrics()` early-returns while `grid_width`/`grid_height` are 0 —
+	# the first snapshot recomputes all of it.
+	if scale.is_equal_approx(counter_scale):
+		return
+	scale = counter_scale
 	_invalidate_map_cache()
 	_update_layout_metrics()
 	queue_redraw()
