@@ -48,6 +48,16 @@ const FORAGE_A_Y := 6
 const OVERLAP_HERD_ID := "game_boar_11"   # the herd parked on the worked forage tile
 const OVERLAP_MOVE_X := 10                # pending-move target; band→target dash crosses forage tile B's label
 const OVERLAP_MOVE_Y := 10
+# THE HAY FIELD — the work fixture's THIRD worked forage tile (issue #449), and the only source in
+# either preview harness whose yield label states its FEED rate. It shares a row with forage tile B
+# (three hexes west of it) rather than touching it: `+0.40 fodder ♻` is roughly 2.5× the width of
+# the widest label this plate had ever drawn, and `_draw_pill_plate` sizes to the measured run, so
+# what a frame has to answer is how far the plate REACHES — a question two touching hexes could not
+# separate from ordinary neighbour crowding, and which a claim about WHICH account was chosen
+# (`_assert_yield_label_component`) cannot see at all.
+const FODDER_FIELD_X := 6
+const FODDER_FIELD_Y := 8
+const FODDER_FIELD_RATE := 0.40
 # ---- THE WORKED BAND'S ESCAPEMENT FLOORS --------------------------------------------------------
 # Where each worked source's crew stops, as a fraction of that source's capacity
 # (`docs/plan_harvest_floor.md`). Every yield label on the map ends in the ZONE MARK of its
@@ -2104,6 +2114,15 @@ func _snapshot_work() -> Dictionary:
 		# shows the product the species PAYS — `⇄+0.22` — rather than the `+0.00` that said the pack
 		# was worth nothing. The deer label beside it is the control: it still reads its food rate.
 		{"kind": "hunt", "workers": 2, "fauna_id": "game_wolf_03", "floor": WORK_DRAWDOWN_FLOOR, "target_x": 11, "target_y": 4, "actual_yield": 0.0, "sustainable_yield": 0.0, "realized_trade_yield": 0.22, "trade_yield": 0.22, "overdraws": false},
+		# THE SOWN HAY FIELD's label (issue #449), the same argument one account further out: a Field
+		# pays FEED and neither provisions nor trade, so every food and trade field here is honestly 0
+		# and the label falls through to `+0.40 fodder`. Both trade keys are present and zero, the way
+		# the wire ships them, so the fall-through is reached through the ordinary
+		# render-only-when-non-zero gate rather than through absence. It is also the only rendered
+		# fodder label in either preview harness — `_assert_yield_label_component` pins WHICH account
+		# fills the one slot, and only a frame can say whether the chosen string FITS beside its
+		# neighbours (the widest run this plate has ever drawn).
+		{"kind": "forage", "workers": 2, "target_x": FODDER_FIELD_X, "target_y": FODDER_FIELD_Y, "floor": WORK_PEAK_FLOOR, "actual_yield": 0.0, "sustainable_yield": 0.0, "realized_yield": 0.0, "trade_yield": 0.0, "realized_trade_yield": 0.0, "fodder_yield": FODDER_FIELD_RATE, "overdraws": false},
 		{"kind": "warrior", "workers": 2},
 	]
 	# work_range 2 (forage green), scout radius 4 (azure) → three DISTINCT nested range borders in one
@@ -2117,6 +2136,11 @@ func _snapshot_work() -> Dictionary:
 	snap["food_modules"] = [
 		{"x": FORAGE_A_X, "y": FORAGE_A_Y, "module": "berry_patch", "kind": "forage"},
 		{"x": 9, "y": 8, "module": "berry_patch", "kind": "forage"},
+		# The hay Field's own site, for the same load-bearing reason: no site, no marker to ring.
+		# `savanna_grassland` rather than the berry patch beside it — grassland is where hay comes
+		# from, and it resolves to a DIFFERENT bundled sprite, so the fodder tile is identifiable in
+		# the frame as something other than a third berry patch.
+		{"x": FODDER_FIELD_X, "y": FODDER_FIELD_Y, "module": "savanna_grassland", "kind": "forage"},
 	]
 	return snap
 

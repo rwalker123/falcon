@@ -1705,8 +1705,10 @@ func _work_name_sorts_before(a: Dictionary, b: Dictionary) -> bool:
         return by_label < 0
     return String(a.get("key", "")) < String(b.get("key", ""))
 
-## "Sort by yield", in TWO TIERS (issue #337): every FOOD-paying source first, ordered by its food
-## figure descending, then the trade-only sources, ordered by their trade figure descending.
+## "Sort by yield", in THREE TIERS (issues #337 / #449) — the account order the rest of the arc uses:
+## every FOOD-paying source first, ordered by its food figure descending; then the sources paying
+## TRADE and no food, by their trade figure descending; then the rest by their FODDER figure
+## descending.
 ##
 ## **THIS IS NOT A RAW MAGNITUDE SORT, AND MUST NOT BE "FIXED" INTO ONE.** Ranking a wolf's 0.22 trade
 ## above a patch's 0.15 food compares two quantities the sim publishes NO exchange rate between, and
@@ -1722,13 +1724,23 @@ func _work_name_sorts_before(a: Dictionary, b: Dictionary) -> bool:
 ## zero-food rows at the bottom of the board, off page one on a busy band, which is the same "an
 ## inedible quarry is worth nothing" reading the per-row work removed.)
 ##
-## A source paying NEITHER component sorts into the trade tier at 0.0, i.e. last — unchanged.
+## **THE THIRD TIER IS NOT DECORATION.** A sown hay Field publishes `rate == 0.0` AND
+## `trade_rate == 0.0`, so under the two-tier rule it landed in the trade tier at 0.0, tied with every
+## source paying nothing at all and separated from them only by the `key` tiebreak — i.e. below every
+## trade-only wolf and among the dead rows. That is verbatim the failure the tiering was introduced to
+## remove, one account further out: on a busy band the one source feeding the pens sat at the bottom
+## of the board, off page one. Fodder ranks THIRD for the same reason food ranks first and for no
+## other: it is the account furthest from the survival constraint the player decides against, feeding
+## the pens rather than the people. It is not a claim that a bale is worth less than a hide.
+##
+## A source paying into NO account has a fodder figure of 0.0 and therefore sorts to the BOTTOM of the
+## fodder tier, i.e. last overall — unchanged in every board that grows no hay.
 ##
 ## **THE `key` TIEBREAK MAKES IT A TOTAL ORDER, and that is a correctness fix**: `sort_custom` is NOT
 ## stable in Godot and equal rates are common — two patches at the same food figure inside the food
-## tier, and every source paying neither component, all of which sit together at 0.0 in the trade
-## tier. Tied rows could otherwise swap on any unrelated re-render. The tiebreak rides BELOW the tier
-## + rate comparisons and changes neither.
+## tier, and every source paying into no account at all, all of which sit together at 0.0 at the foot
+## of the fodder tier. Tied rows could otherwise swap on any unrelated re-render. The tiebreak rides
+## BELOW the tier + rate comparisons and changes neither.
 func _work_sorts_before(a: Dictionary, b: Dictionary) -> bool:
     var a_pays_food := SourceForecast.has_component(float(a.get("rate", 0.0)))
     var b_pays_food := SourceForecast.has_component(float(b.get("rate", 0.0)))
@@ -1741,8 +1753,16 @@ func _work_sorts_before(a: Dictionary, b: Dictionary) -> bool:
         if float(a.get("rate", 0.0)) != float(b.get("rate", 0.0)):
             return float(a.get("rate", 0.0)) > float(b.get("rate", 0.0))
         return String(a.get("key", "")) < String(b.get("key", ""))
-    if float(a.get("trade_rate", 0.0)) != float(b.get("trade_rate", 0.0)):
-        return float(a.get("trade_rate", 0.0)) > float(b.get("trade_rate", 0.0))
+    var a_pays_trade := SourceForecast.has_component(float(a.get("trade_rate", 0.0)))
+    var b_pays_trade := SourceForecast.has_component(float(b.get("trade_rate", 0.0)))
+    if a_pays_trade != b_pays_trade:
+        return a_pays_trade
+    if a_pays_trade:
+        if float(a.get("trade_rate", 0.0)) != float(b.get("trade_rate", 0.0)):
+            return float(a.get("trade_rate", 0.0)) > float(b.get("trade_rate", 0.0))
+        return String(a.get("key", "")) < String(b.get("key", ""))
+    if float(a.get("fodder_rate", 0.0)) != float(b.get("fodder_rate", 0.0)):
+        return float(a.get("fodder_rate", 0.0)) > float(b.get("fodder_rate", 0.0))
     return String(a.get("key", "")) < String(b.get("key", ""))
 
 func _find_work_model(models: Array, key: String) -> Dictionary:

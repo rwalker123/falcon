@@ -3070,16 +3070,20 @@ larder, which is the whole point.) That is
 what keeps the larder identity closed for an inedible quarry, and it is why the answer for an
 AGGREGATE is never "add trade to the food total".
 
-**But an aggregate that omits trade entirely is the same lie one level up.** The work zone's header
+**But an aggregate that omits an account entirely is the same lie one level up.** The work zone's header
 read `3 sources +0.35 /turn` with a `⇄+0.22` wolf row directly beneath it — the arithmetic visibly did
 not add up, and the one source paying only trade read as contributing nothing to the band. So the
 render-only-when-non-zero rule applies to totals too, as a **SIBLING**: `3 sources +0.35 /turn ⇄
 +0.22`, and `🦌 2 · 0.20 ⇄ 0.22` on the per-kind chips (`SourceForecast.magnitude_components`, the
 bare-magnitude twin of `yield_components` — a chip states levels, not deltas). A band with no
-trade-paying source renders exactly as before. Details in `band-city-panel.md`.
+trade-paying source renders exactly as before. **FODDER is the third sibling on both** (issue #449),
+under the identical gate: a band that grows hay heads `+0.40 fodder` beside the other two and chips
+`🌿 1 · 0.40 fodder`, and `magnitude_components` takes all three. Details in `band-city-panel.md`.
 
-**When you add an aggregate, ask which of the two it is** — a *larder* figure (food alone, by the
-identity above) or a *productivity* figure (both products, each when non-zero). Nothing else in the
+**When you add an aggregate, ask which KIND it is** — a *larder* figure (food alone, by the
+identity above) or a *productivity* figure (**every** account the sources pay, each when non-zero;
+there are three, and a two-account sum reproduces the exact `0.00` this rule exists to prevent, one
+surface along). Nothing else in the
 client currently sums or counts across sources: the parties header counts parties and workers, and the
 attention producers key off `idle_workers` / `turns_of_food` / pen status, never "this source yields
 no food", so a trade-only source is already productive to them. **Do not add a "produces nothing"
