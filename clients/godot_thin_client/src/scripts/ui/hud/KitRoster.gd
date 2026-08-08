@@ -178,6 +178,36 @@ static func unequipped_tier(kits: Array, axis_key: String) -> float:
 		lowest = minf(lowest, float((entry_variant as Dictionary).get(axis_key, 0.0)))
 	return lowest
 
+## **THE EQUIPPED REFERENCE TIER ON ONE AXIS — the MAXIMUM across the roster**, and the exact twin of
+## `unequipped_tier` above, read off the same roster for the same reason.
+##
+## **IT IS THE RATE EVERY SOURCE ROW IS PUBLISHED AT**, which is what makes it the denominator of the
+## repricing rather than merely a number the roster happens to contain. A herd's `perWorkerBiomass` is
+## `labor_config.hunt.per_worker_biomass_capacity`, a patch's is
+## `labor_config.forage.per_worker_biomass_capacity × seasonalWeight` — and a kit that USES the
+## component publishes exactly that `labor_config` capacity on its axis (`snapshot/capture.rs` →
+## `kit_roster_states`, which resolves the tier through the take path's own seam). Every kit that does
+## NOT use it publishes the unequipped tier, which is lower. So the roster's max IS the capacity, and
+## the ratio `effective / max` is the fraction of the published rate this crew actually moves.
+##
+## **THE SEASONAL WEIGHT IS WHY THIS IS NOT THE SOURCE'S OWN `perWorkerBiomass`.** A `KitOption`'s
+## `forage_carry_per_worker_biomass` is the throughput *before* the tile's weight (`equipment.md` — the
+## wire says so in as many words), while the patch publishes the weight folded in. Dividing by the
+## patch's number therefore divides the season back out and multiplies a season-free tier by it — the
+## crew's rate comes out season-BLIND, which is wrong in the direction that looks right, worldgen
+## pinning every weight at `1.0` today. Dividing by the roster's own tier leaves the season on the
+## published rate where the sim put it.
+##
+## `0.0` when the roster is empty or states nothing on this axis, which `repriced_source` reads as
+## "no reference, so no repricing" — the same fail-quiet the zero published rate gets.
+static func equipped_tier(kits: Array, axis_key: String) -> float:
+	var highest := 0.0
+	for entry_variant in kits:
+		if not (entry_variant is Dictionary):
+			continue
+		highest = maxf(highest, float((entry_variant as Dictionary).get(axis_key, 0.0)))
+	return highest
+
 ## The wire keys this repricing substitutes — **taken from `SourceForecast`'s own constants, never
 ## typed out here.**
 ##
@@ -198,8 +228,8 @@ const SOURCE_PER_WORKER_BIOMASS := SourceForecast.FORECAST_PER_WORKER_BIOMASS_KE
 const SOURCE_ENGAGE_RATE := SourceForecast.FORECAST_ENGAGE_RATE_KEY
 ## `1 − wariness` — the fraction of what a party reaches that stays to be fought. Absent on a source
 ## with no retreat stage (a pen, the whole plant web), which reads as "nothing breaks off".
-const SOURCE_STAY_FRACTION := "stay_fraction"
-const STAY_FRACTION_NONE_BREAKS_OFF := 1.0
+const SOURCE_STAY_FRACTION := SourceForecast.FORECAST_STAY_FRACTION_KEY
+const STAY_FRACTION_NONE_BREAKS_OFF := SourceForecast.STAY_FRACTION_NONE_BREAKS_OFF
 
 ## **THE SOURCE, REPRICED FOR THE KIT THE CREW IS BEING SENT WITH** — a copy of the wire's own terms
 ## with two substitutions, handed to the ordinary forecast so **every** consumer downstream (the take,
@@ -209,15 +239,29 @@ const STAY_FRACTION_NONE_BREAKS_OFF := 1.0
 ## gathering.** A source that publishes no engagement and no retreat — a patch, a pen — simply has no
 ## key for the second substitution, so the same call does the right thing on both webs.
 ##
-## 1. **Per-worker throughput scales by `carry / published_carry`.** The wire's `per_worker_biomass`
-##    is the EQUIPPED REFERENCE rate (a herd has no band to resolve a tier against), so the ratio is
-##    what turns it into *this* crew's rate. All four currencies scale together — they are one
-##    throughput expressed four ways.
-## 2. **`engage_rate` scales by the effective stay fraction**, `1 − (1 − stay) × dispersion`. Folding
-##    the retreat into the reach term is exact rather than convenient: everything downstream uses
-##    `engage_rate` to mean *animals brought into contact*, and the ones that bolt were never in
-##    contact. It also makes the CREW COUNT right for free — to bring down N you must engage
-##    `N / stay` — which a separate retreat factor applied only to the take would have missed.
+## 1. **Per-worker throughput scales by `carry / reference`**, where `reference` is the roster's own
+##    EQUIPPED tier on that axis (`equipped_tier`) — the rate every source row is published at. All
+##    four currencies scale together; they are one throughput expressed four ways.
+## 2. **`stay_fraction` becomes the kit's EFFECTIVE retreat**, `1 − (1 − stay) × dispersion`, which is
+##    `snapshot.fbs`'s own formula for what a kit does to that field. It is the retreat's ONE home on
+##    the client, so the take arms downstream read a stay fraction that already knows the kit.
+##
+## **THE RETREAT DOES NOT TOUCH `engage_rate`, AND THAT IS THE CORRECTION THIS PAIR EXISTS FOR.**
+## Folding it into the reach reprices the take and the CREW COUNT together, and the sim does not treat
+## them together: `fauna::hunt_engage_workers` sizes a crew on the RAW reach — the hands that can get
+## to the herd — while `HuntParty::stayers` cuts only what those hands bring down. The fold made the
+## sheet's stepper cap disagree with the sim's own `workersNeeded`, which `ui_preview`'s "the compose
+## stepper caps at the crew the SIM asks for" caught at once. Substituting the retreat on its own field
+## keeps the two arms separable, which is what lets `SourceForecast` apply it to the take alone.
+##
+## **THE REFERENCE IS THE ROSTER'S TIER, NOT THE SOURCE'S OWN `per_worker_biomass`** — see
+## `equipped_tier` for why (the seasonal weight, and a harness fixture whose recovered throughput is
+## its own arbitrary number rather than a claim about anyone's carry).
+##
+## **CALL IT ONCE PER SOURCE.** With a reference the substitution does not overwrite, this is no longer
+## idempotent: a second pass multiplies by the ratio again. `DrawerComposeController._kit_priced_source`
+## is the one seam, and each forecast/rates producer prices at its own top rather than passing a priced
+## dict into another producer that prices too.
 ##
 ## **This is where the trapping kit's whole advantage lands.** A spear party on a `wariness 0.75`
 ## warren keeps one animal in four; a device that is not there to be seen (`dispersion 0`) keeps all
@@ -225,29 +269,24 @@ const STAY_FRACTION_NONE_BREAKS_OFF := 1.0
 ##
 ## The non-linear halves stay the sim's answer — the whole-animal quantiser and the fight — exactly as
 ## `yield-forecast.md`'s "THE BOUNDARY" requires; nothing here re-derives a take.
-static func repriced_source(src: Dictionary, prefix: String, carry: float,
+static func repriced_source(src: Dictionary, prefix: String, carry: float, reference: float,
 		dispersion: float) -> Dictionary:
-	var published := float(src.get(prefix + SOURCE_PER_WORKER_BIOMASS, 0.0))
 	var out := src.duplicate()
-	# **A zero published rate is a real reading** (a dead-season patch moves no biomass), so there is
-	# no ratio to take and no repricing to do — never a division that would land an INF in four keys.
-	if published > 0.0 and carry > 0.0 and not is_equal_approx(carry, published):
-		var ratio := carry / published
+	# **A zero reference or a zero carry is a real reading** (an empty roster; a dead-season patch moves
+	# no biomass), so there is no ratio to take and no repricing to do — never a division that would
+	# land an INF in three keys.
+	if reference > 0.0 and carry > 0.0 and not is_equal_approx(carry, reference):
+		var ratio := carry / reference
 		for key in SOURCE_PER_WORKER_KEYS:
 			var full: String = prefix + String(key)
 			if out.has(full):
 				out[full] = float(out[full]) * ratio
-	# **THE RETREAT IS NOT APPLIED HERE, AND THAT IS A CORRECTION.**
-	#
-	# Folding it into `engage_rate` reprices the TAKE and the CREW COUNT together, and the sim does not
-	# treat them together: `fauna::hunt_engage_workers` sizes a crew on the RAW `engage_rate` — the
-	# hands that can reach the herd — while the retreat bounds only what those hands bring down. So a
-	# fold made the sheet's stepper cap disagree with the sim's own `workersNeeded`, which
-	# `ui_preview`'s "the compose stepper caps at the crew the SIM asks for" caught immediately.
-	#
-	# `dispersion` therefore has no effect on the sheet yet. It belongs on the take arm alone
-	# (`expected_yield_account`'s engagement term), which is a change to shared forecast code rather
-	# than a substitution on the source — see the PR notes.
+	# **THE RETREAT, ON ITS OWN FIELD.** Absent = no retreat stage (a patch, a pen), which skips without
+	# a special branch: there is no key to substitute and the take arms read the wire's own `1`.
+	var stay_key := prefix + SOURCE_STAY_FRACTION
+	if out.has(stay_key):
+		var stay := clampf(float(out[stay_key]), 0.0, 1.0)
+		out[stay_key] = clampf(1.0 - (1.0 - stay) * maxf(dispersion, 0.0), 0.0, 1.0)
 	return out
 
 ## **THE KIT'S ATTACK AGAINST THIS QUARRY** — the kit's own number inside its size window, and the

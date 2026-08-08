@@ -237,6 +237,10 @@ func _hunt_avg_window_turns(herd: Dictionary, floor: float, improvement: String)
 ## leaves the crew, the dip and the quantisation exactly where they are, so the burst and the steady
 ## rate are the same computation asked twice. A separate steady-state formula would be free to drop
 ## the whole-animal branch and print a smooth number beside a bodies-per-turn one.
+##
+## **`herd` ARRIVES ALREADY KIT-PRICED** — `_hunt_yield_model` is its only caller and prices at its own
+## top. Pricing again here would apply the ratio twice (`KitRoster.repriced_source` is not idempotent),
+## and reaching for a raw dict instead would quote the equipped reference to a bare-handed crew.
 func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float, workers: int,
         improvement: String, holding: bool = false) -> Dictionary:
     # PER COMPONENT, on the one this species pays (issue #337). The three terms must come from the SAME
@@ -279,8 +283,17 @@ func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float,
     #
     # `animals_engaged` answers UNBOUNDED for a pen and for a species with no engagement stage, so the
     # `min` is a no-op on every managed-herd and plant-web frame.
+    #
+    # **AND THE ARM IS WHAT STAYS, NOT WHAT IS REACHED.** The sim runs engage → retreat → fight and
+    # hands the SURVIVOR count to the quantiser, so the bound here is `animals_stayed` — which is also
+    # the ONE thing the kit's `dispersion` moves on this line. A trapping party is not there to be seen
+    # and keeps everything it reaches; a spear party on the same warren keeps one animal in four. Read
+    # off `engage_rate` instead, Big-game and Trapping quote the identical hunt.
     var carryable := minf(floorf(collection / fpa),
-        SourceForecast.animals_engaged(workers, float(rates["engage_rate"]), float(rates["dip"])))
+        SourceForecast.animals_stayed(
+            SourceForecast.animals_engaged(workers, float(rates["engage_rate"]),
+                float(rates["dip"])),
+            float(rates["stay"])))
     var delivered := 0.0
     var waste := 0.0
     if carryable >= 1.0:
@@ -392,26 +405,39 @@ func _local_hunt_preview_bbcode(band: Dictionary, herd: Dictionary, floor: float
 ## **The tiers are the BAND's, not the kit's fresh ones** — `KitRoster.effective_tiers` steps a tier
 ## down when the band has worn that item out, so a dry-basketed band is quoted bare-handed even while
 ## the picker shows what a fresh gathering kit would grant.
-## **THE HUNT FORECAST, PRICED AT THE CHOSEN KIT** — and the ONLY way this sheet builds one.
+## **THE HERD, PRICED AT THE CHOSEN KIT — and the only door onto this sheet's hunt arithmetic.**
 ##
 ## Reported from play: the take moved with the kit but *clear it now*, *hold it after* and
-## *max N workers useful* did not. Repricing lived inside the two yield models, and there are SIX
-## places that build a forecast — the crew targets and the stepper cap among them. Pairing the
-## repricing with the construction is what makes "some call sites were missed" unrepresentable rather
-## than a thing to remember.
-func _hunt_forecast(herd: Dictionary, band: Dictionary, floor: float,
-        improvement: String = SourceForecast.IMPROVEMENT_NONE) -> Dictionary:
-    return SourceForecast.forecast_inputs(
-        _kit_priced_source(herd, HudComposeVocab.BARE_FORECAST_PREFIX, band, KitRoster.JOB_HUNT,
-            _compose.hunt_kit_id(), "hunt_carry"),
-        SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX, floor, improvement)
+## *max N workers useful* did not. Repricing used to live inside the two yield models, and this sheet
+## reads a source in FOUR shapes — a forecast (`forecast_inputs`), the chart model that renders both
+## crew-target pills, the axis rates the quantised take is composed from, and the degrade path's smooth
+## rate. Every one of them is a function of the crew's carry, so every one of them takes the priced
+## herd; a call site that reached for the raw dict is exactly how three of the four were missed.
+##
+## **PRICE ONCE PER PRODUCER.** `KitRoster.repriced_source` is no longer idempotent (its reference is
+## the roster's tier rather than a field the substitution overwrites), so a producer prices at its own
+## top and never hands a priced dict to another producer that prices too.
+func _hunt_priced_herd(herd: Dictionary, band: Dictionary) -> Dictionary:
+    return _kit_priced_source(herd, HudComposeVocab.BARE_FORECAST_PREFIX, band, KitRoster.JOB_HUNT,
+        _compose.hunt_kit_id(), "hunt_carry")
 
 ## The plant twin. A patch publishes no retreat, so only the carry half of the substitution bites.
+func _forage_priced_patch(tile_info: Dictionary, band: Dictionary) -> Dictionary:
+    return _kit_priced_source(tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX, band,
+        KitRoster.JOB_FORAGE, _compose.forage_kit_id(), "forage_carry")
+
+## The hunt forecast, priced — and the ONLY way this sheet builds one. Pairing the repricing with the
+## construction is what makes "some call sites were missed" unrepresentable rather than a thing to
+## remember.
+func _hunt_forecast(herd: Dictionary, band: Dictionary, floor: float,
+        improvement: String = SourceForecast.IMPROVEMENT_NONE) -> Dictionary:
+    return SourceForecast.forecast_inputs(_hunt_priced_herd(herd, band),
+        SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX, floor, improvement)
+
+## …and the plant one.
 func _forage_forecast(tile_info: Dictionary, band: Dictionary, floor: float,
         improvement: String = SourceForecast.IMPROVEMENT_NONE) -> Dictionary:
-    return SourceForecast.forecast_inputs(
-        _kit_priced_source(tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX, band,
-            KitRoster.JOB_FORAGE, _compose.forage_kit_id(), "forage_carry"),
+    return SourceForecast.forecast_inputs(_forage_priced_patch(tile_info, band),
         SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX, floor,
         improvement)
 
@@ -424,10 +450,15 @@ func _kit_priced_source(src: Dictionary, prefix: String, band: Dictionary, job: 
         return src
     var tiers := KitRoster.effective_tiers(kits, kit, band)
     return KitRoster.repriced_source(src, prefix, float(tiers.get(carry_key, 0.0)),
-        float(kit.get("dispersion", 1.0)))
+        KitRoster.equipped_tier(kits, carry_key), float(kit.get("dispersion", 1.0)))
 
-func _hunt_yield_model(band: Dictionary, herd: Dictionary, floor: float, workers: int,
+func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, workers: int,
         improvement: String, reaches: bool = false) -> Dictionary:
+    # **PRICED AT THE KIT THE CREW WILL BE SENT WITH, ONCE, BEFORE A SINGLE TERM IS READ** — so the
+    # sustainability bar, the take, the waste and the degrade path are all one kit's story. Every read
+    # below is off `herd`; the raw dict is not in scope again, which is the point of shadowing it here
+    # rather than pricing at each `herd_axis_rates` call (this model makes three).
+    var herd := _hunt_priced_herd(herd_raw, band)
     # **THE SUSTAINABILITY BAR IS THE FOOD PEAK'S CEILING**, on the SAME axis the take is measured on
     # (comparing a trade take against a food ceiling would flag every wolf hunt as an overdraw, or
     # none of them). It is the floor at which the herd settles on its most productive biomass, so a
@@ -1452,7 +1483,12 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # it — see `SourceForecast.teaching_note`.
     var lesson_known := SourceForecast.rung_lesson_known(SourceForecast.SOURCE_KIND_HERD, herd,
         HudComposeVocab.BARE_FORECAST_PREFIX, _player_knowledge())
-    chart_model = SourceForecast.floor_chart_model(herd, SourceForecast.SOURCE_KIND_HERD,
+    # **THE CHART TAKES THE PRICED HERD, and it is the surface the kit report was ABOUT.** Both crew
+    # pills — *clear it now* and *hold it after* — are this model's, and the stepper cap floors on the
+    # `hold_crew`/`reach_crew` the FORECAST carries; priced on one side only, a pill would name a count
+    # the `+` refuses, which is the panel arguing with itself.
+    chart_model = SourceForecast.floor_chart_model(_hunt_priced_herd(herd, band),
+        SourceForecast.SOURCE_KIND_HERD,
         HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_floor(), _compose.hunt_count(),
         composed_improvement, crew_label.to_lower(), lesson_known)
     if bool(chart_model.get("known", false)):
@@ -1470,7 +1506,8 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
                     # drag moves nothing, and the release rebuilds the sheet against the sample the
                     # player landed on. The drag itself still survives, which is the contract.
                     _refresh_floor_live(live_hosts, SourceForecast.floor_chart_model(
-                        _live_herd(herd_id, herd), SourceForecast.SOURCE_KIND_HERD,
+                        _hunt_priced_herd(_live_herd(herd_id, herd), band),
+                        SourceForecast.SOURCE_KIND_HERD,
                         HudComposeVocab.BARE_FORECAST_PREFIX, floor, _compose.hunt_count(),
                         composed_improvement, crew_label.to_lower(), lesson_known),
                         _compose.hunt_count())))
@@ -2197,7 +2234,9 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # reason: a lesson the faction has already learned is not taught again in the aside.
     var lesson_known := SourceForecast.rung_lesson_known(SourceForecast.SOURCE_KIND_FORAGE,
         tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX, _player_knowledge())
-    var chart_model := SourceForecast.floor_chart_model(tile_info,
+    # Priced at the chosen kit, exactly as the hunt sheet's is and for the same reason: the two crew
+    # pills are this model's and the stepper cap is the forecast's, so both sides must know the basket.
+    var chart_model := SourceForecast.floor_chart_model(_forage_priced_patch(tile_info, band),
         SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
         _compose.forage_floor(), _compose.forage_count(), composed_improvement,
         crew_label.to_lower(), lesson_known)
@@ -2210,7 +2249,8 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
                     _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target)
                 else:
                     _refresh_floor_live(live_hosts, SourceForecast.floor_chart_model(
-                        _live_tile_info(subject_key, tile_info), SourceForecast.SOURCE_KIND_FORAGE,
+                        _forage_priced_patch(_live_tile_info(subject_key, tile_info), band),
+                        SourceForecast.SOURCE_KIND_FORAGE,
                         HudComposeVocab.FORAGE_FORECAST_PREFIX, floor, _compose.forage_count(),
                         composed_improvement, crew_label.to_lower(),
                         lesson_known),

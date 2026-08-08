@@ -518,6 +518,18 @@ const ENGAGEMENT_UNBOUNDED := INF
 # walk up to it: three hunters do reach a mammoth and then fail at the FIGHT, which is where the gate
 # lives. Flooring to zero would put a headcount threshold in front of the attack-vs-defense one.
 const ENGAGED_AT_LEAST := 1.0
+# **THE RETREAT, AS A TERM — `1 − wariness`** (`HerdTelemetryState.stayFraction`): what fraction of the
+# animals a party REACHES actually stays to be fought. It is the stage between the engagement and the
+# fight, and it bounds the TAKE ALONE — never a crew size. The sim sizes a crew on the RAW reach
+# (`fauna::hunt_engage_workers`, the hands that can get to the herd) and lets the retreat cut only what
+# those hands bring down, so folding it into `engage_rate` makes the sheet's stepper cap disagree with
+# the sim's own `workersNeeded`. That fold shipped once and `ui_preview`'s "the compose stepper caps at
+# the crew the SIM asks for" is what caught it.
+const FORECAST_STAY_FRACTION_KEY := "stay_fraction"
+# **`1` MEANS NOTHING BREAKS OFF**, which is the honest reading for a source with no retreat stage — a
+# pen, the whole plant web, and a species the roster cannot resolve — and is the wire's own default, so
+# an absent field and a present `1.0` are one answer rather than two.
+const STAY_FRACTION_NONE_BREAKS_OFF := 1.0
 # **THE PHASE, AND WHERE ITS BOUNDARIES ARE — both on the wire now.** `ecology_phase` is the source's
 # CURRENT band as a word (Thriving / Stressed / Collapsing); the two fractions below are the cut points
 # `classify_ecology_phase` used to reach it, **in the same units the floor is in** (fractions of `K`).
@@ -1683,6 +1695,28 @@ static func animals_engaged(workers: int, engage_rate: float, dip: float) -> flo
         return ENGAGEMENT_UNBOUNDED
     return maxf(floorf(float(workers) * engage_rate * maxf(dip, 0.0)), ENGAGED_AT_LEAST)
 
+## **HOW MANY OF THE ENGAGED ANIMALS STAY TO BE FOUGHT** — the retreat, the stage between engagement
+## and the fight, mirroring `fauna::animals_that_stay` at the quantile a FORECAST reads it at. The sim
+## draws a binomial per animal; a forecast cannot draw, so it takes the analytic mean
+## `floor(engaged) × stay`, which is `snapshot.fbs`'s own `stayers = workers × engageRate ×
+## buildFraction × stayFraction` with the engagement already floored. `animals_engaged` floors, so
+## nothing here does.
+##
+## **IT BOUNDS THE TAKE AND NEVER A CREW.** The sim sizes a crew on the RAW reach
+## (`fauna::hunt_engage_workers`) — the hands that can get to the herd — and cuts only what those hands
+## bring down, so `engage_workers` / `engagement_carry` / `take_workers` and both crew-target pills
+## must NOT call this. Folding the retreat into `engage_rate` to get it everywhere at once is the
+## shortcut that made the sheet's stepper cap disagree with the sim's own `workersNeeded`.
+##
+## An UNBOUNDED engagement passes straight through: a pen and the whole plant web have no retreat to
+## take because they have no engagement stage, and iterating `INF` down by a fraction is still `INF`.
+## `stay >= 1` is the exact identity the wire's own default gives a source with no retreat stage, and a
+## species the roster cannot resolve reads it too.
+static func animals_stayed(engaged: float, stay: float) -> float:
+    if is_inf(engaged) or engaged <= 0.0 or stay >= STAY_FRACTION_NONE_BREAKS_OFF:
+        return engaged
+    return engaged * clampf(stay, 0.0, STAY_FRACTION_NONE_BREAKS_OFF)
+
 ## ***CLEAR IT NOW*** — the crew that takes everything standing above the floor in ONE turn:
 ## `room ÷ (perWorkerBiomass × dip)`, a closed form in terms already on the wire. Deliberately NOT
 ## rounded to whole animals: this is the number of hands, and a crew that over-carries simply finishes
@@ -2484,6 +2518,12 @@ static func herd_axis_rates(herd: Dictionary, floor: float, improvement: String)
         # undipped: that function applies the dip, and it is the ONE mirror of the sim's arithmetic.
         "engage_rate": float(forecast["engage_rate"]),
         "dip": float(forecast["dip"]),
+        # **THE RETREAT TRAVELS WITH THE PAIR, AND ONLY THE TAKE MAY SPEND IT.** The quantised take
+        # bounds its animal count on what STAYS, not on what is reached — the sim's `stayers` between
+        # the engagement and the fight — while every crew size on this sheet is measured on the raw
+        # reach beside it. Carried here rather than re-read off the herd so the sheet's headline and
+        # `expected_yield_account`'s arm cannot resolve the kit's dispersion two ways.
+        "stay": float(forecast["stay"]),
     }
 
 ## Does the wire describe this source's forecast **at all**? A PRESENCE test, not a rate test — the
@@ -2670,6 +2710,15 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
         # mirror of the sim's arithmetic. A forage patch publishes no such field, so it reads
         # `NO_ENGAGEMENT_STAGE` and both consumers drop the term.
         "engage_rate": float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)),
+        # **THE RETREAT — the take's OWN term, and the ONE the kit's `dispersion` reaches the sheet
+        # through.** `KitRoster.repriced_source` has already folded the kit into the source's
+        # `stay_fraction` (the wire's own `clamp(1 - (1 - stay) x dispersion)`), so what arrives here is
+        # this party's effective retreat rather than the species' bare one. Absent = nothing breaks off,
+        # which every forage patch and every pen reads and which keeps both webs unmoved.
+        #
+        # **ONLY `expected_yield_account`'s reach arm may spend it.** `max_useful_workers`' engagement
+        # crew reads `engage_rate` alone, deliberately — see `animals_stayed`.
+        "stay": float(src.get(prefix + FORECAST_STAY_FRACTION_KEY, STAY_FRACTION_NONE_BREAKS_OFF)),
         # **THE *HOLD IT AFTER* CREW, CARRIED SO THE WORKER CAP CAN FLOOR ITSELF ON IT** (§7.2). It is
         # the same number the chart's second crew target offers — the hands that take exactly what
         # grows back at this floor — and `max_useful_workers` takes the max of it and the one-turn
@@ -2971,7 +3020,8 @@ static func expected_yield(forecast: Dictionary, workers: int, band: Dictionary)
 static func engagement_reach(forecast: Dictionary, workers: int, per_animal_key: String) -> float:
     return engaged_quantum(workers, float(forecast.get(per_animal_key, 0.0)),
         float(forecast.get("engage_rate", NO_ENGAGEMENT_STAGE)),
-        float(forecast.get("dip", NO_BUILD_DIP)))
+        float(forecast.get("dip", NO_BUILD_DIP)),
+        float(forecast.get("stay", STAY_FRACTION_NONE_BREAKS_OFF)))
 
 ## The same arm with its quantum handed in rather than looked up — the form the CHART's projection
 ## needs, whose quantum is `bodyMass` (the curve, the room and the throughput are all biomass there)
@@ -2982,11 +3032,15 @@ static func engagement_reach(forecast: Dictionary, workers: int, per_animal_key:
 ## floors `workers × engageRate × dip` to whole animals exactly as the sim does, and the quantum is
 ## applied to that count. Multiplying first and flooring after can land a whole engagement one animal
 ## short on a rounding.
+## **THE RETREAT IS APPLIED HERE AND NOT ONE STAGE EARLIER**, in the sim's own order — engage, retreat,
+## then convert — so `stay` cuts the whole-animal count the quantum then values. It defaults to the
+## wire's "nothing breaks off", which is what leaves a pen, the plant web and every source that
+## publishes no retreat byte-identical to before the stage existed.
 static func engaged_quantum(workers: int, per_animal: float, engage_rate: float,
-        dip: float) -> float:
+        dip: float, stay: float = STAY_FRACTION_NONE_BREAKS_OFF) -> float:
     if per_animal <= 0.0:
         return ENGAGEMENT_UNBOUNDED
-    return animals_engaged(workers, engage_rate, dip) * per_animal
+    return animals_stayed(animals_engaged(workers, engage_rate, dip), stay) * per_animal
 
 ## The same take on ANY ONE account (#426). `min(workers × per_worker, ceiling)` is applied PER
 ## COMPONENT, never to a total: the sim caps each account against its own ceiling, and a patch whose

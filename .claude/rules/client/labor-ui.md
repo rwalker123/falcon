@@ -1400,6 +1400,109 @@ where a hex genuinely holds more than one eligible quarry.
 **The PARTY stepper row is deliberately not in the family.** It is a control you operate rather than a
 value box, so its key still expands and its `−/+` sits at the row's trailing edge.
 
+### THE SHEET'S NUMBERS ARE REPRICED AT THE CHOSEN KIT, through ONE seam
+
+`KitRoster.repriced_source` hands the ordinary forecast a COPY of the wire's own terms with two
+substitutions, so every consumer downstream — the take, the waste, the crew targets, the chart —
+picks the kit up without knowing it exists. `DrawerComposeController._kit_priced_source` is the only
+caller, and `_hunt_priced_herd` / `_forage_priced_patch` are the only two doors onto it.
+
+**THE DENOMINATOR IS THE ROSTER'S OWN EQUIPPED TIER, NOT THE SOURCE'S `perWorkerBiomass`.** The ratio
+is `effective_carry / KitRoster.equipped_tier(kits, axis)` — the maximum across the roster on that
+axis, the exact twin of `unequipped_tier`'s minimum. Every kit that USES the component publishes the
+`labor_config` capacity there and every kit that does not publishes the bare tier, so the maximum IS
+the rate the sim published the source at (`snapshot/capture.rs` → `kit_roster_states` resolves it
+through the take path's own seam).
+
+- **In production the two coincide on the animal web and DIFFER on the plant one.** A herd publishes
+  `labor_config.hunt.per_worker_biomass_capacity` verbatim; a patch publishes
+  `forage.per_worker_biomass_capacity × seasonalWeight`, while a `KitOption`'s forage tier is stated
+  **before** the tile's weight (`equipment.md` says so in as many words). Dividing by the patch's own
+  number therefore divides the season back out and multiplies a season-free tier by it, so the crew's
+  rate comes out season-BLIND — wrong in the direction that looks right, worldgen pinning every weight
+  at `1.0` today.
+- **It is also what the harness fixtures need.** `ForageFx.seed_growth_terms` RECOVERS an absent
+  `per_worker_biomass` as `per_worker_yield / provisions_per_biomass`, which is exact against the
+  fixture's own hand-authored rates and has nothing to do with anyone's carry — measured at **286.67
+  against the roster's 40** on the deer fixtures, i.e. a ratio of 0.14 applied to every per-worker term
+  on the sheet. That moved five `ui_preview` assertions (three crew-count claims, the dipped-take line
+  and the oracle pair) and it is not a fixture bug: a canned rate is not a claim about a band.
+- **`repriced_source` is consequently NOT idempotent** — its reference is no longer a field the
+  substitution overwrites — so each producer prices at its own top and never hands a priced dict to
+  another producer that prices too. `_hunt_delivered_and_waste` takes `_hunt_yield_model`'s already-priced
+  herd and says so.
+
+**FOUR SHAPES OF THIS SHEET READ A SOURCE, and a call site that reached for the raw dict is how three
+of them were missed.** Reported from play as *the take moved with the kit but the crew numbers did
+not*: `forecast_inputs` (the stepper cap), `floor_chart_model` (**both crew-target pills**),
+`herd_axis_rates` (the quantised take and its waste) and `_hunt_take_rate` (the degrade path). The
+chart is the one the report was actually about — *clear it now* and *hold it after* are its numbers,
+not the forecast's — and priced on one side only, a pill names a count the `+` refuses.
+
+**THE RETREAT RIDES `stay_fraction` AND NEVER `engage_rate`.** The kit's `dispersion` multiplies the
+quarry's own wariness, and the substitution is `snapshot.fbs`'s own formula,
+`clamp(1 − (1 − stayFraction) × dispersion, 0, 1)`. Folding it into the reach instead reprices the take
+and the CREW COUNT together, and **the sim does not treat them together**: `fauna::hunt_engage_workers`
+sizes a crew on the RAW reach — the hands that can get to the herd — while `HuntParty::stayers` cuts
+only what those hands bring down. The fold shipped once and `ui_preview`'s *"the compose stepper caps at
+the crew the SIM asks for"* caught it immediately.
+
+`SourceForecast.animals_stayed` is the client mirror of `animals_that_stay` at the quantile a forecast
+reads it at (the analytic mean `floor(engaged) × stay`; `animals_engaged` already floors). It is
+applied in the sim's own order — **engage → retreat → convert** — and **only where a TAKE is composed**:
+
+| carries the retreat | does NOT |
+|---|---|
+| `engaged_quantum` → `engagement_reach` → `expected_yield_account` | `engage_workers` / `take_workers` |
+| `_hunt_delivered_and_waste`'s `carryable` bound | `engagement_carry`, hence `crew_to_clear` / `crew_to_hold` / `crew_that_reaches` |
+| — | `max_useful_workers`' `hold_crew` / `reach_crew` floors |
+
+**Both take producers, because only one of them is `expected_yield`** — the same reason the reach arm
+needed both. `_hunt_delivered_and_waste` composes its own `collection` so it can quantise, so an arm
+added to the shared layer alone leaves the *rendered* green line unmoved while the cap beside it shifts.
+
+**A source with no retreat stage is byte-identical to before the stage existed.** A patch and a pen
+publish no `stayFraction`, `repriced_source` finds no key to substitute, and `forecast_inputs` reads the
+wire's own `1` — which `animals_stayed` short-circuits on, so an unbounded engagement passes straight
+through. Measured: with the whole substitution live, **zero of `ui_preview`'s 590 assertions move**, no
+fixture in that harness publishing the field.
+
+**KNOWN GAP — the DOCK's hunt and denial forms reprice nothing.** `_kit_priced_source` is
+`DrawerComposeController`'s alone, so `BandPanelController`'s raid sheets build their floor chart on the
+RAW herd. Most of what those forms show is estimate-table lookup, which is quoted at the hunt job's
+default kit BY DESIGN and says so (see "THE HONESTY RULE" below) — but the chart is composed
+client-side from the herd's own terms and could be repriced honestly. It is left alone because its crew
+stepper caps on `expedition_useful_cap`, which IS table-derived: pricing the pills without the stepper
+would put the two at odds, which is the defect this section exists to remove. **Measured consequence:
+the repricing fix moved 83 of `ui_preview`'s 343 frames and ZERO of `band_panel_preview`'s 74.**
+
+**KNOWN GAP — the chart's PROJECTION is still pre-retreat.** `project_stock`'s engagement bound
+(`floor_chart_model`, `take_draws_down`, `crew_that_reaches`' probe walks) reads `engaged_quantum`
+without the stay term, so the drawn curve, the settle verdict and the ⚠ overdraw gate all walk a take
+larger than the one the readout quotes. It is left whole rather than half-closed **because
+`crew_that_reaches` feeds `max_useful_workers`' `reach_crew` floor**, i.e. the stepper cap — retreat-
+bounding it would put the sheet back at odds with the sim's `workersNeeded`, which is the regression
+this whole section exists to prevent. Closing it means separating that crew answer from the walk it is
+derived through. It is the same family as the two gaps recorded below (the local per-turn readout and
+the raid sheet's chart are both blind to the FIGHT), and it closes the same way.
+
+**Assertions, in `band_panel_preview._assert_kit_reprices_the_source`** — the whole substitution is
+arithmetic, so it is unit-tested rather than rendered. The reference claim needs a source whose
+published rate DIFFERS from the roster's (in production they coincide, so a live-shaped fixture passes
+with either denominator and says nothing), and the end-to-end pair is the claim that matters: on one
+herd at one crew the passive device lands **8.0 food against the spear's 2.0** while
+`max_useful_workers` answers **16 either way**. The pairing IS the assertion — a retreat folded into the
+reach moves both and would satisfy the first half alone.
+
+> **`band_panel_preview` IS THE ONLY HARNESS THAT CAN SEE THE FOLD, and it is worth knowing why.** No
+> `ui_preview` fixture publishes `stayFraction` at all, so the substitution has no key to touch there
+> and a retreat folded into `engage_rate` is a NO-OP across all 343 of its frames — the assertion that
+> historically caught this (*"the compose stepper caps at the crew the SIM asks for"*) could not catch
+> it today. Sabotage-verified: restoring the fold fails exactly the two claims above and nothing else
+> in either harness, the crew count going **16 → 61** while the take moves with it. Adding a
+> `stay_fraction` to a `ui_preview` herd fixture would move that herd's frames, so the guard stays
+> here, where it is arithmetic and free.
+
 ### The hint states the EFFECTIVE tier, never the fresh one
 
 `KitOption`'s numbers are for a FRESH kit. The band's real condition is on its own cohort
