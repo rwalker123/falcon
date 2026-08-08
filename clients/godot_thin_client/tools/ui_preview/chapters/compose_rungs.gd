@@ -489,3 +489,84 @@ func run(harness) -> void:
 			% [str(sledless_carry), str(sledded_carry)],
 		is_equal_approx(sledless_carry * BandFx.KIT_HUNT_CARRY_EQUIPPED,
 			sledded_carry * BandFx.KIT_HUNT_CARRY_BARE))
+
+	_assert_husbandry_hint_states_the_pen()
+
+## **THE HUSBANDRY KIT'S HINT NAMES THE PEN, AND AN ORDINARY HUNT KIT'S DOES NOT.**
+##
+## The pen axis reached `AXIS_ITEMS` with no reader, so a player selecting Husbandry on a hunt sheet
+## read `attack 1.0 · carry 40.0 per hunter · sled NN` — the SLED's condition, no pen tier at all, and
+## nothing about the one item the kit exists to carry. The pair is the claim: printing the pen line
+## unconditionally satisfies the husbandry half on its own, and it is exactly the regression the
+## `kit_uses` gate exists to refuse.
+##
+## **DRIVEN OVER A LOCALLY-BUILT ROSTER, and it has to be** — `BandFx.kit_roster_fixture()` carries no
+## `husbandry` kit (adding one would change what every hunt picker in both harnesses lists), so no
+## entry there equips the pen axis and the roster's max would equal its bare tier: a kit compared
+## against itself. It is also a SENTENCE, which a frame cannot judge — the sheet renders a perfectly
+## plausible hint whichever component it quotes.
+##
+## The expectations are spelled out here rather than recomposed through `KitRoster.tier_hint`: an
+## expectation re-derived through the function under test asserts nothing.
+func _assert_husbandry_hint_states_the_pen() -> void:
+	var kits := _pen_axis_roster()
+	var band := BandFx.with_equipped_kit({})
+	var conditions: Array = band[KitRoster.BAND_ITEM_CONDITIONS_KEY]
+	conditions.append({"item_id": PEN_ITEM_ID, "remaining": PEN_GEAR_CONDITION})
+	var big_game := KitRoster.tier_hint(kits, KitRoster.kit_by_id(kits, BandFx.KIT_ID_BIG_GAME),
+		band, KitRoster.JOB_HUNT)
+	var husbandry := KitRoster.tier_hint(kits, KitRoster.kit_by_id(kits, HUSBANDRY_KIT_ID),
+		band, KitRoster.JOB_HUNT)
+	var sep := HudComposeVocab.KIT_HINT_SEPARATOR
+	var want_big_game := sep.join([
+		HudComposeVocab.KIT_HINT_ATTACK_FORMAT % String.num(BandFx.KIT_ATTACK_EQUIPPED,
+			HudComposeVocab.KIT_TIER_DECIMALS),
+		HudComposeVocab.KIT_HINT_HUNT_CARRY_FORMAT % String.num(BandFx.KIT_HUNT_CARRY_EQUIPPED,
+			HudComposeVocab.KIT_TIER_DECIMALS),
+		HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [HudComposeVocab.KIT_COMPONENT_SPEARS,
+			int(BandFx.KIT_CONDITION_SPEARS)],
+		HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [HudComposeVocab.KIT_COMPONENT_SLED,
+			int(BandFx.KIT_CONDITION_SLED)],
+	])
+	# The husbandry kit carries no spears, so it takes the bare-handed attack and states no spear
+	# condition — the same `kit_uses` rule the pen line is being asserted through, one axis over.
+	var want_husbandry := sep.join([
+		HudComposeVocab.KIT_HINT_ATTACK_FORMAT % String.num(BandFx.KIT_ATTACK_BARE,
+			HudComposeVocab.KIT_TIER_DECIMALS),
+		HudComposeVocab.KIT_HINT_HUNT_CARRY_FORMAT % String.num(BandFx.KIT_HUNT_CARRY_EQUIPPED,
+			HudComposeVocab.KIT_TIER_DECIMALS),
+		HudComposeVocab.KIT_HINT_PEN_CARRY_FORMAT % String.num(BandFx.KIT_PEN_CARRY_EQUIPPED,
+			HudComposeVocab.KIT_TIER_DECIMALS),
+		HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [HudComposeVocab.KIT_COMPONENT_SLED,
+			int(BandFx.KIT_CONDITION_SLED)],
+		HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [
+			HudComposeVocab.KIT_COMPONENT_HUSBANDRY_GEAR, int(PEN_GEAR_CONDITION)],
+	])
+	h._assert_hud("an ordinary hunt kit's hint states no pen tier — \"%s\"" % big_game,
+		big_game == want_big_game)
+	h._assert_hud("…and the husbandry kit's states the pen AND its handling gear — \"%s\"" % husbandry,
+		husbandry == want_husbandry)
+
+## The shipped `husbandry` kit's id, and the item behind the pen axis (`equipment.json`).
+const HUSBANDRY_KIT_ID := "husbandry"
+
+const PEN_ITEM_ID := "husbandry_gear"
+
+## The band's handling gear, at a condition that is none of the other three the fixtures ship — two
+## items sharing one number would pass the assertion above with their axes swapped.
+const PEN_GEAR_CONDITION := 42.0
+
+## The shared roster plus the `husbandry` kit the harness's own picker states must not see: the ONE
+## entry that equips the pen axis, so `KitRoster.equipped_tier` answers 40 and `kit_uses` can tell the
+## two hunt kits apart. Every other axis on it is the roster's own bare tier, the wire's shape.
+func _pen_axis_roster() -> Array:
+	var kits := BandFx.kit_roster_fixture()
+	kits.insert(kits.size() - 1, {
+		"id": HUSBANDRY_KIT_ID, "display_name": "Husbandry kit", "jobs": ["hunt"],
+		"attack": BandFx.KIT_ATTACK_BARE,
+		"hunt_carry_per_worker_biomass": BandFx.KIT_HUNT_CARRY_EQUIPPED,
+		"forage_carry_per_worker_biomass": BandFx.KIT_FORAGE_CARRY_BARE,
+		"pen_carry_per_worker_biomass": BandFx.KIT_PEN_CARRY_EQUIPPED,
+		"scout_vantage_range": BandFx.KIT_SCOUT_VANTAGE_BARE,
+	})
+	return kits

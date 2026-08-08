@@ -826,6 +826,11 @@ const KIT_HINT_SEPARATOR := " · "
 const KIT_HINT_ATTACK_FORMAT := "attack %s"
 const KIT_HINT_HUNT_CARRY_FORMAT := "carry %s per hunter"
 const KIT_HINT_FORAGE_CARRY_FORMAT := "carry %s per gatherer"
+## **THE PEN'S OWN CARRY, AND IT IS NOT THE SLED'S.** A sled drags a carcass in off the range; a pen
+## stands at the camp, and what bounds a slaughter there is handling gear — so a kit carrying only a
+## sled collects a pen at the bare rate. It prints on a hunt sheet BESIDE the sled's line rather than
+## instead of it (a husbandry kit carries both), and only for a kit that actually supplies the axis.
+const KIT_HINT_PEN_CARRY_FORMAT := "pen %s per keeper"
 ## A component's remaining condition on `equipment.json`'s 0-100 scale, and the word for a spent one.
 ## **Performance is FLAT until expiry** (durability and performance are orthogonal axes), so this
 ## number never scales anything above it — it says how much longer the tier lasts, not how good it is.
@@ -834,6 +839,10 @@ const KIT_HINT_DRY_FORMAT := "%s dry"
 const KIT_COMPONENT_SPEARS := "spears"
 const KIT_COMPONENT_SLED := "sled"
 const KIT_COMPONENT_BASKETS := "baskets"
+## `husbandry_gear` — hurdles, halters, a butchering stone, vessels. Named for what it DOES on the
+## sheet (it is what a keeper works a pen with) rather than spelled as the wire's item id, the way
+## every component on this line is.
+const KIT_COMPONENT_HUSBANDRY_GEAR := "handling gear"
 ## Tier decimals. The tiers span 1.0 (bare hands) to 40.0 (a sled), authored as small round numbers,
 ## so one decimal states them without claiming a precision the roster does not have.
 const KIT_TIER_DECIMALS := 1

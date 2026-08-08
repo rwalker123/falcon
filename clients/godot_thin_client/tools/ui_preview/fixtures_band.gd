@@ -229,6 +229,25 @@ const KIT_FORAGE_CARRY_EQUIPPED := 8.0
 
 const KIT_FORAGE_CARRY_BARE := 1.6
 
+## **THE PEN'S TIER, AND IT IS NOT THE SLED'S.** A sled drags a carcass in off the range and a pen
+## stands at the camp, so a kit carrying only a sled collects a pen at the bare rate. The equipped
+## side is `labor_config.hunt.per_worker_biomass_capacity` (the number a pen harvest has always been
+## capped by); the bare side is `equipment.json`'s `husbandry_gear` declaration.
+##
+## **NO ENTRY OF `kit_roster_fixture()` EQUIPS IT**, deliberately — the shared roster carries no
+## `husbandry` kit, so adding one would change what every hunt picker in both harnesses lists. The
+## equipped tier is here for the chapters that build their OWN roster to exercise the axis.
+const KIT_PEN_CARRY_EQUIPPED := 40.0
+
+const KIT_PEN_CARRY_BARE := 12.0
+
+## **WHAT A POSTED SCOUT VANTAGE CAN MAKE OUT** — `labor_config.scout.vantage_range` equipped, the
+## `wayfinding` item's own declaration bare. How far out the vantage is POSTED is not a kit axis at
+## all (that is three separate `labor_config` dials), so nothing here states it.
+const KIT_SCOUT_VANTAGE_EQUIPPED := 2.0
+
+const KIT_SCOUT_VANTAGE_BARE := 1.0
+
 # The three conditions a kitted band ships with. **DELIBERATELY THREE DIFFERENT NUMBERS** on the
 # 0-100 scale: a fixture that gave two kits one value would pass every assertion with their accessors
 # swapped, which is the exact defect class this arc keeps reproducing.
@@ -248,17 +267,38 @@ const KIT_CONDITION_BASKETS := 31.0
 const KIT_ID_BIG_GAME := "big_game"
 const KIT_ID_GATHERING := "gathering"
 const KIT_ID_NONE := "none"
+## The two BAND-WIDE roles have a kit axis now — they had none while nothing in the roster was gear
+## for them, and `LaborAssignment.kitId` published `""` on those rows. Each names its own default,
+## exactly as `equipment.json`'s `default_kits` does.
+const KIT_ID_WAYFINDING := "wayfinding"
+const KIT_ID_WARRIOR := "warrior"
 const KIT_DEFAULT_HUNT := KIT_ID_BIG_GAME
 const KIT_DEFAULT_FORAGE := KIT_ID_GATHERING
+const KIT_DEFAULT_SCOUT := KIT_ID_WAYFINDING
+const KIT_DEFAULT_WARRIOR := KIT_ID_WARRIOR
+
+## The `clubs` tier the warrior kit grants — well under the spear's 20, because a raid is people
+## fighting animals at the camp with whatever is by the fire rather than a hunting party that chose
+## its ground. It is the same `attack` stat the hunt reads; what keeps a club out of a hunt is the
+## kit's `jobs` list, which is why this value can sit in the same roster without disturbing it.
+const KIT_ATTACK_CLUBS := 6.0
 
 ## The world's kit roster, in `equipment.json` order — the picker's list, and the ONE roster both
 ## preview harnesses drive (`band_panel_preview` preloads this module for it, so the two cannot quote
 ## different tiers or a different default).
 ##
-## **EVERY ENTRY STATES ALL THREE TIERS, and the ones its kit does not use are the BARE ones.** That
+## **EVERY ENTRY STATES ALL FIVE TIERS, and the ones its kit does not use are the BARE ones.** That
 ## is the wire's own shape and it is what `KitRoster.unequipped_tier` reads the bare-handed tier off:
 ## the minimum across the roster on an axis IS that axis's unequipped tier, so a fixture that left an
-## unused axis at its equipped value would make the client's step-down silently unreachable.
+## unused axis at its equipped value would make the client's step-down silently unreachable. The
+## MAXIMUM is the twin claim `KitRoster.equipped_tier` reads — the rate every source row is published
+## at — so an axis no entry equips reads bare at both ends, which is the honest answer for a roster
+## with no kit supplying it rather than a hole.
+##
+## **THE TWO BAND-WIDE ROLES ARE IN THE ROSTER AND CHANGE NO EXISTING PICKER**: `wayfinding` lists
+## `scout` and `warrior` lists `warrior`, so `kits_for_job` filters both out of every hunt and forage
+## sheet. What they are here for is the AXES — the roster is what the bare-handed vantage tier is read
+## off, and a roster missing them describes a world the sim does not ship.
 ##
 ## **`none` IS AN ORDINARY MEMBER AND IT IS AUTHORED LAST**, exactly as `equipment.json` authors it —
 ## which is the whole of why the picker renders it last. The client sorts nothing.
@@ -269,18 +309,41 @@ static func kit_roster_fixture() -> Array:
 			"attack": KIT_ATTACK_EQUIPPED,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_EQUIPPED,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
+			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
+			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
 		},
 		{
 			"id": KIT_ID_GATHERING, "display_name": "Gathering kit", "jobs": ["forage"],
 			"attack": KIT_ATTACK_BARE,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_EQUIPPED,
+			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
+			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
 		},
 		{
-			"id": KIT_ID_NONE, "display_name": "No kit", "jobs": ["hunt", "forage"],
+			"id": KIT_ID_WAYFINDING, "display_name": "Wayfinding kit", "jobs": ["scout"],
 			"attack": KIT_ATTACK_BARE,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
+			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
+			"scout_vantage_range": KIT_SCOUT_VANTAGE_EQUIPPED,
+		},
+		{
+			"id": KIT_ID_WARRIOR, "display_name": "Warrior kit", "jobs": ["warrior"],
+			"attack": KIT_ATTACK_CLUBS,
+			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
+			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
+			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
+			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
+		},
+		{
+			"id": KIT_ID_NONE, "display_name": "No kit",
+			"jobs": ["hunt", "forage", "scout", "warrior"],
+			"attack": KIT_ATTACK_BARE,
+			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
+			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
+			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
+			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
 		},
 	]
 

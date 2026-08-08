@@ -3,6 +3,7 @@ paths:
   - "core_sim/src/combat/**"
   - "core_sim/src/combat_config.rs"
   - "core_sim/src/data/combat_config.json"
+  - "core_sim/src/systems/labor.rs"
   - "core_sim/tests/predators.rs"
 ---
 
@@ -490,11 +491,20 @@ Phase 0, inert until now) is the trigger; `diet` gates it to carnivores.
   (`count 1.0`, profile `combat` with `attack = attack × aggression`) — a Phase-1b simplification that
   keeps `power_enemy` modest so a handful of warriors can meaningfully cut the loss ratio (the whole pack
   engaged would make every raid a massacre); **Defender** = the band's **Warriors** (`count =
-  workers_on(Warrior)` clamped to working-age, profile = the creatures roster's `person` — the armed
-  defenders that add power and shift the split toward wounded) **plus the exposed populace**
+  workers_on(Warrior)` clamped to working-age, profile = **`EquipmentConfig::warrior_profile`** — the
+  armed defenders that add power and shift the split toward wounded) **plus the exposed populace**
   (`count = min(predators.raid_exposure, working_age − warriors)`, profile `{ attack 0, person.defense,
   person.range }` — the unarmed folk that can die and dilute the blow but add no offense). The seed is
   rollback-stable and distinct per (predator, band) pair (both the herd id and the band entity hashed).
+- **THE WARRIORS ARE KITTED, so their `attack` is not the `person` row's `1`.** The Warrior labor row
+  carries a kit like every other role (`equipment.md` → "The two band-wide roles have a kit axis
+  now"), and `warrior_profile` swaps the whole attack tier off it — the shipped `warrior` kit's
+  `clubs` put a start-kitted band's defenders at **6**, and a band whose clubs are spent drops back to
+  the bare `1`. **Tuning `raid_exposure` or a species' `aggression` against `person.attack` therefore
+  computes the defender's offense six times too low.** Only the warrior contingent is armed: the
+  exposed populace stays at `attack 0` whatever the band carries, which is the whole reason it is a
+  separate contingent. The clubs wear one use per fight resolved, charged after the raids so this
+  turn is defended at the tier it was priced with.
 - **Config** — two `#[serde(default)]` levers on `PredatorConfig` (`fauna_config.json` `predators`
   block), both playtest dials: **`raid_radius`** (`2` — how close the pack must be to raid; its own
   lever, deliberately tighter than the `prey_sense_radius` disk) and **`raid_exposure`** (`4.0` — how

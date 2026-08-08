@@ -32,7 +32,7 @@ cost a whole design conversation to unpick. **"Kit" now means only the roster en
 | **`sled`** — travois, drag harness | `hunt_carry` **12** (unequipped) | per **biomass hauled home from a hunt** |
 | **`baskets`** | `forage_carry` **1.6** (unequipped) | per **biomass gathered** |
 | **`traps`** — the passive device (snares, nets, weirs) | `attack` **20** bounded to `max_body_mass` **1.0**, `dispersion` **0**, `exposure` **0** | per **animal killed** |
-| **`husbandry_gear`** — hurdles, halters, a butchering stone, vessels | `pen_carry` **12** (unequipped) | per **biomass collected off a pen** |
+| **`husbandry_gear`** — hurdles, halters, a butchering stone, vessels | `pen_carry` **12** (unequipped) | per **biomass BUTCHERED off a pen** (what was killed, not what was hauled home) |
 | **`wayfinding`** — tallies, marked staves, a fire-drill | `scout_vantage_range` **1** (unequipped) | per **tile revealed for the FIRST time** |
 | **`clubs`** | `attack` **6** (equipped) | per **fight resolved** |
 
@@ -73,10 +73,20 @@ three that shipped before, pinned by `each_new_kit_wears_on_its_own_use_quantum`
   fought, and pricing gear on its results charges the band that is losing the least. A band nobody
   raided pays zero; a band three packs turned on pays three. Gated on `warrior_count > 0` — nothing
   was swung by a band with nobody on the row.
-- **`biomass_collected` is the pen's, and a pen charges BOTH it and `biomass_hauled` over the one
-  number.** The sled is being dragged and the handling gear is being worked. Two quanta rather than
-  one is what lets a band that only keeps pens leave a sled it never took onto the range untouched,
-  and what lets either life be retuned without moving the other.
+- **`biomass_collected` is the pen's, and a pen charges it and `biomass_hauled` over DIFFERENT
+  numbers.** The sled is charged for what it **hauled** (`take.carried`); the handling gear is
+  charged for what it **butchered** (`take.killed_biomass()`). Hurdles, halters, a butchering stone
+  and vessels are worked on the whole beast brought out of the pen and killed, not on the fraction
+  that made it home — and the gap is reachable rather than theoretical: waste needs
+  `workers × pen_carry < body_mass`, and a Wild Aurochs (`body_mass 120`, pennable, one required
+  keeper) at the equipped `pen_carry` of 40 kills 120 and carries 40, so a single basis would
+  under-charge the gear threefold on the animal it did the most work on.
+
+  **Two quanta rather than one is a SECOND, independent reason** and is worth keeping distinct from
+  the basis question: it is what lets a band that only keeps pens leave a sled it never took onto the
+  range untouched, and what lets either life be retuned without moving the other. The first cut
+  charged both over `take.carried` on the strength of that reason alone — which is exactly how a
+  physical claim goes unexamined behind a correct-but-different one.
 
 ### A pen is collected on `pen_carry`, and bringing a sled to it costs you
 
@@ -304,7 +314,7 @@ back" below.
 
 | File | Purpose |
 |---|---|
-| `src/data/equipment.json` | **The TOE** (loader `equipment_config.rs`, env override `EQUIPMENT_CONFIG_PATH`, validated inside `from_json_str` so every load path is covered). Two blocks. **`items`** — a map of id → `{ starting_durability, wear: { per, amount }, effects: [{ stat, equipped\|unequipped }] }`. `stat` is one of `attack` / `hunt_carry` / `forage_carry` / `pen_carry` / `scout_vantage_range` / `dispersion` / `exposure`; `per` is `kill` / `biomass_hauled` / `biomass_gathered` / `biomass_collected` / `tile_revealed` / `fight` — **there is no `turn` variant, and that is `docs/plan_denial_raid.md` §1.2 enforced by the type**. Shipped: `spears` (100 durability, 0.4/kill → 250 kills), `sled` (100, 0.02/biomass → 5000), `baskets` (100, 0.04/biomass → 2500), `traps` (100, 0.2/kill → 500 — twice the spear's life per kill because a trap is *worked* rather than thrown, and on the **same quantum** so a trapping party cannot hunt for free). **`kits`** — `{ id, display_name, jobs, uses }`, where `uses` names items and `jobs` is `hunt` / `forage` / `scout` / `warrior`; plus `default_kits`, which names one per job. Shipped additions: `husbandry_gear` (100, 0.08/biomass collected → 1250), `wayfinding` (100, 0.05/tile first-seen → 2000), `clubs` (100, 2.0/fight → 50 raids). **`validate` rejects**: an empty item table; any non-finite or `<= 0` durability or wear amount (an item with no wear rate is not consumable, one with no durability is born dry); an item with no effects; a negative or non-finite effect value; **an item declaring the same stat twice** (`effect()` takes the first match, so the second would be silently dead); **two items declaring the same TWO-TIER stat** (`EquipmentStat::TWO_TIER` — the unequipped fallback searches the whole table and takes the first match, so it would resolve by `BTreeMap` order, i.e. alphabetically); **a mass-bounded `attack` on an item a Scout or Warrior kit uses** (nothing on the other side of that fight has a `body_mass`, so the bound would be silently ignored); a duplicate kit id; a kit listing no jobs; a default naming no roster entry or not covering its own job; and **a `uses` entry naming an item the table does not carry**. That last one is a DEBT, not a nicety — see below. |
+| `src/data/equipment.json` | **The TOE** (loader `equipment_config.rs`, env override `EQUIPMENT_CONFIG_PATH`, validated inside `from_json_str` so every load path is covered). Two blocks. **`items`** — a map of id → `{ starting_durability, wear: { per, amount }, effects: [{ stat, equipped\|unequipped }] }`. `stat` is one of `attack` / `hunt_carry` / `forage_carry` / `pen_carry` / `scout_vantage_range` / `dispersion` / `exposure`; `per` is `kill` / `biomass_hauled` / `biomass_gathered` / `biomass_collected` / `tile_revealed` / `fight` — **there is no `turn` variant, and that is `docs/plan_denial_raid.md` §1.2 enforced by the type**. Shipped: `spears` (100 durability, 0.4/kill → 250 kills), `sled` (100, 0.02/biomass → 5000), `baskets` (100, 0.04/biomass → 2500), `traps` (100, 0.2/kill → 500 — twice the spear's life per kill because a trap is *worked* rather than thrown, and on the **same quantum** so a trapping party cannot hunt for free). **`kits`** — `{ id, display_name, jobs, uses }`, where `uses` names items and `jobs` is `hunt` / `forage` / `scout` / `warrior`; plus `default_kits`, which names one per job. Shipped additions: `husbandry_gear` (100, 0.04/biomass **butchered** → 2500 — halved from the 0.08 the collected-equals-carried basis shipped with, because `killed_biomass ≥ carried` always: on the one shipped pen species the two bases diverge on, the Wild Aurochs, the old rate ran a keeper's gear dry in ~10 turns against the 15–20-turn kit clock), `wayfinding` (100, 0.05/tile first-seen → 2000), `clubs` (100, 2.0/fight → 50 raids). **`validate` rejects**: an empty item table; any non-finite or `<= 0` durability or wear amount (an item with no wear rate is not consumable, one with no durability is born dry); an item with no effects; a negative or non-finite effect value; **an item declaring the same stat twice** (`effect()` takes the first match, so the second would be silently dead); **two items declaring the same TWO-TIER stat** (`EquipmentStat::TWO_TIER` — the unequipped fallback searches the whole table and takes the first match, so it would resolve by `BTreeMap` order, i.e. alphabetically); **a mass-bounded `attack` on an item a Scout or Warrior kit uses** (nothing on the other side of that fight has a `body_mass`, so the bound would be silently ignored); a duplicate kit id; a kit listing no jobs; a default naming no roster entry or not covering its own job; and **a `uses` entry naming an item the table does not carry**. That last one is a DEBT, not a nicety — see below. |
 | `src/data/creatures.json` | The creatures roster — intrinsic `CombatStats` for non-fauna units. `person.combat.attack` (**1.0**) is the hunting kit's **unequipped** tier. See `combat.md` for the roster's role in the fight. |
 
 ### `UnknownItem` pays back a guarantee the model used to get for free
@@ -405,8 +415,10 @@ in `bin/server.rs`, and restored by `sim_state.rs` (`BandRecord::equipment`, car
   *both* arms, through the same two `EquipmentConfig` seams. It has to: the forecast-equals-actual
   invariant (`yield-forecast.md`) would otherwise promise a dry band a kitted haul or a bare-handed
   crew a basketful.
-- **A pen harvest wears the SLED only.** A penned beast is slaughtered, not stalked — no fight, no
-  spear to blunt — which is the same reason that branch passes no engagement bound to the quantiser.
+- **A pen harvest wears the SLED and the HUSBANDRY GEAR, and never the hunting kit.** A penned beast
+  is slaughtered, not stalked — no fight, no spear to blunt — which is the same reason that branch
+  passes no engagement bound to the quantiser. The two it *does* wear are charged on **different
+  numbers**: see "A pen is collected on `pen_carry`" above.
 - **An expedition never touches baskets.** A raid is a hunt (`ExpeditionMission` has no gather verb),
   so `advance_expeditions` resolves the sled and the hunting kit and nothing else.
 
@@ -492,9 +504,20 @@ reading that silently re-arms a party sent out bare.
 
 **`EquipmentConfig::no_kit()` is SYNTHETIC, not a lookup of the roster's `none`.** The roster is
 config and a file is free to drop that entry, but "this crew carries no kit" is a state the sim
-reaches on its own — a band-wide role like Scout or Warrior has no kit axis at all. Resolving it
-through the roster would let a config edit panic the labor loop. Its id is empty, which is what
-`LaborAssignment.kitId` already publishes for a row with no kit axis.
+reaches on its own, and resolving it through the roster would let a config edit panic the labor loop.
+
+**What it is FOR changed when the band-wide roles gained a kit axis**, and the old justification is
+worth stating so it is not quietly restored: it used to be *"a Scout or Warrior row has no kit to
+resolve"*, and those rows now resolve their own job's default like every other. What survives is a
+band **with no `LaborAllocation` component at all** — the fallback in `calculate_visibility`'s two
+scout seams — and `HuntingParty::builtin_unequipped`, which wants every unequipped tier and every
+neutral multiplier to come from the *same* resolution a live bare-handed party runs rather than from
+a hand-built profile that could drift.
+
+**An unstaffed singleton role is NOT one of those cases.** `LaborAllocation::kit_on` falls back to
+the **job's default**, not to the empty kit, so a zero-worker Warrior row answers the same tier the
+same row with one worker on it does. Both its consumers gate on the head-count first, so the choice
+costs nothing — what it buys is that the two readings cannot differ.
 
 **Nothing resolves a stat by naming an item.** `hunter_profile` asks the kit for the best *equipped*
 `attack` among its live items; the carries ask whether any live item *supplies* their stat and fall
@@ -508,10 +531,21 @@ special-cased.
 
 ### Wear rides the SAME predicate that chose the tier
 
-Every wear site is gated on the effective predicate its own tier came from — the three in
-`systems/labor.rs` (baskets on the gather, the sled on a pen harvest, both on a wild hunt) and the
-two in `systems/expeditions.rs` (the raid's take and the scout's roadside kill). So a party using no
-component spends no durability on any of them.
+Every wear site is gated on the effective predicate its own tier came from. **There are seven, and
+this list is the one an audit checks against** — two of them are outside `systems/labor.rs`'s
+assignment loop entirely, which is exactly how a site gets missed:
+
+| where | charges | gated on |
+|---|---|---|
+| `systems/labor.rs` — the gather | baskets, per biomass gathered | the crew's kit supplies `forage_carry` |
+| `systems/labor.rs` — a pen harvest | the sled per biomass **hauled**, the husbandry gear per biomass **butchered** | each item's own live predicate |
+| `systems/labor.rs` — a wild hunt | spears/traps per kill, the sled per biomass hauled | likewise, and independently |
+| `systems/expeditions.rs` — the raid's take | the hunting kit and the sled | the party's launch-time kit |
+| `systems/expeditions.rs` — the scout's roadside kill | likewise | likewise |
+| `visibility_systems.rs` — `calculate_visibility` | wayfinding, per tile first revealed | only a **scout vantage's** first sightings, and only for the band that posted it |
+| `systems/labor.rs` — `advance_predator_raids` | clubs, per fight resolved | `warrior_count > 0` — nobody swung anything in a band with no warriors |
+
+So a party using no component spends no durability on any of them.
 
 **This pairing is the whole reason the bare-handed option is usable.** If it were not gated, running
 the comparison would consume the very kit it is being compared against — the player would pay for the
@@ -527,10 +561,9 @@ moves it, so a `big_game` party still steps down when its spears run out; what i
 components it reaches for*.
 
 A `LaborAssignment` carries `kit: Option<KitChoice>` and re-resolves from **there** each turn, not
-from the band. `None` reads as the job's default and is the only reading for the band-wide roles
-(Scout / Warrior), which consume no component and have no kit axis at all. `assign_labor` stores the
-*resolved* choice, so a replayed command lands on the kit it named rather than on whatever the
-default is today.
+from the band. `None` reads as the job's default, **on all four roles** — Scout and Warrior included
+now that each has a job to default through. `assign_labor` stores the *resolved* choice, so a
+replayed command lands on the kit it named rather than on whatever the default is today.
 
 The **wear** snapshot is still taken once per band per turn (`advance_labor_allocation`'s
 `band_kit`), so a kit that expires part-way through the assignment loop cannot pay two different

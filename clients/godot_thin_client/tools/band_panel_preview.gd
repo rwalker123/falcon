@@ -791,7 +791,8 @@ func _ready() -> void:
 	# sheets' Kit picker is built from it. World setup rather than per-state, exactly as the herds and
 	# food modules above are — a roster seeded per frame would give one sheet a picker and the next none.
 	_hud.update_kit_roster(BandFx.kit_roster_fixture(),
-		BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE)
+		BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE,
+		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR)
 	_push_bands([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
 	print("band_panel_preview: cycler split — player_bands=%d (expect 1), player_expeditions=%d (expect 2)" % [
 		_hud._band_labor._player_bands.size(), _hud._band_labor._player_expeditions.size()])

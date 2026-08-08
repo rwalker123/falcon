@@ -165,6 +165,15 @@ const KIT_DURABILITY_KEY_BASKETS := "baskets"
 const KIT_DURABILITY_KEY_TRAPS := "traps"
 const KIT_LABEL_TRAPS := "Traps"
 
+# The three items the expanded roster added. They have labels but NO row of their own in the kit
+# BREAKDOWN, and the difference is what the cohort publishes: that popover pairs each item with the
+# resolved tier it sets, and the wire carries `hunterAttack` / `huntCarry…` / `forageCarry…` and no
+# pen-carry or vantage tier — so a row for one could only quote a number the sim never sent. The
+# summary ROW below needs no tier, so these reach it and read as words instead of as wire ids.
+const KIT_LABEL_HUSBANDRY_GEAR := "Handling gear"
+const KIT_LABEL_WAYFINDING := "Wayfinding"
+const KIT_LABEL_CLUBS := "Clubs"
+
 # What a trap line is FOR, on the disclosure row. It sets no tier the cohort publishes — reach and
 # stand-off are properties of the kit, not of the band — so unlike the other three this row states
 # its role in words rather than quoting a resolved number.
@@ -179,6 +188,9 @@ const KIT_ITEM_LABELS := {
     "sled": KIT_LABEL_SLED,
     "baskets": KIT_LABEL_BASKETS,
     "traps": KIT_LABEL_TRAPS,
+    "husbandry_gear": KIT_LABEL_HUSBANDRY_GEAR,
+    "wayfinding": KIT_LABEL_WAYFINDING,
+    "clubs": KIT_LABEL_CLUBS,
 }
 
 ## The display label for an item id — the id itself when this build has no name for it.

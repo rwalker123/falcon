@@ -231,12 +231,19 @@ pub enum WearQuantum {
     BiomassHauled,
     /// Per unit of biomass gathered. Baskets.
     BiomassGathered,
-    /// Per unit of biomass taken off a **pen**. Husbandry gear.
+    /// Per unit of biomass **butchered** at a pen — what the slaughter put on the ground, not what
+    /// the keeper got home ([`crate::fauna::AnimalTake::killed_biomass`]). Husbandry gear.
     ///
-    /// **Its own quantum rather than [`Self::BiomassHauled`]**, though a pen harvest charges both:
-    /// the sled is being *dragged* and the handling gear is being *worked*, and a band that only
-    /// keeps pens must not blunt a sled it never took onto the range. Two quanta over one number is
-    /// what lets those two lives diverge the moment either rate is retuned.
+    /// **Its own quantum rather than [`Self::BiomassHauled`], and over a different number.** A pen
+    /// harvest charges both, because the sled is being *dragged* and the handling gear is being
+    /// *worked* — but the gear is worked on the **whole beast** brought out of the pen and killed,
+    /// while the sled only ever drags home the fraction the crew could carry. The two coincide on
+    /// every pen a keeper can seat whole and part on the ones it cannot, which is where charging
+    /// this over `carried` under-priced exactly the animal the gear did the most work on.
+    ///
+    /// Keeping the quanta apart is *separately* what stops a band that only keeps pens from blunting
+    /// a sled it never took onto the range, and what lets either life be retuned without moving the
+    /// other.
     BiomassCollected,
     /// Per **tile revealed for the first time**. Wayfinding gear.
     ///

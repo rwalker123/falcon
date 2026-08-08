@@ -143,7 +143,8 @@ func _ready() -> void:
 	# The kit roster, so every compose sheet below resolves a real selection and the `kit <id>` tail
 	# is a token the REAL parser has to accept rather than one the client never emits.
 	_hud.update_kit_roster(BandFx.kit_roster_fixture(),
-		BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE)
+		BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE,
+		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR)
 	await _settle()
 
 	await _drive_assign_labor()

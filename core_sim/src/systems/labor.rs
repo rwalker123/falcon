@@ -1377,12 +1377,20 @@ pub fn advance_labor_allocation(
                                 fauna::EngagementStop::WhenPackFull,
                             );
                         herd.biomass -= take.killed_biomass();
-                        // **A pen charges TWO quanta over the one number, and they are not the same
-                        // use.** The sled wears on what it *hauls* (a pen still has to get the meat
-                        // home); the husbandry gear wears on what it *collects* — the hurdles worked,
-                        // the beast handled, the vessels filled. Two quanta rather than one is what
-                        // lets a band that only keeps pens leave a sled it never took onto the range
-                        // untouched, and what lets either life be retuned without moving the other.
+                        // **A pen charges TWO quanta over TWO DIFFERENT NUMBERS: the sled is charged
+                        // for what it HAULED, the handling gear for what it BUTCHERED.** Hurdles,
+                        // halters, a butchering stone and vessels are worked on the whole beast that
+                        // was brought out of the pen and killed — not on the fraction of it that made
+                        // it home — so `biomass_collected` rides [`AnimalTake::killed_biomass`] while
+                        // `biomass_hauled` rides `carried`. Charging both over `carried` under-charged
+                        // the handling gear for exactly the animal it did the most work on: waste in
+                        // this branch needs `workers × pen_carry < body_mass`, which a Wild Aurochs
+                        // (`body_mass 120`, one required keeper at `animals_per_herder 12`) reaches on
+                        // every slaughter — 120 killed against 40 carried at the equipped tier.
+                        //
+                        // Two quanta rather than one is *separately* what lets a band that only keeps
+                        // pens leave a sled it never took onto the range untouched, and what lets
+                        // either life be retuned without moving the other.
                         //
                         // The *hunting* kit is untouched on both: a penned beast is slaughtered, not
                         // stalked, so there is no fight and no spear to blunt — the same reason this
@@ -1400,7 +1408,7 @@ pub fn advance_labor_allocation(
                                 &equipment_cfg,
                                 &crew_kit,
                                 crate::equipment_config::WearQuantum::BiomassCollected,
-                                take.carried,
+                                take.killed_biomass(),
                             );
                         }
                         // **A pen changes the INTENSITY, never the PRODUCT** — the keeper is paid
@@ -4715,6 +4723,127 @@ mod labor_yield_tests {
             (pen_row.actual - pen_forecast).abs() < FORECAST_EPSILON,
             "pen forecast must equal the actual payout: {pen_forecast} vs {}",
             pen_row.actual
+        );
+    }
+
+    /// **A body no single keeper can seat.** Waste in the pen branch needs
+    /// `workers × pen_carry < body_mass`, and the equipped `pen_carry` is
+    /// `labor_config.hunt.per_worker_biomass_capacity` (40), so one keeper leaves most of this behind.
+    /// It is the **Wild Aurochs**' own mass — the one shipped pen species that reaches this regime,
+    /// at its single required keeper (`animals_per_herder 12`).
+    const UNSEATABLE_BODY_MASS: f32 = 120.0;
+    /// Capacity big enough that the pen's harvest clears a whole [`UNSEATABLE_BODY_MASS`] body every
+    /// turn, so the slaughter happens rather than the pen waiting for one to grow.
+    const UNSEATABLE_PEN_CAP: f32 = 8_000.0;
+    /// **Where the pen stands, as a fraction of its `K`** — a little above the `K/2` escapement point
+    /// the pen harvests down to (`fauna::managed_yield_biomass`). Seating it *at* `K/2` offers
+    /// exactly nothing and the keeper slaughters no animal at all.
+    const PEN_STOCK_ABOVE_ESCAPEMENT: f32 = 0.55;
+
+    /// **THE SLED IS CHARGED FOR WHAT IT HAULED; THE HANDLING GEAR FOR WHAT IT BUTCHERED.** A pen
+    /// harvest wears both, and on **different numbers**: hurdles, halters and a butchering stone are
+    /// worked on the whole beast brought out of the pen and killed, not on the fraction of it the
+    /// keeper could carry home.
+    ///
+    /// The two coincide on every pen a crew can seat whole, which is why this fixture is deliberately
+    /// in the regime where they part — and why the divergence is asserted **on the biomass each
+    /// quantum was charged over** rather than on the raw wear, which would merely be restating that
+    /// the two items ship different rates.
+    ///
+    /// Paired with a liveness assertion that the harvest really wasted something: on a pen that
+    /// seated its beast whole the two bases are equal and the ordering below would be a vacuous
+    /// truth about a fixture that never bound.
+    #[test]
+    fn a_pen_harvest_that_wastes_charges_the_handling_gear_for_more_than_the_sled() {
+        let (mut world, tile) = world_with_source(CAP);
+        // Seat the pen above its escapement point, on a capacity large enough that the stock
+        // standing over it is worth more than one whole body.
+        reseat_herd(
+            &mut world,
+            UNSEATABLE_PEN_CAP * PEN_STOCK_ABOVE_ESCAPEMENT,
+            UNSEATABLE_PEN_CAP,
+        );
+        {
+            let mut registry = world.resource_mut::<HerdRegistry>();
+            let herd = &mut registry.herds[0];
+            herd.body_mass = UNSEATABLE_BODY_MASS;
+            assert!(
+                herd.corral_at(SOURCE),
+                "the fixture species must be pennable"
+            );
+        }
+        let keeper = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Hunt {
+                    fauna_id: HERD_ID.to_string(),
+                    floor: FOOD_PEAK_FLOOR,
+                },
+                // **One keeper**, which is what puts the harvest in the wasting regime: `1 × 40` of
+                // pen collection against a 120-unit body.
+                workers: 1,
+                improvement: None,
+                // The husbandry kit, so both items under test are live: it carries the handling gear
+                // (the pen's own tier) *and* a sled (the keeper still hauls the meat home).
+                kit: Some(
+                    crate::equipment_config::EquipmentConfig::builtin()
+                        .kit("husbandry")
+                        .expect("the shipped roster carries the husbandry kit"),
+                ),
+            }],
+        );
+        // A fresh ledger — `spawn_band` builds no equipment, and wear is only charged where a band
+        // carries one.
+        world
+            .entity_mut(keeper)
+            .insert(crate::components::BandEquipment::default());
+
+        world.run_system_once(advance_labor_allocation);
+
+        let equipment = crate::equipment_config::EquipmentConfig::builtin();
+        let ledger = world
+            .get::<crate::components::BandEquipment>(keeper)
+            .expect("the keeper's ledger survives the turn")
+            .clone();
+        // Each item's wear divided by its own per-use rate is the biomass its quantum was charged
+        // over — the claim under test, and rate-independent so retuning either item cannot move it.
+        let charged_over = |item: &str| {
+            ledger.wear_of(item)
+                / equipment
+                    .item(item)
+                    .unwrap_or_else(|| panic!("the shipped roster must carry '{item}'"))
+                    .wear
+                    .amount
+        };
+        let butchered = charged_over("husbandry_gear");
+        let hauled = charged_over("sled");
+
+        let pen_row = world.get::<LaborAllocation>(keeper).unwrap().last_yields[0].clone();
+        // **Liveness, both halves.** The pen has to have paid something (or nothing was slaughtered
+        // and both charges are zero), and it has to have wasted something (or the two bases coincide
+        // and the ordering below is trivially true of a fixture that never bound).
+        assert!(
+            hauled > 0.0 && pen_row.actual > 0.0,
+            "the keeper must have brought meat home: hauled={hauled} actual={}",
+            pen_row.actual
+        );
+        assert!(
+            pen_row.wasted > 0.0,
+            "the fixture must actually waste — a keeper who seated the whole beast charges both \
+             quanta the same number and proves nothing (wasted={})",
+            pen_row.wasted
+        );
+        assert!(
+            butchered > hauled,
+            "the handling gear is worked on the whole beast and the sled only drags home what fits: \
+             butchered={butchered} must exceed hauled={hauled}"
+        );
+        // ...and it is the *whole* body it was charged for, not merely more than the haul.
+        assert!(
+            (butchered - UNSEATABLE_BODY_MASS).abs() < FORECAST_EPSILON,
+            "one whole body was butchered, so that is what the gear is charged over: \
+             {butchered} vs {UNSEATABLE_BODY_MASS}"
         );
     }
 

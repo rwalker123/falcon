@@ -1068,7 +1068,6 @@ mod tests {
             world.insert_resource(VisibilityConfigHandle::new(Arc::new(vis)));
             world.insert_resource(LaborConfigHandle::default());
             world.insert_resource(crate::equipment_config::EquipmentConfigHandle::default());
-            world.insert_resource(crate::equipment_config::EquipmentConfigHandle::default());
 
             let mut sim = SimulationConfig::builtin();
             sim.map_topology.wrap_horizontal = false;

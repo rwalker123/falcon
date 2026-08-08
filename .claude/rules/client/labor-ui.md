@@ -1613,6 +1613,31 @@ quotes that component's condition — never a number: `none` spends no durabilit
 zero, `0` being a real reading meaning DRY. The fresh tiers then stand and no condition clause prints,
 the "absent terms render no line" convention `hunt_gate_model` already takes.
 
+#### The PEN carry is the hunt hint's one CONDITIONAL tier line
+
+The expanded roster's `husbandry` kit (`husbandry_gear` + `sled`) is the kit that exists to work a
+PEN, and a hunt sheet composed on it read `attack 1.0 · carry 40.0 per hunter · sled 54` — the sled's
+condition, no pen tier, and nothing at all about the item the kit is named for. `KIT_PEN_CARRY_KEY`
+and its `AXIS_ITEMS` row had landed with no reader.
+
+- **It is `kit_uses`-gated where the other three tier lines are not**, and that is the whole design:
+  every kit publishes a pen tier, so an unconditional line puts `pen 12.0 per keeper` on a `big_game`
+  sheet composed against a wild herd, where the pen is not the subject. The gate is true only for a
+  kit whose tier beats the roster's bare-handed one, so a `big_game` hint is byte-identical to what it
+  rendered before the axis existed and a `husbandry` one gains the tier plus its `husbandry_gear`
+  clause. The CONDITION half needed no new rule — `_append_condition` already gates on the same
+  predicate.
+- **`effective_tiers` wear-resolves it like the other three**, for the same reason they are: quoting
+  a fresh `40.0` to a band whose handling gear is dry is exactly the lie that model exists to prevent.
+- **`KIT_SCOUT_VANTAGE_KEY` has no hint-line consumer and stays anyway.** `tier_hint` serves the hunt
+  and forage compose sheets; Scout is a band-wide role with no compose surface, so a vantage tier has
+  nowhere to render — but the wire carries the axis, and `unequipped_tier` / `equipped_tier` /
+  `condition_of` all answer for it the day that role gets a sheet.
+- **`husbandry_gear` / `wayfinding` / `clubs` also joined `DetailFormat.KIT_ITEM_LABELS`**, so the
+  band's `Gear` summary row names them instead of falling through to the raw wire ids. They get NO row
+  in the kit BREAKDOWN: that popover pairs each item with the resolved tier it sets, and the cohort
+  publishes no pen-carry or vantage tier — a row for one could only quote a number the sim never sent.
+
 ### THE HONESTY RULE — the estimate tables are quoted for ONE kit
 
 `huntTripEstimates` and `denialEstimates` are computed at the hunt job's **default** kit only, on

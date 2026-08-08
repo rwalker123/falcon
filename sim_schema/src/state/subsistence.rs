@@ -1001,10 +1001,14 @@ pub struct FoodModuleState {
 pub struct KitOptionState {
     pub id: String,
     pub display_name: String,
-    /// Which verbs this kit may be sent on: `"hunt"` and/or `"forage"`. A kit named for a job outside
-    /// this list is a **command failure**, never a silent fall back to the default, so a picker must
-    /// filter by the job it is composing. No kit lists the band-wide roles — they consume no
-    /// component and have no kit axis.
+    /// Which verbs this kit may be sent on — any of `"hunt"`, `"forage"`, `"scout"`, `"warrior"`. A
+    /// kit named for a job outside this list is a **command failure**, never a silent fall back to
+    /// the default, so a picker must filter by the job it is composing.
+    ///
+    /// **The band-wide roles have a kit axis now.** Scout and Warrior used to list no kit on the
+    /// grounds that they consumed no component; the expanded roster gave them one each
+    /// (`wayfinding` → `["scout"]`, `warrior` → `["warrior"]`), and `none` lists all four, so going
+    /// bare is a real selection on every role rather than the only reading.
     pub jobs: Vec<String>,
     /// A fresh-kit hunter's combat `attack` under this kit — what the gate
     /// `max(0, attack − defense)` compares against a herd's `defense`. **Below a species' defense

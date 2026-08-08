@@ -46,6 +46,12 @@ const KIT_FORAGE_CARRY_KEY := "forage_carry_per_worker_biomass"
 ## sled collects a pen at the bare rate. `scout_vantage_range` is what a posted scout vantage can
 ## make out; how far out it is POSTED is not a kit axis at all (it is three `labor_config` dials).
 const KIT_PEN_CARRY_KEY := "pen_carry_per_worker_biomass"
+## **DECLARED FOR THE ROSTER'S AXIS VOCABULARY, AND IT HAS NO HINT-LINE CONSUMER.** `tier_hint` is
+## written for the two COMPOSE sheets, which are hunt and forage only; Scout is a band-wide role with
+## no compose surface, so there is nowhere for a vantage tier to render. The key and its `AXIS_ITEMS`
+## row stay because the WIRE carries the axis — `unequipped_tier`/`equipped_tier` read it off the
+## roster like any other, and `condition_of` answers for `wayfinding` the moment a Scout row gets a
+## sheet. Do not invent that surface here.
 const KIT_SCOUT_VANTAGE_KEY := "scout_vantage_range"
 
 ## **WHAT THE KIT DOES TO THE QUARRY'S RETREAT** — a multiplier on the species' own wariness, so the
@@ -401,16 +407,21 @@ static func attack_against(kit: Dictionary, body_mass: float, unequipped_attack:
 ## reference came back `0`, the repricing short-circuited, and every kit on every compose sheet quoted
 ## identical numbers. Reported from play. `attack` was always the wire's own spelling and is unchanged;
 ## one name per axis is what makes the two lookups impossible to spell apart.
+## **THE PEN CARRY IS WEAR-RESOLVED LIKE THE OTHER THREE**, and for the same reason: a band whose
+## `husbandry_gear` is dry collects its pen at the bare-handed tier, so quoting the roster's fresh
+## `40.0` to it is exactly the lie this whole function exists to prevent.
 static func effective_tiers(kits: Array, kit: Dictionary, band: Dictionary) -> Dictionary:
 	var fresh_attack := float(kit.get(KIT_ATTACK_KEY, 0.0))
 	var fresh_hunt := float(kit.get(KIT_HUNT_CARRY_KEY, 0.0))
 	var fresh_forage := float(kit.get(KIT_FORAGE_CARRY_KEY, 0.0))
+	var fresh_pen := float(kit.get(KIT_PEN_CARRY_KEY, 0.0))
 	var conditions: Array = band.get(BAND_ITEM_CONDITIONS_KEY, [])
 	if conditions.is_empty():
 		return {
 			KIT_ATTACK_KEY: fresh_attack,
 			KIT_HUNT_CARRY_KEY: fresh_hunt,
 			KIT_FORAGE_CARRY_KEY: fresh_forage,
+			KIT_PEN_CARRY_KEY: fresh_pen,
 			"stated": false,
 		}
 	return {
@@ -420,6 +431,8 @@ static func effective_tiers(kits: Array, kit: Dictionary, band: Dictionary) -> D
 			condition_of(band, KIT_HUNT_CARRY_KEY)),
 		KIT_FORAGE_CARRY_KEY: _tier_after_wear(kits, KIT_FORAGE_CARRY_KEY, fresh_forage,
 			condition_of(band, KIT_FORAGE_CARRY_KEY)),
+		KIT_PEN_CARRY_KEY: _tier_after_wear(kits, KIT_PEN_CARRY_KEY, fresh_pen,
+			condition_of(band, KIT_PEN_CARRY_KEY)),
 		"stated": true,
 	}
 
@@ -460,6 +473,14 @@ static func kit_uses(kits: Array, kit: Dictionary, axis_key: String) -> bool:
 ## spears 74 · sled 58` on a hunt sheet, `carry 8.0 per gatherer · baskets 61` on a forage one: the
 ## tiers this band gets, then the condition of each component the kit actually consumes, so a band one
 ## turn from running dry can see it coming. `""` when the kit is unknown.
+##
+## **THE PEN TIER IS THE ONE CONDITIONAL LINE, and `kit_uses` is the whole of the condition.** Every
+## kit publishes a pen tier, so printing it unconditionally would put a `pen 12.0 per keeper` on a
+## `big_game` sheet that has nothing to do with the wild herd being composed against. A kit that
+## actually supplies the axis — one whose tier beats the roster's bare-handed one, i.e. the husbandry
+## kit — states it, and states the `husbandry_gear` condition beneath it; every other hunt sheet is
+## byte-identical to what it rendered before the axis existed. The condition clause needs no rule of
+## its own: `_append_condition` already gates on the same predicate.
 static func tier_hint(kits: Array, kit: Dictionary, band: Dictionary, job: String) -> String:
 	if kit.is_empty():
 		return ""
@@ -475,10 +496,15 @@ static func tier_hint(kits: Array, kit: Dictionary, band: Dictionary, job: Strin
 			float(tiers[KIT_ATTACK_KEY])))
 		parts.append(HudComposeVocab.KIT_HINT_HUNT_CARRY_FORMAT % _tier_face(
 			float(tiers[KIT_HUNT_CARRY_KEY])))
+		if kit_uses(kits, kit, KIT_PEN_CARRY_KEY):
+			parts.append(HudComposeVocab.KIT_HINT_PEN_CARRY_FORMAT % _tier_face(
+				float(tiers[KIT_PEN_CARRY_KEY])))
 		_append_condition(parts, kits, kit, band, tiers, KIT_ATTACK_KEY,
 			HudComposeVocab.KIT_COMPONENT_SPEARS)
 		_append_condition(parts, kits, kit, band, tiers, KIT_HUNT_CARRY_KEY,
 			HudComposeVocab.KIT_COMPONENT_SLED)
+		_append_condition(parts, kits, kit, band, tiers, KIT_PEN_CARRY_KEY,
+			HudComposeVocab.KIT_COMPONENT_HUSBANDRY_GEAR)
 	return HudComposeVocab.KIT_HINT_SEPARATOR.join(parts)
 
 ## One item's condition clause, appended only where there is something true to say: the kit has to

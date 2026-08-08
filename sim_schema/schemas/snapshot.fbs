@@ -2638,10 +2638,11 @@ table KitOption {
   // LaborAssignment.kitId / PopulationCohortState.kitId / the estimate-table kit ids carry.
   id:string;
   displayName:string;
-  // Which verbs this kit may be sent on: "hunt" and/or "forage". A kit named for a job outside this
-  // list is a COMMAND FAILURE, never a silent fall back to the default — so the picker must filter
-  // by the job it is composing. The band-wide roles (scout/warrior) consume no component and have no
-  // kit axis, so no kit lists them.
+  // Which verbs this kit may be sent on — any of "hunt", "forage", "scout", "warrior". A kit named
+  // for a job outside this list is a COMMAND FAILURE, never a silent fall back to the default — so
+  // the picker must filter by the job it is composing. THE BAND-WIDE ROLES HAVE A KIT AXIS NOW: they
+  // used to list none on the grounds that they consumed no component, and the expanded roster gave
+  // them one each (`wayfinding` -> ["scout"], `warrior` -> ["warrior"]) while `none` lists all four.
   jobs:[string];
   // A fresh-kit hunter's combat `attack` under this kit — the number the combat gate
   // max(0, attack - defense) compares against a herd's `defense`. Below a species' defense that
