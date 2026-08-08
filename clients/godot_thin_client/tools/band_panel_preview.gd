@@ -95,6 +95,27 @@ const QUARRY_TRADE_PER_ANIMAL := 0.5
 ## The INEDIBLE quarry on the work board (issue #337): its hunt row pays trade goods and no food.
 const TRADE_ONLY_HERD_ID := "game_wolf_03"
 
+## ---- THE FODDER FACE (issue #449) -------------------------------------------------------------
+## The sown hay FIELD on the work board: a forage source paying feed and NEITHER provisions nor trade,
+## which is the shipped case the whole change exists for (`flora_config.json`'s hay grass). Its tile is
+## the same one the trade states push a food module for, so the row resolves its icon like any other.
+const FODDER_FIELD_X := 71
+const FODDER_FIELD_Y := 18
+## The feed it pays per turn. It has to be big enough to read at two decimals and unequal to every other
+## rate on this band, so an assertion matching its face cannot be satisfied by a neighbouring row.
+const FODDER_FIELD_RATE := 0.40
+## That rate as the one-slot ROW and the header TOTAL both spell it — the word, never a glyph, because
+## fodder has none. Written out rather than composed through `SourceForecast`, since a needle built by
+## the code under test agrees with whatever that code emits.
+const FODDER_ROW_RATE_FACE := "+0.40 fodder"
+## The same account as the INSPECTOR sentence spells it. `yield_components` renders a fodder magnitude
+## unsigned (the #426 picker rule), so this is deliberately NOT the row's face with the sign stripped.
+const FODDER_INSPECTOR_CLAUSE := "0.40 fodder"
+## The CONTROL row's steady food rate — an ordinary deer hunt on the same band, so "a hunt is unchanged"
+## is asserted against a row that is genuinely there rather than against an empty board.
+const FODDER_CONTROL_HUNT_RATE := 0.20
+const FODDER_CONTROL_HUNT_FACE := "+0.20"
+
 # ---- THE COMBAT GATE's two herd terms on the quarry (`docs/plan_hunt_through_combat.md` §4.2) -----
 ## `defense` is whether a hit counts at all — deliberately ABOVE the roster's bare-handed `attack`
 ## (1.0) and far below the big-game kit's (20.0), so the gate's verdict FLIPS with the kit and the
@@ -1092,6 +1113,7 @@ func _ready() -> void:
 	# The board renders in NAME order now (issue #460), so this is where both halves of that change are
 	# judged: the sorts themselves, and the `⋯` menu saying which one is running.
 	_assert_work_sort_stable()
+	_assert_work_sort_tiers()
 	_assert_work_menu_marks_active_sort("band_panel_work_page")
 
 	# The same 34 sources in the WIDE (bottom dock) shell: multi-column, column-major, hairlines.
@@ -1155,6 +1177,26 @@ func _ready() -> void:
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
+	# The paired NEGATIVE for the fodder state below: this board pays food and trade and NO feed, so
+	# its head must render no fodder sibling at all. Asserted here rather than beside the positive
+	# because a head that rendered the total unconditionally passes every claim made on a band that
+	# actually grows hay.
+	_assert_no_work_fodder_total()
+
+	# THE FODDER FACE (issue #449). Same board shape one account further out: a sown hay Field pays
+	# feed and NEITHER provisions nor trade, so before this its row headlined `+0.00 /turn` and read as
+	# a dead tile while it fed the band's pens every turn. The head therefore carries all THREE
+	# siblings at once — food and trade off the deer, fodder off the Field — and fodder is a SIBLING
+	# for the trade total's own reason: it credits the band's FODDER store and never the larder.
+	_push_bands([_fodder_field_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	await _save("band_panel_work_fodder")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_work_fodder_readouts()
 
 	# THE WORK INSPECTOR'S POLICY PICKER — the one control on the board with no frame coverage at all
 	# until it got these (`_work_floor_open` is otherwise never true in either harness). Two rows: one
@@ -5901,6 +5943,37 @@ func _assert_work_sort_stable() -> void:
 			% [String(sort), ", ".join(forward)], forward == backward)
 	controller._work_sort = restore_sort
 
+## THE YIELD SORT'S THIRD TIER (issue #449). `Sort by yield` ranks food, then trade, then FODDER, and
+## the fodder tier is what stops a sown hay Field — which publishes `rate == 0.0` AND
+## `trade_rate == 0.0` — landing among the rows paying nothing at all, i.e. below every trade-only
+## wolf and off page one on a busy band. That is verbatim the failure the tiering was introduced to
+## remove, one account further out.
+##
+## FOUR claims, one per boundary plus the one that says nothing else moved, because a single
+## whole-order equality reports "the board is different" and names no cause. Neither the boundary
+## claims nor a PNG can be swapped for the other: a board sorted any of these ways renders as a
+## perfectly plausible board.
+func _assert_work_sort_tiers() -> void:
+	var controller = _hud._bandpanel
+	var restore_sort: StringName = controller._work_sort
+	controller._work_sort = HudWorkVocab.WORK_SORT_YIELD
+	var order := _sorted_work_keys(controller, _work_sort_fixture_models())
+	var trade_at := order.find(WORK_SORT_TRADE_ONLY_KEY)
+	var fodder_at := order.find(WORK_SORT_FODDER_KEY)
+	var dead_at := order.find(WORK_SORT_PAYS_NOTHING_KEY)
+	# The food tier is asserted as a SLICE rather than by "the last food row is above the wolf": the
+	# fodder tier must not be paid for by disturbing the order of the two tiers already there.
+	var food_tier := order.slice(0, WORK_SORT_FOOD_TIER_ORDER.size())
+	_assert_band_panel("work sort — every FOOD-paying source still leads, in its old order (%s)"
+		% ", ".join(food_tier), food_tier == WORK_SORT_FOOD_TIER_ORDER)
+	_assert_band_panel("work sort — the trade-only source still follows the food tier (`%s` at %d)"
+		% [WORK_SORT_TRADE_ONLY_KEY, trade_at], trade_at == WORK_SORT_FOOD_TIER_ORDER.size())
+	_assert_band_panel("work sort — a FODDER-only source ranks BELOW the trade-only one (%d vs %d: %s)"
+		% [fodder_at, trade_at, ", ".join(order)], trade_at >= 0 and fodder_at > trade_at)
+	_assert_band_panel("work sort — a FODDER-only source ranks ABOVE the rows paying nothing (%d vs %d: %s)"
+		% [fodder_at, dead_at, ", ".join(order)], fodder_at >= 0 and dead_at > fodder_at)
+	controller._work_sort = restore_sort
+
 ## The sort fixture, carrying BOTH reachable ties: two herds sharing a label (`WORK_ROW_HUNT_FORMAT`
 ## renders one string per species, so two Wild Boar herds collide) and two sources sharing a rate.
 ## Only the keys the two comparators read are populated — this exercises the sort, not the board.
@@ -5922,12 +5995,32 @@ func _work_sort_fixture_models() -> Array:
 		{"key": "forage:8,4", "kind": "forage",
 			"label": HudWorkVocab.WORK_ROW_TEND_FORMAT % [WORK_SORT_TEND_TILE.x, WORK_SORT_TEND_TILE.y],
 			"rate": 0.30, "trade_rate": 0.0},
-		{"key": "hunt:wolf", "label": "Hunt Grey Wolf", "kind": "hunt",
+		{"key": WORK_SORT_TRADE_ONLY_KEY, "label": "Hunt Grey Wolf", "kind": "hunt",
 			"rate": 0.0, "trade_rate": 0.22},
+		# The THIRD tier's pair (issue #449), and they only mean anything TOGETHER: a sown hay Field
+		# pays neither food nor trade, so under the two-tier rule it sat at 0.0 among the rows paying
+		# nothing at all and was separated from them by the `key` tiebreak alone. The barren row is
+		# what makes "above the dead rows" falsifiable — without it the Field is last either way.
+		{"key": WORK_SORT_FODDER_KEY, "label": "Forage (5, 5)", "kind": "forage",
+			"rate": 0.0, "trade_rate": 0.0, "fodder_rate": WORK_SORT_FODDER_RATE},
+		{"key": WORK_SORT_PAYS_NOTHING_KEY, "label": "Forage (6, 6)", "kind": "forage",
+			"rate": 0.0, "trade_rate": 0.0, "fodder_rate": 0.0},
 	]
 
 ## The tile the fixture's managed plant row sits on — only its label is read, so any coordinate does.
 const WORK_SORT_TEND_TILE := Vector2i(8, 4)
+
+## The three sources the TIER claims are made about, named because each assertion states which
+## boundary it is asking about. The fodder rate is deliberately LARGER than the trade-only source's
+## trade rate, so a comparator "fixed" into a raw cross-account magnitude sort ranks the hay Field
+## above the wolf and fails the boundary claim rather than passing by luck.
+const WORK_SORT_TRADE_ONLY_KEY := "hunt:wolf"
+const WORK_SORT_FODDER_KEY := "forage:hay"
+const WORK_SORT_PAYS_NOTHING_KEY := "forage:barren"
+const WORK_SORT_FODDER_RATE := 0.40
+## The food tier in the order it has always come out in — 0.60, 0.40, 0.30, then the 0.25 tie broken
+## by `key` ascending. Stated so the fodder tier cannot be added by disturbing the two above it.
+const WORK_SORT_FOOD_TIER_ORDER := ["forage:3,9", "hunt:boar_b", "forage:8,4", "forage:12,7", "hunt:boar_a"]
 
 ## The source whose crew the assertion "steps", and the rate two sources start tied on. The stepped
 ## source is one of the tied pair, so the step both breaks a tie and moves the row to the TOP of the
@@ -6426,6 +6519,72 @@ func _assert_rung_labels_are_hoverable() -> void:
 	else:
 		print("band_panel_preview: assert OK — %d rung marks are hoverable (tooltip + PASS), %d wild slots bare" % [
 			marked, labels.size() - marked])
+
+## Every `Label` under `node`, in tree order — the read an assertion makes when its claim is about what
+## the board actually RENDERED rather than about what a model answers.
+func _collect_labels(node: Node, out: Array) -> void:
+	if node is Label:
+		out.append(node)
+	for child in node.get_children():
+		_collect_labels(child, out)
+
+## The WORK head's FODDER sibling, found by its own TOOLTIP rather than by its face — on a band with one
+## feed-paying source the row's rate and the header total render the SAME string, so a text match cannot
+## say which of the two it found. `null` where the head renders none, which is the state a band growing
+## no feed is asserted on.
+func _work_head_fodder_total() -> Label:
+	var labels: Array = []
+	_collect_labels(_panel, labels)
+	for label_variant in labels:
+		var label: Label = label_variant
+		if label.tooltip_text == HudWorkVocab.WORK_FODDER_TOTAL_TOOLTIP:
+			return label
+	return null
+
+## **THE FODDER FACE, ON THE THREE SURFACES THE WORK ZONE COMPOSES ITSELF** (issue #449). None of them
+## can be judged from a PNG: `+0.00` and `+0.40 fodder` are the same row at a thumbnail's size, and the
+## header total and the row rate read identically here by construction.
+##
+## The HUNT row is asserted beside them and is the half that keeps the rest honest — a change that put a
+## fodder term on every row would satisfy every positive claim above and fail exactly this one.
+func _assert_work_fodder_readouts() -> void:
+	var band: Dictionary = _hud._band_labor._panel_band
+	var models: Array = _hud._bandpanel._work_source_models(band, 0)
+	var paying: Array = models.filter(func(m): return SourceForecast.has_component(float(m.get("fodder_rate", 0.0))))
+	_assert_band_panel("fodder — exactly one of this band's worked sources pays feed (found %d)"
+		% paying.size(), paying.size() == 1)
+	if paying.is_empty():
+		return
+	var field: Dictionary = paying[0]
+	var field_rate := _hud._bandpanel._work_row_rate_text(field)
+	_assert_band_panel("fodder — the board row states the feed rate instead of +0.00 (got \"%s\")"
+		% field_rate, field_rate == FODDER_ROW_RATE_FACE)
+	var field_sentence := _hud._bandpanel._work_inspector_sentence(field)
+	_assert_band_panel("fodder — the inspector sentence names the account (got \"%s\")"
+		% field_sentence, field_sentence.contains(FODDER_INSPECTOR_CLAUSE))
+	var total := _work_head_fodder_total()
+	_assert_band_panel("fodder — the WORK head renders the feed total (got \"%s\")"
+		% ("<none>" if total == null else total.text),
+		total != null and total.text == FODDER_ROW_RATE_FACE)
+	var hunt_kind := SourceForecast.LABOR_KIND_HUNT
+	var hunts: Array = models.filter(func(m): return String(m.get("kind", "")) == hunt_kind)
+	_assert_band_panel("fodder — the control hunt row is on the board (found %d)" % hunts.size(),
+		hunts.size() == 1)
+	if hunts.is_empty():
+		return
+	var hunt: Dictionary = hunts[0]
+	var hunt_rate := _hud._bandpanel._work_row_rate_text(hunt)
+	_assert_band_panel("fodder — a hunt row still headlines its food rate (got \"%s\")" % hunt_rate,
+		hunt_rate == FODDER_CONTROL_HUNT_FACE)
+	_assert_band_panel("fodder — no fodder term reaches a hunt row's sentence",
+		not _hud._bandpanel._work_inspector_sentence(hunt).contains("fodder"))
+
+## The paired NEGATIVE: a band with no feed-paying source renders NO fodder sibling. Without it every
+## claim above is satisfied by a head that renders the total unconditionally.
+func _assert_no_work_fodder_total() -> void:
+	var total := _work_head_fodder_total()
+	_assert_band_panel("fodder — a band growing no feed renders no fodder total (got \"%s\")"
+		% ("<none>" if total == null else total.text), total == null)
 
 func _collect_rung_labels(node: Node, out: Array) -> void:
 	if node is Label and (node as Label).has_meta(HudWorkVocab.WORK_ROW_RUNG_META):
@@ -8586,6 +8745,30 @@ func _trade_only_hunt_band_fixture() -> Dictionary:
 	var band := _concerning_food_band_fixture()
 	band["labor_assignments"] = (band["labor_assignments"] as Array).filter(
 		func(a): return String((a as Dictionary).get("fauna_id", "")) != EXTRACTIVE_ROW_HERD_ID)
+	return band
+
+## THE FODDER-ONLY BAND (issue #449): one sown hay Field paying feed and NOTHING else, beside an
+## ordinary deer hunt. The Field is what the change exists for — every food and trade field on it is
+## honestly 0, so before this its row headlined `+0.00` and the tile read as dead while it fed the
+## band's pens every turn. The DEER is the control and is not decoration: "a hunt is unchanged" is a
+## claim about a row that has to be on the board to be wrong, and its trade term additionally puts the
+## header's three siblings — food, trade, fodder — in one frame.
+func _fodder_field_band_fixture() -> Dictionary:
+	var band := _concerning_food_band_fixture()
+	band["labor_assignments"] = [
+		{"kind": "forage", "workers": 3, "workers_needed": 3, "floor": 0.5,
+			"target_x": FODDER_FIELD_X, "target_y": FODDER_FIELD_Y,
+			"actual_yield": 0.0, "sustainable_yield": 0.0, "realized_yield": 0.0,
+			# Both trade keys present and zero, the way the wire ships them, so the fodder branch is
+			# reached through the ordinary render-only-when-non-zero gate rather than through absence.
+			"trade_yield": 0.0, "realized_trade_yield": 0.0,
+			"fodder_yield": FODDER_FIELD_RATE},
+		{"kind": "hunt", "workers": 2, "fauna_id": EXTRACTIVE_ROW_HERD_ID, "floor": 0.5,
+			"target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20,
+			"realized_yield": FODDER_CONTROL_HUNT_RATE,
+			"trade_yield": 0.04, "realized_trade_yield": 0.04},
+		{"kind": "scout", "workers": 2},
+	]
 	return band
 
 ## A TALLER band variant (same entity 904, so the expeditions still attach): starving + declining

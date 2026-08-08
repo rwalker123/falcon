@@ -4682,6 +4682,13 @@ pub(crate) fn forecast_source_yield(
         // **Trade is telemetry, not larder income** — it never enters `food_income` (see
         // `SourceYield::trade`), so it rides beside `actual` rather than being summed into it.
         trade: actual.trade_goods,
+        // **The FEED currency, taken off the same take vector** (issue #449) — never a second
+        // derivation. It is `0` today on both webs and for two different reasons: no animal pays
+        // fodder at all, and the plant web's forecast is deliberately food-only
+        // (`forage::plant_food_only`, the same gap `PLANT_TRADE_FORECAST_NOT_YET_PROJECTED` names),
+        // so a pre-commit row quotes no fodder until that projection lands. Reading the component
+        // rather than writing a literal means it starts telling the truth the moment it does.
+        fodder: actual.fodder,
         // The band the two scalars above sit in the middle of. Built from the SAME
         // `forecast_production_and_take_at`, three quantiles apart, so `low <= actual <= high` is a
         // property of the arithmetic rather than a clamp.

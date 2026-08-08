@@ -2936,10 +2936,12 @@ the design doc, and inventing one here would put words on the wire's behalf the 
   +0.12`, `+0.08 /turn · 0.13 fodder` — the ONE joiner every per-turn readout goes through, so no two
   surfaces can word the vector differently. The fodder term wears the WORD (fodder has no glyph);
   every hunt-side caller leaves it defaulted and reads exactly as before.
-- **`magnitude_components(food, trade)`** → `0.20 ⇄ 0.22` — its COMPACT twin for a surface that
-  supplies its own framing and states levels rather than deltas (the work zone's filter chips). Same
-  rule, same food-leads order, bare magnitudes joined by `COMPACT_COMPONENT_SEPARATOR` (a space, since
-  those chips already spend their `·` separating a count from its total).
+- **`magnitude_components(food, trade, fodder = 0)`** → `0.20 ⇄ 0.22`, `0.40 fodder` — its COMPACT
+  twin for a surface that supplies its own framing and states levels rather than deltas (the work
+  zone's filter chips). Same rule, same food-leads order, bare magnitudes joined by
+  `COMPACT_COMPONENT_SEPARATOR` (a space, since those chips already spend their `·` separating a count
+  from its total). The fodder term wears the WORD for `yield_components`' reason, and a chip covering
+  only hay-bearing patches states their feed rather than a `0.00` denying the kind produces anything.
 - **`extractive_take_pair(food, trade, fodder = 0)`** — the rung metric `{compact, full}` for ALL
   THREE pickers. The food-only `extractive_take` the forage picker used is **deleted**, not kept as an
   alias: its justification ("the plant web projects no trade rate") described a wire that no longer
@@ -2983,6 +2985,17 @@ the design doc, and inventing one here would put words on the wire's behalf the 
   used to carry never once fired, and every forage source's trade read as nothing (a work row with no
   `⇄`, a band Trade row at `+0.00`). `source_yield_readout` and `DetailFormat.sum_realized_trade` both
   call it, which is what keeps a per-source row and the band's headline in agreement by construction.
+- **`fodder_rate_of(source)`** — the ONE per-source FEED rate (issue #449), and the contrast with the
+  bullet above is the point. That one must test the VALUE `> 0` because it has a sentinel to dodge;
+  fodder has none, so a plain read of `fodder_yield` is complete. **There is deliberately no
+  `realized_fodder_yield`**: a realized rate is a forward PROJECTION and only the animal web makes
+  one, while fodder is paid by the plant web alone — whose projection is the very gap that leaves
+  `realized_trade_yield` at `0.0` there — so a projected-fodder field would be a constant zero on the
+  only web that can pay it. The actual IS the honest rate, which is exactly where `trade_rate_of`'s
+  fallback already lands for every forage source. **It reaches the work board only because
+  `fodder_yield` is in `HudBandLaborState.OPTIONAL_YIELD_KEYS`** — a key not copied through
+  `effective_worker_map` does not exist as far as the board, its chips and its header totals are
+  concerned, whatever the decoder published.
 - `hunt_policy_trade_ceiling` reads **`hunt_policy_trade_ceilings`**, the trade twin of
   `hunt_policy_ceilings`. Two dicts keyed by the same policy strings rather than one dict of pairs:
   the decoder fills both in ONE pass over the single wire list, so they cannot drift, and every
@@ -3030,10 +3043,23 @@ all of them live in `hunt_trip_forecast` / `hunt_forecast_line_bbcode` / `expedi
 
 Two readouts have a single narrow slot and cannot carry a pair — the **work-board row's** fixed-width
 rate column (`BandPanelController._work_row_rate_text`) and the **map's** on-tile yield label
-(`BandOverlayRenderer._draw_yield_label`). Both show food when there is food (so every forage patch
-and edible quarry is unchanged) and otherwise the trade rate marked with the glyph: `⇄+0.22`. The
-work **inspector strip** beside the row states both components in full, which is where a deer's trade
-shows.
+(`BandOverlayRenderer._draw_yield_label`, whose choice is split out as `_yield_label_rate_text` so a
+harness can ask it — a draw call renders to a canvas and no assertion can read a glyph back off one).
+Both fall through **food → trade → fodder**, in the wire's own order: food when there is food (so
+every forage patch and edible quarry is unchanged), else the trade rate marked with the glyph
+(`⇄+0.22`), else the fodder rate spelled with the WORD (`+0.40 fodder`) — fodder has no glyph, and
+borrowing another account's would say the wrong thing. The work **inspector strip** beside the row
+states every component in full, which is where a deer's trade shows.
+
+**The fodder rung is the one this pair was reported on** (issue #449): a sown hay Field pays no
+provisions and no trade, so with only two options both surfaces read `+0.00` on a tile that was
+filling the band's fodder store every turn. Its own threshold is the trade branch's
+(`YIELD_LABEL_COMPONENT_MIN` on the map, `SourceForecast.has_component` on the row), so no account can
+be shown at a magnitude another would have been hidden at.
+
+**A HUNT call site passes NO fodder argument, and that is a decision rather than an omission.** No
+animal is harvested for feed, so a hunt row's fodder is a structural zero and passing it would only
+offer the label a fall-through it can never take.
 
 **`trade_yield` IS NOT FOOD INCOME.** The Food line's Gathered/Hunted breakdown and the band's
 `food_income` (`DetailFormat.band_food_income` / `sum_realized_yield` / `band_net_food` /
@@ -3044,16 +3070,20 @@ larder, which is the whole point.) That is
 what keeps the larder identity closed for an inedible quarry, and it is why the answer for an
 AGGREGATE is never "add trade to the food total".
 
-**But an aggregate that omits trade entirely is the same lie one level up.** The work zone's header
+**But an aggregate that omits an account entirely is the same lie one level up.** The work zone's header
 read `3 sources +0.35 /turn` with a `⇄+0.22` wolf row directly beneath it — the arithmetic visibly did
 not add up, and the one source paying only trade read as contributing nothing to the band. So the
 render-only-when-non-zero rule applies to totals too, as a **SIBLING**: `3 sources +0.35 /turn ⇄
 +0.22`, and `🦌 2 · 0.20 ⇄ 0.22` on the per-kind chips (`SourceForecast.magnitude_components`, the
 bare-magnitude twin of `yield_components` — a chip states levels, not deltas). A band with no
-trade-paying source renders exactly as before. Details in `band-city-panel.md`.
+trade-paying source renders exactly as before. **FODDER is the third sibling on both** (issue #449),
+under the identical gate: a band that grows hay heads `+0.40 fodder` beside the other two and chips
+`🌿 1 · 0.40 fodder`, and `magnitude_components` takes all three. Details in `band-city-panel.md`.
 
-**When you add an aggregate, ask which of the two it is** — a *larder* figure (food alone, by the
-identity above) or a *productivity* figure (both products, each when non-zero). Nothing else in the
+**When you add an aggregate, ask which KIND it is** — a *larder* figure (food alone, by the
+identity above) or a *productivity* figure (**every** account the sources pay, each when non-zero;
+there are three, and a two-account sum reproduces the exact `0.00` this rule exists to prevent, one
+surface along). Nothing else in the
 client currently sums or counts across sources: the parties header counts parties and workers, and the
 attention producers key off `idle_workers` / `turns_of_food` / pen status, never "this source yields
 no food", so a trade-only source is already productive to them. **Do not add a "produces nothing"

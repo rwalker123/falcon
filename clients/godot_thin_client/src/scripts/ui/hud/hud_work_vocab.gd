@@ -600,6 +600,13 @@ const WORK_TOTAL_TOOLTIP := "Total food per turn from every worked source."
 # trade, so a band with none reads exactly as it did before the two-product model.
 const WORK_TRADE_TOTAL_TOOLTIP := "Total trade goods per turn from every worked source. Trade goods are stockpiled for exchange — they are not food, so they are counted beside the food total, not in it."
 
+# The FODDER total's tooltip (issue #449), the third account's twin of the line above and a SIBLING for
+# the same reason: fodder credits the band's fodder store to feed its penned animals and never the
+# larder, so folding it into the food figure would break the identity the Food line is denominated in.
+# Shown only when a worked source actually pays fodder, so a band growing no feed reads exactly as it
+# did before the third account.
+const WORK_FODDER_TOTAL_TOOLTIP := "Total fodder per turn from every worked source. Fodder feeds penned animals — it is not food for people, so it is counted beside the food total, not in it."
+
 # The band's PRODUCTIVITY, as a head item beside the two totals. It is the multiplier every rate on
 # this board is ALREADY scaled by, which is why it reads here rather than as a band-zone vitals row:
 # the head is where its consequence is. Rendered ONLY below full output (`SourceForecast.OUTPUT_FULL`)

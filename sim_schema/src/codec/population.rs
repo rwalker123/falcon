@@ -240,6 +240,10 @@ fn create_populations<'a>(
                                 floor: assignment.floor,
                                 // THE KIT this crew is working under — appended last.
                                 kitId: kit_id,
+                                // THE FEED CURRENCY (#449) — the third account beside
+                                // actual/trade, carried so a hay Field stops reading `+0.00`.
+                                // Appended last.
+                                fodderYield: assignment.fodder_yield,
                             },
                         )
                     })
