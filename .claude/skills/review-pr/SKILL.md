@@ -47,6 +47,16 @@ The orchestrator must **not** read source files for analysis itself, and must
 **not** run the fmt/clippy/test/build loop itself — that is what the agents are
 for. Its own tool use should be limited to `gh` API calls and dispatching agents.
 
+**The two agent briefs live in `references/`, not here**, for the same reason:
+they are written for the agents, and the orchestrator only needs to hand over a
+path. Do not read them yourself.
+
+| File | Read by |
+|---|---|
+| `references/agent-a-comment-triage.md` | Agent A |
+| `references/agent-b-local-review.md` | Agent B |
+| `references/agent-return-contract.md` | both agents — the report + manifest shape they return |
+
 ## Step 1: Identify the PR (orchestrator)
 
 If a PR number was provided in `$ARGUMENTS`, use it. Otherwise detect from the
@@ -81,238 +91,25 @@ this repo's branch topology is the user's call (see the root `CLAUDE.md`).
 ## Step 2: Delegate the review to two `general-purpose` agents, in parallel
 
 Spawn **both agents in a single message** so they run concurrently (each needs
-Bash for `gh` plus Read/Grep). Hand both the PR number, repo slug, and HEAD SHA.
-They work in their own contexts and return only a report + manifest — none of
-the file reads land in the orchestrator.
+Bash for `gh` plus Read/Grep). Hand each one:
 
-- **Agent A — comment triage**: steps 2a–2e below.
-- **Agent B — local review**: step 2f below. Do **not** pass it the posted
-  comments; its value is that it looks at the diff without knowing what the bots
-  already flagged.
+- the **PR number**, **repo slug**, and **HEAD SHA** from Step 1;
+- the repo-relative path to its brief, with an instruction to read that file
+  first and follow it:
+  - **Agent A — comment triage** → `.claude/skills/review-pr/references/agent-a-comment-triage.md`
+  - **Agent B — local review** → `.claude/skills/review-pr/references/agent-b-local-review.md`
 
-Instruct each agent to do **only its own sections** below — A gets 2a–2e, B gets
-2f — verbatim in spirit. Handing B any part of 2a–2e defeats the independence
-that is the entire reason there are two agents.
+Each brief points at `agent-return-contract.md` for the return format, so you do
+not need to restate it.
+
+**Do not pass Agent B the posted comments, or any part of Agent A's brief.** Its
+entire value is that it looks at the diff without knowing what the bots already
+flagged; handing it A's material defeats the independence that is the reason
+there are two agents.
 
 Both agents number their findings from `n: 1` independently; **the orchestrator
 renumbers on merge** (Step 3). Do not ask either agent to guess an offset — they
 run in parallel and neither knows the other's count.
-
-### 2a: Fetch Copilot + human inline review comments
-
-```bash
-gh api repos/:owner/:repo/pulls/{PR_NUMBER}/comments --paginate --jq '.[] | {id, node_id, user: .user.login, path, line, original_line, body, created_at, in_reply_to_id, pull_request_review_id}'
-```
-
-Keep comments from `copilot-pull-request-reviewer` / `Copilot` and any human
-reviewers. **Skip comments that already carry an `eyes` reaction** (processed in
-a prior run):
-
-```bash
-gh api repos/:owner/:repo/pulls/comments/{COMMENT_ID}/reactions --jq '[.[] | select(.content == "eyes")] | length'
-```
-
-NOTE on reaction API paths — they differ by comment type:
-- **PR review comments** (Copilot inline): `repos/:owner/:repo/pulls/comments/{COMMENT_ID}/reactions`
-- **Issue comments** (Claude flat): `repos/:owner/:repo/issues/comments/{COMMENT_ID}/reactions`
-
-Do NOT include the PR number in the reactions path — it's `pulls/comments/{ID}`,
-not `pulls/{PR}/comments/{ID}`.
-
-### 2b: Fetch Claude issue comments and parse them into findings
-
-```bash
-gh api repos/:owner/:repo/issues/{PR_NUMBER}/comments --jq '.[] | select(.user.login == "claude[bot]") | {id, node_id, body, created_at}'
-```
-
-Skip any with an `eyes` reaction (issue-comment path):
-
-```bash
-gh api repos/:owner/:repo/issues/comments/{COMMENT_ID}/reactions --jq '[.[] | select(.content == "eyes")] | length'
-```
-
-Claude's comments are markdown with numbered findings grouped under severity
-headers (### Critical, ### Important, ### Code Quality / Nice-to-have). Parse each
-into: `severity` (Critical/Important/Code Quality), `title` (the bold title),
-`description` (full text), `file_path` (backtick-wrapped path, resolved to repo
-root), `line` (primary line number), `source` = "claude".
-
-### 2c: Fetch review-thread node IDs for later resolution
-
-```bash
-gh api graphql -f query='
-  query($owner: String!, $repo: String!, $pr: Int!) {
-    repository(owner: $owner, name: $repo) {
-      pullRequest(number: $pr) {
-        reviewThreads(first: 100) {
-          nodes {
-            id
-            isResolved
-            comments(first: 1) {
-              nodes { id databaseId body author { login } path line }
-            }
-          }
-        }
-      }
-    }
-  }
-' -f owner="{OWNER}" -f repo="{REPO}" -F pr={PR_NUMBER}
-```
-
-Match threads to comments by `databaseId` to get each thread's `id`.
-
-### 2d: Assess each unprocessed finding
-
-For each finding: read the referenced file and surrounding context (Read tool,
-not `cat`) and classify it as one of:
-- **Valid — fix needed**: exists in current code, should be fixed
-- **Valid — already fixed**: code no longer matches what the reviewer described
-- **Valid — but out of scope**: real but not for this PR
-- **Style nit**: subjective preference, not a bug
-- **Disagree**: reviewer is wrong (explain why)
-
-Ground assessments in `.github/copilot-instructions.md` and the relevant
-subsystem `CLAUDE.md` (`core_sim/CLAUDE.md`,
-`clients/godot_thin_client/CLAUDE.md`). High-signal categories:
-- FlatBuffers contract changes (`sim_schema/schemas/*.fbs`) without regenerated bindings
-- Hand-edits to generated code under `shadow_scale_flatbuffers/src/generated/`
-- New `unwrap()`/`expect()`/`panic!` in simulation/server hot paths
-- Clippy suppressions (`#[allow(...)]`) added just to silence `-D warnings`
-- Hardcoded tunables that belong in a `core_sim/src/data/*.json` config
-- ECS systems added outside the correct `TurnStage` ordering
-- Godot panels that reimplement sizing instead of reusing `AutoSizingPanel.gd`
-
-### 2e: Agent A returns ONLY these two things
-
-1. The **report** (markdown), grouped by assessment:
-
-```
-## PR Review Comment Analysis — PR #{NUMBER}
-
-### Fixes Needed (X items)
-| # | Source | Severity | File | Finding | Assessment |
-|---|--------|----------|------|---------|------------|
-| 1 | Copilot | High | core_sim/src/systems.rs:444 | unwrap on missing tile | Valid — panics on edge hex |
-
-### Already Fixed (X)
-### Out of Scope (X)
-### Style Nits (X)
-### Disagree (X)
-```
-
-2. A **JSON manifest** — one object per finding, so the orchestrator can drive
-   fixes and side-effects without re-fetching anything:
-
-```json
-[
-  {
-    "n": 1,
-    "source": "copilot|claude|human|local",
-    "severity": "...",
-    "assessment": "fix-needed|already-fixed|out-of-scope|style-nit|disagree",
-    "file_path": "core_sim/src/systems.rs",
-    "line": 444,
-    "title": "...",
-    "description": "...",
-    "comment_id": 123,               // database id of the source comment
-    "comment_type": "pulls|issues",  // which reactions/reply path applies; null for local
-    "thread_id": "PRRT_...",         // GraphQL node id, or null if no thread yet
-    "in_reply_to_id": 123,           // for threaded replies
-    "needs_inline_comment": true     // true for Claude findings with file+line and no thread yet
-  }
-]
-```
-
-The agent must **not** create comments, add reactions, resolve threads, or touch
-the working tree. It is read-only.
-
-### 2f: Agent B — independent local review of the diff
-
-This agent reviews the PR's changes itself. It is **not** given the posted
-review comments, so it can surface what Copilot and Claude missed.
-
-Get the diff and the changed files:
-
-```bash
-gh pr diff {PR_NUMBER}
-gh pr diff {PR_NUMBER} --name-only
-gh pr view {PR_NUMBER} --json title,body --jq '{title, body}'
-```
-
-Review against the PR's *stated intent* (title + body + any linked
-`docs/plan_*.md` or issue), not just internal consistency — code that is
-self-consistent but doesn't do what the PR claims is the most expensive defect
-to find late. Read whole files around each hunk with Read, not just the diff
-context: a hunk can be correct in isolation and wrong against its caller, and
-the diff never shows the caller.
-
-Ground the review in `.github/copilot-instructions.md`, `CLAUDE.md`, and the
-`.claude/rules/**` files whose `paths:` frontmatter matches the changed files —
-those rules are this repo's real invariants, and a violation of one is a finding
-even when the code compiles and passes tests.
-
-**First decide what kind of PR this is**, because the two checklists below are
-different and a PR can be both. This repo lands code-free changes routinely —
-`.claude/rules/*.md`, `docs/plan_*.md`, hub `CLAUDE.md` files, `.claude/skills/**`,
-`core_sim/src/data/*.json` presets, `.github/workflows`. A doc- or config-only PR
-is **not** an automatic empty review; it just moves the review to the second list.
-
-For **code** changes, look hardest at:
-
-- **Correctness**: off-by-one and boundary hexes, integer/float division and
-  truncation, sign and unit errors, `unwrap()`/`expect()`/`panic!` on paths that
-  can actually be reached, error cases swallowed rather than handled
-- **Contracts**: `.fbs` changes without regenerated bindings; a field written by
-  the sim but never read by the client (or vice versa); field-order changes in
-  an append-only schema
-- **Sim semantics**: ECS systems in the wrong `TurnStage`, state read in the same
-  turn it's written, determinism breaks (iteration order over a `HashMap`,
-  unseeded randomness, wall-clock time)
-- **Repo rules**: magic numbers that should be a config lever or named constant,
-  back-compat/fallback code for a game that has no shipped saves, rationale
-  parked in a hub `CLAUDE.md` instead of the owning rule file
-- **Tests**: does a new behavior have a test that would fail without the change?
-  Does a changed behavior have a test asserting the *shipped* artifact rather
-  than an in-process value?
-- **Dead ends**: code added but never called, a config key added but never read,
-  a snapshot field populated but never consumed
-
-For **docs, rules, skills, agent definitions, configs, and workflows**, the
-failure mode is "someone — human or agent — follows this and does the wrong
-thing". Look hardest at:
-
-- **Stale leftovers**: a paragraph the change should have updated but didn't, so
-  the file now describes both the old and the new behavior. Renaming a concept
-  in one place and not the others is the same defect
-- **Contradictions**: two instructions that cannot both be followed, or a new one
-  that contradicts an older paragraph left in place, or the repo's own doctrine
-  (the hub-vs-rule-file rule, the worktree/branch/commit rules, no magic numbers,
-  no back-compat)
-- **Broken cross-references**: step numbers, section labels, file paths, skill
-  names, and `paths:` frontmatter globs that no longer resolve or now point at
-  the wrong thing after a renumber or a move
-- **Procedure correctness**: shell/`gh`/jq/GraphQL snippets that would error,
-  target the wrong endpoint, or perform a mutation the surrounding prose says not
-  to perform
-- **Contracts between steps**: does every field one step emits get consumed by
-  the step that reads it? A field introduced and never handled, or read and never
-  set, is a defect even in prose
-- **Dead ends**: an instruction nothing downstream acts on; a config key added but
-  never read; an output section nothing consumes
-
-Report only defects that would change the changed files, and state each as a
-concrete failure — *given this input, this happens* — not as a preference. If it
-can't name what goes wrong, it's a nit; drop it. Do not report the diff back as a
-summary, and do not restate what the PR does well.
-
-Agent B returns the same two things as Agent A — a report section and a JSON
-manifest — using `"source": "local"`, `"severity"` of
-`Critical|Important|Nice-to-have`, `"assessment": "fix-needed"`, and `null` for
-`comment_id`, `comment_type`, `thread_id`, and `in_reply_to_id`, with
-`needs_inline_comment: false`. `fix-needed` is its only assessment: it was told
-to drop anything it can't state as a failure, so a local `style-nit` would be a
-finding it should not have reported at all. It is read-only: no comments, no
-reactions, no edits to the working tree.
 
 ## Step 3: Present the merged report and get approval (orchestrator)
 
@@ -436,7 +233,9 @@ gh api repos/:owner/:repo/issues/comments/{COMMENT_ID}/reactions -f content=eyes
   present the full report FIRST and wait for direction.
 - The orchestrator does not read source for analysis or run the build/test loop —
   those are delegated (Steps 2 and 4). If you catch yourself reading files to
-  assess a finding or to review the diff, stop and let the agents do it.
+  assess a finding or to review the diff, stop and let the agents do it. The same
+  applies to the agent briefs in `references/`: hand over the path, don't read
+  them in.
 - **Never skip the local review because the bots found plenty.** A long Copilot
   list is not evidence the diff is covered; the two passes look for different
   things. Equally, an empty local-review section is a fine result — report it in
@@ -448,5 +247,4 @@ gh api repos/:owner/:repo/issues/comments/{COMMENT_ID}/reactions -f content=eyes
   declined stay declined; don't re-litigate them.
 - Use exact file paths from the PR diff (not guessed paths) when creating inline
   comments. If a Claude finding names multiple files, comment on the primary one.
-- Handle pagination — PRs can have many comments across pages.
 - The `eyes` reaction is the "processed" marker — do not use other reactions.
