@@ -952,6 +952,17 @@ fn seed_snapshot() -> WorldSnapshot {
                 },
             })
             .collect();
+        // **The per-band resolved tiers**, one row per shipped kit. Spelled out for the same reason
+        // the item conditions above are: a list keyed by `kit_id` cannot carry duplicate keys, which
+        // is what `rows()` would produce. The values are inert here — saturation overwrites them —
+        // but the row COUNT and the ids are what a client decodes against.
+        cohort.kit_tiers = ["big_game", "trapping", "gathering", "none"]
+            .iter()
+            .map(|kit| BandKitTiersState {
+                kit_id: (*kit).to_string(),
+                ..Default::default()
+            })
+            .collect();
         cohort.labor_assignments = rows();
         for assignment in &mut cohort.labor_assignments {
             assignment.arrival_schedule = vec![0.0f32; 4];
@@ -976,22 +987,24 @@ fn seed_snapshot() -> WorldSnapshot {
     // --- subsistence -----------------------------------------------------
     s.herds = rows();
     for herd in &mut s.herds {
-        herd.hunt_trip_estimates = rows();
-        // The denial raid's pre-launch table (`docs/plan_denial_raid.md`) — one row per party size,
-        // seeded for the same reason its hunting sibling above is: a repeated field the fixture
-        // leaves empty is a field the decode guard cannot exercise.
-        herd.denial_estimates = rows();
+        // The two pre-launch estimate tables that used to be seeded here are retired: the client
+        // asks for a forecast now (`sim_runtime`'s `QueryCommand`) instead of reading a table the
+        // capture pre-computed for every herd on every frame.
         // The sampled regrowth curve — a `[float]`, so it needs seeding like every other repeated
         // field or the decode guard cannot see it. Saturation overwrites the values; only the LENGTH
         // matters here, and it is the shipped one so the fixture exercises a real-shaped curve.
         herd.regrowth_samples = vec![0.0; REGROWTH_CURVE_SAMPLES];
     }
     s.food_modules = rows();
-    // **The kit roster**, and each entry's `jobs` — a repeated field inside a repeated field, so both
-    // levels need elements or the decode guard never exercises the inner one.
+    // **The kit roster**, and each entry's `jobs` / `item_ids` — repeated fields inside a repeated
+    // field, so both levels need elements or the decode guard never exercises the inner ones.
     s.kits = rows();
     for option in &mut s.kits {
         option.jobs = vec![String::new(); ROWS];
+        // Which items the kit carries. Seeded for the reason every list here is: an empty one is
+        // indistinguishable from a field that never reached the client, and this one exists
+        // precisely so a durability readout stops guessing the gear from the tiers.
+        option.item_ids = vec![String::new(); ROWS];
     }
     s.sedentarization = rows();
     s.forage_patches = rows();

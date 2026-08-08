@@ -829,33 +829,44 @@ const KIT_HINT_FORAGE_CARRY_FORMAT := "carry %s per gatherer"
 ## A component's remaining condition on `equipment.json`'s 0-100 scale, and the word for a spent one.
 ## **Performance is FLAT until expiry** (durability and performance are orthogonal axes), so this
 ## number never scales anything above it — it says how much longer the tier lasts, not how good it is.
+## **THE ITEM NAMES ITSELF — there is no table of them here.** These two formats take the wire's own
+## `KitOption.item_ids` entry, which is the `equipment.json` id (`spears` / `traps` / `sled` /
+## `baskets`). The three `KIT_COMPONENT_*` constants that used to supply the name are deleted: they were
+## reached through an axis→item guess, and on the Trapping kit that guess printed `spears`.
 const KIT_HINT_CONDITION_FORMAT := "%s %d"
 const KIT_HINT_DRY_FORMAT := "%s dry"
-const KIT_COMPONENT_SPEARS := "spears"
-const KIT_COMPONENT_SLED := "sled"
-const KIT_COMPONENT_BASKETS := "baskets"
 ## Tier decimals. The tiers span 1.0 (bare hands) to 40.0 (a sled), authored as small round numbers,
 ## so one decimal states them without claiming a precision the roster does not have.
 const KIT_TIER_DECIMALS := 1
 
-## **THE HONESTY LINE.** `huntTripEstimates` / `denialEstimates` are quoted for the hunt job's DEFAULT
-## kit ONLY — repricing them per kit is scoped out (they are ~95% of snapshot capture) — so a sheet
-## whose selected kit differs from the id the table names must refuse to present the table as the
-## answer, and say whose numbers it was going to show. `%s` the kit the table IS priced for, `%s` the
-## kit the player selected.
-const KIT_DENIAL_ESTIMATES_QUOTED_FORMAT := "The collapse forecast is priced for %s, not for %s — so no turn count and no take are quoted here."
-const KIT_TRIP_ESTIMATES_QUOTED_FORMAT := "The raid forecast is priced for %s, not for %s — so no turn count and no payload are quoted here."
+# ---- THE FORECAST QUERY's two non-answers -------------------------------------------------------
+#
+# **THE FOUR "PRICED FOR ANOTHER KIT / ANOTHER PARTY" LINES ARE GONE, AND NOTHING REPLACES THEM.**
+# They apologised for a pre-sampled table: quoted at ONE kit over a FRESH component set, on a floor ×
+# party LADDER, so a sheet composing anything else had to say whose numbers it was about to show, or
+# refuse to show them. The sim is asked now, and answers the exact (band, kit, party, floor) — there
+# is no nearest rung to name and no other kit's raid to disown. A sheet's numbers are always its own.
 
-## **THE HONESTY LINE'S PARTY-AXIS TWIN.** Both estimate tables sample the party axis on a LADDER
-## (`expedition_config.estimate_party_sizes`), so a selected party usually falls between two rungs and
-## the sheet quotes the nearest one (`SourceForecast.nearest_estimate_party`). The take SCALES with
-## party size, so a row computed for 8 read against a party of 12 misstates it — the sheet must NAME
-## the party the figures belong to rather than present a nearby row as exact. Unlike the kit line
-## above, the figures still RENDER: they are a real answer to a nearby question, not another kit's
-## numbers. `%d` the party quoted, `%d` the party selected. `""` where they agree, which the ladder's
-## dense low end and the denial table's requirement run make the common case.
-const PARTY_DENIAL_ESTIMATES_QUOTED_FORMAT := "The collapse forecast is priced for a party of %d — the nearest size the scouts costed — not for your %d."
-const PARTY_TRIP_ESTIMATES_QUOTED_FORMAT := "The raid forecast is priced for a party of %d — the nearest size the scouts costed — not for your %d."
+## **WHILE THE ANSWER IS IN FLIGHT.** First open on a quarry, or a re-query whose previous answer has
+## aged past `ForecastQuery.STALE_AFTER_MSEC`. It stands in place of the readout box — never beside
+## zeros, which would read as a raid that lands nothing.
+const RAID_FORECAST_PENDING := "Costing the raid…"
+
+## The denial twin. Two lines rather than one because the two sheets state different things (a payload
+## and a collapse), and a shared "waiting…" would be the only word on either that did not name what it
+## was waiting for.
+const DENIAL_FORECAST_PENDING := "Costing the raid's toll on the herd…"
+
+## **THE ONE FAILURE LINE, AND IT IS DELIBERATELY NOT SEVEN.** The server's refusal tokens
+## (`sim_runtime::commands::query_error`) are all CLIENT BUGS if they ever fire in normal play — the
+## sheet composes the request out of the band, herd, kit and party it is already rendering — so prose
+## per token would be seven sentences for states the UI is supposed to make unreachable. The token
+## rides the line so a report can name it; the player gets one honest "this is not answering".
+const FORECAST_FAILED_FORMAT := "No forecast available (%s)."
+
+## The transport's own token, mirroring `native/src/bridge/query.rs`'s `QUERY_ERROR_TRANSPORT`. It is
+## the ONE token that is not the server's: a socket that never answered has no `query_error` to give.
+const QUERY_ERROR_TRANSPORT := "transport"
 
 const COMPOSE_CANCEL_TOOLTIP := "Cancel"
 

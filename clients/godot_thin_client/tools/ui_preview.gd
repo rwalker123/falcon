@@ -69,6 +69,7 @@ const EXIT_FAILED := 1
 
 const Spine := preload("res://tools/ui_preview/compose_vocab.gd")
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
+const ForecastFx := preload("res://tools/ui_preview/fixtures_forecast.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
@@ -386,6 +387,14 @@ func _ready() -> void:
 	# seeded per arc would give one chapter's sheets a picker and the next chapter's none.
 	_hud.update_kit_roster(BandFx.kit_roster_fixture(),
 		BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE)
+	# **THE CANNED FORECAST ANSWERER — prologue, because a raid sheet without it renders no numbers
+	# at all.** The pre-launch forecasts are a request/response on the command socket now, and there is
+	# no server here; `ForecastQuery` would sit pending forever and every raid readout would be its
+	# placeholder. `fixtures_forecast` answers out of the herd fixtures' own raid tables, deferred, so
+	# the frames judged below are the ones with numbers on them. Prologue rather than chapter state,
+	# exactly as the kit roster above is: an answerer installed per arc would give one chapter's sheets
+	# a forecast and the next chapter's none.
+	ForecastFx.install(_hud)
 	# The world's food modules (Main pushes snapshot["food_modules"]): each Forage row leads with the
 	# module's map glyph, so the panel row and the map marker read as the same resource.
 	_hud.update_food_modules([

@@ -209,6 +209,38 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         }
     }
     let _ = dict.insert("kit_item_conditions", &kit_item_conditions);
+    // **WHAT EVERY OFFERED KIT WOULD GRANT *THIS* BAND, RIGHT NOW** — one row per roster kit,
+    // resolved against this band's LIVE wear. It is the sim's ANSWER, not an input to a client-side
+    // derivation: stepping a fresh tier down needs to know which ITEM supplies which AXIS, that
+    // mapping is per kit (`big_game` gets attack from `spears`, `trapping` from `traps`), and no rule
+    // over `KitOption.itemIds` recovers it. The client guessed `attack → spears` and repriced a band
+    // with fresh traps and dry spears to the bare hand under `trapping`.
+    //
+    // **BOTH MASS BOUNDS RIDE PER BAND TOO**, and that is not symmetry for its own sake: a spent item
+    // contributes no bound either, so a kit whose mass-bounded weapon has run dry has NO size window
+    // rather than its fresh one. `KitOption`'s bounds are the fresh-kit reference only.
+    let mut kit_tiers = VarArray::new();
+    if let Some(tiers) = cohort.kitTiers() {
+        for row in tiers.iter() {
+            let mut entry = VarDictionary::new();
+            let _ = entry.insert("kit_id", row.kitId().unwrap_or_default());
+            let _ = entry.insert("attack", row.attack() as f64);
+            let _ = entry.insert(
+                "hunt_carry_per_worker_biomass",
+                row.huntCarryPerWorkerBiomass() as f64,
+            );
+            let _ = entry.insert(
+                "forage_carry_per_worker_biomass",
+                row.forageCarryPerWorkerBiomass() as f64,
+            );
+            let _ = entry.insert("attack_min_body_mass", row.attackMinBodyMass() as f64);
+            let _ = entry.insert("attack_max_body_mass", row.attackMaxBodyMass() as f64);
+            let _ = entry.insert("dispersion", row.dispersion() as f64);
+            let _ = entry.insert("exposure", row.exposure() as f64);
+            kit_tiers.push(&entry.to_variant());
+        }
+    }
+    let _ = dict.insert("kit_tiers", &kit_tiers);
     // The RESOLVED tiers, so the client renders this band's real numbers instead of re-deriving them
     // from the durabilities plus a config it does not have. `hunter_attack` is the term the combat
     // gate `max(0, attack − defense)` compares against `HerdTelemetryState.defense`.
@@ -489,8 +521,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         cohort.expeditionTripBound().unwrap_or(""),
     );
     // In-flight hunt-party next-delivery forecast (the drawer's "Next delivery: ~X food in ~N turns"
-    // line) — the in-flight twin of the pre-launch huntTripEstimates. 0 / 0.0 / false when n/a
-    // (scout, normal band, or a raid with no finite ETA). See core_sim expedition_delivery.
+    // line) — the in-flight twin of the pre-launch forecast the client now ASKS for over the query
+    // channel. 0 / 0.0 / false when n/a (scout, normal band, or a raid with no finite ETA). See
+    // core_sim expedition_delivery.
     let _ = dict.insert(
         "expedition_eta_turns",
         i64::from(cohort.expeditionEtaTurns()),
@@ -500,22 +533,14 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         f64::from(cohort.expeditionProjectedDelivery()),
     );
     let _ = dict.insert("expedition_recurring", cohort.expeditionRecurring());
-    // Hard cap on party size the server enforces (from the expedition config, default 8). The
-    // outfit stepper clamps its max to min(idle_workers, this) so the player can't dial an
-    // over-cap party.
-    let _ = dict.insert(
-        "max_expedition_party_size",
-        cohort.maxExpeditionPartySize() as i64,
-    );
-    // Global expedition/labor config echoed onto EVERY cohort (same idiom as
-    // `max_expedition_party_size`). These are DISPLAY levers only — none of them is an input to an
-    // expedition trip length. An expedition's turns-to-fill comes from the herd's
-    // `hunt_trip_estimates` (decoded in `herds_to_array` above) and NOTHING ELSE: the sim
-    // forward-simulates the trip (`hunt_trip_forecast`) and exports the ANSWER per (policy, party
-    // size), so the client performs a PURE TABLE LOOKUP and does ZERO arithmetic for an expedition.
-    // It must NEVER divide a carry cap by a take rate: the herd's state moves under the party and
-    // its stock exhausts mid-trip, so any closed form drifts from the take the sim actually
-    // performs. Pinned by core_sim/tests/expedition_hunt.rs.
+    // Global expedition/labor config echoed onto EVERY cohort. These are DISPLAY levers only — none
+    // of them is an input to an expedition trip length. An expedition's turns-to-fill comes from the
+    // sim's FORECAST QUERY answer and NOTHING ELSE: the sim forward-simulates the trip for the exact
+    // (band, kit, party, floor) that was asked about and returns the ANSWER, so the client performs a
+    // PURE READ and does ZERO arithmetic for an expedition. It must NEVER divide a carry cap by a
+    // take rate: the herd's state moves under the party and its stock exhausts mid-trip, so any
+    // closed form drifts from the take the sim actually performs. Pinned by
+    // core_sim/tests/expedition_hunt.rs.
     // What each lever is actually FOR:
     //   expedition_viability_warn_turns — the viable/not-viable threshold applied to `turns_to_fill`
     //   hunt_per_worker_provisions      — one hunter's throughput, used ONLY by the RESIDENT-BAND

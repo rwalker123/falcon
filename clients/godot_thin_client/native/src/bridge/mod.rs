@@ -3,6 +3,7 @@
 
 pub(crate) mod command;
 pub(crate) mod decoder;
+pub(crate) mod query;
 pub(crate) mod script_host;
 pub(crate) mod variant;
 

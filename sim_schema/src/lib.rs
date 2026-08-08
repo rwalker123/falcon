@@ -47,26 +47,38 @@ mod tests {
         const BARE_ATTACK: f32 = 1.0;
 
         let snapshot = WorldSnapshot {
-            kits: vec![KitOptionState {
-                id: "none".to_string(),
-                display_name: "No kit".to_string(),
-                jobs: vec!["hunt".to_string(), "forage".to_string()],
-                attack: BARE_ATTACK,
-                hunt_carry_per_worker_biomass: BARE_HUNT_CARRY,
-                forage_carry_per_worker_biomass: BARE_FORAGE_CARRY,
-                // `none` carries nothing, so every multiplier reads its neutral and its attack —
-                // the bare hand's — is bounded by nothing.
-                attack_min_body_mass: 0.0,
-                attack_max_body_mass: 0.0,
-                dispersion: 1.0,
-                exposure: 1.0,
-            }],
+            kits: vec![
+                KitOptionState {
+                    id: "none".to_string(),
+                    display_name: "No kit".to_string(),
+                    jobs: vec!["hunt".to_string(), "forage".to_string()],
+                    attack: BARE_ATTACK,
+                    hunt_carry_per_worker_biomass: BARE_HUNT_CARRY,
+                    forage_carry_per_worker_biomass: BARE_FORAGE_CARRY,
+                    // `none` carries nothing, so every multiplier reads its neutral and its attack —
+                    // the bare hand's — is bounded by nothing.
+                    attack_min_body_mass: 0.0,
+                    attack_max_body_mass: 0.0,
+                    dispersion: 1.0,
+                    exposure: 1.0,
+                    // Carrying nothing is a real answer, and an EMPTY vector is how it is said.
+                    item_ids: Vec::new(),
+                },
+                // A second entry that actually carries gear, because the empty case above cannot
+                // distinguish "this kit holds nothing" from "the field never reached the wire" —
+                // and telling those apart is the entire reason `item_ids` exists.
+                KitOptionState {
+                    id: "big_game".to_string(),
+                    display_name: "Big-game kit".to_string(),
+                    jobs: vec!["hunt".to_string()],
+                    item_ids: vec!["spears".to_string(), "sled".to_string()],
+                    ..Default::default()
+                },
+            ],
             default_hunt_kit_id: "big_game".to_string(),
             default_forage_kit_id: "gathering".to_string(),
             herds: vec![HerdTelemetryState {
                 id: "herd_wild".to_string(),
-                hunt_trip_estimates_kit_id: "big_game".to_string(),
-                denial_estimates_kit_id: "big_game".to_string(),
                 ..Default::default()
             }],
             populations: vec![PopulationCohortState {
@@ -99,10 +111,34 @@ mod tests {
             .expect("a kit states the jobs it may be sent on");
         assert_eq!(jobs.len(), 2);
         assert_eq!(jobs.get(0), "hunt");
+        assert_eq!(
+            option
+                .itemIds()
+                .expect("a kit states what it carries")
+                .len(),
+            0,
+            "`none` carries nothing, and says so with an empty list"
+        );
 
+        // **WHICH ITEMS A KIT CARRIES, in config order.** Without this the client has to infer the
+        // gear from the tiers — which it did, by hardcoding `attack → spears`, and so quoted a
+        // Trapping party the SPEARS' durability.
+        let kitted = subsistence.kits().expect("the roster is published").get(1);
+        let items = kitted.itemIds().expect("a kit states what it carries");
+        assert_eq!(items.len(), 2);
+        assert_eq!(
+            items.get(0),
+            "spears",
+            "the weapon comes first, as config has it"
+        );
+        assert_eq!(items.get(1), "sled");
+
+        // The herd row still ships. The two `*_kit_id` disclaimers that used to be asserted here are
+        // retired with the estimate tables they described: they told a client *"these rows were
+        // priced at the hunt default, refuse to show them for any other kit"*, which is what you
+        // publish when you cannot answer the question. The client asks now, and names the kit.
         let herd = subsistence.herds().expect("herds present").get(0);
-        assert_eq!(herd.huntTripEstimatesKitId(), Some("big_game"));
-        assert_eq!(herd.denialEstimatesKitId(), Some("big_game"));
+        assert_eq!(herd.id(), Some("herd_wild"));
 
         let cohort = payload
             .population()

@@ -176,15 +176,18 @@ func _is_player_unit(unit: Dictionary) -> bool:
 ## position is nearly all we can honestly observe, and it has no header to carry it — so it keeps the
 ## row and this defaults true. **Deliberately its own parameter and NOT keyed off `compact`**, which
 ## is the band zone's HEIGHT TIER: the dock drops this row in every tier, tall or short.
+## `denial_view` is carried straight through to `expedition_summary_lines` — a party selected on the map
+## renders through THIS entry point, so the drawer host answers the same query the dock's parties strip
+## does. See that producer for why the answer is a parameter.
 func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
         ctx: DetailFormat.Context = null, compact: bool = false,
-        with_position: bool = true) -> Array[String]:
+        with_position: bool = true, denial_view: Dictionary = {}) -> Array[String]:
     # The tint context is an OUT-PARAMETER of this producer, not a member: the caller (each of the two
     # detail hosts) builds it and hands it straight to the formatter. Defaulted so the preview
     # harnesses can still ask for the lines alone.
     var context := ctx if ctx != null else DetailFormat.Context.new()
     if bool(unit_data.get("is_expedition", false)):
-        return expedition_summary_lines(unit_data, context)
+        return expedition_summary_lines(unit_data, context, denial_view)
     var lines: Array[String] = []
     # Disclosure carets + the tint context are rebuilt per render. Reset BOTH here, not inside
     # `_band_food_line` — a foreign band skips that call entirely (below), and a skipped Food row
@@ -302,7 +305,16 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
 ## `id` the old `Unit:` line printed — nothing is lost with it (unlike the herd's fauna id, which
 ## had to move INTO the row). `Policy` / `Phase` deliberately keep their WORDS here: the compact
 ## Active-expeditions row is where the glyph vocabulary belongs; this block IS the disclosure.
-func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context = null) -> Array[String]:
+##
+## **`denial_view` IS THE HOST'S ANSWER TO A QUERY, NOT A LOOKUP THIS PRODUCER MAKES.** The `Collapse:`
+## row's forecast left the snapshot and became a request/response on the command socket, and asking
+## needs a request id, a staleness rule and a re-render when the answer lands — controller business.
+## So the host that renders the strip (`BandPanelController`, which holds the `ForecastQuery` and
+## re-renders on `answered`) composes the question and passes `ForecastQuery.view()` down. Defaulted to
+## `{}` for the OTHER host and for the preview harnesses: a caller with no seam to ask through renders
+## no collapse row at all, rather than a pending placeholder it will never resolve.
+func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context = null,
+        denial_view: Dictionary = {}) -> Array[String]:
     # Same out-parameter contract as `unit_summary_lines`: the Carried/Provisions rows tint by the
     # party's own food runway, which is stashed on the context below. Defaulted for the harnesses.
     var context := ctx if ctx != null else DetailFormat.Context.new()
@@ -377,11 +389,12 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
         else:
             lines.append("Carried: %d  (%s)" % [carried, DetailFormat.food_turns_text(turns)])
         # **THE DENIAL PARTY'S OWN READOUT, IN PLACE OF A DELIVERY ETA.** The mission publishes none —
-        # its verdict is whether the herd goes past the point of no return — so this reads the target
-        # herd's `denialEstimates` row for THIS party's size, the same table the launch sheet quoted.
+        # its verdict is whether the herd goes past the point of no return — so the HOST asks the
+        # forecast query on this party's behalf and hands the answer in (see the parameter's note).
         # Rendered before the hunt-only lines below so the two missions read in the same slot.
         if is_deny:
-            var collapse_line := DetailFormat.expedition_collapse_line(unit_data, target_herd)
+            var collapse_line := DetailFormat.expedition_collapse_line(
+                unit_data, target_herd, denial_view)
             if collapse_line != "":
                 lines.append(collapse_line)
         # Next-delivery forecast (the in-flight twin of the pre-launch hunt trip estimate): ALWAYS

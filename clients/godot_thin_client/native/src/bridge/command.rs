@@ -7,6 +7,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{mpsc, OnceLock};
 use std::thread;
 
+use crate::bridge::query;
 use crate::runtime::transmit_proto_command;
 
 #[derive(GodotClass)]
@@ -87,6 +88,51 @@ impl CommandBridge {
         }
 
         dict
+    }
+
+    /// **Ask the sim a forecast question.** Returns `{ok, error}` for the DISPATCH only — the answer
+    /// itself arrives later through [`Self::poll_query_replies`], because the reply is written back
+    /// on the same socket after the sim has evaluated it.
+    ///
+    /// `request_id` is the CLIENT's number and the server only echoes it; `ForecastQuery.gd` owns
+    /// the sequence and the staleness rule built on it.
+    #[func]
+    pub fn send_query(
+        &self,
+        host: GString,
+        proto_port: i64,
+        request_id: i64,
+        query: VarDictionary,
+    ) -> VarDictionary {
+        let mut dict = VarDictionary::new();
+        if proto_port <= 0 || proto_port > u16::MAX as i64 {
+            let _ = dict.insert("ok", false);
+            let _ = dict.insert("error", format!("invalid port {proto_port}"));
+            return dict;
+        }
+        match query::dispatch(
+            &host.to_string(),
+            proto_port as u16,
+            request_id as u64,
+            &query,
+        ) {
+            Ok(()) => {
+                let _ = dict.insert("ok", true);
+            }
+            Err(err) => {
+                let _ = dict.insert("ok", false);
+                let _ = dict.insert("error", err);
+            }
+        }
+        dict
+    }
+
+    /// Drain every forecast answer that has landed since the last call. **Call it once a frame** —
+    /// this is the ONE hop from the query worker onto the main thread, and Godot's scene tree may
+    /// not be touched from any other.
+    #[func]
+    pub fn poll_query_replies(&self) -> VarArray {
+        query::poll_replies()
     }
 }
 

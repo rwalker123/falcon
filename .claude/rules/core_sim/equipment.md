@@ -178,11 +178,14 @@ rather than silently ignored (`config-loading.md`'s "looks live but isn't").
 no target — the published kit roster and a band's own `hunterAttack` row.
 
 > **The hunt job's DEFAULT kit must carry no mass-bounded attack, and `validate` enforces it.**
-> `snapshot/capture.rs` builds **one** party to price **every** herd's estimate tables, so it cannot
-> carry a per-quarry attack and resolves unbounded. A bounded default weapon would make every table
-> quote a kitted take against animals it cannot touch — wrong in the *reassuring* direction, on the
-> surface a player commits from. The fix when that day comes is to resolve per herd inside
-> `herd_snapshot_entries`; the check is what makes that a decision rather than a bug found in play.
+> `snapshot/capture.rs` builds **one** party to price **every** herd's per-worker yield row, so it
+> cannot carry a per-quarry attack and resolves unbounded. A bounded default weapon would make every
+> row quote a kitted take against animals it cannot touch — wrong in the *reassuring* direction.
+>
+> **The forecast query does not need this guarantee and does not rely on it**: it has a quarry, so it
+> resolves `hunter_profile_against(.., herd.body_mass)` and a trapping party after a mammoth is
+> quoted the bare hand's attack — the gate refusing the raid, which is the same answer the take will
+> give. The check still stands for the rows that genuinely have no herd to ask.
 
 ### A kit resolves a multiplier as the MAX of what its LIVE items DECLARE
 
@@ -459,20 +462,24 @@ Never a silent fall back to the default: naming a kit is how the player *compare
 substitution answers a different question than the one asked and looks exactly like an answer. Absent
 is the job's default, which is the pre-roster behaviour.
 
-### The two estimate tables are NOT repriced per kit — and they say so
+### Every pre-launch forecast is priced at the player's OWN kit and wear
 
-`huntTripEstimates` and `denialEstimates` stay quoted at the **hunt job's default kit**, and publish
-which (`huntTripEstimatesKitId` / `denialEstimatesKitId`). They are ~95% of snapshot capture and a
-kit axis multiplies them — the same structural cost question per-band repricing already faces (see
-`expeditions.md` → "THE WHOLE HERD TABLE IS PRICED AT THE EQUIPPED TIER"). The field exists so a
-client whose player has selected another kit can **refuse to present the table as an answer** for
-that selection rather than quoting a kitted raid's numbers to a bare-handed party. Two fields rather
-than one because they are two tables: if one is later repriced and the other is not, a single field
-would lie about whichever was left behind.
+There is no surface left that quotes one kit to everybody. The forecast query
+(`core_sim/src/forecast_query.rs`) takes `kit_id` as an **argument** and resolves the party against
+the **asking band's live `BandEquipment`**, so a band whose spears have run dry is quoted the attack
+it actually has — intrinsic `1`, which against a Red Deer's `defense 1.0` is an effective **zero** and
+no party of any size works. The launch feed line (`launch_forecast_party` + `launch_forecast_haul`),
+the in-flight delivery ETA and both assign-time compose seeds (`hunt_source_yield_preview` /
+`forage_source_yield_preview`) were already priced at the chosen kit.
 
-Everything the player *does* commit to is priced at the chosen kit: the launch feed line
-(`launch_forecast_party` + `launch_forecast_haul`), the in-flight delivery ETA, and both assign-time
-compose seeds (`hunt_source_yield_preview` / `forage_source_yield_preview`).
+**This section used to say the opposite**, and the reason it could is worth keeping: the two per-herd
+estimate tables were quoted at the hunt job's default kit over a *fresh* component set, published
+`huntTripEstimatesKitId` / `denialEstimatesKitId` so a client could **refuse** to present them for
+another selection, and were ~95% of snapshot capture — so a kit axis multiplied a cost that was
+already dominant. Retiring the tables in favour of an on-demand query removed the cost and the
+disclaimer together: measured, capture went from **49.51 ms to 3.15 ms** and the herd pass from
+**46.22 ms to 0.06 ms** (`expeditions.md` → "What the query replaced, and what it cost"). A
+disclaimer is what you publish when you cannot answer the question; the answer is better.
 
 ## On the wire
 
@@ -486,21 +493,59 @@ one place):
 | `hunterAttack:float` | The band's resolved per-hunter `attack` (1 bare / 20 kitted) — the left side of the fight's gate against a herd's `HerdTelemetryState.defense` |
 | `huntCarryPerWorkerBiomass:float` | The band's resolved per-worker **hunt** haul rate (40 sledded / 12 sledless) |
 | `forageCarryPerWorkerBiomass:float` | The band's resolved per-**gatherer** throughput, *before* the tile's seasonal weight (8 with baskets / 1.6 bare-handed) |
+| `kitTiers:[BandKitTiers]` | **What EVERY offered kit would grant this band, at its live wear** — one row per roster kit (`kitId` + the same seven tiers `KitOption` carries). See below: it is the resolved answer, and a client must not re-derive it |
 
 **The last two are separate fields on purpose.** A band can be out of baskets with its sled untouched;
 a client that rendered one on the other web's row would be repeating the defect the split corrected.
 `HerdTelemetryState.perWorkerBiomass` and `ForagePatchState.perWorkerBiomass` both stay the *equipped
 reference* rate: neither a herd nor a patch has a band to resolve a tier against.
 
-The kit selection adds five more slots, all append-only:
+The kit selection adds five more slots, all append-only. The two retired ones —
+`HerdTelemetryState.huntTripEstimatesKitId` / `denialEstimatesKitId` — are `(deprecated)` in the
+schema; they disclaimed the estimate tables, which are gone.
 
 | Field | Meaning |
 |---|---|
-| `SubsistenceSection.kits:[KitOption]` | **The roster, once per world** — `id`, `displayName`, `jobs`, and the three tiers each kit grants a party whose components are **fresh** (`attack`, `huntCarryPerWorkerBiomass`, `forageCarryPerWorkerBiomass`), so the picker renders real numbers without a second copy of the TOE table |
+| `SubsistenceSection.kits:[KitOption]` | **The roster, once per world** — `id`, `displayName`, `jobs`, `itemIds`, and the three tiers each kit grants a party whose components are **fresh** (`attack`, `huntCarryPerWorkerBiomass`, `forageCarryPerWorkerBiomass`), so the picker renders real numbers without a second copy of the TOE table |
 | `SubsistenceSection.defaultHuntKitId` / `defaultForageKitId:string` | What each verb runs on when the player names none |
 | `PopulationCohortState.kitId:string` | Which kit the two **hunt** tiers above are quoted at — an in-flight party's **own** kit (one kit, so it covers that party's forage tier too), a resident band's **hunt job default** (a band has one kit per assignment and this row is per cohort). **It does not name a resident band's forage kit**: `forageCarryPerWorkerBiomass` resolves through the *forage* default, so pairing the two reads a gathering rate off `big_game`, which has no basket component. The forage default rides the wire once, as `defaultForageKitId`; pinned by `kit_selection::a_resident_bands_published_kit_answers_for_the_hunt_tiers_only` |
 | `LaborAssignment.kitId:string` | The kit that row's yields are priced at, **resolved** — never "unspecified". `""` on a band-wide role, which has no kit axis |
-| `HerdTelemetryState.huntTripEstimatesKitId` / `denialEstimatesKitId:string` | Which kit each estimate table was computed at — see above |
+| `KitOption.itemIds:[string]` | **Which items the kit carries** — its `equipment.json` `uses` list verbatim, in config order (`big_game` → `["spears", "sled"]`). The tiers beside it are numbers and name no item, so without this a durability readout has to guess which component produced them — and the guess was `attack → "spears"`, which quoted a Trapping party the spears' condition. An **empty** list is a real answer (`none` carries nothing), never "unknown" |
+
+### `kitTiers` — the resolved per-band answer, because the derivation is impossible on the wire
+
+`PopulationCohortState.kitTiers` publishes, per band, what **each** roster kit would grant it *right
+now*. The world-level `SubsistenceSection.kits` stays — it is the picker's list and the fresh-kit
+reference — and this is the same seven numbers resolved against the band's own `BandEquipment`.
+
+**A client must not step a tier down for itself**, and this is the field that makes that unnecessary.
+It is also the field that makes it *possible* to be right, because stepping down cannot be done from
+the wire at all:
+
+> Stepping a tier down needs the **axis → item** mapping, and that mapping is **per kit**: `big_game`
+> supplies `attack` from `spears`, `trapping` supplies it from `traps`. `KitOption.itemIds` names
+> what a kit carries but not what each item is *for*, and no rule over that list recovers it —
+> set-cover and positional order both mis-assign, *"any item live"* keeps a kit at full tier with its
+> weapon dry, and *"all items dry"* keeps it at full tier with only the sled left.
+
+The live symptom of guessing: a band with **fresh traps and dry spears** repriced to the bare hand
+under `trapping`. Same root cause as the pre-launch estimate tables this arc retired — a fact the sim
+knows that the wire does not carry — and the same fix.
+
+**One arithmetic, three call sites.** `EquipmentConfig::resolve_kit_tiers` is the single resolver:
+`snapshot::kit_roster_states` calls it per kit over a **fresh** ledger, `snapshot::population_state`
+calls it per kit over the **band's** ledger, and `forecast_query` resolves the same seams for the
+party it prices. It was extracted rather than copied precisely because this field would otherwise
+have been a third transcription of the same seven calls.
+
+Size is bands × kits — a handful each — and it diffs out between frames when nothing wears.
+
+Pinned by `kit_selection::a_bands_published_tiers_step_down_per_kit_by_which_item_that_kit_actually_uses`,
+which wears one band's spears to the cliff, leaves its traps untouched, and asserts **both** that
+`trapping` keeps its attack and that `big_game` loses it — the pairing, because asserting only the
+first would pass on a sim that had stopped stepping tiers down at all. It also asserts the shared
+**sled**'s haul tier is unchanged on both kits, which is what a naive "any item in this kit is dry"
+rule would break.
 
 ### `SubsistenceSection.equipmentConfigJson` — the designer catalogue, and the one blob on this wire
 

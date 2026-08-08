@@ -268,6 +268,162 @@ pub enum CommandPayload {
     /// Drop every staged config override; the next `new_game` boots on the shipped configs.
     /// Proto field 48.
     ClearConfigOverrides,
+    /// **Ask the sim a question and get an answer back on the same socket.** Proto field 50, and the
+    /// only payload in this enum that is *answered* rather than *applied*.
+    ///
+    /// It mutates nothing, so it is deliberately outside the replay log: a logged query would make a
+    /// replay re-answer questions nobody asked. `request_id` is the client's own correlation number,
+    /// echoed on the [`QueryReplyEnvelope`] that comes back.
+    Query {
+        request_id: u64,
+        query: QueryPayload,
+    },
+}
+
+/// Which question a [`CommandPayload::Query`] asks. Mirrors the proto `QueryCommand.query` oneof.
+#[derive(Debug, Clone, PartialEq)]
+pub enum QueryPayload {
+    HuntTripForecast(HuntTripForecastQuery),
+    DenialRaidForecast(DenialRaidForecastQuery),
+}
+
+/// *"What does this party, off this band, carrying this kit, take off this herd at this floor?"*
+///
+/// Every field is an exact ask, not a sample: the answer is computed for these values and echoes
+/// them back on each row so a client can assert it got what it asked for.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HuntTripForecastQuery {
+    pub faction_id: u32,
+    /// The asking band's durable `BandId` — its **live** equipment wear prices the answer.
+    pub band_id: u64,
+    pub herd_id: String,
+    /// An `equipment.json` roster id, **required**. Unknown or wrong-job is an error, never a quiet
+    /// fall back to the job default.
+    pub kit_id: String,
+    pub party_workers: u32,
+    pub floor: f32,
+    /// The sheet's floor presets, answered in the same round trip at the same party size.
+    pub preset_floors: Vec<f32>,
+    /// **The largest party this band could field** — its idle workers. Bounds the reply's
+    /// `useful_cap` plateau scan, which walks `1..=max` **contiguously**; `0` means "do not scan".
+    pub max_party_workers: u32,
+}
+
+/// The denial twin of [`HuntTripForecastQuery`] — no floor, because the mission carries none.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DenialRaidForecastQuery {
+    pub faction_id: u32,
+    pub band_id: u64,
+    pub herd_id: String,
+    pub kit_id: String,
+    pub party_workers: u32,
+    /// **The largest party this band could field** — its idle workers. Bounds the `party_needed`
+    /// search, which walks `1..=max` and stops at the first party that drives the herd past
+    /// recovery; `0` answers the sentinel.
+    pub max_party_workers: u32,
+}
+
+/// **The server → client answer frame**, written back on the command socket as its own
+/// length-prefixed frame. A top-level envelope rather than a `CommandEnvelope` variant: the two
+/// directions carry different vocabularies, and nothing but a query is ever answered.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QueryReplyEnvelope {
+    /// Echoes the [`CommandPayload::Query::request_id`] this answers.
+    pub request_id: u64,
+    pub reply: QueryReply,
+}
+
+/// What came back. [`QueryReply::Error`] carries a machine-readable snake_case token
+/// ([`query_error`]); the client owns the prose.
+#[derive(Debug, Clone, PartialEq)]
+pub enum QueryReply {
+    HuntTripForecast(HuntTripForecastReply),
+    DenialRaidForecast(DenialRaidForecastReply),
+    Error(String),
+}
+
+/// **The refusal tokens a [`QueryReply::Error`] can carry.** Named constants rather than literals at
+/// the raising sites, so the client's match arms and the server's answers cannot drift apart.
+pub mod query_error {
+    /// The server is idle — no world has been generated yet, so there is nothing to forecast.
+    pub const NO_ACTIVE_WORLD: &str = "no_active_world";
+    /// No live herd carries the queried id.
+    pub const UNKNOWN_HERD: &str = "unknown_herd";
+    /// No band of the queried faction carries the queried `BandId`.
+    pub const UNKNOWN_BAND: &str = "unknown_band";
+    /// The queried `kit_id` names no `equipment.json` roster entry.
+    pub const UNKNOWN_KIT: &str = "unknown_kit";
+    /// The kit exists but its `jobs` list does not cover hunting.
+    pub const KIT_WRONG_JOB: &str = "kit_wrong_job";
+    /// A composed or preset floor outside `0..=1`. Rejected, never clamped — the same rule the
+    /// launch commands follow.
+    pub const INVALID_FLOOR: &str = "invalid_floor";
+    /// A party of zero. There is no raid to project, so there is no answer to give.
+    pub const INVALID_PARTY: &str = "invalid_party";
+}
+
+/// One answered hunt-trip forecast. The wire twin of a `HuntTripEstimateState` row, plus the echoed
+/// `floor` / `party_workers` that make it self-describing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HuntTripRow {
+    pub floor: f32,
+    pub party_workers: u32,
+    /// `0` = the raid never completed inside the forecast horizon; `bound` says which kind of never.
+    pub turns_to_fill: u32,
+    pub bound: String,
+    pub delivers_food: bool,
+    pub delivers_trade: bool,
+    /// **Whole** animals killed — a count, typed as one, exactly as `HuntTripEstimateState` and
+    /// [`DenialRow::animals_killed`] type it.
+    pub animals_taken: u32,
+    pub delivered_food: f32,
+    pub delivered_trade: f32,
+    pub wasted_food: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct HuntTripForecastReply {
+    /// The answer at the exact floor the query named.
+    pub at_composed: HuntTripRow,
+    /// One row per queried preset floor, in the same order.
+    pub per_preset: Vec<HuntTripRow>,
+    /// The max-useful party plateau; `0` = no plateau found. See the proto for what the number is
+    /// and what the client still owns.
+    pub useful_cap: u32,
+}
+
+/// One answered denial-raid forecast. The denial twin of [`HuntTripRow`], and like it the row
+/// echoes the `party_workers` it was answered for.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DenialRow {
+    pub party_workers: u32,
+    pub turns_to_collapse: u32,
+    pub turns_to_collapse_low: u32,
+    pub turns_to_collapse_high: u32,
+    pub outcome: String,
+    pub animals_killed: u32,
+    pub delivered_food: f32,
+    pub wasted_food: f32,
+    pub delivered_trade: f32,
+    pub wasted_trade: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DenialRaidForecastReply {
+    pub at_composed: DenialRow,
+    /// **The party the sheet opens on** — the smallest party that actually drives this herd past
+    /// recovery, found by walking `1..=max_party_workers` and stopping at the first success. Seed
+    /// the stepper here: below the requirement a denial raid accomplishes literally nothing however
+    /// long it runs, so without it the control is a guessing game.
+    ///
+    /// **`0` means "NO PARTY YOU CAN FIELD drives this herd down", never "send nobody".** That
+    /// meaning changed with the query, and it changed for the better: the retired
+    /// `HerdTelemetryState.denialPartyNeeded` searched a *sampled* axis with no notion of who was
+    /// asking, so it could name a party the band had no hope of raising and present that as the
+    /// answer. This searches to the band's own last worker, so `0` is a fact the player can act on —
+    /// *raise more people, or pick another quarry*. Render the answered row's `outcome` beside it,
+    /// never a blank, and never a stepper seeded at `0`.
+    pub party_needed: u32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -389,6 +545,29 @@ pub enum SecurityPolicyKind {
     Hardened,
     Crisis,
 }
+
+/// **The largest length-prefixed frame the command socket will carry, in EITHER direction.**
+///
+/// Both ends read a 4-byte little-endian length and then that many bytes: the server's
+/// `handle_proto_client` reading a [`CommandEnvelope`], and the client reading a
+/// [`QueryReplyEnvelope`] back. A frame past this bound is refused, and on the read path that costs
+/// the whole connection — a reader cannot resynchronise mid-stream, because it has no way to tell a
+/// length prefix from payload once it is lost.
+///
+/// # It lives here because it is a property of the PROTOCOL, not of either end
+///
+/// It used to be a private `const` in the server binary, so the client's bridge restated it. Two
+/// independent copies of a bound that both ends must agree on is a defect with a long fuse: nothing
+/// fails while frames stay small, and the day one grows past the smaller copy the sender writes a
+/// frame the receiver refuses — and drops the connection over it. One definition, beside the
+/// envelopes it bounds, is what makes disagreement unrepresentable.
+///
+/// **It became bidirectional when the socket did.** It was written for a one-way command channel;
+/// the query channel added a reply direction on the same stream, and the writer checks an encoded
+/// reply against this same bound before framing it — because a reply the far end would refuse as
+/// oversized must not go on the wire at all. There it costs one unanswered query instead of the
+/// connection.
+pub const MAX_PROTO_FRAME: usize = 64 * 1024;
 
 /// Error returned when encoding a command envelope fails.
 #[derive(Debug, Error)]
@@ -795,6 +974,37 @@ impl CommandEnvelope {
                     pb::ClearConfigOverridesCommand {},
                 )
             }
+            CommandPayload::Query { request_id, query } => {
+                pb::command_envelope::Command::Query(pb::QueryCommand {
+                    request_id: *request_id,
+                    query: Some(match query {
+                        QueryPayload::HuntTripForecast(ask) => {
+                            pb::query_command::Query::HuntTripForecast(pb::HuntTripForecastQuery {
+                                faction_id: ask.faction_id,
+                                band_id: ask.band_id,
+                                herd_id: ask.herd_id.clone(),
+                                kit_id: ask.kit_id.clone(),
+                                party_workers: ask.party_workers,
+                                floor: ask.floor,
+                                preset_floors: ask.preset_floors.clone(),
+                                max_party_workers: ask.max_party_workers,
+                            })
+                        }
+                        QueryPayload::DenialRaidForecast(ask) => {
+                            pb::query_command::Query::DenialRaidForecast(
+                                pb::DenialRaidForecastQuery {
+                                    faction_id: ask.faction_id,
+                                    band_id: ask.band_id,
+                                    herd_id: ask.herd_id.clone(),
+                                    kit_id: ask.kit_id.clone(),
+                                    party_workers: ask.party_workers,
+                                    max_party_workers: ask.max_party_workers,
+                                },
+                            )
+                        }
+                    }),
+                })
+            }
         });
 
         pb::CommandEnvelope {
@@ -1069,12 +1279,186 @@ impl CommandEnvelope {
             pb::command_envelope::Command::ClearConfigOverrides(_) => {
                 CommandPayload::ClearConfigOverrides
             }
+            pb::command_envelope::Command::Query(cmd) => {
+                // A query with no question is as empty as an envelope with no command, and fails the
+                // same way: there is nothing to answer and nothing to guess.
+                let query = match cmd.query.ok_or(CommandDecodeError::MissingPayload)? {
+                    pb::query_command::Query::HuntTripForecast(ask) => {
+                        QueryPayload::HuntTripForecast(HuntTripForecastQuery {
+                            faction_id: ask.faction_id,
+                            band_id: ask.band_id,
+                            herd_id: ask.herd_id,
+                            kit_id: ask.kit_id,
+                            party_workers: ask.party_workers,
+                            floor: ask.floor,
+                            preset_floors: ask.preset_floors,
+                            max_party_workers: ask.max_party_workers,
+                        })
+                    }
+                    pb::query_command::Query::DenialRaidForecast(ask) => {
+                        QueryPayload::DenialRaidForecast(DenialRaidForecastQuery {
+                            faction_id: ask.faction_id,
+                            band_id: ask.band_id,
+                            herd_id: ask.herd_id,
+                            kit_id: ask.kit_id,
+                            party_workers: ask.party_workers,
+                            max_party_workers: ask.max_party_workers,
+                        })
+                    }
+                };
+                CommandPayload::Query {
+                    request_id: cmd.request_id,
+                    query,
+                }
+            }
         };
 
         Ok(CommandEnvelope {
             payload,
             correlation_id: proto.correlation_id,
         })
+    }
+}
+
+impl QueryReplyEnvelope {
+    /// Encode the reply into a protobuf binary frame — what the server's per-connection writer
+    /// thread length-prefixes onto the command socket.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>, CommandEncodeError> {
+        let proto = self.to_proto();
+        let mut buffer = Vec::with_capacity(proto.encoded_len());
+        proto.encode(&mut buffer)?;
+        Ok(buffer)
+    }
+
+    /// Decode a reply frame. The client's half of the round trip, and what the transport test reads
+    /// back off the socket.
+    pub fn decode(bytes: &[u8]) -> Result<Self, CommandDecodeError> {
+        let proto = pb::QueryReplyEnvelope::decode(bytes)?;
+        Self::try_from_proto(proto)
+    }
+
+    fn to_proto(&self) -> pb::QueryReplyEnvelope {
+        let reply = Some(match &self.reply {
+            QueryReply::HuntTripForecast(answer) => {
+                pb::query_reply_envelope::Reply::HuntTripForecast(pb::HuntTripForecastReply {
+                    at_composed: Some(hunt_trip_row_to_proto(&answer.at_composed)),
+                    per_preset: answer
+                        .per_preset
+                        .iter()
+                        .map(hunt_trip_row_to_proto)
+                        .collect(),
+                    useful_cap: answer.useful_cap,
+                })
+            }
+            QueryReply::DenialRaidForecast(answer) => {
+                pb::query_reply_envelope::Reply::DenialRaidForecast(pb::DenialRaidForecastReply {
+                    at_composed: Some(denial_row_to_proto(&answer.at_composed)),
+                    party_needed: answer.party_needed,
+                })
+            }
+            QueryReply::Error(reason) => pb::query_reply_envelope::Reply::Error(pb::QueryError {
+                reason: reason.clone(),
+            }),
+        });
+        pb::QueryReplyEnvelope {
+            request_id: self.request_id,
+            reply,
+        }
+    }
+
+    fn try_from_proto(proto: pb::QueryReplyEnvelope) -> Result<Self, CommandDecodeError> {
+        let reply = match proto.reply.ok_or(CommandDecodeError::MissingPayload)? {
+            pb::query_reply_envelope::Reply::HuntTripForecast(answer) => {
+                QueryReply::HuntTripForecast(HuntTripForecastReply {
+                    at_composed: hunt_trip_row_from_proto(
+                        answer
+                            .at_composed
+                            .ok_or(CommandDecodeError::MissingPayload)?,
+                    ),
+                    per_preset: answer
+                        .per_preset
+                        .into_iter()
+                        .map(hunt_trip_row_from_proto)
+                        .collect(),
+                    useful_cap: answer.useful_cap,
+                })
+            }
+            pb::query_reply_envelope::Reply::DenialRaidForecast(answer) => {
+                QueryReply::DenialRaidForecast(DenialRaidForecastReply {
+                    at_composed: denial_row_from_proto(
+                        answer
+                            .at_composed
+                            .ok_or(CommandDecodeError::MissingPayload)?,
+                    ),
+                    party_needed: answer.party_needed,
+                })
+            }
+            pb::query_reply_envelope::Reply::Error(error) => QueryReply::Error(error.reason),
+        };
+        Ok(QueryReplyEnvelope {
+            request_id: proto.request_id,
+            reply,
+        })
+    }
+}
+
+fn hunt_trip_row_to_proto(row: &HuntTripRow) -> pb::HuntTripRow {
+    pb::HuntTripRow {
+        floor: row.floor,
+        party_workers: row.party_workers,
+        turns_to_fill: row.turns_to_fill,
+        bound: row.bound.clone(),
+        delivers_food: row.delivers_food,
+        delivers_trade: row.delivers_trade,
+        animals_taken: row.animals_taken,
+        delivered_food: row.delivered_food,
+        delivered_trade: row.delivered_trade,
+        wasted_food: row.wasted_food,
+    }
+}
+
+fn hunt_trip_row_from_proto(row: pb::HuntTripRow) -> HuntTripRow {
+    HuntTripRow {
+        floor: row.floor,
+        party_workers: row.party_workers,
+        turns_to_fill: row.turns_to_fill,
+        bound: row.bound,
+        delivers_food: row.delivers_food,
+        delivers_trade: row.delivers_trade,
+        animals_taken: row.animals_taken,
+        delivered_food: row.delivered_food,
+        delivered_trade: row.delivered_trade,
+        wasted_food: row.wasted_food,
+    }
+}
+
+fn denial_row_to_proto(row: &DenialRow) -> pb::DenialRow {
+    pb::DenialRow {
+        party_workers: row.party_workers,
+        turns_to_collapse: row.turns_to_collapse,
+        turns_to_collapse_low: row.turns_to_collapse_low,
+        turns_to_collapse_high: row.turns_to_collapse_high,
+        outcome: row.outcome.clone(),
+        animals_killed: row.animals_killed,
+        delivered_food: row.delivered_food,
+        wasted_food: row.wasted_food,
+        delivered_trade: row.delivered_trade,
+        wasted_trade: row.wasted_trade,
+    }
+}
+
+fn denial_row_from_proto(row: pb::DenialRow) -> DenialRow {
+    DenialRow {
+        party_workers: row.party_workers,
+        turns_to_collapse: row.turns_to_collapse,
+        turns_to_collapse_low: row.turns_to_collapse_low,
+        turns_to_collapse_high: row.turns_to_collapse_high,
+        outcome: row.outcome,
+        animals_killed: row.animals_killed,
+        delivered_food: row.delivered_food,
+        wasted_food: row.wasted_food,
+        delivered_trade: row.delivered_trade,
+        wasted_trade: row.wasted_trade,
     }
 }
 

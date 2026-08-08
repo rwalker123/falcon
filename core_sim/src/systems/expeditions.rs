@@ -139,8 +139,10 @@ pub fn advance_expeditions(
     // the same beast costs it more. The resolver tuning is scaled by `expedition_danger_multiplier`;
     // the base human's intrinsic profile is the same `person` the resident band fields. Resolved once.
     let combat_config = configs.combat.get();
-    let mut combat_tuning = combat_config.tuning();
-    combat_tuning.lethality *= combat_config.expedition_danger_multiplier;
+    // Through the named constructor, not an open-coded multiply: the pre-launch forecasts resolve the
+    // *same* party and one of them had already forgotten the scaling. See
+    // `CombatConfig::expedition_tuning`.
+    let combat_tuning = combat_config.expedition_tuning();
     let person_profile = configs.creatures.get().person();
     // **The minimal TOE** — the two-tier table and the durability dials, resolved once. What varies
     // per party is only its `BandEquipment` *wear*.
@@ -2039,7 +2041,7 @@ impl DenialOutcome {
 
     /// **The inverse of [`Self::as_str`]** — `None` for a key no variant publishes.
     ///
-    /// It exists so a consumer holding the wire `String` (a `DenialEstimateState::outcome` row) can
+    /// It exists so a consumer holding the wire `String` (a `DenialRow::outcome`) can
     /// ask the enum's own questions — [`Self::succeeded`] above all — instead of hand-writing a
     /// second list of keys at the call site. That second list is exactly how the two directions
     /// drift: `snapshot::subsistence::seeded_denial_party` once tested `!= "repelled"`, which

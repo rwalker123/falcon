@@ -214,6 +214,11 @@ static func legacy_peak(src: Dictionary, prefix: String, key: String) -> float:
 ## that: `hunt_trip_forecast` answered `available: false`, the sheet rendered no forecast at all, and
 ## the states went on passing because nothing asserted on a readout those frames no longer had. A row
 ## already carrying the floor field is therefore kept verbatim rather than dropped.
+## The raid ROW's own floor field. It was `SourceForecast.HUNT_ESTIMATE_FLOOR_KEY` until the forecast
+## query retired the snapshot table those keys named; a row still carries `floor`, and this fixture
+## helper is the last thing in the client that builds one out of a legacy stance key.
+const RAID_ROW_FLOOR_KEY := "floor"
+
 static func floorify_estimates(src: Dictionary) -> Dictionary:
 	var estimates: Variant = src.get("hunt_trip_estimates", null)
 	if not (estimates is Dictionary):
@@ -222,7 +227,7 @@ static func floorify_estimates(src: Dictionary) -> Dictionary:
 	for key in (estimates as Dictionary):
 		var converted: Variant = (estimates as Dictionary)[key]
 		if converted is Dictionary \
-				and (converted as Dictionary).has(SourceForecast.HUNT_ESTIMATE_FLOOR_KEY):
+				and (converted as Dictionary).has(RAID_ROW_FLOOR_KEY):
 			rekeyed[key] = converted
 			continue
 		var parts := String(key).split(":")

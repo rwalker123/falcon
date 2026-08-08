@@ -618,7 +618,12 @@ table PopulationCohortState {
   // .claude/rules/core_sim/yield-forecast.md, "THE BOUNDARY"). Quote the largest sampled row WITH
   // the party size it was sampled for. That is safe in the honest direction: both tables are
   // monotone in party size, so it under-states a larger party's take and over-states its turns.
-  maxExpeditionPartySize:uint = 0;
+  // RETIRED with the two pre-launch estimate tables. It echoed the last rung of the sampled party
+  // axis those tables were built on - "where the rows stop" - and it capped NOTHING: the sim never
+  // read it, and every client site that mentions it says so in capitals, because a reader naturally
+  // assumes a field called maxExpeditionPartySize is a rules cap. The honest bound on a party has
+  // always been the band's own idle workers. Deprecated rather than deleted: ids are immutable.
+  maxExpeditionPartySize:uint = 0 (deprecated);
   // The band's resolved settlement-progression stage (data-driven; see `SettlementStageView`).
   // The sim resolves it from the band's `size` against the ordered `settlement_stage_config.json`
   // list (interim: a size-only proxy; Phase 3/4 enrich the resolution inputs without touching this
@@ -870,6 +875,49 @@ table PopulationCohortState {
   // deprecated. See the KitItemCondition table for what a row means and what must NOT be inferred
   // from it.
   kitItemConditions:[KitItemCondition];
+  // --- WHAT EVERY OFFERED KIT WOULD GRANT *THIS* BAND, RIGHT NOW (appended last) -----------------
+  // One row per roster kit, resolved against this band's LIVE wear. See the BandKitTiers table.
+  //
+  // THIS IS THE RESOLVED ANSWER. Render it. Do NOT step a tier down from SubsistenceSection.kits
+  // (which is the fresh-kit reference) by reading kitItemConditions above - that derivation is what
+  // this field exists to stop, and it cannot be done correctly from the wire at all.
+  kitTiers:[BandKitTiers];
+}
+
+// What ONE kit would grant ONE band at its current wear - a row of
+// PopulationCohortState.kitTiers.
+//
+// *** IT IS THE SIM'S ANSWER, NOT AN INPUT TO A CLIENT-SIDE DERIVATION. ***
+//
+// Stepping a tier down needs to know WHICH ITEM SUPPLIES WHICH AXIS, and that mapping is per kit:
+// `big_game` supplies attack from `spears`, `trapping` supplies it from `traps`. KitOption.itemIds
+// says what a kit carries but not what each item is FOR, and no rule over that list recovers it -
+// set-cover and positional order both mis-assign, "any item live" keeps a kit at full tier with its
+// weapon dry, and "all items dry" keeps it at full tier with only the sled left. The live symptom of
+// guessing: a band with FRESH TRAPS AND DRY SPEARS repriced to the bare hand under `trapping`.
+//
+// Same root cause as the pre-launch estimate tables this arc retired - a fact the sim knows that the
+// wire did not carry - and the same fix: publish the answer.
+table BandKitTiers {
+  // The equipment.json roster id these tiers are for; pairs with SubsistenceSection.kits.
+  kitId:string;
+  // This band's hunter `attack` under this kit. UNBOUNDED - the mass window rides beside it, so a
+  // pre-launch gate resolves this kit against the quarry in front of it rather than its best case.
+  attack:float = 0;
+  // This band's per-hunter HUNT haul rate (biomass/turn) under this kit - the sled's tier.
+  huntCarryPerWorkerBiomass:float = 0;
+  // This band's per-gatherer throughput (biomass/turn, BEFORE the tile's seasonal weight).
+  forageCarryPerWorkerBiomass:float = 0;
+  // The range of quarry `attack` applies to, by HerdTelemetryState.bodyMass. 0 on either end is
+  // UNBOUNDED. It rides per band because a spent item contributes no bound either: a kit whose
+  // mass-bounded weapon has run dry has no window at all, and the party is on the bare hand
+  // everywhere.
+  attackMinBodyMass:float = 0;
+  attackMaxBodyMass:float = 0;
+  // Both MULTIPLIERS, neutral at 1.0 - see KitOption's for what each one does. They ride per band
+  // for the same reason the tiers do: a dry item stops contributing its multiplier.
+  dispersion:float = 1;
+  exposure:float = 1;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).
@@ -2045,12 +2093,20 @@ table HerdTelemetryState {
   // composes any floor's ceiling from `biomass`/`carryingCapacity`/`*PerBiomass` below. Stopped
   // being written; the slot stays (append-only discipline).
   huntPolicyCeilings:[HuntPolicyCeiling] (deprecated);
-  // The sim's pre-launch trip estimates for a hunting EXPEDITION against this herd — one entry per
-  // (EXTRACTIVE policy × party size 1..=maxExpeditionPartySize), so the outfit UI is a table lookup
-  // and the client does no arithmetic at all. The investment policies (cultivate/corral) are
-  // place-bound band work that `send_hunt_expedition` rejects, so they get NO rows here. Empty for a
-  // non-huntable herd. Appended last (append-only).
-  huntTripEstimates:[HuntTripEstimate];
+  // RETIRED by the forecast query channel. The two pre-launch estimate tables were the sim
+  // pre-computing every (floor x party) and (party) cell for EVERY huntable herd, every frame,
+  // against ONE kit over a FRESH component set - because the command socket was one-way and could
+  // not be asked. It measured 46 of a 49 ms capture on a fully-revealed 80x52 map with 128 huntable
+  // herds (debug), i.e. 93% of the turn's dominant phase, spent almost entirely on rows nobody read.
+  //
+  // It was also WRONG for anyone who had worn their gear or picked another kit: a band whose spears
+  // have run dry hunts at the intrinsic attack 1 - effectively zero against a Red Deer's defense 1.0
+  // - while these rows quoted it a working party, and a detached raid was priced at resident-hunt
+  // lethality. The client now ASKS (QueryCommand in sim_runtime/proto/command.proto) and is answered
+  // for its exact (band, kit, party, floor) off the live world.
+  //
+  // Deprecated rather than deleted: field ids are immutable once released.
+  huntTripEstimates:[HuntTripEstimate] (deprecated);
   // --- The pen as a managed POPULATION (appended) --- a corralled herd is a population in its own
   // right: it EATS every turn, and underfeeding shrinks it (docs/plan_corral_managed_population.md).
   // `corralYield` above is the GROSS managed harvest; the feed is this separate debit, so the client
@@ -2401,64 +2457,26 @@ table HerdTelemetryState {
   // 0 for a herd whose species the roster cannot resolve.
   durability:float = 0;
   // --- THE DENIAL RAID (appended last, docs/plan_denial_raid.md slice 1) ------------------------
-  // The sim's pre-launch estimates for a DENIAL RAID against this herd — one entry per party size,
-  // with no floor axis and no fill-target axis, because the mission carries neither. See
-  // DenialEstimate. Empty for a non-huntable herd, exactly as huntTripEstimates is.
+  // RETIRED with huntTripEstimates above, and for the same reasons - see that field's note. The
+  // denial table was the more expensive of the two: 3 quantiles x axis rows x forecastHorizonTurns
+  // turn-steps per huntable herd, and its most expensive rows were the small REPELLED parties, which
+  // run the whole horizon to prove they accomplish nothing.
   //
-  // THE TABLE'S PARTY AXIS IS NOT maxExpeditionPartySize. It runs to whichever is larger of that
-  // flat ceiling and `denialPartyNeeded` below, because a denial raid's outfit bound is the band's
-  // OWN IDLE WORKERS and not the ceiling (docs/plan_denial_raid.md §3.1). The stepper on this sheet
-  // therefore caps at `idleWorkers`, never at `maxExpeditionPartySize` — which is a hunt/scout
-  // lever and, at 8, sat one below a common quarry's requirement of 9.
-  denialEstimates:[DenialEstimate];
-  // THE PARTY THIS SHEET OPENS ON — the smallest party in denialEstimates whose raid SUCCEEDED
-  // ("past_recovery" or "herd_lost"), i.e. the smallest one whose kills genuinely outpace this
-  // herd's regrowth.
+  // denialPartyNeeded went with it. It was the smallest QUOTED party whose row succeeded, so it was
+  // only ever as exact as the sampled axis under it; the query searches contiguously and answers the
+  // real number, for the asking band's own kit and wear.
   //
-  // IT IS NOT "the smallest row that is not repelled". A "horizon" row is a raid the projection ran
-  // its whole length with the herd still standing — it demonstrates nothing the sim will vouch for,
-  // and quoting it opened the sheet on a party under its own verdict line "still standing when the
-  // forecast runs out".
-  //
-  // Seed the stepper here. The control is otherwise a guessing game: below the requirement a raid
-  // accomplishes literally nothing however long it runs, and nothing on the sheet told the player
-  // which number crossed the line.
-  //
-  // 0 = NO QUOTED PARTY DRIVES THIS HERD DOWN, and it is never "send nobody". Four situations reach
-  // it, all honest and all distinguishable by the rows' own `outcome`: a quarry nothing can bring
-  // into contact (wariness >= 1), a requirement past the sim's quoting bound (expedition_config
-  // `deny.max_party_quoted`), a herd whose regrowth out-runs the whole table, and a quoted axis that
-  // never reaches a success row — every party either repelled or still grinding at the horizon.
-  // Render the verdict, never a blank, and never a stepper seeded at 0.
-  //
-  // It may exceed the band's idle workers — that is the honest "you need more people than you
-  // have", and the panel already shows both numbers.
-  //
-  // *** IT IS QUOTED FOR THE EQUIPPED TIER, LIKE EVERY OTHER FIELD ON THIS TABLE. *** The capture
-  // prices the whole herd row with `hunter_profile(.., equipped = true)` — a herd row is a fact
-  // about the HERD, and this table has no band to ask. Since TOE landed the take depends on the
-  // band's own `hunterAttack` and carry tier, so a band whose spears have run dry is quoted a party
-  // it cannot achieve (at attack 1 against a Red Deer's defense 1 the effective attack is 0 and NO
-  // party works). That is a property of the whole table, not of this field; repricing it per band is
-  // its own arc. Appended last (append-only wire).
-  denialPartyNeeded:uint = 0;
-  // --- WHICH KIT THE TWO ESTIMATE TABLES ARE QUOTED FOR (appended last) -------------------------
-  // The `equipment.json` roster id of the kit `huntTripEstimates` / `denialEstimates` were computed
-  // at — the HUNT JOB'S DEFAULT ("big_game" as shipped), on every herd, always.
-  //
-  // NEITHER TABLE IS REPRICED PER KIT, and this field exists so a client can SAY SO. They are ~95%
-  // of snapshot capture (measured: 57.5 ms with both, 2.9 ms with neither, on a fully-revealed
-  // 80x52 map) and a kit axis multiplies them — the same structural cost question per-band
-  // repricing already faces. So when the player's selected kit differs from this id, the client must
-  // refuse to present the table as an answer for their selection rather than quoting a kitted raid's
-  // numbers to a bare-handed party. The kit changes the take through BOTH the fight (attack tier)
-  // and the haul (sled tier), so the error is not a small one: a `none` party against a Red Deer's
-  // defense 1 has an effective attack of ZERO and no party size works at all.
-  //
-  // Two fields rather than one because they are two tables: if one is later repriced per kit and the
-  // other is not, a single field would lie about whichever was left behind.
-  huntTripEstimatesKitId:string;
-  denialEstimatesKitId:string;
+  // Deprecated rather than deleted: field ids are immutable once released.
+  denialEstimates:[DenialEstimate] (deprecated);
+  denialPartyNeeded:uint = 0 (deprecated);
+  // --- WHICH KIT THE TWO ESTIMATE TABLES WERE QUOTED FOR (appended last) ------------------------
+  // RETIRED with the two tables these described. They existed so a client could REFUSE to present
+  // rows priced at the hunt job's default kit as an answer for a player who had selected another
+  // one - an honesty note compensating for a table that could not answer the question asked. The
+  // query takes the kit id as an ARGUMENT and echoes the floor and party it answered on every row,
+  // so there is nothing left to disclaim.
+  huntTripEstimatesKitId:string (deprecated);
+  denialEstimatesKitId:string (deprecated);
 }
 
 table CommandEventState {
@@ -2699,6 +2717,18 @@ table KitOption {
   // Deer and report a hunt it cannot make.
   attackMinBodyMass:float = 0;
   attackMaxBodyMass:float = 0;
+  // --- WHICH ITEMS THE KIT CARRIES (appended) ---------------------------------------------------
+  // The kit's `equipment.json` `uses` list VERBATIM, in config order: big_game -> ["spears","sled"],
+  // trapping -> ["traps","sled"], none -> [].
+  //
+  // The tiers above are numbers and say nothing about what produced them, so a durability readout
+  // had no honest way to name the gear it was quoting. The client hardcoded `attack -> "spears"`,
+  // which told a Trapping-kit party it carried spears and showed the SPEARS' condition instead of
+  // the traps'. Two kits with the same attack tier are indistinguishable without this list.
+  //
+  // Order is meaningful (weapon first, haul aid after) and is preserved. An EMPTY vector is a real
+  // answer - "none" carries nothing and wears nothing - never "unknown".
+  itemIds:[string];
 }
 
 table SubsistenceSection {
