@@ -521,6 +521,7 @@ func run(harness) -> void:
 	_assert_kit_hint_names_the_kits_own_items()
 
 	_assert_husbandry_hint_states_the_pen()
+	_assert_the_appended_axes_read_the_band()
 	_assert_a_pen_prices_on_the_keepers_carry()
 
 	await _kit_offer_states()
@@ -966,6 +967,56 @@ func _assert_husbandry_hint_states_the_pen() -> void:
 	h._assert_hud("…and the husbandry kit states the pen AND its handling gear — \"%s\"" % pen_handling,
 		pen_handling == sep.join([pen_carry_equipped, handling_gear, sled]))
 
+## **THE PEN AND THE VANTAGE STEP DOWN WITH THE BAND'S OWN WEAR — the pair that would have caught the
+## bug, and neither half proves anything alone.**
+##
+## Those two axes reached `KitOption` (the FRESH roster) and the cohort's flat fields long before they
+## reached `BandKitTiers`, so for a while a picker asking *what would the kit under the cursor grant
+## me* had nowhere to read them but the roster: a pen compose sheet quoted `pen 40.0 per keeper` for a
+## band whose handling gear was dry while the sim collected 12, and a Scout card quoted `2-tile sight
+## per vantage` while `calculate_visibility` revealed at 1. **Both wrong in the reassuring direction**,
+## which is the direction nobody reports.
+##
+## **EACH AXIS IS A PAIR BECAUSE EITHER READING ALONE IS SATISFIABLE BY A CONSTANT.** A client stuck on
+## the roster's fresh tier passes the equipped half; one that had stopped resolving anything passes the
+## worn half. Only the two together say the number FOLLOWS the band. The worn fixtures differ from
+## their fresh twins in the one item that supplies the axis and in nothing else, so a step-down
+## reaching for any other item's condition moves the wrong number.
+##
+## The pen's worn claim is made on the whole HINT rather than on the tier, because that sentence is
+## what a keeper actually reads and it carries the dry clause beside the rate; the vantage's is made on
+## `role_gear`'s tier, the value the Scout card is built from.
+func _assert_the_appended_axes_read_the_band() -> void:
+	var pen_kits := _pen_axis_roster()
+	var handling := KitRoster.kit_by_id(pen_kits, HUSBANDRY_KIT_ID)
+	var pen := _corral_twin(true)
+	var fresh_pen := float(KitRoster.effective_tiers(pen_kits, handling,
+		_pen_axis_band({}))[KitRoster.KIT_PEN_CARRY_KEY])
+	h._assert_hud("a keeper's pen tier is the EQUIPPED one while the handling gear holds (%s)"
+		% str(fresh_pen), is_equal_approx(fresh_pen, BandFx.KIT_PEN_CARRY_EQUIPPED))
+	var worn_hint := KitRoster.tier_hint(pen_kits, handling, _pen_axis_band({}, true),
+		KitRoster.JOB_HUNT, pen)
+	var want_worn := HudComposeVocab.KIT_HINT_SEPARATOR.join([
+		HudComposeVocab.KIT_HINT_PEN_CARRY_FORMAT % String.num(
+			BandFx.KIT_PEN_CARRY_BARE, HudComposeVocab.KIT_TIER_DECIMALS),
+		HudComposeVocab.KIT_HINT_DRY_FORMAT % BandFx.KIT_ITEM_HUSBANDRY_GEAR,
+		HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [
+			BandFx.KIT_ITEM_SLED, int(BandFx.KIT_CONDITION_SLED)]])
+	h._assert_hud("…and once it is DRY the same pen reads the BARE keeper's tier — \"%s\"" % worn_hint,
+		worn_hint == want_worn)
+	# The SCOUT's axis, on the shared roster: the wayfinding kit is the one entry that equips it, so a
+	# band that has worn that gear out sees one tile where the roster still advertises two.
+	var kits := BandFx.kit_roster_fixture()
+	var wayfinding := KitRoster.kit_by_id(kits, BandFx.KIT_ID_WAYFINDING)
+	var kitted_reach := float(KitRoster.role_gear(kits, wayfinding,
+		BandFx.with_equipped_kit({}), KitRoster.JOB_SCOUT)[KitRoster.ROLE_GEAR_TIER_KEY])
+	var bare_reach := float(KitRoster.role_gear(kits, wayfinding,
+		BandFx.with_bare_hands({}), KitRoster.JOB_SCOUT)[KitRoster.ROLE_GEAR_TIER_KEY])
+	h._assert_hud("a posted vantage sees the EQUIPPED range while the wayfinding gear holds (%s)"
+		% str(kitted_reach), is_equal_approx(kitted_reach, BandFx.KIT_SCOUT_VANTAGE_EQUIPPED))
+	h._assert_hud("…and the BARE range once it is spent, not the roster's fresh one (%s)"
+		% str(bare_reach), is_equal_approx(bare_reach, BandFx.KIT_SCOUT_VANTAGE_BARE))
+
 ## **A PEN IS COLLECTED ON THE KEEPER'S CARRY, NOT THE HUNTER'S** — the pricing half of the same rule,
 ## and the one that moves a number rather than a sentence.
 ##
@@ -1054,10 +1105,15 @@ func _pen_axis_roster() -> Array:
 ## **A KIT WITH NO ROW READS AS `stated == false`**, and then `KitRoster.effective_tiers` falls back to
 ## the roster's fresh tiers and the hint prints NO condition clause — so without this the handling
 ## kit's whole gear half would be silently absent and both hint expectations would be asserting a
-## line the client had stopped building. The row states the three axes `BandKitTiers` carries and no
-## more, exactly as the wire's does; the pen tier is answered by the roster's fresh value, which is the
-## only per-kit answer that field has.
-func _pen_axis_band(band: Dictionary) -> Dictionary:
+## line the client had stopped building.
+##
+## **THE ROW STATES ALL FIVE AXES, THE PEN INCLUDED, because the wire's row does.** It did not while
+## `BandKitTiers` carried three, and the pen therefore came off the ROSTER's fresh tier — which is
+## how a keeper with dry handling gear was quoted 40. `handling_gear_dry` is the other half of that
+## pair: the same band with the gear worn out, its pen row stepped down to the bare rate the way the
+## sim steps it down, so a client that went back to reading the roster reads 40 against a fixture
+## that says 12.
+func _pen_axis_band(band: Dictionary, handling_gear_dry: bool = false) -> Dictionary:
 	var kitted := BandFx.with_equipped_kit(band)
 	var rows: Array = kitted.get(KitRoster.BAND_KIT_TIERS_KEY, [])
 	rows.append({
@@ -1065,6 +1121,25 @@ func _pen_axis_band(band: Dictionary) -> Dictionary:
 		KitRoster.KIT_ATTACK_KEY: BandFx.KIT_ATTACK_BARE,
 		KitRoster.KIT_HUNT_CARRY_KEY: BandFx.KIT_HUNT_CARRY_EQUIPPED,
 		KitRoster.KIT_FORAGE_CARRY_KEY: BandFx.KIT_FORAGE_CARRY_BARE,
+		KitRoster.KIT_PEN_CARRY_KEY: (BandFx.KIT_PEN_CARRY_BARE if handling_gear_dry
+			else BandFx.KIT_PEN_CARRY_EQUIPPED),
+		# The handling gear buys the PEN and nothing else, so this kit's vantage is the bare one
+		# whatever state that gear is in — a keeper's tools do not help a scout see further.
+		KitRoster.KIT_SCOUT_VANTAGE_KEY: BandFx.KIT_SCOUT_VANTAGE_BARE,
 	})
 	kitted[KitRoster.BAND_KIT_TIERS_KEY] = rows
+	if handling_gear_dry:
+		kitted[KitRoster.BAND_ITEM_CONDITIONS_KEY] = _dry_handling_gear_conditions(kitted)
 	return kitted
+
+## The shared fixture's condition list with the HANDLING GEAR alone run to `CONDITION_DRY`. Every
+## other item keeps its own number, which is what makes the worn band's hint assertable: only the one
+## clause changes, so a line that moved anything else is a line that read the wrong item.
+func _dry_handling_gear_conditions(band: Dictionary) -> Array:
+	var out: Array = []
+	for row_variant in band.get(KitRoster.BAND_ITEM_CONDITIONS_KEY, []):
+		var row: Dictionary = (row_variant as Dictionary).duplicate()
+		if String(row.get(KitRoster.ITEM_CONDITION_ID_KEY, "")) == BandFx.KIT_ITEM_HUSBANDRY_GEAR:
+			row[KitRoster.ITEM_CONDITION_REMAINING_KEY] = KitRoster.CONDITION_DRY
+		out.append(row)
+	return out

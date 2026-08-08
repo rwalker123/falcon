@@ -237,6 +237,17 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = entry.insert("attack_max_body_mass", row.attackMaxBodyMass() as f64);
             let _ = entry.insert("dispersion", row.dispersion() as f64);
             let _ = entry.insert("exposure", row.exposure() as f64);
+            // **THE PEN AND THE VANTAGE RIDE PER KIT TOO.** They were absent from this row until the
+            // wire carried them, so a reader fell back to the ROSTER's FRESH tier for exactly these
+            // two — a pen compose sheet quoting 40/keeper against a sim collecting 12, and a Scout
+            // card quoting 2 tiles of sight against a reveal at 1. The band's flat
+            // `pen_carry_per_worker_biomass` / `scout_vantage_range` below answer a DIFFERENT
+            // question (this band at its JOB DEFAULT); these answer for the kit under the cursor.
+            let _ = entry.insert(
+                "pen_carry_per_worker_biomass",
+                row.penCarryPerWorkerBiomass() as f64,
+            );
+            let _ = entry.insert("scout_vantage_range", row.scoutVantageRange() as f64);
             kit_tiers.push(&entry.to_variant());
         }
     }

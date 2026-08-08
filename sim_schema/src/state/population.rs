@@ -260,6 +260,17 @@ pub struct BandKitTiersState {
     /// What this kit multiplies the hunt's injury hazard by, at this band's wear. Neutral `1.0`.
     #[serde(default = "kit_multiplier_neutral")]
     pub exposure: f32,
+    /// **This band's per-keeper PEN collection rate under this kit** (biomass/turn) — *not*
+    /// [`Self::hunt_carry_per_worker_biomass`]. A sled drags a carcass in off the range and a pen
+    /// stands at the camp, so a kit carrying a sled and no handling gear reads the bare rate here
+    /// while its haul tier is the sledded one.
+    #[serde(default)]
+    pub pen_carry_per_worker_biomass: f32,
+    /// **The sight range each posted vantage reveals at under this kit.** How far the vantages are
+    /// *posted* is not a kit axis (three `labor_config.scout.*` dials); this is only how far each one
+    /// sees, and the reveal path rounds it to whole tiles.
+    #[serde(default)]
+    pub scout_vantage_range: f32,
 }
 
 /// The neutral value of [`BandKitTiersState`]'s two multipliers — `1.0`, never `0`.
@@ -284,6 +295,8 @@ impl Default for BandKitTiersState {
             attack_max_body_mass: 0.0,
             dispersion: kit_multiplier_neutral(),
             exposure: kit_multiplier_neutral(),
+            pen_carry_per_worker_biomass: 0.0,
+            scout_vantage_range: 0.0,
         }
     }
 }

@@ -1774,21 +1774,25 @@ the handling gear's condition and the SLED's.
   `pen 12.0 per keeper` beside `pen 40.0 per keeper` is the whole visible difference the handling gear
   buys. The condition CLAUSES are the kit's own `item_ids` list and are not gated on the source at all
   — see "THE HINT NAMES THE KIT'S OWN ITEMS" below.
-- **The pen carry is the ONE tier `effective_tiers` cannot read off the band's row**, because
-  `BandKitTiers` states the fought, hauled and gathered axes and no more. `_resolved_tier` falls back
-  to the roster's FRESH pen tier per key, which is the only per-kit answer the wire has for it — and
-  it is a fall-back, never the client-side step-down `kitTiers` exists to remove. Closing it is a wire
-  change (a `penCarryPerWorkerBiomass` on that table), not a rule this layer may invent. The
-  consequence to know: a band whose handling gear has run dry still reads `pen 40.0 per keeper`.
+- **The pen carry is read off the band's row like every other tier**, `BandKitTiers` carrying
+  `penCarryPerWorkerBiomass` and `scoutVantageRange` alongside the fought, hauled and gathered axes.
+  Those two arrived on the table last and were the two the client had to answer off the ROSTER's fresh
+  tier in the meantime — so a band whose handling gear had run dry read `pen 40.0 per keeper` while the
+  sim collected 12, wrong in the reassuring direction. The per-key fall-through that stood in for them
+  is gone with the gap: `_row_tier` reads the row and nothing else, and a whole-row absence (a band the
+  wire has not described yet) is the only case the roster still answers.
 - **`KIT_SCOUT_VANTAGE_KEY` HAS a consumer now** — the WORKFORCE zone's role CARDS, which carry a
   picker and a gear line each (`band-city-panel.md` → "The role cards carry the band's OTHER two
-  kits"). `role_gear` prices them through the same `_resolved_tier`, so the WARRIOR card reads the
-  band's sim-resolved `attack` under the warrior kit — clubs, not spears — while the SCOUT card takes
-  the roster's fresh vantage for the reason the pen carry does.
+  kits"). `role_gear` reads the same row, so the WARRIOR card reads the band's sim-resolved `attack`
+  under the warrior kit — clubs, not spears — and the SCOUT card its sim-resolved vantage under the
+  wayfinding kit, 1 tile once that gear is spent rather than the roster's fresh 2.
 - **`husbandry_gear` / `wayfinding` / `clubs` also joined `DetailFormat.KIT_ITEM_LABELS`**, so the
-  band's `Gear` summary row names them instead of falling through to the raw wire ids. They get NO row
-  in the kit BREAKDOWN: that popover pairs each item with the resolved tier it sets, and the cohort
-  publishes no pen-carry or vantage tier — a row for one could only quote a number the sim never sent.
+  band's `Gear` summary row names them instead of falling through to the raw wire ids — and each has a
+  row in the kit BREAKDOWN too, that popover pairing an item with the resolved tier it sets and the
+  cohort publishing all three (`band-readouts.md` → "The other three tiers, and the kit each is quoted
+  at"). **The popover's rows and the picker's hint answer different questions off different fields**:
+  the popover states this band's tier at each JOB'S DEFAULT kit (the cohort's flat fields), the hint
+  states what the kit under the cursor would grant (that kit's `kitTiers` row).
 
 ### THE SHEET OPENS ON THE KIT **THIS QUARRY** WANTS (`equipment.md` → "Which kit a QUARRY wants is DERIVED")
 
@@ -1874,6 +1878,13 @@ band's live wear ledger (`equipment.md` → "`kitTiers` — the resolved per-ban
 - **`effective_tiers` is a LOOKUP** (`band_kit_tiers(band, kit_id)`, the ONE reader of the field) and
   re-derives nothing. `stated` is false when the band publishes no row for that kit, and the ROSTER's
   fresh tiers then stand — the "absent terms render no line" convention, unchanged.
+- **THAT WHOLE-ROW ABSENCE IS THE ONLY FALL-BACK LEFT.** A per-KEY one stood beside it while the table
+  carried three axes and the client wanted five, and it is gone with the gap (see the pen bullet under
+  "…so the hunt HINT is gated on the source too"): `_row_tier` reads the axis off the row, and an axis
+  the row omits reads `TIER_ABSENT` rather than the roster's fresh number. That is the same direction
+  `condition_of` errs in — quoting a fresh tier for gear the server never confirmed is precisely the
+  reassuring lie this field was published to end, and a client that kept a per-key fall-through would
+  tell it again the moment a row arrived malformed.
 - **THE MASS WINDOW RIDES THAT ROW TOO, and a gate must read it from there.** `attack_min_body_mass` /
   `attack_max_body_mass` are on `KitOptionState` as well, but those are the FRESH-KIT reference: a spent
   item contributes no bound any more than it contributes a tier, so a kit whose mass-bounded weapon has
@@ -1882,9 +1893,12 @@ band's live wear ledger (`equipment.md` → "`kitTiers` — the resolved per-ban
   wearing different clothes — it would quote a band with dry traps the bare hand's attack (right) inside
   the TRAPS' 1 kg ceiling (wrong), so a bare-handed party after a rabbit would be told it had no weapon
   for it.
-- A band fixture must therefore **state its `kit_tiers` rows**, not just its item conditions
-  (`BandFx.kit_tiers_rows`). Authored, never derived from the conditions beside them: deriving them is
-  writing the guess the field replaced, and a client that had put the guess back would agree with it.
+- A band fixture must therefore **state its `kit_tiers` rows, all five axes of them**, not just its
+  item conditions (`BandFx.kit_tiers_rows`). Authored, never derived from the conditions beside them:
+  deriving them is writing the guess the field replaced, and a client that had put the guess back
+  would agree with it. **A row that OMITS an axis exercises the absence path rather than the real
+  one** — which is what kept the pen and the vantage untested while they were missing from the wire,
+  and is why the worn fixtures now step each of them down at the item that supplies it.
 
 **Assert the two kits as a PAIR** — `big_game` alone passes under the old guess (its attack really does
 come from spears) and `trapping` alone would pass on a hint naming every item there is — plus `none`

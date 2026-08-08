@@ -807,6 +807,185 @@ fn a_bands_published_tiers_step_down_per_kit_by_which_item_that_kit_actually_use
     );
 }
 
+/// The axes [`published_kit_tiers`] reads off one **encoded** `BandKitTiers` row.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PublishedKitRow {
+    pen_carry_per_worker_biomass: f32,
+    scout_vantage_range: f32,
+    hunt_carry_per_worker_biomass: f32,
+}
+
+/// One band's whole `kitTiers` table, **off the encoded envelope**, keyed by kit id.
+///
+/// Encoded from the ring entry's *snapshot* rather than through `StoredSnapshot::encode_flat` for
+/// the reason [`published_default_kit`] states: the cached bytes are the ones published when the
+/// entry was first written, and a mid-tick recapture refreshes the snapshot without refreshing
+/// them — so a fixture that wears an item and recaptures would be decoding the frame from before it
+/// touched anything.
+fn published_kit_tiers(
+    app: &App,
+    band: bevy::prelude::Entity,
+) -> std::collections::BTreeMap<String, PublishedKitRow> {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let cohort = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.entity() == band.to_bits())
+        .expect("the band is on the wire");
+    cohort
+        .kitTiers()
+        .expect("the band publishes a tier row per roster kit")
+        .iter()
+        .map(|row| {
+            (
+                row.kitId()
+                    .expect("every published row names its kit")
+                    .to_string(),
+                PublishedKitRow {
+                    pen_carry_per_worker_biomass: row.penCarryPerWorkerBiomass(),
+                    scout_vantage_range: row.scoutVantageRange(),
+                    hunt_carry_per_worker_biomass: row.huntCarryPerWorkerBiomass(),
+                },
+            )
+        })
+        .collect()
+}
+
+/// **Wear one item to its durability cliff**, in the item's own use quantum.
+///
+/// `wear_item` charges `uses × the item's own wear amount`, so the count that empties it is
+/// `starting_durability / wear.amount` — derived from config rather than written as a number, or a
+/// retune of either dial silently stops a fixture reaching the cliff it is about.
+fn wear_to_the_cliff(app: &mut App, band: bevy::prelude::Entity, item_id: &str) {
+    let cfg = equipment(app);
+    let item = cfg
+        .item(item_id)
+        .unwrap_or_else(|| panic!("the shipped roster carries '{item_id}'"));
+    let uses_to_expiry = item.starting_durability / item.wear.amount;
+    let mut ledger = app
+        .world
+        .get_mut::<BandEquipment>(band)
+        .expect("a spawned band is kitted");
+    ledger.wear_item(&cfg, item_id, uses_to_expiry);
+}
+
+/// **THE PEN AND THE VANTAGE STEP DOWN PER KIT TOO — the twin of the test above for the two axes
+/// `BandKitTiers` did not carry.**
+///
+/// Those two rode the wire per band only at that band's **job default**
+/// (`PopulationCohortState.penCarryPerWorkerBiomass` / `scoutVantageRange`), so a picker asking what
+/// the kit *under the cursor* would grant had nothing to read and fell back to the ROSTER's **fresh**
+/// tier. The two live readings that produced: a pen compose sheet quoting **40 per keeper** while the
+/// sim collected **12** with the handling gear dry, and a Scout role card quoting **2 tiles** of sight
+/// while `calculate_visibility` revealed at **1**. Both wrong in the reassuring direction.
+///
+/// The band wears its **handling gear** and its **wayfinding gear** out and touches nothing else, so
+/// each axis is asserted three ways: the kit that supplies it steps down, a kit that supplies it not
+/// at all is unmoved, and the **sled** both hunt kits share keeps its haul tier — which is what a
+/// naive "any item in this kit is dry" rule would break.
+///
+/// **Every assertion is paired against the FRESH reading of the same row**, taken before the wear:
+/// *"the pen rate is 12"* passes on a table that publishes 12 for everything, and *"it is unmoved"*
+/// passes on a table that never moved at all.
+///
+/// Read off the **encoded envelope** — a field that never reached the codec still satisfies an
+/// in-process assertion.
+#[test]
+fn a_bands_published_pen_and_vantage_tiers_step_down_per_kit_at_the_item_that_supplies_them() {
+    let mut app = placid_world();
+    let band = app
+        .world
+        .query_filtered::<bevy::prelude::Entity, bevy::prelude::With<ResidentBand>>()
+        .iter(&app.world)
+        .next()
+        .expect("the placid world spawns a resident band");
+    recapture_snapshot_in_place(&mut app.world);
+    let fresh = published_kit_tiers(&app, band);
+
+    let row = |table: &std::collections::BTreeMap<String, PublishedKitRow>, kit_id: &str| {
+        *table
+            .get(kit_id)
+            .unwrap_or_else(|| panic!("the band publishes tiers for `{kit_id}`"))
+    };
+
+    // LIVENESS, before anything is worn: the two axes genuinely vary by kit on this roster, or every
+    // equality below would be the trivial truth about a table of one number.
+    assert!(
+        row(&fresh, HUSBANDRY_KIT).pen_carry_per_worker_biomass
+            > row(&fresh, "big_game").pen_carry_per_worker_biomass,
+        "only the handling gear supplies `pen_carry`, so a fresh husbandry kit must out-collect a \
+         fresh stalking kit at the pen"
+    );
+    assert!(
+        row(&fresh, "wayfinding").scout_vantage_range > row(&fresh, "none").scout_vantage_range,
+        "only the wayfinding gear supplies the vantage's reach, so a fresh scout kit must see \
+         further than no kit at all"
+    );
+
+    wear_to_the_cliff(&mut app, band, "husbandry_gear");
+    wear_to_the_cliff(&mut app, band, "wayfinding");
+    recapture_snapshot_in_place(&mut app.world);
+    let worn = published_kit_tiers(&app, band);
+
+    // --- the PEN -------------------------------------------------------------------------------
+    assert!(
+        row(&worn, HUSBANDRY_KIT).pen_carry_per_worker_biomass
+            < row(&fresh, HUSBANDRY_KIT).pen_carry_per_worker_biomass,
+        "the handling gear is dry, so the husbandry kit's published pen rate must fall — this is \
+         the readout that quoted 40 per keeper against a sim collecting 12"
+    );
+    assert_eq!(
+        row(&worn, HUSBANDRY_KIT).pen_carry_per_worker_biomass,
+        row(&fresh, "big_game").pen_carry_per_worker_biomass,
+        "…all the way to the bare rate, which is what a kit with no handling gear reads at every \
+         state of wear"
+    );
+    assert_eq!(
+        row(&worn, "big_game").pen_carry_per_worker_biomass,
+        row(&fresh, "big_game").pen_carry_per_worker_biomass,
+        "a kit that carries no handling gear is UNMOVED by wearing it out — the pairing that stops \
+         this passing on a sim which steps every kit down together"
+    );
+    assert_eq!(
+        row(&worn, HUSBANDRY_KIT).hunt_carry_per_worker_biomass,
+        row(&fresh, HUSBANDRY_KIT).hunt_carry_per_worker_biomass,
+        "the SLED beside the handling gear is untouched, so the husbandry kit keeps its haul tier — \
+         a step-down keyed on `any item in this kit is dry` would drop it"
+    );
+
+    // --- the VANTAGE ---------------------------------------------------------------------------
+    assert!(
+        row(&worn, "wayfinding").scout_vantage_range
+            < row(&fresh, "wayfinding").scout_vantage_range,
+        "the wayfinding gear is dry, so the scout kit's published reach must fall — this is the \
+         readout that quoted 2 tiles of sight against a reveal at 1"
+    );
+    assert_eq!(
+        row(&worn, "wayfinding").scout_vantage_range,
+        row(&fresh, "none").scout_vantage_range,
+        "…all the way to the unaided reach, which is what a kit with no wayfinding gear reads"
+    );
+    assert_eq!(
+        row(&worn, "big_game").scout_vantage_range,
+        row(&fresh, "big_game").scout_vantage_range,
+        "a kit that carries no wayfinding gear is UNMOVED by wearing it out"
+    );
+}
+
 // ---------------------------------------------------------------------------------------------
 // THE QUARRY'S OWN DEFAULT KIT
 // ---------------------------------------------------------------------------------------------

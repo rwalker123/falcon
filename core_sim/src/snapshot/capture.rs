@@ -1868,6 +1868,7 @@ fn kit_roster_states(
                 kit_levers.person_intrinsic,
                 labor.hunt.per_worker_biomass_capacity,
                 labor.forage.per_worker_biomass_capacity,
+                labor.scout.vantage_range as f32,
                 &choice,
                 &fresh,
             );
@@ -1886,19 +1887,15 @@ fn kit_roster_states(
                 // `hunt.per_worker_biomass_capacity` is the number a pen harvest has always been
                 // capped by, and it keeps its one home. A kit carrying a sled and no handling gear
                 // reads the bare rate here, which is the whole point of the husbandry kit.
-                pen_carry_per_worker_biomass: equipment.pen_per_worker_biomass_capacity(
-                    labor.hunt.per_worker_biomass_capacity,
-                    &choice,
-                    &fresh,
-                ),
+                //
+                // **Off `resolve_kit_tiers` like the rest of the row**, since the per-band rows carry
+                // this axis too: resolved beside the call it would be one transcription per reading
+                // again, and the reading that got left behind is the one a picker quotes.
+                pen_carry_per_worker_biomass: tiers.pen_carry_per_worker_biomass,
                 // **The scout vantage's tier.** Not what a *band* currently sees — a fresh kit's
                 // reach, exactly like the three above, so the picker renders the kit and not the
                 // band that happens to be selected.
-                scout_vantage_range: equipment.scout_vantage_range(
-                    labor.scout.vantage_range as f32,
-                    &choice,
-                    &fresh,
-                ),
+                scout_vantage_range: tiers.scout_vantage_range,
                 // **The attack's size window**, so the client's pre-launch gate resolves this kit
                 // against the quarry in front of it rather than against the kit's best case. `0` on
                 // either end is unbounded, which every weapon but the passive device is.

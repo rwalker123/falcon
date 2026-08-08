@@ -773,7 +773,7 @@ one place):
 | `hunterAttack:float` | The band's resolved per-hunter `attack` (1 bare / 20 kitted) — the left side of the fight's gate against a herd's `HerdTelemetryState.defense` |
 | `huntCarryPerWorkerBiomass:float` | The band's resolved per-worker **hunt** haul rate (40 sledded / 12 sledless) |
 | `forageCarryPerWorkerBiomass:float` | The band's resolved per-**gatherer** throughput, *before* the tile's seasonal weight (8 with baskets / 1.6 bare-handed) |
-| `kitTiers:[BandKitTiers]` | **What EVERY offered kit would grant this band, at its live wear** — one row per roster kit (`kitId` + the same seven tiers `KitOption` carries). See below: it is the resolved answer, and a client must not re-derive it |
+| `kitTiers:[BandKitTiers]` | **What EVERY offered kit would grant this band, at its live wear** — one row per roster kit (`kitId` + the same **nine** tiers `KitOption` carries: `attack`, the two mass bounds, `huntCarryPerWorkerBiomass`, `forageCarryPerWorkerBiomass`, `penCarryPerWorkerBiomass`, `scoutVantageRange`, `dispersion`, `exposure`). See below: it is the resolved answer, and a client must not re-derive it |
 | `penCarryPerWorkerBiomass:float` | The band's resolved per-**keeper** pen collection rate (40 with husbandry gear / 12 without). It shares the hunt haul's *equipped* rate — `labor_config.hunt.per_worker_biomass_capacity`, the number a pen harvest has always been capped by, which keeps its one home — but resolves through `EquipmentStat::PenCarry`, so a Hunt row on the stalking kit works the pen at the bare rate |
 | `scoutVantageRange:float` | The sight range each posted vantage reveals at (2 with wayfinding gear / 1 without). **How far the vantages are posted is not a kit axis** — three `labor_config.scout.*` dials — and `calculate_visibility` rounds this to whole tiles |
 | `warriorAttack:float` | The band's resolved per-**warrior** `attack` (1 bare / 6 with clubs) — the defending contingent's side of `advance_predator_raids`. The same stat and the same seam `hunterAttack` resolves through, quoted at a different kit |
@@ -808,7 +808,7 @@ schema; they disclaimed the estimate tables, which are gone.
 
 `PopulationCohortState.kitTiers` publishes, per band, what **each** roster kit would grant it *right
 now*. The world-level `SubsistenceSection.kits` stays — it is the picker's list and the fresh-kit
-reference — and this is the same seven numbers resolved against the band's own `BandEquipment`.
+reference — and this is the same nine numbers resolved against the band's own `BandEquipment`.
 
 **A client must not step a tier down for itself**, and this is the field that makes that unnecessary.
 It is also the field that makes it *possible* to be right, because stepping down cannot be done from
@@ -828,7 +828,20 @@ knows that the wire does not carry — and the same fix.
 `snapshot::kit_roster_states` calls it per kit over a **fresh** ledger, `snapshot::population_state`
 calls it per kit over the **band's** ledger, and `forecast_query` resolves the same seams for the
 party it prices. It was extracted rather than copied precisely because this field would otherwise
-have been a third transcription of the same seven calls.
+have been a third transcription of the same nine calls.
+
+> **A kit axis that is resolved BESIDE that call is an axis one of the readings will lose.** The pen
+> and the vantage were: `kit_roster_states` open-coded
+> `pen_per_worker_biomass_capacity` / `scout_vantage_range` next to the resolver, and the per-band rows
+> — built from the resolver's output alone — therefore went to the wire without them. A picker asking
+> what the kit *under the cursor* would grant fell back to the roster's **fresh** tier for exactly
+> those two, so a pen compose sheet read **40 per keeper** while the sim collected **12** with the
+> handling gear dry, and a Scout role card read **2 tiles** of sight while `calculate_visibility`
+> revealed at **1** with the wayfinding gear dry. Both wrong in the *reassuring* direction. Both are
+> inside `ResolvedKitTiers` now, and both call sites read them from there.
+>
+> **`warriorAttack` is deliberately not a tenth number**: it is the same `attack` the row already
+> carries, read through a different *kit*, so the warrior kit's own row answers it.
 
 Size is bands × kits — a handful each — and it diffs out between frames when nothing wears.
 
@@ -838,6 +851,14 @@ which wears one band's spears to the cliff, leaves its traps untouched, and asse
 first would pass on a sim that had stopped stepping tiers down at all. It also asserts the shared
 **sled**'s haul tier is unchanged on both kits, which is what a naive "any item in this kit is dry"
 rule would break.
+
+Its twin
+`::a_bands_published_pen_and_vantage_tiers_step_down_per_kit_at_the_item_that_supplies_them` does the
+same for the two appended axes — handling gear and wayfinding gear worn to the cliff, `husbandry`'s
+pen rate and `wayfinding`'s reach each falling to the bare tier while `big_game` (which supplies
+neither) is unmoved and the shared **sled** keeps its haul tier. **Every assertion is paired against
+the same row read BEFORE the wear**, because *"the pen rate is 12"* passes on a table that publishes
+12 for everything and *"it is unmoved"* passes on a table that never moved.
 
 ### One choice per JOB, not one per tier — and `kitId` names only one of them
 
@@ -861,6 +882,14 @@ off a kit with no wayfinding gear; a warrior's `attack` off the hunt kit's spear
 club's 6). There is deliberately **no** second per-cohort `*_kit_id` field — each of those three
 defaults already rides the wire once per world, and the per-crew truth is the assignment row's own
 `LaborAssignment.kitId`, so a per-cohort copy would be a third home for a fact that has two.
+
+**These six answer at the JOB DEFAULT, and that is a different question from the one `kitTiers`
+answers.** A readout with **no kit selected** — the band's gear line, a role card's own tier — wants
+this band's tier at the kit it would actually use, which is what the flat fields are. A picker wants
+what the kit **under the cursor** would grant, which is that kit's `kitTiers` row. Both are per band
+and both are resolved sim-side; neither is derivable from the other, because the job default is one
+kit and the picker offers all of them. `penCarryPerWorkerBiomass` and `scoutVantageRange` ride **both
+tables** for exactly that reason, and the flat pair is not redundant with the rows beside it.
 
 Pinned by `kit_selection::a_resident_bands_published_kit_answers_for_the_hunt_tiers_only` and its
 twin `::a_resident_bands_appended_tiers_each_answer_for_their_own_jobs_default`, which compare the

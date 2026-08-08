@@ -56,8 +56,22 @@ post-change set byte-for-byte. Sabotage-verified by reverting the axis to the jo
 exactly the four discriminating claims fail, two naming `0.3 against 0.3` (the two kits quoting one
 pen the same number — the cancellation the defect hid behind) and two naming the wild hint rendered
 at a pen. The other three are the "must not move" guards and correctly stay green.
+**THE PEN AND THE VANTAGE JOINED `BandKitTiers`, and that contributes FOUR `PASS` to `ui_preview`,
+ZERO frames and nothing at all to `band_panel_preview`.** Those two axes were the ones a per-kit
+readout had to answer off the ROSTER's fresh tier, so a dry-`husbandry_gear` band's pen compose sheet
+read `pen 40.0 per keeper` against a sim collecting 12 and a Scout card read 2 tiles of sight against
+a reveal at 1. `BandFx.kit_tiers_rows` states all five axes now (it stated three, and a row that omits
+an axis exercises the absence path rather than the real one), and
+`chapters/compose_rungs.gd::_assert_the_appended_axes_read_the_band` drives the pair each axis needs:
+the fresh tier AND the worn one, since a client stuck on the roster passes the first alone and one
+that had stopped resolving passes the second alone. **The dock harness is untouched because its own
+`_band_fixture` publishes no `kit_tiers` at all** — the whole-row absence, which is the one case the
+roster still answers and the reason that branch survives. Sabotage-verified by restoring the roster
+read on both axes: exactly the two worn claims fail, naming `pen 40.0 per keeper` and `2.0`, i.e. the
+original defect in its own words.
 **The FORECAST QUERY arc's client half.** Measured AFTER it merged with the per-source carry axis, the
-expanded TOE roster and the role cards' kit picker above: `ui_preview` is **281 frames / 666 `PASS`,
+expanded TOE roster, the role cards' kit picker above and the appended-axis pairs: `ui_preview` is
+**281 frames / 670 `PASS`,
 exit 0** and `band_panel_preview` **87 frames / 227 `assert OK` / 259 `: PASS`, exit 0**. The two arcs'
 own pre-merge figures are recorded in their paragraphs above and are NOT additive with these — the
 merge retired the sampled-party and estimate-honesty claims from one side while the other added the

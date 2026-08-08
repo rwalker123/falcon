@@ -292,6 +292,8 @@ fn create_populations<'a>(
                                 attackMaxBodyMass: tiers.attack_max_body_mass,
                                 dispersion: tiers.dispersion,
                                 exposure: tiers.exposure,
+                                penCarryPerWorkerBiomass: tiers.pen_carry_per_worker_biomass,
+                                scoutVantageRange: tiers.scout_vantage_range,
                             },
                         )
                     })

@@ -352,6 +352,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 kit_levers.person_intrinsic,
                 kit_levers.equipped_haul_rate,
                 kit_levers.equipped_gather_rate,
+                kit_levers.equipped_vantage_range,
                 &choice,
                 &kit,
             );
@@ -364,6 +365,12 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 attack_max_body_mass: tiers.attack_max_body_mass,
                 dispersion: tiers.dispersion,
                 exposure: tiers.exposure,
+                // **The two axes the flat fields answer only at the JOB DEFAULT.** They ride here per
+                // kit as well, because a picker asks about the kit under the cursor and a readout
+                // that fell back to the roster's FRESH tier for them quoted a pen 40/keeper while the
+                // sim collected 12, and a vantage of 2 tiles against a reveal at 1.
+                pen_carry_per_worker_biomass: tiers.pen_carry_per_worker_biomass,
+                scout_vantage_range: tiers.scout_vantage_range,
             })
         })
         .collect();

@@ -8719,9 +8719,11 @@ func _kit_worn_band_fixture() -> Dictionary:
 	# while its weapon and the untouched baskets stay equipped.
 	# The warrior kit's own row is CLUBS, not the hunt weapon: the sled running dry says nothing about
 	# what the camp is defended with, and quoting the spear's 20 there is the mis-pairing the per-kit
-	# rows exist to make impossible.
+	# rows exist to make impossible. The VANTAGE stays equipped for the same reason — this fixture's
+	# twist is the sled, and a scout's reach is bought by the wayfinding gear, which is untouched.
 	band["kit_tiers"] = BandFx.kit_tiers_rows(BandFx.KIT_ATTACK_EQUIPPED,
-		BandFx.KIT_HUNT_CARRY_BARE, BandFx.KIT_FORAGE_CARRY_EQUIPPED, BandFx.KIT_ATTACK_CLUBS)
+		BandFx.KIT_HUNT_CARRY_BARE, BandFx.KIT_FORAGE_CARRY_EQUIPPED, BandFx.KIT_ATTACK_CLUBS,
+		BandFx.KIT_SCOUT_VANTAGE_EQUIPPED)
 	return band
 
 ## Stamp a fixture cohort with the `band_id` the real wire carries, DELIBERATELY DIFFERENT from its

@@ -951,6 +951,27 @@ table BandKitTiers {
   // for the same reason the tiers do: a dry item stops contributing its multiplier.
   dispersion:float = 1;
   exposure:float = 1;
+  // --- THE PEN AND THE VANTAGE, PER KIT (appended last) -----------------------------------------
+  // The other two axes a kit can lift. They arrived on KitOption (fresh) and on PopulationCohortState
+  // (this band, at its JOB DEFAULT) before they arrived here, and the gap between those two was a
+  // readout quoting the FRESH tier for the kit in the picker: a pen compose sheet read 40 per keeper
+  // while the sim collected 12 with the handling gear dry, and a Scout card read 2 tiles of sight
+  // while calculate_visibility revealed at 1. Both wrong in the REASSURING direction.
+  //
+  // The per-band flat fields stay and answer a DIFFERENT question - this band's tier at its job
+  // default, which is what a readout with no kit selected needs. These answer "what would THIS kit
+  // grant me", for every kit the picker offers.
+  //
+  //   - penCarryPerWorkerBiomass: per-KEEPER pen collection rate (biomass/turn) under this kit. It is
+  //     NOT huntCarryPerWorkerBiomass: a sled drags a carcass in off the range and a pen stands at
+  //     the camp, so a kit with a sled and no handling gear reads the bare rate (12) here while its
+  //     haul tier is the sledded 40.
+  //   - scoutVantageRange: the sight range each posted vantage reveals at under this kit. How far the
+  //     vantages are POSTED is not a kit axis (three labor_config dials); this is only how far each
+  //     one sees. The sim ROUNDS it to whole tiles when it reveals - a float here because the effects
+  //     axis is continuous and a designer must be able to tune it so.
+  penCarryPerWorkerBiomass:float = 0;
+  scoutVantageRange:float = 0;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).

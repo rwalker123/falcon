@@ -62,9 +62,9 @@ const KIT_PEN_CARRY_KEY := "pen_carry_per_worker_biomass"
 ## **THE SCOUT'S AXIS, AND IT HAS A SURFACE NOW.** It was declared for the roster's axis vocabulary
 ## with no hint-line consumer — `tier_hint` was written for the two COMPOSE sheets, which are hunt and
 ## forage only — and the WORKFORCE zone's role CARDS are the surface that comment said to wait for:
-## each carries a picker and a gear line, priced through `role_gear`. See `ROLE_AXES` — and note that
-## a `BandKitTiers` row does NOT state this axis, so the card reads the ROSTER's fresh vantage rather
-## than a per-band one (`BAND_KIT_TIERS_KEY`).
+## each carries a picker and a gear line, priced through `role_gear`. See `ROLE_AXES` — and a
+## `BandKitTiers` row STATES this axis, so the card reads what the SELECTED kit grants THIS band at
+## its live wear (`BAND_KIT_TIERS_KEY`), never the roster's fresh vantage.
 const KIT_SCOUT_VANTAGE_KEY := "scout_vantage_range"
 
 ## **WHAT THE KIT DOES TO THE QUARRY'S RETREAT** — a multiplier on the species' own wariness, so the
@@ -107,7 +107,8 @@ const ITEM_CONDITION_REMAINING_KEY := "remaining"
 ## **WHAT EVERY OFFERED KIT WOULD GRANT *THIS* BAND, RIGHT NOW** — one row per roster kit on the
 ## band's own cohort (`PopulationCohortState.kitTiers`), resolved by the sim against this band's LIVE
 ## wear. `{kit_id, attack, hunt_carry_per_worker_biomass, forage_carry_per_worker_biomass,
-## attack_min_body_mass, attack_max_body_mass, dispersion, exposure}`.
+## pen_carry_per_worker_biomass, scout_vantage_range, attack_min_body_mass, attack_max_body_mass,
+## dispersion, exposure}`.
 ##
 ## **IT IS THE ANSWER, AND NOTHING HERE MAY RE-DERIVE IT.** This layer used to step a fresh tier down
 ## by asking whether the item behind an axis still had condition — which needs to know WHICH ITEM
@@ -119,13 +120,18 @@ const ITEM_CONDITION_REMAINING_KEY := "remaining"
 ## hand under `trapping` — same root cause as the pre-launch estimate tables this arc retired, a fact
 ## the sim knew that the wire did not carry, and the same fix: publish the answer.
 ##
-## **IT STATES THREE OF THE FIVE AXES — the fought, hauled and gathered ones.** `pen_carry` and
-## `scout_vantage_range` are NOT on a `BandKitTiers` row: the sim publishes those two per band only as
-## the cohort's own flat `pen_carry_per_worker_biomass` / `scout_vantage_range`, each resolved at its
-## JOB's default kit, which cannot answer a picker offering another one. So those two fall through to
-## the ROSTER's fresh tier here — the same fall-through a band the wire has not described yet takes,
-## and never a client-side step-down. Closing it is a wire change (two more fields on `BandKitTiers`),
-## not a rule this layer may invent.
+## **IT STATES ALL FIVE AXES — the fought, hauled, gathered, COLLECTED and SEEN ones.** `pen_carry`
+## and `scout_vantage_range` were the two it did not carry, and they were the two every reader had to
+## take off the ROSTER's fresh tier instead: a pen's compose sheet read `pen 40.0 per keeper` for a
+## band whose handling gear was dry while the sim collected 12, and a Scout card read `2-tile sight
+## per vantage` while `calculate_visibility` revealed at 1 — both wrong in the reassuring direction.
+## They ride the row now, so every axis this layer quotes is the band's own answer.
+##
+## **THE COHORT'S FLAT `pen_carry_per_worker_biomass` / `scout_vantage_range` STAY, and they are not
+## redundant with the row.** Those two answer *this band at its JOB DEFAULT* — the question a readout
+## with no kit selected asks (the Gear popover's rows) — and this table answers *what the kit under
+## the cursor would grant*, which is the picker's. Neither is derivable from the other: the job
+## default is one kit and the picker offers all of them.
 const BAND_KIT_TIERS_KEY := "kit_tiers"
 const BAND_KIT_TIERS_ID_KEY := "kit_id"
 
@@ -716,39 +722,44 @@ static func gate_closed_source(src: Dictionary, prefix: String) -> Dictionary:
 ## which no roster entry carries — so the reference came back `0`, the repricing short-circuited, and
 ## every kit on every compose sheet quoted identical numbers. Reported from play.
 ##
-## **THE PEN CARRY IS ANSWERED PER AXIS, NOT PER DICT, and that is why `_resolved_tier` exists.** A
-## `BandKitTiers` row states the fought, hauled and gathered axes and NOT `pen_carry` (see
-## `BAND_KIT_TIERS_KEY`), so that one axis falls through to the roster's fresh tier while the other
-## three come off the band's row — per key, so the day the wire carries it the fall-through simply
-## stops firing. What must not happen is a client-side step-down from `kit_item_conditions`: which
-## item supplies which axis is per kit, and guessing it is what repriced a band with fresh traps and
-## dry spears to the bare hand.
+## **EVERY AXIS COMES OFF THE ROW, AND THE ONLY FALL-BACK LEFT IS THE WHOLE-ROW ONE.** A per-KEY
+## fall-through to the roster used to stand in for `pen_carry` and `scout_vantage_range`, which the
+## wire's table did not carry; it does now (see `BAND_KIT_TIERS_KEY`), so a fall-through per key would
+## be a path no live frame can reach that quietly re-quotes the FRESH tier the moment a row is
+## malformed — which is the exact reading this field exists to remove. What must not happen either way
+## is a client-side step-down from `kit_item_conditions`: which item supplies which axis is per kit,
+## and guessing it is what repriced a band with fresh traps and dry spears to the bare hand.
 static func effective_tiers(kits: Array, kit: Dictionary, band: Dictionary) -> Dictionary:
 	var resolved := band_kit_tiers(band, String(kit.get(KIT_ID_KEY, "")))
 	if resolved.is_empty():
 		return {
-			KIT_ATTACK_KEY: float(kit.get(KIT_ATTACK_KEY, 0.0)),
-			KIT_HUNT_CARRY_KEY: float(kit.get(KIT_HUNT_CARRY_KEY, 0.0)),
-			KIT_FORAGE_CARRY_KEY: float(kit.get(KIT_FORAGE_CARRY_KEY, 0.0)),
-			KIT_PEN_CARRY_KEY: float(kit.get(KIT_PEN_CARRY_KEY, 0.0)),
+			KIT_ATTACK_KEY: float(kit.get(KIT_ATTACK_KEY, TIER_ABSENT)),
+			KIT_HUNT_CARRY_KEY: float(kit.get(KIT_HUNT_CARRY_KEY, TIER_ABSENT)),
+			KIT_FORAGE_CARRY_KEY: float(kit.get(KIT_FORAGE_CARRY_KEY, TIER_ABSENT)),
+			KIT_PEN_CARRY_KEY: float(kit.get(KIT_PEN_CARRY_KEY, TIER_ABSENT)),
 			"stated": false,
 		}
 	return {
-		KIT_ATTACK_KEY: _resolved_tier(resolved, kit, KIT_ATTACK_KEY),
-		KIT_HUNT_CARRY_KEY: _resolved_tier(resolved, kit, KIT_HUNT_CARRY_KEY),
-		KIT_FORAGE_CARRY_KEY: _resolved_tier(resolved, kit, KIT_FORAGE_CARRY_KEY),
-		KIT_PEN_CARRY_KEY: _resolved_tier(resolved, kit, KIT_PEN_CARRY_KEY),
+		KIT_ATTACK_KEY: _row_tier(resolved, KIT_ATTACK_KEY),
+		KIT_HUNT_CARRY_KEY: _row_tier(resolved, KIT_HUNT_CARRY_KEY),
+		KIT_FORAGE_CARRY_KEY: _row_tier(resolved, KIT_FORAGE_CARRY_KEY),
+		KIT_PEN_CARRY_KEY: _row_tier(resolved, KIT_PEN_CARRY_KEY),
 		"stated": true,
 	}
 
-## **ONE AXIS OFF THE BAND'S ROW, FALLING BACK TO THE ROSTER'S FRESH TIER WHERE THE ROW IS SILENT.**
-## The fall-back is per KEY rather than per row: `pen_carry` and `scout_vantage_range` are not
-## `BandKitTiers` fields, and reading `0.0` for them would quote every kit a pen rate of nothing.
-## **It is a fall-back, never a derivation** — nothing here consults `kit_item_conditions`.
-static func _resolved_tier(resolved: Dictionary, kit: Dictionary, axis_key: String) -> float:
-	if resolved.has(axis_key):
-		return float(resolved[axis_key])
-	return float(kit.get(axis_key, 0.0))
+## What an axis reads where nothing states it — a roster entry that predates the axis, or a band row
+## that omits it. It is **not** a tier the game ships; it is the under-promise, the same direction
+## `condition_of` errs in, and the honest answer for a wire this client cannot read.
+const TIER_ABSENT := 0.0
+
+## **ONE AXIS OFF THE BAND'S OWN ROW.** A row states every axis `BandKitTiers` carries, so an absent
+## key is a wire this client does not understand rather than a gap to paper over — and it reads
+## `TIER_ABSENT` rather than the roster's fresh tier, because quoting a fresh number for gear the
+## server never confirmed is the reassuring lie the per-band field was published to end. The
+## whole-row absence is a different question and `effective_tiers` / `role_gear` answer it above.
+## **It is a read, never a derivation** — nothing here consults `kit_item_conditions`.
+static func _row_tier(resolved: Dictionary, axis_key: String) -> float:
+	return float(resolved.get(axis_key, TIER_ABSENT))
 
 ## **THIS BAND'S RESOLVED ROW FOR ONE KIT**, `{}` when it publishes none. The one reader of
 ## `BAND_KIT_TIERS_KEY`, so the tiers, the mass window and the two multipliers are all fetched through
@@ -787,11 +798,16 @@ static func condition_of(band: Dictionary, item_id: String) -> float:
 ## `effective_tiers` and it exists BECAUSE that one answers only the four source axes: a Scout's kit
 ## is priced on `scout_vantage_range`, which is not one of them.
 ##
-## **THE TIER TAKES THE SAME PER-AXIS RESOLUTION `effective_tiers` DOES** (`_resolved_tier`), so a
-## Warrior card reads the band's own sim-resolved `attack` under the warrior kit — clubs, not spears —
-## while a Scout card falls through to the roster's fresh vantage, because `BandKitTiers` carries no
-## `scout_vantage_range`. **Never a client-side step-down**: the item behind an axis is per kit, and
-## guessing it is the defect the per-band field exists to remove.
+## **THE TIER READS THE BAND'S OWN ROW, EXACTLY AS `effective_tiers` DOES** (`_row_tier`), so a
+## Warrior card reads the band's sim-resolved `attack` under the warrior kit — clubs, not spears — and
+## a Scout card reads its sim-resolved `scout_vantage_range` under the wayfinding kit, 1 tile once
+## that gear is dry rather than the roster's fresh 2. **Never a client-side step-down**: the item
+## behind an axis is per kit, and guessing it is the defect the per-band field exists to remove.
+##
+## **The ROSTER's fresh tier stands only where the band states no row for this kit at all** — a band
+## the wire has not described yet, which is the same whole-row fall-back `effective_tiers` takes and
+## the reason `kits` is unread here without being droppable: this function's twin has the identical
+## `(roster, kit, band)` shape and likewise never reads the roster.
 ##
 ## `stated` is false when the band publishes no item conditions at all: the card then prints no
 ## condition clause, rather than a client quoting `dry` at gear the server never described.
@@ -801,14 +817,11 @@ static func role_gear(kits: Array, kit: Dictionary, band: Dictionary, job: Strin
 	var axis := role_axis(job)
 	if axis.is_empty() or kit.is_empty():
 		return {}
-	# `kits` is unread here and stays in the signature beside every other reader of this layer, all of
-	# which take the roster: a role's tier is answered per kit, and the day the wire carries the
-	# remaining two axes this is where the roster fall-back is dropped.
-	var _roster := kits
 	var resolved := band_kit_tiers(band, String(kit.get(KIT_ID_KEY, "")))
+	var tier := float(kit.get(axis, TIER_ABSENT)) if resolved.is_empty() else _row_tier(resolved, axis)
 	return {
 		ROLE_GEAR_AXIS_KEY: axis,
-		ROLE_GEAR_TIER_KEY: _resolved_tier(resolved, kit, axis),
+		ROLE_GEAR_TIER_KEY: tier,
 		ROLE_GEAR_STATED_KEY: not (band.get(BAND_ITEM_CONDITIONS_KEY, []) as Array).is_empty(),
 	}
 

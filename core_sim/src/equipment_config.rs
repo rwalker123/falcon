@@ -995,7 +995,7 @@ impl EquipmentConfig {
 
     /// **Every tier a kit grants, resolved once, for one `(kit, wear)` pair.**
     ///
-    /// The seven numbers a consumer needs to describe what sending *this* kit buys, each through the
+    /// The nine numbers a consumer needs to describe what sending *this* kit buys, each through the
     /// same seam the take path reads it through — so a readout cannot drift from what the raid
     /// actually pays.
     ///
@@ -1004,18 +1004,30 @@ impl EquipmentConfig {
     /// `snapshot::kit_roster_states` resolves it per kit over a **fresh** ledger (the picker's
     /// reference), and `snapshot::population_state` resolves it per band over that band's **live**
     /// ledger. Those differ only in the `wear` argument, and the per-band-per-kit readout would have
-    /// been a third copy of the same seven calls. One function, three call sites, no drift.
+    /// been a third copy of the same nine calls. One function, three call sites, no drift.
+    ///
+    /// **Every axis a kit can lift is here, and adding one here is what keeps the two readings in
+    /// step.** The pen's collection rate and the scout vantage's reach were resolved *beside* this
+    /// call at the roster site and not at all at the per-band site, so the per-kit rows went to the
+    /// wire without them and a client fell back to the FRESH tier for exactly those two — a pen sheet
+    /// quoting 40 per keeper against a sim collecting 12, and a Scout card quoting 2 tiles against a
+    /// reveal at 1.
     ///
     /// **`attack` resolves UNBOUNDED**, because this is a statement about the *kit* and there is no
     /// quarry in scope — the mass window rides beside it
     /// ([`ResolvedKitTiers::attack_min_body_mass`] / `attack_max_body_mass`) so a consumer can gate
     /// against the animal in front of it. A path that *has* a quarry must resolve
     /// [`Self::hunter_profile_against`] instead; see "Two named resolvers".
+    ///
+    /// **`warrior_attack` is deliberately NOT here.** It is the same `attack` this already resolves,
+    /// read through a different *kit* rather than a different stat — so a band's warrior tier is the
+    /// warrior kit's own row, not a tenth number on every row.
     pub fn resolve_kit_tiers(
         &self,
         hunter_intrinsic: CombatStats,
         equipped_haul_rate: f32,
         equipped_gather_rate: f32,
+        equipped_vantage_range: f32,
         kit: &KitChoice,
         wear: &crate::components::BandEquipment,
     ) -> ResolvedKitTiers {
@@ -1034,6 +1046,16 @@ impl EquipmentConfig {
                 kit,
                 wear,
             ),
+            // **The pen shares the HUNT haul's equipped rate** — `labor_config`'s
+            // `hunt.per_worker_biomass_capacity` is the number a pen harvest has always been capped
+            // by and it keeps its one home — but resolves through `EquipmentStat::PenCarry`, so a kit
+            // with a sled and no handling gear reads the bare rate here beside the sledded rate above.
+            pen_carry_per_worker_biomass: self.pen_per_worker_biomass_capacity(
+                equipped_haul_rate,
+                kit,
+                wear,
+            ),
+            scout_vantage_range: self.scout_vantage_range(equipped_vantage_range, kit, wear),
             // `0` is the *sentinel* for "unbounded" on both ends — the schema's own default, and what
             // every weapon but the passive device ships.
             attack_min_body_mass: attack_min_body_mass.unwrap_or(UNBOUNDED_BODY_MASS),
@@ -1386,6 +1408,13 @@ pub struct ResolvedKitTiers {
     pub hunt_carry_per_worker_biomass: f32,
     /// Per-gatherer throughput (biomass/turn, **before** the tile's seasonal weight) — the baskets'.
     pub forage_carry_per_worker_biomass: f32,
+    /// Per-keeper PEN collection rate (biomass/turn) — the handling gear's, and **not**
+    /// [`Self::hunt_carry_per_worker_biomass`]. A sled drags a carcass in off the range and a pen
+    /// stands at the camp, so a kit with a sled and no handling gear reads the bare rate here.
+    pub pen_carry_per_worker_biomass: f32,
+    /// The sight range each posted scout vantage reveals at — the wayfinding gear's. A distance in
+    /// tiles, carried as `f32` because the effects axis is continuous; the reveal path rounds.
+    pub scout_vantage_range: f32,
     /// **The range of quarry [`Self::attack`] applies to**, by body mass.
     /// [`UNBOUNDED_BODY_MASS`] on either end means no bound there. Outside the range the kit grants
     /// no attack at all and the party falls back to the bare hand's.
