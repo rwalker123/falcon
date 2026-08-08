@@ -115,9 +115,19 @@ const NOTE_SIZE := 11
 const SPEED_ROW_SEPARATION := 4
 const SPEED_ROW_TITLE_SIZE := 13
 const SPEED_READOUT_FORMAT := "%.2f×"
+## The interface-scale row reads as a PERCENTAGE (`135%`), the conventional unit for a UI scale,
+## rather than the speed rows' `×` multiplier. Whole percent only: `UI_SCALE_STEP` is 0.05, so
+## rounding lands exactly on 75, 80, … 150 and float drift can never surface a `134%`.
+const PERCENT_READOUT_FORMAT := "%d%%"
+## Percent per unit of scale factor — 1.0 is 100%.
+const PERCENT_PER_UNIT := 100.0
 ## Meta key on each speed slider carrying its default, so "Restore defaults" resets it.
 const SPEED_DEFAULT_META := "speed_default"
 const SPEED_READOUT_META := "speed_readout"
+## Meta key carrying the row's readout formatter, so the "Restore defaults" path — which reaches the
+## label back through the slider's meta rather than through the builder — renders in the SAME unit
+## the row shows while dragging.
+const SPEED_FORMATTER_META := "speed_formatter"
 ## Same default-in-meta pattern for the Options-pane boolean rows.
 const TOGGLE_DEFAULT_META := "toggle_default"
 
@@ -527,6 +537,19 @@ func _build_options_pane() -> void:
 	_add_pane_header("Options", "Client settings")
 	_speed_sliders.clear()
 	_option_toggles.clear()
+	# FIRST in the pane, because it governs the legibility of every row under it. Same boundary rule
+	# as the fog row: this writes `ClientSettings` and stops. `UiScaler` (an autoload, so it also
+	# holds on the landing screen) turns it into the window's `content_scale_factor`, and `MapView`
+	# counter-scales itself off the same setting so the map is unaffected.
+	_pane_body.add_child(_make_speed_slider_row(
+		"Interface scale",
+		ClientSettings.ui_scale,
+		ClientSettings.UI_SCALE_DEFAULT,
+		ClientSettings.UI_SCALE_MIN,
+		ClientSettings.UI_SCALE_MAX,
+		ClientSettings.UI_SCALE_STEP,
+		ClientSettings.set_ui_scale,
+		_format_percent_readout))
 	# Fog of war is a SERVER setting, but this row writes only `ClientSettings` — MenuShell has no
 	# handle to Main/Inspector/CommandClient and must not grow one. `Main` listens on
 	# `ClientSettings.changed` and is the single place that sends `set_fog`, which is also why the
@@ -542,6 +565,7 @@ func _build_options_pane() -> void:
 		ClientSettings.PAN_SPEED_DEFAULT,
 		ClientSettings.PAN_SPEED_MIN,
 		ClientSettings.PAN_SPEED_MAX,
+		ClientSettings.SPEED_STEP,
 		ClientSettings.set_pan_speed_multiplier))
 	_pane_body.add_child(_make_speed_slider_row(
 		"Zoom speed",
@@ -549,6 +573,7 @@ func _build_options_pane() -> void:
 		ClientSettings.ZOOM_SPEED_DEFAULT,
 		ClientSettings.ZOOM_SPEED_MIN,
 		ClientSettings.ZOOM_SPEED_MAX,
+		ClientSettings.SPEED_STEP,
 		ClientSettings.set_zoom_speed_multiplier))
 	var actions := _make_actions_row()
 	var restore := Button.new()
@@ -559,10 +584,18 @@ func _build_options_pane() -> void:
 	_pane_body.add_child(actions)
 
 
-## One "title / slider + value readout" row for a speed multiplier. Applies live +
+## One "title / slider + value readout" row for a CONTINUOUS setting. Applies live +
 ## persists via `on_changed` (a `ClientSettings.set_*` Callable); the slider is kept in
 ## `_speed_sliders` (with its default in meta) so "Restore defaults" can reset it.
-func _make_speed_slider_row(title: String, value: float, default_value: float, min_v: float, max_v: float, on_changed: Callable) -> Control:
+##
+## `step` is a parameter rather than a hard-wired `ClientSettings.SPEED_STEP` because this is the
+## pane's general slider-row builder now — the interface scale is not a speed and carries its own
+## granularity — and it keeps the name only because `_speed_sliders`' reset contract is named for it.
+##
+## `format_readout` is likewise a parameter because the unit is per-row: the speeds are multipliers,
+## the interface scale is a percentage. It defaults to the speed unit and is stored in meta, so the
+## initial text, the live drag and "Restore defaults" all render through the SAME formatter.
+func _make_speed_slider_row(title: String, value: float, default_value: float, min_v: float, max_v: float, step: float, on_changed: Callable, format_readout: Callable = _format_speed_readout) -> Control:
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", SPEED_ROW_SEPARATION)
 	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -581,24 +614,35 @@ func _make_speed_slider_row(title: String, value: float, default_value: float, m
 	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	slider.min_value = min_v
 	slider.max_value = max_v
-	slider.step = ClientSettings.SPEED_STEP
+	slider.step = step
 	slider.value = value
 	slider.set_meta(SPEED_DEFAULT_META, default_value)
 	row.add_child(slider)
 
 	var readout := Label.new()
-	readout.text = SPEED_READOUT_FORMAT % value
+	readout.text = format_readout.call(value)
 	readout.add_theme_font_size_override("font_size", SPEED_ROW_TITLE_SIZE)
 	readout.add_theme_color_override("font_color", HudStyle.SIGNAL)
 	row.add_child(readout)
 	slider.set_meta(SPEED_READOUT_META, readout)
+	slider.set_meta(SPEED_FORMATTER_META, format_readout)
 
 	slider.value_changed.connect(func(v: float) -> void:
 		on_changed.call(v)
-		readout.text = SPEED_READOUT_FORMAT % v)
+		readout.text = format_readout.call(v))
 
 	_speed_sliders.append(slider)
 	return col
+
+
+## The speed rows' readout unit — a bare multiplier, `1.00×`.
+func _format_speed_readout(value: float) -> String:
+	return SPEED_READOUT_FORMAT % value
+
+
+## The interface-scale row's readout unit — whole percent, `135%`.
+func _format_percent_readout(value: float) -> String:
+	return PERCENT_READOUT_FORMAT % roundi(value * PERCENT_PER_UNIT)
 
 
 ## One "title / checkbox" row for a boolean setting — the `_make_speed_slider_row` twin. Applies
@@ -635,7 +679,8 @@ func _on_restore_defaults_pressed() -> void:
 		var default_value: float = slider.get_meta(SPEED_DEFAULT_META)
 		slider.set_value_no_signal(default_value)
 		var readout: Label = slider.get_meta(SPEED_READOUT_META)
-		readout.text = SPEED_READOUT_FORMAT % default_value
+		var format_readout: Callable = slider.get_meta(SPEED_FORMATTER_META)
+		readout.text = format_readout.call(default_value)
 
 
 func _build_abandon_pane() -> void:

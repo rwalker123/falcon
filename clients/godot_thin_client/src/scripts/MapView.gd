@@ -348,6 +348,10 @@ const ZOOM_BUTTON_STEP := 0.5
 const ZOOM_RUNG_EPSILON := 0.001
 const KEYBOARD_ZOOM_SPEED := 0.8
 const KEYBOARD_PAN_SPEED := 600.0
+# The smallest interface scale this node will take the reciprocal of. `ClientSettings` clamps the
+# setting to a far higher UI_SCALE_MIN, so this is the guard for a hand-edited config file only —
+# without it a 0 would make the counter-scale infinite. See `_apply_ui_scale`.
+const MIN_UI_SCALE := 0.01
 const PLAYER_FACTION_ID := 0
 
 # --- Band status decorations (food-runway dot, activity glyph, supply links) ---
@@ -803,8 +807,54 @@ func _ready() -> void:
 	_secondary_markers = SecondaryMarkerRenderer.new(self)
 	_band_overlays = BandOverlayRenderer.new(self)
 	_annotations = AnnotationRenderer.new(self)
+	_apply_ui_scale()
+	ClientSettings.changed.connect(_apply_ui_scale)
 	# Note: the MinimapPanel node is created lazily from _minimap.update()
 	# This allows Main.gd to set_hud_reference() before the minimap is created
+
+
+## THE MAP IS IMMUNE TO THE INTERFACE SCALE, and this is what makes it so.
+##
+## `UiScaler` sets the window's `content_scale_factor`, which shrinks the LOGICAL viewport so every
+## UI control re-lays-out larger on screen. Counter-scaling this node by the reciprocal leaves the
+## world drawn at exactly the same on-screen size — the chrome grows around a map that holds still,
+## which is what the old whole-canvas interface scale got wrong (it zoomed the map too).
+##
+## MapView owns its own compensation because it already reads `ClientSettings` live for the pan/zoom
+## multipliers; `UiScaler` deliberately holds no handle to the map and must not grow one.
+##
+## The counter-scale leaves `screen_size_local()` CONSTANT (the viewport shrinks by `s`, the local
+## units grow by `s`), so the map's own metrics only actually move when a reserved inset is in play —
+## a docked panel drawn larger eats more of the map. Recomputing them unconditionally is cheap and
+## keeps the two cases from needing to be told apart.
+func _apply_ui_scale() -> void:
+	var ui_scale: float = ClientSettings.ui_scale
+	if ui_scale < MIN_UI_SCALE:
+		# Only reachable from a hand-edited config file — the Options slider and `ClientSettings`
+		# both clamp to UI_SCALE_MIN. Refuse rather than divide by ~0 and explode the map.
+		push_warning("[MapView] ignoring an unusable interface scale: %f" % ui_scale)
+		return
+	var counter_scale := Vector2.ONE / ui_scale
+	# **A NO-OP IS FREE, AND IT HAS TO BE.** `ClientSettings.changed` is ONE signal shared by all four
+	# setters, and `MenuShell._make_speed_slider_row` writes on every `value_changed` — so dragging the
+	# PAN SPEED slider with the pause menu open runs this function once per step of the drag. Each run
+	# would otherwise invalidate the map cache, which is the whole-map re-render the cache exists to
+	# avoid, for a scale that did not move.
+	#
+	# **The test is the TRANSFORM ACTUALLY IN EFFECT, not a remembered copy of `ui_scale`.** `scale` is
+	# what must be true when this returns; a cached previous value would go stale the moment anything
+	# else wrote the node's scale, and the early-out would then skip the correction that was the point.
+	#
+	# It short-circuits the `_ready`-time call too, and nothing is lost there: `scale` already IS
+	# `Vector2.ONE` at the default scale, `_cache_valid` starts `false` so there is no cache to
+	# invalidate, and `_update_layout_metrics()` early-returns while `grid_width`/`grid_height` are 0 —
+	# the first snapshot recomputes all of it.
+	if scale.is_equal_approx(counter_scale):
+		return
+	scale = counter_scale
+	_invalidate_map_cache()
+	_update_layout_metrics()
+	queue_redraw()
 
 
 ## Load FoW appearance tunables from heightfield_config.json ("fog_of_war" section).
@@ -884,8 +934,9 @@ func _render_map_cache() -> void:
 	if _cache_viewport == null or _cache_renderer == null:
 		return
 
-	# Calculate buffer size
-	var viewport_size := get_viewport_rect().size
+	# Calculate buffer size. LOCAL units, like every other length here: the cached texture is drawn
+	# back into this node's own space (`draw_texture_rect` in `_draw`), so it must be sized in it.
+	var viewport_size := screen_size_local()
 	var buffer_size := viewport_size * (1.0 + MAP_CACHE_BUFFER_MARGIN * 2.0)
 	_cache_viewport.size = Vector2i(int(buffer_size.x), int(buffer_size.y))
 
@@ -910,7 +961,7 @@ func _is_pan_within_cache_buffer() -> bool:
 		return false
 
 	var pan_delta := pan_offset - _cache_pan_offset
-	var viewport_size := get_viewport_rect().size
+	var viewport_size := screen_size_local()
 	var max_offset := viewport_size * MAP_CACHE_BUFFER_MARGIN
 
 	# Check if pan is within buffer bounds
@@ -3874,17 +3925,40 @@ func _update_hex_offset_cache(radius: float) -> void:
 		_cached_hex_offsets[i] = Vector2(radius * cos(angle), radius * sin(angle))
 	_cached_hex_radius = radius
 
-func _get_adjusted_viewport_size() -> Vector2:
+## The screen's extent expressed in THIS node's own local units — the map's "how big is the window,
+## in the units I draw in". `get_global_transform_with_canvas()` composes the global canvas transform
+## (camera scaling) with the node's OWN scale, which is where the interface-scale compensation lives,
+## so this one division covers both and the two can never be applied twice or forgotten separately.
+## Public because `CachedMapRenderer` sizes its SubViewport off it.
+func screen_size_local() -> Vector2:
 	var viewport_size: Vector2 = get_viewport_rect().size
-	var canvas_scale := get_viewport().get_canvas_transform().get_scale()
-	if canvas_scale.x != 0.0 and canvas_scale.y != 0.0:
-		# Account for global canvas (camera) scaling so hit-testing matches the drawn map
-		viewport_size /= canvas_scale
+	var to_screen := get_global_transform_with_canvas().get_scale()
+	if to_screen.x == 0.0 or to_screen.y == 0.0:
+		return viewport_size
+	return viewport_size / to_screen
+
+## The summed reserved strips per axis (left+right, top+bottom), converted into LOCAL units.
+## `set_reserved_inset` receives widths measured in CANVAS units (a docked panel's width), which is
+## also the space this node's `position` lives in — but `_get_adjusted_viewport_size` subtracts them
+## from a LOCAL extent, and the interface scale makes those two spaces differ. Converted at the point
+## of USE rather than at set time, because the scale can change after a panel has docked.
+func _reserved_inset_span_local() -> Vector2:
+	var span := Vector2(_inset_left + _inset_right, _inset_top + _inset_bottom)
+	var to_screen := get_global_transform_with_canvas().get_scale()
+	if to_screen.x == 0.0 or to_screen.y == 0.0:
+		return span
+	return span / to_screen
+
+func _get_adjusted_viewport_size() -> Vector2:
+	# In LOCAL units, so hit-testing matches the drawn map under any canvas (camera) scaling and
+	# under the interface scale's counter-scale.
+	var viewport_size: Vector2 = screen_size_local()
 	# Exclude every reserved edge strip: the map treats the remaining rect as its
 	# entire viewport, and the node is translated by the leading insets (see
 	# set_reserved_inset), so nothing renders behind a docked panel.
-	viewport_size.x = max(viewport_size.x - _inset_left - _inset_right, 1.0)
-	viewport_size.y = max(viewport_size.y - _inset_top - _inset_bottom, 1.0)
+	var inset_span: Vector2 = _reserved_inset_span_local()
+	viewport_size.x = max(viewport_size.x - inset_span.x, 1.0)
+	viewport_size.y = max(viewport_size.y - inset_span.y, 1.0)
 	return viewport_size
 
 func _update_layout_metrics() -> void:
@@ -4044,7 +4118,8 @@ func _process(delta: float) -> void:
 		_apply_pan(pan_input * KEYBOARD_PAN_SPEED * ClientSettings.pan_speed_multiplier * delta)
 	var zoom_direction: float = Input.get_action_strength("map_zoom_in") - Input.get_action_strength("map_zoom_out")
 	if not is_zero_approx(zoom_direction):
-		var viewport_center: Vector2 = get_viewport_rect().size * 0.5
+		# `_apply_zoom`'s pivot is in LOCAL coords, so the centre is measured in them too.
+		var viewport_center: Vector2 = screen_size_local() * 0.5
 		_apply_zoom(zoom_direction * KEYBOARD_ZOOM_SPEED * ClientSettings.zoom_speed_multiplier * delta, viewport_center)
 	# Animate the targeting overlay (pulsing glow / reticle) while a command is
 	# being targeted.

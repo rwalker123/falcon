@@ -21,9 +21,9 @@ boot_splash/bg_color=Color(0.043, 0.067, 0.078, 1)
 [autoload]
 
 TerrainTextureManager="*res://assets/terrain/TerrainTextureManager.gd"
-UiScaler="*res://src/scripts/ui_scaler.gd"
 GameLaunch="*res://src/scripts/GameLaunch.gd"
 ClientSettings="*res://src/scripts/ClientSettings.gd"
+UiScaler="*res://src/scripts/ui_scaler.gd"
 
 [display]
 

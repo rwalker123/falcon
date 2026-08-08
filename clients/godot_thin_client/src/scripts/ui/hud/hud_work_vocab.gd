@@ -355,13 +355,17 @@ const PEOPLE_DEPENDENCY_HEAVY := 100
 ## and what it implies live in the tooltip, which is where the teaching belongs.
 const PEOPLE_DEPENDENCY_FORMAT := "%d dependents"
 
-## The band zone yields by TIERS as its box shrinks — the zone height is fixed, so the CONTENT gives
-## way, never the layout (nothing here scrolls, and a clipped chart teaches nothing).
-## At/above TALL: the full-height food-outlook chart and hinted role cards.
-## Between CHART_MIN and TALL: a compact chart.
-## Below CHART_MIN (a 360px T/B dock): no chart at all, and the role cards drop their hint line to a
-## tooltip — the two biggest blocks, given up in the order they are least missed.
+## The band zone renders at DENSER TIERS as its box shrinks. **A TIER NEVER DROPS A BLOCK** — the zone
+## scrolls (`BAND_ZONE_SCROLL_NAME`), so content that outgrows the box is reached rather than lost, and
+## the only thing a tier decides is how tightly what is there is drawn.
+## At/above TALL: the full-height food-outlook chart.
+## Below TALL: the COMPACT chart — same series, same empty marker, less height.
 ## All measured against the zone BOX, never against the dock edge.
+##
+## **They USED to omit** — below CHART_MIN the zone built no chart at all and the role cards dropped
+## their hint line to a tooltip. That is the behaviour this pair of thresholds no longer expresses:
+## silently losing content is never an acceptable outcome, and the parties list had already answered
+## the same requirement by scrolling.
 const BAND_ZONE_TALL_MIN_HEIGHT := 420.0
 
 const BAND_ZONE_CHART_MIN_HEIGHT := 340.0
@@ -369,7 +373,8 @@ const BAND_ZONE_CHART_MIN_HEIGHT := 340.0
 const FOOD_CHART_COMPACT_HEIGHT := 42.0
 
 ## The three tiers as an ordinal, so `zones_resized` can tell a mere re-page (the work board) from a
-## band-zone tier change (which needs the zone rebuilt, not re-paged).
+## band-zone tier change (which needs the zone rebuilt, not re-paged — the density is authored at build
+## time and the split across columns with it).
 const BAND_ZONE_TIER_SHORT := 0
 
 const BAND_ZONE_TIER_COMPACT := 1
@@ -407,6 +412,50 @@ const ROLE_CARD_HINT_HEIGHT := 28.0
 ## WORK BOARD geometry. Every one of these heights is BOTH what the element reserves in
 ## `_work_board_capacity` and what it actually draws at, so the page can never overflow its zone.
 const WORK_ROW_HEIGHT := 28.0
+
+## The node name of the PARTIES zone's scrolling LIST — the party rows plus whichever inspector strip
+## is open, between that zone's fixed head and its fixed Scout/Hunt/Deny footer.
+##
+## **IT IS ONE OF THE BAND/CITY PANEL'S TWO SANCTIONED `ScrollContainer`s, and the NAME is how that
+## stays true.** The panel is no-scroll by default: a zone whose content height fed back into a FIXED
+## reservation is the map flicker the fixed cross-axis size exists to prevent. This one cannot, because
+## the scroll's whole contribution to the zone's minimum is `PARTIES_LIST_MIN_HEIGHT` and nothing else —
+## the list's real height never reaches the panel. `band_panel_preview` asserts that every
+## `ScrollContainer` in the panel is a NAMED one under the zone that sanctions it, so the invariant
+## still holds everywhere else rather than having been deleted.
+const PARTIES_LIST_NAME := "PartiesList"
+
+## The least room that scrolling list is ever given, in board rows. **A floor that never binds any
+## shipped layout** — head + footer + this sits far under the band flank's two-column extent, which is
+## what `BandCityPanel.PANEL_HEIGHT_WIDE_TWO_COLUMN` is derived from — and its only job is to stop a
+## future shorter box collapsing the list into a bare scrollbar with no visible row.
+##
+## THREE, because a list showing fewer than the row being read plus one either side has stopped reading
+## as a list: at two there is nothing to say the bar beside it is for scrolling.
+const PARTIES_LIST_MIN_ROWS := 3
+
+## That floor in pixels. `WORK_ROW_HEIGHT` is this client's one row unit — the work board's capacity
+## maths divides by it — so the parties list states its floor in the same unit rather than in a number
+## of its own. A party row is taller than a board row (42 against 28), which makes this a floor of
+## about two party rows: deliberately conservative, since the point is a non-degenerate list and not a
+## promise about how many parties are visible.
+const PARTIES_LIST_MIN_HEIGHT := float(PARTIES_LIST_MIN_ROWS) * WORK_ROW_HEIGHT
+
+## The node name of the BAND zone's scrolling stack — the vitals / PEOPLE / food-outlook / WORKFORCE
+## blocks, whether they are stacked flat or split across the widened flank's two columns.
+##
+## **IT IS THE SECOND SANCTIONED `ScrollContainer`, and it exists because THE TIERS STOPPED DELETING
+## CONTENT.** The zone used to answer a box it could not fill by building no food-outlook chart and
+## hint-less role cards; at a 1920 logical viewport on a horizontal dock that is one column packing
+## 299px into a 300px box, so the chart and the hints were simply gone until roughly a 2250 viewport
+## earned the flank a second column. Losing content is never an acceptable outcome — the parties list
+## had already answered the identical requirement — so the blocks are all built and the stack scrolls.
+##
+## It is safe for the same reason the parties list is: a `ScrollContainer` reports no minimum on its
+## scrolling axis, so what the stack holds never reaches the panel and the strip's cross-axis size
+## stays a pure function of dock / collapse / window. What it DOES report is declared by the builder
+## from the zone's own BOX, which is geometry the panel states rather than anything the snapshot says.
+const BAND_ZONE_SCROLL_NAME := "BandZoneScroll"
 
 ## Sized so a TYPICAL label — `Forage (nn, nn)`, `Hunt Woolly Mammoth` — fits whole beside the row's
 ## fixed furniture. At 300 a 1920 bottom dock took 4 columns and cut the labels mid-coordinate

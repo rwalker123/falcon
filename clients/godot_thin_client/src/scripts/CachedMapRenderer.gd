@@ -45,8 +45,10 @@ func _draw() -> void:
 	# Pre-compute hex offsets
 	_update_hex_offsets(radius)
 
-	# Calculate the visible area with buffer
-	var viewport_size: Vector2 = map_view.get_viewport_rect().size
+	# Calculate the visible area with buffer. MapView-LOCAL units: this pass draws in MapView's own
+	# space (`last_origin`, `last_hex_radius`), and the interface scale makes that space differ from
+	# the raw viewport rect.
+	var viewport_size: Vector2 = map_view.screen_size_local()
 	var buffer_size := viewport_size * (1.0 + BUFFER_MARGIN * 2.0)
 	_render_size = buffer_size
 

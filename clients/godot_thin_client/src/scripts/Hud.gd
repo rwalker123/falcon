@@ -309,6 +309,12 @@ var _inset_left: float = 0.0
 var _inset_right: float = 0.0
 var _inset_top: float = 0.0
 var _inset_bottom: float = 0.0
+## The `MarginContainer` theme constant `set_right_column_bottom_clearance` writes, and a sentinel no
+## margin can hold, so "not captured yet" is distinguishable from a genuinely zero authored margin.
+const RIGHT_DOCK_MARGIN_BOTTOM := &"margin_bottom"
+const RIGHT_DOCK_MARGIN_UNCAPTURED := -1
+var _right_dock_margin_bottom: int = RIGHT_DOCK_MARGIN_UNCAPTURED
+var _right_column_bottom_clearance: float = 0.0
 
 func _ready() -> void:
     _selection = HudSelectionState.new()
@@ -877,6 +883,45 @@ func set_reserved_inset(id: StringName, edge: int, size: float) -> void:
         layout_root.offset_right = -_inset_right
         layout_root.offset_bottom = -_inset_bottom
 
+## The RIGHT dock's own bottom clearance, in pixels — how far above `ContentRow`'s bottom edge the
+## right column's CARDS must stop. `Main` pushes it; `size <= 0` releases it.
+##
+## **`set_reserved_inset` above cannot express this, which is the whole reason this exists.** That one
+## offsets `LayoutRoot` on a whole EDGE, so a bottom reservation shortens both lateral columns across
+## the entire window — and on a bottom band dock exactly one of them has to yield. The band card's
+## parked chrome (minimap + zoom rail + turn orb) sits at the strip's TRAILING end, flush to the
+## screen, which is the same corner the right dock's cards occupy; the LEFT column has nothing in that
+## strip and must keep running to the window's bottom edge, that being the clipping the conditional
+## inset was written to fix.
+##
+## **It is a MARGIN on the dock's own `MarginContainer`, not a height on the region.** The region is a
+## cell of `ContentRow` and the row writes its rect every layout pass, so a height written here would
+## be overwritten; the margin is the container's own declared padding, and shortening `RightScroll`
+## through it is what keeps the cards inside — the scroll then scrolls rather than overflowing, so no
+## card can draw into the strip however tall its content grows. `right_dock_region`'s RECT is
+## untouched, so `lateral_column_widths()` and `right_column_width()` answer exactly as before and no
+## clearance can feed back into the yield rule that produced it.
+func set_right_column_bottom_clearance(size: float) -> void:
+    if right_dock_region == null:
+        return
+    var clearance: float = maxf(size, 0.0)
+    if _right_dock_margin_bottom == RIGHT_DOCK_MARGIN_UNCAPTURED:
+        # Captured ONCE, before the first override: a theme constant read back after an override
+        # answers the override, so the scene's authored margin has to be taken while it is still the
+        # only value there.
+        _right_dock_margin_bottom = right_dock_region.get_theme_constant(RIGHT_DOCK_MARGIN_BOTTOM)
+    elif is_equal_approx(clearance, _right_column_bottom_clearance):
+        return
+    _right_column_bottom_clearance = clearance
+    right_dock_region.add_theme_constant_override(RIGHT_DOCK_MARGIN_BOTTOM,
+        _right_dock_margin_bottom + int(roundf(clearance)))
+    _refit_right_dock()
+
+## What the right column is currently holding clear at its bottom. Read by the harnesses, which have no
+## `Main` to ask.
+func right_column_bottom_clearance() -> float:
+    return _right_column_bottom_clearance
+
 ## Sum the registered reservations into the four per-edge totals.
 func _recompute_insets() -> void:
     _inset_left = 0.0
@@ -1079,6 +1124,19 @@ func reflow_dock_row(edge: int, size: float) -> void:
     if _dockrow != null:
         _dockrow.apply(edge, size)
 
+## WILL the bottom-bar chrome vacate the row for a panel reserving `size` on `edge`? Asked by
+## `Main.band_dock_overlays_hud` before it decides whether the HUD may keep a BOTTOM dock's strip: the
+## strip is only free of HUD furniture once the chrome has moved into the card's rail. A thin delegator
+## for the same reason `reflow_dock_row` is one — `Main` probes it by name.
+func bottom_chrome_parks_for(edge: int, size: float) -> bool:
+    return _dockrow != null and _dockrow.parks_for(edge, size)
+
+## …and how wide a rail it will ask that card for (0 when it parks nothing). The band card's own
+## affordability test has to subtract the chrome column BEFORE the chrome has been pushed, so it takes
+## the width from here rather than from whatever the panel was last told.
+func bottom_chrome_rail_width(edge: int, size: float) -> float:
+    return 0.0 if _dockrow == null else _dockrow.rail_width_for(edge, size)
+
 ## Walk to the next/prev player band (the panel cycler's ◀/▶).
 func cycle_panel_band(delta: int) -> void:
     _bandpanel.cycle_band(delta)
@@ -1242,6 +1300,118 @@ func left_column_width() -> float:
 func right_column_width() -> float:
     return right_dock_region.custom_minimum_size.x if right_dock_region != null else 0.0
 
+## **THE WIDEST THE RIGHT-HAND COLUMN CAN EVER GET, and the ONE bound a rule may reason FORWARD from.**
+##
+## `right_column_width()` above is what the scene RESERVES; `lateral_column_widths()` below is what the
+## column currently OCCUPIES; and where a live readout outgrows its authored minimum the two disagree.
+## That gap is not cosmetic, because two different consumers ask the two different questions about the
+## same column: `Main.band_dock_overlays_hud` decides whether the HUD keeps its bottom strip from the
+## authored pair (it must — a live read there would depend on the rule's own output, the cycle
+## `348e5c09` sabotage-verified), and the card is then placed against the live pair. Every pixel of
+## daylight is a band of window widths in which the HUD keeps its strip believing the card can afford
+## the wide shell while the card, paying the larger bound, collapses to the narrow tabbed shell — the
+## exact trade that rule exists to REFUSE. Measured with a 344 authored minimum against a 419 live
+## readout: a stable, reproducible 75px band (logical widths 2215-2289) in which every bottom dock
+## rendered the tabbed shell over a HUD that had kept its columns.
+##
+## So the rule reads a CEILING instead: a constant no live content can exceed, which keeps the answer
+## acyclic and jitter-free (both properties the live pair lacks) while making it CONSERVATIVE — where
+## it says the card can afford the bounds, the card really can, with the ceiling's own slack to spare.
+##
+## **IT IS DERIVED FROM THE SCENE'S OWN AUTHORED WIDTHS, WHICH IS WHY IT CAN BE EXACT.** It was `561.0`
+## for a long time, and that number measured a surface that no longer exists: the top-bar KNOWLEDGE
+## STRIP's first row (`⚒ Your people know:` plus two in-progress tracks with meters and percents), the
+## widest line the retired readouts could produce. `TurnBlock`, `TopBar` and all eight of their Labels
+## are gone from `HudLayer.tscn` (issue #450), so nothing in the client renders that line, and 561
+## carried ~209px of headroom that measured nothing at all.
+##
+## **What the column IS now is the RIGHT DOCK alone, and it stacks in exactly three terms:**
+##
+## | term | what it is |
+## |---|---|
+## | `RIGHT_DOCK_WIDEST_CARD_MIN_WIDTH` | the widest AUTHORED card minimum in `RightStack` — `TellingPanel.custom_minimum_size.x` |
+## | `RIGHT_DOCK_SCROLLBAR_SPAN` | `RightScroll`'s vertical scrollbar, which its own minimum width includes while the stack overflows |
+## | `RIGHT_DOCK_MARGIN_SPAN` | `RightDock`'s authored horizontal margins, `margin_left` 8 + `margin_right` 16 |
+##
+## `PanelDock._configure_scroll` disables HORIZONTAL scrolling on `RightScroll` and zeroes the stack's
+## horizontal minimum, so the scroll's minimum width is its widest visible CARD's minimum plus its
+## scrollbar, and the region is that plus its margins. The first and third terms are also exactly the
+## `344` authored on `RightDock.custom_minimum_size.x` — i.e. the reservation is this derivation
+## MINUS the scrollbar, which is the whole of the gap between `right_column_width()` and this.
+##
+## **THE COLUMN IS CONTENT-DERIVED ABOVE THAT FLOOR, AND THE SWEEP SAYS WHERE THE CONTENT STOPS.**
+## `lateral_column_widths().y` read **344** in every one of `band_panel_preview`'s 84 states and every
+## one of `ui_preview`'s 274, at every viewport those harnesses stage (1280→2560 logical) and at
+## `ui_scale` 1.0 and 1.35 alike — the scrollbar is absent until the stack overflows. Staged at the
+## widest content the dock can hold (the Victory card beside a Terrain Types legend long enough to
+## reach `LegendController.LEGEND_MAX_HEIGHT`) it reads **352**, which is this derivation exactly.
+## Measured beside the Telling panel's 320 in that state: the Victory card's minimum is **50** and the
+## legend's **228**, so the Telling panel's authored minimum is the binding term and the other two are
+## nowhere near it.
+##
+## **A HARNESS SWEEP BOUNDS THE FIXTURES, NOT THE SNAPSHOT — so the content paths were probed
+## individually, and all but one are structurally bounded.** A legend row's label is a plain `Label`
+## whose minimum IS its text width, which looks like an unbounded path and is not: `LegendScroll`
+## leaves horizontal scrolling on `AUTO`, so a row's width never reaches the card. The Victory card's
+## `RichTextLabel` sets no `fit_content`, so its minimum ignores its text. Probed with pathological
+## content — 11 rows of 75-character terrain names, and a 120-character unbroken victory string — the
+## column did not move off 352.
+##
+## **THE ONE PATH THAT COULD EXCEED IT WAS A CARD TITLE, AND IT IS NOW BOUNDED AT THE CARD.**
+## `PanelCard._header` was a `RichTextLabel` with `fit_content = true` and `AUTOWRAP_OFF`, which
+## reports its full unwrapped text width as a minimum on BOTH axes with no per-axis switch — so a
+## title was a hard minimum on its card and widened the whole column. Probed against the widest
+## staging: a 58-character legend title took the column to **489**, i.e. 137px past this ceiling, and
+## a margin cannot bound a string (an unexplained pad is exactly what 561 became). The header is a
+## `Label` now, with `clip_text` and `OVERRUN_TRIM_ELLIPSIS`, so it reports a ~zero width minimum and
+## trims instead; the same probe reads **352** after. **Nothing the player can see was traded for
+## that**: every title the client can actually author was swept through the real card — the legend's
+## `Terrain Types` / `Terrain Tags` / `Provinces` / `No Overlay` plus all thirteen overlay-channel
+## labels the native decoder ships, the longest being `Forage (Human Food Capacity)` — and the widest
+## leaves the legend card at **253**, 67px BELOW the Telling panel's 320, so the ellipsis never
+## engages on a real title and the title term contributes nothing to this derivation at all.
+##
+## **THE DANGEROUS DIRECTION IS DOWN.** Too high only makes `affords_wide_shell_with_bounds`
+## conservative — it refuses the wide shell in windows where the card would have fitted, costing layout
+## quality. Too low means a column that renders wider than the bound gets DRAWN THROUGH by the card.
+## So when a right-dock card is authored wider than 320, the fix is to raise
+## `RIGHT_DOCK_WIDEST_CARD_MIN_WIDTH`, not to pad this. (A long TITLE is no longer one of the ways
+## that happens — see above — so the only thing that can move this number is an authored minimum.)
+##
+## **NOTHING CHARGES IT TODAY, so the retune moved no behaviour.** Its one consumer is
+## `Main.band_dock_overlays_hud`, which reaches `affords_wide_shell_with_bounds` only on a **BOTTOM**
+## dock (a top dock answers `true` before that line, every other edge `false`) — and
+## `BandCityPanel._trailing_bound_for` charges a bottom dock NO trailing bound, so the number is passed
+## in and discarded. The fork is `wide_shell_min_width() + rail span + the LEADING ceiling` and does not
+## contain this term at all.
+##
+## **The guard that can see an overrun does not depend on the value**:
+## `band_panel_preview._assert_ceilings_cover_the_widest_right_column` stages the dock at its widest and
+## asserts the ceiling still covers what the column occupies, so a card that outgrew it fails the run
+## rather than silently re-opening the band the day something charges this again. It reads `352 / 352`
+## now, where against 561 it passed with 209px of slack and tested nothing.
+const RIGHT_DOCK_WIDEST_CARD_MIN_WIDTH := 320.0
+const RIGHT_DOCK_SCROLLBAR_SPAN := 8.0
+const RIGHT_DOCK_MARGIN_SPAN := 24.0
+const RIGHT_COLUMN_CEILING := RIGHT_DOCK_WIDEST_CARD_MIN_WIDTH \
+    + RIGHT_DOCK_SCROLLBAR_SPAN + RIGHT_DOCK_MARGIN_SPAN
+
+## The `maxf` cannot bind while the derivation above holds — the constant is the reservation PLUS the
+## scrollbar, so it is the larger of the two by construction. It stays as the floor guard for the case
+## that breaks that: a scene edit that raises `RightDock.custom_minimum_size.x` without raising
+## `RIGHT_DOCK_WIDEST_CARD_MIN_WIDTH` with it, where a ceiling under its own reservation would be the
+## dangerous direction.
+func right_column_ceiling() -> float:
+    return maxf(right_column_width(), RIGHT_COLUMN_CEILING)
+
+## …and the leading column's ceiling, which needs no constant of its own: the left dock's cards are
+## authored to its own `custom_minimum_size.x` and measure exactly that live, so the reservation IS the
+## ceiling there. It exists as a named pair with `right_column_ceiling` so the rule reads one concept
+## on both ends, and so a left column that ever outgrows its minimum has an obvious home rather than a
+## call site to rewrite.
+func left_column_ceiling() -> float:
+    return left_column_width()
+
 ## The room the two HUD side columns actually occupy, as `(leading, trailing)` — what a panel sharing
 ## the HUD's strip must keep clear of (issue #377, `Main._update_band_panel_lateral_bounds`).
 ##
@@ -1250,6 +1420,11 @@ func right_column_width() -> float:
 ## which must not move every turn — so they are authored, and a column that draws wider than its minimum
 ## merely overlaps a little. This bound decides whether a CARD is drawn THROUGH a column, where being a
 ## little wrong is not cosmetic.
+##
+## **A RULE MUST NOT REASON FORWARD FROM THIS.** It is a measurement of the moment, so it disagrees
+## with `right_column_width` whenever a live line exceeds its reservation — and a decision that reads
+## one while the card is placed against the other is wrong across a whole band of window widths (see
+## `right_column_ceiling`, which exists for exactly that caller and bounds this from above).
 ##
 ## **The case that made it live is gone, and the rule is not.** It was the top-bar readouts: measured at
 ## 1920 they rendered 419px against a 344px authored minimum, because `Units: 0 | Logistics: 0.00 |

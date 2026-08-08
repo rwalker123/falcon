@@ -113,6 +113,10 @@ var _work_zone_band: Dictionary = {}
 ## `_on_zones_resized` — the one straddle the band and work halves shared, resolved by keeping BOTH
 ## ends in this controller.
 var _band_zone_tier: int = HudWorkVocab.BAND_ZONE_TIER_TALL
+## How many columns the band zone was last BUILT across, beside the tier and read the same way: a
+## column change needs the zones rebuilt (the split is authored, so it cannot be re-flowed in place),
+## exactly as a tier change does.
+var _band_zone_columns: int = 1
 ## **THE PANEL'S SUBJECT IS THE FACTION PAGE, not a band** (issue #450). The pinned first entry of the
 ## cycler, and the one bit of state that decides which of `render_band` / `render_faction` every
 ## re-entry into this panel resolves to — `refresh_snapshot`, `rerender` and `_on_zones_resized`'s
@@ -153,10 +157,18 @@ const FACTION_CYCLER_ENTRIES := 1
 ## keep a typo from passing silently, and a builder helper on the panel would be a cross-class static
 ## CALL inside a `const` initializer, which evaluates at class load and is a load-order dependency
 ## this file does not need.
+##
+## **ONLY A BAND'S `band` ZONE DECLARES `ZONE_SPEC_MAX_COLUMNS`, and that is a statement about the
+## BUILDER rather than about the width available.** `build_band_zone` below authors a two-way split of
+## its blocks (they are heterogeneous, so nothing can reflow them), so a horizontal dock with room may
+## hand it two columns; `FactionRollup.build_band_zone` authors no such split, so the faction page's
+## `band` zone leaves the field out and stays at one — a two-column host with a one-column builder in
+## it renders half a box of blank card, which is the emptiness the widening exists to REMOVE.
 const BAND_ZONE_LAYOUT: Array[Dictionary] = [
     {BandCityPanel.ZONE_SPEC_KEY: BandCityPanel.ZONE_BAND,
         BandCityPanel.ZONE_SPEC_LABEL: HudWorkVocab.ZONE_TAB_BAND,
-        BandCityPanel.ZONE_SPEC_WIDTH: BandCityPanel.ZONE_BAND_WIDTH},
+        BandCityPanel.ZONE_SPEC_WIDTH: BandCityPanel.ZONE_BAND_WIDTH,
+        BandCityPanel.ZONE_SPEC_MAX_COLUMNS: BandCityPanel.BAND_ZONE_MAX_COLUMNS},
     {BandCityPanel.ZONE_SPEC_KEY: BandCityPanel.ZONE_WORK,
         BandCityPanel.ZONE_SPEC_LABEL: HudWorkVocab.ZONE_TAB_WORK,
         BandCityPanel.ZONE_SPEC_WIDTH: BandCityPanel.ZONE_WIDTH_EXPAND},
@@ -367,8 +379,9 @@ func _build_food_outlook_block(band: Dictionary, compact: bool = false) -> VBoxC
     chart.set_projection(
         DetailFormat.band_provisions(band), arrivals,
         float(band.get("food_consumption", 0.0)) + DetailFormat.band_pen_feed(band), _band_labor.current_turn())
-    # A short zone gets a COMPACT chart (same series, same empty marker, less height) rather than a
-    # clipped full-height one — the zone's height is fixed, so the chart yields, not the layout.
+    # A short zone gets a COMPACT chart — same series, same empty marker, less height. This is the
+    # whole of what the band zone's tier now buys: the chart is built either way, and drawing it
+    # denser is cheaper for the reader than pushing the blocks below it under the scroll.
     if compact:
         chart.custom_minimum_size = Vector2(chart.custom_minimum_size.x, HudWorkVocab.FOOD_CHART_COMPACT_HEIGHT)
     block.add_child(chart)
@@ -393,9 +406,15 @@ func _make_alloc_block() -> VBoxContainer:
 ## (`_build_allocation_panel`, the no-dock ui_preview fallback) simply stacks the
 ## same three VBoxes — ONE set of builders, never a second layout.
 ##
-## NOTHING here scrolls. Content that can outgrow its box is PAGED against
-## `BandCityPanel.work_zone_size()`; a ScrollContainer would reintroduce exactly
-## the content-dependent height the panel rework removed.
+## TWO of the three zones scroll — the parties zone's LIST and the BAND zone's stack —
+## and the WORK board does not: it is PAGED against `BandCityPanel.work_zone_size()`,
+## because rows are homogeneous and a page is a better answer than a gesture for them.
+## What the two scrollers have in common is why they are exempt rather than in spite of
+## it: a `ScrollContainer` reports no minimum on its scrolling axis, and each declares a
+## FIXED one of its own (`HudWorkVocab.PARTIES_LIST_MIN_HEIGHT`; the band zone's own
+## box), so what either holds never reaches the panel and the strip's cross-axis size —
+## hence `MapView`'s inset, hence its cache — stays off the snapshot's critical path.
+## See `_build_parties_list` and `_build_band_zone_scroll`.
 ## ============================================================================
 
 ## The interior box a zone's content may fill, in canvas px. The panel answers it from its FIXED
@@ -451,20 +470,177 @@ func _confirm_destructive(body: String, ok_text: String, on_confirm: Callable) -
 ## Zone `band`: vitals · people · food outlook · workforce (+ the two role cards).
 ## `with_vitals` is false for the legacy flat host, whose Occupants card already renders the very
 ## same Food/Morale/Position rows in its own `%OccupantDetail` drawer above this.
+## **ON A HORIZONTAL DOCK THE BAND ZONE GROWS WIDE, NOT TALL** — the design rule for the whole panel
+## ("vertical docking favours height, horizontal favours width"), and it is the architecture's rule as
+## much as a preference: the panel reserves its CROSS axis, so growth along the LONG one is the one
+## direction that cannot re-emit `reservation_changed` and re-invalidate the map's cache.
+##
+## **THE SPLIT IS AUTHORED HERE, NOT REFLOWED.** These blocks are heterogeneous — a wrapped BBCode
+## label, two composition bars each with its own key, a row of role cards — so a generic "fill column A
+## then spill into B" would separate a bar from its key and break the pairs that read together. The
+## PANEL decides how many columns there are (`band_zone_columns()`, purely geometric); this decides
+## what goes in them.
+##
+## **THERE ARE TWO AUTHORED SPLITS AND ONE BOOLEAN CHOOSES BETWEEN THEM: does this band have a food
+## history to chart?** Both are hand-authored and hand-measured — a declared variant selected by a
+## predicate, the same shape as the tier itself, and not a reflow. The split feeds NO geometry: it
+## moves no column count and no reservation, so the flicker invariant is not in play here at all.
+##
+##   * **chart present — THE LARDER | THE PEOPLE** (vitals + outlook | PEOPLE + WORKFORCE), measured
+##     **246 / 263** of a 300px box.
+##   * **chart absent — vitals + PEOPLE | WORKFORCE**, measured **200 / 193**.
+##
+## Both pairs are MEASURED, not derived by subtracting the chart's height from the charted numbers:
+## the separations and the vitals label's wrapping differ per grouping, so the arithmetic does not
+## decompose and the predicted 258 / 188 both came out wrong by ~12px.
+##
+## PEOPLE is the only block that moves, and that is the entire difference between them.
+##
+## **THE PAIRING IS FORCED BY MEASUREMENT, not chosen for tidiness.** At 380px on the TALL tier the
+## blocks come out vitals 130 · PEOPLE 58 · outlook 116 · WORKFORCE 193, and with the chart present
+## only one of the four candidates fits a 300px box:
+##
+##   * vitals + PEOPLE | WORKFORCE ………………… **316** / 193 — OVERFLOWS by 16 (`band_panel_arrivals_bottom`)
+##   * vitals + PEOPLE | outlook + WORKFORCE … 200 / **321** — overflows
+##   * vitals | PEOPLE + outlook + WORKFORCE … 130 / **391** — overflows
+##   * vitals + outlook | PEOPLE + WORKFORCE … 258 / **263** — fits, and near-balanced
+##
+## Take the chart away and that winner becomes 130 against 263 — one full column beside a third-full
+## one, and **that is turn one**, the first frame a new player ever sees, since a band with no history
+## has nothing to chart. The overflowing candidate is the one that balances once the chart's height
+## leaves with it, which is why the chartless variant is the split the chart broke.
+##
+## **ONE column is byte-identical to the flat build**, deliberately: the blocks are emitted in BUILD
+## order there, not column order, so the flat stack is still vitals · PEOPLE · outlook · WORKFORCE and
+## every existing frame and every tier threshold is untouched.
+##
+## **EVERY BLOCK IS BUILT AT EVERY TIER, and the stack SCROLLS when the box cannot hold it.** A tier
+## chooses DENSITY — the compact chart against the full-height one — and nothing else; it may not
+## decide that a block does not exist. The zone used to answer a short box by building no chart and
+## hint-less role cards, which at a 1920 logical viewport on a horizontal dock meant the chart and the
+## hints were simply absent (one column, 299px of a 300px box) until roughly a 2250 viewport bought
+## the flank a second column. See `_build_band_zone_scroll` for why that is safe.
 func build_band_zone(band: Dictionary, with_vitals: bool = true) -> VBoxContainer:
     var col := HudWidgets.make_zone_column()
-    _band_zone_tier = _band_zone_tier_for(_zone_box().y)
-    if with_vitals:
-        col.add_child(_build_vitals_label(band))
+    # COUNT FIRST, then the tier: the tier is chosen against the flank's whole stacking budget, which
+    # is the column count times the box (see `_band_zone_tier_height`).
+    _band_zone_columns = _band_zone_column_count()
+    _band_zone_tier = _band_zone_tier_for(_band_zone_tier_height())
+    # `{control, column}` in BUILD order. The two orders are deliberately separate: the flat
+    # one-column stack follows this list as-is, while the split reads the `column` field — so the
+    # authored pairing can put two blocks together without reordering the stack that does not use it.
+    var vitals: Control = _build_vitals_label(band) if with_vitals else null
     var people := _build_people_block(band)
+    # The chart is ALWAYS built; only its height answers the tier. `TALL` gets the full series, every
+    # shorter tier the compact one — same series, same empty marker, drawn denser.
+    var outlook: Control = _build_food_outlook_block(band,
+        _band_zone_tier != HudWorkVocab.BAND_ZONE_TIER_TALL)
+    var workforce := _build_workforce_block(band)
+    # **PEOPLE IS THE ONE BLOCK THAT MOVES, and its column is the WHOLE of the second split.** With a
+    # chart the larder column already carries two blocks and PEOPLE belongs with WORKFORCE; without
+    # one it would be a lone vitals label against the pair, so PEOPLE crosses over to keep the two
+    # columns level. One boolean, two hand-measured layouts — not a reflow.
+    var people_column: int = BAND_COLUMN_PEOPLE if outlook != null else BAND_COLUMN_LARDER
+    var blocks: Array[Dictionary] = []
+    if vitals != null:
+        blocks.append({"control": vitals, "column": BAND_COLUMN_LARDER})
     if people != null:
-        col.add_child(people)
-    if _band_zone_tier != HudWorkVocab.BAND_ZONE_TIER_SHORT:
-        var outlook := _build_food_outlook_block(band, _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_COMPACT)
-        if outlook != null:
-            col.add_child(outlook)
-    col.add_child(_build_workforce_block(band, _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT))
+        blocks.append({"control": people, "column": people_column})
+    if outlook != null:
+        blocks.append({"control": outlook, "column": BAND_COLUMN_LARDER})
+    blocks.append({"control": workforce, "column": BAND_COLUMN_PEOPLE})
+    # BOTH layouts go inside the scroll — the flat stack and the two-column row alike. A widened flank
+    # halves what each column carries but does not make either of them unable to overflow, and a rule
+    # that scrolled one layout and clipped the other would be the same content loss on a wider monitor.
+    # In the no-dock host there is no scroll and the blocks stack straight into the column, which is
+    # what keeps that host byte-identical to the build before this zone could scroll at all.
+    var stack := col
+    var scroll := _build_band_zone_scroll()
+    if scroll != null:
+        col.add_child(scroll)
+        stack = HudWidgets.make_zone_column()
+        # A scrolled child must not claim the viewport's height as its own, or a short stack would
+        # space its blocks down the zone; the width still fills, horizontal scrolling being disabled.
+        stack.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+        scroll.add_child(stack)
+    if _band_zone_columns <= 1:
+        for block in blocks:
+            stack.add_child(block["control"])
+        return col
+    var row := HBoxContainer.new()
+    row.name = "BandZoneColumns"
+    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    row.add_theme_constant_override("separation", HudWidgets.ZONE_SECTION_SEPARATION)
+    row.add_child(_band_zone_column(blocks, BAND_COLUMN_LARDER))
+    row.add_child(_band_zone_column(blocks, BAND_COLUMN_PEOPLE))
+    stack.add_child(row)
     return col
+
+## The band zone's scrolling host — a `ScrollContainer` whose single child is the stack (flat, or the
+## two-column row) that `build_band_zone` fills. `_build_parties_list` one flank over is the idiom, and
+## the same three settings carry the same contract:
+##   * **vertical AUTO** — the bar appears only when the stack really overflows, so every dock that
+##     already held its band zone looks exactly as it did before this zone could scroll at all.
+##   * **horizontal DISABLED** — the blocks are fitted to the flank's fixed width; a horizontal bar
+##     would mean a block had been built too wide, which is a layout bug rather than something to
+##     offer the player a control for. DISABLED also forces the child to the container's width, which
+##     is what keeps the vitals label and both composition bars full-bleed.
+##   * **a declared `custom_minimum_size.y`** — the ONE number this zone contributes to its column's
+##     minimum, and it is the zone's own BOX. A `ScrollContainer` reports nothing on a scrolling axis,
+##     so without it the zone would claim to need nothing and `band_panel_preview`'s content-fit walk
+##     would descend past it and measure the unbounded stack instead.
+##
+## **THE DECLARED MINIMUM IS GEOMETRY, NEVER CONTENT, which is what keeps the flicker invariant
+## intact.** `_zone_box()` is `BandCityPanel.work_zone_size()` — the panel's fixed answer from its dock
+## edge, its collapse flag and the window, exactly the terms `_band_zone_tier_height()` reads — so
+## nothing the snapshot says can reach it. It cannot feed back into the reservation either: the zone
+## HOST is a plain `Control` that aggregates no child minimum, and this column is anchored full-rect
+## into it rather than laid out by a container.
+##
+## **THE NO-DOCK FLAT HOST GETS NO SCROLL AT ALL — `null`, and that is not a second layout.** This
+## control exists to bound a stack against a FIXED box; `_build_allocation_panel`'s host has none, it
+## simply grows, and it already sits inside the subject drawer's own `DockScrollFit` scroll. Giving it
+## one anyway means reserving `ZONE_FALLBACK_SIZE`'s flat 360px whatever the band holds — measured, a
+## strip of dead card under the role cards and the Scout/Hunt/Deny footer pushed off the bottom of the
+## drawer. Same builders, same blocks, same order; only the thing that bounds them differs, because
+## only one of the two hosts has something to bound against.
+func _build_band_zone_scroll() -> ScrollContainer:
+    if _panel == null:
+        return null
+    var scroll := ScrollContainer.new()
+    scroll.name = HudWorkVocab.BAND_ZONE_SCROLL_NAME
+    scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+    scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+    scroll.custom_minimum_size = Vector2(0.0, _zone_box().y)
+    return scroll
+
+## The two authored columns of a widened band flank, named for what they are ABOUT rather than by
+## index: what the band has to eat, and who the band is. See `build_band_zone` for the measurement
+## that forces this pairing over the other three.
+const BAND_COLUMN_LARDER := 0
+const BAND_COLUMN_PEOPLE := 1
+
+## One column of a multi-column band zone. `EXPAND_FILL` on both, so the two share the flank evenly
+## whatever their content demands: the flank's width is the PANEL's decision and neither column may
+## claim more of it by being the busier one.
+func _band_zone_column(blocks: Array[Dictionary], which: int) -> VBoxContainer:
+    var column := HudWidgets.make_zone_column()
+    for block in blocks:
+        if int(block["column"]) == which:
+            column.add_child(block["control"])
+    return column
+
+## How many columns the band zone lays out across. **The PANEL answers it**: the count is geometric —
+## what the span affords — and the panel is what knows the span. Asking the CONTENT would put the
+## strip's height, and therefore the map's inset, on the snapshot's critical path. One for the no-dock
+## fallback host, which has no span to answer with.
+func _band_zone_column_count() -> int:
+    if _panel == null:
+        return 1
+    return _panel.band_zone_columns()
 
 ## The vitals readout — Food, Fodder, Trade, Morale and Growth, of which Food / Trade / Morale /
 ## Growth carry the click-to-expand disclosures (Fodder is a plain row, and there is no Output row:
@@ -482,9 +658,10 @@ func _build_vitals_label(band: Dictionary) -> RichTextLabel:
     detail_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     _disclosures.wire_label(detail_label)
     var ctx := DetailFormat.Context.new()
-    # The SHORT tier drops the Trade row, the same budget call `build_band_zone` makes for the
-    # food-outlook chart one block below: a ~300px T/B zone CLIPS what it cannot hold, and the row
-    # measures 26px against a zone that is already tight.
+    # The SHORT tier still re-spends its two optional ROWS: Trade is dropped (it reads on the WORK
+    # zone's head) and the hay larder MERGES onto the Food line. Neither is a loss of content — one
+    # fact moves surface, the other changes shape — which is why this survives the rule that a tier may
+    # not delete a BLOCK. See `band-readouts.md` for the clause and the width it was measured against.
     # No Position row either: the coordinates are IDENTITY and the panel HEADER states them
     # (`_panel_position_label`), so a vitals row would be a second telling — and one this zone pays
     # for in height. The drawer host keeps it (it has no header and renders foreign bands).
@@ -554,7 +731,11 @@ func _build_dependency_chip(children: int, working: int, elders: int) -> Control
 
 ## "WORKFORCE" — what the band DOES: a stacked Forage/Hunt/Roles/Parties/Idle bar, its key, and the
 ## two standing-role CARDS. Saturated against People's muted palette (see `_build_people_block`).
-func _build_workforce_block(band: Dictionary, compact_cards: bool) -> VBoxContainer:
+##
+## **THE ROLE CARDS ALWAYS CARRY THEIR DESCRIPTIONS.** A `compact_cards` flag used to drop the hint
+## line to a tooltip in a short box, and it is gone rather than left unused: the zone scrolls now, so
+## there is nothing to buy by deleting the one line that says what a standing role IS.
+func _build_workforce_block(band: Dictionary) -> VBoxContainer:
     var idle := _band_labor.effective_idle(band)
     var forage_workers := 0
     var hunt_workers := 0
@@ -592,14 +773,14 @@ func _build_workforce_block(band: Dictionary, compact_cards: bool) -> VBoxContai
     var cards := HBoxContainer.new()
     cards.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     cards.add_theme_constant_override("separation", HudWorkVocab.ROLE_CARD_SEPARATION)
-    cards.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_SCOUT, HudWorkVocab.SCOUT_ROLE_HINT, HudConst.LABOR_KIND_SCOUT, scout_eff, idle, compact_cards))
+    cards.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_SCOUT, HudWorkVocab.SCOUT_ROLE_HINT, HudConst.LABOR_KIND_SCOUT, scout_eff, idle))
     # A visible predator within raid range turns the Warrior card's static hint into a live crimson
     # alert naming the on-guard count — the guarding role is only legible when the threat it answers is.
     var warrior_threat := _band_predator_threat_present(band)
     var warrior_hint := HudWorkVocab.WARRIOR_ROLE_HINT
     if warrior_threat:
         warrior_hint = HudWorkVocab.WARRIOR_THREAT_ALERT_FORMAT % int(warrior_eff.get("workers", 0))
-    cards.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_WARRIOR, warrior_hint, HudConst.LABOR_KIND_WARRIOR, warrior_eff, idle, compact_cards, warrior_threat))
+    cards.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_WARRIOR, warrior_hint, HudConst.LABOR_KIND_WARRIOR, warrior_eff, idle, warrior_threat))
     block.add_child(cards)
     return block
 
@@ -637,13 +818,14 @@ func _band_predator_threat_present(band: Dictionary) -> bool:
 ## same idle gating) the role rows used to carry.
 ## `alert` (Predators Phase 3) tints the hint crimson — the Warrior card wears it when a predator is
 ## within raid range, so the live "Predator nearby" warning reads as danger, not routine guidance.
-func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: String, effective: Dictionary, idle: int, compact: bool = false, alert: bool = false) -> PanelContainer:
+func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: String, effective: Dictionary, idle: int, alert: bool = false) -> PanelContainer:
     var workers := int(effective.get("workers", 0))
     var pending := bool(effective.get("pending", false))
     var card := PanelContainer.new()
     card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     card.add_theme_stylebox_override("panel", HudStyle.role_card_stylebox())
-    # In a short zone the hint moves to the card's tooltip — the words survive, the two lines do not.
+    # The hint also rides the tooltip: the label below is height-capped at two lines, so a long or a
+    # newly-alerting hint is readable on hover whatever it wraps to.
     card.tooltip_text = hint
     var col := VBoxContainer.new()
     col.add_theme_constant_override("separation", HudWorkVocab.ROLE_CARD_SEPARATION)
@@ -653,12 +835,11 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
     title.add_theme_font_size_override("font_size", HudWorkVocab.ROLE_CARD_NAME_FONT_SIZE)
     title.add_theme_color_override("font_color", HudStyle.WARN if pending else HudStyle.INK)
     col.add_child(title)
-    if not compact:
-        var hint_label := HudWidgets.alloc_hint_label(hint)
-        if alert:
-            hint_label.add_theme_color_override("font_color", HudStyle.THREAT_ACCENT)
-        hint_label.custom_minimum_size = Vector2(0.0, HudWorkVocab.ROLE_CARD_HINT_HEIGHT)
-        col.add_child(hint_label)
+    var hint_label := HudWidgets.alloc_hint_label(hint)
+    if alert:
+        hint_label.add_theme_color_override("font_color", HudStyle.THREAT_ACCENT)
+    hint_label.custom_minimum_size = Vector2(0.0, HudWorkVocab.ROLE_CARD_HINT_HEIGHT)
+    col.add_child(hint_label)
     var stepper := HBoxContainer.new()
     stepper.alignment = BoxContainer.ALIGNMENT_CENTER
     stepper.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
@@ -683,23 +864,54 @@ func build_work_zone(band: Dictionary) -> VBoxContainer:
     return col
 
 ## The panel's `zones_resized` handler. Re-paging the work board is the cheap common case, but the
-## BAND zone yields by height tier too (chart / role-card hints), so a tier change needs the zones
-## rebuilt rather than the board re-paged — otherwise a tall-shell band zone lands in a short box and
-## is silently clipped by its host.
+## BAND zone picks a DENSITY tier at build time (the chart's height), so a tier change needs the zones
+## rebuilt rather than the board re-paged — the chart's `custom_minimum_size` is written once and
+## cannot be re-flowed in place.
 func _on_zones_resized() -> void:
-    # The faction page has no height tier and no paged board — its two lists are bounded by a row COUNT
+    # The faction page has no height tier and no paged board — its lists are bounded by a row COUNT
     # rather than measured against the box — so a resize is simply a re-render. Falling through would
     # compare against the tier the last BAND render left behind and, on a match, re-page a work host
     # this page does not own.
     if _panel_is_faction:
         rerender()
         return
-    if _band_zone_tier != _band_zone_tier_for(_zone_box().y):
+    # The COLUMN COUNT is the second reason to rebuild rather than re-page, and for the same reason as
+    # the tier: the band zone's split across columns is AUTHORED at build time, so a flank that has
+    # gained or lost a column cannot be re-flowed in place — it would keep a layout built for a
+    # different geometry, one column of it clipped by a host that no longer matches.
+    if _band_zone_tier != _band_zone_tier_for(_band_zone_tier_height()) \
+            or _band_zone_columns != _band_zone_column_count():
         rerender()
         return
     _repage_work_zone()
 
-## Which content tier the band zone's height affords (see `BAND_ZONE_*_MIN_HEIGHT`).
+## The height the band zone's TIER is chosen against: the box times the number of columns the flank
+## lays out across.
+##
+## **A SECOND COLUMN IS A SECOND COLUMN'S WORTH OF STACKING ROOM**, and the tier is the question "how
+## much room do these blocks have?" — so the budget it is asked about has to be the whole flank's, not
+## one column's. Measured at 1920 on a bottom dock: one column packs vitals + PEOPLE + WORKFORCE into
+## 299px of a 300px box and can afford only the densest drawing; two columns carry 148px each and
+## leave 152px of every column blank, which is the same emptiness the widening was supposed to remove,
+## moved down the card. Times the count, that 300px box reads as the 600px of stacking the flank
+## actually offers, and the tier rises to the full-height food-outlook chart.
+##
+## **WHAT THE TIER NO LONGER DECIDES IS WHETHER A BLOCK EXISTS.** It used to: below the chart
+## threshold the zone built no chart and hint-less role cards, so at this very geometry the chart and
+## the hints were GONE and came back only when a second column was earned. Every block is built at
+## every tier now and the stack scrolls (`_build_band_zone_scroll`); the tier is density alone.
+##
+## **STILL PURELY GEOMETRIC.** Both terms are: the box is the panel's fixed geometry and the count is
+## `band_zone_columns()`, which reads only the span. So the tier cannot become a function of the
+## snapshot, and the strip's height — hence `MapView`'s inset — stays off the content's critical path.
+##
+## **ONE column multiplies by one**, so every vertical dock, every narrow shell and every one-column
+## horizontal dock is arithmetically untouched.
+func _band_zone_tier_height() -> float:
+    return _zone_box().y * float(_band_zone_column_count())
+
+## Which DENSITY tier the band zone's height affords (see `BAND_ZONE_*_MIN_HEIGHT`). It chooses how
+## tightly the blocks are drawn and never which of them are built.
 func _band_zone_tier_for(zone_height: float) -> int:
     if zone_height >= HudWorkVocab.BAND_ZONE_TALL_MIN_HEIGHT:
         return HudWorkVocab.BAND_ZONE_TIER_TALL
@@ -1587,6 +1799,24 @@ func _emit_cancel_order(band: Dictionary, scope: String) -> void:
 # ---- zone `parties` ---------------------------------------------------------
 
 ## Zone `parties`: head + `⋯` menu · one row per party in the field · the compose footer.
+##
+## **THE LIST BETWEEN THE HEAD AND THE FOOTER SCROLLS, AND IT IS THE ONLY THING IN THE PANEL THAT
+## DOES.** The zone's chrome is fixed — the head names the section and the Scout/Hunt/Deny row is the
+## zone's whole purpose, so neither may scroll out of reach — while the rows and the open inspector
+## strip are unbounded content, and the strip's seven-line worst case measured **294px of the 300px
+## box**, i.e. it was the tallest thing in the panel and what pinned the strip's height for BOTH
+## column counts.
+##
+## **IT DOES NOT REOPEN THE FLICKER BUG, and that is the whole argument for the exception.** The panel
+## is no-scroll because a zone whose content height fed back into a FIXED reservation would re-emit
+## `reservation_changed` → `MapView.set_reserved_inset` on every edit. This scroll declares
+## `HudWorkVocab.PARTIES_LIST_MIN_HEIGHT` and NOTHING ELSE as its minimum, so what the list holds never
+## reaches the column's minimum, never reaches the panel, and never reaches the reservation. The work
+## zone answers the same requirement by PAGING; this zone cannot page, because the strip is a
+## disclosure that must sit under the row it was opened from.
+##
+## The scroll takes `SIZE_EXPAND_FILL`, which is what the old bottom spacer did — so the footer is
+## still pinned to the bottom of the zone and a short list still renders exactly where it did.
 func build_parties_zone(band: Dictionary) -> VBoxContainer:
     # BEFORE anything reads the latched float requirement below: a box change invalidates the mark.
     _note_parties_zone_box()
@@ -1602,28 +1832,62 @@ func build_parties_zone(band: Dictionary) -> VBoxContainer:
     ], HudComposeVocab.PARTY_MENU_TOOLTIP)
     col.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_PARTIES,
         HudComposeVocab.PARTIES_HEADER_FORMAT % [parties.size(), _band_labor.band_party_workers(band)], menu))
+    # **THE EMPTY HINT IS ZONE-LEVEL, NOT A LIST ITEM** — `_fill_work_zone`'s idiom exactly, where the
+    # board's empty hint is a sibling of the board rather than a row of it. What the zone says when
+    # there are no parties is a statement about the ZONE, and it must never be something the player can
+    # scroll away from; the list below it is simply empty.
     if parties.is_empty():
         col.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.PARTIES_EMPTY_HINT))
-    else:
-        for exp in parties:
-            col.add_child(_build_party_row(exp))
-    # Order: rows → inspector (if open) → an EXPAND_FILL spacer → footer, so the Scout/Hunt footer
-    # stays pinned to the BOTTOM of the zone with the strip sitting under the clicked row (the strip is
-    # a row → detail disclosure, the parties twin of the work board's inspector). Drop a strip pinned to
-    # a party that has left the list (recalled, moved to another band), mirroring `_fill_work_zone`'s
-    # stale-key clear. The strip's own line separation is tightened (PARTIES_INSPECTOR_LINE_SEPARATION)
-    # so strip + a row + the pinned footer still fit the height-capped T/B parties zone.
+    var list := _build_parties_list()
+    col.add_child(list)
+    var rows: VBoxContainer = list.get_child(0)
+    for exp in parties:
+        rows.add_child(_build_party_row(exp))
+    # Order inside the scrolled list: rows → inspector (if open), so the strip sits under the clicked
+    # row (the strip is a row → detail disclosure, the parties twin of the work board's inspector).
+    # Drop a strip pinned to a party that has left the list (recalled, moved to another band),
+    # mirroring `_fill_work_zone`'s stale-key clear. The strip's own line separation stays tightened
+    # (PARTIES_INSPECTOR_LINE_SEPARATION) — scrolling to read a strip is a fallback, not the intent.
     var inspected := _party_by_open_key(parties)
     if inspected.is_empty():
         _party_open_key = ""
     else:
-        col.add_child(_build_parties_inspector(inspected))
-    var spacer := Control.new()
-    spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
-    spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    col.add_child(spacer)
+        rows.add_child(_build_parties_inspector(inspected))
     col.add_child(_build_party_footer(band))
     return col
+
+## The parties zone's scrolling list host — a `ScrollContainer` whose single child is the VBox the rows
+## and the inspector strip go into. Returned with that VBox as child 0, which is what the builder above
+## fills.
+##
+## Three settings carry the contract:
+##   * **vertical AUTO** — the bar appears only when the content really overflows, so a band with one
+##     party looks exactly as it did before this zone could scroll at all.
+##   * **horizontal DISABLED** — the rows are already fitted to the flank's fixed width; a horizontal
+##     bar here would mean a row had been built too wide, which is a layout bug rather than something
+##     to offer the player a control for. DISABLED also forces the child to the container's width,
+##     which is what keeps the rows full-bleed.
+##   * **a declared `custom_minimum_size.y`** — the ONE number this zone contributes to the column's
+##     minimum. A `ScrollContainer` reports no minimum on a scrolling axis, so without it the zone
+##     would claim to need nothing at all and `band_panel_preview`'s content-fit walk would descend
+##     past it and measure the unbounded list instead.
+func _build_parties_list() -> ScrollContainer:
+    var scroll := ScrollContainer.new()
+    scroll.name = HudWorkVocab.PARTIES_LIST_NAME
+    scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+    scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+    scroll.custom_minimum_size = Vector2(0.0, HudWorkVocab.PARTIES_LIST_MIN_HEIGHT)
+    var rows := HudWidgets.make_zone_column()
+    # The zone's own block spacing, not the column's section spacing: these are sibling ROWS plus the
+    # strip that belongs to one of them, exactly the spacing they had as direct children of `col`.
+    rows.add_theme_constant_override("separation", HudWorkVocab.ZONE_BLOCK_SEPARATION)
+    # A scrolled child must not claim the viewport's height as its own, or a short list would stretch
+    # its rows down the zone; the width still fills, since horizontal scrolling is disabled.
+    rows.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+    scroll.add_child(rows)
+    return scroll
 
 ## The party in `parties` whose entity matches `_party_open_key`, or `{}` when none is open / the open
 ## one has left the list (the caller then clears the stale key).
@@ -1977,9 +2241,11 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     # ways. `improvement` is `IMPROVEMENT_NONE` and the crew noun is the party's: a detached party
     # builds nothing, exactly as the drawer's expedition branch already assumes.
     #
-    # **GATED ON THE ZONE HAVING ROOM, the `_build_food_outlook_block` idiom.** A horizontal dock's
-    # parties zone is height-capped and CLIPS, and the chart is ~150px of it — so the SHORT tier keeps
-    # the presets alone, exactly as it keeps the band zone's outlook chart out. The drag goes with it:
+    # **GATED ON THE ZONE HAVING ROOM.** A horizontal dock's parties zone is height-capped and CLIPS —
+    # only its row LIST scrolls, and the compose sheet sits below that list — and the chart is ~150px,
+    # so the SHORT tier keeps the presets alone. (The band zone took the same treatment for its own
+    # outlook chart until that zone learned to scroll; this one has not, so the gate stays.) The drag
+    # goes with it:
     # since slice 4b there is no plain-slider control left to keep, the chart's own floor flag IS the
     # dial (see `HudWidgets.build_floor_chart`).
     #

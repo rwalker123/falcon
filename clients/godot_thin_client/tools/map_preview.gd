@@ -485,6 +485,13 @@ func _ready() -> void:
 	# prefs file, the contamination `band_panel_preview` isolates its config paths to avoid.
 	ClientSettings.zoom_speed_multiplier = ClientSettings.ZOOM_SPEED_DEFAULT
 	ClientSettings.pan_speed_multiplier = ClientSettings.PAN_SPEED_DEFAULT
+	# …and the INTERFACE SCALE, out of the same file and by the same rule. `UiScaler` has already pushed
+	# whatever the developer's Options slider holds onto the window's `content_scale_factor`, which
+	# shrinks the logical viewport and makes MapView counter-scale itself — so every frame here would
+	# re-project on a machine whose slider has been moved. Pin the member and re-emit `changed`, which
+	# is what makes `UiScaler` and this harness's MapView both take the pinned value.
+	ClientSettings.ui_scale = ClientSettings.UI_SCALE_DEFAULT
+	ClientSettings.changed.emit()
 	# And STATE THE INPUT CONDITION — the third of the same family, the treatment `blend_probe` already
 	# carries. This harness renders in a REAL window, so `MapView._unhandled_input` picks up the OS
 	# cursor and draws a faint HOVER hex outline into whichever frame happens to be rendering when the
