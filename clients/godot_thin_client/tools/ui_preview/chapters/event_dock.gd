@@ -1137,10 +1137,21 @@ func run(harness) -> void:
 	h._assert_hud("…and it is CENTRED in the band, not pinned to an edge (%.0f leading / %.0f trailing)"
 			% [lead_gap, trail_gap],
 		is_equal_approx(lead_gap, trail_gap))
-	var wide_image = h.get_viewport().get_texture().get_image()
-	if wide_image != null:
-		wide_image.save_png("%s/event_dock_ultrawide.png" % h.OUT_DIR)
-		print("ui_preview: saved event_dock_ultrawide.png")
+	# **THE ONE FRAME THIS HARNESS WRITES OUTSIDE `_save`**, because it wants the ultrawide canvas as
+	# it stands here — `_save` would `_capture` against the PINNED canvas and reject this very frame.
+	# So the save's own error handling has to be restated inline; it cannot be inherited. Both arms
+	# go through `h._fail`, since a frame that was never written is a claim this chapter did not make.
+	# TYPED, because `h` is untyped and the `:=` on `save_png` below cannot infer a return type
+	# through a Variant chain — the `button_faces` chapter's idiom for the same reason.
+	var wide_image: Image = h.get_viewport().get_texture().get_image()
+	if wide_image == null:
+		h._fail("event_dock_ultrawide captured no image, so the cap is asserted against no frame")
+	else:
+		var wide_err := wide_image.save_png("%s/event_dock_ultrawide.png" % h.OUT_DIR)
+		if wide_err != OK:
+			h._fail("failed to save event_dock_ultrawide (err %d)" % wide_err)
+		else:
+			print("ui_preview: saved event_dock_ultrawide.png")
 	h._pin_canvas(h.get_window())
 	await h._settle()
 

@@ -25,6 +25,12 @@ const DEFAULT_CANVAS_SIZE := Vector2i(1000, 800)
 # so a WM that refuses to shrink the window fails loudly rather than hanging.
 const CANVAS_PIN_MAX_FRAMES := 60
 
+## The run's exit status. **A clean run exits 0 and a run with any `FAIL` in it exits non-zero**, so
+## the status and the output agree — a harness that printed an error and still exited 0 was
+## indistinguishable from a green one to anything but a human reading stdout.
+const EXIT_OK := 0
+const EXIT_FAILED := 1
+
 const GRID_W := 16
 const GRID_H := 12
 const BAND_ENTITY := 9001
@@ -445,6 +451,8 @@ var _river_lake_hex := Vector2i(-1, -1)
 # river states inherit it); the ANNOTATION states that follow switch back to DEFAULT_CANVAS_SIZE,
 # because their fixtures are authored against the GRID_W×GRID_H grid like the earlier states.
 var _canvas_size: Vector2i = DEFAULT_CANVAS_SIZE
+# How many times `_fail` fired this run — the ONE input to the exit status (see `_finish`).
+var _failures := 0
 
 func _ready() -> void:
 	# FREEZE ANIMATION TIME. What it buys: with the canvas pinned, the only remaining run-to-run
@@ -1373,7 +1381,24 @@ func _ready() -> void:
 
 	_assert_zoom_ladder()
 
-	get_tree().quit()
+	_finish()
+
+
+## The ONE failure sink, so `_failures` cannot drift from what was printed. Every caller passes the
+## text AFTER the `FAIL` token, which is what the output scanning keys on.
+func _fail(message: String) -> void:
+	_failures += 1
+	push_error("map_preview: FAIL — %s" % message)
+
+
+## **THE ONLY WAY OUT OF THIS HARNESS.** Every path that ends the run comes through here, so the
+## status is derived from the run's own tally in exactly one place.
+func _finish() -> void:
+	if _failures > 0:
+		print("map_preview: RUN FAILED — %d failure(s); see the FAIL lines above" % _failures)
+	else:
+		print("map_preview: run complete — no failures")
+	get_tree().quit(EXIT_FAILED if _failures > 0 else EXIT_OK)
 
 ## The zoom rail's LADDER, asserted rather than photographed — it SAVES NO PNG, deliberately, so the
 ## frame set stays a 62-frame bit-identity reference and this guard cannot re-baseline anything.
@@ -1537,7 +1562,7 @@ func _capture() -> Image:
 		await get_tree().process_frame
 		RenderingServer.force_draw()
 		await get_tree().process_frame
-	push_error("map_preview: viewport never came back to the pinned %s canvas" % _canvas_size)
+	_fail("viewport never came back to the pinned %s canvas" % _canvas_size)
 	return null
 
 func _save(name: String) -> void:
@@ -1546,7 +1571,7 @@ func _save(name: String) -> void:
 		return
 	var err := image.save_png("%s/%s.png" % [OUT_DIR, name])
 	if err != OK:
-		push_error("map_preview: failed to save %s (err %d)" % [name, err])
+		_fail("failed to save %s (err %d)" % [name, err])
 	else:
 		print("map_preview: saved ", name, ".png")
 
@@ -1561,7 +1586,7 @@ func _save_crop(name: String, fx0: float, fy0: float, fx1: float, fy1: float) ->
 	var crop := image.get_region(rect)
 	var err := crop.save_png("%s/%s.png" % [OUT_DIR, name])
 	if err != OK:
-		push_error("map_preview: failed to save %s (err %d)" % [name, err])
+		_fail("failed to save %s (err %d)" % [name, err])
 	else:
 		print("map_preview: saved ", name, ".png")
 
@@ -1593,7 +1618,7 @@ func _save_crop_px(name: String, center: Vector2, half: float) -> void:
 	var crop := image.get_region(rect)
 	var err := crop.save_png("%s/%s.png" % [OUT_DIR, name])
 	if err != OK:
-		push_error("map_preview: failed to save %s (err %d)" % [name, err])
+		_fail("failed to save %s (err %d)" % [name, err])
 	else:
 		print("map_preview: saved ", name, ".png")
 

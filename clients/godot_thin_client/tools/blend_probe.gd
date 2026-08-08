@@ -36,6 +36,12 @@ const HEX_RADIUS_TOLERANCE := 2.5
 # that refuses to shrink the window fails with the radius warning rather than hanging.
 const CANVAS_PIN_MAX_FRAMES := 60
 
+## The run's exit status. **A clean run exits 0 and a run with any `FAIL` in it exits non-zero**, so
+## the status and the output agree — a harness that printed an error and still exited 0 was
+## indistinguishable from a green one to anything but a human reading stdout.
+const EXIT_OK := 0
+const EXIT_FAILED := 1
+
 # --- state 1: the flat-biome band strip (24×16 at 1920×1080 → r ≈ 45) ---
 const GRID_W := 24
 const GRID_H := 16
@@ -708,6 +714,8 @@ var _shipped_blend_profiles: Dictionary = {}
 # 60+ frames, and a diagnosis loop re-renders ONE state many times. Empty = render everything (the default, so
 # CI/regression runs are unaffected).
 var _only: PackedStringArray = PackedStringArray()
+# How many times `_fail` fired this run — the ONE input to the exit status (see `_finish`).
+var _failures := 0
 
 
 func _ready() -> void:
@@ -923,7 +931,24 @@ func _ready() -> void:
 		# --- state 17 (BANK): the NavigableRiver BANK corridor reads as a CHAIN OF HEXAGONS ---
 		await _render_bank_state()
 
-	get_tree().quit()
+	_finish()
+
+
+## The ONE failure sink, so `_failures` cannot drift from what was printed. Every caller passes the
+## text AFTER the `FAIL` token, which is what the output scanning keys on.
+func _fail(message: String) -> void:
+	_failures += 1
+	push_error("blend_probe: FAIL — %s" % message)
+
+
+## **THE ONLY WAY OUT OF THIS HARNESS.** Every path that ends the run comes through here, so the
+## status is derived from the run's own tally in exactly one place.
+func _finish() -> void:
+	if _failures > 0:
+		print("blend_probe: RUN FAILED — %d failure(s); see the FAIL lines above" % _failures)
+	else:
+		print("blend_probe: run complete — no failures")
+	get_tree().quit(EXIT_FAILED if _failures > 0 else EXIT_OK)
 
 
 func _want(state: String) -> bool:
@@ -1299,7 +1324,7 @@ func _save_diff(a_name: String, b_name: String, out_name: String) -> void:
 			))
 	var err := out.save_png("%s/%s.png" % [OUT_DIR, out_name])
 	if err != OK:
-		push_error("blend_probe: failed to save %s (err %d)" % [out_name, err])
+		_fail("failed to save %s (err %d)" % [out_name, err])
 	else:
 		print("blend_probe: saved %s.png (%d px differ)" % [out_name, changed])
 
@@ -1929,7 +1954,7 @@ func _capture() -> Image:
 		await get_tree().process_frame
 		RenderingServer.force_draw()
 		await get_tree().process_frame
-	push_error("blend_probe: viewport never came back to the pinned %s canvas" % CANVAS_SIZE)
+	_fail("viewport never came back to the pinned %s canvas" % CANVAS_SIZE)
 	return null
 
 
@@ -1939,7 +1964,7 @@ func _save(name: String) -> void:
 		return
 	var err := image.save_png("%s/%s.png" % [OUT_DIR, name])
 	if err != OK:
-		push_error("blend_probe: failed to save %s (err %d)" % [name, err])
+		_fail("failed to save %s (err %d)" % [name, err])
 	else:
 		print("blend_probe: saved ", name, ".png")
 
@@ -1974,7 +1999,7 @@ func _save_crop(name: String, col: int, row: int, radii: float) -> void:
 	var crop := image.get_region(Rect2i(x0, y0, maxi(x1 - x0, 1), maxi(y1 - y0, 1)))
 	var err := crop.save_png("%s/%s.png" % [OUT_DIR, name])
 	if err != OK:
-		push_error("blend_probe: failed to save %s (err %d)" % [name, err])
+		_fail("failed to save %s (err %d)" % [name, err])
 	else:
 		print("blend_probe: saved ", name, ".png")
 

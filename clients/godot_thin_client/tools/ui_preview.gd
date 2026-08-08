@@ -524,7 +524,7 @@ func _stabilize_canvas() -> void:
 			stable = 0
 			_pin_canvas(get_window())
 		await get_tree().process_frame
-	push_error("ui_preview: the window never held the pinned %s canvas — frames will drift" % PREVIEW_CANVAS_SIZE)
+	_fail("the window never held the pinned %s canvas — frames will drift" % PREVIEW_CANVAS_SIZE)
 
 ## The viewport image, GUARANTEED to be the pinned canvas (or an integer HiDPI multiple of it). The
 ## WM's deferred maximize can resize the render target between a settle and a capture, so re-pin and
@@ -549,7 +549,7 @@ func _capture(name: String) -> Image:
 		await get_tree().process_frame
 		RenderingServer.force_draw()
 		await get_tree().process_frame
-	push_error("ui_preview: viewport never came back to the pinned %s canvas for %s" % [PREVIEW_CANVAS_SIZE, name])
+	_fail("viewport never came back to the pinned %s canvas for %s" % [PREVIEW_CANVAS_SIZE, name])
 	return null
 
 func _save(name: String) -> void:
@@ -561,7 +561,7 @@ func _save(name: String) -> void:
 		return
 	var err := image.save_png("%s/%s.png" % [OUT_DIR, name])
 	if err != OK:
-		push_error("ui_preview: failed to save %s (err %d)" % [name, err])
+		_fail("failed to save %s (err %d)" % [name, err])
 	else:
 		print("ui_preview: saved ", name, ".png")
 
