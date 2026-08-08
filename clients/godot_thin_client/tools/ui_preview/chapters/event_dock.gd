@@ -34,6 +34,40 @@ const ULTRAWIDE_WINDOW_SIZE := Vector2i(2560, 900)
 ## worst-case bright field behind the rows, and a screenshot of actual desert would be less extreme.
 const BRIGHT_TERRAIN_COLOR := Color(0.90, 0.86, 0.76)
 
+## The LEFT reservation the floor probe pushes. Chosen so the band it leaves on
+## `PREVIEW_CANVAS_SIZE_BASE` is the **338px** the live report produced (a 1422px logical viewport at
+## `ui_scale` 1.35 with the Band panel docked LEFT), rather than merely "some small number": the claim
+## is about the configuration that was reported, and a squeeze picked for arithmetic convenience would
+## drift away from it the first time either HUD column's authored width moved.
+const FLOOR_PROBE_RESERVED_LEFT := 878.0
+
+## The logical viewport the OVERHANG case was reported at — 1200px wide, which the HUD's two authored
+## columns (360 + 344) leave a 496px band. That band is above the card's own minimum and below the
+## comfortable width the floor used to clamp to, so it is the one range in which the strip was drawn
+## outside the insets it was given.
+const OVERHANG_PROBE_VIEWPORT_WIDTH := 1200.0
+## The LEFT reservation that stages it here. This canvas floors at 1920 (`_pin_canvas` sets the window
+## and `canvas_items` stretches from a 1920 base), so the reported viewport is reached by reserving the
+## difference away rather than by shrinking the window — the band is what the strip's rule reads, and
+## it cannot tell the two apart.
+const OVERHANG_PROBE_RESERVED_LEFT := float(PREVIEW_CANVAS_SIZE_BASE.x) - OVERHANG_PROBE_VIEWPORT_WIDTH
+
+## The two horizontal edges the shell-flip claim is walked on. Both, because `_apply_dock_layout`
+## writes the two against DIFFERENT anchors, so a placement correct on one can be wrong on the other —
+## the same reason the co-edge frames above are a pair.
+const SHELL_FLIP_EDGES: Array[int] = [SIDE_TOP, SIDE_BOTTOM]
+## The scale the flip is walked at — the one it was reported at.
+##
+## **`ui_scale` 1.0 IS NOT WALKED HERE, AND THAT IS A MEASUREMENT RATHER THAN AN OMISSION.** This
+## harness cannot reach the narrow shell on a horizontal dock at 1.0: `project.godot` stretches
+## `canvas_items` from a 1920 base with an `expand` aspect and `_pin_canvas` sets only the WINDOW size,
+## so the canvas floors at 1920 however small the window is — and 1920 less the two HUD columns is
+## **1216 against a 1190 threshold**, i.e. the wide shell holds by 26px. Asserted at 1.0 the
+## precondition simply failed, refusing to claim anything, which is what it is for. The mechanism's
+## 1.0 coverage lives in `band_panel_preview`, which pins `content_scale_size` as well and can
+## therefore stand the panel in the narrow shell on a horizontal dock with no scale at all.
+const SHELL_FLIP_SCALES := [1.35]
+
 ## The largest bar the dock offers, referenced rather than written as a 4 so the state and the
 ## panel's own `RECENT_COUNT_MAX` cannot drift.
 const EVENT_DOCK_MAX_ROWS := EventDockPanel.RECENT_COUNT_MAX
@@ -385,6 +419,131 @@ func _preview_push_event_dock_edge_offset(dock: EventDockPanel, reservers: Array
 ## things on one horizontal edge trivially share a vertical band, so the question that can be answered
 ## for free is whether their x-spans meet. The strip is centred and capped, so a panel narrower than
 ## the gap either side would make this claim about nothing.
+## THE OFFSET IS ONLY AS FRESH AS THE PANEL'S LAST **PUBLICATION**, and every co-edge claim above
+## reads `current_reservation_size()` live at the moment it pushes — which cannot see a stale one.
+##
+## `Main` does not poll. It keeps `_reservations`, written ONLY by `reservation_changed`, and
+## `_update_event_dock_edge_offset` sums that dictionary. So a size the panel DRAWS at but never
+## published is a bar placed by the old number — and the panel has two setters that relayout without
+## emitting (`set_lateral_bounds`, `set_rail_width`), both of which feed `_available_card_span()` and
+## therefore the SHELL, and therefore — since the strip's cross axis carries the active shell's own
+## chrome — the reserved size itself. Measured on a TOP dock: the panel drew 395 while `Main` held
+## 360, and the bar sat 35px inside the card.
+##
+## **SO THIS BLOCK CONSUMES THE SIGNAL RATHER THAN CALLING THE GETTER.** That is the whole difference
+## between it and the frames above; wired the other way it passes with the defect in place.
+##
+## **THE FLIP IS DRIVEN BY THE LATERAL BOUNDS, not by the interface scale**, because that is the
+## general mechanism and it is reachable at `ui_scale` 1.0: `Main` re-pushes those bounds every
+## snapshot on a TOP dock, and on this canvas they take the card's span from 1920 (wide shell) to
+## ~1141 (narrow). The scale is only how a player reaches the same shell on a 1920 monitor. The high
+## scale is then walked as well, because it is the configuration that was reported — and it is
+## restored, and the restore asserted, before this returns.
+func _assert_shell_flip_republishes(dock: EventDockPanel, panel: BandCityPanel) -> void:
+	# `Main._reservations` + `_update_event_dock_edge_offset`, restated — fed by what the panel
+	# PUBLISHES and by nothing else.
+	var published := {"edge": panel.get_dock(), "size": panel.current_reservation_size()}
+	var record := func(edge: int, size: float) -> void:
+		published["edge"] = edge
+		published["size"] = size
+		dock.set_edge_offset(size if edge == dock.get_dock() else 0.0)
+	panel.reservation_changed.connect(record)
+
+	for edge in SHELL_FLIP_EDGES:
+		for scale_variant in SHELL_FLIP_SCALES:
+			await _walk_shell_flip(dock, panel, published, float(scale_variant), edge)
+
+	panel.reservation_changed.disconnect(record)
+	dock.set_edge_offset(0.0)
+	h._hud.set_reserved_inset(&"band_panel", SIDE_TOP, 0.0)
+	h._hud.set_reserved_inset(&"band_panel", SIDE_BOTTOM, 0.0)
+	await h._settle()
+	h._assert_hud("shell flip: the interface scale is restored, so no later frame inherits it",
+		is_equal_approx(h.get_window().content_scale_factor, float(ClientSettings.UI_SCALE_DEFAULT)))
+
+## One (edge, scale) pass: stand the panel in the WIDE shell, push the bounds `Main` pushes, and
+## require that the bar followed the size the panel now draws at.
+func _walk_shell_flip(dock: EventDockPanel, panel: BandCityPanel, published: Dictionary,
+		scale: float, edge: int) -> void:
+	var label := "%s at scale %.2f" % ["TOP" if edge == SIDE_TOP else "BOTTOM", scale]
+	# The MEMBER, never `set_ui_scale` — the setter writes the developer's own config file.
+	ClientSettings.ui_scale = scale
+	ClientSettings.changed.emit()
+	# **THE BOUNDS ARE CLEARED BEFORE THE DOCK CHANGE, NOT AFTER, and the order is the claim's.**
+	# `set_dock` publishes unconditionally, so clearing afterwards leaves the panel's last PUBLISHED
+	# size the narrow one it happened to be carrying from the previous pass — and the flip below then
+	# lands back on that same number, so the stale-publication defect passes by coincidence. Measured:
+	# with the republish removed, the BOTTOM pass went green while the TOP one failed. Cleared first,
+	# `set_dock` publishes the WIDE size and the flip has somewhere to be stale FROM.
+	panel.set_lateral_bounds(0.0, 0.0)
+	panel.set_dock(edge)
+	dock.set_dock(edge)
+	# `Main._on_event_dock_dock_changed` — the bar's OWN edge changing re-runs the offset sum, since it
+	# changes which reservers it has to clear. Without it the offset recorded while the bar was still on
+	# the other edge (zero, correctly) stands, and every claim below fails on the harness's wiring
+	# rather than on the panel's.
+	dock.set_edge_offset(float(published["size"]) if int(published["edge"]) == dock.get_dock() else 0.0)
+	await h._settle()
+	h._hud.set_reserved_inset(&"band_panel", edge, published["size"])
+	await h._settle()
+	var wide_strip: float = panel._root.get_global_rect().size.y
+
+	# THE PER-SNAPSHOT RE-PUSH `Main._update_band_panel_lateral_bounds` makes on a TOP dock. On a
+	# BOTTOM dock `Main` pushes zeroes (the HUD yields that strip), so the flip is driven there by the
+	# SAME setter with the same numbers — the claim is about the setter, not about which edge supplies
+	# the widths.
+	var columns: Vector2 = h._hud.lateral_column_widths()
+	panel.set_lateral_bounds(columns.x, columns.y)
+	await h._settle()
+	h._hud.set_reserved_inset(&"band_panel", edge, published["size"])
+	await h._settle()
+	var narrow_strip: float = panel._root.get_global_rect().size.y
+
+	# The reported configuration, rendered: both docked to one horizontal edge with the panel in the
+	# narrow shell at a high interface scale. The assertions below carry the claim — an overlapping bar
+	# renders a perfectly plausible strip — but this is the one picture of the case, and the co-edge
+	# frames above are all the WIDE shell at 1.0.
+	await h._save("event_dock_shell_flip_%s" % ["top" if edge == SIDE_TOP else "bottom"])
+
+	# PRECONDITION. Without it every claim below passes on a panel whose shell never moved — which is
+	# most of this harness's canvases, and exactly why the defect had no failing state.
+	h._assert_hud("shell flip %s: the bounds really did flip the shell (strip %.0f → %.0f)"
+			% [label, wide_strip, narrow_strip],
+		not is_equal_approx(wide_strip, narrow_strip))
+	# THE CLAIM. `published` is the last thing `reservation_changed` carried; the rect is what the
+	# panel draws. A gap between them is a bar placed by a number nobody is drawing.
+	h._assert_hud("shell flip %s: the panel published the size it now draws (%.0f published, %.0f drawn)"
+			% [label, float(published["size"]), narrow_strip],
+		is_equal_approx(float(published["size"]), narrow_strip))
+	# …AND ITS CONSEQUENCE, which is the reported defect: the bar sits entirely past the card.
+	var bar := dock._root.get_global_rect()
+	var card := panel._panel.get_global_rect()
+	if edge == SIDE_TOP:
+		h._assert_hud("shell flip %s: the bar begins at or past the card's far edge (bar top %.0f, card bottom %.0f)"
+				% [label, bar.position.y, card.end.y],
+			bar.position.y >= card.end.y - CO_EDGE_RECT_EPSILON)
+	else:
+		h._assert_hud("shell flip %s: the bar ends at or before the card's near edge (bar bottom %.0f, card top %.0f)"
+				% [label, bar.end.y, card.position.y],
+			bar.end.y <= card.position.y + CO_EDGE_RECT_EPSILON)
+	_assert_bar_clears_co_edge(dock, panel, "the %s-docked panel after a shell flip" % [
+		"TOP" if edge == SIDE_TOP else "BOTTOM"])
+
+	# **THE NARROW SHELL'S CARD TAKES THE WHOLE AVAILABLE SPAN** — defect (4)'s claim, asserted where
+	# the narrow shell on a horizontal dock actually is. `_card_width()` says so in its docstring
+	# ("it is reached only when there is too little room for three zones, i.e. exactly when there is
+	# nothing to give back"), and nothing checked it; the wide shell's centred content-width card is
+	# the OTHER branch and is untouched. The remaining gap at the card's leading edge is
+	# `_bound_leading`, the HUD column this card must not be drawn over — which is why the claim is
+	# span equality and not "the card reaches the screen edge".
+	h._assert_hud("shell flip %s: the narrow card fills its available span (%.0f drawn of %.0f available, leading bound %.0f)"
+			% [label, card.size.x, panel._available_card_span(), panel._bound_leading],
+		is_equal_approx(card.size.x, panel._available_card_span()))
+
+	ClientSettings.ui_scale = ClientSettings.UI_SCALE_DEFAULT
+	ClientSettings.changed.emit()
+	await h._settle()
+
 func _assert_bar_clears_co_edge(dock: EventDockPanel, panel: BandCityPanel, what: String) -> void:
 	var bar := dock._root.get_global_rect()
 	var box := panel._root.get_global_rect()
@@ -985,6 +1144,46 @@ func run(harness) -> void:
 	h._pin_canvas(h.get_window())
 	await h._settle()
 
+	# ---- …AND THE FLOOR, WHICH IS THE SAME RULE READ FROM BELOW --------------------------------
+	# The cap's own derivation says "no content is ever squeezed"; nothing enforced it downward. The
+	# band is `viewport − insets`, and the insets are three FIXED logical widths (a docked panel's
+	# reservation + the HUD's two authored columns), so it collapses as the logical viewport does.
+	# Reported at `ui_scale` 1.35 with the Band panel docked LEFT: a 1422px viewport, insets 740/344,
+	# **a 338px band** — under the dock card's own 406px minimum, so the card drew outside the strip
+	# and `EventRows` (`clip_contents`) cut its labels.
+	#
+	# **REPRODUCED BY RESERVATION, NOT BY A SCALE, and deliberately.** The strip's rule reads the
+	# BAND and knows nothing about `content_scale_factor`; the arithmetic that squeezes the band is
+	# identical whether the viewport shrank or a wider panel docked. Pushing a scale here would be
+	# window state in the middle of a chapter — the one thing `interface_scale.gd` runs last to avoid.
+	_preview_push_event_dock_insets(event_dock, FLOOR_PROBE_RESERVED_LEFT, 0.0)
+	await h._settle()
+	var squeezed_band: float = float(PREVIEW_CANVAS_SIZE_BASE.x) \
+		- event_dock._inset_left - event_dock._inset_right
+	h._assert_hud("precondition: the squeezed band (%.0f) is genuinely under the floor (%.0f)"
+			% [squeezed_band, EventDockPanel.MIN_STRIP_WIDTH],
+		squeezed_band < EventDockPanel.MIN_STRIP_WIDTH)
+	h._assert_hud("under the floor the strip stops shrinking at %.0f instead of taking the %.0f band"
+			% [event_dock._root.size.x, squeezed_band],
+		is_equal_approx(event_dock._root.size.x, EventDockPanel.MIN_STRIP_WIDTH))
+	# It overhangs its INSETS — that is the trade — but never the window: a strip hanging off the
+	# screen edge loses exactly the text the floor exists to save.
+	h._assert_hud("…and the floored strip is still wholly on screen (%.0f..%.0f of %d)"
+			% [event_dock._root.offset_left, event_dock._root.offset_right,
+				PREVIEW_CANVAS_SIZE_BASE.x],
+		event_dock._root.offset_left >= -CO_EDGE_RECT_EPSILON
+			and event_dock._root.offset_right <= float(PREVIEW_CANVAS_SIZE_BASE.x) + CO_EDGE_RECT_EPSILON)
+	# THE PAIRED NEGATIVE, and without it a floor hard-wired ON passes everything above: with the
+	# squeeze released the strip must go straight back to filling its band.
+	_preview_push_event_dock_insets(event_dock, 0.0, 0.0)
+	await h._settle()
+	var released_band: float = float(PREVIEW_CANVAS_SIZE_BASE.x) \
+		- event_dock._inset_left - event_dock._inset_right
+	h._assert_hud("…and with the squeeze released it FILLS its band again (%.0f of %.0f, floor %.0f)"
+			% [event_dock._root.size.x, released_band, EventDockPanel.MIN_STRIP_WIDTH],
+		is_equal_approx(event_dock._root.size.x, released_band)
+			and released_band > EventDockPanel.MIN_STRIP_WIDTH)
+
 	# THE STRIP DOES NOT BURY THE MAP. It reserves nothing now, so this is no longer about leaving the
 	# map room to lay out in — it is about how much LIVE MAP the overlay hides, which is the same
 	# `MAX_STRIP_HEIGHT_FRACTION` bound and a claim worth keeping. **Measured on the DRAWN rect**
@@ -1114,10 +1313,46 @@ func run(harness) -> void:
 	h._hud.set_reserved_inset(&"band_panel", SIDE_TOP, 0.0)
 	await h._settle()
 
+	await _assert_shell_flip_republishes(event_dock, co_edge_panel)
+
 	h._hud.set_reserved_inset(&"band_panel", SIDE_BOTTOM, 0.0)
 	event_dock.set_edge_offset(0.0)
 	co_edge_panel.queue_free()
 	await h.get_tree().process_frame
+	await h._settle()
+
+	# ---- A SQUEEZED STRIP STAYS INSIDE THE INSETS IT WAS GIVEN ---------------------------------
+	# The band the probe above stages (338) is under EVERY candidate floor, so it can only ever show
+	# the overhang trade. This one stages a band the floor USED to overhang and now fits inside: 496,
+	# which is what a 1200px logical viewport leaves with NOTHING docked (1200 − 360 − 344, the HUD's
+	# two authored columns) — reachable by dragging the interface scale up on an ordinary monitor.
+	#
+	# **REPRODUCED BY RESERVATION, NOT BY A SCALE**, for the reason the floor probe states: the strip's
+	# rule reads the BAND, and the arithmetic that squeezes it is identical whether the viewport shrank
+	# or a panel docked — so the reservation that shrinks this canvas to the reported viewport stages
+	# the reported band exactly.
+	#
+	# **THE CLAIM IS PHRASED IN THE VIEWPORT AND THE INSETS, never in `MIN_STRIP_WIDTH`**: an assertion
+	# written in the implementation's own terms stays green when the implementation moves, which is how
+	# a strip clamped UP to a comfortable width — and drawn 79px over each HUD column — passed every
+	# width claim in this chapter.
+	event_dock.set_dock(SIDE_TOP)
+	event_dock.set_expanded(false)
+	_preview_push_event_dock_insets(event_dock, OVERHANG_PROBE_RESERVED_LEFT, 0.0)
+	await h._settle()
+	await h._save("event_dock_narrow_band")
+	var narrow_viewport: float = event_dock._viewport_size().x
+	var narrow_band: float = narrow_viewport - event_dock._inset_left - event_dock._inset_right
+	h._assert_hud("precondition: the insets really do squeeze the band (%.0f of the %.0f canvas, insets %.0f / %.0f)"
+			% [narrow_band, narrow_viewport, event_dock._inset_left, event_dock._inset_right],
+		narrow_band > 0.0 and narrow_band < narrow_viewport)
+	h._assert_hud("the squeezed strip starts at or right of the left inset (strip %.0f, inset %.0f)"
+			% [event_dock._root.offset_left, event_dock._inset_left],
+		event_dock._root.offset_left >= event_dock._inset_left - CO_EDGE_RECT_EPSILON)
+	h._assert_hud("…and ends at or left of the right inset (strip %.0f, viewport %.0f less inset %.0f)"
+			% [event_dock._root.offset_right, narrow_viewport, event_dock._inset_right],
+		event_dock._root.offset_right <= narrow_viewport - event_dock._inset_right + CO_EDGE_RECT_EPSILON)
+	_preview_push_event_dock_insets(event_dock, 0.0, 0.0)
 	await h._settle()
 
 	event_dock.queue_free()

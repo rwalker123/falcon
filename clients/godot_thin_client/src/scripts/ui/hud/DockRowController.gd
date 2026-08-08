@@ -85,15 +85,31 @@ func set_panel(panel: BandCityPanel) -> void:
 ## React to the Band/City panel's reservation. `edge` is a Godot Side const; `size` is the reserved
 ## cross-axis size (0 when hidden, `COLLAPSED_SIZE` when railed).
 func apply(edge: int, size: float) -> void:
-	var wants_reflow := _panel != null \
-		and REFLOW_EDGES.has(edge) \
-		and size >= _required_height()
+	var wants_reflow := parks_for(edge, size)
 	if wants_reflow == _is_reflowed:
 		return
 	if wants_reflow:
 		_park()
 	else:
 		_restore()
+
+## **WILL the chrome park for this (edge, size)?** `apply`'s own verdict, exposed as a pure function so
+## `Main.band_dock_overlays_hud` can ask it BEFORE the reflow has happened — the two are separate
+## listeners on the same `reservation_changed`, and `Main`'s runs first, so a state read (`_is_reflowed`)
+## would answer for the previous reservation. Being a function of (edge, size) and the chrome's own
+## minimums, it gives both callers the same answer whichever order they arrive in.
+##
+## It is what makes the HUD's bottom-edge yield honest: the strip is only free of HUD furniture once the
+## chrome has moved into the card's rail. A panel collapsed to its 46px rail, a hidden one, and a window
+## too short for the stack all decline here, and in every one of them `BottomBar` is still in the row.
+func parks_for(edge: int, size: float) -> bool:
+	return _panel != null and REFLOW_EDGES.has(edge) and size >= _required_height()
+
+## The rail width this controller WOULD declare at that verdict — `_push_rail_width`'s number, answered
+## before it is pushed, and 0 when the chrome stays home (which is what `_restore` declares). Read by
+## `Main.band_dock_overlays_hud` for the same order-independence reason as `parks_for`.
+func rail_width_for(edge: int, size: float) -> float:
+	return _measured_rail_width() if parks_for(edge, size) else 0.0
 
 ## The chrome only fits if the reserved strip can hold the whole STACK — both clusters plus the gap
 ## between them plus the card's own vertical chrome. This ONE test covers every case that must fall back
@@ -142,9 +158,14 @@ func _restore() -> void:
 func _push_rail_width() -> void:
 	if not _is_reflowed or _panel == null:
 		return
+	_panel.set_rail_width(_measured_rail_width())
+
+## The wider of the two clusters — the ONE measurement, so what `rail_width_for` predicts and what
+## `_push_rail_width` declares cannot drift apart.
+func _measured_rail_width() -> float:
 	var nav_width := 0.0 if _nav == null else _nav.get_combined_minimum_size().x
 	var turn_width := 0.0 if _turn == null else _turn.get_combined_minimum_size().x
-	_panel.set_rail_width(maxf(nav_width, turn_width))
+	return maxf(nav_width, turn_width)
 
 ## Reparent a cluster into its rail slot. **No anchors, offsets or presets are written here, and that is
 ## the point**: a slot is a `MarginContainer`, so it lays the cluster out and the panel's

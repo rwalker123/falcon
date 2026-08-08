@@ -17,7 +17,7 @@ paths:
 | Script | Purpose |
 |--------|---------|
 | `ui/hud/BandPanelController.gd` | `RefCounted` controller (HUD decomposition Phase 2d, `docs/plan_hud_decomposition.md`) owning the **BAND/CITY PANEL's whole render path** — the last big mass to leave `Hud.gd`. It holds the panel HANDLE (`_panel`), the three public **zone builders** `build_band_zone` / `build_work_zone` / `build_parties_zone` and everything under them (the band zone's vitals/PEOPLE/food-outlook/WORKFORCE + role cards; the work zone's paged board, filter chips, pager, inspector strip and source models; the parties zone's rows, inspector strip, footer and the mission compose sheet), the panel's **cycler + snapshot refresh** (`render_band` / `refresh_snapshot` / `rerender` / `cycle_band` / `focus_band` / `select_expedition` / `focus_labor_source` / `confirm_recall_expedition` / `_push_zone_badges`), and the **zone state that survives a snapshot** — `_work_filter` / `_work_sort` / `_work_page` / `_work_open_key` / `_work_policy_open` / `_work_zone_host` / `_work_zone_band` / `_band_zone_tier` / `_party_open_key` / `_party_compose_open` / `_party_compose_mission` / `_send_expedition_count` / `_send_hunt_policy` — ~1,580 lines, 72 moved functions. **`_band_zone_tier` is why the band and work halves are ONE controller**: it is a bare `int` written by `build_band_zone` and read by `_on_zones_resized`, so splitting them would have straddled it. Hud holds it as `_bandpanel`, constructed in `_ready` after `_disclosures` (the vitals row wires its carets through it). **THE PANEL HANDLE IS PRIVATE** — the two non-moving `HudLayer` readers (`_refresh_disclosure_hosts`, `_render_occupant_drawer`) only ever asked "is a panel injected?", so they ask **`has_panel()`** instead of holding the node. **The injection surface is TWO Callables** (it was nine, then six; the three detail-line ones went with `BandDetailLines`, and the four send-expedition/quarry targeting ones went with `TargetingController`), each retained on HudLayer by the "an injection you still have to hold is relocated, not eliminated" test: `_emit_assign_labor` (owns the `assign_labor_requested` emit + optimistic pending write, so `assign_labor` stays INDIRECT) · `_herd_label_for_id`. Each is reached through a **typed adapter**. The parties zone's send-expedition + quarry verbs (`begin_send_expedition` / `begin_pick_quarry` / `cancel_pick_quarry` / `is_expedition_quarry`) are a typed **`TargetingController`** collaborator now, not four Callables. `_is_player_unit` is a trivial private COPY (the `SelectionCardController` precedent). Collaborators: the SAME `_band_labor` / `_compose` model instances BY REFERENCE, `_selectioncard` (roster lookup + map pinning, for the cycler / labor-source / party jump routing, **plus `selected_terrain_label()`** — the one selection read the vitals rows need), `_disclosures` for `wire_label` ONLY, **`_banddetail` (a typed `BandDetailLines` ref — the vitals label and the parties inspector strip render through it; the three `*_fn` members `_unit_summary_lines_fn` / `_expedition_summary_lines_fn` / `_expedition_row_tooltip_fn` and their adapter wrappers are DELETED, the tooltip being a static `DetailFormat.expedition_row_tooltip` call now)**, and the HUD CanvasLayer as the **host** it `add_child`s its `ConfirmationDialog` into (a `RefCounted` cannot parent — the `TurnOrbController` pattern). **It emits FIVE signals, all RELAYED by HudLayer** (the controller never emits a HudLayer signal): `cancel_order_requested` · `send_hunt_expedition_requested` · `recall_expedition_requested` · `alert_focus_requested` · `roster_occupant_selected`. **`set_band_city_panel` / `cycle_panel_band` / `focus_panel_band` MUST stay callable on the HUD node** — `Main._wire_band_city_panel` probes all three with `has_method` and binds the latter two to `BandCityPanel`'s `cycle_requested` / `subject_activated`, and a failed probe fails SILENTLY — so HudLayer keeps them as thin delegators. **`_build_allocation_panel` does NOT live on this controller**: it writes the drawer's `%AllocationPanel` node, so it stays with the drawer render dispatch (it moved to `SubjectDrawerController` with that dispatch in Phase 2c-3, still a thin function stacking this controller's three public zone builders; its two siblings on that host, `_build_band_move_actions` / `_build_expedition_panel`, are branches of `_render_occupant_drawer` and travelled with it for the same reason). Word tables, formats and thresholds stay on `HudLayer` and are read back as `HudLayer.X`, the `HudWidgets`/`HudFormat`/`SelectionCardController`/`DrawerComposeController` convention. Behaviour identical to the old inlined band-panel code |
-| `ui/BandCityPanel.gd` / `.tscn` | The dockable **Band/City command center** CanvasLayer — persistent whenever ≥1 player band exists, dockable to any of the 4 edges (default left, persisted to `user://band_city_dock.cfg`) + collapse-to-rail. Header (stage glyph/name/label + the band's hex coordinates + `◀ n/N ▶` cycler + 2×2 dock chooser + collapse), body hosts **AN ORDERED LIST OF NAMED ZONES AT A FIXED CROSS-AXIS SIZE**, declared by the SUBJECT via **`set_zone_layout(specs)`** and filled by **`set_zones(contents)`** (keys `&"band"`/`&"work"`/`&"knowledge"`/`&"parties"`; the panel OWNS and frees them, and frees a content handed in for a zone the layout does not declare). A band declares three, the faction page four — see "THE BODY IS AN ORDERED LIST OF ZONES". Two shells, chosen by the panel's own **WIDTH** (`wide_shell_min_width()` — never a dock-edge test, so a resizable dock needs no special case). **That threshold is DERIVED FROM THE LIVE ZONE LIST, never hand-picked and never a fixed set of terms**: it sums each declared zone's flank (an EXPANDING zone contributing `ZONE_WORK_MIN_WIDTH`, the one readable board column the test exists to protect) plus **one `RAIL_SEPARATOR_SPAN` per GAP** plus `PANEL_CHROME_H` — so a band's three come to 380 + 380 + 354 + 2×25 + 26 = **1190** and the faction page's four to 380 + 380 + 354 + 354 + 3×25 + 26 = **1569**. **It is therefore PER-SUBJECT**: on a window between the two the faction page correctly tabs while a band's page stays abreast, which is also why `set_zone_layout` is called BEFORE the zone contents are built. `ZONE_WORK_MIN_WIDTH` (380) MIRRORS Hud's `WORK_COLUMN_MIN_WIDTH` — one readable board column — exactly as `ZONE_WORK_MAX_WIDTH` (1520) mirrors `WORK_COLUMN_MIN_WIDTH × WORK_MAX_COLUMNS`; the two are a PAIR with Hud's column consts and move with them. The chrome term is load-bearing because the threshold is tested against the panel's OUTER `_panel_extent().x` while the zones live in `_interior_size()`. It shipped hand-picked at **900**, which broke the whole 900–1055 band (the derived threshold was 1056 then, before the flanks widened): the work zone came out 224px, Hud clamped to one column, its labels clipped — and the NARROW shell would have given the board the full 874px, so flipping wide early made it ~4× narrower, degrading the thing the wide shell exists to improve. `PANEL_CHROME_H` is a `const`; `_wide_separator_span()` and `_fixed_zone_span()` are FUNCTIONS over `_zone_layout`, shared by `wide_shell_min_width()`, `_card_width()`, `_affordable_work_columns()` and `zone_size()` so none of them can disagree about how much width the chrome eats. (`WIDE_SEPARATOR_SPAN`, the `const` that hard-wired TWO gaps, is deleted — it was the one term a fourth column could not have been added around.) **wide** (in practice T/B) = every declared zone side by side, the flanks fixed at `ZONE_BAND_WIDTH` (380) / `ZONE_PARTY_WIDTH` (`PANEL_WIDTH − PANEL_CHROME_H` = 354 — see "The wide shell's flanks are never narrower than the narrow shell's zone") / `ZONE_KNOWLEDGE_WIDTH` (the same 354, taking the same floor for the same rule), work EXPAND_FILL, `LINE_SOFT` hairlines in every gap, no tab bar; **narrow** (in practice L/R) = the subject's own tab bar under the header + exactly one zone beneath it (active tab = SIGNAL ink + a 2px SIGNAL underline, badges via `set_tab_badge(zone, text, hot)`, selection persisted as `CONFIG_KEY_TAB`). **The cross-axis size is FIXED** — `PANEL_WIDTH` 380 (L/R) / `PANEL_HEIGHT_WIDE` 360 clamped to `MAX_WIDE_HEIGHT_FRACTION` of the window (T/B) — so `current_reservation_size()` changes ONLY on dock/collapse/hide/viewport-resize and a content edit can no longer re-emit `reservation_changed` → `MapView.set_reserved_inset` → cache invalidation (the map flicker on every `+` press). **There is deliberately no `ScrollContainer` anywhere in the panel** (no-scroll by design; the work zone pages itself against **`work_zone_size()`** — a named reader of the KEYED **`zone_size(zone)`**, which is one answer with one parameter rather than a named accessor per zone that a fourth zone would have to add a fifth of — the zone's interior after chrome — e.g. 354×1107 in a 380 L dock, 789×300 in a 1920 bottom dock with the chrome rail sharing that row — and re-pages on the **`zones_resized`** signal). **Zone hosts are plain `Control`s, not containers**, so an over-wide zone content cannot push the card past its fixed cross-axis size; `clip_contents` keeps overflow inside its own zone. Reserves its edge via `reservation_changed(edge, size)` → `Main._apply_reservation(&"band_panel", …)`, which since issue #377 fans a HORIZONTAL dock's reservation to the map at 0 (the card floats over live map) and a TOP dock's to the HUD at 0 as well (its readouts belong beside the card, not below the strip). On a **BOTTOM** dock the strip also carries **a trailing CHROME RAIL** the HUD parks its stacked bottom-bar chrome into (`rail_slot_host` / `set_rail_width`, issue #324) — a SIBLING of the card, not a cell of its row, and bottom-only since #377 (a top dock never displaces `BottomBar`, so its chrome stays home). See "Band/City dockable panel". See "Band/City dockable panel" + `docs/plan_band_city_dock.md` |
+| `ui/BandCityPanel.gd` / `.tscn` | The dockable **Band/City command center** CanvasLayer — persistent whenever ≥1 player band exists, dockable to any of the 4 edges (default left, persisted to `user://band_city_dock.cfg`) + collapse-to-rail. Header (stage glyph/name/label + the band's hex coordinates + `◀ n/N ▶` cycler + 2×2 dock chooser + collapse), body hosts **AN ORDERED LIST OF NAMED ZONES AT A FIXED CROSS-AXIS SIZE**, declared by the SUBJECT via **`set_zone_layout(specs)`** and filled by **`set_zones(contents)`** (keys `&"band"`/`&"work"`/`&"knowledge"`/`&"parties"`; the panel OWNS and frees them, and frees a content handed in for a zone the layout does not declare). A band declares three, the faction page four — see "THE BODY IS AN ORDERED LIST OF ZONES". Two shells, chosen by the panel's own **WIDTH** (`wide_shell_min_width()` — never a dock-edge test, so a resizable dock needs no special case). **That threshold is DERIVED FROM THE LIVE ZONE LIST, never hand-picked and never a fixed set of terms**: it sums each declared zone's flank (an EXPANDING zone contributing `ZONE_WORK_MIN_WIDTH`, the one readable board column the test exists to protect) plus **one `RAIL_SEPARATOR_SPAN` per GAP** plus `PANEL_CHROME_H` — so a band's three come to 380 + 380 + 354 + 2×25 + 26 = **1190** and the faction page's four to 380 + 380 + 354 + 354 + 3×25 + 26 = **1569**. **It is therefore PER-SUBJECT**: on a window between the two the faction page correctly tabs while a band's page stays abreast, which is also why `set_zone_layout` is called BEFORE the zone contents are built. `ZONE_WORK_MIN_WIDTH` (380) MIRRORS Hud's `WORK_COLUMN_MIN_WIDTH` — one readable board column — exactly as `ZONE_WORK_MAX_WIDTH` (1520) mirrors `WORK_COLUMN_MIN_WIDTH × WORK_MAX_COLUMNS`; the two are a PAIR with Hud's column consts and move with them. The chrome term is load-bearing because the threshold is tested against the panel's OUTER `_panel_extent().x` while the zones live in `_interior_size()`. It shipped hand-picked at **900**, which broke the whole 900–1055 band (the derived threshold was 1056 then, before the flanks widened): the work zone came out 224px, Hud clamped to one column, its labels clipped — and the NARROW shell would have given the board the full 874px, so flipping wide early made it ~4× narrower, degrading the thing the wide shell exists to improve. `PANEL_CHROME_H` is a `const`; `_wide_separator_span()` and `_fixed_zone_span()` are FUNCTIONS over `_zone_layout`, shared by `wide_shell_min_width()`, `_card_width()`, `_affordable_work_columns()` and `zone_size()` so none of them can disagree about how much width the chrome eats. (`WIDE_SEPARATOR_SPAN`, the `const` that hard-wired TWO gaps, is deleted — it was the one term a fourth column could not have been added around.) **wide** (in practice T/B) = every declared zone side by side, the flanks fixed at `ZONE_BAND_WIDTH` (380) / `ZONE_PARTY_WIDTH` (`PANEL_WIDTH − PANEL_CHROME_H` = 354 — see "The wide shell's flanks are never narrower than the narrow shell's zone") / `ZONE_KNOWLEDGE_WIDTH` (the same 354, taking the same floor for the same rule), work EXPAND_FILL, `LINE_SOFT` hairlines in every gap, no tab bar; **narrow** (in practice L/R) = the subject's own tab bar under the header + exactly one zone beneath it (active tab = SIGNAL ink + a 2px SIGNAL underline, badges via `set_tab_badge(zone, text, hot)`, selection persisted as `CONFIG_KEY_TAB`). **The cross-axis size is FIXED** — `PANEL_WIDTH` 380 (L/R) / `_horizontal_panel_height()` = the body budget (`PANEL_HEIGHT_WIDE` 360 at one band column, `PANEL_HEIGHT_WIDE_TWO_COLUMN` 335 at two) **plus the active shell's own chrome** (`_shell_chrome_height()`: 0 wide, the tab bar narrow), clamped to `MAX_WIDE_HEIGHT_FRACTION` of the window (T/B) — see "The strip's height is 360 at ONE band column and 335 at two" — so `current_reservation_size()` changes ONLY on dock/collapse/hide/viewport-resize and a content edit can no longer re-emit `reservation_changed` → `MapView.set_reserved_inset` → cache invalidation (the map flicker on every `+` press). **TWO sanctioned `ScrollContainer`s exist in the panel — the PARTIES list and the BAND zone** — and the harness asserts both halves for each: that it exists, and that no OTHER zone has grown one (`_assert_scroll_only_where_sanctioned`, a table of `(node name, owning zone)` pairs, so a scroll under the wrong zone still fails). Everything else is no-scroll by design; the work zone pages itself against **`work_zone_size()`** — a named reader of the KEYED **`zone_size(zone)`**, which is one answer with one parameter rather than a named accessor per zone that a fourth zone would have to add a fifth of — the zone's interior after chrome — e.g. 354×1107 in a 380 L dock, 789×300 in a 1920 bottom dock with the chrome rail sharing that row — and re-pages on the **`zones_resized`** signal). **Zone hosts are plain `Control`s, not containers**, so an over-wide zone content cannot push the card past its fixed cross-axis size; `clip_contents` keeps overflow inside its own zone. Reserves its edge via `reservation_changed(edge, size)` → `Main._apply_reservation(&"band_panel", …)`, which since issue #377 fans a HORIZONTAL dock's reservation to the map at 0 (the card floats over live map) and a TOP dock's to the HUD at 0 as well (its readouts belong beside the card, not below the strip). On a **BOTTOM** dock the strip also carries **a trailing CHROME RAIL** the HUD parks its stacked bottom-bar chrome into (`rail_slot_host` / `set_rail_width`, issue #324) — a SIBLING of the card, not a cell of its row, and bottom-only since #377 (a top dock never displaces `BottomBar`, so its chrome stays home). See "Band/City dockable panel". See "Band/City dockable panel" + `docs/plan_band_city_dock.md` |
 | `ui/hud/BandComposeFloat.gd` | **The parties compose sheet, floated off the panel when its zone cannot hold it** — see "A COMPOSE SHEET THE ZONE CANNOT HOLD LEAVES THE ZONE" for the trigger. An **`AutoSizingPanel`**, not `PanelCard` + `DockScrollFit`: this card is measured against the VIEWPORT rather than against a dock's remaining height, which is the free-floating half of that pair (`panel-framework.md`). Both axes are fitted explicitly, because the node is a plain `Control` and no child minimum ever reaches it. **It is the card and NOTHING more — there is deliberately no full-screen catcher.** `ComposeSheet`, the herd drawer's floating sheet, is a catcher with a card inside it so a click anywhere outside dismisses; that is exactly wrong here, because the DOCK's sheet stays open through a map pick — the targeting banner and the herd glow ride on the sheet still being open while the player clicks a herd — and a catcher would eat that click. `PanelRoot`'s autopsy applies in reverse: a `STOP` control the pointer finds makes the Viewport mark the press handled before `MapView._unhandled_input` sees it, so every pixel this node claims is a pixel of dead map, and it claims only its own rect (`band_panel_preview._assert_float_leaves_the_map_clickable` drives that through `Viewport.push_input`, never off a `mouse_filter` value). **It never overlaps the card it came from, structurally rather than by a clamp**: `_room()` is the viewport inside `VIEWPORT_MARGIN` cut back to the MAP-FACING side of the panel card (`MAP_FACING_SIDE`, the opposite of the docked edge) with `ANCHOR_GAP` of clearance, and the width fit, the height fit and the placement all read that ONE rect — a card too tall for it scrolls, it does not creep back across the seam. **`target_width` is the ZONE width plus this card's own chrome**, never the zone width itself: `AutoSizingPanel`'s width is the OUTER one, and a sheet handed the zone width minus a border, two content margins and a scroll gutter re-wraps, which would falsify the very measurement that floated it. `mount` applies that width BEFORE the frame `refit` waits, or the height fit reads the previous width's wrapping and leaves the card ~100px taller than its content (measured). Its ONE `ScrollContainer` is not a breach of the panel's no-scroll rule — that rule is about content whose height feeds back into a FIXED reservation, and this ceiling is real viewport room — and it stays DISABLED unless `fit_to_content` finds the content taller than the room. It draws in `BandCityPanel.panel_card_stylebox()`, the panel's own, so it reads as the panel's surface rather than a second kind of card |
 | `ui/hud/FactionRollup.gd` | **All-`static`, stateless** builder of the FACTION PAGE's FOUR zones (issue #450) — the all-band rollup the cycler pins first. `build_band_zone` (the summed PEOPLE bar + the band page's own five vitals rows — Food / Trade / Kit / Morale / Growth), `build_work_zone` (the whole workforce as one bar and the per-band roster), **`build_knowledge_zone`** (SETTLING, the craft tracks, DISCOVERIES — the fourth column the panel's ordered-list body exists to hold, with a `full` HEIGHT TIER that drops the last of the three in a height-capped horizontal dock) and `build_parties_zone` (every party and the band it left, its NAME jumping to that band — see "THE PARTIES ROW NAMES THE HOME BAND" for why `_summary_row` binds a separate `jump_owner`), plus the `_stat_row` leaf they are built from. Its two new inputs are threaded in as PARAMETERS like every other: the player faction's sedentarization entry and its discovered-site array, read off `FactionReadouts` (`faction_sedentarization` / `faction_discovered_sites`), which is where the PLAYER-FACTION FILTER over those two per-faction wire arrays already lives — a second walk looking for `PLAYER_FACTION_ID` is a second chance to disagree about whose faction is being reported. **It is a shared LAYER rather than a controller because the page is a READOUT** — no steppers, no compose sheet, no open row, nothing that survives a snapshot — so it has no per-cluster state to own, which is the whole of what makes a controller one (`hud-modules.md`). The one thing it needs is threaded in as a PARAMETER: the `HudBandLaborState` instance, plus the faction's `{track: progress}` row and the caller's `herd_label_for_id` Callable (the treatment `HudFormat.panel_expedition_summary` already takes — a stateless layer must not reach for the roster/selection/herd-list state that resolver reads). **IT RE-DERIVES NOTHING**: every total is a SUM over answers the per-band surfaces already give (`DetailFormat.band_net_food` / `band_provisions` / `band_trade_stock` / `band_trade_income`, `HudBandLaborState.effective_idle` / `effective_worker_map` / `effective_role_workers` / `band_party_workers`, `FactionReadouts.faction_tracks`), so a band's own page and this one cannot disagree about a number — a rollup with its own food ledger would be a second source of truth for the identity `larder_delta == income − consumption − pen_feed − raid_forfeit` the food arc keeps closed. Dependency direction: it reads `HudWidgets` / `HudFormat` / `DetailFormat` / `SourceForecast` / `HudStyle` / the vocab leaves and `FactionReadouts`' track table, and none of them may read it back |
 | `ui/PenStatus.gd` | Single source of truth for **"is this pen's herd starving?"** — `FULLY_FED` / `FED_EPSILON` + `fed_fraction(herd)` / `is_starving(fed)`, reading `HerdTelemetryState.penFedFraction` (`< 1` ⇒ the keeper underpaid the pen's feed, so the herd is SHRINKING every turn). Plus `herd_is_starving(herd)` for a caller holding only the herd dict. The ONE test all three surfaces ask — the herd drawer (`DetailFormat.corral_label` + the Pen feed row), the map's distress badge (`MapView._draw_herd`) and the turn orb's `starving_pen` producer — so they can never disagree about which pen is dying |
@@ -182,7 +182,7 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   `parties` — at a **fixed** cross-axis size, hosted by the wide (3 columns) or narrow (tabbed) shell
   per the panel's own WIDTH. Nothing is balanced, so nothing migrates; nothing is content-fitted, so
   the reservation is constant per dock edge. See the `ui/BandCityPanel.gd` roster row for the full
-  contract (`work_zone_size()`, `zones_resized`, `set_tab_badge`, the no-ScrollContainer rule, and
+  contract (`work_zone_size()`, `zones_resized`, `set_tab_badge`, the sanctioned-scrolls rule, and
   the plain-`Control` zone hosts).
 - **A HORIZONTAL DOCK IS TWO FLOATING ISLANDS OVER LIVE MAP** (issue #377) — the card, sized to its
   content and centred, and the HUD's chrome cluster pinned to the strip's trailing edge. The reference
@@ -371,10 +371,52 @@ command center**: shown whenever ≥1 player band exists, always displaying a
     changed: the seam accents the map-facing edge of the STRIP, which is right only while the card fills
     it, so a horizontal dock hides it rather than ruling a line across the monitor above a small floating
     card.
-  - **`set_rail_width` can NEVER re-emit `reservation_changed`**, and that is what stops a feedback loop
-    (HUD pushes a width → panel relayouts → no emit → no `Main` fan-out → no HUD reflow). The rail spends
-    only the LONG axis; the reservation is the CROSS one (`_cross_axis_size`, which reads only the
-    collapse flag, the dock edge and the viewport).
+  - **`set_rail_width` COULD once never re-emit `reservation_changed`, and that is no longer true.**
+    The old guarantee rested on the rail spending only the LONG axis while the reservation is the CROSS
+    one, and on that cross axis reading nothing but the collapse flag, the dock edge and the viewport.
+    Since it carries the active shell's chrome (`_shell_chrome_height`) and the shell is chosen from the
+    span the rail comes out of, **a rail width can flip the shell and move the strip by the tab bar's
+    height** — so `set_rail_width` and `set_lateral_bounds` both call `_republish_reservation_if_changed`.
+    The loop the old rule protected still terminates: the HUD's second push lands on the same number and
+    is dropped by `set_rail_width`'s own early-out, and the republish is silent on an unchanged size.
+
+### A size the panel DRAWS but never PUBLISHES is a bar drawn through the card
+
+`Main` does not poll this panel. It stores what `reservation_changed` carried, and
+`_update_event_dock_edge_offset` sums that to decide where a co-edge event-dock bar starts. So the
+published number and the drawn number must not diverge.
+
+They could not, while the cross axis was a pure function of the collapse flag, the dock edge and the
+viewport — the three paths that move those all emit. **They can now.** The axis carries the shell's own
+chrome, the shell is chosen from `_available_card_span()`, and that span's other two terms — the lateral
+bounds and the rail's span — arrive **DECLARED**, on setters that relayout without emitting.
+`set_lateral_bounds` is re-pushed on every snapshot on a TOP dock. Measured at `ui_scale` 1.35, band
+panel and event dock both docked TOP: the panel drew **395** while `Main` still held **360**, and the bar
+sat 35px inside the card, cutting through the role cards.
+
+**This was a regression introduced by the `_shell_chrome_height` term itself.** Before it, a shell flip
+could not change the reservation, so the missing emission on those two setters was latent and harmless;
+making the reservation shell-dependent turned it into a live 35px error.
+
+`_republish_reservation_if_changed` compares against `_published_reservation` (seeded to `-1.0`, a value
+no reservation can take, so the first republish is never suppressed by a coincidence with an unset
+member). **Every pre-existing `_emit_reservation()` call site stays UNCONDITIONAL, deliberately**:
+`Main._apply_reservation` is not only how the size travels, it is the hook that re-pushes the lateral
+bounds and recomputes the event dock's perpendicular insets, both of which read live HUD geometry a
+viewport resize can move without moving this panel at all. Deduplicating them would silently stop that
+recomputation; the republish is strictly additive.
+
+**The guard is asserted by CONSUMING `reservation_changed`, never by polling
+`current_reservation_size()`** — polled, it passes with the defect in, because the poll re-derives the
+very number that was never published.
+
+### The horizontal card already takes its whole span
+
+Measured on a TOP dock at 1.35: `_bound_leading` 360, `_bound_trailing` 344, `_available_card_span()`
+718.2, `_card_width()` **718.2** — equal, at 1.0 and 1.35 alike. A gap between the card and the screen
+edge on a horizontal dock is the HUD's authored lateral column (`Hud.lateral_column_widths()`, a
+`max(authored, live)`), which the card is holding clear on purpose. It is not the card failing to
+stretch, and widening it into that gap would put it over a live HUD column.
 - **Zone `band` — vitals · PEOPLE · food outlook · WORKFORCE + role cards** (`BandPanelController.build_band_zone`).
   The Food/Trade/Morale/Growth rows are the disclosures — and their breakdowns open in a
   POPOVER, never inline (see Band food status: inline growth is what clipped this very zone).
@@ -675,10 +717,14 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   immediately with no dialog, and **exactly one** rung
   wears the `primary` variant, read back off the button's `normal` stylebox against
   `HudStyle.BUTTON_PRIMARY_BG` (there is no other marker of "this rung is lit", which is why that
-  colour is now a named const rather than a literal inside `apply_button`). The harness also ASSERTS, per state, that **no
-  `ScrollContainer` exists anywhere in the panel** and that **nothing a zone renders falls outside its
-  zone rect** — checked RECURSIVELY, since the top-level content is anchored full-rect and so always
-  "fits" while the thing that actually overflows is a board row off the bottom of a column. Both
+  colour is now a named const rather than a literal inside `apply_button`). The harness also ASSERTS, per state, that **every
+  `ScrollContainer` in the panel is a SANCTIONED one under the zone that sanctions it** (the parties
+  list and the band zone; `_assert_scroll_only_where_sanctioned`) and that **nothing a zone renders
+  falls outside its zone rect** — checked RECURSIVELY, since the top-level content is anchored
+  full-rect and so always "fits" while the thing that actually overflows is a board row off the
+  bottom of a column. **The containment walk does NOT descend into a sanctioned scroll**: that guard
+  exists because zone hosts CLIP, and inside a scroll the premise is false — every scrolled band zone
+  would otherwise report as an overflow. The scroll's own rect is still checked. Both
   assertions have already caught real regressions (a stepper's default button chrome busting
   `WORK_ROW_HEIGHT`; the band zone standing 5px past a 360px T/B dock); **keep them green.** A THIRD
   per-state assertion guards the shell threshold: **whenever the wide shell is active,
@@ -1192,6 +1238,357 @@ zone CLIPS rather than scrolls, so the missing width came straight off its vital
 added lands at ~1511px of window (Standard) / ~1523 (Large) — see the chrome-rail bullet above.
 `PANEL_CHROME_H` moved UP the const block to sit beside the margins it sums, because
 `ZONE_PARTY_WIDTH` now references it and a GDScript `const` may not read one declared below it.
+
+## `PANEL_HEIGHT_WIDE` is the BODY's budget, not the strip's height
+
+The 360 is the box the zones' content is tuned against — `_report_zone_content_extent` reads the band
+zone at **299 of a 300px box** on a wide horizontal dock, i.e. one pixel of slack. It used to be spent
+as a flat strip height, so the **narrow** shell paid for its own tab bar out of that same 360: a
+**265px box for content that needs 273**, which the `clip_contents` zone host then cut with no
+scrollbar and no affordance.
+
+`_horizontal_panel_height()` adds `_shell_chrome_height()` — the tab bar in the narrow shell, zero in
+the wide one, whose separators are vertical hairlines paid out of the width — before the
+`MAX_WIDE_HEIGHT_FRACTION` clamp. **Both shells now hand their zones the identical box, which is the
+only arrangement under which one set of tier thresholds can be right for both.**
+
+**On a BOTTOM dock the cut landed at the window's own edge**, which is why the defect read as the
+panel "running off the bottom of the screen" rather than as a clipped zone — the Scout and Warrior
+cards simply ended mid-stepper. It surfaced at `ui_scale` 1.35 (issue #490 shrinks the logical
+viewport, so a bottom dock drops below `wide_shell_min_width()` on a normal monitor) but **it is not a
+scale defect**: the narrow shell is reached at 1.0 in any window under ~1511px and lost the same 35px
+there. `band_panel_shell_below_threshold` is the 1.0 frame that moved, and it GAINED its work board's
+pager row.
+
+**The split of `_panel_width_extent()` out of `_panel_extent()` is what keeps this acyclic**, not
+tidiness. The cross axis now depends on which shell is active, and the shell is chosen from the width;
+a shell test that built the whole extent would call the height, which calls the shell test. Every
+width reader takes `_panel_width_extent()`; only `_panel_extent()` pairs it with the height.
+`_shell_chrome_height()` reads through `_shell_is_wide()` rather than the cached `_body_is_wide`, so a
+dock layout arriving before `_relayout_body` has re-chosen the shell still sizes the strip for the
+shell it is about to get.
+
+**The fix is a shared bound, NOT a `ScrollContainer`** — for the fixed CROSS-AXIS size, which is what
+that rule was ever about. The no-scroll rule has since been **narrowed twice rather than deleted**:
+the parties LIST scrolls, and since the interface-scale arc the BAND zone does too.
+`_assert_scroll_only_where_sanctioned` keeps the rule everywhere else.
+
+**The band zone's exception overturns an argument stated here, and the reason is worth keeping.** The
+old rule reasoned that a scrolling band zone would hide vitals behind a gesture on the one surface a
+player reads every turn — which is true, and was still the wrong call, because it compared scrolling
+against a fantasy. The actual alternative was not "everything visible without a gesture": it was the
+SHORT tier **silently deleting** the food-outlook chart and the role cards' hint text. Measured, a
+one-column horizontal flank packs vitals + PEOPLE + WORKFORCE into 299px of a 300px box, so at 1920
+there was no room for the chart and it simply was not built. **Content the player cannot reach at all
+is strictly worse than content behind a scrollbar**, and that is the product rule: a tier may change
+DENSITY, never delete a block.
+
+**What it costs, stated honestly.** The full stack is 353–450px in that 300px box, so a third to a
+half of the band zone is under the fold on a one-column horizontal dock, and what falls below it is
+the Scout/Warrior **steppers** — controls, not readouts. They used to be on screen precisely because
+the tier had deleted the chart and the hints to pay for them. Nothing is lost and the scrollbar is
+visible, but if "the role steppers must be reachable without a gesture on a bottom dock" is also a
+requirement, the lever is a cheaper density cut at SHORT (e.g. the role-card hint from two lines to
+one) or a block ORDER that puts controls above the fold — **not** a return to deleting the chart.
+
+The vertical docks are unaffected: the narrow shell gives the zone the full card height, so the
+scroll never engages there, and the shipped default edge is LEFT.
+
+## A horizontal dock grows in WIDTH; a vertical one grows in HEIGHT
+
+The panel reserves its **cross** axis — width on a vertical dock, height on a horizontal one. Growing
+along the axis you reserve re-emits `reservation_changed` → `MapView.set_reserved_inset` → cache
+invalidation, i.e. the map flicker the fixed cross-axis size exists to prevent. Growing along the
+**long** axis costs nothing and nobody downstream needs telling. So the UX rule and the architectural
+invariant are the same rule, and it is the reason width growth is safe to build on and height growth
+is not.
+
+A vertical dock already obeyed it — 380 wide, content flowing down. A horizontal dock did not: the
+card is content-width, but its *content* declared a fixed 380 band flank of stacked blocks, so it
+never asked for the width and paid in height it did not have. On a wide monitor the card used well
+under half the window while the strip stayed a full 360.
+
+**`band_zone_columns()` is PURELY GEOMETRIC** — `(available span − chrome − parties − one work column
+− separators) / ZONE_BAND_WIDTH`, clamped to `BAND_ZONE_MAX_COLUMNS` (2). Not one term is content, and
+that is load-bearing: a count that varied with what the band holds would make the strip height
+content-dependent and reopen the flicker bug. It is the `set_work_columns` / `_affordable_work_columns`
+idiom one flank over, and `_zone_span(spec)` — the zone's base width times the columns
+`zone_columns()` GRANTED it — is the single definition of a flank's realized width. `_card_width()`,
+`work_zone_size()` and `_affordable_work_columns()` all reach it through `_fixed_zone_span()`, and
+`_zone_fixed_width(zone)` is the by-name reader.
+
+**`wide_shell_min_width()` is the one place that must NOT read it.** It sums `_spec_width` — the
+base, one column each — because the threshold asks what the shell needs to be worth choosing, and a
+threshold that read the granted count would depend on a width the granted count is derived from.
+That is the cycle; see the banner on `wide_shell_min_width()` itself.
+
+**The two-column flank costs the work board one column.** That is the trade, and it is deliberate: the
+work zone is already constrained and pages itself, while the band flank had no way to spend width at
+all.
+
+A TOP dock stays at one column — the lateral bounds cost it 704px — which is the geometric rule
+working, not an exception.
+
+## A BOTTOM dock yields the HUD's strip only when the card cannot afford to keep it
+
+`Hud.set_reserved_inset` insets `LayoutRoot` on **all four edges**, so a bottom reservation shortens
+`ContentRow` across the entire window — and the left/right dock columns live there. The tile card
+therefore lost the panel's full 360px of height even in the region the band card never occupies. On a
+bottom dock `DockRowController._park` has already emptied `BottomBar` (`visible = false`, minimum
+`(0,0)`, one zero-size spacer), so that inset buys nothing and costs the columns everything.
+
+**A naive exemption is WRONG, and was tried and reverted.** The inset silently does a second job: the
+card only stays clear of the lateral columns *because those columns are shortened*. At 1920 a 1190px
+card centred in its strip starts at x≈204, inside the 360px left column. Taking the exemption forces
+the bounds to apply, costing 704px on top of the rail's 321 — the span falls 1599 → 895, under
+`wide_shell_min_width()`, and the bottom dock collapses to the narrow tabbed shell (326px at `ui_scale`
+1.35). That is a worse trade than the bug.
+
+So the rule is conditional: **the HUD yields iff the card could NOT afford the wide shell with the
+bounds applied.** `Main.band_dock_overlays_hud(edge, size, hud, panel)` is its ONE home — deliberately
+`static` and node-free so the harnesses can call it instead of restating it. Two clauses: the bottom
+bar must have left the strip, and `BandCityPanel.affords_wide_shell_with_bounds()` must hold. The fork
+sits at a logical width of **1871** for a BAND page — `wide_shell_min_width() 1190 + rail 321 +
+leading ceiling 360 + trailing 0`, confirmed by sweep (*yields* at 1870, *keeps* at 1871).
+
+**THE FORK IS PER-SUBJECT, because the threshold is.** `wide_shell_min_width()` sums the LIVE zone
+list, so the four-zone faction page sets its own — ~2250 off a 1569 threshold. The predicate must ask
+the function and never a constant: a predicate that assumed three zones while a four-zone page laid
+out is the same predicate-versus-consumer mismatch that shipped the 2215–2280 band.
+
+**A variable-width zone lives in the spec, not beside it.** `ZONE_SPEC_WIDTH` is the **base** (one
+column) and the optional `ZONE_SPEC_MAX_COLUMNS` says how many it may take; `_spec_width` is the base,
+`_zone_span(spec) = base × zone_columns(key)` is the extent, and `_fixed_zone_span` and the host
+minimums read the extent. **`wide_shell_min_width()` must keep summing the BASE or it cycles** — the
+grant reads `_available_card_span()`, which is tested against the threshold. The cap is the SUBJECT's
+to declare because the split is authored: `BAND_ZONE_LAYOUT` declares 2 because
+`BandPanelController.build_band_zone` authors a two-way split, and `FACTION_ZONE_LAYOUT` declares
+nothing because `FactionRollup.build_band_zone` authors none — a 760px host with a one-column builder
+in it is the emptiness the widening exists to remove.
+
+| | 1600 | 1920 | 2560 | 3440 |
+|---|---|---|---|---|
+| HUD | yields | **keeps** | keeps | keeps |
+| column bottom | stops at the strip | **1080 of 1080** | full height | full height |
+| band flank | 2 cols | **1 col** | 2 cols | 2 cols |
+
+**A BOTTOM dock charges NO trailing bound** (`_trailing_bound_for`, the one definition, read by both
+`_available_card_span()` and the predicate so the layout and the verdict cannot charge different
+columns). The right column cannot reach a bottom strip in either branch — below the fork the HUD
+yields and `layout_root` is inset wholesale, above it the right dock is clearanced. **The LEADING
+bound stays**, because the left column deliberately does run to the window bottom. **A TOP dock
+charges both**: the HUD is exempt there (issue #377) and the top-right readouts genuinely share the
+strip's row.
+
+That asymmetry is also what fixed the card's centring — residual **0px**, down from 419. No placement
+code changed; the card was off-centre *because* `_available_card_span()` was not the true gap.
+
+**1920 pays for its full-height tile column with band-zone density.** Keeping the strip there costs
+the card the leading 360, the flank drops 2 columns → 1, and the zone falls from TALL to SHORT: no
+food-outlook chart, no role-card hint text, Trade merged away. It is the documented flank trade
+extended down, not a new failure mode — but it is a visible content loss at the commonest resolution,
+and **the lever for it is the fork, not the centring**. Above 2432 the change gives back instead:
+2432–2560 returns to two columns and 3440's work board goes 3 → 4.
+
+**The predicate reads a column CEILING, never the live width and never the reservation — and the
+distinction between those three is the whole of this rule.** They answer different questions:
+`lateral_column_widths()` is `max(authored, live)`, a **layout instruction** the card obeys; the
+ceiling is *the widest the column can ever get*, which is what a rule may reason **forward** from.
+Reading the live width makes the predicate depend on its own output, because a column's live width can
+move when its height changes and its height is what the inset decides.
+
+**Reading the RESERVATION instead was the first attempt and it shipped a real defect.** The predicate
+took the authored 344 while the card laid out against the live 419, so between **2215 and 2280** the
+two disagreed: the HUD kept its strip *and* the card collapsed to the tabbed shell — precisely the
+trade this rule exists to refuse. It is stable and reproducible, not a race; the harness only stumbled
+into it because a mid-flight resize swept the band. Sabotage with `RIGHT_COLUMN_CEILING := 0.0`
+reproduces it deterministically and names the widths.
+
+**`RIGHT_COLUMN_CEILING` is 352, and it is DERIVED FROM THE SCENE rather than measured off a render.**
+It sums three named authored terms — `RIGHT_DOCK_WIDEST_CARD_MIN_WIDTH` (320, `TellingPanel`'s own
+minimum, the widest card in `RightStack`) + `RIGHT_DOCK_SCROLLBAR_SPAN` (8) +
+`RIGHT_DOCK_MARGIN_SPAN` (24) — which is exactly the 344 the column reserves empty, plus the vertical
+scrollbar that appears when the stack overflows.
+
+**The ceiling still lives where the bound is CONSUMED, not in the scene**, and that is a separate
+point from where it is derived. Authoring `TurnBlock.custom_minimum_size.x` was tried and measured:
+`TopBar` packed that block against the right edge behind an expanding spacer with left-aligned
+labels, so a node minimum pinned the column's LEFT edge and floated the readouts 142px clear of the
+screen — it moved all 80 frames and cost four top-dock states their wide shell. A bound and a layout
+instruction are not interchangeable.
+
+**It was 561 until the interface-scale arc, and that number had gone stale.** Issue #450 retired the
+top-bar knowledge strip it was measured against (`⚒ Your people know:` plus two in-progress tracks;
+the runners-up were metrics 384, Sedentarization 346, demographics 260, turn 78), leaving the right
+column as the right dock alone. It survived the merge deliberately — a ceiling that is too large only
+makes the predicate conservative, and re-deriving it from an incomplete sweep mid-merge would have
+been worse — and was then re-derived properly.
+
+**WHICH DIRECTION IS DANGEROUS IS NOT SYMMETRIC.** Too high costs layout quality: the predicate
+refuses the wide shell in windows where the card would fit. Too low is a correctness bug: a readout
+wider than the bound is **overdrawn by the card**. So this comes down to the true maximum and no
+further, and it carries **no safety margin on purpose** — a margin cannot bound a string, and an
+unexplained pad is precisely what 561 became.
+
+**The sweep is evidence, not proof, and the probes are what close the gap.** Both harnesses read
+`344.0` in every one of their states (84/84 and 274/274, across four viewports and at `ui_scale`
+1.35 — logical widths are scale-invariant), a distribution with no tail at all; 352 appears only in
+the deliberately-staged worst case. Fixtures bound fixtures, so the content paths were probed
+individually instead of trusted: legend row labels look unbounded but are not (`LegendScroll` leaves
+horizontal scroll `AUTO`, so row width never reaches the card — 11 rows of 75-char names moved
+nothing), and Victory's `RichTextLabel` has no `fit_content`. **The one genuinely unbounded path is a
+card TITLE**: `PanelCard._header` is `fit_content` + `AUTOWRAP_OFF`, so a title's unwrapped width is a
+hard card minimum — a 58-char legend title takes the column to 509. Sweeping every title the client
+can actually author (the four MapView legend titles and all thirteen overlay-channel labels from the
+native decoder, longest `Forage (Human Food Capacity)`) leaves the legend card at 253, 67px under
+Telling's 320 and contributing nothing.
+
+**The headroom is asserted, not reported**: `_assert_ceilings_cover_the_widest_right_column` stages
+the widest dock content and checks the ceiling still covers the column, now reading `352 / 352`. That
+guard was **vacuous before** — it passed with 209px of untested slack — and is load-bearing for the
+first time. To raise the ceiling, raise `RIGHT_DOCK_WIDEST_CARD_MIN_WIDTH`; the guard is what tells
+you when. What it still cannot see is a title long enough to push a card past 320; closing that means
+bounding the title in `PanelCard._header`, not enlarging this.
+
+`left_column_ceiling()` needs no constant of its own, and that is **measured, not assumed**: with a
+~400-character terrain label in the tile card the left column is still exactly 360 (region 360, stack
+336 inside it), because `LeftScroll` is a `ScrollContainer` with horizontal scrolling live, so its
+minimum width does not include its child and **no card can widen the column**. The right column needed
+`RIGHT_COLUMN_CEILING` because it holds a SECOND region, `TurnBlock`, which is in no scroll container
+and renders 419 against a 344 authored minimum. There is no such second region on the left. With the
+trailing charge gone the slack is now **zero** — the card gets exactly 1190 at the fork — so what holds
+it is `_assert_ceilings_cover_the_columns` (reading `360 / 360`) and the promise walk, not headroom.
+`left_column_ceiling()` returns the left dock's reservation unchanged — that column measures its
+authored 360 live — and exists as a named pair so a future left-column overrun has a home rather than
+a call site to rewrite. **The event dock still bounds off `right_column_width()`**, deliberately: it
+is placing itself, not reasoning forward about someone else's placement.
+
+`DockRowController.parks_for` / `rail_width_for` are **pure functions, not state reads**, because
+`Main` is the FIRST listener on `reservation_changed` and the reflow the second — `_is_reflowed` would
+answer for the previous reservation.
+
+### The chrome rail stays FLUSH to the screen; the right dock is what clears it
+
+The rail was briefly pinned at `offset_left = -(_bound_trailing + rail_width)` to keep the minimap and
+turn orb out of the right column once the HUD stopped yielding. **That was the wrong side of the
+problem** — it pushed the chrome 419px inboard and left a band of bare map between it and the screen
+edge, which is a visible regression against how the corner had always looked.
+
+The measurement that decided it: on a 2560 bottom dock with the strip top at `y=720`, the right dock's
+**content** reaches 302 with nothing in it, 574 at a full Telling page, **718 with the Victory card**
+(2px of clearance) and **1151 with an 11-row Terrain Types legend** — 431px *inside* the strip. Both of
+those are one keypress away (`V`, `L`), so the region-versus-content distinction did not rescue it: a
+flush rail really would sit under the minimap.
+
+So the clearance moved to the right dock's own container.
+`Hud.set_right_column_bottom_clearance(px)` adds to `RightDock`'s `margin_bottom`, pushed by
+`Main._update_right_column_bottom_clearance` iff the dock is BOTTOM and the HUD kept its strip.
+**The region's rect is untouched**, so `lateral_column_widths()` / `right_column_width()` answer
+exactly as before and the clearance cannot feed back into the yield rule that produced it. `RightScroll`
+shortens with it, so a card of any height is bounded rather than merely currently-short. **The LEFT
+column is deliberately not clearanced** — running to the window bottom is the whole point of the
+conditional inset.
+
+**The assertion that let this ship is the lesson.** `_assert_rail_is_right_justified` claimed the rail
+sat at "strip end less `_bound_trailing`" — phrased in terms of the implementation, so it went green
+whichever way the bound was applied. It now claims the **viewport's** right edge, which fails against
+the inboard pinning and passes against the flush one.
+
+**Still to know:** the second band column is lost between the fork and the width where the remaining
+leading bound stops mattering — the lower edge of that band IS the fork by construction, since below it
+no bounds apply. Dropping the trailing charge shrank the band sharply: 2432–2560 now keeps two
+columns, where it lost one before. What is left of the trade sits just above 1871.
+
+**At high `ui_scale` the clipping returns, and that is the intended fallback.** On a 2560 canvas,
+`ui_scale` 1.0 gives a 1535 span and keeps the strip; 1.35 gives a logical 1896, a span of 871, and
+yields. The flip is at roughly `ui_scale` 1.15 there. Printed each run rather than asserted — it is the
+interaction of two independent constants, not a contract.
+
+## The strip's height is 360 at ONE band column and 335 at two
+
+`PANEL_HEIGHT_WIDE_TWO_COLUMN` is **derived, not authored**: `263` (the charted band flank, measured)
+`+ 12` slack (one `ZONE_SEPARATION`) `+ 60` chrome (header 38 + card 22) = **335**. `_body_budget()`
+picks it off `band_zone_columns()`, which is purely geometric — so the height stays
+content-independent and the flicker invariant is untouched, exactly as `_shell_chrome_height()` is
+licensed.
+
+**A FLAT lower constant does not work, and the harness proves it**: a one-column horizontal dock still
+needs the band zone's ~299 stack, and applying 335 at both counts overflows it by 24. **Top docks are
+one column** (the lateral bounds cost them 704px of span), so they keep 360.
+
+**Which zone binds, after the parties list scrolls:** band 263 of 275, work 256 of 275 (it re-pages one
+row shorter), parties 158 of 275. Parties and work structurally cannot bind — parties is
+head + footer + the list's floor, and work pages itself.
+
+### The floors are stacked, not sequential
+
+The 360 was tried at 230 once the two-column flank needed only 148, and it failed 18 ways. That is the
+lesson worth keeping: **removing the tallest thing reveals the next one a few pixels below it.** Four
+things press against the same box, and at the time the band flank at 299 of 300 was merely the
+*closest* to the ceiling, not the thing setting it.
+
+| what binds it | measured |
+|---|---|
+| The **parties** zone's worst case — the seven-line inspector strip | **294px** of body; +44 header +22 card chrome **is** 360 |
+| The **parked chrome** stack (`DockRowController._required_height`): nav 164 + turn orb 128 + separation | **~322px** of strip — below it the reflow gate declines and a BOTTOM dock silently keeps the minimap and turn orb, undoing issue #324 |
+
+**The PARTIES row is how the 335 was unlocked** — its list now scrolls, so the zone falls from 294 to
+158 and the band flank becomes the binder. The parked chrome is unmoved and is the reason 335 is as low
+as this goes on a BOTTOM dock: the measured margin is **13px** (was 38), asserted on
+`band_panel_dockrow_bottom` with the chrome really parked. Sabotage at a 300 budget reads
+`margin -22px` and the predicted cascade follows — chrome un-parks, shell flips narrow, the HUD keeps
+its strip.
+
+The width work's recovered 151px still has nowhere to go on the strip; it is spent **inside** the zone
+(below). And the tile-column clipping a horizontal dock causes is reduced only by the 25px, not solved.
+
+## The band zone's tier reads the whole STACKING BUDGET, and the split is authored
+
+`_band_zone_tier_height()` is the zone box **times the column count**. Both terms are geometric, so the
+tier stays content-independent; **one column multiplies by one**, which is what makes every
+single-column layout arithmetically identical to before. At two columns 300 × 2 = 600 → TALL, which
+restores the food-outlook chart and the role cards' hint text that SHORT hides. Without it the widened
+flank filled 49% of the room and rendered bare `Scout` / `− 2 +` steppers — the width complaint
+answered by moving the emptiness rather than removing it.
+
+**The blocks are heterogeneous, so which column each lands in is AUTHORED, never reflowed** — and
+raising the tier forced the pairing to change. Of four authored candidates measured at TALL against a
+300px box, exactly one fits:
+
+| split | measured |
+|---|---|
+| vitals + PEOPLE \| WORKFORCE | 316 / 193 — overflows |
+| vitals + PEOPLE \| outlook + WORKFORCE | 200 / 321 — overflows |
+| vitals \| PEOPLE + outlook + WORKFORCE | 130 / 391 — overflows |
+| **vitals + outlook \| PEOPLE + WORKFORCE** | **246 / 263** — fits |
+
+It reads as *the larder | the people*, which is defensible on its own terms, but **that is a happy
+accident: it is the only one that fits.** Do not treat the pairing as a design principle that would
+survive the blocks changing size — re-measure all four.
+
+**A band with no food history builds no chart, and that is turn one** — the first frame of every new
+game. Under the charted split that column is the vitals alone, 130 against 263. So there is a **second
+authored layout**, selected by one boolean (`people_column = PEOPLE if outlook != null else LARDER`):
+PEOPLE is the only block that moves. Measured **200 / 193** chartless, **246 / 263** charted. Both are
+hand-authored and hand-measured — a declared variant chosen by a predicate, the same shape as the tier
+itself — and the split feeds no geometry, so the flicker invariant is not in play.
+
+**The measured numbers do not decompose by subtraction** — separations and spacing differ per grouping,
+and both predictions made that way were wrong (188 vs the actual 200; 258 vs the actual 246).
+Re-measure; never derive.
+
+**66% is the chartless flank's CEILING, not a shortfall.** Its three blocks total 393px against the
+600px two columns offer, and the total is the total however it is dealt out. What the second split buys
+is *where* the emptiness sits — ~100px under each column instead of 170 under one and none under the
+other.
+
+Blocks are emitted in **build** order for one column and by **column** field for two, so the flat stack
+stays vitals · PEOPLE · outlook · WORKFORCE.
+
+**The fill assertion measures the WHOLE FLANK against the WHOLE room, plus a separate balance claim.**
+Measuring only the deepest column passed the 130/263 flank at 88% — the short column was invisible to
+it. Two independent failure modes (uniformly empty = a tier that did not rise; lopsided = the wrong
+split) need two claims.
 
 ## Work rows and the two hunt products (issue #337)
 

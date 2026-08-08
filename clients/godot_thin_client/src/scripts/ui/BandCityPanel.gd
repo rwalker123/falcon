@@ -34,9 +34,12 @@ class_name BandCityPanel
 ## while a band's page stays abreast. That is why the layout is DECLARED BEFORE the zones are built —
 ## see `set_zone_layout`.
 ##
-## There is deliberately **no ScrollContainer anywhere in this panel** — the design
-## is no-scroll (the work zone pages itself against `work_zone_size()`), and a
-## scroll container would silently reintroduce content-dependent sizing.
+## There is deliberately **no ScrollContainer anywhere in this panel except the
+## parties zone's list** — the design is no-scroll (the work zone pages itself
+## against `work_zone_size()`), because a scroll whose content height reached the
+## panel would silently reintroduce content-dependent sizing. The one exception
+## declares a fixed minimum and so reaches nothing; see
+## `BandPanelController.build_parties_zone`.
 ##
 ## All geometry/typography flows from named constants + `HudStyle` (no magic
 ## numbers, one visual-language source).
@@ -49,6 +52,15 @@ const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 const PANEL_WIDTH := 380.0
 ## Cross-axis size of the expanded panel when docked T/B. Likewise fixed; tall enough for the three
 ## zones' rows without eating the map.
+##
+## **IT IS THE BODY'S BUDGET, NOT THE STRIP'S HEIGHT** — `_horizontal_panel_height()` adds whatever the
+## ACTIVE SHELL spends on its own chrome (the narrow shell's tab bar) before clamping to
+## `MAX_WIDE_HEIGHT_FRACTION`, so both shells hand their zones the same box. Read as a flat strip
+## height it is 35px short in the narrow shell, which is the zone the tab bar used to be paid out of.
+##
+## **IT IS THE ONE-COLUMN BUDGET SINCE THE FLANK LEARNED TO WIDEN.** A two-column flank needs far less
+## stacking room than a one-column one, so `_horizontal_panel_height()` picks
+## `PANEL_HEIGHT_WIDE_TWO_COLUMN` there instead — declared below, beside the column cap it keys off.
 const PANEL_HEIGHT_WIDE := 360.0
 ## Cross-axis size when collapsed to a thin rail (both orientations).
 const COLLAPSED_SIZE := 46.0
@@ -112,6 +124,21 @@ const PANEL_CHROME_H := 2.0 * (float(PANEL_CONTENT_MARGIN_H) + PANEL_BORDER_WIDT
 ## parties zone, 380 here still leaves the work board two columns at 1920 on every shipped map. 380 is
 ## already this file's vocabulary (`PANEL_WIDTH`, `ZONE_WORK_MIN_WIDTH`): one readable column of rows.
 const ZONE_BAND_WIDTH := 380.0
+## The most columns the BAND flank will lay its blocks out across on a horizontal dock.
+##
+## **GROW THE LONG AXIS, NEVER THE RESERVED ONE.** The panel reserves its CROSS axis — width on a
+## vertical dock, height on a horizontal one — so growth along the reserved axis re-emits
+## `reservation_changed`, re-insets `MapView` and invalidates its cache, which is the map flicker the
+## fixed cross-axis size exists to prevent. Growth along the LONG axis costs nothing. A horizontal
+## dock therefore spends a wide monitor on band COLUMNS rather than on a taller strip. It does NOT buy
+## the strip's height back — see `PANEL_HEIGHT_WIDE` for the two constraints that turned out to pin
+## that, neither of them this flank.
+##
+## **TWO, because the split is AUTHORED** (`BandPanelController.build_band_zone`): the blocks are
+## heterogeneous — a wrapped vitals label, two composition bars, a row of role cards — so a generic
+## reflow produces nonsense, and a third column would need a third authored split with nothing
+## measured to put in it. Measured at 380px on the SHORT tier: vitals 52, PEOPLE 58, WORKFORCE 139.
+const BAND_ZONE_MAX_COLUMNS := 2
 ## **THE PARTIES ZONE IS EXACTLY THE NARROW SHELL'S ZONE WIDTH** — the panel's strip less the card
 ## chrome — which IS the requirement: the wide shell must never hand a zone LESS room than the side
 ## dock does for the same content, and this zone's four-rung compose picker is already 2×2 at that
@@ -153,8 +180,61 @@ const ZONE_SEPARATION := 12
 ## (`_rail_span()`), so the rail's gutter costs the same as any inter-zone gutter by construction
 ## rather than by a matching pair of literals.
 const RAIL_SEPARATOR_SPAN := ZONE_SEPARATOR_THICKNESS + 2.0 * float(ZONE_SEPARATION)
+## The tallest content a **TWO-column** band flank has to hold: its CHARTED split (vitals + outlook |
+## PEOPLE + WORKFORCE) at the TALL tier, measured **263px** on `band_panel_band_columns_two_charted`.
+##
+## **MEASURED, never derived.** The authored splits' separations and label wrapping differ per
+## grouping, so the flank's height does not decompose by subtracting a block from another split's
+## total — both attempts to predict one from the other came out ~12px wrong. Re-measure all four
+## candidates (`BandPanelController.build_band_zone`) before moving it.
+const BAND_ZONE_TWO_COLUMN_EXTENT := 263.0
+## The slack the two-column body budget carries over that extent. **A measurement tolerance, not
+## padding**: 263 is a laid-out extent off float rects summed through nine block separations, and a
+## budget set to exactly it would fail `band_panel_preview._assert_zone_content_fits` on sub-pixel
+## drift in any one of them. Stated as one `ZONE_SEPARATION` — the smallest unit of vertical air this
+## panel already spends — rather than as a fresh number of its own.
+const BAND_ZONE_TWO_COLUMN_SLACK := float(ZONE_SEPARATION)
+## What a horizontal strip spends before a zone sees its box: the header row plus the card's own
+## vertical chrome (`_interior_size`'s `chrome_v` = 2 × (`PANEL_CONTENT_MARGIN_V` +
+## `PANEL_BORDER_WIDTH`) = 22, and a 38px header). **The header is PURE CHROME** — two text rows
+## beside fixed icon controls — which is what lets its height be a constant here at all, and it is
+## the same 60px `PANEL_HEIGHT_WIDE`'s 360 already spends to hand its zones a 300px box.
+const HORIZONTAL_BODY_CHROME := 60.0
+## **THE BODY'S BUDGET WHEN THE BAND FLANK HAS TWO COLUMNS**, chosen by `_horizontal_panel_height()`.
+##
+## **STILL CONTENT-INDEPENDENT, which is the only reason it may exist.** The selector is
+## `band_zone_columns()`, a function of the viewport, the dock edge, the rail's declared span and the
+## lateral bounds — not one term is content — so the strip's height stays off the snapshot's critical
+## path, exactly as `_shell_chrome_height()`'s geometric term does. A budget that tracked what the
+## band HOLDS would re-emit `reservation_changed` → `MapView.set_reserved_inset` on every `+` press,
+## which is the map flicker the fixed cross-axis size exists to prevent.
+##
+## **DERIVED FROM WHAT THE ZONES NEED AT TWO COLUMNS, never a round number.** The saving is unlocked
+## by the parties LIST learning to scroll (`BandPanelController.build_parties_zone`), which retires
+## the 294px worst case that used to pin this budget for both counts. What is left, per zone:
+##
+##   * **band flank** — `BAND_ZONE_TWO_COLUMN_EXTENT`, the binding one.
+##   * **parties zone** — its fixed chrome only now: the head, the pinned Scout/Hunt/Deny row and
+##     `HudWorkVocab.PARTIES_LIST_MIN_HEIGHT`. Measured well under the flank, so it cannot bind.
+##   * **work zone** — pages itself against `work_zone_size()`, so a shorter box costs it a board row
+##     rather than overflowing. It never binds by construction.
+##
+## **A ONE-column horizontal dock keeps `PANEL_HEIGHT_WIDE` EXACTLY**, and must: its flank still
+## stacks 299px into the 300px box, and a flat lower budget would slice it. Top docks are one column
+## (the lateral bounds cost them 704px of span), so no top-dock frame moves.
+##
+## **THE FLOOR IS THE PARKED CHROME STACK, and it is asserted rather than assumed.** On a BOTTOM dock
+## `DockRowController._required_height()` — the nav cluster + the turn cluster + `RAIL_SLOT_SEPARATION`
+## + the card's chrome, **322px measured** — is the strip below which the reflow gate DECLINES,
+## `BottomBar` keeps the minimap and orb, and issue #324's whole dock-row reflow silently un-does
+## itself. And it does not merely un-do: the gate FEEDS BACK, because a declined park restores the
+## HUD's lateral bounds, which costs the span, which drops the flank to one column, which restores the
+## 360 strip, which parks again. `band_panel_preview._assert_parked_chrome_margin` pins the margin on
+## a two-column bottom dock, and `_assert_band_columns_converge` is what would catch the oscillation.
+const PANEL_HEIGHT_WIDE_TWO_COLUMN := BAND_ZONE_TWO_COLUMN_EXTENT + BAND_ZONE_TWO_COLUMN_SLACK \
+	+ HORIZONTAL_BODY_CHROME
 ## Safety net so a short window can never let the T/B strip eat the screen: the reserved wide-dock
-## height is `PANEL_HEIGHT_WIDE` clamped to this fraction of the window height.
+## height is the body budget clamped to this fraction of the window height.
 const MAX_WIDE_HEIGHT_FRACTION := 0.6
 ## Header height used for the interior maths before the header has laid out once (it is pure chrome —
 ## two text rows beside `ICON_BUTTON_SIZE` controls — so this is a bootstrap value, not a guess about
@@ -180,6 +260,24 @@ const ZONE_KEYS: Array[StringName] = [ZONE_BAND, ZONE_WORK, ZONE_KNOWLEDGE, ZONE
 const ZONE_SPEC_KEY := "key"
 const ZONE_SPEC_LABEL := "label"
 const ZONE_SPEC_WIDTH := "width"
+## **HOW MANY COLUMNS OF `ZONE_SPEC_WIDTH` THIS ZONE MAY LAY ITS BLOCKS OUT ACROSS**, when the row can
+## pay for them. Absent means ONE, so every zone that has never asked is bit-identical to before.
+##
+## **A DECLARED WIDTH IS A BASE, NOT AN EXTENT — that is the whole of how a variable-width zone fits
+## the ordered-list model.** `ZONE_SPEC_WIDTH` stays the width of ONE readable column and is what
+## `wide_shell_min_width()` sums, because the threshold asks the minimum the shell needs to be worth
+## choosing; `_zone_span()` multiplies it by what `zone_columns()` GRANTED and is what every width
+## reader takes. Writing the granted extent into the spec instead would put a function of the card's
+## own span inside the sum the shell test reads, i.e. a cycle.
+##
+## **THE CAP IS THE SUBJECT'S TO DECLARE, because the SPLIT IS AUTHORED.** A band's `band` zone
+## declares `BAND_ZONE_MAX_COLUMNS` and `BandPanelController.build_band_zone` authors a two-way split
+## to fill it; the faction page's `band` zone is `FactionRollup`'s, which authors none, so it declares
+## nothing and stays at one — a widened flank with a one-column builder in it renders half a box of
+## blank card, which is the emptiness the widening exists to remove rather than move.
+const ZONE_SPEC_MAX_COLUMNS := "max_columns"
+## What an undeclared `ZONE_SPEC_MAX_COLUMNS` means, and the floor `zone_columns()` clamps to.
+const ZONE_COLUMNS_MIN := 1
 ## A zone whose wide-shell width is `ZONE_WIDTH_EXPAND` takes whatever the fixed flanks leave. Exactly
 ## one zone in a layout should carry it — the work board, whose column count is what the card's width
 ## is built up from (`set_work_columns`).
@@ -190,7 +288,8 @@ const ZONE_WIDTH_EXPAND := 0.0
 ## subject has spoken (`_update_body_visibility` gates it on `_band_present`, which only `set_zones`
 ## turns on), and a default word here would be a second home for a label the subject already owns.
 const DEFAULT_ZONE_LAYOUT: Array[Dictionary] = [
-	{ZONE_SPEC_KEY: ZONE_BAND, ZONE_SPEC_LABEL: "", ZONE_SPEC_WIDTH: ZONE_BAND_WIDTH},
+	{ZONE_SPEC_KEY: ZONE_BAND, ZONE_SPEC_LABEL: "", ZONE_SPEC_WIDTH: ZONE_BAND_WIDTH,
+		ZONE_SPEC_MAX_COLUMNS: BAND_ZONE_MAX_COLUMNS},
 	{ZONE_SPEC_KEY: ZONE_WORK, ZONE_SPEC_LABEL: "", ZONE_SPEC_WIDTH: ZONE_WIDTH_EXPAND},
 	{ZONE_SPEC_KEY: ZONE_PARTIES, ZONE_SPEC_LABEL: "", ZONE_SPEC_WIDTH: ZONE_PARTY_WIDTH},
 ]
@@ -262,6 +361,11 @@ signal zones_resized
 var _dock_edge: int = SIDE_LEFT
 var _collapsed: bool = false
 var _shown: bool = true
+## The cross-axis size last published through `reservation_changed`, so `_republish_reservation_if_changed`
+## can tell a size the panel merely re-derived from one nobody downstream has been told about. Seeded to a
+## value no reservation can take, so the first republish after a declared input arrives is never suppressed
+## by a coincidence with an unset member.
+var _published_reservation: float = -1.0
 # Leading (inboard) offset from the docked edge, pushed by Main = Σ sizes of co-edge reservers
 # inboard of this panel (today: the Inspector's strip when both dock left). Keeps co-edge panels
 # stacked, not overlapping. Does NOT change what this panel reserves (the map/HUD inset is the
@@ -321,9 +425,10 @@ var _rail_slots: Dictionary = {}          # slot:int (RAIL_SLOT_*) -> Control ho
 ## The rail column's width, DECLARED by the HUD (`set_rail_width`) — never measured from the content.
 var _rail_declared_width: float = 0.0
 ## What the card must LEAVE at each end of a horizontal strip, declared by `Main` (`set_lateral_bounds`)
-## — the HUD's left and right column widths. Only a TOP dock has any, because it is the only edge where
-## the HUD does NOT yield its strip (see `Main._reserver_overlays_hud`); a bottom dock's HUD moves out of
-## the way, so the card has the whole row.
+## — the HUD's left and right column widths. An edge has bounds exactly when the HUD does NOT yield its
+## strip there (`Main._reserver_overlays_hud`): always on a TOP dock, and on a BOTTOM dock whenever the
+## card can afford them (`affords_wide_shell_with_bounds`). When the HUD yields, it has moved out of the
+## row entirely and both are 0.
 var _bound_leading: float = 0.0
 var _bound_trailing: float = 0.0
 ## How many columns the WORK board wants, DECLARED by `BandPanelController` (`set_work_columns`). It is
@@ -359,6 +464,9 @@ var _subject_jumpable: bool = true
 var _tab_buttons: Dictionary = {}   # zone:StringName -> Control (the tab cell)
 ## The last `work_zone_size()` reported, so `zones_resized` fires on a real change only.
 var _last_work_zone_size: Vector2 = Vector2.ZERO
+## The last `band_zone_columns()` reported, beside it — see `_notify_zones_resized` for why the work
+## box alone is not enough of a trigger.
+var _last_band_columns: int = 0
 var _dock_cells: Dictionary = {}   # edge:int -> Button
 
 func _ready() -> void:
@@ -493,6 +601,8 @@ func zone_size(zone: StringName) -> Vector2:
 	var body_height: float = maxf(interior.y - _header_height(), 0.0)
 	if not _shell_is_wide():
 		return Vector2(interior.x, maxf(body_height - _tab_bar_height(), 0.0))
+	# A FIXED zone's width is its declared column times however many columns it was GRANTED, so this is
+	# also the answer for the band flank once it widens — there is no second accessor for that.
 	var fixed := _zone_fixed_width(zone)
 	if fixed > 0.0:
 		return Vector2(fixed, body_height)
@@ -977,8 +1087,17 @@ func _position_card_and_rail() -> void:
 	if _is_vertical_edge(_dock_edge):
 		_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		return
-	# The chrome cluster: flush to the strip's TRAILING edge, full strip height. Anchored by hand rather
-	# than laid out, because it is no longer any container's child.
+	# The chrome cluster: flush to the STRIP's trailing edge — i.e. the screen's — full strip height.
+	# Anchored by hand rather than laid out, because it is no longer any container's child.
+	#
+	# **`_bound_trailing` IS DELIBERATELY ABSENT FROM BOTH OFFSETS.** It was briefly in them, to hold the
+	# rail off the HUD's right-hand column, and that inset the parked minimap and turn orb by the
+	# column's whole width — leaving a visible band of dead map between the chrome and the screen edge on
+	# every bottom dock past the fork. The clearance runs the other way now: when the HUD keeps this
+	# strip, `Main._update_right_column_bottom_clearance` stops the right dock's CARDS above the strip's
+	# top edge, so the corner is the chrome's alone and there is nothing here to be drawn over. The CARD
+	# is a different island and still pays both bounds — it shares the columns' vertical band, the rail
+	# does not.
 	var rail_width := _rail_width()
 	if _rail != null:
 		_rail.anchor_left = 1.0
@@ -994,6 +1113,13 @@ func _position_card_and_rail() -> void:
 	# Centred in the room the chrome cluster and the HUD columns leave — and OFFSET past the leading
 	# bound, so "centred" means centred in the gap rather than centred on the screen with a column
 	# underneath one end of it.
+	#
+	# **THE CENTRING IS ONLY AS TRUE AS `_available_card_span()`.** The gap runs from the leading bound to
+	# whatever really stands at the trailing end, and this centres in `available` starting at that bound —
+	# so any term in the span the strip does not actually charge shows up here as an off-centre card, not
+	# as a narrow one. A trailing bound the right column no longer needs put the card 419px short of its
+	# own gap at 2560, i.e. ~210px off centre; `_trailing_bound_for` is where that was fixed, and nothing
+	# in this block had to change for it.
 	var available: float = _available_card_span()
 	var card_width: float = minf(_card_width(), available)
 	var lead: float = _bound_leading + 0.5 * maxf(available - card_width, 0.0)
@@ -1015,6 +1141,14 @@ func _relayout_body() -> void:
 	_body_is_wide = _shell_is_wide()
 	if _body_is_wide != was_wide:
 		_rebuild_tab_bar()
+	# A multi-column zone's host width is not a constant — it is its declared column times the count
+	# `zone_columns()` grants — so every FIXED host's pinned minimum is re-declared on each layout pass
+	# rather than only at `_build`. A single-column zone re-declares the same number it already had, so
+	# this is a no-op for the parties and knowledge flanks.
+	for spec in _zone_layout:
+		var host: Control = _wide_zone_hosts.get(StringName(spec.get(ZONE_SPEC_KEY, &"")))
+		if host != null and _spec_width(spec) > 0.0:
+			host.custom_minimum_size.x = _zone_span(spec)
 	_reparent_zones()
 	_update_body_visibility()
 
@@ -1041,7 +1175,13 @@ func _wide_separator_span() -> float:
 ## between 900 and 1055.
 ##
 ## An EXPANDING zone contributes `ZONE_WORK_MIN_WIDTH` — the one readable board column that is the
-## whole point of the test — and a fixed one contributes its flank.
+## whole point of the test — and a fixed one contributes ONE of its declared columns.
+##
+## **IT SUMS `_spec_width`, NEVER `_zone_span`, and that is what keeps the layout acyclic.** A
+## multi-column zone's granted count is a function of `_available_card_span()`, which is tested against
+## THIS — so folding the grant in would make the threshold call the count that calls the threshold. It
+## is also the right answer on its own terms: this is the MINIMUM the shell needs to be worth
+## choosing, and one band column is exactly that minimum.
 func wide_shell_min_width() -> float:
 	var span := _wide_separator_span() + PANEL_CHROME_H
 	for spec in _zone_layout:
@@ -1056,9 +1196,10 @@ func wide_shell_min_width() -> float:
 ## which is the opposite of the bound the event dock takes and deliberately so. That one fixes an EDGE
 ## that must not jitter from turn to turn, and a column drawing wider than its minimum merely overlaps it
 ## a little. This one decides whether a CARD is drawn THROUGH the readouts, where being a little wrong is
-## not cosmetic: measured at 1920 they render 419px against a 344px authored minimum, because the metrics
-## line is simply longer than the minimum allows for. So the bound moves when the columns do — `Main`
-## re-pushes it per snapshot, and this early-outs on an unchanged pair.
+## not cosmetic — a readout line longer than its column's authored minimum would be overdrawn. So the
+## bound moves when the columns do — `Main` re-pushes it per snapshot, and this early-outs on an
+## unchanged pair. (The authored minimums are sized to their worst case now, so the live term is a net
+## rather than the usual answer — see `affords_wide_shell_with_bounds` for why that distinction matters.)
 ##
 ## **Without this the top-dock HUD exemption is only correct for a SPARSE band.** A band with no worked
 ## sources makes a narrow card with room either side, which is what made the fix look complete; a band
@@ -1071,13 +1212,97 @@ func set_lateral_bounds(leading: float, trailing: float) -> void:
 	_bound_leading = lead
 	_bound_trailing = trail
 	_apply_dock_layout()
+	_republish_reservation_if_changed()
 	_notify_zones_resized()
 
 ## The span of strip a horizontal card may actually use: the whole row less the chrome cluster and less
 ## whatever HUD column sits at either end. The ONE definition, so `_card_width`, `_interior_size` and
 ## `_position_card_and_rail` cannot disagree about how much room there is.
+##
+## **It is also what makes the card CENTRED**: `_position_card_and_rail` centres in this span offset past
+## the leading bound, so the span and the gap the card really has must be the same number. A trailing
+## term the strip does not actually charge would centre the card in a sub-region of its own gap and leave
+## it visibly off to one side.
 func _available_card_span() -> float:
-	return maxf(_panel_extent().x - _rail_span() - _bound_leading - _bound_trailing, 0.0)
+	return maxf(_panel_width_extent() - _rail_span() - _bound_leading
+		- _trailing_bound_for(_dock_edge, _bound_trailing), 0.0)
+
+## What the card must really leave at the TRAILING end of a horizontal strip — **ZERO on a BOTTOM dock**.
+##
+## `Main` declares both HUD columns (`set_lateral_bounds`); this is where the panel decides which of them
+## it is actually charged for, and it is the ONE definition, read by `_available_card_span()` and by
+## `affords_wide_shell_with_bounds()` alike.
+##
+## **The right-hand column cannot reach a BOTTOM dock's strip in EITHER branch of the yield rule**, so a
+## bound against it reserves room for a collision that cannot happen. Where the HUD yields, `LayoutRoot`
+## is inset wholesale and the column stops at the strip's top edge; where it keeps, the right dock's cards
+## are held above that edge by `Hud.set_right_column_bottom_clearance` — which exists because the parked
+## chrome owns that corner. The top-bar readouts, the column's other region, are at the far end of the
+## screen and share no vertical band with the strip at all. Measured, the bound was costing the card 419px
+## at 2560 and leaving it centred ~90px left of its own gap.
+##
+## **The LEADING bound stays, and the asymmetry is the design.** The left column deliberately runs to the
+## window's bottom edge wherever the HUD keeps its strip — that is the whole point of the conditional
+## inset — so the card really does have to clear it.
+##
+## **A TOP dock pays BOTH**, unchanged: the HUD is exempt there (issue #377) and the top-right readout
+## block genuinely shares that strip's row with the card.
+##
+## Both terms are PARAMETERS rather than reads of `_dock_edge` / `_bound_trailing`, because the two
+## callers hold different ones: the layout asks about the bound `Main` last pushed, while the
+## affordability predicate asks about a CEILING it was handed and must not read live state for (see
+## `affords_wide_shell_with_bounds`).
+func _trailing_bound_for(edge: int, trailing: float) -> float:
+	if edge == SIDE_BOTTOM:
+		return 0.0
+	return maxf(trailing, 0.0)
+
+## **COULD the card stand in the WIDE shell if it had to keep clear of these two columns?** The question
+## `Main.band_dock_overlays_hud` asks before it lets the HUD keep its strip on a BOTTOM dock: yielding the
+## strip costs the HUD's left column its full height, and not yielding costs the card the two bounds — so
+## the trade is only worth taking while the card can still pay them and stay in the three-zone shell.
+##
+## **EVERY TERM MUST BE ONE THE INSET CANNOT MOVE, and that is the whole reason this is a separate
+## question from `_shell_is_wide()`.** The caller passes the HUD's AUTHORED column widths
+## (`left_column_width` / `right_column_width`, scene constants) and the rail width the HUD's chrome WILL
+## declare, never `lateral_column_widths()`'s `max(authored, live)`: a live width follows a column's
+## rendered extent, the inset decides that column's height, and reading it here would make the predicate
+## depend on its own output. `_panel_width_extent()` is the viewport. So the answer is a function of the
+## window, two constants and a declared width — no path back to the inset, hence no cycle.
+##
+## The rail width is a PARAMETER for the same order-independence reason: `_rail_declared_width` is pushed
+## by `DockRowController` on the *second* listener of `reservation_changed`, so reading it here would
+## answer against the rail the panel had a moment ago rather than the one it is about to be given.
+##
+## **THE ANSWER IS ONLY HONEST WHILE THE BOUNDS PASSED IN COVER THE ONES THE CARD IS PLACED AGAINST.**
+## This asks whether the card can pay `leading + trailing`; `_available_card_span()` then lays the card
+## out against the bounds `Main` actually pushes, which are `HudLayer.lateral_column_widths()`'s
+## `max(authored, live)`. Any pixel by which those exceed what was passed here is a band of window
+## widths where this says "afford" and the shell comes out NARROW — the trade the rule exists to
+## refuse, taken silently. It shipped that way, passed the columns' authored RESERVATIONS (344 on the
+## trailing one) against a live 419, and the band was 75px wide. The caller passes ceilings now
+## (`Hud.right_column_ceiling`); what belongs here is why the caller may not pass anything smaller.
+##
+## **IT ASKS `wide_shell_min_width()`, SO THE VERDICT IS PER-SUBJECT — and it must be.** The threshold
+## is a sum over the LIVE zone list (issue #450), so a four-zone faction page needs 379px more than a
+## band's three. A predicate frozen at the three-zone number would tell the HUD to keep its strip while
+## the four-zone page then laid out NARROW — the predicate/consumer mismatch this rule already shipped
+## once with the columns' reservations, one subject along. The consequence is that the fork MOVES when
+## the player cycles onto the faction page, which is correct: a wider body genuinely needs a wider
+## window before the trade is worth taking.
+##
+## A collapsed or hidden panel draws no card at all, and a vertical dock's card is a fixed `PANEL_WIDTH`
+## strip — none of them is a wide shell, so none of them can afford one.
+func affords_wide_shell_with_bounds(leading: float, trailing: float, rail_width: float) -> bool:
+	if _collapsed or not _shown or _is_vertical_edge(_dock_edge):
+		return false
+	# `_trailing_bound_for` is what makes this and `_available_card_span()` ask the SAME question: a
+	# predicate charging the card for a column the layout does not charge it for would refuse the trade
+	# on exactly the widths where the card could in fact have paid. It drops the trailing term on a
+	# BOTTOM dock, which is what moved the fork from a logical 2432 to 1871.
+	var span: float = _panel_width_extent() - _rail_span_of(rail_width) \
+		- maxf(leading, 0.0) - _trailing_bound_for(_dock_edge, trailing)
+	return span >= wide_shell_min_width()
 
 ## How wide the CARD draws. A vertical dock is the fixed strip; a horizontal one is exactly what its
 ## content needs, which is what stops a bottom dock spanning an ultrawide.
@@ -1154,7 +1379,10 @@ func _affordable_work_columns() -> int:
 ## outer width before the zones see any of it — its column AND its separator gutter) must come off first.
 func _shell_is_wide() -> bool:
 	if _is_vertical_edge(_dock_edge):
-		return _panel_extent().x - _rail_span() >= wide_shell_min_width()
+		# `_panel_width_extent()`, never `_panel_extent()`: the cross axis now depends on which shell is
+		# active (`_shell_chrome_height`), so building the whole extent here would call the height,
+		# which calls this test.
+		return _panel_width_extent() - _rail_span() >= wide_shell_min_width()
 	# `_available_card_span()` on a horizontal dock, because the HUD columns a top dock keeps clear of
 	# come off the CARD's room before any zone sees it (issue #377). Testing the raw strip put the panel
 	# into the wide shell on a 1920 top dock whose card could only have 1141 — a 331px work zone against
@@ -1170,12 +1398,99 @@ func _panel_extent() -> Vector2:
 	var window := _viewport_size()
 	if _is_vertical_edge(_dock_edge):
 		return Vector2(PANEL_WIDTH, window.y)
-	return Vector2(window.x, _wide_panel_height())
+	return Vector2(window.x, _horizontal_panel_height())
 
-## The T/B cross-axis size: the fixed `PANEL_HEIGHT_WIDE`, clamped to a fraction of the window so a
-## short window can never let the strip eat the screen.
-func _wide_panel_height() -> float:
-	return minf(PANEL_HEIGHT_WIDE, _viewport_size().y * MAX_WIDE_HEIGHT_FRACTION)
+## The strip's extent along the axis the CARD's WIDTH is measured on — `_panel_extent().x`, split out
+## as its own reader.
+##
+## **The split is what keeps the layout ACYCLIC**, not tidiness: the cross axis now depends on which
+## SHELL is active (`_shell_chrome_height`), and the shell is chosen from this width — so a shell test
+## that built the whole extent would call the height, which calls the shell test, which builds the
+## extent. Every width reader takes this; only `_panel_extent()` itself pairs it with the height.
+func _panel_width_extent() -> float:
+	return PANEL_WIDTH if _is_vertical_edge(_dock_edge) else _viewport_size().x
+
+## The T/B cross-axis size: the fixed body budget `PANEL_HEIGHT_WIDE` PLUS whatever the ACTIVE SHELL
+## spends on its own chrome, clamped to a fraction of the window so a short window can never let the
+## strip eat the screen.
+##
+## **THE SHELL TERM IS THE FIX FOR A ZONE SLICED BY THE STRIP'S OWN TAB BAR.** `PANEL_HEIGHT_WIDE` is
+## the budget the zones' content is tuned against — the band zone's SHORT tier reads 299px of the
+## 300px box a wide horizontal dock offers — and it was spent as a FLAT strip height, so the narrow
+## shell paid for its tab bar out of the zone: measured, a 265px box for content that needs 273
+## (`band_panel_scale_bottom`), which the `clip_contents` zone host then sliced with no scrollbar and
+## no affordance. On a BOTTOM dock that cut lands at the window's own edge, which is what makes it
+## read as the panel "running off the bottom of the screen" rather than as a clipped zone.
+##
+## It is deliberately NOT a scale question — the narrow shell is reached at `ui_scale` 1.0 in a window
+## under ~1511px too, and paid the same 35px there. The two shells now hand their zones the SAME box,
+## which is the only arrangement under which one set of tier thresholds can be right for both.
+##
+## **AND THE COLUMN TERM IS THE SAME ARGUMENT AGAIN.** `_body_budget()` picks the budget from
+## `band_zone_columns()`, which is as purely geometric as `_shell_chrome_height()` is — so the strip
+## can get shorter when the flank widens without the height ever becoming a function of content.
+func _horizontal_panel_height() -> float:
+	return minf(_body_budget() + _shell_chrome_height(),
+		_viewport_size().y * MAX_WIDE_HEIGHT_FRACTION)
+
+## The body budget for the CURRENT flank layout: a two-column flank stacks its blocks side by side and
+## needs a shorter box than the one-column stack does, so it takes `PANEL_HEIGHT_WIDE_TWO_COLUMN`.
+##
+## **BOTH BRANCHES ARE GEOMETRIC.** `band_zone_columns()` reads the span, the dock edge, the rail and
+## the lateral bounds and nothing else, so this is a second chrome term and not a fit-to-content: see
+## `PANEL_HEIGHT_WIDE_TWO_COLUMN` for the derivation and for the parked-chrome floor underneath it.
+##
+## A vertical dock and the narrow shell both answer ONE column by construction, so neither is touched.
+func _body_budget() -> float:
+	return PANEL_HEIGHT_WIDE_TWO_COLUMN if band_zone_columns() > 1 else PANEL_HEIGHT_WIDE
+
+## How many columns of its DECLARED width a zone lays its blocks out across, capped by the
+## `ZONE_SPEC_MAX_COLUMNS` its subject declared (see that const for why the cap is the subject's).
+##
+## **PURELY GEOMETRIC — what the span AFFORDS, never what the content holds.** That is the whole
+## safety argument. Every term below is a function of the viewport, the dock edge, the rail's declared
+## span and the lateral bounds; not one of them is content, so the strip's height (which keys off this)
+## stays content-independent and the reservation cannot move when the player edits the band. A count
+## that grew with the roster would put `MapView`'s inset on the snapshot's critical path — the flicker
+## bug the fixed cross-axis size exists to prevent.
+##
+## The room measured is what is left AFTER EVERY OTHER declared zone is paid at ONE column: the wide
+## shell exists to give the work board a readable column, so a second band column is only affordable
+## once the parties flank (and, on the faction page, knowledge) and one `ZONE_WORK_MIN_WIDTH` are
+## already covered. `_affordable_work_columns()`'s idiom, one flank over.
+##
+## **THAT SUM IS `wide_shell_min_width()` LESS THIS ZONE'S OWN COLUMN, never a hand-listed pair of
+## flanks** — which is what makes the count correct for a four-zone page without a second formula, and
+## what stops the two drifting the way the retired `WIDE_SEPARATOR_SPAN` pair did.
+##
+## ONE on a vertical dock and one in the narrow shell, both by construction: those layouts hand a zone
+## a single strip-width column, which is what `PANEL_WIDTH` means. ONE also for any zone that declared
+## no `ZONE_SPEC_MAX_COLUMNS`, and for the EXPANDING zone, which spends the row's remainder rather than
+## a count of columns (`set_work_columns`).
+func zone_columns(zone: StringName) -> int:
+	var spec := _spec_for(zone)
+	var cap: int = maxi(int(spec.get(ZONE_SPEC_MAX_COLUMNS, ZONE_COLUMNS_MIN)), ZONE_COLUMNS_MIN)
+	var column: float = _spec_width(spec)
+	if cap <= ZONE_COLUMNS_MIN or column <= 0.0:
+		return ZONE_COLUMNS_MIN
+	if _is_vertical_edge(_dock_edge) or not _shell_is_wide():
+		return ZONE_COLUMNS_MIN
+	var room: float = _available_card_span() - (wide_shell_min_width() - column)
+	return clampi(int(room / column), ZONE_COLUMNS_MIN, cap)
+
+## How many `ZONE_BAND_WIDTH` columns the BAND flank lays its blocks out across — a NAMED reader of the
+## generic answer above, kept because `BandPanelController.build_band_zone` authors its split against
+## this one zone and `_body_budget()` keys the strip's height off it.
+func band_zone_columns() -> int:
+	return zone_columns(ZONE_BAND)
+
+## What the ACTIVE shell spends on the strip's CROSS axis before any zone sees the box. The wide shell
+## spends none — its separators are vertical hairlines, paid out of the width — while the narrow shell
+## carries the tab bar and the gap beneath it. Read through `_shell_is_wide()` rather than the cached
+## `_body_is_wide`, so a dock layout that arrives before `_relayout_body` has re-chosen the shell still
+## sizes the strip for the shell it is about to get.
+func _shell_chrome_height() -> float:
+	return 0.0 if _shell_is_wide() else _tab_bar_height()
 
 ## The card's INTERIOR box — what the card DRAWS AT, less the border and the content margins it draws
 ## with (`panel_card_stylebox`). Chrome only; never content.
@@ -1279,23 +1594,40 @@ func _zone_order() -> Array[StringName]:
 		keys.append(StringName(spec.get(ZONE_SPEC_KEY, &"")))
 	return keys
 
-## A descriptor's wide-shell width: its fixed flank, or `ZONE_WIDTH_EXPAND` for the expanding zone.
+## A descriptor's ONE-column wide-shell width: its declared flank, or `ZONE_WIDTH_EXPAND` for the
+## expanding zone. **The BASE, not the extent** — `_zone_span()` below is what the zone actually
+## spends; see `ZONE_SPEC_MAX_COLUMNS` for why the two are separate.
 func _spec_width(spec: Dictionary) -> float:
 	return maxf(float(spec.get(ZONE_SPEC_WIDTH, ZONE_WIDTH_EXPAND)), 0.0)
 
-## One zone's FIXED wide-shell width, or `ZONE_WIDTH_EXPAND` if it is the expanding one (or absent).
-func _zone_fixed_width(zone: StringName) -> float:
+## The live descriptor for a zone key, or an empty Dictionary where the layout does not declare it —
+## so every reader takes the same defaults through `get`.
+func _spec_for(zone: StringName) -> Dictionary:
 	for spec in _zone_layout:
 		if StringName(spec.get(ZONE_SPEC_KEY, &"")) == zone:
-			return _spec_width(spec)
-	return ZONE_WIDTH_EXPAND
+			return spec
+	return {}
+
+## What ONE fixed zone actually spends of the row: its declared column times the count `zone_columns()`
+## granted it. **The ONE definition**, so `_card_width`, `zone_size` and `_affordable_work_columns`
+## cannot disagree about how wide a widened flank is — exactly as `_wide_separator_span()` is the one
+## definition of what the separators cost. The expanding zone answers `ZONE_WIDTH_EXPAND` unchanged.
+func _zone_span(spec: Dictionary) -> float:
+	var column := _spec_width(spec)
+	if column <= 0.0:
+		return ZONE_WIDTH_EXPAND
+	return column * float(zone_columns(StringName(spec.get(ZONE_SPEC_KEY, &""))))
+
+## One zone's FIXED wide-shell width, or `ZONE_WIDTH_EXPAND` if it is the expanding one (or absent).
+func _zone_fixed_width(zone: StringName) -> float:
+	return _zone_span(_spec_for(zone))
 
 ## What the layout's FIXED flanks cost the wide shell's interior width, summed over the live list —
 ## never a pair of named constants, which is what made a fourth zone a rewrite rather than a row.
 func _fixed_zone_span() -> float:
 	var span := 0.0
 	for spec in _zone_layout:
-		span += _spec_width(spec)
+		span += _zone_span(spec)
 	return span
 
 ## One wide-shell zone column. `fixed_width > 0` pins the column (band / parties / knowledge);
@@ -1387,10 +1719,17 @@ func rail_slot_host(slot: int) -> Control:
 
 ## Declare the rail column's width — the `max` over the parked clusters, computed by the HUD, which owns
 ## them. NOT measured here. `width <= 0` retires the rail. Re-chooses the shell and re-reports
-## `work_zone_size()`; it can NEVER re-emit `reservation_changed`, because the reservation is the CROSS
-## axis (`_cross_axis_size`, which reads only the collapse flag, the dock edge and the viewport — never a
-## rail width) and the rail only spends the LONG one. That is what stops a feedback loop: the HUD pushes
-## a width -> the panel relayouts -> no reservation emit -> no `Main` fan-out -> no HUD reflow.
+## `work_zone_size()`.
+##
+## **IT COULD ONCE NEVER RE-EMIT `reservation_changed`, AND THAT IS NO LONGER TRUE.** The claim rested
+## on the reservation being a pure function of the collapse flag, the dock edge and the viewport — the
+## rail spending only the LONG axis while the reservation is the CROSS one. Since the cross axis carries
+## the active shell's own chrome (`_shell_chrome_height`), and the shell is chosen from the span the rail
+## comes out of, a rail width can flip the shell and move the strip by the tab bar's height. So it
+## republishes through `_republish_reservation_if_changed`, which read the old guarantee's PURPOSE rather
+## than its letter: the loop it prevented (HUD pushes a width -> panel relayouts -> emit -> `Main` fan-out
+## -> HUD reflow -> pushes a width) still terminates, because that second push lands on the same number
+## and is dropped by the early-out above, and the republish itself is silent on an unchanged size.
 func set_rail_width(width: float) -> void:
 	var declared: float = maxf(width, 0.0)
 	if is_equal_approx(declared, _rail_declared_width):
@@ -1402,6 +1741,7 @@ func set_rail_width(width: float) -> void:
 	# anchored at whatever width it had when the dock was last applied — measured as a 296px rail
 	# hanging 180px off the end of a 1920px strip.
 	_apply_dock_layout()
+	_republish_reservation_if_changed()
 	_notify_zones_resized()
 
 ## Size + show the rail for the current dock. The rail exists only on a HORIZONTAL dock: a vertical strip
@@ -1435,7 +1775,12 @@ func _rail_width() -> float:
 ## between two regions of one card. The `ChromeRailSeparator` `ColorRect` went with the merged bar; a
 ## rule down the gap between the card and the chrome would re-assert the very join that was removed.
 func _rail_span() -> float:
-	var width := _rail_width()
+	return _rail_span_of(_rail_width())
+
+## What a rail of `width` would take off the strip. Split out so `affords_wide_shell_with_bounds` can ask
+## the question about a width that has not been declared yet without restating the "+ gutter, or zero"
+## rule — the two must never disagree about what a rail costs.
+func _rail_span_of(width: float) -> float:
 	if width <= 0.0:
 		return 0.0
 	return width + RAIL_SEPARATOR_SPAN
@@ -1578,11 +1923,17 @@ func _on_viewport_resized() -> void:
 
 ## Re-report `work_zone_size()` when it actually moved, so Hud re-pages its work board once per real
 ## geometry change rather than on every layout pass.
+## **THE BAND FLANK'S COLUMN COUNT IS ITS OWN TRIGGER, beside the work box.** The two nearly always
+## move together — a wider flank leaves the board less — but not always: at the cap the flank stops
+## growing while the board keeps taking the rest, so a span change can hold `work_zone_size()` fixed
+## across a count change, and the band zone would then keep a split authored for the other layout.
 func _notify_zones_resized() -> void:
 	var size := work_zone_size()
-	if size.is_equal_approx(_last_work_zone_size):
+	var columns := band_zone_columns()
+	if size.is_equal_approx(_last_work_zone_size) and columns == _last_band_columns:
 		return
 	_last_work_zone_size = size
+	_last_band_columns = columns
 	zones_resized.emit()
 
 ## The current window (viewport) size, the basis for the panel's long-axis extent + the height clamp.
@@ -1666,7 +2017,30 @@ func _on_cycle_pressed(delta: int) -> void:
 	cycle_requested.emit(delta)
 
 func _emit_reservation() -> void:
-	reservation_changed.emit(_dock_edge, current_reservation_size())
+	_published_reservation = current_reservation_size()
+	reservation_changed.emit(_dock_edge, _published_reservation)
+
+## Publish the reservation again IF the cross-axis size has moved since the last emission — and stay
+## silent otherwise.
+##
+## **THE PANEL'S RESERVED SIZE IS WHERE THE EVENT DOCK'S BAR STARTS**, through `_reservations` →
+## `Main._update_event_dock_edge_offset`, so a size this panel draws at but never published is a bar
+## drawn straight through the card. That could not happen while the cross axis was a pure function of
+## the collapse flag, the dock edge and the viewport, because the three paths that change those all
+## emit. It can now: the axis carries the active SHELL's chrome, and the shell is chosen from
+## `_available_card_span()`, whose other two terms — the lateral bounds and the rail's span — arrive
+## DECLARED, on setters that relayout without emitting. Measured on a TOP dock at `ui_scale` 1.35: the
+## panel drew 395 while `Main` still held 360, and the bar sat 35px inside the card's lower edge.
+##
+## **EVERY EXISTING `_emit_reservation()` CALL SITE STAYS UNCONDITIONAL, and that is deliberate.**
+## `Main._apply_reservation` is not only how the size travels — it is the hook that re-pushes the
+## lateral bounds and recomputes the event dock's perpendicular insets, both of which read live HUD
+## geometry that a viewport resize can move without moving this panel at all. Deduplicating those
+## emissions would silently stop that recomputation; this is strictly additive.
+func _republish_reservation_if_changed() -> void:
+	if is_equal_approx(current_reservation_size(), _published_reservation):
+		return
+	_emit_reservation()
 
 # ---- helpers ---------------------------------------------------------------
 
@@ -1678,7 +2052,7 @@ func _cross_axis_size() -> float:
 		return COLLAPSED_SIZE
 	if _is_vertical_edge(_dock_edge):
 		return PANEL_WIDTH
-	return _wide_panel_height()
+	return _horizontal_panel_height()
 
 ## True when the dock reserves a vertical strip (left/right → width on the x-axis).
 func _is_vertical_edge(edge: int) -> bool:

@@ -28,6 +28,17 @@ var _shell: MenuShell
 
 func _ready() -> void:
 	get_window().size = PREVIEW_SIZE
+	# PIN THE INTERFACE SCALE, the same determinism source `ui_preview` / `map_preview` /
+	# `band_panel_preview` pin: `ClientSettings` is an autoload that has already read the developer's
+	# real `user://client_settings.cfg` and `UiScaler` has already pushed it onto the window's
+	# `content_scale_factor`. This harness sizes `_root` to a fixed PREVIEW_SIZE, so a moved slider
+	# would leave that root larger than the logical viewport and push the Options pane out of frame —
+	# in the ONE PNG that exists to show the Options pane. Reading the real config for the row VALUES
+	# is deliberate here (see the docstring); rendering at the real config's SCALE is not.
+	# Assign the MEMBER, never `set_ui_scale` (the setter `_save`s over that file), then re-emit
+	# `changed` so `UiScaler` applies the pin through its own real path.
+	ClientSettings.ui_scale = ClientSettings.UI_SCALE_DEFAULT
+	ClientSettings.changed.emit()
 	DirAccess.make_dir_absolute(OUT_DIR)
 
 	_root = Control.new()
