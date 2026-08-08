@@ -71,8 +71,21 @@ read on both axes: exactly the two worn claims fail, naming `pen 40.0 per keeper
 original defect in its own words.
 **The FORECAST QUERY arc's client half.** Measured AFTER it merged with the per-source carry axis, the
 expanded TOE roster, the role cards' kit picker above and the appended-axis pairs: `ui_preview` is
-**281 frames / 670 `PASS`,
-exit 0** and `band_panel_preview` **87 frames / 227 `assert OK` / 259 `: PASS`, exit 0**. The two arcs'
+**281 frames / 688 `PASS`,
+exit 0** and `band_panel_preview` **87 frames / 227 `assert OK` / 259 `: PASS`, exit 0**. The
+`ui_preview` tally rose from 670 in two steps and **NEITHER MOVED A FRAME IN EITHER HARNESS**, which is
+what says each was byte-identical everywhere but on the case it fixed. The hunt quantiser's collapse
+into one expression added seven PNG-less claims to `chapters/hunt.gd` (`labor-ui.md` → "THE `max(1.0)`
+SITS ON THE CARRY ARM ALONE" and "THE CARRY CLAMP IS CHARGED PER BODY"); the retreat's reach into the
+crew answers added seven more (`_retreat_crew_assertions`) and **inverted two `band_panel_preview`
+claims that encoded the doctrine it reverses** — the dock chart's hold crew and the kit sheet's cap,
+which now MOVE with `dispersion` rather than standing still — so that harness's tally is unchanged
+while two of its lines say the opposite of what they used to. **Sabotage-verified on three DISJOINT
+mutations, each failing a different set and only one of them moving frames**: the retired two-branch
+form fails the played 4.80/0.36 pair (2 claims, 0 frames); an averaged-then-clamped kill fails the
+cadence pair (2 claims, **33 frames** — every herd compose sheet whose take or holding rate sits below
+one body); and `engage_workers` restored to the raw reach fails the crew-invariant trio (3 claims,
+0 frames). The two arcs'
 own pre-merge figures are recorded in their paragraphs above and are NOT additive with these — the
 merge retired the sampled-party and estimate-honesty claims from one side while the other added the
 role-card and pen-axis ones.

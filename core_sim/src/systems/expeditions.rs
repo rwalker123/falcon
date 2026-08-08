@@ -1207,7 +1207,11 @@ fn expedition_take_biomass(
         // **Restraint is free** — the mission's floor bounds what the party goes after, so a raid at
         // its floor takes no casualties for animals it was never going to kill (§1).
         .min(fauna::animals_affordable(ceiling, body_mass));
-    let stayed = fauna::animals_that_stay(engaged, wariness, draw);
+    // **Through the PARTY, so the kit's `dispersion` reaches the retreat** — the same seam
+    // `systems::hunt_take` uses; see the note there. A raid quoted for a trapping party must project
+    // the trap's stand-off, and `expedition_take_biomass` is both the raid's take and its own
+    // forecast, so the two cannot diverge once this is right.
+    let stayed = party.stayers(engaged, wariness, draw);
     // **The fight decides the kill** (§4) — the same resolution the resident band runs.
     // A detached party builds nothing, so its crew carries the identity dip ([`NO_BUILD_UNDERWAY_DIP`]).
     let fight = fauna::resolve_hunt_fight(
@@ -1491,7 +1495,14 @@ pub fn hunt_take(
     // afterwards. A crew at its floor that engaged normally would take casualties and wear its kit
     // and then hand nothing back — and killing without taking is denial, not restraint.
     let engaged = engaged.min(fauna::animals_affordable(ceiling, herd.body_mass));
-    let stayed = fauna::animals_that_stay(engaged, fauna.wariness_for(&herd.species), draw);
+    // **Through the PARTY, so the kit's `dispersion` reaches the retreat** — `HuntingParty::stayers`,
+    // never the bare `animals_that_stay`. The forecast this take must match resolves it that way
+    // (`forecast_production_and_take_at`), the kit picker prices it that way
+    // (`per_hunter_take_biomass`), and since the retreat also sizes the crew
+    // (`fauna::hunt_engage_workers`) a bare-wariness take here would put all three at odds with the
+    // one number the row reports. The visible cost was the trap line: `dispersion 0` is the whole of
+    // what a passive device buys, and this path charged a trapping party the full retreat anyway.
+    let stayed = party.stayers(engaged, fauna.wariness_for(&herd.species), draw);
     // **The fight decides the kill** — stage 3, and the arm that used to be a bespoke hunt formula.
     // The quarry comes in carrying **this herd's** accumulated wounds (`fauna::herd_quarry_fight`),
     // so a party below the one-turn threshold wears the animal down over several turns instead of

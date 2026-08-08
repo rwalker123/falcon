@@ -233,18 +233,20 @@ func _hunt_avg_window_turns(herd: Dictionary, floor: float, improvement: String)
 
 ## The HONEST carry-aware delivery model for a local hunt: what a crew of `workers` from `band` actually
 ## lands off `herd` under `policy` per turn, and how much of the kill they can't carry (which rots). A
-## hunt takes WHOLE animals via a kill-credit bank, so the crew's raw food throughput is quantized to the
-## whole bodies it can haul — fractional carry capacity is idle (NOT waste), but a crew too small to carry
-## even one whole animal loses the surplus meat. Returns `{available, delivered, waste, waste_pct}` (all
-## food/turn; `waste_pct` 0..1) or `{available=false}` when a lever/ceiling is absent (caller degrades to
-## the old food/turn line). NEVER re-derives the ecology model — `food_per_animal` and the flow ceiling
-## are sim exports.
+## hunt takes WHOLE animals via a kill-credit bank, so the take is ONE quantised expression — the sim's
+## `killed = min(the stock above the floor, max(1, whole bodies haulable), animals brought down)`,
+## in bodies per turn — and delivery is `killed × min(one body, the crew's carry)`, the pack's hold
+## charged PER BODY. Fractional carry capacity is idle (NOT waste, no animal having been dropped); a
+## body killed and left behind is. Returns
+## `{available, delivered, waste, waste_pct}` (all food/turn; `waste_pct` 0..1) or `{available=false}`
+## when a lever/ceiling is absent (caller degrades to the old food/turn line). NEVER re-derives the
+## ecology model — `food_per_animal` and the flow ceiling are sim exports.
 ##
 ## **`holding` ASKS THE SAME QUESTION OF THE STEADY STATE** — the take once the herd sits at its floor
 ## and only regrowth is on offer. It swaps ONLY the ceiling (the room becomes one turn's regrowth) and
 ## leaves the crew, the dip and the quantisation exactly where they are, so the burst and the steady
 ## rate are the same computation asked twice. A separate steady-state formula would be free to drop
-## the whole-animal branch and print a smooth number beside a bodies-per-turn one.
+## the whole-animal quantum and print a smooth number beside a bodies-per-turn one.
 ##
 ## **`herd` ARRIVES ALREADY KIT-PRICED** — `_hunt_yield_model` is its only caller and prices at its own
 ## top. Pricing again here would apply the ratio twice (`KitRoster.repriced_source` is not idempotent),
@@ -260,11 +262,11 @@ func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float,
     # **THE DIP MULTIPLIES THE COLLECTION, AND THE QUANTISATION HAPPENS AFTER IT** — the sim's own
     # order (`hunt_take` composes `workers × per_worker × build_dip`, THEN
     # `fauna::quantise_animal_take`). It arrives here on `per_worker`, so `collection` below carries it
-    # and the whole-animal branch is taken against the dipped throughput. That is not a scaling of the
-    # answer: below one body the crew falls off the carryable branch entirely, still kills one animal
-    # (the `max(1, …)` this function's else-branch mirrors) and wastes most of it — so a build moves the
-    # WASTE line, not merely the take. Dipping the ceiling, or the delivered figure after quantisation,
-    # produces a number that is wrong in a way that still looks plausible.
+    # and the quantisation runs against the dipped throughput. That is not a scaling of the answer:
+    # below one body of carry the crew still kills one animal (the `max(1.0)` on the haul arm) and
+    # wastes most of it — so a build moves the WASTE line, not merely the take. Dipping the ceiling, or
+    # the delivered figure after quantisation, produces a number that is wrong in a way that still
+    # looks plausible.
     var rates := SourceForecast.herd_axis_rates(herd, floor, improvement)
     var fpa := float(rates["per_animal"])
     var per_worker := float(rates["per_worker"])
@@ -274,47 +276,57 @@ func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float,
         return {"available": false}
     ceiling *= output
     var collection := float(workers) * per_worker * output   # crew's raw food throughput /turn
-    # WHOLE ANIMALS /TURN THE CREW CAN CARRY — **AND NEVER MORE THAN IT CAN REACH**
-    # (`docs/plan_hunt_through_combat.md` §2). The sim's take is
-    # `min(stock above the floor, collection, engaged × body_mass)` with the quantiser running on that
-    # min, and the engagement arm was the one this sheet had never had: one hunter's 40 biomass of
-    # carry read **307 Wild Fowl a turn** against a take of ten — the sheet promising 30× what the sim
-    # pays, for the whole life of the wire field's absence.
+    # THE KILL IS ONE EXPRESSION — the sim's own `fauna::quantise_animal_take`,
+    # `killed = affordable.min(carryable.max(1.0)).min(brought_down)`, restated in food. The three
+    # bounds are the stock above the floor, what the crew can HAUL, and what it brings down
+    # (`docs/plan_hunt_through_combat.md` §2). The engagement arm was the one this sheet had never
+    # had: one hunter's 40 biomass of carry read **307 Wild Fowl a turn** against a take of ten — the
+    # sheet promising 30× what the sim pays, for the whole life of the wire field's absence.
+    #
+    # **THE `max(1.0)` BELONGS TO THE CARRY ARM ALONE, INSIDE THE `min`, AND THAT IS THE WHOLE OF WHY
+    # THIS IS ONE EXPRESSION RATHER THAN TWO BRANCHES.** A party that cannot carry one whole animal
+    # still kills one and wastes the rest — a fact about the PACK. A party that brings down three
+    # quarters of an animal has brought down three quarters of an animal, and floors at nothing. While
+    # the only bound below one body was the carry quotient the two were indistinguishable, so a
+    # `carryable < 1` branch could price delivery as the crew's whole raw `collection`; with the
+    # engagement arm in the same `min` that stopped being true, and a Wild Boar crew of six
+    # (engaged 1, stayed 0.75) read **4.80 food/turn** — its entire carry throughput, twenty boar —
+    # for a take of 0.18, then FELL to 0.36 at seven hunters, the readout dropping as the crew grew.
     #
     # **THE BOUND IS APPLIED TO THE ANIMAL COUNT, NOT TO `collection`**, and the two are the same
     # arithmetic taken in different orders: `floor(min(carry, engaged × fpa) / fpa)` is
     # `min(floor(carry / fpa), engaged)` — but the first divides a product of `fpa` BY `fpa` and can
-    # land a whole engagement one animal short on a rounding, while the second is exact. It also keeps
-    # the partial-body branch below reading the RAW carry, which is right: engagement is never the
-    # binding arm there (a party that exists reaches at least one animal), so the waste it reports
-    # stays a carry story.
+    # land a whole engagement one animal short on a rounding, while the second is exact.
     #
-    # `animals_engaged` answers UNBOUNDED for a pen and for a species with no engagement stage, so the
-    # `min` is a no-op on every managed-herd and plant-web frame.
+    # `animals_engaged` answers UNBOUNDED for a pen and for a species with no engagement stage, and
+    # `animals_stayed` passes an unbounded reach straight through — so the `min` is a no-op and every
+    # managed-herd and plant-web frame reads exactly what the carry quotient alone gave it.
     #
     # **AND THE ARM IS WHAT STAYS, NOT WHAT IS REACHED.** The sim runs engage → retreat → fight and
     # hands the SURVIVOR count to the quantiser, so the bound here is `animals_stayed` — which is also
     # the ONE thing the kit's `dispersion` moves on this line. A trapping party is not there to be seen
     # and keeps everything it reaches; a spear party on the same warren keeps one animal in four. Read
     # off `engage_rate` instead, Big-game and Trapping quote the identical hunt.
-    var carryable := minf(floorf(collection / fpa),
-        SourceForecast.animals_stayed(
-            SourceForecast.animals_engaged(workers, float(rates["engage_rate"]),
-                float(rates["dip"])),
-            float(rates["stay"])))
-    var delivered := 0.0
-    var waste := 0.0
-    if carryable >= 1.0:
-        # Carry quantized to whole bodies; the flow ceiling still caps it. Leftover carry capacity is
-        # idle, NOT waste (no animal was killed and dropped).
-        delivered = minf(ceiling, carryable * fpa)
-        waste = 0.0
-    else:
-        # Can't carry even one whole animal → the meat that can't be hauled rots.
-        var kills_per_turn := minf(1.0, ceiling / fpa)
-        delivered = collection * kills_per_turn
-        waste = (fpa - collection) * kills_per_turn
-    var killed_food := delivered + waste
+    #
+    # **AND THE CARRY CLAMP IS PER BODY, NOT PER TURN** — which is the other half of why one expression
+    # replaces two branches. A body lands WHOLE on the turn it drops and the crew hauls `collection`
+    # that turn; the remainder rots where it fell. Below one body per turn `killed` is a CADENCE (a
+    # body every `1/killed` turns), so clamping the AVERAGED kill by the carry credits the crew a whole
+    # body's worth of meat no single turn could hold: a party whose collection, whose ceiling and whose
+    # 0.6-of-a-body cadence all coincide really lands `0.6 × collection` and wastes 40% of what it
+    # kills, where the averaged-then-clamped form reads the full ceiling with no waste at all — 1.67×
+    # too high, and silent about the meat left on the ground.
+    var haulable := maxf(floorf(collection / fpa), 1.0)
+    var brought_down := SourceForecast.animals_stayed(
+        SourceForecast.animals_engaged(workers, float(rates["engage_rate"]),
+            float(rates["dip"])),
+        float(rates["stay"]))
+    # BODIES PER TURN — the herd's own offer, the crew's haul, and what the party puts on the ground,
+    # whichever is least. Fractional below one: a body every `1/killed` turns.
+    var killed := minf(minf(ceiling / fpa, haulable), brought_down)
+    var delivered := killed * minf(fpa, collection)
+    var killed_food := killed * fpa
+    var waste := maxf(killed_food - delivered, 0.0)
     var waste_pct := (waste / killed_food) if killed_food > 0.0 else 0.0
     return {"available": true, "delivered": delivered, "waste": waste, "waste_pct": waste_pct,
         "axis": String(rates["axis"]), "per_animal": fpa}

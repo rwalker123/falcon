@@ -1,5 +1,8 @@
 use super::*;
-use crate::fauna::{herd_capacity, herd_ecology, net_biomass_delta, reseeding_logistic_regrowth};
+use crate::fauna::{
+    herd_capacity, herd_ecology, net_biomass_delta, reseeding_logistic_regrowth,
+    NO_RETREAT_STAGE_STAY,
+};
 use crate::forage::{
     field_fodder, field_trade_goods, forage_per_worker_biomass, patch_ecology,
     patch_fodder_per_biomass, patch_neglect_grace_remaining, patch_provisions_per_biomass,
@@ -31,6 +34,13 @@ const NO_RUNG_CREW: u32 = 0;
 /// does not, so the seam converts once, here, and the schema documents `<= 0` as *unbounded* — the
 /// same reading `fauna::hunt_engage_workers` gives it.
 const NO_ENGAGEMENT_STAGE: f32 = 0.0;
+
+/// **The dispersion the wire's `stayFraction` is published at** — the neutral `1.0`, which leaves the
+/// species' own `wariness` untouched. The field is the *species* half of the retreat; the *party*
+/// half is the chosen kit's `KitOption.dispersion`, which the client multiplies in (schema:
+/// `effective = clamp(1 − (1 − stayFraction) × dispersion, 0, 1)`). Publishing a party-resolved value
+/// here would bake one band's kit into a per-herd row every band reads.
+const WIRE_NEUTRAL_DISPERSION: f32 = 1.0;
 
 /// The compact per-tile pasture-phase code the client reads off `TileState` (`GRAZE_PHASE_*`).
 /// A tile with **no patch** (a biome that carries no pasture: water, ice, bare rock) is
@@ -498,12 +508,16 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // how many counting hits a body takes. The client composes both — it already holds
                 // the band's own `hunterAttack` — so no "can this band win" answer is exported.
                 durability: species_def.map(|def| def.combat.durability).unwrap_or(0.0),
-                // **`1 − wariness`, the retreat as a term.** `1.0` for a species the roster cannot
-                // resolve — nothing breaks off — which is the same reading a pen and the plant web
-                // give and keeps an unresolved row from silently zeroing a take.
-                stay_fraction: species_def
-                    .map(|def| (1.0 - def.combat.wariness).clamp(0.0, 1.0))
-                    .unwrap_or(1.0),
+                // **`1 − wariness`, the retreat as a term** — through the sim's own
+                // [`crate::fauna::stay_fraction`] rather than re-spelled, so the wire and the crew
+                // /take sizing that divides by it cannot drift. Published at the **neutral
+                // dispersion**: the species half of the retreat, which the client composes with its
+                // chosen `KitOption.dispersion`. `1.0` for a species the roster cannot resolve —
+                // nothing breaks off — which is the same reading a pen and the plant web give and
+                // keeps an unresolved row from silently zeroing a take.
+                stay_fraction: species_def.map_or(NO_RETREAT_STAGE_STAY, |def| {
+                    crate::fauna::stay_fraction(def.combat.wariness, WIRE_NEUTRAL_DISPERSION)
+                }),
                 ferocity: species_def.map(|def| def.ferocity).unwrap_or(0.0),
                 aggression: species_def.map(|def| def.aggression).unwrap_or(0.0),
                 // Predators Phase 1a — the herd's prey-sensing radius, but ONLY for a carnivore

@@ -172,11 +172,11 @@ pub use fauna::{
     hunt_haul_workers, hunt_source_yield_preview, hunt_take_bound, hunt_take_workers, pen_upkeep,
     per_hunter_take_biomass, project_arrivals_hunt, project_realized_hunt, quantise_animal_take,
     quarry_default_hunt_kit, repopulate_fauna, resolve_hunt_fight, retreat_seed,
-    spawn_initial_herds, species_requires_denial, AnimalTake, EcologyPhase, EngagementStop,
-    FightCasualties, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, HerdTelemetryEntry,
-    HuntDraw, HuntFight, HuntTakeBound, HuntingParty, PreyDatum, QuarryFight, RoamState,
-    SourceYieldForecast, TakeRange, FODDERING_DISCOVERY_ID, FULLY_HERDED, HERDING_DISCOVERY_ID,
-    MSY_BIOMASS_FRACTION, NO_DEATHS_TO_REPORT, PENNING_DISCOVERY_ID,
+    spawn_initial_herds, species_requires_denial, stay_fraction, AnimalTake, EcologyPhase,
+    EngagementStop, FightCasualties, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
+    HerdTelemetryEntry, HuntDraw, HuntFight, HuntTakeBound, HuntingParty, PreyDatum, QuarryFight,
+    RoamState, SourceYieldForecast, TakeRange, FODDERING_DISCOVERY_ID, FULLY_HERDED,
+    HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, NO_DEATHS_TO_REPORT, PENNING_DISCOVERY_ID,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle,

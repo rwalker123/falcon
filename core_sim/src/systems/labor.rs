@@ -1821,17 +1821,25 @@ pub fn advance_labor_allocation(
                     // two webs cannot dip differently.
                     //
                     // **The ENGAGEMENT side is the third unit** ([`fauna::hunt_engage_workers`],
-                    // `docs/plan_hunt_through_combat.md` §2): a hunter reaches `engage_rate` animals a
-                    // turn whatever they can carry, so the crew that clears the ceiling needs
-                    // `ceil(peak drop / (engage_rate × dip))` hands. Sizing on carry alone reported
-                    // "more hands would be idle" about small-bodied game — 470 fowl above the floor is
-                    // 61 biomass, two haulers' worth, and 47 hunters' worth of reach.
+                    // `docs/plan_hunt_through_combat.md` §2): a hunter brings down
+                    // `engage_rate × dip × stay` animals a turn whatever they can carry, so the crew
+                    // that clears the ceiling needs `ceil(peak drop / that)` hands. Sizing on carry
+                    // alone reported "more hands would be idle" about small-bodied game — 470 fowl
+                    // above the floor is 61 biomass, two haulers' worth, and dozens of hunters' worth
+                    // of reach.
+                    //
+                    // **The retreat rides it, off THIS party's own kit** — `party_for`'s
+                    // `dispersion` against the quarry's `wariness`, which is the same
+                    // `stay_fraction` `hunt_take` above priced the take with. Reading the species'
+                    // bare `1 − wariness` here (or the neutral `1.0`) would size a crew at a
+                    // dispersion the take was never resolved at.
                     let take_workers = fauna::hunt_take_workers(
                         standing_above_floor,
                         herd.body_mass,
                         herd_carry_per_worker * ladder.build_dip(improvement),
                         fauna.engage_rate_for(&herd.species),
                         ladder.build_dip(improvement),
+                        party_for(herd.body_mass).stay_fraction(fauna.wariness_for(&herd.species)),
                     );
                     let workers_needed = source_crew_needed(herders_needed, take_workers);
                     // **The arrival schedule — computed POST-take, unlike `realized`.** It

@@ -532,7 +532,7 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   | term | unit | rate |
 >   |---|---|---|
 >   | `herd_herders_needed` | **heads** minded | `animals_per_herder` (one herder minds 12 aurochs) |
->   | `fauna::hunt_engage_workers` | **animals reachable** | `engage_rate` (one hunter reaches 10 fowl, 0.05 mammoths) |
+>   | `fauna::hunt_engage_workers` | **animals brought down** | `engage_rate × build_dip × stay` (one hunter reaches 10 fowl, 0.05 mammoths — and keeps only what stands) |
 >   | `fauna::hunt_haul_workers` | **biomass** carried | `per_worker_biomass_capacity` (one hauler carries 40) |
 >
 >   A shepherd minds ~300 sheep and could not carry three. So
@@ -549,6 +549,30 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >     wherever `engage_rate × body_mass ≤ per_worker_biomass_capacity`, which is the whole roster, and
 >     the mammoth's `0.05 × 800 = 40` is the one exact tie. Retune either dial past that and the
 >     haul term takes over — which is why it stays in the `max()` rather than being folded away.
+>     (The retreat only widens that dominance: it divides the reach crew by `stay ≤ 1` and leaves the
+>     haul crew alone, so the roster-wide tie above is the *calmest* case.)
+>   - **THE RETREAT PRICES THE CREW, not only the take.** `hunt_engage_workers`' divisor is what one
+>     hunter puts on the ground — `engage_rate × build_dip × stay` — and never the raw reach, because
+>     **a party that keeps one animal in four needs four times the hands to draw the same stock
+>     down**. `stay` is the party's OWN [`HuntingParty::stay_fraction`] (the quarry's `wariness` folded
+>     with the kit's `dispersion`, `equipment.md`), the identical term the take beside it is priced
+>     with — never the species' bare `1 − wariness` and never the neutral `1.0`, or a sheet can size a
+>     crew at one dispersion beside a take priced at another. The one exemption is the `fight: None`
+>     branch (`fauna::NO_RETREAT_STAGE_STAY`), where the source has no engagement stage to speak of and
+>     the term is already `0`.
+>
+>     The reach-only reading was visible in play: on a Wild Boar herd the compose sheet's *clear it
+>     now* target divided the room by the retreat-aware rate (**108 hunters**) while the stepper cap
+>     beside it divided by the raw reach (**82**), so the sheet named a crew the panel refused to let
+>     the player assign — and 82 hunters demonstrably leave the herd short. Pinned in whole numbers by
+>     `fauna::tests::a_wary_boar_herd_needs_the_hands_the_retreat_costs` (body 12, `engage_rate` 0.33,
+>     `wariness` 0.25 at the spear line's neutral dispersion ⇒ `0.2475` boar down per hunter, so a
+>     28-animal drop costs **114** hands where the raw reach reads 85), and on the exported row by
+>     `hunt_yield_vector::the_exported_crew_pays_for_the_retreat`.
+>
+>     `stay == 0` reports **`0`**, which is the answer rather than a sentinel: nothing the party
+>     reaches ever stands, so the take is identically zero at every party size and no crew achieves
+>     it. The haul term still speaks, so the `max()` does not collapse with it.
 >   - **The herder term dominates at a SHALLOW draw.** It counts the whole herd's heads; the other two
 >     count only the drop standing above the floor. A fowl herd worked at floor `0.9` owes its full
 >     keeper crew while the drop it can pay is a fraction of it.
@@ -652,20 +676,29 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   overstaffing inversion.
 > - **The ENGAGEMENT term is sized off the SAME peak drop, and it is the one that binds on light game**
 >   (`fauna::hunt_engage_workers`, `docs/plan_hunt_through_combat.md` §2) — `ceil(peak_animal_drop /
->   (engage_rate × build_dip))`, the exact inverse of `fauna::animals_engaged`, sharing
->   `peak_animal_drop` with the haul term so the two crews can never be sized against different drops.
->   The dip rides it for the reason it rides carry (§3.1): hands spent gentling a herd are hands not
->   stalking it.
+>   (engage_rate × build_dip × stay))`, the inverse of the **closed-form per-hunter bring-down rate**,
+>   sharing `peak_animal_drop` with the haul term so the two crews can never be sized against different
+>   drops. The dip rides it for the reason it rides carry (§3.1): hands spent gentling a herd are hands
+>   not stalking it. The retreat rides it for the reason it rides the take: what a hunter *reaches* is
+>   not what a hunter *lands* (see "THE RETREAT PRICES THE CREW" above).
+>
+>   **It is the inverse of the rate, NOT of `fauna::animals_engaged`.** That helper answers how many
+>   animals the party gets near, which is strictly more than it kills wherever a species has any
+>   wariness — and it floors, so composing the two would lose up to a whole animal before the stay
+>   multiplies. The engagement is still asserted to cover the drop (you cannot bring down what you
+>   never reached); the *count* comes from the unfloored rate.
 >
 >   Its absence was the same defect as the haul term's `carried` inversion, in the opposite direction
 >   and on the same panel: a Wild Fowl herd standing ~470 head above its floor is **61 biomass**, so the
 >   carry-only count read **2** — *"more workers would be idle"* — about a take each additional hunter
->   would have grown, because one hunter reaches 10 birds and 47 are needed to clear the drop. Adding it
->   can only *raise* `workers_needed`, so the invariant above tightens rather than bending: the
->   overstaffed region shrinks and `workers > workers_needed` still cannot coexist with
+>   would have grown, because one hunter reaches 10 birds and dozens are needed to clear the drop.
+>   Adding it can only *raise* `workers_needed`, so the invariant above tightens rather than bending:
+>   the overstaffed region shrinks and `workers > workers_needed` still cannot coexist with
 >   `wasted_yield > 0`. Pinned on the exported row by
 >   `hunt_yield_vector::the_exported_crew_counts_the_hands_that_can_reach_the_herd` (both units, with
->   the pen's no-engagement-stage reading as the liveness half).
+>   the pen's no-engagement-stage reading as the liveness half — that harness holds `wariness` at its
+>   identity, so the retreat's own effect is pinned separately by
+>   `the_exported_crew_pays_for_the_retreat`).
 > - **Wild hunting is untouched, deliberately.** No maintenance (the herd isn't yours), but it keeps
 >   its carry cap. **The models differ because the products differ: hunt = reach + carry; harvest =
 >   maintain + take.**

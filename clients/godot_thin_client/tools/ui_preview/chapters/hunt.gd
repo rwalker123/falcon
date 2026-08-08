@@ -1634,6 +1634,12 @@ func run(harness) -> void:
 	# ---- AN EMPTY RAID IS EMPTY FOR ONE OF TWO REASONS --------------------------------------------
 	await _unkillable_quarry_states()
 
+	# ---- THE QUANTISED TAKE IS ONE EXPRESSION, AND IT NEVER FALLS AS THE CREW GROWS ---------------
+	_engagement_quantisation_assertions()
+
+	# ---- THE RETREAT PRICES THE CREW, NOT ONLY THE TAKE ------------------------------------------
+	_retreat_crew_assertions()
+
 
 # =====================================================================================
 #  THE PRE-LAUNCH FIGHT (`docs/plan_hunt_through_combat.md` §2.1, §4.2, §6.5)
@@ -2089,3 +2095,412 @@ func _raid_row_for(herd: Dictionary, floor: float, party: int) -> Dictionary:
 				and int(row.get("party_workers", 0)) == party:
 			return row
 	return {}
+
+
+# =====================================================================================
+#  THE QUANTISED TAKE IS ONE EXPRESSION (`fauna::quantise_animal_take`)
+# =====================================================================================
+# Reported from play on a Wild Boar herd: **six hunters quoted 4.80 food/turn and seven quoted
+# 0.36** — the readout falling off a cliff as the crew GREW. `_hunt_delivered_and_waste` carried two
+# branches, and the `carryable < 1` one priced delivery as the crew's whole raw `collection` on the
+# premise that the only way below one body is a pack too small to hold one. Once the ENGAGEMENT arm
+# joined the same `min` that premise was false: at six hunters the crew hauls twenty boar and brings
+# down three quarters of ONE, so the branch quoted twenty boar for a take of three quarters of one.
+#
+# PNG-LESS AND DRIVEN, for the reason `compose_rungs.gd`'s kit-repricing liveness block is: this is
+# arithmetic, and a sheet quoting the wrong number renders a perfectly plausible frame. The producer
+# is called directly with a BARE fixture — `_hunt_delivered_and_waste` takes an already-kit-priced
+# herd, and the reference here is the unpriced one whose terms the constants below state.
+
+## The reported quarry's own wire terms. Every derived figure is composed FROM these rather than
+## restated beside them, so the fixture cannot describe a boar whose meat and whose mass disagree.
+##   food_per_animal    = 12 × 0.02 = 0.24
+##   one hunter CARRIES 0.80 food = 40 biomass = 3.3 boar
+##   one hunter REACHES 0.33 boar, of which three in four stay (wariness 0.25)
+const BOAR_BODY_MASS := 12.0
+
+const BOAR_PROVISIONS_PER_BIOMASS := 0.02
+
+const BOAR_PER_WORKER_YIELD := 0.80
+
+const BOAR_ENGAGE_RATE := 0.33
+
+## `1 − wariness`, the wire's own `stayFraction`: a quarter of what the party reaches breaks off.
+const BOAR_STAY_FRACTION := 0.75
+
+## Dialed so the flow ceiling is NEVER the binding arm across the whole sweep — the room above the
+## food peak is 340 − 0.5 × 400 = 140 biomass = 2.80 food, against a top take of 0.54. The claim is
+## about the carry and engagement arms, so a ceiling that clipped the sweep would answer elsewhere.
+const BOAR_CAPACITY := 400.0
+
+const BOAR_BIOMASS := 340.0
+
+## The two crews the played report names, and the one animal-count step between them:
+## 6 → `floor(6 × 0.33)` = 1 engaged, 0.75 stayed; 7 → `floor(7 × 0.33)` = 2 engaged, 1.50 stayed.
+const BOAR_CREW_SUB_ONE_ANIMAL := 6
+
+const BOAR_CREW_ONE_ANIMAL := 7
+
+## The sweep, chosen to CROSS the sub-one-animal region rather than sit above it: at one hunter the
+## party engages `ENGAGED_AT_LEAST`'s single animal and keeps 0.75 of it, and only at 13 would a
+## third body drop. A sweep starting above the crossing would pass with the defect fully restored.
+const BOAR_SWEEP_MIN_CREW := 1
+
+const BOAR_SWEEP_MAX_CREW := 12
+
+## The engagement-bound Wild Boar of the played report: wild, un-penned and food-paying, so the axis
+## is provisions and the whole-animal quantum is real.
+func _quantisation_boar_herd() -> Dictionary:
+	return {
+		"id": "game_boar_03", "label": "Wild Boar (game_boar_03)", "species": "Wild Boar",
+		"size_class": "medium", "huntable": true, "ecology_phase": "thriving",
+		"x": 66, "y": 10,
+		"husbandry_ceiling": "wild",
+		"biomass": BOAR_BIOMASS,
+		"carrying_capacity": BOAR_CAPACITY,
+		"body_mass": BOAR_BODY_MASS,
+		# The sim's own identity, composed rather than restated, for the reason
+		# `_engagement_fowl_herd` composes it: `food_per_animal = body_mass × provisions_per_biomass`.
+		"food_per_animal": BOAR_BODY_MASS * BOAR_PROVISIONS_PER_BIOMASS,
+		"provisions_per_biomass": BOAR_PROVISIONS_PER_BIOMASS,
+		"per_worker_yield": BOAR_PER_WORKER_YIELD,
+		"engage_rate": BOAR_ENGAGE_RATE,
+		"stay_fraction": BOAR_STAY_FRACTION,
+		"tile_info": HerdFx.compact_herd_tile_fixture(),
+	}
+
+## ---- THE CADENCE HERD: collection == ceiling == 0.6 OF ONE BODY -------------------------------
+## Dialed so all three arms of the `min` coincide BELOW one body and the engagement is not one of
+## them, which is the one shape that separates a per-BODY carry clamp from a per-TURN one. Every
+## figure is composed from these; the coincidence itself is asserted before the claims that rest on
+## it, since a fixture that drifts off it satisfies them for the wrong reason.
+##   food_per_animal  = 10 × 0.02 = 0.20
+##   one hunter carries 0.12 food = 0.6 of a body
+##   room above the food peak = 56 − 0.5 × 100 = 6 biomass = 0.12 food = 0.6 bodies a turn
+const CADENCE_BODY_MASS := 10.0
+
+const CADENCE_PROVISIONS_PER_BIOMASS := 0.02
+
+const CADENCE_PER_WORKER_YIELD := 0.12
+
+const CADENCE_CAPACITY := 100.0
+
+const CADENCE_BIOMASS := 56.0
+
+## ONE hunter — the crew the coincidence is dialed for, and the smallest that can be below one body.
+const CADENCE_HUNTERS := 1
+
+## The fraction of a body the three arms agree on, named so the expectation and the fixture are one
+## number: `delivered = bodies × min(fpa, collection)` = `0.6 × 0.6` of a body's food.
+const CADENCE_BODIES_PER_TURN := 0.6
+
+## What rots: the party kills 0.6 of a body's worth per turn and hauls 0.6 of each body it drops, so
+## `1 − 0.6` of every kill is left where it fell.
+const CADENCE_WASTE_FRACTION := 0.4
+
+## The cadence herd. It publishes NO `engage_rate`, so the engagement arm is unbounded and the claim
+## is about the carry clamp alone — the same isolation `_engagement_fowl_herd`'s unbounded twin makes
+## in the other direction.
+func _cadence_herd() -> Dictionary:
+	return {
+		"id": "game_hare_02", "label": "Snow Hare (game_hare_02)", "species": "Snow Hare",
+		"size_class": "small", "huntable": true, "ecology_phase": "thriving",
+		"x": 66, "y": 10,
+		"husbandry_ceiling": "wild",
+		"biomass": CADENCE_BIOMASS,
+		"carrying_capacity": CADENCE_CAPACITY,
+		"body_mass": CADENCE_BODY_MASS,
+		"food_per_animal": CADENCE_BODY_MASS * CADENCE_PROVISIONS_PER_BIOMASS,
+		"provisions_per_biomass": CADENCE_PROVISIONS_PER_BIOMASS,
+		"per_worker_yield": CADENCE_PER_WORKER_YIELD,
+		"tile_info": HerdFx.compact_herd_tile_fixture(),
+	}
+
+## What the party brings down at `workers`, composed the way the sim composes it (engage → retreat)
+## rather than read back off the producer under test.
+func _boar_brought_down(workers: int) -> float:
+	return SourceForecast.animals_stayed(
+		SourceForecast.animals_engaged(workers, BOAR_ENGAGE_RATE, SourceForecast.NO_BUILD_DIP),
+		BOAR_STAY_FRACTION)
+
+## The producer's delivered take for one crew, at the food peak with no build in flight.
+func _boar_delivered(band: Dictionary, herd: Dictionary, workers: int) -> float:
+	var take: Dictionary = h._hud._drawercompose._hunt_delivered_and_waste(
+		band, herd, SourceForecast.FLOOR_FOOD_PEAK, workers, SourceForecast.IMPROVEMENT_NONE)
+	if not bool(take.get("available", false)):
+		return -1.0
+	return float(take["delivered"])
+
+func _engagement_quantisation_assertions() -> void:
+	var band := _delivered_oracle_band()   # output_multiplier 1.0, so no morale factor muddies it
+	var herd := _quantisation_boar_herd()
+	var fpa := BOAR_BODY_MASS * BOAR_PROVISIONS_PER_BIOMASS
+
+	# (0) THE FIXTURE REALLY STAGES THE SUB-ONE-ANIMAL CASE, and it is the ENGAGEMENT arm that puts it
+	#     there. Without this the two claims below are satisfied by any herd whose bounds happen to
+	#     coincide, and they would say nothing about the branch that shipped.
+	var stayed_six := _boar_brought_down(BOAR_CREW_SUB_ONE_ANIMAL)
+	var haulable_six := floorf(float(BOAR_CREW_SUB_ONE_ANIMAL) * BOAR_PER_WORKER_YIELD / fpa)
+	h._assert_hud("the fixture separates the arms — %d hunters HAUL %d boar and bring down %.2f"
+			% [BOAR_CREW_SUB_ONE_ANIMAL, int(haulable_six), stayed_six],
+		stayed_six < 1.0 and haulable_six > 1.0)
+
+	# (1) THE REPORTED PAIR. Six hunters bring down 0.75 of a boar, so they land 0.75 × 0.24 = 0.18
+	#     food — NOT the 4.80 the crew's whole carry throughput would be, which is what the retired
+	#     `carryable < 1` branch quoted: twenty boar, for three quarters of one.
+	var six := _boar_delivered(band, herd, BOAR_CREW_SUB_ONE_ANIMAL)
+	var want_six := stayed_six * fpa
+	var carry_six := float(BOAR_CREW_SUB_ONE_ANIMAL) * BOAR_PER_WORKER_YIELD
+	h._assert_hud(("%d hunters land what they bring DOWN (%.2f food/turn), not what they could carry"
+			+ " (%.2f) — got %.2f") % [BOAR_CREW_SUB_ONE_ANIMAL, want_six, carry_six, six],
+		is_equal_approx(six, want_six))
+	# The seventh hunter tips the engagement to two animals, so 1.50 stay and the take DOUBLES.
+	var seven := _boar_delivered(band, herd, BOAR_CREW_ONE_ANIMAL)
+	var want_seven := _boar_brought_down(BOAR_CREW_ONE_ANIMAL) * fpa
+	h._assert_hud("…and %d hunters land %.2f food/turn — got %.2f"
+			% [BOAR_CREW_ONE_ANIMAL, want_seven, seven],
+		is_equal_approx(seven, want_seven))
+
+	# (2) MONOTONICITY — the PROPERTY the defect violated, and the one that catches its return in any
+	#     other species' numbers. Every arm of the `min` is non-decreasing in the crew, so the take
+	#     must be too; the played pair was 4.80 → 0.36, an order of magnitude LOST to one more hunter.
+	#     Asserted as a relation over the sweep rather than as twelve literals, so a re-dialed fixture
+	#     moves the numbers and not the claim.
+	var previous := -1.0
+	var broke_at := 0
+	var broke_from := 0.0
+	var broke_to := 0.0
+	for workers in range(BOAR_SWEEP_MIN_CREW, BOAR_SWEEP_MAX_CREW + 1):
+		var delivered := _boar_delivered(band, herd, workers)
+		if broke_at == 0 and previous >= 0.0 and delivered < previous \
+				and not is_equal_approx(delivered, previous):
+			broke_at = workers
+			broke_from = previous
+			broke_to = delivered
+		previous = delivered
+	h._assert_hud(("the delivered take never falls as the crew grows (%d..%d hunters)"
+			+ " — %d hunters read %.2f food/turn after %.2f")
+			% [BOAR_SWEEP_MIN_CREW, BOAR_SWEEP_MAX_CREW, broke_at, broke_to, broke_from],
+		broke_at == 0)
+
+	# (3) **THE CARRY CLAMP IS CHARGED PER BODY, NOT PER TURN** — the half of the expression the
+	#     engagement pair above cannot see, because it never puts the crew below one body of CARRY.
+	#     On the cadence herd the three terms coincide at 0.6 of a body: the crew's collection is
+	#     0.6 × fpa, the room offers 0.6 bodies a turn, and nothing breaks off. A body still lands
+	#     WHOLE on the turn it drops, so the crew hauls its 0.6 × fpa of it and the rest rots —
+	#     `0.6 × 0.6 = 0.36 fpa` delivered against `0.6 fpa` killed, i.e. 40% wasted. Averaging the
+	#     kill first and clamping THAT by the carry credits the crew the full 0.6 fpa with no waste
+	#     at all: 1.67× too high, and silent about the meat on the ground.
+	var cadence := _cadence_herd()
+	var cadence_fpa := CADENCE_BODY_MASS * CADENCE_PROVISIONS_PER_BIOMASS
+	var cadence_take: Dictionary = h._hud._drawercompose._hunt_delivered_and_waste(
+		band, cadence, SourceForecast.FLOOR_FOOD_PEAK, CADENCE_HUNTERS,
+		SourceForecast.IMPROVEMENT_NONE)
+	# The vacuity guard: the fixture must really sit at the coincidence, or the two numbers below are
+	# satisfied by any herd whose carry happens not to bind.
+	var cadence_collection := float(CADENCE_HUNTERS) * CADENCE_PER_WORKER_YIELD
+	var cadence_ceiling := (CADENCE_BIOMASS - SourceForecast.FLOOR_FOOD_PEAK * CADENCE_CAPACITY) \
+		* CADENCE_PROVISIONS_PER_BIOMASS
+	h._assert_hud(("the fixture sits at the coincidence — collection %.4f, ceiling %.4f,"
+			+ " both %.2f of one %.4f body")
+			% [cadence_collection, cadence_ceiling, CADENCE_BODIES_PER_TURN, cadence_fpa],
+		is_equal_approx(cadence_collection, CADENCE_BODIES_PER_TURN * cadence_fpa)
+			and is_equal_approx(cadence_ceiling, CADENCE_BODIES_PER_TURN * cadence_fpa))
+	var want_cadence := CADENCE_BODIES_PER_TURN * CADENCE_BODIES_PER_TURN * cadence_fpa
+	h._assert_hud("a crew that cannot carry a whole body lands %.4f food/turn, not the room's %.4f — got %.4f"
+			% [want_cadence, cadence_ceiling, float(cadence_take["delivered"])],
+		is_equal_approx(float(cadence_take["delivered"]), want_cadence))
+	h._assert_hud("…and the body it cannot finish carrying is WASTE — %d%%, got %d%%"
+			% [int(round(CADENCE_WASTE_FRACTION * 100.0)),
+				int(round(float(cadence_take["waste_pct"]) * 100.0))],
+		is_equal_approx(float(cadence_take["waste_pct"]), CADENCE_WASTE_FRACTION))
+
+
+# =====================================================================================
+#  THE RETREAT PRICES THE CREW, NOT ONLY THE TAKE
+# =====================================================================================
+# Reported from play on the same Wild Boar herd: **the stepper capped at 82 while *clear it now* named
+# 108** — the sheet offering a crew target the panel then refused to let the player assign. The two
+# arms had divided by different reaches, `engagement_carry` cutting by the retreat and
+# `engage_workers` sizing on the raw one, on the reasoning that the second mirrors the sim's
+# `hunt_take_workers`. A party that keeps one animal in four brings down a quarter as much per hand
+# and therefore needs four times the hands to draw the same stock down, so every crew answer divides
+# by what STAYS now and 108 is the honest number.
+#
+# PNG-LESS AND DRIVEN, the reason the block above is: a crew count is a number, and a sheet capping
+# at the wrong one renders a perfectly ordinary stepper.
+
+## The played herd's own room — 670 − 0.5 × 700 = 320 biomass — chosen because it is where the two
+## arms were measured disagreeing: 320 ÷ (12 × 0.33 × 0.75) = 108 hands to clear, against a raw-reach
+## engagement crew of 82. Every other term is the boar's, shared with the quantisation block above.
+const RETREAT_CAPACITY := 700.0
+
+const RETREAT_BIOMASS := 670.0
+
+## The crew the chart is composed against. Any crew answers the same two targets — they are functions
+## of the floor and the source — so this is the smallest one that exists.
+const RETREAT_CHART_CREW := 1
+
+## The retreat a TRAP LINE leaves: `dispersion 0` means nothing is there to be seen, so every animal
+## the party reaches stands. It is the wire's own identity, and the A/B's other half.
+const TRAP_LINE_STAY := SourceForecast.STAY_FRACTION_NONE_BREAKS_OFF
+
+## A wary quarry's retreat, used only as the B side of the UNCHANGED A/Bs — a pen, an unstalked herd
+## and a patch must answer the same crew whatever is substituted here, having no engagement to cut.
+const UNCHANGED_PROBE_STAY := 0.25
+
+## The pen's managed per-turn payoff, so its cap is a crew of some size rather than a crew of none.
+const PEN_CORRAL_YIELD := 6.4
+
+## The played Wild Boar at the room the two arms were measured on. `stay` is a parameter so the spear
+## line and the trap line are ONE fixture differing in one field — the A/B that shows the retreat is
+## what moves the cap, rather than something else about the animal.
+func _retreat_crew_boar(stay: float) -> Dictionary:
+	var herd := {
+		"id": "game_boar_09", "label": "Wild Boar (game_boar_09)", "species": "Wild Boar",
+		"size_class": "medium", "huntable": true, "ecology_phase": "thriving",
+		"x": 66, "y": 10,
+		"husbandry_ceiling": "wild",
+		"biomass": RETREAT_BIOMASS,
+		"carrying_capacity": RETREAT_CAPACITY,
+		"body_mass": BOAR_BODY_MASS,
+		"food_per_animal": BOAR_BODY_MASS * BOAR_PROVISIONS_PER_BIOMASS,
+		"provisions_per_biomass": BOAR_PROVISIONS_PER_BIOMASS,
+		"per_worker_yield": BOAR_PER_WORKER_YIELD,
+		"engage_rate": BOAR_ENGAGE_RATE,
+		"stay_fraction": stay,
+		"tile_info": HerdFx.compact_herd_tile_fixture(),
+	}
+	ForageFx.floorify(herd)
+	return herd
+
+## A PENNED boar: no engagement stage (`NO_ENGAGEMENT_STAGE`, the pen's own wire value) and corralled,
+## so the crew is the haul alone and no retreat can reach it. It carries a `corral_yield`, or the
+## managed ceiling reads zero and the A/B below compares two crews of none — true, and about nothing.
+func _retreat_crew_pen(stay: float) -> Dictionary:
+	var pen := _retreat_crew_boar(stay)
+	pen["id"] = "game_boar_pen"
+	pen["engage_rate"] = SourceForecast.NO_ENGAGEMENT_STAGE
+	pen["corralled"] = true
+	pen["corral_yield"] = PEN_CORRAL_YIELD
+	return pen
+
+## A WILD herd that publishes `NO_ENGAGEMENT_STAGE` — the pen's value on the engagement field alone,
+## and the reading the whole plant web gets by never publishing it. This is the case that really
+## exercises the arm: it is a whole-animal source, so `take_workers` IS consulted and its engage half
+## has to answer "no crew" rather than divide by an unbounded reach. The corralled pen above cannot
+## make that claim — a managed source never reaches the whole-animal branch at all.
+func _retreat_crew_unstalked(stay: float) -> Dictionary:
+	var herd := _retreat_crew_boar(stay)
+	herd["id"] = "game_boar_unstalked"
+	herd["engage_rate"] = SourceForecast.NO_ENGAGEMENT_STAGE
+	return herd
+
+## A wild forage patch carrying a `stay_fraction` no plant web would ever publish, purely so the
+## substitution has something to move. The whole claim is that it moves nothing.
+func _retreat_crew_patch(stay: float) -> Dictionary:
+	var patch := {
+		"x": 66, "y": 10,
+		"biomass": RETREAT_BIOMASS,
+		"carrying_capacity": RETREAT_CAPACITY,
+		"provisions_per_biomass": BOAR_PROVISIONS_PER_BIOMASS,
+		"per_worker_yield": BOAR_PER_WORKER_YIELD,
+		"stay_fraction": stay,
+	}
+	ForageFx.floorify(patch)
+	return patch
+
+## The stepper's own ceiling for a source, through the two real layers the sheet uses.
+func _source_worker_cap(src: Dictionary, kind: String) -> int:
+	return SourceForecast.max_useful_workers(SourceForecast.forecast_inputs(
+		src, kind, HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK,
+		SourceForecast.IMPROVEMENT_NONE))
+
+## The two crew-target pills a hunt sheet renders, off the chart model that renders them.
+func _herd_crew_targets(herd: Dictionary) -> Dictionary:
+	var model := SourceForecast.floor_chart_model(herd, SourceForecast.SOURCE_KIND_HERD,
+		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK, RETREAT_CHART_CREW,
+		SourceForecast.IMPROVEMENT_NONE, "hunters", LESSON_NOT_YET_LEARNED)
+	return {
+		"clear": int(model.get("crew_to_clear", SourceForecast.NO_CREW_ANSWER)),
+		"hold": int(model.get("crew_to_hold", SourceForecast.NO_CREW_ANSWER)),
+	}
+
+func _retreat_crew_assertions() -> void:
+	var speared := _retreat_crew_boar(BOAR_STAY_FRACTION)
+	var speared_cap := _source_worker_cap(speared, SourceForecast.SOURCE_KIND_HERD)
+	var speared_targets := _herd_crew_targets(speared)
+	var speared_clear: int = speared_targets["clear"]
+	# The RAW-REACH sizing, restated here rather than asked of the layer under test: the engagement
+	# crew the cap used to be floored on, with the retreat term left out.
+	var speared_forecast := SourceForecast.forecast_inputs(speared, SourceForecast.SOURCE_KIND_HERD,
+		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK,
+		SourceForecast.IMPROVEMENT_NONE)
+	var raw_engage := SourceForecast.engage_workers(float(speared_forecast["axis_ceiling"]),
+		float(speared_forecast["axis_per_animal"]), float(speared_forecast["engage_rate"]),
+		float(speared_forecast["dip"]), SourceForecast.STAY_FRACTION_NONE_BREAKS_OFF)
+
+	# (0) THE FRAME REALLY STAGES THE DISAGREEMENT. Without it the claim below is satisfied by any
+	#     herd whose two arms happen to coincide, and says nothing about the defect.
+	h._assert_hud("the fixture stages the played gap — the raw reach sizes %d hands where *clear it now* names %d"
+			% [raw_engage, speared_clear],
+		raw_engage < speared_clear)
+
+	# (1) **THE CAP IS NO LONGER BELOW THE TARGET BESIDE IT**, which is the whole of the report.
+	h._assert_hud("the stepper caps at %d — at or above the %d *clear it now* names, where the raw reach capped at %d"
+			% [speared_cap, speared_clear, raw_engage],
+		speared_cap >= speared_clear)
+
+	# (2) **THE INVARIANT, over several species rather than the boar alone** — no crew target on a
+	#     hunt sheet may name a crew the stepper refuses to reach. It is the property the whole
+	#     change exists to restore, and the one that catches its return in another species' numbers.
+	#     `NO_CREW_ANSWER` is a target that renders no pill at all, so it bounds nothing.
+	var sweep := {
+		"Wild Boar (speared)": speared,
+		"Wild Boar (trap line)": _retreat_crew_boar(TRAP_LINE_STAY),
+		"Wild Fowl": ForageFx.floorify(_engagement_fowl_herd(FOWL_ENGAGE_RATE)),
+		"Wild Aurochs": ForageFx.floorify(_aurochs_big_game_fixture()),
+		"Snow Hare": ForageFx.floorify(_cadence_herd()),
+	}
+	for quarry in sweep:
+		var src: Dictionary = sweep[quarry]
+		var cap := _source_worker_cap(src, SourceForecast.SOURCE_KIND_HERD)
+		var targets := _herd_crew_targets(src)
+		var clear: int = targets["clear"]
+		var hold: int = targets["hold"]
+		h._assert_hud("%s — the cap (%d) reaches both targets it renders (clear %d, hold %d)"
+				% [quarry, cap, clear, hold],
+			(clear == SourceForecast.NO_CREW_ANSWER or cap >= clear)
+				and (hold == SourceForecast.NO_CREW_ANSWER or cap >= hold))
+
+	# (3) **A TRAP LINE IS UNMOVED, and the A/B is what makes (1) a claim about the RETREAT.** One
+	#     herd, one room, one crew; the only field that differs is `stay_fraction`. A device that is
+	#     not there to be seen keeps everything it reaches, so its cap is the raw-reach sizing exactly.
+	var trapped_cap := _source_worker_cap(_retreat_crew_boar(TRAP_LINE_STAY),
+		SourceForecast.SOURCE_KIND_HERD)
+	h._assert_hud("a trap line keeps what it reaches, so its cap is the raw-reach one (%d) and the spear line's is larger (%d)"
+			% [trapped_cap, speared_cap],
+		trapped_cap == raw_engage and speared_cap > trapped_cap)
+
+	# (4) **A SOURCE WITH NO ENGAGEMENT STAGE IS BYTE-IDENTICAL WHATEVER IS SUBSTITUTED**, the
+	#     byte-identity this arc holds each time the arm reaches a new consumer. Asserted as an A/B on
+	#     ONE source rather than as a literal, so a re-dialed fixture moves the number and not the
+	#     claim, and over all THREE shapes: the unstalked herd is the one that reaches the whole-animal
+	#     branch and so the only one that can testify about `engage_workers`' unbounded reading, while
+	#     the pen (managed) and the patch (no body) never get that far and are each unchanged for their
+	#     own reason. Any one of them alone would leave two of the three untested.
+	var unchanged := {
+		"an unstalked herd": [_retreat_crew_unstalked(TRAP_LINE_STAY),
+			_retreat_crew_unstalked(UNCHANGED_PROBE_STAY), SourceForecast.SOURCE_KIND_HERD],
+		"a pen": [_retreat_crew_pen(TRAP_LINE_STAY), _retreat_crew_pen(UNCHANGED_PROBE_STAY),
+			SourceForecast.SOURCE_KIND_HERD],
+		"a forage patch": [_retreat_crew_patch(TRAP_LINE_STAY),
+			_retreat_crew_patch(UNCHANGED_PROBE_STAY), SourceForecast.SOURCE_KIND_FORAGE],
+	}
+	for subject in unchanged:
+		var pair: Array = unchanged[subject]
+		var kept := _source_worker_cap(pair[0], String(pair[2]))
+		var cut := _source_worker_cap(pair[1], String(pair[2]))
+		h._assert_hud("%s prices the same crew whatever breaks off (%d against %d)"
+				% [subject, kept, cut],
+			kept == cut and kept > 0)

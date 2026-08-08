@@ -7858,11 +7858,15 @@ func _assert_dock_chart_carries_the_kit() -> void:
 	_assert_band_panel("…and the spear line needs more hands to clear the same room (%d against %d)"
 			% [int(speared.get("crew_to_clear", 0)), int(trapped.get("crew_to_clear", 0))],
 		int(speared.get("crew_to_clear", 0)) > int(trapped.get("crew_to_clear", 0)))
-	# **THE SIM-MIRROR HALF.** `crew_to_hold` is `fauna::hunt_take_workers` and the stepper cap floors
-	# on it; it must read the RAW reach whatever the kit is.
-	_assert_band_panel("…while the HOLD crew is the sim's own and does not move (%d)"
-			% int(speared.get("crew_to_hold", -1)),
-		int(speared.get("crew_to_hold", -1)) == int(trapped.get("crew_to_hold", -2)))
+	# **AND THE HOLD CREW MOVES WITH IT TOO.** `crew_to_hold` is `fauna::hunt_take_workers`, and it
+	# divides by what STAYS like every other crew answer on this sheet: a spear party keeping one
+	# animal in four needs four times the hands to take the same regrowth every turn. It read the RAW
+	# reach for a while, on the grounds that the stepper cap floors on it and the sim's own
+	# `workersNeeded` must agree — and the consequence was a cap sized BELOW the *clear it now* pill
+	# beside it, naming a crew the panel then refused to let the player assign.
+	_assert_band_panel("…and so does the HOLD crew (%d against %d)"
+			% [int(speared.get("crew_to_hold", -1)), int(trapped.get("crew_to_hold", -2))],
+		int(speared.get("crew_to_hold", -1)) > int(trapped.get("crew_to_hold", -2)))
 
 ## The dock's own chart composition, at one kit — `KitRoster.priced_source` then `floor_chart_model`,
 ## the two calls `_fill_hunt_compose_sheet` makes in that order.
@@ -7956,9 +7960,11 @@ func _assert_kit_reprices_the_source() -> void:
 			float(neutral[KitRoster.SOURCE_STAY_FRACTION])))
 
 	# --- **AND THE SUBSTITUTION REACHES THE SHEET — the whole point of it.** Everything above is about
-	# one dict; this is the claim a player would make. Two kits, same carry, same reach, and the take
-	# has to differ while the CREW COUNT does not — the pairing IS the assertion, since a retreat folded
-	# into the reach moves both and would satisfy the first half on its own.
+	# one dict; this is the claim a player would make. Two kits, same carry, same reach, and BOTH the
+	# take and the crew have to move: a party that keeps one animal in four takes a quarter as much per
+	# hand, so it needs four times the hands to draw the same stock down. The pairing IS the assertion —
+	# a repricing that reached neither would satisfy nothing, and one that reached only the take would
+	# leave the stepper capping below the crew targets rendered beside it.
 	const RETREAT_WORKERS := 4
 	const RETREAT_BODY_MASS := 2.0
 	const RETREAT_FOOD_PER_BIOMASS := 0.1
@@ -7978,13 +7984,15 @@ func _assert_kit_reprices_the_source() -> void:
 	_assert_band_panel("the passive device out-takes the spear on the same herd (%s against %s)"
 			% [str(trap_take), str(spear_take)],
 		trap_take > spear_take + SourceForecast.COMPONENT_RENDER_MIN)
-	# **…AND NEITHER KIT MOVES THE CREW THE SIM ASKS FOR.** `fauna::hunt_engage_workers` sizes on the
-	# raw reach, so a retreat that reached the cap would put the sheet's stepper at odds with
-	# `workersNeeded` — the exact regression a fold into `engage_rate` shipped.
+	# **…AND THE CREW THE SHEET ASKS FOR MOVES WITH IT.** `engage_workers` divides the peak drop by what
+	# STAYS, so the spear line's stepper caps strictly higher than the trap line's on one herd — which
+	# is what keeps the cap at or above the *clear it now* pill beside it, that pill having divided by
+	# the retreat-aware reach all along.
 	var spear_cap := _kit_hunt_cap(quarry, 1.0)
 	var trap_cap := _kit_hunt_cap(quarry, 0.0)
-	_assert_band_panel("…and the crew the sim asks for is the same either way (%d)" % spear_cap,
-		spear_cap == trap_cap)
+	_assert_band_panel("…and the crew the sheet asks for moves with it (%d against %d)"
+			% [spear_cap, trap_cap],
+		spear_cap > trap_cap)
 
 	# --- A SOURCE WITH NO RETREAT STAGE (a patch, a pen) is untouched by that half.
 	var patch := {

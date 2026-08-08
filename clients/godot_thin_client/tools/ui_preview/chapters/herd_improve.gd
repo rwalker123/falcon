@@ -334,10 +334,11 @@ func run(harness) -> void:
 	# This herd publishes no `engageRate` — it predates the engagement stage — so both recompositions
 	# state `NO_ENGAGEMENT_STAGE` and the reach arm drops out, leaving the claim about the DIP alone.
 	var dip_hold := SourceForecast.crew_to_hold(dip_samples, HERD_DIP_FLOOR, dip_carry,
-		HERD_DIP_BODY_MASS, SourceForecast.NO_ENGAGEMENT_STAGE, dip_fraction)
+		HERD_DIP_BODY_MASS, SourceForecast.NO_ENGAGEMENT_STAGE, dip_fraction,
+		SourceForecast.STAY_FRACTION_NONE_BREAKS_OFF)
 	var bare_hold := SourceForecast.crew_to_hold(dip_samples, HERD_DIP_FLOOR,
 		dip_carry / dip_fraction, HERD_DIP_BODY_MASS, SourceForecast.NO_ENGAGEMENT_STAGE,
-		SourceForecast.NO_BUILD_DIP)
+		SourceForecast.NO_BUILD_DIP, SourceForecast.STAY_FRACTION_NONE_BREAKS_OFF)
 	h._assert_hud("the *hold it after* target divides by the DIPPED carry (%d, against %d undipped)"
 		% [dip_hold, bare_hold],
 		Readout.crew_target_count(dip_sheet, HudWidgets.CREW_TARGET_HOLD) == dip_hold

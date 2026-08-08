@@ -197,6 +197,18 @@ before the effects model existed.
   per-target authoring — **and it is why equipment needs no size-class or "targets" axis at all**.
   `wariness 0` is already an exact identity in the retreat (no draw is made), so `dispersion 0` lands
   in a regime the sim has always had.
+
+  **Every retreat resolves through `fauna::HuntingParty::stayers` (drawn) or
+  `HuntingParty::stay_fraction` (closed), never the bare `fauna::animals_that_stay` /
+  `fauna::stay_fraction` with a species' `wariness`** — that pair is the primitive the party methods
+  are built on, and calling it directly is how the kit's `dispersion` gets dropped. It was dropped, on
+  both take paths at once (`systems::hunt_take` and `systems::expeditions::expedition_take_biomass`),
+  which charged a trapping party the full retreat while the forecast beside it
+  (`fauna::forecast_production_and_take_at`) and the kit picker
+  (`fauna::per_hunter_take_biomass`, which is how a Rabbit Warren publishes `trapping` as its default)
+  both kept the trap's stand-off. The whole ~4× advantage this section describes was quoted and never
+  paid. Since the retreat also sizes the crew (`fauna.md` → "THE RETREAT PRICES THE CREW"), a
+  bare-wariness take now puts three readouts at odds instead of two.
 - **`engage_multiplier` multiplies the species' `engage_rate`** — how many animals one hunter reaches.
   **This is the term that binds on light game**, where `attack` buys nothing because there is no
   `defense` to clear, and it is why a trap raises reach rather than damage.
@@ -417,6 +429,11 @@ in `bin/server.rs`, and restored by `sim_state.rs` (`BandRecord::equipment`, car
   - `forage_per_worker_capacity` (the **basket's**) feeds every gather site: `forage_take`,
     `forage_forecast`, `project_realized_forage` / `project_arrivals_forage`, and the
     `workers_needed` inversion.
+
+  - `dispersion` (the **trap's**, and the spear's explicit neutral) rides the `HuntingParty` the arm
+    builds, so it reaches all three of the retreat's readers at once: the drawn take (`hunt_take`),
+    the closed-form take (`per_hunter_take_biomass`) and the **crew** (`hunt_engage_workers`, via
+    `HuntingParty::stay_fraction` — `fauna.md` → "THE RETREAT PRICES THE CREW").
 
   Wear is charged **after** the take on both webs (the same accrue-after-take ordering every rung's
   build meter uses), so the turn is paid at the tier it was priced with and the cliff lands on the

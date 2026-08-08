@@ -403,13 +403,13 @@ const STAY_FRACTION_NONE_BREAKS_OFF := SourceForecast.STAY_FRACTION_NONE_BREAKS_
 ##    `snapshot.fbs`'s own formula for what a kit does to that field. It is the retreat's ONE home on
 ##    the client, so the take arms downstream read a stay fraction that already knows the kit.
 ##
-## **THE RETREAT DOES NOT TOUCH `engage_rate`, AND THAT IS THE CORRECTION THIS PAIR EXISTS FOR.**
-## Folding it into the reach reprices the take and the CREW COUNT together, and the sim does not treat
-## them together: `fauna::hunt_engage_workers` sizes a crew on the RAW reach — the hands that can get
-## to the herd — while `HuntParty::stayers` cuts only what those hands bring down. The fold made the
-## sheet's stepper cap disagree with the sim's own `workersNeeded`, which `ui_preview`'s "the compose
-## stepper caps at the crew the SIM asks for" caught at once. Substituting the retreat on its own field
-## keeps the two arms separable, which is what lets `SourceForecast` apply it to the take alone.
+## **THE RETREAT DOES NOT TOUCH `engage_rate`, AND THAT IS THE CORRECTION THIS PAIR EXISTS FOR.** The
+## two stages are separately observable — `engage_rate` is a fact about the QUARRY and `dispersion`
+## moves the retreat alone — so folding one into the other makes Big-game and Trapping quote the
+## identical hunt on a herd whose whole difference is how much of what they reach stands still.
+## Substituting on its own field keeps the arms separable, and `SourceForecast` then spends the retreat
+## on BOTH the take and the crew — a party that keeps one animal in four needs four times the hands to
+## draw the same stock down.
 ##
 ## **THE REFERENCE IS THE ROSTER'S TIER, NOT THE SOURCE'S OWN `per_worker_biomass`** — see
 ## `equipped_tier` for why (the seasonal weight, and a harness fixture whose recovered throughput is

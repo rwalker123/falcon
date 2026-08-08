@@ -422,10 +422,39 @@ engageCrew      = ceil((floor(ceiling / bodyMass) + 1) / (engageRate × dip))
 - **The dip rides engagement exactly as it rides carry.** Omitting it re-opens the closed defect where
   a building crew and a harvesting crew reach the same count and the build is free.
 - **THE TAKE'S ARM IS APPLIED TO THE ANIMAL COUNT, NOT TO `collection`.** `_hunt_delivered_and_waste`
-  mins `animals_engaged` into its `carryable`; `floor(min(carry, engaged × fpa) / fpa)` is the same
+  mins `animals_stayed` into its own kill count; `floor(min(carry, engaged × fpa) / fpa)` is the same
   arithmetic but divides a product of `fpa` BY `fpa` and can land a whole engagement one animal short
-  on a rounding. It also leaves the partial-body branch reading the RAW carry, which is right —
-  engagement is never binding there, a party that exists reaching at least one animal.
+  on a rounding.
+- **THE `max(1.0)` SITS ON THE CARRY ARM ALONE, INSIDE THE `min`** — the sim's own
+  `killed = affordable.min(carryable.max(1.0)).min(brought_down)`, and the reason
+  `_hunt_delivered_and_waste` is ONE expression rather than a carryable-versus-partial-body pair. A
+  party that cannot carry a whole animal still kills one and wastes the rest, which is a fact about
+  the PACK; a party that brings down three quarters of an animal has brought down three quarters of
+  an animal and floors at nothing. While the carry quotient was the only arm that could go below one
+  body the two were indistinguishable, so a `carryable < 1` branch could price delivery as the crew's
+  whole raw `collection`. With the engagement arm in the same `min` that is false, and it read as a
+  cliff the wrong way up: a Wild Boar crew of six (`engage_rate` 0.33, `stay` 0.75 ⇒ 1 engaged, 0.75
+  stayed) quoted **4.80 food/turn** — its entire carry throughput, twenty boar, for a take of 0.18 —
+  then FELL to 0.36 at seven hunters, the readout dropping as the crew grew. Guarded by
+  `chapters/hunt.gd`'s `_engagement_quantisation_assertions`, PNG-less and driven: the played pair by
+  equality, plus MONOTONICITY over 1..12 hunters, which is the property the branch violated and the
+  one that catches its return in another species' numbers. **Collapsing the two branches moved no
+  frame** — the one expression is byte-identical to the pair everywhere but where the engagement binds
+  below one body, and no `ui_preview` fixture is in that state.
+- **THE CARRY CLAMP IS CHARGED PER BODY, NOT PER TURN**, and that is the other half of why one
+  expression replaces two branches. `killed` is BODIES PER TURN and goes fractional below one — a body
+  every `1/killed` turns — but a body lands WHOLE on the turn it drops, and the crew hauls one turn's
+  `collection` off it while the rest rots where it fell. So delivery is `killed × min(fpa, collection)`
+  and the clamp rides the per-BODY term. Averaging the kill and clamping THAT by the carry credits the
+  crew meat no single turn could hold: on a party whose collection, whose ceiling and whose 0.6-body
+  cadence all coincide it reads the full ceiling with no waste, where the honest answer is `0.6 ×
+  0.6 = 0.36` of a body's food and 40% wasted — 1.67× too high, and silent about the meat on the
+  ground. **A CEILING BELOW ONE BODY IS SMOOTHED RATHER THAN ZEROED**, which is where the sheet parts
+  from `quantise_animal_take` (it floors the room to whole animals first, so `affordable < 1` ⇒ no
+  take at all): the `now → after` row needs the fractional reading, the holding ceiling being one
+  turn's regrowth and routinely a fraction of a body. Guarded by `chapters/hunt.gd`'s cadence herd,
+  whose three arms coincide at 0.6 of a body with the engagement UNBOUNDED — the one shape that
+  isolates the carry clamp from the arm above it.
 - **The reach arm had to reach BOTH producers, and only one of them is `expected_yield`.** The hunt
   sheet's per-turn row comes from `_hunt_delivered_and_waste` (which composes its own `collection` so
   it can quantise), not from `expected_yield_account` — so an arm added to the shared layer alone would
@@ -1450,31 +1479,45 @@ not the forecast's — and priced on one side only, a pill names a count the `+`
 
 **THE RETREAT RIDES `stay_fraction` AND NEVER `engage_rate`.** The kit's `dispersion` multiplies the
 quarry's own wariness, and the substitution is `snapshot.fbs`'s own formula,
-`clamp(1 − (1 − stayFraction) × dispersion, 0, 1)`. Folding it into the reach instead reprices the take
-and the CREW COUNT together, and **the sim does not treat them together**: `fauna::hunt_engage_workers`
-sizes a crew on the RAW reach — the hands that can get to the herd — while `HuntParty::stayers` cuts
-only what those hands bring down. The fold shipped once and `ui_preview`'s *"the compose stepper caps at
-the crew the SIM asks for"* caught it immediately.
+`clamp(1 − (1 − stayFraction) × dispersion, 0, 1)`. It is applied to its OWN field rather than folded
+into the reach because the two stages are separately observable — `engage_rate` is a fact about the
+quarry, `dispersion` moves the retreat alone — and the fold makes Big-game and Trapping quote the
+identical hunt on a herd whose whole difference is how much of what they reach stands still.
 
 `SourceForecast.animals_stayed` is the client mirror of `animals_that_stay` at the quantile a forecast
-reads it at (the analytic mean `floor(engaged) × stay`; `animals_engaged` already floors). It is
-applied in the sim's own order — **engage → retreat → convert** — and **only where a TAKE is composed**:
+reads it at (the analytic mean `floor(engaged) × stay`; `animals_engaged` already floors), applied in
+the sim's own order — **engage → retreat → convert**.
 
-| carries the retreat | does NOT |
-|---|---|
-| `engaged_quantum` → `engagement_reach` → `expected_yield_account` | `engage_workers` / `take_workers` |
-| `_hunt_delivered_and_waste`'s `carryable` bound | `engagement_carry`, hence `crew_to_clear` / `crew_to_hold` / `crew_that_reaches` |
-| — | `max_useful_workers`' `hold_crew` / `reach_crew` floors |
+**IT PRICES THE CREW AS WELL AS THE TAKE, and that reverses what this file used to say.** A hand that
+keeps one animal in four draws a stock down a quarter as fast, so the crew that draws it down at all
+is four times as large — which makes every crew answer on this sheet a quotient of what STAYS:
+`engage_workers`, `take_workers` and through them `crew_to_hold` and `max_useful_workers`, beside
+`engagement_carry`'s `crew_to_clear` / `crew_that_reaches`, which divided by the retreat all along.
+The doctrine that survived here for a while was that `engage_workers` mirrors
+`fauna::hunt_engage_workers`' raw-reach sizing and must not cut, so the stepper cap could not disagree
+with the sim's `workersNeeded`; the consequence was a cap sized **82** on a played Wild Boar herd
+beside a *clear it now* pill naming **108** — the sheet offering a crew the panel then refused to let
+the player assign. 108 is the honest number, `server-dev` is making the matching change in
+`fauna::hunt_engage_workers` / `hunt_take_workers`, and `stay` is a REQUIRED parameter on
+`engage_workers` / `take_workers` / `crew_to_hold` / `engagement_carry` so no call site can take the
+raw reach back by omission.
 
-**Both take producers, because only one of them is `expected_yield`** — the same reason the reach arm
-needed both. `_hunt_delivered_and_waste` composes its own `collection` so it can quantise, so an arm
-added to the shared layer alone leaves the *rendered* green line unmoved while the cap beside it shifts.
+**`stay <= 0` answers a crew of NONE, not an infinite one.** Nothing the party reaches ever stands, so
+the take is identically zero at every size — there is no number of hands that achieves it, and the
+crew needed to achieve it is therefore none. `take_workers`' `max()` then keeps the haul crew, exactly
+as it does for a source with no engagement stage at all.
+
+**Both take producers carry it, because only one of them is `expected_yield`** — the same reason the
+reach arm needed both. `_hunt_delivered_and_waste` composes its own `collection` so it can quantise,
+so an arm added to the shared layer alone leaves the *rendered* green line unmoved while the cap
+beside it shifts.
 
 **A source with no retreat stage is byte-identical to before the stage existed.** A patch and a pen
 publish no `stayFraction`, `repriced_source` finds no key to substitute, and `forecast_inputs` reads the
 wire's own `1` — which `animals_stayed` short-circuits on, so an unbounded engagement passes straight
-through. Measured: with the whole substitution live, **zero of `ui_preview`'s 590 assertions move**, no
-fixture in that harness publishing the field.
+through. Measured twice: with the whole substitution live, **zero of `ui_preview`'s 590 assertions
+move**, and with the retreat reaching the crew answers as well, **zero of its frames move** — no
+fixture in that harness publishes the field.
 
 ### THE DOCK'S RAID CHART IS PRICED TOO, AND IT IS THE ONLY THING ON THAT SHEET THAT CAN BE
 
@@ -1495,35 +1538,38 @@ that sheet still answering for the kit the player actually picked.
 kit and runs `HuntParty::stayers` exactly as a resident hunt does, so `dispersion` belongs there; the
 carry tier scales the party's throughput the same way.
 
-### THE PROJECTION CARRIES THE RETREAT — and the line between it and the sim is `crew_to_hold`
+### THE PROJECTION CARRIES THE RETREAT, AND SO NOW DOES EVERY CREW ANSWER BESIDE IT
 
-`dispersion` reaches a chart at all only because `project_stock`'s engagement bound now takes the stay
+`dispersion` reaches a chart at all only because `project_stock`'s engagement bound takes the stay
 term. Without it the dock's sheet could be priced and still render identically for every kit, the
 curve being the one thing it draws.
 
-**The split is by WHOSE QUESTION the number answers, not by which function computes it:**
+**Only two things on this sheet still read the RAW reach, and both are readings of ONE TURN's contact
+rather than of a crew:**
 
-| retreat-aware — a DRAWDOWN answer, no sim twin | RAW reach — a SIM MIRROR |
+| divides by what STAYS | the RAW reach |
 |---|---|
-| `project_stock`'s bound at all three walks (`floor_chart_model`, `take_draws_down`, `crew_that_reaches`' probes) | `animals_engaged`, `engagement_per_worker` |
-| `engagement_carry`, hence `crew_to_clear` and `crew_that_reaches` | `engage_workers` (`fauna::hunt_engage_workers`) |
-| — | `take_workers` (`fauna::hunt_take_workers`), hence **`crew_to_hold`** |
+| `project_stock`'s bound at all three walks (`floor_chart_model`, `take_draws_down`, `crew_that_reaches`' probes) | `animals_engaged` — how many this party touches THIS turn, before the retreat is applied to it |
+| `engagement_carry`, hence `crew_to_clear` and `crew_that_reaches` | `engagement_per_worker` — the pair's composition, which `animals_stayed` is then applied to |
+| `engage_workers`, hence `take_workers`, hence **`crew_to_hold`** and `max_useful_workers` | — |
 
-**`crew_to_hold` IS `take_workers` ON A WHOLE-ANIMAL SOURCE, and `max_useful_workers` floors the
-stepper cap on it** — so a retreat reaching it would put the sheet at odds with the sim's own
-`workersNeeded`, which is the regression the `engage_rate` fold shipped and this table exists to keep
-closed. The other two crew answers have no sim twin: they ask how many hands pull a stock DOWN to a
-floor, and a party keeping one animal in four genuinely needs four times as many. The file already
-records that the two disagreeing is correct — *"Two different questions about two different stocks —
-the numbers agreeing would be the bug."*
+**The two surviving raw readings are INPUTS to the retreat, not answers that skip it**: every consumer
+of either passes it straight into `animals_stayed`. What changed is the third row — `crew_to_hold` was
+the last crew answer sized on the raw reach, on the grounds that it IS `fauna::hunt_take_workers` and
+the stepper cap floors on it, and the cost was a cap **below** the *clear it now* pill rendered beside
+it (82 against 108 on the played Wild Boar). The remark this file still makes about the two crew
+targets disagreeing stands and is a different point: *clear* and *hold* ask about different stocks, so
+their answers may differ — what they may not do is disagree about how many animals a hand lands.
 
 **Measured on one herd (`wariness 0.75`, `engageRate 4`, a party of 3):** the passive device walks the
-herd to its floor (`settled_fraction` 0.50) where the spear line settles at **0.70**, and *clear it
-now* reads **50 hands against 13** — while `crew_to_hold` is **2 either way**. Guarded by
-`band_panel_preview._assert_dock_chart_carries_the_kit`, whose two kits differ in `dispersion` ALONE
-(same carry, so the carry half cannot account for a unit of it) over a locally-built roster —
-`BandFx.kit_roster_fixture()` ships no `dispersion` at all, so asserting through it would compare a kit
-against itself.
+herd to its floor (`settled_fraction` 0.50) where the spear line settles at **0.70**, *clear it now*
+reads **50 hands against 13**, `crew_to_hold` **5 against 2**, and the stepper cap **61 against 16**.
+Guarded by `band_panel_preview._assert_dock_chart_carries_the_kit` and
+`_assert_kit_reprices_the_source`, whose two kits differ in `dispersion` ALONE (same carry, so the
+carry half cannot account for a unit of it) over a locally-built roster — `BandFx.kit_roster_fixture()`
+ships no `dispersion` at all, so asserting through it would compare a kit against itself. Beside them
+`chapters/hunt.gd`'s `_retreat_crew_assertions` holds the invariant the whole change exists to
+restore, over five species: **the cap reaches every crew target the same sheet renders.**
 
 **It moved ZERO frames and ZERO assertions in either harness**, measured by stashing the change and
 re-rendering: no rendered fixture on either side publishes `stayFraction`, so `animals_stayed`
