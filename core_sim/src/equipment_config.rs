@@ -101,6 +101,24 @@ pub enum EquipmentStat {
     /// **Multiplies the hunt's baseline injury hazard** (`fauna::hunt_injuries`). Neutral at `1.0`; a
     /// stand-off instrument ships `0.0` and wears out instead of its users getting hurt.
     Exposure,
+    /// **The per-keeper rate a PEN is collected at.** Declared **unequipped**; the equipped `40.0` is
+    /// `labor_config.json`'s `hunt.per_worker_biomass_capacity` — the number the pen harvest has
+    /// always run on, so a keeper carrying husbandry gear collects exactly what it always did.
+    ///
+    /// **A separate stat from [`Self::HuntCarry`], and that is the physical claim `one item, one
+    /// job` already makes twice.** A sled drags a carcass in off the range; a pen stands at the
+    /// camp, and what bounds a slaughter there is the handling gear — hurdles to work the beast into,
+    /// something to butcher onto, vessels to carry it in. A party that brought a sled to a pen has
+    /// the wrong tool, exactly as a party that brought baskets to a deer does.
+    PenCarry,
+    /// **The sight range each posted scout vantage reveals at.** Declared **unequipped**; the
+    /// equipped `2` is `labor_config.json`'s `scout.vantage_range`.
+    ///
+    /// It lifts the vantage's *range* rather than how far out it is posted, because the posting
+    /// distance is three dials (`vantage_distance_base` / `_per_scout` / `_max`) and a kit that moved
+    /// one of them would be a fourth authority over the same line. What wayfinding gear buys is what
+    /// an observer can make out once they are there.
+    ScoutVantageRange,
 }
 
 impl EquipmentStat {
@@ -110,9 +128,25 @@ impl EquipmentStat {
     pub fn neutral(self) -> Option<f32> {
         match self {
             EquipmentStat::Dispersion | EquipmentStat::Exposure => Some(1.0),
-            EquipmentStat::Attack | EquipmentStat::HuntCarry | EquipmentStat::ForageCarry => None,
+            EquipmentStat::Attack
+            | EquipmentStat::HuntCarry
+            | EquipmentStat::ForageCarry
+            | EquipmentStat::PenCarry
+            | EquipmentStat::ScoutVantageRange => None,
         }
     }
+
+    /// **The stats resolved through [`EquipmentConfig::two_tier`]** — the ones whose *unequipped*
+    /// side is declared here and whose equipped side lives in `labor_config.json`. `two_tier`'s
+    /// fallback searches the **whole item table** and takes the first match, so each of these may be
+    /// declared by at most one item or the answer would resolve by `BTreeMap` order (i.e.
+    /// alphabetically). Named once, here, so `validate` cannot fall behind a new stat.
+    pub const TWO_TIER: [EquipmentStat; 4] = [
+        EquipmentStat::HuntCarry,
+        EquipmentStat::ForageCarry,
+        EquipmentStat::PenCarry,
+        EquipmentStat::ScoutVantageRange,
+    ];
 }
 
 /// **Which tier of a stat an effect declares** — exactly one, never both, because the other tier
@@ -197,6 +231,27 @@ pub enum WearQuantum {
     BiomassHauled,
     /// Per unit of biomass gathered. Baskets.
     BiomassGathered,
+    /// Per unit of biomass taken off a **pen**. Husbandry gear.
+    ///
+    /// **Its own quantum rather than [`Self::BiomassHauled`]**, though a pen harvest charges both:
+    /// the sled is being *dragged* and the handling gear is being *worked*, and a band that only
+    /// keeps pens must not blunt a sled it never took onto the range. Two quanta over one number is
+    /// what lets those two lives diverge the moment either rate is retuned.
+    BiomassCollected,
+    /// Per **tile revealed for the first time**. Wayfinding gear.
+    ///
+    /// **First time, not tile-seen** — a band parked in explored ground re-sees the same ring every
+    /// turn, so charging per tile *seen* would be a turn clock wearing a per-use costume, which is
+    /// exactly what `docs/plan_denial_raid.md` §1.2 forbids. What wears wayfinding gear is going
+    /// somewhere new.
+    TileRevealed,
+    /// Per **fight resolved**. Warrior weapons.
+    ///
+    /// **Per engagement, not per casualty inflicted.** A defence that killed nothing was still
+    /// fought, and pricing the kit on its results would make a band that is losing pay less. A band
+    /// nobody raided pays nothing, and a band three packs turned on pays three — a use count, not a
+    /// clock.
+    Fight,
 }
 
 /// An item's use quantum and what one use costs it.
@@ -249,23 +304,38 @@ impl ItemDefinition {
 // represent it. An item id is a string, so nothing stops the file naming `spearz`; the check moved
 // to [`EquipmentConfig::validate`] (`UnknownItem`), which every load path runs.
 
-/// **A job a kit may be sent out on** — the two verbs that resolve a tier off the TOE. The scouting
-/// and warrior roles are deliberately absent: they consume no component, so there is no kit axis to
-/// choose along and no default to name.
+/// **A job a kit may be sent out on** — the four labor roles that resolve a tier off the TOE.
+///
+/// **The two band-wide roles are here now, and that is this slice's whole shape change.** They used
+/// to be absent on the grounds that they consumed no component: `LaborTarget::kit_job` answered
+/// `None` for Scout and Warrior, so `LaborAssignment.kitId` published `""` and neither role had a
+/// tier to step down from. Both have live consumers — scouts post forward-observer vantages in
+/// `calculate_visibility`, warriors are the band's defending contingent in
+/// `advance_predator_raids` — so "consumes no component" was a statement about the roster, not about
+/// the sim, and it stopped being true the moment the roster carried gear for them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum KitJob {
     Hunt,
     Forage,
+    Scout,
+    Warrior,
 }
 
 impl KitJob {
-    /// The wire/command token for this job — the same string `assign_labor`'s role token uses, so a
-    /// kit's `jobs` list and a labor role are compared in one language.
+    /// Every job, for the validations and the wire — one list, so a new job cannot be validated in
+    /// three places and forgotten in a fourth.
+    pub const ALL: [KitJob; 4] = [KitJob::Hunt, KitJob::Forage, KitJob::Scout, KitJob::Warrior];
+
+    /// The wire/command token for this job — the same string `assign_labor`'s role token uses (and
+    /// the same string [`crate::components::LaborTarget::kind`] answers), so a kit's `jobs` list and
+    /// a labor role are compared in one language.
     pub fn as_str(self) -> &'static str {
         match self {
             KitJob::Hunt => "hunt",
             KitJob::Forage => "forage",
+            KitJob::Scout => "scout",
+            KitJob::Warrior => "warrior",
         }
     }
 }
@@ -295,6 +365,8 @@ pub struct KitDefinition {
 pub struct DefaultKitsConfig {
     pub hunt: String,
     pub forage: String,
+    pub scout: String,
+    pub warrior: String,
 }
 
 /// **What the kit is being resolved AGAINST** — the argument a mass-bounded effect is tested on.
@@ -568,6 +640,8 @@ impl EquipmentConfig {
         match job {
             KitJob::Hunt => &self.default_kits.hunt,
             KitJob::Forage => &self.default_kits.forage,
+            KitJob::Scout => &self.default_kits.scout,
+            KitJob::Warrior => &self.default_kits.warrior,
         }
     }
 
@@ -708,6 +782,60 @@ impl EquipmentConfig {
         self.two_tier(EquipmentStat::ForageCarry, equipped_rate, kit, wear)
     }
 
+    /// **A band's per-keeper PEN collection rate** — resolved against the equipped rate the caller
+    /// already holds, which is the same `labor_config.hunt.per_worker_biomass_capacity` the pen
+    /// harvest has always been capped by. A keeper carrying husbandry gear therefore collects
+    /// **exactly what a pen always collected**; what is new is the state below the cliff.
+    ///
+    /// **The sled cannot reach this by construction**, and that is the deliberate consequence: a
+    /// hunting party that has corralled a herd and left its assignment on the big-game kit is
+    /// working the pen with a drag harness and no handling gear, and collects at the bare rate. That
+    /// is the same shape as bringing baskets to a deer — see [`EquipmentStat::PenCarry`].
+    pub fn pen_per_worker_biomass_capacity(
+        &self,
+        equipped_rate: f32,
+        kit: &KitChoice,
+        wear: &crate::components::BandEquipment,
+    ) -> f32 {
+        self.two_tier(EquipmentStat::PenCarry, equipped_rate, kit, wear)
+    }
+
+    /// **The sight range a band's posted scout vantages reveal at** — resolved against the equipped
+    /// range the caller already holds (`labor_config.scout.vantage_range`).
+    ///
+    /// Returned as `f32` like every other tier and rounded by the caller, because the *config* axis
+    /// is a distance in tiles and the *effects* axis is a quantity: giving this one stat an integer
+    /// type would make it the only effect a designer could not tune continuously.
+    pub fn scout_vantage_range(
+        &self,
+        equipped_range: f32,
+        kit: &KitChoice,
+        wear: &crate::components::BandEquipment,
+    ) -> f32 {
+        self.two_tier(EquipmentStat::ScoutVantageRange, equipped_range, kit, wear)
+    }
+
+    /// **A warrior's per-head combat profile, kit composed in** — the defending contingent's side of
+    /// `advance_predator_raids`, resolved through the *same* seam and the same `attack` stat a
+    /// hunter's is.
+    ///
+    /// **One stat for both roles rather than a `warrior_attack` of its own**, because `attack` is
+    /// already "what this person hits with" and a second stat would be a second authority over the
+    /// one number the resolver reads. What keeps a spear out of a raid and a club out of a hunt is
+    /// the kit's `jobs` list, not the stat.
+    ///
+    /// **No [`Quarry`], and `validate` enforces that there is nothing to ask about.** A warrior
+    /// fights people, who have no `body_mass` on this roster, so a mass-bounded weapon in a warrior
+    /// kit is rejected at load rather than silently resolving as unbounded here.
+    pub fn warrior_profile(
+        &self,
+        intrinsic: CombatStats,
+        kit: &KitChoice,
+        wear: &crate::components::BandEquipment,
+    ) -> CombatStats {
+        self.hunter_profile_for(intrinsic, kit, wear, Quarry::Any)
+    }
+
     /// **The two carries' shared resolution**, and the asymmetry with `attack` is one-home-per-fact,
     /// not an inconsistency: a carry item declares the **unequipped** side (the equipped rate is
     /// `labor_config`'s and stays there), so a live item means *the caller's equipped rate applies*
@@ -846,7 +974,7 @@ impl EquipmentConfig {
         // searches the whole table for the unequipped fallback and takes the FIRST match: two items
         // disagreeing about the sledless haul rate would resolve by `BTreeMap` order, which is
         // alphabetical and therefore arbitrary.
-        for stat in [EquipmentStat::HuntCarry, EquipmentStat::ForageCarry] {
+        for stat in EquipmentStat::TWO_TIER {
             let declared: Vec<&str> = self
                 .items
                 .iter()
@@ -856,14 +984,46 @@ impl EquipmentConfig {
             if declared.len() > 1 {
                 return Err(EquipmentConfigError::InvalidRoster {
                     reason: format!(
-                        "items {} all declare the same carry stat - the unequipped fallback would resolve by name order",
+                        "items {} all declare the same two-tier stat {stat:?} - the unequipped fallback would resolve by name order",
                         declared.join(", ")
                     ),
                 });
             }
         }
         self.validate_roster()?;
-        self.validate_default_hunt_kit_is_quarry_blind()
+        self.validate_default_hunt_kit_is_quarry_blind()?;
+        self.validate_warrior_kits_have_no_quarry()
+    }
+
+    /// **A WARRIOR KIT'S ATTACK MUST NOT BE BOUNDED BY BODY MASS**, because there is nothing on the
+    /// other side of that fight with a `body_mass` to test.
+    ///
+    /// [`Self::warrior_profile`] resolves at [`Quarry::Any`], so a bounded weapon in a warrior kit
+    /// would count *everywhere* — a snare rated to hold a hare would arm the camp against a wolf
+    /// pack. That is `config-loading.md`'s "looks live but isn't" in its worst direction: the bound
+    /// is written, parses, validates, and is then ignored by the one resolver that reads the item.
+    /// Rejecting it says so at load instead.
+    fn validate_warrior_kits_have_no_quarry(&self) -> Result<(), EquipmentConfigError> {
+        for kit in self.kits.iter().filter(|kit| {
+            kit.jobs
+                .iter()
+                .any(|job| matches!(job, KitJob::Warrior | KitJob::Scout))
+        }) {
+            for item in &kit.uses {
+                let Some(def) = self.item(item) else { continue };
+                for effect in &def.effects {
+                    if effect.stat == EquipmentStat::Attack && effect.is_mass_bounded() {
+                        return Err(EquipmentConfigError::InvalidRoster {
+                            reason: format!(
+                                "kit '{}' can be sent on a band-wide role but uses '{item}', whose attack is bounded by body mass — a raid has no quarry to test the bound against, so it would be silently ignored",
+                                kit.id
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// **THE HUNT JOB'S DEFAULT KIT MUST CARRY NO MASS-BOUNDED ATTACK**, and this is a structural
@@ -1010,7 +1170,7 @@ impl EquipmentConfig {
                 }
             }
         }
-        for job in [KitJob::Hunt, KitJob::Forage] {
+        for job in KitJob::ALL {
             let id = self.default_kit_id(job);
             let Some(definition) = self.kit_definition(id) else {
                 return Err(EquipmentConfigError::InvalidRoster {
@@ -1624,21 +1784,21 @@ mod tests {
                     { "id": "big_game", "display_name": "A", "jobs": ["hunt"], "uses": [] },
                     { "id": "big_game", "display_name": "B", "jobs": ["hunt"], "uses": [] }
                 ],
-                "default_kits": { "hunt": "big_game", "forage": "big_game" }"#,
+                "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game" }"#,
             ),
             (
                 "a kit that can be sent on nothing",
                 r#""kits": [
                     { "id": "big_game", "display_name": "A", "jobs": [], "uses": [] }
                 ],
-                "default_kits": { "hunt": "big_game", "forage": "big_game" }"#,
+                "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game" }"#,
             ),
             (
                 "a default naming no roster entry",
                 r#""kits": [
                     { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": [] }
                 ],
-                "default_kits": { "hunt": "ghost", "forage": "big_game" }"#,
+                "default_kits": { "hunt": "ghost", "forage": "big_game", "scout": "big_game", "warrior": "big_game" }"#,
             ),
             (
                 "a default whose jobs do not cover its own job",
@@ -1646,7 +1806,7 @@ mod tests {
                     { "id": "big_game", "display_name": "A", "jobs": ["hunt"], "uses": [] },
                     { "id": "gathering", "display_name": "B", "jobs": ["forage"], "uses": [] }
                 ],
-                "default_kits": { "hunt": "gathering", "forage": "gathering" }"#,
+                "default_kits": { "hunt": "gathering", "forage": "gathering", "scout": "gathering", "warrior": "gathering" }"#,
             ),
         ];
         for (what, roster) in cases {
@@ -1673,7 +1833,7 @@ mod tests {
             r#""kits": [
                 { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": ["net_kit"] }
             ],
-            "default_kits": { "hunt": "big_game", "forage": "big_game" }"#,
+            "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game" }"#,
         ))
         .expect_err("an item that does not exist is invalid");
         assert!(
@@ -1700,10 +1860,46 @@ mod tests {
 
     /// A minimal **valid** roster, so a fixture testing one of the three *component* blocks does not
     /// have to restate the shipped kit list to get past the roster's own validation.
+    /// **A BAND-WIDE role's weapon may not be bounded by body mass, because there is nothing on the
+    /// other side of that fight to test the bound against.**
+    ///
+    /// [`EquipmentConfig::warrior_profile`] resolves at [`Quarry::Any`], so a bounded weapon in a
+    /// warrior kit counts **everywhere** — a snare rated to hold a hare would arm the camp against a
+    /// wolf pack. That is `config-loading.md`'s "looks live but isn't" in its worst direction: the
+    /// bound parses, validates, and is then silently ignored by the one resolver that reads it. The
+    /// twin of `validate_default_hunt_kit_is_quarry_blind`, and rejected for the same reason.
+    #[test]
+    fn a_band_wide_kit_may_not_carry_a_mass_bounded_weapon() {
+        // Its own item table rather than `component_json`'s, because the bounded weapon has to
+        // EXIST — a roster naming an item the table does not carry is rejected by `UnknownItem`
+        // first, which is a different check.
+        let json = r#"{
+            "items": {
+                "spears": { "starting_durability": 100.0, "wear": { "per": "kill", "amount": 0.4 }, "effects": [{ "stat": "attack", "equipped": 20.0 }] },
+                "snares": { "starting_durability": 100.0, "wear": { "per": "kill", "amount": 0.2 }, "effects": [{ "stat": "attack", "equipped": 20.0, "max_body_mass": 1.0 }] }
+            },
+            "kits": [
+                { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": ["spears"] },
+                { "id": "warrior", "display_name": "W", "jobs": ["warrior", "scout"], "uses": ["snares"] }
+            ],
+            "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "warrior", "warrior": "warrior" }
+        }"#;
+        let err = EquipmentConfig::from_json_str(json)
+            .expect_err("a warrior kit carrying a mass-bounded weapon is invalid");
+        assert!(
+            matches!(&err, EquipmentConfigError::InvalidRoster { reason } if reason.contains("snares")),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// **A minimal roster that satisfies validate on all four jobs.** The two band-wide roles need a
+    /// default like the other two, and `none` is what these fixtures give them: they are testing the
+    /// item table, not the roster, and a kit-carrying entry per role would put three more items in
+    /// every one of them.
     const ROSTER_JSON: &str = r#""kits": [
                 { "id": "big_game", "display_name": "Big-game kit", "jobs": ["hunt"], "uses": ["spears", "sled"] },
                 { "id": "gathering", "display_name": "Gathering kit", "jobs": ["forage"], "uses": ["baskets"] },
-                { "id": "none", "display_name": "No kit", "jobs": ["hunt", "forage"], "uses": [] }
+                { "id": "none", "display_name": "No kit", "jobs": ["hunt", "forage", "scout", "warrior"], "uses": [] }
             ],
-            "default_kits": { "hunt": "big_game", "forage": "gathering" }"#;
+            "default_kits": { "hunt": "big_game", "forage": "gathering", "scout": "none", "warrior": "none" }"#;
 }

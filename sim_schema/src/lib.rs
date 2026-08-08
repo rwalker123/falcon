@@ -45,15 +45,24 @@ mod tests {
         const BARE_HUNT_CARRY: f32 = 12.0;
         const BARE_FORAGE_CARRY: f32 = 1.6;
         const BARE_ATTACK: f32 = 1.0;
+        const BARE_PEN_CARRY: f32 = 12.0;
+        const BARE_VANTAGE_RANGE: f32 = 1.0;
 
         let snapshot = WorldSnapshot {
             kits: vec![KitOptionState {
                 id: "none".to_string(),
                 display_name: "No kit".to_string(),
-                jobs: vec!["hunt".to_string(), "forage".to_string()],
+                jobs: vec![
+                    "hunt".to_string(),
+                    "forage".to_string(),
+                    "scout".to_string(),
+                    "warrior".to_string(),
+                ],
                 attack: BARE_ATTACK,
                 hunt_carry_per_worker_biomass: BARE_HUNT_CARRY,
                 forage_carry_per_worker_biomass: BARE_FORAGE_CARRY,
+                pen_carry_per_worker_biomass: BARE_PEN_CARRY,
+                scout_vantage_range: BARE_VANTAGE_RANGE,
                 // `none` carries nothing, so every multiplier reads its neutral and its attack —
                 // the bare hand's — is bounded by nothing.
                 attack_min_body_mass: 0.0,
@@ -63,6 +72,8 @@ mod tests {
             }],
             default_hunt_kit_id: "big_game".to_string(),
             default_forage_kit_id: "gathering".to_string(),
+            default_scout_kit_id: "wayfinding".to_string(),
+            default_warrior_kit_id: "warrior".to_string(),
             herds: vec![HerdTelemetryState {
                 id: "herd_wild".to_string(),
                 hunt_trip_estimates_kit_id: "big_game".to_string(),
@@ -88,17 +99,25 @@ mod tests {
         let subsistence = payload.subsistence().expect("subsistence section present");
         assert_eq!(subsistence.defaultHuntKitId(), Some("big_game"));
         assert_eq!(subsistence.defaultForageKitId(), Some("gathering"));
+        // The two band-wide roles' defaults ride the same way — they had no kit axis, and therefore
+        // no default to name, until the roster gained wayfinding gear and clubs.
+        assert_eq!(subsistence.defaultScoutKitId(), Some("wayfinding"));
+        assert_eq!(subsistence.defaultWarriorKitId(), Some("warrior"));
         let option = subsistence.kits().expect("the roster is published").get(0);
         assert_eq!(option.id(), Some("none"));
         assert_eq!(option.displayName(), Some("No kit"));
         assert_eq!(option.attack(), BARE_ATTACK);
         assert_eq!(option.huntCarryPerWorkerBiomass(), BARE_HUNT_CARRY);
         assert_eq!(option.forageCarryPerWorkerBiomass(), BARE_FORAGE_CARRY);
+        assert_eq!(option.penCarryPerWorkerBiomass(), BARE_PEN_CARRY);
+        assert_eq!(option.scoutVantageRange(), BARE_VANTAGE_RANGE);
         let jobs = option
             .jobs()
             .expect("a kit states the jobs it may be sent on");
-        assert_eq!(jobs.len(), 2);
+        assert_eq!(jobs.len(), 4);
         assert_eq!(jobs.get(0), "hunt");
+        assert_eq!(jobs.get(2), "scout");
+        assert_eq!(jobs.get(3), "warrior");
 
         let herd = subsistence.herds().expect("herds present").get(0);
         assert_eq!(herd.huntTripEstimatesKitId(), Some("big_game"));

@@ -548,12 +548,15 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         # from the band panel's Current-actions rows, and to name it. Same array MapView renders.
         _hud_invoke("update_herds", [snapshot["herds"]])
     if snapshot.has("kits") and SnapshotSections.changed(snapshot, "kits"):
-        # The KIT ROSTER + the two job defaults, forwarded as ONE call: the compose sheets' pickers
+        # The KIT ROSTER + the FOUR job defaults, forwarded as ONE call: the compose sheets' pickers
         # need the list and the "what does the verb take when I name none" answer together, and a
         # roster ingested without its defaults would open every picker on nothing. Gated on `kits`
-        # alone — the defaults are scalars riding the same section and change with it.
+        # alone — the defaults are scalars riding the same section and change with it. The scout and
+        # warrior entries arrived with the expanded roster; before it the band-wide roles had no kit
+        # axis and so no default to name.
         _hud_invoke("update_kit_roster", [snapshot["kits"],
-            snapshot.get("default_hunt_kit_id", ""), snapshot.get("default_forage_kit_id", "")])
+            snapshot.get("default_hunt_kit_id", ""), snapshot.get("default_forage_kit_id", ""),
+            snapshot.get("default_scout_kit_id", ""), snapshot.get("default_warrior_kit_id", "")])
     if snapshot.has("forage_patches") and SnapshotSections.changed(snapshot, "forage_patches"):
         # The HUD needs the forage patches to cap each Current-actions Forage row's worker stepper at
         # the patch's max-useful (the same forecast the compose control reads off tile_info). Same

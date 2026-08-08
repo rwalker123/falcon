@@ -308,13 +308,20 @@ pub fn advance_labor_allocation(
             // expires part-way through the loop cannot pay two different rates to two herds in the
             // same turn; only the *mask* varies per assignment.
             let crew_kit = assignment.kit_choice(&equipment_cfg);
-            // **A crew with no kit at all resolves every tier at its unequipped value**, which is
-            // what `EquipmentConfig::default_kit`'s empty-`uses` sibling `none` already means — so
-            // the fallback here is the roster's own "no kit", never a bespoke bare-handed branch.
-            let crew_kit = crew_kit.unwrap_or_else(|| equipment_cfg.no_kit());
             // This crew's HUNT haul tier — the **sled**, if its kit carries one and the band still
             // has condition in it.
             let hunt_per_worker_biomass = equipment_cfg.hunt_per_worker_biomass_capacity(
+                equipped_haul_rate,
+                &crew_kit,
+                &band_kit,
+            );
+            // **And its PEN collection tier** — the **husbandry gear's**, resolved against the same
+            // shipped `equipped_haul_rate` a pen harvest has always been capped by, so a keeper who
+            // brought handling gear collects exactly what a pen always collected. A separate stat
+            // from the haul above because a sled drags a carcass in off the range and a pen stands
+            // at the camp: a crew that corralled its herd and stayed on the big-game kit is working
+            // the pen with the wrong tool, and collects at the bare rate.
+            let pen_per_worker_biomass = equipment_cfg.pen_per_worker_biomass_capacity(
                 equipped_haul_rate,
                 &crew_kit,
                 &band_kit,
@@ -1133,6 +1140,23 @@ pub fn advance_labor_allocation(
                     else {
                         continue;
                     };
+                    // **WHICH CARRY TIER THIS HERD IS WORKED AT — the pen's or the range's.**
+                    // `hunt_forecast` splits on exactly this predicate and early-returns the managed
+                    // path for a penned herd, so **one** rate serves the whole arm: the branch that
+                    // runs is decided by the herd, and the other branch is never reached.
+                    //
+                    // **It is resolved HERE, once, and every forecast, projection, crew inversion
+                    // and take below reads it** — because the forecast-equals-actual invariant
+                    // (`yield-forecast.md`) is exactly the promise that the number the seed quoted
+                    // and the number the turn pays came from one place. A pen priced at the sled's
+                    // tier while it collected at the husbandry gear's is that invariant broken, and
+                    // it is what `a_field_and_a_pen_collapse_the_policy_axis_but_still_need_carrying_home`
+                    // caught the moment the two stats parted.
+                    let herd_carry_per_worker = if herd.is_corralled() {
+                        pen_per_worker_biomass
+                    } else {
+                        hunt_per_worker_biomass
+                    };
                     // **NOTHING LEFT TO BUILD → hand the verb back, whoever finished it** — the
                     // animal twin of the Forage arm's identical check, and stated before the pen's
                     // tend branch `continue`s for the same reason: `handle_corral` sets the verb on
@@ -1151,7 +1175,7 @@ pub fn advance_labor_allocation(
                         herd,
                         &fauna,
                         &ladder,
-                        hunt_per_worker_biomass,
+                        herd_carry_per_worker,
                         &party_for(herd.body_mass),
                         mult_f,
                         workers,
@@ -1342,7 +1366,7 @@ pub fn advance_labor_allocation(
                         // rung 3's actual payoffs are the faster `r`, no chasing, the self-feeding
                         // footprint and a `K` you control. On poor enough range a pen *will* pulse
                         // (the aurochs is closest), and that is honest. See `managed_yield_biomass`.
-                        let collection = workers as f32 * hunt_per_worker_biomass;
+                        let collection = workers as f32 * herd_carry_per_worker;
                         let take =
                             // A penned animal is not stalked: no engagement bound.
                             fauna::quantise_animal_take(
@@ -1353,21 +1377,31 @@ pub fn advance_labor_allocation(
                                 fauna::EngagementStop::WhenPackFull,
                             );
                         herd.biomass -= take.killed_biomass();
-                        // **The carry kit wears on what it HAULS, and a pen hauls** (the minimal
-                        // TOE). The *hunting* kit is untouched here: a penned beast is slaughtered,
-                        // not stalked, so there is no fight and no spear to blunt — which is the
-                        // same reason this branch passes no engagement bound to the quantiser.
-                        // Gated on the same predicate that chose the haul tier: a keeper with no
-                        // sled dragged the carcass by hand and wore nothing out doing it.
-                        {
-                            if let Some(kit) = band_equipment.as_mut() {
-                                kit.wear_kit(
-                                    &equipment_cfg,
-                                    &crew_kit,
-                                    crate::equipment_config::WearQuantum::BiomassHauled,
-                                    take.carried,
-                                );
-                            }
+                        // **A pen charges TWO quanta over the one number, and they are not the same
+                        // use.** The sled wears on what it *hauls* (a pen still has to get the meat
+                        // home); the husbandry gear wears on what it *collects* — the hurdles worked,
+                        // the beast handled, the vessels filled. Two quanta rather than one is what
+                        // lets a band that only keeps pens leave a sled it never took onto the range
+                        // untouched, and what lets either life be retuned without moving the other.
+                        //
+                        // The *hunting* kit is untouched on both: a penned beast is slaughtered, not
+                        // stalked, so there is no fight and no spear to blunt — the same reason this
+                        // branch passes no engagement bound to the quantiser. Each charge is gated
+                        // on the predicate that chose its own tier, so a keeper with no sled dragged
+                        // the carcass by hand and wore nothing out doing it.
+                        if let Some(kit) = band_equipment.as_mut() {
+                            kit.wear_kit(
+                                &equipment_cfg,
+                                &crew_kit,
+                                crate::equipment_config::WearQuantum::BiomassHauled,
+                                take.carried,
+                            );
+                            kit.wear_kit(
+                                &equipment_cfg,
+                                &crew_kit,
+                                crate::equipment_config::WearQuantum::BiomassCollected,
+                                take.carried,
+                            );
                         }
                         // **A pen changes the INTENSITY, never the PRODUCT** — the keeper is paid
                         // this herd's own species vector, so a penned wolf yields pelts and no meat
@@ -1435,7 +1469,7 @@ pub fn advance_labor_allocation(
                             herd,
                             &fauna,
                             &ladder,
-                            hunt_per_worker_biomass,
+                            herd_carry_per_worker,
                             &party_for(herd.body_mass),
                             mult_f,
                             workers,
@@ -1474,7 +1508,7 @@ pub fn advance_labor_allocation(
                                 fauna::hunt_haul_workers(
                                     production,
                                     herd.body_mass,
-                                    hunt_per_worker_biomass,
+                                    herd_carry_per_worker,
                                 ),
                             ),
                             overdraws: false,
@@ -1504,7 +1538,7 @@ pub fn advance_labor_allocation(
                         workers,
                         *floor,
                         improvement,
-                        hunt_per_worker_biomass,
+                        herd_carry_per_worker,
                         &party_for(herd.body_mass),
                         &fauna,
                         &ladder,
@@ -1771,7 +1805,7 @@ pub fn advance_labor_allocation(
                     let take_workers = fauna::hunt_take_workers(
                         standing_above_floor,
                         herd.body_mass,
-                        hunt_per_worker_biomass * ladder.build_dip(improvement),
+                        herd_carry_per_worker * ladder.build_dip(improvement),
                         fauna.engage_rate_for(&herd.species),
                         ladder.build_dip(improvement),
                     );
@@ -1785,7 +1819,7 @@ pub fn advance_labor_allocation(
                         herd,
                         &fauna,
                         &ladder,
-                        hunt_per_worker_biomass,
+                        herd_carry_per_worker,
                         &party_for(herd.body_mass),
                         mult_f,
                         workers,
@@ -2346,6 +2380,7 @@ pub struct RaidConfigs<'w> {
     pub fauna: Res<'w, FaunaConfigHandle>,
     pub combat: Res<'w, CombatConfigHandle>,
     pub creatures: Res<'w, CreaturesConfigHandle>,
+    pub equipment: Res<'w, EquipmentConfigHandle>,
 }
 
 /// **Predators Phase 1b — the raid trigger, and the Warrior role's first live consumer**
@@ -2376,12 +2411,21 @@ pub fn advance_predator_raids(
     tick: Res<SimulationTick>,
     mut event_log: ResMut<CommandEventLog>,
     tiles: Query<&Tile>,
-    mut bands: Query<(Entity, &mut PopulationCohort, &mut LaborAllocation), With<ResidentBand>>,
+    mut bands: Query<
+        (
+            Entity,
+            &mut PopulationCohort,
+            &mut LaborAllocation,
+            Option<&mut BandEquipment>,
+        ),
+        With<ResidentBand>,
+    >,
 ) {
     // Resolved once — none of these change within a turn (the hunt-danger adapter's discipline).
     let fauna = configs.fauna.get();
     let tuning = configs.combat.get().tuning();
     let person = configs.creatures.get().person();
+    let equipment_cfg = configs.equipment.get();
     let raid_radius = fauna.predators.raid_radius;
     let raid_exposure = fauna.predators.raid_exposure;
     let raid_yield_forfeit_fraction = fauna.predators.raid_yield_forfeit_fraction;
@@ -2390,7 +2434,7 @@ pub fn advance_predator_raids(
     let map_seed = sim_config.map_seed;
     let tick = tick.0;
 
-    for (entity, mut cohort, mut alloc) in bands.iter_mut() {
+    for (entity, mut cohort, mut alloc, mut band_equipment) in bands.iter_mut() {
         // Reset the per-turn raid forfeit up front — this system is its only writer, so a band that
         // is NOT raided this turn must read `0.0` rather than keep last turn's debit.
         alloc.last_raid_forfeit = 0.0;
@@ -2409,10 +2453,28 @@ pub fn advance_predator_raids(
         let warriors = alloc.workers_on(&LaborTarget::Warrior) as f32;
         let warrior_count = warriors.min(working_age);
         let exposed = raid_exposure.min((working_age - warrior_count).max(0.0));
+        // **THE WARRIOR ROLE'S TOE.** The kit staffed on the Warrior row swaps the defenders' whole
+        // `attack` tier the same way a spear swaps a hunter's — clubs at `6` over the bare hand's
+        // `1` from the `person` roster row. It is resolved through `warrior_profile`, the *same*
+        // seam and the same `attack` stat a hunt resolves through, so a weapon is a weapon whichever
+        // role carries it; what keeps a spear out of a raid is the kit's `jobs` list.
+        //
+        // **Only the warrior contingent is armed.** The exposed populace below stays at `attack 0`
+        // whatever the band's kit — they are the people who are *not* holding anything, which is the
+        // whole reason they are a separate contingent.
+        let warrior_kit = alloc.kit_on(&LaborTarget::Warrior, &equipment_cfg);
+        let warrior_profile = band_equipment.as_deref().map_or(person, |wear| {
+            equipment_cfg.warrior_profile(person, &warrior_kit, wear)
+        });
 
         // Casualties from every raiding predator this turn are additive and order-independent, so they
         // accumulate into one cohort mutation at the end.
         let mut total_killed = 0.0f32;
+        // **The warrior kit's use quantum: one fight, one use.** Counted rather than inferred from
+        // the casualties, because a defence that killed nothing was still fought — pricing the kit
+        // on its results would charge the band that is losing the least. A band nobody raided ends
+        // the turn at zero, which is the whole difference between this and a turn clock.
+        let mut fights_fought = 0.0f32;
         // Feed lines are DEFERRED: a casualty-causing raid also forfeits food (a band-level debit
         // computed after the loop), which is folded into the line's detail before it is pushed.
         let mut raid_lines: Vec<CommandEventEntry> = Vec::new();
@@ -2472,7 +2534,7 @@ pub fn advance_predator_raids(
                             Contingent {
                                 kind: ContingentId::from("warrior"),
                                 count: warrior_count,
-                                profile: person,
+                                profile: warrior_profile,
                             },
                             Contingent {
                                 kind: ContingentId::from("person"),
@@ -2499,6 +2561,7 @@ pub fn advance_predator_raids(
                 seed,
             };
             let outcome = resolve_fight(&payload, &tuning);
+            fights_fought += 1.0;
             // Apply ONLY the defender side (`ForceId(1)`); the predator side is discarded (no biomass
             // take here to reconcile, but band casualties are all this phase cares about).
             let (killed_f, wounded_f) =
@@ -2543,6 +2606,24 @@ pub fn advance_predator_raids(
                 if let Some(detail) = line.detail.as_mut() {
                     detail.push_str(&format!(" forfeit={taken:.3}"));
                 }
+            }
+        }
+        // **Charge the warrior kit AFTER the fights**, the accrue-after-take ordering every other
+        // wear site uses: this turn's raids are defended at the tier they were priced with and the
+        // cliff lands on the next one.
+        //
+        // **Gated on there having been a warrior to hold the thing.** A band with nobody on the
+        // Warrior row was raided with its populace standing in the open; nothing was swung, so
+        // nothing wore out — the same pairing that makes the bare-handed comparison free to run
+        // everywhere else.
+        if fights_fought > 0.0 && warrior_count > 0.0 {
+            if let Some(kit) = band_equipment.as_mut() {
+                kit.wear_kit(
+                    &equipment_cfg,
+                    &warrior_kit,
+                    crate::equipment_config::WearQuantum::Fight,
+                    fights_fought,
+                );
             }
         }
         for line in raid_lines {
@@ -3241,7 +3322,14 @@ mod labor_yield_tests {
                 },
                 workers: WORKERS,
                 improvement: None,
-                kit: None,
+                // The keeper carries husbandry gear — the only kit supplying
+                // `EquipmentStat::PenCarry` — so the crew inversion below can be quoted at the
+                // shipped `hunt.per_worker_biomass_capacity` the pen has always collected at.
+                kit: Some(
+                    crate::equipment_config::EquipmentConfig::builtin()
+                        .kit("husbandry")
+                        .expect("the shipped roster carries the husbandry kit"),
+                ),
             }],
         );
 
@@ -4577,7 +4665,19 @@ mod labor_yield_tests {
                 },
                 workers: 1,
                 improvement: None,
-                kit: None,
+                // **The keeper carries HUSBANDRY GEAR, and this row is why the kit exists.** A pen
+                // is collected at `EquipmentStat::PenCarry`, which only the husbandry kit supplies;
+                // the hunt job's default (`None` → `big_game`) carries a sled, which drags a carcass
+                // in off the range and does nothing for a pen at the camp. `herd_forecast` above is
+                // quoted at `labor.hunt.per_worker_biomass_capacity` — the equipped rate on both
+                // stats — so naming the kit is what makes the forecast and the payout the same
+                // number. Leaving it `None` prices this crew bare-handed, which is a real reading
+                // and a different test.
+                kit: Some(
+                    crate::equipment_config::EquipmentConfig::builtin()
+                        .kit("husbandry")
+                        .expect("the shipped roster carries the husbandry kit"),
+                ),
             }],
         );
         world.run_system_once(advance_labor_allocation);

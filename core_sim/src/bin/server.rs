@@ -1608,7 +1608,7 @@ fn seed_source_yield(
                     .assignments
                     .iter()
                     .find(|assignment| assignment.target.same_source(target))
-                    .and_then(|assignment| assignment.kit_choice(&equipment_cfg))
+                    .map(|assignment| assignment.kit_choice(&equipment_cfg))
             })
     };
     let Some(crew_kit) = crew_kit else {
@@ -1734,11 +1734,25 @@ fn seed_source_yield(
                 .get::<BandEquipment>(band)
                 .cloned()
                 .unwrap_or_default();
-            let per_worker_biomass = equipment_cfg.hunt_per_worker_biomass_capacity(
-                labor.hunt.per_worker_biomass_capacity,
-                &crew_kit,
-                &band_wear,
-            );
+            // **A PENNED herd is priced at the husbandry gear's tier, a wild one at the sled's** —
+            // the same split `advance_labor_allocation` makes on the same predicate, because
+            // `hunt_forecast` early-returns the managed path for a corralled herd and the seed has
+            // to arrive at that branch holding the rate the turn will pay it at. Pricing a pen at
+            // the sled's tier is `yield-forecast.md`'s invariant broken on the one surface the
+            // player commits from.
+            let per_worker_biomass = if herd.is_corralled() {
+                equipment_cfg.pen_per_worker_biomass_capacity(
+                    labor.hunt.per_worker_biomass_capacity,
+                    &crew_kit,
+                    &band_wear,
+                )
+            } else {
+                equipment_cfg.hunt_per_worker_biomass_capacity(
+                    labor.hunt.per_worker_biomass_capacity,
+                    &crew_kit,
+                    &band_wear,
+                )
+            };
             // **And at THIS band's FIGHTING tier**, for the same reason and through the same seam
             // (`docs/plan_hunt_through_combat.md` §4): the take now resolves through the combat
             // system, so a band whose spears are gone brings down less — or, past a quarry's
@@ -2473,9 +2487,10 @@ fn handle_assign_labor(
     // **The kit this crew works under, resolved at the command boundary and FAILING CLOSED.** An
     // unknown id, or one whose `jobs` does not cover this role, is refused with a reason rather than
     // quietly becoming the default: naming a kit is how the player compares tiers, so a silent
-    // substitution answers a different question than the one asked. The band-wide roles carry no
-    // kit at all — `kit_job()` is `None` for them, and a kit named there is ignored exactly as
-    // `species` and `floor` are.
+    // substitution answers a different question than the one asked. **The band-wide roles resolve
+    // one too** — `kit_job()` answers for all four roles now, so `assign_labor … scout 3 kit none`
+    // is a real selection rather than a token ignored the way `species` and `floor` are on those
+    // rows.
     //
     // **Unassigning (`workers == 0`) resolves NO kit**, the same rule the policy validation above
     // follows and for the same reason: a player must be able to abandon an investment even if what
@@ -2483,21 +2498,15 @@ fn handle_assign_labor(
     // at zero workers and never reads the kit, so refusing here refused a command whose kit could
     // not be used either way — and a roster edit that removed an id left every crew still holding it
     // unclearable, locked in by a kit that no longer exists.
-    let crew_kit = match (workers, target.kit_job()) {
-        (0, _) | (_, None) => None,
-        (_, Some(job)) => {
-            let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
-            match equipment_cfg.resolve_kit_for_job(kit_id.as_deref(), job) {
-                Ok(kit) => Some(kit),
-                Err(reason) => {
-                    emit_command_failure(
-                        app,
-                        event_kind,
-                        faction,
-                        format!("assign_labor: {reason}."),
-                    );
-                    return;
-                }
+    let crew_kit = if workers == 0 {
+        None
+    } else {
+        let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
+        match equipment_cfg.resolve_kit_for_job(kit_id.as_deref(), target.kit_job()) {
+            Ok(kit) => Some(kit),
+            Err(reason) => {
+                emit_command_failure(app, event_kind, faction, format!("assign_labor: {reason}."));
+                return;
             }
         }
     };

@@ -670,12 +670,16 @@ func update_herds(herds_variant: Variant) -> void:
 func update_food_modules(modules_variant: Variant) -> void:
     _band_labor.set_food_modules(modules_variant)
 
-## The world's KIT ROSTER and the two job defaults (`docs/plan_denial_raid.md`) — the four compose
+## The world's KIT ROSTER and the FOUR job defaults (`docs/plan_denial_raid.md`) — the four compose
 ## sheets' picker list, ingested once per world onto `_band_labor` (`kits()` / `default_kit_id()`).
-## `Main` forwards the three wire keys together because they are one fact; a roster whose defaults
-## named kits it did not contain would open every picker on an entry it cannot show.
-func update_kit_roster(kits_variant: Variant, default_hunt: Variant, default_forage: Variant) -> void:
-    _band_labor.set_kit_roster(kits_variant, String(default_hunt), String(default_forage))
+## `Main` forwards the wire keys together because they are one fact; a roster whose defaults named
+## kits it did not contain would open every picker on an entry it cannot show. Scout and Warrior
+## joined the list when the roster gained gear for them — until then the band-wide roles had no kit
+## axis and published `""`.
+func update_kit_roster(kits_variant: Variant, default_hunt: Variant, default_forage: Variant,
+        default_scout: Variant, default_warrior: Variant) -> void:
+    _band_labor.set_kit_roster(kits_variant, String(default_hunt), String(default_forage),
+        String(default_scout), String(default_warrior))
 
 ## Ingests the snapshot forage patches into the per-tile lookup the Current-actions Forage row reads
 ## to cap its worker stepper at max-useful, mirroring MapView's `forage_patch_lookup` ingest. The

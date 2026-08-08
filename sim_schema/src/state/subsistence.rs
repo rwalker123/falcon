@@ -1016,6 +1016,15 @@ pub struct KitOptionState {
     /// Per-gatherer throughput (biomass/turn, **before** the tile's seasonal weight) under this kit —
     /// the baskets' tier.
     pub forage_carry_per_worker_biomass: f32,
+    /// Per-keeper **PEN** collection rate (biomass/turn) under this kit — the husbandry gear's tier.
+    /// **Not [`Self::hunt_carry_per_worker_biomass`]**: a sled drags a carcass in off the range and
+    /// a pen stands at the camp, so a kit carrying only a sled collects a pen at the bare rate.
+    #[serde(default)]
+    pub pen_carry_per_worker_biomass: f32,
+    /// The sight range each posted scout vantage reveals at under this kit — the wayfinding gear's
+    /// tier. How far the vantages are *posted* is not a kit axis.
+    #[serde(default)]
+    pub scout_vantage_range: f32,
     /// **The range of quarry [`Self::attack`] applies to**, by body mass. `0` on either end means
     /// unbounded. Outside the range the kit grants no attack at all and the party falls back to the
     /// bare hand's, so the ordinary `max(0, attack − defense)` gate refuses the hunt.
@@ -1053,6 +1062,8 @@ impl Default for KitOptionState {
             attack: 0.0,
             hunt_carry_per_worker_biomass: 0.0,
             forage_carry_per_worker_biomass: 0.0,
+            pen_carry_per_worker_biomass: 0.0,
+            scout_vantage_range: 0.0,
             // `0` is the *sentinel* on these two — "unbounded", the schema's own default and what
             // every weapon but the passive device ships. Not a multiplier, so not neutral-at-one.
             attack_min_body_mass: 0.0,

@@ -752,8 +752,10 @@ fn every_labor_row_publishes_the_kit_it_is_priced_at() {
         .find(|row| row.kind == "scout")
         .expect("the scout row is published");
     assert_eq!(
-        scout_row.kit_id, "",
-        "a band-wide role has no kit axis — that is `no selection to make`, not `no kit`"
+        scout_row.kit_id,
+        equipment(&app).default_kit_id(KitJob::Scout),
+        "a band-wide role publishes its own job's default now — it used to publish `\"\"`, because \
+         Scout and Warrior had no kit axis at all until the roster gained gear for them"
     );
 }
 

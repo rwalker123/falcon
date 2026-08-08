@@ -249,6 +249,8 @@
   ],
   "default_forage_kit_id": "default_forage_kit_id",
   "default_hunt_kit_id": "default_hunt_kit_id",
+  "default_scout_kit_id": "default_scout_kit_id",
+  "default_warrior_kit_id": "default_warrior_kit_id",
   "demographics": [
     {
       "children": 133,
@@ -1023,7 +1025,9 @@
       "jobs": [
         "kits[0].jobs[0]",
         "kits[0].jobs[1]"
-      ]
+      ],
+      "pen_carry_per_worker_biomass": 94.230003,
+      "scout_vantage_range": 93.739998
     },
     {
       "attack": 15.85,
@@ -1038,7 +1042,9 @@
       "jobs": [
         "kits[1].jobs[0]",
         "kits[1].jobs[1]"
-      ]
+      ],
+      "pen_carry_per_worker_biomass": 86.349998,
+      "scout_vantage_range": 48.380001
     }
   ],
   "orders": [],

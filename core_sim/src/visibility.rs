@@ -110,11 +110,22 @@ impl FactionVisibilityMap {
     }
 
     /// Mark a tile as actively visible.
-    pub fn mark_active(&mut self, x: u32, y: u32, current_turn: u64) {
-        if let Some(tile) = self.get_mut(x, y) {
-            tile.state = VisibilityState::Active;
-            tile.last_seen_turn = current_turn;
-        }
+    ///
+    /// **Returns whether this was the tile's FIRST sighting** — it was `Unexplored` and is now
+    /// `Active`. That is the wayfinding kit's use quantum (`WearQuantum::TileRevealed`), and it has
+    /// to be answered *here* because it is a transition, not a state: by the time the caller could
+    /// look, the tile reads `Active` whether it was new ground or the same ring the band has stared
+    /// at for thirty turns. Charging on the latter would be a turn clock wearing a per-use costume.
+    ///
+    /// An off-map tile reveals nothing and therefore reports `false`.
+    pub fn mark_active(&mut self, x: u32, y: u32, current_turn: u64) -> bool {
+        let Some(tile) = self.get_mut(x, y) else {
+            return false;
+        };
+        let first_sighting = tile.state == VisibilityState::Unexplored;
+        tile.state = VisibilityState::Active;
+        tile.last_seen_turn = current_turn;
+        first_sighting
     }
 
     /// Mark a tile as discovered (was visible but no longer is).

@@ -522,7 +522,9 @@ pub(crate) fn kits_to_array(kits: Vector<'_, ForwardsUOffset<fb::KitOption<'_>>>
         let mut dict = VarDictionary::new();
         let _ = dict.insert("id", kit.id().unwrap_or(""));
         let _ = dict.insert("display_name", kit.displayName().unwrap_or(""));
-        // Which verbs this kit may be sent on ("hunt" and/or "forage"). A kit named for a job outside
+        // Which verbs this kit may be sent on ("hunt", "forage", "scout" and/or "warrior" — the
+        // two band-wide roles gained a kit axis with the wayfinding and warrior kits). A kit named
+        // for a job outside
         // this list is a COMMAND FAILURE server-side, never a silent fall back to the default, so the
         // picker filters by the job it is composing.
         let jobs = kit
@@ -539,6 +541,14 @@ pub(crate) fn kits_to_array(kits: Vector<'_, ForwardsUOffset<fb::KitOption<'_>>>
             "forage_carry_per_worker_biomass",
             kit.forageCarryPerWorkerBiomass() as f64,
         );
+        // The PEN's and the SCOUT VANTAGE's tiers. `pen_carry_per_worker_biomass` is deliberately
+        // NOT `hunt_carry_per_worker_biomass`: a sled drags a carcass in off the range and a pen
+        // stands at the camp, so a kit carrying only a sled collects a pen at the bare rate.
+        let _ = dict.insert(
+            "pen_carry_per_worker_biomass",
+            kit.penCarryPerWorkerBiomass() as f64,
+        );
+        let _ = dict.insert("scout_vantage_range", kit.scoutVantageRange() as f64);
         // What the kit does BESIDES the tiers. `dispersion` multiplies the quarry's own retreat and
         // `exposure` the hunt's injury hazard, both neutral at 1. The two mass bounds say which
         // quarry `attack` above actually applies to — 0 on an end is unbounded — so a picker can

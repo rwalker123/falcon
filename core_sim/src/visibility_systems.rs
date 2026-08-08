@@ -41,9 +41,10 @@ use sim_runtime::TerrainTags;
 
 use crate::{
     components::{
-        Expedition, LaborAllocation, LaborTarget, LogisticsLink, PopulationCohort, Settlement,
-        StartingUnit, Tile, TownCenter, TradeLink,
+        BandEquipment, Expedition, LaborAllocation, LaborTarget, LogisticsLink, PopulationCohort,
+        Settlement, StartingUnit, Tile, TownCenter, TradeLink,
     },
+    equipment_config::EquipmentConfigHandle,
     fauna::HerdRegistry,
     grid_utils::{hex_neighbor, shortest_delta_x, wrap_x, wrapped_distance_x, HEX_DIRECTION_COUNT},
     heightfield::ElevationField,
@@ -98,6 +99,22 @@ pub fn prune_sweep_tracker(
     }
 }
 
+/// The vision-source cohorts [`calculate_visibility`] walks — named because the tuple grew a fifth
+/// member (`BandEquipment`, for the wayfinding kit's wear) and an inline five-tuple query is what
+/// `clippy::type_complexity` exists to stop.
+type VisionCohorts<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static PopulationCohort,
+        &'static StartingUnit,
+        Option<&'static LaborAllocation>,
+        Option<&'static mut BandEquipment>,
+    ),
+    Without<Expedition>,
+>;
+
 /// Step 2: Calculate visibility from all visibility sources (units, settlements).
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn calculate_visibility(
@@ -105,6 +122,7 @@ pub fn calculate_visibility(
     mut sweep: ResMut<VisibilitySweepTracker>,
     config: Res<VisibilityConfigHandle>,
     labor_config: Res<LaborConfigHandle>,
+    equipment_config: Res<EquipmentConfigHandle>,
     sim_config: Res<SimulationConfig>,
     tick: Res<SimulationTick>,
     elevation: Option<Res<ElevationField>>,
@@ -117,20 +135,16 @@ pub fn calculate_visibility(
     // selection) but is deliberately NOT a live faction vision source — comm-range gating means it
     // must not light up the faction map from wherever it stands. It observes into its own
     // pending-reveal buffer and `advance_expeditions` flushes that on a comm-range delay.
-    cohorts: Query<
-        (
-            Entity,
-            &PopulationCohort,
-            &StartingUnit,
-            Option<&LaborAllocation>,
-        ),
-        Without<Expedition>,
-    >,
+    // `BandEquipment` is `&mut` because the **wayfinding kit wears here** — the scout's use quantum
+    // is ground revealed for the first time, and this is the only pass that knows which tiles those
+    // were. The charge is a second pass at the bottom, after the reveals have been counted.
+    mut cohorts: VisionCohorts,
     // Settlements with TownCenter
     settlements: Query<(&Settlement, &TownCenter)>,
 ) {
     let cfg = config.0.as_ref();
     let labor = labor_config.get();
+    let equipment_cfg = equipment_config.get();
     let current_turn = tick.0;
     let wrap_horizontal = sim_config.map_topology.wrap_horizontal;
 
@@ -169,13 +183,16 @@ pub fn calculate_visibility(
     // Parse blocking terrain tags from config (e.g., HIGHLAND, VOLCANIC)
     let blocking_tags = parse_blocking_tags(&cfg.line_of_sight.blocking_terrain_tags);
 
-    // Collect all visibility sources: (faction, position, base_range, elev_factor)
-    let mut sources: Vec<(FactionId, UVec2, u32, f32)> = Vec::new();
+    // Collect all visibility sources: (faction, position, base_range, elev_factor, scout_band).
+    // **The fifth field is the band whose SCOUT VANTAGE this source is**, and `None` on every other
+    // kind — a band centre, a worked source and a settlement all reveal ground too, but none of them
+    // is a scout doing it, so none of them may wear a scout's gear.
+    let mut sources: Vec<(FactionId, UVec2, u32, f32, Option<Entity>)> = Vec::new();
     let mut cohort_count = 0u32;
     let mut settlement_count = 0u32;
 
     // Units (population cohorts with StartingUnit marker)
-    for (entity, cohort, unit, allocation) in cohorts.iter() {
+    for (entity, cohort, unit, allocation, band_equipment) in cohorts.iter() {
         cohort_count += 1;
         let range_def = cfg.sight_range_for(&unit.kind);
         // The band's own base-range LOS from its center is unchanged; scouts are additive
@@ -204,6 +221,7 @@ pub fn calculate_visibility(
                     pos,
                     base_range,
                     range_def.elevation_bonus_factor,
+                    None,
                 ));
             }
             // Local scout (forward observers): with scouts staffed, post vantage tiles out
@@ -216,6 +234,20 @@ pub fn calculate_visibility(
                 .unwrap_or(0);
             let vantage_distance = labor.scout.vantage_distance(scout_workers);
             if vantage_distance > 0 {
+                // **THE SCOUTING TOE.** The Scout row's kit decides what a posted vantage can make
+                // out — `labor_config`'s `vantage_range` with wayfinding gear, the item's own
+                // unequipped tier without it. How far the vantages are *posted* is untouched: that
+                // is three `labor_config` dials, and a kit reaching into one of them would be a
+                // fourth authority over the same line.
+                let scout_kit = allocation
+                    .map(|alloc| alloc.kit_on(&LaborTarget::Scout, &equipment_cfg))
+                    .unwrap_or_else(|| equipment_cfg.no_kit());
+                let vantage_range = band_equipment.map_or(labor.scout.vantage_range, |wear| {
+                    equipment_cfg
+                        .scout_vantage_range(labor.scout.vantage_range as f32, &scout_kit, wear)
+                        .max(0.0)
+                        .round() as u32
+                });
                 for vantage in scout_vantage_tiles(
                     current_pos,
                     vantage_distance,
@@ -227,8 +259,9 @@ pub fn calculate_visibility(
                     sources.push((
                         cohort.faction,
                         vantage,
-                        labor.scout.vantage_range,
+                        vantage_range,
                         range_def.elevation_bonus_factor,
+                        Some(entity),
                     ));
                 }
             }
@@ -258,6 +291,7 @@ pub fn calculate_visibility(
                                 tile,
                                 labor.worked_source_sight_range,
                                 range_def.elevation_bonus_factor,
+                                None,
                             ));
                         }
                     }
@@ -276,6 +310,7 @@ pub fn calculate_visibility(
             settlement.position,
             range_def.base_range,
             range_def.elevation_bonus_factor,
+            None,
         ));
     }
 
@@ -287,8 +322,14 @@ pub fn calculate_visibility(
         "visibility.step2_calculate sources_collected"
     );
 
+    // **First sightings attributable to a band's SCOUT VANTAGES**, accumulated across the reveal
+    // loop and charged to the wayfinding kit below. A `BTreeMap` because a band with several
+    // vantages accumulates into one entry and the iteration order must not vary between runs.
+    let mut scout_first_sightings: std::collections::BTreeMap<Entity, u32> =
+        std::collections::BTreeMap::new();
+
     // Process each visibility source
-    for (faction, pos, base_range, elev_factor) in sources.iter() {
+    for (faction, pos, base_range, elev_factor, scout_band) in sources.iter() {
         tracing::debug!(
             target: "shadow_scale::visibility",
             faction = faction.0,
@@ -316,7 +357,7 @@ pub fn calculate_visibility(
         let effective_range = base_range + capped_bonus;
 
         // Reveal tiles in range
-        reveal_tiles_in_range(
+        let first_sightings = reveal_tiles_in_range(
             map,
             *pos,
             effective_range,
@@ -328,6 +369,39 @@ pub fn calculate_visibility(
             blocking_tags,
             wrap_horizontal,
         );
+        // **Only a SCOUT VANTAGE's first sightings wear a scout's gear.** The band centre reveals
+        // new ground every time the band walks somewhere, and a worked source reveals it around a
+        // patch — neither is a scout doing it, and charging them would make wayfinding gear a tax on
+        // moving rather than a tool for looking.
+        if let Some(band) = scout_band {
+            if first_sightings > 0 {
+                *scout_first_sightings.entry(*band).or_insert(0) += first_sightings;
+            }
+        }
+    }
+
+    // **Charge the wayfinding kit**, after the reveals — the accrue-after-take ordering every wear
+    // site uses, so this turn's ground was seen at the tier it was priced with and the cliff lands
+    // on the next turn. A band that revealed nothing new pays nothing, which is the whole of why
+    // this quantum is *first* sightings and not tiles seen.
+    if !scout_first_sightings.is_empty() {
+        for (entity, _, _, allocation, band_equipment) in cohorts.iter_mut() {
+            let Some(revealed) = scout_first_sightings.get(&entity) else {
+                continue;
+            };
+            let Some(mut wear) = band_equipment else {
+                continue;
+            };
+            let scout_kit = allocation
+                .map(|alloc| alloc.kit_on(&LaborTarget::Scout, &equipment_cfg))
+                .unwrap_or_else(|| equipment_cfg.no_kit());
+            wear.wear_kit(
+                &equipment_cfg,
+                &scout_kit,
+                crate::equipment_config::WearQuantum::TileRevealed,
+                *revealed as f32,
+            );
+        }
     }
 
     // Log visibility state after processing
@@ -504,10 +578,15 @@ fn reveal_tiles_in_range(
     terrain_modifiers: &TerrainModifierConfig,
     blocking_tags: TerrainTags,
     wrap_horizontal: bool,
-) {
+) -> u32 {
     // Mark each visible tile Active **inline** — this runs for every vision source every turn, so
     // it must not allocate a Vec on the reveal hot path (the shared geometry hands us tiles via the
     // closure instead of collecting them).
+    //
+    // **Returns the count of FIRST sightings**, which is what wears a scout's wayfinding gear: a
+    // parked band re-sees the same ring every turn, so anything but "ground nobody had seen" would
+    // charge an idle camp the same as a march into the unknown.
+    let mut first_sightings = 0u32;
     for_each_visible_tile_in_range(
         center,
         base_range,
@@ -517,8 +596,13 @@ fn reveal_tiles_in_range(
         terrain_modifiers,
         blocking_tags,
         wrap_horizontal,
-        |pos| map.mark_active(pos.x, pos.y, current_turn),
+        |pos| {
+            if map.mark_active(pos.x, pos.y, current_turn) {
+                first_sightings += 1;
+            }
+        },
     );
+    first_sightings
 }
 
 /// The tiles a source at `center` with `base_range` can see (elevation/terrain/LOS applied) — the
@@ -983,6 +1067,8 @@ mod tests {
             vis.line_of_sight.enabled = true;
             world.insert_resource(VisibilityConfigHandle::new(Arc::new(vis)));
             world.insert_resource(LaborConfigHandle::default());
+            world.insert_resource(crate::equipment_config::EquipmentConfigHandle::default());
+            world.insert_resource(crate::equipment_config::EquipmentConfigHandle::default());
 
             let mut sim = SimulationConfig::builtin();
             sim.map_topology.wrap_horizontal = false;
@@ -1090,6 +1176,7 @@ mod tests {
         vis.line_of_sight.enabled = true;
         world.insert_resource(VisibilityConfigHandle::new(Arc::new(vis)));
         world.insert_resource(LaborConfigHandle::default());
+        world.insert_resource(crate::equipment_config::EquipmentConfigHandle::default());
 
         let mut sim = SimulationConfig::builtin();
         sim.map_topology.wrap_horizontal = false;

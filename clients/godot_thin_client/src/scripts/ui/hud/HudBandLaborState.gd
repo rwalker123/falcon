@@ -80,6 +80,10 @@ var _food_module_by_tile: Dictionary = {}
 var _kits: Array = []
 var _default_hunt_kit_id: String = KitRoster.NO_KIT_ID
 var _default_forage_kit_id: String = KitRoster.NO_KIT_ID
+# The two BAND-WIDE roles' defaults. They had no kit axis — and so no default to name — until the
+# roster gained wayfinding gear and clubs for them.
+var _default_scout_kit_id: String = KitRoster.NO_KIT_ID
+var _default_warrior_kit_id: String = KitRoster.NO_KIT_ID
 
 # ---- Read accessors (backing value returned by reference — no deep copy) --------------------------
 
@@ -131,9 +135,15 @@ func kits() -> Array:
 ## composition that never touched the picker emits the line it emitted before the picker existed.
 ## `""` for a job the wire has not named a default for.
 func default_kit_id(job: String) -> String:
-	if job == KitRoster.JOB_FORAGE:
-		return _default_forage_kit_id
-	return _default_hunt_kit_id
+	match job:
+		KitRoster.JOB_FORAGE:
+			return _default_forage_kit_id
+		KitRoster.JOB_SCOUT:
+			return _default_scout_kit_id
+		KitRoster.JOB_WARRIOR:
+			return _default_warrior_kit_id
+		_:
+			return _default_hunt_kit_id
 
 # ---- Snapshot lookups (derived reads over the ingested tables) -----------------------------------
 
@@ -251,17 +261,20 @@ func set_world_herds(herds: Array) -> void:
 	_world_herds = herds
 	changed.emit(&"world_herds")
 
-## Ingest the world's kit roster and the two job defaults. **The three ride ONE call**, because they
-## are one fact: a roster whose defaults name kits it does not contain would let every picker open on
-## an entry it cannot show. A non-Array roster is ignored (the last value stands), matching the
+## Ingest the world's kit roster and the FOUR job defaults. **They ride ONE call**, because they are
+## one fact: a roster whose defaults name kits it does not contain would let every picker open on an
+## entry it cannot show. A non-Array roster is ignored (the last value stands), matching the
 ## `set_food_modules` / `set_forage_patches` ingest — a delta carries a section only when it changed,
 ## so absence means unchanged and never "the world has no kits".
-func set_kit_roster(kits_variant: Variant, default_hunt: String, default_forage: String) -> void:
+func set_kit_roster(kits_variant: Variant, default_hunt: String, default_forage: String,
+		default_scout: String, default_warrior: String) -> void:
 	if not (kits_variant is Array):
 		return
 	_kits = kits_variant
 	_default_hunt_kit_id = default_hunt
 	_default_forage_kit_id = default_forage
+	_default_scout_kit_id = default_scout
+	_default_warrior_kit_id = default_warrior
 	changed.emit(&"kits")
 
 func set_panel_band(band: Dictionary) -> void:

@@ -41,6 +41,13 @@ const KIT_ATTACK_KEY := "attack"
 const KIT_HUNT_CARRY_KEY := "hunt_carry_per_worker_biomass"
 const KIT_FORAGE_CARRY_KEY := "forage_carry_per_worker_biomass"
 
+## The two axes the expanded roster added. **`pen_carry` is NOT a second reading of `hunt_carry`** —
+## a sled drags a carcass in off the range and a pen stands at the camp, so a kit carrying only a
+## sled collects a pen at the bare rate. `scout_vantage_range` is what a posted scout vantage can
+## make out; how far out it is POSTED is not a kit axis at all (it is three `labor_config` dials).
+const KIT_PEN_CARRY_KEY := "pen_carry_per_worker_biomass"
+const KIT_SCOUT_VANTAGE_KEY := "scout_vantage_range"
+
 ## **WHAT THE KIT DOES TO THE QUARRY'S RETREAT** — a multiplier on the species' own wariness, so the
 ## SPECIES decides what a noisy approach costs (`equipment.md`). Neutral at `1.0`; a trap ships `0`.
 const KIT_DISPERSION_KEY := "dispersion"
@@ -66,10 +73,16 @@ const ITEM_CONDITION_REMAINING_KEY := "remaining"
 ## two weapons, and the fix is for the wire to state the axis→item mapping per kit rather than for
 ## this table to grow guesses. It cannot misfire on the shipped roster: no two items declare the same
 ## axis, which the server also enforces for the two carries at config-validate time.
+## **The `attack` row answers for the HUNT's weapon.** The warrior kit declares the same stat off a
+## different item (`clubs`), which is the one place this table's one-item-per-axis assumption is
+## genuinely ambiguous — and it does not misfire, because a warrior kit and a hunting kit are never
+## offered on the same sheet: the axis is looked up per JOB, and no job lists both.
 const AXIS_ITEMS := {
 	"attack": "spears",
 	"hunt_carry_per_worker_biomass": "sled",
 	"forage_carry_per_worker_biomass": "baskets",
+	"pen_carry_per_worker_biomass": "husbandry_gear",
+	"scout_vantage_range": "wayfinding",
 }
 
 ## Condition at or below which a component is spent. It is the wire's own cliff, not a display
@@ -90,6 +103,13 @@ const HERD_DENIAL_ESTIMATES_KIT_KEY := "denial_estimates_kit_id"
 const JOB_HUNT := SourceForecast.LABOR_KIND_HUNT
 const JOB_FORAGE := SourceForecast.LABOR_KIND_FORAGE
 
+## **The two BAND-WIDE roles have a kit axis now.** They had none while nothing in the roster was
+## gear for them — `LaborAssignment.kitId` published `""` on those rows — and the wayfinding and
+## warrior kits are what changed that. Spelled the same as the wire's `jobs` entries and the
+## `assign_labor` roles, like the pair above.
+const JOB_SCOUT := "scout"
+const JOB_WARRIOR := "warrior"
+
 ## **THE CARRY AXIS EACH JOB IS PRICED ON** — "one item, one job" (`equipment.md`): a SLED raises the
 ## hunt's haul, BASKETS raise the forage web's, and no kit raises both.
 ##
@@ -99,6 +119,12 @@ const JOB_FORAGE := SourceForecast.LABOR_KIND_FORAGE
 ## `forage_carry_per_worker_biomass`, so the reference resolved to `0`, the repricing short-circuited,
 ## and every kit on every sheet quoted identical numbers with only the hint line moving. Reported from
 ## play. A job is what a call site actually knows; the axis is this layer's business.
+## **A hunt row prices on the SLED's axis even when the herd is penned**, and that is a known gap
+## rather than an oversight: `priced_source` derives the axis from the JOB, and pen-ness is a
+## property of the herd, which this layer is not handed. The sim prices a penned herd on
+## `pen_carry_per_worker_biomass`, so a compose sheet quoting a husbandry kit against a pen reads
+## the sled's tier — the direction that UNDER-states the husbandry kit rather than over-states it.
+## Closing it means threading the herd's corral state into `priced_source`.
 const JOB_CARRY_AXES := {
 	JOB_HUNT: KIT_HUNT_CARRY_KEY,
 	JOB_FORAGE: KIT_FORAGE_CARRY_KEY,

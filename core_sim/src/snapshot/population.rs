@@ -45,12 +45,10 @@ pub(crate) fn labor_assignment_to_state(
             .map(|improvement| improvement.as_str().to_string())
             .unwrap_or_default(),
         // **The kit this crew works under**, RESOLVED — the row's yields are priced at exactly it,
-        // so the wire states the kit rather than "the player named none". `""` on a band-wide role,
-        // which has no kit axis at all.
-        kit_id: assignment
-            .kit_choice(equipment)
-            .map(|kit| kit.id().to_string())
-            .unwrap_or_default(),
+        // so the wire states the kit rather than "the player named none". **Every role now names
+        // one**, including the two band-wide ones: this used to publish `""` for Scout/Warrior
+        // because neither had a kit axis, and the roster giving them one is what changed.
+        kit_id: assignment.kit_choice(equipment).id().to_string(),
         ..Default::default()
     };
     match &assignment.target {

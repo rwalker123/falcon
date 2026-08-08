@@ -252,6 +252,10 @@ pub(crate) struct PublishState {
     kits: Whole<Vec<KitOptionState>>,
     default_hunt_kit_id: Whole<String>,
     default_forage_kit_id: Whole<String>,
+    /// The two band-wide roles' defaults, diffed like the two above — per-world constants that
+    /// re-send only on a world rebuild.
+    default_scout_kit_id: Whole<String>,
+    default_warrior_kit_id: Whole<String>,
     /// The serialized TOE config the Workbench's designer pages print — a per-world constant like
     /// the roster above, and diffed for the same reason: it is the largest string on the section
     /// and nothing about it changes between world rebuilds.
@@ -615,6 +619,8 @@ struct SubsistenceParts {
     kits: Option<Vec<KitOptionState>>,
     default_hunt_kit_id: Option<String>,
     default_forage_kit_id: Option<String>,
+    default_scout_kit_id: Option<String>,
+    default_warrior_kit_id: Option<String>,
     equipment_config_json: Option<String>,
 }
 
@@ -627,6 +633,8 @@ fn diff_subsistence(
     kits: &mut Whole<Vec<KitOptionState>>,
     default_hunt_kit_id: &mut Whole<String>,
     default_forage_kit_id: &mut Whole<String>,
+    default_scout_kit_id: &mut Whole<String>,
+    default_warrior_kit_id: &mut Whole<String>,
     equipment_config_json: &mut Whole<String>,
     snapshot: &WorldSnapshot,
     write: Baseline,
@@ -640,6 +648,16 @@ fn diff_subsistence(
         default_forage_kit_id: diff_whole(
             default_forage_kit_id,
             &snapshot.default_forage_kit_id,
+            write,
+        ),
+        default_scout_kit_id: diff_whole(
+            default_scout_kit_id,
+            &snapshot.default_scout_kit_id,
+            write,
+        ),
+        default_warrior_kit_id: diff_whole(
+            default_warrior_kit_id,
+            &snapshot.default_warrior_kit_id,
             write,
         ),
         equipment_config_json: diff_whole(
@@ -802,6 +820,8 @@ impl PublishState {
             kits: Whole::default(),
             default_hunt_kit_id: Whole::default(),
             default_forage_kit_id: Whole::default(),
+            default_scout_kit_id: Whole::default(),
+            default_warrior_kit_id: Whole::default(),
             equipment_config_json: Whole::default(),
             history: VecDeque::new(),
         }
@@ -923,6 +943,8 @@ impl PublishState {
             kits,
             default_hunt_kit_id,
             default_forage_kit_id,
+            default_scout_kit_id,
+            default_warrior_kit_id,
             equipment_config_json,
             logistics,
             trade_links,
@@ -1032,6 +1054,8 @@ impl PublishState {
                         kits,
                         default_hunt_kit_id,
                         default_forage_kit_id,
+                        default_scout_kit_id,
+                        default_warrior_kit_id,
                         equipment_config_json,
                         captured,
                         write,
@@ -1116,6 +1140,8 @@ impl PublishState {
             kits: subsistence_parts.kits,
             default_hunt_kit_id: subsistence_parts.default_hunt_kit_id,
             default_forage_kit_id: subsistence_parts.default_forage_kit_id,
+            default_scout_kit_id: subsistence_parts.default_scout_kit_id,
+            default_warrior_kit_id: subsistence_parts.default_warrior_kit_id,
             equipment_config_json: subsistence_parts.equipment_config_json,
             logistics: people_parts.logistics,
             removed_logistics: people_parts.removed_logistics,
@@ -1322,6 +1348,10 @@ impl PublishState {
             .reset(entry.snapshot.default_hunt_kit_id.clone());
         self.default_forage_kit_id
             .reset(entry.snapshot.default_forage_kit_id.clone());
+        self.default_scout_kit_id
+            .reset(entry.snapshot.default_scout_kit_id.clone());
+        self.default_warrior_kit_id
+            .reset(entry.snapshot.default_warrior_kit_id.clone());
         self.equipment_config_json
             .reset(entry.snapshot.equipment_config_json.clone());
         self.great_discoveries.reset(
@@ -1480,6 +1510,8 @@ impl PublishState {
             kits: None,
             default_hunt_kit_id: None,
             default_forage_kit_id: None,
+            default_scout_kit_id: None,
+            default_warrior_kit_id: None,
             equipment_config_json: None,
             faction_inventory: None,
             sedentarization: None,
@@ -1613,6 +1645,8 @@ impl PublishState {
             kits: None,
             default_hunt_kit_id: None,
             default_forage_kit_id: None,
+            default_scout_kit_id: None,
+            default_warrior_kit_id: None,
             equipment_config_json: None,
             faction_inventory: None,
             sedentarization: None,
@@ -1730,6 +1764,8 @@ impl PublishState {
             kits: None,
             default_hunt_kit_id: None,
             default_forage_kit_id: None,
+            default_scout_kit_id: None,
+            default_warrior_kit_id: None,
             equipment_config_json: None,
             faction_inventory: None,
             sedentarization: None,
@@ -1844,6 +1880,23 @@ fn kit_roster_states(
                 ),
                 forage_carry_per_worker_biomass: equipment.forage_per_worker_biomass_capacity(
                     labor.forage.per_worker_biomass_capacity,
+                    &choice,
+                    &fresh,
+                ),
+                // **The pen's tier, resolved against the SAME equipped rate the hunt haul is** —
+                // `hunt.per_worker_biomass_capacity` is the number a pen harvest has always been
+                // capped by, and it keeps its one home. A kit carrying a sled and no handling gear
+                // reads the bare rate here, which is the whole point of the husbandry kit.
+                pen_carry_per_worker_biomass: equipment.pen_per_worker_biomass_capacity(
+                    labor.hunt.per_worker_biomass_capacity,
+                    &choice,
+                    &fresh,
+                ),
+                // **The scout vantage's tier.** Not what a *band* currently sees — a fresh kit's
+                // reach, exactly like the three above, so the picker renders the kit and not the
+                // band that happens to be selected.
+                scout_vantage_range: equipment.scout_vantage_range(
+                    labor.scout.vantage_range as f32,
                     &choice,
                     &fresh,
                 ),
@@ -2718,6 +2771,12 @@ pub fn capture_snapshot(
             .to_string(),
         default_forage_kit_id: equipment_config
             .default_kit_id(crate::equipment_config::KitJob::Forage)
+            .to_string(),
+        default_scout_kit_id: equipment_config
+            .default_kit_id(crate::equipment_config::KitJob::Scout)
+            .to_string(),
+        default_warrior_kit_id: equipment_config
+            .default_kit_id(crate::equipment_config::KitJob::Warrior)
             .to_string(),
         tiles: tile_states,
         logistics: logistics_states,

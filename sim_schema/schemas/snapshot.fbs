@@ -2677,6 +2677,14 @@ table KitOption {
   // Deer and report a hunt it cannot make.
   attackMinBodyMass:float = 0;
   attackMaxBodyMass:float = 0;
+  // --- THE BAND-WIDE AND PEN TIERS (appended) ----------------------------------------------------
+  // Per-keeper PEN collection rate (biomass/turn) under this kit — the husbandry gear's tier. It is
+  // NOT huntCarryPerWorkerBiomass: a sled drags a carcass in off the range and a pen stands at the
+  // camp, so a kit carrying only a sled collects a pen at the bare rate.
+  penCarryPerWorkerBiomass:float = 0;
+  // The sight range each posted scout vantage reveals at under this kit — the wayfinding gear's
+  // tier. How far the vantages are POSTED is not a kit axis (it is three labor_config dials).
+  scoutVantageRange:float = 0;
 }
 
 table SubsistenceSection {
@@ -2710,6 +2718,12 @@ table SubsistenceSection {
   // A per-world constant, so it is diffed like `kits` and re-sent only on a world rebuild. Empty
   // string = serialization failed (logged sim-side); the snapshot never fails for a designer page.
   equipmentConfigJson:string;
+  // --- THE BAND-WIDE ROLES' DEFAULTS (appended last) --------------------------------------------
+  // Scout and Warrior have a kit axis now — they used to have none, so `LaborAssignment.kitId` read
+  // `""` on those rows and there was no default to name. Both always name a roster entry, exactly
+  // like the two above.
+  defaultScoutKitId:string;
+  defaultWarriorKitId:string;
 }
 
 table KnowledgeSection {
