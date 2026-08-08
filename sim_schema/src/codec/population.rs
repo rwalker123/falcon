@@ -412,12 +412,19 @@ fn create_populations<'a>(
                     hunterAttack: cohort.hunter_attack,
                     huntCarryPerWorkerBiomass: cohort.hunt_carry_per_worker_biomass,
                     forageCarryPerWorkerBiomass: cohort.forage_carry_per_worker_biomass,
-                    // The kit the three tiers above are resolved through — appended last.
+                    // The kit the two HUNT tiers above (and `penCarryPerWorkerBiomass` below) are
+                    // resolved through — appended last.
                     kitId: Some(kit_id),
                     // The projections' horizon, so the client can put a number on their
                     // "never completed" sentinels — appended after the kit.
                     expeditionForecastHorizonTurns: cohort.expedition_forecast_horizon_turns,
                     kitItemConditions: Some(kit_item_conditions),
+                    // The remaining three resolved tiers, one per role the expanded roster gave a
+                    // kit axis. Each answers for its OWN job's default on a resident band, so none
+                    // of the three may be read against `kitId` except the pen (a Hunt row).
+                    penCarryPerWorkerBiomass: cohort.pen_carry_per_worker_biomass,
+                    scoutVantageRange: cohort.scout_vantage_range,
+                    warriorAttack: cohort.warrior_attack,
                 },
             )
         })

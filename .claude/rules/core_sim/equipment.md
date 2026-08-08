@@ -609,7 +609,7 @@ compose seeds (`hunt_source_yield_preview` / `forage_source_yield_preview`).
 
 ## On the wire
 
-`PopulationCohortState` carries four append-only kit fields (`sim_schema/schemas/snapshot.fbs`,
+`PopulationCohortState` carries seven append-only kit fields (`sim_schema/schemas/snapshot.fbs`,
 captured in `snapshot/population.rs` through the `BandKitLevers` bundle so the resolution happens in
 one place):
 
@@ -619,11 +619,21 @@ one place):
 | `hunterAttack:float` | The band's resolved per-hunter `attack` (1 bare / 20 kitted) — the left side of the fight's gate against a herd's `HerdTelemetryState.defense` |
 | `huntCarryPerWorkerBiomass:float` | The band's resolved per-worker **hunt** haul rate (40 sledded / 12 sledless) |
 | `forageCarryPerWorkerBiomass:float` | The band's resolved per-**gatherer** throughput, *before* the tile's seasonal weight (8 with baskets / 1.6 bare-handed) |
+| `penCarryPerWorkerBiomass:float` | The band's resolved per-**keeper** pen collection rate (40 with husbandry gear / 12 without). It shares the hunt haul's *equipped* rate — `labor_config.hunt.per_worker_biomass_capacity`, the number a pen harvest has always been capped by, which keeps its one home — but resolves through `EquipmentStat::PenCarry`, so a Hunt row on the stalking kit works the pen at the bare rate |
+| `scoutVantageRange:float` | The sight range each posted vantage reveals at (2 with wayfinding gear / 1 without). **How far the vantages are posted is not a kit axis** — three `labor_config.scout.*` dials — and `calculate_visibility` rounds this to whole tiles |
+| `warriorAttack:float` | The band's resolved per-**warrior** `attack` (1 bare / 6 with clubs) — the defending contingent's side of `advance_predator_raids`. The same stat and the same seam `hunterAttack` resolves through, quoted at a different kit |
 
-**The last two are separate fields on purpose.** A band can be out of baskets with its sled untouched;
-a client that rendered one on the other web's row would be repeating the defect the split corrected.
+**They are separate fields on purpose.** A band can be out of baskets with its sled untouched, and it
+fights raids with clubs while it hunts with spears; a client that rendered any of them on another's
+row would be repeating the defect the three-kit split corrected.
 `HerdTelemetryState.perWorkerBiomass` and `ForagePatchState.perWorkerBiomass` both stay the *equipped
 reference* rate: neither a herd nor a patch has a band to resolve a tier against.
+
+**The last three were published per KIT before they were published per BAND**, and that gap is what
+they close: `KitOption` has carried `penCarryPerWorkerBiomass` / `scoutVantageRange` / `attack` since
+the roster expanded, so the picker could quote a fresh kit's numbers while no readout could state a
+keeper's actual pen rate, a scout's actual reach, a warrior's actual tier, or the cliff when any of
+them runs dry.
 
 The kit selection adds five more slots, all append-only:
 
@@ -631,9 +641,39 @@ The kit selection adds five more slots, all append-only:
 |---|---|
 | `SubsistenceSection.kits:[KitOption]` | **The roster, once per world** — `id`, `displayName`, `jobs`, and the tiers each kit grants a party whose components are **fresh** (`attack`, `huntCarryPerWorkerBiomass`, `forageCarryPerWorkerBiomass`, plus the appended `penCarryPerWorkerBiomass` and `scoutVantageRange`), so the picker renders real numbers without a second copy of the TOE table |
 | `SubsistenceSection.defaultHuntKitId` / `defaultForageKitId` / `defaultScoutKitId` / `defaultWarriorKitId:string` | What each verb runs on when the player names none. The last two arrived with the expanded roster; before it the band-wide roles had no kit axis and so no default to name |
-| `PopulationCohortState.kitId:string` | Which kit the two **hunt** tiers above are quoted at — an in-flight party's **own** kit (one kit, so it covers that party's forage tier too), a resident band's **hunt job default** (a band has one kit per assignment and this row is per cohort). **It does not name a resident band's forage kit**: `forageCarryPerWorkerBiomass` resolves through the *forage* default, so pairing the two reads a gathering rate off `big_game`, which has no basket component. The forage default rides the wire once, as `defaultForageKitId`; pinned by `kit_selection::a_resident_bands_published_kit_answers_for_the_hunt_tiers_only` |
+| `PopulationCohortState.kitId:string` | Which kit the row's **hunt-job** tiers are quoted at — an in-flight party's **own** kit (one kit, so it covers *every* tier on that party's row), a resident band's **hunt job default** (a band has one kit per assignment and this row is per cohort). See "One choice per JOB" below for the three tiers it deliberately does **not** answer for on a resident band |
 | `LaborAssignment.kitId:string` | The kit that row's yields are priced at, **resolved** — never "unspecified" and never `""`: a band-wide role publishes its own job's default now |
 | `HerdTelemetryState.huntTripEstimatesKitId` / `denialEstimatesKitId:string` | Which kit each estimate table was computed at — see above |
+
+### One choice per JOB, not one per tier — and `kitId` names only one of them
+
+A resident band holds **one kit per assignment**, so a cohort row that carries six resolved tiers is
+quoting **four** different kits at once. `population_state`'s `job_choice(job)` is the single seam:
+an in-flight party's own kit if it has one, otherwise that **job's** default.
+
+| tier | resolved through | rides the wire as |
+|---|---|---|
+| `hunterAttack`, `huntCarryPerWorkerBiomass`, `penCarryPerWorkerBiomass` | the **hunt** default | `PopulationCohortState.kitId` |
+| `forageCarryPerWorkerBiomass` | the **forage** default | `SubsistenceSection.defaultForageKitId` |
+| `scoutVantageRange` | the **scout** default | `SubsistenceSection.defaultScoutKitId` |
+| `warriorAttack` | the **warrior** default | `SubsistenceSection.defaultWarriorKitId` |
+
+**The pen is on the hunt row deliberately** — a pen is worked from a Hunt assignment, so it shares
+the hunt default and `kitId` *does* answer for it.
+
+**Pairing any of the other three with `kitId` reads the wrong kit's tier**, and each mis-pairing is a
+concrete wrong number: a gathering rate off `big_game`, which carries no basket component; a vantage
+off a kit with no wayfinding gear; a warrior's `attack` off the hunt kit's spears (20 instead of the
+club's 6). There is deliberately **no** second per-cohort `*_kit_id` field — each of those three
+defaults already rides the wire once per world, and the per-crew truth is the assignment row's own
+`LaborAssignment.kitId`, so a per-cohort copy would be a third home for a fact that has two.
+
+Pinned by `kit_selection::a_resident_bands_published_kit_answers_for_the_hunt_tiers_only` and its
+twin `::a_resident_bands_appended_tiers_each_answer_for_their_own_jobs_default`, which compare the
+numbers a client would actually mis-pair rather than the wording. The party side —
+`::an_in_flight_partys_appended_tiers_are_all_quoted_at_the_kit_it_was_sent_with` — sends the party
+out with the **husbandry** kit, the one roster entry whose three appended tiers all differ from the
+job default each would otherwise resolve to, so a resolution reaching for a default fails all three.
 
 ### `SubsistenceSection.equipmentConfigJson` — the designer catalogue, and the one blob on this wire
 

@@ -165,14 +165,18 @@ const KIT_DURABILITY_KEY_BASKETS := "baskets"
 const KIT_DURABILITY_KEY_TRAPS := "traps"
 const KIT_LABEL_TRAPS := "Traps"
 
-# The three items the expanded roster added. They have labels but NO row of their own in the kit
-# BREAKDOWN, and the difference is what the cohort publishes: that popover pairs each item with the
-# resolved tier it sets, and the wire carries `hunterAttack` / `huntCarry…` / `forageCarry…` and no
-# pen-carry or vantage tier — so a row for one could only quote a number the sim never sent. The
-# summary ROW below needs no tier, so these reach it and read as words instead of as wire ids.
+# The three items the expanded roster added, and **they have breakdown rows of their own now**. They
+# were label-only for exactly one reason — the popover pairs each item with the resolved tier it
+# sets, and the cohort published `hunterAttack` / `huntCarry…` / `forageCarry…` and nothing for a pen
+# keeper, a scout's vantage or a warrior — so a row could only have quoted a number the sim never
+# sent. The wire carries all three now (see `KIT_TIER_KEY_PEN_CARRY` and its two neighbours), so the
+# player can finally see a scout kit and a warrior kit dying instead of only its consequences.
 const KIT_LABEL_HUSBANDRY_GEAR := "Handling gear"
 const KIT_LABEL_WAYFINDING := "Wayfinding"
 const KIT_LABEL_CLUBS := "Clubs"
+const KIT_DURABILITY_KEY_HUSBANDRY_GEAR := "husbandry_gear"
+const KIT_DURABILITY_KEY_WAYFINDING := "wayfinding"
+const KIT_DURABILITY_KEY_CLUBS := "clubs"
 
 # What a trap line is FOR, on the disclosure row. It sets no tier the cohort publishes — reach and
 # stand-off are properties of the kit, not of the band — so unlike the other three this row states
@@ -205,6 +209,18 @@ const KIT_TIER_KEY_ATTACK := "hunter_attack"
 const KIT_TIER_KEY_HUNT_CARRY := "hunt_carry_per_worker_biomass"
 const KIT_TIER_KEY_FORAGE_CARRY := "forage_carry_per_worker_biomass"
 
+# The three the expanded roster added, resolved off this band's own wear exactly like the three
+# above. **EACH IS QUOTED AT A DIFFERENT KIT, AND THE COHORT'S `kit_id` ANSWERS FOR ONLY ONE OF
+# THEM** (`snapshot.fbs`, `PopulationCohortState.kitId`): on a resident band `kit_id` names the HUNT
+# job's default, so it answers for `hunter_attack`, `hunt_carry…` and `pen_carry…` (a pen is worked
+# from a Hunt row) — while the vantage and the warrior's attack resolve through the SCOUT and
+# WARRIOR defaults, the same asymmetry `forage_carry…` already has with the FORAGE default. Nothing
+# in this readout may look one of them up against `kit_id`: the sim has already resolved every tier
+# here, so a row states the number the band GETS and never re-derives it from a kit id.
+const KIT_TIER_KEY_PEN_CARRY := "pen_carry_per_worker_biomass"
+const KIT_TIER_KEY_SCOUT_VANTAGE := "scout_vantage_range"
+const KIT_TIER_KEY_WARRIOR_ATTACK := "warrior_attack"
+
 # **A KIT IS EQUIPPED WHILE ITS CONDITION IS ABOVE ZERO** — the schema's own rule, and the only test
 # there is: at 0 the role steps down to its unequipped tier and STAYS there, because nothing
 # replenishes kit yet. Not a threshold of the client's choosing.
@@ -217,22 +233,39 @@ const KIT_DRY_FACE := "dry"
 # The condition's own rounding — it is a 0-100 scale, so a whole number is its full resolution.
 const KIT_CONDITION_DECIMALS := 0
 
-# The two carry tiers are biomass per worker per turn; one decimal, because the bare-handed forage
+# The THREE carry tiers are biomass per worker per turn; one decimal, because the bare-handed forage
 # tier is `1.6` and an integer would print it as `2` beside an equipped `8`.
 const KIT_CARRY_DECIMALS := 1
+
+# **THE VANTAGE IS A DISTANCE, NOT A RATE, AND IT MUST NOT INHERIT `KIT_CARRY_DECIMALS`.** The wire
+# carries it as a float because the effects axis is continuous and a designer must be able to tune it
+# so, but the sim ROUNDS it to whole tiles when a posted vantage actually reveals — so a `1.5` that
+# reveals at 2 is stated as 2 here rather than as a fractional tile the map cannot draw.
+const KIT_VANTAGE_DECIMALS := 0
 
 # The role each kit sets, as the breakdown's own phrasing. The tier is stated FLAT — never scaled by
 # the remaining condition — because durability and performance are orthogonal axes: a kit at 3
 # performs exactly as one at 97, and then stops.
+#
+# **THE TWO ATTACK ROWS SAY WHICH FIGHT THEY ARE FOR.** Spears and clubs set the same `attack` stat
+# off different items, and a band really does hold two different numbers for it — 20 on the hunt and
+# 6 defending the camp — so a bare `attack 6` beside a bare `attack 20` would read as one of them
+# being wrong rather than as two answers to two questions.
 const KIT_ROLE_ATTACK_FORMAT := "attack %s"
 const KIT_ROLE_HUNT_CARRY_FORMAT := "hunt carry %s per hunter"
 const KIT_ROLE_FORAGE_CARRY_FORMAT := "gathering %s per forager"
+const KIT_ROLE_PEN_CARRY_FORMAT := "pen collection %s per keeper"
+# Written as `2-tile sight`, not `sight 2 tiles`, because the tier is a small whole number and the
+# unit would otherwise have to be pluralized: a bare-handed scout sees `1`, and `sight 1 tiles` is
+# the row every value-plus-unit phrasing prints at the bottom of this axis.
+const KIT_ROLE_SCOUT_VANTAGE_FORMAT := "%s-tile sight per vantage"
+const KIT_ROLE_WARRIOR_ATTACK_FORMAT := "attack %s defending the camp"
 
 # The bare-handed tag on a dry kit's breakdown row — the state worth saying plainly, since there is no
 # replenishment path and the role stays there.
 const KIT_BARE_HANDS_SUFFIX := " — bare hands"
 
-# One `    ▲ Spears 87 — attack 20`-style breakdown row, and the sentence beneath the three of them.
+# One `    ▲ Spears 87 — attack 20`-style breakdown row, and the sentence beneath the whole set.
 const KIT_BREAKDOWN_ROW_FORMAT := "%s%s %s %s — %s"
 
 # **THE CLIFF, IN ONE SENTENCE.** Without it a player reads the conditions as a performance gradient

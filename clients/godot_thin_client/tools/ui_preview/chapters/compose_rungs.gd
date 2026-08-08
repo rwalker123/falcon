@@ -726,9 +726,9 @@ func _assert_a_closed_gate_quotes_zero(deer: Dictionary) -> void:
 ## expectation re-derived through the function under test asserts nothing.
 func _assert_husbandry_hint_states_the_pen() -> void:
 	var kits := _pen_axis_roster()
+	# The shared fixture states a condition for EVERY item the roster ships, handling gear included,
+	# so this no longer grafts one on — a second row for the same item would shadow the fixture's.
 	var band := BandFx.with_equipped_kit({})
-	var conditions: Array = band[KitRoster.BAND_ITEM_CONDITIONS_KEY]
-	conditions.append({"item_id": PEN_ITEM_ID, "remaining": PEN_GEAR_CONDITION})
 	var big_game := KitRoster.tier_hint(kits, KitRoster.kit_by_id(kits, BandFx.KIT_ID_BIG_GAME),
 		band, KitRoster.JOB_HUNT)
 	var husbandry := KitRoster.tier_hint(kits, KitRoster.kit_by_id(kits, HUSBANDRY_KIT_ID),
@@ -756,21 +756,17 @@ func _assert_husbandry_hint_states_the_pen() -> void:
 		HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [HudComposeVocab.KIT_COMPONENT_SLED,
 			int(BandFx.KIT_CONDITION_SLED)],
 		HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [
-			HudComposeVocab.KIT_COMPONENT_HUSBANDRY_GEAR, int(PEN_GEAR_CONDITION)],
+			HudComposeVocab.KIT_COMPONENT_HUSBANDRY_GEAR,
+			int(BandFx.KIT_CONDITION_HUSBANDRY_GEAR)],
 	])
 	h._assert_hud("an ordinary hunt kit's hint states no pen tier — \"%s\"" % big_game,
 		big_game == want_big_game)
 	h._assert_hud("…and the husbandry kit's states the pen AND its handling gear — \"%s\"" % husbandry,
 		husbandry == want_husbandry)
 
-## The shipped `husbandry` kit's id, and the item behind the pen axis (`equipment.json`).
+## The shipped `husbandry` kit's id (`equipment.json`). The item behind the pen axis rides the shared
+## band fixture now, so this chapter no longer names it.
 const HUSBANDRY_KIT_ID := "husbandry"
-
-const PEN_ITEM_ID := "husbandry_gear"
-
-## The band's handling gear, at a condition that is none of the other three the fixtures ship — two
-## items sharing one number would pass the assertion above with their axes swapped.
-const PEN_GEAR_CONDITION := 42.0
 
 ## The shared roster plus the `husbandry` kit the harness's own picker states must not see: the ONE
 ## entry that equips the pen axis, so `KitRoster.equipped_tier` answers 40 and `kit_uses` can tell the

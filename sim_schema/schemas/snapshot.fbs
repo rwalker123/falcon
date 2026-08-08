@@ -823,20 +823,27 @@ table PopulationCohortState {
   // perWorkerBiomass stays the EQUIPPED reference rate (a patch has no band to resolve against).
   forageCarryPerWorkerBiomass:float = 0;
   // --- THE KIT THIS COHORT IS QUOTED AT (appended last) -----------------------------------------
-  // The `equipment.json` roster id THE TWO HUNT TIERS above (hunterAttack, huntCarryPerWorkerBiomass)
-  // are resolved through.
+  // The `equipment.json` roster id THE HUNT-JOB TIERS on this row are resolved through — hunterAttack,
+  // huntCarryPerWorkerBiomass, and the appended penCarryPerWorkerBiomass (a pen is worked from a Hunt
+  // row, so it is quoted at the same kit).
   //   - AN IN-FLIGHT PARTY: the kit it was SENT OUT WITH, decided at launch and carried for its
-  //     whole life. A party has ONE kit, so this also names what forageCarryPerWorkerBiomass is
-  //     quoted at. This is the drawer's answer to "what did I send them with?" and it is the tier
-  //     the party really fights and hauls at — a party sent with "none" reads attack 1 here.
+  //     whole life. A party has ONE kit, so this names what EVERY tier on the row is quoted at,
+  //     the three band-wide ones included. This is the drawer's answer to "what did I send them
+  //     with?" and it is the tier the party really fights and hauls at — a party sent with "none"
+  //     reads attack 1 here.
   //   - A RESIDENT BAND: the HUNT JOB'S DEFAULT, because a band has one kit per assignment and this
   //     row is per cohort. The per-crew truth is LaborAssignment.kitId beside that row's own yields.
-  // IT DOES NOT NAME A RESIDENT BAND'S FORAGE KIT, and a reader must not look
-  // forageCarryPerWorkerBiomass up against it: that tier resolves through the FORAGE job's default
-  // (a basket kit), so quoting 8.0 against `big_game` — which carries no basket component at all —
-  // attributes a gathering rate to a kit whose forage tier is 1.6. The forage default rides the wire
-  // already, once, as SubsistenceSnapshot.defaultForageKitId; there is deliberately no second
-  // per-cohort copy of it.
+  // ON A RESIDENT BAND IT ANSWERS FOR THE HUNT TIERS ONLY. Every other tier on this row resolves
+  // through ITS OWN job's default, and a reader must not look any of them up against this id:
+  //   - forageCarryPerWorkerBiomass -> the FORAGE default (a basket kit). Quoting 8.0 against
+  //     `big_game` — which carries no basket component at all — attributes a gathering rate to a kit
+  //     whose forage tier is 1.6.
+  //   - scoutVantageRange -> the SCOUT default (wayfinding gear).
+  //   - warriorAttack -> the WARRIOR default (clubs). Pairing it with this id reads a warrior's
+  //     fighting tier off the hunt kit's spears — 20 instead of the club's 6.
+  // Each of those three defaults rides the wire already, once, as SubsistenceSnapshot's
+  // defaultForageKitId / defaultScoutKitId / defaultWarriorKitId; there is deliberately no second
+  // per-cohort copy of any of them.
   // Never empty: it always names a real roster entry.
   kitId:string;
   // --- THE SCALE BEHIND THE "NEVER COMPLETED" SENTINELS (appended last) -------------------------
@@ -870,6 +877,32 @@ table PopulationCohortState {
   // deprecated. See the KitItemCondition table for what a row means and what must NOT be inferred
   // from it.
   kitItemConditions:[KitItemCondition];
+  // --- THE REMAINING THREE RESOLVED TIERS (appended last) ---------------------------------------
+  // The roster grew husbandry gear, wayfinding gear and clubs, and the three tiers they lift were
+  // published PER KIT (KitOption) but not PER BAND — so no readout could state a keeper's pen rate,
+  // a scout's vantage reach or a warrior's fighting tier, nor the cliff when any of them runs dry.
+  // Same shape as the three tiers above: resolved off this band's own wear, FLAT until expiry.
+  //
+  // WHICH KIT EACH IS QUOTED AT IS NOT kitId — see the kitId note above. On a resident band each
+  // resolves through ITS OWN job's default; on an in-flight party they all resolve through the one
+  // kit the party carries.
+  //
+  //   - penCarryPerWorkerBiomass: this band's per-KEEPER pen collection rate (biomass/turn), the
+  //     term a corralled herd's harvest is capped by. It is NOT huntCarryPerWorkerBiomass: a sled
+  //     drags a carcass in off the range and a pen stands at the camp, so a band on the stalking
+  //     kit collects a pen at the bare rate (12) rather than the sledded 40. Quoted at the HUNT
+  //     default, which is what kitId names.
+  //   - scoutVantageRange: the sight range each posted scout vantage reveals at. How far the
+  //     vantages are POSTED is not a kit axis (three labor_config dials); this is only how far each
+  //     one sees. The sim ROUNDS it to whole tiles when it reveals — a float here because the
+  //     effects axis is continuous and a designer must be able to tune it so.
+  //   - warriorAttack: this band's per-warrior combat `attack`, the defending contingent's side of a
+  //     predator raid. Same `attack` stat and same seam a hunter's resolves through — what keeps a
+  //     spear out of a raid is the kit's `jobs` list, not the stat — so it is 1 bare-handed and 6
+  //     with clubs, and it is NOT hunterAttack.
+  penCarryPerWorkerBiomass:float = 0;
+  scoutVantageRange:float = 0;
+  warriorAttack:float = 0;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).

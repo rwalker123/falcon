@@ -28,6 +28,12 @@ use core_sim::{
 /// The crew every fixture in this file staffs, so two arms are only ever comparable to each other.
 const CREW: u32 = 4;
 
+/// **The one roster entry whose three appended tiers all differ from the job default each would
+/// otherwise resolve to** — pen 40 (the equipped rate) where the hunt default falls back to 12,
+/// vantage 1 where the scout default is 2, and no weapon at all where the warrior default carries
+/// clubs. Named here so the in-flight-party fixture says *why* it picks this kit.
+const HUSBANDRY_KIT: &str = "husbandry";
+
 /// **A quarry that cannot fight back** (`combat.attack 0`) and is light enough that a small crew
 /// engages several animals a turn — so a take is a real number at both tiers rather than a run of
 /// all-or-nothing draws. The same species `denial_raid.rs` measures on, for the same reason.
@@ -824,6 +830,168 @@ fn a_resident_bands_published_kit_answers_for_the_hunt_tiers_only() {
         "…and the tier it IS quoted at is the FORAGE job's default, which rides the wire as \
          `default_forage_kit_id`"
     );
+}
+
+/// **Each of the three appended tiers answers for its OWN job's default** — the direct twin of the
+/// test above, for `penCarryPerWorkerBiomass` / `scoutVantageRange` / `warriorAttack`.
+///
+/// The roster gave husbandry gear, wayfinding gear and clubs a kit each, so a resident band now
+/// resolves **four** different kits across one cohort row: the hunt default for the two hunt tiers
+/// *and the pen* (a pen is worked from a Hunt row), the forage default for the gather tier, and the
+/// scout and warrior defaults for the two band-wide roles. Only the first rides the wire, as
+/// `kitId`.
+///
+/// **It fails if someone resolves all of them through `kitId`.** The scout and warrior asserts are
+/// each paired with an `assert_ne!` against the kit `kitId` actually names — a wayfinding vantage
+/// against `big_game`'s bare 1 tile, a club's `attack 6` against the stalking kit's spears at 20 —
+/// so the numbers a client would mis-pair are what the test compares, not the wording.
+#[test]
+fn a_resident_bands_appended_tiers_each_answer_for_their_own_jobs_default() {
+    let mut app = placid_world();
+    let (_id, pos) = pin_herd(&mut app);
+    let tile = tile_at(&app, pos);
+    let band = app
+        .world
+        .spawn((cohort(tile, CREW), ResidentBand, BandEquipment::default()))
+        .id();
+    recapture_snapshot_in_place(&mut app.world);
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let state = snapshot
+        .populations
+        .iter()
+        .find(|state| state.entity == band.to_bits())
+        .expect("the fixture band is on the wire");
+
+    let cfg = equipment(&app);
+    let roster = |id: &str| {
+        snapshot
+            .kits
+            .iter()
+            .find(|option| option.id == id)
+            .unwrap_or_else(|| panic!("'{id}' is on the published roster"))
+    };
+    let named = roster(&state.kit_id);
+
+    // --- the pen: quoted at the HUNT default, which IS what `kitId` names ---------------------
+    assert_eq!(
+        state.pen_carry_per_worker_biomass,
+        roster(cfg.default_kit_id(KitJob::Hunt)).pen_carry_per_worker_biomass,
+        "a pen is worked from a Hunt row, so its tier is the hunt job's default — the one job \
+         `kitId` does answer for"
+    );
+    // …and it is a real resolution rather than the equipped rate handed back unchanged: some kit on
+    // the roster grants a *different* pen tier, so the hunt default's is genuinely a resolved one.
+    assert!(
+        snapshot
+            .kits
+            .iter()
+            .any(|option| option.pen_carry_per_worker_biomass
+                != state.pen_carry_per_worker_biomass),
+        "if every kit granted the same pen tier this assertion could not tell a resolution from a \
+         constant"
+    );
+
+    // --- the vantage: quoted at the SCOUT default, NOT at `kitId` -------------------------------
+    assert_eq!(
+        state.scout_vantage_range,
+        roster(cfg.default_kit_id(KitJob::Scout)).scout_vantage_range,
+        "the vantage tier is the SCOUT job's default, which rides the wire as `default_scout_kit_id`"
+    );
+    assert_ne!(
+        state.scout_vantage_range, named.scout_vantage_range,
+        "…and reading it against `kitId` would quote the hunt kit's bare vantage instead — which is \
+         exactly the mis-pairing the `.fbs` note on `kitId` exists to prevent"
+    );
+
+    // --- the warrior: quoted at the WARRIOR default, NOT at `kitId` -----------------------------
+    assert_eq!(
+        state.warrior_attack,
+        roster(cfg.default_kit_id(KitJob::Warrior)).attack,
+        "a warrior fights at the WARRIOR job's default, which rides the wire as \
+         `default_warrior_kit_id`"
+    );
+    assert_ne!(
+        state.warrior_attack, named.attack,
+        "…and reading it against `kitId` would arm the band's defenders with the hunt kit's spears"
+    );
+    assert_ne!(
+        state.warrior_attack, state.hunter_attack,
+        "`attack` is one stat resolved through two different kits, so the two rows are two numbers \
+         on the same band — a readout must not render one as the other"
+    );
+}
+
+/// **An in-flight party carries ONE kit, so every tier on its row is quoted at it.** The resident
+/// band's four-way split above is a property of a *band* holding one kit per assignment; a detached
+/// party decided its kit at launch and fights, hauls, keeps and scouts at that one tier — which is
+/// what makes `kitId` a complete answer for a party and a partial one for a band.
+#[test]
+fn an_in_flight_partys_appended_tiers_are_all_quoted_at_the_kit_it_was_sent_with() {
+    let mut app = placid_world();
+    let (fauna_id, pos) = pin_herd(&mut app);
+    let home = spawn_home_band(&mut app, pos);
+    // **The husbandry kit, chosen because all three of its appended tiers differ from the job
+    // default each would otherwise resolve to** — pen 40 against the hunt default's bare 12,
+    // vantage 1 against the scout default's 2, and no weapon at all (`attack` 1) against the
+    // warrior default's clubs at 6. So a resolution that reached for a job default instead of the
+    // party's own kit fails all three asserts, not one.
+    let sent_with = kit(&app, HUSBANDRY_KIT);
+    let party = spawn_party(&mut app, home, pos, &fauna_id, sent_with.clone());
+    recapture_snapshot_in_place(&mut app.world);
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let state = snapshot
+        .populations
+        .iter()
+        .find(|state| state.entity == party.to_bits())
+        .expect("the party is on the wire");
+    let named = snapshot
+        .kits
+        .iter()
+        .find(|option| option.id == state.kit_id)
+        .expect("the published kit id names a real roster entry");
+
+    assert_eq!(
+        state.kit_id,
+        sent_with.id(),
+        "a party's row names the kit it was SENT OUT WITH, not any job's default"
+    );
+    assert_eq!(
+        state.pen_carry_per_worker_biomass,
+        named.pen_carry_per_worker_biomass
+    );
+    assert_eq!(state.scout_vantage_range, named.scout_vantage_range);
+    assert_eq!(state.warrior_attack, named.attack);
+    // Liveness: the three above are the party's kit's numbers, and they are NOT the job defaults'.
+    let cfg = equipment(&app);
+    let default_of = |job| {
+        let id = cfg.default_kit_id(job).to_string();
+        snapshot
+            .kits
+            .iter()
+            .find(|option| option.id == id)
+            .unwrap_or_else(|| panic!("the {job:?} default is on the roster"))
+    };
+    assert_ne!(
+        state.pen_carry_per_worker_biomass,
+        default_of(KitJob::Hunt).pen_carry_per_worker_biomass
+    );
+    assert_ne!(
+        state.scout_vantage_range,
+        default_of(KitJob::Scout).scout_vantage_range
+    );
+    assert_ne!(state.warrior_attack, default_of(KitJob::Warrior).attack);
 }
 
 /// **The shipped durability of one item**, by id — the tests read dials off the item table now that

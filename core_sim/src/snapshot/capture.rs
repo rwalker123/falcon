@@ -1871,7 +1871,7 @@ fn kit_roster_states(
                     .map(|job| job.as_str().to_string())
                     .collect(),
                 attack: equipment
-                    .hunter_profile_unbounded(kit_levers.hunter_intrinsic, &choice, &fresh)
+                    .hunter_profile_unbounded(kit_levers.person_intrinsic, &choice, &fresh)
                     .attack,
                 hunt_carry_per_worker_biomass: equipment.hunt_per_worker_biomass_capacity(
                     labor.hunt.per_worker_biomass_capacity,
@@ -2247,9 +2247,10 @@ pub fn capture_snapshot(
     };
     let kit_levers = crate::snapshot::population::BandKitLevers {
         config: &equipment_config,
-        hunter_intrinsic: creatures.get().person(),
+        person_intrinsic: creatures.get().person(),
         equipped_haul_rate: labor_config.hunt.per_worker_biomass_capacity,
         equipped_gather_rate: labor_config.forage.per_worker_biomass_capacity,
+        equipped_vantage_range: labor_config.scout.vantage_range as f32,
     };
     let expedition_levers = ExpeditionLevers {
         max_estimated_party: expedition_cfg.max_estimated_party(),
@@ -2313,13 +2314,13 @@ pub fn capture_snapshot(
                     let party = crate::fauna::HuntingParty {
                         hunter: match expedition_quarry_mass {
                             Some(mass) => equipment_config.hunter_profile_against(
-                                kit_levers.hunter_intrinsic,
+                                kit_levers.person_intrinsic,
                                 &exp.kit,
                                 &party_wear,
                                 mass,
                             ),
                             None => equipment_config.hunter_profile_unbounded(
-                                kit_levers.hunter_intrinsic,
+                                kit_levers.person_intrinsic,
                                 &exp.kit,
                                 &party_wear,
                             ),
@@ -2706,7 +2707,7 @@ pub fn capture_snapshot(
             // `EquipmentConfig::validate` rejects exactly that config, so the case is a boot failure
             // rather than a table that lies. See "the default hunt kit carries no mass bound".
             hunter: equipment_config.hunter_profile_unbounded(
-                kit_levers.hunter_intrinsic,
+                kit_levers.person_intrinsic,
                 &quoted_kit,
                 &quoted_wear,
             ),

@@ -260,6 +260,16 @@ const KIT_CONDITION_SLED := 54.0
 
 const KIT_CONDITION_BASKETS := 31.0
 
+## The expanded roster's three, on the same 0-100 scale and — for the same reason as the four above —
+## three more DISTINCT numbers, none of them equal to each other or to spears/sled/baskets/traps. The
+## gear popover states one row per item, so two items sharing a condition would pass every assertion
+## with their rows swapped.
+const KIT_CONDITION_HUSBANDRY_GEAR := 45.0
+
+const KIT_CONDITION_WAYFINDING := 66.0
+
+const KIT_CONDITION_CLUBS := 22.0
+
 # ---- THE KIT ROSTER (`docs/plan_denial_raid.md`, `SubsistenceSection.kits`) -----------------------
 # The ids the wire carries and the two job defaults. Named because the `kit <id>` COMMAND token is
 # asserted against them and because "which id is the default" is half of what the picker's frames
@@ -347,12 +357,21 @@ static func kit_roster_fixture() -> Array:
 		},
 	]
 
-## A band carrying ALL THREE kits, each at its own condition and each role at its equipped tier.
+## A band carrying EVERY item the roster ships, each at its own condition and each role at the tier
+## this band's own job defaults resolve to.
+##
+## **THE PEN TIER IS THE BARE ONE, AND THAT IS THE FIXTURE BEING HONEST.** `kit_roster_fixture()`
+## carries no husbandry kit, so the HUNT default (`big_game`) supplies no `husbandry_gear` and a
+## keeper collects at 12 however healthy the item is — which is also what makes the pen row
+## assertable against the sled's 40 rather than agreeing with it by construction.
 static func with_equipped_kit(band: Dictionary) -> Dictionary:
-	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": KIT_CONDITION_SPEARS}, {"item_id": "sled", "remaining": KIT_CONDITION_SLED}, {"item_id": "baskets", "remaining": KIT_CONDITION_BASKETS}, {"item_id": "traps", "remaining": KIT_CONDITION_TRAPS}]
+	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": KIT_CONDITION_SPEARS}, {"item_id": "sled", "remaining": KIT_CONDITION_SLED}, {"item_id": "baskets", "remaining": KIT_CONDITION_BASKETS}, {"item_id": "traps", "remaining": KIT_CONDITION_TRAPS}, {"item_id": "husbandry_gear", "remaining": KIT_CONDITION_HUSBANDRY_GEAR}, {"item_id": "wayfinding", "remaining": KIT_CONDITION_WAYFINDING}, {"item_id": "clubs", "remaining": KIT_CONDITION_CLUBS}]
 	band["hunter_attack"] = KIT_ATTACK_EQUIPPED
 	band["hunt_carry_per_worker_biomass"] = KIT_HUNT_CARRY_EQUIPPED
 	band["forage_carry_per_worker_biomass"] = KIT_FORAGE_CARRY_EQUIPPED
+	band["pen_carry_per_worker_biomass"] = KIT_PEN_CARRY_BARE
+	band["scout_vantage_range"] = KIT_SCOUT_VANTAGE_EQUIPPED
+	band["warrior_attack"] = KIT_ATTACK_CLUBS
 	return band
 
 ## **ONE KIT DRY, THE OTHER TWO INTACT** — the state that proves the three wear independently. The
@@ -361,7 +380,7 @@ static func with_equipped_kit(band: Dictionary) -> Dictionary:
 ## This is the frame a readout rendering one carry on the other's row fails.
 static func with_baskets_dry(band: Dictionary) -> Dictionary:
 	band = with_equipped_kit(band)
-	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": KIT_CONDITION_SPEARS}, {"item_id": "sled", "remaining": KIT_CONDITION_SLED}, {"item_id": "baskets", "remaining": 0.0}, {"item_id": "traps", "remaining": KIT_CONDITION_TRAPS}]
+	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": KIT_CONDITION_SPEARS}, {"item_id": "sled", "remaining": KIT_CONDITION_SLED}, {"item_id": "baskets", "remaining": 0.0}, {"item_id": "traps", "remaining": KIT_CONDITION_TRAPS}, {"item_id": "husbandry_gear", "remaining": KIT_CONDITION_HUSBANDRY_GEAR}, {"item_id": "wayfinding", "remaining": KIT_CONDITION_WAYFINDING}, {"item_id": "clubs", "remaining": KIT_CONDITION_CLUBS}]
 	band["forage_carry_per_worker_biomass"] = KIT_FORAGE_CARRY_BARE
 	return band
 
@@ -369,8 +388,13 @@ static func with_baskets_dry(band: Dictionary) -> Dictionary:
 ## replenishment path, so every role has stepped down and stays there. Its `hunter_attack` of 1 is
 ## what the combat gate refuses megafauna on.
 static func with_bare_hands(band: Dictionary) -> Dictionary:
-	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": 0.0}, {"item_id": "sled", "remaining": 0.0}, {"item_id": "baskets", "remaining": 0.0}, {"item_id": "traps", "remaining": 0.0}]
+	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": 0.0}, {"item_id": "sled", "remaining": 0.0}, {"item_id": "baskets", "remaining": 0.0}, {"item_id": "traps", "remaining": 0.0}, {"item_id": "husbandry_gear", "remaining": 0.0}, {"item_id": "wayfinding", "remaining": 0.0}, {"item_id": "clubs", "remaining": 0.0}]
 	band["hunter_attack"] = KIT_ATTACK_BARE
 	band["hunt_carry_per_worker_biomass"] = KIT_HUNT_CARRY_BARE
 	band["forage_carry_per_worker_biomass"] = KIT_FORAGE_CARRY_BARE
+	band["pen_carry_per_worker_biomass"] = KIT_PEN_CARRY_BARE
+	band["scout_vantage_range"] = KIT_SCOUT_VANTAGE_BARE
+	# A camp with nothing left fights a raid with hands, i.e. the SAME creature `attack` a bare-handed
+	# hunter has — one number, reached from two roles, and the row must still name which fight it is.
+	band["warrior_attack"] = KIT_ATTACK_BARE
 	return band

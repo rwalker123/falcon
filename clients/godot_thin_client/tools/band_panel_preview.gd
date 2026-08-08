@@ -264,6 +264,9 @@ const DENIAL_OUTBOUND_TRAVEL_TURNS := 2
 const BAND_FIXTURE_DISCLOSURE_FOOD := "food:904"
 const BAND_FIXTURE_DISCLOSURE_MORALE := "morale:904"
 const BAND_FIXTURE_DISCLOSURE_TRADE := "trade:904"
+## …and its Kit row's, the gear popover this harness opens. Same shape, `HudDisclosureVocab`'s
+## `BREAKDOWN_KIND_KIT` over the same entity.
+const BAND_FIXTURE_DISCLOSURE_KIT := "kit:904"
 
 ## The work-inspector policy-picker states work TWO Hunt rows on one band. They used to be told apart
 ## by the RUNG they stood on — one on `corral`, which the four-rung picker could not highlight at all.
@@ -974,6 +977,22 @@ func _ready() -> void:
 	# only state in which the zone is asked to hold the full set.
 	_assert_merged_morale_growth_fits()
 
+
+	# (b3) THE GEAR BREAKDOWN — the Kit row's popover, opened on the reference band, which carries one
+	# condition row per item the shipped config has. It is the ONLY surface that states what each item
+	# DOES for the band, and until the expanded roster's three tiers reached the wire it could say
+	# nothing at all about handling gear, wayfinding gear or clubs: a player was handed a scout kit
+	# and a warrior kit whose effects were invisible, and whose running dry was invisible with them.
+	_push_bands([_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"band")
+	await _settle()
+	_click_disclosure(BAND_FIXTURE_DISCLOSURE_KIT)
+	await _settle()
+	await _save("band_panel_kit_expanded")
+	_assert_zones_within_bounds()
+	_assert_gear_breakdown_states_every_kit()
+	_click_disclosure(BAND_FIXTURE_DISCLOSURE_KIT)   # toggle shut before the next state
 
 	# (c) CONCERNING food (net negative + low runway): the breakdown AUTO-shows (no click) under a red net.
 	_push_bands([_concerning_food_band_fixture()])
@@ -4135,6 +4154,88 @@ func _assert_map_path_states_kit() -> void:
 		String.num(spears, DetailFormat.KIT_CONDITION_DECIMALS)]
 	_assert_band_panel("…so the Kit row renders on the map path — \"%s\"" % want,
 		_rich_text_containing(_panel, want) != "")
+
+## **THE GEAR POPOVER STATES EVERY ITEM THE BAND CARRIES, EACH BESIDE THE TIER IT SETS** — the three
+## the expanded roster added included, which is what this assertion was written for: their tiers
+## reached the wire only just now, so before it a scout kit and a warrior kit had no readout at all.
+##
+## **PAIRING IS THE WHOLE CLAIM, so every row is asked BOTH what it must say and what it must not.**
+## `kit_id` names the HUNT job's default and answers for the hunt tiers alone, so the two rows most
+## likely to be mis-wired are the ones whose tiers resolve through a DIFFERENT job's default: a
+## wayfinding row quoting the hunt kit and a clubs row quoting `hunter_attack` are both perfectly
+## plausible-looking rows carrying another kit's number. The fixture's tiers are all distinct, so a
+## swap cannot pass — the pen collects at 12.0 where the sled hauls 40.0, and the camp is defended at
+## 6 where the hunt attacks at 20.
+##
+## Read off the popover's own RENDERED text, per line, like `ui_preview`'s kit assertions: the rows
+## share a shape, so a whole-popover `contains` would be satisfied by the WRONG row.
+func _assert_gear_breakdown_states_every_kit() -> void:
+	var popover := _kit_popover_text()
+	_assert_band_panel("the gear popover opened at all (%d chars)" % popover.length(),
+		popover.contains(DetailFormat.KIT_BREAKDOWN_CLIFF_NOTE))
+	var pen_role := DetailFormat.KIT_ROLE_PEN_CARRY_FORMAT % String.num(
+		BandFx.KIT_PEN_CARRY_BARE, DetailFormat.KIT_CARRY_DECIMALS)
+	var sled_role := DetailFormat.KIT_ROLE_PEN_CARRY_FORMAT % String.num(
+		BandFx.KIT_HUNT_CARRY_EQUIPPED, DetailFormat.KIT_CARRY_DECIMALS)
+	var gear_line := _kit_breakdown_line(popover, DetailFormat.KIT_LABEL_HUSBANDRY_GEAR)
+	_assert_band_panel("HANDLING GEAR states the PEN's collection rate (%s), never the sled's (%s) — \"%s\""
+			% [pen_role, sled_role, gear_line],
+		gear_line.contains(pen_role) and not gear_line.contains(sled_role))
+	_assert_band_panel("…beside its own condition (%s)" % String.num(
+			BandFx.KIT_CONDITION_HUSBANDRY_GEAR, DetailFormat.KIT_CONDITION_DECIMALS),
+		gear_line.contains(String.num(BandFx.KIT_CONDITION_HUSBANDRY_GEAR,
+			DetailFormat.KIT_CONDITION_DECIMALS)))
+	# **THE VANTAGE IS TILES, and the assertion says so in both directions.** A biomass-rate format
+	# string here would print `2.0`, which reads as a rate and is not one.
+	var vantage_role := DetailFormat.KIT_ROLE_SCOUT_VANTAGE_FORMAT % String.num(
+		BandFx.KIT_SCOUT_VANTAGE_EQUIPPED, DetailFormat.KIT_VANTAGE_DECIMALS)
+	var carry_shaped_vantage := String.num(BandFx.KIT_SCOUT_VANTAGE_EQUIPPED,
+		DetailFormat.KIT_CARRY_DECIMALS)
+	var wayfinding_line := _kit_breakdown_line(popover, DetailFormat.KIT_LABEL_WAYFINDING)
+	_assert_band_panel("WAYFINDING states a SIGHT RANGE IN TILES (%s), not a per-worker rate (%s) — \"%s\""
+			% [vantage_role, carry_shaped_vantage, wayfinding_line],
+		wayfinding_line.contains(vantage_role)
+			and not wayfinding_line.contains(carry_shaped_vantage))
+	_assert_band_panel("…beside its own condition (%s)" % String.num(
+			BandFx.KIT_CONDITION_WAYFINDING, DetailFormat.KIT_CONDITION_DECIMALS),
+		wayfinding_line.contains(String.num(BandFx.KIT_CONDITION_WAYFINDING,
+			DetailFormat.KIT_CONDITION_DECIMALS)))
+	# **CLUBS READ `warrior_attack`, NOT the hunt kit's `hunter_attack`** — the one `kit_id` answers
+	# for. Both needles are whole role phrases, so neither can match the SPEARS row two lines up.
+	var clubs_role := DetailFormat.KIT_ROLE_WARRIOR_ATTACK_FORMAT % String.num(
+		BandFx.KIT_ATTACK_CLUBS, DetailFormat.KIT_CONDITION_DECIMALS)
+	var hunt_kit_role := DetailFormat.KIT_ROLE_WARRIOR_ATTACK_FORMAT % String.num(
+		BandFx.KIT_ATTACK_EQUIPPED, DetailFormat.KIT_CONDITION_DECIMALS)
+	var clubs_line := _kit_breakdown_line(popover, DetailFormat.KIT_LABEL_CLUBS)
+	_assert_band_panel("CLUBS state the DEFENDERS' attack (%s), never the hunt kit's (%s) — \"%s\""
+			% [clubs_role, hunt_kit_role, clubs_line],
+		clubs_line.contains(clubs_role) and not clubs_line.contains(hunt_kit_role))
+	_assert_band_panel("…beside its own condition (%s)" % String.num(
+			BandFx.KIT_CONDITION_CLUBS, DetailFormat.KIT_CONDITION_DECIMALS),
+		clubs_line.contains(String.num(BandFx.KIT_CONDITION_CLUBS,
+			DetailFormat.KIT_CONDITION_DECIMALS)))
+	# …and the hunt rows are still paired with THEIR tiers, so the three new ones cannot have been
+	# added by making every row quote the same number.
+	var sled_line := _kit_breakdown_line(popover, DetailFormat.KIT_LABEL_SLED)
+	_assert_band_panel("…and the SLED still states the HUNT's carry (%s) — \"%s\""
+			% [String.num(BandFx.KIT_HUNT_CARRY_EQUIPPED, DetailFormat.KIT_CARRY_DECIMALS), sled_line],
+		sled_line.contains(DetailFormat.KIT_ROLE_HUNT_CARRY_FORMAT % String.num(
+			BandFx.KIT_HUNT_CARRY_EQUIPPED, DetailFormat.KIT_CARRY_DECIMALS)))
+
+## The open breakdown popover's RENDERED text — the popover is a Window and never lands in a capture,
+## so this is the only witness to what it says. Parsed, so the BBCode tags are gone.
+func _kit_popover_text() -> String:
+	var label = _hud._disclosures._breakdown_popover_label
+	return "" if label == null else String((label as RichTextLabel).get_parsed_text())
+
+## ONE breakdown row out of the popover, by the item's NAME. Split per line rather than matched over
+## the whole popover, because every row carries the same shape and a whole-popover `contains` could be
+## satisfied by the wrong item's row — the exact substitution these assertions exist to catch.
+func _kit_breakdown_line(popover: String, label: String) -> String:
+	for line in popover.split("\n"):
+		if String(line).contains(label):
+			return String(line)
+	return ""
 
 ## The panel's SANCTIONED `ScrollContainer`s, by node name and by the zone each must sit under. Two,
 ## and the pairing is half the claim: a scroll is only safe in a zone whose builder declares a fixed
@@ -8575,12 +8676,30 @@ func _map_path_snapshot() -> Dictionary:
 ## deliberately WEARING rather than round, so the row prints a real number and an `int()` narrowing is
 ## visible; none dry, so the DANGER tint keeps its meaning; `hunter_attack` above a Wild Boar's
 ## defense, so the ⚠ effective-attack gate stays quiet and its own coverage stays where it is.
+##
+## **THE EXPANDED ROSTER'S THREE ITEMS AND THEIR THREE TIERS RIDE IT TOO**, because the claim this
+## fixture backs is that the map marker carries the WHOLE cohort — a key it never states is a key the
+## partition assertion says nothing about. Every value below is DISTINCT from every other tier on the
+## band, so the gear popover's rows cannot pass with two of them swapped: the pen's rate is not the
+## sled's 2.5, and the warriors' attack is not the hunters' 2.
+const MAP_PATH_HUSBANDRY_GEAR_CONDITION := 45.0
+const MAP_PATH_WAYFINDING_CONDITION := 66.0
+const MAP_PATH_CLUBS_CONDITION := 22.0
+const MAP_PATH_PEN_CARRY := 3.5
+## Whole tiles, because that is what a posted vantage reveals at; the popover states it in tiles and
+## never at the carries' one decimal.
+const MAP_PATH_SCOUT_VANTAGE := 2.0
+const MAP_PATH_WARRIOR_ATTACK := 5.0
+
 func _kit_band_fixture() -> Dictionary:
 	var band := _band_fixture()
-	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": 74.5}, {"item_id": "sled", "remaining": 58.0}, {"item_id": "baskets", "remaining": 91.0}, {"item_id": "traps", "remaining": 83.0}]
+	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": 74.5}, {"item_id": "sled", "remaining": 58.0}, {"item_id": "baskets", "remaining": 91.0}, {"item_id": "traps", "remaining": 83.0}, {"item_id": "husbandry_gear", "remaining": MAP_PATH_HUSBANDRY_GEAR_CONDITION}, {"item_id": "wayfinding", "remaining": MAP_PATH_WAYFINDING_CONDITION}, {"item_id": "clubs", "remaining": MAP_PATH_CLUBS_CONDITION}]
 	band["hunter_attack"] = 2.0
 	band["hunt_carry_per_worker_biomass"] = 2.5
 	band["forage_carry_per_worker_biomass"] = 1.75
+	band["pen_carry_per_worker_biomass"] = MAP_PATH_PEN_CARRY
+	band["scout_vantage_range"] = MAP_PATH_SCOUT_VANTAGE
+	band["warrior_attack"] = MAP_PATH_WARRIOR_ATTACK
 	return band
 
 # ---- THE SHARED FIXTURE's kit condition (`docs/plan_hunt_through_combat.md` §4.8) ----------------
@@ -8625,11 +8744,15 @@ const KIT_FRAME_BASKETS_CONDITION := 91.0
 ## apart from it because the map-path state asserts a live `Sled 58` row.
 func _kit_worn_band_fixture() -> Dictionary:
 	var band := _band_fixture()
-	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": KIT_FRAME_SPEARS_CONDITION}, {"item_id": "sled", "remaining": KIT_FRAME_SLED_DRY}, {"item_id": "baskets", "remaining": KIT_FRAME_BASKETS_CONDITION}, {"item_id": "traps", "remaining": KIT_FRAME_SPEARS_CONDITION}]
+	# The list is REPLACED rather than extended, so the expanded roster's three are restated here —
+	# a cohort the server publishes carries one row per item in the config's table, and dropping three
+	# of them would render a band no live world produces.
+	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": KIT_FRAME_SPEARS_CONDITION}, {"item_id": "sled", "remaining": KIT_FRAME_SLED_DRY}, {"item_id": "baskets", "remaining": KIT_FRAME_BASKETS_CONDITION}, {"item_id": "traps", "remaining": KIT_FRAME_SPEARS_CONDITION}, {"item_id": "husbandry_gear", "remaining": BandFx.KIT_CONDITION_HUSBANDRY_GEAR}, {"item_id": "wayfinding", "remaining": BandFx.KIT_CONDITION_WAYFINDING}, {"item_id": "clubs", "remaining": BandFx.KIT_CONDITION_CLUBS}]
 	# The band's OWN resolved tiers, i.e. what it gets under the JOB DEFAULT. They are the cohort's
 	# statement and the `Kit` row reads them; the picker does NOT — it resolves the SELECTED kit's
 	# tiers off the roster — so they are set consistently with the conditions above rather than being
-	# what the picker's assertions read.
+	# what the picker's assertions read. The three the expanded roster added are inherited from
+	# `_band_fixture` unchanged: this fixture's twist is the SLED, and only the hunt carry moves with it.
 	band["hunter_attack"] = BandFx.KIT_ATTACK_EQUIPPED
 	band["hunt_carry_per_worker_biomass"] = BandFx.KIT_HUNT_CARRY_BARE
 	band["forage_carry_per_worker_biomass"] = BandFx.KIT_FORAGE_CARRY_EQUIPPED
@@ -8705,7 +8828,7 @@ func _band_fixture() -> Dictionary:
 		# Three DIFFERENT conditions on the 0-100 scale, so an assertion cannot pass with two
 		# accessors swapped; none dry, so the row's DANGER tint keeps its meaning and the frames that
 		# judge a spent kit stay the ones that state one.
-		"kit_item_conditions": [{"item_id": "spears", "remaining": KIT_SHARED_SPEARS_CONDITION}, {"item_id": "sled", "remaining": KIT_SHARED_SLED_CONDITION}, {"item_id": "baskets", "remaining": KIT_SHARED_BASKETS_CONDITION}, {"item_id": "traps", "remaining": KIT_SHARED_SPEARS_CONDITION}],
+		"kit_item_conditions": [{"item_id": "spears", "remaining": KIT_SHARED_SPEARS_CONDITION}, {"item_id": "sled", "remaining": KIT_SHARED_SLED_CONDITION}, {"item_id": "baskets", "remaining": KIT_SHARED_BASKETS_CONDITION}, {"item_id": "traps", "remaining": KIT_SHARED_SPEARS_CONDITION}, {"item_id": "husbandry_gear", "remaining": BandFx.KIT_CONDITION_HUSBANDRY_GEAR}, {"item_id": "wayfinding", "remaining": BandFx.KIT_CONDITION_WAYFINDING}, {"item_id": "clubs", "remaining": BandFx.KIT_CONDITION_CLUBS}],
 		# The RESOLVED tiers the sim publishes beside them. Equipped throughout, matching the
 		# conditions above — `hunter_attack` well clear of `QUARRY_DEFENSE`, so no compose sheet on
 		# this band reads the combat gate's refusal and the frames that judge that refusal stay the
@@ -8713,6 +8836,14 @@ func _band_fixture() -> Dictionary:
 		"hunter_attack": BandFx.KIT_ATTACK_EQUIPPED,
 		"hunt_carry_per_worker_biomass": BandFx.KIT_HUNT_CARRY_EQUIPPED,
 		"forage_carry_per_worker_biomass": BandFx.KIT_FORAGE_CARRY_EQUIPPED,
+		# The expanded roster's three, resolved through the SAME job defaults `BandFx.with_equipped_kit`
+		# resolves them through — one shared roster, so a band in this harness and a band in
+		# `ui_preview` cannot get different answers off the same kits. The pen tier is the BARE one
+		# because no entry of that roster equips husbandry gear (its own note records why), which is
+		# also what keeps the pen row assertable against the sled's 40.
+		"pen_carry_per_worker_biomass": BandFx.KIT_PEN_CARRY_BARE,
+		"scout_vantage_range": BandFx.KIT_SCOUT_VANTAGE_EQUIPPED,
+		"warrior_attack": BandFx.KIT_ATTACK_CLUBS,
 		# The raid-forecast levers the sim echoes on every cohort: the slow-raid warn line and the
 		# move rate the client adds round-trip travel from. Without them the compose sheet's forecast
 		# degrades to hunting turns only and can never read "slow" — i.e. it would prove less.

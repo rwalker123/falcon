@@ -47,6 +47,12 @@ mod tests {
         const BARE_ATTACK: f32 = 1.0;
         const BARE_PEN_CARRY: f32 = 12.0;
         const BARE_VANTAGE_RANGE: f32 = 1.0;
+        // The BAND-resolved twins of the three above (`PopulationCohortState`), deliberately unlike
+        // the roster's fresh-kit numbers: a band's row is its own wear resolved against its own
+        // job defaults, and the two must never be read as one value.
+        const BAND_PEN_CARRY: f32 = 40.0;
+        const BAND_VANTAGE_RANGE: f32 = 2.0;
+        const BAND_WARRIOR_ATTACK: f32 = 6.0;
 
         let snapshot = WorldSnapshot {
             kits: vec![KitOptionState {
@@ -82,6 +88,12 @@ mod tests {
             }],
             populations: vec![PopulationCohortState {
                 kit_id: "none".to_string(),
+                // The three band-resolved tiers the expanded roster added. Given values DISTINCT
+                // from each other and from the roster row above, so a codec entry wired to the
+                // wrong field shows up as a swapped number rather than as a coincidence.
+                pen_carry_per_worker_biomass: BAND_PEN_CARRY,
+                scout_vantage_range: BAND_VANTAGE_RANGE,
+                warrior_attack: BAND_WARRIOR_ATTACK,
                 labor_assignments: vec![LaborAssignmentState {
                     kind: "hunt".to_string(),
                     kit_id: "big_game".to_string(),
@@ -130,6 +142,12 @@ mod tests {
             .expect("populations present")
             .get(0);
         assert_eq!(cohort.kitId(), Some("none"));
+        // Read off the DECODED cohort, not the in-process struct: a field that never reached the
+        // codec still passes an in-process assertion, which is the failure this whole test exists
+        // to catch for an appended slot.
+        assert_eq!(cohort.penCarryPerWorkerBiomass(), BAND_PEN_CARRY);
+        assert_eq!(cohort.scoutVantageRange(), BAND_VANTAGE_RANGE);
+        assert_eq!(cohort.warriorAttack(), BAND_WARRIOR_ATTACK);
         let row = cohort
             .laborAssignments()
             .expect("labor rows present")

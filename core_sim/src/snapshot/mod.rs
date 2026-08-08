@@ -1321,13 +1321,16 @@ mod tests {
         let equipment_config = crate::equipment_config::EquipmentConfig::builtin();
         let kit_levers = population::BandKitLevers {
             config: &equipment_config,
-            hunter_intrinsic: crate::creatures_config::CreaturesConfig::builtin().person(),
+            person_intrinsic: crate::creatures_config::CreaturesConfig::builtin().person(),
             equipped_haul_rate: crate::labor_config::LaborConfig::builtin()
                 .hunt
                 .per_worker_biomass_capacity,
             equipped_gather_rate: crate::labor_config::LaborConfig::builtin()
                 .forage
                 .per_worker_biomass_capacity,
+            equipped_vantage_range: crate::labor_config::LaborConfig::builtin()
+                .scout
+                .vantage_range as f32,
         };
         let levers = ExpeditionLevers {
             max_estimated_party: 0,
