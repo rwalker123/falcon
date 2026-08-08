@@ -6,7 +6,7 @@ extends RefCounted
 ## roster-row clicks and the fresh-hex auto-select. It is the STATE-ISOLATED half — zero drawer coupling,
 ## zero shared compose/band-tint state — so it split off the monolith cleanly ahead of the drawer (Phase 2c).
 ##
-## Built on the LegendController / TopBarReadouts / TurnOrbController idiom: HudLayer holds one as
+## Built on the LegendController / FactionReadouts / TurnOrbController idiom: HudLayer holds one as
 ## `_selectioncard`, hands it the three card nodes + the two shared `RefCounted` state models (BY REFERENCE —
 ## both HudLayer and this controller hold the SAME `HudSelectionState` / `HudBandLaborState` instances), and
 ## RELAYS this controller's own `roster_occupant_selected` onto the HudLayer signal Main connects to.

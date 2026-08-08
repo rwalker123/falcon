@@ -673,6 +673,13 @@ fn decode_delta_against(
     if let Some(default_forage_kit) = delta.subsistence().and_then(|s| s.defaultForageKitId()) {
         frame.insert_changed("default_forage_kit_id", default_forage_kit);
     }
+    // The whole effective `EquipmentConfig` as one `serde_json` string — the Workbench's two config
+    // pages parse it themselves. `insert_changed`, like its siblings: the sim diffs it as a
+    // `Whole<String>`, so it rides a delta ONLY when it moved and presence here IS the change
+    // signal, even though it is not one on the merged frame the client finally reads.
+    if let Some(equipment_config) = delta.subsistence().and_then(|s| s.equipmentConfigJson()) {
+        frame.insert_changed("equipment_config_json", equipment_config);
+    }
 
     // These two were decoded on the full-snapshot path only — `decode_delta_against` passed `None`
     // for both — so a merged delta republished the BASELINE's food modules and stockpiles for the

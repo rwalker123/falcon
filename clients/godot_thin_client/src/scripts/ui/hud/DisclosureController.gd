@@ -61,6 +61,10 @@ var _breakdown_popover_key: String = NO_OPEN_KEY
 ## The one popover both hosts share, built lazily on the first disclosure click.
 var _breakdown_popover: PopupPanel = null
 var _breakdown_popover_label: RichTextLabel = null
+## Where a FACTION drill-down row's band link goes. A Callable rather than a typed collaborator
+## because the thing it reaches — "make this band the panel's subject" — belongs to the band panel's
+## controller, which this one must not depend on (it is wired by whoever owns both).
+var _faction_band_jump: Callable = Callable()
 
 
 ## Hand over the node the popover parents into and the one re-render edge back into HudLayer.
@@ -99,6 +103,31 @@ func register(row_label: String, kind: String, band: Dictionary, lines: Array[St
     var concerning := _is_concerning(kind, band)
     _disclosure_state[row_label] = {"key": key, "open": _breakdown_popover_key == key, "concerning": concerning}
     # A live popover restates the numbers it was opened on, so a snapshot refreshes it in place.
+    if _breakdown_popover_key == key:
+        _refresh_popover_text()
+    return true
+
+## Wire where a faction drill-down row's band link goes. Set once, by whoever owns both this
+## controller and the band panel's.
+func set_faction_band_jump(jump: Callable) -> void:
+    _faction_band_jump = jump
+
+## Register a FACTION row's disclosure — the same popover, with the verdict STATED rather than derived.
+##
+## `register` above asks `_is_concerning(kind, band)`, and a faction row has no band to ask about: its
+## verdict is "at least one band is in trouble", which only the caller holds the roster to answer. So
+## the flag is a parameter here, and the two registration paths stay honest about which of them knows
+## the answer instead of one of them guessing.
+##
+## The KEY is the ordinary `breakdown_key` on an EMPTY band, i.e. entity `-1` — collision-free against
+## every real band (entities are non-negative), so a faction row and a band row of the same kind can
+## never share a payload slot.
+func register_faction(row_label: String, kind: String, lines: Array[String], concerning: bool) -> bool:
+    if lines.is_empty():
+        return false
+    var key := DetailFormat.breakdown_key(kind, {})
+    _breakdown_payloads[key] = lines
+    _disclosure_state[row_label] = {"key": key, "open": _breakdown_popover_key == key, "concerning": concerning}
     if _breakdown_popover_key == key:
         _refresh_popover_text()
     return true
@@ -221,6 +250,15 @@ func kit_breakdown_lines(band: Dictionary) -> Array[String]:
 ## popover positions under.
 func _on_meta_clicked(meta: Variant, anchor: Control) -> void:
     var payload := String(meta)
+    # A FACTION drill-down row: change the panel's subject to that band and close the popover behind
+    # it. Dispatched BEFORE the breakdown branch and on its own prefix — a band jump and a breakdown
+    # toggle are different acts, and a shared prefix would make which one fired a matter of parsing.
+    if payload.begins_with(HudDisclosureVocab.FACTION_BAND_JUMP_META_PREFIX):
+        var entity := int(payload.substr(HudDisclosureVocab.FACTION_BAND_JUMP_META_PREFIX.length()))
+        _close_popover()
+        if _faction_band_jump.is_valid():
+            _faction_band_jump.call(entity)
+        return
     if not payload.begins_with(HudDisclosureVocab.BREAKDOWN_TOGGLE_META_PREFIX):
         return
     var key := payload.substr(HudDisclosureVocab.BREAKDOWN_TOGGLE_META_PREFIX.length())
@@ -294,6 +332,11 @@ func _ensure_popover() -> PopupPanel:
     label.scroll_active = false
     label.autowrap_mode = TextServer.AUTOWRAP_WORD
     label.custom_minimum_size = Vector2(BREAKDOWN_POPOVER_WIDTH, 0.0)
+    # **THE POPOVER'S OWN LABEL TAKES METAS NOW.** Every breakdown until the faction page was inert
+    # prose — indented ▲/▼ rows with nothing to click — so this label had no handler at all. The
+    # faction rows are LINKS TO BANDS, so it needs one; it binds ITSELF as the anchor like every other
+    # wired label, which is inert for the jump branch and correct if a breakdown ever grows a caret.
+    label.meta_clicked.connect(_on_meta_clicked.bind(label))
     margin.add_child(label)
     popover.popup_hide.connect(_on_popover_hidden)
     _popover_host.add_child(popover)

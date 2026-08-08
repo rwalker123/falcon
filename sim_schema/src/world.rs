@@ -202,6 +202,13 @@ pub struct WorldSnapshot {
     pub default_hunt_kit_id: String,
     #[serde(default)]
     pub default_forage_kit_id: String,
+    /// **The whole effective TOE config, `serde_json`-serialized** — the designer surface's
+    /// read-only catalogue, so the Workbench can print keys nobody wrote client code for. A
+    /// per-world constant. Empty string = the sim failed to serialize it. **Only the Workbench may
+    /// read it**; a gameplay readout that wants one of these numbers gets a typed field of its own.
+    /// See `snapshot.fbs` → `SubsistenceSection.equipmentConfigJson`.
+    #[serde(default)]
+    pub equipment_config_json: String,
     pub moisture_raster: FloatRasterState,
     pub elevation_overlay: ElevationOverlayState,
     /// Climate-band cut points (`docs/plan_climate_authority.md` §8.3), a per-map constant.
@@ -297,6 +304,10 @@ pub struct WorldDelta {
     pub default_hunt_kit_id: Option<String>,
     #[serde(default)]
     pub default_forage_kit_id: Option<String>,
+    /// The serialized TOE config; a per-world constant, so a delta re-sends it only when the world
+    /// is rebuilt. `None` means unchanged.
+    #[serde(default)]
+    pub equipment_config_json: Option<String>,
     pub moisture_raster: Option<FloatRasterState>,
     pub elevation_overlay: Option<ElevationOverlayState>,
     /// Climate-band cut points; a per-map constant, so a delta re-sends it only when the map is

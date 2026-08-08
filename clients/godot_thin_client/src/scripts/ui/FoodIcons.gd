@@ -199,7 +199,9 @@ const CROP_ROLE_IMG_FORMAT := "[img=%dx%d]%s[/img]"
 ## `icon_px` is the box the art is drawn in, and **`0` means "text only"** — the answer is then
 ## always the emoji. It is a PARAMETER rather than a constant because the box has to track the
 ## host label's font size, which only the host knows; passing a literal here would be the hardcoded
-## pixel size the discoveries strip already refuses to write (`WonderSprites`' two consumers).
+## pixel size the retired discoveries strip already refused to write (it derived the box from its own
+## `get_theme_font_size`; the strip went with the top-right block in issue #450, and `WonderSprites`
+## keeps its map-marker consumer).
 static func for_crop_role(role: String, icon_px: int = 0) -> String:
 	var key := role.strip_edges().to_lower()
 	if not CROP_ROLE_ICONS.has(key):

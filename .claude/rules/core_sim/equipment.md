@@ -485,6 +485,31 @@ The kit selection adds five more slots, all append-only:
 | `LaborAssignment.kitId:string` | The kit that row's yields are priced at, **resolved** — never "unspecified". `""` on a band-wide role, which has no kit axis |
 | `HerdTelemetryState.huntTripEstimatesKitId` / `denialEstimatesKitId:string` | Which kit each estimate table was computed at — see above |
 
+### `SubsistenceSection.equipmentConfigJson` — the designer catalogue, and the one blob on this wire
+
+The whole effective `EquipmentConfig`, `serde_json`-serialized into a single string. It exists so the
+Workbench's designer pages can print the TOE configuration **as it is**, key by key: a dial added to
+`equipment.json` appears with no client edit and no schema edit, which is exactly what a typed field
+per key cannot do.
+
+**Only the Workbench may consume it.** It is a read-only catalogue with **no gameplay consumer** —
+nothing in the HUD or the sim reads it back, and nothing branches on it. A gameplay readout that
+wants one of these numbers gets a **typed field of its own**; reaching into this string to dodge a
+schema change is how a blob becomes a second, untyped wire contract.
+
+**The STRUCT is serialized, never the file** (`snapshot/capture.rs::serialize_equipment_config`), and
+that decides two things at once: it publishes what the sim is actually *running*, so an
+`EQUIPMENT_CONFIG_PATH` override is reflected; and `equipment.json`'s `_comment*` keys are not struct
+fields, so the prose never reaches the wire. A serialization failure publishes `""` and warns — a
+designer page must not be able to fail a frame.
+
+A per-world constant, so it is a `Whole<String>` baseline like the roster and is re-sent only on a
+world rebuild. Pinned by
+`kit_selection::the_published_equipment_config_json_round_trips_to_the_config_the_sim_runs`, which
+reads the string **off the encoded envelope** and feeds it back through
+`EquipmentConfig::from_json_str` — the failure it exists to catch is a field that serializes under a
+different name than it deserializes, which no compiler and no check against the live struct sees.
+
 ## Balance
 
 The shipped opening is **unchanged** — a start-kitted band hunts and gathers at exactly the numbers it

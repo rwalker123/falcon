@@ -5,7 +5,7 @@ paths:
   - "clients/godot_thin_client/src/scripts/GameLaunch.gd"
   - "clients/godot_thin_client/src/scripts/Hud.gd"
   - "clients/godot_thin_client/src/scripts/MapView.gd"
-  - "clients/godot_thin_client/src/scripts/ui/hud/TopBarReadouts.gd"
+  - "clients/godot_thin_client/src/scripts/ui/hud/FactionReadouts.gd"
   - "clients/godot_thin_client/src/scripts/ui/{TellingPanel,AnnotationRenderer,BandOverlayRenderer}.gd"
 ---
 
@@ -101,7 +101,7 @@ Even with a perfect gate, the reset in (3) above is still required, and it fixes
 gate never touched. "A field absent from a delta means *unchanged*" is correct **within** one world
 and wrong **across** worlds, and several surfaces merge rather than replace:
 
-- **`TopBarReadouts._ingest_intensification`** iterates the payload. A fresh world sends
+- **`FactionReadouts._ingest_intensification`** iterates the payload. A fresh world sends
   `intensification_knowledge: []`, the loop body never runs, and `Herding ✓` from the previous game
   renders forever.
 - **`TellingPanel`** is deliberately never reset on a full snapshot (its de-dup makes re-ingesting
@@ -123,7 +123,7 @@ the knowledge rows, the herd list), so resetting *after* the dispatch would wipe
 
 `Main` decides only WHEN. Each surface owns its own reset, reached by the usual silent `has_method`
 probe — `hud.reset_world_state()` (a **coordinator delegator**; `HudLayer` grows no feature logic, it
-calls `TopBarReadouts.reset_world_state` / `TellingPanel.reset` / `cancel_active_targeting`) and
+calls `FactionReadouts.reset_world_state` / `TellingPanel.reset` / `cancel_active_targeting`) and
 `map_view.reset_world_state()` (which fans out to `AnnotationRenderer` / `BandOverlayRenderer`). `Main`
 also clears `_campaign_label_signature` / `_victory_analytics_signature`, which print once per
 *distinct* value and would otherwise stay silent in a new world that happened to match the old one.
@@ -150,8 +150,14 @@ Two asymmetries worth keeping:
   clearing the renderer's mirror as well would let the banner and the reticle desync.
 
 **Verify with `ui_preview`'s `world_reset` state**, which is a behavioural guard rather than a picture:
-it seeds a knowledge strip and a book of beats, asserts both are present, calls
-`Hud.reset_world_state()`, then asserts the strip is hidden and the Telling's `_entries` is empty. A PNG
-alone could not carry that claim — a hidden strip and a strip that was never seeded look identical.
-`band.png` from the same run shows the strip populated, which is what makes `world_reset.png`'s empty
-top bar mean something.
+it seeds faction knowledge and a book of beats, asserts both are present, calls
+`Hud.reset_world_state()`, then asserts `FactionReadouts.faction_tracks` is empty and so is the
+Telling's `_entries`.
+
+**IT ASKS THE CACHE, NOT A RENDERED SURFACE, and it has to.** It used to read the top-bar knowledge
+strip's Label visibility, and the argument for a behavioural guard was that a PNG could not tell a
+hidden strip from one that was never seeded. That strip is gone — issue #450 deleted the whole
+top-right block, `TopBar` and `TurnBlock` included — so there is no longer any rendered surface in
+this harness to read: the faction's knowledge draws on the Band/City dock's KNOWLEDGE tab, which
+`ui_preview` does not instantiate. The cache is the better witness in any case, being precisely what
+`reset_world_state` exists to clear.

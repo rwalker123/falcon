@@ -28,6 +28,32 @@ const PAGES: Array[Dictionary] = [
 		"script": "res://src/scripts/ui/workbench/pages/ConfigTuningPage.gd",
 	},
 	{
+		"id": &"equipment",
+		"title": WorkbenchVocab.EQUIPMENT_PAGE_TITLE,
+		"subtitle": WorkbenchVocab.EQUIPMENT_PAGE_SUBTITLE,
+		"section": WorkbenchVocab.SECTION_SIM,
+		# ▣ (U+25A3) — same Geometric Shapes block as `◈` / `▲` / `◔`, which the bundled font covers.
+		# Rendered in `workbench_preview`'s collapsed-rail frame before it was trusted, per the rule
+		# above: an uncovered symbol draws as a two-pixel stub with no error at all.
+		"glyph": "▣",
+		"script": "res://src/scripts/ui/workbench/pages/EquipmentPage.gd",
+	},
+	{
+		"id": &"kits",
+		"title": WorkbenchVocab.KITS_PAGE_TITLE,
+		"subtitle": WorkbenchVocab.KITS_PAGE_SUBTITLE,
+		"section": WorkbenchVocab.SECTION_SIM,
+		# ◧ (U+25E7) — the same Geometric Shapes square family as Equipment's `▣`, which is the point:
+		# the two config pages read as siblings in the rail. **Chosen off the RENDER, not the chart.**
+		# `▤` (U+25A4) was the obvious pick and is a whole covered glyph — it draws its rules perfectly
+		# at 30px — yet in `workbench_preview`'s collapsed-rail frame, at `FONT_SIZE_GLYPH` in `INK_DIM`
+		# under the project's fractional canvas scale, they smear into a solid block indistinguishable
+		# from tofu. So the rule above ("render it before you trust it") bites on legibility as well as
+		# on coverage, and the lever is a glyph with no hairline strokes.
+		"glyph": "◧",
+		"script": "res://src/scripts/ui/workbench/pages/KitsPage.gd",
+	},
+	{
 		"id": &"turn_control",
 		"title": "Turn Control",
 		"subtitle": "Step, autoplay, rollback",

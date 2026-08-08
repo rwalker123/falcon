@@ -16,7 +16,10 @@ extends Node2D
 ##      blend keeps a hex intact or tears holes in its interior. Every blend change MUST be judged here.
 ##      Rendered once per tuning variant (the V6 sweep) plus a labelled contact sheet.
 ##
-##   godot --path . res://tools/blend_probe.tscn     (NOT --headless — the dummy renderer can't read back)
+## Run FROM THE REPO ROOT:
+##
+##   scripts/preview.sh res://tools/blend_probe.tscn   (NOT --headless — the dummy renderer can't read back,
+##                                                      and the wrapper is what keeps the window quiet)
 ##
 ## then read ui_preview_out/blend_*.png and ui_preview_out/V6_*.png.
 
@@ -29,8 +32,8 @@ const OUT_DIR := "res://ui_preview_out"
 const CANVAS_SIZE := Vector2i(1920, 1080)
 const HEX_RADIUS_TOLERANCE := 2.5
 # How many frames _refit will keep re-asserting the pinned canvas while it waits for the WM to honour it
-# (project.godot opens MAXIMIZED; the mode change lands asynchronously). Bounded so a WM that refuses to
-# shrink the window fails with the radius warning rather than hanging.
+# (a window mode/size change lands asynchronously, whatever mode the process booted in). Bounded so a WM
+# that refuses to shrink the window fails with the radius warning rather than hanging.
 const CANVAS_PIN_MAX_FRAMES := 60
 
 # --- state 1: the flat-biome band strip (24×16 at 1920×1080 → r ≈ 45) ---
@@ -744,8 +747,8 @@ func _ready() -> void:
 	add_child(_map)
 	await get_tree().process_frame
 	await get_tree().process_frame
-	# Re-assert: project.godot opens the window MAXIMIZED (window/size/mode=3) and the WM applies that a few
-	# frames in — AFTER _ready's first size assignment. That silently defeats the whole point of this harness:
+	# Re-assert: the WM applies a window mode/size change asynchronously, landing a few frames in — AFTER
+	# _ready's first size assignment. That silently defeats the whole point of this harness:
 	# the viewport becomes the monitor, _fit_map_to_view lands r ≈ 154 instead of the game's ~75 (the blend is
 	# radius-relative, so the frames stop being an honest proxy), and the taller states overflow the canvas so
 	# the native-res close-ups clip. Pin it again once the mode change has settled.
@@ -1751,8 +1754,8 @@ func _shore_sweep_overrides(variant: Dictionary) -> Dictionary:
 func _refit(target_radius: float) -> void:
 	## Fit, settle, and assert the achieved hex radius — the blend look is radius-relative, so a frame is
 	## only an honest proxy for the game when it was rendered at the game's on-screen radius.
-	# Re-pin the canvas first: the WM can still push the window back to the project's MAXIMIZED mode after
-	# _ready has run (see _pin_canvas), and a maximized viewport throws every radius off target.
+	# Re-pin the canvas first: the WM can still resize the window out from under the pin after _ready has
+	# run (see _pin_canvas), and a monitor-sized viewport throws every radius off target.
 	_pin_canvas(get_window())
 	await _settle()
 	_map._fit_map_to_view()
@@ -1889,7 +1892,7 @@ func _settle() -> void:
 
 func _ensure_canvas() -> void:
 	## Hold the window at the pinned 1:1 canvas, and WAIT for the WM to honour it, before anything is measured
-	## or captured. project.godot opens MAXIMIZED and macOS applies (and RE-applies) that asynchronously, many
+	## or captured. macOS applies (and RE-applies) a window mode/size change asynchronously, many
 	## frames in — a fixed pair of process_frames in _ready is a RACE, and it does not stay won:
 	##  · fitted while still maximized → r ≈ 154, i.e. 2× the game's 75, and every judgement made on that frame
 	##    is worthless (the blend look is radius-relative). This is the harness's cardinal sin.

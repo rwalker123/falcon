@@ -321,6 +321,7 @@
       "progress_raw": 166
     }
   ],
+  "equipment_config_json": "equipment_config_json",
   "faction_inventory": [
     {
       "faction": 21,

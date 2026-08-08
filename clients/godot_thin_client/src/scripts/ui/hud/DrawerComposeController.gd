@@ -9,7 +9,7 @@ extends RefCounted
 ## (`_render_land_drawer` / `_render_occupant_drawer`) lives on `SubjectDrawerController` (Phase 2c-3)
 ## now and calls IN here.
 ##
-## Built on the LegendController / TopBarReadouts / TurnOrbController / SelectionCardController idiom:
+## Built on the LegendController / FactionReadouts / TurnOrbController / SelectionCardController idiom:
 ## `HudLayer` holds one as `_drawercompose`, hands it the shared `RefCounted` state models BY REFERENCE
 ## (the SAME `ComposeState` / `HudBandLaborState` / `HudSelectionState` instances), keeps thin
 ## delegators for the two methods reached BY NAME (`is_compose_sheet_open` / `close_compose_sheet` —
@@ -51,7 +51,7 @@ var _compose: ComposeState = null
 var _band_labor: HudBandLaborState = null
 var _selection: HudSelectionState = null
 # Read for `faction_knowledge` ONLY — the knowledge half of the investment-rung gates.
-var _topbar: TopBarReadouts = null
+var _topbar: FactionReadouts = null
 # Read for `tile_contents_unseen` ONLY — a redacted hex offers no forage compose.
 var _selectioncard: SelectionCardController = null
 # The HUD CanvasLayer, so the RefCounted controller has a node to parent the compose sheet into.
@@ -83,7 +83,7 @@ var _forage_drawer_shape: Array = []
 var _herd_drawer_shape: Array = []
 
 func _init(compose: ComposeState, band_labor: HudBandLaborState, selection: HudSelectionState,
-        topbar: TopBarReadouts, selectioncard: SelectionCardController, host: Node,
+        topbar: FactionReadouts, selectioncard: SelectionCardController, host: Node,
         herd_assign_controls: VBoxContainer, forage_assign_controls: VBoxContainer,
         tile_panel: PanelCard,
         resolve_assign_band: Callable, herd_label_for_id: Callable, emit_assign_labor: Callable) -> void:

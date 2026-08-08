@@ -64,7 +64,7 @@ use std::{
 };
 
 use bevy::prelude::Resource;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::combat::CombatStats;
@@ -81,7 +81,7 @@ pub const BUILTIN_EQUIPMENT_CONFIG: &str = include_str!("data/equipment.json");
 /// stats introduced with the effects model are **neutral at `1.0`**, so an item that never mentions
 /// one changes nothing about it — which is what makes the whole generalization a no-op for the
 /// shipped roster.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EquipmentStat {
     /// A hunter's per-unit `attack` — the left side of §4.2's gate `max(0, attack − defense)`.
@@ -118,7 +118,7 @@ impl EquipmentStat {
 /// **Which tier of a stat an effect declares** — exactly one, never both, because the other tier
 /// already has a home elsewhere and copying it here would give a shipped number a second home to
 /// drift from. Flattened into the effect, so the JSON reads `{ "stat": "attack", "equipped": 20.0 }`.
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EffectTier {
     /// The value the stat takes **while the item is intact**.
@@ -143,7 +143,7 @@ impl EffectTier {
 /// **An effect names a VALUE, never a delta or a multiplier stacking on something else.** That is
 /// what keeps *flat until expiry, then a step down* structurally true rather than a rule a future
 /// author has to remember — there is no representation for "a bit worse as it wears".
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct EquipmentEffect {
     pub stat: EquipmentStat,
     #[serde(flatten)]
@@ -188,7 +188,7 @@ impl EquipmentEffect {
 /// `docs/plan_denial_raid.md` §1.2 depends on there being no turn variant: a turn clock charges an
 /// idle march the same as a slaughter, which makes denial free. Each quantum is charged at its own
 /// site, so two items on different quanta cannot cross-charge.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WearQuantum {
     /// Per animal brought down. Spears and traps.
@@ -200,7 +200,7 @@ pub enum WearQuantum {
 }
 
 /// An item's use quantum and what one use costs it.
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct WearConfig {
     /// What counts as one use.
     pub per: WearQuantum,
@@ -213,7 +213,11 @@ pub struct WearConfig {
 ///
 /// Quality tiers (flint vs bronze spears) are deliberately **absent**: nothing can craft one, so a
 /// tier here would be a data model with no gameplay behind it. They ride the crafting slice.
-#[derive(Debug, Clone, Deserialize)]
+///
+/// **`PartialEq` is what lets the designer catalogue's round-trip test compare the whole item table
+/// at once** rather than field by field — a hand-listed comparison goes stale the moment an item
+/// gains an axis, which is the failure `equipmentConfigJson` exists to make impossible.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ItemDefinition {
     /// Condition a fresh item carries, on the shared 0–100 scale. A band is equipped while its
     /// accumulated wear is **strictly below** this.
@@ -248,7 +252,7 @@ impl ItemDefinition {
 /// **A job a kit may be sent out on** — the two verbs that resolve a tier off the TOE. The scouting
 /// and warrior roles are deliberately absent: they consume no component, so there is no kit axis to
 /// choose along and no default to name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum KitJob {
     Hunt,
@@ -267,7 +271,7 @@ impl KitJob {
 }
 
 /// One roster entry: a **named mask** over the item table.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KitDefinition {
     /// Stable id — what a command names and what the wire carries. Unique across the roster.
     pub id: String,
@@ -287,7 +291,7 @@ pub struct KitDefinition {
 
 /// The kit each verb reaches for when the player names none. Validated to name a real roster entry
 /// whose `jobs` covers that verb, so [`EquipmentConfig::default_kit`] cannot fail after load.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DefaultKitsConfig {
     pub hunt: String,
     pub forage: String,
@@ -466,7 +470,7 @@ pub enum KitSelectionError {
 /// is what makes the cross-checks in this module's tests (baskets do not touch the hunt; the sled
 /// does not touch foraging) statements about the *type*, not about a convention someone has to
 /// remember.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EquipmentConfig {
     /// **Every piece of equipment, by id.** A `BTreeMap` rather than a `HashMap` so `items()` has a
     /// stable order — the wire's item list and any refusal message that enumerates ids must not

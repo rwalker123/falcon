@@ -23,6 +23,12 @@ class_name HudDisclosureVocab
 # themselves are `DetailFormat`'s, and the popover's geometry `DisclosureController`'s.)
 const BREAKDOWN_TOGGLE_META_PREFIX := "breakdown:"
 
+## The FACTION page's drill-down rows are LINKS TO BANDS, which is the second meta this popover
+## carries. A distinct prefix rather than a reuse: `_on_meta_clicked` dispatches on it, and a band
+## jump is not a breakdown toggle — one changes the panel's subject, the other opens a popover.
+## The payload is the band's ENTITY, which is what the panel resolves a subject by.
+const FACTION_BAND_JUMP_META_PREFIX := "faction_band:"
+
 const BREAKDOWN_KIND_FOOD := "food"
 
 const BREAKDOWN_KIND_MORALE := "morale"

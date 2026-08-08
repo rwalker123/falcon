@@ -219,6 +219,16 @@ func show_page(id: StringName) -> void:
 	_footer_rule.visible = actions != null
 	_refresh_rail_state()
 
+	# CATCH THE NEWLY ACTIVE PAGE UP ON THE FRAME ALREADY IN HAND. `update_snapshot` fans at the
+	# ACTIVE page only, and frames arrive on turn resolution and world-mutating commands — there is no
+	# heartbeat — so a page activated BETWEEN frames would otherwise sit on its empty state until the
+	# next turn. This is coordinator fan-out, not page knowledge: the page is reached through the base
+	# contract, never a concrete type. The visibility gate still holds (a hidden surface ingests
+	# nothing), and `_hidden_frame_pending` is deliberately untouched — it is discharged only by an
+	# actual fan-out, and is already false on this path, which is reached only while visible.
+	if page != null and _panel_visible and not _cached_frame.is_empty():
+		page.apply_update(_cached_frame, true)
+
 
 ## Instantiate (once) and return the page for `id`, or null when the registry row declares no script.
 ## The instance is NOT built here — see `show_page`.

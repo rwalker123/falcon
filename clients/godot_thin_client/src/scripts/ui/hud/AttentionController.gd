@@ -66,6 +66,20 @@ func _herd_label_for_id(herd_id: String) -> String:
 ## The bands-only counter is `i + 1`: the old loop incremented `band_number` once per resident band,
 ## right after `player_bands.append`, so the Nth resident band's number is its index + 1 — matching
 ## the band-picker (`i + 1`) and the panel header, all numbered positionally within `player_bands`.
+## **EVERY ENTRY NAMES ITS `owner`**, the entity the alert is ABOUT — the band for the five band-scoped
+## producers, the party for the awaiting-orders one. The turn orb never needed it (it renders one flat
+## list and jumps by `x`/`y`), but the faction page's Work and Parties tabs GROUP by it, and an alert
+## that cannot say whose it is cannot be put on a row.
+##
+## **`x`/`y` is NOT a substitute and must not be used as one.** Two bands can stand on one tile, and a
+## starving pen's coordinates are deliberately the HERD's rather than the keeper's — so locating an
+## alert and attributing it are different questions with different answers.
+##
+## The UNWORKED-RUNG producer stamps no owner, and that is a fact about the sim rather than an
+## omission: a patch is owned by the FACTION (`patch.owner == PLAYER_FACTION_ID`), never by a band, so
+## there is no band whose row it could sit on. `OWNER_NONE` is what it reads as.
+const OWNER_NONE := -1
+
 func build_band_attention(player_bands: Array, player_expeditions: Array) -> Array:
     var attention: Array = []
     for i in player_bands.size():
@@ -86,6 +100,7 @@ func build_band_attention(player_bands: Array, player_expeditions: Array) -> Arr
         if BandFoodStatus.is_critical(turns):
             attention.append({
                 "kind": HudAttentionVocab.ATTENTION_KIND_STARVING,
+                "owner": entity,
                 "severity": HudAttentionVocab.ATTENTION_SEVERITY_CRITICAL,
                 "label": "%s starving" % band_name,
                 "detail": DetailFormat.food_turns_text(turns),
@@ -96,6 +111,7 @@ func build_band_attention(player_bands: Array, player_expeditions: Array) -> Arr
         if _band_labor.prev_band_sizes().has(entity) and size < int(_band_labor.prev_band_sizes()[entity]):
             attention.append({
                 "kind": HudAttentionVocab.ATTENTION_KIND_LOSING_POPULATION,
+                "owner": entity,
                 "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
                 "label": "%s losing population" % band_name,
                 "detail": _decline_reason(turns, morale, morale_cause, last_emigrated),
@@ -107,6 +123,7 @@ func build_band_attention(player_bands: Array, player_expeditions: Array) -> Arr
         if idle_workers > 0:
             attention.append({
                 "kind": HudAttentionVocab.ATTENTION_KIND_IDLE_WORKERS,
+                "owner": entity,
                 "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
                 "label": "%d idle worker%s" % [idle_workers, "" if idle_workers == 1 else "s"],
                 "detail": band_name,
@@ -196,6 +213,7 @@ func _awaiting_orders_attention(expeditions: Array) -> Array:
             break
         items.append({
             "kind": HudAttentionVocab.ATTENTION_KIND_AWAITING_ORDERS,
+            "owner": int(exp.get("entity", -1)),
             "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
             # The demand headline reuses the phase words ("Awaiting orders"); the context line names
             # the mission + its objective, so the row is actionable without opening anything.
@@ -231,6 +249,7 @@ func _starving_pen_attention(band: Dictionary) -> Array:
         var fed := PenStatus.fed_fraction(herd)
         items.append({
             "kind": HudAttentionVocab.ATTENTION_KIND_STARVING_PEN,
+            "owner": int(band.get("entity", -1)),
             "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
             "label": HudAttentionVocab.ATTENTION_PEN_LABEL_FORMAT % _herd_label_for_id(herd_id),
             "detail": HudAttentionVocab.ATTENTION_PEN_DETAIL_FORMAT % int(round(fed * HudConst.PROGRESS_PERCENT_SCALE)),
@@ -378,6 +397,7 @@ func _under_crewed_herd_attention(band: Dictionary, player_bands: Array) -> Arra
         var needed := int(herd.get("herders_needed", 0))
         items.append({
             "kind": HudAttentionVocab.ATTENTION_KIND_UNDER_CREWED_HERD,
+            "owner": int(band.get("entity", -1)),
             "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
             "label": HudAttentionVocab.ATTENTION_UNDER_CREWED_LABEL_FORMAT % _herd_label_for_id(herd_id),
             "detail": HudAttentionVocab.ATTENTION_UNDER_CREWED_DETAIL_FORMAT % [

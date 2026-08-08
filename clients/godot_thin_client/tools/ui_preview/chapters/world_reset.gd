@@ -31,14 +31,17 @@ func run(harness) -> void:
 	h._hud._telling.reset()
 	h._hud.ingest_command_events(ForageFx.telling_fixture_events())
 	await h._settle()
-	h._assert_hud("world-boundary guard seeds a knowledge strip to clear",
-		h._hud._topbar.intensification_label.visible)
+	# **ASKED OF THE CACHE, NOT A LABEL** — the top-bar knowledge strip this used to read is retired
+	# with the whole top-right block (issue #450), and the cache is the better witness anyway: it is
+	# what `reset_world_state` exists to clear, and what the faction page's KNOWLEDGE zone reads.
+	h._assert_hud("world-boundary guard seeds faction knowledge to clear",
+		not h._hud._topbar.faction_tracks(HudConst.PLAYER_FACTION_ID).is_empty())
 	h._assert_hud("world-boundary guard seeds a telling to clear",
 		not h._hud._telling._entries.is_empty())
 	h._hud.reset_world_state()
 	await h._settle()
-	h._assert_hud("world reset hides the knowledge strip (a new world knows nothing)",
-		not h._hud._topbar.intensification_label.visible)
+	h._assert_hud("world reset drops the faction's knowledge (a new world knows nothing)",
+		h._hud._topbar.faction_tracks(HudConst.PLAYER_FACTION_ID).is_empty())
 	h._assert_hud("world reset empties the Telling (a new world is a different story)",
 		h._hud._telling._entries.is_empty())
 	await h._save("world_reset")

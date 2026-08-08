@@ -1,0 +1,6 @@
+{
+  "_comment": "How a per-band scalar becomes a FACTION scalar. Every axis listed here is one term of a band's weight in that mean; a band's weight is the sum of its axes. Adding an axis means adding a term function in FactionAggregate AND a key here — a key with no term function is ignored, never silently zero-weighted.",
+  "weights": {
+    "population": 1.0
+  }
+}

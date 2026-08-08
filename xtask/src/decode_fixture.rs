@@ -304,16 +304,53 @@ const DELTA_COUNT_STEP: u32 = 7;
 /// count cannot be zero.)
 const DELTA_COMMAND_EVENT_ROWS: u64 = 2;
 
-/// Does this delta carry the WHOLE-SECTION witness (`demographics`)?
+/// Which WHOLE-SECTION witnesses a delta restates.
 ///
-/// **Delta 1 does and delta 2 does not, and that asymmetry covers a hole the keyed sections
+/// **Delta 1 carries them and delta 2 does not, and that asymmetry covers a hole the keyed sections
 /// cannot.** A keyed section's base key is republished every frame out of `SectionCaches`, so it
 /// survives even a merge that re-bases the frame DICTIONARY on the original baseline. A
 /// whole-section field does not: it lands in the merged dict once, when its delta carries it, and
-/// stays only because the next delta merges into the frame before it. So `demographics` is the only
-/// witness here that can testify about `decode_frame`'s `cache.dict.duplicate_shallow()` — measured,
-/// not assumed: mutating that line while only the keyed sections were probed left the guard PASSING.
-const DELTA_CARRIES_DEMOGRAPHICS: [bool; 2] = [true, false];
+/// stays only because the next delta merges into the frame before it. So these are the only
+/// witnesses here that can testify about `decode_frame`'s `cache.dict.duplicate_shallow()` —
+/// measured, not assumed: mutating that line while only the keyed sections were probed left the
+/// guard PASSING.
+///
+/// The two are carried together rather than as two parallel `[bool; 2]` arrays so a delta's
+/// witnesses cannot drift apart by a mis-indexed subscript at the call site.
+#[derive(Clone, Copy)]
+struct WholeSectionWitnesses {
+    /// `demographics` — a whole-section VECTOR, replaced wholesale when carried.
+    demographics: bool,
+    /// `equipment_config_json` — a whole-section STRING, and the only one of the kit roster's four
+    /// whole-section fields any fixture delta carries. It is a *different shape* of witness from
+    /// `demographics` on purpose: the vector rides its own `Option<Vec<_>>` through a section
+    /// converter, while this one is a bare `Option<String>` the decoder republishes opaquely, so a
+    /// delta path that handled repeated fields and forgot the scalars would still be caught.
+    equipment_config_json: bool,
+}
+
+/// Delta 1 states both witnesses; delta 2 states neither. See [`WholeSectionWitnesses`].
+const DELTA_WHOLE_SECTION_WITNESSES: [WholeSectionWitnesses; 2] = [
+    WholeSectionWitnesses {
+        demographics: true,
+        equipment_config_json: true,
+    },
+    WholeSectionWitnesses {
+        demographics: false,
+        equipment_config_json: false,
+    },
+];
+
+/// What delta 1 restates `equipment_config_json` as.
+///
+/// **It must not be the baseline's value**, which saturation sets to the field's own path
+/// (`"equipment_config_json"`): a decoder that ignored the delta and republished the baseline would
+/// otherwise pass the guard's "the merged frame carries the delta's config" assertion while proving
+/// nothing. Shaped as a small JSON object rather than another bare path sentinel so the guard also
+/// sees the braces and quotes survive verbatim — the field is contractually **opaque** to this
+/// decoder (`native-extension.md` → THE KIT ROSTER), and a value that re-serialized or re-escaped on
+/// the way through would be visible in the merged frame rather than silent.
+const DELTA_EQUIPMENT_CONFIG_JSON: &str = r#"{"fixture":"delta.equipment_config_json"}"#;
 
 /// Writes the **DELTA** envelopes built against the same synthetic world [`write_fixture`] emits:
 /// one applied to the baseline, and one applied to THAT delta's output.
@@ -383,7 +420,12 @@ pub fn build_fixture_delta(snapshot: &WorldSnapshot) -> WorldDelta {
     // The gate the client applies before merging: same world, and a base it actually holds.
     header.base_frame_seq = snapshot.header.frame_seq;
     header.frame_seq = snapshot.header.frame_seq + 1;
-    build_planned_delta(snapshot, header, &DELTA_ONE, DELTA_CARRIES_DEMOGRAPHICS[0])
+    build_planned_delta(
+        snapshot,
+        header,
+        &DELTA_ONE,
+        DELTA_WHOLE_SECTION_WITNESSES[0],
+    )
 }
 
 /// The delta the guard applies to the FIRST delta's merged output.
@@ -397,14 +439,19 @@ pub fn build_fixture_delta2(snapshot: &WorldSnapshot, first: &WorldDelta) -> Wor
     // Chained: this one applies to the frame delta 1 PUBLISHED, not to the baseline.
     header.base_frame_seq = first.header.frame_seq;
     header.frame_seq = first.header.frame_seq + 1;
-    build_planned_delta(snapshot, header, &DELTA_TWO, DELTA_CARRIES_DEMOGRAPHICS[1])
+    build_planned_delta(
+        snapshot,
+        header,
+        &DELTA_TWO,
+        DELTA_WHOLE_SECTION_WITNESSES[1],
+    )
 }
 
 fn build_planned_delta(
     snapshot: &WorldSnapshot,
     header: SnapshotHeader,
     plan: &DeltaPlan,
-    carry_demographics: bool,
+    witnesses: WholeSectionWitnesses,
 ) -> WorldDelta {
     let tiles = snapshot
         .tiles
@@ -450,9 +497,9 @@ fn build_planned_delta(
         })
         .collect();
 
-    // The whole-section witness: replaced wholesale when carried, absent (= unchanged) when not.
-    // See `DELTA_CARRIES_DEMOGRAPHICS` for what its asymmetry across the two deltas proves.
-    let demographics = carry_demographics.then(|| {
+    // The whole-section witnesses: replaced wholesale when carried, absent (= unchanged) when not.
+    // See `WholeSectionWitnesses` for what their asymmetry across the two deltas proves.
+    let demographics = witnesses.demographics.then(|| {
         snapshot
             .demographics
             .iter()
@@ -466,6 +513,9 @@ fn build_planned_delta(
             })
             .collect()
     });
+    let equipment_config_json = witnesses
+        .equipment_config_json
+        .then(|| DELTA_EQUIPMENT_CONFIG_JSON.to_string());
 
     // The append-only section: rows the baseline has never seen, numbered above every seq it holds.
     // The two deltas are disjoint here as everywhere else — delta 2 continues delta 1's numbering.
@@ -495,6 +545,7 @@ fn build_planned_delta(
         populations,
         culture_layers,
         demographics,
+        equipment_config_json,
         command_events,
         command_events_retention_turns: Some(plan.retention_turns),
         // Carried on every delta rather than diffed (see `WorldDelta::fog_enabled`); the derived
@@ -1370,8 +1421,8 @@ mod tests {
             "the two deltas must move DIFFERENT culture-layer rows"
         );
 
-        // The whole-section witness: carried by delta 1 ONLY, and visibly moved, so that after the
-        // second merge it can testify that the frame dictionary carried delta 1's value forward.
+        // The whole-section witnesses: carried by delta 1 ONLY, and visibly moved, so that after the
+        // second merge they can testify that the frame dictionary carried delta 1's values forward.
         let carried = first
             .demographics
             .as_ref()
@@ -1384,6 +1435,25 @@ mod tests {
         assert_ne!(
             snapshot.demographics[0].children, carried[0].children,
             "delta 1's `demographics` row must be visibly different from the baseline's"
+        );
+
+        // The SCALAR whole-section witness, same shape of claim. Both clauses go vacuous silently if
+        // they rot — a delta-1 value that drifted back to the baseline's would let a decoder that
+        // never reads `equipmentConfigJson` off a delta satisfy the guard, and a delta 2 that
+        // started restating it would prove the merge re-published the value rather than kept it.
+        let carried_config = first
+            .equipment_config_json
+            .as_deref()
+            .expect("delta 1 must carry `equipment_config_json`");
+        assert!(
+            second.equipment_config_json.is_none(),
+            "delta 2 must NOT carry `equipment_config_json` — it survives the second merge only \
+             because that merge starts from delta 1's frame, which is the property under test"
+        );
+        assert_ne!(
+            snapshot.equipment_config_json, carried_config,
+            "delta 1's `equipment_config_json` must DIFFER from the baseline's, or a decoder that \
+             ignored the delta and republished the baseline would pass"
         );
         let factions: HashSet<u32> = snapshot.demographics.iter().map(|d| d.faction).collect();
         assert_eq!(
@@ -1452,20 +1522,31 @@ mod tests {
             }
         }
 
-        for (delta, expect_forage_absent) in [(&first, true), (&second, true)] {
+        // Restated on the ENCODED bytes, because the wire is what the guard decodes: an `Option`
+        // that stopped reaching `SubsistenceSectionArgs` would leave every claim above intact.
+        for (delta, expect_forage_absent, expect_config) in [
+            (&first, true, Some(DELTA_EQUIPMENT_CONFIG_JSON)),
+            (&second, true, None),
+        ] {
             let bytes = encode_delta_flatbuffer(delta);
             let envelope = fb::root_as_envelope(&bytes)
                 .expect("the delta envelope must verify as FlatBuffers");
             assert_eq!(envelope.payload_type(), fb::SnapshotPayload::delta);
+            let subsistence = envelope
+                .payload_as_delta()
+                .and_then(|d| d.subsistence())
+                .expect("a delta always carries a subsistence table");
             assert_eq!(
-                envelope
-                    .payload_as_delta()
-                    .and_then(|d| d.subsistence())
-                    .and_then(|s| s.foragePatches())
-                    .is_none(),
+                subsistence.foragePatches().is_none(),
                 expect_forage_absent,
                 "the delta must leave `forage_patches` ABSENT — the guard asserts the change \
                  manifest does not name it"
+            );
+            assert_eq!(
+                subsistence.equipmentConfigJson(),
+                expect_config,
+                "the delta's `equipmentConfigJson` must reach the WIRE exactly as planned — \
+                 present and verbatim on delta 1, absent on delta 2"
             );
         }
     }
