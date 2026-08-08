@@ -214,6 +214,80 @@ pub struct KitItemConditionState {
     pub remaining: f32,
 }
 
+/// **What one kit would grant THIS band, at its current wear** — a row of
+/// [`PopulationCohortState::kit_tiers`], one per kit the roster offers.
+///
+/// # This is the RESOLVED answer. A client must not re-derive it.
+///
+/// The numbers here are the sim's, resolved through the same `equipment.*` seams the take path reads
+/// — so the tier a picker shows is the tier a party sent with that kit actually fights and hauls at.
+/// **Do not step a tier down from [`SubsistenceSnapshot::kits`] by looking at
+/// [`PopulationCohortState::kit_item_conditions`]**: that is the derivation this field exists to
+/// stop, and it cannot be done correctly from the wire.
+///
+/// **Why it cannot**: stepping a tier down needs to know *which item supplies which axis*, and that
+/// mapping is per kit — `big_game` supplies `attack` from `spears`, `trapping` supplies it from
+/// `traps`. A kit's `item_ids` names what it carries but not what each item is *for*, and no rule
+/// over that list recovers it: set-cover and positional order both mis-assign, "any item live" keeps
+/// a kit at full tier with its weapon dry, and "all items dry" keeps it at full tier with only the
+/// sled left. The live symptom of guessing was a band with **fresh traps and dry spears** being
+/// repriced to the bare hand under `trapping` — a fact the sim knew that the wire did not carry.
+///
+/// Empty for a cohort captured before the roster resolved (never in practice: the roster is config
+/// and always present), which reads as "no per-band tiers published" rather than "every tier is
+/// zero" — a consumer must fall back to the world roster's fresh-kit numbers, not to `0`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BandKitTiersState {
+    /// The `equipment.json` roster id these tiers are for — pairs with `SubsistenceSnapshot::kits`.
+    pub kit_id: String,
+    /// This band's hunter `attack` under this kit. **Unbounded**; the mass window is beside it.
+    pub attack: f32,
+    /// This band's per-hunter HUNT haul rate (biomass/turn) under this kit.
+    pub hunt_carry_per_worker_biomass: f32,
+    /// This band's per-gatherer throughput (biomass/turn, **before** the tile's seasonal weight).
+    pub forage_carry_per_worker_biomass: f32,
+    /// **The range of quarry [`Self::attack`] applies to.** `0` on either end is unbounded. It rides
+    /// per band because a spent item contributes no bound either — a kit whose mass-bounded weapon
+    /// has run dry has no window, and the party is on the bare hand everywhere.
+    #[serde(default)]
+    pub attack_min_body_mass: f32,
+    /// See [`Self::attack_min_body_mass`].
+    #[serde(default)]
+    pub attack_max_body_mass: f32,
+    /// What this kit multiplies the quarry's own `wariness` by, at this band's wear. Neutral `1.0`.
+    #[serde(default = "kit_multiplier_neutral")]
+    pub dispersion: f32,
+    /// What this kit multiplies the hunt's injury hazard by, at this band's wear. Neutral `1.0`.
+    #[serde(default = "kit_multiplier_neutral")]
+    pub exposure: f32,
+}
+
+/// The neutral value of [`BandKitTiersState`]'s two multipliers — `1.0`, never `0`.
+///
+/// Same reason `KitOptionState` spells its own out: `0` is the *reassuring* wrong answer. A
+/// `dispersion 0` says nothing breaks off at contact and an `exposure 0` says nobody can be hurt, so
+/// a field that failed to arrive would hand every band the passive device's whole advantage.
+fn kit_multiplier_neutral() -> f32 {
+    1.0
+}
+
+/// Hand-written for the reason [`KitOptionState`]'s is: two of these fields are multipliers whose
+/// neutral is `1`, and a derived `Default` would answer `0`.
+impl Default for BandKitTiersState {
+    fn default() -> Self {
+        Self {
+            kit_id: String::new(),
+            attack: 0.0,
+            hunt_carry_per_worker_biomass: 0.0,
+            forage_carry_per_worker_biomass: 0.0,
+            attack_min_body_mass: 0.0,
+            attack_max_body_mass: 0.0,
+            dispersion: kit_multiplier_neutral(),
+            exposure: kit_multiplier_neutral(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct PopulationCohortState {
     pub entity: u64,
@@ -327,29 +401,12 @@ pub struct PopulationCohortState {
     /// Persistence-only: the fractional **trade goods the party is carrying home** — the pelt/hide
     /// half of every kill's hunt yield, banked until the next drop-off/fold-back settles it into the
     /// faction stockpile (`docs/plan_hunt_yield_model.md`, issue #337). Not on the FlatBuffers wire:
-    /// the client already reads the raid's *promised* trade off `HuntTripEstimate.deliveredTrade`,
-    /// and this is server state a rollback must not silently zero (the provisions half round-trips
-    /// for free in `stores`, so without this a rewind would drop the pelts and only the pelts).
+    /// the client already reads the raid's *promised* trade off the forecast query's reply
+    /// (`HuntTripRow::delivered_trade`), and this is server state a rollback must not silently zero
+    /// (the provisions half round-trips for free in `stores`, so without this a rewind would drop
+    /// the pelts and only the pelts).
     #[serde(default)]
     pub expedition_carried_trade: f32,
-    /// **Where the pre-launch estimate tables stop** — the last rung of `expedition_config.json`
-    /// `estimate_party_sizes`, which is the party axis of `HerdTelemetryState::hunt_trip_estimates`
-    /// and the base of `denial_estimates`' own axis. A global config lever echoed per-cohort, same
-    /// idiom as `work_range`, populated for every cohort.
-    ///
-    /// **The axis it bounds is SAMPLED, not contiguous.** The rows between `1` and this are a ladder
-    /// of chosen party sizes, so a client resolves the party it is showing to the **nearest** row on
-    /// the herd's own table rather than assuming every size below this has one.
-    ///
-    /// **It is NOT a cap on the party, and the outfit stepper must not clamp to it**
-    /// (`docs/plan_denial_raid.md` §3.1): the legal bound is the band's own `idle_workers` and
-    /// nothing else. The field name predates that split and survives only because renaming a wire
-    /// slot costs a client decode change for no behaviour. What it is *for* is telling the client
-    /// where the quoted rows stop — a legal party past the last row has no pre-computed estimate, and
-    /// the client quotes the largest sampled row **with the size it was sampled for** rather than
-    /// composing one (the take is non-linear; see `yield-forecast.md`'s terms-vs-answers rule).
-    #[serde(default)]
-    pub max_expedition_party_size: u32,
     /// Hunt expedition only: the carry cap = `party_workers × expedition_config.hunt.per_worker_carry`
     /// (the provisions ceiling the party fills to before auto-Delivering). Capture-only, `0` for
     /// scouts + normal bands. Lets the client render carried/cap + a FULL state.
@@ -427,16 +484,20 @@ pub struct PopulationCohortState {
     /// capture. Appended last.
     #[serde(default)]
     pub food_consumption: f32,
-    /// Hunt levers — global config echoed per-cohort (same idiom as `max_expedition_party_size`, and
-    /// populated for **every** cohort, since the outfit/hunt UI lives on the resident-band panel).
+    /// Hunt levers — global config echoed per-cohort (same idiom as
+    /// [`Self::expedition_viability_warn_turns`], and populated for **every** cohort, since the
+    /// outfit/hunt UI lives on the resident-band panel).
     ///
-    /// The pre-launch **expedition** trip length is **not** computed from these: the client reads the
-    /// sim's simulated answer out of the target herd's
-    /// [`HuntTripEstimateState`](crate::state::subsistence::HuntTripEstimateState) table
-    /// (policy × `party_workers` → `turns_to_fill`) and flags NOT VIABLE when `turns_to_fill >
-    /// expedition_viability_warn_turns` (or `turns_to_fill == 0` → "won't fill"). An `eradicate`
-    /// party has `delivers_food == false` (an INEDIBLE quarry since #337, not a denial policy):
-    /// render "no food delivered", never an ETA.
+    /// The pre-launch **expedition** trip length is **not** computed from these: the client **asks**
+    /// for the sim's simulated answer (`sim_runtime`'s `QueryCommand`, answered by
+    /// `core_sim::forecast_query` for an exact band, kit, party and floor) and flags NOT VIABLE when
+    /// `turns_to_fill > expedition_viability_warn_turns` (or `turns_to_fill == 0` → "won't fill").
+    /// A party after an INEDIBLE quarry gets `delivers_food == false` (a species fact since #337,
+    /// not a denial policy): render "no food delivered", never an ETA.
+    ///
+    /// It used to read that answer out of a `huntTripEstimates` table on the herd row. The table was
+    /// pre-computed for every huntable herd every frame, at one kit over a fresh component set, and
+    /// sampled on both axes — so it could not answer for the band actually asking.
     ///
     /// One hunter's per-turn provisions throughput (`labor_config.hunt.per_worker_biomass_capacity ×
     /// fauna_config.hunt.provisions_per_biomass`).
@@ -447,7 +508,8 @@ pub struct PopulationCohortState {
     /// per-hunter food rate against them is a contradiction. The per-herd, species-aware rates are
     /// `HerdTelemetryState::per_worker_yield` / `per_worker_trade` — clamp a band preview with THOSE.
     /// This survives as the expedition **outfit** lever (rough carry arithmetic before a target is
-    /// chosen); for a chosen target the sim exports the answer in `hunt_trip_estimates`.
+    /// chosen); for a chosen target the client asks for the answer (`sim_runtime`'s `QueryCommand`,
+    /// answered by `core_sim::forecast_query`), exactly as the prose above describes.
     #[serde(default)]
     pub hunt_per_worker_provisions: f32,
     /// Turns-to-fill past which a trip is flagged NOT VIABLE
@@ -473,21 +535,21 @@ pub struct PopulationCohortState {
     pub pen_feed_upkeep: f32,
     /// One worker's carry contribution to a hunt expedition's haul
     /// (`expedition_config.hunt.per_worker_carry`). Global config echoed per-cohort (same idiom as
-    /// [`Self::max_expedition_party_size`] / `expedition_viability_warn_turns` /
-    /// `hunt_per_worker_provisions`), populated for **every** cohort since the outfit UI lives on the
-    /// resident-band panel. The client computes a hypothetical party's pre-launch HAUL as
+    /// [`Self::expedition_viability_warn_turns`] / [`Self::hunt_per_worker_provisions`]), populated
+    /// for **every** cohort since the outfit UI lives on the resident-band panel. The client computes a hypothetical party's pre-launch HAUL as
     /// `party_workers × expedition_per_worker_carry` (the carry cap the pack fills to before
     /// auto-Delivering; a launched party's own echo is [`Self::expedition_carry_cap`]). Appended.
     #[serde(default)]
     pub expedition_per_worker_carry: f32,
     /// A band's move speed (`labor_config.band_move_tiles_per_turn`). Global config echoed per-cohort
-    /// (same idiom as the levers above). The client adds a raid's round-trip travel to the
-    /// band-agnostic pre-launch `hunt_trip_estimates` as
-    /// `ceil(2 × hex_distance(selected_band, herd) / band_move_tiles_per_turn)`. Appended.
+    /// (same idiom as the levers above). The client adds a raid's round-trip travel to the queried
+    /// pre-launch forecast as
+    /// `ceil(2 × hex_distance(selected_band, herd) / band_move_tiles_per_turn)` — the forecast
+    /// projects the hunting itself, never the walk. Appended.
     #[serde(default)]
     pub band_move_tiles_per_turn: f32,
-    /// In-flight hunt-party delivery forecast — the in-flight twin of the pre-launch
-    /// `hunt_trip_estimates`. Turns until the carried food reaches the home larder (`0` = unknown /
+    /// In-flight hunt-party delivery forecast — the in-flight twin of the queried pre-launch
+    /// forecast. Turns until the carried food reaches the home larder (`0` = unknown /
     /// n/a). Computed at capture by `systems::expeditions::expedition_delivery`. Appended.
     #[serde(default)]
     pub expedition_eta_turns: u32,
@@ -582,6 +644,15 @@ pub struct PopulationCohortState {
     /// mean *no wear* — so an item the band has never used reads as full rather than going missing.
     #[serde(default)]
     pub kit_item_conditions: Vec<KitItemConditionState>,
+    /// **What every offered kit would grant THIS band right now** — one row per roster kit,
+    /// resolved against this band's live wear. See [`BandKitTiersState`]: it is the resolved answer,
+    /// and a client must not re-derive a tier from the roster plus
+    /// [`Self::kit_item_conditions`].
+    ///
+    /// Small by construction (bands × kits, a handful each) and it diffs out between frames when
+    /// nothing wears.
+    #[serde(default)]
+    pub kit_tiers: Vec<BandKitTiersState>,
     /// **This band's per-hunter combat `attack`**, kit resolved in — `1.0` bare-handed (the
     /// `creatures.json` `person` row) and `20.0` with the hunting kit
     /// (`equipment.json` `hunting_kit.equipped_attack`).
@@ -632,9 +703,7 @@ pub struct PopulationCohortState {
     ///
     /// It is the **scale for the projections' "never completed" sentinels**, which are all
     /// horizon-relative and none of which carried the horizon before this field:
-    /// [`HuntTripEstimateState::turns_to_fill`](crate::state::subsistence::HuntTripEstimateState::turns_to_fill)
-    /// `== 0`,
-    /// [`DenialEstimateState::turns_to_collapse`](crate::state::subsistence::DenialEstimateState::turns_to_collapse)
+    /// the query reply's `HuntTripRow::turns_to_fill` `== 0`, its `DenialRow::turns_to_collapse`
     /// (and its two range ends) `== 0`, and [`Self::expedition_trip_bound`] `== "horizon"`. **One
     /// lever serves all of them**: the denial forecast and the hunt forecast run over the *same*
     /// horizon (`core_sim`'s `denial_projection_at` and `hunt_trip_forecast_seeded` both read this

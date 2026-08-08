@@ -6,9 +6,8 @@ extends RefCounted
 ## lists it. **The order is load-bearing** — states render into one long-lived `HudLayer`, so a
 ## chapter moved is a set of frames changed. See `.claude/rules/client/test-harnesses.md`.
 ##
-## It is LAST, i.e. after the event dock and before the harness's icon-probe epilogue, and it is
-## OFFSCREEN — every face renders into a `SubViewport` and no `_save` is taken — so it adds no frame
-## and the frame set's bit-identity claim is untouched.
+## It runs late — after the event dock — and it is OFFSCREEN: every face renders into a `SubViewport`
+## and no `_save` is taken, so it adds no frame and the frame set's bit-identity claim is untouched.
 
 const Q := preload("res://tools/ui_preview/node_query.gd")
 

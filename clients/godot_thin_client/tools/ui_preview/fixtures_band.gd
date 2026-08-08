@@ -12,8 +12,24 @@ const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 ## the band's own position implies. Named here so every band fixture in every chapter states one number.
 const FORECAST_HORIZON_TURNS := 60
 
+## **THE DURABLE BAND HANDLE, DERIVED FROM THE ENTITY AND DELIBERATELY DIFFERENT FROM IT.**
+## `band_id` is what every band-addressed command and every forecast QUERY names (`HudConst.NO_BAND_ID`);
+## `entity` is client-local ECS allocation state. Both are plain ints, so a fixture where the two agree
+## cannot tell a correct emit from one that sent the entity — the defect `band_panel_preview` already
+## carries this offset for. The offset keeps ids readable (band 904 → 4904) while guaranteeing they
+## differ; `band_panel_preview` reads it from here, so the two harnesses cannot drift apart on it.
+const FIXTURE_BAND_ID_OFFSET := 4000
+
+## **A COHORT WITHOUT `band_id` ASKS NOTHING.** The pre-launch raid forecasts are a query on the command
+## socket now, and every asker refuses to compose a question about a band holding `NO_BAND_ID` — so a
+## band fixture missing the field renders the PENDING placeholder in place of every raid readout, on a
+## HUD that is behaving correctly. Every band fixture here is therefore stamped.
+static func with_band_id(band: Dictionary) -> Dictionary:
+	band["band_id"] = int(band.get("entity", 0)) + FIXTURE_BAND_ID_OFFSET
+	return band
+
 static func band_fixture() -> Dictionary:
-	return {
+	return with_band_id({
 		"id": "Band 2",
 		"size": 148,
 		"entity": 904,
@@ -96,13 +112,13 @@ static func band_fixture() -> Dictionary:
 			"food_module": "",
 			"food_module_label": "None",
 		},
-	}
+	})
 
 ## A scouting expedition (docs/plan_exploration_and_sites.md §2) in its awaiting-orders phase:
 ## a detached party (is_expedition) carrying a mission/phase + party size + provisions. The drawer
 ## renders the dedicated expedition readout + Recall/Move panel, not the labor-allocation UI.
 static func expedition_fixture() -> Dictionary:
-	return {
+	return with_band_id({
 		"id": "Scouts 1",
 		"size": 6,
 		"entity": 7001,
@@ -121,7 +137,7 @@ static func expedition_fixture() -> Dictionary:
 			"food_module": "",
 			"food_module_label": "None",
 		},
-	}
+	})
 
 ## Distance-aware herd-hunt (docs/plan_exploration_and_sites.md §2b): two player bands at DIFFERENT
 ## distances from ONE herd — a NEAR band ON the herd tile (within hunt_reach → LOCAL hunt) and a FAR
@@ -130,12 +146,12 @@ static func expedition_fixture() -> Dictionary:
 ## playtest can't surface. Both carry idle workers + a party cap so either verb is dialable.
 static func hunt_distance_bands() -> Array:
 	return [
-		{"entity": 811, "faction": 0, "size": 120, "current_x": 66, "current_y": 10,
+		with_band_id({"entity": 811, "faction": 0, "size": 120, "current_x": 66, "current_y": 10,
 			"working_age": 14, "idle_workers": 10, "hunt_reach": 7, "max_expedition_party_size": 8,
-			"activity": "forage", "labor_assignments": []},
-		{"entity": 812, "faction": 0, "size": 80, "current_x": 86, "current_y": 24,
+			"activity": "forage", "labor_assignments": []}),
+		with_band_id({"entity": 812, "faction": 0, "size": 80, "current_x": 86, "current_y": 24,
 			"working_age": 10, "idle_workers": 6, "hunt_reach": 7, "max_expedition_party_size": 8,
-			"activity": "hunt", "labor_assignments": []},
+			"activity": "hunt", "labor_assignments": []}),
 	]
 
 ## Range-aware forage: two player bands at DIFFERENT distances from the (66,10) food tile — a NEAR band
@@ -145,14 +161,14 @@ static func hunt_distance_bands() -> Array:
 ## enabled-vs-disabled state — the case single-band playtest can't surface.
 static func forage_range_bands() -> Array:
 	return [
-		{"entity": 821, "faction": 0, "size": 120, "current_x": 67, "current_y": 10,
+		with_band_id({"entity": 821, "faction": 0, "size": 120, "current_x": 67, "current_y": 10,
 			# **THE IDLE COUNT HAS TO CLEAR THE DIPPED BUILD CREW.** `improvement_build_crew` asserts the
 			# stepper reaches the sim's own `workers_needed` (12 since the dip moved onto the crew), and
 			# the stepper caps at `idle + already staffed` — so 10 idle pinned it one short and the frame
 			# would have failed on the labour bound rather than on the thing it is testing.
-			"working_age": 20, "idle_workers": 16, "work_range": 2, "activity": "forage", "labor_assignments": []},
-		{"entity": 822, "faction": 0, "size": 80, "current_x": 80, "current_y": 24,
-			"working_age": 10, "idle_workers": 6, "work_range": 2, "activity": "forage", "labor_assignments": []},
+			"working_age": 20, "idle_workers": 16, "work_range": 2, "activity": "forage", "labor_assignments": []}),
+		with_band_id({"entity": 822, "faction": 0, "size": 80, "current_x": 80, "current_y": 24,
+			"working_age": 10, "idle_workers": 6, "work_range": 2, "activity": "forage", "labor_assignments": []}),
 	]
 
 ## The near band of `forage_range_bands`, ALREADY WORKING the (66,10) food tile — the fixture behind
@@ -197,7 +213,7 @@ static func cultivating_forage_band_fixture(x: int = 66, y: int = 10) -> Diction
 ## applies the band's morale/discontent productivity modifier — the one term that makes a resident
 ## hunt's take differ from an expedition's.
 static func hunt_preview_local_band() -> Dictionary:
-	return {
+	return with_band_id({
 		"id": "Band 1", "entity": 832, "faction": 0, "size": 120,
 		"current_x": 66, "current_y": 10, "pos": [66, 10],
 		"working_age": 14, "idle_workers": 10,
@@ -205,7 +221,7 @@ static func hunt_preview_local_band() -> Dictionary:
 		"hunt_per_worker_provisions": 0.8,
 		"output_multiplier": 0.9,
 		"activity": "hunt", "labor_assignments": [],
-	}
+	})
 
 # ---- THE THREE KITS (`docs/plan_hunt_through_combat.md` §4.8) ------------------------------------
 # Shipped tiers, one pair per kit, at the values `equipment.json` / `labor_config` authorise. They are
@@ -241,11 +257,26 @@ const KIT_CONDITION_SLED := 54.0
 
 const KIT_CONDITION_BASKETS := 31.0
 
+## **THE ITEM IDS** (`equipment.json` `items`) — named because they appear TWICE in every band fixture:
+## once in the roster entry's `item_ids` (which kit carries what) and once in the band's condition rows
+## (how worn the band's own copy is). A literal in both places is exactly how a hint comes to quote the
+## condition of gear its kit does not carry.
+const KIT_ITEM_SPEARS := "spears"
+const KIT_ITEM_SLED := "sled"
+const KIT_ITEM_BASKETS := "baskets"
+const KIT_ITEM_TRAPS := "traps"
+
 # ---- THE KIT ROSTER (`docs/plan_denial_raid.md`, `SubsistenceSection.kits`) -----------------------
 # The ids the wire carries and the two job defaults. Named because the `kit <id>` COMMAND token is
 # asserted against them and because "which id is the default" is half of what the picker's frames
 # claim — a literal in two harnesses is how those two claims come apart.
 const KIT_ID_BIG_GAME := "big_game"
+## **A SHIPPED KIT THAT `kit_roster_fixture()` DELIBERATELY DOES NOT OFFER.** The trapping kit exists in
+## `equipment.json`, and the traps' own condition is on every kitted band here — but adding a fourth
+## picker entry would move every rendered kit-picker frame in both harnesses for a claim only one
+## chapter makes, so that chapter stages it on a roster of its own. The id lives here because the BAND's
+## `kit_tiers` answer sheet states a row for it, and one spelling is what keeps the two in step.
+const KIT_ID_TRAPPING := "trapping"
 const KIT_ID_GATHERING := "gathering"
 const KIT_ID_NONE := "none"
 const KIT_DEFAULT_HUNT := KIT_ID_BIG_GAME
@@ -262,6 +293,10 @@ const KIT_DEFAULT_FORAGE := KIT_ID_GATHERING
 ##
 ## **`none` IS AN ORDINARY MEMBER AND IT IS AUTHORED LAST**, exactly as `equipment.json` authors it —
 ## which is the whole of why the picker renders it last. The client sorts nothing.
+##
+## **EVERY ENTRY STATES ITS `item_ids`**, the wire's own `uses` list, in config order — weapon first,
+## haul aid after. `none` states an EMPTY one, which is a real answer rather than a missing field: it
+## carries nothing, so the hint prints no condition clause for it.
 static func kit_roster_fixture() -> Array:
 	return [
 		{
@@ -269,24 +304,56 @@ static func kit_roster_fixture() -> Array:
 			"attack": KIT_ATTACK_EQUIPPED,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_EQUIPPED,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
+			"item_ids": [KIT_ITEM_SPEARS, KIT_ITEM_SLED],
 		},
 		{
 			"id": KIT_ID_GATHERING, "display_name": "Gathering kit", "jobs": ["forage"],
 			"attack": KIT_ATTACK_BARE,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_EQUIPPED,
+			"item_ids": [KIT_ITEM_BASKETS],
 		},
 		{
 			"id": KIT_ID_NONE, "display_name": "No kit", "jobs": ["hunt", "forage"],
 			"attack": KIT_ATTACK_BARE,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
+			"item_ids": [],
 		},
 	]
 
-## A band carrying ALL THREE kits, each at its own condition and each role at its equipped tier.
+## **THE BAND'S OWN RESOLVED TIER ROWS** (`PopulationCohortState.kitTiers`) — what EVERY offered kit
+## would grant THIS band at its live wear, one row per kit id, authored the way the sim resolves them.
+##
+## **THEY ARE AUTHORED, NEVER DERIVED HERE FROM THE CONDITIONS BESIDE THEM.** The whole reason the field
+## exists is that the step-down needs the per-kit axis→item mapping, which the wire does not carry and no
+## client-side rule recovers; a fixture that re-derived the rows would be writing exactly the guess the
+## field replaced, and would agree with a client that had put the guess back.
+##
+## `KIT_ID_TRAPPING` gets a row although `kit_roster_fixture()` does not offer it: the roster is the
+## PICKER's list, this is the BAND's answer sheet, and the trapping kit is a shipped kit that one chapter
+## stages against a roster of its own. A row for a kit no roster offers is never looked up.
+static func kit_tiers_rows(attack: float, hunt_carry: float, forage_carry: float) -> Array:
+	return [
+		{"kit_id": KIT_ID_BIG_GAME, "attack": attack,
+			"hunt_carry_per_worker_biomass": hunt_carry,
+			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE},
+		{"kit_id": KIT_ID_TRAPPING, "attack": attack,
+			"hunt_carry_per_worker_biomass": hunt_carry,
+			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE},
+		{"kit_id": KIT_ID_GATHERING, "attack": KIT_ATTACK_BARE,
+			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
+			"forage_carry_per_worker_biomass": forage_carry},
+		{"kit_id": KIT_ID_NONE, "attack": KIT_ATTACK_BARE,
+			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
+			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE},
+	]
+
+## A band carrying ALL FOUR items, each at its own condition and each role at its equipped tier.
 static func with_equipped_kit(band: Dictionary) -> Dictionary:
-	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": KIT_CONDITION_SPEARS}, {"item_id": "sled", "remaining": KIT_CONDITION_SLED}, {"item_id": "baskets", "remaining": KIT_CONDITION_BASKETS}, {"item_id": "traps", "remaining": KIT_CONDITION_TRAPS}]
+	band["kit_item_conditions"] = [{"item_id": KIT_ITEM_SPEARS, "remaining": KIT_CONDITION_SPEARS}, {"item_id": KIT_ITEM_SLED, "remaining": KIT_CONDITION_SLED}, {"item_id": KIT_ITEM_BASKETS, "remaining": KIT_CONDITION_BASKETS}, {"item_id": KIT_ITEM_TRAPS, "remaining": KIT_CONDITION_TRAPS}]
+	band["kit_tiers"] = kit_tiers_rows(KIT_ATTACK_EQUIPPED, KIT_HUNT_CARRY_EQUIPPED,
+		KIT_FORAGE_CARRY_EQUIPPED)
 	band["hunter_attack"] = KIT_ATTACK_EQUIPPED
 	band["hunt_carry_per_worker_biomass"] = KIT_HUNT_CARRY_EQUIPPED
 	band["forage_carry_per_worker_biomass"] = KIT_FORAGE_CARRY_EQUIPPED
@@ -298,7 +365,11 @@ static func with_equipped_kit(band: Dictionary) -> Dictionary:
 ## This is the frame a readout rendering one carry on the other's row fails.
 static func with_baskets_dry(band: Dictionary) -> Dictionary:
 	band = with_equipped_kit(band)
-	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": KIT_CONDITION_SPEARS}, {"item_id": "sled", "remaining": KIT_CONDITION_SLED}, {"item_id": "baskets", "remaining": 0.0}, {"item_id": "traps", "remaining": KIT_CONDITION_TRAPS}]
+	band["kit_item_conditions"] = [{"item_id": KIT_ITEM_SPEARS, "remaining": KIT_CONDITION_SPEARS}, {"item_id": KIT_ITEM_SLED, "remaining": KIT_CONDITION_SLED}, {"item_id": KIT_ITEM_BASKETS, "remaining": 0.0}, {"item_id": KIT_ITEM_TRAPS, "remaining": KIT_CONDITION_TRAPS}]
+	# The gathering kit's own row steps down and the two hunt kits' do not — the whole claim of this
+	# fixture, stated where the client now reads it rather than left to be inferred from the conditions.
+	band["kit_tiers"] = kit_tiers_rows(KIT_ATTACK_EQUIPPED, KIT_HUNT_CARRY_EQUIPPED,
+		KIT_FORAGE_CARRY_BARE)
 	band["forage_carry_per_worker_biomass"] = KIT_FORAGE_CARRY_BARE
 	return band
 
@@ -306,7 +377,8 @@ static func with_baskets_dry(band: Dictionary) -> Dictionary:
 ## replenishment path, so every role has stepped down and stays there. Its `hunter_attack` of 1 is
 ## what the combat gate refuses megafauna on.
 static func with_bare_hands(band: Dictionary) -> Dictionary:
-	band["kit_item_conditions"] = [{"item_id": "spears", "remaining": 0.0}, {"item_id": "sled", "remaining": 0.0}, {"item_id": "baskets", "remaining": 0.0}, {"item_id": "traps", "remaining": 0.0}]
+	band["kit_item_conditions"] = [{"item_id": KIT_ITEM_SPEARS, "remaining": 0.0}, {"item_id": KIT_ITEM_SLED, "remaining": 0.0}, {"item_id": KIT_ITEM_BASKETS, "remaining": 0.0}, {"item_id": KIT_ITEM_TRAPS, "remaining": 0.0}]
+	band["kit_tiers"] = kit_tiers_rows(KIT_ATTACK_BARE, KIT_HUNT_CARRY_BARE, KIT_FORAGE_CARRY_BARE)
 	band["hunter_attack"] = KIT_ATTACK_BARE
 	band["hunt_carry_per_worker_biomass"] = KIT_HUNT_CARRY_BARE
 	band["forage_carry_per_worker_biomass"] = KIT_FORAGE_CARRY_BARE

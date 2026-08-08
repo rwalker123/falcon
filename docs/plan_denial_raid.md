@@ -244,7 +244,13 @@ half of a turn. The added rows are the cheap ones — a party past the requireme
 a handful of turns, so its projection returns long before the horizon, while the sub-requirement rows
 are the ones that run it out.
 
-#### What this change did NOT do, and where the seam is
+#### What this change did NOT do, and where the seam is — RESOLVED
+
+> **All three blockers below are resolved.** The forecast query channel
+> (`.claude/rules/core_sim/expeditions.md` → "The forecast is ASKED FOR") replaced both estimate
+> tables with an on-demand request/response over the command socket. The original analysis is kept
+> because it is what set the shape of the answer, and because the third blocker's numbers are the
+> before-half of the measurement that justified it.
 
 **The sampled table survives, and it is priced for a band that may not exist.**
 `snapshot::subsistence` prices every field on `HerdTelemetryState` — `denialEstimates`,
@@ -259,16 +265,32 @@ party of any size works** — and it is being quoted `9`.
 
 So the honest end state is a **per-band** denial answer: the minimum viable party priced for the
 asking band's actual kit, published instead of a sampled table across party sizes, with a dry band
-seeing a larger number or `repelled`. Three things stop that being part of this change:
+seeing a larger number or `repelled`. Three things stopped that being part of this change:
 
 1. **It is a wire-shape decision, not a repricing.** A per-(band, herd) answer has nowhere to live
    today: `HerdTelemetryState` is per herd and `PopulationCohortState` is per band, so it needs a new
    repeated field on the cohort keyed by `faunaId` — and the retired `denialEstimates` becomes a
    `(deprecated)` slot the sim stops writing, since `snapshot.fbs` is append-only.
+
+   > **Resolved differently, and better: it does not live on the snapshot at all.** The premise was
+   > that an answer has to be *published*. It does not — the client asks
+   > (`DenialRaidForecastQuery { faction, band, herd, kit, party_workers, max_party_workers }`) and
+   > is answered on the same socket. There is no per-(band, herd) cross product on the wire because
+   > there is no wire field: the sim answers the one question in front of it. `denialEstimates`,
+   > `denialPartyNeeded`, `huntTripEstimates` and the two `*_kit_id` disclaimers are `(deprecated)`
+   > slots, exactly as predicted.
+
 2. **It is also a UI decision.** The sheet has a party *stepper*, and the rows are what give a
    stepped-off size any verdict at all. Publishing only the requirement's row means the stepper
    either goes away (the sheet states one number) or loses its readout. That is a design call, not an
    implementation detail.
+
+   > **Resolved: the stepper stays, and it gained precision.** Every stepped-to size gets a verdict,
+   > because each is a question the sim will answer — and the answer is for *that* size rather than
+   > the nearest sampled rung. `party_needed` still seeds the control; `useful_cap` now walks
+   > `1..=idleWorkers` contiguously instead of a ladder, so the max-useful party is the real plateau
+   > rather than the rung after which a sampled payload stopped rising.
+
 3. **It cannot be a straight repricing, because of what the tables cost.** Measured on a
    fully-revealed 80×52 map, 132 huntable herds, debug build, over 5 captures:
 
@@ -286,12 +308,32 @@ seeing a larger number or `repelled`. Three things stop that being part of this 
    therefore *forces* one of two structural answers — collapse the axes so the cross product is
    affordable, or move the estimates off the per-turn capture entirely (which the one-way command
    channel does not support today) — and neither is a decision to take by reflex.
+
+   > **Resolved by the second structural answer, and the multiplication is never paid.** The command
+   > socket learned to answer — it was always an ordinary bidirectional stream; "one-way" was a
+   > protocol choice, not a transport limit. Re-measured on the same harness
+   > (`core_sim/tests/capture_cost.rs`, fully-revealed 80×52, debug, 5 captures):
+   >
+   > | phase | with the tables | without |
+   > |---|---|---|
+   > | `snapshot.build` | **49.51 ms** | **3.15 ms** |
+   > | `snapshot.build.herds` | **46.22 ms** (93.4%) | **0.06 ms** (1.8%) |
+   >
+   > Capture is **15.7× cheaper**; the herd pass ~770×. The band count never enters it: a query is
+   > answered when a player asks, for one herd, not 131 times a turn for nobody.
+
 4. **`huntTripEstimates` has the identical defect for the identical reason**, and the same cost
    argument applies to it, but the two tables answer different questions: denial asks *"what party do
    I need"* (one number) while a hunt asks *"what will I get"* at a floor **and** a party size, so
    whether the hunt's axes survive a repricing is its own case to make.
    `estimate_party_sizes` cannot be deleted until that table is dealt with, which is why the lever
    survives — renamed to say what it does — rather than being removed here.
+
+   > **Resolved: both tables went together, and the axes went with them.** A query has no axes to
+   > survive — it takes the floor and the party as arguments and echoes them back on the row.
+   > `estimate_party_sizes` and `deny.requirement_rows` are **deleted**, with their validators and
+   > drift tests, and so is `PopulationCohortState.maxExpeditionPartySize` (which echoed the ladder's
+   > last rung and capped nothing).
 
 **The clean line this change stops at:** the launch cap is gone (the reported defect), the minimum
 viable party is computed, rounded up, and published as an *answer*, and the sheet can open on it. The
@@ -347,7 +389,7 @@ unclamp.
 | 1 | **Does a collapsing herd tell anyone?** | §2 settles that denial names no target faction. But a herd crossing `collapse_fraction` is visible ecology, and whether its *other* users are told — and how — is unresolved. |
 | 2 | ~~**Does a raid recur?**~~ | **SETTLED in slice 1: it does not.** A denial raid completes when the herd goes past recovery and never relaunches — there is nothing to come back for, and `raid_is_recurring` is a question about a *floor*, which the mission does not carry. A raid that cannot get there keeps working the herd until it is recalled; the launch verdict warns first (§3). |
 | 3 | **Is denial legible as distinct from a deep hunt?** | The mechanical difference is one clamp. If a player cannot feel why the raid is different from `floor = 0`, the mission has failed even if the sim is right. |
-| 4 | **Where does a PER-BAND raid estimate live on the wire?** | The whole of `HerdTelemetryState` is priced at the equipped tier (§3.1, "What this change did NOT do"), so a band with worn kit is quoted numbers it cannot reach — on `denialPartyNeeded` and on `huntTripEstimates` alike. A per-(band, herd) answer needs a new cohort-side field and a decision about whether the launch sheet keeps a party stepper at all. |
+| 4 | **Where does a PER-BAND raid estimate live on the wire?** | **ANSWERED: nowhere.** The premise was that an answer must be published. The client asks and the sim answers on the command socket, so there is no per-(band, herd) field and no cross product — see §3.1's resolved blockers. |
 
 ---
 

@@ -73,10 +73,6 @@ const QUICK_HUNT_HERD_ID := "game_aurochs_quickhunt"
 
 const QUICK_HUNT_IDLE_WORKERS := 3
 
-# `BandFx.band_fixture` carries no `band_id` (nothing else here emits a command), and `Hud._emit_assign_labor`
-# REFUSES a band without one — so the shortcut would no-op silently and the guard would pass on nothing.
-const QUICK_HUNT_BAND_ID := 9041
-
 ## A synthetic PRESSED mouse-button event, for driving a Control's real `gui_input` handler. The
 ## harness has no OS input, so this is how a click/wheel gesture is put through the shipped code path
 ## rather than calling the handler's effect directly.
@@ -1083,8 +1079,9 @@ func run(harness) -> void:
 	# state left one selected — so clear it, or the shortcut resolves to a band that is building nothing
 	# and the assertion below judges the wrong band. (The next state clears it too; this is not restored.)
 	h._hud.clear_selection()
+	# `BandFx.band_fixture` stamps its own `band_id`, and `Hud._emit_assign_labor` REFUSES a band
+	# without one — so the shortcut would no-op silently and the guard would pass on nothing.
 	var quick_hunt_band := BandFx.band_fixture()
-	quick_hunt_band["band_id"] = QUICK_HUNT_BAND_ID
 	quick_hunt_band["idle_workers"] = QUICK_HUNT_IDLE_WORKERS
 	quick_hunt_band["labor_assignments"] = [{
 		"kind": "hunt", "workers": 2, "floor": 0.5,

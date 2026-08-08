@@ -22,8 +22,8 @@ use core_sim::{
     EquipmentConfigHandle, Expedition, ExpeditionConfig, ExpeditionConfigHandle, ExpeditionMission,
     ExpeditionPhase, FactionId, FaunaConfigHandle, GenerationId, HerdRegistry, HerdTelemetry,
     HuntingParty, LaborAllocation, LaborConfigHandle, LocalStore, MoraleCause, PopulationCohort,
-    ResidentBand, SimulationConfig, SnapshotHistory, StartingUnit, TileRegistry, VisibilityLedger,
-    FOOD, STRIP_IT_BARE,
+    ResidentBand, SimulationConfig, StartingUnit, TileRegistry, VisibilityLedger, FOOD,
+    STRIP_IT_BARE,
 };
 
 /// The reference denial party — four people, the same crew every raid fixture in
@@ -285,7 +285,16 @@ fn spawn_home_band(app: &mut App, herd_pos: UVec2) -> bevy::prelude::Entity {
         (herd_pos.y + height / 3) % height,
     );
     let tile = tile_at(app, far);
-    app.world.spawn((cohort(tile, 20), ResidentBand)).id()
+    app.world
+        .spawn((
+            cohort(tile, 20),
+            ResidentBand,
+            // Addressable + zero wear: the denial readouts are ASKED for now (the pre-launch table
+            // is retired), and a query needs a band to price against.
+            core_sim::BandId(FIXTURE_BAND_ID),
+            core_sim::BandEquipment::default(),
+        ))
+        .id()
 }
 
 /// A party already in the `Hunting` phase on `mission`, positioned on the herd's tile — the state
@@ -567,7 +576,7 @@ fn a_wary_herd_resists_denial_and_the_forecast_says_so() {
 
     // 3. Liveness: a bigger party on the SAME wary herd does get there, so `Repelled` is a statement
     //    about the party rather than about the fixture.
-    let big_enough = expedition_cfg(&wary).max_estimated_party();
+    let big_enough = SHEET_SEARCH_BOUND;
     let overwhelming = forecast(&wary, &id, big_enough);
     assert!(
         overwhelming.outcome.succeeded() && overwhelming.turns_to_collapse.is_some(),
@@ -1066,7 +1075,7 @@ fn the_exported_denial_estimate_matches_a_real_raid_at_wariness_zero() {
     reveal_herd(&mut app, herd_pos);
     recapture_snapshot_in_place(&mut app.world);
 
-    let row = exported_denial_row(&app, &id, PARTY_WORKERS);
+    let row = denial_answer(&mut app, &id, PARTY_WORKERS);
     assert_eq!(
         (row.turns_to_collapse_low, row.turns_to_collapse_high),
         (row.turns_to_collapse, row.turns_to_collapse),
@@ -1139,7 +1148,7 @@ fn the_exported_denial_band_brackets_the_seeded_raids_on_a_wary_herd() {
         let (id, herd_pos) = pin_raid_herd(&mut app, BANDED_HERD);
         reveal_herd(&mut app, herd_pos);
         recapture_snapshot_in_place(&mut app.world);
-        let row = exported_denial_row(&app, &id, BANDED_PARTY_WORKERS);
+        let row = denial_answer(&mut app, &id, BANDED_PARTY_WORKERS);
         // The band is a property of the herd and the party, not of the seed — the projection makes
         // no draw at all. Assert that directly rather than re-reading it per seed.
         let (low, high) = (row.turns_to_collapse_low, row.turns_to_collapse_high);
@@ -1209,33 +1218,71 @@ struct ExportedDenialRow {
     wasted_trade: f32,
 }
 
-fn exported_denial_row(app: &App, id: &str, party_workers: u32) -> ExportedDenialRow {
-    let snapshot = app
-        .world
-        .resource::<SnapshotHistory>()
-        .latest_entry()
-        .expect("a snapshot was captured")
-        .snapshot;
-    let herd = snapshot
-        .herds
-        .iter()
-        .find(|h| h.id == id)
-        .expect("the herd is on the wire (its tile was revealed)");
-    let row = herd
-        .denial_estimates
-        .iter()
-        .find(|row| row.party_workers == party_workers)
-        .unwrap_or_else(|| panic!("no denial estimate row for a party of {party_workers}"));
+/// The `BandId` every fixture band in this file carries — the band a denial query is priced for.
+const FIXTURE_BAND_ID: u64 = 1;
+
+/// **How large a party these fixtures let the seed search consider.**
+///
+/// It stands in for the asking band's idle workers, which is what bounds the search in play. Wide
+/// enough to cover the reported Red Deer's requirement with headroom, so a fixture that reads the
+/// sentinel is reading a fact about the *herd* rather than about a band too small to matter.
+const SHEET_SEARCH_BOUND: u32 = 40;
+
+/// The denial readout for `party_workers`, **asked for** through `core_sim::forecast_query`.
+///
+/// It used to be a lookup in the herd row's `denialEstimates` table. That table is retired: it was a
+/// forward simulation per quoted party size, three quantiles deep, for every huntable herd on the
+/// map, every frame — and it quoted one default-kit party to every band alike. The query answers the
+/// **exact** party for the **asking band's** kit and wear, which is both cheaper and the number the
+/// player is actually shown.
+///
+/// The assertions built on this are unchanged. What they read is now an answer rather than a row.
+fn denial_answer(app: &mut App, id: &str, party_workers: u32) -> ExportedDenialRow {
+    let reply = denial_reply(app, id, party_workers);
+    let row = reply.at_composed;
     ExportedDenialRow {
         turns_to_collapse: row.turns_to_collapse,
         turns_to_collapse_low: row.turns_to_collapse_low,
         turns_to_collapse_high: row.turns_to_collapse_high,
-        outcome: row.outcome.clone(),
+        outcome: row.outcome,
         animals_killed: row.animals_killed,
         delivered_food: row.delivered_food,
         wasted_food: row.wasted_food,
         delivered_trade: row.delivered_trade,
         wasted_trade: row.wasted_trade,
+    }
+}
+
+/// The raw denial reply — [`denial_answer`]'s source, and the seeded party's too.
+fn denial_reply(
+    app: &mut App,
+    id: &str,
+    party_workers: u32,
+) -> sim_runtime::commands::DenialRaidForecastReply {
+    let kit_id = app
+        .world
+        .resource::<core_sim::EquipmentConfigHandle>()
+        .get()
+        .default_kit_id(core_sim::KitJob::Hunt)
+        .to_string();
+    let reply = core_sim::forecast_query::answer_forecast_query(
+        &mut app.world,
+        &sim_runtime::commands::QueryPayload::DenialRaidForecast(
+            sim_runtime::commands::DenialRaidForecastQuery {
+                faction_id: 0,
+                band_id: FIXTURE_BAND_ID,
+                herd_id: id.to_string(),
+                kit_id,
+                party_workers,
+                // The seed search's bound. Wide enough that this fixture's requirement is inside it,
+                // so the sheet reports a party rather than "your band is too small".
+                max_party_workers: SHEET_SEARCH_BOUND,
+            },
+        ),
+    );
+    match reply {
+        sim_runtime::commands::QueryReply::DenialRaidForecast(answer) => answer,
+        other => panic!("a denial query over a live herd is answered: {other:?}"),
     }
 }
 
@@ -1332,8 +1379,7 @@ fn the_reported_red_deer_raid_is_staffable_and_its_seeded_party_declines_the_her
     let (id, pos) = pin_raid_herd_of(&mut app, REPORTED_QUARRY, REPORTED_HERD);
     reveal_herd(&mut app, pos);
     recapture_snapshot_in_place(&mut app.world);
-    let sheet = exported_denial_sheet(&app, &id);
-    let ladder = expedition_cfg(&app).estimate_party_sizes.clone();
+    let sheet = exported_denial_sheet(&mut app, &id);
 
     // 1. The number, and the rounding. `8.3` hunters is NINE — and the sheet never opens BELOW it.
     assert!(
@@ -1355,56 +1401,22 @@ fn the_reported_red_deer_raid_is_staffable_and_its_seeded_party_declines_the_her
          and opening there quotes a party under the verdict \"still standing when the forecast runs \
          out\""
     );
-    let below = sheet
-        .row_below(sheet.party_needed)
-        .expect("the seed is never the sheet's first row on this herd");
     assert!(
-        !sheet.succeeded_at(below),
-        "…and the sampled row below the seed ({below}) must NOT have succeeded, or the sheet \
-         skipped a party that works"
+        !sheet.succeeded_at(sheet.party_needed - 1),
+        "…and the party one below the seed must NOT have succeeded, or the search skipped a party \
+         that works"
     );
 
-    // 2. It is reachable at all — the defect was that this row did not exist. The requirement is
-    //    not a rung of the shared ladder; it is on the sheet only because the denial axis samples a
-    //    contiguous run at the herd's OWN requirement, which is what keeps the seed off a rung the
-    //    player cannot justify.
-    assert!(
-        !ladder.contains(&sheet.party_needed),
-        "this fixture only means something while the requirement ({}) falls BETWEEN the ladder's \
-         rungs ({ladder:?}) — a requirement that happened to land on one would pass without the \
-         requirement run existing at all",
-        sheet.party_needed
-    );
+    // 2. **The seed is an EXACT party, not a rung.** The retired sheet sampled its axis — the shared
+    //    `estimate_party_sizes` ladder plus a short contiguous run at the herd's closed-form
+    //    requirement — so the seed could only ever be one of the sampled sizes, and this fixture
+    //    existed to prove the requirement run kept it off the rung above (16 on this herd). The
+    //    search is contiguous now, so there is no rung to be rounded to and no run to justify: the
+    //    seed is simply the smallest party that works, which the assertions above state directly.
     assert!(
         sheet.party_needed <= REPORTED_IDLE_WORKERS,
         "the band held {REPORTED_IDLE_WORKERS} idle workers; a requirement past that would make \
          this a fixture about a band too small, which is a different (and legitimate) refusal"
-    );
-    // …and the LADDER did not round it up. The requirement run is the whole reason the seed can
-    // land between two rungs; without it the sheet would open on the next rung above (16 here),
-    // which is a party the player has no reason to believe in.
-    let next_rung_above = *ladder
-        .iter()
-        .find(|rung| **rung > sheet.party_needed)
-        .expect("the ladder reaches past this requirement");
-    assert!(
-        sheet.party_needed < next_rung_above,
-        "the seed ({}) must not be inflated to a ladder rung ({next_rung_above})",
-        sheet.party_needed
-    );
-    // The sampled sheet costs no more rows than the retired contiguous `1..=requirement + 8` axis.
-    assert!(
-        sheet.rows() <= RETIRED_CONTIGUOUS_END,
-        "the sampled axis spent {} rows where the contiguous one spent {RETIRED_CONTIGUOUS_END}",
-        sheet.rows()
-    );
-
-    assert!(
-        sheet.largest_party() > sheet.party_needed,
-        "the table must quote headroom ABOVE the requirement, or a player holding more workers than \
-         the herd needs has no row to read for spending them (largest row {}, needed {})",
-        sheet.largest_party(),
-        sheet.party_needed
     );
 
     // 3 + 4. Driven for real, over seeds, because the retreat is a draw and this herd is a near-run
@@ -1429,74 +1441,60 @@ fn the_reported_red_deer_raid_is_staffable_and_its_seeded_party_declines_the_her
 
 /// **The largest party the retired CONTIGUOUS axes reached on this herd.** The hunt table walked
 /// `1..=8` (`estimate_party_sizes` as a count) and the denial table `1..=requirement + 8`, so on the
-/// reported Red Deer this is the higher of the two, `9 + 8`.
+/// reported Red Deer this is the higher of the two, `9 + 8`. Kept as the fixture's "well past
+/// anything the old tables covered" mark.
 const RETIRED_CONTIGUOUS_END: u32 = REPORTED_PARTY_NEEDED + 8;
 
-/// **A party past where the contiguous axes stopped now finds a row — on BOTH tables.**
+/// **ANY party is answered, exactly — there is no axis to fall off.**
 ///
-/// This is the defect the ladder exists for. Both tables sampled their party axis contiguously from
-/// `1` and the client's lookup demanded an *exact* match, while the compose sheet's stepper caps at
-/// the band's **idle workers** — an unrelated number. A band with more idle workers than the axis
-/// was long therefore had a stepper it could not read: every raid readout on the sheet went blank —
-/// no verdict, no range, no take, no turn count.
+/// This is the end state of a defect that was fixed twice. Both estimate tables sampled their party
+/// axis and the client's lookup demanded a match, while the compose sheet's stepper caps at the
+/// band's **idle workers** — an unrelated number. A band with more idle workers than the axis was
+/// long had a stepper it could not read, and every raid readout went blank: no verdict, no range, no
+/// take, no turn count. The first fix made the axis a ladder and taught the client to resolve to the
+/// nearest rung, which bought coverage at the price of quoting a party the player had not asked for.
 ///
-/// The claim is deliberately made on the **exported wire** and against a party well past the retired
-/// end, on both tables at once: the hunt table's axis is the shorter of the two, so a fix applied to
-/// the denial half alone would still leave the compose sheet dark.
+/// The query removes the class. It takes the party as an **argument**, so the concepts of "off the
+/// end of the axis" and "the nearest rung" do not exist; the reply echoes the party it answered, and
+/// this asserts that echo across a range that spans and passes the retired ends.
 ///
-/// The pairing that makes it an assertion rather than a tautology: every rung of the shipped ladder
-/// must be present on both tables, so "there is a row up there somewhere" cannot pass by the axis
-/// having quietly become one enormous row.
+/// The liveness pairing: the answers must not all be identical. A stub returning one canned row
+/// would satisfy an echo check alone, so the sweep also requires the verdicts to actually move with
+/// party size — which is the whole reason the number is dialable.
 #[test]
-fn a_party_past_the_retired_contiguous_axis_finds_a_row_on_both_tables() {
+fn any_party_size_is_answered_exactly_with_no_axis_to_fall_off() {
     let mut app = wary_world();
     let (id, pos) = pin_raid_herd_of(&mut app, REPORTED_QUARRY, REPORTED_HERD);
     reveal_herd(&mut app, pos);
-    recapture_snapshot_in_place(&mut app.world);
 
-    let snapshot = app
-        .world
-        .resource::<SnapshotHistory>()
-        .latest_entry()
-        .expect("a snapshot was captured")
-        .snapshot;
-    let herd = snapshot
-        .herds
-        .iter()
-        .find(|h| h.id == id)
-        .expect("the herd is on the wire (its tile was revealed)");
-
-    let ladder = expedition_cfg(&app).estimate_party_sizes.clone();
-    let past_the_end = *ladder
-        .iter()
-        .find(|rung| **rung > RETIRED_CONTIGUOUS_END)
-        .expect("the ladder must reach past where the contiguous axes stopped");
-
-    let denial_parties: Vec<u32> = herd
-        .denial_estimates
-        .iter()
-        .map(|row| row.party_workers)
-        .collect();
-    let hunt_parties: Vec<u32> = herd
-        .hunt_trip_estimates
-        .iter()
-        .map(|row| row.party_workers)
-        .collect();
-
-    for (table, parties) in [("denial", &denial_parties), ("hunt", &hunt_parties)] {
-        assert!(
-            parties.contains(&past_the_end),
-            "{table}: a party of {past_the_end} is past the retired axis's \
-             {RETIRED_CONTIGUOUS_END} and must still resolve to an exact row — that gap is what \
-             blanked the whole sheet"
+    let mut verdicts = std::collections::BTreeSet::new();
+    // Spans the retired ends and runs well past them, including sizes no sampled ladder carried.
+    for party_workers in [
+        1_u32,
+        2,
+        7,
+        9,
+        13,
+        RETIRED_CONTIGUOUS_END,
+        RETIRED_CONTIGUOUS_END + 5,
+    ] {
+        let answer = denial_reply(&mut app, &id, party_workers);
+        assert_eq!(
+            answer.at_composed.party_workers, party_workers,
+            "the reply must answer the party it was ASKED for — never the nearest sampled rung"
         );
-        for rung in &ladder {
-            assert!(
-                parties.contains(rung),
-                "{table}: the ladder's rung {rung} is missing, so the axis is not the ladder"
-            );
-        }
+        assert!(
+            !answer.at_composed.outcome.is_empty(),
+            "a party of {party_workers} must carry a verdict, not a blank — the defect this \
+             replaces was the sheet going dark past the axis's end"
+        );
+        verdicts.insert(answer.at_composed.outcome.clone());
     }
+    assert!(
+        verdicts.len() > 1,
+        "the verdict must move with party size across this sweep, or the answers are canned: \
+         {verdicts:?}"
+    );
 }
 
 /// The wire key [`DenialOutcome::Repelled`] publishes — spelled once so a test cannot drift from the
@@ -1535,8 +1533,8 @@ fn mean_biomass_after_raiding(workers: u32) -> f32 {
 /// which is the *no viable number* case the readout has to survive rather than paper over.
 const UNDENIABLE_HERD: RaidQuarry = RaidQuarry {
     body_mass: RED_DEER_BODY_MASS,
-    // Seated at the food peak, where the logistic curve is at its most productive: the hardest
-    // point on the path, and the one `herd_replacement_animals` sizes the requirement against.
+    // Seated at the food peak, where the logistic curve is at its most productive — the hardest
+    // point on the path a raid has to drive the herd down through.
     biomass_fraction: 0.5,
     carrying_capacity: 20_000.0,
     regrowth_rate: 0.10,
@@ -1559,24 +1557,25 @@ fn a_herd_no_quoted_party_can_collapse_reports_no_viable_party_and_still_reads_r
     let (id, pos) = pin_raid_herd_of(&mut app, REPORTED_QUARRY, UNDENIABLE_HERD);
     reveal_herd(&mut app, pos);
     recapture_snapshot_in_place(&mut app.world);
-    let sheet = exported_denial_sheet(&app, &id);
-    let cfg = expedition_cfg(&app);
+    let sheet = exported_denial_sheet(&mut app, &id);
 
     assert_eq!(
         sheet.party_needed, NO_VIABLE_DENIAL_PARTY,
-        "no party this sim will quote outpaces the herd, so the requirement is the sentinel — \
+        "no party the sim will vouch for outpaces the herd, so the requirement is the sentinel — \
          never a number the player could send and watch fail"
     );
-    // The table is still a table: capped at the quoting bound, and every row answers.
-    assert_eq!(
-        sheet.parties(),
-        cfg.estimate_party_sizes,
-        "a requirement past the ladder's last rung contributes NO rows, so the axis is the bare \
-         ladder — it must not run away with the requirement"
-    );
+    // **The pairing that makes the sentinel an assertion**: it must not have been reached by the
+    // answer going blank. Every party across the sweep still names WHY it failed, so the client has
+    // a verdict to render beside the "no viable party" line.
+    //
+    // The retired form of this compared the published axis against `estimate_party_sizes` — *"a
+    // requirement past the ladder's last rung contributes no rows, so the axis is the bare
+    // ladder"*. That claim was about a sampled table's shape and has no meaning now: the query has
+    // no axis, and the sweep above is the caller's own choice of parties.
     assert!(
         sheet.every_row_reads(REPELLED),
-        "…and every row must still name WHY, so the client renders a verdict instead of a blank"
+        "every party asked about must still name WHY, so the client renders a verdict instead of \
+         a blank"
     );
     // Liveness: the same species on an ordinary herd is deniable, so the sentinel above is a fact
     // about this range and not about the export being broken.
@@ -1586,51 +1585,33 @@ fn a_herd_no_quoted_party_can_collapse_reports_no_viable_party_and_still_reads_r
     reveal_herd(&mut ordinary, ordinary_pos);
     recapture_snapshot_in_place(&mut ordinary.world);
     assert_ne!(
-        exported_denial_sheet(&ordinary, &ordinary_id).party_needed,
+        exported_denial_sheet(&mut ordinary, &ordinary_id).party_needed,
         NO_VIABLE_DENIAL_PARTY,
         "a normal herd of the same species must still name a party — otherwise the sentinel above \
          is the export failing, not the range being too rich to deny"
     );
 }
 
-/// The wire's *"no quoted party drives this herd down"* — `HerdTelemetryState::denial_party_needed`'s
-/// sentinel, spelled once here so the fixture states what it is asserting.
+/// **"No party this band can field drives this herd down"** — `DenialRaidForecastReply`'s
+/// `party_needed` sentinel, spelled once here so the fixture states what it is asserting.
+///
+/// It is bounded by the asking band now, so it is never *"send nobody"* and never a party the
+/// band could not raise: it means the search ran to the band's last worker and found none.
 const NO_VIABLE_DENIAL_PARTY: u32 = 0;
 
-/// The exported denial sheet for one herd: the rows the client looks up, and the party size it opens
-/// on. Read off the **wire**, never the in-process forecast, so a capture that dropped either fails
-/// here rather than at the client.
+/// The denial sheet for one herd: a verdict per party size over [`SHEET_SWEEP`], and the party the
+/// sheet opens on. **Answered**, not exported — the pre-launch table is retired.
+///
+/// The `rows` / `parties` / `largest_party` / `row_below` helpers went with the table. They existed
+/// because the published axis was **sampled**: a fixture that wanted "the row below X" had to ask
+/// which row that was, since `X - 1` might not be quoted. The sweep is contiguous, so `X - 1` is
+/// always there and the question answers itself.
 struct ExportedDenialSheet {
     party_needed: u32,
     outcomes: Vec<(u32, String)>,
 }
 
 impl ExportedDenialSheet {
-    fn rows(&self) -> u32 {
-        self.outcomes.len() as u32
-    }
-
-    /// The party sizes the sheet actually quotes, ascending. The axis is **sampled**, not
-    /// contiguous, so a fixture that wants "the row below X" has to ask for it rather than assume
-    /// `X - 1` exists.
-    fn parties(&self) -> Vec<u32> {
-        let mut parties: Vec<u32> = self.outcomes.iter().map(|(workers, _)| *workers).collect();
-        parties.sort_unstable();
-        parties
-    }
-
-    /// The largest party the sheet quotes.
-    fn largest_party(&self) -> u32 {
-        self.parties().last().copied().unwrap_or(0)
-    }
-
-    /// The sampled row immediately **below** `party_workers`, or `None` if it is the first row.
-    fn row_below(&self, party_workers: u32) -> Option<u32> {
-        self.parties()
-            .into_iter()
-            .rfind(|workers| *workers < party_workers)
-    }
-
     fn outcome_at(&self, party_workers: u32) -> Option<&str> {
         self.outcomes
             .iter()
@@ -1652,25 +1633,32 @@ impl ExportedDenialSheet {
     }
 }
 
-fn exported_denial_sheet(app: &App, id: &str) -> ExportedDenialSheet {
-    let snapshot = app
-        .world
-        .resource::<SnapshotHistory>()
-        .latest_entry()
-        .expect("a snapshot was captured")
-        .snapshot;
-    let herd = snapshot
-        .herds
-        .iter()
-        .find(|h| h.id == id)
-        .expect("the herd is on the wire (its tile was revealed)");
+/// The party sizes a sheet fixture sweeps when it wants "every party this band could field".
+///
+/// **The sweep is the caller's now.** The retired `denialEstimates` table shipped a party axis, so a
+/// fixture could read "every row" off the wire; the query answers one party at a time, so a test
+/// that wants a range has to name it. Contiguous from 1 — which is also what the sheet's stepper
+/// offers — and past the reported quarry's requirement, so a verdict that changes with party size
+/// has room to change.
+const SHEET_SWEEP: std::ops::RangeInclusive<u32> = 1..=(REPORTED_PARTY_NEEDED + 4);
+
+/// The denial sheet for one herd, **asked for**: the party the sheet opens on, plus a verdict per
+/// party size over [`SHEET_SWEEP`].
+fn exported_denial_sheet(app: &mut App, id: &str) -> ExportedDenialSheet {
+    // `party_needed` is a property of the herd against this band's kit, so one query carries it;
+    // any party size would return the same seed.
+    let party_needed = denial_reply(app, id, *SHEET_SWEEP.start()).party_needed;
+    let outcomes = SHEET_SWEEP
+        .map(|party_workers| {
+            (
+                party_workers,
+                denial_reply(app, id, party_workers).at_composed.outcome,
+            )
+        })
+        .collect();
     ExportedDenialSheet {
-        party_needed: herd.denial_party_needed,
-        outcomes: herd
-            .denial_estimates
-            .iter()
-            .map(|row| (row.party_workers, row.outcome.clone()))
-            .collect(),
+        party_needed,
+        outcomes,
     }
 }
 
@@ -1828,7 +1816,7 @@ fn a_denial_raids_waste_is_reported_in_both_products() {
     reveal_herd(&mut app, herd_pos);
     recapture_snapshot_in_place(&mut app.world);
 
-    let row = exported_denial_row(&app, &id, WASTEFUL_PARTY_WORKERS);
+    let row = denial_answer(&mut app, &id, WASTEFUL_PARTY_WORKERS);
 
     // Liveness — a raid that killed nothing, or one whose pack never bound, would satisfy every
     // comparison below without exercising the waste at all.

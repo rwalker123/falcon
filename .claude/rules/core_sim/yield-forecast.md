@@ -128,8 +128,8 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 > `min(workers × perWorkerYield, ceiling(floor))` is honest per component — and for the *crew* side
 > of the same question the herd carries **`perWorkerBiomass`**, which is positive on a wolf where
 > both the cohort echo and the food rate mislead. The cohort field survives as the expedition
-> **outfit** lever (rough carry arithmetic before a target is chosen); for a chosen target the sim
-> exports the answer in `huntTripEstimates`.
+> **outfit** lever (rough carry arithmetic before a target is chosen); for a chosen target the client
+> asks — `sim_runtime`'s `HuntTripForecastQuery`, answered at that band's kit and live wear.
 
 > **A stance ceiling is now a STOCK, on both webs — `max(0, B − floor·K)`.** Since
 > `docs/plan_harvest_floor.md` slice 1 the four rows on each list are the stock standing above each
@@ -214,7 +214,7 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 > | build dip | **terms** — the four `*BuildFraction` fields | a factor on the crew term, likewise exact |
 > | engagement bound | **term** — `HerdTelemetryState.engageRate` | `workers × engageRate × dip × bodyMass` is linear in the crew, exactly like the carry term beside it |
 > | the take | **the answer** — `SourceYield.actual` | `floor(ceiling / bodyMass)` is not linear; no client can re-derive it |
-> | raid trip length | **sampled answers** — `huntTripEstimates` × `RAID_FORECAST_FLOOR_SAMPLES` | a bounded forward simulation; there is no expression to hand over |
+> | raid trip length | **an answer, ASKED FOR** — `HuntTripForecastQuery` on the command socket | a bounded forward simulation; there is no expression to hand over, and it depends on the asking band's kit and wear, which no per-herd row carries |
 > | the growth curve | **sampled answers** — `regrowthSamples` × `REGROWTH_CURVE_SAMPLES` | see below |
 >
 > **`regrowthSamples` is sampled, and NOT because the curve is hard to write down.** It is **two
@@ -235,8 +235,9 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 > peak of the curve IS the food peak** at `K/2` and is deliberately not published separately: one
 > number derived two ways is how the two start disagreeing. The samples are evenly spaced over
 > `0.0..=1.0` of `K`, so the x-axis is implicit; `REGROWTH_CURVE_SAMPLES` is a display-resolution
-> choice, not a model fact, and — like `RAID_FORECAST_FLOOR_SAMPLES` — is named so a set of readings
-> cannot quietly re-become a set of states.
+> choice, not a model fact, and is named so a set of readings cannot quietly re-become a set of
+> states. It is now the only sampled answer left on the wire: the raid tables that sat beside it were
+> sampled for affordability rather than because sampling was right, and asking replaced them.
 >
 > Sim-side that is **`SourceYieldForecast::ceiling_at(floor)`** — one computation, which answers *any*
 > floor because the player drags a continuous one. It is backed by the forecast's **terms**

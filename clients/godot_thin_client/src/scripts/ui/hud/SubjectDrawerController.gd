@@ -124,6 +124,28 @@ func render_subject_drawer(from_selection: bool = false) -> void:
     _drawercompose.refresh_compose_sheet()
     fit_subject_drawer()
 
+## **A FORECAST ANSWER LANDED — redraw only if it is about the party this drawer is showing.**
+##
+## A query triggers no snapshot, so `ForecastQuery.answered` is the only thing that can tell the
+## occupant drawer its `Collapse:` row has an answer. It is deliberately SUBJECT-SCOPED rather than an
+## unconditional `render_subject_drawer()`: the same signal fires on every reply to a compose sheet's
+## stepper, and rebuilding this drawer (which re-runs the height fit) on each of those would reflow the
+## card under a player who is composing something else entirely.
+##
+## The subject is recomposed from the shown party the same way the ask composes it, so a renamed or
+## re-targeted party simply does not match and nothing is redrawn.
+func on_forecast_answered(subject: String) -> void:
+    var unit := _selection.unit()
+    if unit.is_empty() or not bool(unit.get("is_expedition", false)):
+        return
+    if String(unit.get("expedition_mission", "")) != HudExpeditionVocab.EXPEDITION_MISSION_DENY:
+        return
+    var shown := ForecastQuery.subject_of(ForecastQuery.KIND_DENIAL_RAID,
+        int(unit.get("band_id", HudConst.NO_BAND_ID)),
+        String(unit.get("expedition_target_herd", "")).strip_edges())
+    if shown == subject:
+        render_subject_drawer()
+
 ## The LAND drawer: the terrain rows + the "Assign foragers" compose block (the land's only action).
 ## On a hex the player cannot see it also carries the unknown-contents statement — see below.
 func _render_land_drawer() -> void:
@@ -545,8 +567,12 @@ func _render_occupant_drawer(from_selection: bool = false) -> void:
     _occupant_detail.visible = true
     var lines: Array[String] = []
     if not _selection.unit().is_empty():
+        # A launched DENIAL party's `Collapse:` row is a forecast QUERY, and the ask belongs to a
+        # controller (`BandPanelController.launched_party_denial_view` — one seam, one request-id
+        # stream). It answers `{}` for anything else, which renders no row at all.
         lines = _banddetail.unit_summary_lines(
-            _selection.unit(), _selectioncard.selected_terrain_label(), ctx)
+            _selection.unit(), _selectioncard.selected_terrain_label(), ctx, false, true,
+            _bandpanel.launched_party_denial_view(_selection.unit()))
     elif not _selection.herd().is_empty():
         # Thread in the ACTUAL herders staffed/staged on this herd (summed across the player's bands,
         # pending-aware) so the "N / M" staffing readout is right the instant one is assigned — never a

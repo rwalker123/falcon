@@ -273,6 +273,31 @@ fn create_populations<'a>(
                     .collect();
                 builder.create_vector(&rows)
             };
+            // **What each offered kit grants THIS band** — the resolved answer, so the client does no
+            // tier stepping. Nested vector, built before the parent table like the one above.
+            let kit_tiers = {
+                let rows: Vec<_> = cohort
+                    .kit_tiers
+                    .iter()
+                    .map(|tiers| {
+                        let kit_id = builder.create_string(&tiers.kit_id);
+                        fb::BandKitTiers::create(
+                            builder,
+                            &fb::BandKitTiersArgs {
+                                kitId: Some(kit_id),
+                                attack: tiers.attack,
+                                huntCarryPerWorkerBiomass: tiers.hunt_carry_per_worker_biomass,
+                                forageCarryPerWorkerBiomass: tiers.forage_carry_per_worker_biomass,
+                                attackMinBodyMass: tiers.attack_min_body_mass,
+                                attackMaxBodyMass: tiers.attack_max_body_mass,
+                                dispersion: tiers.dispersion,
+                                exposure: tiers.exposure,
+                            },
+                        )
+                    })
+                    .collect();
+                builder.create_vector(&rows)
+            };
             let expedition_mission = if cohort.expedition_mission.is_empty() {
                 None
             } else {
@@ -364,7 +389,6 @@ fn create_populations<'a>(
                     expeditionAnnounced: cohort.expedition_announced,
                     pendingRevealX: pending_reveal_x,
                     pendingRevealY: pending_reveal_y,
-                    maxExpeditionPartySize: cohort.max_expedition_party_size,
                     expeditionCarryCap: cohort.expedition_carry_cap,
                     // Appended after every earlier-shipped field (append-only wire discipline).
                     expeditionTargetHerd: expedition_target_herd,
@@ -418,6 +442,7 @@ fn create_populations<'a>(
                     // "never completed" sentinels — appended after the kit.
                     expeditionForecastHorizonTurns: cohort.expedition_forecast_horizon_turns,
                     kitItemConditions: Some(kit_item_conditions),
+                    kitTiers: Some(kit_tiers),
                 },
             )
         })

@@ -1826,6 +1826,15 @@ fn kit_roster_states(
             let choice = equipment
                 .kit(&definition.id)
                 .expect("a roster entry resolves by its own id");
+            // **Through the same seam the per-band rows resolve through** — this one over `fresh`,
+            // `population_state`'s `kit_tiers` over the band's live ledger. One arithmetic.
+            let tiers = equipment.resolve_kit_tiers(
+                kit_levers.hunter_intrinsic,
+                labor.hunt.per_worker_biomass_capacity,
+                labor.forage.per_worker_biomass_capacity,
+                &choice,
+                &fresh,
+            );
             KitOptionState {
                 id: definition.id.clone(),
                 display_name: definition.display_name.clone(),
@@ -1834,32 +1843,22 @@ fn kit_roster_states(
                     .iter()
                     .map(|job| job.as_str().to_string())
                     .collect(),
-                attack: equipment
-                    .hunter_profile_unbounded(kit_levers.hunter_intrinsic, &choice, &fresh)
-                    .attack,
-                hunt_carry_per_worker_biomass: equipment.hunt_per_worker_biomass_capacity(
-                    labor.hunt.per_worker_biomass_capacity,
-                    &choice,
-                    &fresh,
-                ),
-                forage_carry_per_worker_biomass: equipment.forage_per_worker_biomass_capacity(
-                    labor.forage.per_worker_biomass_capacity,
-                    &choice,
-                    &fresh,
-                ),
+                attack: tiers.attack,
+                hunt_carry_per_worker_biomass: tiers.hunt_carry_per_worker_biomass,
+                forage_carry_per_worker_biomass: tiers.forage_carry_per_worker_biomass,
                 // **The attack's size window**, so the client's pre-launch gate resolves this kit
                 // against the quarry in front of it rather than against the kit's best case. `0` on
                 // either end is unbounded, which every weapon but the passive device is.
-                attack_min_body_mass: equipment
-                    .attack_mass_bounds(&choice, &fresh)
-                    .0
-                    .unwrap_or(0.0),
-                attack_max_body_mass: equipment
-                    .attack_mass_bounds(&choice, &fresh)
-                    .1
-                    .unwrap_or(0.0),
-                dispersion: equipment.dispersion(&choice, &fresh),
-                exposure: equipment.exposure(&choice, &fresh),
+                attack_min_body_mass: tiers.attack_min_body_mass,
+                attack_max_body_mass: tiers.attack_max_body_mass,
+                dispersion: tiers.dispersion,
+                exposure: tiers.exposure,
+                // **WHICH ITEMS THIS KIT CARRIES** — the definition's `uses` list verbatim, in config
+                // order, off the *definition* rather than the resolved `KitChoice` so the published
+                // order is the roster's own. The tiers above are numbers and name no item, so without
+                // this a durability readout has to guess which component produced them — and the
+                // guess was `attack → "spears"`, which quoted a Trapping party the spears' condition.
+                item_ids: definition.uses.clone(),
             }
         })
         .collect()
@@ -2186,12 +2185,9 @@ pub fn capture_snapshot(
     let equipment_config = equipment.get();
     let combat_config = combat.get();
     // A detached party fights at the `expedition_danger_multiplier`-scaled lethality, exactly as
-    // `advance_expeditions` resolves it — so the in-flight ETA and the turn agree.
-    let expedition_combat_tuning = {
-        let mut tuning = combat_config.tuning();
-        tuning.lethality *= combat_config.expedition_danger_multiplier;
-        tuning
-    };
+    // `advance_expeditions` resolves it — so the in-flight ETA and the turn agree. Through the one
+    // named constructor rather than a fourth copy of the multiply (`CombatConfig::expedition_tuning`).
+    let expedition_combat_tuning = combat_config.expedition_tuning();
     let kit_levers = crate::snapshot::population::BandKitLevers {
         config: &equipment_config,
         hunter_intrinsic: creatures.get().person(),
@@ -2199,7 +2195,6 @@ pub fn capture_snapshot(
         equipped_gather_rate: labor_config.forage.per_worker_biomass_capacity,
     };
     let expedition_levers = ExpeditionLevers {
-        max_estimated_party: expedition_cfg.max_estimated_party(),
         hunt_per_worker_carry: expedition_cfg.hunt.per_worker_carry,
         hunt_per_worker_provisions: hunt_per_worker_provisions(&labor_config, &fauna_config),
         hunt_viability_warn_turns: expedition_cfg.hunt.viability_warn_turns,
@@ -2635,23 +2630,27 @@ pub fn capture_snapshot(
         fauna: &fauna_config,
         ladder: &ladder_config,
         labor: &labor_config,
-        expedition: &expedition_cfg,
         grid_size: config.grid_size,
         wrap_horizontal: config.map_topology.wrap_horizontal,
         visibility: &visibility_ledger,
         viewer: viewer_faction.0,
         fog_enabled: config.fog_enabled,
         // **The hunt job's DEFAULT kit, deliberately** — the herd row is a fact about the herd and
-        // has no band to ask, so both estimate tables are quoted at one kit and **publish which**.
-        // A fresh kit (`BandEquipment::default()` is zero wear), because the table describes the
-        // kit rather than any band's wear on it; with the shipped `big_game` default this is
-        // bit-for-bit the hardcoded `equipped = true` it replaced.
+        // has no band to ask. A fresh kit (`BandEquipment::default()` is zero wear), because the row
+        // describes the kit rather than any band's wear on it; with the shipped `big_game` default
+        // this is bit-for-bit the hardcoded `equipped = true` it replaced.
+        //
+        // **This prices the per-worker YIELD row only.** The two pre-launch estimate tables that
+        // used to be quoted here are gone — `crate::forecast_query` answers them per band, per kit,
+        // per exact party and floor, on demand — and with them went `quoted_per_worker_haul`
+        // (the sled tier only the tables read), `quoted_kit_id` (the honesty note that disclaimed
+        // them) and `range_sigmas` (the denial readout's band width).
         party: crate::fauna::HuntingParty {
             // **UNBOUNDED, and `validate` is what keeps that honest.** This ONE party prices every
             // herd row, so it cannot carry a per-quarry attack — and a mass-bounded weapon in the
             // hunt job's default kit would therefore be quoted against animals it cannot touch.
             // `EquipmentConfig::validate` rejects exactly that config, so the case is a boot failure
-            // rather than a table that lies. See "the default hunt kit carries no mass bound".
+            // rather than a row that lies. See "the default hunt kit carries no mass bound".
             hunter: equipment_config.hunter_profile_unbounded(
                 kit_levers.hunter_intrinsic,
                 &quoted_kit,
@@ -2662,15 +2661,6 @@ pub fn capture_snapshot(
                 * equipment_config.exposure(&quoted_kit, &quoted_wear),
             dispersion: equipment_config.dispersion(&quoted_kit, &quoted_wear),
         },
-        quoted_per_worker_haul: equipment_config.hunt_per_worker_biomass_capacity(
-            kit_levers.equipped_haul_rate,
-            &quoted_kit,
-            &quoted_wear,
-        ),
-        quoted_kit_id: quoted_kit.id().to_string(),
-        // The denial estimate's reported band width — a readout lever, read from the same config the
-        // per-source yield range reads it from.
-        range_sigmas: combat_config.forecast_range_sigmas,
     });
     drop(herds_scope);
     let faction_inventory_state = snapshot_faction_inventory(&faction_inventory);

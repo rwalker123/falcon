@@ -253,6 +253,11 @@ func _ready() -> void:
             hud.connect("improvement_requested", Callable(self, "_on_hud_improvement"))
         if hud.has_signal("answer_fork_requested") and not hud.is_connected("answer_fork_requested", Callable(self, "_on_hud_answer_fork")):
             hud.connect("answer_fork_requested", Callable(self, "_on_hud_answer_fork"))
+        # **THE FORECAST QUERY'S TRANSPORT, injected rather than reached for.** The HUD composes the
+        # question out of what it is already rendering; the socket is `Main`'s. `_process` pumps the
+        # answers back the other way — a query triggers NO snapshot, so nothing else ever would.
+        if hud.has_method("forecast_query"):
+            hud.call("forecast_query").set_sender(Callable(self, "_send_forecast_query"))
         if hud.has_signal("next_turn_requested") and not hud.is_connected("next_turn_requested", Callable(self, "_on_hud_next_turn")):
             hud.connect("next_turn_requested", Callable(self, "_on_hud_next_turn"))
         if hud.has_signal("roster_occupant_selected") and not hud.is_connected("roster_occupant_selected", Callable(self, "_on_hud_roster_occupant_selected")):
@@ -1790,7 +1795,25 @@ func _sync_fog_of_war(snapshot: Dictionary, is_delta: bool) -> void:
         map_view.call("set_fow_enabled", enabled)
     _push_fog_preference()
 
+## Put one composed forecast question on the command socket. Injected into the HUD's `ForecastQuery`
+## as its sender; `true` means the frame reached the socket, never that it was answered.
+func _send_forecast_query(request_id: int, ask: Dictionary) -> bool:
+    if command_client == null:
+        return false
+    return command_client.send_query(request_id, ask)
+
+## Drain the forecast answers that landed this frame into the HUD's seam, and let it retire any
+## superseded answer whose stale window has closed. **This is the only path an answer takes** — a
+## query deliberately triggers no re-capture server-side, so no snapshot will ever carry one.
+func _pump_forecast_queries() -> void:
+    if hud == null or command_client == null or not hud.has_method("forecast_query"):
+        return
+    var query: ForecastQuery = hud.call("forecast_query")
+    query.deliver(command_client.poll_query_replies())
+    query.expire_stale()
+
 func _process(delta: float) -> void:
+    _pump_forecast_queries()
     if Input.is_action_just_pressed("toggle_inspector"):
         _toggle_inspector_visibility()
     if Input.is_action_just_pressed("toggle_legend"):

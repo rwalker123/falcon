@@ -1822,7 +1822,7 @@ function that clamps nothing is an invitation to put the clamp back. `SourceFore
 is the surviving named seam, for the herd drawer's expedition branch and the dock's hunt form
 (`labor-ui.md`).
 
-**The stepper SEEDS on `denialPartyNeeded`** — the smallest party the sim quotes whose raid
+**The stepper SEEDS on the reply's `party_needed`** — the smallest party the sim quotes whose raid
 SUCCEEDS, i.e. whose kills outpace the herd's regrowth. **`horizon` is not a success and not
 `repelled`**, so "the first row that is not `repelled`" is the wrong test and shipped as one:
 `SourceForecast.denial_outcome_succeeds` over `DENIAL_SUCCESS_OUTCOMES` is the client's ONE spelling

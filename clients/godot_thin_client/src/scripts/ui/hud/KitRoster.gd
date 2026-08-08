@@ -32,6 +32,16 @@ const KIT_ID_KEY := "id"
 const KIT_DISPLAY_NAME_KEY := "display_name"
 const KIT_JOBS_KEY := "jobs"
 
+## **WHICH ITEMS THIS KIT CARRIES** — its `equipment.json` `uses` list verbatim, in config order
+## (weapon first, haul aid after), which is the order the hint reads them out in. An EMPTY list is a
+## real answer — `none` carries nothing and wears nothing — never "unknown".
+##
+## The tiers below are bare numbers and name no item, so before this list reached the wire a
+## condition readout had to GUESS which item produced them. It guessed `attack → spears`, and told a
+## Trapping party it carried spears while quoting the SPEARS' remaining condition — exactly backwards
+## for a band with fresh traps and dry spears.
+const KIT_ITEM_IDS_KEY := "item_ids"
+
 ## The three tier axes a kit publishes, and the ONE mapping from each to the consumable component
 ## behind it (`equipment.json` "One kit, one job"): spears raise ATTACK, a SLED raises the HUNT's
 ## carry, BASKETS raise the FORAGE web's. **The two carry tiers are not two readings of one number** —
@@ -57,32 +67,27 @@ const BAND_ITEM_CONDITIONS_KEY := "kit_item_conditions"
 const ITEM_CONDITION_ID_KEY := "item_id"
 const ITEM_CONDITION_REMAINING_KEY := "remaining"
 
-## **WHICH ITEM BACKS EACH DISPLAY AXIS.** The wire says what a kit *grants* per axis but not which
-## item supplies it, so the client carries this mapping — as it always effectively did, when the axis
-## was welded to a field name.
+## **WHAT EVERY OFFERED KIT WOULD GRANT *THIS* BAND, RIGHT NOW** — one row per roster kit on the
+## band's own cohort (`PopulationCohortState.kitTiers`), resolved by the sim against this band's LIVE
+## wear. `{kit_id, attack, hunt_carry_per_worker_biomass, forage_carry_per_worker_biomass,
+## attack_min_body_mass, attack_max_body_mass, dispersion, exposure}`.
 ##
-## **Known limitation, and it is bounded.** A second item supplying the same axis (a bow beside the
-## spear) would read its condition off the wrong row here. That is a real gap the day a kit carries
-## two weapons, and the fix is for the wire to state the axis→item mapping per kit rather than for
-## this table to grow guesses. It cannot misfire on the shipped roster: no two items declare the same
-## axis, which the server also enforces for the two carries at config-validate time.
-const AXIS_ITEMS := {
-	"attack": "spears",
-	"hunt_carry_per_worker_biomass": "sled",
-	"forage_carry_per_worker_biomass": "baskets",
-}
+## **IT IS THE ANSWER, AND NOTHING HERE MAY RE-DERIVE IT.** This layer used to step a fresh tier down
+## by asking whether the item behind an axis still had condition — which needs to know WHICH ITEM
+## SUPPLIES WHICH AXIS, and that mapping is per kit: `big_game` gets attack from `spears`, `trapping`
+## from `traps`. `KitOption.item_ids` says what a kit carries, never what each item is FOR, and no rule
+## over that list recovers it (set-cover and positional order both mis-assign; "any item live" keeps a
+## kit at full tier with its weapon dry; "all items dry" keeps it at full tier with only the sled
+## left). The live symptom of guessing was a band with FRESH TRAPS AND DRY SPEARS repriced to the bare
+## hand under `trapping` — same root cause as the pre-launch estimate tables this arc retired, a fact
+## the sim knew that the wire did not carry, and the same fix: publish the answer.
+const BAND_KIT_TIERS_KEY := "kit_tiers"
+const BAND_KIT_TIERS_ID_KEY := "kit_id"
 
 ## Condition at or below which a component is spent. It is the wire's own cliff, not a display
 ## threshold: the sim equips a component while its remaining condition is strictly positive.
 const CONDITION_DRY := 0.0
 
-## Which kit the two pre-launch estimate tables were quoted for — the hunt job's DEFAULT, on every
-## herd, always. **Neither table is repriced per kit** (they are ~95% of snapshot capture), and these
-## keys exist so a client can SAY so rather than quoting a kitted raid's numbers to a bare-handed
-## party. Two keys because they are two tables: if one is later repriced and the other is not, a
-## single key would lie about whichever was left behind.
-const HERD_TRIP_ESTIMATES_KIT_KEY := "hunt_trip_estimates_kit_id"
-const HERD_DENIAL_ESTIMATES_KIT_KEY := "denial_estimates_kit_id"
 
 ## The two jobs a kit may be sent on, spelled exactly as the wire's `jobs` entries and as the
 ## `assign_labor` roles — aliases of `SourceForecast`'s labor kinds so the sheet's verb, the command's
@@ -338,83 +343,92 @@ static func priced_source(src: Dictionary, prefix: String, kits: Array, job: Str
 		equipped_tier(kits, carry_key),
 		float(kit.get(KIT_DISPERSION_KEY, DISPERSION_NEUTRAL)))
 
-## **THE KIT'S ATTACK AGAINST THIS QUARRY** — the kit's own number inside its size window, and the
-## band's unequipped attack outside it.
+## **THE SIZE WINDOW A MASS-BOUNDED WEAPON WORKS IN**, `0` on either end meaning unbounded — which is
+## what every weapon but the passive device ships (`equipment.md`). They are the two keys of a
+## `kit_tiers` row that are NOT tiers, which is why they are named here beside the axis constants.
+const KIT_ATTACK_MIN_MASS_KEY := "attack_min_body_mass"
+const KIT_ATTACK_MAX_MASS_KEY := "attack_max_body_mass"
+
+## **THE ATTACK THIS BAND'S KIT BRINGS AGAINST THIS QUARRY** — the band's own number inside the kit's
+## size window, and the band's unequipped attack outside it.
 ##
 ## A snare holds a hare and not a deer, so asking a kit for its attack without naming the animal gets
-## the kit's BEST case — which would tell a player the trapping kit can take a Red Deer. `0` on a
-## bound means unbounded, which every weapon but the passive device is.
-static func attack_against(kit: Dictionary, body_mass: float, unequipped_attack: float) -> float:
-	var low := float(kit.get("attack_min_body_mass", 0.0))
-	var high := float(kit.get("attack_max_body_mass", 0.0))
+## the kit's BEST case — which would tell a player the trapping kit can take a Red Deer.
+##
+## **THE WINDOW AND THE ATTACK BOTH COME OFF THE BAND'S `kit_tiers` ROW, NEVER OFF THE ROSTER.** The
+## sim resolves that row against the band's live wear ledger, and a spent item contributes no bound any
+## more than it contributes a tier — so a kit whose mass-bounded weapon has run dry has NO size window
+## at all rather than its fresh one. Reading the bounds off `KitOptionState` while reading the attack
+## off the band is exactly the mixed answer the per-band field was added to remove: it would quote a
+## band with dry traps the bare hand's attack (correct) inside the TRAPS' 1 kg ceiling (wrong), so a
+## bare-handed party after a rabbit would be told it had no weapon for it. The roster's own bounds are
+## the FRESH-KIT reference, and they stand only where the band states no row at all.
+static func attack_against(kit: Dictionary, band: Dictionary, body_mass: float,
+		unequipped_attack: float) -> float:
+	var resolved := band_kit_tiers(band, String(kit.get(KIT_ID_KEY, "")))
+	var stated: Dictionary = resolved if not resolved.is_empty() else kit
+	var low := float(stated.get(KIT_ATTACK_MIN_MASS_KEY, 0.0))
+	var high := float(stated.get(KIT_ATTACK_MAX_MASS_KEY, 0.0))
 	if (low > 0.0 and body_mass < low) or (high > 0.0 and body_mass > high):
 		return unequipped_attack
-	return float(kit.get(KIT_ATTACK_KEY, unequipped_attack))
+	return float(stated.get(KIT_ATTACK_KEY, unequipped_attack))
 
-## **WHAT THIS BAND ACTUALLY GETS UNDER THIS KIT** — `{attack, hunt_carry, forage_carry, stated}`.
+## **THE EFFECTIVE TIER A GIVEN BAND GETS UNDER A GIVEN KIT — READ, NEVER DERIVED.**
 ##
-## `KitOption`'s numbers are for a FRESH kit; the band's real condition is on its own cohort. A
-## component the kit uses but the band has run dry delivers the UNEQUIPPED tier, so quoting the fresh
-## number to a band with spent spears is a lie of exactly the class this arc keeps correcting.
+## One lookup into the band's own `kit_tiers` (see `BAND_KIT_TIERS_KEY` for why that field exists and
+## why no client-side rule can stand in for it). `stated` is false when the band publishes no row for
+## this kit at all — a band the wire has not described yet — and then the ROSTER's fresh tiers stand
+## and the hint prints no condition clause, the same "absent terms render no line" convention
+## `hunt_gate_model` takes.
 ##
-## **NO "does this kit use that component?" TEST IS NEEDED, AND THAT IS THE POINT OF THE FORM.** A kit
-## that does not use a component already publishes the unequipped tier on that axis, so stepping down
-## to the unequipped tier is a no-op there and the whole rule collapses to one line per axis:
-##
-##     effective(axis) = kit(axis) when the band still has condition in the component, else unequipped(axis)
-##
-## `stated` is false when the band says nothing about its condition at all (the key is absent, not
-## zero — `0` is a real reading meaning DRY). Then the fresh tiers stand and the hint prints no
-## condition clause, the same "absent terms render no line" convention `hunt_gate_model` takes.
-##
-## **IT IS KEYED BY THE ROSTER'S OWN AXIS CONSTANTS, so a tier and the roster entry it came from are
-## reachable by ONE name.** It used to answer short keys (`"hunt_carry"` / `"forage_carry"`) while the
-## roster spelled them `hunt_carry_per_worker_biomass` / `forage_carry_per_worker_biomass`, and that
-## split shipped a silent bug the moment a caller needed BOTH: `_kit_priced_source` read this dict with
-## the short key and `equipped_tier` with the same string, which no roster entry carries — so the
-## reference came back `0`, the repricing short-circuited, and every kit on every compose sheet quoted
-## identical numbers. Reported from play. `attack` was always the wire's own spelling and is unchanged;
-## one name per axis is what makes the two lookups impossible to spell apart.
+## **IT IS KEYED BY THE ROSTER'S OWN AXIS CONSTANTS**, so a tier and the roster entry it came from are
+## reachable by ONE name. It used to answer short keys (`"hunt_carry"` / `"forage_carry"`) while the
+## roster spelled them in full, and that split shipped a silent bug the moment a caller needed BOTH:
+## `_kit_priced_source` read this dict with the short key and `equipped_tier` with the same string,
+## which no roster entry carries — so the reference came back `0`, the repricing short-circuited, and
+## every kit on every compose sheet quoted identical numbers. Reported from play.
 static func effective_tiers(kits: Array, kit: Dictionary, band: Dictionary) -> Dictionary:
-	var fresh_attack := float(kit.get(KIT_ATTACK_KEY, 0.0))
-	var fresh_hunt := float(kit.get(KIT_HUNT_CARRY_KEY, 0.0))
-	var fresh_forage := float(kit.get(KIT_FORAGE_CARRY_KEY, 0.0))
-	var conditions: Array = band.get(BAND_ITEM_CONDITIONS_KEY, [])
-	if conditions.is_empty():
+	var resolved := band_kit_tiers(band, String(kit.get(KIT_ID_KEY, "")))
+	if resolved.is_empty():
 		return {
-			KIT_ATTACK_KEY: fresh_attack,
-			KIT_HUNT_CARRY_KEY: fresh_hunt,
-			KIT_FORAGE_CARRY_KEY: fresh_forage,
+			KIT_ATTACK_KEY: float(kit.get(KIT_ATTACK_KEY, 0.0)),
+			KIT_HUNT_CARRY_KEY: float(kit.get(KIT_HUNT_CARRY_KEY, 0.0)),
+			KIT_FORAGE_CARRY_KEY: float(kit.get(KIT_FORAGE_CARRY_KEY, 0.0)),
 			"stated": false,
 		}
 	return {
-		KIT_ATTACK_KEY: _tier_after_wear(kits, KIT_ATTACK_KEY, fresh_attack,
-			condition_of(band, KIT_ATTACK_KEY)),
-		KIT_HUNT_CARRY_KEY: _tier_after_wear(kits, KIT_HUNT_CARRY_KEY, fresh_hunt,
-			condition_of(band, KIT_HUNT_CARRY_KEY)),
-		KIT_FORAGE_CARRY_KEY: _tier_after_wear(kits, KIT_FORAGE_CARRY_KEY, fresh_forage,
-			condition_of(band, KIT_FORAGE_CARRY_KEY)),
+		KIT_ATTACK_KEY: float(resolved.get(KIT_ATTACK_KEY, 0.0)),
+		KIT_HUNT_CARRY_KEY: float(resolved.get(KIT_HUNT_CARRY_KEY, 0.0)),
+		KIT_FORAGE_CARRY_KEY: float(resolved.get(KIT_FORAGE_CARRY_KEY, 0.0)),
 		"stated": true,
 	}
 
-## One axis of the rule above. An unreadable roster (`INF` — no bare-handed tier on the wire) leaves
-## the fresh tier standing rather than substituting a guess.
-static func _tier_after_wear(kits: Array, axis_key: String, fresh: float,
-		condition: float) -> float:
-	if condition > CONDITION_DRY:
-		return fresh
-	var bare := unequipped_tier(kits, axis_key)
-	return fresh if is_inf(bare) else bare
+## **THIS BAND'S RESOLVED ROW FOR ONE KIT**, `{}` when it publishes none. The one reader of
+## `BAND_KIT_TIERS_KEY`, so the tiers, the mass window and the two multipliers are all fetched through
+## the same lookup and cannot come from two different rows.
+##
+## **THE MASS BOUNDS AND THE MULTIPLIERS RIDE HERE TOO, and a gate must read them from HERE.** A spent
+## item contributes no bound either, so a kit whose mass-bounded weapon has run dry has NO size window
+## rather than its fresh one; `KitOption`'s own bounds are the fresh-kit reference only.
+static func band_kit_tiers(band: Dictionary, kit_id: String) -> Dictionary:
+	if kit_id.is_empty():
+		return {}
+	for row_variant in band.get(BAND_KIT_TIERS_KEY, []):
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		if String(row.get(BAND_KIT_TIERS_ID_KEY, "")) == kit_id:
+			return row
+	return {}
 
-## **The remaining condition of the item backing an AXIS**, `CONDITION_DRY` when the band publishes
-## no row for it.
+## **The remaining condition of one ITEM, by its `equipment.json` id** — `CONDITION_DRY` when the band
+## publishes no row for it.
 ##
 ## Absent reads as dry deliberately: the caller has already established that the band stated *some*
 ## condition, so a missing row for one item is a wire the client does not understand — and quoting a
 ## kitted number for gear the server never confirmed is the failure mode this whole model exists to
 ## prevent. Erring toward the unequipped tier under-promises instead.
-static func condition_of(band: Dictionary, axis_key: String) -> float:
-	var item_id: String = AXIS_ITEMS.get(axis_key, "")
+static func condition_of(band: Dictionary, item_id: String) -> float:
 	if item_id.is_empty():
 		return CONDITION_DRY
 	for row in band.get(BAND_ITEM_CONDITIONS_KEY, []):
@@ -422,18 +436,30 @@ static func condition_of(band: Dictionary, axis_key: String) -> float:
 			return float(row.get(ITEM_CONDITION_REMAINING_KEY, CONDITION_DRY))
 	return CONDITION_DRY
 
-## **IS THIS COMPONENT PART OF THIS KIT?** — a kit uses a component exactly when its tier on that
-## component's axis beats the roster's bare-handed one. It answers a DISPLAY question only (whether
-## the hint quotes that component's condition), never a number: `none` spends no durability, so
-## printing `spears 74` beside it would describe wear it will never cause.
-static func kit_uses(kits: Array, kit: Dictionary, axis_key: String) -> bool:
-	var bare := unequipped_tier(kits, axis_key)
-	return not is_inf(bare) and float(kit.get(axis_key, 0.0)) > bare
+## **THE ITEMS THIS KIT CARRIES, IN CONFIG ORDER** — the wire's own list, `[]` for a kit that carries
+## nothing (`none`) and for an entry that predates a roster.
+##
+## **THIS REPLACED THE `kit_uses(kits, kit, axis_key)` INFERENCE**, which asked whether the kit's tier
+## on an axis beat the roster's bare-handed one and called that "the kit uses this component".
+## Membership is now stated, so it is read rather than deduced — and the deduction could not tell
+## `traps` from `spears` in the first place, both being `attack` at the same tier.
+static func kit_item_ids(kit: Dictionary) -> Array:
+	var items_variant: Variant = kit.get(KIT_ITEM_IDS_KEY, [])
+	return items_variant if items_variant is Array else []
 
 ## **THE HINT LINE — THE EFFECTIVE TIER, NEVER THE FRESH ONE.** `attack 20.0 · carry 40.0 per hunter ·
 ## spears 74 · sled 58` on a hunt sheet, `carry 8.0 per gatherer · baskets 61` on a forage one: the
-## tiers this band gets, then the condition of each component the kit actually consumes, so a band one
-## turn from running dry can see it coming. `""` when the kit is unknown.
+## tiers this band gets, then the condition of each item the kit actually carries, so a band one turn
+## from running dry can see it coming. `""` when the kit is unknown.
+##
+## **THE ITEM CLAUSES ARE THE KIT'S OWN LIST, NOT ONE PER AXIS** (`KIT_ITEM_IDS_KEY`, in config order,
+## so the weapon still reads before the haul aid). Per-axis clauses had to name the item from the axis,
+## which is a guess: the Trapping kit read `attack 20.0 · carry 40.0 per hunter · spears 100 · sled 100`
+## — naming gear it does not carry and quoting the SPEARS' wear, so a band with fresh traps and dry
+## spears read exactly backwards. It now reads `traps`, with the traps' own condition.
+##
+## The number of clauses therefore follows the KIT rather than the job: `big_game` and `trapping` state
+## two, `gathering` one, `none` none at all.
 static func tier_hint(kits: Array, kit: Dictionary, band: Dictionary, job: String) -> String:
 	if kit.is_empty():
 		return ""
@@ -442,66 +468,40 @@ static func tier_hint(kits: Array, kit: Dictionary, band: Dictionary, job: Strin
 	if job == JOB_FORAGE:
 		parts.append(HudComposeVocab.KIT_HINT_FORAGE_CARRY_FORMAT % _tier_face(
 			float(tiers[KIT_FORAGE_CARRY_KEY])))
-		_append_condition(parts, kits, kit, band, tiers, KIT_FORAGE_CARRY_KEY,
-			HudComposeVocab.KIT_COMPONENT_BASKETS)
 	else:
 		parts.append(HudComposeVocab.KIT_HINT_ATTACK_FORMAT % _tier_face(
 			float(tiers[KIT_ATTACK_KEY])))
 		parts.append(HudComposeVocab.KIT_HINT_HUNT_CARRY_FORMAT % _tier_face(
 			float(tiers[KIT_HUNT_CARRY_KEY])))
-		_append_condition(parts, kits, kit, band, tiers, KIT_ATTACK_KEY,
-			HudComposeVocab.KIT_COMPONENT_SPEARS)
-		_append_condition(parts, kits, kit, band, tiers, KIT_HUNT_CARRY_KEY,
-			HudComposeVocab.KIT_COMPONENT_SLED)
+	for item_variant in kit_item_ids(kit):
+		_append_condition(parts, band, tiers, String(item_variant))
 	return HudComposeVocab.KIT_HINT_SEPARATOR.join(parts)
 
-## One item's condition clause, appended only where there is something true to say: the kit has to
-## actually use the item, and the band has to have stated its condition. The axis names the item
-## through `AXIS_ITEMS`, so there is no second key to keep in step with it.
-static func _append_condition(parts: Array[String], kits: Array, kit: Dictionary,
-		band: Dictionary, tiers: Dictionary, axis_key: String, component: String) -> void:
-	if not bool(tiers.get("stated", false)) or not kit_uses(kits, kit, axis_key):
+## One item's condition clause, appended only where there is something true to say: the band has to
+## have stated its conditions at all. **The item names ITSELF** — the caller is walking the kit's own
+## list, so there is no axis→item key to keep in step with anything, and an item the kit does not
+## carry can no longer be reached from here.
+static func _append_condition(parts: Array[String], band: Dictionary, tiers: Dictionary,
+		item_id: String) -> void:
+	if not bool(tiers.get("stated", false)) or item_id.is_empty():
 		return
-	var condition := condition_of(band, axis_key)
+	var condition := condition_of(band, item_id)
 	if condition <= CONDITION_DRY:
-		parts.append(HudComposeVocab.KIT_HINT_DRY_FORMAT % component)
+		parts.append(HudComposeVocab.KIT_HINT_DRY_FORMAT % item_id)
 	else:
-		parts.append(HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [component, int(condition)])
+		parts.append(HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [item_id, int(condition)])
 
 static func _tier_face(value: float) -> String:
 	return String.num(value, HudComposeVocab.KIT_TIER_DECIMALS)
 
-# ---- THE HONESTY RULE ---------------------------------------------------------------------------
-
-## **WHICH KIT A HERD'S ESTIMATE TABLE IS QUOTED FOR** — the id the wire states, falling back to the
-## job default when the herd is silent. It never guesses: the sim prices both tables at the hunt job's
-## default on every herd, so the default IS the honest answer where the field is unset, and the two
-## readings agree on live data.
-static func estimates_quoted_kit(herd: Dictionary, table_key: String, default_id: String) -> String:
-	var stated := String(herd.get(table_key, "")).strip_edges()
-	return stated if stated != "" else default_id
-
-## **MAY THIS SHEET PRESENT THE TABLE AS THE ANSWER FOR `selected_id`?** Compare the ids — never
-## assume the default is selected.
-##
-## `huntTripEstimates` / `denialEstimates` are quoted for ONE kit and repricing them per kit was
-## scoped out, so a sheet whose selection differs must suppress the turn-count verdict and the take
-## line rather than showing figures computed for a different kit. The error is not a small one: the
-## kit moves the take through BOTH the fight (attack tier) and the haul (sled tier), and a `none`
-## party against a Red Deer's defense 1 has an effective attack of ZERO — no party size works at all.
-static func estimates_apply_to(herd: Dictionary, table_key: String, default_id: String,
-		selected_id: String) -> bool:
-	return estimates_quoted_kit(herd, table_key, default_id) == selected_id
-
-## The sentence a sheet renders in place of the suppressed figures — it names the kit the table IS
-## priced for and the kit the player picked, so "why is there no turn count?" is answered on the sheet
-## rather than inferred from an absence. `""` when the two agree (nothing to explain).
-static func estimates_quoted_note(kits: Array, herd: Dictionary, table_key: String,
-		default_id: String, selected_id: String, format: String) -> String:
-	var quoted := estimates_quoted_kit(herd, table_key, default_id)
-	if quoted == selected_id:
-		return ""
-	return format % [display_name_for_id(kits, quoted), display_name_for_id(kits, selected_id)]
+# **THE HONESTY RULE IS GONE, AND SO IS EVERY FUNCTION THAT SERVED IT.**
+#
+# `estimates_quoted_kit` / `estimates_apply_to` / `estimates_quoted_note` and the two
+# `HERD_*_ESTIMATES_KIT_KEY` wire keys existed because the pre-launch tables were computed at ONE kit
+# — the hunt job's default — over a FRESH component set, so a sheet composing anything else had to
+# refuse to present them and say whose numbers it was withholding. The sim is ASKED now
+# (`ForecastQuery`) and answers the exact kit and wear the sheet composed, so there is no other kit's
+# raid to disown. A sheet's numbers are always its own.
 
 # ---- the control --------------------------------------------------------------------------------
 
