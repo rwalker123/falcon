@@ -118,6 +118,105 @@ mod tests {
         assert_eq!(row.kitId(), Some("big_game"));
     }
 
+    /// **THE THREE RETREAT/HAZARD MULTIPLIERS READ `1` THROUGH ALL THREE DOORS.**
+    ///
+    /// `stay_fraction`, `dispersion` and `exposure` are multipliers whose neutral is `1`, and each is
+    /// reachable by three separate defaulting mechanisms that have no compiler relationship to each
+    /// other: the FlatBuffers schema's `= 1`, `serde`'s missing-field default, and the Rust `Default`
+    /// impl. **Two of the three were `0` until this test was written**, which is the wrong answer in
+    /// the *reassuring* direction — `dispersion 0` says the party scares nothing and `exposure 0` says
+    /// nobody can be hurt, so a field arriving by any of these doors would have handed every kit the
+    /// passive device's whole advantage. (`stay_fraction 0` fails loudly instead: the take is zero.)
+    ///
+    /// **Each door is sabotage-verified to fail ALONE** — flipping the `Default` impl, the
+    /// `#[serde(default = …)]` attribute, or the schema's `= 1` fails exactly its own leg. The wire
+    /// leg took two attempts to make real, and the failed one is worth knowing because it is the
+    /// obvious way to write it: see the comment at door 3.
+    #[test]
+    fn the_retreat_and_hazard_multipliers_are_neutral_at_one_on_every_defaulting_path() {
+        const NEUTRAL: f32 = 1.0;
+
+        // Door 1 — the Rust `Default` impls, which `..Default::default()` fixtures ride.
+        assert_eq!(HerdTelemetryState::default().stay_fraction, NEUTRAL);
+        assert_eq!(KitOptionState::default().dispersion, NEUTRAL);
+        assert_eq!(KitOptionState::default().exposure, NEUTRAL);
+        // …and the sentinel pair beside them is NOT neutral-at-one: `0` means unbounded there, and a
+        // well-meaning sweep that "fixed" these to 1.0 would silently bound every weapon at 1 kg.
+        assert_eq!(KitOptionState::default().attack_min_body_mass, 0.0);
+        assert_eq!(KitOptionState::default().attack_max_body_mass, 0.0);
+
+        // Door 2 — `serde`, with the field absent. Built by serializing a state that states a
+        // deliberately NON-neutral value and then DELETING the key, so the number read back cannot
+        // have come from the object under test: it is `serde`'s own missing-field default or nothing.
+        // (Most of these structs' other fields are required, so a hand-written JSON literal would be
+        // a maintenance burden that goes stale on every appended field.)
+        fn without_key<T: serde::Serialize, U: serde::de::DeserializeOwned>(
+            value: T,
+            key: &str,
+        ) -> U {
+            let mut json = serde_json::to_value(value).expect("the state serializes");
+            let object = json.as_object_mut().expect("a state is a JSON object");
+            assert!(
+                object.remove(key).is_some(),
+                "`{key}` was not on the serialized state — this test is checking a field that moved"
+            );
+            serde_json::from_value(json).expect("the state deserializes with the key absent")
+        }
+
+        let herd: HerdTelemetryState = without_key(
+            HerdTelemetryState {
+                stay_fraction: 0.3,
+                ..Default::default()
+            },
+            "stay_fraction",
+        );
+        assert_eq!(herd.stay_fraction, NEUTRAL);
+        let kit: KitOptionState = without_key(
+            KitOptionState {
+                dispersion: 0.3,
+                ..Default::default()
+            },
+            "dispersion",
+        );
+        assert_eq!(kit.dispersion, NEUTRAL);
+        let kit: KitOptionState = without_key(
+            KitOptionState {
+                exposure: 0.3,
+                ..Default::default()
+            },
+            "exposure",
+        );
+        assert_eq!(kit.exposure, NEUTRAL);
+
+        // Door 3 — the FlatBuffers schema's own `= 1`, read off a table where the field is GENUINELY
+        // ABSENT. That last word is the whole design of this leg, and the obvious version of it does
+        // not work: encoding a populated state and reading it back is vacuous here, because the
+        // generated builder omits a field only while it EQUALS the schema default — flip the schema
+        // to `= 0` and the encoder starts writing the `1.0` it was handed, so the read still answers
+        // `1.0` and the check passes through the very change it was meant to catch (measured).
+        //
+        // So the tables below are built from `..Default::default()` ARGS, which take the schema's
+        // numbers and therefore write no multiplier at all. What comes back is the vtable's answer
+        // for a missing field, which is the schema default and nothing else.
+        let mut fbb = flatbuffers::FlatBufferBuilder::new();
+        let kit = fb::KitOption::create(&mut fbb, &fb::KitOptionArgs::default());
+        fbb.finish_minimal(kit);
+        let kit = flatbuffers::root::<fb::KitOption>(fbb.finished_data())
+            .expect("a defaulted KitOption table reads back");
+        assert_eq!(kit.dispersion(), NEUTRAL);
+        assert_eq!(kit.exposure(), NEUTRAL);
+        // …and the sentinel pair stays at its own schema default, for the reason given above.
+        assert_eq!(kit.attackMinBodyMass(), 0.0);
+        assert_eq!(kit.attackMaxBodyMass(), 0.0);
+
+        let mut fbb = flatbuffers::FlatBufferBuilder::new();
+        let herd = fb::HerdTelemetryState::create(&mut fbb, &fb::HerdTelemetryStateArgs::default());
+        fbb.finish_minimal(herd);
+        let herd = flatbuffers::root::<fb::HerdTelemetryState>(fbb.finished_data())
+            .expect("a defaulted HerdTelemetryState table reads back");
+        assert_eq!(herd.stayFraction(), NEUTRAL);
+    }
+
     /// **The pen-as-a-managed-population fields survive the wire.** `penUpkeep` (what the pen eats
     /// each turn) and `penFedFraction` (`< 1` = starving) are appended to `HerdTelemetryState`
     /// (append-only discipline), and the client renders the feed as a negative row against the

@@ -69,6 +69,23 @@ against a basketful — so its ratio is large (`8.0 → 1.6`, exactly a fifth). 
 All three are **neutral at `1.0`**, so an item declaring none of them is priced exactly as it was
 before the effects model existed.
 
+> **`1` has to be spelled out THREE TIMES on the wire, once per defaulting mechanism, and they have
+> no compiler relationship to each other.** `KitOptionState`'s `dispersion` / `exposure` and
+> `HerdTelemetryState`'s `stay_fraction` are each reachable through the FlatBuffers schema's `= 1`,
+> `serde`'s missing-field default, and the Rust `Default` impl — and a bare `#[serde(default)]` or a
+> `#[derive(Default)]` answers **`0`**, which on two of them is wrong *in the reassuring direction*:
+> `dispersion 0` says the party scares nothing and `exposure 0` says nobody can be hurt, i.e. a field
+> that failed to arrive would hand every kit the passive device's entire advantage. Hence the named
+> `multiplier_neutral()` helper and the hand-written `Default` impls in
+> `sim_schema/src/state/subsistence.rs`, and
+> `the_retreat_and_hazard_multipliers_are_neutral_at_one_on_every_defaulting_path`, which pins all
+> three doors and is sabotage-verified to fail on each alone.
+>
+> **`attack_min_body_mass` / `attack_max_body_mass` are the deliberate exception**: `0` is their
+> *sentinel* for "unbounded", it is their schema default too, and it is what every weapon but the
+> passive device ships. A sweep that "fixed" them to `1.0` would silently bound every weapon at 1 kg,
+> so the same test pins them at `0`.
+
 - **`dispersion` multiplies the QUARRY'S OWN `wariness`** at the retreat:
   `effective_wariness = clamp(wariness × dispersion, 0, 1)`, and `stayers = engaged × (1 −
   effective_wariness)`. A trap ships `0` — nothing breaks off at contact.

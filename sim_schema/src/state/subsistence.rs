@@ -148,6 +148,23 @@ fn fully_herded() -> f32 {
     1.0
 }
 
+/// **The neutral value of every retreat/hazard multiplier on this wire** —
+/// [`HerdTelemetryState::stay_fraction`] and [`KitOptionState`]'s `dispersion` / `exposure`.
+///
+/// **It exists because `0` is the WRONG neutral for all three, and it is wrong in the reassuring
+/// direction on two of them.** `stay_fraction 0` says every animal bolts before contact (a take of
+/// nothing); `dispersion 0` says the party scares nothing, and `exposure 0` says nobody can be hurt
+/// — i.e. a field that failed to arrive would silently hand every kit the passive device's whole
+/// advantage. The FlatBuffers schema declares all three `= 1`, so a derived `Default` is the one
+/// place the two representations of the same field could disagree.
+///
+/// **`attack_min_body_mass` / `attack_max_body_mass` deliberately keep the bare `#[serde(default)]`**:
+/// `0` is their *sentinel* for "unbounded", it matches their schema default, and it is what every
+/// weapon but the passive device ships.
+fn multiplier_neutral() -> f32 {
+    1.0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HerdTelemetryState {
     pub id: String,
@@ -483,7 +500,7 @@ pub struct HerdTelemetryState {
     ///
     /// A kit multiplies it through `KitOptionState::dispersion`. `1.0` = nothing breaks off, which is
     /// the honest reading for a pen and for the whole plant web.
-    #[serde(default)]
+    #[serde(default = "multiplier_neutral")]
     pub stay_fraction: f32,
     /// **The sim's pre-launch estimates for a DENIAL RAID against this herd** — one entry per party
     /// size, with no floor axis and no fill-target axis because the mission carries neither
@@ -607,7 +624,7 @@ impl Default for HerdTelemetryState {
             // **`1.0` — nothing breaks off.** The honest default for a source with no retreat stage
             // (a pen, the whole plant web); a `0.0` default would read as "every animal flees" and
             // silently zero a take.
-            stay_fraction: 1.0,
+            stay_fraction: multiplier_neutral(),
             denial_estimates: Vec::new(),
             // A herd nothing has described quotes no party — the same "no viable party" reading the
             // capture publishes for an unraidable one.
@@ -980,7 +997,7 @@ pub struct FoodModuleState {
 /// **`none` is an ordinary roster entry, not a sentinel**: it grants nothing, so its tiers are the
 /// unequipped ones throughout and a party sent with it spends no durability on any item. No consumer
 /// should special-case its id.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct KitOptionState {
     pub id: String,
     pub display_name: String,
@@ -1013,13 +1030,37 @@ pub struct KitOptionState {
     /// It is a *multiplier*, so a picker must not render it as a flat "scares N% away": the same kit
     /// costs a jumpy gazelle (`wariness 0.85`) almost its whole engagement and a mammoth (`0.10`)
     /// nearly nothing. Pair it with the herd's own reading to say anything about a specific hunt.
-    #[serde(default)]
+    #[serde(default = "multiplier_neutral")]
     pub dispersion: f32,
     /// **What this kit multiplies the hunt's baseline injury hazard by.** `1.0` is neutral; `0` is a
     /// stand-off kit whose users are never in reach of the animal, and which therefore pays its cost
     /// in durability instead of in people.
-    #[serde(default)]
+    #[serde(default = "multiplier_neutral")]
     pub exposure: f32,
+}
+
+/// **Hand-written rather than derived, for the same reason [`HerdTelemetryState`]'s is**: two of these
+/// fields are multipliers whose neutral is `1`, and a `#[derive(Default)]` would answer `0` — the
+/// value that means *this kit scares nothing and exposes nobody*, i.e. the passive device's entire
+/// advantage handed out by omission. `serde`'s missing-field default is spelled separately on each
+/// field, so this impl is what keeps the two agreeing with the schema's `= 1`.
+impl Default for KitOptionState {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            display_name: String::new(),
+            jobs: Vec::new(),
+            attack: 0.0,
+            hunt_carry_per_worker_biomass: 0.0,
+            forage_carry_per_worker_biomass: 0.0,
+            // `0` is the *sentinel* on these two — "unbounded", the schema's own default and what
+            // every weapon but the passive device ships. Not a multiplier, so not neutral-at-one.
+            attack_min_body_mass: 0.0,
+            attack_max_body_mass: 0.0,
+            dispersion: multiplier_neutral(),
+            exposure: multiplier_neutral(),
+        }
+    }
 }
 
 /// `TileState::graze_ecology_phase` — the biome carries no pasture at all (water, ice, bare rock).

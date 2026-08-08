@@ -1453,7 +1453,12 @@ impl BandEquipment {
         quantum: crate::equipment_config::WearQuantum,
         uses: f32,
     ) -> &mut Self {
-        let items: Vec<String> = kit
+        // **The collect is a BORROW break, not a copy** — the filter reads `self.has_condition` and
+        // the loop below needs `&mut self`, so the immutable borrow has to end first. The items
+        // themselves are borrowed from `kit`, which the loop never touches, so nothing needs owning:
+        // an earlier `.map(str::to_string)` here allocated a `String` per charged item purely to
+        // satisfy a borrow that `&str` already satisfies.
+        let items: Vec<&str> = kit
             .uses()
             .filter(|item| {
                 config
@@ -1467,10 +1472,9 @@ impl BandEquipment {
                     // `kit_selection::a_kitted_partys_own_wear_still_steps_it_down`.
                     && self.has_condition(item, config)
             })
-            .map(str::to_string)
             .collect();
         for item in items {
-            self.wear_item(config, &item, uses);
+            self.wear_item(config, item, uses);
         }
         self
     }
