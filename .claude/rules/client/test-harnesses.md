@@ -58,9 +58,13 @@ pen the same number — the cancellation the defect hid behind) and two naming t
 at a pen. The other three are the "must not move" guards and correctly stay green.
 
 **The INTERFACE-SCALE arc's additions to this harness, and the three rules they cost.**
-`band_panel_preview` is **86 frames / 225 `assert OK` / 265 `: PASS`** and `ui_preview` **279 frames /
-639 `PASS`, exit 0** once the FODDER FACE (#449), the EXPANDED TOE ROSTER, the KIT OFFER TEST and the
-GEAR BREAKDOWN's three new rows had all landed on top. **The gear breakdown contributes ONE frame,
+`band_panel_preview` is **87 frames / 227 `assert OK` / 278 `: PASS`** and `ui_preview` **279 frames /
+639 `PASS`, exit 0** once the BAND-WIDE ROLE CARDS' KIT PICKER had landed on top of the FODDER FACE
+(#449), the EXPANDED TOE ROSTER, the KIT OFFER TEST and the GEAR BREAKDOWN's three new rows.
+**The role-card picker contributes ONE frame, TWO `assert OK` and THIRTEEN `PASS` here and nothing to
+`ui_preview`** — `band_panel_role_kits` (the LEFT dock, both cards) with its bounds/content-fits pair,
+`_assert_role_card_gear`'s six, `_assert_role_cards_are_level`'s two and
+`_assert_role_kit_command_carries_the_pick`'s five. The figures before it were **86 / 225 / 265**. **The gear breakdown contributes ONE frame,
 ONE `assert OK` and EIGHT `PASS` to `band_panel_preview` and nothing to `ui_preview`** —
 `band_panel_kit_expanded` (the dock's own Kit popover, opened on the reference band) and
 `_assert_gear_breakdown_states_every_kit`, which asks each of the three new rows both what it must

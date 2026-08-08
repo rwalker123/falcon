@@ -1127,6 +1127,28 @@ func _ready() -> void:
 	# Restore the snapshot-path band so the later states start from the same subject they always did.
 	_push_bands([_band_fixture()])
 
+	# THE BAND-WIDE ROLE CARDS' KIT PICKER + GEAR LINE. Until this, a player was handed a wayfinding
+	# kit and a warrior kit silently: the WORKFORCE cards named neither, and the picker was mounted
+	# only on the four hunt/forage compose sheets, so naming a kit on those two roles was a
+	# command-line act. The frame is the look; the two assertions under it are the claims a picture
+	# cannot make — WHICH item each row derives, and whether the command carries the pick.
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"band")
+	await _settle()
+	await _save("band_panel_role_kits")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_role_card_gear()
+	_assert_role_cards_are_level()
+	_assert_role_kit_command_carries_the_pick()
+	# Put the shared band back exactly as the later states expect it: the pick above is real zone
+	# state and its emit is a real pending assign, and either one left behind would render a `No kit`
+	# Scout card with an amber title in every band frame from here down.
+	_hud._bandpanel._role_kit_ids.clear()
+	_hud._band_labor._pending_labor.clear()
+	_push_bands([_band_fixture()])
+	await _settle()
+
 	# The paged WORK BOARD at 34 sources — far past one page in the narrow (L dock) shell, so the
 	# pager must appear and NOTHING may scroll. Its patches carry RUNG marks on a stride, so the
 	# board is also where the marks are judged at real density — and, because the shell-threshold
@@ -2951,9 +2973,14 @@ func _render_band_column_states() -> void:
 ## the number it must catch is a tier that failed to rise, not a block that gained a row.
 const BAND_FLANK_FILL_FLOOR := 0.60
 ## How short the LESSER column may be against the taller before the flank reads as lopsided rather
-## than laid out. 0.75 passes both authored splits at their MEASURED worst (246/263 = 0.94 charted,
-## 200/193 = 0.97 chartless) and fails the charted split applied to a chartless band (130/263 = 0.49),
-## which is exactly the case the second authored split exists for.
+## than laid out. 0.75 passes both authored splits at their MEASURED worst (**246/326 = 0.75 charted,
+## 200/256 = 0.78 chartless**) and fails the charted split applied to a chartless band (130/263 =
+## 0.49), which is exactly the case the second authored split exists for.
+##
+## **THE CHARTED FLANK NOW SITS EXACTLY ON IT — 1.5px of slack** (`246 >= 326 × 0.75`). It was 0.94
+## before the role cards grew their kit pickers, and this number is now the tightest constraint on the
+## band flank: the next row to land in the WORKFORCE column trips it. Re-author the split and
+## re-measure — do not lower the floor to fit.
 const BAND_FLANK_BALANCE_FLOOR := 0.75
 
 ## GUARD: **the widened flank SPENDS the height it recovered.** Two columns halve what each carries,
@@ -4236,6 +4263,175 @@ func _kit_breakdown_line(popover: String, label: String) -> String:
 		if String(line).contains(label):
 			return String(line)
 	return ""
+
+## **EACH BAND-WIDE ROLE CARD NAMES ITS OWN KIT AND ITS OWN ITEM** — the picker's closed face and the
+## gear line beneath it, asserted by EQUALITY on both cards.
+##
+## **THE ITEM IS THE CLAIM, AND IT IS WHY THE WARRIOR CARD IS HALF OF THIS.** `KitRoster.AXIS_ITEMS`
+## maps `attack` to the SPEARS, which is right on a hunt sheet and wrong here: a warrior kit buys the
+## same stat off `clubs`, so the row has to resolve its item per JOB (`KitRoster.item_for_axis`). A
+## card reading the axis table alone renders `attack 6 defending the camp · Spears 74` — a perfectly
+## plausible line, quoting the wear on gear this role never touches.
+##
+## **THE EXPECTED STRINGS NAME THEIR ITEM LABELS OUTRIGHT**, never through `item_for_axis`: composing
+## the expectation through the derivation under test would assert only that it agrees with itself.
+func _assert_role_card_gear() -> void:
+	_assert_one_role_card_gear(HudWorkVocab.ROLE_NAME_SCOUT, KitRoster.JOB_SCOUT, "Wayfinding kit",
+		DetailFormat.KIT_ROLE_SCOUT_VANTAGE_FORMAT % String.num(
+			BandFx.KIT_SCOUT_VANTAGE_EQUIPPED, DetailFormat.KIT_VANTAGE_DECIMALS),
+		DetailFormat.KIT_LABEL_WAYFINDING, BandFx.KIT_CONDITION_WAYFINDING)
+	_assert_one_role_card_gear(HudWorkVocab.ROLE_NAME_WARRIOR, KitRoster.JOB_WARRIOR, "Warrior kit",
+		DetailFormat.KIT_ROLE_WARRIOR_ATTACK_FORMAT % String.num(
+			BandFx.KIT_ATTACK_CLUBS, DetailFormat.KIT_CONDITION_DECIMALS),
+		DetailFormat.KIT_LABEL_CLUBS, BandFx.KIT_CONDITION_CLUBS)
+
+func _assert_one_role_card_gear(role_name: String, job: String, kit_name: String, effect: String,
+		item_label: String, condition: float) -> void:
+	var card := _find_role_card(role_name)
+	_assert_band_panel("the %s card carries a kit picker" % role_name, card != null)
+	if card == null:
+		return
+	var picker := _find_meta_control(card, KitRoster.KIT_PICKER_META) as OptionButton
+	if picker == null:
+		_fail("the %s card has no kit picker" % role_name)
+		return
+	var face := HudComposeVocab.KIT_PICKER_FACE_FORMAT % [
+		String(HudComposeVocab.KIT_JOB_GLYPHS[job]), kit_name]
+	_assert_band_panel("…whose face names this role's own kit (\"%s\")" % picker.text,
+		picker.text == face)
+	var hint := _find_meta_control(card, KitRoster.KIT_HINT_META) as Label
+	if hint == null:
+		_fail("the %s card has no gear line" % role_name)
+		return
+	var want := HudComposeVocab.KIT_HINT_SEPARATOR.join([effect,
+		HudComposeVocab.KIT_HINT_ROLE_ITEM_FORMAT % [item_label,
+			String.num(condition, DetailFormat.KIT_CONDITION_DECIMALS)]])
+	_assert_band_panel("…over a gear line stating what it buys and the item behind it — \"%s\""
+			% hint.text, hint.text == want)
+
+## **THE TWO ROLE CARDS DRAW TO THE SAME HEIGHT.** Reported on sight: side by side at unequal heights
+## the pair reads as ragged. Their content genuinely differs in height — the Scout's description wraps
+## to three lines against the Warrior's two, and either kit name can wrap — so the claim is that the
+## SHORTER card is padded to the taller, never that the two hold the same amount.
+##
+## **IT IS ASSERTED RATHER THAN EYEBALLED BECAUSE THE PROPERTY RESTS ON ONE SIZE FLAG** — the
+## `SIZE_FILL` the row's `HBoxContainer` stretches against, which is `Control`'s own default and so
+## appears in no diff at all until someone writes something else there. A card an eighth short still
+## draws its border, its background and every control inside it, so a PNG shows two plausible cards.
+##
+## **AND BECAUSE THE NEXT TEXT CHANGE IS WHAT WOULD REINTRODUCE IT.** A hardcoded minimum height would
+## pass this by construction and be wrong the moment a description or a kit name changes length, so
+## the assertion is deliberately a comparison of the two RENDERED heights and quotes both.
+##
+## `HEIGHT_EPSILON` is the sub-pixel disagreement between a container's rounded layout and the float
+## rects it writes — the tolerance `_faction_keyless_rows` takes for the same reason.
+func _assert_role_cards_are_level() -> void:
+	var scout := _find_role_card(HudWorkVocab.ROLE_NAME_SCOUT)
+	var warrior := _find_role_card(HudWorkVocab.ROLE_NAME_WARRIOR)
+	if scout == null or warrior == null:
+		_fail("both role cards must render to compare their heights")
+		return
+	# THE PRECONDITION. Two cards of zero height are trivially level, and so are two cards whose
+	# content happens to measure the same — the claim is only worth making where one card's CONTENT is
+	# genuinely shorter than the other's, which is what makes the padding observable.
+	var scout_content := scout.get_combined_minimum_size().y
+	var warrior_content := warrior.get_combined_minimum_size().y
+	_assert_band_panel(
+		"the two role cards hold DIFFERENT amounts (Scout wants %.0fpx, Warrior %.0fpx) — %s"
+			% [scout_content, warrior_content,
+				"so the shorter one has to be padded" if scout_content != warrior_content
+					else "NOTHING TO PROVE"],
+		scout_content != warrior_content and minf(scout_content, warrior_content) > 0.0)
+	_assert_band_panel("…and both cards RENDER at the same height (Scout %.0fpx, Warrior %.0fpx)"
+			% [scout.size.y, warrior.size.y],
+		absf(scout.size.y - warrior.size.y) <= ROLE_CARD_HEIGHT_EPSILON)
+
+## How far two role cards' rendered heights may differ before the pair reads as ragged — the sub-pixel
+## disagreement between a container's rounded layout and the float rects it writes, and nothing more.
+const ROLE_CARD_HEIGHT_EPSILON := 1.0
+
+## **THE PICK REACHES THE COMMAND, AND THE DEFAULT STILL OMITS THE TOKEN** — a PAIR, because either
+## claim alone is satisfied by a builder that gets the tail exactly backwards.
+##
+## Both halves are driven through the picker's REAL `item_selected` wiring — the signal
+## `HudWidgets.build_option_picker` connects the entry callables to — and read off the payload the
+## HUD actually emits, put through `Main.format_assign_labor`. A role card has no Send to commit at,
+## so the pick emits on the press; a pick that only moved client state would leave the sim running
+## the kit the card had stopped naming.
+func _assert_role_kit_command_carries_the_pick() -> void:
+	var card := _find_role_card(HudWorkVocab.ROLE_NAME_SCOUT)
+	var picker := _find_meta_control(card, KitRoster.KIT_PICKER_META) as OptionButton if card != null else null
+	if picker == null:
+		_fail("no Scout kit picker to drive")
+		return
+	# The entry that is NOT tagged `(default)` — the roster's `none`, which the sim would never
+	# resolve on its own, so the tail it produces cannot be an accident of the default.
+	var other := -1
+	var default_entry := -1
+	for i in picker.item_count:
+		if picker.get_item_text(i).contains(HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX):
+			default_entry = i
+		else:
+			other = i
+	_assert_band_panel("the Scout picker offers a non-default kit to pick (%d entries)"
+			% picker.item_count, other >= 0 and default_entry >= 0)
+	if other < 0 or default_entry < 0:
+		return
+	var picked := _emitted_assign_line(picker, other)
+	_assert_band_panel("picking a kit on a STAFFED role card emits at once — \"%s\"" % picked,
+		picked != "")
+	if picked == "":
+		return
+	_assert_band_panel("…and the line carries the named kit tail — \"%s\"" % picked,
+		picked.ends_with(" kit %s" % BandFx.KIT_ID_NONE))
+	_assert_band_panel("…on the band-wide role's own grammar, which takes no other token — \"%s\""
+			% picked,
+		picked.contains(" %s " % HudConst.LABOR_KIND_SCOUT))
+	# THE NEGATIVE HALF. Picking the job default back emits the line this client always emitted:
+	# `Main._kit_token` omits the tail when the choice is what the sim would resolve anyway, and a
+	# builder that appended unconditionally would pass every claim above.
+	var restored := _emitted_assign_line(picker, default_entry)
+	_assert_band_panel("…while picking the job DEFAULT back omits the tail — \"%s\"" % restored,
+		restored != "" and not restored.contains(" kit "))
+
+## Drive one entry of a live picker and hand back the command line the HUD's emit produced, `""` when
+## nothing was emitted. The picker is re-found after the pick because the card rebuilds on it.
+func _emitted_assign_line(picker: OptionButton, index: int) -> String:
+	var seen: Array[Dictionary] = []
+	var sink := func(payload: Dictionary) -> void: seen.append(payload)
+	_hud.assign_labor_requested.connect(sink)
+	picker.item_selected.emit(index)
+	_hud.assign_labor_requested.disconnect(sink)
+	if seen.is_empty():
+		return ""
+	return String(MAIN_SCRIPT.format_assign_labor(seen[0]).get("line", ""))
+
+## The WORKFORCE zone's role CARD, found by its own title label. **Never by sibling index**: the two
+## cards are built side by side and an order assumption would read the Warrior's picker for the
+## Scout's, which is the exact substitution the assertions above exist to catch. Deepest match first,
+## so an enclosing `PanelContainer` can never answer for a card inside it.
+func _find_role_card(role_name: String) -> PanelContainer:
+	var host := _band_flank_host()
+	return null if host == null else _role_card_under(host, role_name)
+
+func _role_card_under(node: Node, role_name: String) -> PanelContainer:
+	for child in node.get_children():
+		var found := _role_card_under(child, role_name)
+		if found != null:
+			return found
+	if node is PanelContainer and _has_label_titled(node, role_name):
+		return node as PanelContainer
+	return null
+
+## Does this subtree carry a Label whose whole text is `title`? EXACT, not `contains` — the role
+## card's own hint mentions "scouts", and a substring test would match the hint before the title.
+func _has_label_titled(node: Node, title: String) -> bool:
+	if node is Label and (node as Label).text == title:
+		return true
+	for child in node.get_children():
+		if _has_label_titled(child, title):
+			return true
+	return false
 
 ## The panel's SANCTIONED `ScrollContainer`s, by node name and by the zone each must sit under. Two,
 ## and the pairing is half the claim: a scroll is only safe in a zone whose builder declares a fixed

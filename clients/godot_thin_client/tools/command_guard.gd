@@ -269,10 +269,11 @@ func _drive_send_hunt_expedition_from_herd_drawer() -> void:
 	_press_send_hunt_confirm(_hud, "herd drawer compose")
 	await _settle()
 
-## `assign_labor` with the KIT TAIL, on BOTH grammars (`docs/plan_denial_raid.md`). The quick-hunt
-## drive above emits the untailed line (it names no kit, so the job default stands and the token is
-## omitted); this one emits the tailed twin of each, which is what puts `kit <id>` in front of the
-## real parser on the forage grammar's two optional positionals as well as on the hunt grammar.
+## `assign_labor` with the KIT TAIL, on ALL THREE grammars (`docs/plan_denial_raid.md`). The
+## quick-hunt drive above emits the untailed line (it names no kit, so the job default stands and the
+## token is omitted); this one emits the tailed twin of each, which is what puts `kit <id>` in front
+## of the real parser on the forage grammar's two optional positionals, on the hunt grammar, and on a
+## BAND-WIDE role's otherwise closed four-token tail.
 ##
 ## It reaches `HudLayer._emit_assign_labor` DIRECTLY rather than through a compose sheet, and that is
 ## deliberate: what is under test here is the LINE, and the two compose sheets' own kit plumbing is
@@ -288,6 +289,16 @@ func _drive_assign_labor_kits() -> void:
 	_hud._emit_assign_labor(band, SourceForecast.LABOR_KIND_FORAGE, PARTY_WORKERS,
 		TARGET_X, TARGET_Y, "", SourceForecast.DEFAULT_HARVEST_FLOOR, "",
 		SourceForecast.IMPROVEMENT_NONE, BandFx.KIT_ID_NONE)
+	await _settle()
+	# **THE THIRD GRAMMAR — A BAND-WIDE ROLE.** `assign_labor <faction> <band> scout <workers>` takes
+	# no tile, no herd, no floor and no species, so its tail was CLOSED and the kit token had never
+	# once been put in front of the real parser on it. The role cards mount a picker now, so the line
+	# is emittable from the UI; this is the drive that proves the server accepts it. `scout` stands
+	# for the pair — Warrior parses through the identical arm of `handle_assign_labor`, so a second
+	# emit would buy a duplicate rather than a second claim.
+	_hud._emit_assign_labor(band, HudConst.LABOR_KIND_SCOUT, PARTY_WORKERS, -1, -1, "",
+		SourceForecast.DEFAULT_HARVEST_FLOOR, "", SourceForecast.IMPROVEMENT_NONE,
+		BandFx.KIT_ID_NONE)
 	await _settle()
 
 ## Push the band through a REAL MapView and click its hex, so the HUD's selected unit is the marker
@@ -391,9 +402,10 @@ func _record(kind: String, payload: Dictionary, formatted: Dictionary) -> void:
 ## The commands this guard must see. Missing one is a failure: a driver that quietly stopped
 ## reaching its emit site would otherwise turn this guard green by producing nothing to check.
 const EXPECTED_KINDS := {
-	# THREE — the map's quick-hunt (which names no kit, so the line is the untailed one) plus the two
-	# `_drive_assign_labor_kits` emits that put `kit <id>` on both grammars.
-	"assign_labor": 3,
+	# FOUR — the map's quick-hunt (which names no kit, so the line is the untailed one) plus the three
+	# `_drive_assign_labor_kits` emits that put `kit <id>` on all three grammars: hunt, forage and a
+	# BAND-WIDE role, whose otherwise closed tail had never been parsed with the token on it.
+	"assign_labor": 4,
 	"cancel_order": 1,
 	"move_band": 1,
 	"send_expedition": 1,

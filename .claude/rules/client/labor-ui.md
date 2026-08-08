@@ -1333,6 +1333,13 @@ the herd drawer's assign-hunters block and the land drawer's assign-foragers blo
 the crew, which is why it sits with the crew; every number under it is a function of it, which is why
 it sits above them.
 
+**…AND ON THE TWO BAND-WIDE ROLE CARDS, which are not sheets and take two documented deviations.**
+The WORKFORCE zone's Scout and Warrior cards mount the same builder with no field key and with
+`compact_chrome`, over a hint of their own (`KitRoster.role_hint` — a carry-axis wording says nothing
+about a vantage), and they COMMIT ON THE PRESS rather than at a Send. The spec is
+`band-city-panel.md` → "The role cards carry the band's OTHER two kits", including the per-JOB
+axis→item resolution (`ROLE_AXES` / `JOB_AXIS_ITEMS`) that keeps a warrior's `attack` off the spears.
+
 **The control is a native `OptionButton`** — `HudWidgets.build_option_picker` — not a pill row, the
 roster growing toward a dozen kits that a row of pills cannot hold in a 354px dock column. No
 per-entry art: the client ships none per kit, and repeating ONE job glyph down every row is noise

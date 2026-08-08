@@ -446,9 +446,10 @@ party that never engaged.
 ## What is NOT wired yet, deliberately
 
 - **The Crafter role and replenishment/upgrade** are out of scope; they are **#494**.
-- **The compose sheets offer no kit picker on a Scout or Warrior row.** Both roles resolve their job's
-  default and the tiers are live, but the client's picker is mounted only on the four hunt/forage
-  compose sheets, so choosing `none` on a band-wide role is a command-line selection today.
+- ~~The compose sheets offer no kit picker on a Scout or Warrior row.~~ **Wired.** The Band panel's
+  WORKFORCE zone mounts the picker on each role CARD, over a line stating what the kit buys and the
+  condition of the item behind it, and the card emits `assign_labor … <role> <n> kit <id>` on the
+  pick — `.claude/rules/client/band-city-panel.md` → "The role cards carry the band's OTHER two kits".
 - **A Field's (rung-3) managed collection cap stays on the equipped reference rate.** Rung 3's
   harvest is quoted per *account* (`managed_per_worker_yield` / `_fodder` / `_trade`) and draws no
   biomass down, so it has no single biomass quantum to charge a basket against; wiring it needs the

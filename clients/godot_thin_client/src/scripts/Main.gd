@@ -862,8 +862,15 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
                     workers, "" if workers == 1 else "s", herd_id, _floor_percent_text(payload)],
             }
         "scout", "warrior":
+            # **A BAND-WIDE ROLE CARRIES THE KIT TOKEN TOO, and it is the only optional token these
+            # two rows take.** They have no tile, no herd, no floor and no species — the sim ignores
+            # every one of those on a Scout or Warrior target — but `kit_job()` answers for all four
+            # roles now, so `assign_labor … scout 3 kit none` is a real selection rather than a token
+            # dropped on the floor. Same `_kit_token` omission rule as the other two branches, so a
+            # player who never opened the role card's picker emits the line they always did.
             return {
-                "line": "assign_labor %d %d %s %d" % [faction, band_id, kind, workers],
+                "line": "assign_labor %d %d %s %d%s" % [
+                    faction, band_id, kind, workers, _kit_token(payload)],
                 "message": "Assign %d worker%s to %s." % [workers, "" if workers == 1 else "s", kind],
             }
     return {}

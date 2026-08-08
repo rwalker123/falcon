@@ -804,9 +804,14 @@ const KIT_PICKER_FACE_FORMAT := "%s %s"
 ## The glyph is keyed by the JOB THE SHEET IS COMPOSING, never by the kit's id: ids come from
 ## `equipment.json` and a client-side table keyed on them goes stale the moment a kit is added. The
 ## glyph says what the crew is walking out to do, which is the same for every kit on one sheet.
+## **The two BAND-WIDE roles have faces here too**, since the WORKFORCE zone's role cards mount the
+## same picker: a compass for the scout who is walking out to look, an axe for the warrior who stays
+## by the fire. Keyed by job like the two above, so a roster that adds a wayfinding kit needs no entry.
 const KIT_JOB_GLYPHS := {
 	"hunt": "🏹",
 	"forage": "🧺",
+	"scout": "🧭",
+	"warrior": "🪓",
 }
 
 ## The fallback face glyph for a job with no glyph of its own — the roster's `jobs` is wire data, so a
@@ -851,6 +856,12 @@ const KIT_HINT_PEN_CARRY_FORMAT := "pen %s per keeper"
 ## number never scales anything above it — it says how much longer the tier lasts, not how good it is.
 const KIT_HINT_CONDITION_FORMAT := "%s %d"
 const KIT_HINT_DRY_FORMAT := "%s dry"
+## **A BAND-WIDE ROLE'S ITEM CLAUSE** — `Wayfinding 100`, `Clubs dry`. It takes `DetailFormat`'s own
+## capitalised item LABEL and condition FACE rather than the lowercase component words below, because
+## the Gear popover states the identical pair for the identical band (`▲ Wayfinding 66 — …`) and two
+## spellings of one reading is how a card and the popover it sits above come to disagree. One format
+## for both states: the face is the number or the word `dry`, so this line needs no dry twin.
+const KIT_HINT_ROLE_ITEM_FORMAT := "%s %s"
 const KIT_COMPONENT_SPEARS := "spears"
 const KIT_COMPONENT_SLED := "sled"
 const KIT_COMPONENT_BASKETS := "baskets"

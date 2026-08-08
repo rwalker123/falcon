@@ -2,14 +2,14 @@ class_name KitRoster
 
 ## THE KIT ROSTER LAYER (`docs/plan_denial_raid.md`, `equipment.json` `kits`) — the read over
 ## `SubsistenceSection.kits`, the EFFECTIVE tier a given band gets under a given kit, the honesty test
-## against the estimate tables' own kit ids, and the picker row all four compose sheets mount.
+## against the estimate tables' own kit ids, and the picker row every surface that names a kit mounts.
 ##
 ## WHY IT IS ITS OWN FILE. The control appears on FOUR sheets across TWO controllers (the Band panel's
 ## hunting-party and denial forms, the herd drawer's assign-hunters block, the land drawer's
-## assign-foragers block). A kit describes the crew, so the row sits directly under the crew stepper
-## and above every forecast on all four — and a row that has to read identically in four places is
-## exactly the thing that must have one implementation. Same measurement that produced `SourceForecast`
-## and `HudWidgets`.
+## assign-foragers block) **and on the WORKFORCE zone's two band-wide role CARDS**. A kit describes the
+## crew, so the row sits directly under the crew stepper and above every forecast on all four — and a
+## row that has to read identically in six places is exactly the thing that must have one
+## implementation. Same measurement that produced `SourceForecast` and `HudWidgets`.
 ##
 ## EVERYTHING HERE IS `static` AND STATELESS. The roster itself is snapshot data and lives on
 ## `HudBandLaborState` (the pure data model), threaded in as a parameter — never held here.
@@ -23,7 +23,9 @@ class_name KitRoster
 ##
 ## DEPENDENCY DIRECTION: this file reads `SourceForecast` / `HudWidgets` / `HudStyle` / the vocab
 ## leaves, and NONE of them may read it back — a `const` cycle between two `class_name`d scripts fails
-## to load the whole client.
+## to load the whole client. **`DetailFormat` joined that list for `role_hint` alone**, and only from
+## inside a function body, never as a `const` initializer: the band-wide role line is the Gear
+## popover's own wording and must not be a second copy of it. `DetailFormat` reads nothing here.
 
 # ---- the wire's own keys ------------------------------------------------------------------------
 # The kit roster + the two job defaults, decoded once per world onto the snapshot dict
@@ -46,12 +48,11 @@ const KIT_FORAGE_CARRY_KEY := "forage_carry_per_worker_biomass"
 ## sled collects a pen at the bare rate. `scout_vantage_range` is what a posted scout vantage can
 ## make out; how far out it is POSTED is not a kit axis at all (it is three `labor_config` dials).
 const KIT_PEN_CARRY_KEY := "pen_carry_per_worker_biomass"
-## **DECLARED FOR THE ROSTER'S AXIS VOCABULARY, AND IT HAS NO HINT-LINE CONSUMER.** `tier_hint` is
-## written for the two COMPOSE sheets, which are hunt and forage only; Scout is a band-wide role with
-## no compose surface, so there is nowhere for a vantage tier to render. The key and its `AXIS_ITEMS`
-## row stay because the WIRE carries the axis — `unequipped_tier`/`equipped_tier` read it off the
-## roster like any other, and `condition_of` answers for `wayfinding` the moment a Scout row gets a
-## sheet. Do not invent that surface here.
+## **THE SCOUT'S AXIS, AND IT HAS A SURFACE NOW.** It was declared for the roster's axis vocabulary
+## with no hint-line consumer — `tier_hint` was written for the two COMPOSE sheets, which are hunt and
+## forage only — and the WORKFORCE zone's role CARDS are the surface that comment said to wait for:
+## each carries a picker and a gear line, so `unequipped_tier` / `item_condition` / `_tier_after_wear`
+## answer for `wayfinding` exactly as they always could. See `ROLE_AXES`.
 const KIT_SCOUT_VANTAGE_KEY := "scout_vantage_range"
 
 ## **WHAT THE KIT DOES TO THE QUARRY'S RETREAT** — a multiplier on the species' own wariness, so the
@@ -150,6 +151,43 @@ const JOB_FORAGE := SourceForecast.LABOR_KIND_FORAGE
 ## `assign_labor` roles, like the pair above.
 const JOB_SCOUT := "scout"
 const JOB_WARRIOR := "warrior"
+
+## **THE ONE AXIS TWO ITEMS SUPPLY, RESOLVED PER JOB.** `AXIS_ITEMS` answers `spears` for `attack`,
+## which is right on the hunt job and wrong on the WARRIOR's: a raid is fought at the camp with
+## whatever is by the fire, so a warrior kit buys the same stat off `clubs`. That is the exact
+## ambiguity `AXIS_ITEMS` already records as its one genuine gap, and this is where it is closed — by
+## JOB, which is what that note says the lookup is keyed on.
+##
+## **NOTHING OUTSIDE THIS FILE MAY NAME AN ITEM.** A caller asks `item_for_axis(job, axis)` and gets
+## the id back; a card that spelled `clubs` would be a second mapping free to drift from the roster,
+## and the sim spells no item id either (`equipment.md` → "Nothing resolves a stat by naming an item").
+const JOB_AXIS_ITEMS := {
+	JOB_WARRIOR: {KIT_ATTACK_KEY: "clubs"},
+}
+
+## **THE AXIS EACH BAND-WIDE ROLE IS PRICED ON** — a Scout's kit buys what a posted vantage can make
+## out, a Warrior's buys the `attack` the camp is defended at. Only the two roles with no source to
+## work appear: a hunt or forage crew's carry axis is a property of the SOURCE (`carry_axis_for`)
+## rather than of the job alone, and the two questions must not collapse into one table.
+const ROLE_AXES := {
+	JOB_SCOUT: KIT_SCOUT_VANTAGE_KEY,
+	JOB_WARRIOR: KIT_ATTACK_KEY,
+}
+
+## Is this a BAND-WIDE role — one standing slot, no source, priced on `ROLE_AXES`? The one test, so a
+## caller never spells the pair of job names.
+static func is_band_wide_role(job: String) -> bool:
+	return ROLE_AXES.has(job)
+
+## The axis this role's kit is priced on, `""` for a job that works a source instead.
+static func role_axis(job: String) -> String:
+	return String(ROLE_AXES.get(job, ""))
+
+## **WHICH ITEM SUPPLIES THIS AXIS ON THIS JOB** — the job's own answer where it has one
+## (`JOB_AXIS_ITEMS`), else the axis-keyed table. `""` for an axis no item is mapped to.
+static func item_for_axis(job: String, axis_key: String) -> String:
+	var per_job: Dictionary = JOB_AXIS_ITEMS.get(job, {})
+	return String(per_job.get(axis_key, AXIS_ITEMS.get(axis_key, "")))
 
 ## **THE CARRY AXIS EACH JOB IS PRICED ON** — "one item, one job" (`equipment.md`): a SLED raises the
 ## hunt's haul, BASKETS raise the forage web's, and no kit raises both.
@@ -731,13 +769,53 @@ static func _tier_after_wear(kits: Array, axis_key: String, fresh: float,
 ## kitted number for gear the server never confirmed is the failure mode this whole model exists to
 ## prevent. Erring toward the unequipped tier under-promises instead.
 static func condition_of(band: Dictionary, axis_key: String) -> float:
-	var item_id: String = AXIS_ITEMS.get(axis_key, "")
+	return item_condition(band, String(AXIS_ITEMS.get(axis_key, "")))
+
+## The remaining condition of ONE ITEM, `CONDITION_DRY` when the band publishes no row for it. The
+## axis-keyed reading above is written in terms of it, so the "absent reads as dry" rule has one home
+## for both — the band-wide roles resolve their item per JOB (`item_for_axis`) and cannot go through
+## the axis table.
+static func item_condition(band: Dictionary, item_id: String) -> float:
 	if item_id.is_empty():
 		return CONDITION_DRY
 	for row in band.get(BAND_ITEM_CONDITIONS_KEY, []):
 		if String(row.get(ITEM_CONDITION_ID_KEY, "")) == item_id:
 			return float(row.get(ITEM_CONDITION_REMAINING_KEY, CONDITION_DRY))
 	return CONDITION_DRY
+
+## **WHAT A BAND-WIDE ROLE ACTUALLY GETS UNDER THIS KIT** — `{axis, item, tier, condition, stated}`,
+## the role twin of `effective_tiers` and it exists BECAUSE that one is job-blind: its `attack` row
+## reads the SPEARS' condition (`AXIS_ITEMS`), so asking it for a warrior kit would step the camp's
+## defence down to bare hands on a band whose clubs are whole and whose spears are spent.
+##
+## `stated` is false when the band publishes no conditions at all, exactly as `effective_tiers` reads
+## it: the fresh tier then stands and the card prints no condition clause, rather than a client
+## quoting `dry` at gear the server never described.
+##
+## `{}` for a job that is not band-wide, or a kit the roster could not resolve.
+static func role_gear(kits: Array, kit: Dictionary, band: Dictionary, job: String) -> Dictionary:
+	var axis := role_axis(job)
+	if axis.is_empty() or kit.is_empty():
+		return {}
+	var item_id := item_for_axis(job, axis)
+	var fresh := float(kit.get(axis, 0.0))
+	var stated := not (band.get(BAND_ITEM_CONDITIONS_KEY, []) as Array).is_empty()
+	var condition := item_condition(band, item_id)
+	return {
+		ROLE_GEAR_AXIS_KEY: axis,
+		ROLE_GEAR_ITEM_KEY: item_id,
+		ROLE_GEAR_TIER_KEY: _tier_after_wear(kits, axis, fresh, condition) if stated else fresh,
+		ROLE_GEAR_CONDITION_KEY: condition,
+		ROLE_GEAR_STATED_KEY: stated,
+	}
+
+## `role_gear`'s keys. Named rather than spelled at each reader for the reason every dict contract in
+## this layer is: a typo in a `get` is a silent zero.
+const ROLE_GEAR_AXIS_KEY := "axis"
+const ROLE_GEAR_ITEM_KEY := "item"
+const ROLE_GEAR_TIER_KEY := "tier"
+const ROLE_GEAR_CONDITION_KEY := "condition"
+const ROLE_GEAR_STATED_KEY := "stated"
 
 ## **IS THIS COMPONENT PART OF THIS KIT?** — a kit uses a component exactly when its tier on that
 ## component's axis beats the roster's bare-handed one. It answers a DISPLAY question only (whether
@@ -782,6 +860,11 @@ static func tier_hint(kits: Array, kit: Dictionary, band: Dictionary, job: Strin
 		quarry: Dictionary = {}) -> String:
 	if kit.is_empty():
 		return ""
+	# **A BAND-WIDE ROLE READS ONE AXIS AND ITS OWN ITEM**, and it takes a branch of its own rather
+	# than a fourth arm below: those arms are keyed by CARRY axis and resolve their conditions through
+	# `effective_tiers`, which is job-blind and would price a warrior's `attack` off the spears.
+	if is_band_wide_role(job):
+		return role_hint(kits, kit, band, job)
 	var tiers := effective_tiers(kits, kit, band)
 	var parts: Array[String] = []
 	if job == JOB_FORAGE:
@@ -806,6 +889,45 @@ static func tier_hint(kits: Array, kit: Dictionary, band: Dictionary, job: Strin
 		_append_condition(parts, kits, kit, band, tiers, KIT_HUNT_CARRY_KEY,
 			HudComposeVocab.KIT_COMPONENT_SLED)
 	return HudComposeVocab.KIT_HINT_SEPARATOR.join(parts)
+
+## **THE BAND-WIDE ROLE CARDS' HINT** — `2-tile sight per vantage · Wayfinding 100`, the effect this
+## band's Scout or Warrior actually gets under this kit, then the condition of the item behind it.
+##
+## **IT IS THE GEAR POPOVER'S OWN VOCABULARY, DELIBERATELY** (`DetailFormat.KIT_ROLE_*`,
+## `kit_item_label`, `kit_condition_face`), rather than this file's compose-sheet wording. That
+## popover already renders `▲ Wayfinding 66 — 2-tile sight per vantage` for the same pair on the same
+## band, and a card that phrased its own version would give the player two ways of reading one number.
+##
+## The condition clause follows `_append_condition`'s two rules — the kit must actually USE the axis
+## (`none` wears nothing, so quoting an item beside it would describe wear it never causes) and the
+## band must have STATED a condition — so a `none` selection reads as its bare-handed effect alone.
+static func role_hint(kits: Array, kit: Dictionary, band: Dictionary, job: String) -> String:
+	var gear := role_gear(kits, kit, band, job)
+	if gear.is_empty():
+		return ""
+	var parts: Array[String] = []
+	var phrase := _role_effect_phrase(job, float(gear[ROLE_GEAR_TIER_KEY]))
+	if phrase != "":
+		parts.append(phrase)
+	if bool(gear[ROLE_GEAR_STATED_KEY]) and kit_uses(kits, kit, String(gear[ROLE_GEAR_AXIS_KEY])):
+		var item_id := String(gear[ROLE_GEAR_ITEM_KEY])
+		parts.append(HudComposeVocab.KIT_HINT_ROLE_ITEM_FORMAT % [
+			DetailFormat.kit_item_label(item_id), DetailFormat.kit_condition_face(band, item_id)])
+	return HudComposeVocab.KIT_HINT_SEPARATOR.join(parts)
+
+## What this role's tier BUYS, in words. **A vantage is a DISTANCE and the camp's attack is a small
+## whole number**, so each takes the rounding the Gear popover already gives it — the vantage its own
+## (the sim reveals in whole tiles), the attack the popover's shared whole-number face — and neither
+## may inherit the carries' one decimal.
+static func _role_effect_phrase(job: String, tier: float) -> String:
+	match job:
+		JOB_SCOUT:
+			return DetailFormat.KIT_ROLE_SCOUT_VANTAGE_FORMAT % String.num(
+				tier, DetailFormat.KIT_VANTAGE_DECIMALS)
+		JOB_WARRIOR:
+			return DetailFormat.KIT_ROLE_WARRIOR_ATTACK_FORMAT % String.num(
+				tier, DetailFormat.KIT_CONDITION_DECIMALS)
+	return ""
 
 ## One item's condition clause, appended only where there is something true to say: the kit has to
 ## actually use the item, and the band has to have stated its condition. The axis names the item
@@ -891,11 +1013,34 @@ static func estimates_quoted_note(kits: Array, herd: Dictionary, table_key: Stri
 ## and every kit is offered, exactly as before the test existed. **The quarry reaches the HINT too**,
 ## which is how a pen's row states the keeper's carry where a wild herd's states the hunter's.
 ##
+## **`key_text` IS THE FIELD KEY, AND `""` MEANS THE HOST HAS ALREADY NAMED THE ROW.** Every compose
+## sheet takes the default and gets the family's declared-width `Kit` label. The WORKFORCE zone's role
+## CARDS pass `""`: the card is already headed `Scout` / `Warrior`, and its ~175px width cannot spend
+## `COMPOSE_FIELD_KEY_WIDTH` (64) on a third word — measured, the key leaves ~109px for the control
+## and `🧭 Wayfinding kit` clips inside it. With no key the picker is the row's only child and takes
+## the card.
+##
+## **`compact_chrome` SQUEEZES THE CONTROL INTO A ZONE CARD** (`HudWidgets.compact` — the WORK zone's
+## own row type size and padding, the trim the board's steppers and chips take). It buys BOTH of the
+## things a ~137px role card is short of, and both were measured on a rendered frame:
+##
+## - **HEIGHT.** The ghost stylebox pads 9px top and bottom, so an untrimmed picker is ~42px — a fifth
+##   of the card, and enough to tip the band flank's two columns past `band_panel_preview`'s levelness
+##   floor.
+## - **WIDTH, which is the half a padding trim alone does not fix.** `clip_text` is on, so at the
+##   default type size `🧭 Wayfinding kit` came back as **`🧭 Wayfinding ki`** in both a 380px side dock
+##   and a two-column horizontal one — the face naming a kit whose name it had eaten the end of.
+##
+## A compose sheet passes `false` and is byte-identical: it is a free-standing form with a whole
+## column to spend, and the family's 42px height is what makes its `Band:` / `Kit` / `Quarry` rows
+## line up.
+##
 ## Returns `null` when the job offers no kit at all, so a sheet whose verb the roster does not cover
 ## renders exactly as it did before the picker existed.
 static func build_kit_row(kits: Array, job: String, selected_id: String, default_id: String,
 		band: Dictionary, on_pick: Callable, quarry: Dictionary = {},
-		prefix: String = "") -> VBoxContainer:
+		prefix: String = "", key_text: String = HudComposeVocab.COMPOSE_FIELD_KIT,
+		compact_chrome: bool = false) -> VBoxContainer:
 	var offered := kits_for_job(kits, job)
 	if offered.is_empty():
 		return null
@@ -903,7 +1048,8 @@ static func build_kit_row(kits: Array, job: String, selected_id: String, default
 	var block := VBoxContainer.new()
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-	row.add_child(HudWidgets.build_field_key(HudComposeVocab.COMPOSE_FIELD_KIT))
+	if key_text != "":
+		row.add_child(HudWidgets.build_field_key(key_text))
 	var glyph := String(HudComposeVocab.KIT_JOB_GLYPHS.get(job,
 		HudComposeVocab.KIT_JOB_GLYPH_FALLBACK))
 	# **THE MARK FOLLOWS THE ID THE SHEET ACTUALLY OPENED ON** — `default_kit_for`, the same
@@ -944,6 +1090,9 @@ static func build_kit_row(kits: Array, job: String, selected_id: String, default
 		HudComposeVocab.KIT_PICKER_FACE_FORMAT % [glyph, kit_display_name(selected)],
 		HudComposeVocab.KIT_PICKER_TOOLTIP)
 	picker.set_meta(KIT_PICKER_META, true)
+	if compact_chrome:
+		HudWidgets.compact(picker, HudWorkVocab.WORK_STEPPER_FONT_SIZE,
+			HudWorkVocab.WORK_STEPPER_PADDING_V)
 	row.add_child(picker)
 	block.add_child(row)
 	var hint_text := tier_hint(kits, selected, band, job, quarry)
