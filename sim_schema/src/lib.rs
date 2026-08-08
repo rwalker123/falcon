@@ -34,12 +34,12 @@ mod tests {
         }
     }
 
-    /// **The kit roster, the per-row kit ids and the estimate tables' quoted kit survive the wire.**
+    /// **The kit roster, its carry list, and every per-row kit id survive the wire.**
     ///
     /// Encode → decode through the generated reader, because a field appended behind an existing one
-    /// is exactly the shape that silently fails to serialize — and the estimate-table ids are the
-    /// field a client uses to *refuse* to present a table for a kit it was not computed for, so an
-    /// absent one reads as "quoted for nothing" and the refusal never fires.
+    /// is exactly the shape that silently fails to serialize — and every id here is what a consumer
+    /// resolves a readout against, so an absent one reads as "quoted for nothing" rather than as a
+    /// missing field.
     #[test]
     fn the_kit_roster_and_every_kit_id_ride_the_wire() {
         const BARE_HUNT_CARRY: f32 = 12.0;
@@ -55,38 +55,50 @@ mod tests {
         const BAND_WARRIOR_ATTACK: f32 = 6.0;
 
         let snapshot = WorldSnapshot {
-            kits: vec![KitOptionState {
-                id: "none".to_string(),
-                display_name: "No kit".to_string(),
-                jobs: vec![
-                    "hunt".to_string(),
-                    "forage".to_string(),
-                    "scout".to_string(),
-                    "warrior".to_string(),
-                ],
-                attack: BARE_ATTACK,
-                hunt_carry_per_worker_biomass: BARE_HUNT_CARRY,
-                forage_carry_per_worker_biomass: BARE_FORAGE_CARRY,
-                pen_carry_per_worker_biomass: BARE_PEN_CARRY,
-                scout_vantage_range: BARE_VANTAGE_RANGE,
-                // `none` carries nothing, so every multiplier reads its neutral and its attack —
-                // the bare hand's — is bounded by nothing.
-                attack_min_body_mass: 0.0,
-                attack_max_body_mass: 0.0,
-                dispersion: 1.0,
-                exposure: 1.0,
-            }],
+            kits: vec![
+                KitOptionState {
+                    id: "none".to_string(),
+                    display_name: "No kit".to_string(),
+                    jobs: vec![
+                        "hunt".to_string(),
+                        "forage".to_string(),
+                        "scout".to_string(),
+                        "warrior".to_string(),
+                    ],
+                    attack: BARE_ATTACK,
+                    hunt_carry_per_worker_biomass: BARE_HUNT_CARRY,
+                    forage_carry_per_worker_biomass: BARE_FORAGE_CARRY,
+                    pen_carry_per_worker_biomass: BARE_PEN_CARRY,
+                    scout_vantage_range: BARE_VANTAGE_RANGE,
+                    // `none` carries nothing, so every multiplier reads its neutral and its attack —
+                    // the bare hand's — is bounded by nothing.
+                    attack_min_body_mass: 0.0,
+                    attack_max_body_mass: 0.0,
+                    dispersion: 1.0,
+                    exposure: 1.0,
+                    // Carrying nothing is a real answer, and an EMPTY vector is how it is said.
+                    item_ids: Vec::new(),
+                },
+                // A second entry that actually carries gear, because the empty case above cannot
+                // distinguish "this kit holds nothing" from "the field never reached the wire" —
+                // and telling those apart is the entire reason `item_ids` exists.
+                KitOptionState {
+                    id: "big_game".to_string(),
+                    display_name: "Big-game kit".to_string(),
+                    jobs: vec!["hunt".to_string()],
+                    item_ids: vec!["spears".to_string(), "sled".to_string()],
+                    ..Default::default()
+                },
+            ],
             default_hunt_kit_id: "big_game".to_string(),
             default_forage_kit_id: "gathering".to_string(),
             default_scout_kit_id: "wayfinding".to_string(),
             default_warrior_kit_id: "warrior".to_string(),
             herds: vec![HerdTelemetryState {
                 id: "herd_wild".to_string(),
-                hunt_trip_estimates_kit_id: "big_game".to_string(),
-                denial_estimates_kit_id: "big_game".to_string(),
-                // DISTINCT from the two above, although the capture quotes all three at the same
-                // kit: a slot wired to the wrong string then shows up as a swap rather than as a
-                // coincidence.
+                // The quarry's OWN default kit, deliberately not the snapshot's
+                // `default_hunt_kit_id` above: a slot wired to the wrong string then shows up as a
+                // swap rather than as a coincidence.
                 default_kit_id: "trapping".to_string(),
                 ..Default::default()
             }],
@@ -134,10 +146,34 @@ mod tests {
         assert_eq!(jobs.get(0), "hunt");
         assert_eq!(jobs.get(2), "scout");
         assert_eq!(jobs.get(3), "warrior");
+        assert_eq!(
+            option
+                .itemIds()
+                .expect("a kit states what it carries")
+                .len(),
+            0,
+            "`none` carries nothing, and says so with an empty list"
+        );
 
+        // **WHICH ITEMS A KIT CARRIES, in config order.** Without this the client has to infer the
+        // gear from the tiers — which it did, by hardcoding `attack → spears`, and so quoted a
+        // Trapping party the SPEARS' durability.
+        let kitted = subsistence.kits().expect("the roster is published").get(1);
+        let items = kitted.itemIds().expect("a kit states what it carries");
+        assert_eq!(items.len(), 2);
+        assert_eq!(
+            items.get(0),
+            "spears",
+            "the weapon comes first, as config has it"
+        );
+        assert_eq!(items.get(1), "sled");
+
+        // The herd row still ships. The two `*_kit_id` disclaimers that used to be asserted here are
+        // retired with the estimate tables they described: they told a client *"these rows were
+        // priced at the hunt default, refuse to show them for any other kit"*, which is what you
+        // publish when you cannot answer the question. The client asks now, and names the kit.
         let herd = subsistence.herds().expect("herds present").get(0);
-        assert_eq!(herd.huntTripEstimatesKitId(), Some("big_game"));
-        assert_eq!(herd.denialEstimatesKitId(), Some("big_game"));
+        assert_eq!(herd.id(), Some("herd_wild"));
         assert_eq!(herd.defaultKitId(), Some("trapping"));
 
         let cohort = payload

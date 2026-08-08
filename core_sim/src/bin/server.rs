@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::io::{self, BufReader, Read};
+use std::io::{self, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
@@ -59,7 +59,8 @@ use core_sim::{
 };
 use sim_runtime::{
     commands::{
-        ConfigOverrideKind, EspionageGeneratorUpdate as CommandGeneratorUpdate, ReloadConfigKind,
+        query_error, ConfigOverrideKind, EspionageGeneratorUpdate as CommandGeneratorUpdate,
+        QueryPayload, QueryReply, QueryReplyEnvelope, ReloadConfigKind, MAX_PROTO_FRAME,
     },
     CancelScope, CommandEnvelope as ProtoCommandEnvelope, CommandPayload as ProtoCommandPayload,
     OrdersDirective as ProtoOrdersDirective, SecurityPolicyKind, TerrainTags,
@@ -373,6 +374,41 @@ fn main() {
                     &snapshot_flat_server,
                 );
             }
+            // **A QUERY IS ANSWERED, NOT APPLIED — and that is why it is matched here rather than
+            // falling into the arm below.** Two things below it must not happen to a query:
+            //
+            //  - `log_dispatched_command` would put it in the replay log. A query mutates nothing,
+            //    so replaying one would re-answer a question nobody asked, into a reply channel from
+            //    a connection that no longer exists — a log entry that cannot reproduce anything and
+            //    can only fail.
+            //  - `apply_command` has nothing to apply. There is no world change to make.
+            //
+            // It also `continue`s past the re-capture at the bottom of the loop: that republishes
+            // the entire world, which is the expensive half of a turn, and a question that changed
+            // nothing has nothing to republish.
+            Command::Query {
+                request_id,
+                query,
+                reply,
+            } => {
+                let answer = answer_query(world_active, &mut app.world, &query);
+                // A send failure means the asking connection is gone. Nothing to recover: the
+                // question died with it.
+                if reply
+                    .send(QueryReplyEnvelope {
+                        request_id,
+                        reply: answer,
+                    })
+                    .is_err()
+                {
+                    warn!(
+                        target: "shadow_scale::server",
+                        request_id,
+                        "query.reply.dropped=asking connection closed"
+                    );
+                }
+                continue;
+            }
             other => {
                 // Logged BEFORE it runs, and on the same uniform seam every command already passes
                 // through: a new command variant is logged whether or not anyone remembers it
@@ -590,6 +626,18 @@ enum Command {
     },
     /// Drop every staged override, so the next `new_game` boots on the shipped configs.
     ClearConfigOverrides,
+    /// **A question, not an order** — the only variant in this enum the loop *answers* instead of
+    /// applying. It mutates nothing, so it is dispatched ahead of the catch-all arm and never
+    /// reaches the replay log (see the dispatch site for why that matters).
+    ///
+    /// `reply` is the asking **connection's** channel, cloned at decode time, so an answer computed
+    /// later on the turn thread goes back to the client that asked rather than to whoever is
+    /// currently connected.
+    Query {
+        request_id: u64,
+        query: QueryPayload,
+        reply: Sender<QueryReplyEnvelope>,
+    },
 }
 
 #[derive(Resource, Clone)]
@@ -822,8 +870,6 @@ impl Drop for FileWatcherHandle {
     }
 }
 
-const MAX_PROTO_FRAME: usize = 64 * 1024;
-
 /// Starts the command listener on an already-bound listener. Binding happens
 /// up front in `port_alloc::allocate`, so this can no longer panic on a port
 /// conflict.
@@ -854,7 +900,44 @@ fn spawn_command_listener(listener: TcpListener) -> (Receiver<Command>, Sender<C
     (receiver, sender)
 }
 
+/// **The command socket is bidirectional, and this is where the second direction lives.**
+///
+/// Every payload but one is an *order*: the client sends it, the world changes, and the client
+/// learns what happened from the next snapshot. `QueryCommand` is the exception — it asks a question
+/// and is *answered* on the same TCP stream. Nothing about the transport had to change to allow
+/// that; "one-way" was a protocol choice, not a limitation of the socket.
+///
+/// So each connection gets a **writer thread** over a `try_clone`d handle and its own unbounded
+/// reply channel. The read loop hands a clone of the sender to every `Command::Query` it decodes, so
+/// an answer computed on the turn thread — arbitrarily later, and possibly interleaved with other
+/// connections' — lands back on *this* client's socket, correlated by `request_id`.
+///
+/// **The channel is unbounded and the writer never blocks the sim.** A snapshot broadcast can afford
+/// to drop a slow client because the next frame supersedes it (`snapshot-socket.md`); a query reply
+/// has no successor, so the answer is queued rather than discarded. Bounding queries is the client's
+/// job — it asks one question per sheet interaction.
+///
+/// **Both threads end together.** The writer exits when the read loop drops its sender (the client
+/// disconnected) or when a write fails; the reader exits on EOF or a framing violation. Neither can
+/// leave the other spinning on a dead socket.
 fn handle_proto_client(stream: TcpStream, sender: Sender<Command>) {
+    // The write half. A failure to clone is not fatal to the *command* direction — orders still
+    // work; only queries go unanswered — so it degrades to a read-only connection rather than
+    // dropping a client that may never ask a question.
+    let (reply_tx, reply_rx) = unbounded::<QueryReplyEnvelope>();
+    match stream.try_clone() {
+        Ok(write_half) => {
+            thread::spawn(move || write_query_replies(write_half, reply_rx));
+        }
+        Err(err) => {
+            warn!(
+                target: "shadow_scale::server",
+                error = %err,
+                "query.reply_channel.unavailable=stream could not be cloned for writing"
+            );
+        }
+    }
+
     let mut reader = BufReader::new(stream);
     loop {
         let mut len_buf = [0u8; 4];
@@ -888,7 +971,7 @@ fn handle_proto_client(stream: TcpStream, sender: Sender<Command>) {
         }
         match ProtoCommandEnvelope::decode(&payload) {
             Ok(envelope) => {
-                if let Some(cmd) = command_from_payload(envelope.payload) {
+                if let Some(cmd) = command_from_payload(envelope.payload, &reply_tx) {
                     if sender.send(cmd).is_err() {
                         break;
                     }
@@ -897,6 +980,79 @@ fn handle_proto_client(stream: TcpStream, sender: Sender<Command>) {
             Err(err) => {
                 warn!("Proto command decode error: {}", err);
             }
+        }
+    }
+}
+
+/// **The idle-boot gate on a query.**
+///
+/// The server boots with **no world** (`world_active == false` until `new_game` or `ResetMap`), and
+/// that world has no herds, no bands and no `ElevationField`. Answering there would resolve against
+/// an empty registry and report `unknown_herd` — true, and useless: it sends the player looking at
+/// the map for a problem that is "there is no map". The distinct token is what lets a client say
+/// *"start a game first"*.
+///
+/// Split out of the dispatch arm so the gate is testable without a main loop; it is the one part of
+/// answering a query that depends on server state rather than world state.
+fn answer_query(
+    world_active: bool,
+    world: &mut bevy::prelude::World,
+    query: &QueryPayload,
+) -> QueryReply {
+    if !world_active {
+        return QueryReply::Error(query_error::NO_ACTIVE_WORLD.to_string());
+    }
+    core_sim::forecast_query::answer_forecast_query(world, query)
+}
+
+/// One connection's **reply writer**: drain answered queries and frame them back onto the socket.
+///
+/// The framing is the read path's, inverted — a 4-byte little-endian length followed by the encoded
+/// protobuf — and it is bounded by the **same** [`MAX_PROTO_FRAME`], deliberately: a reply the reader
+/// on the other end would refuse as oversized must not be put on the wire in the first place, because
+/// the client's framing loop drops the connection on one. A reply that would exceed it is logged and
+/// skipped, which costs the client one unanswered question instead of the whole socket.
+///
+/// Exits when the sender drops (the connection's read loop ended) or when a write fails — a broken
+/// pipe is the ordinary way a client goes away, so it warns at most once and returns.
+fn write_query_replies(mut stream: TcpStream, replies: Receiver<QueryReplyEnvelope>) {
+    while let Ok(reply) = replies.recv() {
+        let request_id = reply.request_id;
+        let encoded = match reply.encode_to_vec() {
+            Ok(encoded) => encoded,
+            Err(err) => {
+                warn!(
+                    target: "shadow_scale::server",
+                    request_id,
+                    error = %err,
+                    "query.reply.encode_failed"
+                );
+                continue;
+            }
+        };
+        if encoded.len() > MAX_PROTO_FRAME {
+            warn!(
+                target: "shadow_scale::server",
+                request_id,
+                bytes = encoded.len(),
+                limit = MAX_PROTO_FRAME,
+                "query.reply.too_large=dropped rather than sent as a frame the client must refuse"
+            );
+            continue;
+        }
+        let header = (encoded.len() as u32).to_le_bytes();
+        if let Err(err) = stream
+            .write_all(&header)
+            .and_then(|()| stream.write_all(&encoded))
+            .and_then(|()| stream.flush())
+        {
+            warn!(
+                target: "shadow_scale::server",
+                request_id,
+                error = %err,
+                "query.reply.write_failed=connection closed"
+            );
+            return;
         }
     }
 }
@@ -2983,11 +3139,7 @@ fn launch_forecast_party(
             &fresh,
             quarry_body_mass,
         ),
-        tuning: {
-            let mut tuning = combat.tuning();
-            tuning.lethality *= combat.expedition_danger_multiplier;
-            tuning
-        },
+        tuning: combat.expedition_tuning(),
         injury_damage_per_animal: combat.hunt_injury_damage_per_animal
             * equipment_cfg.exposure(kit, &fresh),
         dispersion: equipment_cfg.dispersion(kit, &fresh),
@@ -5270,7 +5422,14 @@ fn handle_reload_crisis_telemetry_config(app: &mut bevy::prelude::App, path: Opt
     );
 }
 
-fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
+/// Map a decoded wire payload onto the loop's [`Command`].
+///
+/// `reply` is the **connection's** reply channel, threaded through so the one payload that expects
+/// an answer can carry a way back to the client that sent it. Every other arm ignores it.
+fn command_from_payload(
+    payload: ProtoCommandPayload,
+    reply: &Sender<QueryReplyEnvelope>,
+) -> Option<Command> {
     match payload {
         ProtoCommandPayload::Turn { steps } => Some(Command::Turn(steps)),
         ProtoCommandPayload::ResetMap { width, height } => {
@@ -5569,6 +5728,13 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             height,
             seed,
             profile_id,
+        }),
+        // The one payload that carries a way BACK. `reply` is this connection's writer channel, so
+        // the answer reaches the client that asked even if it is computed several commands later.
+        ProtoCommandPayload::Query { request_id, query } => Some(Command::Query {
+            request_id,
+            query,
+            reply: reply.clone(),
         }),
     }
 }
@@ -6069,16 +6235,32 @@ impl CommandLog {
 /// on, so a replay of this timeline that re-installed them would re-do file writes to change
 /// nothing about the world being replayed.
 fn log_dispatched_command(log: &mut CommandLog, command: &Command) {
-    let unreplayable = matches!(
+    if is_replayable(command) {
+        log.push(LogEntry::Command(command.clone()));
+    }
+}
+
+/// **Does replaying this command reproduce anything?** The exclusion list of
+/// [`log_dispatched_command`], as its own predicate so it can be asserted without standing a world
+/// up to hold a [`CommandLog`].
+///
+/// The reasons differ per variant and are given in that function's docs. `Query` is the newest and
+/// the plainest: it mutates nothing, so there is nothing to reproduce, and it carries a reply
+/// channel belonging to a connection a replay does not have.
+///
+/// **A query is dispatched before `log_dispatched_command` is ever reached, so it cannot arrive
+/// there today.** It is named here anyway, because the exclusion is a property of the *command* —
+/// not of where the dispatcher happens to match it — and a refactor that routed it through the
+/// generic arm must not silently start logging questions.
+fn is_replayable(command: &Command) -> bool {
+    !matches!(
         command,
         Command::ReloadConfig { .. }
             | Command::Rollback { .. }
             | Command::SetConfigOverride { .. }
             | Command::ClearConfigOverrides
-    );
-    if !unreplayable {
-        log.push(LogEntry::Command(command.clone()));
-    }
+            | Command::Query { .. }
+    )
 }
 
 fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &SnapshotServer) {
@@ -6097,6 +6279,18 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
             info!(
                 target: "shadow_scale::server",
                 "config_override.cleared"
+            );
+        }
+        // **Unreachable by construction** — the main loop answers a query and `continue`s, so one
+        // never gets here. It is a loud no-op rather than an `unreachable!` because the cost of
+        // being wrong differs by orders of magnitude: a panic here would take the whole server down
+        // over a question, while a warning leaves one query unanswered and names the routing bug in
+        // the log.
+        Command::Query { request_id, .. } => {
+            warn!(
+                target: "shadow_scale::server",
+                request_id,
+                "query.misrouted=a query reached apply_command; it is answered by the dispatcher"
             );
         }
         // Republish the world as a FULL frame. The client asks for this when it cannot apply a
@@ -9889,11 +10083,7 @@ mod tests {
     ///    vanished.
     #[test]
     fn a_raiding_party_is_bounded_by_the_band_and_not_by_the_sampling_lever() {
-        let ladder = core_sim::ExpeditionConfig::builtin()
-            .estimate_party_sizes
-            .clone();
-
-        // 1 + 2. Both raiding verbs launch a party the estimate tables do not quote.
+        // 1 + 2. Both raiding verbs launch whatever party the band can field.
         for verb in [RaidVerb::Deny, RaidVerb::Hunt] {
             let mut app = build_headless_app();
             // Startup, so the world carries the tile registry every launch path resolves against.
@@ -9907,12 +10097,12 @@ mod tests {
                     .expect("the fixture band exists")
                     .working,
             );
-            // The largest party this band could actually field that the ladder does NOT sample —
-            // there is no pre-computed row for it, and it must launch anyway.
-            let unquoted_party = (1..=pool)
-                .rev()
-                .find(|party| !ladder.contains(party))
-                .expect("some party the band can field falls between the ladder's rungs");
+            // **The largest party the band can field.** This used to be *"the largest party the
+            // sampling ladder does not carry a row for"*, because a launch had to be shown to work
+            // for a party the estimate tables could not quote. The ladder and the tables are gone —
+            // a forecast is asked for by party size now, so every party is quotable — and what is
+            // left to assert is the bound itself: the band, and nothing else.
+            let unquoted_party = pool;
             assert!(
                 unquoted_party > 1,
                 "{verb:?}: the fixture only means something while the band can spare a real party \
@@ -9930,7 +10120,7 @@ mod tests {
                 launched,
                 vec![unquoted_party],
                 "{verb:?}: a party of {unquoted_party} must launch from a band of {pool} — the \
-                 sampling ladder {ladder:?} is not a rule about what may be sent"
+                 band's own workers are the only rule about what may be sent"
             );
         }
 
@@ -11240,6 +11430,241 @@ mod tests {
         assert!(
             staffed_kinds(&app, band).is_empty(),
             "`work` is accepted on the same band"
+        );
+    }
+
+    // --- the query channel ------------------------------------------------------------------
+
+    /// A hunt query, framed as the client sends it. The values are irrelevant to the transport —
+    /// what is exercised is the framing and the correlation.
+    fn a_query_envelope(request_id: u64) -> ProtoCommandEnvelope {
+        ProtoCommandEnvelope {
+            payload: ProtoCommandPayload::Query {
+                request_id,
+                query: a_hunt_query(),
+            },
+            correlation_id: None,
+        }
+    }
+
+    /// The one query shape these transport tests send. Its values never reach a world.
+    fn a_hunt_query() -> QueryPayload {
+        QueryPayload::HuntTripForecast(sim_runtime::commands::HuntTripForecastQuery {
+            faction_id: 0,
+            band_id: 1,
+            herd_id: "game_transport".to_string(),
+            kit_id: "big_game".to_string(),
+            party_workers: 3,
+            floor: 0.25,
+            preset_floors: vec![0.0, 0.5],
+            // A plateau scan the transport tests never read; the reply is injected, not computed.
+            max_party_workers: 0,
+        })
+    }
+
+    /// Write one length-prefixed frame, exactly as the client's emit path does.
+    fn write_frame(stream: &mut TcpStream, bytes: &[u8]) {
+        stream
+            .write_all(&(bytes.len() as u32).to_le_bytes())
+            .expect("frame header");
+        stream.write_all(bytes).expect("frame body");
+        stream.flush().expect("frame flush");
+    }
+
+    /// Read one length-prefixed frame back off the socket.
+    fn read_frame(stream: &mut TcpStream) -> Vec<u8> {
+        let mut header = [0u8; 4];
+        stream.read_exact(&mut header).expect("reply header");
+        let len = u32::from_le_bytes(header) as usize;
+        assert!(
+            len <= MAX_PROTO_FRAME,
+            "a reply frame respects the same bound the read path enforces"
+        );
+        let mut body = vec![0u8; len];
+        stream.read_exact(&mut body).expect("reply body");
+        body
+    }
+
+    /// **THE ROUND TRIP, over a real socket.** A query frame in, a reply frame out, on the *same*
+    /// connection, correlated by `request_id`.
+    ///
+    /// It drives the actual `handle_proto_client` over a real `TcpStream` rather than exercising the
+    /// codec, because what is being proved is the part a codec round trip cannot see: that the
+    /// command socket carries a second direction at all. The reply path is a `try_clone`d handle and
+    /// a writer thread, and neither exists in a codec test.
+    ///
+    /// The answer is **injected rather than computed** — the sim's half is tested in
+    /// `core_sim::forecast_query`, and binding this test to a world would make a transport failure
+    /// and a forecast failure look the same.
+    #[test]
+    fn a_query_is_answered_on_the_same_socket() {
+        const REQUEST_ID: u64 = 4242;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("an ephemeral port");
+        let addr = listener.local_addr().expect("the bound address");
+        let (command_tx, command_rx) = unbounded::<Command>();
+
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("the test client connects");
+            handle_proto_client(stream, command_tx);
+        });
+
+        let mut client = TcpStream::connect(addr).expect("connect to the listener");
+        write_frame(
+            &mut client,
+            &a_query_envelope(REQUEST_ID)
+                .encode_to_vec()
+                .expect("the query envelope encodes"),
+        );
+
+        // The loop's side: the decoded command carries the request id AND a way back.
+        let command = command_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the query reaches the command channel");
+        let Command::Query {
+            request_id,
+            query,
+            reply,
+        } = command
+        else {
+            panic!("a query envelope must decode to Command::Query");
+        };
+        assert_eq!(request_id, REQUEST_ID);
+        assert!(
+            matches!(query, QueryPayload::HuntTripForecast(_)),
+            "the oneof survives the wire"
+        );
+
+        reply
+            .send(QueryReplyEnvelope {
+                request_id,
+                reply: QueryReply::Error(query_error::NO_ACTIVE_WORLD.to_string()),
+            })
+            .expect("the writer thread is listening");
+
+        let answer =
+            QueryReplyEnvelope::decode(&read_frame(&mut client)).expect("the reply frame decodes");
+        assert_eq!(
+            answer.request_id, REQUEST_ID,
+            "the reply is correlated to the query that asked for it"
+        );
+        assert_eq!(
+            answer.reply,
+            QueryReply::Error(query_error::NO_ACTIVE_WORLD.to_string())
+        );
+
+        // Closing the client ends the read loop, which drops the reply sender and ends the writer.
+        drop(client);
+        server.join().expect("the connection handler exits cleanly");
+    }
+
+    /// **Two queries on one connection stay distinguishable, whatever order they are answered in.**
+    /// The reply channel is per *connection* and shared by every question asked on it, so a client
+    /// with two sheets open must be able to tell the answers apart — which is the whole job of
+    /// `request_id`. Answering the second one first is what makes that a real assertion rather than
+    /// an accident of ordering.
+    #[test]
+    fn replies_stay_correlated_when_queries_are_pipelined() {
+        const FIRST: u64 = 1;
+        const SECOND: u64 = 2;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("an ephemeral port");
+        let addr = listener.local_addr().expect("the bound address");
+        let (command_tx, command_rx) = unbounded::<Command>();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("the test client connects");
+            handle_proto_client(stream, command_tx);
+        });
+
+        let mut client = TcpStream::connect(addr).expect("connect to the listener");
+        for id in [FIRST, SECOND] {
+            write_frame(
+                &mut client,
+                &a_query_envelope(id).encode_to_vec().expect("encodes"),
+            );
+        }
+
+        let mut pending = Vec::new();
+        for _ in 0..2 {
+            let command = command_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("both queries arrive");
+            let Command::Query {
+                request_id, reply, ..
+            } = command
+            else {
+                panic!("expected a query");
+            };
+            pending.push((request_id, reply));
+        }
+        assert_eq!(pending[0].0, FIRST);
+        assert_eq!(pending[1].0, SECOND);
+
+        for (request_id, reply) in pending.into_iter().rev() {
+            reply
+                .send(QueryReplyEnvelope {
+                    request_id,
+                    reply: QueryReply::Error(format!("token_{request_id}")),
+                })
+                .expect("the writer thread is listening");
+        }
+
+        let first_out = QueryReplyEnvelope::decode(&read_frame(&mut client)).expect("decodes");
+        let second_out = QueryReplyEnvelope::decode(&read_frame(&mut client)).expect("decodes");
+        assert_eq!(
+            first_out.request_id, SECOND,
+            "the answers come back in the order they were ANSWERED, not asked"
+        );
+        assert_eq!(second_out.request_id, FIRST);
+        assert_eq!(
+            first_out.reply,
+            QueryReply::Error(format!("token_{SECOND}")),
+            "each reply carries its OWN answer, not the other's"
+        );
+
+        drop(client);
+        server.join().expect("the connection handler exits cleanly");
+    }
+
+    /// **The idle server refuses a query with its own token.** `no_active_world` is unreachable
+    /// through `answer_forecast_query` — there is no world to ask — so it is asserted on the gate
+    /// that produces it.
+    ///
+    /// The `World::new()` is deliberately **empty**: it carries none of the config handles an answer
+    /// reads, so a gate that fell through to the answering path would panic on a missing resource
+    /// rather than quietly return some other token.
+    #[test]
+    fn an_idle_server_refuses_a_query_without_touching_the_world() {
+        let mut world = bevy::prelude::World::new();
+        let reply = answer_query(false, &mut world, &a_hunt_query());
+        assert_eq!(
+            reply,
+            QueryReply::Error(query_error::NO_ACTIVE_WORLD.to_string())
+        );
+    }
+
+    /// **A query is never written to the replay log.** It mutates nothing, so a logged one would
+    /// make a replay re-answer a question into a reply channel whose connection is long gone.
+    ///
+    /// Asserted against the log's own exclusion predicate rather than against the dispatch arm: the
+    /// arm is the *current* reason a query never reaches the log, and the predicate is the durable
+    /// one. A refactor that routed queries through the generic arm must still not log them.
+    #[test]
+    fn a_query_is_not_replayable() {
+        let (reply, _reply_rx) = unbounded::<QueryReplyEnvelope>();
+        let query = Command::Query {
+            request_id: 1,
+            query: a_hunt_query(),
+            reply,
+        };
+
+        assert!(
+            !is_replayable(&query),
+            "a query must not enter the replay log — replaying one cannot reproduce anything"
+        );
+        assert!(
+            is_replayable(&Command::Turn(1)),
+            "the predicate must still admit an ordinary command, or it proves nothing"
         );
     }
 }

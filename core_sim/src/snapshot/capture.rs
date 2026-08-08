@@ -1862,6 +1862,15 @@ fn kit_roster_states(
             let choice = equipment
                 .kit(&definition.id)
                 .expect("a roster entry resolves by its own id");
+            // **Through the same seam the per-band rows resolve through** — this one over `fresh`,
+            // `population_state`'s `kit_tiers` over the band's live ledger. One arithmetic.
+            let tiers = equipment.resolve_kit_tiers(
+                kit_levers.person_intrinsic,
+                labor.hunt.per_worker_biomass_capacity,
+                labor.forage.per_worker_biomass_capacity,
+                &choice,
+                &fresh,
+            );
             KitOptionState {
                 id: definition.id.clone(),
                 display_name: definition.display_name.clone(),
@@ -1870,19 +1879,9 @@ fn kit_roster_states(
                     .iter()
                     .map(|job| job.as_str().to_string())
                     .collect(),
-                attack: equipment
-                    .hunter_profile_unbounded(kit_levers.person_intrinsic, &choice, &fresh)
-                    .attack,
-                hunt_carry_per_worker_biomass: equipment.hunt_per_worker_biomass_capacity(
-                    labor.hunt.per_worker_biomass_capacity,
-                    &choice,
-                    &fresh,
-                ),
-                forage_carry_per_worker_biomass: equipment.forage_per_worker_biomass_capacity(
-                    labor.forage.per_worker_biomass_capacity,
-                    &choice,
-                    &fresh,
-                ),
+                attack: tiers.attack,
+                hunt_carry_per_worker_biomass: tiers.hunt_carry_per_worker_biomass,
+                forage_carry_per_worker_biomass: tiers.forage_carry_per_worker_biomass,
                 // **The pen's tier, resolved against the SAME equipped rate the hunt haul is** —
                 // `hunt.per_worker_biomass_capacity` is the number a pen harvest has always been
                 // capped by, and it keeps its one home. A kit carrying a sled and no handling gear
@@ -1903,16 +1902,16 @@ fn kit_roster_states(
                 // **The attack's size window**, so the client's pre-launch gate resolves this kit
                 // against the quarry in front of it rather than against the kit's best case. `0` on
                 // either end is unbounded, which every weapon but the passive device is.
-                attack_min_body_mass: equipment
-                    .attack_mass_bounds(&choice, &fresh)
-                    .0
-                    .unwrap_or(0.0),
-                attack_max_body_mass: equipment
-                    .attack_mass_bounds(&choice, &fresh)
-                    .1
-                    .unwrap_or(0.0),
-                dispersion: equipment.dispersion(&choice, &fresh),
-                exposure: equipment.exposure(&choice, &fresh),
+                attack_min_body_mass: tiers.attack_min_body_mass,
+                attack_max_body_mass: tiers.attack_max_body_mass,
+                dispersion: tiers.dispersion,
+                exposure: tiers.exposure,
+                // **WHICH ITEMS THIS KIT CARRIES** — the definition's `uses` list verbatim, in config
+                // order, off the *definition* rather than the resolved `KitChoice` so the published
+                // order is the roster's own. The tiers above are numbers and name no item, so without
+                // this a durability readout has to guess which component produced them — and the
+                // guess was `attack → "spears"`, which quoted a Trapping party the spears' condition.
+                item_ids: definition.uses.clone(),
             }
         })
         .collect()
@@ -2003,9 +2002,9 @@ impl TerrainTagGrid {
 const HERD_ON_THE_RANGE: bool = false;
 const HERD_IN_A_PEN: bool = true;
 
-/// **Assemble one quarry's [`QuotedParty`]** — the fight tier, the haul tier and the kit id, all
-/// resolved from the *same* `kit` against the *same* `wear`, so a herd row cannot quote one kit's
-/// haul beside another kit's attack.
+/// **Assemble one quarry's [`QuotedParty`]** — the fight tier and the kit id, both resolved from the
+/// *same* `kit` against the *same* `wear`, so a herd row cannot publish one kit's id beside another
+/// kit's attack.
 ///
 /// **The hunter profile is passed in rather than resolved here**, because which of the two named
 /// resolvers applies is the caller's decision and must stay visible at the call site: a per-species
@@ -2015,7 +2014,6 @@ const HERD_IN_A_PEN: bool = true;
 fn quoted_party_for(
     equipment: &crate::equipment_config::EquipmentConfig,
     combat: &crate::combat_config::CombatConfig,
-    levers: &BandKitLevers<'_>,
     kit: &crate::equipment_config::KitChoice,
     wear: &BandEquipment,
     hunter: crate::combat::CombatStats,
@@ -2028,11 +2026,6 @@ fn quoted_party_for(
                 * equipment.exposure(kit, wear),
             dispersion: equipment.dispersion(kit, wear),
         },
-        per_worker_haul: equipment.hunt_per_worker_biomass_capacity(
-            levers.equipped_haul_rate,
-            kit,
-            wear,
-        ),
         kit_id: kit.id().to_string(),
     }
 }
@@ -2278,12 +2271,9 @@ pub fn capture_snapshot(
     let equipment_config = equipment.get();
     let combat_config = combat.get();
     // A detached party fights at the `expedition_danger_multiplier`-scaled lethality, exactly as
-    // `advance_expeditions` resolves it — so the in-flight ETA and the turn agree.
-    let expedition_combat_tuning = {
-        let mut tuning = combat_config.tuning();
-        tuning.lethality *= combat_config.expedition_danger_multiplier;
-        tuning
-    };
+    // `advance_expeditions` resolves it — so the in-flight ETA and the turn agree. Through the one
+    // named constructor rather than a fourth copy of the multiply (`CombatConfig::expedition_tuning`).
+    let expedition_combat_tuning = combat_config.expedition_tuning();
     let kit_levers = crate::snapshot::population::BandKitLevers {
         config: &equipment_config,
         person_intrinsic: creatures.get().person(),
@@ -2292,7 +2282,6 @@ pub fn capture_snapshot(
         equipped_vantage_range: labor_config.scout.vantage_range as f32,
     };
     let expedition_levers = ExpeditionLevers {
-        max_estimated_party: expedition_cfg.max_estimated_party(),
         hunt_per_worker_carry: expedition_cfg.hunt.per_worker_carry,
         hunt_per_worker_provisions: hunt_per_worker_provisions(&labor_config, &fauna_config),
         hunt_viability_warn_turns: expedition_cfg.hunt.viability_warn_turns,
@@ -2740,7 +2729,6 @@ pub fn capture_snapshot(
             quoted_party_for(
                 &equipment_config,
                 &combat_config,
-                &kit_levers,
                 &kit,
                 &quoted_wear,
                 // **BOUNDED, against this species** — one party per herd is still one party,
@@ -2774,7 +2762,6 @@ pub fn capture_snapshot(
     let quoted_fallback = quoted_party_for(
         &equipment_config,
         &combat_config,
-        &kit_levers,
         &fallback_kit,
         &quoted_wear,
         equipment_config.hunter_profile_unbounded(
@@ -2789,22 +2776,24 @@ pub fn capture_snapshot(
         fauna: &fauna_config,
         ladder: &ladder_config,
         labor: &labor_config,
-        expedition: &expedition_cfg,
         grid_size: config.grid_size,
         wrap_horizontal: config.map_topology.wrap_horizontal,
         visibility: &visibility_ledger,
         viewer: viewer_faction.0,
         fog_enabled: config.fog_enabled,
         // **THIS QUARRY'S own default kit, deliberately** — the herd row is a fact about the herd
-        // and has no band to ask, but it can ask the *animal*, so each species' tables are quoted
-        // at the kit its compose sheet opens on and **publish which**. Still exactly one party per
-        // herd; what moved is which kit it carries.
+        // and has no band to ask, but it can ask the *animal*, so each species' row is quoted at
+        // the kit its compose sheet opens on and **publishes which**. A fresh kit
+        // (`BandEquipment::default()` is zero wear), because the row describes the kit rather than
+        // any band's wear on it.
+        //
+        // **This prices the per-worker YIELD row only.** The two pre-launch estimate tables that
+        // used to be quoted here are gone — `crate::forecast_query` answers them per band, per kit,
+        // per exact party and floor, on demand — and with them went the sled tier only they read
+        // and `range_sigmas` (the denial readout's band width).
         parties: &quoted_parties,
         penned_parties: &penned_parties,
         fallback_party: &quoted_fallback,
-        // The denial estimate's reported band width — a readout lever, read from the same config the
-        // per-source yield range reads it from.
-        range_sigmas: combat_config.forecast_range_sigmas,
     });
     drop(herds_scope);
     let faction_inventory_state = snapshot_faction_inventory(&faction_inventory);

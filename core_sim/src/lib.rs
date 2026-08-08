@@ -36,6 +36,7 @@ mod fauna_config;
 mod flora_config;
 mod food;
 mod forage;
+pub mod forecast_query;
 mod generations;
 mod graze;
 mod great_discovery;
@@ -164,18 +165,18 @@ pub use expedition_config::{
 };
 pub use fauna::{
     advance_herd_grazing, advance_herds, advance_husbandry, advance_predation, animals_affordable,
-    animals_engaged, animals_that_stay, build_prey_index, carnivore_k_at, denial_party_needed,
-    escapement_ceiling, forecast_expected_take, forecast_take_range, herd_capacity,
-    herd_default_hunt_kit, herd_ecology, herd_herders_needed, herd_hunt_yield, herd_past_recovery,
-    herd_quarry_fight, herd_replacement_animals, herded_fraction, herders_needed,
-    hunt_engage_workers, hunt_escapement_ceiling, hunt_haul_workers, hunt_source_yield_preview,
-    hunt_take_bound, hunt_take_workers, pen_upkeep, per_hunter_take_biomass, project_arrivals_hunt,
-    project_realized_hunt, quantise_animal_take, quarry_default_hunt_kit, repopulate_fauna,
-    resolve_hunt_fight, retreat_seed, spawn_initial_herds, species_requires_denial, AnimalTake,
-    EcologyPhase, EngagementStop, FightCasualties, Herd, HerdDensityMap, HerdRegistry,
-    HerdTelemetry, HerdTelemetryEntry, HuntDraw, HuntFight, HuntTakeBound, HuntingParty, PreyDatum,
-    QuarryFight, RoamState, SourceYieldForecast, TakeRange, FODDERING_DISCOVERY_ID, FULLY_HERDED,
-    HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, NO_DEATHS_TO_REPORT, PENNING_DISCOVERY_ID,
+    animals_engaged, animals_that_stay, build_prey_index, carnivore_k_at, escapement_ceiling,
+    forecast_expected_take, forecast_take_range, herd_capacity, herd_default_hunt_kit,
+    herd_ecology, herd_herders_needed, herd_hunt_yield, herd_past_recovery, herd_quarry_fight,
+    herded_fraction, herders_needed, hunt_engage_workers, hunt_escapement_ceiling,
+    hunt_haul_workers, hunt_source_yield_preview, hunt_take_bound, hunt_take_workers, pen_upkeep,
+    per_hunter_take_biomass, project_arrivals_hunt, project_realized_hunt, quantise_animal_take,
+    quarry_default_hunt_kit, repopulate_fauna, resolve_hunt_fight, retreat_seed,
+    spawn_initial_herds, species_requires_denial, AnimalTake, EcologyPhase, EngagementStop,
+    FightCasualties, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, HerdTelemetryEntry,
+    HuntDraw, HuntFight, HuntTakeBound, HuntingParty, PreyDatum, QuarryFight, RoamState,
+    SourceYieldForecast, TakeRange, FODDERING_DISCOVERY_ID, FULLY_HERDED, HERDING_DISCOVERY_ID,
+    MSY_BIOMASS_FRACTION, NO_DEATHS_TO_REPORT, PENNING_DISCOVERY_ID,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle,

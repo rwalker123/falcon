@@ -212,6 +212,12 @@ var _selectioncard: SelectionCardController = null
 # beside the lifecycle that opens it — a model holds pure data, never a scene handle. This state is
 # shared: BOTH HudLayer (the parties zone) and that controller (the drawer) hold the same instance.
 var _compose: ComposeState = null
+
+## **THE FORECAST QUERY SEAM** — the client's half of the command socket's request/response channel,
+## shared by every sheet that composes a raid. It owns no socket: `Main` injects the sender and pumps
+## the replies in (see `forecast_query()`), so the HUD asks questions without reaching the network and
+## a harness can drive every state of it with no server at all.
+var _forecast_query: ForecastQuery = ForecastQuery.new()
 # ---- Selection-card in-place update caches (docs/plan_hud_decomposition.md §2a) --------------
 # The selection card re-renders on EVERY snapshot; to avoid a one-frame teardown/reflow flash each
 # controller caches the last-rendered STRUCTURE of its widget, so an unchanged restate PATCHES the
@@ -424,6 +430,26 @@ func _ready() -> void:
     # rather than in `_bandpanel`'s construction because `_attention` takes `_bandpanel` itself, so the
     # two cannot both be constructed with the other in hand.
     _bandpanel.set_attention(_attention)
+    # **THE FORECAST QUERY SEAM, handed to BOTH raid-composing controllers.** One instance: the drawer's
+    # expedition branch and the dock's two sheets ask the same questions of the same sim, and two seams
+    # would be two request-id sequences and two staleness rules over one socket. Injected here rather
+    # than constructed into either — neither owns it, and `Main` has to reach it to inject the transport
+    # (`forecast_query()`), which is the coordinator's job and not a controller's.
+    #
+    # An answer arrives with no snapshot behind it (a query triggers no re-capture), so `answered` is
+    # the ONLY thing that tells a sheet to redraw. Both listen; whichever is not showing that subject
+    # rebuilds into the same pixels.
+    _drawercompose.set_forecast_query(_forecast_query)
+    _bandpanel.set_forecast_query(_forecast_query)
+    # …and the OCCUPANTS DRAWER, which renders a launched denial party's `Collapse:` row off the same
+    # seam. It is fanned out here rather than in `_drawer`'s own construction for the ordinary reason
+    # (`_drawer` is built below, after the controllers it dispatches into), and it re-renders only when
+    # the answer is about the party it is showing — a full drawer rebuild on every stepper tick's reply
+    # would reflow the card under the player while a compose sheet is being answered.
+    _forecast_query.answered.connect(func(subject: String) -> void:
+        _drawercompose.refresh_compose_sheet()
+        _bandpanel.rerender()
+        _drawer.on_forecast_answered(subject))
     _turnorb.focus_requested.connect(_attention.on_turn_orb_focus)
     # The selection drawer's render dispatch. Constructed AFTER `_bandpanel` + `_drawercompose` (it
     # dispatches into both) and handed the SAME selection/labor models, the sibling controllers, the
@@ -680,6 +706,12 @@ func update_kit_roster(kits_variant: Variant, default_hunt: Variant, default_for
         default_scout: Variant, default_warrior: Variant) -> void:
     _band_labor.set_kit_roster(kits_variant, String(default_hunt), String(default_forage),
         String(default_scout), String(default_warrior))
+
+## **THE FORECAST QUERY SEAM, for `Main` to wire the transport into.** `Main` owns the command client,
+## so it injects the sender and pumps `CommandBridge.poll_query_replies` in once a frame; nothing in
+## the HUD reaches the socket itself. Also the harnesses' handle for driving a canned answer.
+func forecast_query() -> ForecastQuery:
+    return _forecast_query
 
 ## Ingests the snapshot forage patches into the per-tile lookup the Current-actions Forage row reads
 ## to cap its worker stepper at max-useful, mirroring MapView's `forage_patch_lookup` ingest. The
@@ -964,6 +996,11 @@ func reset_world_state() -> void:
     # Targeting addresses a band/tile of the world being replaced. Cancelling through the normal path
     # also clears MapView's reticle (via `targeting_changed`), so the two can't desync.
     cancel_active_targeting()
+    # The forecast seam holds answers keyed by band + herd id, and a NEW WORLD REUSES BOTH — band ids
+    # restart low and herd ids are derived from species + index — so a held answer matches the new
+    # world's composed key exactly and renders the old world's numbers as a live forecast. See
+    # `ForecastQuery.reset`.
+    _forecast_query.reset()
 func show_tile_selection(tile_info: Dictionary) -> void:
     # A selection change invalidates the subject being composed (§15).
     close_compose_sheet()

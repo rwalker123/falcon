@@ -993,6 +993,56 @@ impl EquipmentConfig {
         kit.multiplier(EquipmentStat::Exposure, wear, self)
     }
 
+    /// **Every tier a kit grants, resolved once, for one `(kit, wear)` pair.**
+    ///
+    /// The seven numbers a consumer needs to describe what sending *this* kit buys, each through the
+    /// same seam the take path reads it through — so a readout cannot drift from what the raid
+    /// actually pays.
+    ///
+    /// # It exists because the same arithmetic had two callers and was about to have three
+    ///
+    /// `snapshot::kit_roster_states` resolves it per kit over a **fresh** ledger (the picker's
+    /// reference), and `snapshot::population_state` resolves it per band over that band's **live**
+    /// ledger. Those differ only in the `wear` argument, and the per-band-per-kit readout would have
+    /// been a third copy of the same seven calls. One function, three call sites, no drift.
+    ///
+    /// **`attack` resolves UNBOUNDED**, because this is a statement about the *kit* and there is no
+    /// quarry in scope — the mass window rides beside it
+    /// ([`ResolvedKitTiers::attack_min_body_mass`] / `attack_max_body_mass`) so a consumer can gate
+    /// against the animal in front of it. A path that *has* a quarry must resolve
+    /// [`Self::hunter_profile_against`] instead; see "Two named resolvers".
+    pub fn resolve_kit_tiers(
+        &self,
+        hunter_intrinsic: CombatStats,
+        equipped_haul_rate: f32,
+        equipped_gather_rate: f32,
+        kit: &KitChoice,
+        wear: &crate::components::BandEquipment,
+    ) -> ResolvedKitTiers {
+        let (attack_min_body_mass, attack_max_body_mass) = self.attack_mass_bounds(kit, wear);
+        ResolvedKitTiers {
+            attack: self
+                .hunter_profile_unbounded(hunter_intrinsic, kit, wear)
+                .attack,
+            hunt_carry_per_worker_biomass: self.hunt_per_worker_biomass_capacity(
+                equipped_haul_rate,
+                kit,
+                wear,
+            ),
+            forage_carry_per_worker_biomass: self.forage_per_worker_biomass_capacity(
+                equipped_gather_rate,
+                kit,
+                wear,
+            ),
+            // `0` is the *sentinel* for "unbounded" on both ends — the schema's own default, and what
+            // every weapon but the passive device ships.
+            attack_min_body_mass: attack_min_body_mass.unwrap_or(UNBOUNDED_BODY_MASS),
+            attack_max_body_mass: attack_max_body_mass.unwrap_or(UNBOUNDED_BODY_MASS),
+            dispersion: self.dispersion(kit, wear),
+            exposure: self.exposure(kit, wear),
+        }
+    }
+
     /// Invariants a TOE config must satisfy. **An item with no wear rate is not consumable** and one
     /// with no durability is born dry, so both are rejected rather than shipped as a silently eternal
     /// (or silently absent) item.
@@ -1320,6 +1370,38 @@ impl ConfigLoadError for EquipmentConfigError {
         matches!(self, Self::Read { source, .. } if source.kind() == io::ErrorKind::NotFound)
     }
 }
+
+/// **What one kit grants a party at one state of wear** — the output of
+/// [`EquipmentConfig::resolve_kit_tiers`], and the shape both the world-level kit roster and the
+/// per-band kit readout are built from.
+///
+/// A plain value with no config in it: everything here has already been resolved, so a consumer
+/// renders these numbers rather than re-deriving them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ResolvedKitTiers {
+    /// A hunter's combat `attack` under this kit — what the gate `max(0, attack − defense)` compares
+    /// against a herd's `defense`. **Unbounded**: see [`Self::attack_min_body_mass`].
+    pub attack: f32,
+    /// Per-hunter HUNT haul rate (biomass/turn) — the sled's tier.
+    pub hunt_carry_per_worker_biomass: f32,
+    /// Per-gatherer throughput (biomass/turn, **before** the tile's seasonal weight) — the baskets'.
+    pub forage_carry_per_worker_biomass: f32,
+    /// **The range of quarry [`Self::attack`] applies to**, by body mass.
+    /// [`UNBOUNDED_BODY_MASS`] on either end means no bound there. Outside the range the kit grants
+    /// no attack at all and the party falls back to the bare hand's.
+    pub attack_min_body_mass: f32,
+    /// See [`Self::attack_min_body_mass`].
+    pub attack_max_body_mass: f32,
+    /// What this kit multiplies the quarry's own `wariness` by at the retreat. `1.0` is neutral.
+    pub dispersion: f32,
+    /// What this kit multiplies the hunt's baseline injury hazard by. `1.0` is neutral.
+    pub exposure: f32,
+}
+
+/// **"This end of the attack's mass window is not bounded"** — `0`, which is both the FlatBuffers
+/// default and what every weapon but the passive device ships. Named because a `0` beside a body
+/// mass otherwise reads as *"applies to animals of zero mass"*, which is the opposite of unbounded.
+pub const UNBOUNDED_BODY_MASS: f32 = 0.0;
 
 /// Handle for accessing the TOE configuration.
 #[derive(Resource, Debug, Clone)]

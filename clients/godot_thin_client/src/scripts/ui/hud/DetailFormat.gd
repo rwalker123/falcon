@@ -417,13 +417,9 @@ const EXPEDITION_ORDERS_ROW_FORMAT := "Orders: %s"
 # on a hunt party. One word, so `_split_kv` lays it out as a table row beside the others; the VALUE
 # carries its own tint, since a verdict's severity is a fact about the forecast and not about the key.
 const DENIAL_COLLAPSE_ROW := "Collapse:"
-# **THE QUOTED-PARTY CLAUSE — the compose sheets' `quoted_party_note` in a detail row's clothing.**
-# `denialEstimates` samples the party axis on a LADDER, and a LAUNCHED party's size is bounded by the
-# band alone, so an in-flight party very often falls between two rungs; the row then quotes the nearest
-# one and must SAY so, because the collapse timeline scales with party size. It is a CLAUSE rather than
-# a row of its own: this producer's output lands in the parties zone's clipped inspector strip, where a
-# second row costs height the tier has already budgeted. `%d` the party quoted, `%d` this party's.
-const DENIAL_COLLAPSE_QUOTED_PARTY_FORMAT := " — priced for a party of %d, not this party's %d"
+# The quoted-party clause this row used to carry is gone with the sampled ladder that made a nearby
+# row the best a launched party could be told about. A query answers the party that was sent, so the
+# row states the verdict and nothing about whose numbers they are.
 
 # ---- The tile card's BASKET rows — what the `Foraging` stock above them is MADE OF (flora roster
 # F1/F5). Each realized plant reads on its OWN indented row: a role icon, the plant's display name,
@@ -1536,7 +1532,13 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array, assign
 ## `target_herd` is the party's OWN target resolved from the snapshot herd list ({} when it has none
 ## or the herd is gone) — threaded in for the same reason `world_herds` is: this layer holds no
 ## snapshot state. Callers pass `HudBandLaborState.expedition_target_herd(exp)`.
-static func expedition_row_tooltip(exp: Dictionary, phase: String, target_herd: Dictionary) -> String:
+##
+## `denial_view` is the same already-answered forecast the parties strip's `Collapse:` row renders,
+## handed in for the same reason (`expedition_collapse_line`). A DENIAL party's orders are just "this
+## herd, these hands", so what its hover adds is the one thing the row cannot show: the collapse
+## verdict. `join_tooltip_lines` drops the `""` a hunt or a scout answers here, so neither gains a line.
+static func expedition_row_tooltip(exp: Dictionary, phase: String, target_herd: Dictionary,
+		denial_view: Dictionary = {}) -> String:
     var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
     # THE PARTY'S ORDERS — `expedition_floor`, where this raid stops (the retired
     # `expeditionHuntPolicy` string is a `(deprecated)` wire slot). `1.0` is the sim's value for a
@@ -1547,10 +1549,7 @@ static func expedition_row_tooltip(exp: Dictionary, phase: String, target_herd: 
         floor_hint = HudFormat.floor_hint(
             float(exp.get("expedition_floor", SourceForecast.DEFAULT_HARVEST_FLOOR)),
             SourceForecast.LABOR_KIND_HUNT, true)
-    # A DENIAL party's orders are just "this herd, these hands", so what its hover adds is the one
-    # thing the row cannot show: the collapse verdict. `join_tooltip_lines` drops the `""` a hunt or a
-    # scout answers here, so neither gains a line.
-    var collapse_line := expedition_collapse_line(exp, target_herd) \
+    var collapse_line := expedition_collapse_line(exp, target_herd, denial_view) \
         if mission == HudExpeditionVocab.EXPEDITION_MISSION_DENY else ""
     return HudFormat.join_tooltip_lines([
         expedition_mission_label(mission), floor_hint,
@@ -1605,43 +1604,55 @@ static func _expedition_delivery_tooltip_line(exp: Dictionary, mission: String, 
 ## `expeditionEtaTurns` / `expeditionTripBound` at all, deliberately: its question is not when food
 ## arrives, it is whether the herd goes past the point of no return.
 ##
-## **THE SIM PUBLISHES NO PER-PARTY COLLAPSE FIELD, so this reads the TARGET HERD's own
-## `denialEstimates` row for the party's size** — the same table, the same row and therefore the same
-## sentence the launch sheet quoted, which is what stops the promise made at launch and the readout in
-## flight from drifting. `""` when the target is gone from telemetry (the `Target:` row above already
-## says the herd is not there) or the herd carries no row for this party size.
+## **THE ANSWER IS HANDED IN, AND THAT IS WHAT KEEPS THIS LAYER STATIC.** The sim publishes no
+## per-party collapse field and the pre-launch denial TABLE this row used to read is gone — the
+## forecast is a request/response on the command socket now (`ForecastQuery`). A query needs a request
+## id, a staleness rule and a socket, and a formatter that held any of the three would be a controller;
+## so the PARTIES STRIP asks on the launched party's own behalf (a detached party is a band, so
+## `DenialRaidForecastQuery` takes it unchanged) and passes the answer down. It is the treatment
+## `target_herd` already gets one argument to the left, for the same reason.
 ##
-## The value carries its OWN `[color]`, the `_band_food_line` precedent: the verdict's severity is not
-## a property of the row KEY, so it cannot come from `_value_hex`'s key registry.
+## `view` is `ForecastQuery.view()`'s `{state, answer, error}`. Every state renders SOMETHING once the
+## party is a denial party with a live target: the verdict when it is ready, and otherwise the row
+## saying whether the answer is still coming or has failed — a row that appeared only on success would
+## pop into the strip a frame after it opens and change its height under the player.
 ##
-## **IT PASSES NO BAND, SO THE VERDICT READS "…of raiding" RATHER THAN "…from launch"** — and that is
-## the honest span here, not an omission. The launch sheet adds the OUTBOUND WALK because it knows
-## where the party is starting from; this party has already left, its remaining walk is not on the wire
-## (a denial mission publishes no `expeditionEtaTurns`), and adding the walk from the HOME BAND's tile
-## would quote a leg the party may have finished turns ago. `denial_forecast` names the span it is
-## quoting either way, so the two surfaces cannot be read as the same clock.
-static func expedition_collapse_line(exp: Dictionary, target_herd: Dictionary) -> String:
-    if target_herd.is_empty():
+## `""` when the target is gone from telemetry (the `Target:` row above already says the herd is not
+## there), for a ready answer the sim priced at no party at all, and for an EMPTY `view` — which is a
+## caller with no query seam to ask through (the Occupants drawer, a preview harness), not a question
+## awaiting an answer. Rendering the pending row for one would promise a number nothing will deliver.
+##
+## The value carries its OWN `[color]`, the `_band_food_line` precedent: the verdict's severity is a
+## fact about the forecast and not about the row KEY, so it cannot come from `_value_hex`'s key registry.
+##
+## **IT PASSES NO BAND TO THE FORECAST, SO THE VERDICT READS "…of raiding" RATHER THAN "…from launch"**
+## — and that is the honest span here, not an omission. The launch sheet adds the OUTBOUND WALK because
+## it knows where the party is starting from; this party has already left, its remaining walk is not on
+## the wire (a denial mission publishes no `expeditionEtaTurns`), and adding the walk from the HOME
+## BAND's tile would quote a leg the party may have finished turns ago. `denial_forecast` names the span
+## it is quoting either way, so the two surfaces cannot be read as the same clock.
+static func expedition_collapse_line(exp: Dictionary, target_herd: Dictionary,
+        view: Dictionary) -> String:
+    if target_herd.is_empty() or view.is_empty():
         return ""
-    # The party's own size is the table's only axis — `size` is the cohort's head count, which for a
-    # detached party IS its workers (the same reading `HudBandLaborState.band_party_workers` takes).
-    var party := int(exp.get("size", 0))
-    # **THE PARTY IS HANDED IN FOR THE FORECAST HORIZON AND FOR NOTHING ELSE** — still no band, so still no
-    # travel term and still the "…of raiding" span. The horizon is a global lever echoed onto every
+    var state := String(view.get("state", ForecastQuery.STATE_PENDING))
+    if state == ForecastQuery.STATE_PENDING:
+        return "%s %s" % [DENIAL_COLLAPSE_ROW, HudComposeVocab.DENIAL_FORECAST_PENDING]
+    if state == ForecastQuery.STATE_FAILED:
+        return "%s %s" % [DENIAL_COLLAPSE_ROW,
+            HudComposeVocab.FORECAST_FAILED_FORMAT % String(view.get("error", ""))]
+    var answer: Dictionary = view.get("answer", {})
+    # **THE PARTY IS HANDED IN FOR THE FORECAST HORIZON AND FOR NOTHING ELSE** — still no band, so still
+    # no travel term and still the "…of raiding" span. The horizon is a global lever echoed onto every
     # cohort, so this launched party answers it exactly as its home band would; without it the verdict
     # falls back to naming a clock the player cannot see.
-    var forecast := SourceForecast.denial_forecast(target_herd, party, {}, 0, false, exp)
+    var forecast := SourceForecast.denial_forecast(target_herd,
+        answer.get("at_composed", {}), {}, 0, false, exp)
     var verdict := SourceForecast.denial_verdict_bbcode(forecast,
         SourceForecast.herd_display_name(target_herd))
     if verdict == "":
         return ""
-    # …and WHICH party the sim costed it for, whenever the ladder rounded this one. The note is the
-    # compose sheets' rule reaching the launched party: a nearby row is a real answer to a nearby
-    # question, never an exact one, and this surface is where a between-rungs party is most likely
-    # (a launch is bounded by the band's idle workers and by nothing else).
-    var party_note := SourceForecast.quoted_party_note(forecast, party,
-        DENIAL_COLLAPSE_QUOTED_PARTY_FORMAT)
-    return "%s %s%s" % [DENIAL_COLLAPSE_ROW, verdict, party_note]
+    return "%s %s" % [DENIAL_COLLAPSE_ROW, verdict]
 
 ## The robust "Next delivery: …" wording, shared by the parties inspector strip
 ## (`BandDetailLines.expedition_summary_lines`) and the row tooltip (`expedition_row_tooltip`) so the

@@ -662,34 +662,6 @@
       "corralled": true,
       "default_kit_id": "herds[0].default_kit_id",
       "defense": 77.480003,
-      "denial_estimates": [
-        {
-          "animals_killed": 170,
-          "delivered_food": 6.34,
-          "delivered_trade": 59.880001,
-          "outcome": "herds[0].denial_estimates[0].outcome",
-          "party_workers": 87,
-          "turns_to_collapse": 105,
-          "turns_to_collapse_high": 22,
-          "turns_to_collapse_low": 114,
-          "wasted_food": 31.969999,
-          "wasted_trade": 15.41
-        },
-        {
-          "animals_killed": 163,
-          "delivered_food": 23.23,
-          "delivered_trade": 49.32,
-          "outcome": "herds[0].denial_estimates[1].outcome",
-          "party_workers": 76,
-          "turns_to_collapse": 86,
-          "turns_to_collapse_high": 183,
-          "turns_to_collapse_low": 85,
-          "wasted_food": 73.800003,
-          "wasted_trade": 81.949997
-        }
-      ],
-      "denial_estimates_kit_id": "herds[0].denial_estimates_kit_id",
-      "denial_party_needed": 16,
       "domestication": 25.139999,
       "durability": 52.57,
       "ecology_phase": "herds[0].ecology_phase",
@@ -703,33 +675,6 @@
       "herded_fraction": 57.66,
       "herders_needed": 45,
       "herders_needed_if_managed": 61,
-      "hunt_trip_estimates": {
-        "33.43:72": {
-          "animals_taken": 191,
-          "bound": "herds[0].hunt_trip_estimates[1].bound",
-          "delivered_food": 49.540001,
-          "delivered_trade": 97.989998,
-          "delivers_food": true,
-          "delivers_trade": true,
-          "floor": 33.43,
-          "party_workers": 72,
-          "turns_to_fill": 180,
-          "wasted_food": 76.540001
-        },
-        "36.89:147": {
-          "animals_taken": 76,
-          "bound": "herds[0].hunt_trip_estimates[0].bound",
-          "delivered_food": 29.25,
-          "delivered_trade": 61.939999,
-          "delivers_food": true,
-          "delivers_trade": true,
-          "floor": 36.889999,
-          "party_workers": 147,
-          "turns_to_fill": 15,
-          "wasted_food": 56.849998
-        }
-      },
-      "hunt_trip_estimates_kit_id": "herds[0].hunt_trip_estimates_kit_id",
       "huntable": true,
       "husbandry_ceiling": "herds[0].husbandry_ceiling",
       "id": "herds[0].id",
@@ -778,34 +723,6 @@
       "corralled": true,
       "default_kit_id": "herds[1].default_kit_id",
       "defense": 11.55,
-      "denial_estimates": [
-        {
-          "animals_killed": 107,
-          "delivered_food": 0.83,
-          "delivered_trade": 22.16,
-          "outcome": "herds[1].denial_estimates[0].outcome",
-          "party_workers": 132,
-          "turns_to_collapse": 94,
-          "turns_to_collapse_high": 31,
-          "turns_to_collapse_low": 85,
-          "wasted_food": 21.559999,
-          "wasted_trade": 21.709999
-        },
-        {
-          "animals_killed": 114,
-          "delivered_food": 110.279999,
-          "delivered_trade": 4.18,
-          "outcome": "herds[1].denial_estimates[1].outcome",
-          "party_workers": 183,
-          "turns_to_collapse": 17,
-          "turns_to_collapse_high": 150,
-          "turns_to_collapse_low": 162,
-          "wasted_food": 99.110001,
-          "wasted_trade": 50.029999
-        }
-      ],
-      "denial_estimates_kit_id": "herds[1].denial_estimates_kit_id",
-      "denial_party_needed": 83,
       "domestication": 102.790001,
       "durability": 53.200001,
       "ecology_phase": "herds[1].ecology_phase",
@@ -819,33 +736,6 @@
       "herded_fraction": 76.389999,
       "herders_needed": 64,
       "herders_needed_if_managed": 186,
-      "hunt_trip_estimates": {
-        "22.36:150": {
-          "animals_taken": 65,
-          "bound": "herds[1].hunt_trip_estimates[0].bound",
-          "delivered_food": 6.45,
-          "delivered_trade": 57.189999,
-          "delivers_food": true,
-          "delivers_trade": true,
-          "floor": 22.360001,
-          "party_workers": 150,
-          "turns_to_fill": 22,
-          "wasted_food": 81.800003
-        },
-        "46.47:73": {
-          "animals_taken": 118,
-          "bound": "herds[1].hunt_trip_estimates[1].bound",
-          "delivered_food": 61.830002,
-          "delivered_trade": 71.190002,
-          "delivers_food": true,
-          "delivers_trade": true,
-          "floor": 46.470001,
-          "party_workers": 73,
-          "turns_to_fill": 1,
-          "wasted_food": 84.790001
-        }
-      },
-      "hunt_trip_estimates_kit_id": "herds[1].hunt_trip_estimates_kit_id",
       "huntable": true,
       "husbandry_ceiling": "herds[1].husbandry_ceiling",
       "id": "herds[1].id",
@@ -1024,6 +914,10 @@
       "forage_carry_per_worker_biomass": 88.019997,
       "hunt_carry_per_worker_biomass": 30.709999,
       "id": "kits[0].id",
+      "item_ids": [
+        "kits[0].item_ids[0]",
+        "kits[0].item_ids[1]"
+      ],
       "jobs": [
         "kits[0].jobs[0]",
         "kits[0].jobs[1]"
@@ -1041,6 +935,10 @@
       "forage_carry_per_worker_biomass": 15.04,
       "hunt_carry_per_worker_biomass": 39.080002,
       "id": "kits[1].id",
+      "item_ids": [
+        "kits[1].item_ids[0]",
+        "kits[1].item_ids[1]"
+      ],
       "jobs": [
         "kits[1].jobs[0]",
         "kits[1].jobs[1]"
@@ -1525,6 +1423,48 @@
           "remaining": 67.139999
         }
       ],
+      "kit_tiers": [
+        {
+          "attack": 11.2,
+          "attack_max_body_mass": 50.830002,
+          "attack_min_body_mass": 108.860001,
+          "dispersion": 4.44,
+          "exposure": 89.910004,
+          "forage_carry_per_worker_biomass": 42.849998,
+          "hunt_carry_per_worker_biomass": 73.699997,
+          "kit_id": "big_game"
+        },
+        {
+          "attack": 61.849998,
+          "attack_max_body_mass": 77.75,
+          "attack_min_body_mass": 83.360001,
+          "dispersion": 96.25,
+          "exposure": 39.16,
+          "forage_carry_per_worker_biomass": 20.09,
+          "hunt_carry_per_worker_biomass": 82.440002,
+          "kit_id": "trapping"
+        },
+        {
+          "attack": 51.32,
+          "attack_max_body_mass": 103.339996,
+          "attack_min_body_mass": 58.709999,
+          "dispersion": 4.7,
+          "exposure": 59.209999,
+          "forage_carry_per_worker_biomass": 82.540001,
+          "hunt_carry_per_worker_biomass": 23.040001,
+          "kit_id": "gathering"
+        },
+        {
+          "attack": 20.6,
+          "attack_max_body_mass": 39.380001,
+          "attack_min_body_mass": 94.529999,
+          "dispersion": 67.370003,
+          "exposure": 28.950001,
+          "forage_carry_per_worker_biomass": 75.239998,
+          "hunt_carry_per_worker_biomass": 0.8,
+          "kit_id": "none"
+        }
+      ],
       "knowledge_fragments": [
         {
           "discovery": 18,
@@ -1591,7 +1531,6 @@
       ],
       "last_emigrated": 197,
       "last_immigrated": 170,
-      "max_expedition_party_size": 29,
       "migration": {
         "destination": 76,
         "eta": 148,
@@ -1715,6 +1654,48 @@
           "remaining": 1.56
         }
       ],
+      "kit_tiers": [
+        {
+          "attack": 94.120003,
+          "attack_max_body_mass": 67.339996,
+          "attack_min_body_mass": 53.849998,
+          "dispersion": 99.980003,
+          "exposure": 69.050003,
+          "forage_carry_per_worker_biomass": 13.06,
+          "hunt_carry_per_worker_biomass": 10.58,
+          "kit_id": "big_game"
+        },
+        {
+          "attack": 39.16,
+          "attack_max_body_mass": 81.260002,
+          "attack_min_body_mass": 84.709999,
+          "dispersion": 68.239998,
+          "exposure": 70.529999,
+          "forage_carry_per_worker_biomass": 51.84,
+          "hunt_carry_per_worker_biomass": 32.560001,
+          "kit_id": "trapping"
+        },
+        {
+          "attack": 57.23,
+          "attack_max_body_mass": 0.29,
+          "attack_min_body_mass": 57.639999,
+          "dispersion": 88.470001,
+          "exposure": 10.98,
+          "forage_carry_per_worker_biomass": 111.449997,
+          "hunt_carry_per_worker_biomass": 89.0,
+          "kit_id": "gathering"
+        },
+        {
+          "attack": 48.34,
+          "attack_max_body_mass": 105.690002,
+          "attack_min_body_mass": 64.160004,
+          "dispersion": 91.199997,
+          "exposure": 102.290001,
+          "forage_carry_per_worker_biomass": 13.81,
+          "hunt_carry_per_worker_biomass": 29.91,
+          "kit_id": "none"
+        }
+      ],
       "knowledge_fragments": [
         {
           "discovery": 89,
@@ -1781,7 +1762,6 @@
       ],
       "last_emigrated": 24,
       "last_immigrated": 49,
-      "max_expedition_party_size": 142,
       "migration": {
         "destination": 119,
         "eta": 55,

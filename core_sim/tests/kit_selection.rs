@@ -152,18 +152,6 @@ fn published_default_kit(app: &App, herd_id: &str) -> String {
         .iter()
         .find(|herd| herd.id() == Some(herd_id))
         .unwrap_or_else(|| panic!("the pinned herd '{herd_id}' is on the wire"));
-    // Both tables are quoted at this same kit, so a row where they disagree is a mis-wired slot
-    // rather than a policy difference — asserted here so every caller gets the check.
-    assert_eq!(
-        herd.huntTripEstimatesKitId(),
-        herd.defaultKitId(),
-        "the hunt table is quoted at the herd's own default"
-    );
-    assert_eq!(
-        herd.denialEstimatesKitId(),
-        herd.defaultKitId(),
-        "and so is the denial table"
-    );
     herd.defaultKitId()
         .expect("every herd publishes the kit its sheet opens on")
         .to_string()
@@ -632,14 +620,15 @@ fn a_kitted_partys_own_wear_still_steps_it_down() {
 // THE WIRE
 // ---------------------------------------------------------------------------------------------
 
-/// **The roster reaches the client, and both estimate tables SAY which kit they are quoted for.**
+/// **The roster reaches the client, tiers and carried items and all.**
 ///
-/// Neither `huntTripEstimates` nor `denialEstimates` is repriced per kit — they are ~95% of snapshot
-/// capture and a kit axis multiplies them — so the field exists precisely so a client can refuse to
-/// present a table as an answer for a selection it was not computed for. A missing or wrong id here
-/// is the "a sheet quoting a kitted raid to a bare-handed party" defect, on the wire.
+/// This used to also assert the two estimate tables' `*_kit_id` disclaimers — the fields that told a
+/// client *"these rows were priced at the hunt default, so refuse to show them for any other
+/// selection"*. Both the tables and their disclaimers are retired: a client now **asks**
+/// (`crate::forecast_query`) and names the kit in the question, so there is no mismatch left to
+/// warn about. What still has to reach the wire is the picker's own data, which is this.
 #[test]
-fn the_published_snapshot_carries_the_roster_and_names_the_kit_the_tables_are_quoted_for() {
+fn the_published_snapshot_carries_the_kit_roster() {
     let mut app = placid_world();
     let (id, _pos) = pin_herd(&mut app);
     recapture_snapshot_in_place(&mut app.world);
@@ -687,27 +676,134 @@ fn the_published_snapshot_carries_the_roster_and_names_the_kit_the_tables_are_qu
     assert_eq!(kitted.attack, equipped_attack(&cfg));
     assert!(kitted.jobs.iter().any(|job| job == "hunt"));
 
+    // **WHICH ITEMS EACH KIT CARRIES**, in config order. Without it a durability readout has to
+    // infer the gear from the tiers, which is how a Trapping party came to be quoted the SPEARS'
+    // condition.
+    assert_eq!(
+        kitted.item_ids,
+        cfg.kit_definition("big_game")
+            .expect("the roster ships `big_game`")
+            .uses,
+        "the kit publishes its `uses` list verbatim"
+    );
+    assert!(
+        bare.item_ids.is_empty(),
+        "`none` carries nothing, and says so with an empty list rather than an absent field"
+    );
+
+    // The pinned herd still reaches the wire — the herd row outlived the two tables that used to
+    // hang off it, and it still publishes the kit its compose sheet opens on. On this fixture that
+    // is the job default: `placid_world` holds the roster's wariness at `0`, which is exactly the
+    // term the trap's `dispersion 0` acts on, so a warren ties with the spear and a tie keeps the
+    // job default. That coincidence is asserted, not assumed.
     let herd = snapshot
         .herds
         .iter()
         .find(|h| h.id == id)
         .expect("the pinned herd is on the wire");
-    // **Both tables are quoted at the HERD'S OWN default**, so the ids match `defaultKitId` rather
-    // than the job default. On this fixture they coincide: `placid_world` holds the roster's
-    // wariness at `0`, which is exactly the term the trap's `dispersion 0` acts on, so a warren
-    // ties with the spear and a tie keeps the job default. That coincidence is asserted, not
-    // assumed — the two clauses below are separate claims.
     assert_eq!(
         herd.default_kit_id, expected_hunt_default,
         "with no retreat to avoid, the trap has nothing on the spear and the job default stands"
     );
+}
+
+/// **THE DEFECT: fresh traps and dry spears must not reprice the Trapping kit to the bare hand.**
+///
+/// The band wears its **spears** out and never touches its **traps**. Under `big_game` (which uses
+/// spears) its attack must fall to the bare hand's; under `trapping` (which uses traps) it must stay
+/// at the kitted tier. Those are two different answers for one band in one frame, and the pairing is
+/// the whole test: asserting only the `trapping` row would pass on a sim that had stopped stepping
+/// tiers down at all.
+///
+/// # Why the sim has to answer this instead of the client
+///
+/// Stepping a tier down needs the **axis → item** mapping, and it is per kit: `big_game` supplies
+/// `attack` from `spears`, `trapping` supplies it from `traps`. `KitOption.itemIds` says what a kit
+/// carries, not what each item is *for*, and no rule over that list recovers it — set-cover and
+/// positional order both mis-assign, "any item live" keeps a kit at full tier with its weapon dry,
+/// and "all items dry" keeps it at full tier with only the sled left. The client was guessing with a
+/// hardcoded table, and this is the case the guess got wrong.
+#[test]
+fn a_bands_published_tiers_step_down_per_kit_by_which_item_that_kit_actually_uses() {
+    let mut app = placid_world();
+    let cfg = equipment(&app);
+
+    // Wear the SPEARS to nothing and leave the traps untouched. `wear_item` charges per the item's
+    // own quantum, so this is the durability cliff reached the way play reaches it.
+    let band = app
+        .world
+        .query_filtered::<bevy::prelude::Entity, bevy::prelude::With<core_sim::ResidentBand>>()
+        .iter(&app.world)
+        .next()
+        .expect("the placid world spawns a resident band");
+    {
+        // **Uses, not condition points.** `wear_item` charges `uses × the item's own quantum`, so
+        // the kills that empty the spears are `starting_durability / wear amount` — derived from
+        // config rather than written as a number, or a retune of either dial silently stops this
+        // fixture reaching the cliff it is about.
+        let spears = cfg
+            .item("spears")
+            .expect("the shipped roster carries spears");
+        let kills_to_expiry = spears.starting_durability / spears.wear.amount;
+        let mut equipment_ledger = app
+            .world
+            .get_mut::<core_sim::BandEquipment>(band)
+            .expect("a spawned band is kitted");
+        equipment_ledger.wear_item(&cfg, "spears", kills_to_expiry);
+    }
+    recapture_snapshot_in_place(&mut app.world);
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let cohort = snapshot
+        .populations
+        .iter()
+        .find(|p| p.entity == band.to_bits())
+        .expect("the band is on the wire");
+
+    let tiers = |kit_id: &str| {
+        cohort
+            .kit_tiers
+            .iter()
+            .find(|row| row.kit_id == kit_id)
+            .unwrap_or_else(|| panic!("the band publishes tiers for `{kit_id}`"))
+            .clone()
+    };
+
     assert_eq!(
-        herd.hunt_trip_estimates_kit_id, herd.default_kit_id,
-        "the hunt table names the kit it was priced at — this herd's own default"
+        cohort.kit_tiers.len(),
+        cfg.kits().len(),
+        "every offered kit gets a row — the picker's list and this list are the same list"
+    );
+
+    let bare = tiers("none").attack;
+    let trapping = tiers("trapping").attack;
+    let big_game = tiers("big_game").attack;
+
+    assert!(
+        trapping > bare,
+        "the TRAPS are untouched, so the trapping kit keeps its attack ({trapping} vs bare {bare})          — this is the reported defect: guessing repriced it to the bare hand"
     );
     assert_eq!(
-        herd.denial_estimates_kit_id, herd.default_kit_id,
-        "and so does the denial table"
+        big_game, bare,
+        "…and the SPEARS are dry, so the big-game kit is on the bare hand's attack — the pairing          that stops this passing on a sim which never steps a tier down"
+    );
+
+    // The haul tier is supplied by the SLED, which BOTH kits use and neither wore, so it must be
+    // untouched on both. A step-down keyed on "any item in the kit is dry" would drop it here.
+    assert_eq!(
+        tiers("big_game").hunt_carry_per_worker_biomass,
+        tiers("trapping").hunt_carry_per_worker_biomass,
+        "the sled is shared and unworn, so the haul tier cannot differ between the two hunt kits"
+    );
+    assert!(
+        tiers("big_game").hunt_carry_per_worker_biomass
+            > tiers("none").hunt_carry_per_worker_biomass,
+        "…and it is still the SLEDDED rate, not the sledless one"
     );
 }
 

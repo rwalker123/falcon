@@ -108,6 +108,25 @@ impl CombatConfig {
         }
     }
 
+    /// **[`Self::tuning`] as a DETACHED PARTY fights at it** — the base dials with `lethality` scaled
+    /// by [`Self::expedition_danger_multiplier`]. A hunting party takes casualties like a resident
+    /// band but bloodier: far from home and unsupported, so the same beast costs it more.
+    ///
+    /// **It is a named constructor because the scaling was being open-coded, and one caller got it
+    /// wrong.** `advance_expeditions` (the live raid), the launch line and the in-flight ETA all
+    /// applied it; the per-herd estimate tables did not, so both pre-launch tables priced a detached
+    /// raid at *resident-hunt* lethality — under-stating casualties, and therefore over-stating the
+    /// take and under-stating the fill time, on every expedition and denial raid they quoted. With
+    /// one constructor there is no second copy of the multiplication to forget.
+    ///
+    /// Anything projecting or resolving an **expedition** reads this; a resident band reads
+    /// [`Self::tuning`].
+    pub fn expedition_tuning(&self) -> CombatTuning {
+        let mut tuning = self.tuning();
+        tuning.lethality *= self.expedition_danger_multiplier;
+        tuning
+    }
+
     /// Both severity dials must be finite and `> 0` (at `0` a fight is bloodless — the whole
     /// subsystem is silently disabled), and `disengage_fraction <= 1` (above a full headcount no loser
     /// could ever be flagged as merely driven off).

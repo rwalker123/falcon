@@ -410,6 +410,177 @@ message SetConfigOverrideCommand {
 // Drop every staged override, so the next new_game boots on the shipped configs again.
 message ClearConfigOverridesCommand {}
 
+// ---------------------------------------------------------------------------------------------
+// THE QUERY CHANNEL — the one message on this socket the server ANSWERS.
+//
+// Every other envelope here is an order: it mutates the world, it is logged for replay, and the
+// client learns what happened from the next snapshot. A query mutates nothing. It asks the sim to
+// evaluate a forecast at an EXACT (band, kit, party, floor) and write the answer straight back on
+// the same TCP stream as a `QueryReplyEnvelope`, correlated by `request_id`.
+//
+// It exists because the pre-sampled estimate tables cannot answer the question the launch sheet
+// actually asks. Those tables are quoted at ONE kit (the hunt job's default) over a FRESH component
+// set, on a sampled floor × party ladder — so a band whose spears have run dry, or a player who
+// picked the trapping kit, is quoted a party that does not exist. Sampling both axes per herd is
+// also ~95% of snapshot capture, paid every frame for rows nobody reads.
+//
+// A query is answered from the LIVE world: this band's own equipment wear, this kit, this party
+// size, this floor.
+message QueryCommand {
+  // Correlates the reply. The client owns the numbering; the server only echoes it.
+  uint64 request_id = 1;
+  oneof query {
+    HuntTripForecastQuery hunt_trip_forecast = 2;
+    DenialRaidForecastQuery denial_raid_forecast = 3;
+  }
+}
+
+// "What does a raid of `party_workers` from `band_id`, carrying `kit_id`, take off `herd_id` if it
+// stops at `floor`?"
+message HuntTripForecastQuery {
+  uint32 faction_id = 1;
+  // The ASKING band — a durable `BandId`, never an ECS entity handle (same rule as every
+  // band-addressed command above). Its LIVE equipment wear is what prices the answer, which is the
+  // whole reason this is a query and not a table lookup.
+  uint64 band_id = 2;
+  string herd_id = 3;
+  // An `equipment.json` roster id, and REQUIRED. Unknown, or one whose `jobs` does not list `hunt`,
+  // is a `QueryError` — never a silent fall back to the job default, because a quietly re-armed
+  // party answers a different question than the one asked.
+  string kit_id = 4;
+  uint32 party_workers = 5;
+  // The composed floor, as a fraction of the herd's K.
+  float floor = 6;
+  // The sheet's floor presets, answered in the SAME round trip so a picker can label all three
+  // buttons without three sockets' worth of latency. Same party size as the composed row.
+  repeated float preset_floors = 7;
+  // **The largest party this band could actually field** - its idle workers, which the client
+  // already knows and the stepper already caps at. It bounds the `useful_cap` plateau scan below.
+  //
+  // The scan walks 1..=max CONTIGUOUSLY. It used to walk `expedition_config.estimate_party_sizes`,
+  // a sampled ladder that existed only to make a pre-computed table affordable - and a sampled scan
+  // finds a sampled plateau, so the answer was "the rung after which the payload stopped rising",
+  // not the party after which it stopped rising. A query answers one herd for one band, so it can
+  // afford to be exact.
+  //
+  // 0 means "do not scan": the reply's `useful_cap` comes back 0 and the client names no cap.
+  uint32 max_party_workers = 8;
+}
+
+// The denial twin. No floor and no fill target: the mission carries neither.
+message DenialRaidForecastQuery {
+  uint32 faction_id = 1;
+  uint64 band_id = 2;
+  string herd_id = 3;
+  string kit_id = 4;
+  uint32 party_workers = 5;
+  // **The largest party this band could field** - its idle workers, where the sheet's stepper
+  // stops.
+  //
+  // It bounds the `party_needed` search, which walks 1..=max and stops at the first party that
+  // actually drives the herd past recovery. The retired `denialPartyNeeded` searched a SAMPLED
+  // axis and could therefore only ever name a sampled party; it could also name one the band had
+  // no hope of raising. Bounding here means `party_needed = 0` says "no party YOU can field does
+  // this", which is a fact the player can act on.
+  uint32 max_party_workers = 6;
+}
+
+// The reply frame, written back on the command socket. A TOP-LEVEL message rather than a member of
+// `CommandEnvelope`: the two directions carry different vocabularies and nothing but a query is ever
+// answered.
+message QueryReplyEnvelope {
+  // Echoes the `QueryCommand.request_id` it answers.
+  uint64 request_id = 1;
+  oneof reply {
+    HuntTripForecastReply hunt_trip_forecast = 2;
+    DenialRaidForecastReply denial_raid_forecast = 3;
+    QueryError error = 4;
+  }
+}
+
+// A query the server declined to answer. `reason` is a machine-readable snake_case token
+// ("no_active_world", "unknown_herd", "unknown_band", "unknown_kit", "kit_wrong_job",
+// "invalid_floor", "invalid_party") — the client owns the prose.
+message QueryError {
+  string reason = 1;
+}
+
+// One answered forecast. `floor` / `party_workers` are ECHOED back deliberately: it makes the row
+// self-describing, so a client can assert the answer is for what it asked rather than trusting
+// position in a list.
+message HuntTripRow {
+  float floor = 1;
+  uint32 party_workers = 2;
+  // Turns of hunting until the party comes home. `0` = never completed inside the forecast horizon —
+  // the same NEVER_FILLED sentinel the retired estimate tables published; `bound` says which kind of
+  // never.
+  uint32 turns_to_fill = 3;
+  // A `HuntTripBound` key: which stop ended the trip.
+  string bound = 4;
+  bool delivers_food = 5;
+  bool delivers_trade = 6;
+  // WHOLE animals killed, so uint32 — the same type the retired estimate tables published and the
+  // same type `DenialRow.animals_killed` carries. A float here would let a client render "2.0
+  // animals" and would type one quantity two ways inside a single reply.
+  uint32 animals_taken = 7;
+  float delivered_food = 8;
+  float delivered_trade = 9;
+  float wasted_food = 10;
+}
+
+message HuntTripForecastReply {
+  // The answer at the exact floor the query named.
+  HuntTripRow at_composed = 1;
+  // One row per `preset_floors` entry, in the SAME order. Empty if none were asked for.
+  repeated HuntTripRow per_preset = 2;
+  // **The max-useful party plateau** — the LAST party at which the delivered payload was still
+  // rising with party size, scanned contiguously over `1..=max_party_workers` at the composed floor.
+  // It is the largest party still worth sending, so a stepper seeds ON it, not one worker above:
+  // `useful_cap + 1` is by construction the first party that adds nothing.
+  //
+  // `0` = **no usefulness cap to name** — the scan found no plateau because the payload never rose
+  // above zero, or was still rising at the band's last fieldable worker, or no scan was asked for
+  // (`max_party_workers = 0`).
+  //
+  // Server-side because the client can no longer find it: reading a plateau needs a row per party
+  // size, and the pre-computed table that used to carry that axis is what the query replaced. It is
+  // the SCAN only — the engagement-crew floor the client maxes into it is derivable from fields the
+  // herd row already carries, and stays there with the prose.
+  uint32 useful_cap = 3;
+}
+
+// Mirrors the wire's `DenialEstimate` row, field for field.
+message DenialRow {
+  uint32 party_workers = 1;
+  // `0` = never past recovery inside the horizon; `outcome` says which kind of never.
+  uint32 turns_to_collapse = 2;
+  // The optimistic end (the FEWEST turns) and the pessimistic end.
+  uint32 turns_to_collapse_low = 3;
+  uint32 turns_to_collapse_high = 4;
+  // A `DenialOutcome` key: "past_recovery" / "herd_lost" / "repelled" / "horizon".
+  string outcome = 5;
+  uint32 animals_killed = 6;
+  float delivered_food = 7;
+  float wasted_food = 8;
+  float delivered_trade = 9;
+  float wasted_trade = 10;
+}
+
+message DenialRaidForecastReply {
+  DenialRow at_composed = 1;
+  // THE PARTY THE LAUNCH SHEET OPENS ON - the smallest party that actually drives this herd past
+  // recovery, found by walking 1..=max_party_workers and stopping at the first success. Seed the
+  // stepper here: below the requirement a denial raid accomplishes nothing however long it runs.
+  //
+  // 0 means "NO PARTY YOU CAN FIELD drives this herd down", never "send nobody". That meaning
+  // CHANGED with the query: the retired HerdTelemetryState.denialPartyNeeded searched a sampled axis
+  // with no notion of who was asking, so it could name a party the band had no hope of raising and
+  // present it as the answer. This searches to the band's own last worker, so 0 is actionable -
+  // raise more people, or pick another quarry. Render at_composed.outcome beside it, never a blank,
+  // and never seed a stepper at 0.
+  uint32 party_needed = 2;
+}
+
 message CommandEnvelope {
   optional uint64 correlation_id = 15;
 
@@ -482,5 +653,8 @@ message CommandEnvelope {
     ClearConfigOverridesCommand clear_config_overrides = 48;
     // 48 is held by `clear_config_overrides`, so the denial raid takes 49 (append-only).
     SendDenialRaidCommand send_denial_raid = 49;
+    // 49 is held by `send_denial_raid`, so the query channel takes 50. The ONE payload here the
+    // server answers rather than applies — see `QueryCommand`.
+    QueryCommand query = 50;
   }
 }

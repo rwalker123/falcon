@@ -1131,7 +1131,8 @@ fn a_wolves_exported_rate_reads_no_food_and_real_trade_at_every_floor() {
          asserting about zeros"
     );
 
-    // The expedition side says the same thing with two flags rather than two numbers.
+    // The per-herd row itself is still published — only the estimate TABLE that used to hang off it
+    // is retired — so the species-aware rates below are read off the shipped snapshot as before.
     let snapshot = app
         .world
         .resource::<SnapshotHistory>()
@@ -1142,12 +1143,40 @@ fn a_wolves_exported_rate_reads_no_food_and_real_trade_at_every_floor() {
         .herds
         .iter()
         .find(|h| h.id == id)
+        .cloned()
         .expect("the herd is in the snapshot");
-    assert!(
-        !herd.hunt_trip_estimates.is_empty(),
-        "a huntable herd exports trip estimates"
+
+    // The expedition side says the same thing with two flags rather than two numbers. **Asked for
+    // rather than exported**: the pre-launch table is retired, so the sweep over floors is the
+    // caller's now instead of the capture's.
+    let kit_id = app
+        .world
+        .resource::<core_sim::EquipmentConfigHandle>()
+        .get()
+        .default_kit_id(core_sim::KitJob::Hunt)
+        .to_string();
+    let presets = vec![0.0_f32, 0.3, 0.5, 0.8];
+    let reply = core_sim::forecast_query::answer_forecast_query(
+        &mut app.world,
+        &sim_runtime::commands::QueryPayload::HuntTripForecast(
+            sim_runtime::commands::HuntTripForecastQuery {
+                faction_id: 0,
+                band_id: FIXTURE_BAND_ID,
+                herd_id: id.clone(),
+                kit_id,
+                party_workers: RAID_PARTY,
+                floor: 0.5,
+                preset_floors: presets.clone(),
+                max_party_workers: 0,
+            },
+        ),
     );
-    for row in &herd.hunt_trip_estimates {
+    let sim_runtime::commands::QueryReply::HuntTripForecast(answer) = reply else {
+        panic!("a huntable wolf pack answers a raid query: {reply:?}");
+    };
+    let rows = std::iter::once(&answer.at_composed).chain(answer.per_preset.iter());
+    let mut seen = 0usize;
+    for row in rows {
         assert!(
             !row.delivers_food,
             "floor {}: a wolf trip brings home no food",
@@ -1158,7 +1187,13 @@ fn a_wolves_exported_rate_reads_no_food_and_real_trade_at_every_floor() {
             "floor {}: …but it does bring home pelts — the flag that keeps it from reading as denial",
             row.floor
         );
+        seen += 1;
     }
+    assert_eq!(
+        seen,
+        presets.len() + 1,
+        "every floor asked for must be answered, or the sweep is shorter than it looks"
+    );
     // The per-herd, species-aware per-worker rates agree: no food, real trade. (The cohort-level
     // `huntPerWorkerProvisions` is species-blind by construction — see its doc — which is exactly why
     // a band preview must clamp with THESE.)
@@ -1379,7 +1414,14 @@ fn spawn_raid_home_band(app: &mut App, herd_pos: UVec2) -> bevy::prelude::Entity
         .index(camp.x, camp.y)
         .expect("the camp tile resolves");
     app.world
-        .spawn((party_cohort(tile, RAID_PARTY), ResidentBand))
+        .spawn((
+            party_cohort(tile, RAID_PARTY),
+            ResidentBand,
+            // Addressable + zero wear, so the pre-launch promise can be ASKED for through the same
+            // query the client uses now that the estimate tables are retired.
+            core_sim::BandId(FIXTURE_BAND_ID),
+            core_sim::BandEquipment::default(),
+        ))
         .id()
 }
 
@@ -1430,40 +1472,62 @@ struct ExportedRaid {
     bound: String,
 }
 
-/// The **exported** pre-launch raid row for `(floor, RAID_PARTY)`, read off the shipped snapshot.
-fn exported_raid_row(app: &App, id: &str, floor: f32) -> ExportedRaid {
-    let snapshot = app
+/// The **answered** pre-launch raid row for `(floor, RAID_PARTY)`.
+///
+/// It used to be read off the shipped snapshot's `huntTripEstimates`. That table is retired — it was
+/// the sim pre-computing every cell for every herd every frame — so the row is now *asked for*
+/// through `core_sim::forecast_query`, which is what the client does. The assertions around it are
+/// unchanged and still compare a **promise** against what the live raid actually pays; what moved is
+/// where the promise comes from.
+///
+/// **It is a closer comparison than the table was.** The table quoted the hunt job's default kit
+/// over a FRESH component set at base combat tuning, for every band alike; the query answers for
+/// this band's own kit and wear at the expedition's lethality — the same terms the raid below is
+/// resolved on.
+fn exported_raid_row(app: &mut App, id: &str, floor: f32) -> ExportedRaid {
+    let kit_id = app
         .world
-        .resource::<SnapshotHistory>()
-        .latest_entry()
-        .expect("a snapshot was captured")
-        .snapshot;
-    let herd = snapshot
-        .herds
-        .iter()
-        .find(|h| h.id == id)
-        .expect("the herd is in the snapshot");
-    let row = herd
-        .hunt_trip_estimates
-        .iter()
-        .find(|row| row.floor == floor && row.party_workers == RAID_PARTY)
-        .unwrap_or_else(|| {
-            panic!("the herd exports a floor {floor} × {RAID_PARTY}-worker trip estimate")
-        });
+        .resource::<core_sim::EquipmentConfigHandle>()
+        .get()
+        .default_kit_id(core_sim::KitJob::Hunt)
+        .to_string();
+    let reply = core_sim::forecast_query::answer_forecast_query(
+        &mut app.world,
+        &sim_runtime::commands::QueryPayload::HuntTripForecast(
+            sim_runtime::commands::HuntTripForecastQuery {
+                faction_id: 0,
+                band_id: FIXTURE_BAND_ID,
+                herd_id: id.to_string(),
+                kit_id,
+                party_workers: RAID_PARTY,
+                floor,
+                preset_floors: Vec::new(),
+                // These fixtures read the composed row only, so no plateau scan is asked for.
+                max_party_workers: 0,
+            },
+        ),
+    );
+    let sim_runtime::commands::QueryReply::HuntTripForecast(answer) = reply else {
+        panic!("the herd answers a floor {floor} × {RAID_PARTY}-worker query: {reply:?}");
+    };
+    let row = answer.at_composed;
     ExportedRaid {
         turns_to_fill: row.turns_to_fill,
         animals_taken: row.animals_taken,
         delivered_food: row.delivered_food,
         wasted_food: row.wasted_food,
         delivered_trade: row.delivered_trade,
-        bound: row.bound.clone(),
+        bound: row.bound,
     }
 }
+
+/// The `BandId` the raid fixtures' home band carries, so the query has a band to price against.
+const FIXTURE_BAND_ID: u64 = 1;
 
 /// The **exported** pre-launch raid promise for `(policy, RAID_PARTY)` — the very row the client's
 /// "delivers ≈X over ≈N turns · ⇄ ~Y trade goods" line reads — as
 /// `(turns_to_fill, delivered_food, delivered_trade)`.
-fn exported_raid_promise(app: &App, id: &str, floor: f32) -> (u32, f32, f32) {
+fn exported_raid_promise(app: &mut App, id: &str, floor: f32) -> (u32, f32, f32) {
     let row = exported_raid_row(app, id, floor);
     (row.turns_to_fill, row.delivered_food, row.delivered_trade)
 }
@@ -1518,7 +1582,8 @@ fn a_hunting_expedition_delivers_both_products_it_forecast() {
             pin_quarry(&mut app, &id);
             reveal_herd(&mut app, &id);
             recapture_snapshot_in_place(&mut app.world);
-            let (turns, promised_food, promised_trade) = exported_raid_promise(&app, &id, policy);
+            let (turns, promised_food, promised_trade) =
+                exported_raid_promise(&mut app, &id, policy);
             let context = format!("{species} {policy:?} raid");
             // **`turnsToFill == 0` = "the raid never completes within `hunt.forecast_horizon_turns`"**
             // — a herd whose regrowth keeps handing the party another whole animal forever. Its
@@ -1570,7 +1635,7 @@ fn an_inedible_raid_comes_home_with_pelts_and_no_food() {
     pin_quarry(&mut app, &id);
     reveal_herd(&mut app, &id);
     recapture_snapshot_in_place(&mut app.world);
-    let (turns, promised_food, promised_trade) = exported_raid_promise(&app, &id, 0.5);
+    let (turns, promised_food, promised_trade) = exported_raid_promise(&mut app, &id, 0.5);
     assert_eq!(
         promised_food, 0.0,
         "a wolf is not food — the exported raid promise must be 0 provisions"
@@ -1632,7 +1697,7 @@ fn a_floor_zero_raid_delivers_and_wastes_what_its_exported_row_promised() {
     pin_quarry(&mut app, &id);
     reveal_herd(&mut app, &id);
     recapture_snapshot_in_place(&mut app.world);
-    let promised = exported_raid_row(&app, &id, STRIP_IT_BARE);
+    let promised = exported_raid_row(&mut app, &id, STRIP_IT_BARE);
     let quarry = {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
         let registry = app.world.resource::<HerdRegistry>();

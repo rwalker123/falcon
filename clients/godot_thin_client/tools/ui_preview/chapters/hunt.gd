@@ -218,10 +218,10 @@ func _two_player_bands() -> Array:
 	# band-picker states test the LOCAL-hunt re-cap (the distance-aware expedition path is exercised by
 	# BandFx.hunt_distance_bands, in `fixtures_band.gd`).
 	return [
-		{"entity": 801, "faction": 0, "size": 120, "current_x": 66, "current_y": 10,
-			"working_age": 14, "idle_workers": 12, "hunt_reach": 6, "activity": "forage", "labor_assignments": []},
-		{"entity": 802, "faction": 0, "size": 40, "current_x": 68, "current_y": 12,
-			"working_age": 6, "idle_workers": 2, "hunt_reach": 6, "activity": "hunt", "labor_assignments": []},
+		BandFx.with_band_id({"entity": 801, "faction": 0, "size": 120, "current_x": 66, "current_y": 10,
+			"working_age": 14, "idle_workers": 12, "hunt_reach": 6, "activity": "forage", "labor_assignments": []}),
+		BandFx.with_band_id({"entity": 802, "faction": 0, "size": 40, "current_x": 68, "current_y": 12,
+			"working_age": 6, "idle_workers": 2, "hunt_reach": 6, "activity": "hunt", "labor_assignments": []}),
 	]
 
 ## A raid herd whose max-useful party DIFFERS BY POLICY, to prove the labor-bound note's "of M" tracks
@@ -395,7 +395,7 @@ func _partial_waste_mammoth() -> Dictionary:
 ## config values echoed on every cohort) and sits at (86,24) — ~27 tiles from the (66,10) herd, beyond
 ## its hunt_reach 7, so every herd resolves to the expedition branch.
 func _hunt_preview_far_band() -> Dictionary:
-	return {
+	return BandFx.with_band_id({
 		"id": "Band 1", "entity": 831, "faction": 0, "size": 80,
 		"current_x": 86, "current_y": 24, "pos": [86, 24],
 		"working_age": 10, "idle_workers": 6,
@@ -406,14 +406,14 @@ func _hunt_preview_far_band() -> Dictionary:
 		# Per-worker carry (shipped 4.0) → the forecast's HAUL = party × this.
 		"expedition_per_worker_carry": 4.0,
 		"activity": "forage", "labor_assignments": [],
-	}
+	})
 
 ## A band 8 tiles from the (66,10) herd (beyond hunt_reach 7 → expedition) carrying a MOVE RATE, so the
 ## raid forecast's round-trip travel is exercised: ceil(2 × 8 / 2) = 8 travel turns added to the hunting
 ## turns. `band_move_tiles_per_turn` now ships on the wire (schema slot 124) and is decoded onto the band;
 ## this carries the same value the decoder surfaces.
 func _raid_travel_band() -> Dictionary:
-	return {
+	return BandFx.with_band_id({
 		"id": "Band 1", "entity": 833, "faction": 0, "size": 80,
 		"current_x": 66, "current_y": 18, "pos": [66, 18],
 		"working_age": 10, "idle_workers": 6,
@@ -424,14 +424,14 @@ func _raid_travel_band() -> Dictionary:
 		"expedition_per_worker_carry": 4.0,
 		"band_move_tiles_per_turn": 2,
 		"activity": "forage", "labor_assignments": [],
-	}
+	})
 
 ## The oracle band for the carry-aware delivered/waste preview: per-worker 0.8, output 1.0 (so the
 ## rendered numbers match the spec oracle EXACTLY — no morale modifier muddying them), sitting ON the
 ## herd (local branch), with plenty of idle workers so the big-game auto-max (20 carriers) isn't
 ## labor-bound.
 func _delivered_oracle_band() -> Dictionary:
-	return {
+	return BandFx.with_band_id({
 		"id": "Band 1", "entity": 840, "faction": 0, "size": 120,
 		"current_x": 66, "current_y": 10, "pos": [66, 10],
 		"working_age": 30, "idle_workers": 26,
@@ -439,7 +439,7 @@ func _delivered_oracle_band() -> Dictionary:
 		"hunt_per_worker_provisions": 0.8,
 		"output_multiplier": 1.0,
 		"activity": "hunt", "labor_assignments": [],
-	}
+	})
 
 # ---- THE ENGAGEMENT-BOUND FOWL (docs/plan_hunt_through_combat.md §2) ----------------------------
 # A LIGHT-BODIED quarry at the shipped hunt conversion, dialed so the two bounds on a take are an
@@ -2055,9 +2055,14 @@ func _assert_horizon_floor_is_the_whole_trip() -> void:
 	# 3. THE ONE-LINE FORM (the targeting banner's and the dock sheet's sentence — the compose sheet
 	#    renders the box instead, so it is asserted on the producer). The payload tail is the fixture's
 	#    and is not the claim, so the equality is on the whole HEAD through the travel split.
+	# **THE ROW IS HANDED IN NOW, not looked up.** `hunt_trip_forecast` took a (floor, party) and read
+	# the herd's snapshot table; the sim answers a QUERY for the exact pair instead, so the producer
+	# takes the answered ROW. The fixture's table stands in for that answer here — this claim is about
+	# how the producer SHAPES a row into a sentence, which is unchanged.
 	var forecast := SourceForecast.hunt_trip_forecast(
 		h._hud._band_labor._player_band, h._hud._selection.herd(),
-		SourceForecast.FLOOR_FOOD_PEAK, HerdFx.HUNT_FORECAST_PARTY,
+		_raid_row_for(h._hud._selection.herd(), SourceForecast.FLOOR_FOOD_PEAK,
+			HerdFx.HUNT_FORECAST_PARTY),
 		h._hud._band_labor.grid_width(), h._hud._band_labor.wrap_horizontal())
 	var expected_head := ("[color=#%s]delivers ≈%d %s over more than %d turns "
 		+ "(more than %d hunting + %d travel)") % [
@@ -2067,3 +2072,20 @@ func _assert_horizon_floor_is_the_whole_trip() -> void:
 	h._assert_hud("…and the one-line form opens on the same floor and split — want \"%s\", got \"%s\""
 			% [expected_head, got_line],
 		got_line.begins_with(expected_head))
+
+## The fixture raid table's row for one (floor, party), standing in for a query answer. It SCANS on
+## the row's own two fields rather than rebuilding the `"<floor>:<party>"` key, which renders the
+## floor through Rust's float Display and cannot be reproduced exactly from GDScript.
+func _raid_row_for(herd: Dictionary, floor: float, party: int) -> Dictionary:
+	var estimates: Variant = herd.get("hunt_trip_estimates", {})
+	if not (estimates is Dictionary):
+		return {}
+	for key in (estimates as Dictionary):
+		var row_variant: Variant = (estimates as Dictionary)[key]
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		if is_equal_approx(float(row.get("floor", -1.0)), floor) \
+				and int(row.get("party_workers", 0)) == party:
+			return row
+	return {}

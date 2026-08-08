@@ -215,12 +215,19 @@ func _concerning_food_band_fixture() -> Dictionary:
 ## mission (which has no such lever), so a fixture omitting it would let the absent `Orders:` row pass
 ## on a party that simply carried no field. The delivery trio is absent because a denial party
 ## genuinely publishes none.
+##
+## **IT CARRIES A `band_id` AND ITS OWN `kit_id`, and both are what make its `Collapse:` row reachable.**
+## A detached party is a band, so the collapse forecast is a QUERY asked about IT — and a party holding
+## `HudConst.NO_BAND_ID` is one the asker correctly refuses to compose a question about, which renders
+## the row's placeholder forever. The kit is the one it was outfitted with at launch, which is what the
+## sim prices its whole life from.
 func _denial_expedition_fixture() -> Dictionary:
-	return {
+	return BandFx.with_band_id({
 		"id": "Raiders 1",
 		"size": DENIAL_PARTY_SIZE,
 		"entity": 7104,
 		"faction": 0,
+		"kit_id": BandFx.KIT_DEFAULT_HUNT,
 		"pos": [67, 16],
 		"turns_of_food": 3.0,
 		# A rounding error against what it killed — the mission's own cost, stated rather than hidden.
@@ -239,7 +246,7 @@ func _denial_expedition_fixture() -> Dictionary:
 			"food_module": "",
 			"food_module_label": "None",
 		},
-	}
+	})
 
 func _hunt_expedition_fixture() -> Dictionary:
 	return {

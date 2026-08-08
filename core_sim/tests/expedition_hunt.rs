@@ -23,18 +23,18 @@ use core_sim::{
     advance_band_movement, advance_expeditions, advance_herds, available_workers,
     build_headless_app, herd_hunt_yield, hunt_escapement_ceiling, hunt_source_yield_preview,
     hunt_take, hunt_trip_forecast, recapture_snapshot_in_place, scalar_from_f32, scalar_one,
-    scalar_zero, spawn_initial_forage, spawn_initial_herds, spawn_initial_world, BandTravel,
-    CombatConfigHandle, CommandEventLog, CultureManager, DiscoveryProgressLedger, Expedition,
-    ExpeditionConfig, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FactionId,
-    FactionInventory, FaunaConfig, FaunaConfigHandle, ForageRegistry, GenerationId,
-    GenerationRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, HuntDraw, HuntTripBound,
-    LaborAllocation, LaborConfig, LaborConfigHandle, LadderConfig, LadderConfigHandle, LocalStore,
-    MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, Scalar,
-    SimulationConfig, SimulationTick, SizeClass, SnapshotHistory, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, VisibilityConfig,
-    VisibilityConfigHandle, VisibilityLedger, WellbeingConfigHandle, FOOD, NO_IMPROVEMENT_UNDERWAY,
-    STRIP_IT_BARE,
+    scalar_zero, spawn_initial_forage, spawn_initial_herds, spawn_initial_world, BandEquipment,
+    BandId, BandTravel, CombatConfigHandle, CommandEventLog, CultureManager,
+    DiscoveryProgressLedger, Expedition, ExpeditionConfig, ExpeditionConfigHandle,
+    ExpeditionMission, ExpeditionPhase, FactionId, FactionInventory, FaunaConfig,
+    FaunaConfigHandle, ForageRegistry, GenerationId, GenerationRegistry, Herd, HerdDensityMap,
+    HerdRegistry, HerdTelemetry, HuntDraw, HuntTripBound, LaborAllocation, LaborConfig,
+    LaborConfigHandle, LadderConfig, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
+    MoraleCause, PopulationCohort, ResidentBand, Scalar, SimulationConfig, SimulationTick,
+    SizeClass, SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
+    TileRegistry, VisibilityConfig, VisibilityConfigHandle, VisibilityLedger,
+    WellbeingConfigHandle, FOOD, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
 };
 
 /// Party size used by every trip test: 4 hunters (the design's reference party).
@@ -206,6 +206,55 @@ fn cohort(tile: bevy::prelude::Entity, working: u32) -> PopulationCohort {
     }
 }
 
+/// The `BandId` every fixture band in this file carries. One id is enough: no test here fields two
+/// resident bands at once, and a named constant beats a literal threaded through four spawn helpers.
+const FIXTURE_BAND_ID: u64 = 1;
+
+/// **The pre-launch estimate, ASKED FOR** — `delivered_food` for exactly this (band, kit, party,
+/// floor), through `core_sim::forecast_query`.
+///
+/// This replaces a lookup in the herd row's `huntTripEstimates` table, which is retired. The table
+/// was a snapshot field, so the old form of these assertions read a *published* number; the query is
+/// answered on demand from the live world, so they now read the number the client would actually be
+/// given. It is also a **closer** comparison than it was: the table was priced at base combat
+/// tuning while the in-flight projection uses the expedition's, and the query uses the expedition's
+/// too — so both sides of these equalities now fight the same fight.
+fn pre_launch_delivery(app: &mut App, herd_id: &str, party_workers: u32, floor: f32) -> f32 {
+    let kit_id = expedition_hunt_default_kit(app);
+    let reply = core_sim::forecast_query::answer_forecast_query(
+        &mut app.world,
+        &sim_runtime::commands::QueryPayload::HuntTripForecast(
+            sim_runtime::commands::HuntTripForecastQuery {
+                faction_id: 0,
+                band_id: FIXTURE_BAND_ID,
+                herd_id: herd_id.to_string(),
+                kit_id,
+                party_workers,
+                floor,
+                preset_floors: Vec::new(),
+                // These fixtures read the composed row only, so no plateau scan is asked for.
+                max_party_workers: 0,
+            },
+        ),
+    );
+    match reply {
+        sim_runtime::commands::QueryReply::HuntTripForecast(answer) => {
+            answer.at_composed.delivered_food
+        }
+        other => panic!("the pre-launch estimate must be answerable: {other:?}"),
+    }
+}
+
+/// The hunt job's default kit id — what a launch with no explicit kit resolves to, and therefore
+/// what the retired tables were priced at.
+fn expedition_hunt_default_kit(app: &App) -> String {
+    app.world
+        .resource::<core_sim::EquipmentConfigHandle>()
+        .get()
+        .default_kit_id(core_sim::KitJob::Hunt)
+        .to_string()
+}
+
 /// A home band far from the herd (so no near-band early delivery / comm flush interferes).
 fn spawn_home_band(app: &mut App, herd_pos: UVec2) -> bevy::prelude::Entity {
     let width = app.world.resource::<TileRegistry>().width;
@@ -215,7 +264,18 @@ fn spawn_home_band(app: &mut App, herd_pos: UVec2) -> bevy::prelude::Entity {
         (herd_pos.y + height / 3) % height,
     );
     let tile = tile_at(app, far);
-    app.world.spawn((cohort(tile, 10), ResidentBand)).id()
+    app.world
+        .spawn((
+            cohort(tile, 10),
+            ResidentBand,
+            // Addressable + kitted, so the pre-launch estimate can be ASKED for through the
+            // same query the client uses (`pre_launch_delivery`). `BandEquipment::default()` is
+            // zero wear, which is the condition the retired estimate tables assumed of every
+            // band; here it is stated rather than assumed.
+            BandId(FIXTURE_BAND_ID),
+            BandEquipment::default(),
+        ))
+        .id()
 }
 
 /// A home band far from the herd but on the **same row**, so a returning party's Chebyshev
@@ -227,7 +287,18 @@ fn spawn_home_band_same_row(app: &mut App, herd_pos: UVec2) -> bevy::prelude::En
     let width = app.world.resource::<TileRegistry>().width;
     let far = UVec2::new((herd_pos.x + width / 3) % width, herd_pos.y);
     let tile = tile_at(app, far);
-    app.world.spawn((cohort(tile, 10), ResidentBand)).id()
+    app.world
+        .spawn((
+            cohort(tile, 10),
+            ResidentBand,
+            // Addressable + kitted, so the pre-launch estimate can be ASKED for through the
+            // same query the client uses (`pre_launch_delivery`). `BandEquipment::default()` is
+            // zero wear, which is the condition the retired estimate tables assumed of every
+            // band; here it is stated rather than assumed.
+            BandId(FIXTURE_BAND_ID),
+            BandEquipment::default(),
+        ))
+        .id()
 }
 
 /// A `PARTY_WORKERS`-strong hunting party at `pos`, already in the `Hunting` phase.
@@ -1736,17 +1807,11 @@ fn a_far_just_launched_party_projects_the_estimate_delivery() {
 
     // The invariant that encodes the user's contradiction: the far in-flight forecast and the
     // pre-launch estimate are the same forecast (carried == 0), so they must agree.
-    let herd_state = snapshot
-        .herds
-        .iter()
-        .find(|h| h.id == id)
-        .expect("the target herd is in the snapshot");
-    let estimate = herd_state
-        .hunt_trip_estimates
-        .iter()
-        .find(|e| e.floor == 0.5 && e.party_workers == BOAR_RAID_CREW)
-        .expect("a (Sustain, BOAR_RAID_CREW) huntTripEstimate row")
-        .delivered_food;
+    assert!(
+        snapshot.herds.iter().any(|h| h.id == id),
+        "the target herd is in the snapshot — the fog reveal above is what puts it there"
+    );
+    let estimate = pre_launch_delivery(&mut app, &id, BOAR_RAID_CREW, 0.5);
     assert!(
         estimate > 0.0,
         "a Thriving boar at 0.86·K offers surplus — the pre-launch estimate must be positive"
@@ -1824,17 +1889,11 @@ fn a_lost_target_herd_projects_zero_while_a_healthy_boar_still_estimates_positiv
 
     // The healthy boar the player sees STILL offers surplus in its estimates: the two herds are
     // distinct, and only the client can tell the player which one the party is actually chasing.
-    let healthy_state = snapshot
-        .herds
-        .iter()
-        .find(|h| h.id == healthy)
-        .expect("the healthy boar is in the snapshot");
-    let healthy_estimate = healthy_state
-        .hunt_trip_estimates
-        .iter()
-        .find(|e| e.floor == 0.5 && e.party_workers == BOAR_RAID_CREW)
-        .expect("a (Sustain, BOAR_RAID_CREW) estimate for the healthy boar")
-        .delivered_food;
+    assert!(
+        snapshot.herds.iter().any(|h| h.id == healthy),
+        "the healthy boar is in the snapshot"
+    );
+    let healthy_estimate = pre_launch_delivery(&mut app, &healthy, BOAR_RAID_CREW, 0.5);
     assert!(
         healthy_estimate > 0.0,
         "the boar on the tile is healthy — its estimate is positive while the party's target's is 0"
@@ -1885,7 +1944,18 @@ fn spawn_home_band_near_herd(
     let width = app.world.resource::<TileRegistry>().width;
     let near = UVec2::new((herd_pos.x + tiles_away) % width, herd_pos.y);
     let tile = tile_at(app, near);
-    app.world.spawn((cohort(tile, 10), ResidentBand)).id()
+    app.world
+        .spawn((
+            cohort(tile, 10),
+            ResidentBand,
+            // Addressable + kitted, so the pre-launch estimate can be ASKED for through the
+            // same query the client uses (`pre_launch_delivery`). `BandEquipment::default()` is
+            // zero wear, which is the condition the retired estimate tables assumed of every
+            // band; here it is stated rather than assumed.
+            BandId(FIXTURE_BAND_ID),
+            BandEquipment::default(),
+        ))
+        .id()
 }
 
 /// **A raid does not end because its quarry strolled past camp** (issue #441). A hunting party whose
@@ -2077,15 +2147,14 @@ fn a_raids_length_is_invariant_in_party_size_while_its_payload_is_not() {
     let mut baseline: Option<u32> = None;
     let mut smallest_payload = 0u32;
     let mut largest_payload = 0u32;
-    // The sampled party ladder, skipping the lone hunter — the claim is about party size moving
-    // the payload but not the trip length, and it needs two sizes to compare.
-    let sampled_parties: Vec<u32> = cfg
-        .estimate_party_sizes
-        .iter()
-        .copied()
-        .filter(|workers| *workers > LONE_HUNTER)
-        .collect();
-    for workers in sampled_parties {
+    // A spread of party sizes above the lone hunter — the claim is about party size moving the
+    // payload but not the trip length, and it needs several sizes to compare.
+    //
+    // These used to be read off `expedition_config.estimate_party_sizes`, the sampling ladder the
+    // retired estimate tables were built on. The ladder is gone with the tables, so the sizes are
+    // named here: they belong to this test's claim, not to a config lever.
+    const PARTIES: [u32; 5] = [2, 3, 4, 8, 16];
+    for workers in PARTIES {
         let f = raid_for(workers);
         let turns = f.turns_to_fill.expect("a fowl raid fills its pack");
         assert_eq!(
@@ -2418,34 +2487,49 @@ fn every_pre_launch_estimate_row_names_one_of_the_raids_four_stops() {
 
     let mut app = deterministic_headless_app();
     app.update();
-    let (id, _) = pin_frozen_herd(&mut app, "Wild Fowl", FOWL_BODY, FOWL_K, FOWL_K, FOWL_R);
-    reveal_herds(&mut app, std::slice::from_ref(&id));
-    recapture_snapshot_in_place(&mut app.world);
+    let (id, herd_pos) = pin_frozen_herd(&mut app, "Wild Fowl", FOWL_BODY, FOWL_K, FOWL_K, FOWL_R);
+    spawn_home_band(&mut app, herd_pos);
 
-    let snapshot = app
-        .world
-        .resource::<SnapshotHistory>()
-        .latest_entry()
-        .expect("a snapshot was captured")
-        .snapshot;
-    let herd_state = snapshot
-        .herds
-        .iter()
-        .find(|h| h.id == id)
-        .expect("the flock is in the snapshot");
-    assert!(
-        !herd_state.hunt_trip_estimates.is_empty(),
-        "a huntable flock publishes a trip table — otherwise this test asserts nothing"
-    );
-    for row in &herd_state.hunt_trip_estimates {
-        assert!(
-            LIVE_TRIP_BOUND_KEYS.contains(&row.bound.as_str()),
-            "every row must name one of the raid's four stops (floor {}, {} workers, got {:?})",
-            row.floor,
-            row.party_workers,
-            row.bound
-        );
+    // **Swept across the answer space rather than read off a published table.** The rows used to be
+    // pre-computed per herd, so asserting over `huntTripEstimates` swept every cell the sim shipped;
+    // the query answers one cell at a time, so the sweep is the caller's now. Floors and party sizes
+    // that span the outcomes: a floor at K takes nothing, a floor at 0 can lose the herd, a big party
+    // fills its pack and a lone hunter runs out of horizon.
+    let kit_id = expedition_hunt_default_kit(&app);
+    let mut seen = std::collections::BTreeSet::new();
+    for floor in [0.0_f32, 0.3, 0.5, 0.8, 1.0] {
+        for party_workers in [1_u32, 4, 16] {
+            let reply = core_sim::forecast_query::answer_forecast_query(
+                &mut app.world,
+                &sim_runtime::commands::QueryPayload::HuntTripForecast(
+                    sim_runtime::commands::HuntTripForecastQuery {
+                        faction_id: 0,
+                        band_id: FIXTURE_BAND_ID,
+                        herd_id: id.clone(),
+                        kit_id: kit_id.clone(),
+                        party_workers,
+                        floor,
+                        preset_floors: Vec::new(),
+                        max_party_workers: 0,
+                    },
+                ),
+            );
+            let sim_runtime::commands::QueryReply::HuntTripForecast(answer) = reply else {
+                panic!("a well-formed query over a live flock is answered");
+            };
+            assert!(
+                LIVE_TRIP_BOUND_KEYS.contains(&answer.at_composed.bound.as_str()),
+                "every answer must name one of the raid's four stops (floor {floor}, \
+                 {party_workers} workers, got {:?})",
+                answer.at_composed.bound
+            );
+            seen.insert(answer.at_composed.bound.clone());
+        }
     }
+    assert!(
+        seen.len() > 1,
+        "the sweep must reach more than one stop, or a hardcoded bound would pass: saw {seen:?}"
+    );
 }
 
 /// **A returning party whose home band cannot be resolved folds back where it stands, instead of

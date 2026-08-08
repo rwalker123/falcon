@@ -128,12 +128,21 @@ fn create_kits<'a>(
             .map(|job| builder.create_string(job))
             .collect();
         let jobs = builder.create_vector(&jobs);
+        // The kit's `uses` list, in config order — see `KitOptionState::item_ids` for why the tiers
+        // above cannot stand in for it.
+        let item_ids: Vec<_> = state
+            .item_ids
+            .iter()
+            .map(|item| builder.create_string(item))
+            .collect();
+        let item_ids = builder.create_vector(&item_ids);
         entries.push(fb::KitOption::create(
             builder,
             &fb::KitOptionArgs {
                 id: Some(id),
                 displayName: Some(display_name),
                 jobs: Some(jobs),
+                itemIds: Some(item_ids),
                 attack: state.attack,
                 huntCarryPerWorkerBiomass: state.hunt_carry_per_worker_biomass,
                 forageCarryPerWorkerBiomass: state.forage_carry_per_worker_biomass,
@@ -185,77 +194,13 @@ fn create_herds<'a>(
         let size_class = builder.create_string(herd.size_class.as_str());
         let ecology_phase = builder.create_string(herd.ecology_phase.as_str());
         let husbandry_ceiling = builder.create_string(herd.husbandry_ceiling.as_str());
-        // WHICH KIT EACH ESTIMATE TABLE IS QUOTED FOR — always written, even when the table beside it
-        // is empty: "these rows would have been priced at X" is still the honest answer, and a
-        // consumer comparing the player's selection against an absent string would read every herd
+        // THE KIT THIS QUARRY WANTS — always written, even when it names the hunt job's default: a
+        // consumer comparing its player's selection against an absent string would read every herd
         // as a mismatch.
-        let hunt_trip_estimates_kit_id =
-            builder.create_string(herd.hunt_trip_estimates_kit_id.as_str());
-        let denial_estimates_kit_id = builder.create_string(herd.denial_estimates_kit_id.as_str());
-        // THE KIT THIS QUARRY WANTS — always written for the same reason: a consumer comparing its
-        // player's selection against an absent string would read every herd as a mismatch.
         let default_kit_id = builder.create_string(herd.default_kit_id.as_str());
-        let hunt_trip_estimates = if herd.hunt_trip_estimates.is_empty() {
-            None
-        } else {
-            let entries: Vec<_> = herd
-                .hunt_trip_estimates
-                .iter()
-                .map(|estimate| {
-                    let bound = builder.create_string(estimate.bound.as_str());
-                    fb::HuntTripEstimate::create(
-                        builder,
-                        &fb::HuntTripEstimateArgs {
-                            // THE SAMPLED FLOOR — replaces the retired `policy` string.
-                            floor: estimate.floor,
-                            // WHICH STOP ENDS THE TRIP — a `HuntTripBound` key.
-                            bound: Some(bound),
-                            partyWorkers: estimate.party_workers,
-                            turnsToFill: estimate.turns_to_fill,
-                            deliversFood: estimate.delivers_food,
-                            deliversTrade: estimate.delivers_trade,
-                            deliveredTrade: estimate.delivered_trade,
-                            animalsTaken: estimate.animals_taken,
-                            deliveredFood: estimate.delivered_food,
-                            wastedFood: estimate.wasted_food,
-                        },
-                    )
-                })
-                .collect();
-            Some(builder.create_vector(&entries))
-        };
-        // The denial twin of the table above — one row per party size, no floor axis (the mission
-        // carries no floor). Absent when empty, the same convention.
-        let denial_estimates = if herd.denial_estimates.is_empty() {
-            None
-        } else {
-            let entries: Vec<_> = herd
-                .denial_estimates
-                .iter()
-                .map(|estimate| {
-                    let outcome = builder.create_string(estimate.outcome.as_str());
-                    fb::DenialEstimate::create(
-                        builder,
-                        &fb::DenialEstimateArgs {
-                            partyWorkers: estimate.party_workers,
-                            turnsToCollapse: estimate.turns_to_collapse,
-                            turnsToCollapseLow: estimate.turns_to_collapse_low,
-                            turnsToCollapseHigh: estimate.turns_to_collapse_high,
-                            outcome: Some(outcome),
-                            animalsKilled: estimate.animals_killed,
-                            deliveredFood: estimate.delivered_food,
-                            wastedFood: estimate.wasted_food,
-                            deliveredTrade: estimate.delivered_trade,
-                            wastedTrade: estimate.wasted_trade,
-                        },
-                    )
-                })
-                .collect();
-            Some(builder.create_vector(&entries))
-        };
-        // **An EMPTY curve is absent, not a vector of zeros** — the `hunt_trip_estimates` convention
-        // above, and the one that lets a client tell "this source published no curve" from "this
-        // source does not grow", which are different facts.
+        // **An EMPTY curve is absent, not a vector of zeros** — the convention every repeated field
+        // on this table follows, and the one that lets a client tell "this source published no
+        // curve" from "this source does not grow", which are different facts.
         let regrowth_samples = if herd.regrowth_samples.is_empty() {
             None
         } else {
@@ -293,7 +238,6 @@ fn create_herds<'a>(
                 provisionsPerBiomass: herd.provisions_per_biomass,
                 fodderPerBiomass: herd.fodder_per_biomass,
                 tradePerBiomass: herd.trade_per_biomass,
-                huntTripEstimates: hunt_trip_estimates,
                 // Ecological K + grazing range (Grazing Phase 2b-iii) — appended last.
                 carryingCapacity: herd.carrying_capacity,
                 grazeRangeRadius: herd.graze_range_radius,
@@ -354,13 +298,6 @@ fn create_herds<'a>(
                 // The attrition denominator — appended last, so the slot stays positional.
                 durability: herd.durability,
                 stayFraction: herd.stay_fraction,
-                // The denial raid's pre-launch table — appended last.
-                denialEstimates: denial_estimates,
-                // The party that table's sheet opens on — appended last, so the slot stays
-                // positional. `0` = no quoted party drives this herd down.
-                denialPartyNeeded: herd.denial_party_needed,
-                huntTripEstimatesKitId: Some(hunt_trip_estimates_kit_id),
-                denialEstimatesKitId: Some(denial_estimates_kit_id),
                 // The quarry's own default kit — appended last, so the slot stays positional.
                 defaultKitId: Some(default_kit_id),
             },

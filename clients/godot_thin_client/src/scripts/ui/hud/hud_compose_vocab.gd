@@ -854,43 +854,50 @@ const KIT_HINT_PEN_CARRY_FORMAT := "pen %s per keeper"
 ## A component's remaining condition on `equipment.json`'s 0-100 scale, and the word for a spent one.
 ## **Performance is FLAT until expiry** (durability and performance are orthogonal axes), so this
 ## number never scales anything above it — it says how much longer the tier lasts, not how good it is.
+## **THE ITEM NAMES ITSELF — there is no table of them here.** These two formats take the wire's own
+## `KitOption.item_ids` entry, which is the `equipment.json` id (`spears` / `traps` / `sled` /
+## `baskets`). The three `KIT_COMPONENT_*` constants that used to supply the name are deleted: they were
+## reached through an axis→item guess, and on the Trapping kit that guess printed `spears`.
 const KIT_HINT_CONDITION_FORMAT := "%s %d"
 const KIT_HINT_DRY_FORMAT := "%s dry"
 ## **A BAND-WIDE ROLE'S ITEM CLAUSE** — `Wayfinding 100`, `Clubs dry`. It takes `DetailFormat`'s own
-## capitalised item LABEL and condition FACE rather than the lowercase component words below, because
-## the Gear popover states the identical pair for the identical band (`▲ Wayfinding 66 — …`) and two
+## capitalised item LABEL and condition FACE rather than the compose hint's raw wire id, because the
+## Gear popover states the identical pair for the identical band (`▲ Wayfinding 66 — …`) and two
 ## spellings of one reading is how a card and the popover it sits above come to disagree. One format
 ## for both states: the face is the number or the word `dry`, so this line needs no dry twin.
 const KIT_HINT_ROLE_ITEM_FORMAT := "%s %s"
-const KIT_COMPONENT_SPEARS := "spears"
-const KIT_COMPONENT_SLED := "sled"
-const KIT_COMPONENT_BASKETS := "baskets"
-## `husbandry_gear` — hurdles, halters, a butchering stone, vessels. Named for what it DOES on the
-## sheet (it is what a keeper works a pen with) rather than spelled as the wire's item id, the way
-## every component on this line is.
-const KIT_COMPONENT_HUSBANDRY_GEAR := "handling gear"
 ## Tier decimals. The tiers span 1.0 (bare hands) to 40.0 (a sled), authored as small round numbers,
 ## so one decimal states them without claiming a precision the roster does not have.
 const KIT_TIER_DECIMALS := 1
 
-## **THE HONESTY LINE.** `huntTripEstimates` / `denialEstimates` are quoted for the hunt job's DEFAULT
-## kit ONLY — repricing them per kit is scoped out (they are ~95% of snapshot capture) — so a sheet
-## whose selected kit differs from the id the table names must refuse to present the table as the
-## answer, and say whose numbers it was going to show. `%s` the kit the table IS priced for, `%s` the
-## kit the player selected.
-const KIT_DENIAL_ESTIMATES_QUOTED_FORMAT := "The collapse forecast is priced for %s, not for %s — so no turn count and no take are quoted here."
-const KIT_TRIP_ESTIMATES_QUOTED_FORMAT := "The raid forecast is priced for %s, not for %s — so no turn count and no payload are quoted here."
+# ---- THE FORECAST QUERY's two non-answers -------------------------------------------------------
+#
+# **THE FOUR "PRICED FOR ANOTHER KIT / ANOTHER PARTY" LINES ARE GONE, AND NOTHING REPLACES THEM.**
+# They apologised for a pre-sampled table: quoted at ONE kit over a FRESH component set, on a floor ×
+# party LADDER, so a sheet composing anything else had to say whose numbers it was about to show, or
+# refuse to show them. The sim is asked now, and answers the exact (band, kit, party, floor) — there
+# is no nearest rung to name and no other kit's raid to disown. A sheet's numbers are always its own.
 
-## **THE HONESTY LINE'S PARTY-AXIS TWIN.** Both estimate tables sample the party axis on a LADDER
-## (`expedition_config.estimate_party_sizes`), so a selected party usually falls between two rungs and
-## the sheet quotes the nearest one (`SourceForecast.nearest_estimate_party`). The take SCALES with
-## party size, so a row computed for 8 read against a party of 12 misstates it — the sheet must NAME
-## the party the figures belong to rather than present a nearby row as exact. Unlike the kit line
-## above, the figures still RENDER: they are a real answer to a nearby question, not another kit's
-## numbers. `%d` the party quoted, `%d` the party selected. `""` where they agree, which the ladder's
-## dense low end and the denial table's requirement run make the common case.
-const PARTY_DENIAL_ESTIMATES_QUOTED_FORMAT := "The collapse forecast is priced for a party of %d — the nearest size the scouts costed — not for your %d."
-const PARTY_TRIP_ESTIMATES_QUOTED_FORMAT := "The raid forecast is priced for a party of %d — the nearest size the scouts costed — not for your %d."
+## **WHILE THE ANSWER IS IN FLIGHT.** First open on a quarry, or a re-query whose previous answer has
+## aged past `ForecastQuery.STALE_AFTER_MSEC`. It stands in place of the readout box — never beside
+## zeros, which would read as a raid that lands nothing.
+const RAID_FORECAST_PENDING := "Costing the raid…"
+
+## The denial twin. Two lines rather than one because the two sheets state different things (a payload
+## and a collapse), and a shared "waiting…" would be the only word on either that did not name what it
+## was waiting for.
+const DENIAL_FORECAST_PENDING := "Costing the raid's toll on the herd…"
+
+## **THE ONE FAILURE LINE, AND IT IS DELIBERATELY NOT SEVEN.** The server's refusal tokens
+## (`sim_runtime::commands::query_error`) are all CLIENT BUGS if they ever fire in normal play — the
+## sheet composes the request out of the band, herd, kit and party it is already rendering — so prose
+## per token would be seven sentences for states the UI is supposed to make unreachable. The token
+## rides the line so a report can name it; the player gets one honest "this is not answering".
+const FORECAST_FAILED_FORMAT := "No forecast available (%s)."
+
+## The transport's own token, mirroring `native/src/bridge/query.rs`'s `QUERY_ERROR_TRANSPORT`. It is
+## the ONE token that is not the server's: a socket that never answered has no `query_error` to give.
+const QUERY_ERROR_TRANSPORT := "transport"
 
 const COMPOSE_CANCEL_TOOLTIP := "Cancel"
 
@@ -906,13 +913,14 @@ const CANCEL_SCOPE_ROLES := "roles"
 #       `carryingCapacity` and the herd's per-biomass yield vector: `max(0, B − floor·K) × rate`,
 #       which is linear and exact, so the client lands on the number the sim would at ANY floor.
 #       With the cohort's levers that makes the LOCAL hunt preview pure arithmetic.
-#   `hunt_trip_estimates`  {"<floor>:<workers>" → {floor, party_workers, turns_to_fill,
-#       delivers_food, delivers_trade, …}} — the sim's PRE-LAUNCH TRIP ESTIMATE, forward-simulated
-#       server-side. An expedition's trip length is NOT a rate division: above the peak the ceiling is
-#       a *stock*, so the party strips the headroom in a turn or two and then crawls at the herd's
-#       regrowth trickle. A re-derived `carryCap / rate` closed form is wrong, and wrong by a lot — on
-#       a FULL Rabbit Warren a LONE hunter fills in 23 turns while a party of 4 never fills within the
-#       sim's horizon. So the client does ZERO arithmetic here — it looks the answer up.
+#   the EXPEDITION's trip is ASKED FOR (`ForecastQuery` → `HuntTripForecastReply.at_composed`:
+#       {floor, party_workers, turns_to_fill, delivers_food, delivers_trade, …}), forward-simulated
+#       server-side for the exact band, kit, party and floor the sheet composed. A trip length is NOT
+#       a rate division: above the peak the ceiling is a *stock*, so the party strips the headroom in
+#       a turn or two and then crawls at the herd's regrowth trickle. A re-derived `carryCap / rate`
+#       closed form is wrong, and wrong by a lot — on a FULL Rabbit Warren a LONE hunter fills in 23
+#       turns while a party of 4 never fills within the sim's horizon. So the client does ZERO
+#       arithmetic here — it asks, and reads the answer.
 # **THIS IS THE BOUNDARY OF THE CLIENT-COMPOSES-THE-CEILING EXCEPTION.** The ceiling is composable
 # because it is linear; a raid's trip has no closed form, and a hunt's TAKE is rounded to whole
 # animals (`floor(ceiling / bodyMass)`), which is not linear either. The client draws the curve; the
@@ -923,10 +931,10 @@ const CANCEL_SCOPE_ROLES := "roles"
 # DENIAL raid is one that lands nothing in EITHER currency, which is a property of the SPECIES;
 # `SourceForecast.hunt_trip_forecast` owns that test.)
 #
-# **THE SAMPLED FLOORS ARE MARKS ON A DIAL, NOT A SET OF OPTIONS.** The sim samples the continuum
-# (`snapshot::RAID_FORECAST_FLOOR_SAMPLES`) because it cannot ship a formula for a forward
-# simulation; the launch command accepts ANY floor in `0.0..=1.0`, and the preview quotes the nearest
-# sampled row. Treating a sample as an offered stance would undo the whole arc.
+# **THE THREE PRESET FLOORS ARE MARKS ON A DIAL, NOT A SET OF OPTIONS.** The floor is continuous, the
+# launch command accepts ANY value in `0.0..=1.0`, and a question carries whatever the chart was
+# dragged to — the presets ride the ask as `preset_floors` purely so the three buttons get a face in
+# the same round trip. Treating one of them as an offered stance would undo the whole arc.
 #
 # The only thing the client computes for a raid is the display verdict:
 #     viable = turns <= expedition_viability_warn_turns   (the band's own exported lever)

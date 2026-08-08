@@ -159,14 +159,15 @@ fn merged_arrival_schedule(allocation: Option<&LaborAllocation>) -> Vec<f32> {
 }
 
 /// The global expedition levers the snapshot echoes onto **every** cohort (resolved once per
-/// capture, not per band). `max_estimated_party` says **where the pre-launch estimate tables stop**
-/// (`expedition_config.estimate_party_sizes`'s last rung) — it does *not* cap the outfit stepper,
-/// which clamps to the band's idle workers (`docs/plan_denial_raid.md` §3.1); the other three are
-/// the linear constants the client's **pre-launch hunt forecast** multiplies against a herd's
-/// exported `hunt_policy_ceilings` — so the outfit UI never re-derives the ecology model. See
-/// `.claude/rules/core_sim/expeditions.md`.
+/// capture, not per band) — the linear constants the client's **pre-launch hunt forecast**
+/// multiplies against a herd's exported terms, so the outfit UI never re-derives the ecology model.
+/// See `.claude/rules/core_sim/expeditions.md`.
+///
+/// **`max_estimated_party` is retired.** It echoed `estimate_party_sizes`' last rung — where the
+/// pre-launch estimate tables stopped — and it capped nothing: the sim never read it, and all four
+/// client sites that mention it say so in capitals ("IS NOT A RULES CAP AND MUST NOT BE APPLIED
+/// HERE"). The tables are gone and the ladder with them, so the echo went too.
 pub(crate) struct ExpeditionLevers {
-    pub(crate) max_estimated_party: u32,
     pub(crate) hunt_per_worker_carry: f32,
     pub(crate) hunt_per_worker_provisions: f32,
     pub(crate) hunt_viability_warn_turns: u32,
@@ -330,6 +331,42 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         .config
         .warrior_profile(kit_levers.person_intrinsic, &warrior_choice, &kit)
         .attack;
+    // **WHAT EVERY OFFERED KIT WOULD GRANT THIS BAND, at its live wear** — the picker's real
+    // numbers, resolved here so the client never steps a tier down for itself.
+    //
+    // It cannot do that correctly from the wire even in principle: stepping down needs the axis→item
+    // mapping, which is per kit (`big_game` takes `attack` from `spears`, `trapping` from `traps`)
+    // and is not recoverable from a kit's `item_ids`. Guessing repriced a band with fresh traps and
+    // dry spears to the bare hand under `trapping`. Same shape as the retired estimate tables: a fact
+    // the sim knows that the wire did not carry.
+    //
+    // **Through the same `resolve_kit_tiers` seam `kit_roster_states` uses** — that one over a fresh
+    // ledger (the reference), this one over `kit`. One arithmetic, two readings, no third copy.
+    let kit_tiers = kit_levers
+        .config
+        .kits()
+        .iter()
+        .filter_map(|definition| {
+            let choice = kit_levers.config.kit(&definition.id)?;
+            let tiers = kit_levers.config.resolve_kit_tiers(
+                kit_levers.person_intrinsic,
+                kit_levers.equipped_haul_rate,
+                kit_levers.equipped_gather_rate,
+                &choice,
+                &kit,
+            );
+            Some(sim_schema::state::BandKitTiersState {
+                kit_id: definition.id.clone(),
+                attack: tiers.attack,
+                hunt_carry_per_worker_biomass: tiers.hunt_carry_per_worker_biomass,
+                forage_carry_per_worker_biomass: tiers.forage_carry_per_worker_biomass,
+                attack_min_body_mass: tiers.attack_min_body_mass,
+                attack_max_body_mass: tiers.attack_max_body_mass,
+                dispersion: tiers.dispersion,
+                exposure: tiers.exposure,
+            })
+        })
+        .collect();
     let migration = cohort.migration.as_ref().map(pending_migration_to_state);
     let (travel_target_x, travel_target_y) = travel_target.map(|t| (t.x, t.y)).unwrap_or((0, 0));
     let demand = food_demand(
@@ -513,7 +550,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         pending_reveal_y,
         expedition_carried_trade,
         expedition_floor,
-        max_expedition_party_size: expedition_levers.max_estimated_party,
         expedition_carry_cap,
         // Appended after every earlier-shipped field (append-only wire discipline; matches the
         // `.fbs` slot order for `expeditionTargetHerd`/`expeditionHuntPolicy`/`travelTargetX/Y`).
@@ -598,6 +634,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // The minimal TOE — the three kits' remaining condition and the three tiers they resolve to
         // (resolved above, off the band's own wear).
         kit_item_conditions,
+        kit_tiers,
         hunter_attack,
         hunt_carry_per_worker_biomass,
         forage_carry_per_worker_biomass,
@@ -689,6 +726,7 @@ pub(crate) fn snapshot_demographics(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::expedition_config::ExpeditionConfig;
     // Test-only since the restore path that shared them was deleted.
     use crate::components::{
         ExpeditionPhase, FertilityFactors, LocalStore, MoraleCause, MoraleContributions,
@@ -725,7 +763,6 @@ mod tests {
     fn levers() -> ExpeditionLevers {
         let cfg = ExpeditionConfig::builtin();
         ExpeditionLevers {
-            max_estimated_party: cfg.max_estimated_party(),
             hunt_per_worker_carry: cfg.hunt.per_worker_carry,
             hunt_per_worker_provisions: 0.0,
             hunt_viability_warn_turns: cfg.hunt.viability_warn_turns,

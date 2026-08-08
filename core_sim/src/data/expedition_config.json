@@ -1,5 +1,4 @@
 {
-  "estimate_party_sizes": [1, 2, 3, 4, 8, 16, 32, 64],
   "comm_range_tiles": 2,
   "comm_range_tech_factor": 1.0,
   "observe_sight_range": 6,
@@ -12,9 +11,6 @@
     "min_deliver_fraction": 0.5,
     "viability_warn_turns": 20,
     "forecast_horizon_turns": 60
-  },
-  "deny": {
-    "requirement_rows": 5
   },
   "replenish": {
     "low_turns": 3,
