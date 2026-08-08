@@ -1251,6 +1251,36 @@ pub struct SourceYield {
     /// trade forecast is a separate arc (#337 covers the animal web). The `actual` trade a Deplete
     /// gather earns *is* reported — only the projection is missing.
     pub realized_trade: f32,
+    /// **Fodder this source produced this turn** — the feed-currency twin of [`SourceYield::actual`]
+    /// and [`SourceYield::trade`], and *literally* the `min(production, collection)` the band's
+    /// `FODDER` [`LocalStore`] was credited with on this turn's resolution (issue #449). Reported,
+    /// never recomputed: a readout that re-derived its own number would drift from what the band was
+    /// actually paid, and the knowledge gate on the wild credit (`FODDERING_DISCOVERY_ID`) is part of
+    /// what it was paid.
+    ///
+    /// **Plant-only, and that is structural rather than a gap**: no animal pays fodder
+    /// ([`crate::fauna_config::YieldAccounts`] carries the component, the roster never populates it),
+    /// so every hunt row reports an honest `0.0`. What this field exists for is the opposite case — a
+    /// **sown hay Field** (`flora_config.json`'s `hay_grass`: no provisions, no trade, positive
+    /// fodder) whose compact readout said `+0.00` while it fed the band's herds every turn.
+    ///
+    /// **It is NOT food income.** `PopulationCohortState.food_income` stays `Σ actual` and must never
+    /// include this — fodder credits the band's `FODDER` store and never touches the larder, so
+    /// folding it in would break the larder identity
+    /// `larder_delta == food_income − food_consumption − pen_feed_upkeep`, exactly as
+    /// [`SourceYield::trade`] already states.
+    ///
+    /// **There is deliberately NO `realized_fodder` twin.** [`SourceYield::realized_trade`] exists
+    /// because the *animal* web projects a steady trade rate; the plant web's forward projection is
+    /// the known gap [`crate::forage::PLANT_TRADE_FORECAST_NOT_YET_PROJECTED`] names, and fodder is
+    /// paid by the plant web **alone** — so a projected-fodder field would be a constant zero on the
+    /// only web that can pay it, i.e. dead weight the client would have to fall back off anyway. The
+    /// client reads the actual, exactly as it already falls back to `trade` on every forage source.
+    ///
+    /// **No [`YieldRange`] fodder bounds either**, for a sharper reason: every forage row reports
+    /// [`YieldRange::certain`] — no engagement, no retreat, no fight, nothing stochastic anywhere on
+    /// the plant web — so a fodder band would be a point at every source that could ever carry one.
+    pub fodder: f32,
     /// **The band around [`SourceYield::actual`] / [`SourceYield::trade`]** — *"6–11, likely 9"*
     /// (`docs/plan_hunt_through_combat.md` §6.4). See [`YieldRange`].
     pub range: YieldRange,
@@ -1327,6 +1357,8 @@ impl SourceYield {
         realized: 0.0,
         trade: 0.0,
         realized_trade: 0.0,
+        // …nor in the feed currency: nothing was harvested, so nothing was foddered.
+        fodder: 0.0,
         // Nothing is coming either. An **empty** schedule, not a run of zeros: a source with no row
         // has not been projected at all, and the client renders "no data" rather than "famine".
         // `Vec::new` allocates nothing, so this stays a `const`.

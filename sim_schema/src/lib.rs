@@ -656,6 +656,73 @@ mod tests {
         );
     }
 
+    /// **`fodderYield` crosses the wire** (issue #449) — the third account beside `actualYield` and
+    /// `tradeYield`, without which a sown hay Field publishes its whole product as `+0.00`.
+    ///
+    /// Asserted on the **decoded** FlatBuffers rather than the in-process struct, for the reason
+    /// `IntensificationKnowledgeState::foddering` already records: a field that never reached the
+    /// codec still passes an in-process assertion. Pinned **beside** the two currencies it must not
+    /// be confused with — a codec that read fodder off the trade slot would pass a single-field
+    /// check — and against a **hunt** row, whose `0.0` is structural (no animal pays fodder).
+    #[test]
+    fn the_feed_currency_rides_the_wire_beside_the_other_two_accounts() {
+        /// A sown hay Field's whole product: no provisions, no trade, real fodder.
+        const HAY_FODDER: f32 = 3.25;
+        /// A cash crop beside it, so the trade slot is non-zero and cannot silently absorb the
+        /// fodder value.
+        const CASH_TRADE: f32 = 1.5;
+        /// The hunt's food, likewise non-zero so the food slot is distinguishable too.
+        const HUNT_FOOD: f32 = 9.0;
+
+        let snapshot = WorldSnapshot {
+            populations: vec![PopulationCohortState {
+                entity: 1,
+                labor_assignments: vec![
+                    LaborAssignmentState {
+                        kind: "forage".to_string(),
+                        fodder_yield: HAY_FODDER,
+                        trade_yield: CASH_TRADE,
+                        ..Default::default()
+                    },
+                    LaborAssignmentState {
+                        kind: "hunt".to_string(),
+                        actual_yield: HUNT_FOOD,
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("snapshot decodes");
+        let rows = envelope
+            .payload_as_snapshot()
+            .expect("snapshot payload")
+            .population()
+            .expect("population section present")
+            .populations()
+            .expect("cohorts present")
+            .get(0)
+            .laborAssignments()
+            .expect("the assignments ride the cohort");
+
+        let hay = rows.get(0);
+        assert_eq!(
+            (hay.actualYield(), hay.fodderYield(), hay.tradeYield()),
+            (0.0, HAY_FODDER, CASH_TRADE),
+            "the three accounts must survive the codec in their own slots"
+        );
+
+        let hunt = rows.get(1);
+        assert_eq!(
+            (hunt.actualYield(), hunt.fodderYield()),
+            (HUNT_FOOD, 0.0),
+            "no animal pays fodder, so a hunt row's zero is structural rather than unset"
+        );
+    }
+
     /// **`durability` crosses the wire** (`docs/plan_hunt_through_combat.md` §4.2/§6.5) — the term
     /// that turns the combat gate from *"you cannot"* into *"you cannot, and here is how long it
     /// would take"*.

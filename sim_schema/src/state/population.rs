@@ -127,6 +127,27 @@ pub struct LaborAssignmentState {
     /// [`Self::arrival_schedule`].
     #[serde(default)]
     pub realized_trade_yield: f32,
+    /// **Fodder this source produced this turn** — the third account beside [`Self::actual_yield`]
+    /// and [`Self::trade_yield`] (issue #449), and exactly the `min(production, collection)` the
+    /// band's `FODDER` store was credited with, the wild credit's *Foddering* knowledge gate
+    /// included: a gated-off row reports `0.0` because the band was paid `0.0`. Reported, never
+    /// recomputed.
+    ///
+    /// **Plant-only, structurally rather than by omission**: no animal pays fodder, so every hunt row
+    /// is an honest `0.0`. What it exists for is the opposite case — a sown **hay Field**
+    /// (`flora_config.json`'s `hay_grass`: no provisions, no trade, positive fodder) whose compact
+    /// readout said `+0.00` while it fed the band's herds every turn.
+    ///
+    /// **NOT food income**, the same rule [`Self::trade_yield`] carries: `food_income` stays
+    /// `Σ actual_yield`; fodder credits the band's `FODDER` store and never touches the larder.
+    ///
+    /// There is deliberately no `realized_fodder_yield` twin — [`Self::realized_trade_yield`] exists
+    /// because the *animal* web projects a steady rate, and fodder is paid by the *plant* web alone,
+    /// whose projection is the very gap that field is already `0.0` for. Read this actual, exactly as
+    /// a client already falls back to [`Self::trade_yield`] on every forage source. Appended
+    /// (append-only).
+    #[serde(default)]
+    pub fodder_yield: f32,
     /// **The band [`Self::actual_yield`] sits in the middle of** — *"6–11, likely 9"*
     /// (`docs/plan_hunt_through_combat.md` §6.4).
     ///

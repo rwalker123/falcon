@@ -94,6 +94,32 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 > `LaborAssignment.tradeYield` / `realizedTradeYield`. The investment rungs' twins
 > `HerdTelemetryState.pastoralTrade` / `corralTrade` followed in issue #397 (below).
 >
+> **THE ROW IS A TRIPLE, NOT A PAIR — `SourceYield::fodder` / `LaborAssignment.fodderYield`**
+> (issue #449, appended last). The take pays three accounts (`docs/plan_flora_roster.md` §3) and the
+> row reported two, so a **sown hay Field** — `flora_config.json`'s `hay_grass`: no provisions, no
+> trade, `fodder_per_biomass 0.20` — published `+0.00` in every compact yield readout while feeding
+> the band's pens every turn. It is filled at the **two** sites that credit the `FODDER` store (the
+> Field arm and the wild/tended gather arm of `advance_labor_allocation`) and nowhere else:
+> - **It is the CREDITED value, never a recomputation**, gate included. The wild credit is gated on
+>   *Foddering* at the credit site (`flora.md` → "Wild fodder is gated at the CONSUMER"), so a row
+>   that re-derived `tended_take_fodder` would publish hay income to a faction that was paid nothing.
+>   Pinned by `forage_basket_reweight::the_published_fodder_is_the_fodder_the_band_was_actually_credited`,
+>   which sweeps both sides of the gate.
+> - **It is not food income.** `food_income` stays `Σ actual`; fodder credits the band's `FODDER`
+>   store and never touches the larder, exactly as `trade` does not.
+> - **There is no `realized_fodder` twin and no `YieldRange` fodder band, deliberately.**
+>   `realized_trade` exists because the *animal* web projects a steady rate; fodder is paid by the
+>   *plant* web alone, whose projection is the same known gap `PLANT_TRADE_FORECAST_NOT_YET_PROJECTED`
+>   names — so a projected-fodder field would be a constant zero on the only web that can pay it. And
+>   every forage row's range is a point (nothing on the plant web is stochastic), so bounds would only
+>   restate the scalar. The client reads the actual, as it already does for `trade` on a forage row.
+> - **A hunt row's `0.0` is structural**: no animal's `YieldAccounts` pays fodder. `forecast_source_yield`
+>   reads `actual.fodder` off the take vector rather than writing a literal, so a **pre-commit seed**
+>   still quotes `0` on both webs — the plant side because `forage::plant_food_only` keeps the forecast
+>   food-only, which is the same gap the trade projection has. **A fresh hay-Field assignment therefore
+>   still previews `+0.00` until its first turn resolves**; closing it means giving the plant forecast a
+>   fodder component, not adding a field.
+>
 > **`PopulationCohortState.huntPerWorkerProvisions` is SPECIES-BLIND — do not clamp a per-herd preview
 > with it.** It is a per-*cohort* echo of the global `hunt.provisions_per_biomass`, and a cohort has no
 > herd, so there is no species to resolve a vector from; left unqualified it quotes a wolf's hunters a

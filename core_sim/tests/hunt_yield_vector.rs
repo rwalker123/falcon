@@ -421,6 +421,38 @@ fn the_larder_ledger_excludes_trade_goods_for_a_wolf_hunt() {
     );
 }
 
+/// **A hunt row's FODDER is an honest zero, and it is structural** (issue #449).
+///
+/// The feed account is plant-only — no animal's yield vector pays it — so the third account exists
+/// on the row to let a hay Field state its product, never to be silently populated on the animal
+/// web. Asserted on a hunt that demonstrably took something, so this is *"a real take pays no
+/// fodder"* rather than *"nothing happened"*.
+#[test]
+fn a_hunt_row_reports_no_fodder_because_no_animal_pays_it() {
+    let mut app = spawn_world();
+    let (id, pos) = reshape_first_herd(&mut app, "Red Deer");
+    let band = spawn_hunters(&mut app, pos, &id, 0.15, UNBOUNDED_CREW);
+
+    app.world.run_system_once(advance_labor_allocation);
+
+    let row = app
+        .world
+        .get::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .last_yields
+        .first()
+        .expect("its one Hunt assignment has a yield row")
+        .clone();
+    assert!(
+        row.actual > 0.0,
+        "the harness must actually feed the band, or the zero below is vacuous"
+    );
+    assert_eq!(
+        row.fodder, 0.0,
+        "no animal pays fodder, so a hunt row's zero is structural rather than unset"
+    );
+}
+
 /// **6. A `yields_nothing` species offers Eradicate ALONE.**
 ///
 /// The only pruning rule in the picker: a pure pest, worth neither meat nor pelt, has no meaningful
