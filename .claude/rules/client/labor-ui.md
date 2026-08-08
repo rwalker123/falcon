@@ -781,7 +781,7 @@ plausible-looking card at the wrong width, which is why the regression reached p
 ### THE HEIGHT CHROME IS THE HEADER **ROW**, NOT THE TITLE LABEL
 
 The height fit is the same story one axis over, and it went wrong the same way. `refit` composed the
-card's chrome from `_header` — the title `RichTextLabel` — where the header ROW is that title beside
+card's chrome from `_header` — the title label — where the header ROW is that title beside
 the ✕ `Button`, and **the button is the taller of the two** (41 against 20 at the shipped faces). So
 the chrome ran **21px short** on every sheet, while `_fit_width` had measured `_header_row` all along.
 The two fits now read the same node.

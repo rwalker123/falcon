@@ -20,6 +20,13 @@ class_name PanelCard
 
 const CONTENT_NODE_NAME := "CardContent"
 
+## Header type scale — the title at the card's own weight, the kind eyebrow smaller beside it,
+## the two sizes the header carried when it was a single bbcode line.
+const TITLE_FONT_SIZE := 14
+const KIND_FONT_SIZE := 11
+## The gap between the kind eyebrow and the title, replacing the two literal spaces the bbcode used.
+const HEADER_GAP := 8
+
 @export var card_title: String = "Panel":
 	set(value):
 		card_title = value
@@ -37,7 +44,12 @@ const CONTENT_NODE_NAME := "CardContent"
 		card_kind = value
 		_refresh_header()
 
-var _header: RichTextLabel
+## The header is a PanelContainer (it carries the hairline stylebox) around a row of two Labels:
+## the optional kind eyebrow and the title. See `_build` for why it is not one RichTextLabel.
+var _header: PanelContainer
+var _header_row: HBoxContainer
+var _kind_label: Label
+var _title_label: Label
 var _content: VBoxContainer
 var _built: bool = false
 ## Header ink. Defaults to the shared INK; `set_title_color` re-tints it for a card whose title
@@ -64,8 +76,8 @@ func set_card_kind(value: String) -> void:
 func set_title_color(color: Color) -> void:
 	_title_color = color
 	_build()
-	if _header != null:
-		_header.add_theme_color_override("default_color", _title_color)
+	if _title_label != null:
+		_title_label.add_theme_color_override("font_color", _title_color)
 
 func _build() -> void:
 	if _built:
@@ -85,30 +97,79 @@ func _build() -> void:
 		add_child(_content)
 	_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
-	# RichTextLabel header so the title can carry a colored "kind" eyebrow while
-	# still behaving like a single-line label inside the content VBox.
-	_header = RichTextLabel.new()
+	# THE TITLE MUST NEVER DICTATE THE CARD'S WIDTH, which is why the header is a row of two
+	# Labels and not the one bbcode RichTextLabel it used to be. A RichTextLabel's `fit_content`
+	# reports its full unwrapped content size as a MINIMUM on both axes with no per-axis switch,
+	# so with AUTOWRAP_OFF a long title was a hard minimum on its card and widened the entire dock
+	# column: a 58-character legend title measured the right column at 489 against the 352 that
+	# `Hud.RIGHT_COLUMN_CEILING` promises is an upper bound — and a column wider than that bound
+	# gets drawn through by the Band/City card. A Label can trim, a RichTextLabel cannot (it has
+	# neither `clip_text` nor `text_overrun_behavior`), so the title is a Label that reports a
+	# ~zero width minimum and ellipsises when the card is narrower than its text.
+	_header = PanelContainer.new()
 	_header.name = "CardHeader"
-	_header.bbcode_enabled = true
-	_header.fit_content = true
-	_header.scroll_active = false
-	_header.autowrap_mode = TextServer.AUTOWRAP_OFF
-	_header.add_theme_font_size_override("normal_font_size", 14)
-	_header.add_theme_color_override("default_color", _title_color)
-	_header.add_theme_stylebox_override("normal", HudStyle.header_stylebox())
+	_header.add_theme_stylebox_override("panel", HudStyle.header_stylebox())
+
+	_header_row = HBoxContainer.new()
+	_header_row.name = "CardHeaderRow"
+	_header_row.add_theme_constant_override("separation", HEADER_GAP)
+	_header.add_child(_header_row)
+
+	# The kind eyebrow keeps its natural width, deliberately: it is a one-word authored vocabulary
+	# ("TILE"), and an HBox pays every child its minimum before the expanding one gets anything —
+	# so trimming the eyebrow too would collapse BOTH halves to slivers on a narrow card instead of
+	# spending the shortfall on the one string that can be arbitrarily long.
+	_kind_label = Label.new()
+	_kind_label.name = "CardKind"
+	_kind_label.add_theme_font_size_override("font_size", KIND_FONT_SIZE)
+	_kind_label.add_theme_color_override("font_color", HudStyle.SIGNAL)
+	_kind_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_kind_label.visible = false
+	_header_row.add_child(_kind_label)
+
+	_title_label = Label.new()
+	_title_label.name = "CardTitle"
+	_title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_title_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	# Both halves of the bound, and they are not the same property doing the same job: the overrun
+	# behaviour is what draws the ellipsis, `clip_text` is what stops the label reporting — and
+	# drawing — its full text width. Either one alone shrinks the reported minimum in Godot 4.7,
+	# but only the pair both bounds the card and shows the player that the title was trimmed.
+	_title_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_title_label.clip_text = true
+	# A Label ignores the mouse by default and a tooltip is only found on a control the mouse hits.
+	# PASS rather than STOP so the card underneath still sees the event.
+	_title_label.mouse_filter = Control.MOUSE_FILTER_PASS
+	_title_label.add_theme_font_size_override("font_size", TITLE_FONT_SIZE)
+	_title_label.add_theme_color_override("font_color", _title_color)
+	_title_label.resized.connect(_update_title_tooltip)
+	_header_row.add_child(_title_label)
+
 	_content.add_child(_header)
 	_content.move_child(_header, 0)
 	_refresh_header()
 
 func _refresh_header() -> void:
-	if _header == null:
+	if _title_label == null:
 		return
 	var title := card_title
 	if not hotkey_hint.is_empty():
 		title = "%s (%s)" % [card_title, hotkey_hint]
-	if card_kind.is_empty():
-		_header.text = title
-	else:
-		_header.text = "[color=#%s][font_size=11]%s[/font_size][/color]  %s" % [
-			HudStyle.SIGNAL_HEX, card_kind.to_upper(), title,
-		]
+	_title_label.text = title
+	_kind_label.text = card_kind.to_upper()
+	_kind_label.visible = not card_kind.is_empty()
+	_update_title_tooltip()
+
+## A trimmed title stays reachable: when — and only when — the ellipsis is engaged, the header
+## carries the untrimmed string as its tooltip. Godot exposes no "is this label trimmed" flag, so
+## the test is the shaped text width against the width the label was actually laid out at; an
+## untrimmed title clears the tooltip so a card never explains a line the player can already read.
+func _update_title_tooltip() -> void:
+	if _title_label == null:
+		return
+	var font := _title_label.get_theme_font("font")
+	if font == null:
+		return
+	var natural := font.get_string_size(_title_label.text, HORIZONTAL_ALIGNMENT_LEFT, -1,
+		_title_label.get_theme_font_size("font_size")).x
+	_title_label.tooltip_text = _title_label.text if natural > _title_label.size.x else ""

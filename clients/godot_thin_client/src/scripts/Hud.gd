@@ -1357,21 +1357,26 @@ func right_column_width() -> float:
 ## content — 11 rows of 75-character terrain names, and a 120-character unbroken victory string — the
 ## column did not move off 352.
 ##
-## **THE ONE PATH THAT CAN EXCEED IT IS A CARD TITLE.** `PanelCard._header` is a `RichTextLabel` with
-## `fit_content = true` and `AUTOWRAP_OFF`, so a title's full unwrapped width is a hard minimum on its
-## card. Probed: a 58-character legend title took the column to **509**. Every title the client can
-## actually author was then swept through the real card — the legend's `Terrain Types` / `Terrain Tags`
-## / `Provinces` / `No Overlay` plus all thirteen overlay-channel labels the native decoder ships, the
-## longest being `Forage (Human Food Capacity)` — and the widest of them leaves the legend card at
-## **253**, i.e. 67px BELOW the Telling panel's 320 and contributing nothing. So the title path has real
-## slack today and no margin is bought for it here: a margin cannot bound a string, and an unexplained
-## pad is exactly what 561 became.
+## **THE ONE PATH THAT COULD EXCEED IT WAS A CARD TITLE, AND IT IS NOW BOUNDED AT THE CARD.**
+## `PanelCard._header` was a `RichTextLabel` with `fit_content = true` and `AUTOWRAP_OFF`, which
+## reports its full unwrapped text width as a minimum on BOTH axes with no per-axis switch — so a
+## title was a hard minimum on its card and widened the whole column. Probed against the widest
+## staging: a 58-character legend title took the column to **489**, i.e. 137px past this ceiling, and
+## a margin cannot bound a string (an unexplained pad is exactly what 561 became). The header is a
+## `Label` now, with `clip_text` and `OVERRUN_TRIM_ELLIPSIS`, so it reports a ~zero width minimum and
+## trims instead; the same probe reads **352** after. **Nothing the player can see was traded for
+## that**: every title the client can actually author was swept through the real card — the legend's
+## `Terrain Types` / `Terrain Tags` / `Provinces` / `No Overlay` plus all thirteen overlay-channel
+## labels the native decoder ships, the longest being `Forage (Human Food Capacity)` — and the widest
+## leaves the legend card at **253**, 67px BELOW the Telling panel's 320, so the ellipsis never
+## engages on a real title and the title term contributes nothing to this derivation at all.
 ##
 ## **THE DANGEROUS DIRECTION IS DOWN.** Too high only makes `affords_wide_shell_with_bounds`
 ## conservative — it refuses the wide shell in windows where the card would have fitted, costing layout
 ## quality. Too low means a column that renders wider than the bound gets DRAWN THROUGH by the card.
-## So when a right-dock card is authored wider than 320 — or a card title is written long enough to
-## push one past it — the fix is to raise `RIGHT_DOCK_WIDEST_CARD_MIN_WIDTH`, not to pad this.
+## So when a right-dock card is authored wider than 320, the fix is to raise
+## `RIGHT_DOCK_WIDEST_CARD_MIN_WIDTH`, not to pad this. (A long TITLE is no longer one of the ways
+## that happens — see above — so the only thing that can move this number is an authored minimum.)
 ##
 ## **NOTHING CHARGES IT TODAY, so the retune moved no behaviour.** Its one consumer is
 ## `Main.band_dock_overlays_hud`, which reaches `affords_wide_shell_with_bounds` only on a **BOTTOM**

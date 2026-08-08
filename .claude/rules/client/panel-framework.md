@@ -202,6 +202,27 @@ always reports a correct minimum size, so the dock reflows automatically.
   script break. Reference inner widgets by unique name (`%Name`).
 - **Rule:** no anchor-positioned children inside a card. Anchor layout inside a
   container parent is what made the legacy `Panel`s overlap.
+- **THE TITLE MAY NEVER SET THE CARD'S WIDTH.** The header is a `PanelContainer`
+  over an `HBoxContainer` of two `Label`s — `CardKind` (the eyebrow) and
+  `CardTitle`, which is `SIZE_EXPAND_FILL` with `clip_text` +
+  `OVERRUN_TRIM_ELLIPSIS` and a `tooltip_text` carrying the untrimmed string
+  (set from `resized`, and left EMPTY when the title fits, so no card explains a
+  line the player can already read). It was a `bbcode` `RichTextLabel` with
+  `fit_content = true` and `AUTOWRAP_OFF`, which made a title's unwrapped width a
+  hard card minimum: a 58-character title dragged the right column to **489**,
+  137px past `Hud.RIGHT_COLUMN_CEILING` — and that ceiling is an upper bound a
+  forward-reasoning predicate consumes, so a card wider than it is drawn THROUGH
+  the readouts. **The node type is the fix, not a property**: `RichTextLabel`
+  exposes neither `clip_text` nor `text_overrun_behavior` (checked against
+  Godot 4.7's `extension_api.json`), and its `fit_content` drives both axes with
+  no per-axis switch. `TellingPanel._build_chrome` still depends on the header
+  being child index 0 of `CardContent`; it is.
+- **The KIND eyebrow is deliberately still unbounded.** An `HBox` pays every
+  child its minimum before the expanding one gets anything, so trimming both
+  would collapse both to slivers instead of spending the shortfall on the one
+  string that can be arbitrarily long. `card_kind` is a one-word authored
+  vocabulary with a single value today (`"Tile"`); a long one could widen a card
+  again. A conscious limit, not an oversight.
 - API: `card_title` / `set_card_title()`, `get_content()`, `hotkey_hint`
   (renders the toggle key in the header, e.g. `"Terrain Types (L)"`; leave empty
   for panels with no show/hide hotkey), and `set_title_color()` — for a card whose
