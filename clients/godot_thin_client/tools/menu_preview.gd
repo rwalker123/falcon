@@ -21,9 +21,16 @@ const MAP_TONE := Color(0.10, 0.15, 0.16)
 # Nav id of the client-settings pane in MenuShell.ITEMS.
 const OPTIONS_PANE_ID := "options"
 
+## The run's exit status. **A clean run exits 0 and a run with any `FAIL` in it exits non-zero**, so
+## the status and the output agree — a harness that printed an error and still exited 0 was
+## indistinguishable from a green one to anything but a human reading stdout.
+const EXIT_OK := 0
+const EXIT_FAILED := 1
+
 var _root: Control
 var _bg: ColorRect
 var _shell: MenuShell
+var _failures := 0
 
 
 func _ready() -> void:
@@ -75,7 +82,24 @@ func _ready() -> void:
 	await _settle()
 	await _save("menu_options")
 
-	get_tree().quit()
+	_finish()
+
+
+## The ONE failure sink, so `_failures` cannot drift from what was printed. Every caller passes the
+## text AFTER the `FAIL` token, which is what the output scanning keys on.
+func _fail(message: String) -> void:
+	_failures += 1
+	push_error("menu_preview: FAIL — %s" % message)
+
+
+## **THE ONLY WAY OUT OF THIS HARNESS.** Every path that ends the run comes through here, so the
+## status is derived from the run's own tally in exactly one place.
+func _finish() -> void:
+	if _failures > 0:
+		print("menu_preview: RUN FAILED — %d failure(s); see the FAIL lines above" % _failures)
+	else:
+		print("menu_preview: run complete — no failures")
+	get_tree().quit(EXIT_FAILED if _failures > 0 else EXIT_OK)
 
 
 func _settle() -> void:
@@ -91,6 +115,6 @@ func _save(name: String) -> void:
 		return
 	var err := image.save_png("%s/%s.png" % [OUT_DIR, name])
 	if err != OK:
-		push_error("menu_preview: failed to save %s (err %d)" % [name, err])
+		_fail("failed to save %s (err %d)" % [name, err])
 	else:
 		print("menu_preview: saved ", name, ".png")
