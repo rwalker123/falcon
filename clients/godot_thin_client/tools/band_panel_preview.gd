@@ -5215,25 +5215,17 @@ func _assert_kit_reprices_the_source() -> void:
 			% str(bare[SourceForecast.FORECAST_PER_WORKER_TRADE_KEY]),
 		is_equal_approx(float(bare[SourceForecast.FORECAST_PER_WORKER_TRADE_KEY]), 2.0 * ratio))
 
-	# --- THE RETREAT: applied OUTRIGHT, because the published reach carries none of it.
+	# --- THE RETREAT IS DELIBERATELY NOT APPLIED, and this pins that rather than leaving it silent.
+	# Folding it into `engage_rate` reprices the take and the CREW COUNT together; the sim sizes a crew
+	# on the RAW reach (`fauna::hunt_engage_workers`) and lets the retreat bound only the take. A fold
+	# made the stepper cap disagree with the sim's own `workersNeeded`.
 	var neutral := KitRoster.repriced_source(src, "", PUBLISHED_CARRY, 1.0)
-	_assert_band_panel("a neutral kit still pays the species' OWN retreat — reach x (1 - wariness) (%s)"
-			% str(neutral[SourceForecast.FORECAST_ENGAGE_RATE_KEY]),
-		is_equal_approx(float(neutral[SourceForecast.FORECAST_ENGAGE_RATE_KEY]),
-			PUBLISHED_ENGAGE * STAY))
 	var trapped := KitRoster.repriced_source(src, "", PUBLISHED_CARRY, 0.0)
-	_assert_band_panel("dispersion 0 means nothing breaks off (%s)"
-			% str(trapped[KitRoster.SOURCE_STAY_FRACTION]),
-		is_equal_approx(float(trapped[KitRoster.SOURCE_STAY_FRACTION]), 1.0))
-	# **NEVER ABOVE ITS OWN REACH** — the second shipped defect, which multiplied the reach instead of
-	# fractioning it and quoted a party more animals than it ever met.
-	_assert_band_panel("…and a party is never quoted MORE than it reaches (%s <= %s)"
-			% [str(trapped[SourceForecast.FORECAST_ENGAGE_RATE_KEY]), str(PUBLISHED_ENGAGE)],
-		float(trapped[SourceForecast.FORECAST_ENGAGE_RATE_KEY]) <= PUBLISHED_ENGAGE + 0.001)
-	# The claim that motivated the whole repricing: same carry, different take.
-	_assert_band_panel("…so two kits with the SAME carry still quote different takes",
-		not is_equal_approx(float(trapped[SourceForecast.FORECAST_ENGAGE_RATE_KEY]),
-			float(neutral[SourceForecast.FORECAST_ENGAGE_RATE_KEY])))
+	_assert_band_panel("dispersion does not touch the reach term — the crew count is the sim's (%s)"
+			% str(trapped[SourceForecast.FORECAST_ENGAGE_RATE_KEY]),
+		is_equal_approx(float(trapped[SourceForecast.FORECAST_ENGAGE_RATE_KEY]), PUBLISHED_ENGAGE)
+			and is_equal_approx(float(neutral[SourceForecast.FORECAST_ENGAGE_RATE_KEY]),
+				PUBLISHED_ENGAGE))
 
 	# --- A SOURCE WITH NO RETREAT STAGE (a patch, a pen) is untouched by that half.
 	var patch := {

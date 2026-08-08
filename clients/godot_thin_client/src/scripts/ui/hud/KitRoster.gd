@@ -237,24 +237,17 @@ static func repriced_source(src: Dictionary, prefix: String, carry: float,
 			var full: String = prefix + String(key)
 			if out.has(full):
 				out[full] = float(out[full]) * ratio
-	# **THE RETREAT, APPLIED OUTRIGHT — the published `engage_rate` has none of it folded in.**
+	# **THE RETREAT IS NOT APPLIED HERE, AND THAT IS A CORRECTION.**
 	#
-	# The first version scaled by `effective / stay`, which assumes the wire's reach already carries
-	# the species' own retreat. It does not: `engageRate` is how many animals one hunter BRINGS INTO
-	# CONTACT, before any of them bolt. So that version left a spear party quoting every animal it
-	# touched, and then multiplied a trapping party ABOVE its own reach — a take of more animals than
-	# the party ever met.
+	# Folding it into `engage_rate` reprices the TAKE and the CREW COUNT together, and the sim does not
+	# treat them together: `fauna::hunt_engage_workers` sizes a crew on the RAW `engage_rate` — the
+	# hands that can reach the herd — while the retreat bounds only what those hands bring down. So a
+	# fold made the sheet's stepper cap disagree with the sim's own `workersNeeded`, which
+	# `ui_preview`'s "the compose stepper caps at the crew the SIM asks for" caught immediately.
 	#
-	# Applying the effective fraction outright is what the sim does (`animals_that_stay`), and it
-	# corrects a pre-existing over-quote on every wild hunt at the same time: a neutral kit now
-	# quotes `reach × (1 - wariness)` where it used to quote the whole reach.
-	#
-	# Absent = no retreat stage (a patch, a pen), which skips without a special branch.
-	if out.has(SOURCE_STAY_FRACTION) and out.has(SOURCE_ENGAGE_RATE):
-		var stay := clampf(float(out[SOURCE_STAY_FRACTION]), 0.0, 1.0)
-		var effective := clampf(1.0 - (1.0 - stay) * maxf(dispersion, 0.0), 0.0, 1.0)
-		out[SOURCE_ENGAGE_RATE] = float(out[SOURCE_ENGAGE_RATE]) * effective
-		out[SOURCE_STAY_FRACTION] = effective
+	# `dispersion` therefore has no effect on the sheet yet. It belongs on the take arm alone
+	# (`expected_yield_account`'s engagement term), which is a change to shared forecast code rather
+	# than a substitution on the source — see the PR notes.
 	return out
 
 ## **THE KIT'S ATTACK AGAINST THIS QUARRY** — the kit's own number inside its size window, and the
