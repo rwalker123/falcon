@@ -1007,12 +1007,14 @@ func _ready() -> void:
 	# `_arrivals_band_fixture` is the fixture that actually RENDERS the FOOD OUTLOOK chart (it carries
 	# `arrival_schedule`s; the plain `_band_fixture` does not, so its band zone has no chart at all).
 	# The TALL (L) shell shows the full chart; the height-capped T/B shells (top + bottom) land the band
-	# zone in the SHORT tier, where the chart is DROPPED and the role cards go hint-less. The
-	# content-fits assertion on the T/B frames is what proves that drop keeps the zone inside its box:
-	# ungated (the chart rendered at full height in the SHORT tier) it overruns the ~300px T/B cap by
-	# 115px, which is exactly the overflow the tier gating exists to prevent — and which the work-heavy
-	# `band_panel_work_wide` / `band_panel_parties_inspector_wide` states cannot catch (their big band's
-	# vitals carry no chart either).
+	# zone in the SHORT tier, where the chart is drawn COMPACT.
+	#
+	# **THE CHART IS PRESENT AT EVERY TIER, AND THAT IS WHAT THESE THREE FRAMES NOW PIN.** The SHORT
+	# tier used to build no chart at all, so a band with a food history simply had none in a T/B dock —
+	# and `_assert_zone_content_fits` was the thing that "proved" the drop kept the zone in its box,
+	# i.e. it was reading a deletion as a fit. The zone SCROLLS now, so that assertion has nothing left
+	# to say about this zone and `_assert_band_flank_charts` carries the claim instead: a chart-bearing
+	# band renders its chart in all three docks, the short ones included.
 	_push_bands([_arrivals_band_fixture()])
 	_panel.set_active_tab(&"band")   # the narrow (L) shell shows ONE zone; these frames judge the band one
 	for state in [{"edge": SIDE_LEFT, "name": "band_panel_arrivals_left"},
@@ -1025,6 +1027,8 @@ func _ready() -> void:
 		_assert_zones_within_bounds()
 		_assert_work_zone_readable()
 		_assert_zone_content_fits()
+		_assert_band_flank_charts(state["name"], true)
+		_report_zone_content_extent(state["name"])
 
 	# (b) A band whose larder EMPTIES inside the horizon: sparse lumpy hauls under a heavy drain, so the
 	# walk hits 0 and the chart draws the dashed DANGER "empty ~turn N" marker.
@@ -1668,7 +1672,7 @@ func _ready() -> void:
 	await _settle()
 	await _save("band_panel_no_idle")
 
-	_assert_scroll_only_in_the_parties_list()
+	_assert_scroll_only_where_sanctioned()
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
@@ -1723,7 +1727,7 @@ func _ready() -> void:
 	# `PANEL_HEIGHT_WIDE` at 294px of a 300px box; it now scrolls instead, which is what let the
 	# two-column budget come down. Judged with `band_panel_band_columns_two`'s empty list below —
 	# either claim alone passes on a list that always scrolls, or on one that never does.
-	_assert_scroll_only_in_the_parties_list()
+	_assert_scroll_only_where_sanctioned()
 	_assert_parties_list_scrolls_iff_it_overflows("band_panel_worst_case_party")
 	_report_zone_content_extent("band_panel_worst_case_party")
 	_hud._bandpanel._toggle_parties_inspector(str(HUNT_WORST_CASE_ENTITY))
@@ -1748,7 +1752,7 @@ func _ready() -> void:
 	# The POPULATED non-overflowing case: two party rows and an open strip in a tall side dock with
 	# room to spare, so the bar must stay hidden. `band_panel_band_columns_two`'s half is an EMPTY
 	# list, which cannot tell "no bar because it fits" from "no bar because there is nothing in it".
-	_assert_scroll_only_in_the_parties_list()
+	_assert_scroll_only_where_sanctioned()
 	_assert_parties_list_scrolls_iff_it_overflows("band_panel_parties_inspector_narrow")
 	_hud._bandpanel._toggle_parties_inspector(str(HUNT_LEAN_ENTITY))
 
@@ -2796,12 +2800,12 @@ func _render_band_column_states() -> void:
 	# **THE NON-OVERFLOWING half of the scroll pair.** This band fields no parties, so the list is one
 	# hint line and the bar must stay hidden — without it, "scrolls iff it overflows" would pass on a
 	# list that scrolls unconditionally, which is a visible scrollbar on every band in the game.
-	_assert_scroll_only_in_the_parties_list()
+	_assert_scroll_only_where_sanctioned()
 	_assert_parties_list_scrolls_iff_it_overflows("band_panel_band_columns_two")
 	_report_zone_content_extent("band_panel_band_columns_two")
 	var two_column_strip: float = _panel.current_reservation_size()
 	await _assert_band_columns_converge("band_panel_band_columns_two")
-	_assert_band_columns_ignore_content("band_panel_band_columns_two")
+	await _assert_band_columns_ignore_content("band_panel_band_columns_two")
 
 	# THE CHARTED VARIANT, at the same span. **Both authored splits need their own state**: the one
 	# above is the CHARTLESS band — a fresh band has no food history to chart, so it is turn one and
@@ -2967,12 +2971,24 @@ func _band_flank_box_height() -> float:
 	return 0.0 if host == null else (host as Control).size.y
 
 ## The live band-zone host, whichever shell is up.
+##
+## **IT PREFERS A HOST THAT HAS CONTENT IN IT, and the narrow shell is why.** Both names in
+## `BAND_ZONE_HOST_NAMES` are present in the tree at once there — the wide shell's `Zone_band` sits
+## empty beside the single `NarrowZoneHost` the active tab's zone was reparented into — so a
+## first-name-match answered the EMPTY one, and any claim made through it (the chart's presence, the
+## flank's fill) reported an absence that is a fact about the harness rather than about the panel.
 func _band_flank_host() -> Control:
+	var fallback: Control = null
 	for host_variant in _find_zone_hosts(_panel):
 		var host: Control = host_variant
-		if BAND_ZONE_HOST_NAMES.has(String(host.name)):
-			return host
-	return null
+		if not BAND_ZONE_HOST_NAMES.has(String(host.name)):
+			continue
+		if fallback == null:
+			fallback = host
+		for child in host.get_children():
+			if child is Control and (child as Control).visible:
+				return host
+	return fallback
 
 ## GUARD: the flank laid out across the number of columns the panel affords — asserted on the RENDERED
 ## tree, not just on the panel's own answer, since a count nothing consumed is a count that did nothing.
@@ -2994,18 +3010,51 @@ func _assert_band_columns(state_name: String, want: int) -> void:
 ## into `MapView.set_reserved_inset` on every turn. Drives real content changes at a FIXED span — a
 ## band with a different roster and a different optional-vitals set — and requires both numbers to sit
 ## still.
+## **AND THE RESERVATION CLAIM IS MADE ON THE PUBLISHED SIZE, by CONSUMING `reservation_changed`.**
+## `Main` does not poll this panel — it stores what the signal carried and fans that to
+## `MapView.set_reserved_inset` — so the published number is the one that invalidates the map cache,
+## and a claim phrased as `current_reservation_size()` re-derives the very number that was never
+## published and passes with the defect in (the rule `_assert_reservation_matches_drawn` records).
+##
+## It matters most since the band zone learned to SCROLL: the stack inside it can now be any height at
+## all, so "the strip does not move when the content does" stopped being true for free.
 func _assert_band_columns_ignore_content(state_name: String) -> void:
+	var published: Array[float] = []
+	var probe := func(_edge: int, size: float) -> void: published.append(size)
+	_panel.reservation_changed.connect(probe)
 	var before_columns: int = _panel.band_zone_columns()
 	var before_reservation: float = _panel.current_reservation_size()
+	# CONTENT-HEAVY, twice over and in both zones: the band carrying every optional vitals row (the
+	# tallest band flank this harness can stage) and then the 34-source band (the busiest work board).
 	_push_bands([_vitals_worst_case_band_fixture()])
+	await _settle()
+	_push_bands([_many_sources_band_fixture()])
+	await _settle()
 	var after_columns: int = _panel.band_zone_columns()
 	var after_reservation: float = _panel.current_reservation_size()
+	var content_publications: int = published.size()
+	# THE NEGATIVE CONTROL, on the same live wire: a GEOMETRY change must publish, or "nothing was
+	# published" is a claim about a signal nobody was listening to. Collapse is the cheapest one that
+	# cannot be confused with content — it moves the strip to `COLLAPSED_SIZE` whatever the band holds.
+	published.clear()
+	_panel.set_collapsed(true)
+	await _settle()
+	var geometry_publications: int = published.size()
+	_panel.set_collapsed(false)
+	await _settle()
+	_panel.reservation_changed.disconnect(probe)
+	# The quiet reference band back, uncollapsed, before anything below reads either.
 	_push_bands([_band_fixture()])
+	await _settle()
 	_assert_band_panel("%s: a content change does not move the column count (%d → %d)"
 		% [state_name, before_columns, after_columns], before_columns == after_columns)
 	_assert_band_panel("%s: …nor the reservation (%.0f → %.0f) — the flicker invariant"
 		% [state_name, before_reservation, after_reservation],
 		is_equal_approx(before_reservation, after_reservation))
+	_assert_band_panel("%s: …and the panel PUBLISHED nothing across the swap (%d emissions) — the size Main fans to MapView never moved"
+		% [state_name, content_publications], content_publications == 0)
+	_assert_band_panel("%s: …while a real geometry change still publishes (%d emissions on collapse) — the probe is live"
+		% [state_name, geometry_publications], geometry_publications > 0)
 
 ## GUARD: the layout reaches a FIXED POINT, and does so inside a bound.
 ##
@@ -4016,45 +4065,76 @@ func _assert_map_path_states_kit() -> void:
 	_assert_band_panel("…so the Kit row renders on the map path — \"%s\"" % want,
 		_rich_text_containing(_panel, want) != "")
 
-## GUARD: the zone model is NO-SCROLL by construction, with **exactly one sanctioned exception** — the
-## parties zone's list (`HudWorkVocab.PARTIES_LIST_NAME`). Any other `ScrollContainer` would silently
-## reintroduce the content-dependent sizing the rework removed.
+## The panel's SANCTIONED `ScrollContainer`s, by node name and by the zone each must sit under. Two,
+## and the pairing is half the claim: a scroll is only safe in a zone whose builder declares a fixed
+## minimum for it, so `PartiesList` under the band zone would be as much a stray as an unnamed one.
+const SANCTIONED_SCROLLS := [
+	[HudWorkVocab.PARTIES_LIST_NAME, BandCityPanel.ZONE_PARTIES],
+	[HudWorkVocab.BAND_ZONE_SCROLL_NAME, BandCityPanel.ZONE_BAND],
+]
+
+## GUARD: the zone model is NO-SCROLL by construction, with **exactly two sanctioned exceptions** —
+## the parties zone's row list and the band zone's block stack (`SANCTIONED_SCROLLS`). Any other
+## `ScrollContainer` would silently reintroduce the content-dependent sizing the rework removed.
 ##
-## **THE RULE IS NARROWED, NOT DELETED, and that is the whole point of asserting it this way.** The
-## exception is safe only because that one node declares a FIXED minimum, so what the list holds never
-## reaches the zone's minimum; a scroll added anywhere else would carry its content's height straight
-## into the reservation. So the walk collects EVERY `ScrollContainer` and requires each to be that node
-## AND to sit under the parties zone host.
+## **THE RULE IS NARROWED, NOT DELETED, and that is the whole point of asserting it this way.** Each
+## exception is safe only because its builder declares a FIXED minimum on the scrolling axis, so what
+## the scroll holds never reaches the zone's minimum; a scroll added anywhere else — the WORK board,
+## most of all, which PAGES for exactly this reason — would carry its content's height straight into
+## the reservation. So the walk collects EVERY `ScrollContainer` and requires each to be a sanctioned
+## name AND to sit under the zone that sanctions it.
 ##
-## **IT ALSO ASSERTS THE SANCTIONED ONE EXISTS**, because "no strays" is satisfied by a panel that has
-## lost the list scroll altogether — which is the regression that would put the seven-line strip back
-## to clipping.
-func _assert_scroll_only_in_the_parties_list() -> void:
+## **IT ALSO ASSERTS THE SANCTIONED ONES EXIST**, because "no strays" is satisfied by a panel that has
+## lost a scroll altogether — which is the regression that would put the seven-line parties strip back
+## to clipping, and the band zone back to deleting its chart.
+##
+## **The BAND zone's is claimed only on a BAND page.** `FactionRollup.build_band_zone` authors that
+## zone for the faction subject and builds no scroll — its blocks are bounded lists, not a stack that
+## can outgrow the box — so requiring one there would fail a page that is correct.
+func _assert_scroll_only_where_sanctioned() -> void:
 	var found: Array[Node] = []
 	_collect_scroll_containers(_panel, found)
-	# **THE PARTIES ZONE IS FOUND THROUGH THE PANEL'S OWN `_zones` DICT, never by host name.** The wide
-	# shell mounts it in `Zone_parties` and the narrow one in the single `NarrowZoneHost`, so a
-	# host-name test would call the narrow shell's own list a stray — which it did.
-	var parties_zone: Variant = _panel._zones.get(BandCityPanel.ZONE_PARTIES)
+	# **EACH ZONE IS FOUND THROUGH THE PANEL'S OWN `_zones` DICT, never by host name.** The wide shell
+	# mounts them in `Zone_parties` / `Zone_band` and the narrow one in the single `NarrowZoneHost`, so
+	# a host-name test would call the narrow shell's own scroll a stray — which it did.
 	var strays: Array[String] = []
-	var sanctioned := 0
+	var counts := {}
+	for pair in SANCTIONED_SCROLLS:
+		counts[String(pair[0])] = 0
 	for node in found:
-		if String(node.name) == HudWorkVocab.PARTIES_LIST_NAME and parties_zone is Node \
-				and (parties_zone as Node).is_ancestor_of(node):
-			sanctioned += 1
-		else:
+		var matched := false
+		for pair in SANCTIONED_SCROLLS:
+			var zone: Variant = _panel._zones.get(pair[1])
+			if String(node.name) == String(pair[0]) and zone is Node \
+					and (zone as Node).is_ancestor_of(node):
+				counts[String(pair[0])] = int(counts[String(pair[0])]) + 1
+				matched = true
+				break
+		if not matched:
 			strays.append(String(node.get_path()))
 	if not strays.is_empty():
-		push_error("band_panel_preview: %s — ScrollContainer outside the parties list at %s — no other zone may scroll"
+		push_error("band_panel_preview: %s — ScrollContainer outside a sanctioned zone at %s — no other zone may scroll"
 			% [_current_state, ", ".join(strays)])
 		return
-	# A zone the panel does not currently own (no band, or the zones freed) has no list to find — an
+	# A zone the panel does not currently own (no band, or the zones freed) has no scroll to find — an
 	# absence that says nothing about the rule and must not fail.
+	var parties_zone: Variant = _panel._zones.get(BandCityPanel.ZONE_PARTIES)
 	if not (parties_zone is Node):
 		print("band_panel_preview: assert OK — no ScrollContainer in the panel (the parties zone is not mounted here)")
 		return
-	_assert_band_panel("the parties zone scrolls its list and NOTHING else in the panel scrolls (%d sanctioned, %d stray)"
-		% [sanctioned, strays.size()], sanctioned == 1)
+	_assert_band_panel("the parties zone scrolls its list and NOTHING unsanctioned in the panel scrolls (%d sanctioned, %d stray)"
+		% [int(counts[HudWorkVocab.PARTIES_LIST_NAME]), strays.size()],
+		int(counts[HudWorkVocab.PARTIES_LIST_NAME]) == 1)
+	# **THE NARROW SHELL PARENTS ONLY THE ACTIVE TAB'S ZONE** (`_reparent_zones` DETACHES the rest), so
+	# the band zone can exist and be nowhere the walk above could have found it. Asked there, this claim
+	# would report every parties-tab state as a band zone that had lost its scroll.
+	var band_zone: Variant = _panel._zones.get(BandCityPanel.ZONE_BAND)
+	if not (band_zone is Node) or not _panel.is_ancestor_of(band_zone as Node) \
+			or _hud._bandpanel._panel_is_faction:
+		return
+	_assert_band_panel("…and the band zone scrolls its block stack, so no tier can delete a block instead (%d sanctioned)"
+		% int(counts[HudWorkVocab.BAND_ZONE_SCROLL_NAME]),
+		int(counts[HudWorkVocab.BAND_ZONE_SCROLL_NAME]) == 1)
 
 func _collect_scroll_containers(node: Node, into: Array[Node]) -> void:
 	if node is ScrollContainer:
@@ -4184,8 +4264,12 @@ func _band_zone_tier_name() -> String:
 ## zone's content actually came out against the box it was given, so a state that PASSES still says by
 ## how much. A near-miss and a comfortable fit are the same green line otherwise, and the whole point
 ## of the worst-case state is knowing what the margin is.
-## Uses the SAME walk `_collect_zone_content_shortfall` does — the deepest `top + needed` any measurable
-## control reaches — so the number printed here and the number asserted on cannot come from two reads.
+## It is the same walk `_collect_zone_content_shortfall` makes — the deepest `top + needed` any
+## measurable control reaches — with ONE deliberate divergence: it descends INTO a sanctioned
+## `ScrollContainer` where the assertion stops at it. The two are asking different questions the
+## moment a zone can scroll ("must the box hold this?" against "how tall is it?"), and the scroll's
+## own declared minimum is its BOX, so a walk that stopped there would print the box back at itself
+## and say nothing about how much of the stack is under the bar.
 func _report_zone_content_extent(state_name: String) -> void:
 	for host_variant in _find_zone_hosts(_panel):
 		var host: Control = host_variant
@@ -4201,6 +4285,12 @@ func _report_zone_content_extent(state_name: String) -> void:
 				if BAND_ZONE_HOST_NAMES.has(String(host.name)) else ""])
 
 ## The deepest point any measurable control in this zone reaches, relative to the zone's own top.
+##
+## **IT DESCENDS THROUGH EVERYTHING, unlike the assertion's walk, and takes the deepest answer it
+## finds anywhere.** A `ScrollContainer` declares the BOX it was given, so measuring it — or the column
+## that merely inherits that minimum through it — reports the box back at itself and says nothing about
+## the stack under the bar, which is the one number this report exists to give. So nothing with a
+## scroll anywhere beneath it is measured; everything else is measured AND descended into.
 func _zone_content_extent(node: Node, host: Control) -> float:
 	var deepest := 0.0
 	for child in node.get_children():
@@ -4209,12 +4299,22 @@ func _zone_content_extent(node: Node, host: Control) -> float:
 		var content: Control = child
 		if not content.visible:
 			continue
-		var needed := content.get_combined_minimum_size().y
-		if needed <= 0.0:
-			deepest = maxf(deepest, _zone_content_extent(content, host))
-			continue
-		deepest = maxf(deepest, content.global_position.y - host.global_position.y + needed)
+		if not _contains_scroll(content):
+			var needed := content.get_combined_minimum_size().y
+			if needed > 0.0:
+				deepest = maxf(deepest, content.global_position.y - host.global_position.y + needed)
+		deepest = maxf(deepest, _zone_content_extent(content, host))
 	return deepest
+
+## Does a sanctioned scroll sit anywhere in this subtree? The measurement above skips such a control:
+## its minimum is the scroll's declared box rather than anything its content asked for.
+func _contains_scroll(node: Node) -> bool:
+	if node is ScrollContainer:
+		return true
+	for child in node.get_children():
+		if _contains_scroll(child):
+			return true
+	return false
 
 ## GUARD: the SHORT tier merges the hay larder onto the Food line (`BandDetailLines`'
 ## `BAND_FOOD_HAY_CLAUSE_FORMAT`) to save a row — and the vitals label is `AUTOWRAP_WORD`, so a merged
@@ -4435,6 +4535,13 @@ func _collect_zone_overflow(node: Node, bounds: Rect2, failures: Array[String]) 
 				failures.append("%s (%s) overflows its zone by (%.1f, %.1f)" % [
 					content.name, content.get_class(), maxf(over_x, 0.0), maxf(over_y, 0.0)])
 				continue   # one report per subtree — its children overflow by construction
+		# **A SANCTIONED SCROLL'S RECT IS CHECKED AND ITS CONTENT IS NOT DESCENDED INTO.** This guard
+		# exists because the zone hosts CLIP: a rect outside the host is content the player can never
+		# see. Inside a `ScrollContainer` that premise is false — a stack taller than its viewport is
+		# precisely what the bar is for — so descending would report every scrolled band zone as an
+		# overflow. The scroll ITSELF is still bounded by the zone, which is the claim that matters.
+		if content is ScrollContainer:
+			continue
 		_collect_zone_overflow(content, bounds, failures)
 
 ## **WHY THE DOCK RENDERED NOTHING FOR WILD FOWL — and the INVERSION that closed it.**
@@ -4639,15 +4746,20 @@ func _assert_compose_float(state_name: String) -> void:
 		_find_meta_control(_panel, HudWidgets.SEND_HUNT_CONFIRM_META) == null)
 	_assert_band_panel("%s — …and it is in the float, whole (its Send is there)" % state_name,
 		_find_meta_control(floater, HudWidgets.SEND_HUNT_CONFIRM_META) != null)
-	# (2) THE ZONE FITS WHAT IS LEFT — the same walk `_assert_zone_content_fits` makes, restated here
-	# with its number so a zone that merely stopped overflowing by luck is visible.
+	# (2) THE ZONE FITS WHAT IS LEFT — the same CONTAINMENT walk `_assert_zone_content_fits` makes, which
+	# stops at a sanctioned scroll (a scrolled stack is reached, not clipped), restated here with the
+	# stack's measured height beside it so a zone that merely stopped overflowing by luck is visible.
 	for host_variant in _find_zone_hosts(_panel):
 		var host: Control = host_variant
 		var extent := _zone_content_extent(host, host)
 		if extent <= 0.0:
 			continue
-		_assert_band_panel("%s — zone %s holds its remaining content (%.0fpx of a %.0fpx box)" % [
-			state_name, host.name, extent, host.size.y], extent <= host.size.y + ZONE_BOUNDS_TOLERANCE)
+		var shortfalls: Array[String] = []
+		_collect_zone_content_shortfall(host, host, shortfalls)
+		_assert_band_panel("%s — zone %s holds its remaining content (%s; its stack measures %.0fpx of a %.0fpx box)" % [
+			state_name, host.name,
+			"nothing clipped" if shortfalls.is_empty() else ", ".join(shortfalls), extent, host.size.y],
+			shortfalls.is_empty())
 	# (3) THE FLOAT FITS THE VIEWPORT. This is where the overflow went, so this is where it is measured.
 	var view := get_viewport().get_visible_rect()
 	var card := _panel.card_rect()
