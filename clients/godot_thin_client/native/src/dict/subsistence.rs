@@ -485,7 +485,9 @@ pub(crate) fn herds_to_array(
         // breaks off", which is a pen and the whole plant web.
         let _ = dict.insert("stay_fraction", herd.stayFraction());
         // **WHICH KIT THE TWO ESTIMATE TABLES ABOVE ARE QUOTED FOR** (`docs/plan_denial_raid.md`) —
-        // the hunt job's DEFAULT roster id, on every herd, always. Neither table is repriced per kit
+        // THIS HERD'S OWN default roster id (`default_kit_id` below), on every herd, always. It was
+        // the hunt JOB's default until the per-quarry default landed; the two are the same id on
+        // every herd the scorer leaves alone. Neither table is repriced per kit
         // (they are ~95% of snapshot capture), and these exist so the client can SAY SO: when the
         // player's selected kit differs from the id here, the sheet must refuse to present the table
         // as the answer for their selection rather than quoting a kitted raid's numbers to a
@@ -499,6 +501,18 @@ pub(crate) fn herds_to_array(
             "denial_estimates_kit_id",
             herd.denialEstimatesKitId().unwrap_or(""),
         );
+        // **THE KIT THIS QUARRY'S OWN COMPOSE SHEET OPENS ON** — DERIVED per herd, not the hunt job's
+        // default: the sim scores every hunt kit's per-hunter-turn take against this animal at the
+        // FRESH tier and publishes the winner where it beats the job default by
+        // `quarry_default_kit_margin`. It is also the kit `assign_labor … hunt <herd> <n>` resolves
+        // when the command names none, so a sheet that opened on the job default instead would say
+        // Stalking while the sim ran Trapping — a spear party losing three rabbits in four to the
+        // retreat, which is the whole reason this field exists.
+        //
+        // `""` means the roster could not resolve the species; the client reads that as "no herd
+        // answer" and falls back to `SubsistenceSection.defaultHuntKitId`, exactly as the sim does.
+        // Newest slot on `HerdTelemetryState`, decoded beside the two table ids it follows.
+        let _ = dict.insert("default_kit_id", herd.defaultKitId().unwrap_or(""));
         array.push(&dict.to_variant());
     }
     array

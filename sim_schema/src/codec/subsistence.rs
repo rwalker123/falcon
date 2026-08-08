@@ -192,6 +192,9 @@ fn create_herds<'a>(
         let hunt_trip_estimates_kit_id =
             builder.create_string(herd.hunt_trip_estimates_kit_id.as_str());
         let denial_estimates_kit_id = builder.create_string(herd.denial_estimates_kit_id.as_str());
+        // THE KIT THIS QUARRY WANTS — always written for the same reason: a consumer comparing its
+        // player's selection against an absent string would read every herd as a mismatch.
+        let default_kit_id = builder.create_string(herd.default_kit_id.as_str());
         let hunt_trip_estimates = if herd.hunt_trip_estimates.is_empty() {
             None
         } else {
@@ -358,6 +361,8 @@ fn create_herds<'a>(
                 denialPartyNeeded: herd.denial_party_needed,
                 huntTripEstimatesKitId: Some(hunt_trip_estimates_kit_id),
                 denialEstimatesKitId: Some(denial_estimates_kit_id),
+                // The quarry's own default kit — appended last, so the slot stays positional.
+                defaultKitId: Some(default_kit_id),
             },
         );
         entries.push(entry);

@@ -1998,6 +1998,45 @@ impl TerrainTagGrid {
     }
 }
 
+/// The two readings of [`crate::fauna::herd_default_hunt_kit`]'s source axis, named so the
+/// per-species quote table says which half it is building rather than passing a bare `true`.
+const HERD_ON_THE_RANGE: bool = false;
+const HERD_IN_A_PEN: bool = true;
+
+/// **Assemble one quarry's [`QuotedParty`]** — the fight tier, the haul tier and the kit id, all
+/// resolved from the *same* `kit` against the *same* `wear`, so a herd row cannot quote one kit's
+/// haul beside another kit's attack.
+///
+/// **The hunter profile is passed in rather than resolved here**, because which of the two named
+/// resolvers applies is the caller's decision and must stay visible at the call site: a per-species
+/// party resolves [`crate::equipment_config::EquipmentConfig::hunter_profile_against`], the
+/// no-species fallback resolves `hunter_profile_unbounded`. Folding that choice in here would be a
+/// third resolver that picks for you, which is exactly what the two names exist to prevent.
+fn quoted_party_for(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    combat: &crate::combat_config::CombatConfig,
+    levers: &BandKitLevers<'_>,
+    kit: &crate::equipment_config::KitChoice,
+    wear: &BandEquipment,
+    hunter: crate::combat::CombatStats,
+) -> QuotedParty {
+    QuotedParty {
+        party: crate::fauna::HuntingParty {
+            hunter,
+            tuning: combat.tuning(),
+            injury_damage_per_animal: combat.hunt_injury_damage_per_animal
+                * equipment.exposure(kit, wear),
+            dispersion: equipment.dispersion(kit, wear),
+        },
+        per_worker_haul: equipment.hunt_per_worker_biomass_capacity(
+            levers.equipped_haul_rate,
+            kit,
+            wear,
+        ),
+        kit_id: kit.id().to_string(),
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn capture_snapshot(
     ctx: SnapshotContext,
@@ -2679,10 +2718,71 @@ pub fn capture_snapshot(
     // Per herd, and derived rather than copied: each entry resolves distance/reach/visibility
     // against the viewer's fog before it is emitted.
     let herds_scope = crate::turn_profile::scope("snapshot.build.herds");
-    // The kit both per-herd estimate tables are priced at, resolved once.
-    let quoted_kit = equipment_config.default_kit(crate::equipment_config::KitJob::Hunt);
-    // A fresh ledger to price it against — the table describes the KIT, not any band's wear on it.
+    // **The kit each herd's tables are priced at, resolved once PER SPECIES × SOURCE AXIS.** The
+    // default is a pure function of quarry × roster × *is this herd penned*
+    // (`fauna::herd_default_hunt_kit`), so resolving it per herd would re-score the same roster for
+    // every herd of the same animal; each map is keyed by the display name the herd's own `species`
+    // string carries. **Two maps rather than one**, because the axis is a property of the herd and
+    // the species is a property of the roster: the range map answers every wild/pastoral herd and
+    // the pen map answers a corralled one, so a lookup is still one probe.
+    // A fresh ledger to price every kit against — a herd row describes the KIT, not any band's wear
+    // on it, and the default itself is resolved at the fresh tier for the same reason.
     let quoted_wear = BandEquipment::default();
+    let quote_species = |species: &crate::fauna_config::SpeciesDef, corralled: bool| {
+        let kit = crate::fauna::herd_default_hunt_kit(
+            &equipment_config,
+            kit_levers.person_intrinsic,
+            species,
+            corralled,
+        );
+        (
+            species.display_name.clone(),
+            quoted_party_for(
+                &equipment_config,
+                &combat_config,
+                &kit_levers,
+                &kit,
+                &quoted_wear,
+                // **BOUNDED, against this species** — one party per herd is still one party,
+                // but it now knows what it is hunting, so a mass-bounded weapon is priced only
+                // where it can actually hold the animal. This is what a per-herd resolution
+                // buys that the single unbounded party could not express.
+                equipment_config.hunter_profile_against(
+                    kit_levers.person_intrinsic,
+                    &kit,
+                    &quoted_wear,
+                    species.body_mass,
+                ),
+            ),
+        )
+    };
+    let quoted_parties: HashMap<String, QuotedParty> = fauna_config
+        .species
+        .values()
+        .map(|species| quote_species(species, HERD_ON_THE_RANGE))
+        .collect();
+    let penned_parties: HashMap<String, QuotedParty> = fauna_config
+        .species
+        .values()
+        .map(|species| quote_species(species, HERD_IN_A_PEN))
+        .collect();
+    // **The fallback for a herd whose species the roster cannot resolve** — the hunt job's default,
+    // resolved UNBOUNDED because there is no quarry to test a bound against. `EquipmentConfig::
+    // validate` rejects a mass-bounded attack in that kit for exactly this reason, so the unbounded
+    // resolution here cannot quote a weapon against animals it could not touch.
+    let fallback_kit = equipment_config.default_kit(crate::equipment_config::KitJob::Hunt);
+    let quoted_fallback = quoted_party_for(
+        &equipment_config,
+        &combat_config,
+        &kit_levers,
+        &fallback_kit,
+        &quoted_wear,
+        equipment_config.hunter_profile_unbounded(
+            kit_levers.person_intrinsic,
+            &fallback_kit,
+            &quoted_wear,
+        ),
+    );
     let herd_states = herd_snapshot_entries(HerdSnapshotInputs {
         telemetry: &herds,
         registry: &herd_registry,
@@ -2695,33 +2795,13 @@ pub fn capture_snapshot(
         visibility: &visibility_ledger,
         viewer: viewer_faction.0,
         fog_enabled: config.fog_enabled,
-        // **The hunt job's DEFAULT kit, deliberately** — the herd row is a fact about the herd and
-        // has no band to ask, so both estimate tables are quoted at one kit and **publish which**.
-        // A fresh kit (`BandEquipment::default()` is zero wear), because the table describes the
-        // kit rather than any band's wear on it; with the shipped `big_game` default this is
-        // bit-for-bit the hardcoded `equipped = true` it replaced.
-        party: crate::fauna::HuntingParty {
-            // **UNBOUNDED, and `validate` is what keeps that honest.** This ONE party prices every
-            // herd row, so it cannot carry a per-quarry attack — and a mass-bounded weapon in the
-            // hunt job's default kit would therefore be quoted against animals it cannot touch.
-            // `EquipmentConfig::validate` rejects exactly that config, so the case is a boot failure
-            // rather than a table that lies. See "the default hunt kit carries no mass bound".
-            hunter: equipment_config.hunter_profile_unbounded(
-                kit_levers.person_intrinsic,
-                &quoted_kit,
-                &quoted_wear,
-            ),
-            tuning: combat_config.tuning(),
-            injury_damage_per_animal: combat_config.hunt_injury_damage_per_animal
-                * equipment_config.exposure(&quoted_kit, &quoted_wear),
-            dispersion: equipment_config.dispersion(&quoted_kit, &quoted_wear),
-        },
-        quoted_per_worker_haul: equipment_config.hunt_per_worker_biomass_capacity(
-            kit_levers.equipped_haul_rate,
-            &quoted_kit,
-            &quoted_wear,
-        ),
-        quoted_kit_id: quoted_kit.id().to_string(),
+        // **THIS QUARRY'S own default kit, deliberately** — the herd row is a fact about the herd
+        // and has no band to ask, but it can ask the *animal*, so each species' tables are quoted
+        // at the kit its compose sheet opens on and **publish which**. Still exactly one party per
+        // herd; what moved is which kit it carries.
+        parties: &quoted_parties,
+        penned_parties: &penned_parties,
+        fallback_party: &quoted_fallback,
         // The denial estimate's reported band width — a readout lever, read from the same config the
         // per-source yield range reads it from.
         range_sigmas: combat_config.forecast_range_sigmas,

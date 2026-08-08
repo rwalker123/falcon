@@ -84,6 +84,10 @@ mod tests {
                 id: "herd_wild".to_string(),
                 hunt_trip_estimates_kit_id: "big_game".to_string(),
                 denial_estimates_kit_id: "big_game".to_string(),
+                // DISTINCT from the two above, although the capture quotes all three at the same
+                // kit: a slot wired to the wrong string then shows up as a swap rather than as a
+                // coincidence.
+                default_kit_id: "trapping".to_string(),
                 ..Default::default()
             }],
             populations: vec![PopulationCohortState {
@@ -134,6 +138,7 @@ mod tests {
         let herd = subsistence.herds().expect("herds present").get(0);
         assert_eq!(herd.huntTripEstimatesKitId(), Some("big_game"));
         assert_eq!(herd.denialEstimatesKitId(), Some("big_game"));
+        assert_eq!(herd.defaultKitId(), Some("trapping"));
 
         let cohort = payload
             .population()

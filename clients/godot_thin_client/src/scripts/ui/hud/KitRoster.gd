@@ -116,13 +116,27 @@ const AXIS_ITEMS := {
 ## threshold: the sim equips a component while its remaining condition is strictly positive.
 const CONDITION_DRY := 0.0
 
-## Which kit the two pre-launch estimate tables were quoted for — the hunt job's DEFAULT, on every
-## herd, always. **Neither table is repriced per kit** (they are ~95% of snapshot capture), and these
-## keys exist so a client can SAY so rather than quoting a kitted raid's numbers to a bare-handed
-## party. Two keys because they are two tables: if one is later repriced and the other is not, a
-## single key would lie about whichever was left behind.
+## Which kit the two pre-launch estimate tables were quoted for — THIS HERD'S OWN default
+## (`HERD_DEFAULT_KIT_KEY`), on every herd, always. **Neither table is repriced per kit** (they are
+## ~95% of snapshot capture), and these keys exist so a client can SAY so rather than quoting a kitted
+## raid's numbers to a bare-handed party. Two keys because they are two tables: if one is later
+## repriced and the other is not, a single key would lie about whichever was left behind.
 const HERD_TRIP_ESTIMATES_KIT_KEY := "hunt_trip_estimates_kit_id"
 const HERD_DENIAL_ESTIMATES_KIT_KEY := "denial_estimates_kit_id"
+
+## **THE KIT THIS QUARRY WANTS** (`equipment.md` → "Which kit a QUARRY wants is DERIVED") — the roster
+## id the hunt sheet opens on for THIS herd, and the one `assign_labor … hunt <herd> <n>` resolves when
+## the command names no kit. The sim scores every hunt kit's per-hunter-turn take against the species
+## at the FRESH tier and publishes the winner where it clears the job default by a margin.
+##
+## **IT IS NOT A SECOND OPINION ABOUT THE JOB DEFAULT — it is a NARROWER answer, and it wins.** A
+## Rabbit Warren's `wariness 0.75` loses a spear party three animals in four to the retreat while the
+## trap's `dispersion 0` keeps all of them, so a sheet opening on the job's `big_game` defaulted the
+## player onto a ~4× worse tool on exactly the quarry the roster has a right one for.
+##
+## `""` is "this herd has no answer" — a species the roster cannot resolve, and every forage row and
+## every sheet with no source in hand — and falls back to the job default, exactly as the sim does.
+const HERD_DEFAULT_KIT_KEY := "default_kit_id"
 
 ## The two jobs a kit may be sent on, spelled exactly as the wire's `jobs` entries and as the
 ## `assign_labor` roles — aliases of `SourceForecast`'s labor kinds so the sheet's verb, the command's
@@ -140,19 +154,15 @@ const JOB_WARRIOR := "warrior"
 ## **THE CARRY AXIS EACH JOB IS PRICED ON** — "one item, one job" (`equipment.md`): a SLED raises the
 ## hunt's haul, BASKETS raise the forage web's, and no kit raises both.
 ##
-## **`priced_source` DERIVES the axis from the job rather than taking it, and that is the whole point
-## of the table.** A caller that can name the axis can name the WRONG one, and one did: the compose
-## seam passed the key `effective_tiers` answered (`"forage_carry"`) to a roster lookup that spells it
+## **`priced_source` DERIVES the axis rather than taking it, and that is the whole point of the
+## table.** A caller that can name the axis can name the WRONG one, and one did: the compose seam
+## passed the key `effective_tiers` answered (`"forage_carry"`) to a roster lookup that spells it
 ## `forage_carry_per_worker_biomass`, so the reference resolved to `0`, the repricing short-circuited,
 ## and every kit on every sheet quoted identical numbers with only the hint line moving. Reported from
 ## play. A job is what a call site actually knows; the axis is this layer's business.
-## **A hunt row prices on the SLED's axis even when the herd is penned**, and that is a known gap
-## rather than an oversight: the axis comes from THIS TABLE, which is keyed by job alone. The sim
-## prices a penned herd on `pen_carry_per_worker_biomass`, so a compose sheet quoting a husbandry kit
-## against a pen reads the sled's tier — the direction that UNDER-states the husbandry kit rather than
-## over-states it. **The herd's corral state is no longer the missing term**: `priced_source` is handed
-## the source and reads `QUARRY_CORRALLED_KEY` off it for the offer test and the fight's gate. What is
-## missing is a per-SOURCE axis where this table states a per-job one.
+##
+## **IT IS THE JOB'S ANSWER, NOT THE LAST WORD** — a penned herd overrides it. `carry_axis_for` is the
+## whole of that rule and the only thing anything should ask; nothing outside it reads this table.
 const JOB_CARRY_AXES := {
 	JOB_HUNT: KIT_HUNT_CARRY_KEY,
 	JOB_FORAGE: KIT_FORAGE_CARRY_KEY,
@@ -216,11 +226,34 @@ static func display_name_for_id(kits: Array, kit_id: String) -> String:
 	var kit := kit_by_id(kits, kit_id)
 	return kit_display_name(kit) if not kit.is_empty() else kit_id
 
+## **THE DEFAULT THAT ACTUALLY APPLIES HERE — the SOURCE's own, falling back to the JOB's.** The one
+## home of that precedence, so the sheet's opening selection, the picker's `(default)` mark and the
+## estimate tables' honesty test cannot each answer it differently.
+##
+## **THE SOURCE OVERRIDES THE JOB, and it is a narrower answer rather than a competing one**
+## (`HERD_DEFAULT_KIT_KEY`). Only a HUNT row has a source that publishes one: the forage web's patches
+## carry no such field, and passing them through here is what keeps the two webs on one call.
+##
+## **THE SOURCE ARRIVES AS A PARAMETER, never reached for.** The two sheets that price a herd already
+## hold it — it is the same dict the offer test reads `corralled` off — so this layer stays stateless.
+static func default_kit_for(job: String, source: Dictionary, job_default_id: String) -> String:
+	if job != JOB_HUNT:
+		return job_default_id
+	var stated := String(source.get(HERD_DEFAULT_KIT_KEY, "")).strip_edges()
+	return stated if stated != "" else job_default_id
+
 ## **THE SELECTION A SHEET OPENS ON.** The player's own composed choice when it is still a kit this
-## verb may be sent on **and one this quarry can be worked with**, otherwise the job's default,
-## otherwise the first kit the job lists. The fall-through is what lets one composed id survive a world
-## rebuild, a roster edit, and a sheet switching between the hunt and denial missions (which share the
-## `hunt` job) without ever naming a kit the command would refuse.
+## verb may be sent on **and one this quarry can be worked with**, otherwise this QUARRY'S default
+## (`default_kit_for` — the herd's own, else the job's), otherwise the first kit the job lists. The
+## fall-through is what lets one composed id survive a world rebuild, a roster edit, and a sheet
+## switching between the hunt and denial missions (which share the `hunt` job) without ever naming a
+## kit the command would refuse.
+##
+## **THE COMPOSED CHOICE STILL OUTRANKS THE DEFAULT, and that is why the composed id is dropped on a
+## SOURCE CHANGE rather than being overridden here** (`ComposeState.reset_hunt_kit` /
+## `set_party_quarry`). A player who picked `none` on this animal to compare bare-handed must keep it
+## across the re-render their own click causes; what they must not keep is a choice made about a
+## DIFFERENT animal, since the default is now a fact about the quarry.
 ##
 ## **THE QUARRY IS OPTIONAL AND ABSENT MEANS "NO APPLICABILITY QUESTION"** — the forage sheets pass
 ## none and resolve exactly as they did before the offer test existed. Where one IS passed, a
@@ -245,9 +278,10 @@ static func resolve_selection(kits: Array, job: String, default_id: String,
 	for kit_variant in selectable:
 		if String((kit_variant as Dictionary).get(KIT_ID_KEY, "")) == composed_id:
 			return composed_id
+	var effective_default := default_kit_for(job, quarry, default_id)
 	for kit_variant in selectable:
-		if String((kit_variant as Dictionary).get(KIT_ID_KEY, "")) == default_id:
-			return default_id
+		if String((kit_variant as Dictionary).get(KIT_ID_KEY, "")) == effective_default:
+			return effective_default
 	return String((selectable[0] as Dictionary).get(KIT_ID_KEY, ""))
 
 # ---- the EFFECTIVE tier -------------------------------------------------------------------------
@@ -378,6 +412,28 @@ static func repriced_source(src: Dictionary, prefix: String, carry: float, refer
 		out[stay_key] = clampf(1.0 - (1.0 - stay) * maxf(dispersion, 0.0), 0.0, 1.0)
 	return out
 
+## **THE CARRY AXIS THIS SOURCE IS COLLECTED ON — the job's answer (`JOB_CARRY_AXES`), overridden by
+## a PENNED herd.** `""` for a job with no carry axis at all, which `priced_source` reads as "nothing
+## to price against".
+##
+## **THE AXIS IS A PROPERTY OF THE SOURCE, AND A JOB-KEYED TABLE ALONE COULD NOT SAY SO.** A corralled
+## herd is worked from a Hunt row, so pricing it by job read the SLED's tier — while the sim collects
+## a pen on `EquipmentStat::PenCarry`, which only the husbandry kit supplies. That UNDER-stated the
+## very kit the pen exists for and OVER-stated every kit carrying a sled and no handling gear, and on
+## the shipped roster (where husbandry and stalking both carry a sled) the two errors cancelled into
+## *every hunt kit quotes a pen the same number* — a perfectly plausible sheet, which is why only a
+## driven assertion can hold it. A sled drags a carcass in off the range; a pen stands at the camp.
+##
+## **THE CORRAL STATE COMES OFF `src`, AND THAT IS NOT A REACH FOR STATE** — on the hunt job `src` IS
+## the herd, handed in as a parameter exactly like the body mass the weapon's size window is tested
+## against, and read through the same `QUARRY_CORRALLED_KEY` the offer test and the fight's gate use.
+##
+## The forage web has one carry and no override: a patch is a patch.
+static func carry_axis_for(job: String, src: Dictionary) -> String:
+	if job == JOB_HUNT and bool(src.get(QUARRY_CORRALLED_KEY, false)):
+		return KIT_PEN_CARRY_KEY
+	return String(JOB_CARRY_AXES.get(job, ""))
+
 ## **THE COMPOSE SHEETS' ONE PRICING SEAM — resolve the kit, then reprice the source at it.**
 ##
 ## `repriced_source` above is pure arithmetic on two tiers; this is the step that decides WHICH tiers,
@@ -389,8 +445,14 @@ static func repriced_source(src: Dictionary, prefix: String, carry: float, refer
 ## **STATELESS, so the roster and the job default arrive as PARAMETERS** — they are snapshot data and
 ## live on `HudBandLaborState`, which this layer must never reach for.
 ##
-## **The AXIS is derived from the JOB** (`JOB_CARRY_AXES`), so a caller cannot hand it a key no roster
-## entry carries — see that table for the bug this closes.
+## **The AXIS is derived from the job AND the source** (`carry_axis_for`), so a caller cannot hand it
+## a key no roster entry carries — see that function and `JOB_CARRY_AXES` for the two bugs this closes.
+##
+## **THE REFERENCE TIER IS READ ON THE SAME AXIS AS THE CREW'S**, in one expression below, because
+## they are the numerator and the denominator of one ratio: switching the axis without switching the
+## reference resolves the denominator to `0` off a roster that states nothing there, the repricing
+## short-circuits, and every kit quotes identical numbers. That is not hypothetical — it is exactly
+## how the forage spelling bug shipped.
 ##
 ## **THE FIGHT'S GATE IS PRICED HERE, BEFORE ANY REPRICING** (`hunt_gate_closes`). A kit whose attack
 ## cannot clear this quarry's defence — because the band's weapon is spent, or because the quarry is
@@ -408,7 +470,7 @@ static func repriced_source(src: Dictionary, prefix: String, carry: float, refer
 ## guess, and never a partial substitution.
 static func priced_source(src: Dictionary, prefix: String, kits: Array, job: String,
 		default_kit_id: String, composed_kit_id: String, band: Dictionary) -> Dictionary:
-	var carry_key: String = String(JOB_CARRY_AXES.get(job, ""))
+	var carry_key := carry_axis_for(job, src)
 	if carry_key.is_empty():
 		return src
 	var kit := kit_by_id(kits, resolve_selection(kits, job, default_kit_id, composed_kit_id,
@@ -690,14 +752,34 @@ static func kit_uses(kits: Array, kit: Dictionary, axis_key: String) -> bool:
 ## tiers this band gets, then the condition of each component the kit actually consumes, so a band one
 ## turn from running dry can see it coming. `""` when the kit is unknown.
 ##
-## **THE PEN TIER IS THE ONE CONDITIONAL LINE, and `kit_uses` is the whole of the condition.** Every
-## kit publishes a pen tier, so printing it unconditionally would put a `pen 12.0 per keeper` on a
-## `big_game` sheet that has nothing to do with the wild herd being composed against. A kit that
-## actually supplies the axis — one whose tier beats the roster's bare-handed one, i.e. the husbandry
-## kit — states it, and states the `husbandry_gear` condition beneath it; every other hunt sheet is
-## byte-identical to what it rendered before the axis existed. The condition clause needs no rule of
-## its own: `_append_condition` already gates on the same predicate.
-static func tier_hint(kits: Array, kit: Dictionary, band: Dictionary, job: String) -> String:
+## **THE HUNT BRANCH STATES WHAT THIS SOURCE WILL ACTUALLY READ, WHICH IS WHY IT TAKES THE QUARRY.**
+## A hunt row works two different things through one verb, and they read disjoint axes:
+##
+## - **A WILD herd is stalked and hauled** — `attack`, the sled's carry, and those two conditions.
+##   Byte-identical to what this line rendered before the pen axis existed.
+## - **A PEN is collected** — `pen 40.0 per keeper`, and the conditions of the handling gear and the
+##   SLED. **No attack and no spears**: a penned beast is slaughtered rather than stalked, it
+##   publishes no engagement stage (the same predicate the gate LINE is mounted behind), and the sim
+##   charges no weapon for the kill.
+##
+## **AT A PEN THE TIER AND THE CONDITIONS ANSWER DIFFERENT QUESTIONS, WHICH IS WHY THE SLED APPEARS
+## UNDER ONE AND NOT THE OTHER.** Only `pen_carry` sets the rate — a sled drags a carcass in off the
+## range and does nothing for a pen at the camp — but the sim charges a pen slaughter over TWO
+## quanta: the handling gear for what was butchered and the sled for what was hauled home. So the
+## sled's tier is a number nothing on this sheet will read, while the sled's condition is wear the
+## player is actually paying.
+##
+## **THE PEN LINE IS GATED ON THE SOURCE, NOT ON `kit_uses`, AND THE DIFFERENCE IS THE POINT.** Gating
+## it on the kit printed a pen tier for a husbandry kit selected against a *wild* herd — a number that
+## would never be read — while withholding it from the sled-only kit at a pen, which is the one place
+## the player needs to see it: at a pen, `pen 12.0 per keeper` beside `pen 40.0 per keeper` is the
+## whole visible difference the handling gear buys. The condition clauses still gate on `kit_uses`,
+## for their own reason and the sim's: a kit that carries no sled wears none out.
+##
+## `quarry` is optional and absent means WILD: a sheet composed before the wire named a source, and
+## both forage sheets, render exactly as they did.
+static func tier_hint(kits: Array, kit: Dictionary, band: Dictionary, job: String,
+		quarry: Dictionary = {}) -> String:
 	if kit.is_empty():
 		return ""
 	var tiers := effective_tiers(kits, kit, band)
@@ -707,20 +789,22 @@ static func tier_hint(kits: Array, kit: Dictionary, band: Dictionary, job: Strin
 			float(tiers[KIT_FORAGE_CARRY_KEY])))
 		_append_condition(parts, kits, kit, band, tiers, KIT_FORAGE_CARRY_KEY,
 			HudComposeVocab.KIT_COMPONENT_BASKETS)
+	elif carry_axis_for(job, quarry) == KIT_PEN_CARRY_KEY:
+		parts.append(HudComposeVocab.KIT_HINT_PEN_CARRY_FORMAT % _tier_face(
+			float(tiers[KIT_PEN_CARRY_KEY])))
+		_append_condition(parts, kits, kit, band, tiers, KIT_PEN_CARRY_KEY,
+			HudComposeVocab.KIT_COMPONENT_HUSBANDRY_GEAR)
+		_append_condition(parts, kits, kit, band, tiers, KIT_HUNT_CARRY_KEY,
+			HudComposeVocab.KIT_COMPONENT_SLED)
 	else:
 		parts.append(HudComposeVocab.KIT_HINT_ATTACK_FORMAT % _tier_face(
 			float(tiers[KIT_ATTACK_KEY])))
 		parts.append(HudComposeVocab.KIT_HINT_HUNT_CARRY_FORMAT % _tier_face(
 			float(tiers[KIT_HUNT_CARRY_KEY])))
-		if kit_uses(kits, kit, KIT_PEN_CARRY_KEY):
-			parts.append(HudComposeVocab.KIT_HINT_PEN_CARRY_FORMAT % _tier_face(
-				float(tiers[KIT_PEN_CARRY_KEY])))
 		_append_condition(parts, kits, kit, band, tiers, KIT_ATTACK_KEY,
 			HudComposeVocab.KIT_COMPONENT_SPEARS)
 		_append_condition(parts, kits, kit, band, tiers, KIT_HUNT_CARRY_KEY,
 			HudComposeVocab.KIT_COMPONENT_SLED)
-		_append_condition(parts, kits, kit, band, tiers, KIT_PEN_CARRY_KEY,
-			HudComposeVocab.KIT_COMPONENT_HUSBANDRY_GEAR)
 	return HudComposeVocab.KIT_HINT_SEPARATOR.join(parts)
 
 ## One item's condition clause, appended only where there is something true to say: the kit has to
@@ -742,12 +826,18 @@ static func _tier_face(value: float) -> String:
 # ---- THE HONESTY RULE ---------------------------------------------------------------------------
 
 ## **WHICH KIT A HERD'S ESTIMATE TABLE IS QUOTED FOR** — the id the wire states, falling back to the
-## job default when the herd is silent. It never guesses: the sim prices both tables at the hunt job's
-## default on every herd, so the default IS the honest answer where the field is unset, and the two
-## readings agree on live data.
+## default that applies to this herd when the table id is unset. It never guesses: the sim prices both
+## tables at THIS HERD'S OWN default (all three ids come off one quoted party), so that default IS the
+## honest answer where the field is missing, and the two readings agree on live data.
+##
+## **THE FALLBACK HAS TO BE THE SAME DEFAULT THE SHEET OPENS ON, or the refusal fires on every
+## small-game herd.** A sheet opened on the warren's `trapping` while this answered the job's
+## `big_game` would compare two ids that can never match and suppress the trip readout for a table
+## that was in fact priced for the very kit selected — the exact inversion the per-quarry default was
+## introduced to prevent.
 static func estimates_quoted_kit(herd: Dictionary, table_key: String, default_id: String) -> String:
 	var stated := String(herd.get(table_key, "")).strip_edges()
-	return stated if stated != "" else default_id
+	return stated if stated != "" else default_kit_for(JOB_HUNT, herd, default_id)
 
 ## **MAY THIS SHEET PRESENT THE TABLE AS THE ANSWER FOR `selected_id`?** Compare the ids — never
 ## assume the default is selected.
@@ -798,7 +888,8 @@ static func estimates_quoted_note(kits: Array, herd: Dictionary, table_key: Stri
 ## and only the second is allowed to remove a choice.
 ##
 ## `quarry` / `prefix` are optional — a sheet with no source in hand (both forage sheets) passes none
-## and every kit is offered, exactly as before the test existed.
+## and every kit is offered, exactly as before the test existed. **The quarry reaches the HINT too**,
+## which is how a pen's row states the keeper's carry where a wild herd's states the hunter's.
 ##
 ## Returns `null` when the job offers no kit at all, so a sheet whose verb the roster does not cover
 ## renders exactly as it did before the picker existed.
@@ -815,6 +906,11 @@ static func build_kit_row(kits: Array, job: String, selected_id: String, default
 	row.add_child(HudWidgets.build_field_key(HudComposeVocab.COMPOSE_FIELD_KIT))
 	var glyph := String(HudComposeVocab.KIT_JOB_GLYPHS.get(job,
 		HudComposeVocab.KIT_JOB_GLYPH_FALLBACK))
+	# **THE MARK FOLLOWS THE ID THE SHEET ACTUALLY OPENED ON** — `default_kit_for`, the same
+	# precedence `resolve_selection` used. Tagging the JOB's default while the sheet opens on the
+	# HERD's would have the picker contradict itself on every small-game herd: Trapping selected,
+	# `(default)` printed on Stalking.
+	var effective_default := default_kit_for(job, quarry, default_id)
 	var entries: Array = []
 	# **THE SELECTION IS AN INDEX, because an `OptionButton` marks the current entry itself.** The
 	# roster order IS the list order (this layer sorts nothing), so the index of the resolved kit is
@@ -824,7 +920,7 @@ static func build_kit_row(kits: Array, job: String, selected_id: String, default
 		var kit: Dictionary = kit_variant
 		var kit_id := String(kit.get(KIT_ID_KEY, ""))
 		var label := kit_display_name(kit)
-		if kit_id == default_id:
+		if kit_id == effective_default:
 			label += HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX
 		if kit_id == selected_id:
 			selected_index = entries.size()
@@ -850,7 +946,7 @@ static func build_kit_row(kits: Array, job: String, selected_id: String, default
 	picker.set_meta(KIT_PICKER_META, true)
 	row.add_child(picker)
 	block.add_child(row)
-	var hint_text := tier_hint(kits, selected, band, job)
+	var hint_text := tier_hint(kits, selected, band, job, quarry)
 	if hint_text != "":
 		var hint := HudWidgets.alloc_hint_label(hint_text)
 		hint.set_meta(KIT_HINT_META, true)

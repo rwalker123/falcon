@@ -252,9 +252,17 @@ func _drive_send_hunt_expedition_from_herd_drawer() -> void:
 	await _settle()
 	# `open_herd_compose` takes the herd it is composing for — it gates on `_herd_compose_available`
 	# and keys the compose state off `herd.id`, so the drawer's own selection is not enough.
-	# **BEFORE the open, not after.** The commit button's payload is captured in a `pressed` closure
-	# built during the render, so a selection written after the sheet exists is not the one the button
-	# carries — the line would come out untailed and the drive would silently assert nothing.
+	#
+	# **TWO OPENS, and the order is forced from both ends.** The FIRST open is the source change, which
+	# drops the composed kit (`ComposeState.reset_hunt_kit`) so the sheet takes THIS herd's own default
+	# — so a selection written before it does not survive to be composed. The SECOND names the same
+	# herd, so it is not a source change and the pick stands; it also re-renders, which matters because
+	# the commit button's payload is captured in a `pressed` closure built during the render, so a
+	# selection written after the LAST render is not the one the button carries. Either half alone
+	# emits the untailed line and the drive silently asserts nothing about the kit — which is exactly
+	# what `_record`'s job-default check refuses.
+	_hud._drawercompose.open_herd_compose(herd)
+	await _settle()
 	_hud._compose.set_hunt_kit_id(BandFx.KIT_ID_NONE)
 	_hud._drawercompose.open_herd_compose(herd)
 	await _settle()

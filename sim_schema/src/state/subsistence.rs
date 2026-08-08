@@ -540,22 +540,40 @@ pub struct HerdTelemetryState {
     /// property of the whole herd table rather than of this field. Appended last.
     #[serde(default)]
     pub denial_party_needed: u32,
-    /// **The `equipment.json` roster id [`Self::hunt_trip_estimates`] was computed at** — the hunt
-    /// job's default kit (`"big_game"` as shipped), on every herd, always.
+    /// **The `equipment.json` roster id [`Self::hunt_trip_estimates`] was computed at** — this
+    /// herd's OWN default kit, i.e. [`Self::default_kit_id`].
     ///
-    /// **The table is NOT repriced per kit, and this field exists so a consumer can say so.** The
-    /// two estimate tables are ~95% of snapshot capture and a kit axis multiplies them — the same
-    /// structural cost question per-band repricing already faces. A client whose player has selected
-    /// another kit must therefore refuse to present these rows as an answer for that selection: the
-    /// kit moves the take through **both** the fight and the haul, and a `none` party's effective
-    /// attack against a defended quarry is zero, so the error is total rather than marginal.
+    /// **The table is NOT repriced per player SELECTION, and this field exists so a consumer can say
+    /// so.** The two estimate tables are ~95% of snapshot capture and a selection axis multiplies
+    /// them — the same structural cost question per-band repricing already faces. A client whose
+    /// player has selected another kit must therefore refuse to present these rows as an answer for
+    /// that selection: the kit moves the take through **both** the fight and the haul, and a `none`
+    /// party's effective attack against a defended quarry is zero, so the error is total rather than
+    /// marginal.
+    ///
+    /// It is still exactly **one party per herd** — what moved is which kit that party carries, so
+    /// the table agrees with the kit the compose sheet opens on instead of refusing on every herd
+    /// whose default is not the job's.
     #[serde(default)]
     pub hunt_trip_estimates_kit_id: String,
     /// The same, for [`Self::denial_estimates`]. **Two fields rather than one** because they are two
-    /// tables: if one is later repriced per kit and the other is not, a single field would lie about
-    /// whichever was left behind.
+    /// tables: if one is later repriced per selection and the other is not, a single field would lie
+    /// about whichever was left behind.
     #[serde(default)]
     pub denial_estimates_kit_id: String,
+    /// **The kit this QUARRY wants** — the roster id the hunt compose sheet opens on for this herd,
+    /// and the one `assign_labor … hunt <herd> <n>` resolves when the player names none.
+    ///
+    /// **Derived, never authored.** The sim scores every hunt-job kit's per-hunter-turn take against
+    /// this species and publishes the winner, but only when it beats the hunt job's default by
+    /// `equipment.json`'s `quarry_default_kit_margin`; otherwise the job default stands. Wear does
+    /// not enter the score, so this is a per-world constant per herd and cannot reshuffle as a band's
+    /// spears wear down.
+    ///
+    /// Empty only for a herd whose species the roster cannot resolve — the same "fall back to
+    /// `SubsistenceSection::default_hunt_kit_id`" reading every other unresolved row gives.
+    #[serde(default)]
+    pub default_kit_id: String,
 }
 
 impl Default for HerdTelemetryState {
@@ -631,6 +649,7 @@ impl Default for HerdTelemetryState {
             denial_party_needed: 0,
             hunt_trip_estimates_kit_id: String::new(),
             denial_estimates_kit_id: String::new(),
+            default_kit_id: String::new(),
         }
     }
 }

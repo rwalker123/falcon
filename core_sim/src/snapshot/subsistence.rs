@@ -424,6 +424,22 @@ fn denial_estimate_entries(
 /// [`NEVER_FILLED`] alike, and no second horizon belongs on the wire.
 const NEVER_PAST_RECOVERY: u32 = 0;
 
+/// **One quarry's quoted party** — the three things a herd's estimate tables are priced with, and
+/// the roster id that says which kit all three came from.
+///
+/// They travel together because they must agree: the fight tier, the haul tier and the published id
+/// are one kit's three faces, and a row quoting a haul rate from one kit beside an attack from
+/// another is the mis-pairing `equipment.md`'s per-job tier table exists to prevent.
+#[derive(Debug, Clone)]
+pub(crate) struct QuotedParty {
+    /// The hunter profile and resolver tuning the forecast and both tables resolve their fight with.
+    pub(crate) party: crate::fauna::HuntingParty,
+    /// That same kit's per-hunter **haul** tier — the sled half of what the tables are quoted at.
+    pub(crate) per_worker_haul: f32,
+    /// The roster id of that kit, published verbatim on `default_kit_id` and on both table ids.
+    pub(crate) kit_id: String,
+}
+
 /// Display herd telemetry for the client, plus each herd's **pre-commit yield forecast**
 /// (`fauna::hunt_forecast` — the same ceiling/conversion helpers `hunt_take` pays with, so
 /// forecast == actual) and its **pre-launch expedition trip estimates**. All three need the herd's
@@ -454,21 +470,42 @@ pub(crate) struct HerdSnapshotInputs<'a> {
     /// the filter below is a no-op, which is the ONLY way to reveal hidden fauna: unseen herds never
     /// reach the wire, so no client render flag could put them back.
     pub(crate) fog_enabled: bool,
-    /// **The party this per-herd estimate is priced for** — the hunter profile and the base resolver
-    /// tuning (`docs/plan_hunt_through_combat.md` §4), resolved at the **hunt job's DEFAULT kit**.
-    /// The herd row is a fact about the *herd*, not about any one band, and this table has no band
-    /// to ask; a band's real, kit-resolved numbers ride its `SourceYield` row.
+    /// **The party each per-herd estimate is priced for, resolved per SPECIES** — the hunter
+    /// profile, the haul tier and the resolver tuning (`docs/plan_hunt_through_combat.md` §4), at
+    /// **that quarry's own default kit** ([`crate::fauna::herd_default_hunt_kit`]).
     ///
-    /// **Which kit it is quoted at is PUBLISHED** ([`HerdTelemetryState::hunt_trip_estimates_kit_id`]
-    /// / `denial_estimates_kit_id`) so a client can tell when the player's selection differs and
+    /// The herd row is a fact about the *herd*, not about any one band, and this table has no band
+    /// to ask; a band's real, kit-resolved numbers ride its `SourceYield` row. What it *can* ask is
+    /// the **quarry** — which is what moved: it is still exactly one party per herd, carrying the
+    /// kit the compose sheet opens on rather than the hunt job's blanket default, so the tables and
+    /// the sheet agree instead of the client refusing them on every herd whose default is not the
+    /// job's.
+    ///
+    /// **Keyed by species DISPLAY name**, the same key `FaunaConfig::species_by_display` and the
+    /// herd's own `species` string use, and resolved once per species per capture — the default is
+    /// a pure function of quarry × roster, so a per-herd resolution would re-score the same roster
+    /// for every herd of the same animal.
+    ///
+    /// **Which kit each table is quoted at is PUBLISHED**
+    /// ([`HerdTelemetryState::hunt_trip_estimates_kit_id`] / `denial_estimates_kit_id`, and
+    /// `default_kit_id` beside them) so a client can tell when the player's *selection* differs and
     /// decline to present the table as an answer for a kit it was not computed for. Repricing the
-    /// two tables per kit is its own arc — they are ~95% of snapshot capture and a kit axis
-    /// multiplies them, the same structural cost question per-band repricing already faces.
-    pub(crate) party: crate::fauna::HuntingParty,
-    /// The default kit's per-hunter **haul** tier, the sled half of what the two tables are quoted at.
-    pub(crate) quoted_per_worker_haul: f32,
-    /// The roster id of that default kit — published verbatim on both tables.
-    pub(crate) quoted_kit_id: String,
+    /// two tables per selection is still its own arc — they are ~95% of snapshot capture and a
+    /// selection axis multiplies them, the same structural cost question per-band repricing faces.
+    pub(crate) parties: &'a HashMap<String, QuotedParty>,
+    /// **The PEN axis of that same table** — the identical per-species quote resolved for a herd
+    /// that is *corralled*, which is a fact about the herd rather than the species and so cannot
+    /// live in one map beside it.
+    ///
+    /// A pen is collected on [`crate::equipment_config::EquipmentStat::PenCarry`], so its default is
+    /// the kit that supplies it and not the range scorer's winner — see
+    /// [`crate::fauna::herd_default_hunt_kit`]. With no such kit on the roster this map holds the
+    /// *same* choice the range map does, and a penned herd reads exactly as it did before.
+    pub(crate) penned_parties: &'a HashMap<String, QuotedParty>,
+    /// **The party for a herd whose species the roster cannot resolve** — the hunt job's default,
+    /// resolved unbounded, which is the same fallback every other unresolved field on the row gives.
+    /// Answers for a penned herd too: with no species there is no row to quote either axis from.
+    pub(crate) fallback_party: &'a QuotedParty,
     /// `combat_config.forecast_range_sigmas` — how wide a band the **denial** estimate reports around
     /// its expected turns-to-collapse (`docs/plan_hunt_through_combat.md` §6.4). A **readout width**:
     /// nothing the sim resolves reads it, so widening the band cannot move an animal.
@@ -515,9 +552,9 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
         expedition,
         grid_size,
         wrap_horizontal,
-        party,
-        quoted_per_worker_haul,
-        ref quoted_kit_id,
+        parties,
+        penned_parties,
+        fallback_party,
         range_sigmas,
         ..
     } = inputs;
@@ -537,6 +574,19 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
         .map(|(entry, herd)| {
             // The species row backing this herd — resolved once for the raw combat components below.
             let species_def = fauna.species_by_display(&entry.species);
+            // **THIS HERD'S quoted party** — the kit the compose sheet opens on, memoized once per
+            // species per source axis by the caller. **A corralled herd reads the PEN table**: a
+            // pen is collected on `EquipmentStat::PenCarry` and only the handling gear supplies it,
+            // which no score against the *species* can say (`fauna::herd_default_hunt_kit`). A
+            // species the roster cannot resolve falls back to the hunt job's default, unbounded,
+            // like every other unresolved field here.
+            let axis = if herd.is_some_and(|herd| herd.is_corralled()) {
+                penned_parties
+            } else {
+                parties
+            };
+            let quoted = axis.get(&entry.species).unwrap_or(fallback_party);
+            let party = quoted.party;
             let forecast = herd
                 .map(|herd| {
                     hunt_forecast(
@@ -578,7 +628,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                         fauna,
                         expedition,
                         &party,
-                        quoted_per_worker_haul,
+                        quoted.per_worker_haul,
                         range_sigmas,
                     )
                 })
@@ -693,7 +743,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                             fauna,
                             expedition,
                             &party,
-                            quoted_per_worker_haul,
+                            quoted.per_worker_haul,
                         )
                     })
                     .unwrap_or_default(),
@@ -838,12 +888,16 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // `repelled`, so the control starts at a number that works instead of at an
                 // arbitrary default the player has to guess their way off.
                 denial_party_needed: denial.party_needed,
-                // **WHICH KIT EACH TABLE IS QUOTED FOR** — the hunt job's default, since neither is
-                // repriced per selection. Published so a client whose player has chosen another kit
-                // can say the table does not answer for it rather than presenting a kitted raid's
-                // numbers to a bare-handed party.
-                hunt_trip_estimates_kit_id: quoted_kit_id.clone(),
-                denial_estimates_kit_id: quoted_kit_id.clone(),
+                // **WHICH KIT EACH TABLE IS QUOTED FOR** — this quarry's own default, since neither
+                // is repriced per player selection. Published so a client whose player has chosen
+                // another kit can say the table does not answer for it rather than presenting a
+                // kitted raid's numbers to a bare-handed party. All three ids are one kit's, off
+                // the single `quoted` resolution above, so they cannot part company.
+                hunt_trip_estimates_kit_id: quoted.kit_id.clone(),
+                denial_estimates_kit_id: quoted.kit_id.clone(),
+                // **The kit this quarry wants** — what the compose sheet opens on and what
+                // `assign_labor … hunt <herd> <n>` resolves with no `kit` token.
+                default_kit_id: quoted.kit_id.clone(),
             }
         })
         .collect()

@@ -966,6 +966,15 @@ mod tests {
         visibility: &crate::visibility::VisibilityLedger,
         fog_enabled: bool,
     ) -> Vec<HerdTelemetryState> {
+        // These fixtures test the FOG FILTER, not the pricing, so every species quotes the same
+        // ordinary band — `parties` is left empty and every row falls through to the fallback.
+        let fallback = QuotedParty {
+            party: crate::fauna::HuntingParty::builtin_equipped(),
+            per_worker_haul: labor.hunt.per_worker_biomass_capacity,
+            kit_id: crate::equipment_config::EquipmentConfig::builtin()
+                .default_kit_id(crate::equipment_config::KitJob::Hunt)
+                .to_string(),
+        };
         herd_snapshot_entries(HerdSnapshotInputs {
             telemetry,
             registry,
@@ -978,11 +987,9 @@ mod tests {
             visibility,
             viewer: VIEWER,
             fog_enabled,
-            party: crate::fauna::HuntingParty::builtin_equipped(),
-            quoted_per_worker_haul: labor.hunt.per_worker_biomass_capacity,
-            quoted_kit_id: crate::equipment_config::EquipmentConfig::builtin()
-                .default_kit_id(crate::equipment_config::KitJob::Hunt)
-                .to_string(),
+            parties: &HashMap::new(),
+            penned_parties: &HashMap::new(),
+            fallback_party: &fallback,
             range_sigmas: crate::combat_config::CombatConfig::builtin().forecast_range_sigmas,
         })
     }

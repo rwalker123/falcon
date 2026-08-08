@@ -1319,6 +1319,10 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     var source_changed := _compose.hunt_key() != herd_id
     if source_changed:
         _compose.begin_hunt_source(herd_id, int(resolved.get("entity", -1)))
+        # **AND THE KIT, because the default is a fact about the ANIMAL now** — every render writes
+        # the resolved id back onto the compose state, so a choice resolved on the last herd would
+        # otherwise read as the player's own choice here and hide this herd's own default.
+        _compose.reset_hunt_kit()
     # The actor is the band-picker selection; fall back to the resolved band if it has vanished.
     var band := _band_labor.player_band_by_entity(_compose.hunt_band())
     if band.is_empty():

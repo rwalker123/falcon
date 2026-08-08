@@ -279,11 +279,16 @@ rather than silently ignored (`config-loading.md`'s "looks live but isn't").
 no target — the published kit roster and a band's own `hunterAttack` row.
 
 > **The hunt job's DEFAULT kit must carry no mass-bounded attack, and `validate` enforces it.**
-> `snapshot/capture.rs` builds **one** party to price **every** herd's estimate tables, so it cannot
-> carry a per-quarry attack and resolves unbounded. A bounded default weapon would make every table
-> quote a kitted take against animals it cannot touch — wrong in the *reassuring* direction, on the
-> surface a player commits from. The fix when that day comes is to resolve per herd inside
-> `herd_snapshot_entries`; the check is what makes that a decision rather than a bug found in play.
+> `default_kits.hunt` is what this file answers wherever there is **no quarry to test a bound
+> against**: a band's own `hunterAttack` row, `HuntingParty::builtin_equipped`, and a herd whose
+> species the roster cannot resolve, all of which go through `hunter_profile_unbounded`. A bounded
+> weapon there would be counted *everywhere* — the twin of the band-wide-kit check above, and
+> `config-loading.md`'s "looks live but isn't" in its most reassuring direction.
+>
+> **A bounded kit may still be a QUARRY's default**, because that resolution passes the animal's own
+> `body_mass` — which is exactly what makes `trapping` legal there and illegal here. The check's
+> *original* reason was narrower and is retired: `snapshot/capture.rs` used to build one unbounded
+> party for every herd, and it now resolves per species (see "Which kit a QUARRY wants is DERIVED").
 
 ### A kit resolves a multiplier as the MAX of what its LIVE items DECLARE
 
@@ -314,7 +319,7 @@ back" below.
 
 | File | Purpose |
 |---|---|
-| `src/data/equipment.json` | **The TOE** (loader `equipment_config.rs`, env override `EQUIPMENT_CONFIG_PATH`, validated inside `from_json_str` so every load path is covered). Two blocks. **`items`** — a map of id → `{ starting_durability, wear: { per, amount }, effects: [{ stat, equipped\|unequipped }] }`. `stat` is one of `attack` / `hunt_carry` / `forage_carry` / `pen_carry` / `scout_vantage_range` / `dispersion` / `exposure`; `per` is `kill` / `biomass_hauled` / `biomass_gathered` / `biomass_collected` / `tile_revealed` / `fight` — **there is no `turn` variant, and that is `docs/plan_denial_raid.md` §1.2 enforced by the type**. Shipped: `spears` (100 durability, 0.4/kill → 250 kills), `sled` (100, 0.02/biomass → 5000), `baskets` (100, 0.04/biomass → 2500), `traps` (100, 0.2/kill → 500 — twice the spear's life per kill because a trap is *worked* rather than thrown, and on the **same quantum** so a trapping party cannot hunt for free). **`kits`** — `{ id, display_name, jobs, uses }`, where `uses` names items and `jobs` is `hunt` / `forage` / `scout` / `warrior`; plus `default_kits`, which names one per job. Shipped additions: `husbandry_gear` (100, 0.04/biomass **butchered** → 2500 — halved from the 0.08 the collected-equals-carried basis shipped with, because `killed_biomass ≥ carried` always: on the one shipped pen species the two bases diverge on, the Wild Aurochs, the old rate ran a keeper's gear dry in ~10 turns against the 15–20-turn kit clock), `wayfinding` (100, 0.05/tile first-seen → 2000), `clubs` (100, 2.0/fight → 50 raids). **`validate` rejects**: an empty item table; any non-finite or `<= 0` durability or wear amount (an item with no wear rate is not consumable, one with no durability is born dry); an item with no effects; a negative or non-finite effect value; **an item declaring the same stat twice** (`effect()` takes the first match, so the second would be silently dead); **two items declaring the same TWO-TIER stat** (`EquipmentStat::TWO_TIER` — the unequipped fallback searches the whole table and takes the first match, so it would resolve by `BTreeMap` order, i.e. alphabetically); **a mass-bounded `attack` on an item a Scout or Warrior kit uses** (nothing on the other side of that fight has a `body_mass`, so the bound would be silently ignored); a duplicate kit id; a kit listing no jobs; a default naming no roster entry or not covering its own job; and **a `uses` entry naming an item the table does not carry**. That last one is a DEBT, not a nicety — see below. |
+| `src/data/equipment.json` | **The TOE** (loader `equipment_config.rs`, env override `EQUIPMENT_CONFIG_PATH`, validated inside `from_json_str` so every load path is covered). Two blocks plus one scalar. **`items`** — a map of id → `{ starting_durability, wear: { per, amount }, effects: [{ stat, equipped\|unequipped }] }`. `stat` is one of `attack` / `hunt_carry` / `forage_carry` / `pen_carry` / `scout_vantage_range` / `dispersion` / `exposure`; `per` is `kill` / `biomass_hauled` / `biomass_gathered` / `biomass_collected` / `tile_revealed` / `fight` — **there is no `turn` variant, and that is `docs/plan_denial_raid.md` §1.2 enforced by the type**. Shipped: `spears` (100 durability, 0.4/kill → 250 kills), `sled` (100, 0.02/biomass → 5000), `baskets` (100, 0.04/biomass → 2500), `traps` (100, 0.2/kill → 500 — twice the spear's life per kill because a trap is *worked* rather than thrown, and on the **same quantum** so a trapping party cannot hunt for free). **`kits`** — `{ id, display_name, jobs, uses }`, where `uses` names items and `jobs` is `hunt` / `forage` / `scout` / `warrior`; plus `default_kits`, which names one per job, and **`quarry_default_kit_margin`** (**0.25**) — how decisively a kit must beat `default_kits.hunt` on a species before it replaces it as that *quarry's* published default, as a fraction of the default's own score. Required, like every other key here: `serde`'s `0.0` would read as *"any win at all republishes the default"*, which is the flapping the lever exists to prevent. See "Which kit a QUARRY wants is DERIVED". Shipped additions: `husbandry_gear` (100, 0.04/biomass **butchered** → 2500 — halved from the 0.08 the collected-equals-carried basis shipped with, because `killed_biomass ≥ carried` always: on the one shipped pen species the two bases diverge on, the Wild Aurochs, the old rate ran a keeper's gear dry in ~10 turns against the 15–20-turn kit clock), `wayfinding` (100, 0.05/tile first-seen → 2000), `clubs` (100, 2.0/fight → 50 raids). **`validate` rejects**: an empty item table; any non-finite or `<= 0` durability or wear amount (an item with no wear rate is not consumable, one with no durability is born dry); an item with no effects; a negative or non-finite effect value; **an item declaring the same stat twice** (`effect()` takes the first match, so the second would be silently dead); **two items declaring the same TWO-TIER stat** (`EquipmentStat::TWO_TIER` — the unequipped fallback searches the whole table and takes the first match, so it would resolve by `BTreeMap` order, i.e. alphabetically); **a mass-bounded `attack` on an item a Scout or Warrior kit uses** (nothing on the other side of that fight has a `body_mass`, so the bound would be silently ignored); a duplicate kit id; a kit listing no jobs; a default naming no roster entry or not covering its own job; a non-finite or negative `quarry_default_kit_margin` (`0` is legal — flappy but coherent; a *negative* margin would let a kit that scores WORSE take the default's place, which is not a weaker rule but an inverted one); and **a `uses` entry naming an item the table does not carry**. That last one is a DEBT, not a nicety — see below. |
 | `src/data/creatures.json` | The creatures roster — intrinsic `CombatStats` for non-fauna units. `person.combat.attack` (**1.0**) is the hunting kit's **unequipped** tier. See `combat.md` for the roster's role in the fight. |
 
 ### `UnknownItem` pays back a guarantee the model used to get for free
@@ -444,13 +449,6 @@ party that never engaged.
 - **The compose sheets offer no kit picker on a Scout or Warrior row.** Both roles resolve their job's
   default and the tiers are live, but the client's picker is mounted only on the four hunt/forage
   compose sheets, so choosing `none` on a band-wide role is a command-line selection today.
-- **`KitRoster.priced_source` prices a hunt row on the SLED's axis even when the herd is penned.**
-  `JOB_CARRY_AXES` derives the axis from the JOB alone, so a compose sheet quoting the husbandry kit
-  against a pen reads the sled's tier — the direction that **under**-states the husbandry kit. The
-  herd's corral state is no longer the missing term: `priced_source` is handed the source itself and
-  reads `corralled` off it for both the offer test and the fight's gate
-  (`.claude/rules/client/labor-ui.md` → "A KIT THAT CANNOT WORK ON THIS QUARRY IS GREYED"). What is
-  missing is a per-SOURCE carry axis where the table states a per-job one.
 - **A Field's (rung-3) managed collection cap stays on the equipped reference rate.** Rung 3's
   harvest is quoted per *account* (`managed_per_worker_yield` / `_fodder` / `_trade`) and draws no
   biomass down, so it has no single biomass quantum to charge a basket against; wiring it needs the
@@ -592,20 +590,182 @@ Never a silent fall back to the default: naming a kit is how the player *compare
 substitution answers a different question than the one asked and looks exactly like an answer. Absent
 is the job's default, which is the pre-roster behaviour.
 
-### The two estimate tables are NOT repriced per kit — and they say so
+### The two estimate tables are NOT repriced per SELECTION — and they say so
 
-`huntTripEstimates` and `denialEstimates` stay quoted at the **hunt job's default kit**, and publish
-which (`huntTripEstimatesKitId` / `denialEstimatesKitId`). They are ~95% of snapshot capture and a
-kit axis multiplies them — the same structural cost question per-band repricing already faces (see
-`expeditions.md` → "THE WHOLE HERD TABLE IS PRICED AT THE EQUIPPED TIER"). The field exists so a
-client whose player has selected another kit can **refuse to present the table as an answer** for
-that selection rather than quoting a kitted raid's numbers to a bare-handed party. Two fields rather
-than one because they are two tables: if one is later repriced and the other is not, a single field
-would lie about whichever was left behind.
+`huntTripEstimates` and `denialEstimates` are quoted at **the herd's own default kit** (below), and
+publish which (`huntTripEstimatesKitId` / `denialEstimatesKitId`). They are ~95% of snapshot capture
+and a **selection** axis multiplies them — the same structural cost question per-band repricing
+already faces (see `expeditions.md` → "THE WHOLE HERD TABLE IS PRICED AT THE EQUIPPED TIER"). The
+field exists so a client whose player has selected another kit can **refuse to present the table as
+an answer** for that selection rather than quoting a kitted raid's numbers to a bare-handed party.
+Two fields rather than one because they are two tables: if one is later repriced and the other is
+not, a single field would lie about whichever was left behind.
+
+**Moving them from the job default to the herd's own default is NOT that repricing**, and the
+distinction is the cost: it is still **exactly one party per herd**, resolved once per *species ×
+source axis* (range / pen) and memoized, beside a forecast that was already per herd. What repricing
+per selection would add is a second axis — every table × every roster entry — and that is still
+declined.
+
+**All three ids come off ONE `QuotedParty`**, so `huntTripEstimatesKitId`, `denialEstimatesKitId` and
+`defaultKitId` are the same string by construction and cannot part company when the default moves —
+which is why the pen axis needed no separate work here. `kit_selection::published_default_kit`
+asserts the three agree on **every** herd it reads, so each fixture in that file gets the check.
+Consequence worth knowing: a corralled herd's two tables now quote the *handling gear's* tiers — no
+sled, no weapon — which is the honest reading of a party carrying the kit the sheet opened on.
+
+**It had to move with the default.** The client refuses a table whose published kit differs from the
+player's selection, and the sheet now *opens* on the herd's default; leaving the tables on the job
+default would fire that refusal on every small-game herd in the game and make the tables useless on
+exactly the quarry the arc was about.
+
+**A per-herd party may carry a mass-bounded weapon, and that is the difference from the fallback.**
+`herd_snapshot_entries` resolves `hunter_profile_against(body_mass)`, so a trapping party is priced
+only against animals a snare can hold; the no-species fallback resolves `hunter_profile_unbounded`
+at the job default, which is why that kit is still validate-checked for a bound.
 
 Everything the player *does* commit to is priced at the chosen kit: the launch feed line
 (`launch_forecast_party` + `launch_forecast_haul`), the in-flight delivery ETA, and both assign-time
 compose seeds (`hunt_source_yield_preview` / `forage_source_yield_preview`).
+
+## Which kit a QUARRY wants is DERIVED, never authored
+
+`default_kits.hunt` is one id for the whole job, and that could not express *"which kit this quarry
+wants"*. A Rabbit Warren's compose sheet therefore opened on the **Stalking kit** — which works on a
+rabbit and is **~4× worse** than `trapping`, because a rabbit's `wariness 0.75` loses a spear party
+three animals in four to the retreat while the trap's `dispersion 0` keeps all of them. The player
+was defaulted onto the wrong tool on exactly the quarry the roster has a right one for.
+
+**`fauna::quarry_default_hunt_kit` scores the roster against the species** and publishes the winner
+per herd (`HerdTelemetryState.defaultKitId`). It is reached through `fauna::herd_default_hunt_kit`,
+which answers the **source axis** first — a corralled herd never reaches the score, see "A PEN is not
+a scoring question" below. The score is §4.6's own per-hunter-turn ceiling,
+`fauna::per_hunter_take_biomass`:
+
+```text
+min(engage_rate, (attack − defense) / durability) × (1 − clamp(wariness × dispersion, 0, 1)) × body_mass
+```
+
+composed from the resolver's own `combat::strike_damage` / `combat::units_brought_down` and the
+retreat's own `fauna::stay_fraction`, so it is the take model read as a rate rather than a second
+copy of it. It sees **no** carry tier, crew size, escapement floor or quantiser — every term it drops
+is a property of the *band* or the *herd* rather than of the kit, which is what makes it a fair
+comparison between two kits against one quarry.
+
+> **A CONFIG PREDICATE (`mass < X && wariness > Y`) WAS REJECTED.** Those facts already exist twice —
+> the trap declares `max_body_mass 1.0` and `dispersion 0`, the species declares `body_mass`,
+> `wariness` and `defense` — and a third copy would drift on the first retune. It is the same mistake
+> this file already records rejecting twice: `dispersion` multiplies the species' own `wariness`
+> rather than reading a "jumpy" flag, and `max_body_mass` reads `body_mass` rather than a
+> `size_class`, both explicitly to avoid a second authority. A mass/wariness threshold would also be
+> **silently wrong on `defense`**, which is what actually zeroes a trap party on a Marsh Grazer.
+
+### Scored at the FRESH tier — wear must not enter
+
+Every kit is scored against `BandEquipment::default()`, so a herd's default is a property of
+**quarry × roster**: a per-world constant per herd, which cannot reshuffle under the player as their
+spears wear down. Scoring live would do exactly that — a dry `big_game` party falls to the bare
+hand's `attack 1`, a 20× cut on a `defense 0` warren, enough to flip any margin. It is the same rule
+the picker's greying follows. Pinned by
+`kit_selection::a_herds_default_kit_does_not_move_when_the_band_wears_its_kit_to_dry`.
+
+### A near-tie keeps the job default — `quarry_default_kit_margin`
+
+The winner replaces `default_kits.hunt` only when it scores more than
+`(1 + quarry_default_kit_margin) ×` the default's own score. Without a margin the published default
+flips on a trivial retune and the player watches their sheet move for reasons they cannot see. **A
+default that scores `0` is beaten by anything positive** — "better than nothing" needs no margin, and
+a margin cannot be expressed against zero. Ties resolve to the **earliest roster entry**, because the
+fold keeps only a strictly greater score.
+
+Measured against the shipped roster at `0.25`, the whole outcome is a clean split at the trap's
+`max_body_mass`:
+
+| quarry | body mass | job default | best | ratio | published default |
+|---|---|---|---|---|---|
+| Wild Fowl | 0.13 | 0.455 | 1.300 | 2.86 | **`trapping`** |
+| Rabbit Warren | 0.27 | 0.675 | 2.700 | 4.00 | **`trapping`** |
+| Forest Grouse | 0.47 | 1.253 | 3.133 | 2.50 | **`trapping`** |
+| Snow Hare Warren | 0.60 | 1.000 | 4.000 | 4.00 | **`trapping`** |
+| Silt Catfish | 0.67 | 4.020 | 6.700 | 1.67 | **`trapping`** |
+| Desert Gazelle and everything above | ≥ 3.3 | — | ties | 1.00 | `big_game` |
+
+**Nothing is near the line.** The narrowest genuine win is the Silt Catfish's `1.67×`, well clear of
+`1.25`; every large-game row is an exact tie, because a trap grants no attack past its bound and
+`husbandry` / `none` carry no weapon at all, so all three score exactly what the bare hand does.
+`kit_selection::a_narrow_win_keeps_the_job_default_until_the_margin_lets_it_through` sweeps the
+lever against the roster's *own* narrowest win rather than against a literal, so a retune moves the
+threshold with the game.
+
+### A PEN is not a scoring question — the source axis answers first
+
+`fauna::herd_default_hunt_kit` is the one seam every no-kit-named surface resolves through, and it
+puts a **source-axis** test in front of the score:
+
+> A corralled herd's default is the kit that supplies `EquipmentStat::PenCarry`; every other herd's
+> is the score's winner.
+
+**The scorer structurally cannot answer for a pen.** `per_hunter_take_biomass` prices a fight, and a
+pen has no fight stage — so it scored a corralled Rabbit Warren exactly as it scored one on the
+range and published `trapping`, a kit whose contribution at a pen is nil. A pen is collected on
+`PenCarry`, and the only kit supplying it is the handling gear (see "A pen is collected on
+`pen_carry`"). That is the same axis the picker's greying and `KitRoster.priced_source` already read
+off the source (`.claude/rules/client/labor-ui.md`), so it is one rule with three readers rather
+than a special case beside the score.
+
+**The kit is DERIVED, not named** — `EquipmentConfig::kit_supplying(job, stat)` returns the earliest
+hunt kit, in file order, whose live items declare the stat at the fresh tier. *"Nothing resolves a
+stat by naming an item"* applies to kits too: `"husbandry"` is spelled nowhere in the sim, only in a
+test fixture, so a roster that moves the handling gear to another kit moves the pen's default with
+it. **No such kit ⇒ fall through to the score**, which is the honest answer: nothing on this roster
+can work a pen properly, so the herd keeps whatever the range comparison chose rather than
+publishing an empty selection.
+
+**Wear does not enter here either.** `kit_supplying` resolves against `BandEquipment::default()`,
+because *which* kit supplies a stat is a property of quarry × roster, not of how worn one band's
+gear is — the same rule the score follows and the picker's greying follows.
+
+Capture-side this is a **second per-species quote table** (`penned_parties` beside `quoted_parties`
+in `snapshot/capture.rs`), not a per-herd resolution: the axis is a property of the herd but the
+quote is a property of the species, so each map is still one memo per species and a herd row is
+still one probe.
+
+### It is resolved SIM-side, and every command boundary agrees with the wire
+
+`handle_assign_labor`'s **no-kit-named** path resolves the *herd's* default for a `LaborTarget::Hunt`
+(`default_kit_for_target` → `EquipmentConfig::resolve_kit_or`). If the client picked a display
+default while the command still resolved `default_kits.hunt`, the sheet would open on Trapping and
+the command would run Stalking — the same silent substitution *"an unknown id … is a command
+failure, never a silent fall back"* exists to prevent, arriving through the **absent-token** door.
+The named path is untouched and is still the only validated one. `LaborAssignment` stores the
+*resolved* choice, so a replayed command is unaffected.
+
+**The two raiding verbs resolve through the SAME seam** — `resolve_raid_kit` builds a
+`LaborTarget::Hunt` naming the raid's herd and hands it to `default_kit_for_target`, rather than
+carrying a second resolution. `send_hunt_expedition` and `send_denial_raid` took `default_kits.hunt`
+on the absent token while the herd published its own, and that is the launch-sheet form of the same
+defect: the client's sheet reads `defaultKitId` and both estimate tables beside it are priced at
+that id, so the forecast the player committed from was **not** the one the party went out on. The
+kit is still resolved before the party is drawn off the band, so a bad id refuses the launch outright.
+
+`Expedition` stores the *resolved* choice and prices its whole life from it, so a raid launched on
+the herd's default keeps that kit even after the herd is penned or the roster is retuned.
+
+**`default_kits.hunt` stays the fallback and the answer for every surface with no quarry**: a
+Forage / Scout / Warrior row, a herd id the registry does not carry, a species the roster cannot
+resolve, a band's own `hunterAttack`, and `HuntingParty::builtin_equipped`. That is now the stated
+reason `validate` rejects a mass-bounded attack in it — see the callout above, whose old reason
+(*"the capture builds one party for every herd"*) the per-herd resolution retired.
+
+The shipped surfaces are pinned end to end, each against the **published** id rather than against a
+re-derivation, because the claim is that two surfaces agree and a re-derivation agrees with itself:
+
+| test | pins |
+|---|---|
+| `kit_selection::a_warren_defaults_to_the_trap_and_a_deer_to_the_spear_on_the_wire` | the score, off the **encoded** envelope, with an `assert_ne!` liveness half |
+| `kit_selection::a_corralled_herd_defaults_to_the_pen_kit_and_a_wild_one_of_the_same_species_does_not` | the source axis — the same species, penned and ranging, compared **to each other**, so a constant fails |
+| `server::tests::a_hunt_row_with_no_kit_named_stores_the_kit_the_wire_published_for_that_herd` | `assign_labor`'s absent-token path |
+| `server::tests::a_raid_with_no_kit_named_launches_on_the_kit_the_wire_published_for_that_herd` | `send_hunt_expedition`'s, with the same `assert_ne!` against the job default |
 
 ## On the wire
 
@@ -640,10 +800,11 @@ The kit selection adds five more slots, all append-only:
 | Field | Meaning |
 |---|---|
 | `SubsistenceSection.kits:[KitOption]` | **The roster, once per world** — `id`, `displayName`, `jobs`, and the tiers each kit grants a party whose components are **fresh** (`attack`, `huntCarryPerWorkerBiomass`, `forageCarryPerWorkerBiomass`, plus the appended `penCarryPerWorkerBiomass` and `scoutVantageRange`), so the picker renders real numbers without a second copy of the TOE table |
-| `SubsistenceSection.defaultHuntKitId` / `defaultForageKitId` / `defaultScoutKitId` / `defaultWarriorKitId:string` | What each verb runs on when the player names none. The last two arrived with the expanded roster; before it the band-wide roles had no kit axis and so no default to name |
+| `SubsistenceSection.defaultHuntKitId` / `defaultForageKitId` / `defaultScoutKitId` / `defaultWarriorKitId:string` | What each verb runs on when the player names none — **and, for Hunt, only where there is no quarry to score against**; a herd names its own below. The last two arrived with the expanded roster; before it the band-wide roles had no kit axis and so no default to name |
 | `PopulationCohortState.kitId:string` | Which kit the row's **hunt-job** tiers are quoted at — an in-flight party's **own** kit (one kit, so it covers *every* tier on that party's row), a resident band's **hunt job default** (a band has one kit per assignment and this row is per cohort). See "One choice per JOB" below for the three tiers it deliberately does **not** answer for on a resident band |
 | `LaborAssignment.kitId:string` | The kit that row's yields are priced at, **resolved** — never "unspecified" and never `""`: a band-wide role publishes its own job's default now |
-| `HerdTelemetryState.huntTripEstimatesKitId` / `denialEstimatesKitId:string` | Which kit each estimate table was computed at — see above |
+| `HerdTelemetryState.huntTripEstimatesKitId` / `denialEstimatesKitId:string` | Which kit each estimate table was computed at — this herd's own default, see above |
+| `HerdTelemetryState.defaultKitId:string` | **The kit THIS HERD wants** — what the hunt compose sheet opens on, and what `assign_labor … hunt <herd> <n>` **and both raiding verbs** resolve with no `kit` token. Derived at the fresh tier from the take score against the species, *except* for a **corralled** herd, which takes the kit supplying `EquipmentStat::PenCarry` (a pen has no fight to score — see "A PEN is not a scoring question"). Equal to the two ids above by construction (all three come off one `QuotedParty`). Empty only for a species the roster cannot resolve, which falls back to `defaultHuntKitId`. See "Which kit a QUARRY wants is DERIVED" |
 
 ### One choice per JOB, not one per tier — and `kitId` names only one of them
 

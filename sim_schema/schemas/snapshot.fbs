@@ -2477,21 +2477,37 @@ table HerdTelemetryState {
   denialPartyNeeded:uint = 0;
   // --- WHICH KIT THE TWO ESTIMATE TABLES ARE QUOTED FOR (appended last) -------------------------
   // The `equipment.json` roster id of the kit `huntTripEstimates` / `denialEstimates` were computed
-  // at — the HUNT JOB'S DEFAULT ("big_game" as shipped), on every herd, always.
+  // at — THIS HERD'S OWN DEFAULT, i.e. `defaultKitId` below, on every herd.
   //
-  // NEITHER TABLE IS REPRICED PER KIT, and this field exists so a client can SAY SO. They are ~95%
-  // of snapshot capture (measured: 57.5 ms with both, 2.9 ms with neither, on a fully-revealed
-  // 80x52 map) and a kit axis multiplies them — the same structural cost question per-band
-  // repricing already faces. So when the player's selected kit differs from this id, the client must
-  // refuse to present the table as an answer for their selection rather than quoting a kitted raid's
-  // numbers to a bare-handed party. The kit changes the take through BOTH the fight (attack tier)
-  // and the haul (sled tier), so the error is not a small one: a `none` party against a Red Deer's
-  // defense 1 has an effective attack of ZERO and no party size works at all.
+  // NEITHER TABLE IS REPRICED PER PLAYER SELECTION, and this field exists so a client can SAY SO.
+  // They are ~95% of snapshot capture (measured: 57.5 ms with both, 2.9 ms with neither, on a
+  // fully-revealed 80x52 map) and a selection axis multiplies them — the same structural cost
+  // question per-band repricing already faces. So when the player's selected kit differs from this
+  // id, the client must refuse to present the table as an answer for their selection rather than
+  // quoting a kitted raid's numbers to a bare-handed party. The kit changes the take through BOTH
+  // the fight (attack tier) and the haul (sled tier), so the error is not a small one: a `none`
+  // party against a Red Deer's defense 1 has an effective attack of ZERO and no party size works at
+  // all.
   //
-  // Two fields rather than one because they are two tables: if one is later repriced per kit and the
-  // other is not, a single field would lie about whichever was left behind.
+  // It is still exactly ONE party per herd — what moved is WHICH kit that party carries, from the
+  // hunt job's default to the one this quarry scores best against, so the tables agree with the kit
+  // the compose sheet actually opens on.
+  //
+  // Two fields rather than one because they are two tables: if one is later repriced per selection
+  // and the other is not, a single field would lie about whichever was left behind.
   huntTripEstimatesKitId:string;
   denialEstimatesKitId:string;
+  // --- THIS QUARRY'S OWN DEFAULT KIT (appended last) --------------------------------------------
+  // The `equipment.json` roster id the hunt compose sheet opens on for THIS herd, and the kit
+  // `assign_labor … hunt <herd> <n>` resolves when the player names none. DERIVED, never authored:
+  // the sim scores every hunt-job kit's per-hunter-turn take against this quarry at the FRESH tier
+  // and publishes the winner — but only when it beats `defaultHuntKitId` by
+  // `equipment.json`'s `quarry_default_kit_margin`, otherwise the job default stands.
+  //
+  // A per-world constant per herd: wear does NOT enter the score, so a band whose spears are worn
+  // to dry sees the same default as one that just spawned. Empty only for a herd whose species the
+  // roster cannot resolve, which falls back to `SubsistenceSection.defaultHuntKitId`.
+  defaultKitId:string;
 }
 
 table CommandEventState {
