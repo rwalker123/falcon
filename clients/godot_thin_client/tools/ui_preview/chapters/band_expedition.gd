@@ -77,7 +77,11 @@ func _click_disclosure(key: String) -> void:
 	var meta := HudDisclosureVocab.BREAKDOWN_TOGGLE_META_PREFIX + key
 	var label = _find_meta_label(h._hud, meta)
 	if label == null:
-		push_warning("ui_preview: no detail label offering '%s' — disclosure not rendered?" % meta)
+		# **A CLICK THAT NEVER HAPPENED IS A FAILED PRECONDITION, NOT AN ADVISORY.** The states this
+		# drives assert what the popover holds and what the drawer no longer does, and the second half
+		# passes on a drawer that rendered no disclosure at all — so warning here left the block
+		# claiming its result vacuously, with the frame quietly showing the un-clicked state.
+		h._fail("no detail label offering '%s' — the disclosure was never rendered, so nothing was clicked" % meta)
 		return
 	label.meta_clicked.emit(meta)
 

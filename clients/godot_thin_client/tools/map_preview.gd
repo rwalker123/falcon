@@ -25,6 +25,12 @@ const DEFAULT_CANVAS_SIZE := Vector2i(1000, 800)
 # so a WM that refuses to shrink the window fails loudly rather than hanging.
 const CANVAS_PIN_MAX_FRAMES := 60
 
+## The run's exit status. **A clean run exits 0 and a run with any `FAIL` in it exits non-zero**, so
+## the status and the output agree — a harness that printed an error and still exited 0 was
+## indistinguishable from a green one to anything but a human reading stdout.
+const EXIT_OK := 0
+const EXIT_FAILED := 1
+
 const GRID_W := 16
 const GRID_H := 12
 const BAND_ENTITY := 9001
@@ -470,6 +476,8 @@ var _river_lake_hex := Vector2i(-1, -1)
 # river states inherit it); the ANNOTATION states that follow switch back to DEFAULT_CANVAS_SIZE,
 # because their fixtures are authored against the GRID_W×GRID_H grid like the earlier states.
 var _canvas_size: Vector2i = DEFAULT_CANVAS_SIZE
+# How many times `_fail` fired this run — the ONE input to the exit status (see `_finish`).
+var _failures := 0
 
 func _ready() -> void:
 	# FREEZE ANIMATION TIME. What it buys: with the canvas pinned, the only remaining run-to-run
@@ -1399,7 +1407,24 @@ func _ready() -> void:
 
 	_assert_zoom_ladder()
 
-	get_tree().quit()
+	_finish()
+
+
+## The ONE failure sink, so `_failures` cannot drift from what was printed. Every caller passes the
+## text AFTER the `FAIL` token, which is what the output scanning keys on.
+func _fail(message: String) -> void:
+	_failures += 1
+	push_error("map_preview: FAIL — %s" % message)
+
+
+## **THE ONLY WAY OUT OF THIS HARNESS.** Every path that ends the run comes through here, so the
+## status is derived from the run's own tally in exactly one place.
+func _finish() -> void:
+	if _failures > 0:
+		print("map_preview: RUN FAILED — %d failure(s); see the FAIL lines above" % _failures)
+	else:
+		print("map_preview: run complete — no failures")
+	get_tree().quit(EXIT_FAILED if _failures > 0 else EXIT_OK)
 
 ## The zoom rail's LADDER, asserted rather than photographed — it SAVES NO PNG, deliberately, so the
 ## frame set stays a 62-frame bit-identity reference and this guard cannot re-baseline anything.
@@ -1454,25 +1479,25 @@ func _assert_zoom_ladder() -> void:
 		walk.append("%.1f" % _map.zoom_factor)
 	print("map_preview: zoom ladder = ", " → ".join(walk))
 
-## Same shape as `ui_preview`'s `_assert_hud`: PASS prints, FAIL prints AND raises, so a regression is
-## visible in the run log next to the neighbouring states' `push_warning`s rather than needing a diff.
+## Same shape as `ui_preview`'s `_assert_hud`: PASS prints, FAIL goes through `_fail` — the harness's
+## ONE sink, so the run's exit status counts this claim. It used to print its own `FAIL` line and
+## `push_warning` beside it, which is the whole defect the sink exists to remove: every assertion in
+## this harness reaches the log through here, so the run printed the family's `FAIL` token and then
+## exited 0. The `zoom-ladder — ` category mirrors the `PASS zoom-ladder — ` line it fails against, the
+## way `ui_preview`'s `hud — ` category does.
 func _assert_ladder(label: String, actual: float, expected: float) -> void:
 	if is_equal_approx(actual, expected):
 		print("map_preview: PASS zoom-ladder — %s (%.2f)" % [label, actual])
 	else:
-		var message := "map_preview: FAIL zoom-ladder — %s: got %.4f, expected %.4f" % [label, actual, expected]
-		print(message)
-		push_warning(message)
+		_fail("zoom-ladder — %s: got %.4f, expected %.4f" % [label, actual, expected])
 
-## The general form of the above, for a claim that is already a bool. Same PASS/FAIL wording, so one
-## grep reads every assertion in this harness.
+## The general form of the above, for a claim that is already a bool. Same PASS/FAIL wording and the
+## same sink, so one grep reads every assertion in this harness and `$?` agrees with it.
 func _assert_map(label: String, condition: bool) -> void:
 	if condition:
 		print("map_preview: PASS — %s" % label)
 	else:
-		var message := "map_preview: FAIL — %s" % label
-		print(message)
-		push_warning(message)
+		_fail(label)
 
 ## **THE WORKED-BAND FRAMES RENDER MORE THAN ONE HARVEST MARK.** A picture cannot carry this: every
 ## zone mark is a plausible-looking glyph on a yield label, so a renderer that answered ONE mark for
@@ -1589,7 +1614,7 @@ func _capture() -> Image:
 		await get_tree().process_frame
 		RenderingServer.force_draw()
 		await get_tree().process_frame
-	push_error("map_preview: viewport never came back to the pinned %s canvas" % _canvas_size)
+	_fail("viewport never came back to the pinned %s canvas" % _canvas_size)
 	return null
 
 func _save(name: String) -> void:
@@ -1598,7 +1623,7 @@ func _save(name: String) -> void:
 		return
 	var err := image.save_png("%s/%s.png" % [OUT_DIR, name])
 	if err != OK:
-		push_error("map_preview: failed to save %s (err %d)" % [name, err])
+		_fail("failed to save %s (err %d)" % [name, err])
 	else:
 		print("map_preview: saved ", name, ".png")
 
@@ -1613,7 +1638,7 @@ func _save_crop(name: String, fx0: float, fy0: float, fx1: float, fy1: float) ->
 	var crop := image.get_region(rect)
 	var err := crop.save_png("%s/%s.png" % [OUT_DIR, name])
 	if err != OK:
-		push_error("map_preview: failed to save %s (err %d)" % [name, err])
+		_fail("failed to save %s (err %d)" % [name, err])
 	else:
 		print("map_preview: saved ", name, ".png")
 
@@ -1645,7 +1670,7 @@ func _save_crop_px(name: String, center: Vector2, half: float) -> void:
 	var crop := image.get_region(rect)
 	var err := crop.save_png("%s/%s.png" % [OUT_DIR, name])
 	if err != OK:
-		push_error("map_preview: failed to save %s (err %d)" % [name, err])
+		_fail("failed to save %s (err %d)" % [name, err])
 	else:
 		print("map_preview: saved ", name, ".png")
 

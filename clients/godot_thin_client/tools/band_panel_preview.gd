@@ -19,12 +19,11 @@ const HUD_SCENE := preload("res://src/ui/HudLayer.tscn")
 ## **This harness does NOT have `ui_preview`'s chapter-loading defect** — it loads no chapters, so
 ## nothing here can leave a half-written frame set behind a broken sub-script. What it DOES share is
 ## the shape underneath it: the whole run is one long `await`ing `_ready()` whose last line is
-## `get_tree().quit()`, so any runtime error aborts it without ever exiting, and any of the three
+## `_finish()`, so any runtime error aborts it without ever exiting, and any of the three
 ## scenes/scripts it `preload`s failing to compile takes THIS script's parse down with it — leaving
 ## the root node scriptless and the process idling forever with no FAIL and no status. The guard is
-## the same node, for that shape only; this harness's own PASS/FAIL contract is untouched (it prints
-## `ERROR: band_panel_preview` lines and still exits 0 on a red run — see
-## `.claude/rules/client/test-harnesses.md`).
+## the same node, for that shape only. A run that DOES reach `_finish()` derives its own status from
+## `_failures` — see `_fail` and `EXIT_OK` / `EXIT_FAILED`.
 const WATCHDOG_NODE := "Watchdog"
 const WATCHDOG_PROGRESS_METHOD := "note_progress"
 
@@ -416,11 +415,21 @@ const WINDOW_PIN_MAX_FRAMES := 30
 ## RE-applied — asynchronously, so "it is the right size once" is not the same as "it stays".
 const CANVAS_STABLE_FRAMES := 30
 const CANVAS_STABLE_MAX_FRAMES := 600
+## What `DisplayServer.get_name()` answers under `--headless` (measured, Godot 4.7 — it reads `macOS`
+## in a real window). That driver opens no window and offers only the `dummy` rendering driver, so
+## every window geometry this harness pins is a stub: see `_is_headless`.
+const HEADLESS_DISPLAY_DRIVER := "headless"
 ## Phase to seed the turn orb's calm breath at, as a fraction of `TurnOrb.PULSE_PERIOD`. The breath is
 ## `0.5 - 0.5 * cos(t)`, which is ZERO — its faintest, smallest instant — at phase 0, so freezing the
 ## clock there would render the pulse at the bottom of its range. A quarter period puts `cos` at 0,
 ## i.e. the breath's MIDPOINT, which is what an unfrozen frame averaged.
 const TURN_ORB_PULSE_MIDPOINT_FRACTION := 0.25
+
+## The run's exit status. **A clean run exits 0 and a run with any `FAIL` in it exits non-zero**, so
+## the status and the output agree — stdout used to be the only signal this harness gave, and a red
+## run was indistinguishable from a green one to anything that only checked the status.
+const EXIT_OK := 0
+const EXIT_FAILED := 1
 
 ## The size every state re-asserts before it renders — see `_pin_window`.
 var _pinned_size := PREVIEW_SIZE
@@ -435,6 +444,8 @@ var _reservation_listener: Callable
 var _watchdog: Node = null
 ## The last state `_save`d, so an assertion failure names the frame it fired on.
 var _current_state := "<pre-render>"
+## How many assertions have failed, tallied by `_fail` and turned into the exit status by `_finish`.
+var _failures := 0
 ## Set by `_unhandled_input` below — this harness's stand-in for `MapView`'s hex picking, which is also
 ## an `_unhandled_input` handler. See `_assert_open_strip_reaches_the_map`.
 var _unhandled_press_seen := false
@@ -2136,7 +2147,7 @@ func _render_dock_row_states() -> void:
 	_assert_chrome_home_exact("band_panel_dockrow_reflow_round_trip")
 	var round_trip_work_zone := _panel.work_zone_size()
 	if not round_trip_work_zone.is_equal_approx(vertical_work_zone):
-		push_error("band_panel_preview: round trip left the work zone at %s, baseline was %s" % [
+		_fail("round trip left the work zone at %s, baseline was %s" % [
 			round_trip_work_zone, vertical_work_zone])
 	else:
 		print("band_panel_preview: assert OK — round trip restored work_zone_size() to %s" % round_trip_work_zone)
@@ -2277,7 +2288,7 @@ func _assert_hud_yields_the_strip(expected_yield: bool, state_name: String) -> v
 			state_name, "yields" if expected_yield else "KEEPS", inset, size])
 		return
 	for failure in failures:
-		push_error("band_panel_preview: %s — %s" % [state_name, failure])
+		_fail("%s — %s" % [state_name, failure])
 
 ## GUARD: the reported symptom itself — **does the HUD's left column run to the bottom of the window?**
 ##
@@ -2314,7 +2325,7 @@ func _assert_lateral_columns_reach_the_bottom(expected: bool, state_name: String
 			state_name, "reach" if expected else "correctly stop short of", ", ".join(reached)])
 		return
 	for failure in failures:
-		push_error("band_panel_preview: %s — %s" % [state_name, failure])
+		_fail("%s — %s" % [state_name, failure])
 
 ## GUARD: **THE NEGATIVE — a full-height column and the card do not overlap.**
 ##
@@ -2361,7 +2372,7 @@ func _assert_card_clears_lateral_columns(state_name: String) -> void:
 			state_name, float(reach["bottom"])])
 		return
 	for failure in failures:
-		push_error("band_panel_preview: %s — %s" % [state_name, failure])
+		_fail("%s — %s" % [state_name, failure])
 
 ## GUARD: the yield rule is a FIXED POINT, and reaches it inside a bound.
 ##
@@ -2616,7 +2627,7 @@ func _legend_worst_case_rows() -> int:
 ## one `Tween`, and a `Tween` at `Engine.time_scale = 0` never advances at all.
 func _assert_right_dock_clears_the_parked_chrome(state_name: String) -> void:
 	if not _hud.has_method("set_right_column_bottom_clearance"):
-		push_error("band_panel_preview: %s — the HUD has no right-column clearance to assert" % state_name)
+		_fail("%s — the HUD has no right-column clearance to assert" % state_name)
 		return
 	var legend_rows: Array = []
 	for i in range(_legend_worst_case_rows()):
@@ -2944,7 +2955,7 @@ func _assert_band_tier_rises(state_name: String) -> void:
 func _assert_band_flank_is_full(state_name: String) -> void:
 	var columns := _band_flank_column_extents()
 	if columns.is_empty():
-		push_error("band_panel_preview: %s — no band flank columns to measure" % state_name)
+		_fail("%s — no band flank columns to measure" % state_name)
 		return
 	var box: float = _band_flank_box_height()
 	var used := 0.0
@@ -3222,7 +3233,7 @@ func _assert_panel_within_window(state_name: String) -> void:
 			str(_panel._panel.get_global_rect().size), str(window.size)])
 		return
 	for failure in failures:
-		push_error("band_panel_preview: %s — %s" % [state_name, failure])
+		_fail("%s — %s" % [state_name, failure])
 
 ## GUARD: the strip's cross-axis size is CONTENT-INDEPENDENT, still — the invariant that keeps
 ## `current_reservation_size()` (and therefore MapView's inset and its cache) constant while the
@@ -3252,7 +3263,11 @@ func _assert_badge_cannot_move_the_reservation(state_name: String) -> void:
 func _seed_embedded_minimap() -> void:
 	var container: Control = _hud.get_minimap_container()
 	if container == null:
-		push_warning("band_panel_preview: no MinimapContainer — dock-row rail widths will be unrealistic")
+		# **A MISSING FIXTURE HOST IS A FAILURE, NOT AN ADVISORY.** Without the container there is no minimap, the chrome column
+		# collapses to the zoom rail's ~80px, and every dock-row assertion below — the rail's span, the
+		# parked cluster's fit, the card's centring — is measured against a rail the game does not have.
+		# The frames render fine and prove nothing, which is the failure this harness exists to refuse.
+		_fail("no MinimapContainer in the HUD — the dock-row states would measure a rail the game never has")
 		return
 	var option: Dictionary = MapSizes.option_for(DOCKROW_MAP)
 	var grid := Vector2i(int(option["width"]), int(option["height"]))
@@ -3286,7 +3301,7 @@ func _assert_chrome_parked(parked: bool, state_name: String) -> void:
 		print("band_panel_preview: assert OK — %s chrome %s" % [state_name, "parked in the row" if parked else "home in BottomBar"])
 		return
 	for failure in failures:
-		push_error("band_panel_preview: %s — %s" % [state_name, failure])
+		_fail("%s — %s" % [state_name, failure])
 
 ## The two parked-chrome clusters paired with the rail slot each belongs in — nav on TOP, turn cluster
 ## BELOW. One definition, so the parent assertion and the containment assertion cannot disagree about
@@ -3379,7 +3394,7 @@ func _assert_parked_chrome_fits(state_name: String) -> void:
 		print("band_panel_preview: assert OK — %s the chrome stack fits its rail, the rail fits the strip, and the stack is centred" % state_name)
 		return
 	for failure in failures:
-		push_error("band_panel_preview: %s — %s" % [state_name, failure])
+		_fail("%s — %s" % [state_name, failure])
 
 ## PRECONDITION for the two assertions below: the strip really is WIDER than the card wants to be, so
 ## the island geometry they judge has slack to get wrong. Without it both would pass vacuously on a
@@ -3389,7 +3404,7 @@ func _assert_card_is_narrower_than_strip(state_name: String) -> void:
 	var strip := _panel._root.get_global_rect().size.x
 	var slack: float = strip - card - _panel._rail_span()
 	if slack <= ZONE_BOUNDS_TOLERANCE:
-		push_error("band_panel_preview: %s — the card (%.0fpx) fills its %.0fpx strip, so the island assertions below prove nothing" % [
+		_fail("%s — the card (%.0fpx) fills its %.0fpx strip, so the island assertions below prove nothing" % [
 			state_name, card, strip])
 		return
 	print("band_panel_preview: assert OK — %s the card is an island (%.0fpx card + %.0fpx chrome span in a %.0fpx strip, %.0fpx of open map)" % [
@@ -3419,7 +3434,7 @@ func _assert_rail_is_right_justified(state_name: String) -> void:
 	var window_right: float = get_viewport().get_visible_rect().end.x
 	var gap: float = window_right - rail_right
 	if absf(gap) > ZONE_BOUNDS_TOLERANCE:
-		push_error("band_panel_preview: %s — the chrome cluster ends at %.0f but the window ends at %.0f — %.0fpx short (strip end %.0f, HUD column %.0f)" % [
+		_fail("%s — the chrome cluster ends at %.0f but the window ends at %.0f — %.0fpx short (strip end %.0f, HUD column %.0f)" % [
 			state_name, rail_right, window_right, gap,
 			_panel._root.get_global_rect().end.x, _panel._bound_trailing])
 		return
@@ -3456,7 +3471,7 @@ func _assert_card_follows_its_content(busy_width: float, busy_columns: int, stat
 			state_name, busy_width, busy_columns, quiet_width, quiet_columns])
 		return
 	for failure in failures:
-		push_error("band_panel_preview: %s — %s" % [state_name, failure])
+		_fail("%s — %s" % [state_name, failure])
 
 ## GUARD: a TOP-docked card is drawn over NEITHER HUD column (issue #377).
 ##
@@ -3521,7 +3536,7 @@ func _assert_card_clears_hud_columns(state_name: String) -> void:  # coroutine: 
 		print("band_panel_preview: assert OK — %s the card clears both HUD columns (and would collide unbound)" % state_name)
 		return
 	for failure in failures:
-		push_error("band_panel_preview: %s — %s" % [state_name, failure])
+		_fail("%s — %s" % [state_name, failure])
 
 ## GUARD: the CARD sits centred in the room the chrome cluster and the HUD columns leave.
 ##
@@ -3556,7 +3571,7 @@ func _assert_card_is_centred(state_name: String) -> void:
 	var lead_margin: float = card.position.x - (strip.position.x + _panel._bound_leading)
 	var trail_margin: float = trail_edge - card.end.x
 	if absf(lead_margin - trail_margin) > ZONE_BOUNDS_TOLERANCE:
-		push_error("band_panel_preview: %s — the card is not centred in its gap: %.0fpx of margin leading (past a %.0fpx HUD column) and %.0fpx trailing (up to %s at %.0f)" % [
+		_fail("%s — the card is not centred in its gap: %.0fpx of margin leading (past a %.0fpx HUD column) and %.0fpx trailing (up to %s at %.0f)" % [
 			state_name, lead_margin, _panel._bound_leading, trail_margin, trail_what, trail_edge])
 		return
 	print("band_panel_preview: assert OK — %s the card is centred in its gap (%.0fpx either side, between a %.0fpx HUD column and %s)" % [
@@ -3652,7 +3667,7 @@ func _assert_open_strip_reaches_the_map(state_name: String) -> void:
 			state_name, card.position.x - row_start, row_end - rail_span - card.end.x])
 		return
 	for failure in failures:
-		push_error("band_panel_preview: %s — %s" % [state_name, failure])
+		_fail("%s — %s" % [state_name, failure])
 
 ## Where the "is the probe alive at all" press lands: the middle of the canvas, which on every state
 ## that runs this guard is bare ground — the strip is on an edge and the HUD's own columns are not.
@@ -3751,7 +3766,7 @@ func _assert_no_rail_width(state_name: String) -> void:
 		print("band_panel_preview: assert OK — %s spends nothing on the chrome rail" % state_name)
 		return
 	for failure in failures:
-		push_error("band_panel_preview: %s — %s" % [state_name, failure])
+		_fail("%s — %s" % [state_name, failure])
 
 ## GUARD: the clusters came home to the EXACT authored parent, child index, anchors and size flags the
 ## controller captured before the first reflow. A preset applied on park must not leak into the
@@ -3781,7 +3796,7 @@ func _assert_chrome_home_exact(state_name: String) -> void:
 		print("band_panel_preview: assert OK — %s chrome restored exactly (parent/index/anchors/flags/bar minimum)" % state_name)
 		return
 	for failure in failures:
-		push_error("band_panel_preview: %s — %s" % [state_name, failure])
+		_fail("%s — %s" % [state_name, failure])
 
 ## GUARD (FIX 4): the Next-delivery line must reach the DETAIL PANEL through the MARKER, not only the
 ## raw `_player_expeditions` dict. Push a hunt party through a REAL MapView (display_snapshot →
@@ -3814,7 +3829,7 @@ func _assert_detail_panel_delivery() -> void:
 	if lines.has(want):
 		print("band_panel_preview: assert OK — detail panel (marker path) renders '%s'" % want)
 	else:
-		push_error("band_panel_preview: detail panel MISSING '%s' — marker path dropped the field. Got: %s" % [
+		_fail("detail panel MISSING '%s' — marker path dropped the field. Got: %s" % [
 			want, str(lines)])
 	view.queue_free()
 
@@ -3857,7 +3872,7 @@ func _check_line(label: String, got: String, want: String) -> void:
 	if got == want:
 		print("band_panel_preview: assert OK — %s renders '%s'" % [label, got])
 	else:
-		push_error("band_panel_preview: %s expected '%s' but got '%s'" % [label, want, got])
+		_fail("%s expected '%s' but got '%s'" % [label, want, got])
 
 ## The parties zone's host in the WIDE shell — the one the worst-case party state renders into. (The
 ## NARROW shell swaps in `NarrowZoneHost`, which is why the band zone's own extent report carries a
@@ -4013,7 +4028,7 @@ func _assert_work_zone_readable() -> void:
 		return
 	var work_width := _panel.work_zone_size().x
 	if work_width + ZONE_BOUNDS_TOLERANCE < BandCityPanel.ZONE_WORK_MIN_WIDTH:
-		push_error("band_panel_preview: wide shell with a %.0fpx work zone — under ZONE_WORK_MIN_WIDTH (%.0f)" % [
+		_fail("wide shell with a %.0fpx work zone — under ZONE_WORK_MIN_WIDTH (%.0f)" % [
 			work_width, BandCityPanel.ZONE_WORK_MIN_WIDTH])
 	else:
 		print("band_panel_preview: assert OK — wide shell work zone %.0fpx >= %.0f" % [
@@ -4024,7 +4039,7 @@ func _assert_work_zone_readable() -> void:
 func _assert_shell_is_wide(expected: bool, state_name: String) -> void:
 	var actual := _panel._shell_is_wide()
 	if actual != expected:
-		push_error("band_panel_preview: %s expected shell wide=%s but got %s" % [
+		_fail("%s expected shell wide=%s but got %s" % [
 			state_name, expected, actual])
 	else:
 		print("band_panel_preview: assert OK — %s shell wide=%s" % [state_name, actual])
@@ -4045,7 +4060,7 @@ func _assert_people_sum_matches_size(band: Dictionary, state_name: String) -> vo
 		total += part
 	var size := int(band.get("size", 0))
 	if total != size:
-		push_error("band_panel_preview: %s PEOPLE brackets sum to %d but the band holds %d (raw %s — narrowed?)" % [
+		_fail("%s PEOPLE brackets sum to %d but the band holds %d (raw %s — narrowed?)" % [
 			state_name, total, size, str(raw)])
 	else:
 		print("band_panel_preview: assert OK — %s PEOPLE brackets sum to the band's %d people" % [state_name, size])
@@ -4166,7 +4181,7 @@ func _assert_scroll_only_where_sanctioned() -> void:
 		if not matched:
 			strays.append(String(node.get_path()))
 	if not strays.is_empty():
-		push_error("band_panel_preview: %s — ScrollContainer outside a sanctioned zone at %s — no other zone may scroll"
+		_fail("%s — ScrollContainer outside a sanctioned zone at %s — no other zone may scroll"
 			% [_current_state, ", ".join(strays)])
 		return
 	# A zone the panel does not currently own (no band, or the zones freed) has no scroll to find — an
@@ -4215,7 +4230,7 @@ func _parties_list_scroll() -> ScrollContainer:
 func _assert_parties_list_scrolls_iff_it_overflows(state_name: String) -> void:
 	var scroll := _parties_list_scroll()
 	if scroll == null:
-		push_error("band_panel_preview: %s — no parties list to judge" % state_name)
+		_fail("%s — no parties list to judge" % state_name)
 		return
 	var rows: Control = scroll.get_child(0)
 	var needed := rows.get_combined_minimum_size().y
@@ -4240,7 +4255,7 @@ func _assert_zone_content_fits() -> void:
 		print("band_panel_preview: assert OK — every zone's content fits its zone box (%s)" % _current_state)
 		return
 	for failure in failures:
-		push_error("band_panel_preview: %s — %s" % [_current_state, failure])
+		_fail("%s — %s" % [_current_state, failure])
 
 ## Walk a zone host looking for content the BOX cannot hold. The zone content roots are plain
 ## `Control` wrappers (`HudWidgets.wrap_zone`) that report NO minimum size, so the measurable thing is the
@@ -4279,16 +4294,16 @@ func _collect_zone_content_shortfall(node: Node, host: Control, failures: Array[
 func _assert_trade_row_absent_in_short_tier() -> void:
 	var vitals := _find_vitals_label(_panel)
 	if vitals == null:
-		push_error("band_panel_preview: short-tier trade assert found no vitals label")
+		_fail("short-tier trade assert found no vitals label")
 		return
 	var text: String = vitals.get_parsed_text()
 	# The Food row proves the vitals label is actually populated — without it, "no Trade row" would
 	# pass vacuously on an empty label.
 	if not text.contains("Food"):
-		push_error("band_panel_preview: short-tier trade assert — vitals label has no Food row (vacuous)")
+		_fail("short-tier trade assert — vitals label has no Food row (vacuous)")
 		return
 	if text.contains("Trade"):
-		push_error("band_panel_preview: SHORT tier still renders the Trade row — the compact gate is off")
+		_fail("SHORT tier still renders the Trade row — the compact gate is off")
 		return
 	print("band_panel_preview: assert OK — SHORT tier drops the Trade row (Food row still present)")
 
@@ -4385,14 +4400,14 @@ func _contains_scroll(node: Node) -> bool:
 func _assert_merged_food_row_fits() -> void:
 	var vitals := _find_vitals_label(_panel)
 	if vitals == null:
-		push_error("band_panel_preview: merged-food-row assert found no vitals label")
+		_fail("merged-food-row assert found no vitals label")
 		return
 	var text: String = vitals.get_parsed_text()
 	if not text.contains(MERGED_FOOD_HAY_NEEDLE):
-		push_error("band_panel_preview: the SHORT tier's Food row carries no hay clause — the merge is off (got: %s)" % text)
+		_fail("the SHORT tier's Food row carries no hay clause — the merge is off (got: %s)" % text)
 		return
 	if text.contains(FODDER_ROW_NEEDLE):
-		push_error("band_panel_preview: the SHORT tier still renders a standalone Fodder row beside the merged Food line")
+		_fail("the SHORT tier still renders a standalone Fodder row beside the merged Food line")
 		return
 	# **THE ROW IS BOUNDED BY THE ROW THAT FOLLOWS IT, AND THAT ROW IS NOW `Kit`.** This read to
 	# `Morale` while Food and Morale were adjacent; the Kit row landed between them and the cut then
@@ -4402,7 +4417,7 @@ func _assert_merged_food_row_fits() -> void:
 	var food_run := _vitals_run(text, HudDisclosureVocab.DETAIL_ROW_FOOD,
 		[HudDisclosureVocab.DETAIL_ROW_KIT, HudDisclosureVocab.DETAIL_ROW_MORALE])
 	if food_run == "":
-		push_error("band_panel_preview: merged-food-row assert cannot find the Food row (got: %s)" % text)
+		_fail("merged-food-row assert cannot find the Food row (got: %s)" % text)
 		return
 	_assert_vitals_run_fits("merged Food", food_run, vitals)
 
@@ -4419,17 +4434,17 @@ func _assert_merged_food_row_fits() -> void:
 func _assert_merged_morale_growth_fits() -> void:
 	var vitals := _find_vitals_label(_panel)
 	if vitals == null:
-		push_error("band_panel_preview: merged-morale-row assert found no vitals label")
+		_fail("merged-morale-row assert found no vitals label")
 		return
 	var text: String = vitals.get_parsed_text()
 	if not text.contains(HudDisclosureVocab.DETAIL_ROW_GROWTH):
-		push_error("band_panel_preview: the SHORT tier's Morale line carries no Growth clause — the merge is off (got: %s)" % text)
+		_fail("the SHORT tier's Morale line carries no Growth clause — the merge is off (got: %s)" % text)
 		return
 	# Nothing follows Morale in the dock's vitals block (the Position row is the drawer host's), so the
 	# run reaches the end of the label — stated as an EMPTY bound list rather than left implicit.
 	var morale_run := _vitals_run(text, HudDisclosureVocab.DETAIL_ROW_MORALE, [])
 	if morale_run == "":
-		push_error("band_panel_preview: merged-morale-row assert cannot find the Morale row (got: %s)" % text)
+		_fail("merged-morale-row assert cannot find the Morale row (got: %s)" % text)
 		return
 	_assert_vitals_run_fits("merged Morale+Growth", morale_run, vitals)
 
@@ -4445,15 +4460,15 @@ func _assert_merged_morale_growth_fits() -> void:
 func _assert_growth_row_not_merged(state_name: String) -> void:
 	var vitals := _find_vitals_label(_panel)
 	if vitals == null:
-		push_error("band_panel_preview: growth-row tier assert found no vitals label (%s)" % state_name)
+		_fail("growth-row tier assert found no vitals label (%s)" % state_name)
 		return
 	var merged_needle := BandDetailLines.BAND_MORALE_GROWTH_CLAUSE_SEPARATOR \
 		+ DetailFormat.DISCLOSURE_URL_OPEN
 	if vitals.text.contains(merged_needle):
-		push_error("band_panel_preview: %s merged Growth onto the Morale line — that is the SHORT tier's layout only" % state_name)
+		_fail("%s merged Growth onto the Morale line — that is the SHORT tier's layout only" % state_name)
 		return
 	if not vitals.get_parsed_text().contains(DetailFormat.GROWTH_ROW_ANCHOR_SUFFIX):
-		push_error("band_panel_preview: %s dropped the Growth row's `of normal` anchor — the SHORT tier's short form leaked up" % state_name)
+		_fail("%s dropped the Growth row's `of normal` anchor — the SHORT tier's short form leaked up" % state_name)
 		return
 	print("band_panel_preview: assert OK — %s keeps Growth as its own row, anchor intact" % state_name)
 
@@ -4484,7 +4499,7 @@ func _assert_vitals_run_fits(label: String, run: String, vitals: RichTextLabel) 
 	print("band_panel_preview: %s row — \"%s\" measures %.0fpx of a %.0fpx column" % [
 		label, run, needed, available])
 	if needed > available:
-		push_error("band_panel_preview: the %s line WRAPS — %.0fpx of run in a %.0fpx column" % [
+		_fail("the %s line WRAPS — %.0fpx of run in a %.0fpx column" % [
 			label, needed, available])
 	else:
 		print("band_panel_preview: assert OK — the %s line fits its column (%.0f spare)" % [
@@ -4500,11 +4515,11 @@ func _assert_vitals_run_fits(label: String, run: String, vitals: RichTextLabel) 
 func _assert_forage_trade_counted() -> void:
 	var vitals := _find_vitals_label(_panel)
 	if vitals == null:
-		push_error("band_panel_preview: forage-trade assert found no vitals label")
+		_fail("forage-trade assert found no vitals label")
 		return
 	var text: String = vitals.get_parsed_text()
 	if not text.contains("+0.08"):
-		push_error("band_panel_preview: Trade must read +0.08 (forage 0.04 + hunt 0.04) — got: %s" % text)
+		_fail("Trade must read +0.08 (forage 0.04 + hunt 0.04) — got: %s" % text)
 		return
 	# The band-local STOCK, read off `stores.trade_goods` the way the Food row reads the larder.
 	# Matched as the VALUE cell's own run (`12.0 · +0.08`) rather than `Trade 12.0`: the KV formatter
@@ -4512,15 +4527,15 @@ func _assert_forage_trade_counted() -> void:
 	# adjacent in the parsed text. ONE DECIMAL — the stock is a float on screen because the sim
 	# accumulates sub-unit trade income; the exact rendered value is what this pins.
 	if not text.contains("12.0 · +0.08"):
-		push_error("band_panel_preview: Trade row does not carry the band's stock of 12 — got: %s" % text)
+		_fail("Trade row does not carry the band's stock of 12 — got: %s" % text)
 		return
 	var rows := _disclosure_rows(BAND_FIXTURE_DISCLOSURE_TRADE)
 	var joined := "\n".join(rows)
 	if not joined.contains(DetailFormat.FOOD_LABEL_GATHERED):
-		push_error("band_panel_preview: the Trade breakdown has no Gathered row — the forage source's trade was dropped (rows: %s)" % joined)
+		_fail("the Trade breakdown has no Gathered row — the forage source's trade was dropped (rows: %s)" % joined)
 		return
 	if not joined.contains(DetailFormat.FOOD_LABEL_HUNTED):
-		push_error("band_panel_preview: the Trade breakdown has no Hunted row (rows: %s)" % joined)
+		_fail("the Trade breakdown has no Hunted row (rows: %s)" % joined)
 		return
 	print("band_panel_preview: assert OK — a forage source's trade counts (Trade +0.08, Gathered + Hunted)")
 
@@ -4539,16 +4554,16 @@ func _disclosure_rows(key: String) -> Array[String]:
 func _assert_trade_row_reads_zero() -> void:
 	var vitals := _find_vitals_label(_panel)
 	if vitals == null:
-		push_error("band_panel_preview: zero-trade assert found no vitals label")
+		_fail("zero-trade assert found no vitals label")
 		return
 	var text: String = vitals.get_parsed_text()
 	if not text.contains("Trade"):
-		push_error("band_panel_preview: a band earning no trade dropped its Trade row — it must read zero")
+		_fail("a band earning no trade dropped its Trade row — it must read zero")
 		return
 	# `format_yield` writes a signed magnitude, so a zero rate renders "+0.00". Matching the NUMBER
 	# rather than the row keeps this from passing on an earning band that merely has a Trade row.
 	if not text.contains("+0.00"):
-		push_error("band_panel_preview: zero-trade band's Trade row does not read +0.00 — got: %s" % text)
+		_fail("zero-trade band's Trade row does not read +0.00 — got: %s" % text)
 		return
 	print("band_panel_preview: assert OK — a band earning no trade still shows Trade, reading +0.00")
 
@@ -4570,7 +4585,7 @@ func _assert_zones_within_bounds() -> void:
 		print("band_panel_preview: assert OK — every zone renders inside its zone rect")
 		return
 	for failure in failures:
-		push_error("band_panel_preview: %s" % failure)
+		_fail("%s" % failure)
 
 func _collect_zone_overflow(node: Node, bounds: Rect2, failures: Array[String]) -> void:
 	for child in node.get_children():
@@ -4633,7 +4648,7 @@ func _compose_surface() -> Node:
 func _assert_compose_float(state_name: String) -> void:
 	var floater: BandComposeFloat = _hud._bandpanel.compose_float()
 	if floater == null or not _hud._bandpanel.compose_is_floating():
-		push_error("band_panel_preview: %s — the compose sheet did NOT float, so nothing below is a claim" % state_name)
+		_fail("%s — the compose sheet did NOT float, so nothing below is a claim" % state_name)
 		return
 	# (1) IT REALLY LEFT THE ZONE. Asked of the Send button's own meta, which every branch of this
 	# sheet renders and nothing else in the panel carries.
@@ -4674,7 +4689,7 @@ func _assert_compose_float(state_name: String) -> void:
 	var shares_other_axis: bool = box.position.x < card.end.x and card.position.x < box.end.x \
 		if stacked_vertically else box.position.y < card.end.y and card.position.y < box.end.y
 	if not shares_other_axis:
-		push_error(("band_panel_preview: %s — VACUOUS: the float and the panel card share no band on "
+		_fail(("%s — VACUOUS: the float and the panel card share no band on "
 			+ "either axis, so 'they do not overlap' claims nothing") % state_name)
 		return
 	var moved_onto_card := Rect2(card.position, box.size)
@@ -4709,7 +4724,7 @@ func _assert_empty_compose_opens_in_the_zone(state_name: String) -> void:
 	var launch := _find_meta_control_valued(_panel, HudWidgets.MISSION_LAUNCH_META,
 		HudComposeVocab.COMPOSE_MISSION_HUNT) as Button
 	if launch == null or launch.disabled:
-		push_error("band_panel_preview: %s — no live 🏹 Hunt launch button, so nothing below is driven" % state_name)
+		_fail("%s — no live 🏹 Hunt launch button, so nothing below is driven" % state_name)
 		return
 	# The REAL press. Everything until the next `await` runs inside the pre-layout window the phantom
 	# lives in — the sheet is built and parented, and no container has sorted.
@@ -4720,7 +4735,7 @@ func _assert_empty_compose_opens_in_the_zone(state_name: String) -> void:
 	# **THE VACUITY GUARD.** If the unsorted reading would not have floated the sheet anyway, refusing
 	# to record it proves nothing about this defect.
 	if phantom <= box.y + HudComposeVocab.COMPOSE_FLOAT_SLACK:
-		push_error(("band_panel_preview: %s — VACUOUS: the pre-layout column reads %.0fpx against a "
+		_fail(("%s — VACUOUS: the pre-layout column reads %.0fpx against a "
 			+ "%.0fpx box, so recording it would not have floated the sheet either way") % [
 			state_name, phantom, box.y])
 		return
@@ -4750,7 +4765,7 @@ func _assert_zone_holds_its_compose_sheet(state_name: String) -> void:
 	var needed: float = _hud._bandpanel._party_compose_needed
 	var box: Vector2 = _hud._bandpanel._parties_zone_box_known()
 	if box == Vector2.ZERO or needed > box.y + HudComposeVocab.COMPOSE_FLOAT_SLACK:
-		push_error(("band_panel_preview: %s — VACUOUS: the zone (%.0fpx) cannot hold this sheet "
+		_fail(("%s — VACUOUS: the zone (%.0fpx) cannot hold this sheet "
 			+ "(%.0fpx), so 'a zone with room keeps its sheet' is not what is being tested") % [
 			state_name, box.y, needed])
 		return
@@ -4793,7 +4808,7 @@ func _is_descendant_of(node: Node, root: Node) -> bool:
 func _assert_unknown_zone_box_does_not_float(state_name: String) -> void:
 	var needed: float = _hud._bandpanel._party_compose_needed
 	if needed <= HudWorkVocab.ZONE_FALLBACK_SIZE.y:
-		push_error(("band_panel_preview: %s — VACUOUS: the latched requirement is %.0fpx, under the "
+		_fail(("%s — VACUOUS: the latched requirement is %.0fpx, under the "
 			+ "%.0fpx fallback box, so an unknown box answers 'no float' either way") % [
 			state_name, needed, HudWorkVocab.ZONE_FALLBACK_SIZE.y])
 		return
@@ -4844,7 +4859,7 @@ func _assert_mark_dropped_on_dock_change(state_name: String, staged: float) -> v
 func _assert_float_leaves_the_map_clickable(state_name: String) -> void:
 	var floater: BandComposeFloat = _hud._bandpanel.compose_float()
 	if floater == null or not _hud._bandpanel.compose_is_floating():
-		push_error("band_panel_preview: %s — no float, so the click-through probe proves nothing" % state_name)
+		_fail("%s — no float, so the click-through probe proves nothing" % state_name)
 		return
 	var box := floater.get_global_rect()
 	var failures: Array[String] = []
@@ -4874,7 +4889,7 @@ func _assert_float_leaves_the_map_clickable(state_name: String) -> void:
 			state_name, reached, _rect_probe_points(open_ground).size()])
 		return
 	for failure in failures:
-		push_error("band_panel_preview: %s — %s" % [state_name, failure])
+		_fail("%s — %s" % [state_name, failure])
 
 ## How far outboard of the float the open-ground probe band starts, and where the "one pixel out is
 ## already map" samples sit. Both in canvas px; the second is deliberately just past the float's edge,
@@ -4914,7 +4929,7 @@ func _assert_chart_reads_the_settled_party(state_name: String, seeded: int) -> v
 	var chart := _find_meta_control(surface, HudWidgets.FLOOR_CHART_META)
 	var stepper := _find_meta_control(surface, HudWidgets.PARTY_STEPPER_COUNT_META)
 	if chart == null or stepper == null:
-		push_error("band_panel_preview: %s renders no %s — the cap-before-chart claim cannot be made" % [
+		_fail("%s renders no %s — the cap-before-chart claim cannot be made" % [
 			state_name, "floor chart" if chart == null else "party stepper"])
 		return
 	var settled := int(stepper.get_meta(HudWidgets.PARTY_STEPPER_COUNT_META))
@@ -4932,11 +4947,11 @@ func _assert_hunt_sheet_chart(want: bool, state_name: String) -> void:
 	var chart := _find_meta_control(_compose_surface(), HudWidgets.FLOOR_CHART_META)
 	var tier := _band_zone_tier_name()
 	if want and chart == null:
-		push_error("band_panel_preview: %s (%s tier) renders NO floor chart — the tier gate is stuck off" % [
+		_fail("%s (%s tier) renders NO floor chart — the tier gate is stuck off" % [
 			state_name, tier])
 		return
 	if not want and chart != null:
-		push_error("band_panel_preview: %s (%s tier) renders a floor chart — the tier gate is stuck on" % [
+		_fail("%s (%s tier) renders a floor chart — the tier gate is stuck on" % [
 			state_name, tier])
 		return
 	print("band_panel_preview: assert OK — %s (%s tier) %s the floor chart" % [
@@ -4991,8 +5006,6 @@ func _assert_forage_jump_names_land() -> void:
 	_assert_band_panel("forage jump — the land is the lit subject afterwards",
 		_hud._selection.subject() == HudSelectionState.SUBJECT_LAND)
 
-## Pass/fail reporting for the rung-ready assertions, in this harness's `push_error` idiom so a
-## regression fails loudly in the run log rather than waiting to be noticed in a thumbnail.
 ## A control carrying `meta`, found by IDENTITY rather than by face — the rule this harness already
 ## follows for policy rungs (`HudWidgets.POLICY_RUNG_META`). The fill-target control is a checkbox
 ## whose own text FLIPS between its two states, so a text match would find it in one state and pass
@@ -5725,11 +5738,16 @@ func _zone_head_readout(node: Node, title: String) -> String:
 			return found
 	return ""
 
+## Pass/fail reporting for this harness's assertions — the rung-ready ones among them — through
+## `_fail`, the run's ONE sink, so a regression fails loudly in the run log AND is counted against the
+## exit status rather than waiting to be noticed in a thumbnail. **Report a failure here or through
+## `_fail` itself and nowhere else**: a bare `push_error` beside them prints the same line and counts
+## for nothing, which is a red run reporting success.
 func _assert_band_panel(label: String, ok: bool) -> void:
 	if ok:
 		print("band_panel_preview: PASS — ", label)
 	else:
-		push_error("band_panel_preview: FAIL — %s" % label)
+		_fail(label)
 
 ## THE BOARD MUST NOT RE-ORDER UNDER THE PLAYER'S OWN EDIT (issue #460), and both comparators must be
 ## TOTAL ORDERS. Neither claim is visible in a PNG — a re-sorted board is a perfectly plausible board —
@@ -6111,7 +6129,7 @@ func _assert_herder_floor_row(herd_id: String) -> void:
 	var band: Dictionary = _hud._band_labor._panel_band
 	var idle := _hud._band_labor.effective_idle(band)
 	if idle <= 0:
-		push_error("band_panel_preview: herder-floor frame needs idle workers to gate on the source")
+		_fail("herder-floor frame needs idle workers to gate on the source")
 		return
 	var found := false
 	for model in _hud._bandpanel._work_source_models(band, idle):
@@ -6120,16 +6138,16 @@ func _assert_herder_floor_row(herd_id: String) -> void:
 			continue
 		found = true
 		if not bool(m.get("under_herded", false)):
-			push_error("band_panel_preview: expected under_herded on the Hunt row for %s" % herd_id)
+			_fail("expected under_herded on the Hunt row for %s" % herd_id)
 		elif not bool(m.get("can_add", false)):
-			push_error(("band_panel_preview: the under-herded row for %s disables its own `+` at %d "
+			_fail(("the under-herded row for %s disables its own `+` at %d "
 				+ "workers with %d idle — the board flags the shed and refuses the fix")
 				% [herd_id, int(m.get("workers", 0)), idle])
 		else:
 			print("band_panel_preview: assert OK — the under-herded row keeps its `+` live (crew %d > take-useful %d)"
 				% [HERDER_FLOOR_HERDERS_NEEDED, HERDER_FLOOR_TAKE_USEFUL])
 	if not found:
-		push_error("band_panel_preview: no Hunt work row for %s" % herd_id)
+		_fail("no Hunt work row for %s" % herd_id)
 		return
 	# The twins, asked the same question about the same herd+policy. `_forecast_worker_cap` is given an
 	# assignable count above both candidate ceilings so its answer IS the usefulness ceiling and not a
@@ -6149,10 +6167,10 @@ func _assert_herder_floor_row(herd_id: String) -> void:
 	var row_at: bool = bool(SourceForecast.source_worker_cap_state(
 		forecast, HERDER_FLOOR_HERDERS_NEEDED, 1, floor_workers)["can_add"])
 	if compose_cap != HERDER_FLOOR_HERDERS_NEEDED:
-		push_error("band_panel_preview: the compose stepper caps at %d, not the crew of %d"
+		_fail("the compose stepper caps at %d, not the crew of %d"
 			% [compose_cap, HERDER_FLOOR_HERDERS_NEEDED])
 	elif not (row_below and not row_at):
-		push_error(("band_panel_preview: the worked row does not gate at the crew of %d "
+		_fail(("the worked row does not gate at the crew of %d "
 			+ "(can_add below=%s, at=%s)") % [HERDER_FLOOR_HERDERS_NEEDED, row_below, row_at])
 	else:
 		print("band_panel_preview: assert OK — both cap twins gate at the crew of %d, above the take-useful %d"
@@ -6169,15 +6187,15 @@ func _assert_under_herded_work_row(herd_id: String) -> void:
 			continue
 		found = true
 		if not bool(m.get("under_herded", false)):
-			push_error("band_panel_preview: expected under_herded on the Hunt row for %s" % herd_id)
+			_fail("expected under_herded on the Hunt row for %s" % herd_id)
 		elif not String(m.get("marks", "")).contains(HudComposeVocab.OVERHUNT_FLAG):
-			push_error("band_panel_preview: expected the ⚠ mark on the under-herded row for %s" % herd_id)
+			_fail("expected the ⚠ mark on the under-herded row for %s" % herd_id)
 		elif not String(m.get("note", "")).contains("drifting off"):
-			push_error("band_panel_preview: expected the drifting-off note on the under-herded row for %s" % herd_id)
+			_fail("expected the drifting-off note on the under-herded row for %s" % herd_id)
 		else:
 			print("band_panel_preview: assert OK — under-herded Hunt row flags the shed (⚠ + note)")
 	if not found:
-		push_error("band_panel_preview: no Hunt work row for %s" % herd_id)
+		_fail("no Hunt work row for %s" % herd_id)
 
 # ---- THE SOURCE-RUNG BOARD ------------------------------------------------------------------------
 #
@@ -6310,19 +6328,19 @@ func _assert_work_row_rungs() -> void:
 		if expected_labels.has(key):
 			var label := String(m.get("label", ""))
 			if label != String(expected_labels[key]):
-				push_error("band_panel_preview: %s expected row label '%s' but got '%s'" % [
+				_fail("%s expected row label '%s' but got '%s'" % [
 					key, expected_labels[key], label])
 			else:
 				labels_seen += 1
 		var glyph := String(m.get("rung_glyph", ""))
 		if glyph != String(expected[key]):
-			push_error("band_panel_preview: %s expected rung glyph '%s' but got '%s'" % [
+			_fail("%s expected rung glyph '%s' but got '%s'" % [
 				key, expected[key], glyph])
 		elif glyph != "" and String(m.get("rung_tooltip", "")) == "":
-			push_error("band_panel_preview: %s wears a rung glyph with no tooltip naming the rung" % key)
+			_fail("%s wears a rung glyph with no tooltip naming the rung" % key)
 	for key in expected:
 		if not seen.has(key):
-			push_error("band_panel_preview: no work row for %s on the rung board" % key)
+			_fail("no work row for %s on the rung board" % key)
 	if seen.size() == expected.size():
 		print("band_panel_preview: assert OK — %d work rows wear their standing rung (wild bare)" % seen.size())
 	if labels_seen == expected_labels.size():
@@ -6348,14 +6366,14 @@ func _assert_rung_labels_are_hoverable() -> void:
 			continue   # a WILD row's reserved-but-empty slot — nothing to hover
 		marked += 1
 		if label.tooltip_text == "":
-			push_error("band_panel_preview: rung mark '%s' carries no tooltip" % label.text)
+			_fail("rung mark '%s' carries no tooltip" % label.text)
 			return
 		if label.mouse_filter != Control.MOUSE_FILTER_PASS:
-			push_error("band_panel_preview: rung mark '%s' has mouse_filter %d — PASS is the only value that both shows the tooltip and lets the row's click through" % [
+			_fail("rung mark '%s' has mouse_filter %d — PASS is the only value that both shows the tooltip and lets the row's click through" % [
 				label.text, label.mouse_filter])
 			return
 	if marked == 0:
-		push_error("band_panel_preview: no rung mark rendered in the panel (%d slots) — the mark is missing" % labels.size())
+		_fail("no rung mark rendered in the panel (%d slots) — the mark is missing" % labels.size())
 	else:
 		print("band_panel_preview: assert OK — %d rung marks are hoverable (tooltip + PASS), %d wild slots bare" % [
 			marked, labels.size() - marked])
@@ -6446,7 +6464,7 @@ func _open_work_inspector_for_herd(herd_id: String) -> void:
 			continue
 		_hud._bandpanel._toggle_work_inspector(String(model.get("key", "")))
 		return
-	push_error("band_panel_preview: %s" % _work_row_absence_report(herd_id, band, models))
+	_fail("%s" % _work_row_absence_report(herd_id, band, models))
 
 ## **Keyed on the HERD, not on the rung.** Both rows stand on the same stance now (issue #442 — the
 ## build verb moved to its own field), so a rung is no longer an identity; the source is.
@@ -6461,7 +6479,7 @@ func _open_work_policy_picker_for_herd(herd_id: String) -> void:
 		_hud._bandpanel._work_floor_open = true
 		_hud._bandpanel._repage_work_zone()
 		return
-	push_error("band_panel_preview: %s" % _work_row_absence_report(herd_id, band, models))
+	_fail("%s" % _work_row_absence_report(herd_id, band, models))
 
 ## WHY A WORK ROW IS MISSING, in the terms the two helpers above can actually be wrong about.
 ## The message they used to share — "fixture drifted?" — named the ONE cause that is checked into the
@@ -6553,7 +6571,7 @@ func _find_first_grid(node: Node) -> GridContainer:
 func _assert_policy_pick_confirms(standing: String, want_confirm: bool) -> void:
 	var buttons := _picker_rung_buttons()
 	if not buttons.has(PICKED_RUNG_PRESET):
-		push_error("band_panel_preview: no '%s' rung in the work inspector's picker" % PICKED_RUNG_PRESET)
+		_fail("no '%s' rung in the work inspector's picker" % PICKED_RUNG_PRESET)
 		return
 	var fired := [false]
 	var sink := func(_payload: Dictionary) -> void: fired[0] = true
@@ -6568,7 +6586,7 @@ func _assert_policy_pick_confirms(standing: String, want_confirm: bool) -> void:
 		print("band_panel_preview: assert OK — a '%s' row's pick %s" % [
 			standing, "confirms before discarding" if want_confirm else "emits immediately"])
 	else:
-		push_error("band_panel_preview: '%s' row pick expected (confirm=%s, emit=%s) but got (confirm=%s, emit=%s)" % [
+		_fail("'%s' row pick expected (confirm=%s, emit=%s) but got (confirm=%s, emit=%s)" % [
 			standing, want_confirm, not want_confirm, dialog_shown, fired[0]])
 	_dismiss_dialogs()
 
@@ -6584,7 +6602,7 @@ func _assert_lit_rung(standing: String) -> void:
 	if lit.size() == 1 and lit[0] == standing:
 		print("band_panel_preview: assert OK — exactly one rung lit, and it is '%s'" % standing)
 	else:
-		push_error("band_panel_preview: expected only '%s' lit in the picker but got %s" % [standing, str(lit)])
+		_fail("expected only '%s' lit in the picker but got %s" % [standing, str(lit)])
 
 ## Drop every optimistic pending assign through the REAL path — a snapshot whose turn is NEWER than the
 ## edit is what confirms it — so an assertion that issues one leaves the board as it found it, and the
@@ -6616,10 +6634,10 @@ func _assert_crew_edit_keeps_improvement(herd_id: String, improvement: String) -
 	var band: Dictionary = _stamp_band_ids([_investment_policy_band_fixture()])[0]
 	var before := _find_work_model_for_herd(band, herd_id)
 	if before.is_empty():
-		push_error("band_panel_preview: no Hunt work row for '%s' — fixture drifted?" % herd_id)
+		_fail("no Hunt work row for '%s' — fixture drifted?" % herd_id)
 		return
 	if String(before.get("improvement", "")) != improvement or String(before.get("building_glyph", "")) == "":
-		push_error(("band_panel_preview: the '%s' row is not mid-build before the edit "
+		_fail(("the '%s' row is not mid-build before the edit "
 			+ "(improvement '%s', building glyph '%s') — the crew-edit assertion would be vacuous")
 			% [herd_id, String(before.get("improvement", "")), String(before.get("building_glyph", ""))])
 		return
@@ -6627,14 +6645,14 @@ func _assert_crew_edit_keeps_improvement(herd_id: String, improvement: String) -
 	_hud._bandpanel._emit_work_assign(band, before, int(before.get("workers", 0)) + 1)
 	var after := _find_work_model_for_herd(band, herd_id)
 	if not bool(after.get("pending", false)):
-		push_error("band_panel_preview: the crew edit on '%s' recorded no pending assign to judge" % herd_id)
+		_fail("the crew edit on '%s' recorded no pending assign to judge" % herd_id)
 	elif String(after.get("improvement", "")) != improvement:
-		push_error(("band_panel_preview: a crew edit on '%s' dropped the improvement — the row now reads "
+		_fail(("a crew edit on '%s' dropped the improvement — the row now reads "
 			+ "'%s' instead of '%s', so its build badge vanishes and the rung it is already climbing is "
 			+ "re-offered for the rest of the turn")
 			% [herd_id, String(after.get("improvement", "")), improvement])
 	elif String(after.get("building_glyph", "")) == "":
-		push_error(("band_panel_preview: a crew edit on '%s' kept the improvement but lost the BUILDING "
+		_fail(("a crew edit on '%s' kept the improvement but lost the BUILDING "
 			+ "badge — the row stopped showing the verb under way") % herd_id)
 	else:
 		print("band_panel_preview: assert OK — a pending crew edit keeps the '%s' build on the '%s' row"
@@ -6773,7 +6791,9 @@ const PROJECT_VIEWPORT_HEIGHT := "display/window/size/viewport_height"
 ## asserting against a width it never asked for, which is exactly what this function exists to stop.
 ##
 ## **A PIN THAT DOES NOT PIN FAILS THE RUN.** It used to `push_warning`, which is invisible in a
-## 500-line log from a harness whose whole value is bit-identity — a mis-pinned run passed.
+## 500-line log from a harness whose whole value is bit-identity — a mis-pinned run passed. The ONE
+## exception is a run with no window at all (`--headless`), which `_report_canvas_drift` warns about
+## and skips: there the pin is unanswerable rather than broken.
 ##
 ## `strict` is `false` for exactly one caller, `_stabilize_canvas`, which is DELIBERATELY driving the
 ## window through a maximize and converging over up to `CANVAS_STABLE_MAX_FRAMES`; a transient miss
@@ -6798,9 +6818,9 @@ func _pin_window(size: Vector2i, strict: bool = true) -> void:
 	if not strict:
 		return
 	if window.size != size:
-		push_error("band_panel_preview: window pinned to %s but reports %s — every width this state asserts is measured against the canvas that window projects" % [size, window.size])
+		_report_canvas_drift("window pinned to %s but reports %s — every width this state asserts is measured against the canvas that window projects" % [size, window.size])
 	elif not _canvas_is_projected():
-		push_error("band_panel_preview: window is %s but the logical viewport is %s, not the %s canvas it was pinned to" % [
+		_report_canvas_drift("window is %s but the logical viewport is %s, not the %s canvas it was pinned to" % [
 			size, get_viewport().get_visible_rect().size, _expected_canvas()])
 
 ## Does the LOGICAL viewport match the canvas this state pinned? True (vacuously) before any canvas
@@ -6858,7 +6878,7 @@ func _stabilize_canvas() -> void:
 			# own terminal error below.
 			await _pin_window(PREVIEW_SIZE, false)
 		await get_tree().process_frame
-	push_error("band_panel_preview: the window never held the pinned %s canvas — frames will drift" % PREVIEW_SIZE)
+	_report_canvas_drift("the window never held the pinned %s canvas — frames will drift" % PREVIEW_SIZE)
 
 ## The viewport image, GUARANTEED to be at the size this state pinned (or an integer HiDPI multiple of
 ## it). The WM's deferred maximize can resize the render target between a settle and a capture, so
@@ -6882,7 +6902,7 @@ func _capture(name: String) -> Image:
 		await get_tree().process_frame
 		RenderingServer.force_draw()
 		await get_tree().process_frame
-	push_error("band_panel_preview: viewport never came back to the pinned %s canvas for %s" % [_pinned_size, name])
+	_fail("viewport never came back to the pinned %s canvas for %s" % [_pinned_size, name])
 	return null
 
 ## The hang guard from the scene, or `null` if the node has gone. Checked for its method rather than
@@ -6901,11 +6921,43 @@ func _note_progress() -> void:
 	if _watchdog != null:
 		_watchdog.note_progress()
 
-## Stand the guard down on the way out, so a slow shutdown cannot be reported as a stall.
+## The ONE failure sink, so `_failures` cannot drift from what was printed. Every caller passes the
+## text AFTER the `FAIL — ` token, which is what the output scanning keys on.
+func _fail(message: String) -> void:
+	_failures += 1
+	push_error("band_panel_preview: FAIL — %s" % message)
+
+## Is this run using the headless display driver, i.e. is there no window behind `_pin_window`?
+##
+## **A CONDITION THAT FAILS ONLY BECAUSE THERE IS NO RENDERER IS NOT A FAILURE.** `--headless` is the
+## documented fast "does this still compile?" pass over this harness, and under it the window never
+## leaves its stub geometry — it reports `MODE_MINIMIZED` and never accepts `MODE_WINDOWED` — so the
+## canvas claims are unanswerable rather than false. They warn and skip; `_capture`'s null-image arm
+## is the precedent. Every assertion that does not need a window still runs and still counts.
+func _is_headless() -> bool:
+	return DisplayServer.get_name() == HEADLESS_DISPLAY_DRIVER
+
+## Report a window/canvas the pin would not hold. A real failure in a window — every width this
+## harness asserts is measured against that canvas — and a skip under `--headless`, where the stub
+## window can never hold it and reporting one would fail every clean run.
+func _report_canvas_drift(message: String) -> void:
+	if _is_headless():
+		push_warning("band_panel_preview: %s (no window under the %s display driver — skipped; run windowed to capture)"
+			% [message, HEADLESS_DISPLAY_DRIVER])
+		return
+	_fail(message)
+
+## **THE ONLY WAY OUT OF THIS HARNESS.** Every path that ends the run comes through here, so the
+## status is derived from the run's own tally in exactly one place and the hang guard is stood down
+## before shutdown (a slow shutdown is not a stall).
 func _finish() -> void:
 	if _watchdog != null:
 		_watchdog.disarm()
-	get_tree().quit()
+	if _failures > 0:
+		print("band_panel_preview: RUN FAILED — %d failure(s); see the FAIL lines above" % _failures)
+	else:
+		print("band_panel_preview: run complete — no failures")
+	get_tree().quit(EXIT_FAILED if _failures > 0 else EXIT_OK)
 
 func _settle() -> void:
 	_note_progress()
@@ -6926,7 +6978,7 @@ func _save(name: String) -> void:
 		return
 	var err := image.save_png("%s/%s.png" % [OUT_DIR, name])
 	if err != OK:
-		push_error("band_panel_preview: failed to save %s (err %d)" % [name, err])
+		_fail("failed to save %s (err %d)" % [name, err])
 	else:
 		print("band_panel_preview: saved ", name, ".png")
 
@@ -6938,7 +6990,11 @@ func _click_disclosure(key: String) -> void:
 	var meta := HudDisclosureVocab.BREAKDOWN_TOGGLE_META_PREFIX + key
 	var label := _find_meta_label(_panel, meta)
 	if label == null:
-		push_warning("band_panel_preview: no vitals label offering '%s' — disclosure not rendered?" % meta)
+		# **A CLICK THAT NEVER HAPPENED IS A FAILED PRECONDITION, NOT AN ADVISORY.** Every assertion the
+		# disclosure states rides on this press, and each of them reads "the breakdown is not inline" —
+		# i.e. passes on a panel that rendered no disclosure at all. Warning here printed a line nobody
+		# reads and left the block claiming its result vacuously.
+		_fail("no vitals label offering '%s' — the disclosure was never rendered, so nothing was clicked" % meta)
 		return
 	label.meta_clicked.emit(meta)
 
@@ -7006,7 +7062,7 @@ func _guard_herd_fields(subject: Variant, where: String, depth: int = 0) -> void
 		var if_managed := int(dict.get(HERDERS_NEEDED_IF_MANAGED_KEY, 0))
 		if if_managed < needed:
 			_herd_pair_violations += 1
-			push_error(("band_panel_preview: %s — herd \"%s\" declares %s %d but %s %d. The would-be "
+			_fail(("%s — herd \"%s\" declares %s %d but %s %d. The would-be "
 				+ "crew can never be SMALLER than the ownership-gated one, and on a herd with herders "
 				+ "(i.e. a managed one) the sim exports them EQUAL — the investment rungs' worker cap "
 				+ "floors on the second field, so half-setting the pair silently caps the crew at the "
@@ -7021,7 +7077,7 @@ func _guard_herd_fields(subject: Variant, where: String, depth: int = 0) -> void
 			# a conservative fixture, it is an impossible herd: it claims managing this herd would cost
 			# MORE than managing it already does.
 			_herd_pair_violations += 1
-			push_error(("band_panel_preview: %s — herd \"%s\" declares %s %d and %s %d. Once %s is "
+			_fail(("%s — herd \"%s\" declares %s %d and %s %d. Once %s is "
 				+ "above zero the herd IS managed, and the would-be crew is the SAME crew — the sim's "
 				+ "two functions differ only by the ownership gate this herd has already passed, so "
 				+ "they must be EQUAL here. Set both through _set_managed_herders; only a still-WILD "
@@ -7043,12 +7099,13 @@ func _guard_frame_herd_fields(state: String) -> void:
 	_guard_herd_fields(_hud._selection._roster_herds, state)
 	_guard_herd_fields(_hud._selection._selected_tile_info, state)
 
-## The field-pair guard's verdict, ONE line for the whole run (each violation has already been
-## push_error'd against the frame it rendered in). The scanned count is part of the claim: a guard that
+## The field-pair guard's verdict, ONE line for the whole run (each violation has already gone through
+## `_fail` against the frame it rendered in, so it is already counted against the run's exit status and
+## this line only states the total). The scanned count is part of the claim: a guard that
 ## walked nothing would pass vacuously, and "0 herd dicts scanned" says so out loud.
 func _assert_herd_field_pairs() -> void:
 	if _herd_pair_violations > 0:
-		push_error("band_panel_preview: %d herd dict(s) of %d scanned half-set the herders_needed pair"
+		_fail("%d herd dict(s) of %d scanned half-set the herders_needed pair"
 			% [_herd_pair_violations, _herd_pair_scans])
 		return
 	print("band_panel_preview: assert OK — every herd fixture keeps the herders_needed pair consistent (%d herd dicts scanned)"

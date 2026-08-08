@@ -245,6 +245,15 @@ func run(harness) -> void:
 		# every luminance reading below and is the double-dim the invariant forbids.
 		h._assert_hud("%s dims through its TINT, not through `modulate` — no double-dim on the box" % what,
 			_face_modulate_is_identity(lit_face) and _face_modulate_is_identity(dim_face))
+		# **THE PIXEL HALF NEEDS A RENDERER, AND NOTHING ELSE HERE DOES.** Under `--headless` the
+		# probe's `SubViewport` reads back a null texture, so every reading below would fail on a
+		# clean tree — a missing viewport, not a face that drew wrong (`ui_preview._capture`'s rule).
+		# The `modulate` claim above is structural and still runs. A null image with a REAL renderer
+		# behind it stays a failure: `_two_line_face_luma` answers an empty array and the size guard
+		# below names it.
+		if h._is_headless():
+			push_warning("ui_preview: no renderer — skipping %s's pixel probe; run without --headless" % what)
+			continue
 		var lit: PackedFloat32Array = await _two_line_face_luma(probe, host, lit_face)
 		var dim: PackedFloat32Array = await _two_line_face_luma(probe, host, dim_face)
 		h._assert_hud("%s: the probe read BOTH lines in BOTH states" % what,
