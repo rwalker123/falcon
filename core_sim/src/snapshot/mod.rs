@@ -13,20 +13,19 @@ use sim_runtime::{
     CrisisGaugeState, CrisisMetricKind as SchemaCrisisMetricKind, CrisisOverlayState,
     CrisisSeverityBand as SchemaCrisisSeverityBand, CrisisTelemetryState,
     CrisisTrendSample as SchemaCrisisTrendSample, CultureLayerState, CultureTensionState,
-    CultureTraitEntry, DenialEstimateState, DiscoveredSiteState as SchemaDiscoveredSiteState,
+    CultureTraitEntry, DiscoveredSiteState as SchemaDiscoveredSiteState,
     DiscoveredSitesState as SchemaDiscoveredSitesState, DiscoveryProgressEntry,
     ElevationOverlayState, FactionInventoryEntryState as SchemaFactionInventoryEntryState,
     FactionInventoryState as SchemaFactionInventoryState, FloatRasterState, FloraShareInfo,
     FoodModuleState, ForagePatchState, ForkChoiceState, GenerationState, GlossEntryState,
     GreatDiscoveryDefinitionState, GreatDiscoveryProgressState, GreatDiscoveryState,
-    GreatDiscoveryTelemetryState, HerdTelemetryState, HuntTripEstimateState,
-    InfluentialIndividualState, IntensificationKnowledgeState, KitOptionState,
-    KnowledgeLedgerEntryState, KnowledgeMetricsState, KnowledgeTimelineEventState,
-    LaborAssignmentState, LogisticsLinkState, MountainKind, PendingForkState, PendingForksState,
-    PendingMigrationState, PopulationCohortState,
-    PopulationDemographicsState as SchemaPopulationDemographicsState, PowerIncidentSeverity,
-    PowerIncidentState, PowerNodeState, PowerTelemetryState, ScalarRasterState,
-    SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
+    GreatDiscoveryTelemetryState, HerdTelemetryState, InfluentialIndividualState,
+    IntensificationKnowledgeState, KitOptionState, KnowledgeLedgerEntryState,
+    KnowledgeMetricsState, KnowledgeTimelineEventState, LaborAssignmentState, LogisticsLinkState,
+    MountainKind, PendingForkState, PendingForksState, PendingMigrationState,
+    PopulationCohortState, PopulationDemographicsState as SchemaPopulationDemographicsState,
+    PowerIncidentSeverity, PowerIncidentState, PowerNodeState, PowerTelemetryState,
+    ScalarRasterState, SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
     SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
     SettlementStageViewState, SnapshotHeader, StanceAxisState, StanceState, StartMarkerState,
     TerrainOverlayState, TerrainSample, TileState, TradeLinkKnowledge, TradeLinkState,
@@ -48,7 +47,6 @@ use crate::{
         CultureTraitAxis as SimCultureTraitAxis,
     },
     demographics_config::{DemographicsConfig, DemographicsConfigHandle},
-    expedition_config::ExpeditionConfig,
     fauna::{
         herd_herders_needed, hunt_forecast, pen_upkeep, would_be_herders_needed, EcologyPhase,
         Herd, HerdRegistry, HerdTelemetry, FODDERING_DISCOVERY_ID, FULLY_HERDED,
@@ -92,8 +90,7 @@ use crate::{
     start_profile::{snapshot_profiles, CampaignLabel, StartProfilesHandle},
     supply::SupplyNetworkMembership,
     systems::{
-        food_demand, hunt_per_worker_provisions, hunt_trip_forecast, tile_morale_pressure,
-        MoralePressureConfig,
+        food_demand, hunt_per_worker_provisions, tile_morale_pressure, MoralePressureConfig,
     },
     telling::BeatLedger,
     terrain::terrain_definition,
@@ -948,12 +945,9 @@ mod tests {
         registry: &HerdRegistry,
         fauna: &FaunaConfig,
         labor: &LaborConfig,
-        expedition: &ExpeditionConfig,
         visibility: &crate::visibility::VisibilityLedger,
     ) -> Vec<HerdTelemetryState> {
-        export_herds_with_fog(
-            telemetry, registry, fauna, labor, expedition, visibility, true,
-        )
+        export_herds_with_fog(telemetry, registry, fauna, labor, visibility, true)
     }
 
     /// `export_herds` with the server-owned fog switch exposed, for the fog-disabled fixtures.
@@ -962,7 +956,6 @@ mod tests {
         registry: &HerdRegistry,
         fauna: &FaunaConfig,
         labor: &LaborConfig,
-        expedition: &ExpeditionConfig,
         visibility: &crate::visibility::VisibilityLedger,
         fog_enabled: bool,
     ) -> Vec<HerdTelemetryState> {
@@ -972,18 +965,12 @@ mod tests {
             fauna,
             ladder: &LadderConfig::builtin(),
             labor,
-            expedition,
             grid_size: UVec2::new(64, 64),
             wrap_horizontal: false,
             visibility,
             viewer: VIEWER,
             fog_enabled,
             party: crate::fauna::HuntingParty::builtin_equipped(),
-            quoted_per_worker_haul: labor.hunt.per_worker_biomass_capacity,
-            quoted_kit_id: crate::equipment_config::EquipmentConfig::builtin()
-                .default_kit_id(crate::equipment_config::KitJob::Hunt)
-                .to_string(),
-            range_sigmas: crate::combat_config::CombatConfig::builtin().forecast_range_sigmas,
         })
     }
 
@@ -1324,7 +1311,6 @@ mod tests {
                 .per_worker_biomass_capacity,
         };
         let levers = ExpeditionLevers {
-            max_estimated_party: 0,
             hunt_per_worker_carry: 0.0,
             hunt_per_worker_provisions: 0.0,
             hunt_viability_warn_turns: 0,
@@ -2246,13 +2232,11 @@ mod tests {
         };
         let labor = LaborConfig::builtin();
         let fauna = FaunaConfig::builtin();
-        let expedition = ExpeditionConfig::builtin();
         let states = export_herds(
             &telemetry,
             &registry,
             &fauna,
             &labor,
-            &expedition,
             &all_seeing_ledger(64),
         );
         let pen = states.iter().find(|h| h.id == "herd_pen").unwrap();
@@ -2363,7 +2347,6 @@ mod tests {
             registry,
             &FaunaConfig::builtin(),
             &LaborConfig::builtin(),
-            &ExpeditionConfig::builtin(),
             ledger,
         )
     }
@@ -2462,7 +2445,6 @@ mod tests {
                 &registry,
                 &FaunaConfig::builtin(),
                 &LaborConfig::builtin(),
-                &ExpeditionConfig::builtin(),
                 &ledger,
                 fog_enabled,
             )
@@ -2553,7 +2535,6 @@ mod tests {
 
         let fauna = FaunaConfig::builtin();
         let labor = LaborConfig::builtin();
-        let expedition = ExpeditionConfig::builtin();
 
         // One mobile herd per size class, each a real species so `species_by_display` resolves the
         // migratory `loiter_radius`. Distinct carrying capacities so the assertion is meaningful.
@@ -2600,7 +2581,6 @@ mod tests {
             &registry,
             &fauna,
             &labor,
-            &expedition,
             &all_seeing_ledger(64),
         );
 
@@ -2650,7 +2630,6 @@ mod tests {
 
         let fauna = FaunaConfig::builtin();
         let labor = LaborConfig::builtin();
-        let expedition = ExpeditionConfig::builtin();
 
         let mut registry = HerdRegistry::default();
         // A wolf pack (carnivore) and a deer (herbivore) — both real roster species so
@@ -2689,7 +2668,6 @@ mod tests {
             &registry,
             &fauna,
             &labor,
-            &expedition,
             &all_seeing_ledger(64),
         );
 
@@ -2755,13 +2733,11 @@ mod tests {
         };
         let labor = LaborConfig::builtin();
         let fauna = FaunaConfig::builtin();
-        let expedition = ExpeditionConfig::builtin();
         let states = export_herds(
             &telemetry,
             &registry,
             &fauna,
             &labor,
-            &expedition,
             &all_seeing_ledger(64),
         );
 
@@ -2839,13 +2815,11 @@ mod tests {
         };
         let labor = LaborConfig::builtin();
         let fauna = FaunaConfig::builtin();
-        let expedition = ExpeditionConfig::builtin();
         let states = export_herds(
             &telemetry,
             &registry,
             &fauna,
             &labor,
-            &expedition,
             &all_seeing_ledger(64),
         );
 

@@ -82,6 +82,14 @@ var _compose_sheet: ComposeSheet = null
 var _forage_drawer_shape: Array = []
 var _herd_drawer_shape: Array = []
 
+## **THE FORECAST QUERY SEAM**, injected by `HudLayer` after construction (`set_forecast_query`).
+## The expedition branch's every number comes through it; the LOCAL hunt branch never touches it,
+## being priced from the herd's own per-biomass vector and the band's ceilings.
+var _forecast_query: ForecastQuery = null
+
+func set_forecast_query(query: ForecastQuery) -> void:
+    _forecast_query = query
+
 func _init(compose: ComposeState, band_labor: HudBandLaborState, selection: HudSelectionState,
         topbar: FactionReadouts, selectioncard: SelectionCardController, host: Node,
         herd_assign_controls: VBoxContainer, forage_assign_controls: VBoxContainer,
@@ -1361,21 +1369,28 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     var is_expedition := distance >= 0 and distance > reach
     # Local hunt caps at the band's assignable hunt workers; an expedition caps at the party ceiling.
     var assignable := SourceForecast.expedition_party_cap(band) if is_expedition else _band_labor.assignable_hunt_workers(band, herd_id)
-    # **THE KIT, RESOLVED HERE AND MOUNTED UNDER THE CREW ROW.** Its selection decides whether the
-    # sim's `huntTripEstimates` table applies to this raid at all, and every reading below is priced
-    # against that answer — so the resolve leads and the ROW lands beside the crew it describes.
+    # **THE KIT, RESOLVED HERE AND MOUNTED UNDER THE CREW ROW.** It is part of the question the sim is
+    # asked, so every reading below is priced for it — the resolve leads and the ROW lands beside the
+    # crew it describes.
     var kits := _band_labor.kits()
     var default_kit := _band_labor.default_kit_id(KitRoster.JOB_HUNT)
     var kit_id := KitRoster.resolve_selection(kits, KitRoster.JOB_HUNT, default_kit,
         _compose.hunt_kit_id())
     _compose.set_hunt_kit_id(kit_id)
-    # **THE HONESTY GATE, EXPEDITION BRANCH ONLY.** A LOCAL hunt is priced from the herd's own
-    # per-biomass vector and the band's ceilings — no estimate table, so no kit mismatch to have. The
-    # raid's every figure is a lookup into `huntTripEstimates`, which is quoted for ONE kit; where the
-    # selection differs the sheet must not present that table as the answer. Compare the ids — never
-    # assume the default is selected.
-    var trip_quoted := not is_expedition or KitRoster.estimates_apply_to(herd,
-        KitRoster.HERD_TRIP_ESTIMATES_KIT_KEY, default_kit, kit_id)
+    # **THE RAID'S NUMBERS ARE ASKED FOR, EXPEDITION BRANCH ONLY.** A LOCAL hunt is priced from the
+    # herd's own per-biomass vector and the band's ceilings — client arithmetic over wire terms, no
+    # query. A raid's every figure is the sim's forward simulation of THIS band, kit, party and floor,
+    # so the sheet asks and renders the answer; there is no table to mismatch against any more.
+    #
+    # The ask is idempotent on the composed key, so it costs nothing on the rebuilds that do not move
+    # it — and every rebuild that DOES (a stepper tick, a kit switch, a committed floor) is exactly a
+    # re-query. A floor DRAG never reaches here: only a committed change rebuilds the sheet.
+    var raid_view := {"state": ForecastQuery.STATE_PENDING, "answer": {}, "error": ""}
+    if is_expedition:
+        raid_view = _raid_forecast_view(band, herd_id, kit_id, _compose.hunt_count(),
+            _compose.hunt_floor(), SourceForecast.expedition_party_cap(band))
+    var raid_answer: Dictionary = raid_view["answer"]
+    var raid_ready := String(raid_view["state"]) == ForecastQuery.STATE_READY
     # **THE HARVEST ROW IS THE SAME CONTROL ON BOTH BRANCHES** — three floor presets plus the slider
     # between them, since a floor is a number and there is no per-branch option list left to differ
     # about. Corral being local-only is still true: it is an IMPROVEMENT, and the improvement control
@@ -1412,12 +1427,16 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # It reads the IMPROVEMENT axis to pick the ownership-gated vs would-be crew field; the rationale
     # for that split lives on the helper. The expedition party has no herding crew, so
     # `SourceForecast.expedition_useful_cap` is left alone.
-    # **THE DEMAND-SIDE CAP IS A READING OF THE TABLE TOO**, so under a kit mismatch the party falls
-    # back to supply alone: with no table for this kit the payload's plateau is unknown, and clamping
-    # to another kit's plateau would refuse a party this one may well need.
+    # **THE DEMAND-SIDE CAP RIDES THE ANSWER TOO**, so until one lands the party falls back to supply
+    # alone: with no reply the payload's plateau is unknown, and clamping to a plateau nobody has quoted
+    # would refuse a party this raid may well need.
     var capped := {"cap": assignable, "note": ""}
-    if is_expedition and trip_quoted:
-        capped = SourceForecast.expedition_useful_cap(band, herd, _compose.hunt_floor(), assignable)
+    if is_expedition:
+        # The plateau is the reply's (`useful_cap`); the engagement-crew floor and the `assignable`
+        # clamp stay client-side. With no answer yet the scan contributes 0, which reads exactly as
+        # the old "the table carries no rows" case — supply alone binds.
+        capped = SourceForecast.expedition_useful_cap(band, herd, _compose.hunt_floor(),
+            int(raid_answer.get("useful_cap", 0)), assignable)
     elif not is_expedition:
         capped = _forecast_worker_cap(forecast, assignable, SourceForecast.herd_crew_floor(
             herd, composed_improvement != SourceForecast.IMPROVEMENT_NONE))
@@ -1425,6 +1444,15 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # Auto-max on a FLOOR click — "give me everything this herd can spare at this floor": the
     # max-useful for that floor (clamped to idle below), which guarantees zero waste + the full rate.
     # Only ever set by a preset/slider click, never by a −/+ tick, so manual counts survive a rebuild.
+    #
+    #
+    # **IT DOES NOT WAIT FOR THE REPLY, AND IT MUST NOT.** A raid's plateau is the reply's, so a fill
+    # spent before the answer lands uses the supply-only fallback — but the line BELOW re-clamps the
+    # count to the cap on every render, so the reply's real plateau still binds it a frame later and the
+    # fill converges on `min(plateau, idle)` either way. Holding the one-shot until the reply DEADLOCKS
+    # instead: the ask is skipped at a party of 0, which is exactly the state the fill exists to leave,
+    # so the answer never comes and the sheet renders no forecast at all. (The DENIAL sheet's seed has
+    # no such re-clamp and does wait — see `BandPanelController._fill_denial_compose_sheet`.)
     if _compose.consume_hunt_autofill():
         _compose.set_hunt_count(cap)
     _compose.clamp_hunt_count(cap)
@@ -1437,15 +1465,18 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # "up to X/turn" button metric, DESCENDING as the floor rises (take everything > best harvest >
     # learn from it). Worker-independent on both branches (the expedition's is the max over party sizes
     # of delivered / trip_turns, so it never changes as the Party stepper steps).
-    # **THE PRESET METRICS GO WITH THE TABLE THEY COME FROM.** `expedition_policy_takes` is a reading
-    # of `huntTripEstimates`, so under a kit mismatch it would put a figure priced at another kit on a
-    # sheet whose own note says none are quoted. `{}` is the picker's supported degrade (a herd the
+    # **THE PRESET METRICS COME FROM THE SAME ANSWER AS EVERY OTHER FIGURE HERE** — `per_preset`, one
+    # row per preset in the order they were asked for, priced for the party and kit this sheet is
+    # composing. `{}` until the reply lands, which is the picker's supported degrade (as is a herd the
     # wire does not describe), so the rungs render bare rather than wrong.
     var floor_takes := {}
     if is_expedition:
-        if trip_quoted:
-            floor_takes = SourceForecast.expedition_policy_takes(band, herd,
-                _band_labor.grid_width(), _band_labor.wrap_horizontal())
+        # One row per preset, answered in the SAME round trip as the composed row, so all three
+        # buttons get a face without three sockets' worth of latency. `{}` until the answer lands —
+        # the picker's supported degrade, so the rungs render bare rather than wrong.
+        floor_takes = SourceForecast.expedition_policy_takes(band, herd,
+            raid_answer.get("per_preset", []), _band_labor.grid_width(),
+            _band_labor.wrap_horizontal())
     else:
         floor_takes = _hunt_floor_takes(herd, band, composed_improvement)
     # **THE FLOOR FIRST, THEN THE CREW — the SAME vertical grammar the forage sheet reads in.** You
@@ -1523,9 +1554,10 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         target.add_child(HudWidgets.alloc_hint_label(
             "%s is %d tiles away — beyond this band's hunt reach (%d). Detach a party to follow it." \
             % [_herd_label_for_id(herd_id), distance, reach]))
-    if is_expedition and trip_quoted:
-        trip = SourceForecast.hunt_trip_forecast(band, herd, _compose.hunt_floor(),
-            _compose.hunt_count(), _band_labor.grid_width(), _band_labor.wrap_horizontal())
+    if is_expedition and raid_ready:
+        trip = SourceForecast.hunt_trip_forecast(band, herd,
+            raid_answer.get("at_composed", {}), _band_labor.grid_width(),
+            _band_labor.wrap_horizontal())
         # **THE FLOOR HINT TRAVELS INTO THE TRIP READOUT'S ASIDE**, where the local sheet keeps its
         # own — the two branches now read alike. It stays HERE only for the raids that get no readout
         # box (no estimate, a denial quarry, a herd with nothing above the floor): those state one
@@ -1629,16 +1661,20 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     var is_noop := not is_expedition and _compose.hunt_count() <= 0 and current <= 0
     var assign_btn := Button.new()
     assign_btn.set_meta(HudWidgets.COMPOSE_COMMIT_META, true)
-    if is_expedition and not trip_quoted:
-        # **THE KIT-MISMATCH RAID.** The table is not an answer for this party, so nothing derived from
-        # it renders — no trip readout, no one-line verdict, no refusal. The combat gate two rows above
-        # already stated what this kit can and cannot hurt (it is composed from wire terms and stays
-        # honest at any tier), so what is added here is the sentence naming whose numbers were
-        # withheld. The send stays live and plainly styled: the raid launches, we simply cannot quote
-        # its length.
-        target.add_child(HudWidgets.alloc_hint_label(KitRoster.estimates_quoted_note(kits, herd,
-            KitRoster.HERD_TRIP_ESTIMATES_KIT_KEY, default_kit, kit_id,
-            HudComposeVocab.KIT_TRIP_ESTIMATES_QUOTED_FORMAT)))
+    if is_expedition and not raid_ready:
+        # **NO ANSWER YET, OR NONE COMING.** Where the kit-mismatch apology used to stand: the table
+        # could not answer for this party, so the sheet said whose numbers it was withholding. The sim
+        # answers for this party now — so the only reason to have no figures is that the round trip
+        # has not landed (or has failed), and the line says which.
+        #
+        # Nothing derived renders either way. The combat gate two rows above still does: it is
+        # composed from wire terms the band and herd already carry and stays honest at any tier and
+        # with no reply at all. **The send stays LIVE and plainly styled** — the raid launches; we
+        # simply cannot quote its length yet, and refusing a launch over a pending socket would be a
+        # worse lie than the one this arc removed.
+        target.add_child(HudWidgets.alloc_hint_label(
+            HudComposeVocab.RAID_FORECAST_PENDING if String(raid_view["state"]) == ForecastQuery.STATE_PENDING
+            else HudComposeVocab.FORECAST_FAILED_FORMAT % String(raid_view["error"])))
         SourceForecast.style_send_hunt_button(assign_btn, {}, "")
     elif is_expedition:
         # **THE TRIP READOUT** — the raid's answer in the SAME bounded box the local sheet uses, so a
@@ -1660,13 +1696,6 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
             var forecast_line := SourceForecast.hunt_forecast_line_bbcode(trip, _herd_label_for_id(herd_id))
             if forecast_line != "":
                 target.add_child(HudWidgets.forecast_label(forecast_line))
-        # **WHICH PARTY THE FIGURES ABOVE WERE COSTED FOR**, whenever the sampled party ladder rounded
-        # the composed count to a neighbouring rung — the dock sheet's line, verbatim, so the two entry
-        # points cannot name different parties for one raid.
-        var party_note := SourceForecast.quoted_party_note(trip, _compose.hunt_count(),
-            HudComposeVocab.PARTY_TRIP_ESTIMATES_QUOTED_FORMAT)
-        if party_note != "":
-            target.add_child(HudWidgets.alloc_hint_label(party_note))
         # The empty-raid refusal — computed ONCE and used for both the button tooltip and the reason
         # line, and identical to what the Band panel's dock sheet renders. It takes the TRIP as well as
         # the herd: whether the culprit is the herd's spent surplus or a party that cannot make the
@@ -1729,12 +1758,11 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         assign_btn.pressed.connect(func() -> void:
             if _compose.hunt_count() <= 0:
                 return
-            # **THE EMPTY-RAID GUARD IS ALSO A READING OF THE TABLE**, so it is skipped where the table
-            # is not quoted for this kit: refusing a launch on another kit's projection would be the
-            # same lie as quoting one, cast as a silent no-op.
-            if trip_quoted and SourceForecast.hunt_trip_returns_empty(
-                    SourceForecast.hunt_trip_forecast(band, herd, _compose.hunt_floor(), _compose.hunt_count(),
-            _band_labor.grid_width(), _band_labor.wrap_horizontal())):
+            # **THE EMPTY-RAID GUARD READS THE ANSWER ON SCREEN**, and only when there is one: with no
+            # reply the button is plainly styled and enabled, and refusing the launch here would be a
+            # silent no-op the player has no way to explain. It re-reads `trip` rather than re-asking,
+            # so the guard and the readout above it can never disagree.
+            if raid_ready and SourceForecast.hunt_trip_returns_empty(trip):
                 return
             emit_signal("send_hunt_expedition_requested", {
                 "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
@@ -2516,6 +2544,34 @@ func open_herd_compose(herd: Dictionary) -> void:
 ## close — `reapply_selection` runs every turn and closing would make the sheet unusable under
 ## autoplay (§15). It closes only when the subject it is composing is actually GONE (a different
 ## source is now selected, or the source stopped offering the compose at all).
+## **THE RAID QUESTION, COMPOSED AND ASKED.** One place, so the ask and the read cannot describe two
+## different raids: the key it asks under is the key it reads back, and both are built here.
+##
+## `max_party` is the band's own idle workforce — the stepper's ceiling — and it bounds the reply's
+## `useful_cap` plateau scan, which walks `1..=max` CONTIGUOUSLY. It is deliberately not a rules cap:
+## there is no such thing any more.
+func _raid_forecast_view(band: Dictionary, herd_id: String, kit_id: String, party: int,
+        floor: float, max_party: int) -> Dictionary:
+    if _forecast_query == null:
+        return {"state": ForecastQuery.STATE_PENDING, "answer": {}, "error": ""}
+    var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
+    var subject := ForecastQuery.subject_of(ForecastQuery.KIND_HUNT_TRIP, band_id, herd_id)
+    var key := ForecastQuery.key_of(subject, kit_id, party, floor)
+    # A party of 0 is `invalid_party` server-side and there is no raid to project, so it is never
+    # asked — the sheet's Send is already disabled there and the readout has nothing to say.
+    if party > 0 and band_id != HudConst.NO_BAND_ID and herd_id != "":
+        _forecast_query.ask(ForecastQuery.KIND_HUNT_TRIP, subject, key, {
+            "faction_id": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+            "band_id": band_id,
+            "herd_id": herd_id,
+            "kit_id": kit_id,
+            "party_workers": party,
+            "floor": floor,
+            "preset_floors": SourceForecast.preset_floors(),
+            "max_party_workers": max_party,
+        })
+    return _forecast_query.view(subject, key)
+
 func refresh_compose_sheet() -> void:
     if not is_compose_sheet_open():
         return

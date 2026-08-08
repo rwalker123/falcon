@@ -51,6 +51,28 @@ func send_line(line: String) -> Error:
             return ERR_CANT_CONNECT
     return ERR_CANT_ACQUIRE_RESOURCE
 
+## **ASK the sim a forecast question.** Returns whether the question reached the socket — the ANSWER
+## arrives later through `poll_query_replies`, because the server writes it back on the same stream
+## after evaluating it. See `native/src/bridge/query.rs` for why a query cannot ride `send_line`.
+func send_query(request_id: int, ask: Dictionary) -> bool:
+    if _bridge == null:
+        return false
+    var result: Variant = _bridge.call("send_query", host, proto_port, request_id, ask)
+    if typeof(result) != TYPE_DICTIONARY:
+        return false
+    if bool(result.get("ok", false)):
+        return true
+    push_warning("CommandBridge query error: %s" % result.get("error", "unknown error"))
+    return false
+
+## Drain the answers that have landed since the last call. **Call it once a frame**: this is the one
+## hop from the native query worker onto the main thread.
+func poll_query_replies() -> Array:
+    if _bridge == null:
+        return []
+    var result: Variant = _bridge.call("poll_query_replies")
+    return result if result is Array else []
+
 func set_proto_port(value: int) -> void:
     proto_port = value
     _proto_port_override = true

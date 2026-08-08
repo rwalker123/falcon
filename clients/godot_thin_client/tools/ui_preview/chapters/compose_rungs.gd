@@ -46,6 +46,22 @@ const REOPEN_WORKING_AGE := 24
 ## dead repricing again.
 const KIT_LIVENESS_FORAGERS := 2
 
+## **THE TRAPPING KIT, WHICH NO FIXTURE ROSTER STAGES.** `BandFx.kit_roster_fixture()` ships the three
+## kits the picker's frames are judged on; a fourth entry would change the picker's contents on every
+## rendered kit state, and what the hint SAYS is a string rather than a picture anyway — the sheet
+## renders a plausible line whichever item it names. So the hint claim below is DRIVEN over this entry
+## appended to the shipped roster, the `_assert_denial_party_needed_skips_horizon` idiom.
+##
+## It is the one kit that can see the defect: it supplies `attack` from `traps` where `big_game`
+## supplies it from `spears`, so a hint that resolves the item from the AXIS names gear this kit does
+## not carry and quotes the wrong band row's wear.
+## Read off `BandFx` rather than restated: the shared band fixtures state this kit's row on their own
+## `kit_tiers` answer sheet, and a second spelling of the id here is how the roster entry below and the
+## row the client looks it up in come apart.
+const KIT_ID_TRAPPING := BandFx.KIT_ID_TRAPPING
+
+const KIT_TRAPPING_DISPLAY_NAME := "Trapping kit"
+
 const CREW_NOUN_PEN_HERD_ID := "game_aurochs_crewnoun"
 
 ## The crew the WILD herd of that pair would owe if it were ever tamed — its ownership-gated count is 0.
@@ -489,3 +505,73 @@ func run(harness) -> void:
 			% [str(sledless_carry), str(sledded_carry)],
 		is_equal_approx(sledless_carry * BandFx.KIT_HUNT_CARRY_EQUIPPED,
 			sledded_carry * BandFx.KIT_HUNT_CARRY_BARE))
+
+	# --- **THE HINT NAMES THE KIT'S OWN GEAR** -----------------------------------------------------
+	#
+	# Reported from play: selecting the Trapping kit read `attack 20.0 · carry 40.0 per hunter ·
+	# spears 100 · sled 100`. It named an item that kit does not carry AND quoted the SPEARS' remaining
+	# condition, so a band with fresh traps and worn-out spears read exactly backwards. The client was
+	# resolving the item from the display AXIS (`attack → spears`), which cannot tell two kits apart
+	# when both grant `attack` at the same tier — and `KitOption.item_ids` is the wire field that can.
+	#
+	# **THE PAIR IS THE CLAIM.** `big_game` alone passes under the old guess (its attack really does
+	# come from spears), and `trapping` alone would pass on a hint that named every item in the world.
+	# Both are asserted by EQUALITY against the vocabulary's own formats rather than by `contains`,
+	# because half of what the trapping line must get right is what it does NOT say.
+	_assert_kit_hint_names_the_kits_own_items()
+
+## The two hints, driven at the roster + band the sim publishes: a band carrying all four items at four
+## DIFFERENT conditions, so a clause reading the wrong row quotes a visibly wrong number rather than a
+## coincidentally equal one.
+func _assert_kit_hint_names_the_kits_own_items() -> void:
+	var roster := BandFx.kit_roster_fixture()
+	roster.append({
+		"id": KIT_ID_TRAPPING, "display_name": KIT_TRAPPING_DISPLAY_NAME, "jobs": [KitRoster.JOB_HUNT],
+		"attack": BandFx.KIT_ATTACK_EQUIPPED,
+		"hunt_carry_per_worker_biomass": BandFx.KIT_HUNT_CARRY_EQUIPPED,
+		"forage_carry_per_worker_biomass": BandFx.KIT_FORAGE_CARRY_BARE,
+		# The passive device, then the haul aid it shares with `big_game` — config order, weapon first.
+		"item_ids": [BandFx.KIT_ITEM_TRAPS, BandFx.KIT_ITEM_SLED],
+	})
+	var band := BandFx.with_equipped_kit(BandFx.band_fixture())
+	# The tier half of both lines is identical (the two kits grant the same numbers), which is exactly
+	# why the item clauses are the only thing that can tell them apart.
+	var tiers := [
+		HudComposeVocab.KIT_HINT_ATTACK_FORMAT % String.num(BandFx.KIT_ATTACK_EQUIPPED,
+			HudComposeVocab.KIT_TIER_DECIMALS),
+		HudComposeVocab.KIT_HINT_HUNT_CARRY_FORMAT % String.num(BandFx.KIT_HUNT_CARRY_EQUIPPED,
+			HudComposeVocab.KIT_TIER_DECIMALS),
+	]
+	var sled_clause := HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [BandFx.KIT_ITEM_SLED,
+		int(BandFx.KIT_CONDITION_SLED)]
+	var big_game_want := HudComposeVocab.KIT_HINT_SEPARATOR.join(tiers + [
+		HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [BandFx.KIT_ITEM_SPEARS,
+			int(BandFx.KIT_CONDITION_SPEARS)],
+		sled_clause])
+	var trapping_want := HudComposeVocab.KIT_HINT_SEPARATOR.join(tiers + [
+		HudComposeVocab.KIT_HINT_CONDITION_FORMAT % [BandFx.KIT_ITEM_TRAPS,
+			int(BandFx.KIT_CONDITION_TRAPS)],
+		sled_clause])
+	var big_game_got := KitRoster.tier_hint(roster,
+		KitRoster.kit_by_id(roster, BandFx.KIT_ID_BIG_GAME), band, KitRoster.JOB_HUNT)
+	var trapping_got := KitRoster.tier_hint(roster,
+		KitRoster.kit_by_id(roster, KIT_ID_TRAPPING), band, KitRoster.JOB_HUNT)
+	h._assert_hud("the big-game hint is UNCHANGED — spears then sled, at their own conditions (\"%s\")"
+		% big_game_got, big_game_got == big_game_want)
+	h._assert_hud("…and the trapping hint names TRAPS at the traps' condition (wanted \"%s\", got \"%s\")"
+		% [trapping_want, trapping_got], trapping_got == trapping_want)
+	h._assert_hud("…naming no gear it does not carry — the reported defect (\"%s\")"
+		% trapping_got, not trapping_got.contains(BandFx.KIT_ITEM_SPEARS))
+	# The empty list is a real answer, not a missing field: `none` wears nothing, so it states its bare
+	# tiers and STOPS. Without this the whole claim is satisfiable by a hint that prints every item
+	# there is — and `none` is the entry that would show it, being in the same roster as both others.
+	var none_want := HudComposeVocab.KIT_HINT_SEPARATOR.join([
+		HudComposeVocab.KIT_HINT_ATTACK_FORMAT % String.num(BandFx.KIT_ATTACK_BARE,
+			HudComposeVocab.KIT_TIER_DECIMALS),
+		HudComposeVocab.KIT_HINT_HUNT_CARRY_FORMAT % String.num(BandFx.KIT_HUNT_CARRY_BARE,
+			HudComposeVocab.KIT_TIER_DECIMALS),
+	])
+	var none_got := KitRoster.tier_hint(roster, KitRoster.kit_by_id(roster, BandFx.KIT_ID_NONE),
+		band, KitRoster.JOB_HUNT)
+	h._assert_hud("…while a kit that carries nothing states no condition clause at all (\"%s\")"
+		% none_got, none_got == none_want)

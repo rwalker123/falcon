@@ -706,30 +706,17 @@ const MAX_USEFUL_CAPPED_TOOLTIP := "Fully staffed — this source can use at mos
 # so a capped `+` reads as "fixable by reassigning labor" rather than as a silent bug.
 const LABOR_BOUND_NOTE_FORMAT := "%d of %d useful — free up idle workers to send more"
 
-# **THE RAID TABLE IS THE ONE PLACE THE SIM STILL EXPORTS ROWS, and for the opposite reason to the
+# **THE RAID'S ROW IS THE ONE ANSWER THE SIM STILL COMPUTES FOR US, and for the opposite reason to the
 # retired ceiling lists.** A resident band's ceiling has a closed form the client can evaluate at any
 # floor; a raid's trip length does not — it is a bounded forward simulation of "grab the standing
-# surplus, come home", so there is no expression to hand over. The sim therefore SAMPLES the continuum
-# (`snapshot::RAID_FORECAST_FLOOR_SAMPLES`) at a handful of floors × every party size, and the client
-# does ZERO arithmetic over it: a re-derived `carryCap / rate` closed form is wrong, and wrong by a lot
-# (on a FULL Rabbit Warren above the peak only a LONE hunter fills at all). Look it up.
+# surplus, come home", so there is no expression to hand over. The client therefore does ZERO
+# arithmetic over a raid row: a re-derived `carryCap / rate` closed form is wrong, and wrong by a lot
+# (on a FULL Rabbit Warren above the peak only a LONE hunter fills at all). Ask, and read the answer.
 #
-# **THE SAMPLES ARE MARKS ON A DIAL, NOT A SET OF OPTIONS.** The launch command accepts any floor in
-# `0.0..=1.0`; the preview reads the NEAREST sampled row (`nearest_estimate_floor`), so a dial parked
-# between two samples previews the closer one rather than going silent.
-const HERD_TRIP_ESTIMATES_KEY := "hunt_trip_estimates"
-# Each row carries its own `floor` and `party_workers`, and both are read off the ROW — never
-# reconstructed from the dictionary key. The key is `"<floor>:<party>"` with the floor rendered by
-# Rust's `f32` Display (`0`, not `0.0`, for the bare floor), so a GDScript-side rebuild has to
-# reproduce Rust float formatting exactly and a near-miss silently finds nothing.
-const HUNT_ESTIMATE_FLOOR_KEY := "floor"
-const HUNT_ESTIMATE_PARTY_KEY := "party_workers"
-# **WHICH SAMPLED PARTY A FORECAST WAS COMPUTED FOR**, carried out on BOTH raid forecasts (the hunting
-# trip's and the denial raid's) because the party axis is SAMPLED and a selected party usually falls
-# between two rungs. It is the forecast's own record of the rounding `nearest_estimate_party` made, and
-# the ONE thing `quoted_party_note` reads — so the sentence naming the quoted party and the figures it
-# qualifies can never come from two lookups free to disagree.
-const QUOTED_PARTY_KEY := "quoted_party"
+# **IT IS ASKED FOR, NOT BROADCAST.** The forecast is a request/response on the command socket
+# (`ForecastQuery`), answered for the exact band, kit, party and floor the sheet composed — so the row
+# below is one answer rather than a cell of a sampled table, and there is no rung to round to. A ROW
+# still carries `floor` / `party_workers`, and both are still read off the row.
 # Sentinel for "the snapshot doesn't carry the levers/ceiling this forecast needs" (older server).
 # A real take rate / ceiling is always ≥ 0, so a negative reads unambiguously as absent → the caller
 # renders NO forecast line rather than a misleading zero.
@@ -1136,7 +1123,7 @@ static func yield_range_clause(m: Dictionary) -> String:
 # hunter needs per kill, which is what makes the two ends of the roster comparable (a mammoth at 62
 # against a rabbit at 0.1). **It is deliberately not divided by the party**: the herd's accumulated
 # wounds are not exported, so a per-party turn count here would be a second, always-pessimistic
-# duration model competing with the sim's own `huntTripEstimates`.
+# duration model competing with the raid forecast the sim answers when asked.
 
 ## Whether the pre-launch fight lines have anything to say about this source. A PEN and the whole
 ## PLANT web publish no engagement stage (`NO_ENGAGEMENT_STAGE`), which is exactly the byte-identity
@@ -1380,8 +1367,8 @@ static func hex_distance_wrapped(a_col: int, a_row: int, b_col: int, b_row: int,
     return int((abs(dq) + abs(dr) + abs(dq + dr)) / 2)
 
 ## Round-trip TRAVEL turns for a raid party walking from `band` out to `herd` and back — the honest
-## remainder of the trip length the band-agnostic `hunt_trip_estimates` table cannot carry (one row
-## serves every band). Matches the sim launch feed EXACTLY: ceil(2 × wrap-aware hex_distance(band, herd)
+## remainder of the trip length the sim's answer does not carry: `turns_to_fill` counts HUNTING turns
+## only, whichever band asked. Matches the sim launch feed EXACTLY: ceil(2 × wrap-aware hex_distance(band, herd)
 ## / band_move_tiles_per_turn), from the SELECTED band's tile + the exported move rate.
 ## Returns 0 — so the forecast degrades to hunting turns only, never a fabricated travel — when the move
 ## rate isn't on the band dict or a position is unknown. `band_move_tiles_per_turn` (a LaborConfig scalar
@@ -2036,18 +2023,9 @@ const VERDICT_NO_CREW := "No one assigned. Nothing is taken and it grows back on
 # zeroes and the decline is irreversible, and then walk away (§1.1). So its readout is a COLLAPSE
 # VERDICT, and `expeditionFloor` (`0.0`) / `expeditionFillTarget` (`0`) must never be rendered for it:
 # they are the mission reporting that it has no such lever, not values it chose.
-const HERD_DENIAL_ESTIMATES_KEY := "denial_estimates"
-# The table is an ARRAY with ONE axis — party size — so a row's own `party_workers` is its identity
-# and `denial_estimate_row` SCANS for it. (`huntTripEstimates` needs a composite key because it is
-# sampled on two axes; that key is where its Rust-float-Display trap comes from, and one axis is
-# exactly what makes the trap inexpressible here.)
-const DENIAL_ESTIMATE_PARTY_KEY := "party_workers"
-# **THE PARTY THE SHEET OPENS ON** — the sim's own `denialPartyNeeded`: the smallest party in the
-# table above whose raid SUCCEEDED (`DENIAL_SUCCESS_OUTCOMES`), i.e. the smallest one whose kills
-# outpace this herd's regrowth. **NOT "the first row that is not `repelled`"** — that reading quotes a
-# `horizon` row, whose projection merely ran out, as the party that breaks the herd. It is what the stepper seeds to and what the repelled refusal names, and both read it
-# through `denial_party_needed` so the control and the sentence cannot quote different counts.
-const HERD_DENIAL_PARTY_NEEDED_KEY := "denial_party_needed"
+# The requirement is `DenialRaidForecastReply.party_needed`, searched CONTIGUOUSLY to the asking band's
+# own last worker — so `0` says "no party YOU can field does this", a fact the player can act on,
+# rather than "no party anyone happened to sample did".
 # **`0` IS "NO QUOTED PARTY DRIVES THIS HERD DOWN", and it is NEVER "send nobody".** Three honest
 # situations reach it (a quarry nothing can bring into contact, a requirement past the sim's quoting
 # bound, a herd out-growing the whole table), all told apart by the rows' own `outcome` — so the
@@ -2173,8 +2151,8 @@ const DENIAL_VERDICTS := {
     # is recalled, §6 Q2), so this warns and never blocks.
     # **TWO REASONS, AND WHICH ONE RENDERS IS A FACT ABOUT THE SIM'S ANSWER, NOT ABOUT THE WORDING.**
     # "Send more hunters" is correct on the merits and useless in hand: it prescribes hands without
-    # naming how many, while the sim has been shipping the exact figure (`denialPartyNeeded`) all
-    # along. So where there IS a number, `reason_counted` names it — `%s` the quarry, `%d` the party
+    # naming how many, while the reply's `party_needed` states the exact figure. So where there IS a
+    # number, `reason_counted` names it — `%s` the quarry, `%d` the party
     # — and where there is not (`DENIAL_PARTY_NEEDED_NONE`), the bare `reason` stands verbatim,
     # because inventing a figure there would be a promise the sim did not make.
     DENIAL_OUTCOME_REPELLED: {
@@ -3391,140 +3369,29 @@ static func flora_basket_entries(composition: Variant) -> Array[Dictionary]:
     entries[0]["percent"] = int(entries[0]["percent"]) + FLORA_SHARE_PERCENT_TOTAL - total
     return entries
 
-## **THE NEAREST SAMPLED FLOOR the raid table actually carries**, or `NO_SAMPLED_FLOOR` when it
-## carries none at all. The sim SAMPLES the floor continuum for raids
-## (`snapshot::RAID_FORECAST_FLOOR_SAMPLES`) because a raid's trip length has no closed form to hand
-## over — so unlike a resident band's ceiling, the client cannot evaluate an arbitrary floor here and
-## must read the closest reading instead. The samples are marks on a dial: the launch command still
-## sends the player's exact floor, and this only decides which row the PREVIEW quotes.
-const NO_SAMPLED_FLOOR := -1.0
-
-static func nearest_estimate_floor(estimates: Dictionary, floor: float) -> float:
-    var want := clamp_floor(floor)
-    var best := NO_SAMPLED_FLOOR
-    var best_gap := INF
-    for key in estimates:
-        var row_variant: Variant = estimates[key]
-        if not (row_variant is Dictionary):
-            continue
-        var sampled := float((row_variant as Dictionary).get(HUNT_ESTIMATE_FLOOR_KEY, 0.0))
-        var gap := absf(sampled - want)
-        if gap < best_gap:
-            best_gap = gap
-            best = sampled
-    return best
-
-## **THE NEAREST SAMPLED PARTY SIZE a table carries**, or `NO_SAMPLED_PARTY` when it carries none —
-## the PARTY axis's twin of `nearest_estimate_floor`, and named for it so a reader can see the two are
-## one idea. Both estimate tables are sampled on this axis now: `expedition_config
-## .estimate_party_sizes` is an ascending LADDER (`[1, 2, 3, 4, 8, 16, 32, 64]`), dense where one
-## hunter is a large proportional change and sparse where it is not, so most party sizes fall BETWEEN
-## two rungs. Demanding an exact match there blanks the whole sheet — a party of 6 against a denial
-## axis of `{1,2,3,4,5,8,16,32,64}` used to find nothing at all — and the marks-on-a-dial reading the
-## floor axis already takes is the honest one: the launch command still sends the player's exact
-## party, and this only decides which row the PREVIEW quotes. **The sheet then NAMES the quoted party
-## whenever it is not the selected one** (`quoted_party_note`); a nearby row must never be presented
-## as though it were exact, because the take scales with party size.
-const NO_SAMPLED_PARTY := 0
-
-static func nearest_estimate_party(parties: Array, workers: int) -> int:
-    var best := NO_SAMPLED_PARTY
-    var best_gap := INF
-    for party_variant in parties:
-        var party := int(party_variant)
-        if party <= 0:
-            continue
-        var gap := absf(float(party - workers))
-        # Strictly closer wins; **on a TIE the LOWER rung wins** — quoting the bigger party's take
-        # against a smaller one over-states what comes home, and over-quoting is the more misleading
-        # of the two directions. (`gap < best_gap` alone would leave the tie to iteration order.)
-        if gap < best_gap or (gap == best_gap and party < best):
-            best_gap = gap
-            best = party
-    return best
-
-## The row for the nearest sampled party in `rows`, or `{}` when none of them names one. The ONE
-## resolution of the party axis, shared by both tables so the hunt sheet and the denial sheet cannot
-## round a party two different ways.
-static func _row_for_nearest_party(rows: Array, party_key: String, workers: int) -> Dictionary:
-    var parties: Array = []
-    for row_variant in rows:
-        if row_variant is Dictionary:
-            parties.append(int((row_variant as Dictionary).get(party_key, 0)))
-    var party := nearest_estimate_party(parties, workers)
-    if party == NO_SAMPLED_PARTY:
-        return {}
-    for row_variant in rows:
-        if not (row_variant is Dictionary):
-            continue
-        var row := row_variant as Dictionary
-        if int(row.get(party_key, 0)) == party:
-            return row
-    return {}
-
-## Every raid row standing at `sampled` — the floor axis resolved, the party axis not yet. It SCANS
-## rather than rebuilding the `"<floor>:<party>"` key, because that key renders the floor with Rust's
-## `f32` Display and a GDScript-side near-miss finds nothing silently.
-static func _estimate_rows_at_floor(estimates: Dictionary, sampled: float) -> Array:
-    var rows: Array = []
-    for key in estimates:
-        var row_variant: Variant = estimates[key]
-        if not (row_variant is Dictionary):
-            continue
-        var row := row_variant as Dictionary
-        if is_equal_approx(float(row.get(HUNT_ESTIMATE_FLOOR_KEY, 0.0)), sampled):
-            rows.append(row)
-    return rows
-
-## One raid row — the cell for (the nearest sampled floor, the nearest sampled party), or `{}` when the
-## table carries no cell at all. **BOTH axes are read at their nearest mark**; the party axis used to
-## demand an exact match, which is what silenced the whole readout for a party the ladder does not
-## sample.
-static func hunt_estimate_row(estimates: Dictionary, floor: float, workers: int) -> Dictionary:
-    var sampled := nearest_estimate_floor(estimates, floor)
-    if sampled == NO_SAMPLED_FLOOR:
-        return {}
-    return _row_for_nearest_party(_estimate_rows_at_floor(estimates, sampled),
-        HUNT_ESTIMATE_PARTY_KEY, workers)
-
-## **WHICH PARTY A FORECAST'S FIGURES WERE COMPUTED FOR**, when it is not the one selected — the
-## sentence the sheet renders beside the numbers, in `KitRoster.estimates_quoted_note`'s idiom and for
-## its reason: a figure quoted for a party the player is not sending must SAY so rather than be
-## presented as exact. `""` where the selected party IS a sampled rung (the ladder's dense low end and
-## the denial table's requirement run make that the common case) and where no row was found at all.
+## **THE RAID ROW'S OWN KEYS.** A forecast row is what it always was — the sim's forward-simulated
+## answer for one (floor, party) — and it still spells `floor` / `party_workers` / `turns_to_fill` /
+## `bound` / `delivers_*` / `animals_taken` / `delivered_*` / `wasted_food` exactly as the snapshot
+## table did. **What moved is where the row COMES FROM**, not what a row is: `native/src/bridge/query.rs`
+## decodes the reply under the same names, so every reader below is unchanged from the table era.
 ##
-## **It takes the FORMAT as a parameter** — this layer references no `Hud*Vocab` module by invariant —
-## and reads the quoted party off the FORECAST rather than looking the row up a second time, so the
-## note and the figures it qualifies come from one resolution.
-static func quoted_party_note(forecast: Dictionary, workers: int, format: String) -> String:
-    var quoted := int(forecast.get(QUOTED_PARTY_KEY, NO_SAMPLED_PARTY))
-    if quoted == NO_SAMPLED_PARTY or quoted == workers:
-        return ""
-    return format % [quoted, workers]
+## **NOTHING HERE IS ROUNDED, AND NO SENTENCE APOLOGISES FOR A ROUNDING.** A row answers the exact
+## party and floor the sheet composed, so the take it states is the take of the raid on screen. Any
+## copy that names a party OTHER than the composed one is describing a contract that no longer exists.
 
-## The raid `workers` from `band` deliver hunting `herd` at `floor`. A PURE TABLE LOOKUP into the sim's
-## forward-simulated `hunt_trip_estimates` (`HERD_TRIP_ESTIMATES_KEY`) — ZERO arithmetic: the sim grabs
-## the herd's standing surplus above the floor in a burst and reports the whole animals it lands
-## (`animals_taken`) and the turns until the party comes home (`turns_to_fill`, NOT "turns to fill the
-## pack"). The ecology/MSY model is never reproduced here, and unlike a resident band's ceiling it
-## cannot be: the trip is a bounded forward simulation with no closed form, which is exactly why this
-## one table survived the stance deletion. The preview reads the NEAREST SAMPLED floor
-## (`hunt_estimate_row`); the launch command sends the player's exact one. Returns {available, denial,
-## empty, animals, turns, food, long_raid, slow}: `available` false = the snapshot carries no estimate
-## for this party size (a non-huntable herd, an older server → the caller shows no forecast at all).
-static func hunt_trip_forecast(band: Dictionary, herd: Dictionary, floor: float, workers: int,
+## The raid `workers` from `band` deliver hunting `herd` at `floor`, read off the ANSWER the sheet
+## asked for — ZERO arithmetic: the sim grabs the herd's standing surplus above the floor in a burst
+## and reports the whole animals it lands (`animals_taken`) and the turns until the party comes home
+## (`turns_to_fill`, NOT "turns to fill the pack"). The ecology/MSY model is never reproduced here,
+## and unlike a resident band's ceiling it cannot be: the trip is a bounded forward simulation with no
+## closed form, which is exactly why the sim answers this one rather than exporting terms for it. The
+## launch command sends the same floor the question carried. Returns {available, denial, empty,
+## animals, turns, food, long_raid, slow}: `available` false = there is no answer to read yet (in
+## flight, refused, or a non-huntable herd → the caller shows no forecast at all).
+static func hunt_trip_forecast(band: Dictionary, herd: Dictionary, estimate: Dictionary,
         grid_width: int, wrap_horizontal: bool) -> Dictionary:
-    var estimates_variant: Variant = herd.get(HERD_TRIP_ESTIMATES_KEY, {})
-    if workers <= 0 or not (estimates_variant is Dictionary):
-        return {"available": false}
-    var estimate := hunt_estimate_row(estimates_variant as Dictionary, floor, workers)
     if estimate.is_empty():
         return {"available": false}
-    # WHICH sampled party the rows below were computed for — the party axis is a LADDER, so this is
-    # usually not `workers`, and the sheet says so beside the figures (`quoted_party_note`). It rides
-    # every available branch, the denial carve-out included: a raid that brings nothing home still
-    # brings nothing home for a stated party size.
-    var quoted_party := int(estimate.get(HUNT_ESTIMATE_PARTY_KEY, NO_SAMPLED_PARTY))
     # A DENIAL mission carries nothing home at all. **`delivers_food == false` alone no longer means
     # that** (issue #337): it was redefined to say the QUARRY IS INEDIBLE, and an inedible quarry still
     # pays pelts — a wolf raid reads `delivers_food false, delivers_trade true` and is a real delivery,
@@ -3532,7 +3399,7 @@ static func hunt_trip_forecast(band: Dictionary, herd: Dictionary, floor: float,
     # carve-out fires only when the species pays NEITHER product.
     if not bool(estimate.get("delivers_food", false)) \
             and not bool(estimate.get("delivers_trade", false)):
-        return {"available": true, "denial": true, "empty": false, QUOTED_PARTY_KEY: quoted_party}
+        return {"available": true, "denial": true, "empty": false}
     # **WHICH STOP ENDS THIS SAMPLED TRIP**, off the row rather than inferred from the numbers here.
     #
     # **IT IS READ BEFORE THE EMPTY BRANCH BECAUSE THE EMPTY BRANCH IS WHAT NEEDS IT MOST** — an empty
@@ -3552,8 +3419,7 @@ static func hunt_trip_forecast(band: Dictionary, herd: Dictionary, floor: float,
     var delivered_food := float(estimate.get("delivered_food", 0.0))
     var delivered_trade := float(estimate.get("delivered_trade", 0.0))
     if delivered_food <= 0.0 and delivered_trade <= 0.0:
-        return {"available": true, "denial": false, "empty": true, TRIP_BOUND_KEY: bound,
-            QUOTED_PARTY_KEY: quoted_party}
+        return {"available": true, "denial": false, "empty": true, TRIP_BOUND_KEY: bound}
     var animals := int(estimate.get("animals_taken", 0))
     # `turns_to_fill == RAID_TURNS_UNBOUNDED` = the raid ran the whole horizon still delivering (a long
     # raid), and since the floor-0 fix that is `horizon` and nothing else — a `herd_lost` raid completes
@@ -3581,7 +3447,6 @@ static func hunt_trip_forecast(band: Dictionary, herd: Dictionary, floor: float,
     var waste_pct := (wasted_food / killed) if killed > 0.0 else 0.0
     return {
         "available": true, "denial": false, "empty": false,
-        QUOTED_PARTY_KEY: quoted_party,
         "animals": animals, "turns": total, "hunt_turns": hunt_turns, "travel": travel,
         "long_raid": long_raid, "slow": slow, TRIP_BOUND_KEY: bound,
         RAID_TURNS_FLOOR_KEY: turns_floor, RAID_HUNT_TURNS_FLOOR_KEY: hunt_turns_floor,
@@ -3771,20 +3636,8 @@ static func hunt_empty_refusal_reason(forecast: Dictionary, herd: Dictionary) ->
 
 # ---- THE DENIAL RAID's readout (`docs/plan_denial_raid.md` §1.1 / §3) ---------------------------
 
-## One denial row — the cell for the NEAREST sampled party, or `{}` when the table carries no rows at
-## all. It SCANS, like its hunting sibling, but for the opposite reason: the table has ONE axis, so a
-## row's own `party_workers` IS its identity and there is no key to rebuild in the first place.
-##
-## **It read the party axis EXACTLY until the ladder landed, and that was the worse half of the two.**
-## The denial axis is the shared `estimate_party_sizes` ladder plus a short contiguous run at the
-## herd's own requirement, so against a requirement of 1 it is `{1,2,3,4,5,8,16,32,64}` — a party of 6
-## found nothing and the entire sheet went blank. Both tables take the nearest rung now, and the sheet
-## names it (`quoted_party_note`) wherever it is not the party selected.
-static func denial_estimate_row(rows: Array, workers: int) -> Dictionary:
-    return _row_for_nearest_party(rows, DENIAL_ESTIMATE_PARTY_KEY, workers)
-
-## What `workers` from this band do to `herd` on a DENIAL raid — a table lookup into the sim's
-## `denialEstimates` plus the ONE band-relative term the band-agnostic table cannot carry. Returns
+## What `workers` from this band do to `herd` on a DENIAL raid — the reply's row for the composed party,
+## plus the ONE term the sim's answer does not carry (the outbound walk). Returns
 ## `{available, outcome, turns, low, high, travel, animals, food, trade, wasted}`.
 ##
 ## **THE TURN COUNTS ARE FROM LAUNCH, AND THE OUTBOUND WALK IS WHY** (reported from play). The sim's
@@ -3810,22 +3663,15 @@ static func denial_estimate_row(rows: Array, workers: int) -> Dictionary:
 ## passes nothing here; the in-flight drawer, which deliberately passes no band (see the travel note
 ## above), hands in the launched PARTY's own cohort. It is never consulted for travel — a launched party's
 ## remaining walk is not on the wire, which is the whole reason that caller passes no band.
-static func denial_forecast(herd: Dictionary, workers: int, band: Dictionary = {},
+static func denial_forecast(herd: Dictionary, row: Dictionary, band: Dictionary = {},
         grid_width: int = 0, wrap_horizontal: bool = false,
         horizon_cohort: Dictionary = {}) -> Dictionary:
-    var rows_variant: Variant = herd.get(HERD_DENIAL_ESTIMATES_KEY, [])
-    if workers <= 0 or not (rows_variant is Array):
-        return {"available": false}
-    var row := denial_estimate_row(rows_variant as Array, workers)
     if row.is_empty():
         return {"available": false}
     var travel := DENIAL_TRAVEL_UNKNOWN if band.is_empty() \
         else outbound_travel_turns(band, herd, grid_width, wrap_horizontal)
     return {
         "available": true,
-        # WHICH sampled party these figures belong to — the sheet says so out loud when it is not the
-        # one selected. Read off the ROW, so it is the rounding actually made rather than a second one.
-        QUOTED_PARTY_KEY: int(row.get(DENIAL_ESTIMATE_PARTY_KEY, NO_SAMPLED_PARTY)),
         # The sim's own key, carried through untouched — every branch below asks THIS, never the
         # numbers, because a `0` turn count is reachable from two unrelated outcomes.
         "outcome": String(row.get("outcome", DENIAL_OUTCOME_NONE)).strip_edges().to_lower(),
@@ -4043,14 +3889,14 @@ static func denial_waste_face(forecast: Dictionary) -> String:
             FoodIcons.TRADE_GOODS_GLYPH, format_magnitude(trade)])
     return DENIAL_TAKE_LEFT_JOIN.join(parts)
 
-## **THE ONE READING OF `denialPartyNeeded`** — the smallest party the sim quotes whose raid actually
+## **THE ONE READING OF `DenialRaidForecastReply.party_needed`** — the smallest party the sim quotes whose raid actually
 ## SUCCEEDS in driving this herd past recovery (never a `horizon` row, which only means the projection
 ## ran out), `DENIAL_PARTY_NEEDED_NONE` when it quotes none. The stepper's seed and the
 ## repelled refusal's count BOTH come through here, so the control and the sentence beside it cannot
 ## disagree about the number. It is NOT a cap and may exceed the band's idle workers — that is the
 ## honest "you need more people than you have", and only the stepper, which knows the band, clamps it.
-static func denial_party_needed(herd: Dictionary) -> int:
-    return int(herd.get(HERD_DENIAL_PARTY_NEEDED_KEY, DENIAL_PARTY_NEEDED_NONE))
+static func denial_party_needed(reply: Dictionary) -> int:
+    return int(reply.get("party_needed", DENIAL_PARTY_NEEDED_NONE))
 
 ## The spelled-out reason a denial raid will not get there — `""` for the two outcomes that do, so the
 ## sheet renders no line rather than an empty one.
@@ -4059,9 +3905,8 @@ static func denial_party_needed(herd: Dictionary) -> int:
 ## outcome's two reasons renders is decided by `denial_party_needed`, never by the wording: with a
 ## figure the sentence carries `[quarry, needed]`, without one it falls back to the numberless form
 ## that takes the quarry alone. An outcome with no counted variant (every other one) is unaffected.
-static func denial_refusal_reason(forecast: Dictionary, herd: Dictionary) -> String:
+static func denial_refusal_reason(forecast: Dictionary, herd: Dictionary, needed: int) -> String:
     var entry := denial_verdict(forecast)
-    var needed := denial_party_needed(herd)
     var counted := String(entry.get("reason_counted", ""))
     if counted != "" and needed > DENIAL_PARTY_NEEDED_NONE:
         return counted % [herd_display_name(herd), needed]
@@ -4077,18 +3922,16 @@ static func denial_refusal_reason(forecast: Dictionary, herd: Dictionary) -> Str
 ## `snapshot.fbs` it also covers a quarry nothing can bring into contact (wariness ≥ 1), where more
 ## hands never help, and a requirement past the sim's quoting bound. There is no number to compare, so
 ## the verdict copy governs and the button behaves as it always has.
-static func denial_is_short_handed(herd: Dictionary, idle: int) -> bool:
-    var needed := denial_party_needed(herd)
+static func denial_is_short_handed(needed: int, idle: int) -> bool:
     return needed > DENIAL_PARTY_NEEDED_NONE and needed > idle
 
 ## …and the sentence that says so, `""` when the band is not short-handed. Both numbers, off the SAME
 ## `denial_party_needed` reading the stepper's seed and the repelled refusal use, so the sheet cannot
 ## disable a Send over one figure while quoting another.
-static func denial_short_handed_reason(herd: Dictionary, idle: int) -> String:
-    if not denial_is_short_handed(herd, idle):
+static func denial_short_handed_reason(herd: Dictionary, needed: int, idle: int) -> String:
+    if not denial_is_short_handed(needed, idle):
         return ""
-    return DENIAL_SHORT_HANDED_REASON_FORMAT % [
-        herd_display_name(herd), denial_party_needed(herd), idle]
+    return DENIAL_SHORT_HANDED_REASON_FORMAT % [herd_display_name(herd), needed, idle]
 
 ## The denial Send button, off the SAME entry the verdict line came from. With no forecast at all (a
 ## party size the sim did not sample) it takes the plain primary face rather than a warning it cannot
@@ -4123,12 +3966,13 @@ static func style_send_denial_button(button: Button, forecast: Dictionary,
 ## the stepper takes the tighter of the two. Kept as a named function rather than inlined because it is
 ## the seam TWO entry points read — the herd drawer's expedition branch and the dock's hunt form.
 ##
-## **`max_expedition_party_size` IS NOT A RULES CAP AND IS NOT READ HERE.** It is the wire echo of the
-## LAST RUNG of `expedition_config.estimate_party_sizes` — the top of the estimate tables' SAMPLED
-## party axis, and the only quoting bound there is (it absorbed the retired `deny.max_party_quoted`) —
-## and the sim deleted the rules cap for all three launch verbs, so this clamp was the client enforcing
-## a limit nothing on the server holds. A party past that rung is quoted at the rung, with the sheet
-## naming it (`quoted_party_note`); it is not refused.
+## **`max_expedition_party_size` IS NOT A RULES CAP, AND NOTHING IN THE CLIENT READS IT ANY MORE.** It
+## was the per-cohort echo of how far the pre-launch estimate TABLES had been sampled, i.e. the point
+## past which a preview had to quote a smaller party's numbers and say so. There is no sampled axis
+## left to declare: a sheet asks for the party it has composed and is answered for that party, and the
+## `max_party_workers` it sends is the band's own idle workforce, which is what bounds the sim's
+## contiguous search. The sim holds no rules cap on any of the three launch verbs either, so a clamp
+## here would be the client enforcing a limit that exists nowhere.
 static func expedition_party_cap(band: Dictionary) -> int:
     return int(band.get("idle_workers", 0))
 
@@ -4157,81 +4001,42 @@ static func expedition_engage_crew(herd: Dictionary, floor: float) -> int:
         float(herd.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)),
         build_dip(herd, prefix, IMPROVEMENT_NONE))
 
-## The max-useful party for a raid: `delivered_food` PLATEAUS with party size once the standing surplus
-## (not the pack) binds, so beyond the plateau extra hunters raise the payload by nothing. Scan the
-## sampled floor's rows for the smallest size at which delivered food stops rising and cap there — the
-## raid twin of `_forecast_worker_cap`, mirroring its `{cap, note}` shape + "max N useful" note so the
-## expedition and local pickers explain a dead `+` the same way. Scans DELIVERED FOOD (not the
-## whole-animal `animals_taken`, which sits at 1 across every small-party size on big game — its
-## leading-zeros plateau fooled the old scan into capping at 1; with partials delivered food rises
-## smoothly, so the cap tracks the true bind). A table SCAN, zero client arithmetic. Returns the full
-## `assignable` (no note) when the table carries no rows or never plateaus within the band's reach.
+## The max-useful party for a raid, from the reply's own plateau scan plus the one thing the scan
+## cannot see. `{cap, note}`, the raid twin of `_forecast_worker_cap` — same shape, same "max N useful"
+## note, so the expedition and local pickers explain a dead `+` the same way.
+##
+## **ONLY THE SCAN MOVED SERVER-SIDE.** `scanned` is `HuntTripForecastReply.useful_cap`: the LAST party
+## at which the delivered payload was still RISING, walked CONTIGUOUSLY from 1 to the band's own idle
+## workers. It used to be a client scan over the snapshot table's sampled rungs, which could only ever
+## find a sampled plateau — the last rung still rising, not the last PARTY still rising. `0` means the
+## scan found none (the payload never rose above zero, or was still rising at the band's last worker),
+## and reads exactly as the old no-plateau case did.
+##
+## **IT IS THE LARGEST PARTY STILL WORTH SENDING, SO THIS SEEDS AND CLAMPS *ON* IT — never one above.**
+## `useful_cap + 1` is by construction the first party that adds nothing (the sim asserts both sides of
+## that: the payload rises into `useful_cap` and does not rise past it), so treating the figure as
+## "the first useless party" and stepping under it would strand a raid one worker short of its own
+## plateau, on a sheet that renders perfectly happily either way.
+##
+## **THE ENGAGEMENT ARM STAYS HERE, and it is why this function still exists**
+## (`docs/plan_hunt_through_combat.md` 2). A scan can only report a bind it can WATCH the payload run
+## into; the crew that brings a quarry into CONTACT is derivable from fields the herd row already
+## carries (`expedition_engage_crew`), and a herd needing six hunters per animal with four animals
+## standing wants ~30 while every small party delivers nothing at all. It is a FLOOR on the demand
+## side, never a cap — `assignable` still binds below — so the note names the ceiling the player is
+## working toward instead of calling the missing hands idle. That is the reading that fixed the sheet
+## saying *"max 1 worker useful here"* two lines above *"6 hunters bring one Wild Aurochs into
+## contact"*.
 static func expedition_useful_cap(band: Dictionary, herd: Dictionary, floor: float,
-        assignable: int) -> Dictionary:
-    var estimates_variant: Variant = herd.get(HERD_TRIP_ESTIMATES_KEY, {})
-    if not (estimates_variant is Dictionary):
-        return {"cap": assignable, "note": ""}
-    var estimates := estimates_variant as Dictionary
-    var sampled := nearest_estimate_floor(estimates, floor)
-    if sampled == NO_SAMPLED_FLOOR:
-        return {"cap": assignable, "note": ""}
-    # Scan the herd's FULL exported absorption range — every party size the table carries at this
-    # sampled floor, NOT the idle/party-limited cap — so `plateau` is the herd's true max-useful party
-    # even when it exceeds what we can field right now. The returned cap still clamps to `assignable`
-    # below, so this widens ONLY the explanatory note (it lets a labor-bound stepper name the ceiling
-    # it is working toward, "N of M useful"), never the cap.
-    #
-    # **IT WALKS THE SAMPLED RUNGS, NOT `1..=largest`, AND THAT IS LOAD-BEARING NOW THAT THE PARTY AXIS
-    # IS A LADDER.** The walk used to step every integer and `continue` past the sizes the table did not
-    # carry; with `hunt_estimate_row` reading the nearest rung, no size is ever missing, so an unsampled
-    # 5 would answer rung 4's row, read as "the payload stopped rising" and BREAK the scan one rung in.
-    # Sorting the rows ascending is what makes the rise/break test mean what it says.
-    var rows := _estimate_rows_at_floor(estimates, sampled)
-    rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-        return int(a.get(HUNT_ESTIMATE_PARTY_KEY, 0)) < int(b.get(HUNT_ESTIMATE_PARTY_KEY, 0)))
-    var prev_delivered := -1.0
-    var plateau := 0
-    for cell_variant in rows:
-        var cell: Dictionary = cell_variant
-        var workers := int(cell.get(HUNT_ESTIMATE_PARTY_KEY, 0))
-        if workers <= 0:
-            continue
-        # Scan the component this QUARRY pays (issue #337): an inedible species delivers 0 food at
-        # every party size, so a food-only scan finds no plateau at all and the party stepper loses
-        # its max-useful cap. Edibility is a species property, so this picks the same component in
-        # every cell of the row.
-        var delivered := float(cell.get("delivered_food", 0.0)) if bool(cell.get("delivers_food", false)) \
-            else float(cell.get("delivered_trade", 0.0))
-        if delivered > prev_delivered:
-            prev_delivered = delivered
-            # **A PAYLOAD THAT HAS NOT RISEN ABOVE ZERO IS NOT A PLATEAU.** A raid every sampled party
-            # size comes home empty from — a party too small to make the kill at all — is FLAT at zero,
-            # and the rise/break scan reads that flatness as "the first size was enough", capping at
-            # ONE. That is how the sheet came to read *"max 1 worker useful here"* about a party of one
-            # that kills nothing (reported from play). A size is useful when it lands something.
-            if delivered > 0.0:
-                plateau = workers   # the payload is still rising — this size is useful
-        else:
-            break               # the payload stopped rising — the previous size is the plateau
-    # **THE ENGAGEMENT ARM THE PLATEAU CANNOT SEE** (`docs/plan_hunt_through_combat.md` §2). The scan
-    # can only report a bind it can WATCH the payload run into, and the sampled party sizes stop long
-    # before the crew that brings this quarry into contact: a herd needing six hunters per animal with
-    # four animals standing wants ~30, so every sampled row delivers nothing and the scan has nothing
-    # to plateau on. The local sheet's cap has floored on this crew since the arm landed
-    # (`max_useful_workers` → `take_workers`); the raid's never did, which is how the sheet came to say
-    # *"max 1 worker useful here"* two lines above *"6 hunters bring one Wild Aurochs into contact"*.
-    # It is a FLOOR on the demand side, never a cap — `assignable` still binds below — so the note
-    # names the ceiling the player is working toward instead of calling the missing hands idle.
-    plateau = maxi(plateau, expedition_engage_crew(herd, floor))
+        scanned: int, assignable: int) -> Dictionary:
+    var plateau: int = maxi(scanned, expedition_engage_crew(herd, floor))
     if plateau <= 0:
         return {"cap": assignable, "note": ""}
     var useful: int = mini(plateau, assignable)
     if useful >= assignable:
         # Labor-bound below the plateau: the party capped at what you can field, not at usefulness.
-        # **THERE IS ONLY ONE SUPPLY CONSTRAINT NOW, so there is only one note.** `assignable` is the
-        # band's idle workforce (`expedition_party_cap`), so freeing idle workers is ALWAYS the remedy;
-        # the party-size twin that used to sit here described `max_expedition_party_size` binding
-        # instead, and that cap is gone — a branch that can never be taken is worse than no branch.
+        # **THERE IS ONLY ONE SUPPLY CONSTRAINT**, `assignable` — the band's idle workforce — so
+        # freeing idle workers is ALWAYS the remedy and there is only one note.
         var labor_note := ""
         if plateau > assignable:
             labor_note = LABOR_BOUND_NOTE_FORMAT % [assignable, plateau]
@@ -4239,67 +4044,59 @@ static func expedition_useful_cap(band: Dictionary, herd: Dictionary, floor: flo
     var noun := MAX_USEFUL_NOUN_ONE if useful == 1 else MAX_USEFUL_NOUN_MANY
     return {"cap": useful, "note": MAX_USEFUL_NOTE_FORMAT % [useful, noun]}
 
-## Each FLOOR PRESET's max obtainable rate as a raid — the expedition twin of the local hunt's
-## per-preset cap, so all three pickers (forage / local hunt / expedition) wear the same face and the
-## presets read DESCENDING in take (strip it > the food peak > learn from it: a lower floor frees more
-## surplus). The metric is WORKER-INDEPENDENT: the max over every party size of
-## `delivered / trip_turns`, where `trip_turns = turns_to_fill + round-trip travel` (a far herd's best
-## rate is correctly lower). A bigger party delivers more in fewer turns, so the rate rises then
-## plateaus — the max is the honest cap.
+## Each FLOOR PRESET's obtainable rate as a raid — the expedition twin of the local hunt's per-preset
+## cap, so all three pickers (forage / local hunt / expedition) wear the same face and the presets read
+## DESCENDING in take (strip it > the food peak > learn from it: a lower floor frees more surplus).
 ##
-## **KEYED BY PRESET, READ AT THE NEAREST SAMPLE.** The presets are the picker's three buttons; the
-## table's rows are the sim's own samples, and the two sets are deliberately independent — a preset
-## whose floor the sim did not sample still gets a face, quoted at the closest reading it has.
+## **ONE ROW PER PRESET, ANSWERED IN THE SAME ROUND TRIP** — `HuntTripForecastReply.per_preset`, in the
+## order the presets were asked for, which is `FLOOR_PRESETS`. The metric is
+## `delivered / (turns_to_fill + round-trip travel)`, so a far herd's rate is correctly lower.
 ##
-## BOTH PRODUCTS ride the metric (issue #337): each component's best rate is scanned independently and
-## rendered only when non-zero, so an inedible quarry's presets read as trade rates instead of blanks.
-## A preset that lands NOTHING in either currency — a true denial mission, which is a property of the
-## QUARRY — carries no rate and falls back to its name + glyph. A table SCAN, zero client arithmetic.
-static func expedition_policy_takes(band: Dictionary, herd: Dictionary,
+## **IT IS THIS PARTY'S RATE NOW, NOT THE BEST OVER ALL PARTY SIZES.** The table era scanned every
+## sampled party at a preset's floor and took the maximum, because the table was there and a
+## worker-independent face was cheap. A query answers the party the sheet has composed, and quoting a
+## rate for a party the player is not sending is the exact class of error this arc removed — so the
+## buttons now move with the crew stepper, which is honest and is the visible behaviour change.
+##
+## BOTH PRODUCTS ride the metric (issue #337): each component is read only when the quarry pays it, so
+## an inedible quarry's presets read as trade rates instead of blanks. A preset that lands NOTHING in
+## either currency — a true denial mission, a property of the QUARRY — carries no rate and falls back
+## to its name + glyph. An UNBOUNDED raid has no length and its travel is not one, so it is skipped
+## outright rather than quoted as `delivered / travel`.
+static func expedition_policy_takes(band: Dictionary, herd: Dictionary, per_preset: Array,
         grid_width: int, wrap_horizontal: bool) -> Dictionary:
     var takes := {}
-    var estimates_variant: Variant = herd.get(HERD_TRIP_ESTIMATES_KEY, {})
-    if not (estimates_variant is Dictionary):
-        return takes
-    var estimates := estimates_variant as Dictionary
     var travel := round_trip_travel_turns(band, herd, grid_width, wrap_horizontal)
     var zero_account := zero_account_of(herd, "")
-    for preset in FLOOR_PRESETS:
-        var sampled := nearest_estimate_floor(estimates, floor_for_preset(String(preset)))
-        if sampled == NO_SAMPLED_FLOOR:
+    for index in mini(per_preset.size(), FLOOR_PRESETS.size()):
+        var row_variant: Variant = per_preset[index]
+        if not (row_variant is Dictionary):
             continue
-        var best_food := -1.0
-        var best_trade := -1.0
-        for key in estimates:
-            var cell_variant: Variant = estimates[key]
-            if not (cell_variant is Dictionary):
-                continue
-            var cell := cell_variant as Dictionary
-            if not is_equal_approx(float(cell.get(HUNT_ESTIMATE_FLOOR_KEY, 0.0)), sampled):
-                continue
-            # **AN UNBOUNDED RAID HAS NO LENGTH, AND ITS TRAVEL IS NOT ONE.** The skip used to test the
-            # SUM, so a horizon cell on a distant herd read `delivered ÷ travel` — a rate for a raid the
-            # sim says never finished, made entirely out of the walk. Under the old wire that was every
-            # floor-`0` cell, so the `Take everything` preset quoted a fabricated rate on a far herd and
-            # no rate at all on a near one. Ask the raid, not the total.
-            var cell_hunt_turns := int(cell.get("turns_to_fill", RAID_TURNS_UNBOUNDED))
-            if raid_is_unbounded(cell_hunt_turns):
-                continue
-            var trip_turns := cell_hunt_turns + travel
-            # Each component gates on its OWN delivers flag: `delivers_food == false` now means the
-            # quarry is inedible, so gating the whole row on it would blank a wolf's every preset.
-            if bool(cell.get("delivers_food", false)):
-                var delivered := float(cell.get("delivered_food", 0.0))
-                if delivered > 0.0:
-                    best_food = maxf(best_food, delivered / float(trip_turns))
-            if bool(cell.get("delivers_trade", false)):
-                var delivered_trade := float(cell.get("delivered_trade", 0.0))
-                if delivered_trade > 0.0:
-                    best_trade = maxf(best_trade, delivered_trade / float(trip_turns))
-        if best_food >= 0.0 or best_trade >= 0.0:
-            takes[String(preset)] = extractive_take_pair(
-                maxf(best_food, 0.0), maxf(best_trade, 0.0), 0.0, zero_account)
+        var row := row_variant as Dictionary
+        var hunt_turns := int(row.get("turns_to_fill", RAID_TURNS_UNBOUNDED))
+        if raid_is_unbounded(hunt_turns):
+            continue
+        var trip_turns := hunt_turns + travel
+        if trip_turns <= 0:
+            continue
+        var food := 0.0
+        if bool(row.get("delivers_food", false)):
+            food = maxf(0.0, float(row.get("delivered_food", 0.0)) / float(trip_turns))
+        var trade := 0.0
+        if bool(row.get("delivers_trade", false)):
+            trade = maxf(0.0, float(row.get("delivered_trade", 0.0)) / float(trip_turns))
+        if food > 0.0 or trade > 0.0:
+            takes[String(FLOOR_PRESETS[index])] = extractive_take_pair(food, trade, 0.0, zero_account)
     return takes
+
+## **THE FLOORS THE PRESET ROW IS ASKED FOR**, in `FLOOR_PRESETS` order — which is the order the reply
+## answers in and therefore the order `expedition_policy_takes` reads back. One list, so the ask and
+## the read cannot index the presets differently.
+static func preset_floors() -> Array:
+    var floors: Array = []
+    for preset in FLOOR_PRESETS:
+        floors.append(floor_for_preset(String(preset)))
+    return floors
 
 ## Style the hunt-expedition send button from the live forecast. Two treatments, and the line between
 ## them is the point:
