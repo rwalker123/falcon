@@ -232,8 +232,8 @@ the band back to the rate the game already ships at rather than into a spiral.
 - **Its payload is its `effects` list**: quality ceiling, material efficiency, bench speed. Present
   effects apply; absent ones do not. Speed alone is the weak one — no land is better at it, so a
   speed-only tool never touches the move/stay decision.
-- **Output grade is `min(material reading, tool ceiling)`.** Fine flax with no loom still makes a
-  standard basket.
+- **Output grade is the band of `min(material reading, tool ceiling)`.** Excellent flax with no loom
+  still makes a `good` basket — the bare hand's ceiling is what the band is capped at.
 - **A material's tool is never made from that material.** The bone awl costs fibre and hide, never
   bone, or you would need the scarce material to make the thing that stretches it.
 - **A tool is gated on the crafts of what it is MADE FROM, never on the craft it unlocks.** Otherwise
@@ -344,14 +344,14 @@ that split.
   Clubs row under **Bronze** whose cell says *carrying flint · poor* is telling you something worth
   knowing. **The tier word appears in the cell only then** — only when it is news.
 
-  > **OPEN — "outdated" is doing two jobs.** Grouping answers *"what tier is this made at"* while
-  > fold-away asks *"is everything here superseded"*. Those coincide for spears and clubs and never
-  > coincide for baskets and cordage, which are woven fibre and will never have a bronze version —
-  > flint is not an *old* tier for them, it is the **only** one they will ever have, so folding
-  > **Flint** hides gear that is not outdated at all. The recommendation is to **name a group by what
-  > it is rather than by material age** (*Metalwork* / *Woven & tanned*), so the head states a fact
-  > about the item instead of a claim about its recency — which also stops **Bench tools** being a
-  > special case, a tool having no tier because it is the thing that makes a tier reachable.
+  **The heads are the tier, and the ledger's other two groups join them as one family** — `Flint`,
+  `Bench tools`, `Materials` today; `Bronze` above `Flint` once minerals land. All three are the same
+  head: a caret and a name, nothing else. A purpose-named axis (*Metalwork* / *Woven & tanned*) was
+  considered against it and **rejected**, on the ground that the head is answering *"what would this
+  be made at"* rather than *"is this superseded"* — so it makes no claim about recency, and an item
+  that will only ever be flint simply never gains a second head to be sorted under. Folding **Flint**
+  does put baskets away with the spears; that is the reader choosing to stop looking at a group, and
+  it is what a head buys that a column cannot.
 - **The life meter is a fuel gauge, not a performance meter** — the rule still governs every surface
   that *does* show condition. A spear at 34% is exactly as deadly as one at 100%, so condition is a
   discrete chip and is read in **turns left**, never as a percentage: a single percentage bar would

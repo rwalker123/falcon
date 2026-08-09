@@ -501,6 +501,27 @@ impl ItemDefinition {
             .unwrap_or_else(|| self.default_tier())
     }
 
+    /// **What one TIER of this item declares for a craft stat** — the tier's own entry if it has
+    /// one, else the item's shared one, resolved the same way [`LiveItem::effect_entry`] does minus
+    /// the grade layer.
+    ///
+    /// It exists for the caller that has **no serving batch to resolve against**: a readout about a
+    /// bench tool the band does not own yet cannot ask what its live unit says, and quoting a
+    /// different tool's number — or the top of the quality ladder — would advertise a ceiling this
+    /// one does not reach.
+    pub fn tier_craft_stat(&self, tier: &EquipmentTier, stat: EquipmentStat) -> Option<f32> {
+        let find = |effects: &[EquipmentEffect]| {
+            effects
+                .iter()
+                .find(|effect| effect.stat == stat)
+                .map(|effect| effect.tier)
+        };
+        match find(&tier.effects).or_else(|| find(&self.effects)) {
+            Some(EffectTier::Equipped(value)) => Some(value),
+            _ => None,
+        }
+    }
+
     /// The material this item is a bench tool for, or `None` for ordinary party gear.
     pub fn bounds_material(&self) -> Option<&str> {
         self.bounds_material.as_deref()

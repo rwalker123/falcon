@@ -181,7 +181,7 @@ tool's craft stats).
   departure: an effect with a bound but **no value** is not representable — an effect names the value
   a stat takes — so a second tier of the passive device restates its bound, and `validate_mass_bounds`
   still checks it. A **grade** that replaces such an effect must restate the bounds verbatim
-  (`recipes_config::validate_grades_against_item`), or a fine snare would quietly become a mammoth
+  (`recipes_config::validate_grades_against_item`), or an excellent snare would quietly become a mammoth
   trap.
 
 ### THE EQUIPPED CARRY RATES CAME OUT OF `labor_config.json` — the number moved, the key did not

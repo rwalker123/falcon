@@ -1746,17 +1746,24 @@ pub struct BandEquipment {
     /// frame — and a `Vec` inside it because batch order is insertion order, which is what makes
     /// *"the most worn first, earliest batch on a tie"* a deterministic rule.
     batches: std::collections::BTreeMap<String, Vec<EquipmentBatch>>,
-    /// **Whole units of each item this band has WORN OUT**, ever. Monotonic; only [`Self::wear_item`]
-    /// raises it.
+    /// **Whole units this band has WORN OUT, per item and PER TIER**, ever. Monotonic; only
+    /// [`Self::wear_item`] raises it, and that seam already holds the tier of the unit it is
+    /// destroying, so the key costs nothing to record.
     ///
     /// **It exists because a batch that runs out of units is REMOVED**, so *"the sled broke"* and
     /// *"we have never had a sled"* are the same empty ledger — and they are not the same sentence to
     /// a player. Without this the panel's `Worn out` wording is unrepresentable and every count of
     /// zero has to read as *never made*, which is wrong for exactly the item the player just lost.
     ///
+    /// **The TIER is part of the key because the readout names it out loud.** *"last flint set wore
+    /// out"* is a claim about which tier was lost, and an item-wide tally could only *infer* one —
+    /// the day iron ships beside bronze and flint, inferring *"the tier below what I can now make"*
+    /// names bronze for a flint set that actually wore out. A published string asserting the wrong
+    /// tier is worse than saying nothing.
+    ///
     /// An item with no entry has retired none. **Not gameplay**: nothing in the sim branches on it,
     /// and it must not become a repair discount or a durability bonus — it is the readout's memory.
-    retired: std::collections::BTreeMap<String, u32>,
+    retired: std::collections::BTreeMap<String, std::collections::BTreeMap<String, u32>>,
 }
 
 impl BandEquipment {
@@ -1963,6 +1970,9 @@ impl BandEquipment {
             batch.wear -= durability;
             retired += 1;
         }
+        // **The tier is read off the batch being spent**, before it can be dropped — this seam knows
+        // which tier it is destroying, so the readout never has to guess one later.
+        let tier = batch.tier.clone();
         let emptied = batch.count == 0;
         if emptied {
             batches.remove(index);
@@ -1973,13 +1983,18 @@ impl BandEquipment {
         // **The readout's memory, written on the one seam that destroys a unit.** See the field's
         // docs: an emptied batch is removed, so without this the panel could not say *"worn out"*.
         if retired > 0 {
-            *self.retired.entry(item.to_string()).or_default() += retired;
+            *self
+                .retired
+                .entry(item.to_string())
+                .or_default()
+                .entry(tier)
+                .or_default() += retired;
         }
         self
     }
 
-    /// **Whole units of `item` this band has worn out**, ever. `0` for an item it has never
-    /// retired — including one it has never owned.
+    /// **Whole units of `item` this band has worn out**, ever, across every tier. `0` for an item it
+    /// has never retired — including one it has never owned.
     ///
     /// Paired with [`Self::count_of`] it separates the two states a count of zero collapses:
     /// `count 0, retired > 0` is **worn out**, `count 0, retired 0` is **never made**.
@@ -1987,7 +2002,23 @@ impl BandEquipment {
     /// **The checkpoint carries it for free**: `SimState`'s `BandRecord::equipment` clones the whole
     /// [`BandEquipment`], so there is no restore setter beside [`Self::restore_batches`] to forget.
     pub fn retired_of(&self, item: &str) -> u32 {
-        self.retired.get(item).copied().unwrap_or(0)
+        self.retired
+            .get(item)
+            .map(|tiers| tiers.values().sum())
+            .unwrap_or(0)
+    }
+
+    /// **Which TIERS of `item` this band has worn out, and how many of each** — in tier-id order,
+    /// empty for an item it has never retired.
+    ///
+    /// The readout's join: *"last flint set wore out"* names a tier, and this is the only record of
+    /// which one it was. [`Self::retired_of`] is the same tally summed for a caller that only asks
+    /// *whether* anything broke.
+    pub fn retired_tiers_of(&self, item: &str) -> impl Iterator<Item = (&str, u32)> {
+        self.retired
+            .get(item)
+            .into_iter()
+            .flat_map(|tiers| tiers.iter().map(|(tier, count)| (tier.as_str(), *count)))
     }
 
     /// **Charge every item in `kit` whose quantum is `quantum`.** The seam every wear site calls, and

@@ -185,7 +185,7 @@ pub fn preview_grade(
     );
     let reading = weighted_reading(&draws, axis)?;
     recipe
-        .grade_for(reading.min(tiers.quality_ceiling))
+        .grade_for(reading.min(tiers.quality_ceiling), materials)
         .map(str::to_string)
 }
 
@@ -247,7 +247,12 @@ pub fn advance_crafting(
                 tiers.material_efficiency,
                 &materials,
             ) {
-                bench.drawn = Some(fix_grade(recipe, reading, tiers.quality_ceiling));
+                bench.drawn = Some(fix_grade(
+                    recipe,
+                    reading,
+                    tiers.quality_ceiling,
+                    &materials,
+                ));
             }
         }
         // Nothing drawn ⇒ nothing to work on. Not a branch on "can this be crafted": the pile is
@@ -306,17 +311,28 @@ pub fn advance_crafting(
             tiers.material_efficiency,
             &materials,
         ) {
-            bench.drawn = Some(fix_grade(recipe, reading, tiers.quality_ceiling));
+            bench.drawn = Some(fix_grade(
+                recipe,
+                reading,
+                tiers.quality_ceiling,
+                &materials,
+            ));
         }
     }
 }
 
-/// **The grade, fixed here and never again.** `min(drawn reading, tool ceiling)` against the
-/// recipe's own seams — fine flax with no loom still makes a standard basket.
-fn fix_grade(recipe: &RecipeDef, reading: Option<f32>, ceiling: f32) -> DrawnInputs {
+/// **The grade, fixed here and never again.** The `characteristic_bands` rung `min(drawn reading,
+/// tool ceiling)` falls in — excellent flax with no loom still makes a `good` basket, because the
+/// bare hand's ceiling is what the band is capped at.
+fn fix_grade(
+    recipe: &RecipeDef,
+    reading: Option<f32>,
+    ceiling: f32,
+    materials: &MaterialsConfig,
+) -> DrawnInputs {
     let grade = reading
         .map(|reading| reading.min(ceiling))
-        .and_then(|capped| recipe.grade_for(capped))
+        .and_then(|capped| recipe.grade_for(capped, materials))
         .map(str::to_string);
     DrawnInputs { reading, grade }
 }
@@ -351,11 +367,13 @@ fn emit_outputs(
             // **The grade's absolutes are copied HERE and carried on the batch**, which is what
             // makes "fixed at craft time and never moves" structural: a recipe retuned under a
             // running world cannot re-grade a sled already in the band's hands.
-            let grade = drawn_grade.and_then(|id| {
-                recipe.grades.get(id).map(|grade| BatchGrade {
-                    id: id.to_string(),
-                    effects: grade.effects.clone(),
-                })
+            //
+            // **The batch is stamped with the BAND whether or not the recipe declares it** — the
+            // grade is a real property of the object, and a recipe that declares nothing there
+            // simply hands it an empty effect list (inherited from the highest rung at or below it).
+            let grade = drawn_grade.map(|id| BatchGrade {
+                id: id.to_string(),
+                effects: recipe.grade_effects_for(id, materials).to_vec(),
             });
             wear.stock(item, whole_units(output.amount), &tier, grade);
         }

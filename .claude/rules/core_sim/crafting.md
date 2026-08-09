@@ -164,44 +164,69 @@ loads **last** of all, because it is the only config that names ids from *two* o
 
 `reads` names one axis on exactly one input. It is the whole of what separates two recipes over the
 same material: the sled reads hide's `toughness` and the husbandry gear reads its `suppleness`, so a
-Thunder Mammoth (`0.92 / 0.10`) makes a **fine** sled and **coarse** halters and a Snow Hare
+Thunder Mammoth (`0.92 / 0.10`) makes an **excellent** sled and **poor** halters and a Snow Hare
 (`0.14 / 0.92`) does the reverse. Fibre splits the same way (baskets read `fineness`, traps read
 `strength`), and bone does (spears and clubs read `density`, wayfinding reads `length`).
 
 `validate` rejects a second `reads`, because one reading answers one question.
 
-## Continuous in, discrete out — and the STANDARD grade is the shipped number
+## ONE QUALITY LADDER — a grade key IS a `characteristic_bands` name
 
 The drawn reading never scales a resolved stat; it **selects** a grade, and a grade declares
 absolutes. That is not a preference — `EquipmentEffect` has no representation for a multiplier
 stacking on something else, which is what makes *flat until expiry, then a step down* structural
 rather than remembered (`equipment.md` → "The three rules").
 
-**A grade's payload was empty until the TIER owned these numbers, and now it is real.** The
-objection was never to grades — it was that a grade may only declare a stat whose value does not
-already live somewhere else, and while `attack` sat on the item and the two carry rates in
-`labor_config.json`, writing them into `recipes.json` too would have given a shipped number a second
-home to drift from *and* left the numbers inert. Quality tiers moved them onto the item's tier
-(`equipment.md` → "Quality tiers"), so the grades declare absolutes against **that**:
+**And the grade it selects is simply the BAND.** A recipe declares **no `when` at all**: the output's
+grade is the band of `min(material reading, tool quality ceiling)`, resolved through
+`MaterialsConfig`'s own lookup, which is already total by construction. So the same four words rate a
+hide's toughness on the panel's rail and rate the sled you make out of it. An earlier cut invented
+`coarse / standard / fine`, which was a second vocabulary for one idea — and, load-bearingly, a
+**second set of cut points free to drift** from the bands beside them. Deleting them is the same
+choice this model already recorded twice: `dispersion` multiplies a species' own `wariness` rather
+than reading a "jumpy" flag, and `max_body_mass` reads `body_mass` rather than a `size_class`.
 
-- **The STANDARD grade is the shipped number, always.** `validate_against` rejects one that disagrees
-  with the output item's default tier, so a standard-grade craft reproduces today's game exactly and
-  the two rungs either side are what quality is worth — `coarse −15% · standard · fine +15%`, the
-  design's own sled example (`34 / 40 / 46` on a shipped `40`).
+- **A band a recipe does not declare INHERITS THE ONE BELOW IT** (`RecipeDef::grade_effects_for`), so
+  a recipe wanting three steps writes three. **Declaration governs effects only** — the grade a batch
+  is *stamped* with is always the band name, so a craft off excellent hide reads `excellent` even on
+  a recipe that declares nothing there; it simply buys no stat on that item. A recipe with **no
+  `reads`** still resolves no grade (`""`).
+- **`validate_against` rejects a grade key that is not a declared band**, and **a recipe whose lowest
+  declared grade is not the FIRST band** — inheritance only ever looks down, so something has to
+  answer for a reading of `0.0`. Both are cross-config, because the book does not carry the
+  vocabulary.
 - **A grade may only name a stat the item's TIERS declare**, and must restate that effect's mass
-  bounds verbatim: a grade *replaces* a number rather than adding one, and a fine snare that dropped
-  `max_body_mass` would quietly become a mammoth trap.
-- **The empty payloads that remain are the items whose whole payload is shared** (husbandry gear's
-  `pen_carry`, the wayfinding gear's vantage) or is a bench stat nothing yet grades.
+  bounds verbatim: a grade *replaces* a number rather than adding one, and an excellent snare that
+  dropped `max_body_mass` would quietly become a mammoth trap.
+- **A recipe with no `grades` block at all is a real statement**, not a missing value: five ship that
+  way (`husbandry_gear`, `wayfinding`, and the three bench tools), because their payload is *shared*
+  rather than tier-bought (the husbandry gear's `pen_carry`, the wayfinding gear's vantage) or is a
+  bench stat nothing yet grades. The old shape spelled that as three empty rungs each — fifteen inert
+  config rows saying by convention what absence now says outright.
 
-`recipes_config::no_shipped_grade_declares_an_effect` is **replaced** by
-`the_standard_grade_reproduces_the_shipped_item_and_the_others_bracket_it`, which pins the rule in
-both directions and carries a liveness assertion — *"every standard grade agrees with its item"* is
-trivially true of a book whose grades declare nothing, which is exactly the state it replaced.
+### The anchor is DERIVED from the bench material's bare hand
 
-Three rungs ship on every equipment recipe: `coarse 0.00 · standard 0.45 · fine 0.75`. The lowest
-seam must be `0.00` and no two may be equal, so every reading selects exactly one — the same
-totality rule `characteristic_bands` follows, for the same reason.
+**The rung pinned to the shipped item is the band that the recipe's bench material's
+`hand_working.quality_ceiling` falls in** (`recipes_config::anchor_band`) — not a literal grade name.
+The grade resolved there, *after inheritance*, must agree with the output item's default tier for
+every stat it declares. That states the invariant that actually matters: **a bare-handed craft off
+the best material a band can work by hand reproduces the shipped item exactly**, which is *"a tool
+run dry drops the band back to the rate the game already ships at rather than into a spiral"*. On the
+shipped config all three organics carry `quality_ceiling 0.60`, so the anchor is **`good`**
+everywhere; a material with no `hand_working` at all has no anchor and no check.
+
+**The migration was not a rename.** The old seams (`0.00 / 0.45 / 0.75`) do not line up with the band
+cuts, so `good` holds the shipped number and the other three fan around it at
+**`poor ×0.75 · fair ×0.85 · good ×1.00 · excellent ×1.15`** — the design's own sled example,
+`30 / 34 / 40 / 46` on a shipped `40`.
+
+`recipes_config::the_anchor_grade_reproduces_the_shipped_item_and_the_others_bracket_it` pins it in
+both directions and carries a liveness assertion — *"every anchor grade agrees with its item"* is
+trivially true of a book whose grades declare nothing, so the test also asserts the shipped book
+genuinely **brackets** its anchor (a rung strictly below and one strictly above). Inheritance itself
+is covered by a **fixture** (`a_band_a_recipe_does_not_declare_inherits_the_one_below_it`), for the
+same reason `materials.json`'s varieties and `equipment.json`'s bronze tier are: no shipped recipe
+declares a partial ladder.
 
 ## The craft is DERIVED and then written down
 
@@ -375,7 +400,7 @@ so *"tools are earned"* survives the flip by construction rather than by the old
 |---|---|
 | `src/data/materials.json` | **The materials table** (loader `materials_config.rs`, env override `MATERIALS_CONFIG_PATH`, validated inside `from_json_str` so every load path is covered). Two blocks. **`characteristic_bands`** — the shared rating vocabulary, `[{ name, from }]` ascending: `poor 0.0 · fair 0.30 · good 0.55 · excellent 0.80`. Retuning these re-partitions every batch on the map. **`materials`** — id → `{ craft, characteristics[], hand_working?, varieties? }`. Shipped: **`hide`** (tanning; `toughness`/`suppleness`), **`fibre`** (weaving; `fineness`/`strength`), **`bone`** (bone_working; `density`/`length`), each `hand_working { rate 0.5, quality_ceiling 0.60 }`. **Only the three organics ship** — wood, stone, clay and metal have no producer until the minerals arc and an unreachable material is dead content the catalogue publishes. **`hand_working` absent means the material cannot be worked bare-handed at all** (rate `0`, which is how metal will refuse itself with no branch), and the bare-handed ceiling belongs to the **material**, not to the absent tool. **`varieties` are parsed, validated, and none ships** — named presets over the material's own axes (`copper`, `bronze`), exercised by a test fixture for the same reason the bronze equipment tier is. **`validate` rejects**: an empty material table; a band list that is empty, does not open at `0.0`, does not strictly ascend, or carries a seam outside `0..=1`; a material with no craft or no characteristics; a duplicate characteristic on one material; a non-finite or negative `hand_working.rate`; a `quality_ceiling` outside `0..=1`; a variety that omits an axis the material declares or names one it does not, or states a reading off the range. **The root is open (`_comment*` keys) and `MaterialDef` is CLOSED** — a mistyped `hand_workng` would silently make a material unworkable, while a stray key at the root can only be prose. |
 
-| `src/data/recipes.json` | **The recipe book** (loader `recipes_config.rs`, env override `RECIPES_CONFIG_PATH`, `validate` inside `from_json_str`, cross-config `validate_against(&materials, &equipment)` at the `build_headless_app` seam). Two blocks. **`crafting`** — `progress_per_worker_turn` (**1.0**). **`recipes`** — id → `{ display_name, craft, work, requires_knowledge[]?, inputs[], outputs[], grades? }`, where an input is `{ material, amount, variety?, reads? }` and an output is exactly one of `{ equipment }` or `{ material, characteristics }`. Ten ship: the seven kit items (`sled` 6 hide + 2 fibre / work 8; `husbandry_gear` 4 hide + 3 fibre / 7; `baskets` 5 fibre + 1 hide / 6; `traps` 6 fibre + 1 bone / 6; `spears` 1 bone + 2 fibre + 1 hide / 6; `clubs` 2 bone + 1 hide / 4; `wayfinding` 1 bone + 1 hide + 1 fibre / 4) and the three bench tools (`tanning_frame` 8 fibre + 2 bone / 12; `loom` 3 bone + 4 hide / 14; `bone_awl` 3 hide + 3 fibre / 10). **Costs are sized so MATERIAL, not bench time, is what binds** — see the file's `_comment_work_and_costs` for the measured income figures. **Bone is the scarce one by an order of magnitude** (0.0012–0.003 per biomass against hide's 0.006–0.022), so nothing costs more than 3 of it. **`validate` rejects**: a non-positive `progress_per_worker_turn`; an empty book; a non-positive `work` or `amount`; a recipe with no inputs or no outputs; the same material twice in one recipe's inputs; **more than one input carrying `reads`**; an output naming both or neither of `equipment`/`material`; an equipment output stating characteristics, or a material output stating none; a duplicate output; grades on a recipe that reads nothing or outputs only materials; a lowest grade seam that is not `0.00`; two grades sharing a seam; a duplicate stat in one grade's effects. **`validate_against` additionally rejects**: an unknown material, item, variety or axis; a `craft` that is not the craft of the material the recipe reads; a `requires_knowledge` naming a craft no material declares **or one that none of the recipe's own inputs is worked by**; a tool recipe whose inputs include the material it bounds; **a fractional `amount` on an equipment output** (a batch's `count` cannot bank half a spear); and **a grade effect that names a stat no tier of the output item declares, drops that effect's mass bounds, or — at the `standard` rung — disagrees with the item's default tier** (see "Continuous in, discrete out"). |
+| `src/data/recipes.json` | **The recipe book** (loader `recipes_config.rs`, env override `RECIPES_CONFIG_PATH`, `validate` inside `from_json_str`, cross-config `validate_against(&materials, &equipment)` at the `build_headless_app` seam). Two blocks. **`crafting`** — `progress_per_worker_turn` (**1.0**). **`recipes`** — id → `{ display_name, craft, work, requires_knowledge[]?, inputs[], outputs[], grades? }`, where `grades` is keyed by `characteristic_bands` NAME and carries only `effects` (there is no `when`), an input is `{ material, amount, variety?, reads? }` and an output is exactly one of `{ equipment }` or `{ material, characteristics }`. Ten ship: the seven kit items (`sled` 6 hide + 2 fibre / work 8; `husbandry_gear` 4 hide + 3 fibre / 7; `baskets` 5 fibre + 1 hide / 6; `traps` 6 fibre + 1 bone / 6; `spears` 1 bone + 2 fibre + 1 hide / 6; `clubs` 2 bone + 1 hide / 4; `wayfinding` 1 bone + 1 hide + 1 fibre / 4) and the three bench tools (`tanning_frame` 8 fibre + 2 bone / 12; `loom` 3 bone + 4 hide / 14; `bone_awl` 3 hide + 3 fibre / 10). **Costs are sized so MATERIAL, not bench time, is what binds** — see the file's `_comment_work_and_costs` for the measured income figures. **Bone is the scarce one by an order of magnitude** (0.0012–0.003 per biomass against hide's 0.006–0.022), so nothing costs more than 3 of it. **`validate` rejects**: a non-positive `progress_per_worker_turn`; an empty book; a non-positive `work` or `amount`; a recipe with no inputs or no outputs; the same material twice in one recipe's inputs; **more than one input carrying `reads`**; an output naming both or neither of `equipment`/`material`; an equipment output stating characteristics, or a material output stating none; a duplicate output; grades on a recipe that reads nothing or outputs only materials; a duplicate stat in one grade's effects. **`validate_against` additionally rejects**: an unknown material, item, variety or axis; a `craft` that is not the craft of the material the recipe reads; a `requires_knowledge` naming a craft no material declares **or one that none of the recipe's own inputs is worked by**; a tool recipe whose inputs include the material it bounds; **a fractional `amount` on an equipment output** (a batch's `count` cannot bank half a spear); **a grade key that is not a declared `characteristic_bands` name, and a lowest declared grade that is not the FIRST band**; and **a grade effect that names a stat no tier of the output item declares, drops that effect's mass bounds, or — at the DERIVED anchor band — disagrees with the item's default tier** (see "ONE QUALITY LADDER"). |
 
 The two **yield edges** are rows on the rosters that own them — `fauna_config.json`'s
 `hunt_yield.materials` (`fauna.md`) and `flora_config.json`'s `yield.materials` (`flora.md`) — and
@@ -445,7 +470,7 @@ number, a grade or a step-down.**
 |---|---|
 | `materialBatches:[MaterialBatchState]` | *what have I got* — one row per (material, band key) batch: `amount`, plus a `CharacteristicReading` per axis carrying **both** the exact value and its band name, in the material's **declared** axis order |
 | `bench:BenchState` | *what am I making* — `recipeId` (`""` = idle), crew, `progress` against `work`, `teaches` (the recipe's craft), `itemsCompleted`, whether the pile is `drawn` and the grade it fixed, and `blockedReason` |
-| `craftOffers:[CraftOffer]` | *what could I make* — **one row per recipe, always**, with `available`, a resolved `reason` + `severity`, the `shortfalls`, the `outputGrade` a draw would select, `group`, `outputItemId` and `onBench` |
+| `craftOffers:[CraftOffer]` | *what could I make* — **one row per recipe, always**, with `available`, a resolved `reason` + `severity`, the `shortfalls`, the `outputGrade` a draw would select, `group`, `outputItemId`, `onBench`, and the three ledger fields below (`outputTierName` / `outputTierRank` / `ownedNote`) |
 | `equipmentBatches:[EquipmentBatchState]` | *what have I got, and how long will it last* — one row per **batch**, plus one `count: 0` row per config item the band owns none of, so the ledger is never missing a row |
 
 **`craftOffers` is the field that keeps the refusal out of the client**, and the reason vocabulary is
@@ -457,8 +482,8 @@ the contract. `reason` and `severity` are what a client renders — **not `avail
 | the craft is unknown | `Needs Bone-working` | `danger` |
 | no tool and the material cannot be hand-worked | `No loom` (the bounding tool's display name, lowercased) | `danger` |
 | two reasons at once | joined with ` · ` | `danger` |
-| buildable | `Hide + tanning frame → fine` / `Fibre, no loom → standard`, with `· Hide costs −20%` appended when the tool saves material | `neutral` |
-| buildable and this is a **first tool** | `Unlocks fine hide work` | `good` |
+| buildable | `Hide + tanning frame → excellent` / `Fibre, no loom → good`, with `· Hide costs −20%` appended when the tool saves material | `neutral` |
+| buildable and this is a **first tool** | `Unlocks excellent hide work` — the band **this tool's own `craft_quality_ceiling` falls in** (`snapshot::crafting::unlocked_band`), never the top of the ladder | `good` |
 | buildable but the item is untouched | **`Not needed yet`** | `neutral`, dimmed |
 
 > **"Not needed yet" reading differently from a shortage is the entire point of publishing the reason
@@ -467,6 +492,65 @@ the contract. `reason` and `severity` are what a client renders — **not `avail
 > `crafting_wire::not_needed_yet_and_a_shortage_are_different_strings_and_severities`, which asserts
 > the two rows differ in **both** the string and the severity — asserting one row's wording alone
 > would pass on a wire that said the same thing everywhere.
+
+## TIER IS A GROUP HEAD, NOT A COLUMN — and the note is the disagreement
+
+The ledger's columns are **Item · Owned · Rebuild costs · action**; there is no Tier column, because
+a column spends its width saying `flint` on every row for the whole early game while a **head** says
+it once and can **fold away**. Three appended `CraftOffer` fields carry it, and all three are
+resolved sim-side for the reason `kitTiers` exists: a client that re-derived a tier, a grade or a
+wording would be a second copy of a join it cannot make correctly.
+
+| Field | Answers |
+|---|---|
+| `outputTierName` | **The head** — `ItemDefinition::craftable_tier`, the best tier this *faction* knows, so it is resolved per band rather than in the per-capture `CraftOfferPlan`. `""` on a material (stock) recipe |
+| `outputTierRank` | that tier's index in the item's own `tiers` list. **Heads order by rank descending** — newest first — because there is no other honest ordering for two heads and alphabetical would put Iron above Bronze |
+| `ownedNote` | **the cell's news, rendered verbatim** — `""` unless what the band *has* disagrees with what it could now *make* |
+
+**The head is what a row would be MADE at; the Owned cell is what the band HAS, and the disagreement
+is the readout.** A Clubs row under **Bronze** whose cell says *carrying flint · poor* is telling the
+player something worth knowing. Two wordings, resolved by `snapshot::crafting::owned_note`:
+
+- units in hand at a tier **below** `craftable_tier` → `carrying <tier> · <grade>`. Several such
+  batches name the **worst** grade — naming the best is the one a player would be told about last,
+  and a row that flattered its stock would say the opposite of what they need to act on. An
+  **ungraded** batch is a start-stocked unit making no quality claim, so it sorts ahead of every
+  graded one and reads simply `carrying flint`.
+- no units at all and a set retired at an older tier → `last <tier> set wore out`. **The tier is read
+  out of `BandEquipment::retired_tiers_of`, never inferred from `craftable_tier`'s neighbour** — of
+  several it names the highest-ranked one still below what the band can now make, the set it lost
+  most recently.
+
+A tier's word goes through `crafting::title_from_id` like every other id (`equipment.json` authors no
+display name), lowercased for mid-sentence use.
+
+> ### `retired` IS KEYED BY (ITEM, TIER), because the readout names the tier out loud
+>
+> `BandEquipment::retired` is a `BTreeMap<String, BTreeMap<String, u32>>`, written by `wear_item` —
+> the one seam that destroys a unit, and the one place that already holds the tier it is destroying,
+> so the key costs a `clone` and no lookup. `retired_of` sums it for the caller that only asks
+> *whether* anything broke (`equipmentBatches`' `Worn out` wording); `retired_tiers_of` is the
+> readout's join.
+>
+> **An item-wide tally could only ever INFER the tier**, and *"the rank below what I can now make"*
+> is right only while nothing has three tiers: with iron beside bronze and flint it names **bronze**
+> for a flint set that actually wore out. A published string asserting the wrong tier is worse than
+> saying nothing, and it is the same defect class the derived anchor exists to avoid — a value taken
+> from a coincidence of the shipped config rather than from the fact it is claiming.
+>
+> **Nothing in the sim branches on `retired`** and nothing may — it must not become a repair
+> discount. That constraint is what keeps the per-tier key cheap. The checkpoint carries it for free,
+> because `BandRecord::equipment` clones the whole component.
+
+**On the shipped one-tier roster `ownedNote` is `""` on every offer**, which is why it is covered by
+a **three-tier fixture**
+(`crafting_wire::the_owned_note_is_published_only_when_the_band_carries_something_older`) — the same
+treatment `a_tier_switches_an_items_attack_without_touching_its_shared_effects` gets, one tier
+deeper. **Two tiers cannot tell the two rules apart**: *"the tier that wore out"* and *"the tier below
+craftable"* agree there, so a two-tier fixture passes either implementation. The fixture retires a
+**flint** set with bronze standing between it and the iron the band can now make, and is pinned as a
+**pairing** — an upgraded row against an un-upgraded one on the same frame — so a wire that emitted
+the same note everywhere cannot pass.
 
 **Nothing here is authored.** `group` (`kit`/`tool`/`stock`) is derived from whether the output item
 declares a `bounds_material`; a craft's display name is `crafting::title_from_id`
@@ -496,10 +580,12 @@ Five wordings: `Untouched` · `48 kills left` · `~1 kill left` · **`Worn out`*
 >
 > A batch that runs out of units is **removed** from `BandEquipment`, so *"the sled broke"* and
 > *"we have never had a sled"* were the same empty ledger — and they are not the same sentence to a
-> player. `BandEquipment::retired` is the readout's memory: a `BTreeMap<String, u32>` incremented by
-> `wear_item`, the one seam that destroys a unit, and read by `retired_of`. **Nothing in the sim
-> branches on it** and nothing may — it must not become a repair discount. The checkpoint carries it
-> for free, because `BandRecord::equipment` clones the whole component.
+> player. `BandEquipment::retired` is the readout's memory, incremented by `wear_item` — the one seam
+> that destroys a unit — and summed here by `retired_of`. It is keyed by **(item, tier)**, because
+> the craft ledger's `ownedNote` names the lost tier out loud; see "`retired` IS KEYED BY
+> (ITEM, TIER)". **Nothing in the sim branches on it** and nothing may — it must not become a repair
+> discount. The checkpoint carries it for free, because `BandRecord::equipment` clones the whole
+> component.
 >
 > Deriving it from config instead (*"a start-stocked item at count 0 must have worn out"*) is right
 > for kit items and **wrong for a tool the band built and then wore out**, which is exactly the case

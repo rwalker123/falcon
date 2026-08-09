@@ -233,6 +233,19 @@ impl MaterialsConfig {
             .map(|band| band.name.as_str())
     }
 
+    /// **Which rung a band NAME is**, or `None` for a name this table does not carry — the inverse of
+    /// [`Self::band_name`].
+    ///
+    /// It is what resolves a config keyed by band name: `recipes.json`'s grades are keyed by these
+    /// words, so ordering them, inheriting between them and rejecting one that is not a rung all go
+    /// through here rather than through a second copy of the vocabulary
+    /// (`.claude/rules/core_sim/crafting.md` → "A grade key IS a band name").
+    pub fn band_index_of(&self, name: &str) -> Option<usize> {
+        self.characteristic_bands
+            .iter()
+            .position(|band| band.name == name)
+    }
+
     /// **THE merge key** — the per-axis band of `readings`, in `material`'s declared axis order.
     ///
     /// `None` for a material the table does not carry; an axis missing from `readings` reads at

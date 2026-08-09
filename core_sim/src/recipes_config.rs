@@ -10,10 +10,13 @@
 //! 1. **A recipe reads ONE characteristic** ([`RecipeInput::reads`]), and that is what makes *"there
 //!    is no best hide"* real. A sled reads `toughness` and a halter reads `suppleness`, so spending
 //!    the mammoth hide on the halter is a mistake the player is free to make.
-//! 2. **Continuous in, discrete out.** The reading selects a [`RecipeGrade`], and the grade declares
-//!    **absolutes** ([`crate::equipment_config::EquipmentEffect`] names the value a stat *takes*).
-//!    Nothing may scale a resolved stat by a quality number — there is no representation for it, and
-//!    that is what keeps *flat until expiry, then a step down* structural.
+//! 2. **Continuous in, discrete out — and there is ONE quality ladder for the whole game.** The
+//!    reading falls in a `characteristic_bands` rung, that rung's **name is the grade**, and the
+//!    grade declares **absolutes** ([`crate::equipment_config::EquipmentEffect`] names the value a
+//!    stat *takes*). Nothing may scale a resolved stat by a quality number — there is no
+//!    representation for it, and that is what keeps *flat until expiry, then a step down*
+//!    structural. **A recipe declares no seams of its own**: a second set of cut points beside the
+//!    bands would be a second authority to drift from.
 //! 3. **The grade is fixed at draw time and never moves.** It is not a taper.
 //! 4. **Knowledge gates a recipe only when the recipe says so** ([`RecipeDef::requires_knowledge`]),
 //!    and only the **tool** recipes say so — gated on the crafts of what the tool is MADE FROM,
@@ -46,11 +49,12 @@ use crate::{
 
 pub const BUILTIN_RECIPES_CONFIG: &str = include_str!("data/recipes.json");
 
-/// **The seam the lowest grade must open at.** Every drawn reading has to select *some* grade or the
-/// output would be unrepresentable, and the lowest therefore opens at the bottom of the reading
-/// range rather than at whatever the author happened to type — the exact twin of
-/// `materials_config`'s first-band rule.
-const FIRST_GRADE_WHEN: f32 = READING_MIN;
+/// **The band a recipe's lowest grade must name** — the first rung of `characteristic_bands`.
+///
+/// Something has to answer for a reading of `0.0`. A recipe whose lowest grade sits higher would
+/// leave the bottom of the range with no effects to inherit, which is the exact twin of
+/// `materials_config`'s first-band rule and is checked for the same reason.
+const FIRST_GRADE_BAND_INDEX: usize = 0;
 
 /// Bench dials shared by every recipe.
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
@@ -127,27 +131,29 @@ impl RecipeOutput {
     }
 }
 
-/// **One discrete output quality**, selected by where the drawn reading falls.
+/// **What one BAND buys on this recipe's output** — the payload half of a grade, the name half being
+/// the `characteristic_bands` rung the map is keyed by.
 ///
-/// `when` is the seam the continuous reading quantises at; `effects` is the set of **absolutes** the
-/// output takes at this grade.
+/// There is no `when`: the cut points already exist in the materials table, and a per-recipe seam
+/// beside them would be a second authority free to drift. So the grade a craft comes out at is
+/// simply the band of `min(material reading, tool quality ceiling)`.
 ///
-/// **A grade may only declare a stat the output item's TIERS declare**, and the `standard` rung must
-/// declare the same value that tier does ([`RecipesConfig::validate_grades_against_item`]). That is
-/// what keeps a grade from becoming a second home for a shipped number: the tier stays the one home,
-/// the grades are a spread around it, and a standard-grade craft reproduces the game as shipped.
+/// **A band a recipe does not declare INHERITS THE ONE BELOW IT**
+/// ([`RecipeDef::grade_effects_for`]), so a recipe wanting three steps writes three and a recipe
+/// wanting none writes no `grades` block at all — the batch is still *stamped* with the band it was
+/// made at, that band simply buys it no stat.
 ///
-/// **`effects` may still be empty**, and the shipped empties are the items whose whole payload is
-/// *shared* rather than tier-bought (the handling gear's `pen_carry`, the wayfinding gear's vantage)
-/// or is a bench stat nothing yet grades.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+/// **A grade may only declare a stat the output item's TIERS declare**, and the **anchor** rung — the
+/// band the bench material's bare-handed `hand_working.quality_ceiling` falls in — must declare the
+/// same value that tier does ([`RecipesConfig::validate_grades_against_item`]). That is what keeps a
+/// grade from becoming a second home for a shipped number: the tier stays the one home, the grades
+/// are a spread around it, and a bare-handed craft off the best material a band can work by hand
+/// reproduces the game as shipped.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RecipeGrade {
-    /// The reading at which this grade opens. The lowest must be [`FIRST_GRADE_WHEN`] and no two may
-    /// share a seam, so every reading selects exactly one grade.
-    pub when: f32,
-    /// The absolutes the output takes at this grade. See the type doc for why the shipped ones are
-    /// empty.
+    /// The absolutes the output takes at this band. May be empty, which states *"this band buys
+    /// nothing extra"* — the same thing the band below it would have said.
     #[serde(default)]
     pub effects: Vec<EquipmentEffect>,
 }
@@ -178,9 +184,13 @@ pub struct RecipeDef {
     pub requires_knowledge: Vec<String>,
     pub inputs: Vec<RecipeInput>,
     pub outputs: Vec<RecipeOutput>,
-    /// The discrete output qualities, by name. **The map's key order is irrelevant** — the seams are
-    /// what order them ([`Self::grades_by_seam`]), and `validate` rejects two grades sharing a
-    /// `when` so that order is total.
+    /// **The discrete output qualities, KEYED BY `characteristic_bands` NAME.** The map's own key
+    /// order is irrelevant — the band table is what orders them ([`Self::grades_by_band`]), and
+    /// `validate_against` rejects a key that is not a rung.
+    ///
+    /// **Absent is a real statement**, not a missing value: it says this item's payload is not
+    /// tier-bought (the husbandry gear's `pen_carry`, the wayfinding gear's vantage) or is a bench
+    /// stat nothing yet grades. The output is still stamped with the band it was made at.
     #[serde(default)]
     pub grades: BTreeMap<String, RecipeGrade>,
 }
@@ -212,30 +222,57 @@ impl RecipeDef {
         self.outputs.iter().find_map(|output| output.equipment_id())
     }
 
-    /// **The grades in seam order, lowest first.** Total by construction: `validate` requires the
-    /// lowest seam to be [`FIRST_GRADE_WHEN`] and no two to be equal.
-    pub fn grades_by_seam(&self) -> Vec<(&str, &RecipeGrade)> {
-        let mut ordered: Vec<(&str, &RecipeGrade)> = self
+    /// **The declared grades in BAND order, lowest first**, each with the rung index it names. A key
+    /// the band table does not carry is dropped, which `validate_against` makes unreachable.
+    pub fn grades_by_band<'a>(
+        &'a self,
+        materials: &MaterialsConfig,
+    ) -> Vec<(usize, &'a str, &'a RecipeGrade)> {
+        let mut ordered: Vec<(usize, &str, &RecipeGrade)> = self
             .grades
             .iter()
-            .map(|(name, grade)| (name.as_str(), grade))
+            .filter_map(|(name, grade)| {
+                materials
+                    .band_index_of(name)
+                    .map(|index| (index, name.as_str(), grade))
+            })
             .collect();
-        ordered.sort_by(|a, b| {
-            a.1.when
-                .partial_cmp(&b.1.when)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        ordered.sort_by_key(|(index, ..)| *index);
         ordered
     }
 
-    /// **Which grade a reading selects** — the highest seam the reading has reached. `None` for a
-    /// recipe that declares no grades, which is a real answer: an alloy has no quality to name.
-    pub fn grade_for(&self, reading: f32) -> Option<&str> {
-        self.grades_by_seam()
+    /// **The grade a reading comes out at: the BAND it falls in.** One vocabulary rates a hide's
+    /// toughness and the sled made out of it, so a reading of `.55` is *good* in both places.
+    ///
+    /// The name is a property of the object whether or not this recipe declares that band —
+    /// declaration governs *effects* only. `None` for a recipe that reads no characteristic, which is
+    /// a real answer: an alloy has no quality to name.
+    pub fn grade_for<'a>(&self, reading: f32, materials: &'a MaterialsConfig) -> Option<&'a str> {
+        self.reads_axis()?;
+        materials.band_name(materials.band_index(reading))
+    }
+
+    /// **What the band named `grade` buys — INHERITING THE ONE BELOW IT.** The effects of the
+    /// highest-indexed declared grade whose band index is `<= index(grade)`, and an empty slice when
+    /// the recipe declares nothing at or below it.
+    ///
+    /// Inheritance is what lets a recipe write three steps instead of one per rung, and it is why an
+    /// undeclared band is still a legal stamp: *"excellent, which buys this item nothing"* is a
+    /// coherent thing for an object to be.
+    pub fn grade_effects_for(
+        &self,
+        grade: &str,
+        materials: &MaterialsConfig,
+    ) -> &[EquipmentEffect] {
+        let Some(target) = materials.band_index_of(grade) else {
+            return &[];
+        };
+        self.grades_by_band(materials)
             .into_iter()
-            .rev()
-            .find(|(_, grade)| reading >= grade.when)
-            .map(|(name, _)| name)
+            .take_while(|(index, ..)| *index <= target)
+            .last()
+            .map(|(_, _, grade)| grade.effects.as_slice())
+            .unwrap_or_default()
     }
 }
 
@@ -443,8 +480,7 @@ impl RecipesConfig {
     }
 
     fn validate_grades(&self, id: &str, recipe: &RecipeDef) -> Result<(), RecipesConfigError> {
-        let ordered = recipe.grades_by_seam();
-        if ordered.is_empty() {
+        if recipe.grades.is_empty() {
             return Ok(());
         }
         // **Grades need something to select them.** A recipe with grades and no `reads` would have
@@ -471,39 +507,10 @@ impl RecipesConfig {
                 ),
             });
         }
-        let (lowest_name, lowest) = ordered[0];
-        if lowest.when != FIRST_GRADE_WHEN {
-            return Err(RecipesConfigError::Invalid {
-                field: format!("recipes.{id}.grades.{lowest_name}.when"),
-                constraint: format!(
-                    "be exactly {FIRST_GRADE_WHEN} on the lowest grade - every reading must select \
-                     one"
-                ),
-                value: lowest.when.to_string(),
-            });
-        }
-        let mut previous = lowest.when;
-        for (name, grade) in &ordered[1..] {
-            if !reading_in_range(grade.when) {
-                return Err(RecipesConfigError::Invalid {
-                    field: format!("recipes.{id}.grades.{name}.when"),
-                    constraint: format!("be finite and within {READING_MIN}..={READING_MAX}"),
-                    value: grade.when.to_string(),
-                });
-            }
-            if grade.when <= previous {
-                return Err(RecipesConfigError::Invalid {
-                    field: format!("recipes.{id}.grades.{name}.when"),
-                    constraint: format!(
-                        "be strictly greater than the grade below it ({previous}) - two grades \
-                         sharing a seam make the selection depend on map order"
-                    ),
-                    value: grade.when.to_string(),
-                });
-            }
-            previous = grade.when;
-        }
-        for (name, grade) in &ordered {
+        // **The band NAMES are checked at the composition seam** — this table does not carry the
+        // rating vocabulary, so `validate_against` is where a key that is not a band, and a lowest
+        // grade that is not the first band, are rejected.
+        for (name, grade) in &recipe.grades {
             for (index, effect) in grade.effects.iter().enumerate() {
                 let value = effect.tier.value();
                 if !value.is_finite() || value < 0.0 {
@@ -542,6 +549,7 @@ impl RecipesConfig {
     ) -> Result<(), RecipesConfigError> {
         let crafts = crafts_declared_by(materials);
         for (id, recipe) in &self.recipes {
+            Self::validate_grade_bands(id, recipe, materials)?;
             for input in &recipe.inputs {
                 let Some(def) = materials.material(&input.material) else {
                     return Err(RecipesConfigError::UnknownMaterial {
@@ -608,7 +616,7 @@ impl RecipesConfig {
                             ),
                         });
                     }
-                    Self::validate_grades_against_item(id, recipe, item, equipment)?;
+                    Self::validate_grades_against_item(id, recipe, item, equipment, materials)?;
                 }
                 if let Some(material) = output.material_id() {
                     let Some(def) = materials.material(material) else {
@@ -702,6 +710,45 @@ impl RecipesConfig {
         Ok(())
     }
 
+    /// **A GRADE KEY IS A `characteristic_bands` NAME** — the whole of *"one quality ladder for the
+    /// whole game"*, enforced rather than left to convention.
+    ///
+    /// Two rejections, and the second is the one that keeps the ladder total: the **lowest** declared
+    /// grade must name the **first** band, because something has to answer for a reading of `0.0` and
+    /// inheritance only ever looks *down*.
+    fn validate_grade_bands(
+        id: &str,
+        recipe: &RecipeDef,
+        materials: &MaterialsConfig,
+    ) -> Result<(), RecipesConfigError> {
+        let mut lowest: Option<usize> = None;
+        for name in recipe.grades.keys() {
+            let Some(index) = materials.band_index_of(name) else {
+                return Err(RecipesConfigError::InvalidBook {
+                    reason: format!(
+                        "recipe '{id}' declares the grade '{name}', which is not a \
+                         `characteristic_bands` rung - a grade IS a band, so a second vocabulary \
+                         here is a second set of cut points to drift from"
+                    ),
+                });
+            };
+            lowest = Some(lowest.map_or(index, |current: usize| current.min(index)));
+        }
+        let Some(lowest) = lowest else {
+            return Ok(());
+        };
+        if lowest != FIRST_GRADE_BAND_INDEX {
+            return Err(RecipesConfigError::InvalidBook {
+                reason: format!(
+                    "recipe '{id}''s lowest grade names the band at rung {lowest}, not the first one \
+                     - a band a recipe does not declare inherits the one BELOW it, so nothing would \
+                     answer for a reading of {READING_MIN}"
+                ),
+            });
+        }
+        Ok(())
+    }
+
     /// **WHAT A GRADE MAY SAY ABOUT THE THING IT MAKES.** A grade declares absolutes on a *crafted*
     /// item, so every rule here is about it not becoming a second home for a number that already
     /// has one — the objection that kept every grade's payload empty until the tier owned these.
@@ -711,16 +758,18 @@ impl RecipesConfig {
     ///   otherwise have. A grade naming `pen_carry` — whose equipped side is the hunt haul's —
     ///   would be exactly the second home.
     /// - **The mass bounds are restated verbatim.** A grade's effect is what
-    ///   [`crate::equipment_config::LiveItem::effect_entry`] answers with, bounds included, so a
-    ///   fine snare that dropped `max_body_mass` would quietly become a mammoth trap.
-    /// - **The STANDARD grade equals the shipped tier value.** That is what makes a standard-grade
-    ///   craft reproduce today's game exactly, and it is what stops the two numbers drifting: the
-    ///   tier stays the one home, and the grades are a spread around it.
+    ///   [`crate::equipment_config::LiveItem::effect_entry`] answers with, bounds included, so an
+    ///   excellent snare that dropped `max_body_mass` would quietly become a mammoth trap.
+    /// - **The ANCHOR grade equals the shipped tier value** — see [`anchor_band`]. That is what makes
+    ///   a bare-handed craft off the best material a band can work by hand reproduce today's game
+    ///   exactly, and it is what stops the two numbers drifting: the tier stays the one home, and the
+    ///   grades are a spread around it.
     fn validate_grades_against_item(
         id: &str,
         recipe: &RecipeDef,
         item: &str,
         equipment: &EquipmentConfig,
+        materials: &MaterialsConfig,
     ) -> Result<(), RecipesConfigError> {
         let Some(def) = equipment.item(item) else {
             return Ok(());
@@ -753,35 +802,57 @@ impl RecipesConfig {
                         ),
                     });
                 }
-                if name == STANDARD_GRADE
-                    && effect.tier.value()
-                        != def
-                            .default_tier()
-                            .effects
-                            .iter()
-                            .find(|e| e.stat == effect.stat)
-                            .map_or(effect.tier.value(), |e| e.tier.value())
-                {
-                    return Err(RecipesConfigError::InvalidBook {
-                        reason: format!(
-                            "recipe '{id}' grade '{STANDARD_GRADE}' declares {:?} = {}, which is not \
-                             what '{item}''s default tier declares - a standard-grade craft must \
-                             reproduce the shipped item exactly",
-                            effect.stat,
-                            effect.tier.value()
-                        ),
-                    });
-                }
+            }
+        }
+        // **The anchor, resolved AFTER inheritance** — a recipe that declares nothing at the anchor
+        // band still answers with whatever it inherits there, and that is the value the check is
+        // about. A bench material with no bare-handed rate at all has no anchor and no check.
+        let Some(anchor) = anchor_band(recipe, materials) else {
+            return Ok(());
+        };
+        for effect in recipe.grade_effects_for(anchor, materials) {
+            let shipped = def
+                .default_tier()
+                .effects
+                .iter()
+                .find(|e| e.stat == effect.stat)
+                .map_or(effect.tier.value(), |e| e.tier.value());
+            if effect.tier.value() != shipped {
+                return Err(RecipesConfigError::InvalidBook {
+                    reason: format!(
+                        "recipe '{id}' resolves {:?} = {} at its anchor band '{anchor}', which is not \
+                         what '{item}''s default tier declares ({shipped}) - a bare-handed craft off \
+                         the best material that band can work by hand must reproduce the shipped item \
+                         exactly",
+                        effect.stat,
+                        effect.tier.value()
+                    ),
+                });
             }
         }
         Ok(())
     }
 }
 
-/// **The grade a standard craft comes out at, and therefore the one pinned to the shipped item.**
-/// Named because it is a *rule* rather than a label: the middle rung is what an ordinary draw off
-/// ordinary stock selects, so it is what has to reproduce the game as shipped.
-pub const STANDARD_GRADE: &str = "standard";
+/// **THE ANCHOR BAND — DERIVED, never a literal.**
+///
+/// The band the recipe's **bench material**'s bare-handed
+/// [`crate::materials_config::HandWorking::quality_ceiling`] falls in. That is the best a band with
+/// no tool can reach, so pinning it to the shipped item is what makes *"a tool run dry drops the band
+/// back to the rate the game already ships at rather than into a spiral"* true by construction.
+///
+/// Reading the ceiling rather than naming a rung is the same shape this model already chose twice —
+/// `dispersion` multiplies a species' own `wariness` rather than reading a "jumpy" flag, and
+/// `max_body_mass` reads `body_mass` rather than a `size_class`. A material with **no**
+/// `hand_working` cannot be worked bare-handed at all, so it has no anchor and the check does not
+/// apply.
+fn anchor_band<'a>(recipe: &RecipeDef, materials: &'a MaterialsConfig) -> Option<&'a str> {
+    let ceiling = materials
+        .material(recipe.bench_material()?)?
+        .hand_working?
+        .quality_ceiling;
+    materials.band_name(materials.band_index(ceiling))
+}
 
 /// A reading is a position on an axis, so it has both ends. Same bound the materials table applies,
 /// named once per file that checks one.
@@ -900,14 +971,28 @@ mod tests {
             .expect_err("the mutated book must be rejected")
     }
 
+    /// [`mutated`]'s twin for a rule only the **composition seam** can see: the book still validates
+    /// on its own, and is then reconciled against the two tables it names ids — and band names —
+    /// from.
+    fn reconciled(mutate: impl FnOnce(&mut serde_json::Value)) -> RecipesConfigError {
+        let mut json: serde_json::Value =
+            serde_json::from_str(BUILTIN_RECIPES_CONFIG).expect("builtin parses as json");
+        mutate(&mut json);
+        RecipesConfig::from_json_str(&json.to_string())
+            .expect("the mutated book is still self-consistent")
+            .validate_against(&MaterialsConfig::builtin(), &EquipmentConfig::builtin())
+            .expect_err("the cross-config check must reject it")
+    }
+
     /// The shipped book reconciled against the two tables it names ids from — the same call
     /// `build_headless_app` makes, run here so a broken cross-reference fails a unit test rather
     /// than a boot.
     #[test]
     fn the_builtin_book_parses_validates_and_reconciles() {
         let recipes = builtin();
+        let materials = MaterialsConfig::builtin();
         recipes
-            .validate_against(&MaterialsConfig::builtin(), &EquipmentConfig::builtin())
+            .validate_against(&materials, &EquipmentConfig::builtin())
             .expect("the shipped book must reconcile against the shipped tables");
         for (id, recipe) in recipes.recipes() {
             assert!(
@@ -916,26 +1001,25 @@ mod tests {
                  a graded output needs a reading"
             );
             assert!(
-                recipe.grade_for(READING_MIN).is_some(),
+                recipe.grade_for(READING_MIN, &materials).is_some(),
                 "recipe '{id}' leaves the bottom of the reading range ungraded"
             );
         }
     }
 
-    /// **THE STANDARD GRADE IS THE SHIPPED NUMBER.** It replaces `no_shipped_grade_declares_an_effect`,
-    /// which pinned the *previous* stage's deliberate emptiness — a grade could not declare a stat
-    /// while every stat the shipped items own lived somewhere else. The tier owns them now, so the
-    /// grades declare real absolutes and the rule that keeps them honest is this one: a **standard**
-    /// craft must reproduce today's game exactly, so its value is the item's own default-tier value
-    /// and the other two rungs are a spread around it.
+    /// **THE ANCHOR GRADE IS THE SHIPPED NUMBER**, and the anchor is *derived*: the band the recipe's
+    /// bench material's bare-handed `hand_working.quality_ceiling` falls in. So a bare-handed craft
+    /// off the best material that band can work by hand reproduces today's game exactly, and a tool
+    /// run dry drops back to the shipped rate rather than into a spiral.
     ///
-    /// **Paired with a liveness assertion**, because "every standard grade agrees with its item"
-    /// is trivially true of a book whose grades declare nothing at all — which is exactly the state
-    /// this test replaced.
+    /// **Both directions, plus a liveness assertion.** *"Every anchor grade agrees with its item"* is
+    /// trivially true of a book whose grades declare nothing, so the rungs either side must be seen
+    /// to genuinely bracket it — one strictly below and one strictly above, on the shipped book.
     #[test]
-    fn the_standard_grade_reproduces_the_shipped_item_and_the_others_bracket_it() {
+    fn the_anchor_grade_reproduces_the_shipped_item_and_the_others_bracket_it() {
         let equipment = EquipmentConfig::builtin();
-        let mut saw_a_declared_effect = false;
+        let materials = MaterialsConfig::builtin();
+        let (mut saw_anchor, mut saw_below, mut saw_above) = (false, false, false);
         for (id, recipe) in builtin().recipes() {
             let Some(item) = recipe
                 .outputs
@@ -945,9 +1029,13 @@ mod tests {
             else {
                 continue;
             };
-            for (name, grade) in recipe.grades_by_seam() {
+            let anchor = anchor_band(recipe, &materials)
+                .unwrap_or_else(|| panic!("recipe '{id}' works a hand-workable material"));
+            let anchor_index = materials
+                .band_index_of(anchor)
+                .expect("the anchor is a declared band");
+            for (index, name, grade) in recipe.grades_by_band(&materials) {
                 for effect in &grade.effects {
-                    saw_a_declared_effect = true;
                     let shipped = item
                         .default_tier()
                         .effects
@@ -958,46 +1046,121 @@ mod tests {
                             panic!("recipe '{id}' grade '{name}' declares a stat no tier declares")
                         });
                     let value = effect.tier.value();
-                    match name {
-                        STANDARD_GRADE => assert_eq!(
-                            value, shipped,
-                            "recipe '{id}' grade '{name}': a standard craft must reproduce the \
-                             shipped item exactly"
-                        ),
-                        _ => assert_ne!(
-                            value, shipped,
-                            "recipe '{id}' grade '{name}' equals the shipped value - a grade that \
-                             does not move is a rung the player cannot feel"
-                        ),
+                    match index.cmp(&anchor_index) {
+                        std::cmp::Ordering::Equal => {
+                            saw_anchor = true;
+                            assert_eq!(
+                                value, shipped,
+                                "recipe '{id}' grade '{name}' is the anchor and must reproduce the \
+                                 shipped item exactly"
+                            );
+                        }
+                        std::cmp::Ordering::Less => {
+                            saw_below = true;
+                            assert!(
+                                value < shipped,
+                                "recipe '{id}' grade '{name}' sits below the anchor and must cost \
+                                 something: {value} vs {shipped}"
+                            );
+                        }
+                        std::cmp::Ordering::Greater => {
+                            saw_above = true;
+                            assert!(
+                                value > shipped,
+                                "recipe '{id}' grade '{name}' sits above the anchor and must buy \
+                                 something: {value} vs {shipped}"
+                            );
+                        }
                     }
                 }
             }
         }
         assert!(
-            saw_a_declared_effect,
-            "no shipped grade declares an effect at all - the agreement above is vacuous"
+            saw_anchor && saw_below && saw_above,
+            "the shipped book must actually BRACKET its anchor - saw anchor {saw_anchor}, below \
+             {saw_below}, above {saw_above}; without all three the agreement above is vacuous"
         );
     }
 
-    /// The grade ladder is total and monotone: a reading anywhere in range selects exactly one, and
-    /// a higher reading never selects a lower grade.
+    /// **A reading is graded by the BAND it falls in** — the same table that rates the hide it was
+    /// made from, with no seams of the recipe's own.
     #[test]
-    fn a_reading_selects_the_highest_grade_it_has_reached() {
+    fn a_reading_is_graded_by_the_band_it_falls_in() {
         let recipes = builtin();
+        let materials = MaterialsConfig::builtin();
         let sled = recipes.recipe("sled").expect("the sled is shipped");
-        let seams = sled.grades_by_seam();
-        assert!(
-            seams.len() >= 2,
-            "the sled must have a grade ladder to test"
-        );
-        let lowest = seams[0].0.to_string();
-        let highest = seams[seams.len() - 1].0.to_string();
-        assert_eq!(sled.grade_for(READING_MIN), Some(lowest.as_str()));
-        assert_eq!(sled.grade_for(READING_MAX), Some(highest.as_str()));
+        for (reading, expected) in [
+            (READING_MIN, "poor"),
+            (0.29, "poor"),
+            (0.30, "fair"),
+            (0.55, "good"),
+            (READING_MAX, "excellent"),
+        ] {
+            assert_eq!(
+                sled.grade_for(reading, &materials),
+                Some(expected),
+                "a reading of {reading} is '{expected}' on the rail and on the sled alike"
+            );
+        }
+    }
+
+    /// **A BAND A RECIPE DOES NOT DECLARE INHERITS THE ONE BELOW IT.** Exercised by a fixture,
+    /// because every shipped recipe either declares all four rungs or declares none — so nothing in
+    /// the book reaches this rule, exactly as nothing reaches `materials.json`'s varieties or
+    /// `equipment.json`'s bronze tier.
+    #[test]
+    fn a_band_a_recipe_does_not_declare_inherits_the_one_below_it() {
+        let materials = MaterialsConfig::builtin();
+        let equipment = EquipmentConfig::builtin();
+        let recipes = RecipesConfig::from_json_str(
+            r#"{
+                "crafting": { "progress_per_worker_turn": 1.0 },
+                "recipes": {
+                    "spears": {
+                        "display_name": "Spears",
+                        "craft": "bone_working",
+                        "work": 6.0,
+                        "inputs": [ { "material": "bone", "amount": 1.0, "reads": "density" } ],
+                        "outputs": [ { "equipment": "spears", "amount": 1.0 } ],
+                        "grades": {
+                            "poor": { "effects": [ { "stat": "attack", "equipped": 15.0 } ] },
+                            "good": { "effects": [ { "stat": "attack", "equipped": 20.0 } ] }
+                        }
+                    }
+                }
+            }"#,
+        )
+        .expect("a two-rung ladder is a legal book");
+        recipes
+            .validate_against(&materials, &equipment)
+            .expect("its lowest rung is the first band and its anchor is `good`");
+        let spears = recipes.recipe("spears").expect("shipped in the fixture");
+        let value_at = |band: &str| {
+            spears
+                .grade_effects_for(band, &materials)
+                .iter()
+                .map(|effect| effect.tier.value())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(value_at("poor"), vec![15.0]);
         assert_eq!(
-            sled.grade_for(seams[1].1.when - f32::EPSILON),
-            Some(lowest.as_str()),
-            "a reading just under a seam stays below it"
+            value_at("fair"),
+            vec![15.0],
+            "an undeclared band takes the effects of the highest rung at or below it"
+        );
+        assert_eq!(value_at("good"), vec![20.0]);
+        assert_eq!(
+            value_at("excellent"),
+            vec![20.0],
+            "and inheritance only ever looks DOWN - there is nothing above `good` to reach for"
+        );
+        // **The stamp is the band regardless**, which is what makes the grade a property of the
+        // object rather than of the recipe's authoring.
+        assert_eq!(
+            spears.grade_for(READING_MAX, &materials),
+            Some("excellent"),
+            "a craft off excellent bone reads `excellent` even where the recipe declares nothing \
+             there"
         );
     }
 
@@ -1038,24 +1201,59 @@ mod tests {
         );
     }
 
+    /// **A GRADE KEY THAT IS NOT A BAND IS REJECTED** — the whole of *"one quality ladder"*, and a
+    /// cross-config check because this table does not carry the rating vocabulary.
     #[test]
-    fn validate_rejects_a_grade_ladder_that_does_not_open_at_the_bottom() {
-        let err = mutated(|json| {
-            json["recipes"]["sled"]["grades"]["coarse"]["when"] = serde_json::json!(0.1)
+    fn validate_against_rejects_a_grade_key_that_is_not_a_band() {
+        let err = reconciled(|json| {
+            let grades = json["recipes"]["sled"]["grades"]
+                .as_object_mut()
+                .expect("the sled declares grades");
+            let excellent = grades.remove("excellent").expect("the top rung");
+            grades.insert("fine".to_string(), excellent);
         });
         assert!(
-            matches!(&err, RecipesConfigError::Invalid { field, .. } if field.starts_with("recipes.sled.grades.")),
+            matches!(&err, RecipesConfigError::InvalidBook { reason } if reason.contains("not a `characteristic_bands` rung")),
             "got {err}"
         );
     }
 
+    /// **SOMETHING MUST ANSWER FOR A READING OF `0.0`.** Inheritance only ever looks down, so a
+    /// ladder whose lowest rung is not the first band leaves the bottom of the range with nothing to
+    /// inherit.
     #[test]
-    fn validate_rejects_two_grades_sharing_a_seam() {
-        let err = mutated(|json| {
-            json["recipes"]["sled"]["grades"]["fine"]["when"] = serde_json::json!(0.45);
+    fn validate_against_rejects_a_grade_ladder_that_does_not_open_at_the_first_band() {
+        let err = reconciled(|json| {
+            json["recipes"]["sled"]["grades"]
+                .as_object_mut()
+                .expect("the sled declares grades")
+                .remove("poor");
         });
         assert!(
-            matches!(&err, RecipesConfigError::Invalid { constraint, .. } if constraint.contains("strictly greater")),
+            matches!(&err, RecipesConfigError::InvalidBook { reason } if reason.contains("not the first one")),
+            "got {err}"
+        );
+    }
+
+    /// **THE ANCHOR IS DERIVED FROM THE BENCH MATERIAL'S BARE-HANDED CEILING**, so retuning that
+    /// ceiling into a different band moves which rung has to reproduce the shipped item — and the
+    /// book that agreed at `good` no longer agrees at `fair`.
+    #[test]
+    fn validate_against_rejects_an_anchor_grade_that_disagrees_with_the_shipped_item() {
+        use crate::materials_config::BUILTIN_MATERIALS_CONFIG;
+
+        let equipment = EquipmentConfig::builtin();
+        let recipes = builtin();
+        let mut json: serde_json::Value =
+            serde_json::from_str(BUILTIN_MATERIALS_CONFIG).expect("the materials table is json");
+        json["materials"]["hide"]["hand_working"]["quality_ceiling"] = serde_json::json!(0.4);
+        let materials = MaterialsConfig::from_json_str(&json.to_string())
+            .expect("a lower bare-handed ceiling is a legal table");
+        let err = recipes
+            .validate_against(&materials, &equipment)
+            .expect_err("the anchor moved to `fair`, which is not the shipped sled");
+        assert!(
+            matches!(&err, RecipesConfigError::InvalidBook { reason } if reason.contains("anchor band 'fair'")),
             "got {err}"
         );
     }
@@ -1236,6 +1434,11 @@ mod tests {
             .expect("the alloy reconciles");
         let bronze = recipes.recipe("bronze").expect("shipped in the fixture");
         assert_eq!(bronze.reads_axis(), None);
-        assert_eq!(bronze.grade_for(READING_MAX), None);
+        assert_eq!(
+            bronze.grade_for(READING_MAX, &materials),
+            None,
+            "a recipe that reads no characteristic resolves no grade - an alloy has no quality to \
+             name"
+        );
     }
 }

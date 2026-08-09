@@ -2937,9 +2937,24 @@ table CraftOffer {
   severity:string;       // "danger" | "neutral" | "good"
   shortfalls:[MaterialShortfall];
   // THE GRADE THE DRAW WOULD SELECT out of the band's stock right now, after the tool's quality
-  // ceiling — "coarse" / "standard" / "fine". "" on a recipe that reads no characteristic.
+  // ceiling. IT IS A `characteristic_bands` NAME — "poor" / "fair" / "good" / "excellent" — because
+  // there is ONE quality ladder for the whole game: the same four words rate the hide and the sled
+  // made out of it. "" on a recipe that reads no characteristic.
   outputGrade:string;
   onBench:bool;          // this recipe is the running job — the row's button is spent
+  // --- THE LEDGER'S GROUP HEAD, AND WHAT THE BAND ACTUALLY CARRIES (appended last) --------------
+  // THE TIER A CRAFT WOULD PRODUCE RIGHT NOW — `ItemDefinition::craftable_tier`, the best tier the
+  // faction knows. This is the ledger's GROUP HEAD, not a column: a head says it once and can fold
+  // away, which is what a column can never do. "" on a material (stock) recipe.
+  outputTierName:string;
+  // Index of that tier within the item's own `tiers` list. The head order is by RANK DESCENDING —
+  // newest first — because the client has no other honest way to order two tier heads, and
+  // alphabetical would put Iron above Bronze.
+  outputTierRank:uint;
+  // RENDER IT VERBATIM, "" when there is no news. What the band CARRIES, said only when it
+  // disagrees with what it could now make: "carrying flint · poor", "last flint set wore out".
+  // The tier word reaches the Owned cell ONLY through this field and only when it is news.
+  ownedNote:string;
 }
 
 // ONE BATCH OF ONE ITEM a band owns, plus the CONFIG's items it owns none of (one row each, count 0)

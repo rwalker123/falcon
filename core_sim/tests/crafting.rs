@@ -28,11 +28,15 @@ const CREW: u32 = 8;
 const HIDE: &str = "hide";
 const TOUGHNESS: &str = "toughness";
 const SUPPLENESS: &str = "suppleness";
-/// The shipped grade names — spelled here because a test asserting *which* grade a draw selected has
-/// to name one, and nowhere else in the sim does.
-const COARSE: &str = "coarse";
-const STANDARD: &str = "standard";
-const FINE: &str = "fine";
+/// The grade names — which are the `characteristic_bands` rungs, because there is **one** quality
+/// ladder for the whole game. Spelled here because a test asserting *which* grade a draw came out at
+/// has to name one.
+const POOR: &str = "poor";
+/// **The ANCHOR band on the shipped tables** — the rung all three organics' bare-handed
+/// `hand_working.quality_ceiling` of `0.60` falls in, and therefore the one pinned to the shipped
+/// item.
+const GOOD: &str = "good";
+const EXCELLENT: &str = "excellent";
 const TANNING_FRAME: &str = "tanning_frame";
 const SLED: &str = "sled";
 /// The tier every shipped item's one quality rung carries — the flint age.
@@ -266,8 +270,8 @@ fn the_grade_a_draw_selects_does_not_move_when_the_bands_stock_does() {
     let drawn = bench.bench().drawn.clone().expect("the draw succeeded");
     assert_eq!(
         drawn.grade.as_deref(),
-        Some(FINE),
-        "excellent toughness under a 0.90 tool ceiling is a fine sled"
+        Some(EXCELLENT),
+        "excellent toughness under a 0.90 tool ceiling is an excellent sled"
     );
 
     // The excellent hide is gone; only poor hide is left. The pass in flight must not notice.
@@ -275,7 +279,7 @@ fn the_grade_a_draw_selects_does_not_move_when_the_bands_stock_does() {
     bench.turns(1);
     assert_eq!(
         bench.bench().drawn.as_ref().and_then(|d| d.grade.as_deref()),
-        Some(FINE),
+        Some(EXCELLENT),
         "the grade was fixed when the materials left the store - it is not a taper and it does not \
          re-read the pile"
     );
@@ -283,11 +287,15 @@ fn the_grade_a_draw_selects_does_not_move_when_the_bands_stock_does() {
 
 /// **THE TOOL CEILING CAPS THE OUTPUT: `min(material reading, ceiling)`.**
 ///
-/// Fine flax with no loom still makes a standard basket. Here: excellent hide with no tanning frame
-/// still makes a `standard` sled, because the material's own bare-handed ceiling (`0.60`) sits below
-/// the `fine` seam (`0.75`) — and the same hide with the frame reaches `fine`.
+/// Excellent flax with no loom still makes a `good` basket. Here: excellent hide with no tanning
+/// frame still makes a `good` sled, because the material's own bare-handed ceiling (`0.60`) lands in
+/// the `good` band (`0.55`) and never reaches `excellent` (`0.80`) — and the same hide with the
+/// frame's `0.90` ceiling does.
+///
+/// **This is also the anchor stated as behaviour**: the bare-handed craft comes out at the anchor
+/// band, which `validate_against` pins to the shipped sled.
 #[test]
-fn the_bare_handed_ceiling_caps_an_excellent_hide_to_a_standard_sled() {
+fn the_bare_handed_ceiling_caps_an_excellent_hide_to_the_anchor_band() {
     let output_grade = |with_tool: bool| {
         let mut bench = Bench::shipped();
         bench
@@ -312,12 +320,12 @@ fn the_bare_handed_ceiling_caps_an_excellent_hide_to_a_standard_sled() {
 
     assert_eq!(
         output_grade(false),
-        STANDARD,
-        "the ceiling belongs to the MATERIAL, not to the absent tool, and 0.60 is below the fine seam"
+        GOOD,
+        "the ceiling belongs to the MATERIAL, not to the absent tool, and 0.60 falls in `good`"
     );
     assert_eq!(
         output_grade(true),
-        FINE,
+        EXCELLENT,
         "the frame's 0.90 ceiling is what lets an excellent hide read as excellent"
     );
 }
@@ -434,7 +442,7 @@ fn a_finished_item_lands_in_the_bands_equipment_ledger_unworn() {
         "the band keeps SERVING its nearly-spent sled - the fresh batch is stock, worst-first is \
          what makes the stock run out one batch at a time, and idle stock does not rot"
     );
-    assert_eq!(bench.bench().last_output_grade.as_deref(), Some(STANDARD));
+    assert_eq!(bench.bench().last_output_grade.as_deref(), Some(GOOD));
 }
 
 /// **The material is drawn WORST-FIRST on the axis the recipe reads** — you spend the poor hide
@@ -456,7 +464,7 @@ fn the_draw_spends_the_poor_stock_before_the_good() {
             .drawn
             .as_ref()
             .and_then(|d| d.grade.as_deref()),
-        Some(COARSE),
+        Some(POOR),
         "the poor hide must be spent first, or the player's best stock is silently burned on the \
          first thing they make"
     );
@@ -571,7 +579,7 @@ const FIXTURE_RECIPES: &str = r#"{
       "work": 4.0,
       "inputs": [{ "material": "ore", "amount": 4.0, "reads": "hardness" }],
       "outputs": [{ "equipment": "spears", "amount": 1.0 }],
-      "grades": { "rough": { "when": 0.0 } }
+      "grades": { "poor": {} }
     }
   }
 }"#;
@@ -653,13 +661,16 @@ fn a_completion_delivers_the_recipes_whole_output_amount() {
 /// craft time and never moves"* structural: swapping the bench's recipe afterwards cannot re-grade a
 /// sled already in the band's hands.
 ///
-/// Both directions: a **fine** sled hauls more than the shipped rate, and a **standard** one hauls
-/// exactly it — the rule that makes a standard-grade craft reproduce today's game.
+/// Both directions: an **excellent** sled hauls more than the shipped rate, and a **good** one — the
+/// anchor band — hauls exactly it, which is the rule that makes a bare-handed craft reproduce today's
+/// game.
 #[test]
 fn a_crafted_items_grade_decides_what_it_grants() {
     let equipment =
         EquipmentConfig::from_json_str(core_sim::BUILTIN_EQUIPMENT_CONFIG).expect("equipment");
     let recipes = RecipesConfig::from_json_str(core_sim::BUILTIN_RECIPES_CONFIG).expect("recipes");
+    let materials =
+        MaterialsConfig::from_json_str(core_sim::BUILTIN_MATERIALS_CONFIG).expect("materials");
     let labor = core_sim::LaborConfig::builtin();
     let big_game = equipment
         .kit("big_game")
@@ -675,12 +686,12 @@ fn a_crafted_items_grade_decides_what_it_grants() {
         .expect("the sled's tier declares a haul rate");
 
     let haul_at = |grade_id: &str| {
-        let grade = recipes
+        // **Resolved through the inheritance rule**, exactly as the bench resolves it — a band the
+        // recipe does not declare takes the one below it.
+        let effects = recipes
             .recipe(SLED)
             .expect("the sled recipe is shipped")
-            .grades
-            .get(grade_id)
-            .unwrap_or_else(|| panic!("the sled recipe ships a '{grade_id}' grade"));
+            .grade_effects_for(grade_id, &materials);
         let mut ledger = BandEquipment::default();
         ledger.stock(
             SLED,
@@ -688,7 +699,7 @@ fn a_crafted_items_grade_decides_what_it_grants() {
             FLINT_TIER,
             Some(core_sim::BatchGrade {
                 id: grade_id.to_string(),
-                effects: grade.effects.clone(),
+                effects: effects.to_vec(),
             }),
         );
         equipment.hunt_per_worker_biomass_capacity(
@@ -699,19 +710,19 @@ fn a_crafted_items_grade_decides_what_it_grants() {
     };
 
     assert_eq!(
-        haul_at(STANDARD),
+        haul_at(GOOD),
         shipped,
-        "a STANDARD craft reproduces the shipped sled exactly"
+        "a craft at the ANCHOR band reproduces the shipped sled exactly"
     );
     assert!(
-        haul_at(FINE) > shipped,
-        "a fine sled hauls more: {} vs {shipped}",
-        haul_at(FINE)
+        haul_at(EXCELLENT) > shipped,
+        "an excellent sled hauls more: {} vs {shipped}",
+        haul_at(EXCELLENT)
     );
     assert!(
-        haul_at("coarse") < shipped,
-        "and a coarse one less: {} vs {shipped}",
-        haul_at("coarse")
+        haul_at(POOR) < shipped,
+        "and a poor one less: {} vs {shipped}",
+        haul_at(POOR)
     );
 }
 
@@ -744,7 +755,7 @@ fn a_delivered_item_carries_the_tier_that_ships_known() {
     assert!(
         batches
             .iter()
-            .any(|batch| batch.grade.as_ref().is_some_and(|g| g.id == STANDARD)),
+            .any(|batch| batch.grade.as_ref().is_some_and(|g| g.id == GOOD)),
         "and the crafted one carries the grade its draw selected: {batches:?}"
     );
 }

@@ -34,7 +34,7 @@ use sim_runtime::{
 use crate::{
     components::{BandBench, BandEquipment, LocalStore},
     crafting::{craft_discovery_id, title_from_id},
-    equipment_config::EquipmentConfig,
+    equipment_config::{EquipmentConfig, EquipmentStat},
     intensification::knows,
     materials_config::MaterialsConfig,
     orders::FactionId,
@@ -389,8 +389,22 @@ fn craft_offer(
     let available = refusals.is_empty();
     let output_grade =
         preview_grade(store, plan.recipe, tiers, inputs.materials).unwrap_or_default();
+    // **The head and the cell are resolved together**, because the note is only news relative to the
+    // head — the two disagreeing is the whole readout. The head is resolved *first* because the
+    // invitation quotes what the tier being made would unlock.
+    let craftable = craftable_tier(plan, inputs);
+    let (output_tier_name, output_tier_rank) = craftable
+        .map(|(id, rank)| (id.to_string(), rank))
+        .unwrap_or_default();
     let (reason, severity) = if available {
-        invitation(plan, tiers, wear, &output_grade)
+        invitation(
+            plan,
+            tiers,
+            wear,
+            &output_grade,
+            inputs,
+            craftable.map(|(id, _)| id),
+        )
     } else {
         (refusals.join(REASON_JOIN), SEVERITY_DANGER)
     };
@@ -405,22 +419,146 @@ fn craft_offer(
         shortfalls,
         output_grade,
         on_bench: running == Some(plan.id),
+        output_tier_name,
+        output_tier_rank,
+        owned_note: craftable
+            .map(|(_, rank)| owned_note(plan, wear, rank, inputs))
+            .unwrap_or_default(),
     }
+}
+
+/// **The tier a craft would produce right now, and its rank in the item's own list** — the ledger's
+/// group head. `None` for a recipe that makes a material rather than an item, which has no tier to
+/// be grouped under.
+///
+/// It is resolved **per band** rather than in the [`CraftOfferPlan`] because `craftable_tier` reads
+/// what the *faction* knows, and the plan is a per-capture constant. The walk is over one item's
+/// tiers — one on the shipped roster — so it costs nothing.
+fn craftable_tier<'a>(
+    plan: &CraftOfferPlan<'a>,
+    inputs: &BandCraftInputs<'a>,
+) -> Option<(&'a str, u32)> {
+    let def = inputs.equipment.item(plan.output_item?)?;
+    let known = |craft: &str| inputs.known_crafts.get(craft).copied().unwrap_or(false);
+    let tier = def.craftable_tier(known);
+    let rank = def.tiers.iter().position(|row| row.id == tier.id)?;
+    Some((tier.id.as_str(), rank as u32))
+}
+
+/// **WHAT THE BAND CARRIES, SAID ONLY WHEN IT IS NEWS** — `""` whenever nothing the band holds is
+/// older than what it could now make, which is every row on the shipped one-tier roster.
+///
+/// Two sentences, and they answer different questions:
+///
+/// - **units in hand at an older tier** → `carrying flint · poor`. Several such batches name the
+///   **worst** grade, because naming the best is the one a player would be told about last — a row
+///   that flattered its stock would be telling them the opposite of what they need to act on.
+/// - **no units at all, and a set retired at an older tier** → `last flint set wore out`. The tier is
+///   read out of `BandEquipment::retired_tiers_of`, which `wear_item` keys by the tier of the unit it
+///   destroyed — **never inferred from `craftable_tier`'s neighbour**. With iron beside bronze and
+///   flint, *"the rank below what I can now make"* names bronze for a flint set that actually wore
+///   out, and a published string asserting the wrong tier is worse than saying nothing. Of several
+///   retired tiers it names the **highest-ranked one still below** what the band can now make: that
+///   is the set it lost most recently.
+fn owned_note(
+    plan: &CraftOfferPlan<'_>,
+    wear: &BandEquipment,
+    craftable_rank: u32,
+    inputs: &BandCraftInputs<'_>,
+) -> String {
+    let Some(item) = plan.output_item else {
+        return String::new();
+    };
+    let Some(def) = inputs.equipment.item(item) else {
+        return String::new();
+    };
+    let rank_of = |tier: &str| def.tiers.iter().position(|row| row.id == tier);
+    // **Worst grade first**, by the band it names; an ungraded batch is a start-stocked unit, which
+    // makes no quality claim at all and therefore sorts ahead of every one that does.
+    let carried = wear
+        .batches_of(item)
+        .iter()
+        .filter_map(|batch| rank_of(&batch.tier).map(|rank| (rank, batch)))
+        .filter(|(rank, _)| (*rank as u32) < craftable_rank)
+        .min_by_key(|(rank, batch)| {
+            let grade = batch
+                .grade
+                .as_ref()
+                .and_then(|grade| inputs.materials.band_index_of(&grade.id));
+            (grade, *rank)
+        });
+    if let Some((rank, batch)) = carried {
+        let tier = tier_word(&def.tiers[rank].id);
+        return match batch.grade.as_ref().filter(|grade| !grade.id.is_empty()) {
+            Some(grade) => format!("carrying {tier}{REASON_JOIN}{}", grade.id),
+            None => format!("carrying {tier}"),
+        };
+    }
+    if wear.count_of(item) > 0 {
+        return String::new();
+    }
+    // **The tier that actually wore out**, newest-lost first — not the neighbour of what the band can
+    // now make.
+    let lost = wear
+        .retired_tiers_of(item)
+        .filter(|(_, count)| *count > 0)
+        .filter_map(|(tier, _)| rank_of(tier))
+        .filter(|rank| (*rank as u32) < craftable_rank)
+        .max();
+    match lost {
+        Some(rank) => format!("last {} set wore out", tier_word(&def.tiers[rank].id)),
+        None => String::new(),
+    }
+}
+
+/// **THE BAND A TOOL WOULD UNLOCK — its own `craft_quality_ceiling`, never the top of the ladder.**
+///
+/// Resolved off the tier the bench would actually make (`made_tier`, the faction's `craftable_tier`),
+/// through the **same** `band_index` lookup `fix_grade` runs, so the invitation names exactly the
+/// grade the bench will then produce. Quoting the top band instead is right only while every tool
+/// happens to declare `0.90`: a tool with a ceiling of `0.70` would advertise `excellent` work while
+/// capping the band at `good` — the panel promising a grade the bench cannot make.
+///
+/// `None` for a recipe that makes no item, or a tool declaring no ceiling at all — *present effects
+/// apply, absent ones do not*.
+fn unlocked_band<'a>(
+    plan: &CraftOfferPlan<'_>,
+    made_tier: Option<&str>,
+    inputs: &BandCraftInputs<'a>,
+) -> Option<&'a str> {
+    let def = inputs.equipment.item(plan.output_item?)?;
+    let tier = made_tier.map_or_else(|| def.default_tier(), |id| def.tier_or_default(id));
+    let ceiling = def.tier_craft_stat(tier, EquipmentStat::CraftQualityCeiling)?;
+    inputs
+        .materials
+        .band_name(inputs.materials.band_index(ceiling))
+}
+
+/// **A tier's player-facing word, lowercased for mid-sentence use.** Resolved through
+/// [`title_from_id`] like every other id in this model — `equipment.json` authors no display name,
+/// and a second spelling of `flint` here is a second thing to keep in step.
+fn tier_word(tier: &str) -> String {
+    title_from_id(tier).to_lowercase()
 }
 
 /// **What a buildable row says.** Three rungs, most specific first:
 ///
-/// 1. **A first tool** — `Unlocks fine fibre work`, `good`. The one row on the panel that is an
-///    opportunity rather than a chore, and it is only true once: the band owns none of it yet.
+/// 1. **A first tool** — `Unlocks excellent fibre work`, `good`. The one row on the panel that is an
+///    opportunity rather than a chore, and it is only true once: the band owns none of it yet. The
+///    adjective is **the band THIS tool's own `craft_quality_ceiling` falls in** ([`unlocked_band`]),
+///    resolved through the same lookup the draw uses to fix a grade — so the invitation and the
+///    outcome cannot disagree.
 /// 2. **Nothing to replace** — `Not needed yet`, `neutral` and dimmed. A shrug, and deliberately a
 ///    different string and severity from a shortage.
-/// 3. **Otherwise** — what the pile and the bench would make of it, `Hide + tanning frame → fine`,
-///    with the tool's material saving appended when it has one.
+/// 3. **Otherwise** — what the pile and the bench would make of it, `Hide + tanning frame →
+///    excellent`, with the tool's material saving appended when it has one.
 fn invitation(
     plan: &CraftOfferPlan<'_>,
     tiers: &BenchTiers,
     wear: &BandEquipment,
     output_grade: &str,
+    inputs: &BandCraftInputs<'_>,
+    made_tier: Option<&str>,
 ) -> (String, &'static str) {
     let owned = plan
         .output_item
@@ -428,7 +566,8 @@ fn invitation(
         .unwrap_or(0);
     if plan.group == GROUP_TOOL && owned == 0 {
         let material = plan.bounds_material.unwrap_or_default();
-        return (format!("Unlocks fine {material} work"), SEVERITY_GOOD);
+        let band = unlocked_band(plan, made_tier, inputs).unwrap_or_default();
+        return (format!("Unlocks {band} {material} work"), SEVERITY_GOOD);
     }
     // **A shrug, not a shortage.** The band holds units of the thing and has spent nothing on them,
     // so there is nothing to replace — a different string AND a different severity from a refusal,

@@ -386,6 +386,8 @@ fn create_populations<'a>(
                         let reason = builder.create_string(&offer.reason);
                         let severity = builder.create_string(&offer.severity);
                         let output_grade = builder.create_string(&offer.output_grade);
+                        let output_tier_name = builder.create_string(&offer.output_tier_name);
+                        let owned_note = builder.create_string(&offer.owned_note);
                         let shortfalls = create_shortfalls(builder, &offer.shortfalls);
                         fb::CraftOffer::create(
                             builder,
@@ -400,6 +402,9 @@ fn create_populations<'a>(
                                 shortfalls: Some(shortfalls),
                                 outputGrade: Some(output_grade),
                                 onBench: offer.on_bench,
+                                outputTierName: Some(output_tier_name),
+                                outputTierRank: offer.output_tier_rank,
+                                ownedNote: Some(owned_note),
                             },
                         )
                     })

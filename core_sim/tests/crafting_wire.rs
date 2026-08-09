@@ -19,7 +19,8 @@ use bevy::prelude::Entity;
 
 use core_sim::{
     build_headless_app, recapture_snapshot_in_place, scalar_from_f32, BandBench, BandEquipment,
-    EquipmentConfigHandle, MaterialsConfigHandle, PopulationCohort, ResidentBand, SnapshotHistory,
+    BatchGrade, DiscoveryProgressLedger, EquipmentConfig, EquipmentConfigHandle,
+    LadderConfigHandle, MaterialsConfigHandle, PopulationCohort, ResidentBand, SnapshotHistory,
 };
 use std::collections::BTreeMap;
 
@@ -33,9 +34,16 @@ const SLED_RECIPE: &str = "sled";
 /// A **tool** recipe: gated on two crafts none of which ships known, so it is the honest subject for
 /// the knowledge refusal.
 const TANNING_FRAME_RECIPE: &str = "tanning_frame";
+/// The two recipes the tier-head pairing runs on: one gains a second tier, the other does not.
+const SPEARS_RECIPE: &str = "spears";
+const CLUBS_RECIPE: &str = "clubs";
 const SLED_ITEM: &str = "sled";
 const SPEARS_ITEM: &str = "spears";
 const TANNING_FRAME_ITEM: &str = "tanning_frame";
+/// The one tier every shipped item ships, and the fixture's two metal ones.
+const FLINT_TIER: &str = "flint";
+const BRONZE_TIER: &str = "bronze";
+const IRON_TIER: &str = "iron";
 
 /// Enough hide that a `work: 8` sled recipe's 6-unit draw is comfortably covered.
 const PLENTY: f32 = 40.0;
@@ -109,6 +117,80 @@ fn wear_out(app: &mut App, band: Entity, item: &str) {
     }
 }
 
+/// **Give `spears` a bronze AND an iron tier** — the state the day metal lands, and the only way any
+/// of the tier-head readout can fire at all: no shipped item ships a second tier, because an
+/// unreachable one is dead content the Workbench catalogue publishes.
+///
+/// **Three tiers, not two, deliberately.** With only flint and bronze, *"the tier that wore out"* and
+/// *"the tier below what I can now make"* are the same answer, so a two-tier fixture passes either
+/// implementation and proves nothing about which one the note is reading.
+fn give_spears_two_metal_tiers(app: &mut App, edit: impl FnOnce(&mut serde_json::Value)) {
+    let mut json: serde_json::Value =
+        serde_json::from_str(core_sim::BUILTIN_EQUIPMENT_CONFIG).expect("the TOE is json");
+    let tiers = json["items"][SPEARS_ITEM]["tiers"]
+        .as_array_mut()
+        .expect("spears declare tiers");
+    tiers.push(serde_json::json!({
+        "id": BRONZE_TIER,
+        "starting_durability": 140.0,
+        "requires_knowledge": "bone_working",
+        "effects": [{ "stat": "attack", "equipped": 30.0 }]
+    }));
+    tiers.push(serde_json::json!({
+        "id": IRON_TIER,
+        "starting_durability": 180.0,
+        "requires_knowledge": "weaving",
+        "effects": [{ "stat": "attack", "equipped": 40.0 }]
+    }));
+    edit(&mut json);
+    let config = EquipmentConfig::from_json_str(&json.to_string())
+        .expect("extra tiers are a legal item table");
+    app.world
+        .resource_mut::<EquipmentConfigHandle>()
+        .replace(std::sync::Arc::new(config));
+}
+
+/// Credit this band's faction with a craft, past the ladder's completion threshold — what makes a
+/// knowledge-gated tier reachable.
+fn learn(app: &mut App, band: Entity, craft: &str) {
+    let threshold = app
+        .world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .knowledge
+        .completion_threshold;
+    let faction = app
+        .world
+        .get::<PopulationCohort>(band)
+        .expect("the band has a cohort")
+        .faction;
+    let id = core_sim::crafting::craft_discovery_id(craft).expect("a shipped craft");
+    app.world
+        .resource_mut::<DiscoveryProgressLedger>()
+        .add_progress(faction, id, scalar_from_f32(threshold));
+}
+
+/// Replace an item's batches with exactly `(tier, grade)` rows of one unit each — so a fixture can
+/// state *which* tiers and grades a band is holding rather than depending on what a spawn stocked.
+fn restock(app: &mut App, band: Entity, item: &str, batches: &[(&str, &str)]) {
+    let mut wear = app
+        .world
+        .get_mut::<BandEquipment>(band)
+        .expect("a spawned band carries an equipment ledger");
+    wear.restore_batches(item, Vec::new());
+    for (tier, grade) in batches {
+        wear.stock(
+            item,
+            1,
+            tier,
+            Some(BatchGrade {
+                id: (*grade).to_string(),
+                effects: Vec::new(),
+            }),
+        );
+    }
+}
+
 // --- reading the envelope ----------------------------------------------------------------------
 
 /// One published axis of one batch: `(axis, exact value, band name)`. Both halves ride, which is the
@@ -149,6 +231,9 @@ struct PublishedOffer {
     shortfalls: Vec<(String, f32, f32, f32)>,
     output_grade: String,
     on_bench: bool,
+    output_tier_name: String,
+    output_tier_rank: u32,
+    owned_note: String,
 }
 
 #[derive(Clone, Debug)]
@@ -262,6 +347,9 @@ fn publish(app: &mut App, band: Entity) -> Published {
                         .unwrap_or_default(),
                     output_grade: offer.outputGrade().unwrap_or_default().to_string(),
                     on_bench: offer.onBench(),
+                    output_tier_name: offer.outputTierName().unwrap_or_default().to_string(),
+                    output_tier_rank: offer.outputTierRank(),
+                    owned_note: offer.ownedNote().unwrap_or_default().to_string(),
                 },
             )
         })
@@ -769,8 +857,9 @@ fn a_batchs_exact_reading_survives_the_wire_beside_its_band_name() {
     let with_fibre = publish(&mut app, band);
     assert_eq!(
         offer(&with_fibre, SLED_RECIPE).output_grade,
-        "coarse",
-        "worst-first: the 0.14 hide is spent before the 0.92 one, so the next sled is coarse"
+        "poor",
+        "worst-first: the 0.14 hide is spent before the 0.92 one, so the next sled is poor - and the \
+         grade is the BAND word, the same one the reading above published"
     );
 }
 
@@ -962,6 +1051,165 @@ fn the_per_world_catalogues_round_trip() {
             .iter()
             .any(|(craft, ..)| craft == "bone_working"),
         "the third organic craft is on the wire beside the other two"
+    );
+}
+
+/// **THE GROUP HEAD SAYS WHAT A ROW WOULD BE MADE AT; THE NOTE SAYS WHAT THE BAND HAS — AND THE NOTE
+/// IS PUBLISHED ONLY WHEN THE TWO DISAGREE.**
+///
+/// Exercised by a **two-tier fixture**, because every shipped item ships one tier and none of this
+/// can fire on the shipped roster — the same treatment
+/// `a_tier_switches_an_items_attack_without_touching_its_shared_effects` gets, and the reason
+/// `ownedNote` is `""` on every shipped row.
+///
+/// Pinned as a **pairing**: the upgraded row against an un-upgraded one beside it on the same frame.
+/// Asserting one row's wording alone would pass on a wire that said the same thing everywhere.
+#[test]
+fn the_owned_note_is_published_only_when_the_band_carries_something_older() {
+    let (mut app, band) = world();
+    give_spears_two_metal_tiers(&mut app, |_| {});
+    learn(&mut app, band, "bone_working");
+    learn(&mut app, band, "weaving");
+    // Two flint batches at different grades — the note must name the WORST, because naming the best
+    // is the one the player would be told about last.
+    restock(
+        &mut app,
+        band,
+        SPEARS_ITEM,
+        &[(FLINT_TIER, "good"), (FLINT_TIER, "poor")],
+    );
+    let published = publish(&mut app, band);
+
+    let upgraded = offer(&published, SPEARS_RECIPE);
+    assert_eq!(
+        (
+            upgraded.output_tier_name.as_str(),
+            upgraded.output_tier_rank
+        ),
+        (IRON_TIER, 2),
+        "the head is what a craft would be made at NOW, and heads order by rank descending"
+    );
+    assert_eq!(
+        upgraded.owned_note, "carrying flint · poor",
+        "the band holds an older tier, so the cell says so - and it names the worst grade it holds"
+    );
+
+    // THE PAIRING, on the same frame: an item with nothing newer to be made at says nothing.
+    let current = offer(&published, CLUBS_RECIPE);
+    assert_eq!(
+        (current.output_tier_name.as_str(), current.output_tier_rank),
+        (FLINT_TIER, 0),
+        "clubs gained no tier, so their head is still the one that ships known"
+    );
+    assert_eq!(
+        current.owned_note, "",
+        "there is nothing older in hand, so there is no news - and \"\" is what the whole shipped \
+         roster publishes"
+    );
+    assert_ne!(
+        upgraded.owned_note, current.owned_note,
+        "this is the whole point: a wire that emitted the same note everywhere cannot pass"
+    );
+
+    // **WORN OUT NAMES THE TIER THAT ACTUALLY WORE OUT.** The band loses its FLINT spears while a
+    // bronze tier sits between them and the iron it could now make — so *"the tier below craftable"*
+    // would say **bronze**, a set this band never owned. Only a three-tier fixture can tell the two
+    // rules apart; at two tiers they agree, so a two-tier fixture proves nothing here.
+    wear_out(&mut app, band, SPEARS_ITEM);
+    let after = publish(&mut app, band);
+    let dry = offer(&after, SPEARS_RECIPE);
+    assert_eq!(
+        dry.owned_note, "last flint set wore out",
+        "the note names the tier `wear_item` retired, never the neighbour of what could be made"
+    );
+    assert!(
+        !dry.owned_note.contains(BRONZE_TIER),
+        "bronze sits between flint and iron and this band never held one - naming it would be a \
+         published string asserting the wrong tier"
+    );
+    assert_ne!(
+        dry.owned_note, upgraded.owned_note,
+        "\"we still have the old ones\" and \"the old ones broke\" are not the same sentence"
+    );
+}
+
+/// **A FIRST TOOL ADVERTISES THE BAND ITS OWN CEILING REACHES, not the top of the ladder.**
+///
+/// The shipped tools all declare `craft_quality_ceiling 0.90`, which lands in the top band — so a
+/// fixture at `0.90` passes both *"quote the top band"* and *"quote this tool's band"* and proves
+/// nothing. This one drops the tanning frame's ceiling into `good`, where the two answers differ:
+/// advertising `excellent` there is the panel promising a grade the bench cannot produce.
+#[test]
+fn a_first_tools_invitation_names_the_band_its_own_quality_ceiling_reaches() {
+    // A ceiling inside `good` (0.55..0.80) and clear of `excellent` (0.80).
+    const MODEST_CEILING: f32 = 0.70;
+
+    let (mut app, band) = world();
+    give_spears_two_metal_tiers(&mut app, |json| {
+        let effects = json["items"][TANNING_FRAME_ITEM]["tiers"][0]["effects"]
+            .as_array_mut()
+            .expect("the frame's tier declares craft stats");
+        for effect in effects.iter_mut() {
+            if effect["stat"] == serde_json::json!("craft_quality_ceiling") {
+                effect["equipped"] = serde_json::json!(MODEST_CEILING);
+            }
+        }
+    });
+    // The frame is gated on Weaving and Bone-working and needs its pile — an invitation is only ever
+    // published on a buildable row.
+    learn(&mut app, band, "weaving");
+    learn(&mut app, band, "bone_working");
+    deposit(
+        &mut app,
+        band,
+        "fibre",
+        PLENTY,
+        &[("fineness", 0.5), ("strength", 0.5)],
+    );
+    deposit(
+        &mut app,
+        band,
+        BONE,
+        PLENTY,
+        &[("density", 0.5), ("length", 0.5)],
+    );
+    let published = publish(&mut app, band);
+
+    let tool = offer(&published, TANNING_FRAME_RECIPE);
+    assert!(
+        tool.available,
+        "the crafts are known and the pile is there - got {:?}",
+        tool.reason
+    );
+    assert_eq!(
+        tool.reason, "Unlocks good hide work",
+        "a 0.70 ceiling falls in `good`, and that is the grade this frame will actually produce"
+    );
+    assert!(
+        !tool.reason.contains("excellent"),
+        "the top band must never be quoted for a tool that does not reach it - that is the panel \
+         promising a grade the bench cannot make"
+    );
+
+    // LIVENESS: `excellent` is a word this wire really can say, so "good" is not simply what every
+    // string says. The band's own hide reads excellent on the rail beside the frame's modest offer.
+    deposit(
+        &mut app,
+        band,
+        HIDE,
+        PLENTY,
+        &[(TOUGHNESS, 0.95), (SUPPLENESS, 0.2)],
+    );
+    let stocked = publish(&mut app, band);
+    assert!(
+        stocked
+            .material_batches
+            .iter()
+            .filter(|(material, _)| material == HIDE)
+            .any(|(_, axes)| axes
+                .iter()
+                .any(|(axis, _, band_name)| axis == TOUGHNESS && band_name == "excellent")),
+        "the vocabulary really does carry `excellent` on this frame"
     );
 }
 
