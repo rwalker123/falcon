@@ -1,6 +1,9 @@
 # Plan: Band Fission — a splinter group leaves and starts a new band
 
-Status: **Design — not implemented.** The authoritative spec for arc
+Status: **The arrival verb ships; the party it sends is still today's.** `settle_expedition` (#510)
+founds a resident band, same-faction, gated on **reachability** and on a **minimum founding party**
+(`min_founding_workers`, live on the Workbench). What a founding party is *made of* — the parent-side
+viability gates, dependents travelling, the dowry and the remaining dials — is #511. The authoritative spec for arc
 [#508](https://github.com/rwalker123/falcon/issues/508): splitting a band. It answers the six
 questions the feature slices cannot answer for themselves — *does the new band stay yours, who is
 allowed to leave, who actually goes, what they take, why you would ever do it, and what the player
@@ -40,16 +43,20 @@ instead of coming home, you stay.
   around the `max_party`/provision-draw block at `:2903–2975`), `fold_party_into_band`
   (`core_sim/src/systems/expeditions.rs:989`), `BandIdAllocator`, and `ResidentBand` as a positive
   isolation marker.
-- **`AwaitingOrders` has exactly two exits** — re-aim via `move_band`, or `recall_expedition`. There
-  is no third.
-- **No code path creates a resident band at runtime.** `ResidentBand` is inserted in exactly two
+- **`AwaitingOrders` had exactly two exits** — re-aim via `move_band`, or `recall_expedition`.
+  ✅ **#510 added the third**, `settle_expedition`, which is the whole of this arc's opening slice.
+- **No code path created a resident band at runtime.** `ResidentBand` was inserted in exactly two
   places: worldgen (`core_sim/src/systems/worldgen.rs:3018`) and checkpoint restore
-  (`core_sim/src/sim_state.rs:487`).
+  (`core_sim/src/sim_state.rs:487`). ✅ **#510 added the third**,
+  `systems::expeditions::found_band_from_expedition` — which is why `components.rs`'s note on the
+  marker now reads "the *other* two places".
 - **A party is 100% working-age.** The launcher clones the parent cohort, then sets
   `children = 0`, `working = party`, `elders = 0` (`server.rs:2937–2939`). Nobody's family goes.
 - **The party bound is availability and nothing else** — `1..=available_workers(cohort.working)`,
   and the comment above it is explicit that this is deliberate: *"you cannot detach workers you do
   not have, and you may detach all the ones you do."* There is no floor and no parent check.
+  **Still true, and deliberately** — #510's `min_founding_workers` floor fires at the *founding*, not
+  at the detaching, exactly as Q2 places it. Walking out is still free and still reversible.
 - **The only thing a party carries is food** — `party × distance × provision_draw_per_worker_per_tile`
   off the parent's larder (`server.rs:2919–2921`). Not stock, not stores beyond food.
 - **A party leaves with a pristine kit.** `BandEquipment` is a *wear ledger*
@@ -102,9 +109,9 @@ every seam the independent case later needs.
 `population.rs:945` and the two `(faction, …)` bins above are the exact places that stop being
 trivially true. #458 (cross-faction proximity trade) is the same seam approached from the other side.
 
-## Q2 — What is the minimum viable group, and what floor must the parent stay above?
+## Q2 — Who may leave, where may they go, and what floor must the parent stay above?
 
-Two gates, and **both fire at the founding, not at the compose sheet.**
+Three gates, and **all three fire at the founding, not at the compose sheet.**
 
 That placement is the decision. The existing party bound is deliberately permissive — the band is the
 bound and the only one — and adding a floor at compose time would break a rule the raid and
@@ -115,22 +122,92 @@ expedition. So that is the moment the sim checks:
 
 - **Party viability** — the founding party must have at least `min_founding_workers` working-age
   people. Below that there is no labor pool to allocate and the new band is a death notice with a
-  marker on it.
+  marker on it. **Shipped in #510** alongside reachability, out of sequence: playtest founded a
+  colony with **one** person, and a verb that ships without this gate is a verb that teaches the
+  player the wrong price for it.
 - **Parent viability** — the *parent as it stands right now* must clear two floors after the split
-  is made permanent: at least `parent_min_workers` remaining, and a post-split dependency ratio
+  is made permanent (**#511**): at least `parent_min_workers` remaining, and a post-split dependency ratio
   `(children + elders) / working` no worse than `parent_max_dependency_ratio`. This is the guard
   against the #431 spiral: the failure mode there is dependents outnumbering workers, and hollowing
   out the home band to crew a colony is the fastest way to arrange it.
+- **Reachability** — the founding tile must connect, through tiles the faction has **discovered**, to
+  a tile held by one of its **resident** bands. See below. **Shipped in #510.**
 
 Evaluating the parent live at founding time — rather than freezing a verdict at launch — is what
 makes this honest: the home band may have grown, starved or split again in the twenty turns the party
 spent walking. **A refusal is a refusal to found, not a loss of the party** — it stays an expedition
 in `AwaitingOrders`, and *recall* is still there.
 
-**The compose sheet forecasts both gates and warns; it does not refuse.** Same pattern as the hunt
-trip forecast: the sim exports the verdict, the client reads it. The player should see "founding
+**The compose sheet forecasts these gates and warns; it does not refuse** (#511). Same pattern as the
+hunt trip forecast: the sim exports the verdict, the client reads it. The player should see "founding
 would leave the home band below its floor" before they walk twenty tiles, and should still be allowed
 to walk if they mean to.
+
+**The two gates #510 ships already forecast, on the ARRIVAL affordance rather than on the compose
+sheet.** A refusal delivered after the press is honest but late — playtest pressed *Start a life
+here* with one worker and read the reason in the event dock seconds later — so the sim publishes its
+verdict (`PopulationCohortState.foundingRefusals`) and the button greys out carrying **every** reason
+that applies. That the client is told rather than deciding is the same rule the hunt forecast follows:
+it holds neither `min_founding_workers` nor the faction map's connectivity, and a client-side copy of
+either is a second model that can disagree with the sim.
+
+**All applicable reasons, never the first one.** A one-worker party on unmapped ground fails both
+gates and is told both. Reporting one at a time means the player fixes it, presses again, and
+discovers the next — learning the rules by a sequence of refusals rather than reading them.
+
+What #511 still adds is the forecast on the **compose sheet**, before the party walks: the parent
+floors it introduces are the ones you most want to see *at* twenty tiles' distance rather than after
+them.
+
+### Reachability — you can only settle ground you can point at
+
+**The founding tile must connect to one of the faction's resident bands through tiles the faction has
+discovered.** Not distance, not supply reach, not terrain quality — a contiguous run of mapped ground.
+
+The rule *is* the fiction rather than a balance lever sitting on top of one. A splinter group
+announcing where it means to go can only do that by naming a place both halves of the band know:
+*we are going over to that valley we found.* Ground nobody has mapped cannot be named, so a party that
+walks twenty tiles into the unknown and stops has not founded a colony — it is a party you have lost
+track of. Refusing to call that a band is the honest answer, not a restriction.
+
+It also earns its keep mechanically. Q1 hands the independence trigger to the supply network's
+connected components, and #511's dowry is measured in walking distance; both assume the colony is a
+place the parent could actually reach. A founding that skips this gate produces a band the rest of the
+arc has no way to reason about.
+
+**What "discovered" means here is the faction map, and that is not incidental.** An expedition is
+excluded from live fog reveal (`Without<Expedition>` in `calculate_visibility`) because discovery is
+comm-range gated: a party buffers what it sees into a private `pending_reveal` and promotes it to the
+faction map only on coming back within `comm_range_tiles` of its home band. So the corridor a scout
+walked is not mapped until the scout reports, and neither is the tile it is standing on. The loop that
+falls out — **scout out, report, then send the founding party along ground you now hold** — is already
+how the pull works: a settle-site is recorded when its tile becomes Discovered for the faction, at
+that same flush. The Verdant Basin you settle is one you learned about by the scout coming home.
+
+Rules:
+
+- **Resident bands only.** A party cannot anchor a path to another party — that would let two
+  expeditions bootstrap a colony out of ground neither has reported.
+- **Land only.** Water is discovered like anything else, but a path across a mapped strait would
+  qualify a colony nobody can walk to. The party's own tile is land by construction
+  (`send_expedition` validates a land target).
+- **Evaluated live at the founding**, like the parent floors above and for the same reason: the home
+  band moves, and so does the frontier.
+- **No length bound.** The discovered set is the bound.
+
+### There is deliberately NO habitability gate
+
+The founding tile's quality is **not** checked, and an earlier draft of this document was wrong to
+reserve a `min_site_habitability` lever for it (it proposed reusing `fertile_settle`'s
+`max_habitability_pressure`, 0.02 — which is exactly the client's *Hospitable* ceiling, so it would
+have refused every tile the tile card rates merely *Fair*).
+
+**Founding raises a party to a band that can forage, hunt and move on its own. That is the entire
+effect.** It does not root anyone: a band is mobile, so settling harsh ground is a mistake the player
+can walk out of, and pricing it as an illegal move confuses *bad idea* with *impossible*. The land's
+quality already speaks through every system that reads it — morale drain, forage and pasture yield,
+carrying capacity — which is the feedback that belongs on this decision, delivered where the player
+can act on it.
 
 ## Q3 — Who goes?
 
@@ -179,6 +256,15 @@ Q2. Until then the party is carrying it, and a recall brings it home.
 - **Breeding stock, if the parent has a pen.** Capped at `breeding_stock_fraction_max` of the pen's
   stock — a herd that can walk somewhere and still breed on arrival, without gutting the parent's
   pen. Gated on the parent actually having one; a forager band's dowry has no animals in it.
+- **The culture goes with them, and it costs the parent nothing.** *(built)* The colony's culture
+  layer is attached at the founding, seeded from the **home band's** current traits and parented on
+  the province it landed in (`CultureManager::attach_band_from_source`). The precedent is migration:
+  a band that *walks* twenty tiles keeps the culture it arrived with and chases its new province at
+  the band scope's elasticity, and a party that settles twenty tiles out is the same journey — it
+  would be strange for the walk to preserve a people and the founding to replace them with the
+  locals. Like knowledge, culture is not conserved, so this is a line in the dowry the player pays
+  nothing for; unlike knowledge, it starts diverging immediately, because the colony mints its own
+  character offset and lags toward a *different* province than the parent's.
 
 **The dowry is the decision.** Each line above is a real subtraction from a band the player has been
 nursing for fifty turns, and the compose sheet's job (Q6) is to make that subtraction legible before
@@ -238,12 +324,15 @@ say which way each one breaks, because that is what tells you which direction to
 
 | Lever | Opening | What it means | Too low | Too high |
 |---|---|---|---|---|
-| `min_founding_workers` | **4** | The founding party must hold at least this many **working-age** people at the moment of founding (Q2). | One or two people can found a band that cannot staff a single food role — a death notice with a marker on it. | At 8+ a split costs half the home workforce, so the verb ships and is never used. |
+| `min_founding_workers` | **4** | The founding party must hold at least this many **working-age** people at the moment of founding (Q2). **Shipped — #510.** | One or two people can found a band that cannot staff a single food role — a death notice with a marker on it. | At 8+ a split costs half the home workforce, so the verb ships and is never used. |
 | `parent_min_workers` | **6** | Workers the **parent** must still have once the split is permanent (Q2). | The home band can be hollowed out to crew a colony, killing both. | Only an already-large band can split, which pushes the first fission very late. |
 | `parent_max_dependency_ratio` | **1.0** | The parent's post-split `(children + elders) / working` ceiling — at most one dependent per worker. The #431 spiral guard. | The default start is ≈0.82 (30/55/15), so anything under ~0.9 means you can barely ever split. | At 1.5 you can leave home with three workers feeding five mouths — the spiral, arranged deliberately. |
 | `establishment_turns` | **20** | Turns of food the seed larder must cover **after arrival**, on top of the walk: `total_party_size × per_capita_draw × (distance + establishment_turns)` (Q4). How long the colony has to bring its own forage and hunt income up. | Every colony starves on arrival however good the tile is. | The dowry guts the parent's larder, so splitting is gated on food you rarely have. |
 | `breeding_stock_fraction_max` | **0.5** | The most of a pen's stock that may leave with the party (Q4). | At 0.1 the animals that go cannot breed a viable herd — pastoral colonies are impossible. | At 1.0 one command empties a pen the player spent many turns filling. |
-| `min_site_habitability` | *(reuse)* | The founding tile must be somewhere people can live. **Not a new number** — settle-site placement already derives this threshold, and a second one here would drift from it. | — | — |
+
+**The reachability gate has no lever, and wants none.** It is a yes/no question about the faction map
+(Q2), so there is no number to tune — the dial that moves it is `comm_range_tiles`, which already
+exists and belongs to scouting.
 
 **`establishment_turns` defaults to 20 to match `startup.food_reserve_days`.** Worldgen already
 answers *how much food does a brand-new band need in order not to immediately die* — it seeds every
@@ -274,7 +363,7 @@ manifest row, not new machinery:
 
 | pointer | type | min · max · step | default | unit | hint |
 |---|---|---|---|---|---|
-| `/settle/min_founding_workers` | int | 1 · 12 · 1 | 4 | workers | Working-age floor a party must clear to found a band. |
+| `/settle/min_founding_workers` | int | 1 · 12 · 1 | 4 | workers | Working-age floor a party must clear to found a band. **Shipped — #510**, with the gate it governs. `1` is the "off" setting and is still a real party. |
 | `/settle/parent_min_workers` | int | 0 · 20 · 1 | 6 | workers | Workers the home band must keep after the split. **0 turns the gate off** for a playtest run. |
 | `/settle/parent_max_dependency_ratio` | float | 0.5 · 2.5 · 0.05 | 1.0 | — | Dependents per worker the home band may be left with. |
 | `/settle/establishment_turns` | int | 0 · 60 · 1 | 20 | turns | Food the seed larder carries beyond the walk. |
@@ -287,12 +376,18 @@ reuses the settle-site threshold rather than being a number of its own.
 ## Sequencing
 
 1. **Design doc (this document).** ✅ #509.
-2. **"Start a life here"** — #510. The arrival verb: the component swap, snapshot persistence of a
-   mid-game founding (`sim_state.rs:487` must re-attach `ResidentBand` for a band worldgen never
-   made), the event and feed lines, and the client affordance. Build it same-faction, with the party
-   as it is composed today.
-3. **Compose the founding party** — #511. The Q2 gates, dependents travelling, the Q4 dowry, the
-   compose sheet's parent-after forecast, and the five `tuning_manifest.json` rows — the dials land
+2. **"Start a life here"** — ✅ #510. The arrival verb: the component swap, the **reachability gate**
+   and the **party floor** (`min_founding_workers`, with its Workbench row — the two of Q2's three
+   gates that ship here; the party floor came in on playtest, which founded a colony with one
+   person), snapshot persistence of a mid-game
+   founding (`sim_state.rs:487` must re-attach `ResidentBand` for a band worldgen never made), the
+   event and feed lines, and the client affordance — **which forecasts both of its gates**, since the
+   sim publishes the whole refusal set per party and the button greys out carrying every reason.
+   Build it same-faction, with the party as it is composed today.
+3. **Compose the founding party** — #511. The Q2 **parent** gates, dependents travelling, the Q4
+   dowry, the **compose-sheet** forecast of all three gates (#510 forecasts its two on the arrival
+   affordance; #511 moves the warning to before the party walks), and the remaining four
+   `tuning_manifest.json` rows — the dials land
    in the Workbench **with** the gates they govern, not as a follow-up, because a gate that cannot be
    moved during a playtest cannot be judged during one.
 4. **Naming** — #271, generalized so it serves a founded band and not only the player's first one.

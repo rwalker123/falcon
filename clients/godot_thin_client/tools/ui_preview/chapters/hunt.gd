@@ -2030,6 +2030,64 @@ func _unkillable_quarry_states() -> void:
 	h._hud._compose.reset_hunt_source()
 	h._hud._compose.set_hunt_band(-1)
 
+	# ---- A SHEET COMPOSES FOR THE BAND THE PLAYER IS LOOKING AT (issue #510) ---------------------
+	# **The two-band regression founding a colony exposed.** `Hud._resolve_assign_band` fell through to
+	# the FIRST player band whenever no unit was selected — and selecting a herd or a tile, which is
+	# how a compose sheet is opened in the first place, leaves the selection's unit empty. Once a
+	# colony existed the sheet composed for the PARENT while the Band/City panel read the colony: the
+	# picker said `Band 1` under a header saying `Band 2`, and the crew stepper capped at the parent's
+	# spent idle workers. Every number under it was honest and about the wrong band.
+	#
+	# **THE ROSTER IS THE ASSERTION.** Every other compose fixture in this harness is single-band, which
+	# is exactly why nothing here caught it: with one band the three rungs of the resolver agree, so a
+	# state that does not stage a SECOND band as the panel's subject passes for free.
+	#
+	# Three wrong answers, three distinct numbers, so a failure names WHICH rung misfired — the parent
+	# holds `PANEL_BAND_PARENT_IDLE` (its crew walked out with the expedition), the colony
+	# `PANEL_BAND_COLONY_IDLE`, and the panel's stored render-time COPY of the colony
+	# `PANEL_BAND_STALE_IDLE`.
+	var panel_roster := _panel_band_roster()
+	var panel_colony: Dictionary = panel_roster[PANEL_BAND_COLONY_INDEX - 1]
+	h._hud._band_labor._player_bands = panel_roster
+	h._hud._band_labor._player_band = panel_roster[0]
+	h._hud._band_labor.set_panel_band(_stale_panel_band())
+	h._hud._compose.reset_hunt_source()
+	h._hud._compose.set_hunt_band(-1)
+	var panel_band_herd := HerdFx.herd_fixture()
+	h._show_herd(panel_band_herd)
+	h._compose_herd(panel_band_herd, PANEL_BAND_DIALED_CREW)
+	await h._settle()
+	await h._save("compose_panel_band_hunt")
+	_assert_composes_for_panel_band("compose_panel_band_hunt", panel_colony,
+		h._hud._compose.hunt_band())
+
+	# ---- …AND SO DOES THE FORAGE SHEET ----------------------------------------------------------
+	# The report says the forage sheet behaved identically, and it is a SECOND call site of the same
+	# resolver — one sheet passing says nothing about the other. Same roster, same stale panel copy,
+	# and the (66,10) reference patch both bands stand within work range of, so nothing but the band
+	# resolution can move the answer.
+	h._hud._compose.reset_forage_source()
+	h._hud._compose.set_forage_band(-1)
+	var panel_band_tile := BaseFx.food_tile_fixture()
+	h._show_tile(panel_band_tile)
+	h._compose_forage(panel_band_tile)
+	h._hud._compose.set_forage_count(PANEL_BAND_DIALED_CREW)
+	h._compose_forage(panel_band_tile)
+	await h._settle()
+	await h._save("compose_panel_band_forage")
+	_assert_composes_for_panel_band("compose_panel_band_forage", panel_colony,
+		h._hud._compose.forage_band())
+
+	# Reset the roster, the panel band and BOTH compose spines for whatever renders after this chapter.
+	h._hud._band_labor.set_panel_band({})
+	h._hud._band_labor._player_bands = []
+	h._hud._band_labor._player_band = BandFx.band_fixture()
+	h._hud._compose.reset_hunt_source()
+	h._hud._compose.set_hunt_band(-1)
+	h._hud._compose.reset_forage_source()
+	h._hud._compose.set_forage_band(-1)
+	h._hud.clear_selection()
+
 
 ## The three surfaces that used to say "many turns", each asserted by EQUALITY against a sentence
 ## spelled out HERE rather than re-composed through `SourceForecast`'s own formats — a claim about copy
@@ -2504,3 +2562,96 @@ func _retreat_crew_assertions() -> void:
 		h._assert_hud("%s prices the same crew whatever breaks off (%d against %d)"
 				% [subject, kept, cut],
 			kept == cut and kept > 0)
+
+
+# ---- THE PANEL BAND IS THE ACTING BAND (issue #510) ----------------------------------------------
+
+## The PARENT band's idle crew. Zero: a colony founding off it took the workers with it, which is the
+## state the playtest report was in and the reason the wrongly-resolved sheet capped at nothing.
+const PANEL_BAND_PARENT_IDLE := 0
+
+## The COLONY's LIVE idle crew — the number the compose steppers must cap at, since the colony is what
+## the Band/City panel is showing.
+const PANEL_BAND_COLONY_IDLE := 2
+
+## The idle crew on the panel's STORED copy of the colony. Deliberately unlike either of the other two:
+## `set_panel_band` keeps a deep copy taken at render time, so a resolver that hands that copy back
+## instead of re-resolving the entity against the live roster answers a third, equally distinct number
+## rather than coinciding with the parent's and hiding inside its failure.
+const PANEL_BAND_STALE_IDLE := 9
+
+## Where the colony sits in the roster, 1-based — the picker labels bands positionally
+## (`HudFormat.band_display_name`), so this is both its index and the `Band 2` its face must read.
+## Named because the frame's whole point is that the SECOND band is the one in focus.
+const PANEL_BAND_COLONY_INDEX := 2
+
+## The crew both sheets are dialed to before the cap is read. Above every candidate idle count
+## including the stale one, so the rendered number is decided by the CAP and never by the dial.
+const PANEL_BAND_DIALED_CREW := 12
+
+## What `_band_picker_face` answers when the open sheet has no `Band:` row at all — a SENTINEL rather
+## than "", so a sheet that never built the picker fails the equality instead of quietly satisfying it.
+const PANEL_BAND_PICKER_ABSENT := "<no Band: picker>"
+
+## TWO player bands where the SECOND is the one the player is looking at. Both stand within hunt reach
+## and work range of the (66,10) reference herd and food tile, so neither sheet's answer can turn on
+## distance — the ONLY thing that differs between them is the idle crew, which is precisely what makes
+## composing for the wrong band visible in the frame.
+func _panel_band_roster() -> Array:
+	return [
+		BandFx.with_band_id({"entity": 841, "faction": 0, "size": 120, "current_x": 66, "current_y": 10,
+			"working_age": 14, "idle_workers": PANEL_BAND_PARENT_IDLE, "hunt_reach": 7, "work_range": 2,
+			"max_expedition_party_size": 8, "activity": "forage", "labor_assignments": []}),
+		BandFx.with_band_id({"entity": 842, "faction": 0, "size": 40, "current_x": 67, "current_y": 10,
+			"working_age": 6, "idle_workers": PANEL_BAND_COLONY_IDLE, "hunt_reach": 7, "work_range": 2,
+			"max_expedition_party_size": 8, "activity": "forage", "labor_assignments": []}),
+	]
+
+## The colony as the Band/City panel STORED it — the deep copy `set_panel_band` keeps, here stale about
+## the one field the compose steppers cap against.
+func _stale_panel_band() -> Dictionary:
+	var stale: Dictionary = (_panel_band_roster()[PANEL_BAND_COLONY_INDEX - 1] as Dictionary).duplicate(true)
+	stale["idle_workers"] = PANEL_BAND_STALE_IDLE
+	return stale
+
+## The `Band:` picker's rendered FACE. Found STRUCTURALLY — `_build_band_picker` is the only row that
+## pairs the `BAND_PICKER_LABEL` field key with an `OptionButton` — because the face is the very thing
+## under test, so reaching the control by the text it is claimed to show would assert nothing.
+func _band_picker_face(root: Node) -> String:
+	if root == null:
+		return PANEL_BAND_PICKER_ABSENT
+	var key_seen := false
+	for child in root.get_children():
+		if child is Label and (child as Label).text == HudWorkVocab.BAND_PICKER_LABEL:
+			key_seen = true
+		elif key_seen and child is OptionButton:
+			return (child as OptionButton).text
+	for child in root.get_children():
+		var found := _band_picker_face(child)
+		if found != PANEL_BAND_PICKER_ABSENT:
+			return found
+	return PANEL_BAND_PICKER_ABSENT
+
+## The three claims an open compose sheet owes the band the player has in FOCUS, made on BOTH sheets
+## because `_resolve_assign_band` is injected into each of them separately.
+##
+## They are three because they fail apart: the picker's face is what the player READ (the report's
+## screenshot showed `Band 1` under a `Band 2` header), the composed entity is what the commit would
+## NAME, and the stepper's cap is what actually stopped the player staffing the hunt. A sheet could get
+## any one of them right while the resolver is wrong.
+func _assert_composes_for_panel_band(state: String, colony: Dictionary, composed_entity: int) -> void:
+	var sheet: Control = h._hud._drawercompose._compose_sheet
+	var want_face := HudFormat.band_display_name(colony, PANEL_BAND_COLONY_INDEX)
+	var got_face := _band_picker_face(sheet)
+	h._assert_hud("%s: the Band: picker names the band the panel is on (%s, got %s)"
+			% [state, want_face, got_face],
+		got_face == want_face)
+	var want_entity := int(colony.get("entity", -1))
+	h._assert_hud("%s: the sheet composes for that band's entity (%d, got %d)"
+			% [state, want_entity, composed_entity],
+		composed_entity == want_entity)
+	var got_crew := Readout.stepper_value(sheet)
+	h._assert_hud(("%s: the crew stepper caps at its LIVE idle workers (%d, got %d) — not the parent's"
+			+ " %d and not the panel's stale %d")
+			% [state, PANEL_BAND_COLONY_IDLE, got_crew, PANEL_BAND_PARENT_IDLE, PANEL_BAND_STALE_IDLE],
+		got_crew == PANEL_BAND_COLONY_IDLE)

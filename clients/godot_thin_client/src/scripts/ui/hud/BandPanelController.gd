@@ -54,6 +54,10 @@ signal send_hunt_expedition_requested(payload: Dictionary)
 signal send_denial_raid_requested(payload: Dictionary)
 # A party was ordered home — relayed to HudLayer.recall_expedition_requested.
 signal recall_expedition_requested(payload: Dictionary)
+# A party stopped being an expedition and became a band where it stands (issue #510) — relayed to
+# HudLayer.settle_expedition_requested. **Its own signal beside the recall above**, not a mode on it:
+# the two are opposite arrival answers and their grammars are separate closed verbs.
+signal settle_expedition_requested(payload: Dictionary)
 # Recenter + select a hex (a zone row / cycler jump) — relayed to HudLayer.alert_focus_requested.
 signal alert_focus_requested(x: int, y: int)
 # Pin an exact occupant on the map after that recenter — relayed to HudLayer.roster_occupant_selected.
@@ -484,11 +488,17 @@ func _parties_zone_box_known() -> Vector2:
 ## Ask before a destructive bulk action. A `ConfirmationDialog` is a Window — like the section menu,
 ## it cannot disturb any zone's height. The body names what is SPARED, so "unassign all" never reads
 ## as "undo everything".
+##
+## **THIS IS THE PANEL'S ONE CONFIRM PATH** — the settle prompt, the recall prompt, `Unassign all`
+## and `Recall all` — so `HudStyle.apply_dialog` lands HERE and all four wear the console's surface
+## from one call. The `title` is still set although that treatment draws no title bar: it is the
+## Window's NAME, which an unembedded (OS-window) dialog would show, and it costs nothing.
 func _confirm_destructive(body: String, ok_text: String, on_confirm: Callable) -> void:
     var dialog := ConfirmationDialog.new()
     dialog.dialog_text = body
     dialog.ok_button_text = ok_text
     dialog.title = HudWorkVocab.CONFIRM_DIALOG_TITLE
+    HudStyle.apply_dialog(dialog)
     dialog.confirmed.connect(func() -> void:
         on_confirm.call()
         dialog.queue_free())
@@ -2151,6 +2161,23 @@ func _build_parties_inspector(exp: Dictionary) -> PanelContainer:
         select_expedition(entity, x, y)))
     links.add_child(HudWidgets.build_inline_link(recall_verb(exp), HudStyle.DANGER, func() -> void:
         confirm_recall_expedition(exp)))
+    # THE THIRD ARRIVAL ACTION, and it is offered on the same terms the row's control is (issue #510):
+    # only while the party is `awaiting`. HEALTHY rather than DANGER — founding builds a band where a
+    # recall dissolves a party, and the two links must not read as the same kind of act.
+    if party_may_settle(exp):
+        # **A BLOCKED LINK IS STILL A LINK NODE, DISABLED** — `build_inline_link` returns a `Button`, so
+        # it takes `disabled` like the row control does, and `HudStyle.apply_link_button` already
+        # declares a link's disabled face (`font_disabled_color` = INK_FAINT, a rest stylebox). That is
+        # the honest option of the two available: rendering a plain status part instead would take the
+        # act off the strip entirely on exactly the parties that need to be told about it, and a live
+        # link tinted faint would still fire a refusal on press. Disabled cannot be pressed at all.
+        var strip_blocked := settle_blocked_reason(exp)
+        var settle_link := HudWidgets.build_inline_link(HudComposeVocab.PARTY_SETTLE_ACTION,
+            HudStyle.INK_FAINT if strip_blocked != "" else HudStyle.HEALTHY,
+            func() -> void: confirm_settle_expedition(exp))
+        settle_link.disabled = strip_blocked != ""
+        settle_link.tooltip_text = strip_blocked if settle_link.disabled else HudComposeVocab.PARTY_SETTLE_TOOLTIP
+        links.add_child(settle_link)
     col.add_child(links)
     return strip
 
@@ -2176,6 +2203,31 @@ func _build_party_row(exp: Dictionary) -> HBoxContainer:
     var entity := int(exp.get("entity", -1))
     body.pressed.connect(func() -> void: _toggle_parties_inspector(str(entity)))
     row.add_child(body)
+    # "Start a life here" (issue #510), BEFORE the recall ✕ — the constructive act reads left of the
+    # removal, and the ✕ stays the row's LAST child, which `band_panel_preview._assert_recall_press`
+    # identifies it by. It renders only for an `awaiting` party, so an ordinary hunt row is unchanged.
+    if party_may_settle(exp):
+        var settle := Button.new()
+        settle.text = HudComposeVocab.PARTY_SETTLE_VERB
+        settle.focus_mode = Control.FOCUS_NONE
+        settle.custom_minimum_size = Vector2(HudComposeVocab.PARTY_SETTLE_WIDTH, 0.0)
+        HudStyle.apply_button(settle, "ghost")
+        # HEALTHY green, the opposite pole from the ✕'s DANGER: this press MAKES a band. It is
+        # irreversible rather than destructive, so the ceremony is the confirm, not the colour.
+        settle.add_theme_color_override("font_color", HudStyle.HEALTHY)
+        # **BLOCKED IS DISABLED-WITH-ITS-REASON, NEVER HIDDEN** — the row keeps its control so the
+        # player can see the act exists and read what stands in the way of it. A disabled Godot Button
+        # still resolves its tooltip (hit-testing reads `mouse_filter`, which `disabled` does not
+        # touch), which is what makes the greyed state legible rather than mute.
+        var blocked := settle_blocked_reason(exp)
+        settle.disabled = blocked != ""
+        settle.tooltip_text = blocked if settle.disabled else HudComposeVocab.PARTY_SETTLE_TOOLTIP
+        if settle.disabled:
+            # A blocked control must not read as HEALTHY — that is the colour of an act the player can
+            # take. `apply_button`'s own disabled tint is the ghost variant's, so it is restated here.
+            settle.add_theme_color_override("font_disabled_color", HudStyle.INK_FAINT)
+        settle.pressed.connect(func() -> void: confirm_settle_expedition(exp))
+        row.add_child(settle)
     var recall := Button.new()
     recall.text = HudComposeVocab.PARTY_RECALL_GLYPH
     recall.focus_mode = Control.FOCUS_NONE
@@ -2218,12 +2270,103 @@ func confirm_recall_expedition(exp: Dictionary) -> void:
     if _band_labor.party_cancels_in_camp(exp):
         _on_recall_expedition_pressed(exp)
         return
-    var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
-    var label := _herd_label_for_id(String(exp.get("expedition_target_herd", "")).strip_edges()) \
-        if mission == HudExpeditionVocab.EXPEDITION_MISSION_HUNT \
-        else HudComposeVocab.PARTY_RECALL_SCOUT_LABEL
-    _confirm_destructive(HudComposeVocab.PARTY_RECALL_ONE_CONFIRM_FORMAT % label, HudComposeVocab.PARTY_RECALL_ONE_CONFIRM_OK,
+    _confirm_destructive(HudComposeVocab.PARTY_RECALL_ONE_CONFIRM_FORMAT % _party_confirm_label(exp),
+        HudComposeVocab.PARTY_RECALL_ONE_CONFIRM_OK,
         func() -> void: _on_recall_expedition_pressed(exp))
+
+## How a prompt NAMES a party — its herd for a hunt, the bare mission word otherwise. Shared by the
+## recall prompt and the founding one so the two cannot name one party two ways.
+func _party_confirm_label(exp: Dictionary) -> String:
+    var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
+    if mission == HudExpeditionVocab.EXPEDITION_MISSION_HUNT:
+        return _herd_label_for_id(String(exp.get("expedition_target_herd", "")).strip_edges())
+    return HudComposeVocab.PARTY_RECALL_SCOUT_LABEL
+
+## **IS THE FOUNDING AFFORDANCE OFFERED AT ALL for this party?** (issue #510) — the PHASE test, and
+## nothing else. A party under orders shows no settle control anywhere; a party awaiting orders shows
+## one, whether or not the sim would accept the founding today.
+##
+## **IT IS DELIBERATELY NOT "would the founding succeed"** — that is `settle_blocked_reason`, and the
+## split is the whole design: an affordance that VANISHED when a party was one worker short would
+## teach the player nothing, where a greyed one naming the worker floor teaches the rule. So this
+## decides EXISTENCE and the refusals decide ENABLEDNESS.
+##
+## The row, the inspector strip's link and the Occupants drawer's button all read THIS, the way the
+## three recall surfaces read `recall_verb` — so the action cannot be offered on one and missing from
+## another.
+func party_may_settle(exp: Dictionary) -> bool:
+    return HudFormat.expedition_phase_key(exp) == HudExpeditionVocab.EXPEDITION_PHASE_AWAITING
+
+## **WHY the sim would refuse this party's founding right now** — its `foundingRefusals` tokens, in the
+## sim's own assessment order, recomputed every turn by `assess_foundings`.
+##
+## **READ IT ONLY WHERE `party_may_settle` HOLDS.** Empty is ambiguous on the wire: it means either
+## "the founding would succeed" OR "this cohort is not a party awaiting orders at all", so asked of a
+## resident band it answers `[]` and would read as a green light.
+##
+## Coerced defensively because the decoder publishes a `PackedStringArray` (`string_vector_to_packed`,
+## the `dict/` family's idiom) while every harness fixture hand-writes a plain `Array` — both are
+## legitimate inputs to this seam and neither is `is Array` in both cases.
+func settle_refusals(exp: Dictionary) -> Array:
+    var raw: Variant = exp.get(HudComposeVocab.PARTY_SETTLE_REFUSALS_KEY, null)
+    var tokens: Array = []
+    if raw is PackedStringArray:
+        for token in (raw as PackedStringArray):
+            tokens.append(String(token))
+    elif raw is Array:
+        for token in (raw as Array):
+            tokens.append(String(token))
+    return tokens
+
+## **The tooltip copy for a BLOCKED founding — `""` when the party may found.** One sentence per
+## refusal, joined one-per-line: two reasons hold at once often enough (a one-worker party on unmapped
+## ground publishes both) that a run-on would read as one rambling excuse rather than as two things to
+## fix, and fixing only the first otherwise just reveals the second.
+##
+## **AN UNRECOGNISED TOKEN STILL SAYS SOMETHING.** A refusal the sim adds later reaches a client that
+## has never heard of it, and a silently empty tooltip on a greyed button is indistinguishable from a
+## broken control — so the fall-through is the honest floor, not a skip.
+##
+## The three surfaces all read THIS, exactly as they read `party_may_settle` above, so a party cannot
+## be refused with one reason on the row and another in the drawer.
+func settle_blocked_reason(exp: Dictionary) -> String:
+    var tokens := settle_refusals(exp)
+    if tokens.is_empty():
+        return ""
+    var min_workers := int(exp.get(HudComposeVocab.PARTY_SETTLE_MIN_WORKERS_KEY, 0))
+    var lines: Array[String] = []
+    for token in tokens:
+        var line := _settle_refusal_sentence(String(token), min_workers)
+        if not lines.has(line):
+            lines.append(line)
+    return HudComposeVocab.PARTY_SETTLE_BLOCKED_SEPARATOR.join(lines)
+
+## One refusal token → its player-facing sentence. The worker floor is the party's OWN
+## `founding_min_workers` (the sim's `settle.min_founding_workers`, echoed per cohort), never a
+## client-side copy of that config.
+func _settle_refusal_sentence(token: String, min_workers: int) -> String:
+    match token:
+        HudComposeVocab.PARTY_SETTLE_REFUSAL_TOO_SMALL:
+            return HudComposeVocab.PARTY_SETTLE_BLOCKED_TOO_SMALL % min_workers
+        HudComposeVocab.PARTY_SETTLE_REFUSAL_UNREACHABLE:
+            return HudComposeVocab.PARTY_SETTLE_BLOCKED_UNREACHABLE
+        HudComposeVocab.PARTY_SETTLE_REFUSAL_NOT_AWAITING:
+            return HudComposeVocab.PARTY_SETTLE_BLOCKED_NOT_AWAITING
+        HudComposeVocab.PARTY_SETTLE_REFUSAL_NOT_EXPEDITION:
+            return HudComposeVocab.PARTY_SETTLE_BLOCKED_NOT_EXPEDITION
+        HudComposeVocab.PARTY_SETTLE_REFUSAL_SITE_UNRESOLVED:
+            return HudComposeVocab.PARTY_SETTLE_BLOCKED_SITE_UNRESOLVED
+    return HudComposeVocab.PARTY_SETTLE_BLOCKED_UNKNOWN
+
+## Act on a party's founding. **It ALWAYS confirms**, where a recall's cancel branch acts on the
+## press: founding is the first act in the band economy that cannot be undone, so there is no
+## "re-make the decision" branch to skip the prompt for. The prompt states THAT and nothing else —
+## it takes no arguments, the row that was just pressed already naming the party and its place.
+func confirm_settle_expedition(exp: Dictionary) -> void:
+    if exp.is_empty():
+        return
+    _confirm_destructive(HudComposeVocab.PARTY_SETTLE_CONFIRM, HudComposeVocab.PARTY_SETTLE_CONFIRM_OK,
+        func() -> void: _on_settle_expedition_pressed(exp))
 
 ## Recall every party in one go — there is no bulk verb on the wire and parties are few, so this is
 ## one `recall_expedition` per party through the existing signal.
@@ -3100,6 +3243,19 @@ func _on_recall_expedition_pressed(expedition: Dictionary) -> void:
     # A detached party is a band too, and `recall_expedition <faction> <expedition_band_id>` names it
     # by the same durable id — never its ECS entity bits.
     emit_signal("recall_expedition_requested", {
+        "faction": int(expedition.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "expedition_band_id": int(expedition.get("band_id", HudConst.NO_BAND_ID)),
+    })
+
+## Found a band where the selected party stands. Emits settle_expedition_requested; Main formats the
+## `settle_expedition …` command.
+func _on_settle_expedition_pressed(expedition: Dictionary) -> void:
+    if expedition.is_empty():
+        return
+    # Same handle rule as the recall above: `settle_expedition <faction> <expedition_band_id>` names
+    # the party by its durable BandId — never its ECS entity bits, which the server would resolve to
+    # nothing at all, silently. `cargo xtask command-guard` is what asserts it.
+    emit_signal("settle_expedition_requested", {
         "faction": int(expedition.get("faction", HudConst.PLAYER_FACTION_ID)),
         "expedition_band_id": int(expedition.get("band_id", HudConst.NO_BAND_ID)),
     })

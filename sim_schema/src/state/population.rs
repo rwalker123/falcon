@@ -768,6 +768,25 @@ pub struct PopulationCohortState {
     /// **warrior** job's default, *not* at [`Self::kit_id`]. Appended last (append-only).
     #[serde(default)]
     pub warrior_attack: f32,
+    /// **Why "start a life here" would be refused for this party right now** — the machine tokens of
+    /// `core_sim`'s `FoundingRefusal`, in the order the sim assesses them.
+    ///
+    /// **Empty means either that the founding would succeed, or that this cohort is not a party
+    /// awaiting orders at all** — the field speaks only to a party the arrival affordance is offered
+    /// for, which is the only place a client reads it.
+    ///
+    /// **A list, because the two eligibility gates are independent and both can hold at once.** A
+    /// party that is too small *and* standing on unmapped ground has to be told both, or fixing one
+    /// reveals the other and the player learns the rules one refusal at a time. Derived per-turn
+    /// telemetry, never persisted. Appended last (append-only).
+    #[serde(default)]
+    pub founding_refusals: Vec<String>,
+    /// **`settle.min_founding_workers`** — the working-age floor a party must clear to found a band.
+    /// A global config lever echoed onto *every* cohort, the same idiom as
+    /// [`Self::expedition_forecast_horizon_turns`], so a client can name the number in a tooltip
+    /// without keeping a second copy of the config. Appended last (append-only).
+    #[serde(default)]
+    pub founding_min_workers: u32,
 }
 
 /// Presentation view of a band's resolved settlement stage (mirror of the `SettlementStageView`

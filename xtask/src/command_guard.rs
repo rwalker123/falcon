@@ -207,7 +207,10 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                 continue;
             }
         };
-        let expected = if matches!(payload, CommandPayload::RecallExpedition { .. }) {
+        let expected = if matches!(
+            payload,
+            CommandPayload::RecallExpedition { .. } | CommandPayload::SettleExpedition { .. }
+        ) {
             expedition_band_id
         } else {
             band_id
@@ -303,6 +306,9 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
         | CommandPayload::SendDenialRaid { band_id, .. }
         | CommandPayload::SendHuntExpedition { band_id, .. } => *band_id,
         CommandPayload::RecallExpedition {
+            expedition_band_id, ..
+        }
+        | CommandPayload::SettleExpedition {
             expedition_band_id, ..
         } => Some(*expedition_band_id),
         _ => return BandHandle::NotBandAddressed,

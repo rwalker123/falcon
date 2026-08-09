@@ -520,6 +520,57 @@ renderer skipped. One pair per condition, so a regression names which one broke.
 assertion is the one to be careful with — see the `RungGates.gd` row in `labor-ui.md` for why it needs
 a WILD sowable patch rather than the obvious tended one.
 
+## "Start a life here" — the drawer pair, and the dock's prose branch (issue #510)
+
+**`expedition_panel` / `expedition_returning` already existed and now carry the claim.** They are the
+drawer's arrival pair — an ARRIVED scout and the same party once it is walking home — so the third
+action's presence and its absence are asserted on frames whose whole difference is the phase. A
+one-sided frame proves nothing here: a button rendered unconditionally passes the positive half. The
+negative also asserts the `Move` button is still there, so the absence is the settle control's and
+not a panel that failed to build.
+
+**`event_dock_band_founded`** (`chapters/event_dock.gd`, appended last) renders a founding and a
+founding REFUSED at the ALERTS-ONLY floor, which is what proves the rung rather than showing two rows
+the `notable` floor would have admitted anyway. Its two details are the pair the dock's prose branch
+needs — one PROSE (the sim's refusal sentence, which no other fixture in that chapter stages) and one
+TOKENS — and the token half is what proves the walk still runs for details that really are the
+machine contract. The rule is in `event-dock.md` → "…but a detail the sim wrote as a SENTENCE".
+
+**Both details are spelled out as chapter constants** rather than recomposed through
+`SourceForecast`/`HudEventVocab`, the `_assert_horizon_floor_is_the_whole_trip` rule: an expectation
+built from the code under test can only agree with itself.
+
+**A clean run is 284 frames / 700 `PASS`, exit 0** — three frames and twelve `PASS`es on the 281 / 688
+this arc started from: the drawer pair's three, the dock frame's three, and the two-band compose pair
+below.
+
+### The compose sheet composes for the PANEL band, not the first one
+
+**`compose_panel_band_hunt` / `compose_panel_band_forage`** (`chapters/hunt.gd`, appended last) guard
+`Hud._resolve_assign_band` once founding makes a second band reachable. **BOTH sheets, because they
+are two separate injections of that resolver** — one passing says nothing about the other, and the
+playtest report named both.
+
+**The ROSTER is the assertion.** Every other compose fixture in this harness is single-band, which is
+exactly why nothing here caught the defect: with one band all three rungs of the resolver agree, so a
+state that does not stage a SECOND band as the panel's subject passes for free. The pair stages the
+panel band as the roster's second entry and gives the three candidate answers three deliberately
+unlike idle counts — a parent with NONE (its crew left with the expedition), the colony's live 2, and
+a stale render-time panel copy at 9 — so each wrong rung fails as its own number rather than hiding
+inside another's.
+
+Three claims per sheet, because they fail apart: the picker's rendered FACE (what the player read),
+the composed band ENTITY (what a commit would name), and the crew stepper's CAP (what stopped the
+player staffing the hunt). Sabotage-verified by restoring the bare `player_band()` fallback — exactly
+those six fail, at `Band 1` / entity 841 / a stepper capped at 0, and nothing else in the run does.
+
+**A leaked panel band is a real hazard in this harness**, and the shape to know: `tile_panel_band`
+sets one through the real `render_band` path and never clears it, so every chapter after it runs with
+a panel band the resolver now prefers. A resolver variant that returned the STORED panel dict when the
+entity is absent from the roster failed four unrelated assertions in `tile_panel` and `compose_rungs`
+for exactly that reason. The shipped one falls through to `player_band()` instead — which is also the
+correct live behaviour, an unresolvable panel entity being a band that has left the world.
+
 ## The UNBOUNDED-RAID floor: one frame, three equalities, and a driven denial pair
 
 `ui_preview` **`herd_hunt_horizon_travel`** (`chapters/hunt.gd`, appended last in the hunt chapter) is

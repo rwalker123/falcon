@@ -5,7 +5,7 @@ use godot::prelude::*;
 use shadow_scale_flatbuffers::shadow_scale::sim as fb;
 
 use crate::dict::economy::fragment_to_dict;
-use crate::dict::fixed64_to_f64;
+use crate::dict::{fixed64_to_f64, string_vector_to_packed};
 
 pub(crate) fn demographics_to_array(
     states: Vector<'_, ForwardsUOffset<fb::PopulationDemographicsState<'_>>>,
@@ -620,6 +620,25 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "band_move_tiles_per_turn",
         f64::from(cohort.bandMoveTilesPerTurn()),
     );
+    // **WHY "start a life here" WOULD BE REFUSED for this party right now** — the sim's own machine
+    // tokens (`core_sim` `FoundingRefusal`: `not_an_expedition`, `not_awaiting_orders`,
+    // `party_too_small`, `site_unresolved`, `unreachable`), in its assessment order, recomputed every
+    // turn by `assess_foundings`. A LIST because the eligibility gates are independent and two can
+    // hold at once — a one-worker party on unmapped ground publishes both, and a tooltip naming only
+    // the first teaches the player one rule per refusal.
+    //
+    // **EMPTY IS AMBIGUOUS BY DESIGN**: it means either "the founding would succeed" OR "this cohort
+    // is not a party awaiting orders at all", so it answers only where the arrival affordance is
+    // already offered (`BandPanelController.party_may_settle`) and says nothing about a resident band.
+    // Beside it, `settle.min_founding_workers` echoed per-cohort (the `bandMoveTilesPerTurn` idiom
+    // directly above), so the tooltip can name the worker floor without a second copy of the config.
+    if let Some(refusals) = cohort.foundingRefusals() {
+        let packed = string_vector_to_packed(refusals);
+        let _ = dict.insert("founding_refusals", &packed);
+    } else {
+        let _ = dict.insert("founding_refusals", &PackedStringArray::new());
+    }
+    let _ = dict.insert("founding_min_workers", cohort.foundingMinWorkers() as i64);
 
     if let Some(access) = cohort.accessibleStockpile() {
         let mut stock_dict = VarDictionary::new();

@@ -41,6 +41,12 @@ signal send_denial_raid_requested(payload: Dictionary)
 ## Emitted when the player recalls the selected in-flight expedition (folds it home). Payload
 ## keys: { faction, expedition }. Main formats the `recall_expedition …` command.
 signal recall_expedition_requested(payload: Dictionary)
+## Emitted when the player has an arrived party STOP being an expedition and become a resident band
+## where it stands — the third arrival action beside onward and recall (issue #510,
+## `docs/plan_band_fission.md` §Q2). Payload keys: { faction, expedition_band_id } and nothing else:
+## the grammar `settle_expedition <faction> <expedition_band_id>` is CLOSED at two positional tokens.
+## Main formats the `settle_expedition …` command.
+signal settle_expedition_requested(payload: Dictionary)
 ## Emitted when the player extends a built pen by one fenced ring (Grazing 2d-γ). Payload keys:
 ## { faction, x, y } — the pen's anchor tile. Main formats the `extend_pen <faction> <x> <y>` command.
 signal extend_pen_requested(payload: Dictionary)
@@ -414,6 +420,8 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: send_denial_raid_requested.emit(payload))
     _bandpanel.recall_expedition_requested.connect(
         func(payload: Dictionary) -> void: recall_expedition_requested.emit(payload))
+    _bandpanel.settle_expedition_requested.connect(
+        func(payload: Dictionary) -> void: settle_expedition_requested.emit(payload))
     _bandpanel.alert_focus_requested.connect(
         func(x: int, y: int) -> void: alert_focus_requested.emit(x, y))
     _bandpanel.roster_occupant_selected.connect(
@@ -664,12 +672,39 @@ func _on_zoom_fit_pressed() -> void:
 # formats the `assign_labor …` command). The Work zone's bulk unassign reuses
 # `cancel_order_requested`, scoped `work`.
 
-## Resolve the band that assignment/move/clear commands target. The selected band when
-## it is a player band; otherwise the single player band captured from the snapshot (so
-## herd/tile assign controls still target it while a herd/tile is selected). {} if none.
+## Resolve the band that assignment/move/clear commands target, in three rungs:
+## **selected player unit → the PANEL band → the first player band**.
+##
+## The middle rung is what makes this correct once the player has more than one band. Selecting a
+## HERD or a TILE — which is exactly when a compose sheet opens — leaves `_selection.unit()` empty,
+## so the resolver used to fall straight through to `player_band()`, the FIRST player-faction cohort
+## captured in `update_band_alerts`. With a second band founded (issue #510) the sheet then composed
+## for the PARENT band while the Band/City panel read the colony: every number under it was honest
+## and about the wrong band, capping the stepper at the parent's near-exhausted idle workers.
+##
+## The panel band is the right middle rung because it is the band the player has in FOCUS and it
+## survives everything the sheet does: selecting a herd or a tile deliberately leaves it intact (the
+## panel persists across selection changes), the faction page deliberately leaves it alone as the
+## subject the cycler walks back into, and `refresh_snapshot` re-resolves it against every snapshot.
+##
+## **It is re-resolved LIVE by entity rather than returned as stored, and the stored dict is never
+## returned at all.** `set_panel_band` keeps a deep copy taken at render time, and this answer feeds
+## `assignable_hunt_workers` / `assignable_forage_workers` — the very idle counts the steppers cap
+## against — so handing that copy back would put a stale-by-one-turn crew under the same steppers this
+## exists to fix. And an entity the roster no longer lists is not merely stale, it is a band that is
+## GONE: the panel band is only ever set from `player_bands()` and re-resolved by `refresh_snapshot`,
+## so a failed lookup means the cohort left the world, and an assignment addressed to it would name a
+## band the sim cannot find. The last rung takes that case, as it took every case before.
+##
+## `{}` when the player has no band at all.
 func _resolve_assign_band() -> Dictionary:
     if not _selection.unit().is_empty() and _is_player_unit(_selection.unit()):
         return _selection.unit()
+    var panel := _band_labor.panel_band()
+    if not panel.is_empty() and _is_player_unit(panel):
+        var live := _band_labor.player_band_by_entity(int(panel.get("entity", -1)))
+        if not live.is_empty():
+            return live
     return _band_labor.player_band()
 
 ## Map grid dimensions captured each snapshot (Main forwards the snapshot `grid` key). Width + wrap

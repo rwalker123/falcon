@@ -39,23 +39,24 @@ use core_sim::{
 };
 use core_sim::{
     build_headless_app, clear_config_overrides, denial_forecast, expedition_returned_event,
-    fold_party_into_band, hunt_trip_forecast, install_config_override, party_owes_a_report,
-    recapture_snapshot_in_place, run_turn, scalar_from_f32, AgentAssignment, BandId,
-    BandIdAllocator, CommandEventEntry, CommandEventKind, CommandEventLog, CounterIntelBudgets,
-    CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle, CrisisArchetypeCatalogMetadata,
-    CrisisModifierCatalog, CrisisModifierCatalogHandle, CrisisModifierCatalogMetadata,
-    CrisisTelemetry, CrisisTelemetryConfig, CrisisTelemetryConfigHandle,
-    CrisisTelemetryConfigMetadata, DiscoveryProgressLedger, EquipmentConfigHandle,
-    EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionKind,
-    EspionageMissionState, EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders,
-    FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle, FoodSiteRegistry, ForageRegistry,
-    FrameSink, HerdRegistry, Improvement, LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns,
-    PopulationCohort, QueueMissionError, QueueMissionParams, Scalar, SecurityPolicy, Settlement,
-    SimulationConfig, SimulationConfigMetadata, SimulationTick, SnapshotHistory,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
-    StartLocation, StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot,
-    SubmitError, SubmitOutcome, Tile, TileRegistry, TownCenter, TurnPipelineConfig,
-    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FOOD,
+    fold_party_into_band, found_band_from_expedition, hunt_trip_forecast, install_config_override,
+    party_owes_a_report, recapture_snapshot_in_place, run_turn, scalar_from_f32, AgentAssignment,
+    BandId, BandIdAllocator, CommandEventEntry, CommandEventKind, CommandEventLog,
+    CounterIntelBudgets, CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle,
+    CrisisArchetypeCatalogMetadata, CrisisModifierCatalog, CrisisModifierCatalogHandle,
+    CrisisModifierCatalogMetadata, CrisisTelemetry, CrisisTelemetryConfig,
+    CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, DiscoveryProgressLedger,
+    EquipmentConfigHandle, EspionageAgentHandle, EspionageCatalog, EspionageMissionId,
+    EspionageMissionKind, EspionageMissionState, EspionageMissionTemplate, EspionageRoster,
+    FactionId, FactionOrders, FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle,
+    FoodSiteRegistry, ForageRegistry, FrameSink, HerdRegistry, Improvement, LaborConfigHandle,
+    MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError, QueueMissionParams,
+    Scalar, SecurityPolicy, Settlement, SimulationConfig, SimulationConfigMetadata, SimulationTick,
+    SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    SnapshotOverlaysConfigMetadata, StartLocation, StartProfileLookup, StartProfilesHandle,
+    StartingUnit, StoredSnapshot, SubmitError, SubmitOutcome, Tile, TileRegistry, TownCenter,
+    TurnPipelineConfig, TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue,
+    WorldEpoch, FOOD,
 };
 use sim_runtime::{
     commands::{
@@ -531,6 +532,12 @@ enum Command {
         target_y: u32,
     },
     RecallExpedition {
+        faction: FactionId,
+        expedition_band_id: u64,
+    },
+    /// **"Start a life here"** — an arrived party stops being an expedition and becomes a resident
+    /// band on the spot (`docs/plan_band_fission.md`).
+    SettleExpedition {
         faction: FactionId,
         expedition_band_id: u64,
     },
@@ -2980,6 +2987,9 @@ fn handle_send_expedition(
                     .resource::<EquipmentConfigHandle>()
                     .get()
                     .default_kit(KitJob::Hunt),
+                // Derived per-turn telemetry — `assess_foundings` fills it on the party's first
+                // Visibility stage; a launched party has nothing to found yet.
+                founding_refusals: Vec::new(),
             },
             BandTravel { target },
         ))
@@ -3345,6 +3355,9 @@ fn launch_detached_party(
                 pending_reveal: Vec::new(),
                 carried_trade: 0.0,
                 kit,
+                // Derived per-turn telemetry — see the scout launch above. A raid never enters
+                // `AwaitingOrders`, so this stays empty for its whole life.
+                founding_refusals: Vec::new(),
             },
             BandTravel { target: herd_pos },
         ))
@@ -3824,6 +3837,84 @@ fn handle_recall_expedition(
         faction,
         format!("{} recalled — returning home", label),
         Some(format!("status=returning expedition={}", entity.to_bits())),
+    );
+}
+
+/// **"Start a life here"** — the third arrival action, beside onward (`move_band`) and `recall`.
+///
+/// Resolves the party through the **same** [`resolve_expedition_entity`] its siblings use (so the
+/// wire carries a `BandId` and never entity bits), then hands the founding itself to
+/// [`found_band_from_expedition`], which owns the gate, the swap and their order. A refusal refuses
+/// the founding and not the party: the expedition is left in `AwaitingOrders` and recall still works.
+fn handle_settle_expedition(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    expedition_band_id: u64,
+) {
+    let Some(entity) = resolve_expedition_entity(
+        app,
+        faction,
+        expedition_band_id,
+        "settle_expedition",
+        CommandEventKind::BandFounded,
+    ) else {
+        return;
+    };
+    let label = starting_unit_label(app, entity);
+    let founded = match found_band_from_expedition(&mut app.world, entity) {
+        Ok(founded) => founded,
+        // **Every applicable reason, not the first one.** A party that is both too small and on
+        // unmapped ground has two things to fix, and reporting one at a time teaches the rules one
+        // refusal at a time — so the log token list and the feed line both carry the whole set.
+        Err(refusals) => {
+            warn!(
+                target: "shadow_scale::command",
+                command = "settle_expedition",
+                faction = %faction.0,
+                band_id = expedition_band_id,
+                "command.settle.rejected={}",
+                refusals.tokens()
+            );
+            emit_command_failure(
+                app,
+                CommandEventKind::BandFounded,
+                faction,
+                format!(
+                    "{} cannot start a life here — {}",
+                    label,
+                    refusals.explanation()
+                ),
+            );
+            return;
+        }
+    };
+    let tick = app.world.resource::<SimulationTick>().0;
+    // Every token is numeric, so none of them has to be last (`.claude/rules/core_sim/event-feed.md`
+    // — a multi-word value can only be the trailing remainder). `parent` is omitted rather than
+    // sentinelled when the parent band cannot be named, the same render-only-when-real rule the
+    // haul lines follow.
+    let mut detail = format!(
+        "status=founded band={} x={} y={}",
+        expedition_band_id, founded.at.x, founded.at.y
+    );
+    if let Some(parent) = founded.parent {
+        detail.push_str(&format!(" parent={}", parent.0));
+    }
+    detail.push_str(&format!(
+        " mapped_tiles={} trade_goods={:.2}",
+        founded.mapped_tiles,
+        founded.trade_settled.to_f32()
+    ));
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::BandFounded,
+        faction,
+        format!(
+            "{} started a life at ({}, {})",
+            label, founded.at.x, founded.at.y
+        ),
+        Some(detail),
     );
 }
 
@@ -5586,6 +5677,13 @@ fn command_from_payload(
             faction: FactionId(faction_id),
             expedition_band_id,
         }),
+        ProtoCommandPayload::SettleExpedition {
+            faction_id,
+            expedition_band_id,
+        } => Some(Command::SettleExpedition {
+            faction: FactionId(faction_id),
+            expedition_band_id,
+        }),
         ProtoCommandPayload::SendHuntExpedition {
             faction_id,
             band_id,
@@ -6065,6 +6163,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::ExpeditionArrived => "Expedition arrived",
         CommandEventKind::ExpeditionRecalled => "Expedition recalled",
         CommandEventKind::ExpeditionReturned => "Expedition returned",
+        CommandEventKind::BandFounded => "Band founded",
         CommandEventKind::HerdUnderHerded => "Under-herded",
         // The demographic kinds are world events, not commands — they never reach
         // `emit_command_failure`. Named anyway so the display map stays total.
@@ -6433,6 +6532,12 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
             expedition_band_id,
         } => {
             handle_recall_expedition(app, faction, expedition_band_id);
+        }
+        Command::SettleExpedition {
+            faction,
+            expedition_band_id,
+        } => {
+            handle_settle_expedition(app, faction, expedition_band_id);
         }
         Command::SendHuntExpedition {
             faction,
@@ -7997,6 +8102,7 @@ mod tests {
                 pending_reveal: Vec::new(),
                 carried_trade: 0.0,
                 kit: core_sim::EquipmentConfig::builtin().default_kit(KitJob::Hunt),
+                founding_refusals: Vec::new(),
             },
         ));
 

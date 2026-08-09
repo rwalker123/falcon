@@ -1438,6 +1438,46 @@ where a hex genuinely holds more than one eligible quarry.
 **The PARTY stepper row is deliberately not in the family.** It is a control you operate rather than a
 value box, so its key still expands and its `−/+` sits at the row's trailing edge.
 
+### The `Band:` picker opens on the band the player is LOOKING AT
+
+`Hud._resolve_assign_band` answers which band a sheet composes for — and every command it can emit
+targets — in three rungs: **the selected player unit → the PANEL band → `player_band()`**. Both
+compose sheets seed their picker from it (`begin_hunt_source` / `begin_forage_source`), and it is
+injected into `DrawerComposeController` and `TargetingController` alike, so the sheet, the map pick
+and the move all name one band.
+
+**The middle rung is the whole of it, and it exists because the first rung is empty exactly when a
+sheet is open.** Selecting a HERD or a TILE clears `HudSelectionState`'s unit (`select_herd` /
+`select_tile` drop it by design), and selecting a herd or a tile is *how* a compose sheet is opened.
+The resolver therefore used to reach `player_band()` — the FIRST player-faction cohort in
+`update_band_alerts` — on the ordinary path. That was harmless while a faction had one band and
+became a defect the moment an expedition could found a second (issue #510): the sheet composed for
+the PARENT while the Band/City panel showed the colony, so the picker read `Band 1` under a `Band 2`
+header and the crew stepper capped at the parent's spent idle workers ("1 of 30 useful — free up idle
+workers to send more"). Every number was arithmetically honest and about the wrong band.
+
+**The panel band is the right subject because it survives everything a sheet does to the selection.**
+Selecting a herd or an empty tile leaves it intact (`band-city-panel.md` — the panel persists across
+selection changes), the faction page leaves it alone as the subject the cycler walks back into, and
+`refresh_snapshot` re-resolves it every turn. It is the only piece of state that still names the band
+the player was reading when they clicked the map.
+
+**It is re-resolved LIVE by entity; the stored dict is never returned.** `set_panel_band` keeps
+`unit.duplicate(true)`, a copy taken at render time, and this answer feeds `assignable_hunt_workers` /
+`assignable_forage_workers` — the very idle counts the steppers cap against — so returning that copy
+would put a stale crew under the steppers this fix exists for. A lookup that FAILS is not staleness
+either: the panel band only ever comes from `player_bands()`, so an entity the roster no longer lists
+is a band that has left the world, and the last rung takes that case rather than addressing a command
+to it. The panel rung carries the same `_is_player_unit` guard the selection rung does.
+
+**Verified by `ui_preview`'s `compose_panel_band_hunt` / `compose_panel_band_forage`**
+(`chapters/hunt.gd`, appended last). Both sheets are asserted, because they are two injection sites
+and one passing says nothing about the other. Three numbers are staged deliberately unlike each other
+— a parent with NO idle crew, the colony's live 2, and a panel copy stale at 9 — so each wrong rung
+fails as its own distinct answer instead of hiding inside another's. Sabotage-verified by restoring
+the bare `player_band()` fallback: exactly those six assertions fail (`Band 1`, entity 841, a stepper
+capped at 0) and nothing else in the run does.
+
 ### THE SHEET'S NUMBERS ARE REPRICED AT THE CHOSEN KIT, through ONE seam
 
 `KitRoster.repriced_source` hands the ordinary forecast a COPY of the wire's own terms with two
@@ -2347,13 +2387,14 @@ discard is precisely what this axis split removed.
 
 - **Labor allocation UI** (`Hud.gd`, Early-Game Labor slice 3b — `docs/plan_early_game_labor.md`):
   the band is a **labor pool** whose working-age workers are assigned source-centrically to
-  in-range sources/roles. There is **exactly one player band today**, captured each snapshot
-  into `_player_band` (first player-faction cohort in `update_band_alerts`); assign/move/clear
-  all target it. Every player band is also collected into `_player_bands`, which backs the
-  **band-picker dropdown** on the herd/tile assign controls (see `%HerdAssignControls` /
-  `%ForageAssignControls` below) — an assignment explicitly names WHICH band supplies the
-  workers (built for N even though only one exists live). Three runtime-built control sets replace the retired single-task Scout/Cancel,
-  Hunt/policy, and Forage buttons:
+  in-range sources/roles. **The player has as many bands as it has founded** — an arrived expedition
+  can start a life where it stands (issue #510) — so every player-faction cohort is collected each
+  snapshot into `_player_bands`, which backs the **band-picker dropdown** on the herd/tile assign
+  controls (see `%HerdAssignControls` / `%ForageAssignControls` below) and the Band/City panel's
+  cycler; an assignment explicitly names WHICH band supplies the workers.
+  `player_band()` — the FIRST of that list — is the last-resort fallback and nothing else; which band
+  a sheet actually composes for is `Hud._resolve_assign_band`'s answer, below. Three runtime-built
+  control sets replace the retired single-task Scout/Cancel, Hunt/policy, and Forage buttons:
   - **`%AllocationPanel`** (band drawer, player band only, `_build_allocation_panel`): reads as a
     "current actions" report — a `Population <size> · Workers <working_age> (Idle <n>)` line (spells
     out that only the ~16 working-age labor, not the 30 people — children/elders are dependents;

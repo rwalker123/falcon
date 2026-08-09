@@ -15,5 +15,8 @@
   "replenish": {
     "low_turns": 3,
     "reach_tiles": 1
+  },
+  "settle": {
+    "min_founding_workers": 4
   }
 }
