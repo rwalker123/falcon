@@ -21,10 +21,11 @@ use bevy::prelude::{Entity, With};
 use core_sim::grid_utils::hex_neighbors_wrapped;
 use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 use core_sim::{
-    found_band_from_expedition, founding_site_is_reachable, run_turn, BandEquipment, BandId,
-    DemographicFlowAccumulator, EquipmentConfigHandle, Expedition, ExpeditionMission,
-    ExpeditionPhase, FactionId, FoundingRefusal, KitJob, LaborAllocation, PopulationCohort,
-    ResidentBand, SimulationConfig, StartingUnit, Tile, TileRegistry, VisibilityLedger,
+    culture_region_at, found_band_from_expedition, founding_site_is_reachable, run_turn,
+    BandEquipment, BandId, CultureManager, CultureOwner, DemographicFlowAccumulator,
+    EquipmentConfigHandle, Expedition, ExpeditionMission, ExpeditionPhase, FactionId,
+    FoundingRefusal, KitJob, LaborAllocation, PopulationCohort, ProvinceMap, ResidentBand,
+    SimulationConfig, StartingUnit, Tile, TileRegistry, VisibilityLedger, CULTURE_TRAIT_AXES,
     TRADE_GOODS,
 };
 use sim_runtime::TerrainTags;
@@ -481,6 +482,93 @@ fn a_founded_band_is_simulated_as_a_band_on_the_next_turn() {
     assert_eq!(
         cohort.age_turns, 1,
         "`simulate_population` ages resident bands and only resident bands"
+    );
+}
+
+/// **The settlers are their own people, not the locals.** A colony's culture layer is attached at
+/// founding time and seeded from the **home band**, then parented on the province it landed in — so
+/// it opens as the band that sent it and chases the locals from there, exactly as a band that walked
+/// the same distance does (`CultureManager::set_band_parent`).
+///
+/// **The vacuity guard is the point of the fixture.** On a fresh world every layer is still the
+/// baseline, so a colony seeded from its parent and one seeded from the destination province land on
+/// identical numbers and any assertion here passes for free. The parent is therefore pushed a full
+/// unit clear of the destination province first, and the gap between the two is asserted before the
+/// colony is looked at.
+#[test]
+fn a_founded_colony_opens_with_its_parent_bands_culture() {
+    /// The axis the fixture reads; the seeding is per-axis, so any one of them tells the story.
+    const AXIS: usize = 0;
+    /// How far the parent is staged from the baseline every other layer still sits on.
+    const PARENT_MARKER: f32 = 1.5;
+    /// The gap the fixture insists on between the parent and the destination province, below which
+    /// the two candidate seeds are indistinguishable and the test proves nothing.
+    const MIN_STAGED_GAP: f32 = 1.0;
+
+    let mut app = spawn_world();
+    let (home, faction, home_pos) = home_band(&mut app);
+    let corridor = land_corridor(&app, home_pos);
+    let site = *corridor.last().expect("corridor has a tail");
+    set_discovered(&mut app, faction, &corridor);
+
+    let parent_band = *app
+        .world
+        .get::<BandId>(home)
+        .expect("the home band carries an id");
+    {
+        let mut manager = app.world.resource_mut::<CultureManager>();
+        let layer = manager
+            .band_layer_mut_by_owner(CultureOwner::from_band(parent_band))
+            .expect("worldgen's bands own culture layers after the first update");
+        for idx in 0..CULTURE_TRAIT_AXES {
+            layer
+                .traits
+                .update_value(idx, core_sim::scalar_from_f32(PARENT_MARKER));
+        }
+    }
+
+    let party = spawn_party(
+        &mut app,
+        home,
+        PARTY_BAND_ID,
+        site,
+        ExpeditionPhase::AwaitingOrders,
+    );
+    found_band_from_expedition(&mut app.world, party).expect("the founding is admitted");
+
+    let destination_region = culture_region_at(app.world.get_resource::<ProvinceMap>(), site);
+    let manager = app.world.resource::<CultureManager>();
+    let region_layer = manager
+        .regional_layers()
+        .find(|layer| layer.owner == CultureOwner::from_region(destination_region))
+        .expect("the province the colony landed in owns a regional layer");
+    let region_value = region_layer.traits.values()[AXIS].to_f32();
+    assert!(
+        (PARENT_MARKER - region_value).abs() > MIN_STAGED_GAP,
+        "the fixture must stage a real divergence between the parent band ({PARENT_MARKER}) and \
+         the destination province ({region_value}), or both seeds give the same answer"
+    );
+
+    let colony = manager
+        .band_layer_by_owner(CultureOwner::from_band(BandId(PARTY_BAND_ID)))
+        .expect(
+            "the colony owns a culture layer the moment it is founded — waiting for the next \
+             reconcile is what seeded it from the province it landed in",
+        );
+    let opened = colony.traits.values()[AXIS].to_f32();
+    assert!(
+        (opened - PARENT_MARKER).abs() < 1e-3,
+        "the colony opens as the band that sent it ({PARENT_MARKER}), got {opened}"
+    );
+    assert!(
+        (opened - region_value).abs() > MIN_STAGED_GAP,
+        "…and not as the province it landed in ({region_value})"
+    );
+    assert_eq!(
+        colony.parent,
+        Some(region_layer.id),
+        "the colony is parented on the province it was founded in, so it lags toward the locals \
+         rather than snapping to them"
     );
 }
 

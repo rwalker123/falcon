@@ -383,6 +383,65 @@ static func apply_button(button: Button, variant: String = "ghost",
 	button.add_theme_color_override("font_disabled_color",
 		button_font_color(variant, true, selected_when_disabled))
 
+# ---- modal dialogs ---------------------------------------------------------
+## **A CONFIRM PROMPT IS A CARD, NOT A SYSTEM WINDOW.** Same root cause as the checkbox below: the
+## client applies no `Theme` resource, so an `AcceptDialog` wears Godot's stock chrome — a light-grey
+## surface, a stock-blue focus ring and a `Confirm` title bar with an ✕ — over a near-black console.
+## It read as another application's dialog dropped onto the HUD.
+##
+## **THE TITLE BAR IS REMOVED, NOT RESTYLED** (`borderless`). Two reasons, and the second is the one
+## that decided it. A title bar on an embedded subwindow is drawn by the VIEWPORT, not by the dialog:
+## `Viewport._sub_window_update` reads `title_font`/`title_color`/`title_height`/`embedded_border`
+## off the **`Window`** theme type, and `add_theme_*_override` on an `AcceptDialog` is resolved
+## against `AcceptDialog` — so those overrides are accepted and then never read. That is the same
+## silent no-op `apply_checkbox` documents, one class boundary over. And a bar reading `Confirm`
+## above a one-line question says nothing the question does not: the prompt IS the heading, and the
+## ✕ is a third way to say Cancel. `borderless` deletes the whole decoration in one flag, which is
+## why this is a suppression rather than a restyle.
+##
+## The OK button takes `primary` — this HUD's committing/chosen mark — and Cancel takes `ghost`, so
+## the irreversible half is the lit one and backing out is the quiet one.
+
+## The modal's surface. A card, but OPAQUE (`PANEL_SOLID`, not the 92% `PANEL`): a prompt sits over
+## a dense work board, and text read through a translucent panel is the one place that fill costs
+## legibility.
+const DIALOG_PADDING_H := 18
+const DIALOG_PADDING_V := 16
+const DIALOG_CORNER_RADIUS := 10
+## A prompt is read ONCE, deliberately, and it is the only text on screen that matters while it is
+## up — so one step above the work board's 13px row rather than at it.
+const DIALOG_BODY_FONT_SIZE := 14
+
+static func dialog_stylebox() -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = PANEL_SOLID
+	sb.set_corner_radius_all(DIALOG_CORNER_RADIUS)
+	sb.set_border_width_all(1)
+	sb.border_color = LINE
+	sb.content_margin_left = DIALOG_PADDING_H
+	sb.content_margin_right = DIALOG_PADDING_H
+	sb.content_margin_top = DIALOG_PADDING_V
+	sb.content_margin_bottom = DIALOG_PADDING_V
+	sb.shadow_color = Color(0.0, 0.0, 0.0, 0.5)
+	sb.shadow_size = 10
+	sb.shadow_offset = Vector2(0.0, 8.0)
+	return sb
+
+## Dress an `AcceptDialog` (or `ConfirmationDialog`) as this console's modal — see the block above.
+## Call it on every dialog the client pops, so there is one confirm surface rather than one per site.
+static func apply_dialog(dialog: AcceptDialog) -> void:
+	if dialog == null:
+		return
+	dialog.borderless = true
+	dialog.add_theme_stylebox_override("panel", dialog_stylebox())
+	var body := dialog.get_label()
+	if body != null:
+		body.add_theme_color_override("font_color", INK)
+		body.add_theme_font_size_override("font_size", DIALOG_BODY_FONT_SIZE)
+	apply_button(dialog.get_ok_button(), "primary")
+	if dialog is ConfirmationDialog:
+		apply_button((dialog as ConfirmationDialog).get_cancel_button(), "ghost")
+
 # ---- checkboxes ------------------------------------------------------------
 ## **THE INDICATOR GODOT'S DEFAULT THEME CANNOT DRAW ON THIS HUD.** The client applies no `Theme`
 ## resource at all (`minimal_theme.tres` in this folder is an `@tool` EDITOR theme, referenced by

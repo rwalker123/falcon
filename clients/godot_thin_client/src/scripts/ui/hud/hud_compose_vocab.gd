@@ -650,14 +650,16 @@ const PARTY_SETTLE_WIDTH := 46.0
 ## comes home.
 const PARTY_SETTLE_TOOLTIP := "Start a life here — the party stops being an expedition and becomes a band that will not come home"
 
-## The confirm body. `%s` = the party's own label (the same one `confirm_recall_expedition` names it
-## by), then its tile.
+## The confirm body — a fixed sentence, no arguments.
 ##
-## **THE SECOND SENTENCE IS THE GATE, AND IT IS THERE BECAUSE THIS SLICE HAS NO FORECAST.** The sim
-## answers reachability only when the command lands (`founding_site_is_reachable`), so a press can
-## come back refused — and the prompt is the one place the client can say beforehand that a refusal
-## costs the party nothing. Issue #511's compose-sheet forecast is what replaces it.
-const PARTY_SETTLE_CONFIRM_FORMAT := "Start a life at (%d, %d) with the %s party? It stops being an expedition and becomes a band of its own — it will not come home, and a founding cannot be undone.\n\nIf nobody at home can point at that place across ground your people have mapped, the founding is refused and the party stands where it is."
+## **THE PROMPT SAYS THE ONE THING THE PLAYER IS DECIDING: that this cannot be undone.** It carried
+## the site's coordinates, the party's name and the reachability caveat; all three are gone. The
+## coordinates and the name restate what the row that was just pressed already says, and the
+## reachability rule is not the player's problem at the moment of confirming — a refusal costs
+## nothing and leaves the party where it stands, which is a thing to learn from the refusal EVENT
+## rather than from a modal in front of every founding. Issue #511's compose-sheet forecast is where
+## reachability belongs.
+const PARTY_SETTLE_CONFIRM := "Starting a life here cannot be undone, confirm to continue"
 
 const PARTY_SETTLE_CONFIRM_OK := "Start a life here"
 

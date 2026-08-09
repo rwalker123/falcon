@@ -118,8 +118,11 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 231 `assert OK` lines, 264 `PASS` ones and ZERO `FAIL` ones.** (It
-was 229/259 before the THIRD ARRIVAL ACTION (issue #510) added `band_panel_settle_offered` /
+**A clean run exits 0 and prints 231 `assert OK` lines, 265 `PASS` ones and ZERO `FAIL` ones.** (It
+was 231/264 before the founding prompt's copy was cut to one line and
+`_assert_settle_confirms_before_emitting` gained its EQUALITY claim on that line — one `PASS` and one
+frame, `band_panel_settle_confirm`, and no `assert OK`.) (It was 229/259 before the THIRD ARRIVAL
+ACTION (issue #510) added `band_panel_settle_offered` /
 `band_panel_settle_withheld` — two frames, their two content-fits `assert OK`s, the four
 `_assert_settle_affordance` claims and `_assert_settle_confirms_before_emitting`'s one.) (The
 only `ERROR:` lines in a clean log are Godot's own shutdown RID-leak noise, which is why the status

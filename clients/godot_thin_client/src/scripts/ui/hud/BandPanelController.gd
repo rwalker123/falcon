@@ -488,11 +488,17 @@ func _parties_zone_box_known() -> Vector2:
 ## Ask before a destructive bulk action. A `ConfirmationDialog` is a Window — like the section menu,
 ## it cannot disturb any zone's height. The body names what is SPARED, so "unassign all" never reads
 ## as "undo everything".
+##
+## **THIS IS THE PANEL'S ONE CONFIRM PATH** — the settle prompt, the recall prompt, `Unassign all`
+## and `Recall all` — so `HudStyle.apply_dialog` lands HERE and all four wear the console's surface
+## from one call. The `title` is still set although that treatment draws no title bar: it is the
+## Window's NAME, which an unembedded (OS-window) dialog would show, and it costs nothing.
 func _confirm_destructive(body: String, ok_text: String, on_confirm: Callable) -> void:
     var dialog := ConfirmationDialog.new()
     dialog.dialog_text = body
     dialog.ok_button_text = ok_text
     dialog.title = HudWorkVocab.CONFIRM_DIALOG_TITLE
+    HudStyle.apply_dialog(dialog)
     dialog.confirmed.connect(func() -> void:
         on_confirm.call()
         dialog.queue_free())
@@ -2273,14 +2279,12 @@ func party_may_settle(exp: Dictionary) -> bool:
 
 ## Act on a party's founding. **It ALWAYS confirms**, where a recall's cancel branch acts on the
 ## press: founding is the first act in the band economy that cannot be undone, so there is no
-## "re-make the decision" branch to skip the prompt for. The prompt names the party the same way the
-## recall prompt does and states the site it is about to become a band on.
+## "re-make the decision" branch to skip the prompt for. The prompt states THAT and nothing else —
+## it takes no arguments, the row that was just pressed already naming the party and its place.
 func confirm_settle_expedition(exp: Dictionary) -> void:
     if exp.is_empty():
         return
-    var body := HudComposeVocab.PARTY_SETTLE_CONFIRM_FORMAT % [
-        int(exp.get("current_x", -1)), int(exp.get("current_y", -1)), _party_confirm_label(exp)]
-    _confirm_destructive(body, HudComposeVocab.PARTY_SETTLE_CONFIRM_OK,
+    _confirm_destructive(HudComposeVocab.PARTY_SETTLE_CONFIRM, HudComposeVocab.PARTY_SETTLE_CONFIRM_OK,
         func() -> void: _on_settle_expedition_pressed(exp))
 
 ## Recall every party in one go — there is no bulk verb on the wire and parties are few, so this is

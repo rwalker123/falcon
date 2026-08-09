@@ -611,6 +611,16 @@ stretch, and widening it into that gap would put it over a live HUD column.
   `cancel_order_requested(band, scope)` gained the scope this pass; `work` clears Forage + Hunt only
   and leaves standing roles, parties and an in-progress move alone. `Recall all` is one
   `recall_expedition` per party (no bulk verb, and parties are few).
+  **IT IS THE PANEL'S ONE CONFIRM PATH — four prompts, one surface.** The settle prompt, the recall
+  prompt, `Unassign all work` and `Recall all parties` all go through it, so the console's dialog
+  treatment (`HudStyle.apply_dialog`, `sprites-widgets.md` → "The modal dialog") is applied HERE and
+  reaches all four from one call. Every one of them wore Godot's stock light-grey chrome and a
+  default `Confirm` title bar until it was, on a dark cyan-accented HUD — reported from playtest as
+  looking like another application's dialog. **A new prompt in this panel must not build its own
+  `ConfirmationDialog`**: there is exactly one construction site in the client, and that is what
+  makes the surface a fact rather than a convention. `HudWorkVocab.CONFIRM_DIALOG_TITLE` is still
+  set on the Window and is no longer DRAWN (the treatment is borderless) — it is the window's NAME,
+  which only an unembedded dialog would show. The frame is `band_panel_settle_confirm`.
 - **Move and Clear all are GONE from the panel.** Move belongs to the Tile panel in a later change;
   `_on_move_band_pressed` / `_pending_move_band` / the whole targeting machinery are intact and still
   reachable (the expedition drawer's Move), just not surfaced here.
@@ -2399,8 +2409,15 @@ mission never enters that phase at all, so founding is a SCOUT's arrival choice 
 DISCOVERED land — is answered only when the command lands (`core_sim` `founding_site_is_reachable`, a
 BFS), and this slice exports no per-party verdict to read. So the control stays **ENABLED** and the
 sim answers. A client-side re-implementation would be a second copy of that BFS, free to drift; issue
-#511's compose-sheet forecast is what replaces the guesswork, and the CONFIRM carries the honest
-statement in the meantime — a refusal costs nothing and the party stands where it is.
+#511's compose-sheet forecast is what replaces the guesswork.
+
+**THE CONFIRM DOES NOT CARRY THAT CAVEAT, and it did for one release.** The prompt's second paragraph
+explained the reachability gate — that a founding the sim cannot join to a resident band is refused
+and costs the party nothing. Reported from playtest as far too much to read at the moment of
+confirming, and it is: reachability is not what the player is deciding there, a refusal is a thing to
+learn from the refusal EVENT (which already states it in full — `FOUNDING_REFUSAL_DETAIL` in
+`ui_preview`'s event-dock chapter), and a modal that explains a rule in front of every founding
+teaches it once and taxes it forever.
 
 **TWO FACES FOR ONE ACT, and the width decides which.** The row spends its whole width on the
 party's own summary and a 24px removal glyph, so its control is the bare verb `Settle`; every surface
@@ -2416,8 +2433,15 @@ live in `HudComposeVocab`, so no surface can invent a third.
   that cannot be undone, so there is no press-through branch to have. It reuses
   `_confirm_destructive` — the helper is the panel's one *ask before an act you cannot take back*
   dialog, and a `ConfirmationDialog` is a Window, so it cannot disturb a zone's height.
-- **The prompt names the party the way the recall prompt does** (`_party_confirm_label`, extracted so
-  the two cannot name one party two ways) and states the SITE it is about to become a band on.
+- **The prompt is ONE fixed line and takes no arguments** —
+  `HudComposeVocab.PARTY_SETTLE_CONFIRM`, *"Starting a life here cannot be undone, confirm to
+  continue"*. It named the party and its tile as well (`PARTY_SETTLE_CONFIRM_FORMAT`), which restated
+  what the row the player just pressed already says; what a confirm owes is the one fact that makes
+  it a confirm. `_party_confirm_label` is the RECALL prompt's alone now — do not re-route the
+  founding prompt through it to "keep the two consistent", since these two prompts no longer ask the
+  same shape of question. **`band_panel_preview` asserts the line by EQUALITY**
+  (`_assert_settle_confirms_before_emitting`), because every phrase of it also appears in the two-
+  paragraph version and only equality keeps that version from coming back.
 - **The command carries the `BandId` and nothing else.** `settle_expedition <faction>
   <expedition_band_id>` is CLOSED at two positional tokens — the parser rejects a third — and a
   detached party is a band addressed by the same durable id, never its ECS entity bits, which the
@@ -2431,6 +2455,12 @@ render ONE roster (an arrived scout and a party still hunting) in the tall LEFT 
 in which inspector strip is open: the arrived party's strip offers the link, the hunting party's does
 not, and the scout's ROW keeps its control in both. `ui_preview`'s `expedition_panel` /
 `expedition_returning` are the drawer's own pair, which already existed and now carry the claim.
+
+**`band_panel_settle_confirm` is the THIRD frame, and it is the panel's only rendered dialog besides
+`band_panel_clear_confirm`** — the prompt left standing by `_assert_settle_confirms_before_emitting`
+rather than staged a second time. A `ConfirmationDialog` is an embedded subwindow, so it lands in the
+capture (the kit picker's popup precedent), and this is the frame the shared confirm chrome is judged
+on by eye — the copy is asserted, the SURFACE cannot be.
 
 ### BOTH ESTIMATE AXES ARE SAMPLED, AND THE SHEET NAMES THE PARTY IT QUOTES
 

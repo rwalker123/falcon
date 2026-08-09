@@ -233,6 +233,15 @@ Q2. Until then the party is carrying it, and a recall brings it home.
 - **Breeding stock, if the parent has a pen.** Capped at `breeding_stock_fraction_max` of the pen's
   stock — a herd that can walk somewhere and still breed on arrival, without gutting the parent's
   pen. Gated on the parent actually having one; a forager band's dowry has no animals in it.
+- **The culture goes with them, and it costs the parent nothing.** *(built)* The colony's culture
+  layer is attached at the founding, seeded from the **home band's** current traits and parented on
+  the province it landed in (`CultureManager::attach_band_from_source`). The precedent is migration:
+  a band that *walks* twenty tiles keeps the culture it arrived with and chases its new province at
+  the band scope's elasticity, and a party that settles twenty tiles out is the same journey — it
+  would be strange for the walk to preserve a people and the founding to replace them with the
+  locals. Like knowledge, culture is not conserved, so this is a line in the dowry the player pays
+  nothing for; unlike knowledge, it starts diverging immediately, because the colony mints its own
+  character offset and lags toward a *different* province than the parent's.
 
 **The dowry is the decision.** Each line above is a real subtraction from a band the player has been
 nursing for fifty turns, and the compose sheet's job (Q6) is to make that subtraction legible before

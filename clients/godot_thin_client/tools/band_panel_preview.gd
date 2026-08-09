@@ -1914,6 +1914,12 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 	_assert_settle_affordance("band_panel_settle_withheld", false)
 	_assert_settle_confirms_before_emitting()
+	# The founding prompt itself, left standing by the assertion above. An embedded subwindow lands in
+	# the capture (the kit picker's popup precedent), so this is where the SHARED confirm chrome —
+	# `HudStyle.apply_dialog`, worn by all four of this panel's prompts — is judged by eye.
+	await _settle()
+	await _save("band_panel_settle_confirm")
+	_dismiss_dialogs()
 	_hud._bandpanel._toggle_parties_inspector(str(HUNT_DELIVERING_ENTITY))
 	# PUT THE PREVIOUS ROSTER BACK — `update_band_alerts` diffs against the LAST roster pushed.
 	_push_bands([
@@ -4133,6 +4139,9 @@ func _count_buttons_with_text(node: Node, face: String) -> int:
 ## straight off the press for a party still standing in camp. Driven through the REAL row builder and
 ## the REAL `pressed` handler, and asserted as a PAIR of readings (a dialog appeared, nothing was
 ## emitted), for the deferred-`queue_free` reason `_assert_recall_press` records.
+##
+## **IT LEAVES THE DIALOG UP.** The caller renders `band_panel_settle_confirm` off it — the founding
+## prompt is the one confirm in this file whose COPY is a claim rather than chrome — and dismisses.
 func _assert_settle_confirms_before_emitting() -> void:
 	var exp := _awaiting_scout_expedition_fixture()
 	var row: HBoxContainer = _hud._bandpanel._build_party_row(exp)
@@ -4152,9 +4161,25 @@ func _assert_settle_confirms_before_emitting() -> void:
 	var dialog_shown := _hud_dialog_count() > before
 	_assert_band_panel("settle ceremony — confirms first, no immediate emit (dialog=%s, emitted=%d)" % [
 		dialog_shown, emitted.size()], dialog_shown and emitted.is_empty())
-	_dismiss_dialogs()
+	# **THE COPY IS ASSERTED BY EQUALITY, and that is the whole point of asserting it at all.** The
+	# prompt shipped as two paragraphs naming the party and its tile and explaining the reachability
+	# gate; a `contains` on any phrase of the surviving sentence passes on that version too, so only
+	# equality can keep it from coming back.
+	var prompt := _hud_confirm_dialog()
+	var prompt_text := prompt.dialog_text if prompt != null else ""
+	_assert_band_panel("settle prompt — one line, no coordinates, no party name (got \"%s\")" % prompt_text,
+		prompt_text == HudComposeVocab.PARTY_SETTLE_CONFIRM)
 	_hud.settle_expedition_requested.disconnect(sink)
 	row.queue_free()
+
+## The LIVE confirm dialog on the HUD — the last still-visible one, since `_dismiss_dialogs` frees
+## with the deferred `queue_free` and a spent dialog stays a child for the rest of the frame.
+func _hud_confirm_dialog() -> ConfirmationDialog:
+	var found: ConfirmationDialog = null
+	for child in _hud.get_children():
+		if child is ConfirmationDialog and (child as ConfirmationDialog).visible:
+			found = child
+	return found
 
 ## Confirmation dialogs parented on the HUD right now, freed-but-not-yet-collected ones included —
 ## which is exactly why `_assert_recall_press` compares two readings rather than testing presence.

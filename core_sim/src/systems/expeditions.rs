@@ -1360,6 +1360,27 @@ pub fn found_band_from_expedition(
 
     let parent = world.get::<BandId>(expedition.home_band).copied();
 
+    // ---- The culture the settlers walked out with is part of the dowry too ----
+    // Attached HERE rather than left to `reconcile_band_culture_layers`: that system's "resident
+    // band with no layer" case seeds from the **province the band stands in**, which for a colony is
+    // the one it just travelled to — the settlers would open as the locals. Seeding from the home
+    // band instead is the rule a *walking* band already gets from `set_band_parent`, which keeps the
+    // culture a migrant arrived with and lets it chase its new province at the band scope's
+    // elasticity. Attaching at founding time also means the reconcile finds a layer next turn and
+    // its attach branch never fires, so there is one attach path and not two.
+    if let Some(band) = world.get::<BandId>(entity).copied() {
+        let region_id =
+            crate::culture::culture_region_at(world.get_resource::<ProvinceMap>(), site);
+        let mut culture = world.resource_mut::<crate::culture::CultureManager>();
+        let parent_region = culture.upsert_regional(region_id);
+        match parent {
+            Some(source) => culture.attach_band_from_source(band, parent_region, source),
+            // No resolvable home band — an expedition owns no layer of its own, so the destination
+            // province is the only seed left, i.e. plain `attach_band`.
+            None => culture.attach_band(band, parent_region),
+        };
+    }
+
     // ---- The swap ----
     let mut founded = world.entity_mut(entity);
     founded.remove::<Expedition>();

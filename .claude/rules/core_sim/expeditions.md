@@ -1110,10 +1110,16 @@ identity a restore preserves.
 sedentarization, migration, herd drift, `simulate_population`, the band culture layers and the
 default-band pickers. Two consequences worth knowing rather than fixing:
 
-- **Its culture layer is seeded from the province it was founded in, not inherited from the parent.**
-  `reconcile_band_culture_layers` detaches a layer when a band becomes an expedition and attaches a
-  fresh one parented to the local region when it becomes resident again, so a colony opens with the
-  *new* region's traits.
+- **The colony's culture is the HOME BAND's, and the founding is what attaches it.**
+  `found_band_from_expedition` calls `CultureManager::attach_band_from_source(colony, destination
+  province, home band)` before the component swap, so `reconcile_band_culture_layers` finds a layer
+  already there on the next turn and its "no layer → `attach_band`" branch — which seeds from the
+  *destination province* — never sees a colony. The settlers therefore open as the people who left
+  rather than as the locals, and then chase the new province at the band scope's elasticity, exactly
+  as a band that **walked** the same distance does under `set_band_parent`. Both halves of the
+  founding's province resolution go through the one `culture::culture_region_at`, so the layer's
+  parent and its first reconcile's parent cannot disagree. See `ecs-systems.md` → "Bands carry their
+  own culture" for the seeding rule, the un-inherited character offset and the no-layer fallback.
 - **`select_founder_band` picks the first matching band, and a colony inherits the parent's
   `StartingUnit.kind`.** A band founded off a `founders` band is also `founders`, so a `found_settlement`
   issued with no band handle now has two candidates.
