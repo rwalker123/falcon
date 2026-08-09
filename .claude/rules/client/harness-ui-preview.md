@@ -540,8 +540,36 @@ machine contract. The rule is in `event-dock.md` → "…but a detail the sim wr
 `SourceForecast`/`HudEventVocab`, the `_assert_horizon_floor_is_the_whole_trip` rule: an expectation
 built from the code under test can only agree with itself.
 
-**A clean run is 282 frames / 694 `PASS`, exit 0** — one frame and six `PASS`es on the 281 / 688 this
-arc started from, three of them the drawer pair's and three the dock frame's.
+**A clean run is 284 frames / 700 `PASS`, exit 0** — three frames and twelve `PASS`es on the 281 / 688
+this arc started from: the drawer pair's three, the dock frame's three, and the two-band compose pair
+below.
+
+### The compose sheet composes for the PANEL band, not the first one
+
+**`compose_panel_band_hunt` / `compose_panel_band_forage`** (`chapters/hunt.gd`, appended last) guard
+`Hud._resolve_assign_band` once founding makes a second band reachable. **BOTH sheets, because they
+are two separate injections of that resolver** — one passing says nothing about the other, and the
+playtest report named both.
+
+**The ROSTER is the assertion.** Every other compose fixture in this harness is single-band, which is
+exactly why nothing here caught the defect: with one band all three rungs of the resolver agree, so a
+state that does not stage a SECOND band as the panel's subject passes for free. The pair stages the
+panel band as the roster's second entry and gives the three candidate answers three deliberately
+unlike idle counts — a parent with NONE (its crew left with the expedition), the colony's live 2, and
+a stale render-time panel copy at 9 — so each wrong rung fails as its own number rather than hiding
+inside another's.
+
+Three claims per sheet, because they fail apart: the picker's rendered FACE (what the player read),
+the composed band ENTITY (what a commit would name), and the crew stepper's CAP (what stopped the
+player staffing the hunt). Sabotage-verified by restoring the bare `player_band()` fallback — exactly
+those six fail, at `Band 1` / entity 841 / a stepper capped at 0, and nothing else in the run does.
+
+**A leaked panel band is a real hazard in this harness**, and the shape to know: `tile_panel_band`
+sets one through the real `render_band` path and never clears it, so every chapter after it runs with
+a panel band the resolver now prefers. A resolver variant that returned the STORED panel dict when the
+entity is absent from the roster failed four unrelated assertions in `tile_panel` and `compose_rungs`
+for exactly that reason. The shipped one falls through to `player_band()` instead — which is also the
+correct live behaviour, an unresolvable panel entity being a band that has left the world.
 
 ## The UNBOUNDED-RAID floor: one frame, three equalities, and a driven denial pair
 

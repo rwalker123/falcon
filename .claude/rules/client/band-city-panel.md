@@ -150,6 +150,14 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   changes. `cycle_panel_band(delta)` walks `_player_bands`, **recenters the map**
   on the band (`alert_focus_requested` → `MapView.focus_and_select_tile`), then
   pins the exact band so ring/Tile card/roster/panel all agree.
+- **`_panel_band` is the ACTING band, not just the displayed one.** Because it survives a
+  selection change and the faction page and is re-resolved every snapshot, it is the middle rung
+  of `Hud._resolve_assign_band` — so a compose sheet opened on a herd or a tile staffs the band
+  the panel is showing rather than the first one in the roster. Callers must **re-resolve it by
+  entity** (`HudBandLaborState.player_band_by_entity`) rather than read `panel_band()` directly:
+  `set_panel_band` stores `unit.duplicate(true)`, a render-time copy, and the idle-worker count on
+  it is what the compose steppers cap against. The rationale and its guards are in `labor-ui.md`
+  → "The `Band:` picker opens on the band the player is LOOKING AT".
 - **Bands vs expeditions.** `update_band_alerts` splits the player faction into
   `_player_bands` (resident bands — NOT `is_expedition`) and `_player_expeditions`
   (detached scout/hunt parties). The cycler + band-picker read `_player_bands`

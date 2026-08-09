@@ -672,12 +672,39 @@ func _on_zoom_fit_pressed() -> void:
 # formats the `assign_labor …` command). The Work zone's bulk unassign reuses
 # `cancel_order_requested`, scoped `work`.
 
-## Resolve the band that assignment/move/clear commands target. The selected band when
-## it is a player band; otherwise the single player band captured from the snapshot (so
-## herd/tile assign controls still target it while a herd/tile is selected). {} if none.
+## Resolve the band that assignment/move/clear commands target, in three rungs:
+## **selected player unit → the PANEL band → the first player band**.
+##
+## The middle rung is what makes this correct once the player has more than one band. Selecting a
+## HERD or a TILE — which is exactly when a compose sheet opens — leaves `_selection.unit()` empty,
+## so the resolver used to fall straight through to `player_band()`, the FIRST player-faction cohort
+## captured in `update_band_alerts`. With a second band founded (issue #510) the sheet then composed
+## for the PARENT band while the Band/City panel read the colony: every number under it was honest
+## and about the wrong band, capping the stepper at the parent's near-exhausted idle workers.
+##
+## The panel band is the right middle rung because it is the band the player has in FOCUS and it
+## survives everything the sheet does: selecting a herd or a tile deliberately leaves it intact (the
+## panel persists across selection changes), the faction page deliberately leaves it alone as the
+## subject the cycler walks back into, and `refresh_snapshot` re-resolves it against every snapshot.
+##
+## **It is re-resolved LIVE by entity rather than returned as stored, and the stored dict is never
+## returned at all.** `set_panel_band` keeps a deep copy taken at render time, and this answer feeds
+## `assignable_hunt_workers` / `assignable_forage_workers` — the very idle counts the steppers cap
+## against — so handing that copy back would put a stale-by-one-turn crew under the same steppers this
+## exists to fix. And an entity the roster no longer lists is not merely stale, it is a band that is
+## GONE: the panel band is only ever set from `player_bands()` and re-resolved by `refresh_snapshot`,
+## so a failed lookup means the cohort left the world, and an assignment addressed to it would name a
+## band the sim cannot find. The last rung takes that case, as it took every case before.
+##
+## `{}` when the player has no band at all.
 func _resolve_assign_band() -> Dictionary:
     if not _selection.unit().is_empty() and _is_player_unit(_selection.unit()):
         return _selection.unit()
+    var panel := _band_labor.panel_band()
+    if not panel.is_empty() and _is_player_unit(panel):
+        var live := _band_labor.player_band_by_entity(int(panel.get("entity", -1)))
+        if not live.is_empty():
+            return live
     return _band_labor.player_band()
 
 ## Map grid dimensions captured each snapshot (Main forwards the snapshot `grid` key). Width + wrap
