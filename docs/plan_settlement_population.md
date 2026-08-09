@@ -199,6 +199,8 @@ government) is a **later arc**, out of scope for the phases above.
 
 - `docs/plan_early_game_labor.md` — realizes/extends Phase 2 for the first few turns (band as a
   labor pool; TOE/equipment; carry-capacity population cap; the early-game roles).
+- `docs/plan_band_fission.md` — §Migration's *"how colonists split off"*, decided: the founding
+  gates, the dowry, and why a player-founded band stays in the faction.
 - `shadow_scale_strategy_game_concept_technical_plan_v_0.md` — §"Organic Settlement —
   Sedentarization" (lines 64–72), the era ladder (Forager → Pastoralist / Tended Patches →
   Agrarian Towns …, line 88), §Ecosystem Food Modules (the storage-hook catalog).
