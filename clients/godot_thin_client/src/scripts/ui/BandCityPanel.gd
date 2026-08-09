@@ -313,6 +313,10 @@ const COLLAPSE_GLYPH := "▾"   # ▾  minimize
 const EXPAND_GLYPH := "▸"     # ▸  restore
 const CYCLE_PREV_GLYPH := "◀" # ◀
 const CYCLE_NEXT_GLYPH := "▶" # ▶
+## The Materials & Crafting launcher. Its glyph and tooltip are the crafting panel's own vocabulary,
+## read back from the leaf that owns them so the header and the panel it opens cannot drift apart.
+const CRAFTING_GLYPH := HudCraftingVocab.LAUNCH_GLYPH
+const CRAFTING_TOOLTIP := HudCraftingVocab.LAUNCH_TOOLTIP
 const DEFAULT_STAGE_GLYPH := "⛺" # ⛺  nomadic fallback
 ## The subject cluster's affordance, cleared while the subject is not jumpable (`set_subject_jumpable`).
 const SUBJECT_JUMP_TOOLTIP := "Jump to this band on the map"
@@ -354,6 +358,14 @@ signal reservation_changed(edge: int, size: float)
 signal cycle_requested(delta: int)
 ## The header subject cluster (stage glyph + name + stage label) was clicked — "jump to my band".
 signal subject_activated
+## The header's `⚒` was pressed — open the Materials & Crafting panel
+## (`.claude/rules/client/crafting-panel.md`).
+##
+## **IT CARRIES NO SUBJECT, and that is the point of putting it in the HEADER.** The header is
+## subject-independent chrome, so ONE button serves a band page and the faction page and the band
+## zone's 300px budget is untouched; which band it opens on is `BandPanelController`'s answer, not
+## this panel's.
+signal crafting_requested
 ## `work_zone_size()` changed — a shell flip, dock change, collapse or viewport resize. Hud re-pages
 ## its work board on this rather than re-rendering everything.
 signal zones_resized
@@ -395,6 +407,9 @@ var _stage_label: Label
 var _position_label: Label
 var _count_label: Label
 var _collapse_button: Button
+## The header's Materials & Crafting launcher. Subject-independent chrome, so it is built once and
+## never re-made per subject — the same lifetime the collapse toggle and the cycler arrows have.
+var _crafting_button: Button
 var _rail_expand_button: Button
 # Body layout: `_body_host` holds the two alternative SHELLS, exactly one visible at a time (chosen by
 # panel width — see `_shell_is_wide`). The wide shell is an HBox of one zone host per DECLARED zone
@@ -935,6 +950,14 @@ func _build_header_full() -> HBoxContainer:
 	header.add_child(_subject_cluster)
 
 	header.add_child(_build_cycler())
+
+	# **THE MATERIALS & CRAFTING LAUNCHER, beside the cycler and the dock chooser** — the same
+	# `_make_icon_button` the collapse toggle and the two arrows use, so it reads as a member of the
+	# header's own family rather than as a new kind of control. It is subject-independent chrome: one
+	# button serves a band page and the faction page, and the band zone's 300px budget is untouched.
+	_crafting_button = _make_icon_button(CRAFTING_GLYPH, CRAFTING_TOOLTIP)
+	_crafting_button.pressed.connect(func(): crafting_requested.emit())
+	header.add_child(_crafting_button)
 
 	var dock_chooser := _build_dock_chooser()
 	header.add_child(dock_chooser)

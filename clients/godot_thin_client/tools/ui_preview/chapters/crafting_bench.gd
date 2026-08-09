@@ -1,0 +1,370 @@
+extends RefCounted
+
+## MATERIALS & CRAFTING — the material rail, the bench and the kit ledger
+## (`docs/plan_crafting_and_materials.md` §7).
+##
+## One chapter of the `ui_preview` state walk, run in the order `ui_preview.gd`'s `CHAPTERS`
+## lists it. **The order is load-bearing** — states render into one long-lived `HudLayer`, so a
+## chapter moved is a set of frames changed. See `.claude/rules/client/test-harnesses.md`.
+##
+## **THE FIXTURE IS THE PROTOTYPE'S OWN BAND**, and every string it carries is one the SIM would have
+## resolved: the refusals, the life wordings, the grades and the craft names. That is the whole
+## discipline this panel is built on — the client renders them verbatim — so a fixture that composed
+## any of them here would be testing the harness's spelling rather than the panel's.
+##
+## It ends by CLOSING the panel and handing the reference band back, so a chapter appended after it
+## starts where every other one does.
+
+const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
+
+## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
+var h
+
+## The band this chapter composes for. Its own entity, so it cannot be confused with the reference
+## band the rest of the run uses.
+const CRAFTING_BAND_ENTITY := 971
+
+## The ladder each craft's `progress` is measured against — the sim's published
+## `completion_threshold`, which is what stops the client inventing a scale of its own.
+const CRAFT_THRESHOLD := 100.0
+
+## Where each of the three crafts stands. Weaving is DONE (this band gathers), Tanning is climbing (it
+## hunts deer) and Bone-working is stalled at 12% — which is not an error state but a band standing in
+## country with no bone game. The land decides what you are good at.
+const WEAVING_PROGRESS := 100.0
+const TANNING_PROGRESS := 41.0
+const BONE_WORKING_PROGRESS := 12.0
+
+func run(harness) -> void:
+	h = harness
+	await _crafting_states()
+
+func _crafting_states() -> void:
+	# The panel resolves its subject out of `player_bands()`, so the band goes through the same
+	# per-snapshot ingest every other surface reads.
+	h._hud.update_band_alerts([_crafting_band()])
+	h._hud.update_crafting_catalogues(_materials(), _characteristic_bands(), _recipes(),
+		_craft_knowledge())
+
+	# State 1 — the whole panel: the rail's three material groups with their craft tracks, a bench
+	# weaving baskets with 2 crafters on it, and the ledger's three groups sorted worn-first.
+	h._hud.open_crafting_panel(_crafting_band())
+	await h._settle()
+	_assert_panel_renders()
+	await h._save("crafting_panel")
+
+	# State 2 — the IDLE bench, which is a different statement from a blocked one, on a band that has
+	# banked no materials at all. It is the first turn of a world, and the panel must say so rather
+	# than render an empty grid.
+	h._hud.update_band_alerts([_bare_band()])
+	h._hud.open_crafting_panel(_bare_band())
+	await h._settle()
+	_assert_idle_bench()
+	await h._save("crafting_bench_idle")
+
+	# Hand everything back: the panel closed, the roster restored to the reference band.
+	h._hud.close_crafting_panel()
+	h._hud._band_labor._player_bands = []
+	h._hud._band_labor._player_band = BandFx.band_fixture()
+	await h._settle()
+
+# ---- assertions ---------------------------------------------------------------------------------
+
+## **THE CLAIMS NO PICTURE CAN CARRY.** A ledger sorted the wrong way, a refusal re-derived into
+## "cannot craft", or a tier chip that moved with the life bar all render as perfectly plausible
+## frames; what separates them is the ORDER of the rows and the exact strings in them.
+func _assert_panel_renders() -> void:
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	h._assert_hud("crafting — the panel is open", panel != null and panel.is_open())
+	if panel == null:
+		return
+	var texts := _label_texts(panel)
+	# The refusal is rendered VERBATIM, with its number. "Short 4.9 bone", never "cannot craft".
+	h._assert_hud("crafting — a refusal names its number",
+		texts.has("Short 4.9 bone") and not texts.has("cannot craft"))
+	# …and the shrug reads differently from the shortage, which is the whole reason the reason is
+	# published rather than derived from `available`.
+	h._assert_hud("crafting — the shrug is its own string", texts.has("Not needed yet"))
+	# Worn out and never made are DIFFERENT states, told apart by `life` and never by a zero.
+	h._assert_hud("crafting — worn out and never made are both stated",
+		texts.has("Worn out") and texts.has("Never made"))
+	# The life column is in the item's own use quanta and never in percent.
+	h._assert_hud("crafting — the life meter reads in quanta, not percent",
+		texts.has("48 raids left") and texts.has("~15 turns left"))
+	# The tier chip flips only on OWNERSHIP: the band holds no wayfinding gear, so it reads bare hands
+	# while every held batch still reads its tier.
+	h._assert_hud("crafting — the tier chip states ownership",
+		texts.has(HudCraftingVocab.TIER_CHIP_KIT_NONE) and texts.has(HudCraftingVocab.TIER_CHIP_TOOL_NONE))
+	# The running row's button is SPENT — one job at a time, so it has nothing left to ask for.
+	h._assert_hud("crafting — the running row reads On the bench",
+		texts.has(HudCraftingVocab.ON_BENCH_LABEL))
+	# Sorted by urgency: the worn-out kit leads its group and the untouched one trails it.
+	var worn := _index_of(texts, "Wayfinding gear")
+	var untouched := _index_of(texts, "Traps")
+	h._assert_hud("crafting — worn first, untouched last",
+		worn >= 0 and untouched > worn)
+	# The rail carries a craft track per material group, at the sim's own spelling of the craft.
+	h._assert_hud("crafting — the rail carries its craft tracks",
+		_has_prefix(texts, "▰▰▰▰▰ Weaving") and _has_prefix(texts, "▰▰▱▱▱ Tanning"))
+	# **THE SHRUG IS DIMMED AND NOTHING ELSE IS** — asserted as a PAIR, because a panel that dimmed
+	# every neutral row would satisfy the first half alone and take a sled at 42 turns left down with
+	# it. That over-dimming is exactly what shipped in the first cut of this panel.
+	var untouched_alpha := _row_alpha(panel, "Traps")
+	var used_alpha := _row_alpha(panel, "Sled")
+	h._assert_hud("crafting — the untouched row is dimmed and the used one is not",
+		untouched_alpha >= 0.0 and untouched_alpha < 1.0 and is_equal_approx(used_alpha, 1.0))
+
+func _assert_idle_bench() -> void:
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting — the idle panel is open", false)
+		return
+	var texts := _label_texts(panel)
+	h._assert_hud("crafting — an idle bench says so",
+		texts.has(HudCraftingVocab.BENCH_IDLE_TITLE))
+	h._assert_hud("crafting — an empty rail says so",
+		texts.has(HudCraftingVocab.RAIL_EMPTY))
+
+func _label_texts(node: Node) -> Array:
+	var texts: Array = []
+	if node is Label:
+		texts.append((node as Label).text)
+	if node is Button:
+		texts.append((node as Button).text)
+	for child in node.get_children():
+		texts.append_array(_label_texts(child))
+	return texts
+
+func _index_of(texts: Array, needle: String) -> int:
+	return texts.find(needle)
+
+## The `modulate.a` of the ledger row naming `item_name` — how the dimming is applied, so it is what
+## the claim has to read. `1.0` when no such row is found, which fails the dimmed half honestly.
+##
+## **IT LOOKS FOR THE INNERMOST MATCHING `HBoxContainer`, and that is not fussiness.** The zones row
+## is an `HBoxContainer` too and every ledger row is a descendant of it, so a walk that took the first
+## match from the top answered the ZONES row's alpha — a flat `1.0` — for every item in the table, and
+## the dimming claim failed against a frame that was rendering it correctly.
+func _row_alpha(node: Node, item_name: String) -> float:
+	for child in node.get_children():
+		var found := _row_alpha(child, item_name)
+		if found >= 0.0:
+			return found
+	if node is HBoxContainer and _label_texts(node).has(item_name):
+		return (node as HBoxContainer).modulate.a
+	return -1.0
+
+func _has_prefix(texts: Array, prefix: String) -> bool:
+	for text in texts:
+		if String(text).begins_with(prefix):
+			return true
+	return false
+
+# ---- fixtures -----------------------------------------------------------------------------------
+
+## The per-world MATERIAL catalogue. A material is the generic thing and owns its craft, its axes IN
+## DECLARED ORDER, and the tool that bounds it at the bench.
+func _materials() -> Array:
+	return [
+		{"id": "fibre", "craft": "weaving", "axes": ["fine", "strong"],
+			"hand_workable": true, "tool_item_id": "loom"},
+		{"id": "hide", "craft": "tanning", "axes": ["tough", "supple"],
+			"hand_workable": true, "tool_item_id": ""},
+		{"id": "bone", "craft": "bone_working", "axes": ["dense", "long"],
+			"hand_workable": true, "tool_item_id": "bone_awl"},
+	]
+
+## The shared rating vocabulary, ascending — the panel reads only its two ENDS, to decide which chips
+## read as a strength and which as a weakness.
+func _characteristic_bands() -> Array:
+	return [
+		{"name": "poor", "from": 0.0},
+		{"name": "fair", "from": 0.30},
+		{"name": "good", "from": 0.55},
+		{"name": "excellent", "from": 0.80},
+	]
+
+## The craft tracks, per faction. The display names are the SIM's spelling — "Bone-working", hyphenated
+## and capitalized sim-side — because the client never maps a craft id to English.
+func _craft_knowledge() -> Array:
+	return [
+		{"faction": 0, "craft_id": "weaving", "display_name": "Weaving", "known": true,
+			"progress": WEAVING_PROGRESS, "completion_threshold": CRAFT_THRESHOLD},
+		{"faction": 0, "craft_id": "tanning", "display_name": "Tanning", "known": false,
+			"progress": TANNING_PROGRESS, "completion_threshold": CRAFT_THRESHOLD},
+		{"faction": 0, "craft_id": "bone_working", "display_name": "Bone-working", "known": false,
+			"progress": BONE_WORKING_PROGRESS, "completion_threshold": CRAFT_THRESHOLD},
+	]
+
+## The recipe book. One structure — `inputs → outputs` — whether the output is a kit item, a bench
+## tool or a pile of stock.
+func _recipes() -> Array:
+	return [
+		_kit_recipe("wayfinding", "Wayfinding gear", "weaving", [["fibre", 6.0, ""]]),
+		_kit_recipe("baskets", "Baskets", "weaving", [["fibre", 20.0, "strong"]]),
+		_kit_recipe("spears", "Spears", "bone_working", [["fibre", 12.0, ""], ["bone", 8.0, "dense"]]),
+		_kit_recipe("husbandry_gear", "Husbandry gear", "tanning",
+			[["hide", 12.0, "tough"], ["fibre", 8.0, ""]]),
+		_kit_recipe("sled", "Sled", "tanning", [["hide", 18.0, "tough"], ["fibre", 10.0, ""]]),
+		_kit_recipe("clubs", "Clubs", "bone_working", [["bone", 10.0, "dense"]]),
+		_kit_recipe("traps", "Traps", "weaving", [["fibre", 14.0, ""], ["hide", 6.0, ""]]),
+		_tool_recipe("loom", "Loom", "tanning", [["hide", 14.0, ""]]),
+		_tool_recipe("bone_awl", "Bone awl", "weaving", [["fibre", 12.0, ""], ["hide", 6.0, ""]]),
+		{
+			"id": "cordage", "display_name": "Cordage", "craft": "weaving",
+			"group": HudCraftingVocab.GROUP_STOCK, "work": 3.0, "requires_knowledge": [],
+			"inputs": [{"material_id": "fibre", "amount": 12.0, "reads_axis": "strong"}],
+			"outputs": [{"equipment_id": "", "material_id": "cordage", "amount": 6.0}],
+		},
+	]
+
+func _kit_recipe(id: String, display_name: String, craft: String, inputs: Array) -> Dictionary:
+	return _equipment_recipe(id, display_name, craft, HudCraftingVocab.GROUP_KIT, inputs)
+
+func _tool_recipe(id: String, display_name: String, craft: String, inputs: Array) -> Dictionary:
+	return _equipment_recipe(id, display_name, craft, HudCraftingVocab.GROUP_TOOL, inputs)
+
+func _equipment_recipe(id: String, display_name: String, craft: String, group: String,
+		inputs: Array) -> Dictionary:
+	var rows: Array = []
+	for input in inputs:
+		rows.append({
+			"material_id": String(input[0]), "amount": float(input[1]),
+			"reads_axis": String(input[2]),
+		})
+	return {
+		"id": id, "display_name": display_name, "craft": craft, "group": group,
+		"work": 5.0, "requires_knowledge": [], "inputs": rows,
+		"outputs": [{"equipment_id": id, "material_id": "", "amount": 1.0}],
+	}
+
+## The band the panel is composed for — the prototype's own, carrying every state the ledger has to
+## tell apart at once.
+func _crafting_band() -> Dictionary:
+	var band := BandFx.with_band_id({
+		"id": "Band 1",
+		"entity": CRAFTING_BAND_ENTITY,
+		"faction": 0,
+		"size": 30,
+		"pos": [71, 18],
+		"current_x": 71,
+		"current_y": 18,
+		"working_age": 16,
+		"idle_workers": 6,
+		"turns_of_food": 22.0,
+		"morale": 0.8,
+		"labor_assignments": [],
+	})
+	band["material_batches"] = _material_batches()
+	band["bench"] = _bench()
+	band["craft_offers"] = _craft_offers()
+	band["equipment_batches"] = _equipment_batches()
+	return band
+
+## A band that has banked nothing and has nothing on its bench — the first turn of a world.
+func _bare_band() -> Dictionary:
+	var band := _crafting_band()
+	band["material_batches"] = []
+	band["bench"] = _idle_bench()
+	band["equipment_batches"] = []
+	band["craft_offers"] = []
+	return band
+
+## What the band holds, per rating. **The band rates the AXIS, not the material**: the second hide is
+## excellent at being tough and poor at being supple, which is right for a sled and wrong for cordage.
+func _material_batches() -> Array:
+	return [
+		_batch("fibre", 8.4, [["fine", 0.88, "excellent"], ["strong", 0.40, "fair"]]),
+		_batch("fibre", 14.4, [["fine", 0.18, "poor"], ["strong", 0.62, "good"]]),
+		_batch("hide", 14.2, [["tough", 0.45, "fair"], ["supple", 0.58, "good"]]),
+		_batch("hide", 2.6, [["tough", 0.90, "excellent"], ["supple", 0.15, "poor"]]),
+		_batch("bone", 3.1, [["dense", 0.82, "excellent"], ["long", 0.35, "fair"]]),
+	]
+
+func _batch(material_id: String, amount: float, readings: Array) -> Dictionary:
+	var rows: Array = []
+	for reading in readings:
+		rows.append({"axis": String(reading[0]), "value": float(reading[1]),
+			"band_name": String(reading[2])})
+	return {"material_id": material_id, "amount": amount, "readings": rows, "variety_name": ""}
+
+func _bench() -> Dictionary:
+	return {
+		"recipe_id": "baskets", "display_name": "Baskets", "workers": 2,
+		"progress": 3.0, "work": 5.0, "teaches": "weaving", "blocked_reason": "",
+		"shortfalls": [], "items_completed": 1, "drawn": true, "output_grade": "standard",
+	}
+
+func _idle_bench() -> Dictionary:
+	return {
+		"recipe_id": "", "display_name": "", "workers": 0, "progress": 0.0, "work": 0.0,
+		"teaches": "", "blocked_reason": "", "shortfalls": [], "items_completed": 0,
+		"drawn": false, "output_grade": "",
+	}
+
+## **ONE ROW PER RECIPE, ALWAYS**, each carrying the reason and the severity the SIM resolved. Every
+## string here is one the sim's own vocabulary produces (`.claude/rules/core_sim/crafting.md`).
+func _craft_offers() -> Array:
+	return [
+		_offer("wayfinding", "Wayfinding gear", HudCraftingVocab.GROUP_KIT, "wayfinding", true,
+			"Scouts see 1 tile, not 2", HudCraftingVocab.SEVERITY_DANGER),
+		_offer("baskets", "Baskets", HudCraftingVocab.GROUP_KIT, "baskets", true,
+			"Reed, no loom → standard", HudCraftingVocab.SEVERITY_NEUTRAL, [], true),
+		_offer("spears", "Spears", HudCraftingVocab.GROUP_KIT, "spears", false,
+			"Short 4.9 bone", HudCraftingVocab.SEVERITY_DANGER,
+			[{"material_id": "bone", "required": 8.0, "held": 3.1, "short": 4.9}]),
+		_offer("husbandry_gear", "Husbandry gear", HudCraftingVocab.GROUP_KIT, "husbandry_gear", true,
+			"Hide + tanning frame → standard", HudCraftingVocab.SEVERITY_NEUTRAL),
+		_offer("sled", "Sled", HudCraftingVocab.GROUP_KIT, "sled", true,
+			"Mammoth hide → fine", HudCraftingVocab.SEVERITY_NEUTRAL),
+		_offer("clubs", "Clubs", HudCraftingVocab.GROUP_KIT, "clubs", false,
+			"Short 6.9 bone", HudCraftingVocab.SEVERITY_DANGER,
+			[{"material_id": "bone", "required": 10.0, "held": 3.1, "short": 6.9}]),
+		_offer("traps", "Traps", HudCraftingVocab.GROUP_KIT, "traps", true,
+			"Not needed yet", HudCraftingVocab.SEVERITY_NEUTRAL),
+		_offer("loom", "Loom", HudCraftingVocab.GROUP_TOOL, "loom", true,
+			"Unlocks fine fibre work", HudCraftingVocab.SEVERITY_GOOD),
+		_offer("bone_awl", "Bone awl", HudCraftingVocab.GROUP_TOOL, "bone_awl", true,
+			"Bone costs −25%", HudCraftingVocab.SEVERITY_NEUTRAL),
+		_offer("cordage", "Cordage", HudCraftingVocab.GROUP_STOCK, "", true,
+			"Reed .70 → strong", HudCraftingVocab.SEVERITY_NEUTRAL),
+	]
+
+func _offer(recipe_id: String, display_name: String, group: String, output_item_id: String,
+		available: bool, reason: String, severity: String, shortfalls: Array = [],
+		on_bench: bool = false) -> Dictionary:
+	return {
+		"recipe_id": recipe_id, "display_name": display_name, "group": group,
+		"output_item_id": output_item_id, "available": available, "reason": reason,
+		"severity": severity, "shortfalls": shortfalls, "output_grade": "", "on_bench": on_bench,
+	}
+
+## What the band OWNS, and how much life is in it. **`count == 0` means it owns none**, and `life` is
+## what tells a worn-out item from one that was never made.
+func _equipment_batches() -> Array:
+	return [
+		_batch_row("wayfinding", "", "", 0, 0.0, "Worn out", HudCraftingVocab.LIFE_SEVERITY_DANGER),
+		_batch_row("baskets", "flint", "standard", 4, 8.0, "~1 turn left",
+			HudCraftingVocab.LIFE_SEVERITY_DANGER),
+		_batch_row("spears", "flint", "standard", 6, 34.0, "~15 turns left",
+			HudCraftingVocab.LIFE_SEVERITY_WARN),
+		_batch_row("husbandry_gear", "flint", "standard", 2, 62.0, "~28 turns left",
+			HudCraftingVocab.LIFE_SEVERITY_HEALTHY),
+		_batch_row("sled", "flint", "standard", 1, 71.0, "~42 turns left",
+			HudCraftingVocab.LIFE_SEVERITY_HEALTHY),
+		_batch_row("clubs", "flint", "fine", 5, 96.0, "48 raids left",
+			HudCraftingVocab.LIFE_SEVERITY_HEALTHY),
+		_batch_row("traps", "flint", "standard", 8, 100.0, "Untouched",
+			HudCraftingVocab.LIFE_SEVERITY_HEALTHY),
+		_batch_row("loom", "", "", 0, 0.0, "Never made", HudCraftingVocab.LIFE_SEVERITY_WARN),
+		_batch_row("bone_awl", "flint", "standard", 1, 47.0, "~19 turns left",
+			HudCraftingVocab.LIFE_SEVERITY_WARN),
+	]
+
+func _batch_row(item_id: String, tier_id: String, grade: String, count: int, remaining: float,
+		life: String, life_severity: String) -> Dictionary:
+	return {
+		"item_id": item_id, "tier_id": tier_id, "grade": grade, "count": count,
+		"remaining": remaining, "quanta_left": remaining, "quantum_noun": "uses",
+		"life": life, "life_severity": life_severity,
+	}

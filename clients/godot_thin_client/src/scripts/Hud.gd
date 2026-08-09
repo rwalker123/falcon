@@ -49,6 +49,14 @@ signal extend_pen_requested(payload: Dictionary)
 ## (`cultivate` / `sow` / `tame` / `corral`). RELAYED from `DrawerComposeController`, which is its
 ## only emitter, exactly as `extend_pen_requested` is.
 signal improvement_requested(payload: Dictionary)
+## Emitted when the player presses **Make** in Materials & Crafting — the recipe goes on the band's
+## bench and the sim draws idle workers onto it. **Make IS the assignment**, which is why there is no
+## crew argument here and no Crafter role card anywhere. Payload keys: { faction, band_id, recipe_id }.
+## Main formats `set_bench <faction> <band> recipe <id>`. RELAYED from `CraftingPanelController`.
+signal set_bench_requested(payload: Dictionary)
+## Emitted when the bench's `− n +` stepper moves — the job and its progress are left alone. Payload
+## keys: { faction, band_id, workers }. Main formats `bench_crew <faction> <band> workers <n>`.
+signal bench_crew_requested(payload: Dictionary)
 ## Optimistic pending-labor state changed (Early-Game Labor slice 3b UX): carries the
 ## per-band pending map so MapView can draw the pending-action hex highlights. Main forwards
 ## it to `MapView.set_labor_pending`.
@@ -311,6 +319,12 @@ var _attention: AttentionController = null
 # vertical dock is untouched. Constructed in `_ready` after `_connect_zoom_rail()`, since it MEASURES
 # the nav backing and that call is what applies the stylebox whose padding is part of the measurement.
 var _dockrow: DockRowController = null
+# The MATERIALS & CRAFTING cluster (`docs/plan_crafting_and_materials.md` §7): its own free-floating
+# panel, launched from the Band/City panel HEADER, holding the per-world crafting catalogues and the
+# band it is open on. It emits its own two command signals, which HudLayer relays like every other
+# controller's; `_bandpanel.crafting_requested` is the launch edge, so the two controllers never talk
+# to each other directly.
+var _crafting: CraftingPanelController = null
 var _inset_left: float = 0.0
 var _inset_right: float = 0.0
 var _inset_top: float = 0.0
@@ -418,6 +432,19 @@ func _ready() -> void:
         func(x: int, y: int) -> void: alert_focus_requested.emit(x, y))
     _bandpanel.roster_occupant_selected.connect(
         func(kind: String, id: Variant) -> void: roster_occupant_selected.emit(kind, id))
+    # MATERIALS & CRAFTING. Constructed after `_bandpanel` because the launch edge comes off it, and
+    # handed the SAME labor model plus this CanvasLayer as the node it parents its panel into (a
+    # `RefCounted` cannot `add_child` — the `TurnOrbController` pattern). Its two command signals relay
+    # onto HudLayer's, like every other controller's; the two controllers are mediated here and never
+    # hold each other.
+    _crafting = CraftingPanelController.new()
+    _crafting.setup(self, _band_labor)
+    _crafting.set_bench_requested.connect(
+        func(payload: Dictionary) -> void: set_bench_requested.emit(payload))
+    _crafting.bench_crew_requested.connect(
+        func(payload: Dictionary) -> void: bench_crew_requested.emit(payload))
+    _bandpanel.crafting_requested.connect(
+        func(band: Dictionary) -> void: _crafting.toggle_for(band))
     # The band/expedition attention producers + orb jump-routing. Constructed AFTER `_bandpanel` (its
     # expedition/pen jumps reuse the panel's own focus paths) and handed the ONE retained helper,
     # `_herd_label_for_id`. It emits its OWN `alert_focus_requested`, relayed onto the HudLayer signal
@@ -706,6 +733,27 @@ func update_kit_roster(kits_variant: Variant, default_hunt: Variant, default_for
         default_scout: Variant, default_warrior: Variant) -> void:
     _band_labor.set_kit_roster(kits_variant, String(default_hunt), String(default_forage),
         String(default_scout), String(default_warrior))
+
+## The world's CRAFTING CATALOGUES (`docs/plan_crafting_and_materials.md` §7) — the materials, the
+## shared rating vocabulary, the recipe book and each faction's craft knowledge. Forwarded by `Main`
+## as ONE call for the reason the kit roster is: they are one fact, and a recipe book ingested without
+## its materials would render a rail with no craft tracks and costs in materials the panel cannot name.
+## They live on `CraftingPanelController` rather than on a state model — one cluster reads them.
+func update_crafting_catalogues(materials: Variant, characteristic_bands: Variant,
+        recipes: Variant, craft_knowledge: Variant) -> void:
+    _crafting.set_catalogues(materials, characteristic_bands, recipes, craft_knowledge)
+
+## Open Materials & Crafting on `band`. Reached BY NAME from the preview harnesses, which stand the
+## panel up without a Band/City panel to launch it from.
+func open_crafting_panel(band: Dictionary) -> void:
+    _crafting.open_for(band)
+
+func close_crafting_panel() -> void:
+    _crafting.close()
+
+## The panel's controller, for the harnesses' assertions.
+func crafting_panel() -> CraftingPanelController:
+    return _crafting
 
 ## **THE FORECAST QUERY SEAM, for `Main` to wire the transport into.** `Main` owns the command client,
 ## so it injects the sender and pumps `CommandBridge.poll_query_replies` in once a frame; nothing in
@@ -1001,6 +1049,10 @@ func reset_world_state() -> void:
     # world's composed key exactly and renders the old world's numbers as a live forecast. See
     # `ForecastQuery.reset`.
     _forecast_query.reset()
+    # Materials & Crafting is open on a BAND ENTITY, and a new world renumbers entities from the same
+    # low range — so a panel left open would silently re-resolve onto a different band's bench and
+    # rail. Closing is the honest answer: nothing about the previous world's crafting survives.
+    _crafting.close()
 func show_tile_selection(tile_info: Dictionary) -> void:
     # A selection change invalidates the subject being composed (§15).
     close_compose_sheet()
@@ -1319,6 +1371,10 @@ func update_band_alerts(populations_variant: Variant) -> void:
     # Keep the dockable Band/City panel a persistent, live command center: shown whenever ≥1
     # player band exists, re-rendering the current _band_labor.panel_band() so its steppers/idle stay current.
     _bandpanel.refresh_snapshot()
+    # Materials & Crafting is a live surface too: its bench progress, its material rail and the
+    # ledger's life all move every turn. Refreshed from the same seam as the dock, so the two can
+    # never be a turn apart about the same band.
+    _crafting.refresh_snapshot()
     # Keep the on-screen allocation panel / assign controls live as the band's staffing
     # changes turn to turn (the coordinator re-renders occupant/tile cards separately, but
     # a herd/tile selection reads _band_labor.player_band(), which only just refreshed here).

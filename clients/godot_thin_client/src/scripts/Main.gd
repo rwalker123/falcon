@@ -251,6 +251,10 @@ func _ready() -> void:
             hud.connect("extend_pen_requested", Callable(self, "_on_hud_extend_pen"))
         if hud.has_signal("improvement_requested") and not hud.is_connected("improvement_requested", Callable(self, "_on_hud_improvement")):
             hud.connect("improvement_requested", Callable(self, "_on_hud_improvement"))
+        if hud.has_signal("set_bench_requested") and not hud.is_connected("set_bench_requested", Callable(self, "_on_hud_set_bench")):
+            hud.connect("set_bench_requested", Callable(self, "_on_hud_set_bench"))
+        if hud.has_signal("bench_crew_requested") and not hud.is_connected("bench_crew_requested", Callable(self, "_on_hud_bench_crew")):
+            hud.connect("bench_crew_requested", Callable(self, "_on_hud_bench_crew"))
         if hud.has_signal("answer_fork_requested") and not hud.is_connected("answer_fork_requested", Callable(self, "_on_hud_answer_fork")):
             hud.connect("answer_fork_requested", Callable(self, "_on_hud_answer_fork"))
         # **THE FORECAST QUERY'S TRANSPORT, injected rather than reached for.** The HUD composes the
@@ -562,6 +566,20 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         _hud_invoke("update_kit_roster", [snapshot["kits"],
             snapshot.get("default_hunt_kit_id", ""), snapshot.get("default_forage_kit_id", ""),
             snapshot.get("default_scout_kit_id", ""), snapshot.get("default_warrior_kit_id", "")])
+    # The CRAFTING CATALOGUES, forwarded as ONE call for the reason the kit roster is: they are one
+    # fact, and a recipe book ingested without its materials renders a rail with no craft tracks and
+    # costs in materials the panel cannot name. **Gated on `craft_knowledge`, not on `materials`** —
+    # the other three are per-world constants that ride a delta only on a world rebuild, while a craft
+    # is LEARNED, so knowledge is the one of the four that moves in play and therefore the one whose
+    # arrival must re-render the panel.
+    #
+    # The other three are passed as `null` when the frame does not carry them, NOT as `[]`: the
+    # ingest ignores a non-Array and lets the last value stand, so absence means unchanged — where an
+    # empty array would mean "the world has no materials" and blank the rail.
+    if snapshot.has("craft_knowledge") and SnapshotSections.changed(snapshot, "craft_knowledge"):
+        _hud_invoke("update_crafting_catalogues", [snapshot.get("materials", null),
+            snapshot.get("characteristic_bands", null), snapshot.get("recipes", null),
+            snapshot["craft_knowledge"]])
     if snapshot.has("forage_patches") and SnapshotSections.changed(snapshot, "forage_patches"):
         # The HUD needs the forage patches to cap each Current-actions Forage row's worker stepper at
         # the patch's max-useful (the same forecast the compose control reads off tile_info). Same
@@ -1038,6 +1056,43 @@ static func format_improvement(payload: Dictionary) -> Dictionary:
         "message": "%s (%d, %d)." % [improvement.capitalize(), x, y],
     }
 
+## **`set_bench <faction_id> <band_id> recipe <recipe_id>`** — put a recipe on a band's crafting bench
+## (`docs/plan_crafting_and_materials.md` §7).
+##
+## **BOTH TAILS ARE NAMED TOKENS, and this builder sends only the first.** The grammar is
+## `recipe <id> [workers <n>]`, and the crew is deliberately omitted: **Make IS the assignment**, so
+## the sim draws idle workers onto the job itself and a client-chosen crew here would be a second
+## answer to a question the sim already answers. Changing it afterwards is `bench_crew`'s job.
+##
+## It takes `<faction_id> <band_id>` first, like `assign_labor`, and names the band by its DURABLE
+## `band_id` — never its ECS entity bits, which a rollback renumbers.
+static func format_set_bench(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID:
+        return {}
+    var recipe_id := String(payload.get("recipe_id", "")).strip_edges()
+    if recipe_id == "":
+        return {}
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    return {
+        "line": "set_bench %d %d recipe %s" % [faction, band_id, recipe_id],
+        "message": "Put %s on the bench." % recipe_id,
+    }
+
+## **`bench_crew <faction_id> <band_id> workers <n>`** — re-crew the running bench, leaving the job and
+## its progress alone. `workers` is a NAMED token and is mandatory; `0` is a legal, meaningful value
+## (the recipe stays up with nobody on it) rather than a missing argument, so it is never omitted.
+static func format_bench_crew(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID:
+        return {}
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var workers: int = max(0, int(payload.get("workers", 0)))
+    return {
+        "line": "bench_crew %d %d workers %d" % [faction, band_id, workers],
+        "message": "Put %d crafter%s on the bench." % [workers, "" if workers == 1 else "s"],
+    }
+
 ## **`abandon_improvement <faction> forage <x> <y>` / `abandon_improvement <faction> hunt <herd_id>`**
 ## — the command that stops a build (issue #442). Alias `abandon`.
 ##
@@ -1125,6 +1180,15 @@ func _on_hud_improvement(payload: Dictionary) -> void:
         _send_formatted_command(format_abandon_improvement(payload))
         return
     _send_formatted_command(format_improvement(payload))
+
+## Put a recipe on the band's bench (Materials & Crafting). Make IS the assignment, so this sends the
+## recipe alone and lets the sim staff it.
+func _on_hud_set_bench(payload: Dictionary) -> void:
+    _send_formatted_command(format_set_bench(payload))
+
+## Re-crew the running bench, leaving the job and its progress alone.
+func _on_hud_bench_crew(payload: Dictionary) -> void:
+    _send_formatted_command(format_bench_crew(payload))
 
 ## Recall an in-flight expedition home (folds workers + provisions back on arrival).
 func _on_hud_recall_expedition(payload: Dictionary) -> void:

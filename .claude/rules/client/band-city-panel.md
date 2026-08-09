@@ -39,9 +39,16 @@ command center**: shown whenever ≥1 player band exists, always displaying a
 - **Header chrome.** Settlement **stage glyph + name + stage label + the band's hex coordinates**
   (`set_header` — glyph/label from the band marker's `settlement_stage_icon` /
   `settlement_stage_label`, neutral glyph fallback), a `◀ n/N ▶` **cycler**
-  (`set_cycler`) over `_player_bands`, a 2×2 **dock chooser** (active edge
-  highlighted), and a **collapse** toggle. `cycle_requested(delta)` → Main relays
-  to `Hud.cycle_panel_band`.
+  (`set_cycler`) over `_player_bands`, a `⚒` **Materials & Crafting launcher**, a 2×2 **dock
+  chooser** (active edge highlighted), and a **collapse** toggle. `cycle_requested(delta)` → Main
+  relays to `Hud.cycle_panel_band`.
+  **The `⚒` CARRIES NO SUBJECT, and that is why it is in the header at all.** The header is
+  subject-independent chrome, so ONE button serves a band page and the faction page and the band
+  zone's 300px budget is untouched; `crafting_requested` says only that it was pressed, and
+  `BandPanelController` answers WHICH band with `_band_labor.panel_band()` — the panel band on a band
+  page, the last band loaded on the faction page, `render_faction` deliberately never touching it.
+  Its glyph and tooltip are read back from `HudCraftingVocab`, so the button and the panel it opens
+  cannot drift apart. See `crafting-panel.md`.
   **The coordinates are IDENTITY, so they sit beside the stage word on the header's second line**
   (`Camp  (71, 18)`, same quiet ink and size, coordinates second — a band is "Camp" first and "at
   (71, 18)" second) rather than as a `Position:` row in the band zone's vitals, where they cost a
