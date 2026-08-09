@@ -312,10 +312,12 @@ func run(harness) -> void:
 	# "This herd is N% tamed" reason line, which only existed while a build verb was a picker rung; the
 	# meter on the checked Tame box states the SAME number, is the thing the player actually reads, and
 	# is unambiguously per-herd — so a stale captured dict shows through it just as plainly.
-	# **BUILT FROM THE METER FORMAT AND MATCHED AS A PREFIX**, because the face now carries the rung's
-	# payoff after the percent (`🐾 Taming — 4% · then 1.20 food`) and the payoff is not what this pair
-	# is about. The percent is followed by `%` in the format, so one meter's face can never be a prefix
-	# of the other's — `— 0%` does not lead `— 34%` — and the claim stays as exact as the `==` was.
+	# **BUILT FROM THE METER FORMAT AND MATCHED AS A PREFIX.** The face carried the rung's payoff after
+	# the percent for a while (`🐾 Taming — 4% · then 1.20 food`) and no longer does — the payoff
+	# reads in the readout — so the prefix form is now equivalent to an `==`. It stays because the
+	# claim is about the METER and nothing else, whatever else a face may later gain. The percent is
+	# followed by `%` in the format, so one meter's face can never be a prefix of the other's — `— 0%`
+	# does not lead `— 34%` — and the claim is as exact as the `==` was.
 	var stale_meter := HudComposeVocab.IMPROVEMENT_RUNNING_BARE_FORMAT % [
 		FoodIcons.for_policy(HudConst.LABOR_POLICY_TAME),
 		String(HudComposeVocab.IMPROVEMENT_RUNNING_LABELS[HudConst.LABOR_POLICY_TAME]), 0]

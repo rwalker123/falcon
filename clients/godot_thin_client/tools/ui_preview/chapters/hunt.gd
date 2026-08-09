@@ -56,9 +56,10 @@ const FLOOR_CHART_ALLEE_STOCK_FRACTION := 0.08
 ## re-derives the terms through the very formatter under test asserts nothing. Food leads, and each
 ## half appears because the boar pays both; the pre-fix face was the food clause alone.
 ##
-## They moved off the PICKER's rung face onto the IMPROVEMENT control's own (issue #442), which is why
-## the payoff ARROW is gone from them: the control's face already reads
-## `◎ Tame this herd · then <terms>`, so a second arrow inside the terms said "then → 1.48" twice.
+## They have moved twice — off the PICKER's rung face onto the IMPROVEMENT control's own (issue #442),
+## and then off that face into the READOUT's payoff row, which is where they are asserted now. The
+## payoff ARROW went at the first move (the face already read `· then <terms>`, so an arrow inside the
+## terms said "then → 1.48" twice) and stays gone: the row's key states the condition instead.
 const BOAR_TAME_PAYOFF_FACE := "1.48 food · 0.37 trade"
 
 const BOAR_CORRAL_PAYOFF_FACE := "2.95 food · 0.74 trade"
@@ -1601,8 +1602,11 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("herd_investment_both_products")
 	h._assert_hud("Tame's payoff names BOTH products, food leading",
-		ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, HudConst.LABOR_POLICY_TAME)
+		Readout.improvement_deal_text(h._hud._drawercompose._compose_sheet)
 			.ends_with(BOAR_TAME_PAYOFF_FACE))
+	h._assert_hud("…and states them ONCE, the box above carrying no terms of its own",
+		not ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
+			HudConst.LABOR_POLICY_TAME).contains(ForageFx.IMPROVEMENT_PAYOFF_NEEDLE))
 	# CORRAL OFFERED: the boar is fully tamed here, so Tame is DONE and Corral is the rung on offer —
 	# its payoff quoted on the checkbox's own face, which is where a not-yet-started rung states terms.
 	var penned_boar := HerdFx.investment_pair_boar_herd()
@@ -1613,10 +1617,12 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("herd_investment_corral_offer")
 	var corral_offer = ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet, "corral")
-	h._assert_hud("Corral's offered face names BOTH products, food leading",
+	h._assert_hud("Corral's OFFERED payoff names BOTH products too, food leading",
 		corral_offer is CheckBox
-		and ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
-			SourceForecast.IMPROVEMENT_CORRAL).ends_with(BOAR_CORRAL_PAYOFF_FACE))
+		and Readout.improvement_deal_text(h._hud._drawercompose._compose_sheet)
+			.ends_with(BOAR_CORRAL_PAYOFF_FACE))
+	h._assert_hud("…as the block's ONLY row, an offered rung stating its payoff and nothing else",
+		Readout.improvement_deal_rows(h._hud._drawercompose._compose_sheet) == 1)
 
 	# Reset so later states render their usual single-band dropdown + default band/policy.
 	h._hud._band_labor._player_bands = []

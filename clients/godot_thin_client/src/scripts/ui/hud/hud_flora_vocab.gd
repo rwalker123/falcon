@@ -186,7 +186,16 @@ const FLORA_CROP_ROW := "Crop"
 # ladder is `SourceForecast.FORAGE_IMPROVEMENTS`, and a second list of the same two verbs was one more
 # thing to keep in step (issue #442).
 
+# **THE HEADER IS PER RUNG, because "commit" is true of ONE of the two committing rungs.** Sow
+# forces the favored species to 100% of the stand (`forage.rs::planted` — a Field has no volunteers),
+# so the patch really does become that crop and nothing else: committing is exactly what the picker
+# does there. Cultivate only weeds the favored share UPWARD by `tended_weeding_gain` and leaves the
+# rest of the basket standing (`forage.rs::weeded`), so a tended patch keeps growing everything it
+# grew before — calling that a commitment overstates it, and it is the belief issue #433 already had
+# to delete from the tile card (a 64/36 tile reading as 100% one crop the moment a crop was picked).
 const FLORA_CROP_PICKER_HEADER := "Crop to commit to"
+
+const FLORA_CROP_TEND_HEADER := "Crop to tend to"
 
 # An entry the SPECIES can never climb this rung with stays VISIBLE and disabled, never hidden: that a
 # tile carries Oak Mast you cannot farm is information about the LAND, and hiding it would make the

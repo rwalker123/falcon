@@ -277,17 +277,14 @@ static func telling_fixture_events() -> Array:
 ## The two remedies a STANDING-but-gated Cultivate must still spell out (issue #420). Each is the tail
 ## of its `HudFloraVocab` reason, so the assertion reads the sentence the player reads and not just the
 ## rung's presence: the paused build's ease-off advice, and the finished patch's harvest advice.
-## **THE PHRASE ONLY THE DELETED DEAL LINE COULD PRODUCE.** The improvement forecast line read
-## `A → B while building → C`; its middle term restated the readout's own PER TURN headline and its
-## first term the price of building (the crew row's dip note), so only the payoff was unique to it and
-## the payoff moved onto the running control's FACE. Nothing else on either sheet says "while
-## building" — `CREW_BUILD_DIP_NOTE_FORMAT` deliberately does not — so this needle now asserts the
-## line's ABSENCE. **Absence alone is a vacuous claim** (deleting the payoff too would satisfy it), so
-## every frame asserting it also asserts the payoff ON the face, by meta.
-const IMPROVEMENT_DEAL_MIDDLE_NEEDLE := "while building"
-
-## The `· then` grammar the OFFERED box and the RUNNING one now share — the whole point of moving the
-## payoff onto the face is that the two states of one control read alike, so one needle serves both.
+## **THE `· then` GRAMMAR THE TWO FACES USED TO CLOSE ON, kept as the needle for its ABSENCE.** The
+## payoff has left both the OFFERED and the RUNNING face and reads in the PER TURN readout instead
+## (`Readout.improvement_deal_text`): the face's `· then <payoff>` sat one line above a box quoting a
+## different number for the same source, and nothing said which question either was answering.
+##
+## **ABSENCE ALONE IS VACUOUS** — a sheet that lost the payoff outright satisfies it — so every frame
+## that asserts this needle is gone from the face also asserts the payoff is PRESENT in the readout,
+## by `HudWidgets.IMPROVEMENT_DEAL_META`. Assert the pair, never the half.
 const IMPROVEMENT_PAYOFF_NEEDLE := "· then "
 
 ## A crop `BaseFx.food_tile_fixture`'s basket really carries, used to prove the crop list is ABSENT under a
@@ -475,6 +472,13 @@ const THREE_ROLE_GRAZE_CAPACITY := 130.0
 ## forecast pair is deliberately asymmetric with Cultivate's: `ceiling_sow` is ~0 because a sown
 ## patch has no standing crop to take a fraction of (a bare-ground sow is PURE investment), and
 ## `field_yield` is 2× the tended yield — the payoff that makes the ladder's top plant rung worth it.
+## SOW'S BUILD DIP, as the wire's own FRACTION of the food-peak ceiling — `0.02 / 0.96`, i.e. the
+## near-zero absolute dip this fixture's docstring describes over `food_tile_fixture`'s own Sustain
+## ceiling. A sown patch has no standing crop to take a fraction of, so a bare-ground sow is PURE
+## investment: that asymmetry against Cultivate's quarter is rung 3's whole bargain, and it is what
+## the readout's `without the build` row is measured against on a Sow sheet.
+const SOW_BUILD_FRACTION := 0.02 / 0.96
+
 static func sowable_tile_fixture() -> Dictionary:
 	var tile := BaseFx.food_tile_fixture()
 	# Kept WITHIN the reference band's forage range (it sits on 66,10 with work_range 2) so the Forage
@@ -489,7 +493,15 @@ static func sowable_tile_fixture() -> Dictionary:
 	tile["site_name"] = ""
 	# The ground answers the site requirement: rich enough AND watered. No refusal.
 	tile["patch_sow_site_refusal"] = ""
-	tile["patch_ceiling_sow"] = 0.02
+	# **THE FRACTION IS STATED OUTRIGHT, NOT VIA `patch_ceiling_sow`, AND THAT IS A REPAIR.**
+	# `seed_forage_rows` converts the authoring shorthand only `if not tile.has(<fraction key>)` — and
+	# `food_tile_fixture()` has already run it once, writing `patch_sow_build_fraction = 0.0` off its own
+	# `patch_ceiling_sow` of 0 and ERASING the shorthand key. A layered fixture restating the shorthand
+	# is therefore ignored on the re-seed, so this patch carried a build fraction of ZERO,
+	# `improvement_forecast` answered `{}` for Sow, and the whole rung quoted no deal on any frame: no
+	# payoff row, no `without the build` row, and a bare face before those rows existed. The docstring's
+	# own escape hatch — "a fixture that states a fraction outright wins" — is what closes it.
+	tile["patch_sow_build_fraction"] = SOW_BUILD_FRACTION
 	tile["patch_field_yield"] = 2.40
 	return BaseFx.seed_forage_rows(tile)
 

@@ -49,6 +49,16 @@ static func yields_text(root: Node) -> String:
 	var row := Q.find_meta_node(root, HudWidgets.YIELDS_ROW_META)
 	return " ".join(face_lines(row)) if row != null else ""
 
+## **DOES ANY READING STATE A `now → after` TRANSITION?** — asked of the row's own faces, through the
+## same glyph the widget draws (`SourceForecast.YIELD_AFTER_GLYPH`, which `YIELD_AFTER_FORMAT` is
+## written in terms of), so the mark looked for and the mark rendered are one string.
+##
+## It is the ROW's half of a claim the caption cannot make alone: a sheet whose caption dropped
+## `now → after` while the readings kept their arrows is exactly the mismatch the two used to be
+## composed separately enough to produce, and a header assertion passes right through it.
+static func yields_show_a_transition(root: Node) -> bool:
+	return yields_text(root).contains(SourceForecast.YIELD_AFTER_GLYPH)
+
 ## ONE ACCOUNT'S NUMBER out of the yields row — the reading beside the unit `account` names, or
 ## `YIELDS_ACCOUNT_ABSENT` when that account renders no row at all. The two answers are different
 ## claims, and both matter here: a locked account still HAS a row (unit kept, number replaced by the
@@ -69,6 +79,74 @@ static func yields_account_number(root: Node, account: String) -> String:
 		if lines.size() >= 2 and lines[1] == account.to_upper():
 			return lines[0]
 	return YIELDS_ACCOUNT_ABSENT
+
+## The READOUT's IMPROVEMENT-DEAL block as one string — its key and its value joined, so the payoff
+## row reads `ONCE TENDED 1.39 food`. Found by `HudWidgets.IMPROVEMENT_DEAL_META`, its identity: the
+## row is a key/value Label pair at two sizes carrying live numbers, so there is no single `text` to
+## match — and a needle search across the sheet would find whichever register happened to hold the
+## same magnitude.
+##
+## "" when no deal block rendered, which is a REAL reading and half of what every payoff assertion is
+## made of: "the payoff left the face" also passes on a sheet that lost the payoff altogether, so a
+## claim about the face's absence must be paired with a `contains` here, which "" fails.
+static func improvement_deal_text(root: Node) -> String:
+	var block := Q.find_meta_node(root, HudWidgets.IMPROVEMENT_DEAL_META)
+	return " ".join(face_lines(block)) if block != null else ""
+
+## What `improvement_deal_value` answers when no deal block rendered. A SENTINEL, not "": an absent
+## block and a row whose value is empty are different findings, and a claim comparing the deal's
+## magnitude against another register must fail loudly on the first rather than parse `""` into a
+## `0.0` that happens to satisfy it.
+const DEAL_ROW_ABSENT := "<row absent>"
+
+## The deal row's VALUE ALONE — the payoff terms without their key. It takes NO key parameter,
+## because the block is exactly one row: a key argument with one possible value is the same
+## unused-API liability the builder's collapsed array parameter was.
+static func improvement_deal_value(root: Node) -> String:
+	var block := Q.find_meta_node(root, HudWidgets.IMPROVEMENT_DEAL_META)
+	if block == null:
+		return DEAL_ROW_ABSENT
+	var lines := face_lines(block)
+	return lines[1] if lines.size() >= 2 else DEAL_ROW_ABSENT
+
+## HOW MANY ROWS the deal block renders — `0` when it does not render at all.
+##
+## **IT EXISTS TO PIN A REMOVAL.** The block briefly carried a second row stating the crew's undipped
+## take, and it went because the baseline is visible by simply unticking the box — and because on a
+## crew that saturates the source the dip costs nothing, so the row printed the SAME numbers as the
+## headline directly above it, under a crew note saying each carries half as much. No text assertion
+## can catch that coming back: a re-added baseline row satisfies every `contains` claim on this
+## block, and its numbers are legitimate. The COUNT is the claim.
+static func improvement_deal_rows(root: Node) -> int:
+	var block := Q.find_meta_node(root, HudWidgets.IMPROVEMENT_DEAL_META)
+	return block.get_child_count() if block != null else 0
+
+## Every magnitude-looking token in `text`, as strings — the tokens a reader would compare between
+## two registers of the readout. Deliberately textual: what matters is whether the same NUMBER
+## appears twice on screen, which is a claim about what is printed rather than about two floats.
+static func magnitudes_in(text: String) -> Array[String]:
+	var found: Array[String] = []
+	for token in text.split(" ", false):
+		if token.is_valid_float() and token.contains("."):
+			found.append(token)
+	return found
+
+## **DOES THE DEAL ROW REPEAT A NUMBER THE YIELDS ROW ALREADY PRINTS?** The defect that retired the
+## baseline row: at a crew that saturates the source the dip costs nothing, so the undipped take and
+## the dipped headline were the same figure printed twice, one under a caption saying they differ.
+## Asked here rather than in each chapter so the two webs cannot answer it differently.
+##
+## `false` when either register is absent — a missing block cannot repeat anything, and the callers
+## pin its presence separately.
+static func deal_repeats_a_yields_number(root: Node) -> bool:
+	var deal := improvement_deal_value(root)
+	if deal == DEAL_ROW_ABSENT:
+		return false
+	var takes := magnitudes_in(yields_text(root))
+	for magnitude in magnitudes_in(deal):
+		if takes.has(magnitude):
+			return true
+	return false
 
 ## The aside's LOCKED-ACCOUNT line alone, by its own meta — the twin of `teaching_line`, and separate
 ## for the same reason: its siblings move with the floor while this one does not, so a whole-aside
