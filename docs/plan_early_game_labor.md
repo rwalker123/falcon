@@ -259,6 +259,8 @@ numbers convention.
   expeditions** (a provisioned traveling party), and the **Wondrous Sites** catalog they discover.
 - `docs/plan_settlement_population.md` — the arc this realizes/extends (Phase 2 labor; Phase 3
   improvements/storage; emergent settlements). Carry capacity + storage are the bridge.
+- `docs/plan_band_fission.md` — the **SplitClan/migration seam** decisions 1 and 14 defer to: what a
+  founding party is made of, what it takes from the parent, and how a detached party becomes a band.
 - `docs/plan_wildlife_hunting_overlay.md` — the herds/Sustain yields this subsistence model draws
   from; the density overlay that reads carrying capacity.
 - `docs/plan_intensification.md` — the arc that makes Forage a depletable resource with a policy
