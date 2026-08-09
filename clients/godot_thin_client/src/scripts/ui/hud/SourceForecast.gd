@@ -367,33 +367,32 @@ const YIELD_ACCOUNT_UNITS := {
 ## the unit alone.
 const YIELD_ROW_HEADER := "per turn"
 const YIELD_ROW_HEADER_WITH_AFTER := "per turn · now → after"
-## **THE TWO CAPTIONS A COMPOSED BUILD ADDS.** While a rung is going up the crew carries the rung's
-## `yield_fraction_while_building`, so the readings under this row are the DIPPED take — a number the
-## sheet otherwise gives no way to tell apart from the undipped one it replaced.
-##
-## **IT COMPOSES WITH THE ARROW'S KEY; IT DOES NOT REPLACE IT.** Shipped once as an unconditional
-## override, it left the row's own `0.64 → 0.15` reading with no key at all on exactly the sheets
-## that most need one — a caption that has stopped explaining a mark still on screen, which is worse
-## than the ambiguity it was added to fix. Both facts are true at once on a building sheet whose crew
-## reaches the floor, so the caption states both.
+## **THE CAPTION A COMPOSED BUILD TAKES, AND IT IS THE WHOLE CAPTION.** While a rung is going up the
+## crew carries the rung's `yield_fraction_while_building`, so the readings under this row are the
+## DIPPED take — a number the sheet otherwise gives no way to tell apart from the undipped one it
+## replaced. It never composes with the arrow's key, because a building sheet states **no arrow**:
+## the floor walk is suppressed at the model while a build is composed (`labor-ui.md` → "A COMPOSED
+## BUILD SUPPRESSES THE FLOOR WALK"), so the two facts cannot both be true on one row.
 const YIELD_ROW_HEADER_WHILE_BUILDING := "per turn · while building"
-const YIELD_ROW_HEADER_WHILE_BUILDING_WITH_AFTER := "per turn · while building, now → after"
 
-## **THE ONE RESOLUTION OF THE ROW'S CAPTION**, over the two INDEPENDENT facts that can key it: is a
-## build dipping these readings, and do they carry a holding rate to arrow toward. Four states, one
-## place — `build_yields_row` calls it and no caller composes a caption of its own, because two sites
-## deciding separately is exactly how the `while building` override came to swallow the arrow's key.
-## A caller with no per-turn rate AT ALL (the raid's whole-trip payload) supplies its own `header`
-## and never reaches here.
+## **THE ONE RESOLUTION OF THE ROW'S CAPTION**, over the two facts that can key it: is a build
+## dipping these readings, and do they carry a holding rate to arrow toward. THREE states, because
+## the pair is not independent — a composed build drops the `after` readings, so `while_building`
+## always arrives with `has_after` false and the fourth combination is unreachable. It is resolved
+## in one place: `build_yields_row` calls it and no caller composes a caption of its own, because
+## two sites deciding separately is how the `while building` override once came to swallow the
+## arrow's key. A caller with no per-turn rate AT ALL (the raid's whole-trip payload) supplies its
+## own `header` and never reaches here.
 static func yield_row_header(while_building: bool, has_after: bool) -> String:
     if while_building:
-        return YIELD_ROW_HEADER_WHILE_BUILDING_WITH_AFTER if has_after \
-            else YIELD_ROW_HEADER_WHILE_BUILDING
+        return YIELD_ROW_HEADER_WHILE_BUILDING
     return YIELD_ROW_HEADER_WITH_AFTER if has_after else YIELD_ROW_HEADER
 ## The transition inside ONE account's reading: `2.26 → 0.42`. The glyph is the row's second job for
 ## an arrow — the retired routing suffix (`→ CAMP`) was the first — but the two never coexisted, and
-## this one is keyed by the header rather than left to be guessed.
-const YIELD_AFTER_FORMAT := "%s → %s"
+## this one is keyed by the header rather than left to be guessed. The format is written in terms of
+## the GLYPH so the mark a harness looks for and the mark the row draws are one string.
+const YIELD_AFTER_GLYPH := "→"
+const YIELD_AFTER_FORMAT := "%s " + YIELD_AFTER_GLYPH + " %s"
 
 ## **WHICH ACCOUNTS A TAKE PAYS, AS ROWS** — the STRUCTURAL half of the render-only-when-non-zero rule,
 ## and the one definition of it. `yield_components` (a joined sentence), `picker_products` (a rung's
@@ -419,6 +418,14 @@ const YIELD_AFTER_FORMAT := "%s → %s"
 ## takes the same amount every turn, and an arrow from a number to itself is noise. Whether the crew
 ## reaches the floor AT ALL is the caller's test: a crew that settles short never reaches the holding
 ## state, so it passes no `after` and the row reads exactly as it did before this existed.
+##
+## **"DIFFERS" IS A CLAIM ABOUT WHAT IS SHOWN, SO IT IS ASKED OF THE FORMATTED STRINGS.** The test was
+## `is_equal_approx` on the raw floats, which is a claim about the model — and the reading renders
+## through `format_magnitude` at `YIELD_DECIMALS`, so any pair differing by less than the display's own
+## resolution drew the arrow between two IDENTICAL numbers (`0.26 → 0.26 FOOD`, reported from play,
+## beside a trade account correctly reading `0.90 → 0.87`). The same reasoning `COMPONENT_RENDER_MIN`
+## already records one function along: a gate finer than its formatter's resolution admits exactly what
+## it exists to stop.
 static func yield_rows(food: float, trade: float, fodder: float = 0.0,
         zero_account: String = YIELD_ACCOUNT_FOOD, after: Dictionary = {}) -> Array[Dictionary]:
     var rows: Array[Dictionary] = []
@@ -430,7 +437,8 @@ static func yield_rows(food: float, trade: float, fodder: float = 0.0,
         var value := float(pair[1])
         if has_component(value) or (empty and zero_account == account):
             var row := {YIELD_ROW_ACCOUNT: account, YIELD_ROW_VALUE: value}
-            if after.has(account) and not is_equal_approx(float(after[account]), value):
+            if after.has(account) and format_magnitude(float(after[account])) \
+                    != format_magnitude(value):
                 row[YIELD_ROW_AFTER] = float(after[account])
             rows.append(row)
     return rows

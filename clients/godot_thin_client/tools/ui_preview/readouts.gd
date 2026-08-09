@@ -49,6 +49,16 @@ static func yields_text(root: Node) -> String:
 	var row := Q.find_meta_node(root, HudWidgets.YIELDS_ROW_META)
 	return " ".join(face_lines(row)) if row != null else ""
 
+## **DOES ANY READING STATE A `now → after` TRANSITION?** — asked of the row's own faces, through the
+## same glyph the widget draws (`SourceForecast.YIELD_AFTER_GLYPH`, which `YIELD_AFTER_FORMAT` is
+## written in terms of), so the mark looked for and the mark rendered are one string.
+##
+## It is the ROW's half of a claim the caption cannot make alone: a sheet whose caption dropped
+## `now → after` while the readings kept their arrows is exactly the mismatch the two used to be
+## composed separately enough to produce, and a header assertion passes right through it.
+static func yields_show_a_transition(root: Node) -> bool:
+	return yields_text(root).contains(SourceForecast.YIELD_AFTER_GLYPH)
+
 ## ONE ACCOUNT'S NUMBER out of the yields row — the reading beside the unit `account` names, or
 ## `YIELDS_ACCOUNT_ABSENT` when that account renders no row at all. The two answers are different
 ## claims, and both matter here: a locked account still HAS a row (unit kept, number replaced by the

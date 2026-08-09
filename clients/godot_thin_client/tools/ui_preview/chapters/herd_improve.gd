@@ -184,6 +184,16 @@ func run(harness) -> void:
 		Readout.teaching_line(h._hud._drawercompose._compose_sheet).contains(Readout.TEACHING_BUILD_NEEDLE))
 	h._assert_hud("a running Tame's box is LIVE too — the abandon path is ungated on both webs",
 		tame_box is CheckBox and not (tame_box as CheckBox).disabled)
+	# **THE SUPPRESSED FLOOR WALK, on the web whose model composes its `after` a different way.** The
+	# hunt model rescales a quantised take into every account it pays, so its holding rate is built by
+	# code the plant model shares none of — a gate added to one web only would leave this sheet
+	# stacking the floor walk under the `ONCE TAMED` row exactly as the reported plant frame did.
+	# Caption AND readings, for the reason the plant twin states.
+	h._assert_hud("a composed Tame's caption keys the dip alone, as the plant web's does",
+		Readout.yields_header(h._hud._drawercompose._compose_sheet)
+			== SourceForecast.YIELD_ROW_HEADER_WHILE_BUILDING.to_upper())
+	h._assert_hud("…over readings that draw no arrow either",
+		not Readout.yields_show_a_transition(h._hud._drawercompose._compose_sheet))
 	# **THE HERD FORM, which is the one a shared branch gets wrong.** `abandon_improvement` targets by
 	# WEB (`hunt` → herd id) while the SET verbs target by VERB — and `corral` is a herd's rung
 	# addressed by a TILE, so a formatter that reused the set-verb rule would send coordinates here.

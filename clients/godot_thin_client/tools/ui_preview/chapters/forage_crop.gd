@@ -452,11 +452,11 @@ func run(harness) -> void:
 	# what pins the retired baseline rather than a `contains`.
 	h._assert_hud("…as the block's ONLY row, at a crew of zero as at any other",
 		Readout.improvement_deal_rows(h._hud._drawercompose._compose_sheet) == 1)
-	# **THE CAPTION'S OTHER BUILDING STATE — building, with NO arrow to key.** A zero crew reaches no
-	# holding rate, so this row states one reading and the caption must key the dip ALONE. It is the
-	# pair to `improvement_running_plant`'s both-true claim: between them the two building states of
-	# `SourceForecast.yield_row_header` are pinned, and a caption that composed the arrow's key
-	# unconditionally would fail here while passing there.
+	# **THE BUILDING CAPTION AT A CREW THAT REACHES NOTHING — two reasons for one answer.** A composed
+	# build suppresses the floor walk outright, and a zero crew reaches no holding rate either, so a
+	# caption composing the arrow's key unconditionally fails here whichever of the two it read.
+	# `improvement_running_plant` is where the SUPPRESSION alone is pinned, against a crew that does
+	# reach its floor.
 	h._assert_hud("…under a caption keying the dip alone, this crew reaching no holding rate",
 		Readout.yields_header(h._hud._drawercompose._compose_sheet)
 			== SourceForecast.YIELD_ROW_HEADER_WHILE_BUILDING.to_upper())

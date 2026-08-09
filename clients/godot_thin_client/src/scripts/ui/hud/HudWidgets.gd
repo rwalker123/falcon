@@ -1296,11 +1296,16 @@ static func build_readout_box(parent: Container) -> VBoxContainer:
 ## raid's whole-trip payload, which has no `/turn` and no holding state to arrow toward.
 ##
 ## `while_building` is the OTHER key a per-turn caption can carry: these readings are the DIPPED
-## take. It is a FLAG rather than a second header string, and that is the whole point —
-## `SourceForecast.yield_row_header` composes it WITH the arrow's key over the `has_after` this
-## function is the only place that knows, so neither fact can silence the other. A caller that
-## composed its own caption did exactly that: the `while building` string replaced `now → after` and
-## left the row's arrow unkeyed.
+## take. It is a FLAG rather than a second header string, and that is the whole point — the caption is
+## resolved in ONE place (`SourceForecast.yield_row_header`) over that flag and the `has_after` this
+## function is the only place that knows, so the caption and the marks under it cannot be composed
+## separately. A caller that composed its own caption did exactly that once: the `while building`
+## string replaced `now → after` and left the row's arrow unkeyed.
+##
+## **A BUILDING ROW CARRIES NO ARROW TO KEY.** The floor walk is suppressed at the yield model while a
+## build is composed, so `has_after` is false whenever `while_building` is true and the resolver has
+## three states rather than four. `has_after` is still read here rather than assumed, because it is
+## the ROWS that decide it and a widget that inferred it from the flag would be a second opinion.
 static func build_yields_row(rows: Array, number_tint: Color, note: String, note_tint: Color,
         waste: String, header: String = "", while_building: bool = false) -> VBoxContainer:
     var block := VBoxContainer.new()

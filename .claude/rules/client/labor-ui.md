@@ -912,7 +912,18 @@ Four things follow, and each is load-bearing:
 - **It renders only where the crew REACHES the floor**, gated on the walk's `reached_turn` — the same
   walk the verdict one line down narrates ("Reaches the floor in 3 turns"). A crew that settles short
   never enters the holding state, and promising it a held rate is the failure this reading exists to
-  fix. `yield_rows` additionally drops it where the two are equal: an arrow to itself is noise.
+  fix. **And only where no BUILD is composed** — see "A COMPOSED BUILD SUPPRESSES THE FLOOR WALK"
+  below. Both tests are the yield models' (`_walks_to_the_floor`), so the rows and the caption over
+  them answer one question.
+- **"Differs from the take" is asked of the FORMATTED strings, because that is what an arrow claims.**
+  `yield_rows` drops the second reading where the two are equal — an arrow to itself is noise — and
+  that test read `is_equal_approx` on the raw floats while the row renders through `format_magnitude`
+  at `YIELD_DECIMALS`. Any pair closer than the display's own resolution therefore drew `0.26 → 0.26
+  FOOD`, reported from play beside a trade account correctly reading `0.90 → 0.87`. It is the same
+  mistake `COMPONENT_RENDER_MIN` records one function along: **a gate finer than its formatter's
+  resolution admits exactly what it exists to stop.** Driven, PNG-less, in `chapters/improvements.gd`
+  — a rounding pair and a visible pair asserted together, since suppressing every arrow satisfies the
+  negative alone, plus a precondition that the rounding pair really is two different floats.
 - **A managed rung-3 source has no burst** — the sim never draws a Field or built Pen down, so its
   `hold_ceiling` IS its ceiling and one reading renders.
 - **The unit is hoisted into the header.** Three `/TURN`s were the widest thing on the row and it
@@ -2214,25 +2225,58 @@ row satisfies every one of them, and its numbers are legitimate.
   line's third term, then the control's face, now this row — and has stayed on
   `build_improvement_control`'s note slot throughout, because it is a warning about the RUNG rather
   than a footnote to whichever register prints the number. Frame: `herd_corral_depleted`.
-- **The yields caption says which take it is, and it COMPOSES with the arrow's key rather than
-  replacing it.** A composed build passes a `while_building` FLAG — not a caption string — into
-  `build_yields_row`, which is the only place that knows whether the readings also carry a holding
-  rate, and `SourceForecast.yield_row_header` resolves the four states in ONE place:
+- **The yields caption says which take it is.** A composed build passes a `while_building` FLAG — not
+  a caption string — into `build_yields_row`, which is the only place that knows whether the readings
+  also carry a holding rate, and `SourceForecast.yield_row_header` resolves the THREE states in ONE
+  place:
 
   | building? | arrow present? | caption |
   |---|---|---|
   | no | no | `per turn` |
   | no | yes | `per turn · now → after` |
-  | yes | no | `per turn · while building` |
-  | yes | yes | `per turn · while building, now → after` |
+  | yes | — | `per turn · while building` |
 
-  It shipped once as an UNCONDITIONAL override, which left the row's own `0.64 → 0.15` reading with
-  no key at all on exactly the sheets that most need one — a caption that has stopped explaining a
-  mark still on screen, which is worse than the ambiguity it was added to fix. Two call sites
-  deciding separately is how that happened, so no caller composes a caption of its own; a caller with
-  no per-turn rate AT ALL (the raid's trip payload) supplies its own `header` and never reaches the
-  resolver. The two building states are pinned as a PAIR — `improvement_running_plant` (both true)
-  and `forage_unstaffed` (a zero crew reaches no holding rate) — each failing the other's sabotage.
+  It shipped once as an UNCONDITIONAL override while a building row could still carry an arrow, which
+  left the row's own `0.64 → 0.15` reading with no key at all on exactly the sheets that most need
+  one — a caption that has stopped explaining a mark still on screen, which is worse than the
+  ambiguity it was added to fix. Two call sites deciding separately is how that happened, so no
+  caller composes a caption of its own; a caller with no per-turn rate AT ALL (the raid's trip
+  payload) supplies its own `header` and never reaches the resolver. **`has_after` is still READ on
+  the building branch's way in rather than assumed**, because the rows decide it and a widget
+  inferring it from the flag would be a second opinion — but the resolver has nothing to do with it
+  there, the fourth combination being unreachable:
+
+  > #### A COMPOSED BUILD SUPPRESSES THE FLOOR WALK — both the `after` readings and the caption's key
+  >
+  > The readout was stacking two unrelated meanings of *later* with nothing marking them apart. The
+  > row's `now → after` is the **floor walk at the CURRENT rung** — the burst take now, the steady
+  > rate once the source is drawn to its floor, ~13 turns out on the reported frame. The `ONCE TENDED`
+  > row directly beneath the caption is the **payoff at the NEXT rung**, after a ~25-turn build.
+  > `PER TURN · WHILE BUILDING, NOW → AFTER` sat one line above `ONCE TENDED 1.20 food` and the
+  > labelled row was read as the caption's *after*. Reported from play.
+  >
+  > So while an improvement is composed the sheet states ONE transition, and it is the one being
+  > decided. **Nothing is lost**: the verdict two lines down narrates the walk in prose (*"Reaches the
+  > floor in 13 turns, then holds it — taking only what grows back"*), which is why the fix is
+  > suppression rather than a second label.
+  >
+  > **It is gated at the MODEL, in `DrawerComposeController._walks_to_the_floor`** — one seam both
+  > `_forage_yield_model` and `_hunt_yield_model` compose their `after` dict through, beside the
+  > `reaches` test that was already there. The caption's `has_after` is derived from the rows the
+  > model emits, so gating at the render instead would let the arrow and the key over it disagree,
+  > which is the failure this resolver has already paid for once.
+  >
+  > **Assert the caption AND the readings, or the claim is half made.** With the both-true caption
+  > deleted, a model that kept its `after` renders the SAME `per turn · while building` caption over
+  > rows still drawing arrows — measured: the header-only assertion passes with the suppression fully
+  > reverted, and only the row claim fails. `improvement_running_plant` (plant) and
+  > `improvement_running_animal` (animal, whose model rescales a quantised take through code the
+  > plant one shares none of) each pin both halves. The plant frame carries the **non-vacuity** half
+  > too: both claims are free on a crew that never reaches its floor, so the same patch, crew and
+  > floor are re-composed with the box UNTICKED and must state the walk in full.
+  >
+  > `forage_unstaffed` is no longer the pair to a both-true frame — it is a crew of 0 with a build
+  > composed, i.e. two reasons for one answer.
 - **Assert the PAIR, never the absence alone** — "the payoff left the face" also passes on a sheet
   that lost the payoff entirely. Every frame that pins the face's `· then` absence
   (`IMPROVEMENT_PAYOFF_NEEDLE`, kept and re-pointed) also pins the payoff's presence in the readout by
@@ -2270,8 +2314,17 @@ per account, and it is what the readout's `PER TURN` row has quoted since §3.1.
 
 **A non-Sustain stance beside a running build is LEGAL and is not an error state.** It defeats itself
 through the ecology, not through a gate: the build meter accrues only while the source is Thriving,
-and Deplete is what drives it out. The dip rides the LARGER ceiling, so a Deplete builder takes more
-now and stalls their own meter. `ui_preview`'s `improvement_deplete_while_building` is that frame.
+and Deplete is what drives it out. `ui_preview`'s `improvement_deplete_while_building` is that frame.
+
+**On a LABOUR-BOUND crew it takes no more now, which is the trap at its sharpest** — and that frame's
+crew is deliberately one (`ForageFx.IMPROVEMENT_STANCE_FRAME_FORAGERS`, sized under the food peak's
+dipped crew count). Since the dip moved onto the CREW (§3.1) a deeper floor frees a ceiling such a
+crew cannot reach, so the rendered take is identical at both floors while the build rate the same
+crew earns falls with the floor. **The frame's assertion said the opposite for a while and passed
+anyway**, because it compared the whole yields STRING and that string carried a `now → after` reading
+which did move; suppressing the walk under a composed build is what exposed it, and the claim is now
+the equality — agreeing with the floor-independence claim beside it, which is the same number — over
+a teaching-line companion that keeps it non-vacuous.
 
 **The pause line is both webs' now.** A build accrues only while its source is Thriving, and that is
 deliberately not a gate (a source's phase swings as it is worked). The sim PAUSES, losing nothing, and

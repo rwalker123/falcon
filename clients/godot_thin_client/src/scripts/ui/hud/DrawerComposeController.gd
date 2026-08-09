@@ -469,6 +469,24 @@ func _kit_priced_source(src: Dictionary, prefix: String, band: Dictionary, job: 
     return KitRoster.priced_source(src, prefix, _band_labor.kits(), job,
         _band_labor.default_kit_id(job), kit_id, band)
 
+## **DOES THIS READOUT STATE THE FLOOR WALK AT ALL?** — the one gate on every `after` reading both
+## webs compose, and therefore on the row's arrow and on the caption's `now → after` alike.
+##
+## A crew reaching its floor is only half of it. The other half is that a COMPOSED BUILD suppresses
+## the walk entirely, because the readout would otherwise stack two unrelated "laters" with nothing
+## marking them apart: the row's `now → after` is this rung's burst falling to its steady rate over
+## a handful of turns, while the `ONCE TENDED` row directly beneath it is the NEXT rung's payoff
+## after a ~25-turn build. Reported from play — the caption sat one line above the labelled row and
+## was read as naming it. One transition on screen, labelled, and it is the one being decided; the
+## walk is not lost, the verdict two lines down still narrates it in prose ("Reaches the floor in 13
+## turns, then holds it").
+##
+## **IT IS ASKED AT THE MODEL, and one seam serves both webs.** The caption's `has_after` is derived
+## from the rows the model emits, so gating here is what makes it impossible for the arrow and the
+## key over it to disagree — which is the failure the caption resolver has already paid for once.
+func _walks_to_the_floor(reaches: bool, improvement: String) -> bool:
+    return reaches and improvement == SourceForecast.IMPROVEMENT_NONE
+
 func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, workers: int,
         improvement: String, reaches: bool = false) -> Dictionary:
     # **PRICED AT THE KIT THE CREW WILL BE SENT WITH, ONCE, BEFORE A SINGLE TERM IS READ** — so the
@@ -511,11 +529,12 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
         var account := SourceForecast.YIELD_ACCOUNT_TRADE if trade_axis \
             else SourceForecast.YIELD_ACCOUNT_FOOD
         var smooth_after := {}
-        var smooth_hold := _hunt_take_rate(herd, floor, workers, improvement, true)
-        if reaches and bool(smooth_hold.get("available", false)):
-            smooth_after = SourceForecast.rescaled_accounts(herd,
-                HudComposeVocab.BARE_FORECAST_PREFIX, String(smooth_hold["axis"]),
-                float(smooth_hold["rate"]) * output)
+        if _walks_to_the_floor(reaches, improvement):
+            var smooth_hold := _hunt_take_rate(herd, floor, workers, improvement, true)
+            if bool(smooth_hold.get("available", false)):
+                smooth_after = SourceForecast.rescaled_accounts(herd,
+                    HudComposeVocab.BARE_FORECAST_PREFIX, String(smooth_hold["axis"]),
+                    float(smooth_hold["rate"]) * output)
         return {
             YIELD_MODEL_ROWS: SourceForecast.yield_rows(
                 float(smooth[SourceForecast.YIELD_ACCOUNT_FOOD]),
@@ -567,10 +586,11 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
     # beside a take credited on two would arrow only half the reading. `yield_rows` drops an `after`
     # equal to its take, which is the same "an arrow to itself is noise" test this used to make here.
     var after := {}
-    var held := _hunt_delivered_and_waste(band, herd, floor, workers, improvement, true)
-    if reaches and bool(held.get("available", false)):
-        after = SourceForecast.rescaled_accounts(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
-            String(held["axis"]), float(held["delivered"]))
+    if _walks_to_the_floor(reaches, improvement):
+        var held := _hunt_delivered_and_waste(band, herd, floor, workers, improvement, true)
+        if bool(held.get("available", false)):
+            after = SourceForecast.rescaled_accounts(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
+                String(held["axis"]), float(held["delivered"]))
     return {
         YIELD_MODEL_ROWS: SourceForecast.yield_rows(
             float(take[SourceForecast.YIELD_ACCOUNT_FOOD]),
@@ -675,10 +695,11 @@ func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
     var zero_account := String(forecast["zero_account"])
     # THE STEADY-STATE TAKE, one `min` against a different ceiling — the SAME `expected_yield_account`,
     # reached by key, so the burst and the hold rate cannot be computed two ways. Composed only when
-    # the crew actually reaches the floor: a crew that settles short never enters the holding state,
-    # and promising it a rate it never attains is the failure this whole reading exists to fix.
+    # this sheet states the floor walk at all: a crew that settles short never enters the holding state
+    # (promising it a rate it never attains is the failure this whole reading exists to fix), and a
+    # sheet composing a BUILD suppresses the walk outright — see `_walks_to_the_floor`.
     var after := {}
-    if reaches:
+    if _walks_to_the_floor(reaches, improvement):
         after = {
             SourceForecast.YIELD_ACCOUNT_FOOD: SourceForecast.expected_yield_account(
                 forecast, workers, band, "per_worker", "hold_ceiling",
@@ -1370,7 +1391,9 @@ func _live_reaches(live: Dictionary) -> bool:
 ## `while_building` says these readings are the DIPPED take, which the caption is the only place on
 ## the sheet that can say. It is passed as a FLAG and not as a composed caption: `build_yields_row`
 ## is the only place that knows whether the readings also carry a holding rate, so it is the only
-## place that can key both facts without one silencing the other.
+## place the two can be resolved together. On a building sheet they never both apply — the model
+## drops the floor walk (`_walks_to_the_floor`) — but the flag says nothing about that, and it must
+## not: the rows are what decide the arrow, here as everywhere else in this readout.
 func _fill_yields_host(host: Container, model: Dictionary, labor_kind: String,
         while_building: bool = false) -> void:
     if model.is_empty():
