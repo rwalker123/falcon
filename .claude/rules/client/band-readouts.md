@@ -567,6 +567,10 @@ row says *how long have I got and which side of the line am I on*, and only the 
 - **All three are listed even on a band that neither hunts nor forages today.** Each wears on its own
   quantum (spears per animal killed, the sled per biomass hauled, baskets per biomass gathered), so
   this turn's activity does not predict which kit is closest to running out.
+- **…AND THE EXPANDED ROSTER'S THREE ARE LISTED EVEN WITH NOBODY ON SCOUT OR WARRIOR**, which is the
+  same rule one roster wider. The popover answers *what does this band's gear do*, not *what is it
+  doing this turn*, and a row that vanished when a role was unstaffed would hide the cliff exactly
+  when the player is deciding whether to staff it again.
 - **It survives the `compact` (SHORT band-zone) tier, unlike Trade.** The Trade row is a rate the WORK
   zone's head restates; a spent kit is stated nowhere else in the client and is not recoverable.
 
@@ -578,6 +582,41 @@ unequipped tier) · plus the PNG-less negative that a band stating no kit render
 without which the three frames above pass on a row that renders unconditionally. The fixtures' three
 conditions are deliberately three DIFFERENT numbers (`fixtures_band.gd`), because two kits sharing one
 value would pass every assertion with their accessors swapped.
+
+### The other three tiers, and the kit each is quoted at (`.claude/rules/core_sim/equipment.md`)
+
+The roster grew **handling gear**, **wayfinding gear** and **clubs**, and those three items were
+label-only in this readout for one reason: the popover pairs an item with the resolved tier it sets,
+and the cohort published none for a pen keeper, a scout's vantage or a warrior. It publishes all
+three now (`pen_carry_per_worker_biomass` / `scout_vantage_range` / `warrior_attack`), so each has a
+row — `▲ Handling gear 45 — pen collection 12.0 per keeper`, `▲ Wayfinding 66 — 2-tile sight per
+vantage`, `▲ Clubs 22 — attack 6 defending the camp`.
+
+- **`kit_id` ANSWERS FOR THE HUNT JOB ALONE, and pairing either of the last two with it quotes the
+  wrong kit's tier.** On a resident band that id is the HUNT default, so it covers `hunter_attack`,
+  `hunt_carry…` and `pen_carry…` (a pen is worked from a Hunt row); the vantage and the warrior's
+  attack resolve through `default_scout_kit_id` / `default_warrior_kit_id`, the same asymmetry
+  `forage_carry…` has always had with the forage default. Nothing in the popover reads a kit id at
+  all — the sim has already resolved every tier — which is what makes the trap unreachable rather
+  than merely avoided.
+- **The two ATTACK rows say WHICH FIGHT they are for.** Spears and clubs set the same `attack` stat
+  off different items, and a band really does hold two numbers for it — 20 on the hunt, 6 defending
+  the camp — so a bare `attack 6` beside a bare `attack 20` would read as one of them being wrong.
+- **THE VANTAGE IS TILES AND MUST NOT TAKE THE CARRIES' FORMAT.** It is a distance, not a biomass
+  rate, and the sim rounds it to whole tiles when a posted vantage reveals — hence
+  `KIT_VANTAGE_DECIMALS` and the `%s-tile sight per vantage` phrasing, which also sidesteps the
+  `sight 1 tiles` a bare-handed scout would otherwise print.
+- **An item is a CLOCK and its axis is a TIER, and the two are read from different places** — which
+  is why a live item can sit beside a bare tier. The shared roster equips no husbandry kit, so a band
+  on the stalking kit collects its pen at 12 with its handling gear at 45; the row is honest, and the
+  fixture is built that way deliberately so the pen row cannot pass by quoting the sled's 40.
+
+**Frames + assertions (`band_panel_preview`):** `band_panel_kit_expanded` — the dock's own gear
+popover, with `_assert_gear_breakdown_states_every_kit` asking each new row BOTH what it must say and
+what it must not (the pen never the sled's carry, the vantage never a per-worker rate, the clubs never
+`hunter_attack`), plus the sled's own pairing so the three cannot have been added by making every row
+quote one number. Sabotage-verified: pairing the clubs row with `hunter_attack` fails exactly the
+clubs assertion, naming `attack 20 defending the camp`.
 
 ## The forecast's BAND rides beside the expectation, never in place of it (§6.4)
 

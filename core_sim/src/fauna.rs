@@ -3972,6 +3972,16 @@ pub struct SourceYieldForecast {
 /// twin of `PLANTS_DO_NOT_QUANTISE`.
 pub(crate) const NO_PASTORAL_YIELD: YieldAccounts = YieldAccounts::ZERO;
 
+/// **The retreat term of a source that has no retreat stage** — every plant patch and every pen,
+/// which [`SourceYieldForecast::fight`] answers `None` for (a plant does not bolt, a penned animal is
+/// slaughtered rather than stalked).
+///
+/// `1.0` is the identity, and it is safe *here specifically* because those same sources forecast
+/// `engage_rate: f32::INFINITY`: their engagement crew is already `0` whatever this term says, so the
+/// value cannot reach an answer. **It is not a stand-in for an unresolved party** — a hunting source
+/// must pass its own [`HuntingParty::stay_fraction`], or the crew stops matching the take.
+pub(crate) const NO_RETREAT_STAGE_STAY: f32 = 1.0;
+
 /// The biomass a **per-unit rate** is the yield of — `1.0`, so `HuntYield::apply(ONE_UNIT_OF_BIOMASS)`
 /// reads as *"what is one unit of this stock worth"* rather than as an unexplained `1.0` argument to
 /// a function whose other callers pass a real take.
@@ -4755,6 +4765,14 @@ pub(crate) fn forecast_source_yield(
                     // `f32::INFINITY` and contributes no engagement crew at all.
                     forecast.engage_rate,
                     forecast.build_dips.of(improvement),
+                    // **The retreat, off THIS forecast's own party and quarry** — the same
+                    // `stay_fraction` the take above was priced with, so the crew and the take can
+                    // never be resolved at two different dispersions.
+                    forecast
+                        .fight
+                        .map_or(NO_RETREAT_STAGE_STAY, |(party, quarry)| {
+                            party.stay_fraction(quarry.profile.wariness)
+                        }),
                 ),
             ),
             Some(axis) => source_crew_needed(
@@ -5053,12 +5071,48 @@ pub fn retreat_seed(map_seed: u64, tick: u64, herd_id: &str, workers: u32) -> u6
     map_seed ^ tick ^ RETREAT_SEED_SALT ^ hasher.finish() ^ (workers as u64)
 }
 
+/// **The retreat's one composition** — `clamp(wariness × dispersion, 0, 1)`, the probability an
+/// engaged animal breaks off, with the kit's noise folded into the quarry's own flight response
+/// ([`crate::equipment_config::EquipmentStat::Dispersion`]).
+///
+/// **Clamped into `0..=1` because both factors are authored**: a species may ship `wariness 0.85`
+/// and a future kit a dispersion above `1.0` (a noisy drive), and a probability above one is not a
+/// probability. `0` is the identity the retreat has always had — no draw is made at all.
+///
+/// Stated once so the drawn form ([`HuntingParty::stayers`]) and the closed form
+/// ([`stay_fraction`], which [`per_hunter_take_biomass`] prices a kit with) cannot disagree about
+/// how loud a party is.
+pub fn effective_wariness(wariness: f32, dispersion: f32) -> f32 {
+    (wariness * dispersion.max(0.0)).clamp(0.0, 1.0)
+}
+
+/// **The share of an engagement that stays**, `1 − effective_wariness` — the retreat as a *term*
+/// rather than as a draw, for the closed forms that price a party without resolving a hunt
+/// ([`per_hunter_take_biomass`], and the wire's `HerdTelemetryState::stay_fraction`, which is this
+/// at the neutral `dispersion 1`).
+///
+/// # It prices the TAKE and the CREW, on the same rate
+///
+/// A hunter's real throughput is `engage_rate × build_dip × stay` — what they reach, dipped, times
+/// what stands — so this term divides into a crew count ([`hunt_engage_workers`]) exactly as it
+/// multiplies into a biomass rate ([`per_hunter_take_biomass`]). **A party that keeps one animal in
+/// four needs four times the hands to draw the same stock down.** Any surface that sizes a hunting
+/// crew reads it here, through the party's own [`HuntingParty::stay_fraction`], so a crew and the
+/// take beside it cannot be resolved at different dispersions.
+pub fn stay_fraction(wariness: f32, dispersion: f32) -> f32 {
+    1.0 - effective_wariness(wariness, dispersion)
+}
+
 /// **How many of the engaged animals stay to be fought** — the retreat stage
 /// (`docs/plan_hunt_through_combat.md` §3), between engagement and the fight.
 ///
 /// Each engaged animal independently breaks off with probability `wariness`. **Escaped animals are
 /// not dead**, so the herd loses nothing for them: a wary herd costs the party *hunter-turns*, never
 /// herd biomass, and that pressure falls out with no extra rule.
+///
+/// Those hunter-turns are **priced**, not merely implied: the closed form of this draw
+/// ([`stay_fraction`]) is a factor in the per-hunter rate, so a wary quarry raises the crew a
+/// `workers_needed` names ([`hunt_engage_workers`]) by exactly the reciprocal of what stands.
 ///
 /// # `wariness == 0` is an EXACT identity, and that is load-bearing
 ///
@@ -5248,11 +5302,17 @@ impl HuntingParty {
     /// above one is not a probability. `0` is the identity the retreat has always had — no draw is
     /// made at all — so a trap line lands in a tested regime rather than a new branch.
     pub fn stayers(&self, engaged: f32, wariness: f32, draw: HuntDraw) -> f32 {
-        animals_that_stay(
-            engaged,
-            (wariness * self.dispersion.max(0.0)).clamp(0.0, 1.0),
-            draw,
-        )
+        animals_that_stay(engaged, effective_wariness(wariness, self.dispersion), draw)
+    }
+
+    /// **The closed form of [`stayers`](Self::stayers)** — the share of an engagement this party
+    /// keeps against a quarry of `wariness`, with its kit's `dispersion` folded in.
+    ///
+    /// The one seam every *rate* reads the retreat through: [`per_hunter_take_biomass`] prices a kit
+    /// with it and [`hunt_engage_workers`] sizes a crew with it, so a compose sheet cannot quote a
+    /// take at one dispersion beside a crew at another.
+    pub fn stay_fraction(&self, wariness: f32) -> f32 {
+        stay_fraction(wariness, self.dispersion)
     }
 
     /// **The shipped, fully-kitted party at the base tuning** — the `person` row's intrinsic profile
@@ -5301,6 +5361,135 @@ impl HuntingParty {
             dispersion: equipment.dispersion(&kit, &fresh),
         }
     }
+}
+
+/// **§4.6's per-hunter-turn take, in biomass** — what one hunter carrying `kit` brings down off this
+/// species in one turn:
+///
+/// ```text
+/// min(engage_rate, (attack − defense) / durability) × (1 − clamp(wariness × dispersion, 0, 1)) × body_mass
+/// ```
+///
+/// The three bounds a hunt actually has, in order: what one hunter **reaches**, what one hunter can
+/// **bring down**, and what **stays** to be brought down. Composed from the resolver's own
+/// primitives ([`combat::strike_damage`], [`combat::units_brought_down`]) and the retreat's own
+/// helper ([`HuntingParty::stay_fraction`]) rather than re-spelled, so it cannot become a second
+/// take model: the same `min(reach, damage/durability)` the fight pays, read as a rate.
+///
+/// **It sees no carry tier, no crew size, no escapement floor and no quantiser** — it is the
+/// *ceiling*, which is exactly what makes it a fair comparison between two kits against one quarry:
+/// every term it drops is a property of the band or the herd rather than of the kit.
+///
+/// `0` for a quarry the kit cannot hurt at all (`attack ≤ defense`) — the gate refusing the hunt,
+/// which is what makes a trapping party score zero on a Red Deer.
+///
+/// **It takes the two terms a KIT moves** — the kit-composed hunter profile and the kit's
+/// `dispersion` — rather than a whole [`HuntingParty`], because the party's other two fields
+/// (resolver tuning, the injury hazard) describe what the hunt *costs*, not what it *takes*, and
+/// requiring them would make every caller hold a [`crate::combat_config::CombatConfig`] to price a
+/// comparison neither field enters.
+pub fn per_hunter_take_biomass(hunter: CombatStats, dispersion: f32, species: &SpeciesDef) -> f32 {
+    let quarry = species.combat;
+    let damage = combat::strike_damage(hunter.attack, quarry.defense);
+    let brought_down = combat::units_brought_down(damage, &quarry, species.engage_rate);
+    brought_down * stay_fraction(quarry.wariness, dispersion) * species.body_mass.max(0.0)
+}
+
+/// **Which kit THIS QUARRY wants** — the hunt roster scored against one species, at the **fresh**
+/// tier, returning the kit a compose sheet should open on and the one `assign_labor … hunt` resolves
+/// when the player names none.
+///
+/// # Derived, never authored
+///
+/// A config predicate (`mass < X && wariness > Y`) would be a **third** copy of facts that already
+/// exist twice — the trap declares `max_body_mass 1.0` and `dispersion 0`, the species declares
+/// `body_mass`, `wariness` and `defense` — and would drift from both on the first retune, exactly as
+/// a `size_class` or a "jumpy" flag would. It would also be silently wrong on `defense`, which is
+/// what actually zeroes a trap party on Marsh Grazers. So the answer is *measured* with
+/// [`per_hunter_take_biomass`], through the same `hunter_profile_against` / `dispersion` seams a
+/// live take resolves.
+///
+/// # Wear does NOT enter
+///
+/// Every kit is scored against [`crate::components::BandEquipment::default()`] — zero wear — so a
+/// herd's default is a property of **quarry × roster**, a per-world constant, and cannot reshuffle
+/// under the player as their spears wear down. The same rule the picker's greying follows.
+///
+/// # A near-tie keeps the job default
+///
+/// The winner replaces [`crate::equipment_config::DefaultKitsConfig::hunt`] only when it scores more
+/// than `(1 + quarry_default_kit_margin) ×` the default's own score. A default that flips on a
+/// trivial retune moves under the player for reasons they cannot see. **A default that scores `0`
+/// is beaten by anything positive** — "better than nothing" needs no margin, and a margin cannot be
+/// expressed against zero anyway.
+///
+/// Ties resolve to the **earliest roster entry** (the fold keeps only a strictly greater score), so
+/// two kits that price identically answer by file order rather than by iteration order.
+pub fn quarry_default_hunt_kit(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    person: CombatStats,
+    species: &SpeciesDef,
+) -> crate::equipment_config::KitChoice {
+    let job = crate::equipment_config::KitJob::Hunt;
+    let fresh = crate::components::BandEquipment::default();
+    let score = |kit: &crate::equipment_config::KitChoice| {
+        per_hunter_take_biomass(
+            // **Against THIS animal**, so a mass-bounded weapon is scored on quarry it can actually
+            // hold — the whole reason a bounded kit may win here and may not be the job default.
+            equipment.hunter_profile_against(person, kit, &fresh, species.body_mass),
+            equipment.dispersion(kit, &fresh),
+            species,
+        )
+    };
+    let default = equipment.default_kit(job);
+    let threshold = score(&default) * (1.0 + equipment.quarry_default_kit_margin.max(0.0));
+    let mut best: Option<(crate::equipment_config::KitChoice, f32)> = None;
+    for kit in equipment.kits_for_job(job) {
+        let value = score(&kit);
+        // Strictly greater on BOTH tests: above the margin at all, and above whatever is already
+        // holding the slot — which is what makes file order the tie-break.
+        if value > threshold && best.as_ref().is_none_or(|(_, held)| value > *held) {
+            best = Some((kit, value));
+        }
+    }
+    best.map(|(kit, _)| kit).unwrap_or(default)
+}
+
+/// **Which kit THIS HERD wants** — the one seam every surface resolves a herd's no-kit-named default
+/// through: the wire's `HerdTelemetryState::default_kit_id`, `assign_labor … hunt` and both raiding
+/// verbs.
+///
+/// # A pen is a SOURCE AXIS, not a score
+///
+/// A corralled herd is collected at [`crate::equipment_config::EquipmentStat::PenCarry`], and the
+/// only kit that supplies it is the handling gear — so *"which kit does a pen want"* has a
+/// **structural** answer, and [`quarry_default_hunt_kit`] structurally cannot give it: a pen has no
+/// fight stage, so [`per_hunter_take_biomass`] scores every kit on a quarry the party never stalks
+/// and hands back the *range* winner. That is how a corralled Rabbit Warren came to publish
+/// `trapping` — a kit whose contribution at a pen is nil.
+///
+/// It is the same source-axis rule the client's picker greys on and `KitRoster.priced_source`
+/// prices on, asked of the **roster** rather than answered with an id
+/// ([`crate::equipment_config::EquipmentConfig::kit_supplying`]).
+///
+/// **A roster with no `PenCarry` hunt kit falls through to the score**, which is the honest answer:
+/// nothing can work a pen properly, so the herd keeps whatever the range comparison chose rather
+/// than publishing an empty selection.
+pub fn herd_default_hunt_kit(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    person: CombatStats,
+    species: &SpeciesDef,
+    corralled: bool,
+) -> crate::equipment_config::KitChoice {
+    let job = crate::equipment_config::KitJob::Hunt;
+    if corralled {
+        if let Some(kit) =
+            equipment.kit_supplying(job, crate::equipment_config::EquipmentStat::PenCarry)
+        {
+            return kit;
+        }
+    }
+    quarry_default_hunt_kit(equipment, person, species)
 }
 
 /// **What the fight cost the party** — the band-side casualties of one hunt, in people.
@@ -5893,26 +6082,44 @@ fn peak_animal_drop(ceiling: f32, body: f32) -> f32 {
     (ceiling.max(0.0) / body).floor() + 1.0
 }
 
-/// **The ENGAGEMENT crew for a whole-animal (hunt) source** — how many hunters it takes to bring the
-/// ceiling's peak animal drop *into contact* in one turn, the third unit in `workers_needed`'s
+/// **The ENGAGEMENT crew for a whole-animal (hunt) source** — how many hunters it takes to put the
+/// ceiling's peak animal drop *on the ground* in one turn, the third unit in `workers_needed`'s
 /// `max()` (`docs/plan_hunt_through_combat.md` §2).
 ///
-/// It is the exact inverse of [`animals_engaged`]: that floors `workers × engage_rate × build_dip` to
-/// whole animals, so the crew reaching `n` of them is `ceil(n / (engage_rate × build_dip))`.
-///
 /// ```text
-/// crew = ceil(peak_animal_drop(ceiling, body) / (engage_rate × build_dip))
+/// crew = ceil(peak_animal_drop(ceiling, body) / (engage_rate × build_dip × stay))
 /// ```
+///
+/// # The retreat prices the CREW as well as the take
+///
+/// The divisor is what one hunter actually brings down in a turn — the animals they **reach**
+/// (`engage_rate × build_dip`) times the share of those that **stand** ([`stay_fraction`]) — and not
+/// the raw reach. **A party that keeps one animal in four needs four times the hands to draw the same
+/// stock down**, so the retreat belongs in every sizing of a hunting crew exactly as it already
+/// belongs in the pricing of a hunting take ([`per_hunter_take_biomass`], which divides the same
+/// three terms into a biomass rate).
+///
+/// It is the crew inverse of the closed-form per-hunter rate, *not* of [`animals_engaged`]: that
+/// answers how many animals the party gets near, which is strictly more than it kills the moment a
+/// species has any wariness at all. Sizing on the reach alone made the panel name a crew whose take
+/// left the herd short — and, because the client's *clear it now* target divides the room by the
+/// retreat-aware rate while the stepper cap divided by the raw one, name two different crews on the
+/// same sheet.
+///
+/// **Pass the PARTY'S own stay, never the species' bare `1 − wariness`.** A kit moves the retreat
+/// through [`crate::equipment_config::EquipmentStat::Dispersion`], so the crew and the take must be
+/// resolved through the one [`stay_fraction`] seam or a sheet can size a crew at one dispersion
+/// beside a take priced at another.
 ///
 /// # Why it cannot be folded into the haul crew
 ///
 /// The two terms scale on **different units** — hauling is per *biomass* (one hauler carries 40),
 /// engaging is per *animal* (one hunter reaches 10 fowl or 0.05 mammoths) — so neither dominates
 /// across the roster, exactly as the herder term does not. A Wild Fowl herd with ~470 head above its
-/// floor is 61 biomass: **two** haulers clear it and **47** hunters are needed to reach it, so sizing
-/// the crew on carry alone told the player *"more hands would be idle"* about the very hands the take
-/// was short of. The mammoth inverts it (one hunter reaches the peak drop; twenty are needed to carry
-/// it home).
+/// floor is 61 biomass: **two** haulers clear it and dozens of hunters are needed to reach it, so
+/// sizing the crew on carry alone told the player *"more hands would be idle"* about the very hands
+/// the take was short of. The mammoth inverts it (one hunter reaches the peak drop; twenty are needed
+/// to carry it home).
 ///
 /// # The dip rides the crew here too
 ///
@@ -5928,19 +6135,34 @@ fn peak_animal_drop(ceiling: f32, body: f32) -> f32 {
 /// stalked and a plant is not either — so the `max()` collapses to the haul term and neither web
 /// regresses. Same for a degenerate `body`/rate.
 ///
+/// # `stay == 0` reports no crew, and that is the ANSWER rather than a fudge
+///
+/// At a stay of zero nothing the party reaches ever stands: the take is identically zero at *every*
+/// party size, so the crew needed to achieve it is none. `0` is therefore the honest count, not a
+/// sentinel — and emphatically not [`u32::MAX`], which would read as *"staff it harder"* about a
+/// source no crew can take anything from.
+///
 /// Units on `ceiling`/`body` are free, exactly as they are for [`hunt_haul_workers`]: an animal count
 /// is a ratio, so a provisions-space call and a biomass-space one give the same crew.
-pub fn hunt_engage_workers(ceiling: f32, body: f32, engage_rate: f32, build_dip: f32) -> u32 {
+pub fn hunt_engage_workers(
+    ceiling: f32,
+    body: f32,
+    engage_rate: f32,
+    build_dip: f32,
+    stay: f32,
+) -> u32 {
     if !body.is_finite() || body <= 0.0 {
         return 0;
     }
-    let reach = engage_rate.max(0.0) * build_dip.max(0.0);
-    if !reach.is_finite() || reach <= 0.0 {
-        // No engagement stage (a pen, a plant) — or a dip of zero, which is not a crew size but the
-        // absence of one. Either way this term has nothing to say and the `max()` keeps the others.
+    // What one hunter puts on the ground in a turn: reached × dipped × stayed.
+    let brought_down = engage_rate.max(0.0) * build_dip.max(0.0) * stay.clamp(0.0, 1.0);
+    if !brought_down.is_finite() || brought_down <= 0.0 {
+        // No engagement stage (a pen, a plant), a dip of zero, or a quarry that never stands — none
+        // of which is a crew size. Either way this term has nothing to say and the `max()` keeps the
+        // others.
         return 0;
     }
-    (peak_animal_drop(ceiling, body) / reach).ceil() as u32
+    (peak_animal_drop(ceiling, body) / brought_down).ceil() as u32
 }
 
 /// **THE take-side crew for a whole-animal (hunt) source** — `max(`[`hunt_haul_workers`]`,
@@ -5948,22 +6170,27 @@ pub fn hunt_engage_workers(ceiling: f32, body: f32, engage_rate: f32, build_dip:
 /// its take half with (the assign-time seed in [`forecast_source_yield`] and the resolved Hunt arm of
 /// `advance_labor_allocation`), so the two cannot answer differently.
 ///
-/// **Two jobs, one crew, two units** — reach the animals, then carry them home. It is the take-side
-/// half of [`crate::intensification::source_crew_needed`]'s `max(standing, take)`, which adds the
-/// third: the herders who mind a managed herd whether or not it is killed from this turn.
+/// **Two jobs, one crew, two units** — bring the animals down, then carry them home. It is the
+/// take-side half of [`crate::intensification::source_crew_needed`]'s `max(standing, take)`, which
+/// adds the third: the herders who mind a managed herd whether or not it is killed from this turn.
 /// `max()`, never `+`: one crew covering its busiest job.
+///
+/// `stay` is the party's own retreat term ([`HuntingParty::stay_fraction`]) — see
+/// [`hunt_engage_workers`] for why a crew is sized on what stands rather than on what is reached.
 pub fn hunt_take_workers(
     ceiling: f32,
     body: f32,
     per_worker: f32,
     engage_rate: f32,
     build_dip: f32,
+    stay: f32,
 ) -> u32 {
     hunt_haul_workers(ceiling, body, per_worker).max(hunt_engage_workers(
         ceiling,
         body,
         engage_rate,
         build_dip,
+        stay,
     ))
 }
 
@@ -7523,33 +7750,52 @@ mod tests {
     const LIGHT_BODY: f32 = 1.0;
     /// The shipped `hunt.per_worker_biomass_capacity`.
     const HUNTER_CARRY: f32 = 40.0;
+    /// A quarry that never breaks off — the retreat's identity, so a case exercising only reach and
+    /// dip reads exactly as it did before the retreat entered the crew.
+    const NOTHING_BREAKS_OFF: f32 = 1.0;
+    /// A quarry that keeps three animals in four — the shipped Wild Boar's `wariness 0.25` at the
+    /// neutral spear dispersion.
+    const BOAR_STAY: f32 = 0.75;
 
-    /// **The engagement crew is the exact inverse of [`animals_engaged`]** — the smallest party that
-    /// reaches the whole peak drop, and one hunter short of it does not. That exactness is the
-    /// property: a crew count that merely correlated with reach would let the panel name a number the
-    /// stepper's own take does not clear.
+    /// **The engagement crew is the exact inverse of the per-hunter BRING-DOWN rate** — the smallest
+    /// party whose `engage_rate × dip × stay` covers the whole peak drop, and one hunter short of it
+    /// does not. That exactness is the property: a crew count that merely correlated with the rate
+    /// would let the panel name a number the stepper's own take does not clear.
+    ///
+    /// The retreat is one of the three factors, so the inverse is of the **closed-form** rate rather
+    /// than of [`animals_engaged`] — which answers how many the party gets *near*, strictly more than
+    /// it kills wherever a species has any wariness. The engagement itself is still asserted to cover
+    /// the drop, because you cannot bring down what you never reached.
     #[test]
-    fn the_engagement_crew_is_the_smallest_party_that_reaches_the_peak_drop() {
+    fn the_engagement_crew_is_the_smallest_party_that_brings_down_the_peak_drop() {
         for rate in [HARD_TO_CORNER_ENGAGE_RATE, EASY_ENGAGE_RATE, 10.0] {
             for dip in [NO_BUILD_UNDERWAY_DIP, HALF_CREW_BUILD_DIP] {
-                let peak = peak_animal_drop(ROOMY_CEILING, LIGHT_BODY);
-                let crew = hunt_engage_workers(ROOMY_CEILING, LIGHT_BODY, rate, dip);
-                assert!(
-                    crew > 1,
-                    "rate {rate} dip {dip}: fixture must need a real crew"
-                );
-                assert!(
-                    animals_engaged(crew, rate, dip) >= peak,
-                    "rate {rate} dip {dip}: {crew} hunters must reach the whole {peak}-animal drop, \
-                     they reach {}",
-                    animals_engaged(crew, rate, dip)
-                );
-                assert!(
-                    animals_engaged(crew - 1, rate, dip) < peak,
-                    "rate {rate} dip {dip}: …and {} must not — the count has to be the SMALLEST such \
-                     crew, not merely a sufficient one",
-                    crew - 1
-                );
+                for stay in [NOTHING_BREAKS_OFF, BOAR_STAY] {
+                    let peak = peak_animal_drop(ROOMY_CEILING, LIGHT_BODY);
+                    let crew = hunt_engage_workers(ROOMY_CEILING, LIGHT_BODY, rate, dip, stay);
+                    let brought_down = |hands: u32| hands as f32 * rate * dip * stay;
+                    assert!(
+                        crew > 1,
+                        "rate {rate} dip {dip} stay {stay}: fixture must need a real crew"
+                    );
+                    assert!(
+                        brought_down(crew) >= peak,
+                        "rate {rate} dip {dip} stay {stay}: {crew} hunters must put the whole \
+                         {peak}-animal drop down, they put down {}",
+                        brought_down(crew)
+                    );
+                    assert!(
+                        brought_down(crew - 1) < peak,
+                        "rate {rate} dip {dip} stay {stay}: …and {} must not — the count has to be \
+                         the SMALLEST such crew, not merely a sufficient one",
+                        crew - 1
+                    );
+                    assert!(
+                        animals_engaged(crew, rate, dip) >= peak,
+                        "rate {rate} dip {dip} stay {stay}: …and it must REACH the drop too — you \
+                         cannot bring down what you never got near"
+                    );
+                }
             }
         }
     }
@@ -7565,12 +7811,14 @@ mod tests {
             LIGHT_BODY,
             EASY_ENGAGE_RATE,
             NO_BUILD_UNDERWAY_DIP,
+            NOTHING_BREAKS_OFF,
         );
         let building = hunt_engage_workers(
             ROOMY_CEILING,
             LIGHT_BODY,
             EASY_ENGAGE_RATE,
             HALF_CREW_BUILD_DIP,
+            NOTHING_BREAKS_OFF,
         );
         assert!(
             harvesting > 0,
@@ -7597,28 +7845,36 @@ mod tests {
     /// both forecast `f32::INFINITY` ([`SourceYieldForecast::managed`],
     /// [`FaunaConfig::engage_rate_for`]), so the `max()` collapses to the haul term and neither
     /// regresses. This is the no-regress half of the pair below.
+    ///
+    /// **Byte-identical whatever the retreat says**, which is what makes
+    /// [`NO_RETREAT_STAGE_STAY`]'s neutral safe on the `fight: None` branch: an infinite reach times
+    /// any stay is still not a finite rate, so the term cannot start speaking on a source that has
+    /// no engagement stage to speak about.
     #[test]
     fn a_source_with_no_engagement_stage_keeps_exactly_its_haul_crew() {
         let haul = hunt_haul_workers(ROOMY_CEILING, LIGHT_BODY, HUNTER_CARRY);
         assert!(haul > 0, "liveness: the haul crew is a real count");
         for dip in [NO_BUILD_UNDERWAY_DIP, HALF_CREW_BUILD_DIP] {
-            assert_eq!(
-                hunt_engage_workers(ROOMY_CEILING, LIGHT_BODY, f32::INFINITY, dip),
-                0,
-                "an unstalked source owes no engagement crew (dip {dip})"
-            );
+            for stay in [NO_RETREAT_STAGE_STAY, BOAR_STAY, NOTHING_STANDS] {
+                assert_eq!(
+                    hunt_engage_workers(ROOMY_CEILING, LIGHT_BODY, f32::INFINITY, dip, stay),
+                    0,
+                    "an unstalked source owes no engagement crew (dip {dip}, stay {stay})"
+                );
+                assert_eq!(
+                    hunt_take_workers(
+                        ROOMY_CEILING,
+                        LIGHT_BODY,
+                        HUNTER_CARRY,
+                        f32::INFINITY,
+                        dip,
+                        stay
+                    ),
+                    haul,
+                    "…so the take crew is the haul crew, unchanged (dip {dip}, stay {stay})"
+                );
+            }
         }
-        assert_eq!(
-            hunt_take_workers(
-                ROOMY_CEILING,
-                LIGHT_BODY,
-                HUNTER_CARRY,
-                f32::INFINITY,
-                NO_BUILD_UNDERWAY_DIP
-            ),
-            haul,
-            "…so the take crew is the haul crew, unchanged"
-        );
     }
 
     /// **The take crew takes whichever of REACH and CARRY binds — and both directions are live.**
@@ -7635,6 +7891,7 @@ mod tests {
             HUNTER_CARRY,
             SLOW_REACH,
             NO_BUILD_UNDERWAY_DIP,
+            NOTHING_BREAKS_OFF,
         );
         let reach_haul = hunt_haul_workers(ROOMY_CEILING, LIGHT_BODY, HUNTER_CARRY);
         assert!(
@@ -7652,10 +7909,16 @@ mod tests {
             HUNTER_CARRY,
             FAST_REACH,
             NO_BUILD_UNDERWAY_DIP,
+            NOTHING_BREAKS_OFF,
         );
         let carry_haul = hunt_haul_workers(ROOMY_CEILING, HEAVY_BODY, HUNTER_CARRY);
-        let carry_reach =
-            hunt_engage_workers(ROOMY_CEILING, HEAVY_BODY, FAST_REACH, NO_BUILD_UNDERWAY_DIP);
+        let carry_reach = hunt_engage_workers(
+            ROOMY_CEILING,
+            HEAVY_BODY,
+            FAST_REACH,
+            NO_BUILD_UNDERWAY_DIP,
+            NOTHING_BREAKS_OFF,
+        );
         assert!(
             carry_reach > 0,
             "liveness: the engagement term is computed here too, it is simply the smaller"
@@ -7665,6 +7928,155 @@ mod tests {
             "heavy game is carry-bound: take crew {carry_bound} is the haul crew {carry_haul}, \
              above the reach crew {carry_reach}"
         );
+    }
+
+    // ---- The retreat prices the crew (`docs/plan_hunt_through_combat.md` §3) ---------------------
+
+    /// A Wild Boar's shipped body mass, in the whole numbers the case is stated in.
+    const BOAR_BODY: f32 = 12.0;
+    /// A Wild Boar's shipped `engage_rate` — one hunter gets near a third of a boar per turn.
+    const BOAR_ENGAGE_RATE: f32 = 0.33;
+    /// A room of 27 whole boar (`27 × 12`), so the peak drop is the 28 that room's last partial body
+    /// covers — `floor(324 / 12) + 1`.
+    const BOAR_ROOM: f32 = 27.0 * BOAR_BODY;
+    /// A quarry nothing stands against — [`stay_fraction`] at `wariness 1`, or a kit so loud it
+    /// scatters everything.
+    const NOTHING_STANDS: f32 = 0.0;
+
+    /// **THE WILD BOAR CASE — the crew is sized on what the party puts DOWN, not on what it gets
+    /// near.** One hunter reaches `0.33` boar a turn and keeps three in four of them, so they land
+    /// `0.33 × 0.75 = 0.2475` boar. Clearing a 28-animal peak drop therefore takes
+    /// `ceil(28 / 0.2475) = 114` hunters, and the retreat-blind reading (`ceil(28 / 0.33) = 85`) is
+    /// short by a third.
+    ///
+    /// This is the contradiction the change exists to remove: the compose sheet's *clear it now*
+    /// target already divided the room by the retreat-aware rate while the stepper cap beside it
+    /// divided by the raw reach, so the sheet named a crew the panel refused to let the player
+    /// assign. The sharp half is asserted rather than the arithmetic alone — the raw-reach crew
+    /// demonstrably leaves the herd short.
+    #[test]
+    fn a_wary_boar_herd_needs_the_hands_the_retreat_costs() {
+        const PEAK_DROP: f32 = 28.0;
+        const RETREAT_AWARE_CREW: u32 = 114;
+        const RAW_REACH_CREW: u32 = 85;
+
+        assert_eq!(
+            peak_animal_drop(BOAR_ROOM, BOAR_BODY),
+            PEAK_DROP,
+            "the fixture's room must be the 28-animal drop the numbers below are derived from"
+        );
+        let crew = hunt_engage_workers(
+            BOAR_ROOM,
+            BOAR_BODY,
+            BOAR_ENGAGE_RATE,
+            NO_BUILD_UNDERWAY_DIP,
+            BOAR_STAY,
+        );
+        assert_eq!(
+            crew, RETREAT_AWARE_CREW,
+            "28 boar at 0.2475 down per hunter is {RETREAT_AWARE_CREW} hands, not {crew}"
+        );
+        assert_eq!(
+            hunt_engage_workers(
+                BOAR_ROOM,
+                BOAR_BODY,
+                BOAR_ENGAGE_RATE,
+                NO_BUILD_UNDERWAY_DIP,
+                NOTHING_BREAKS_OFF,
+            ),
+            RAW_REACH_CREW,
+            "…and the raw reach is what the crew used to be sized on"
+        );
+        // The sharp form: the retreat-blind crew cannot draw the room down, and the sized one can.
+        let brought_down = |hands: u32| hands as f32 * BOAR_ENGAGE_RATE * BOAR_STAY;
+        assert!(
+            brought_down(RAW_REACH_CREW) < PEAK_DROP,
+            "{RAW_REACH_CREW} hunters put {} boar down against a {PEAK_DROP}-animal drop — the herd \
+             is left short, which is why the old count was not merely a different convention",
+            brought_down(RAW_REACH_CREW)
+        );
+        assert!(
+            brought_down(RETREAT_AWARE_CREW) >= PEAK_DROP,
+            "…and {RETREAT_AWARE_CREW} clears it"
+        );
+    }
+
+    /// **A quarry that never stands owes NO crew, and `0` is the answer rather than a fudge.** At a
+    /// stay of zero the take is identically zero at every party size — no number of hands changes it
+    /// — so the crew *needed to achieve the take* is none. Asserted as that reasoning: the take at
+    /// the largest crew the function could have named is still nothing.
+    #[test]
+    fn a_quarry_that_never_stands_needs_no_crew_because_no_crew_can_take_it() {
+        for rate in [HARD_TO_CORNER_ENGAGE_RATE, EASY_ENGAGE_RATE] {
+            for dip in [NO_BUILD_UNDERWAY_DIP, HALF_CREW_BUILD_DIP] {
+                assert_eq!(
+                    hunt_engage_workers(ROOMY_CEILING, LIGHT_BODY, rate, dip, NOTHING_STANDS),
+                    0,
+                    "rate {rate} dip {dip}: nothing stands, so no crew achieves the take"
+                );
+            }
+        }
+        // The reasoning, not merely the return: a huge party still brings down nothing, so there is
+        // no crew size the count could honestly have named.
+        const AN_ABSURDLY_LARGE_PARTY: f32 = 1_000_000.0;
+        assert_eq!(
+            AN_ABSURDLY_LARGE_PARTY * EASY_ENGAGE_RATE * NOTHING_STANDS,
+            0.0,
+            "the premise: at stay 0 the take is zero however many hands are sent"
+        );
+        // …and the haul term still speaks, so the `max()` has not been switched off.
+        assert_eq!(
+            hunt_take_workers(
+                ROOMY_CEILING,
+                LIGHT_BODY,
+                HUNTER_CARRY,
+                EASY_ENGAGE_RATE,
+                NO_BUILD_UNDERWAY_DIP,
+                NOTHING_STANDS,
+            ),
+            hunt_haul_workers(ROOMY_CEILING, LIGHT_BODY, HUNTER_CARRY),
+            "the take crew collapses to the haul term, it does not collapse to zero"
+        );
+    }
+
+    /// **Monotone in the retreat: a wary quarry never needs FEWER hands than a calm one** at the same
+    /// reach. Without this the crew could be *any* function of the stay and still pass the boar case;
+    /// the direction is what makes it a model rather than a fitted number.
+    #[test]
+    fn a_warier_quarry_never_needs_fewer_hands() {
+        // Descending stay = ascending wariness. `NOTHING_STANDS` is excluded deliberately: it is the
+        // one rung where the crew drops to `0`, and it does so because the take drops to `0` with it.
+        const DESCENDING_STAY: [f32; 5] = [1.0, 0.9, 0.75, 0.4, 0.15];
+        for rate in [HARD_TO_CORNER_ENGAGE_RATE, EASY_ENGAGE_RATE] {
+            let mut previous = 0;
+            for stay in DESCENDING_STAY {
+                let crew = hunt_engage_workers(
+                    ROOMY_CEILING,
+                    LIGHT_BODY,
+                    rate,
+                    NO_BUILD_UNDERWAY_DIP,
+                    stay,
+                );
+                assert!(
+                    crew >= previous,
+                    "rate {rate}: a quarry keeping {stay} needs {crew} hands, fewer than the calmer \
+                     quarry's {previous}"
+                );
+                previous = crew;
+            }
+            // Liveness: the sweep must actually climb, or a constant would pass it.
+            assert!(
+                previous
+                    > hunt_engage_workers(
+                        ROOMY_CEILING,
+                        LIGHT_BODY,
+                        rate,
+                        NO_BUILD_UNDERWAY_DIP,
+                        NOTHING_BREAKS_OFF
+                    ),
+                "rate {rate}: the wariest rung must cost strictly more than the calmest"
+            );
+        }
     }
 
     /// A zero deadband restores the raw stateless behaviour (the flicker) — the lever genuinely

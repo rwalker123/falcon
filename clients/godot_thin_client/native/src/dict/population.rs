@@ -237,6 +237,17 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = entry.insert("attack_max_body_mass", row.attackMaxBodyMass() as f64);
             let _ = entry.insert("dispersion", row.dispersion() as f64);
             let _ = entry.insert("exposure", row.exposure() as f64);
+            // **THE PEN AND THE VANTAGE RIDE PER KIT TOO.** They were absent from this row until the
+            // wire carried them, so a reader fell back to the ROSTER's FRESH tier for exactly these
+            // two — a pen compose sheet quoting 40/keeper against a sim collecting 12, and a Scout
+            // card quoting 2 tiles of sight against a reveal at 1. The band's flat
+            // `pen_carry_per_worker_biomass` / `scout_vantage_range` below answer a DIFFERENT
+            // question (this band at its JOB DEFAULT); these answer for the kit under the cursor.
+            let _ = entry.insert(
+                "pen_carry_per_worker_biomass",
+                row.penCarryPerWorkerBiomass() as f64,
+            );
+            let _ = entry.insert("scout_vantage_range", row.scoutVantageRange() as f64);
             kit_tiers.push(&entry.to_variant());
         }
     }
@@ -253,12 +264,34 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "forage_carry_per_worker_biomass",
         cohort.forageCarryPerWorkerBiomass() as f64,
     );
-    // **THE KIT THE THREE TIERS ABOVE ARE RESOLVED THROUGH** (`docs/plan_denial_raid.md`). For an
+    // The three tiers the EXPANDED ROSTER added — husbandry gear, wayfinding gear and clubs — each
+    // published per band for the first time here. Same shape and the same cliff as the three above:
+    // `pen_carry_per_worker_biomass` is a pen keeper's collection rate and is NOT the sled's
+    // `hunt_carry_per_worker_biomass`; `scout_vantage_range` is how far each posted vantage SEES
+    // (how far they are posted is not a kit axis); `warrior_attack` is the defending contingent's
+    // own `attack` and is NOT `hunter_attack` — a band fights raids with clubs and hunts with
+    // spears, so the two are different numbers on the same band.
+    let _ = dict.insert(
+        "pen_carry_per_worker_biomass",
+        cohort.penCarryPerWorkerBiomass() as f64,
+    );
+    let _ = dict.insert("scout_vantage_range", cohort.scoutVantageRange() as f64);
+    let _ = dict.insert("warrior_attack", cohort.warriorAttack() as f64);
+    // **THE KIT THE HUNT TIERS ABOVE ARE RESOLVED THROUGH** (`docs/plan_denial_raid.md`). For an
     // IN-FLIGHT PARTY it is the kit it was SENT OUT WITH, decided at launch and carried for the
     // party's whole life — the drawer's answer to "what did I send them with?", and the tier the
-    // party really fights and hauls at. For a RESIDENT BAND it is the JOB'S DEFAULT, because a band
-    // has one kit per assignment and this row is per cohort; the per-crew truth is the labor
-    // assignment's own `kit_id` beside that row's yields. Never empty on the wire.
+    // party really fights and hauls at, every tier on the row included. For a RESIDENT BAND it is
+    // the HUNT JOB'S DEFAULT, because a band has one kit per assignment and this row is per cohort;
+    // the per-crew truth is the labor assignment's own `kit_id` beside that row's yields.
+    //
+    // **On a resident band it answers for the HUNT tiers only** — `hunter_attack`,
+    // `hunt_carry_per_worker_biomass` and `pen_carry_per_worker_biomass` (a pen is worked from a
+    // Hunt row). `forage_carry_per_worker_biomass`, `scout_vantage_range` and `warrior_attack` each
+    // resolve through their OWN job's default, which rides the wire as
+    // `default_forage_kit_id` / `default_scout_kit_id` / `default_warrior_kit_id`. Rendering any of
+    // those three against this id quotes the wrong kit's tier.
+    //
+    // Never empty on the wire.
     let _ = dict.insert("kit_id", cohort.kitId().unwrap_or(""));
     // Data-driven settlement stage (id/label/icon are opaque pass-through strings resolved
     // by the sim from `settlement_stage_config.json`). Missing/pre-stage snapshots yield

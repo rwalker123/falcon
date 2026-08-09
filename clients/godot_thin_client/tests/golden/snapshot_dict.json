@@ -249,6 +249,8 @@
   ],
   "default_forage_kit_id": "default_forage_kit_id",
   "default_hunt_kit_id": "default_hunt_kit_id",
+  "default_scout_kit_id": "default_scout_kit_id",
+  "default_warrior_kit_id": "default_warrior_kit_id",
   "demographics": [
     {
       "children": 133,
@@ -658,6 +660,7 @@
       "corral_trade": 67.93,
       "corral_yield": 50.880001,
       "corralled": true,
+      "default_kit_id": "herds[0].default_kit_id",
       "defense": 77.480003,
       "domestication": 25.139999,
       "durability": 52.57,
@@ -718,6 +721,7 @@
       "corral_trade": 7.57,
       "corral_yield": 35.5,
       "corralled": true,
+      "default_kit_id": "herds[1].default_kit_id",
       "defense": 11.55,
       "domestication": 102.790001,
       "durability": 53.200001,
@@ -917,7 +921,9 @@
       "jobs": [
         "kits[0].jobs[0]",
         "kits[0].jobs[1]"
-      ]
+      ],
+      "pen_carry_per_worker_biomass": 94.230003,
+      "scout_vantage_range": 93.739998
     },
     {
       "attack": 15.85,
@@ -936,7 +942,9 @@
       "jobs": [
         "kits[1].jobs[0]",
         "kits[1].jobs[1]"
-      ]
+      ],
+      "pen_carry_per_worker_biomass": 86.349998,
+      "scout_vantage_range": 48.380001
     }
   ],
   "orders": [],
@@ -1424,7 +1432,9 @@
           "exposure": 89.910004,
           "forage_carry_per_worker_biomass": 42.849998,
           "hunt_carry_per_worker_biomass": 73.699997,
-          "kit_id": "big_game"
+          "kit_id": "big_game",
+          "pen_carry_per_worker_biomass": 89.699997,
+          "scout_vantage_range": 46.830002
         },
         {
           "attack": 61.849998,
@@ -1434,7 +1444,9 @@
           "exposure": 39.16,
           "forage_carry_per_worker_biomass": 20.09,
           "hunt_carry_per_worker_biomass": 82.440002,
-          "kit_id": "trapping"
+          "kit_id": "trapping",
+          "pen_carry_per_worker_biomass": 69.040001,
+          "scout_vantage_range": 12.69
         },
         {
           "attack": 51.32,
@@ -1444,7 +1456,9 @@
           "exposure": 59.209999,
           "forage_carry_per_worker_biomass": 82.540001,
           "hunt_carry_per_worker_biomass": 23.040001,
-          "kit_id": "gathering"
+          "kit_id": "gathering",
+          "pen_carry_per_worker_biomass": 103.190002,
+          "scout_vantage_range": 107.400002
         },
         {
           "attack": 20.6,
@@ -1454,7 +1468,9 @@
           "exposure": 28.950001,
           "forage_carry_per_worker_biomass": 75.239998,
           "hunt_carry_per_worker_biomass": 0.8,
-          "kit_id": "none"
+          "kit_id": "none",
+          "pen_carry_per_worker_biomass": 2.04,
+          "scout_vantage_range": 20.26
         }
       ],
       "knowledge_fragments": [
@@ -1549,11 +1565,13 @@
       "morale_terrain": 0.000096,
       "morale_unrest": 0.000088,
       "output_multiplier": 0.000001,
+      "pen_carry_per_worker_biomass": 24.940001,
       "pen_feed_upkeep": 5.23,
       "pending_reveal_count": 2,
       "raid_forfeit": 89.769997,
       "raid_radius": 51,
       "scout_reveal_radius": 65,
+      "scout_vantage_range": 44.77,
       "settlement_stage_icon": "populations[0].settlement_stage.icon",
       "settlement_stage_id": "populations[0].settlement_stage.id",
       "settlement_stage_label": "populations[0].settlement_stage.label",
@@ -1566,6 +1584,7 @@
       "travel_target_x": 79,
       "travel_target_y": 90,
       "turns_of_food": 62.830002,
+      "warrior_attack": 62.459999,
       "work_range": 137,
       "working_age": 87
     },
@@ -1652,7 +1671,9 @@
           "exposure": 69.050003,
           "forage_carry_per_worker_biomass": 13.06,
           "hunt_carry_per_worker_biomass": 10.58,
-          "kit_id": "big_game"
+          "kit_id": "big_game",
+          "pen_carry_per_worker_biomass": 5.64,
+          "scout_vantage_range": 9.84
         },
         {
           "attack": 39.16,
@@ -1662,7 +1683,9 @@
           "exposure": 70.529999,
           "forage_carry_per_worker_biomass": 51.84,
           "hunt_carry_per_worker_biomass": 32.560001,
-          "kit_id": "trapping"
+          "kit_id": "trapping",
+          "pen_carry_per_worker_biomass": 74.610001,
+          "scout_vantage_range": 44.200001
         },
         {
           "attack": 57.23,
@@ -1672,7 +1695,9 @@
           "exposure": 10.98,
           "forage_carry_per_worker_biomass": 111.449997,
           "hunt_carry_per_worker_biomass": 89.0,
-          "kit_id": "gathering"
+          "kit_id": "gathering",
+          "pen_carry_per_worker_biomass": 49.759998,
+          "scout_vantage_range": 95.129997
         },
         {
           "attack": 48.34,
@@ -1682,7 +1707,9 @@
           "exposure": 102.290001,
           "forage_carry_per_worker_biomass": 13.81,
           "hunt_carry_per_worker_biomass": 29.91,
-          "kit_id": "none"
+          "kit_id": "none",
+          "pen_carry_per_worker_biomass": 37.110001,
+          "scout_vantage_range": 42.950001
         }
       ],
       "knowledge_fragments": [
@@ -1777,11 +1804,13 @@
       "morale_terrain": 0.000157,
       "morale_unrest": 0.000139,
       "output_multiplier": 0.000118,
+      "pen_carry_per_worker_biomass": 4.73,
       "pen_feed_upkeep": 77.650002,
       "pending_reveal_count": 2,
       "raid_forfeit": 69.870003,
       "raid_radius": 80,
       "scout_reveal_radius": 130,
+      "scout_vantage_range": 23.389999,
       "settlement_stage_icon": "populations[1].settlement_stage.icon",
       "settlement_stage_id": "populations[1].settlement_stage.id",
       "settlement_stage_label": "populations[1].settlement_stage.label",
@@ -1794,6 +1823,7 @@
       "travel_target_x": 128,
       "travel_target_y": 117,
       "turns_of_food": 103.459999,
+      "warrior_attack": 96.199997,
       "work_range": 176,
       "working_age": 100
     }

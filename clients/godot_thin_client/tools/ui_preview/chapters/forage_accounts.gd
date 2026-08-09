@@ -675,7 +675,8 @@ func run(harness) -> void:
 	h._assert_hud("a finished rung's verb dips no crew — HOLD divides by the wire's own throughput (%d)"
 		% stale_hold,
 		stale_hold == SourceForecast.crew_to_hold(stale_samples, ForageFx.STALE_VERB_FLOOR, stale_carry,
-			PLANT_NO_BODY, SourceForecast.NO_ENGAGEMENT_STAGE, SourceForecast.NO_BUILD_DIP))
+			PLANT_NO_BODY, SourceForecast.NO_ENGAGEMENT_STAGE, SourceForecast.NO_BUILD_DIP,
+			SourceForecast.STAY_FRACTION_NONE_BREAKS_OFF))
 	h._assert_hud("…and so does CLEAR, the other half of the same division",
 		Readout.crew_target_count(stale_sheet, HudWidgets.CREW_TARGET_CLEAR)
 			== SourceForecast.crew_to_clear(SourceForecast.escapement_room(stale_tile,

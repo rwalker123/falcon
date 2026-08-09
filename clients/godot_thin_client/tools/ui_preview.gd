@@ -421,7 +421,8 @@ func _ready() -> void:
 	# sheet's Kit picker is built from it, so it is prologue rather than chapter state — a roster
 	# seeded per arc would give one chapter's sheets a picker and the next chapter's none.
 	_hud.update_kit_roster(BandFx.kit_roster_fixture(),
-		BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE)
+		BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE,
+		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR)
 	# **THE CANNED FORECAST ANSWERER — prologue, because a raid sheet without it renders no numbers
 	# at all.** The pre-launch forecasts are a request/response on the command socket now, and there is
 	# no server here; `ForecastQuery` would sit pending forever and every raid readout would be its

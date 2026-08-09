@@ -370,6 +370,19 @@ pub struct HerdTelemetryState {
     /// the honest reading for a pen and for the whole plant web.
     #[serde(default = "multiplier_neutral")]
     pub stay_fraction: f32,
+    /// **The kit this QUARRY wants** — the roster id the hunt compose sheet opens on for this herd,
+    /// and the one `assign_labor … hunt <herd> <n>` resolves when the player names none.
+    ///
+    /// **Derived, never authored.** The sim scores every hunt-job kit's per-hunter-turn take against
+    /// this species and publishes the winner, but only when it beats the hunt job's default by
+    /// `equipment.json`'s `quarry_default_kit_margin`; otherwise the job default stands. Wear does
+    /// not enter the score, so this is a per-world constant per herd and cannot reshuffle as a band's
+    /// spears wear down.
+    ///
+    /// Empty only for a herd whose species the roster cannot resolve — the same "fall back to
+    /// `SubsistenceSection::default_hunt_kit_id`" reading every other unresolved row gives.
+    #[serde(default)]
+    pub default_kit_id: String,
 }
 
 impl Default for HerdTelemetryState {
@@ -438,8 +451,9 @@ impl Default for HerdTelemetryState {
             // (a pen, the whole plant web); a `0.0` default would read as "every animal flees" and
             // silently zero a take.
             stay_fraction: multiplier_neutral(),
-            // A herd nothing has described quotes no party — the same "no viable party" reading the
-            // capture publishes for an unraidable one.
+            // A herd nothing has described names no kit — the same "fall back to the hunt job's
+            // default" reading the capture publishes for a species the roster cannot resolve.
+            default_kit_id: String::new(),
         }
     }
 }
@@ -810,10 +824,14 @@ pub struct FoodModuleState {
 pub struct KitOptionState {
     pub id: String,
     pub display_name: String,
-    /// Which verbs this kit may be sent on: `"hunt"` and/or `"forage"`. A kit named for a job outside
-    /// this list is a **command failure**, never a silent fall back to the default, so a picker must
-    /// filter by the job it is composing. No kit lists the band-wide roles — they consume no
-    /// component and have no kit axis.
+    /// Which verbs this kit may be sent on — any of `"hunt"`, `"forage"`, `"scout"`, `"warrior"`. A
+    /// kit named for a job outside this list is a **command failure**, never a silent fall back to
+    /// the default, so a picker must filter by the job it is composing.
+    ///
+    /// **The band-wide roles have a kit axis now.** Scout and Warrior used to list no kit on the
+    /// grounds that they consumed no component; the expanded roster gave them one each
+    /// (`wayfinding` → `["scout"]`, `warrior` → `["warrior"]`), and `none` lists all four, so going
+    /// bare is a real selection on every role rather than the only reading.
     pub jobs: Vec<String>,
     /// A fresh-kit hunter's combat `attack` under this kit — what the gate
     /// `max(0, attack − defense)` compares against a herd's `defense`. **Below a species' defense
@@ -825,6 +843,15 @@ pub struct KitOptionState {
     /// Per-gatherer throughput (biomass/turn, **before** the tile's seasonal weight) under this kit —
     /// the baskets' tier.
     pub forage_carry_per_worker_biomass: f32,
+    /// Per-keeper **PEN** collection rate (biomass/turn) under this kit — the husbandry gear's tier.
+    /// **Not [`Self::hunt_carry_per_worker_biomass`]**: a sled drags a carcass in off the range and
+    /// a pen stands at the camp, so a kit carrying only a sled collects a pen at the bare rate.
+    #[serde(default)]
+    pub pen_carry_per_worker_biomass: f32,
+    /// The sight range each posted scout vantage reveals at under this kit — the wayfinding gear's
+    /// tier. How far the vantages are *posted* is not a kit axis.
+    #[serde(default)]
+    pub scout_vantage_range: f32,
     /// **The range of quarry [`Self::attack`] applies to**, by body mass. `0` on either end means
     /// unbounded. Outside the range the kit grants no attack at all and the party falls back to the
     /// bare hand's, so the ordinary `max(0, attack − defense)` gate refuses the hunt.
@@ -876,6 +903,8 @@ impl Default for KitOptionState {
             attack: 0.0,
             hunt_carry_per_worker_biomass: 0.0,
             forage_carry_per_worker_biomass: 0.0,
+            pen_carry_per_worker_biomass: 0.0,
+            scout_vantage_range: 0.0,
             // `0` is the *sentinel* on these two — "unbounded", the schema's own default and what
             // every weapon but the passive device ships. Not a multiplier, so not neutral-at-one.
             attack_min_body_mass: 0.0,

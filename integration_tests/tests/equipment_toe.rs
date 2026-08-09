@@ -259,6 +259,12 @@ fn kit_of(app: &bevy::prelude::App, band: Entity) -> BandEquipment {
 const SPEARS: &str = "spears";
 const SLED: &str = "sled";
 const BASKETS: &str = "baskets";
+/// The scouting TOE — the one item a band that neither hunts nor gathers can still spend.
+const WAYFINDING: &str = "wayfinding";
+/// The warrior TOE.
+const CLUBS: &str = "clubs";
+/// The husbandry TOE — hurdles, halters, vessels.
+const HUSBANDRY_GEAR: &str = "husbandry_gear";
 
 /// A ledger with one item worn exactly to its limit — the first spent state, since an item is
 /// equipped while its wear is *strictly below* `starting_durability`.
@@ -782,11 +788,27 @@ fn wear_is_charged_for_kills_not_for_turns_elapsed() {
         hunted.wear_of(SPEARS) > 0.0 && hunted.wear_of(SLED) > 0.0,
         "a hunting band must wear its spears AND its sled over {RUN_TURNS} turns (got {hunted:?})"
     );
-    // The discriminating half: identical turn count, zero kills, zero wear — on ALL THREE kits.
-    assert_eq!(
-        scouted,
-        BandEquipment::default(),
-        "a band that killed and gathered nothing for {RUN_TURNS} turns must lose no durability at all"
+    // The discriminating half: identical turn count, zero kills, zero wear on every item whose
+    // quantum is a KILL or a BIOMASS.
+    //
+    // **It is no longer `BandEquipment::default()`, and what changed is honest rather than a
+    // loosening.** A scouting band now carries wayfinding gear, whose quantum is *ground revealed
+    // for the first time* — so a band that is out scouting really is using something up, and a
+    // ledger that stayed empty would mean the scouting kit was inert. What §1.2 forbids is a TURN
+    // clock, and this asserts exactly that: the three items a hunt and a gather wear are untouched
+    // over the same span, and the one item that moved moved on work that was actually done.
+    for item in [SPEARS, SLED, BASKETS] {
+        assert_eq!(
+            scouted.wear_of(item),
+            0.0,
+            "a band that killed and gathered nothing for {RUN_TURNS} turns must not wear {item} \
+             (got {scouted:?})"
+        );
+    }
+    assert!(
+        scouted.wear_of(WAYFINDING) > 0.0,
+        "...and its wayfinding gear must actually be paying for the ground it uncovered, or the \
+         scouting kit is inert and the clause above asserts nothing (got {scouted:?})"
     );
 
     // ...and the hunting kit's wear is an exact whole number of kills, never a per-turn drip.
@@ -1009,6 +1031,13 @@ fn unequipped_carry(config: &EquipmentConfig, item: &str) -> f32 {
     } else {
         EquipmentStat::ForageCarry
     };
+    unequipped_of(config, item, stat)
+}
+
+/// The **unequipped** value an item declares for a NAMED stat — the general form of the two-tier
+/// read above, and the one the roster's newer stats use. Panics if the item declares the other tier,
+/// so a test cannot silently assert against the wrong side of a cliff.
+fn unequipped_of(config: &EquipmentConfig, item: &str, stat: EquipmentStat) -> f32 {
     match config.item(item).and_then(|def| def.effect(stat)) {
         Some(EffectTier::Unequipped(value)) => value,
         other => panic!("'{item}' must declare an unequipped {stat:?}, got {other:?}"),
@@ -1041,4 +1070,208 @@ fn worn(entries: &[(&str, f32)]) -> BandEquipment {
         ledger.restore_wear(item, *wear);
     }
     ledger
+}
+
+// ---------------------------------------------------------------------------------------------
+// The expanded roster: scouting, warrior and husbandry (issue #492)
+// ---------------------------------------------------------------------------------------------
+
+/// **THE WAYFINDING KIT WEARS ON GROUND, NOT ON TURNS — and this is the half that proves the
+/// quantum is not a clock in disguise.**
+///
+/// A band's own centre and its worked sources reveal fog too, and a parked band re-sees the same
+/// ring every single turn. If `WearQuantum::TileRevealed` had been charged for *tiles seen* — or for
+/// any reveal rather than a scout vantage's — a camp that never staffed a scout would still spend
+/// wayfinding gear simply by existing, which is exactly the "an idle march costs the same as a
+/// slaughter" failure `docs/plan_denial_raid.md` §1.2 forbids.
+///
+/// So: same world, same turn count, same fog being revealed by the band itself — **the difference is
+/// solely whether anyone is staffing Scout**. Paired with the liveness half in
+/// `wear_is_charged_for_kills_not_for_turns_elapsed`, which asserts the scouting band's gear really
+/// does run down, so this is not the trivial truth about a dead feature.
+#[test]
+fn only_a_staffed_scout_wears_the_wayfinding_kit() {
+    let (mut scouting, scouting_band) = scouting_world(BandEquipment::default());
+    // The hunting fixture staffs Hunt and nothing else, so its Scout head-count is zero and no
+    // vantage is ever posted — while its band centre and its worked herd tile reveal fog every turn.
+    let (mut unscouted, unscouted_band) = hunting_world(BandEquipment::default());
+    for _ in 0..RUN_TURNS {
+        run_turn(&mut scouting);
+        run_turn(&mut unscouted);
+    }
+
+    assert!(
+        kit_of(&scouting, scouting_band).wear_of(WAYFINDING) > 0.0,
+        "liveness: a band staffing Scout must actually spend its wayfinding gear over {RUN_TURNS} turns"
+    );
+    assert_eq!(
+        kit_of(&unscouted, unscouted_band).wear_of(WAYFINDING),
+        0.0,
+        "a band with nobody on Scout reveals fog from its own centre and its worked sources for \
+         {RUN_TURNS} turns and must still spend NO wayfinding gear — the quantum is a scout's \
+         first sightings, not a turn"
+    );
+}
+
+/// **THE SCOUTING KIT DECIDES WHAT A VANTAGE MAKES OUT**, and running it dry steps the band down to
+/// the item's own unequipped tier rather than blinding it.
+///
+/// The two tiers are `labor_config.json`'s `scout.vantage_range` (equipped — the shipped game has
+/// always run kitted, so that number keeps its one home) and `wayfinding`'s declared unequipped
+/// value. Asserted through the resolver rather than against literals, so a retune of either moves
+/// the test with it; the ordering and the liveness of both sides are what is actually pinned.
+#[test]
+fn the_wayfinding_tier_steps_down_when_the_kit_runs_dry() {
+    let equipment = equipment();
+    let equipped_range = LaborConfig::builtin().scout.vantage_range as f32;
+    let kit = equipment
+        .kit("wayfinding")
+        .expect("the shipped roster carries the wayfinding kit");
+
+    let fresh = equipment.scout_vantage_range(equipped_range, &kit, &BandEquipment::default());
+    let spent = equipment.scout_vantage_range(
+        equipped_range,
+        &kit,
+        &worn(&[(
+            WAYFINDING,
+            equipment.item(WAYFINDING).unwrap().starting_durability,
+        )]),
+    );
+
+    assert_eq!(
+        fresh, equipped_range,
+        "a fresh wayfinding kit posts vantages at labor_config's own range, which is where that \
+         number lives"
+    );
+    assert_eq!(
+        spent,
+        unequipped_of(&equipment, WAYFINDING, EquipmentStat::ScoutVantageRange),
+        "a dry wayfinding kit steps exactly onto the item's declared unequipped range"
+    );
+    assert!(
+        spent < fresh,
+        "...and that is a step DOWN: {spent} must be under {fresh}, or the kit buys nothing"
+    );
+    assert!(
+        spent > 0.0,
+        "...but never to blindness — a scout with no gear still sees their own tile's ring"
+    );
+}
+
+/// **A PEN IS COLLECTED ON THE HUSBANDRY GEAR'S TIER, NOT THE SLED'S**, and the whole point of the
+/// kit is that bringing the wrong tool costs you.
+///
+/// A sled drags a carcass in off the range; a pen stands at the camp, and what bounds a slaughter
+/// there is handling gear. So `EquipmentStat::PenCarry` is a separate stat, the equipped side stays
+/// `labor_config.hunt.per_worker_biomass_capacity` (the rate a pen has always collected at, keeping
+/// its one home), and a crew that corralled its herd and stayed on the big-game kit collects at the
+/// bare rate.
+#[test]
+fn only_the_husbandry_kit_collects_a_pen_at_the_shipped_rate() {
+    let equipment = equipment();
+    let equipped_rate = LaborConfig::builtin().hunt.per_worker_biomass_capacity;
+    let fresh = BandEquipment::default();
+
+    let husbandry = equipment
+        .kit("husbandry")
+        .expect("the shipped roster carries the husbandry kit");
+    let big_game = equipment
+        .kit("big_game")
+        .expect("the shipped roster carries the big-game kit");
+
+    assert_eq!(
+        equipment.pen_per_worker_biomass_capacity(equipped_rate, &husbandry, &fresh),
+        equipped_rate,
+        "a keeper with handling gear collects a pen at exactly the rate a pen has always collected at"
+    );
+    assert_eq!(
+        equipment.pen_per_worker_biomass_capacity(equipped_rate, &big_game, &fresh),
+        unequipped_of(&equipment, HUSBANDRY_GEAR, EquipmentStat::PenCarry),
+        "a crew that brought spears and a sled to a pen collects at the bare rate — the sled is for \
+         the range, and this is the decision the husbandry kit exists to make"
+    );
+    // ...and the two carry stats genuinely cannot reach each other: the husbandry kit still carries
+    // a sled (a keeper hauls the meat home), so this is the discriminating direction.
+    assert_eq!(
+        equipment.hunt_per_worker_biomass_capacity(equipped_rate, &husbandry, &fresh),
+        equipped_rate,
+        "the husbandry kit carries a sled too, so its RANGE haul is untouched"
+    );
+    assert!(
+        equipment.pen_per_worker_biomass_capacity(equipped_rate, &big_game, &fresh) < equipped_rate,
+        "liveness: the bare pen rate must actually be lower, or both branches assert the same thing"
+    );
+}
+
+/// **THE WARRIOR KIT ARMS THE CAMP, through the SAME `attack` stat and the same seam a spear does.**
+///
+/// A weapon is a weapon whichever role carries it — what keeps a club out of a hunt and a spear out
+/// of a raid is the kit's `jobs` list, not a second stat. The unequipped side is `creatures.json`'s
+/// `person.combat.attack`, exactly as it is for spears, so a band whose clubs are gone defends with
+/// its hands.
+#[test]
+fn the_warrior_kit_swaps_the_defenders_attack_tier() {
+    let equipment = equipment();
+    let bare = CreaturesConfig::builtin().person();
+    let fresh = BandEquipment::default();
+    let warrior = equipment
+        .kit("warrior")
+        .expect("the shipped roster carries the warrior kit");
+
+    let armed = equipment.warrior_profile(bare, &warrior, &fresh);
+    let spent = equipment.warrior_profile(
+        bare,
+        &warrior,
+        &worn(&[(CLUBS, equipment.item(CLUBS).unwrap().starting_durability)]),
+    );
+
+    assert!(
+        armed.attack > bare.attack,
+        "clubs must beat the bare hand's {} (got {})",
+        bare.attack,
+        armed.attack
+    );
+    assert_eq!(
+        spent.attack, bare.attack,
+        "and a dry warrior kit steps exactly onto the person roster's own attack, not an \
+         interpolated value"
+    );
+    // The rest of the profile is untouched — a weapon is a weapon, and armour is not this item.
+    assert_eq!(armed.defense, bare.defense);
+    assert_eq!(armed.durability, bare.durability);
+}
+
+/// **EVERY NEW KIT CARRIES A QUANTUM THAT IS NOT A TURN**, and each of the three is its own.
+///
+/// The type already forbids a `turn` variant, so what this pins is the thing a config edit can still
+/// get wrong: two kits sharing one quantum, which would let a band that only scouts blunt gear it
+/// never touched. Read off the shipped config, so authoring a fourth kit onto an existing quantum
+/// fails here rather than in play.
+#[test]
+fn each_new_kit_wears_on_its_own_use_quantum() {
+    let equipment = equipment();
+    let quantum = |item: &str| {
+        equipment
+            .item(item)
+            .unwrap_or_else(|| panic!("the shipped roster must carry '{item}'"))
+            .wear
+            .per
+    };
+    assert_eq!(quantum(WAYFINDING), core_sim::WearQuantum::TileRevealed);
+    assert_eq!(quantum(CLUBS), core_sim::WearQuantum::Fight);
+    assert_eq!(
+        quantum(HUSBANDRY_GEAR),
+        core_sim::WearQuantum::BiomassCollected
+    );
+    // ...and none of the three shares a quantum with the four that shipped before them.
+    for prior in [SPEARS, SLED, BASKETS] {
+        for new in [WAYFINDING, CLUBS, HUSBANDRY_GEAR] {
+            assert_ne!(
+                quantum(prior),
+                quantum(new),
+                "'{new}' must not be charged on '{prior}'s quantum — a band that only scouts would \
+                 blunt gear it never took out"
+            );
+        }
+    }
 }

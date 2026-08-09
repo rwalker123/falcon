@@ -535,11 +535,16 @@ static func build_field_key(text: String) -> Label:
 ## items and it marks the selected one itself — which is the behaviour `_fill_menu_popup` hand-rolls
 ## through `MENU_ENTRY_CHECKED`.
 ##
-## `entries` is an ordered array of `{label, on_pick}` — `build_section_menu`'s contract minus
-## `MENU_ENTRY_CHECKED`, which a native selector OWNS: `selected_index` is both the entry the face
-## opens on and the one the popup marks, and passing a second, hand-rolled mark would let the two
-## disagree. (No `MENU_ENTRY_ICON` either: neither caller has per-entry art, and repeating ONE glyph
-## down every row is noise rather than a distinction.)
+## `entries` is an ordered array of `{label, disabled, tooltip, on_pick}` — `build_section_menu`'s
+## contract minus `MENU_ENTRY_CHECKED`, which a native selector OWNS: `selected_index` is both the
+## entry the face opens on and the one the popup marks, and passing a second, hand-rolled mark would
+## let the two disagree. (No `MENU_ENTRY_ICON` either: neither caller has per-entry art, and repeating
+## ONE glyph down every row is noise rather than a distinction.)
+##
+## **`disabled` is the SAME key `_fill_menu_popup` already honours**, so the two menu families state
+## an unavailable entry one way. It is an *unpressable row that is still read*, never a hidden one:
+## `item_selected` is not emitted for it, and a caller that greys an entry is expected to say why —
+## the kit picker puts the reason in the entry's own `label` and repeats it in `tooltip`.
 ##
 ## **`face` OVERRIDES the closed face, and the two are deliberately not the same sentence.** A list
 ## entry may carry a marker that belongs only in the list (the kit roster tags its job default) and
@@ -566,7 +571,12 @@ static func build_option_picker(entries: Array, selected_index: int, face: Strin
         if not (entry_variant is Dictionary):
             continue
         var entry: Dictionary = entry_variant
-        button.add_item(String(entry.get("label", "")), picks.size())
+        var index := picks.size()
+        button.add_item(String(entry.get("label", "")), index)
+        button.set_item_disabled(index, bool(entry.get("disabled", false)))
+        var entry_tooltip := String(entry.get("tooltip", ""))
+        if entry_tooltip != "":
+            button.set_item_tooltip(index, entry_tooltip)
         var pick: Variant = entry.get("on_pick", null)
         picks.append(pick if pick is Callable else Callable())
     if selected_index >= 0 and selected_index < picks.size():

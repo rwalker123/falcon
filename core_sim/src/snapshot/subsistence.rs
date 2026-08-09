@@ -1,5 +1,8 @@
 use super::*;
-use crate::fauna::{herd_capacity, herd_ecology, net_biomass_delta, reseeding_logistic_regrowth};
+use crate::fauna::{
+    herd_capacity, herd_ecology, net_biomass_delta, reseeding_logistic_regrowth,
+    NO_RETREAT_STAGE_STAY,
+};
 use crate::forage::{
     field_fodder, field_trade_goods, forage_per_worker_biomass, patch_ecology,
     patch_fodder_per_biomass, patch_neglect_grace_remaining, patch_provisions_per_biomass,
@@ -31,6 +34,13 @@ const NO_RUNG_CREW: u32 = 0;
 /// does not, so the seam converts once, here, and the schema documents `<= 0` as *unbounded* — the
 /// same reading `fauna::hunt_engage_workers` gives it.
 const NO_ENGAGEMENT_STAGE: f32 = 0.0;
+
+/// **The dispersion the wire's `stayFraction` is published at** — the neutral `1.0`, which leaves the
+/// species' own `wariness` untouched. The field is the *species* half of the retreat; the *party*
+/// half is the chosen kit's `KitOption.dispersion`, which the client multiplies in (schema:
+/// `effective = clamp(1 − (1 − stayFraction) × dispersion, 0, 1)`). Publishing a party-resolved value
+/// here would bake one band's kit into a per-herd row every band reads.
+const WIRE_NEUTRAL_DISPERSION: f32 = 1.0;
 
 /// The compact per-tile pasture-phase code the client reads off `TileState` (`GRAZE_PHASE_*`).
 /// A tile with **no patch** (a biome that carries no pasture: water, ice, bare rock) is
@@ -131,6 +141,24 @@ fn herd_regrowth_samples(herd: &Herd, fauna: &FaunaConfig) -> Vec<f32> {
         .collect()
 }
 
+/// **One quarry's quoted party** — the fight tier the herd row is priced with, and the roster id
+/// that says which kit it came from.
+///
+/// They travel together because they must agree: the published id names the kit the fight tier was
+/// resolved through, and a row quoting an attack from one kit beside an id naming another is the
+/// mis-pairing `equipment.md`'s per-job tier table exists to prevent.
+///
+/// **The sled tier that used to ride here went with the two pre-launch estimate tables** — they were
+/// its only readers, and `crate::forecast_query` answers a raid per band, per kit, per exact party
+/// and floor, on demand.
+#[derive(Debug, Clone)]
+pub(crate) struct QuotedParty {
+    /// The hunter profile and resolver tuning the herd's `hunt_forecast` resolves its fight with.
+    pub(crate) party: crate::fauna::HuntingParty,
+    /// The roster id of that kit, published verbatim on `default_kit_id`.
+    pub(crate) kit_id: String,
+}
+
 /// Display herd telemetry for the client, plus each herd's **pre-commit yield forecast**
 /// (`fauna::hunt_forecast` — the same ceiling/conversion helpers `hunt_take` pays with, so
 /// forecast == actual) and its **pre-launch expedition trip estimates**. All three need the herd's
@@ -160,22 +188,38 @@ pub(crate) struct HerdSnapshotInputs<'a> {
     /// the filter below is a no-op, which is the ONLY way to reveal hidden fauna: unseen herds never
     /// reach the wire, so no client render flag could put them back.
     pub(crate) fog_enabled: bool,
-    /// **The party this herd's per-worker YIELD row is priced for** — the hunter profile and the
-    /// base resolver tuning (`docs/plan_hunt_through_combat.md` §4), resolved at the **hunt job's
-    /// default kit**.
+    /// **The party this herd's per-worker YIELD row is priced for, resolved per SPECIES** — the
+    /// hunter profile and the resolver tuning (`docs/plan_hunt_through_combat.md` §4), at **that
+    /// quarry's own default kit** ([`crate::fauna::herd_default_hunt_kit`]).
     ///
     /// **It survived the estimate tables; it is not a leftover of them.** The two pre-launch tables
-    /// that used to be priced here are gone (the forecast query answers them per band, per kit, on
-    /// demand), but `hunt_forecast` still needs a party to resolve the fight that decides
+    /// that used to be priced here are gone (`crate::forecast_query` answers them per band, per kit,
+    /// on demand), but `hunt_forecast` still needs a party to resolve the fight that decides
     /// `per_worker_yield` / `per_worker_trade` / `corral_yield` / `corral_trade` — and those are
     /// facts about the **herd**, published once for every viewer, with no band to ask.
     ///
-    /// So this is still a default-kit quote and still band-agnostic. What changed is that nothing
-    /// pretends otherwise: the retired `hunt_trip_estimates_kit_id` / `denial_estimates_kit_id`
-    /// existed to *disclaim* a table quoted at a kit the player might not have picked, and a
-    /// disclaimer is what you publish when you cannot answer the question. A band's real,
-    /// kit-and-wear-resolved raid numbers now come from `crate::forecast_query`.
-    pub(crate) party: crate::fauna::HuntingParty,
+    /// The herd row therefore has no band to ask, but it *can* ask the **quarry**: it is still
+    /// exactly one party per herd, carrying the kit the compose sheet opens on rather than the hunt
+    /// job's blanket default, and it **publishes which** ([`HerdTelemetryState::default_kit_id`]).
+    ///
+    /// **Keyed by species DISPLAY name**, the same key `FaunaConfig::species_by_display` and the
+    /// herd's own `species` string use, and resolved once per species per capture — the default is
+    /// a pure function of quarry × roster, so a per-herd resolution would re-score the same roster
+    /// for every herd of the same animal.
+    pub(crate) parties: &'a HashMap<String, QuotedParty>,
+    /// **The PEN axis of that same table** — the identical per-species quote resolved for a herd
+    /// that is *corralled*, which is a fact about the herd rather than the species and so cannot
+    /// live in one map beside it.
+    ///
+    /// A pen is collected on [`crate::equipment_config::EquipmentStat::PenCarry`], so its default is
+    /// the kit that supplies it and not the range scorer's winner — see
+    /// [`crate::fauna::herd_default_hunt_kit`]. With no such kit on the roster this map holds the
+    /// *same* choice the range map does, and a penned herd reads exactly as it did before.
+    pub(crate) penned_parties: &'a HashMap<String, QuotedParty>,
+    /// **The party for a herd whose species the roster cannot resolve** — the hunt job's default,
+    /// resolved unbounded, which is the same fallback every other unresolved field on the row gives.
+    /// Answers for a penned herd too: with no species there is no row to quote either axis from.
+    pub(crate) fallback_party: &'a QuotedParty,
 }
 
 impl HerdSnapshotInputs<'_> {
@@ -217,7 +261,9 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
         labor,
         grid_size,
         wrap_horizontal,
-        party,
+        parties,
+        penned_parties,
+        fallback_party,
         ..
     } = inputs;
     let width = grid_size.x.max(1);
@@ -236,6 +282,19 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
         .map(|(entry, herd)| {
             // The species row backing this herd — resolved once for the raw combat components below.
             let species_def = fauna.species_by_display(&entry.species);
+            // **THIS HERD'S quoted party** — the kit the compose sheet opens on, memoized once per
+            // species per source axis by the caller. **A corralled herd reads the PEN table**: a
+            // pen is collected on `EquipmentStat::PenCarry` and only the handling gear supplies it,
+            // which no score against the *species* can say (`fauna::herd_default_hunt_kit`). A
+            // species the roster cannot resolve falls back to the hunt job's default, unbounded,
+            // like every other unresolved field here.
+            let axis = if herd.is_some_and(|herd| herd.is_corralled()) {
+                penned_parties
+            } else {
+                parties
+            };
+            let quoted = axis.get(&entry.species).unwrap_or(fallback_party);
+            let party = quoted.party;
             let forecast = herd
                 .map(|herd| {
                     hunt_forecast(
@@ -449,12 +508,16 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // how many counting hits a body takes. The client composes both — it already holds
                 // the band's own `hunterAttack` — so no "can this band win" answer is exported.
                 durability: species_def.map(|def| def.combat.durability).unwrap_or(0.0),
-                // **`1 − wariness`, the retreat as a term.** `1.0` for a species the roster cannot
-                // resolve — nothing breaks off — which is the same reading a pen and the plant web
-                // give and keeps an unresolved row from silently zeroing a take.
-                stay_fraction: species_def
-                    .map(|def| (1.0 - def.combat.wariness).clamp(0.0, 1.0))
-                    .unwrap_or(1.0),
+                // **`1 − wariness`, the retreat as a term** — through the sim's own
+                // [`crate::fauna::stay_fraction`] rather than re-spelled, so the wire and the crew
+                // /take sizing that divides by it cannot drift. Published at the **neutral
+                // dispersion**: the species half of the retreat, which the client composes with its
+                // chosen `KitOption.dispersion`. `1.0` for a species the roster cannot resolve —
+                // nothing breaks off — which is the same reading a pen and the plant web give and
+                // keeps an unresolved row from silently zeroing a take.
+                stay_fraction: species_def.map_or(NO_RETREAT_STAGE_STAY, |def| {
+                    crate::fauna::stay_fraction(def.combat.wariness, WIRE_NEUTRAL_DISPERSION)
+                }),
                 ferocity: species_def.map(|def| def.ferocity).unwrap_or(0.0),
                 aggression: species_def.map(|def| def.aggression).unwrap_or(0.0),
                 // Predators Phase 1a — the herd's prey-sensing radius, but ONLY for a carnivore
@@ -497,6 +560,10 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // the pair reads "nothing at risk" rather than a zero that means "shedding now".
                 has_neglect_grace: neglect_grace.is_some(),
                 neglect_grace_remaining: neglect_grace.unwrap_or(NO_NEGLECT_REMAINING),
+                // **The kit this quarry wants** — what the compose sheet opens on and what
+                // `assign_labor … hunt <herd> <n>` resolves with no `kit` token. Off the single
+                // `quoted` resolution above, so it names the kit the row's own tiers came from.
+                default_kit_id: quoted.kit_id.clone(),
             }
         })
         .collect()

@@ -252,6 +252,10 @@ pub(crate) struct PublishState {
     kits: Whole<Vec<KitOptionState>>,
     default_hunt_kit_id: Whole<String>,
     default_forage_kit_id: Whole<String>,
+    /// The two band-wide roles' defaults, diffed like the two above — per-world constants that
+    /// re-send only on a world rebuild.
+    default_scout_kit_id: Whole<String>,
+    default_warrior_kit_id: Whole<String>,
     /// The serialized TOE config the Workbench's designer pages print — a per-world constant like
     /// the roster above, and diffed for the same reason: it is the largest string on the section
     /// and nothing about it changes between world rebuilds.
@@ -615,6 +619,8 @@ struct SubsistenceParts {
     kits: Option<Vec<KitOptionState>>,
     default_hunt_kit_id: Option<String>,
     default_forage_kit_id: Option<String>,
+    default_scout_kit_id: Option<String>,
+    default_warrior_kit_id: Option<String>,
     equipment_config_json: Option<String>,
 }
 
@@ -627,6 +633,8 @@ fn diff_subsistence(
     kits: &mut Whole<Vec<KitOptionState>>,
     default_hunt_kit_id: &mut Whole<String>,
     default_forage_kit_id: &mut Whole<String>,
+    default_scout_kit_id: &mut Whole<String>,
+    default_warrior_kit_id: &mut Whole<String>,
     equipment_config_json: &mut Whole<String>,
     snapshot: &WorldSnapshot,
     write: Baseline,
@@ -640,6 +648,16 @@ fn diff_subsistence(
         default_forage_kit_id: diff_whole(
             default_forage_kit_id,
             &snapshot.default_forage_kit_id,
+            write,
+        ),
+        default_scout_kit_id: diff_whole(
+            default_scout_kit_id,
+            &snapshot.default_scout_kit_id,
+            write,
+        ),
+        default_warrior_kit_id: diff_whole(
+            default_warrior_kit_id,
+            &snapshot.default_warrior_kit_id,
             write,
         ),
         equipment_config_json: diff_whole(
@@ -802,6 +820,8 @@ impl PublishState {
             kits: Whole::default(),
             default_hunt_kit_id: Whole::default(),
             default_forage_kit_id: Whole::default(),
+            default_scout_kit_id: Whole::default(),
+            default_warrior_kit_id: Whole::default(),
             equipment_config_json: Whole::default(),
             history: VecDeque::new(),
         }
@@ -923,6 +943,8 @@ impl PublishState {
             kits,
             default_hunt_kit_id,
             default_forage_kit_id,
+            default_scout_kit_id,
+            default_warrior_kit_id,
             equipment_config_json,
             logistics,
             trade_links,
@@ -1032,6 +1054,8 @@ impl PublishState {
                         kits,
                         default_hunt_kit_id,
                         default_forage_kit_id,
+                        default_scout_kit_id,
+                        default_warrior_kit_id,
                         equipment_config_json,
                         captured,
                         write,
@@ -1116,6 +1140,8 @@ impl PublishState {
             kits: subsistence_parts.kits,
             default_hunt_kit_id: subsistence_parts.default_hunt_kit_id,
             default_forage_kit_id: subsistence_parts.default_forage_kit_id,
+            default_scout_kit_id: subsistence_parts.default_scout_kit_id,
+            default_warrior_kit_id: subsistence_parts.default_warrior_kit_id,
             equipment_config_json: subsistence_parts.equipment_config_json,
             logistics: people_parts.logistics,
             removed_logistics: people_parts.removed_logistics,
@@ -1322,6 +1348,10 @@ impl PublishState {
             .reset(entry.snapshot.default_hunt_kit_id.clone());
         self.default_forage_kit_id
             .reset(entry.snapshot.default_forage_kit_id.clone());
+        self.default_scout_kit_id
+            .reset(entry.snapshot.default_scout_kit_id.clone());
+        self.default_warrior_kit_id
+            .reset(entry.snapshot.default_warrior_kit_id.clone());
         self.equipment_config_json
             .reset(entry.snapshot.equipment_config_json.clone());
         self.great_discoveries.reset(
@@ -1480,6 +1510,8 @@ impl PublishState {
             kits: None,
             default_hunt_kit_id: None,
             default_forage_kit_id: None,
+            default_scout_kit_id: None,
+            default_warrior_kit_id: None,
             equipment_config_json: None,
             faction_inventory: None,
             sedentarization: None,
@@ -1613,6 +1645,8 @@ impl PublishState {
             kits: None,
             default_hunt_kit_id: None,
             default_forage_kit_id: None,
+            default_scout_kit_id: None,
+            default_warrior_kit_id: None,
             equipment_config_json: None,
             faction_inventory: None,
             sedentarization: None,
@@ -1730,6 +1764,8 @@ impl PublishState {
             kits: None,
             default_hunt_kit_id: None,
             default_forage_kit_id: None,
+            default_scout_kit_id: None,
+            default_warrior_kit_id: None,
             equipment_config_json: None,
             faction_inventory: None,
             sedentarization: None,
@@ -1829,9 +1865,10 @@ fn kit_roster_states(
             // **Through the same seam the per-band rows resolve through** — this one over `fresh`,
             // `population_state`'s `kit_tiers` over the band's live ledger. One arithmetic.
             let tiers = equipment.resolve_kit_tiers(
-                kit_levers.hunter_intrinsic,
+                kit_levers.person_intrinsic,
                 labor.hunt.per_worker_biomass_capacity,
                 labor.forage.per_worker_biomass_capacity,
+                labor.scout.vantage_range as f32,
                 &choice,
                 &fresh,
             );
@@ -1846,6 +1883,19 @@ fn kit_roster_states(
                 attack: tiers.attack,
                 hunt_carry_per_worker_biomass: tiers.hunt_carry_per_worker_biomass,
                 forage_carry_per_worker_biomass: tiers.forage_carry_per_worker_biomass,
+                // **The pen's tier, resolved against the SAME equipped rate the hunt haul is** —
+                // `hunt.per_worker_biomass_capacity` is the number a pen harvest has always been
+                // capped by, and it keeps its one home. A kit carrying a sled and no handling gear
+                // reads the bare rate here, which is the whole point of the husbandry kit.
+                //
+                // **Off `resolve_kit_tiers` like the rest of the row**, since the per-band rows carry
+                // this axis too: resolved beside the call it would be one transcription per reading
+                // again, and the reading that got left behind is the one a picker quotes.
+                pen_carry_per_worker_biomass: tiers.pen_carry_per_worker_biomass,
+                // **The scout vantage's tier.** Not what a *band* currently sees — a fresh kit's
+                // reach, exactly like the three above, so the picker renders the kit and not the
+                // band that happens to be selected.
+                scout_vantage_range: tiers.scout_vantage_range,
                 // **The attack's size window**, so the client's pre-launch gate resolves this kit
                 // against the quarry in front of it rather than against the kit's best case. `0` on
                 // either end is unbounded, which every weapon but the passive device is.
@@ -1941,6 +1991,39 @@ impl TerrainTagGrid {
     /// `Option`.
     fn get(&self, pos: UVec2) -> Option<sim_runtime::TerrainTags> {
         self.index(pos).and_then(|index| self.tags[index])
+    }
+}
+
+/// The two readings of [`crate::fauna::herd_default_hunt_kit`]'s source axis, named so the
+/// per-species quote table says which half it is building rather than passing a bare `true`.
+const HERD_ON_THE_RANGE: bool = false;
+const HERD_IN_A_PEN: bool = true;
+
+/// **Assemble one quarry's [`QuotedParty`]** — the fight tier and the kit id, both resolved from the
+/// *same* `kit` against the *same* `wear`, so a herd row cannot publish one kit's id beside another
+/// kit's attack.
+///
+/// **The hunter profile is passed in rather than resolved here**, because which of the two named
+/// resolvers applies is the caller's decision and must stay visible at the call site: a per-species
+/// party resolves [`crate::equipment_config::EquipmentConfig::hunter_profile_against`], the
+/// no-species fallback resolves `hunter_profile_unbounded`. Folding that choice in here would be a
+/// third resolver that picks for you, which is exactly what the two names exist to prevent.
+fn quoted_party_for(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    combat: &crate::combat_config::CombatConfig,
+    kit: &crate::equipment_config::KitChoice,
+    wear: &BandEquipment,
+    hunter: crate::combat::CombatStats,
+) -> QuotedParty {
+    QuotedParty {
+        party: crate::fauna::HuntingParty {
+            hunter,
+            tuning: combat.tuning(),
+            injury_damage_per_animal: combat.hunt_injury_damage_per_animal
+                * equipment.exposure(kit, wear),
+            dispersion: equipment.dispersion(kit, wear),
+        },
+        kit_id: kit.id().to_string(),
     }
 }
 
@@ -2190,9 +2273,10 @@ pub fn capture_snapshot(
     let expedition_combat_tuning = combat_config.expedition_tuning();
     let kit_levers = crate::snapshot::population::BandKitLevers {
         config: &equipment_config,
-        hunter_intrinsic: creatures.get().person(),
+        person_intrinsic: creatures.get().person(),
         equipped_haul_rate: labor_config.hunt.per_worker_biomass_capacity,
         equipped_gather_rate: labor_config.forage.per_worker_biomass_capacity,
+        equipped_vantage_range: labor_config.scout.vantage_range as f32,
     };
     let expedition_levers = ExpeditionLevers {
         hunt_per_worker_carry: expedition_cfg.hunt.per_worker_carry,
@@ -2255,13 +2339,13 @@ pub fn capture_snapshot(
                     let party = crate::fauna::HuntingParty {
                         hunter: match expedition_quarry_mass {
                             Some(mass) => equipment_config.hunter_profile_against(
-                                kit_levers.hunter_intrinsic,
+                                kit_levers.person_intrinsic,
                                 &exp.kit,
                                 &party_wear,
                                 mass,
                             ),
                             None => equipment_config.hunter_profile_unbounded(
-                                kit_levers.hunter_intrinsic,
+                                kit_levers.person_intrinsic,
                                 &exp.kit,
                                 &party_wear,
                             ),
@@ -2620,10 +2704,69 @@ pub fn capture_snapshot(
     // Per herd, and derived rather than copied: each entry resolves distance/reach/visibility
     // against the viewer's fog before it is emitted.
     let herds_scope = crate::turn_profile::scope("snapshot.build.herds");
-    // The kit both per-herd estimate tables are priced at, resolved once.
-    let quoted_kit = equipment_config.default_kit(crate::equipment_config::KitJob::Hunt);
-    // A fresh ledger to price it against — the table describes the KIT, not any band's wear on it.
+    // **The kit each herd's tables are priced at, resolved once PER SPECIES × SOURCE AXIS.** The
+    // default is a pure function of quarry × roster × *is this herd penned*
+    // (`fauna::herd_default_hunt_kit`), so resolving it per herd would re-score the same roster for
+    // every herd of the same animal; each map is keyed by the display name the herd's own `species`
+    // string carries. **Two maps rather than one**, because the axis is a property of the herd and
+    // the species is a property of the roster: the range map answers every wild/pastoral herd and
+    // the pen map answers a corralled one, so a lookup is still one probe.
+    // A fresh ledger to price every kit against — a herd row describes the KIT, not any band's wear
+    // on it, and the default itself is resolved at the fresh tier for the same reason.
     let quoted_wear = BandEquipment::default();
+    let quote_species = |species: &crate::fauna_config::SpeciesDef, corralled: bool| {
+        let kit = crate::fauna::herd_default_hunt_kit(
+            &equipment_config,
+            kit_levers.person_intrinsic,
+            species,
+            corralled,
+        );
+        (
+            species.display_name.clone(),
+            quoted_party_for(
+                &equipment_config,
+                &combat_config,
+                &kit,
+                &quoted_wear,
+                // **BOUNDED, against this species** — one party per herd is still one party,
+                // but it now knows what it is hunting, so a mass-bounded weapon is priced only
+                // where it can actually hold the animal. This is what a per-herd resolution
+                // buys that the single unbounded party could not express.
+                equipment_config.hunter_profile_against(
+                    kit_levers.person_intrinsic,
+                    &kit,
+                    &quoted_wear,
+                    species.body_mass,
+                ),
+            ),
+        )
+    };
+    let quoted_parties: HashMap<String, QuotedParty> = fauna_config
+        .species
+        .values()
+        .map(|species| quote_species(species, HERD_ON_THE_RANGE))
+        .collect();
+    let penned_parties: HashMap<String, QuotedParty> = fauna_config
+        .species
+        .values()
+        .map(|species| quote_species(species, HERD_IN_A_PEN))
+        .collect();
+    // **The fallback for a herd whose species the roster cannot resolve** — the hunt job's default,
+    // resolved UNBOUNDED because there is no quarry to test a bound against. `EquipmentConfig::
+    // validate` rejects a mass-bounded attack in that kit for exactly this reason, so the unbounded
+    // resolution here cannot quote a weapon against animals it could not touch.
+    let fallback_kit = equipment_config.default_kit(crate::equipment_config::KitJob::Hunt);
+    let quoted_fallback = quoted_party_for(
+        &equipment_config,
+        &combat_config,
+        &fallback_kit,
+        &quoted_wear,
+        equipment_config.hunter_profile_unbounded(
+            kit_levers.person_intrinsic,
+            &fallback_kit,
+            &quoted_wear,
+        ),
+    );
     let herd_states = herd_snapshot_entries(HerdSnapshotInputs {
         telemetry: &herds,
         registry: &herd_registry,
@@ -2635,32 +2778,19 @@ pub fn capture_snapshot(
         visibility: &visibility_ledger,
         viewer: viewer_faction.0,
         fog_enabled: config.fog_enabled,
-        // **The hunt job's DEFAULT kit, deliberately** — the herd row is a fact about the herd and
-        // has no band to ask. A fresh kit (`BandEquipment::default()` is zero wear), because the row
-        // describes the kit rather than any band's wear on it; with the shipped `big_game` default
-        // this is bit-for-bit the hardcoded `equipped = true` it replaced.
+        // **THIS QUARRY'S own default kit, deliberately** — the herd row is a fact about the herd
+        // and has no band to ask, but it can ask the *animal*, so each species' row is quoted at
+        // the kit its compose sheet opens on and **publishes which**. A fresh kit
+        // (`BandEquipment::default()` is zero wear), because the row describes the kit rather than
+        // any band's wear on it.
         //
         // **This prices the per-worker YIELD row only.** The two pre-launch estimate tables that
         // used to be quoted here are gone — `crate::forecast_query` answers them per band, per kit,
-        // per exact party and floor, on demand — and with them went `quoted_per_worker_haul`
-        // (the sled tier only the tables read), `quoted_kit_id` (the honesty note that disclaimed
-        // them) and `range_sigmas` (the denial readout's band width).
-        party: crate::fauna::HuntingParty {
-            // **UNBOUNDED, and `validate` is what keeps that honest.** This ONE party prices every
-            // herd row, so it cannot carry a per-quarry attack — and a mass-bounded weapon in the
-            // hunt job's default kit would therefore be quoted against animals it cannot touch.
-            // `EquipmentConfig::validate` rejects exactly that config, so the case is a boot failure
-            // rather than a row that lies. See "the default hunt kit carries no mass bound".
-            hunter: equipment_config.hunter_profile_unbounded(
-                kit_levers.hunter_intrinsic,
-                &quoted_kit,
-                &quoted_wear,
-            ),
-            tuning: combat_config.tuning(),
-            injury_damage_per_animal: combat_config.hunt_injury_damage_per_animal
-                * equipment_config.exposure(&quoted_kit, &quoted_wear),
-            dispersion: equipment_config.dispersion(&quoted_kit, &quoted_wear),
-        },
+        // per exact party and floor, on demand — and with them went the sled tier only they read
+        // and `range_sigmas` (the denial readout's band width).
+        parties: &quoted_parties,
+        penned_parties: &penned_parties,
+        fallback_party: &quoted_fallback,
     });
     drop(herds_scope);
     let faction_inventory_state = snapshot_faction_inventory(&faction_inventory);
@@ -2708,6 +2838,12 @@ pub fn capture_snapshot(
             .to_string(),
         default_forage_kit_id: equipment_config
             .default_kit_id(crate::equipment_config::KitJob::Forage)
+            .to_string(),
+        default_scout_kit_id: equipment_config
+            .default_kit_id(crate::equipment_config::KitJob::Scout)
+            .to_string(),
+        default_warrior_kit_id: equipment_config
+            .default_kit_id(crate::equipment_config::KitJob::Warrior)
             .to_string(),
         tiles: tile_states,
         logistics: logistics_states,

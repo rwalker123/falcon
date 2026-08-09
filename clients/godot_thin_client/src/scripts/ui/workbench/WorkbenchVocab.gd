@@ -126,7 +126,7 @@ const CONFIG_DEFAULT_KITS_KEY := "default_kits"
 
 ## **THE ONE BOUNDED EXCEPTION, AND IT MUST NOT BECOME A WHITELIST.** The Kits page PROMOTES these two
 ## keys of a roster entry into the block's title: `kits[0]` is a coordinate that tells a reader
-## nothing, while `Big-game kit (big_game)` names the thing they are looking at. Having said them in
+## nothing, while `Stalking kit (big_game)` names the thing they are looking at. Having said them in
 ## the title the page then hides **only the keys the title actually used** — every other key in the
 ## entry still renders blind, so a field added to a kit definition tomorrow still appears with no edit
 ## here. Promotion is a rendering of two values the page already drew, not a list of the fields a kit

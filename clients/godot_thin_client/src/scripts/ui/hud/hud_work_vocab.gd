@@ -101,7 +101,7 @@ const ALLOC_HEADER_FOOD_OUTLOOK := "Food outlook"
 
 const ALLOC_NO_SOURCES_HINT := "No sources worked yet — select a tile or herd to assign foragers/hunters."
 
-const SCOUT_ROLE_HINT := "Posts scouts that see around obstacles — more scouts range farther. Staff with −/+."
+const SCOUT_ROLE_HINT := "Posts scouts that see around obstacles — more scouts range farther."
 
 const WARRIOR_ROLE_HINT := "Guards the band — matters once threats arrive."
 

@@ -464,9 +464,11 @@ stretch, and widening it into that gap would put it over a live HUD column.
   Its palette is deliberately MUTED (`VOICE_PIGMENT` / `INK_DIM` / `VOICE_INK`) against
   **WORKFORCE**'s saturated one (`HEALTHY` / `SIGNAL` / `VOICE_INK` / `WARN` / `INK_FAINT`): two bars,
   same shape, different question — *who they are* vs *what they do* — and they must not read as the
-  same chart twice. Scout + Warrior are **CARDS** now (bordered, name · hint · the same `−/+` stepper
-  and `assign_labor` emit), not rows in a list — the fix for a standing role being indistinguishable
-  from a worked source. **The Warrior card carries a LIVE THREAT ALERT** (Predators Phase 3): when
+  same chart twice. Scout + Warrior are **CARDS** now (bordered, name · the `−/+` stepper and its
+  `assign_labor` emit · **the kit picker and its gear line** · the role's description LAST), not rows
+  in a list — the fix for a standing role being indistinguishable from a worked source. See "The role
+  cards carry the band's OTHER two kits" below for the picker half and for why the prose trails.
+  **The Warrior card carries a LIVE THREAT ALERT** (Predators Phase 3): when
   `_band_predator_threat_present(band)` is true its static hint is replaced by the crimson
   (`HudStyle.THREAT_ACCENT`) `HudWorkVocab.WARRIOR_THREAT_ALERT_FORMAT` — `⚠ Predator nearby — N on
   guard`, N being the on-guard warrior count — so the guarding role is legible exactly when the threat
@@ -1567,20 +1569,45 @@ accident: it is the only one that fits.** Do not treat the pairing as a design p
 survive the blocks changing size — re-measure all four.
 
 **A band with no food history builds no chart, and that is turn one** — the first frame of every new
-game. Under the charted split that column is the vitals alone, 130 against 263. So there is a **second
-authored layout**, selected by one boolean (`people_column = PEOPLE if outlook != null else LARDER`):
-PEOPLE is the only block that moves. Measured **200 / 193** chartless, **246 / 263** charted. Both are
-hand-authored and hand-measured — a declared variant chosen by a predicate, the same shape as the tier
-itself — and the split feeds no geometry, so the flicker invariant is not in play.
+game. Under the charted split that column was the vitals alone, 130 against 263. So there was a
+**second authored layout**, selected by one boolean (`people_column = PEOPLE if outlook != null else
+LARDER`): PEOPLE was the only block that moved, measured **200 / 193** chartless against **246 / 263**
+charted.
+
+### BOTH LAYOUTS SURVIVED THE ROLE CARDS' PICKERS, and the CHARTED one now sits ON the floor
+
+Each role card grew a kit picker and a gear line, so WORKFORCE went from the lightest block on the
+flank to the heaviest and the split's margins moved a long way. **Neither authored layout had to
+change** — re-measured in the harness's two column states, which is what the docstring's
+*"re-measure all four"* asks for:
+
+| | LARDER | WORKFORCE | level | was |
+|---|---|---|---|---|
+| charted | 246 | 326 | **75%** | 94% |
+| chartless | 200 | 256 | 78% | 97% |
+
+**The charted flank is now EXACTLY ON `band_panel_preview`'s 75% levelness floor**, with 1.5px of
+slack (`246 >= 326 × 0.75`, i.e. 244.5). It is the tightest constraint on this flank, and the next row
+that lands in the WORKFORCE column trips it — at which point the answer is to re-author the split and
+re-measure, never to lower the floor.
+
+> **A card ORDERING moved this, and that is worth knowing before the next one.** An intermediate
+> layout put the description above the controls; on it WORKFORCE measured **332** and the charted
+> split read **74% — failing**. Moving the prose to the bottom of the card (see "The role cards carry
+> the band's OTHER two kits") took 6px back off the block and put the split over the line. So the
+> floor is currently sensitive to a change with no obvious geometric content at all.
+
+Both layouts were hand-authored and hand-measured, and the split feeds no geometry, so the flicker
+invariant was never in play for either.
 
 **The measured numbers do not decompose by subtraction** — separations and spacing differ per grouping,
 and both predictions made that way were wrong (188 vs the actual 200; 258 vs the actual 246).
 Re-measure; never derive.
 
-**66% is the chartless flank's CEILING, not a shortfall.** Its three blocks total 393px against the
-600px two columns offer, and the total is the total however it is dealt out. What the second split buys
-is *where* the emptiness sits — ~100px under each column instead of 170 under one and none under the
-other.
+**66% was the chartless flank's CEILING, not a shortfall.** Its three blocks totalled 393px against
+the 600px two columns offer, and the total is the total however it is dealt out. What the split buys
+is *where* the emptiness sits. (With the role cards' pickers the flank no longer has emptiness to
+place — it OVERFLOWS its box and the zone's own scroll carries the remainder.)
 
 Blocks are emitted in **build** order for one column and by **column** field for two, so the flat stack
 stays vitals · PEOPLE · outlook · WORKFORCE.
@@ -1589,6 +1616,113 @@ stays vitals · PEOPLE · outlook · WORKFORCE.
 Measuring only the deepest column passed the 130/263 flank at 88% — the short column was invisible to
 it. Two independent failure modes (uniformly empty = a tier that did not rise; lopsided = the wrong
 split) need two claims.
+
+## The role cards carry the band's OTHER two kits
+
+A wayfinding kit and a warrior kit were applied to the Scout and Warrior rows **silently**: the cards
+named neither, and `KitRoster.build_kit_row` was mounted only on the four hunt/forage compose sheets,
+so naming a kit on a band-wide role was a command-line act (`assign_labor … scout 3 kit none`). Each
+card now reads
+
+```
+Scout                                      Warrior
+      [−]  1  [+]                                [−]  0  [+]
+[🧭 Wayfinding kit  ⌄]                     [🪓 Warrior kit  ⌄]
+2-tile sight per vantage · Wayfinding 66   attack 6 defending the camp · Clubs 22
+Posts scouts that see around …             Guards the band — matters once …
+```
+
+**THE CONTROLS LEAD AND THE PROSE TRAILS, and the gear line is the PICKER's help text.** A card is
+read every turn and acted on with two controls; the description is what a player reads ONCE, to learn
+what the role is. The gear line states what the SELECTED kit buys and moves when the picker moves, so
+nothing may come between the two — `build_kit_row` returns them as ONE block, which makes that
+adjacency structural rather than a rule this call site has to remember.
+
+**BOTH CARDS DRAW TO THE HEIGHT OF THE TALLER ONE, and nothing was ever shrinking them.** The row's
+`HBoxContainer` stretches a child to the row height wherever the child asks to FILL its cross axis,
+and `SIZE_FILL` is `Control`'s own default, which `PanelContainer` does not override (measured). So
+the card RECTS were level under the old ordering too; what read as ragged was the CONTENT — the
+Scout's three-line description pushed its picker, gear line and stepper 17px below the Warrior's and
+left dead space under the Warrior's stepper. With the controls first they land on the same lines in
+both cards and only the trailing prose differs in length. The flag is written out at the call site
+rather than inherited, because the alternative is a hardcoded minimum height that would be wrong the
+next time a description or a kit name changes length; `_assert_role_cards_are_level` is the guard
+(Scout wants 193px, Warrior 176px, both RENDER 193px), sabotage-verified against `SIZE_SHRINK_BEGIN`.
+
+**WHICH ITEM BACKS A ROLE IS DERIVED, and the warrior is why it needed a new seam.**
+`KitRoster.AXIS_ITEMS` maps an axis to its item, and `attack` maps to the SPEARS — right on a hunt
+sheet, wrong here, because a warrior kit buys the same stat off `clubs`. `KitRoster.ROLE_AXES` names
+each band-wide role's axis and `JOB_AXIS_ITEMS` / `item_for_axis(job, axis)` resolve the item per JOB,
+which is what the axis table's own note always said the lookup was keyed on. **Nothing outside
+`KitRoster` names an item**, so a roster that moves the handling of a stat moves the card with it.
+
+**THE LINE IS THE GEAR POPOVER'S OWN WORDS** (`DetailFormat.KIT_ROLE_SCOUT_VANTAGE_FORMAT` /
+`KIT_ROLE_WARRIOR_ATTACK_FORMAT`, `kit_item_label`, `kit_condition_face`), reached through
+`KitRoster.role_hint`. The Kit row's popover states the identical pair for the identical band
+(`▲ Wayfinding 66 — 2-tile sight per vantage`), and two phrasings of one reading is how a card and
+the popover above it come to disagree.
+
+**IT FOLLOWS THE SELECTION, NOT THE WIRE'S RESOLVED TIER.** The cohort's `scoutVantageRange` /
+`warriorAttack` are quoted at each job's DEFAULT kit, so a card that read them would print
+`attack 6 defending the camp` beside a `No kit` selection. `KitRoster.role_gear` resolves the tier
+from the SELECTED kit against the band's own item condition — the role twin of `effective_tiers`,
+which exists separately precisely because that one is job-blind and would step a warrior down on
+spent spears.
+
+**THE PICK EMITS ON THE PRESS**, like the work inspector's policy picker and unlike a compose sheet:
+a card has no Send to commit at, so a pick that only moved client state would leave the sim running
+the kit the card had stopped naming. The command re-states the role's current head count and moves
+only the kit token, which `Main._kit_token` omits when the choice equals the job default — so a
+player who never opens the picker emits the byte-identical line they always did. **An UNSTAFFED role
+emits nothing**: `assign_labor … scout 0` drops the assignment and the sim resolves no kit for it, so
+the pick is held and rides the first `+`.
+
+**THE SELECTION LIVES ON `BandPanelController._role_kit_ids`, keyed `"<band entity>:<role>"`** — zone
+state that survives a snapshot, this controller's own remit (`_work_filter`, `_send_hunt_floor`), and
+explicitly not a state model's, a model being for a field two clusters read. The role cards had
+nowhere to keep per-row state before this; `ComposeState` was rejected because it is the model for
+what a *sheet* is composing and a card has no composing act to bracket. It is keyed by BAND because
+the cycler walks bands, and it is SEEDED from the wire — the role's own resolved
+`LaborAssignment.kitId` — so a fresh session shows what the sim is actually running rather than a
+default.
+
+**GREYING: there is none, and the seam is still there.** `build_kit_row` asks `KitRoster.kit_offer`
+per entry as it does everywhere; that test answers "offered" for every job but `hunt`, there being no
+quarry whose outcome a band-wide kit could fail to change. A future rule lands automatically.
+
+**Two card-shaped deviations from the compose sheets' row, both forced and both measured:**
+
+- **No field key.** The card is already headed `Scout`, and `COMPOSE_FIELD_KEY_WIDTH` (64) of a
+  ~137px card leaves the control ~73px. `build_kit_row`'s `key_text` is `""` here.
+- **`compact_chrome`** — `HudWidgets.compact` at the WORK zone's own row size and padding. It buys
+  both things the card is short of: the ~42px ghost stylebox is a fifth of the card's height, and at
+  the default type size `clip_text` rendered the face as **`🧭 Wayfinding ki`**, naming a kit whose
+  name it had eaten the end of.
+
+**WHAT IT COSTS THE FLANK, MEASURED:** the WORKFORCE column went **326px** charted against a 275px
+two-column box (from ~263), which took the band zone's charted split from 94% level to **exactly the
+75% floor** — the authored split is unchanged and it has 1.5px of slack, so see "The band zone's tier
+reads the whole STACKING BUDGET" before adding a row to that column. In the one-column horizontal dock
+the flank reads **416px of a 300px box**, so the role steppers sit further under the zone's scroll fold
+than before; that zone SCROLLS, so nothing is lost, and the standing lever if the steppers must be
+reachable without a gesture is a density cut at SHORT (see "`PANEL_HEIGHT_WIDE` is the BODY's budget").
+**The card ORDERING is part of that measurement** — with the description above the controls WORKFORCE
+measured 332 and the charted split failed the floor at 74%.
+
+**Frame + assertions:** `band_panel_role_kits` (the LEFT dock, both cards). Three claims a picture
+cannot make, each sabotage-verified against a DISJOINT mutation — `_assert_role_cards_are_level`
+compares the two cards' RENDERED heights behind a precondition that their CONTENT heights differ (two
+cards of equal content are level for free) —
+`_assert_role_card_gear` compares both cards' face and gear line by EQUALITY against expectations
+that name their item LABEL outright (composing them through `item_for_axis` would assert only that
+the derivation agrees with itself; dropping the job override fails the WARRIOR card alone, naming
+`attack 6 defending the camp · Spears 74`), and `_assert_role_kit_command_carries_the_pick` drives
+the picker's real `item_selected` wiring and reads `Main.format_assign_labor`'s line off the emitted
+payload — a PAIR, the non-default pick carrying `kit none` and the default pick carrying no tail at
+all, since either alone passes on a builder that gets the tail exactly backwards. `cargo xtask
+command-guard` carries the other half: it now drives a band-wide role with a non-default kit and
+parses `assign_labor 0 <band> scout 2 kit none` with the real server parser, a grammar whose tail was
+closed until this.
 
 ## Work rows and the two hunt products (issue #337)
 

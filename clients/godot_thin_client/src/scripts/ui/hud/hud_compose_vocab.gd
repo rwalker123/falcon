@@ -804,16 +804,36 @@ const KIT_PICKER_FACE_FORMAT := "%s %s"
 ## The glyph is keyed by the JOB THE SHEET IS COMPOSING, never by the kit's id: ids come from
 ## `equipment.json` and a client-side table keyed on them goes stale the moment a kit is added. The
 ## glyph says what the crew is walking out to do, which is the same for every kit on one sheet.
+## **The two BAND-WIDE roles have faces here too**, since the WORKFORCE zone's role cards mount the
+## same picker: a compass for the scout who is walking out to look, an axe for the warrior who stays
+## by the fire. Keyed by job like the two above, so a roster that adds a wayfinding kit needs no entry.
 const KIT_JOB_GLYPHS := {
 	"hunt": "🏹",
 	"forage": "🧺",
+	"scout": "🧭",
+	"warrior": "🪓",
 }
 
 ## The fallback face glyph for a job with no glyph of its own — the roster's `jobs` is wire data, so a
 ## job this table has never heard of must still render a legible face rather than an empty one.
 const KIT_JOB_GLYPH_FALLBACK := "🎒"
 
-const KIT_PICKER_TOOLTIP := "What this crew carries. A kit decides what they can hurt and how much they can haul — the line beneath it is this band's own tier, after wear."
+const KIT_PICKER_TOOLTIP := "What this crew carries. A kit decides what they can hurt and how much they can haul — the line beneath it is this band's own tier, after wear. A kit that could change nothing about this quarry is greyed out and says why."
+
+## **A KIT THAT CANNOT WORK ON THIS QUARRY IS GREYED AND STATES ITS REASON, on the entry's own face.**
+## Greyed rather than hidden: *"a snare cannot hold a Red Deer"* is a fact about the world worth
+## teaching once, and a kit that simply vanished from three of four sheets is exactly what let the
+## picker quote a real take for a hunt that brought home nothing. `%s` the kit's name (with its
+## `(default)` mark if it carries one), `%s` the reason.
+const KIT_WITHHELD_ENTRY_FORMAT := "%s — %s"
+## The WEAPON rule's reason — the kit's fresh attack, resolved against this animal's mass, cannot
+## clear its defence. `%s` the quarry. It names the ANIMAL rather than the weapon because what the
+## player is choosing between is kits, and the animal is the term that changes under them.
+const KIT_WITHHELD_REASON_CANNOT_HURT := "nothing it carries can bring down a %s"
+## The PEN rule's reason — the kit's contribution is `pen_carry`, which only a corralled herd is
+## collected on. Worded for the AXIS rather than for the husbandry kit by name: the rule is that the
+## source cannot read the stat, and a second kit supplying it tomorrow gets the same sentence.
+const KIT_WITHHELD_REASON_PEN_ONLY := "what it adds is only used on a penned herd"
 
 ## **THE JOB'S DEFAULT IS MARKED, NOT SEPARATED.** The player needs to know which kit the verb takes
 ## when they name none; that is a note on an ordinary entry, and a divider would imply the roster has
@@ -826,6 +846,11 @@ const KIT_HINT_SEPARATOR := " · "
 const KIT_HINT_ATTACK_FORMAT := "attack %s"
 const KIT_HINT_HUNT_CARRY_FORMAT := "carry %s per hunter"
 const KIT_HINT_FORAGE_CARRY_FORMAT := "carry %s per gatherer"
+## **THE PEN'S OWN CARRY, AND IT IS NOT THE SLED'S.** A sled drags a carcass in off the range; a pen
+## stands at the camp, and what bounds a slaughter there is handling gear — so a kit carrying only a
+## sled collects a pen at the bare rate. It prints on a hunt sheet BESIDE the sled's line rather than
+## instead of it (a husbandry kit carries both), and only for a kit that actually supplies the axis.
+const KIT_HINT_PEN_CARRY_FORMAT := "pen %s per keeper"
 ## A component's remaining condition on `equipment.json`'s 0-100 scale, and the word for a spent one.
 ## **Performance is FLAT until expiry** (durability and performance are orthogonal axes), so this
 ## number never scales anything above it — it says how much longer the tier lasts, not how good it is.
@@ -835,6 +860,12 @@ const KIT_HINT_FORAGE_CARRY_FORMAT := "carry %s per gatherer"
 ## reached through an axis→item guess, and on the Trapping kit that guess printed `spears`.
 const KIT_HINT_CONDITION_FORMAT := "%s %d"
 const KIT_HINT_DRY_FORMAT := "%s dry"
+## **A BAND-WIDE ROLE'S ITEM CLAUSE** — `Wayfinding 100`, `Clubs dry`. It takes `DetailFormat`'s own
+## capitalised item LABEL and condition FACE rather than the compose hint's raw wire id, because the
+## Gear popover states the identical pair for the identical band (`▲ Wayfinding 66 — …`) and two
+## spellings of one reading is how a card and the popover it sits above come to disagree. One format
+## for both states: the face is the number or the word `dry`, so this line needs no dry twin.
+const KIT_HINT_ROLE_ITEM_FORMAT := "%s %s"
 ## Tier decimals. The tiers span 1.0 (bare hands) to 40.0 (a sled), authored as small round numbers,
 ## so one decimal states them without claiming a precision the roster does not have.
 const KIT_TIER_DECIMALS := 1

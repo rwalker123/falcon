@@ -1764,7 +1764,7 @@ fn seed_source_yield(
                     .assignments
                     .iter()
                     .find(|assignment| assignment.target.same_source(target))
-                    .and_then(|assignment| assignment.kit_choice(&equipment_cfg))
+                    .map(|assignment| assignment.kit_choice(&equipment_cfg))
             })
     };
     let Some(crew_kit) = crew_kit else {
@@ -1890,11 +1890,25 @@ fn seed_source_yield(
                 .get::<BandEquipment>(band)
                 .cloned()
                 .unwrap_or_default();
-            let per_worker_biomass = equipment_cfg.hunt_per_worker_biomass_capacity(
-                labor.hunt.per_worker_biomass_capacity,
-                &crew_kit,
-                &band_wear,
-            );
+            // **A PENNED herd is priced at the husbandry gear's tier, a wild one at the sled's** —
+            // the same split `advance_labor_allocation` makes on the same predicate, because
+            // `hunt_forecast` early-returns the managed path for a corralled herd and the seed has
+            // to arrive at that branch holding the rate the turn will pay it at. Pricing a pen at
+            // the sled's tier is `yield-forecast.md`'s invariant broken on the one surface the
+            // player commits from.
+            let per_worker_biomass = if herd.is_corralled() {
+                equipment_cfg.pen_per_worker_biomass_capacity(
+                    labor.hunt.per_worker_biomass_capacity,
+                    &crew_kit,
+                    &band_wear,
+                )
+            } else {
+                equipment_cfg.hunt_per_worker_biomass_capacity(
+                    labor.hunt.per_worker_biomass_capacity,
+                    &crew_kit,
+                    &band_wear,
+                )
+            };
             // **And at THIS band's FIGHTING tier**, for the same reason and through the same seam
             // (`docs/plan_hunt_through_combat.md` §4): the take now resolves through the combat
             // system, so a band whose spears are gone brings down less — or, past a quarry's
@@ -2520,6 +2534,51 @@ fn labor_event_kind(role: &str) -> CommandEventKind {
     }
 }
 
+/// **What this row runs on when the player names no kit** — the herd's own default for a Hunt on a
+/// resolvable quarry, the job's default for everything else.
+///
+/// It is the **same** id the wire published for that herd (`HerdTelemetryState::default_kit_id`,
+/// via `fauna::herd_default_hunt_kit`, resolved through the same seams at the same fresh tier and
+/// on the same source axis), so the command and the compose sheet cannot disagree about what "no
+/// kit named" means.
+///
+/// **Every no-kit-named hunt surface resolves through here** — `assign_labor` and both raiding
+/// verbs (`resolve_raid_kit`) — because a second resolution is a second answer, and the one the
+/// launch sheet quoted is the one the launch has to run.
+///
+/// Falls through to `default_kits.<job>` on every path with no quarry to score: a Forage, Scout or
+/// Warrior row, a herd id the registry does not carry, and a herd whose species the roster cannot
+/// resolve.
+fn default_kit_for_target(
+    app: &bevy::prelude::App,
+    equipment: &core_sim::EquipmentConfig,
+    target: &LaborTarget,
+) -> KitChoice {
+    let job = target.kit_job();
+    let LaborTarget::Hunt { fauna_id, .. } = target else {
+        return equipment.default_kit(job);
+    };
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let resolved = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(fauna_id)
+        .and_then(|herd| {
+            fauna
+                .species_by_display(&herd.species)
+                .map(|species| (species, herd.is_corralled()))
+        });
+    let Some((species, corralled)) = resolved else {
+        return equipment.default_kit(job);
+    };
+    core_sim::herd_default_hunt_kit(
+        equipment,
+        app.world.resource::<CreaturesConfigHandle>().get().person(),
+        species,
+        corralled,
+    )
+}
+
 // One labor command's worth of context: the band, the role, the crew, the source's coordinates or
 // herd id, and the assignment's two mutable properties (the crop selection and the floor). Bundling
 // them would just move the noise.
@@ -2629,9 +2688,10 @@ fn handle_assign_labor(
     // **The kit this crew works under, resolved at the command boundary and FAILING CLOSED.** An
     // unknown id, or one whose `jobs` does not cover this role, is refused with a reason rather than
     // quietly becoming the default: naming a kit is how the player compares tiers, so a silent
-    // substitution answers a different question than the one asked. The band-wide roles carry no
-    // kit at all — `kit_job()` is `None` for them, and a kit named there is ignored exactly as
-    // `species` and `floor` are.
+    // substitution answers a different question than the one asked. **The band-wide roles resolve
+    // one too** — `kit_job()` answers for all four roles now, so `assign_labor … scout 3 kit none`
+    // is a real selection rather than a token ignored the way `species` and `floor` are on those
+    // rows.
     //
     // **Unassigning (`workers == 0`) resolves NO kit**, the same rule the policy validation above
     // follows and for the same reason: a player must be able to abandon an investment even if what
@@ -2639,21 +2699,23 @@ fn handle_assign_labor(
     // at zero workers and never reads the kit, so refusing here refused a command whose kit could
     // not be used either way — and a roster edit that removed an id left every crew still holding it
     // unclearable, locked in by a kit that no longer exists.
-    let crew_kit = match (workers, target.kit_job()) {
-        (0, _) | (_, None) => None,
-        (_, Some(job)) => {
-            let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
-            match equipment_cfg.resolve_kit_for_job(kit_id.as_deref(), job) {
-                Ok(kit) => Some(kit),
-                Err(reason) => {
-                    emit_command_failure(
-                        app,
-                        event_kind,
-                        faction,
-                        format!("assign_labor: {reason}."),
-                    );
-                    return;
-                }
+    //
+    // **A HUNT row with no kit named resolves the HERD's default, not the job's.** The wire
+    // publishes that per-herd id (`HerdTelemetryState::default_kit_id`) and the compose sheet opens
+    // on it, so resolving the job default here would run Stalking on a warren whose sheet said
+    // Trapping — the silent substitution the refusal above exists to prevent, arriving through the
+    // absent-token door instead. `default_kits.hunt` stays the answer wherever there is no quarry
+    // to score: every other role, and a Hunt row whose herd or species will not resolve.
+    let crew_kit = if workers == 0 {
+        None
+    } else {
+        let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
+        let absent = default_kit_for_target(app, &equipment_cfg, &target);
+        match equipment_cfg.resolve_kit_or(kit_id.as_deref(), target.kit_job(), absent) {
+            Ok(kit) => Some(kit),
+            Err(reason) => {
+                emit_command_failure(app, event_kind, faction, format!("assign_labor: {reason}."));
+                return;
             }
         }
     };
@@ -3103,19 +3165,33 @@ fn launch_forecast_haul(app: &bevy::prelude::App, kit: &KitChoice) -> f32 {
 ///
 /// **Fails closed, exactly as the floor does.** An unknown id, or one whose `jobs` does not cover
 /// `hunt`, is a command failure — never a silent fall back to the default, because a party quietly
-/// re-armed is the opposite of the comparison the player asked for. Absent = the hunt job's default,
-/// which is the pre-roster behaviour.
+/// re-armed is the opposite of the comparison the player asked for.
+///
+/// **Absent = the TARGET HERD's default, not the job's** — the same `default_kit_for_target` seam
+/// `handle_assign_labor` resolves through, keyed on the herd this raid names. Both verbs are quoted
+/// against tables the wire priced at that herd's own kit (`huntTripEstimatesKitId` /
+/// `denialEstimatesKitId`, which are `defaultKitId` by construction), and the client's launch sheet
+/// reads `defaultKitId`; resolving `default_kits.hunt` here would launch a party on a different kit
+/// than the forecast the player committed from — the silent substitution the refusal above exists to
+/// prevent, arriving through the absent-token door.
 fn resolve_raid_kit(
     app: &mut bevy::prelude::App,
     faction: FactionId,
     verb: &str,
     kit_id: Option<&str>,
+    fauna_id: &str,
 ) -> Option<KitChoice> {
-    let resolved = app
-        .world
-        .resource::<EquipmentConfigHandle>()
-        .get()
-        .resolve_kit_for_job(kit_id, KitJob::Hunt);
+    let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
+    // A target built to NAME the herd, never to state an assignment — hence the floor constant.
+    let absent = default_kit_for_target(
+        app,
+        &equipment_cfg,
+        &LaborTarget::Hunt {
+            fauna_id: fauna_id.to_string(),
+            floor: SOURCE_NAMED_NOT_ASSIGNED,
+        },
+    );
+    let resolved = equipment_cfg.resolve_kit_or(kit_id, KitJob::Hunt, absent);
     match resolved {
         Ok(kit) => Some(kit),
         Err(reason) => {
@@ -3312,8 +3388,13 @@ fn handle_send_hunt_expedition(
     };
     // **The kit fails closed too** — resolved before the party is drawn off the band, so a bad kit
     // id refuses the launch outright rather than sending a party at a tier nobody named.
-    let Some(kit) = resolve_raid_kit(app, faction, "send_hunt_expedition", kit_id.as_deref())
-    else {
+    let Some(kit) = resolve_raid_kit(
+        app,
+        faction,
+        "send_hunt_expedition",
+        kit_id.as_deref(),
+        &fauna_id,
+    ) else {
         return;
     };
     let Some(outfit) = outfit_raiding_party(
@@ -3504,7 +3585,13 @@ fn handle_send_denial_raid(
 ) {
     // **The one order this mission still takes, and it fails closed like the hunt's.** A denial raid
     // carries no floor and no fill target, but the party still has to be sent with *something*.
-    let Some(kit) = resolve_raid_kit(app, faction, "send_denial_raid", kit_id.as_deref()) else {
+    let Some(kit) = resolve_raid_kit(
+        app,
+        faction,
+        "send_denial_raid",
+        kit_id.as_deref(),
+        &fauna_id,
+    ) else {
         return;
     };
     let Some(outfit) = outfit_raiding_party(
@@ -10745,6 +10832,185 @@ mod tests {
             (seeded - expected.actual).abs() < SEED_EPSILON,
             "seed {seeded} must equal the forecast {}",
             expected.actual
+        );
+    }
+
+    /// **A wary, light-bodied quarry** — the row where the trap's `dispersion 0` genuinely beats the
+    /// job default, so "the command matched the wire" is a claim about a kit that MOVED.
+    const WARREN: &str = "Rabbit Warren";
+
+    /// The id every per-herd-default fixture below re-badges its herd to.
+    const QUARRY_DEFAULT_FIXTURE_HERD: &str = "quarry_default_fixture_herd";
+
+    /// The crew a per-herd-default launch fixture sends out — small, because the claim is about
+    /// which kit the party carries, not about what it brings home.
+    const PARTY_ON_A_DEFAULT_KIT_RAID: u32 = 2;
+
+    /// Re-badge a stationary game group as a [`WARREN`] under [`QUARRY_DEFAULT_FIXTURE_HERD`] and
+    /// refresh the display telemetry the capture reads.
+    ///
+    /// Re-badging rather than spawning a herd on invented ground: it is already on a real tile,
+    /// already in the registry, and already reachable by the starting band the command resolves.
+    fn pin_a_warren(app: &mut bevy::prelude::App) -> String {
+        let body_mass = app
+            .world
+            .resource::<FaunaConfigHandle>()
+            .get()
+            .species_by_display(WARREN)
+            .expect("the roster ships the warren")
+            .body_mass;
+        let id = QUARRY_DEFAULT_FIXTURE_HERD.to_string();
+        {
+            let mut registry = app.world.resource_mut::<HerdRegistry>();
+            let herd = registry
+                .herds
+                .iter_mut()
+                .find(|herd| herd.id.starts_with("game_") && herd.route_length() == 1)
+                .expect("the campaign map seeds a stationary game group");
+            herd.id = id.clone();
+            herd.species = WARREN.to_string();
+            herd.body_mass = body_mass;
+        }
+        refresh_herd_telemetry(app);
+        id
+    }
+
+    /// Rebuild `HerdTelemetry` off the authoritative registry — the capture reads the display list,
+    /// so a fixture that edits a `Herd` must republish it or the wire describes the old herd.
+    fn refresh_herd_telemetry(app: &mut bevy::prelude::App) {
+        let entries = app.world.resource::<HerdRegistry>().snapshot_entries();
+        app.world.resource_mut::<core_sim::HerdTelemetry>().entries = entries;
+    }
+
+    /// `HerdTelemetryState.defaultKitId` for one herd, read off the **encoded** envelope through the
+    /// client's own accessor chain — a field that never reached the codec still passes an in-process
+    /// assertion.
+    fn published_default_kit_for(app: &mut bevy::prelude::App, herd_id: &str) -> String {
+        use core_sim::{recapture_snapshot_in_place, SnapshotHistory};
+        use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+        recapture_snapshot_in_place(&mut app.world);
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+        let envelope = fb::root_as_envelope(&bytes).expect("the snapshot encodes");
+        envelope
+            .payload_as_snapshot()
+            .expect("the envelope carries a snapshot")
+            .subsistence()
+            .and_then(|section| section.herds())
+            .expect("the subsistence section carries the herd list")
+            .iter()
+            .find(|herd| herd.id() == Some(herd_id))
+            .and_then(|herd| herd.defaultKitId())
+            .expect("the herd publishes the kit its sheet opens on")
+            .to_string()
+    }
+
+    /// **A hunt row with no `kit` token stores the kit the WIRE published for that herd.**
+    ///
+    /// The compose sheet opens on `HerdTelemetryState.defaultKitId`, so if the command boundary
+    /// still resolved `default_kits.hunt` the sheet would say Trapping and the command would run
+    /// Stalking — the silent substitution `equipment.md`'s "an unknown id is a command failure,
+    /// never a silent fall back" exists to prevent, arriving through the *absent*-token door.
+    ///
+    /// Asserted against the **published id**, decoded off the encoded snapshot, rather than against
+    /// a literal or a second call to the scorer: the claim is that the two surfaces agree, and a
+    /// re-derivation would agree with itself no matter what the wire said.
+    #[test]
+    fn a_hunt_row_with_no_kit_named_stores_the_kit_the_wire_published_for_that_herd() {
+        // The REAL campaign world, because the assertion reads a captured snapshot and the capture
+        // wants every worldgen resource. `fog_enabled = false` so the pinned herd reaches the wire
+        // wherever it stands rather than the test asserting about visibility.
+        let mut app = build_headless_app();
+        app.world.resource_mut::<SimulationConfig>().fog_enabled = false;
+        app.update();
+        let faction = FactionId(0);
+        let id = pin_a_warren(&mut app);
+        let published = published_default_kit_for(&mut app, &id);
+
+        // **No `kit` token** — the absent-token path, which is the one under test.
+        assign_hunt(&mut app, faction, &id, SUSTAIN_FLOOR, BAND_WORKERS);
+
+        let stored = app
+            .world
+            .iter_entities()
+            .filter_map(|entity| entity.get::<LaborAllocation>())
+            .flat_map(|allocation| allocation.assignments.iter())
+            .find_map(|assignment| assignment.kit.as_ref().map(|kit| kit.id().to_string()))
+            .expect("the hunt row stored a resolved kit");
+        assert_eq!(
+            stored, published,
+            "the command resolves the same per-herd default the sheet opened on"
+        );
+        assert_ne!(
+            published,
+            app.world
+                .resource::<EquipmentConfigHandle>()
+                .get()
+                .default_kit_id(KitJob::Hunt),
+            "LIVENESS: on this quarry the herd default DIFFERS from the job default, so the \
+             equality above is a real agreement rather than both surfaces reading the same fallback"
+        );
+    }
+
+    /// **A raid with no `kit` token launches on the kit the WIRE published for that herd** — the
+    /// expedition twin of the assign-labor agreement above, and the same defect class.
+    ///
+    /// The client's launch sheet reads `HerdTelemetryState.defaultKitId` and quotes both estimate
+    /// tables (`huntTripEstimatesKitId` / `denialEstimatesKitId`, which are that same id by
+    /// construction). While `resolve_raid_kit` resolved `default_kits.hunt`, the sheet said Trapping
+    /// and the party went out Stalking, so the forecast the player committed from was **not** the
+    /// one they got.
+    ///
+    /// The `assert_ne!` is what makes the equality a real agreement: on a quarry whose default IS
+    /// the job default, a verb that ignored the herd entirely would still pass the first assertion.
+    #[test]
+    fn a_raid_with_no_kit_named_launches_on_the_kit_the_wire_published_for_that_herd() {
+        let mut app = build_headless_app();
+        app.world.resource_mut::<SimulationConfig>().fog_enabled = false;
+        app.update();
+        let faction = FactionId(0);
+        let id = pin_a_warren(&mut app);
+        let published = published_default_kit_for(&mut app, &id);
+
+        // **No `kit` token** — the absent-token path, which is the one under test.
+        handle_send_hunt_expedition(
+            &mut app,
+            faction,
+            None,
+            PARTY_ON_A_DEFAULT_KIT_RAID,
+            id.clone(),
+            None,
+            None,
+        );
+
+        let launched = {
+            let mut query = app.world.query::<&Expedition>();
+            query
+                .iter(&app.world)
+                .next()
+                .expect("the launch spawned a detached party")
+                .kit
+                .id()
+                .to_string()
+        };
+        assert_eq!(
+            launched, published,
+            "the raid goes out on the same per-herd default the launch sheet opened on"
+        );
+        assert_ne!(
+            published,
+            app.world
+                .resource::<EquipmentConfigHandle>()
+                .get()
+                .default_kit_id(KitJob::Hunt),
+            "LIVENESS: on this quarry the herd default DIFFERS from the job default, so the \
+             equality above is a real agreement rather than both surfaces reading the same fallback"
         );
     }
 

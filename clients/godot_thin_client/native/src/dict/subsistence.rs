@@ -329,6 +329,19 @@ pub(crate) fn herds_to_array(
         // stays to be fought. A kit's `dispersion` multiplies the FLIGHT half of it. `1` is "nothing
         // breaks off", which is a pen and the whole plant web.
         let _ = dict.insert("stay_fraction", herd.stayFraction());
+        // **THE KIT THIS QUARRY'S OWN COMPOSE SHEET OPENS ON** — DERIVED per herd, not the hunt job's
+        // default: the sim scores every hunt kit's per-hunter-turn take against this animal at the
+        // FRESH tier and publishes the winner where it beats the job default by
+        // `quarry_default_kit_margin`. It is also the kit `assign_labor … hunt <herd> <n>` resolves
+        // when the command names none, so a sheet that opened on the job default instead would say
+        // Stalking while the sim ran Trapping — a spear party losing three rabbits in four to the
+        // retreat, which is the whole reason this field exists.
+        //
+        // `""` means the roster could not resolve the species; the client reads that as "no herd
+        // answer" and falls back to `SubsistenceSection.defaultHuntKitId`, exactly as the sim does.
+        // Newest live slot on `HerdTelemetryState`, following the two retired `*EstimatesKitId`
+        // slots the forecast query replaced — those are `(deprecated)` and are decoded nowhere.
+        let _ = dict.insert("default_kit_id", herd.defaultKitId().unwrap_or(""));
         array.push(&dict.to_variant());
     }
     array
@@ -352,7 +365,9 @@ pub(crate) fn kits_to_array(kits: Vector<'_, ForwardsUOffset<fb::KitOption<'_>>>
         let mut dict = VarDictionary::new();
         let _ = dict.insert("id", kit.id().unwrap_or(""));
         let _ = dict.insert("display_name", kit.displayName().unwrap_or(""));
-        // Which verbs this kit may be sent on ("hunt" and/or "forage"). A kit named for a job outside
+        // Which verbs this kit may be sent on ("hunt", "forage", "scout" and/or "warrior" — the
+        // two band-wide roles gained a kit axis with the wayfinding and warrior kits). A kit named
+        // for a job outside
         // this list is a COMMAND FAILURE server-side, never a silent fall back to the default, so the
         // picker filters by the job it is composing.
         let jobs = kit
@@ -369,6 +384,14 @@ pub(crate) fn kits_to_array(kits: Vector<'_, ForwardsUOffset<fb::KitOption<'_>>>
             "forage_carry_per_worker_biomass",
             kit.forageCarryPerWorkerBiomass() as f64,
         );
+        // The PEN's and the SCOUT VANTAGE's tiers. `pen_carry_per_worker_biomass` is deliberately
+        // NOT `hunt_carry_per_worker_biomass`: a sled drags a carcass in off the range and a pen
+        // stands at the camp, so a kit carrying only a sled collects a pen at the bare rate.
+        let _ = dict.insert(
+            "pen_carry_per_worker_biomass",
+            kit.penCarryPerWorkerBiomass() as f64,
+        );
+        let _ = dict.insert("scout_vantage_range", kit.scoutVantageRange() as f64);
         // What the kit does BESIDES the tiers. `dispersion` multiplies the quarry's own retreat and
         // `exposure` the hunt's injury hazard, both neutral at 1. The two mass bounds say which
         // quarry `attack` above actually applies to — 0 on an end is unbounded — so a picker can

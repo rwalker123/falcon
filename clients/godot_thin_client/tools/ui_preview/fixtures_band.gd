@@ -245,6 +245,25 @@ const KIT_FORAGE_CARRY_EQUIPPED := 8.0
 
 const KIT_FORAGE_CARRY_BARE := 1.6
 
+## **THE PEN'S TIER, AND IT IS NOT THE SLED'S.** A sled drags a carcass in off the range and a pen
+## stands at the camp, so a kit carrying only a sled collects a pen at the bare rate. The equipped
+## side is `labor_config.hunt.per_worker_biomass_capacity` (the number a pen harvest has always been
+## capped by); the bare side is `equipment.json`'s `husbandry_gear` declaration.
+##
+## **NO ENTRY OF `kit_roster_fixture()` EQUIPS IT**, deliberately — the shared roster carries no
+## `husbandry` kit, so adding one would change what every hunt picker in both harnesses lists. The
+## equipped tier is here for the chapters that build their OWN roster to exercise the axis.
+const KIT_PEN_CARRY_EQUIPPED := 40.0
+
+const KIT_PEN_CARRY_BARE := 12.0
+
+## **WHAT A POSTED SCOUT VANTAGE CAN MAKE OUT** — `labor_config.scout.vantage_range` equipped, the
+## `wayfinding` item's own declaration bare. How far out the vantage is POSTED is not a kit axis at
+## all (that is three separate `labor_config` dials), so nothing here states it.
+const KIT_SCOUT_VANTAGE_EQUIPPED := 2.0
+
+const KIT_SCOUT_VANTAGE_BARE := 1.0
+
 # The three conditions a kitted band ships with. **DELIBERATELY THREE DIFFERENT NUMBERS** on the
 # 0-100 scale: a fixture that gave two kits one value would pass every assertion with their accessors
 # swapped, which is the exact defect class this arc keeps reproducing.
@@ -257,6 +276,16 @@ const KIT_CONDITION_SLED := 54.0
 
 const KIT_CONDITION_BASKETS := 31.0
 
+## The expanded roster's three, on the same 0-100 scale and — for the same reason as the four above —
+## three more DISTINCT numbers, none of them equal to each other or to spears/sled/baskets/traps. The
+## gear popover states one row per item, so two items sharing a condition would pass every assertion
+## with their rows swapped.
+const KIT_CONDITION_HUSBANDRY_GEAR := 45.0
+
+const KIT_CONDITION_WAYFINDING := 66.0
+
+const KIT_CONDITION_CLUBS := 22.0
+
 ## **THE ITEM IDS** (`equipment.json` `items`) — named because they appear TWICE in every band fixture:
 ## once in the roster entry's `item_ids` (which kit carries what) and once in the band's condition rows
 ## (how worn the band's own copy is). A literal in both places is exactly how a hint comes to quote the
@@ -265,6 +294,12 @@ const KIT_ITEM_SPEARS := "spears"
 const KIT_ITEM_SLED := "sled"
 const KIT_ITEM_BASKETS := "baskets"
 const KIT_ITEM_TRAPS := "traps"
+## The expanded roster's three. They are named for the same reason as the four above and they carry
+## one more job: the band-wide role CARDS read their gear line off `KitOption.item_ids`, so these
+## appear in the wayfinding and warrior roster entries as well as in the condition rows.
+const KIT_ITEM_HUSBANDRY_GEAR := "husbandry_gear"
+const KIT_ITEM_WAYFINDING := "wayfinding"
+const KIT_ITEM_CLUBS := "clubs"
 
 # ---- THE KIT ROSTER (`docs/plan_denial_raid.md`, `SubsistenceSection.kits`) -----------------------
 # The ids the wire carries and the two job defaults. Named because the `kit <id>` COMMAND token is
@@ -279,17 +314,38 @@ const KIT_ID_BIG_GAME := "big_game"
 const KIT_ID_TRAPPING := "trapping"
 const KIT_ID_GATHERING := "gathering"
 const KIT_ID_NONE := "none"
+## The two BAND-WIDE roles have a kit axis now — they had none while nothing in the roster was gear
+## for them, and `LaborAssignment.kitId` published `""` on those rows. Each names its own default,
+## exactly as `equipment.json`'s `default_kits` does.
+const KIT_ID_WAYFINDING := "wayfinding"
+const KIT_ID_WARRIOR := "warrior"
 const KIT_DEFAULT_HUNT := KIT_ID_BIG_GAME
 const KIT_DEFAULT_FORAGE := KIT_ID_GATHERING
+const KIT_DEFAULT_SCOUT := KIT_ID_WAYFINDING
+const KIT_DEFAULT_WARRIOR := KIT_ID_WARRIOR
+
+## The `clubs` tier the warrior kit grants — well under the spear's 20, because a raid is people
+## fighting animals at the camp with whatever is by the fire rather than a hunting party that chose
+## its ground. It is the same `attack` stat the hunt reads; what keeps a club out of a hunt is the
+## kit's `jobs` list, which is why this value can sit in the same roster without disturbing it.
+const KIT_ATTACK_CLUBS := 6.0
 
 ## The world's kit roster, in `equipment.json` order — the picker's list, and the ONE roster both
 ## preview harnesses drive (`band_panel_preview` preloads this module for it, so the two cannot quote
 ## different tiers or a different default).
 ##
-## **EVERY ENTRY STATES ALL THREE TIERS, and the ones its kit does not use are the BARE ones.** That
+## **EVERY ENTRY STATES ALL FIVE TIERS, and the ones its kit does not use are the BARE ones.** That
 ## is the wire's own shape and it is what `KitRoster.unequipped_tier` reads the bare-handed tier off:
 ## the minimum across the roster on an axis IS that axis's unequipped tier, so a fixture that left an
-## unused axis at its equipped value would make the client's step-down silently unreachable.
+## unused axis at its equipped value would make the client's step-down silently unreachable. The
+## MAXIMUM is the twin claim `KitRoster.equipped_tier` reads — the rate every source row is published
+## at — so an axis no entry equips reads bare at both ends, which is the honest answer for a roster
+## with no kit supplying it rather than a hole.
+##
+## **THE TWO BAND-WIDE ROLES ARE IN THE ROSTER AND CHANGE NO EXISTING PICKER**: `wayfinding` lists
+## `scout` and `warrior` lists `warrior`, so `kits_for_job` filters both out of every hunt and forage
+## sheet. What they are here for is the AXES — the roster is what the bare-handed vantage tier is read
+## off, and a roster missing them describes a world the sim does not ship.
 ##
 ## **`none` IS AN ORDINARY MEMBER AND IT IS AUTHORED LAST**, exactly as `equipment.json` authors it —
 ## which is the whole of why the picker renders it last. The client sorts nothing.
@@ -300,10 +356,12 @@ const KIT_DEFAULT_FORAGE := KIT_ID_GATHERING
 static func kit_roster_fixture() -> Array:
 	return [
 		{
-			"id": KIT_ID_BIG_GAME, "display_name": "Big-game kit", "jobs": ["hunt"],
+			"id": KIT_ID_BIG_GAME, "display_name": "Stalking kit", "jobs": ["hunt"],
 			"attack": KIT_ATTACK_EQUIPPED,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_EQUIPPED,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
+			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
+			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
 			"item_ids": [KIT_ITEM_SPEARS, KIT_ITEM_SLED],
 		},
 		{
@@ -311,13 +369,36 @@ static func kit_roster_fixture() -> Array:
 			"attack": KIT_ATTACK_BARE,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_EQUIPPED,
+			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
+			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
 			"item_ids": [KIT_ITEM_BASKETS],
 		},
 		{
-			"id": KIT_ID_NONE, "display_name": "No kit", "jobs": ["hunt", "forage"],
+			"id": KIT_ID_WAYFINDING, "display_name": "Wayfinding kit", "jobs": ["scout"],
 			"attack": KIT_ATTACK_BARE,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
+			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
+			"scout_vantage_range": KIT_SCOUT_VANTAGE_EQUIPPED,
+			"item_ids": [KIT_ITEM_WAYFINDING],
+		},
+		{
+			"id": KIT_ID_WARRIOR, "display_name": "Warrior kit", "jobs": ["warrior"],
+			"attack": KIT_ATTACK_CLUBS,
+			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
+			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
+			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
+			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
+			"item_ids": [KIT_ITEM_CLUBS],
+		},
+		{
+			"id": KIT_ID_NONE, "display_name": "No kit",
+			"jobs": ["hunt", "forage", "scout", "warrior"],
+			"attack": KIT_ATTACK_BARE,
+			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
+			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
+			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
+			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
 			"item_ids": [],
 		},
 	]
@@ -330,33 +411,81 @@ static func kit_roster_fixture() -> Array:
 ## client-side rule recovers; a fixture that re-derived the rows would be writing exactly the guess the
 ## field replaced, and would agree with a client that had put the guess back.
 ##
+## **A ROW STATES ALL FIVE AXES `BandKitTiers` CARRIES**, the pen and the vantage included. They were
+## absent here while the wire's table was, and a row that omits an axis exercises a fall-back rather
+## than the real path: the client used to answer those two off the ROSTER's fresh tier, so a dry
+## `husbandry_gear` band read `pen 40.0 per keeper` against a sim collecting 12. Stating them is what
+## makes a worn fixture prove the step-down instead of hiding it.
+##
+## **EACH OF THE TWO IS SUPPLIED BY ONE ROSTER KIT, WHICH IS WHY ONLY THE VANTAGE TAKES AN ARGUMENT.**
+## The wayfinding gear equips the vantage, so the `wayfinding` row moves with that item's condition and
+## every other row reads the bare tier — a scout's reach is not a thing a sled or a basket can buy. The
+## PEN is bare on every row here because **no kit `kit_roster_fixture()` offers equips it**: the
+## handling gear rides the `husbandry` kit, which that roster does not carry (the one chapter that
+## needs it builds its own roster and its own row). A table that let the hunt carry stand in for the
+## pen would agree with a client that had put the roster fall-back back — a sled drags a carcass in off
+## the range and a pen stands at the camp.
+##
 ## `KIT_ID_TRAPPING` gets a row although `kit_roster_fixture()` does not offer it: the roster is the
 ## PICKER's list, this is the BAND's answer sheet, and the trapping kit is a shipped kit that one chapter
 ## stages against a roster of its own. A row for a kit no roster offers is never looked up.
-static func kit_tiers_rows(attack: float, hunt_carry: float, forage_carry: float) -> Array:
+##
+## **THE WARRIOR'S ATTACK IS ITS OWN ARGUMENT, and it is not the hunter's.** One roster kit resolves
+## `attack` off `clubs` rather than `spears`, so a table that reused the hunt tier would quote the camp's
+## defenders a spear's 20 — the exact mis-pairing the per-kit rows exist to make impossible.
+static func kit_tiers_rows(attack: float, hunt_carry: float, forage_carry: float,
+		warrior_attack: float, scout_vantage: float) -> Array:
 	return [
 		{"kit_id": KIT_ID_BIG_GAME, "attack": attack,
 			"hunt_carry_per_worker_biomass": hunt_carry,
-			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE},
+			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
+			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
+			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE},
 		{"kit_id": KIT_ID_TRAPPING, "attack": attack,
 			"hunt_carry_per_worker_biomass": hunt_carry,
-			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE},
+			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
+			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
+			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE},
 		{"kit_id": KIT_ID_GATHERING, "attack": KIT_ATTACK_BARE,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
-			"forage_carry_per_worker_biomass": forage_carry},
+			"forage_carry_per_worker_biomass": forage_carry,
+			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
+			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE},
+		{"kit_id": KIT_ID_WAYFINDING, "attack": KIT_ATTACK_BARE,
+			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
+			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
+			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
+			"scout_vantage_range": scout_vantage},
+		{"kit_id": KIT_ID_WARRIOR, "attack": warrior_attack,
+			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
+			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
+			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
+			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE},
 		{"kit_id": KIT_ID_NONE, "attack": KIT_ATTACK_BARE,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
-			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE},
+			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
+			"pen_carry_per_worker_biomass": KIT_PEN_CARRY_BARE,
+			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE},
 	]
 
-## A band carrying ALL FOUR items, each at its own condition and each role at its equipped tier.
+## A band carrying EVERY item the roster ships, each at its own condition and each role at the tier
+## this band's own job defaults resolve to.
+##
+## **THE PEN TIER IS THE BARE ONE, AND THAT IS THE FIXTURE BEING HONEST.** `kit_roster_fixture()`
+## carries no husbandry kit, so the HUNT default (`big_game`) supplies no `husbandry_gear` and a
+## keeper collects at 12 however healthy the item is — which is also what makes the pen row
+## assertable against the sled's 40 rather than agreeing with it by construction. The per-kit rows
+## beside it say the same thing kit by kit, which is what a picker reads.
 static func with_equipped_kit(band: Dictionary) -> Dictionary:
-	band["kit_item_conditions"] = [{"item_id": KIT_ITEM_SPEARS, "remaining": KIT_CONDITION_SPEARS}, {"item_id": KIT_ITEM_SLED, "remaining": KIT_CONDITION_SLED}, {"item_id": KIT_ITEM_BASKETS, "remaining": KIT_CONDITION_BASKETS}, {"item_id": KIT_ITEM_TRAPS, "remaining": KIT_CONDITION_TRAPS}]
+	band["kit_item_conditions"] = [{"item_id": KIT_ITEM_SPEARS, "remaining": KIT_CONDITION_SPEARS}, {"item_id": KIT_ITEM_SLED, "remaining": KIT_CONDITION_SLED}, {"item_id": KIT_ITEM_BASKETS, "remaining": KIT_CONDITION_BASKETS}, {"item_id": KIT_ITEM_TRAPS, "remaining": KIT_CONDITION_TRAPS}, {"item_id": KIT_ITEM_HUSBANDRY_GEAR, "remaining": KIT_CONDITION_HUSBANDRY_GEAR}, {"item_id": KIT_ITEM_WAYFINDING, "remaining": KIT_CONDITION_WAYFINDING}, {"item_id": KIT_ITEM_CLUBS, "remaining": KIT_CONDITION_CLUBS}]
 	band["kit_tiers"] = kit_tiers_rows(KIT_ATTACK_EQUIPPED, KIT_HUNT_CARRY_EQUIPPED,
-		KIT_FORAGE_CARRY_EQUIPPED)
+		KIT_FORAGE_CARRY_EQUIPPED, KIT_ATTACK_CLUBS, KIT_SCOUT_VANTAGE_EQUIPPED)
 	band["hunter_attack"] = KIT_ATTACK_EQUIPPED
 	band["hunt_carry_per_worker_biomass"] = KIT_HUNT_CARRY_EQUIPPED
 	band["forage_carry_per_worker_biomass"] = KIT_FORAGE_CARRY_EQUIPPED
+	band["pen_carry_per_worker_biomass"] = KIT_PEN_CARRY_BARE
+	band["scout_vantage_range"] = KIT_SCOUT_VANTAGE_EQUIPPED
+	band["warrior_attack"] = KIT_ATTACK_CLUBS
 	return band
 
 ## **ONE KIT DRY, THE OTHER TWO INTACT** — the state that proves the three wear independently. The
@@ -365,11 +494,13 @@ static func with_equipped_kit(band: Dictionary) -> Dictionary:
 ## This is the frame a readout rendering one carry on the other's row fails.
 static func with_baskets_dry(band: Dictionary) -> Dictionary:
 	band = with_equipped_kit(band)
-	band["kit_item_conditions"] = [{"item_id": KIT_ITEM_SPEARS, "remaining": KIT_CONDITION_SPEARS}, {"item_id": KIT_ITEM_SLED, "remaining": KIT_CONDITION_SLED}, {"item_id": KIT_ITEM_BASKETS, "remaining": 0.0}, {"item_id": KIT_ITEM_TRAPS, "remaining": KIT_CONDITION_TRAPS}]
+	band["kit_item_conditions"] = [{"item_id": KIT_ITEM_SPEARS, "remaining": KIT_CONDITION_SPEARS}, {"item_id": KIT_ITEM_SLED, "remaining": KIT_CONDITION_SLED}, {"item_id": KIT_ITEM_BASKETS, "remaining": 0.0}, {"item_id": KIT_ITEM_TRAPS, "remaining": KIT_CONDITION_TRAPS}, {"item_id": KIT_ITEM_HUSBANDRY_GEAR, "remaining": KIT_CONDITION_HUSBANDRY_GEAR}, {"item_id": KIT_ITEM_WAYFINDING, "remaining": KIT_CONDITION_WAYFINDING}, {"item_id": KIT_ITEM_CLUBS, "remaining": KIT_CONDITION_CLUBS}]
 	# The gathering kit's own row steps down and the two hunt kits' do not — the whole claim of this
 	# fixture, stated where the client now reads it rather than left to be inferred from the conditions.
+	# The WAYFINDING gear is untouched here, so the scout's reach is unmoved too: a band that has worn
+	# its baskets out can still see as far as it ever could.
 	band["kit_tiers"] = kit_tiers_rows(KIT_ATTACK_EQUIPPED, KIT_HUNT_CARRY_EQUIPPED,
-		KIT_FORAGE_CARRY_BARE)
+		KIT_FORAGE_CARRY_BARE, KIT_ATTACK_CLUBS, KIT_SCOUT_VANTAGE_EQUIPPED)
 	band["forage_carry_per_worker_biomass"] = KIT_FORAGE_CARRY_BARE
 	return band
 
@@ -377,9 +508,15 @@ static func with_baskets_dry(band: Dictionary) -> Dictionary:
 ## replenishment path, so every role has stepped down and stays there. Its `hunter_attack` of 1 is
 ## what the combat gate refuses megafauna on.
 static func with_bare_hands(band: Dictionary) -> Dictionary:
-	band["kit_item_conditions"] = [{"item_id": KIT_ITEM_SPEARS, "remaining": 0.0}, {"item_id": KIT_ITEM_SLED, "remaining": 0.0}, {"item_id": KIT_ITEM_BASKETS, "remaining": 0.0}, {"item_id": KIT_ITEM_TRAPS, "remaining": 0.0}]
-	band["kit_tiers"] = kit_tiers_rows(KIT_ATTACK_BARE, KIT_HUNT_CARRY_BARE, KIT_FORAGE_CARRY_BARE)
+	band["kit_item_conditions"] = [{"item_id": KIT_ITEM_SPEARS, "remaining": 0.0}, {"item_id": KIT_ITEM_SLED, "remaining": 0.0}, {"item_id": KIT_ITEM_BASKETS, "remaining": 0.0}, {"item_id": KIT_ITEM_TRAPS, "remaining": 0.0}, {"item_id": KIT_ITEM_HUSBANDRY_GEAR, "remaining": 0.0}, {"item_id": KIT_ITEM_WAYFINDING, "remaining": 0.0}, {"item_id": KIT_ITEM_CLUBS, "remaining": 0.0}]
+	band["kit_tiers"] = kit_tiers_rows(KIT_ATTACK_BARE, KIT_HUNT_CARRY_BARE, KIT_FORAGE_CARRY_BARE,
+		KIT_ATTACK_BARE, KIT_SCOUT_VANTAGE_BARE)
 	band["hunter_attack"] = KIT_ATTACK_BARE
 	band["hunt_carry_per_worker_biomass"] = KIT_HUNT_CARRY_BARE
 	band["forage_carry_per_worker_biomass"] = KIT_FORAGE_CARRY_BARE
+	band["pen_carry_per_worker_biomass"] = KIT_PEN_CARRY_BARE
+	band["scout_vantage_range"] = KIT_SCOUT_VANTAGE_BARE
+	# A camp with nothing left fights a raid with hands, i.e. the SAME creature `attack` a bare-handed
+	# hunter has — one number, reached from two roles, and the row must still name which fight it is.
+	band["warrior_attack"] = KIT_ATTACK_BARE
 	return band

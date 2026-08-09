@@ -25,7 +25,7 @@ paths:
 | `ui/hud/RungGates.gd` | **All-`static`, stateless** shared RUNG-GATE layer — the one answer to "may this source climb its next rung, and if not, why not?". Extracted from `DrawerComposeController` (issue #412) when the compose sheet stopped being the only surface asking: the Band panel's WORK board marks a source that can climb, and the MAP marks it on the source's own marker — and a renderer must not depend on the HUD's compose controller. Shared-layers-BEFORE-controllers, the same measurement that produced `SourceForecast` and `HudWidgets`. Holds `forage_gates` / `hunt_gates` / `sow_site_refusal_reason` (moved VERBATIM, so the compose sheet's greying is unchanged), **`forage_gates_from_patch`** (the BARE-keyed twin for a raw wire patch — the RAW wire patch carries its keys BARE while the `tile_info` cross-ref `patch_`-prefixes every one of them, and this adapter is the ONE place that mapping is written down. **The prefixing is UNIFORM now (#442)** — `is_cultivated`/`cultivation_progress` were the last unprefixed strays on the cross-ref and are stamped `patch_`-prefixed like their siblings, so there is no longer a mixed convention to remember; reading a `tile_info` key without the prefix silently answers nothing (`hud_compose_vocab.gd` → `BARE_FORECAST_PREFIX` carries the long form)), and **`next_rung_ready`** — the READY test all three surfaces mark from — plus **`knowledge_gate_unmet`** (with its `RUNG_KNOWLEDGE_TRACKS` map: is THIS rung blocked on knowledge specifically? — the same `track < KNOWLEDGE_COMPLETE` test the gate builders make, asked on its own so the compose sheet can suppress that reason **structurally instead of by matching its words**; one caller, for the reason the "A KNOWLEDGE gate renders NO improvement control" section gives). **`wild_fodder_reason` broadens the file's remit** from "may this source climb its next rung" to "…and will the work it is doing actually pay out" — the wild forage patch's fodder credit, which the sim refuses to a faction without Foddering; see "The FODDER account can be real and unbankable at once". **STATELESS IS THE INVARIANT**: the one impurity, faction knowledge, is threaded in as a `knowledge` PARAMETER (`FactionReadouts.faction_tracks(faction)`, the whole `{track: progress}` row `faction_knowledge` reads one key out of), never reached for. `next_rung_ready` requires all three of OFFERED (husbandry ceiling / `can_cultivate`-`can_sow` + willing ground), UNGATED (the gate functions answer nothing), and NOT-ALREADY-RUNNING (a patch mid-Cultivate is progress, not an opportunity), **highest rung first**. **That ordering is load-bearing on the PLANT web only** and its assertion needed care: `is_cultivated` retires Cultivate, so on a TENDED patch the two rungs are mutually exclusive and an ordering test there passes with the branches swapped (measured). `Sow` needs no prior patch, so a WILD patch on sowable ground is the one shape that clears both gates at once. On the animal web the rungs are always mutually exclusive — Tame retires at a full meter, Corral requires one — so ordering is genuinely not load-bearing there. `FactionReadouts.faction_knowledge` deliberately does NOT call `RungGates.track`: dependency DIRECTION outranks the one-definition rule for a `float(d.get(k, 0.0))` |
 | `ui/hud/HarvestFloorChart.gd` | The compose sheet's **floor instrument** (`docs/plan_harvest_floor.md` §7.3) — a custom-drawn `Control` (the `FoodOutlookChart` / `ArrivalStrip` idiom) putting the standing stock, the draggable floor line, the projection and the food peak on ONE y-axis of `B/K`, with the `learn_multiplier` gradient rail down the right edge. **IT DRAWS; IT DOES NOT MODEL** — every number comes from `SourceForecast.floor_chart_model`, the projection walks the sim's own `regrowthSamples`, the peak is the argmax of those samples rather than `FLOOR_FOOD_PEAK` restated beside them, and negative samples are carried through as decline. It emits ONE signal, `floor_changed(floor, committed)`, and the second argument is the whole contract: a committed change rebuilds the compose controls (which frees this node), a live one must not, or the drag in flight dies with it — see "THE CHART" below. Keyboard-accessible (`FOCUS_ALL`; arrows / Shift-arrows / Home / End), because the floor is the primary control of the panel. Palette through `HudStyle` only — plus `DetailFormat.ecology_tier_color` for the standing-stock band and the **phase zones** behind it (`_draw_phase_zones`, the furthest-back layer: the source's own `collapseFraction` / `stressedFraction` as horizontal Collapsing/Stressed/Thriving bands, so the floor is dragged against the ecology rather than against a remembered number) |
 | `ui/hud/ForecastQuery.gd` | **The client's half of the command socket's SECOND direction** (`sim_runtime/proto/command.proto` -> "THE QUERY CHANNEL") — a `RefCounted` seam owning the request-id sequence, the SUBJECT/KEY split (`subject_of` = kind + band + herd, `key_of` = that plus the kit, party and floor), the `{state, answer, error}` a sheet renders off (`view`), the stale-answer window (`STALE_AFTER_MSEC`), the settled test the crew one-shots gate on (`answer_settled`) and the `answered(subject)` signal every consumer redraws from. **It owns NO socket**: `Main` injects the sender and pumps `CommandBridge.poll_query_replies` in through `deliver` / `expire_stale`, so the HUD asks questions without reaching the network and every state is drivable from a harness with no server. **Its own object because THREE sheets across TWO controllers compose a raid** and each needs the same four things — an id, a rule for which reply is still wanted, a rule for what to show while waiting, and a re-render when the answer lands; two copies would drift the moment one learned to keep its last answer and the other did not. `Hud` holds the ONE instance and fans `answered` out to `_drawercompose` / `_bandpanel` / `_drawer`. **`reset()` is a WORLD-BOUNDARY cache clear and `HudLayer.reset_world_state` is its only production caller** — a subject is kind + band + herd, and a new world hands out both handles again (band ids restart low, herd ids are species + index), so a held answer matches the new world's composed key exactly and renders the previous world's numbers as `STATE_READY`; the shape and the reset contract are `.claude/rules/core_sim/world-handoff.md`. **The no-retry rule is scoped to the SERVER's token class** (`TRANSPORT_RETRY_AFTER_MSEC`): a `query_error` names something wrong with the QUESTION, which the sheet composed itself, so it is never re-asked — but `QUERY_ERROR_TRANSPORT` names a dead socket, which heals, so it is re-askable once the backoff has elapsed (not on the next render, which `ask` reaches once per render and would spin the socket; not never, which strands a sheet on `No forecast available (transport)` for the session after a server restart). The failure keeps rendering through the retry, so a server coming back is ONE transition rather than a flicker. See "THE RAID'S NUMBERS ARE ASKED FOR" below |
-| `ui/hud/KitRoster.gd` | **All-`static`, stateless** shared KIT layer (`docs/plan_denial_raid.md`) — the read over `SubsistenceSection.kits` (`kits_for_job` / `kit_by_id` / `kit_display_name` / `display_name_for_id` / `resolve_selection`), the EFFECTIVE tier a given band gets under a given kit — **READ off the band's own `kitTiers` row, never re-derived** (`band_kit_tiers` / `effective_tiers` / `unequipped_tier` / `kit_item_ids` / `condition_of` / `tier_hint` / `attack_against`, the last taking the BAND so a kit's size window comes off the same resolved row its attack does) — and the picker ROW itself (`build_kit_row`). **The honesty trio `estimates_quoted_kit` / `estimates_apply_to` / `estimates_quoted_note` is RETIRED with the per-herd estimate tables**: a forecast is a query answered for the composed kit, so there is no other kit's numbers to disown. **Its own file because the control appears on FOUR sheets across TWO controllers** — the Band panel's hunting-party and denial forms, the herd drawer's assign-hunters block, the land drawer's assign-foragers block — and a row that has to read identically in four places must have one implementation; the same measurement that produced `SourceForecast` and `HudWidgets`. The ROSTER is snapshot data and lives on `HudBandLaborState` (`kits()` / `default_kit_id(job)`, ingested by `Hud.update_kit_roster` off `Main`'s `kits` + the two default keys), threaded in as a parameter — this layer holds nothing. **Dependency direction: it reads `SourceForecast` / `HudWidgets` / `HudStyle` / the vocab leaves and none of them may read it back** (a `const` cycle between two `class_name`d scripts fails to load the whole client) |
+| `ui/hud/KitRoster.gd` | **All-`static`, stateless** shared KIT layer (`docs/plan_denial_raid.md`) — the read over `SubsistenceSection.kits` (`kits_for_job` / `kit_by_id` / `kit_display_name` / `display_name_for_id` / `default_kit_for` / `resolve_selection`), the EFFECTIVE tier a given band gets under a given kit — **READ off the band's own `kitTiers` row, never re-derived** (`band_kit_tiers` / `effective_tiers` / `_resolved_tier` / `unequipped_tier` / `equipped_tier` / `kit_item_ids` / `condition_of` / `tier_hint`) — the BAND-WIDE ROLE cards' own tier and gear line (`ROLE_AXES` / `is_band_wide_role` / `role_axis` / `role_gear` / `role_hint`), the OFFER test that decides which kits a quarry may be worked with (`attack_reaches` / `attack_against` / `effective_attack_against` / `kit_uses` / `kit_supplies_any` / `kit_offer` / `kit_is_offered` / `hunt_gate_closes` / `gate_closed_source` — see "A KIT THAT CANNOT WORK ON THIS QUARRY IS GREYED"), the resolve-then-reprice seam and the CARRY AXIS it prices on (`carry_axis_for` / `priced_source` / `repriced_source` — the axis is the SOURCE's, a penned herd overriding its job's; see "A PENNED herd is priced — and described — on the KEEPER'S carry"), and the picker ROW itself (`build_kit_row`). **The honesty trio `estimates_quoted_kit` / `estimates_apply_to` / `estimates_quoted_note` is RETIRED with the per-herd estimate tables**: a forecast is a query answered for the composed kit, so there is no other kit's numbers to disown. **`attack_reaches` takes the ROW the attack is read from** — the roster entry for the fresh offer test, the band's `kitTiers` row for the worn gate — so a kit's size window and its attack can never come from two different rows. **Its own file because the control appears on FOUR sheets across TWO controllers** — the Band panel's hunting-party and denial forms, the herd drawer's assign-hunters block, the land drawer's assign-foragers block — **and on the WORKFORCE zone's two band-wide role CARDS** — and a row that has to read identically in six places must have one implementation; the same measurement that produced `SourceForecast` and `HudWidgets`. The ROSTER is snapshot data and lives on `HudBandLaborState` (`kits()` / `default_kit_id(job)`, ingested by `Hud.update_kit_roster` off `Main`'s `kits` + the four job defaults), threaded in as a parameter — this layer holds nothing. **Dependency direction: it reads `SourceForecast` / `HudWidgets` / `HudStyle` / `DetailFormat` (for `role_hint` alone, from inside a function body) / the vocab leaves and none of them may read it back** (a `const` cycle between two `class_name`d scripts fails to load the whole client) |
 | `ui/hud/SourceForecast.gd` | **All-`static`, stateless** shared forecast/estimate layer (HUD decomposition, phase 2c-2 precursor) — the pure "what will this source give me?" math THREE consumers ask for: the drawer's compose blocks, the Band panel's WORK zone, and its PARTIES zone. Three families: POST-HOC `source_yield_readout` (what a worked source actually produced, incl. the ⚠ overdraw + overstaff/wasted notes) · PRE-COMMIT `forecast_inputs` / `max_useful_workers` / **`source_worker_cap_state`** (the CONFIRMED-row twin of that cap: `(forecast, workers, idle, useful_floor = 0) → {can_add, note}`, beside the ceiling it reads so a worked row and a compose stepper can never gate differently — the trailing floor is what makes that true rather than merely stated, and `herd_crew_floor` is its one definition; the *hold it after* crew is a floor on BOTH twins and therefore lives inside `max_useful_workers`, carried on the forecast as `hold_crew`) / `expected_yield` / `hunt_policy_ceiling` · THE RAID `hunt_trip_forecast` → `hunt_forecast_line_bbcode` / `hunt_trip_returns_empty` / `hunt_empty_refusal` / `hunt_empty_refusal_reason` / `expedition_party_cap` (the SUPPLY side — the band's idle workforce, and NOT `max_expedition_party_size`, which is the LAST RUNG of the estimate tables' sampled party axis rather than a rules cap) / `expedition_engage_crew` / `expedition_useful_cap` (the DEMAND side, untouched) / `expedition_policy_takes` / `style_send_hunt_button` (`style_send_hunt_button` styles a Button off the raid verdict, so it lives WITH the verdict). Plus **THE DENIAL RAID's own layer** (`docs/plan_denial_raid.md`) — `denial_forecast` / `denial_verdict` / `denial_turns_phrase` / `denial_verdict_text` / `denial_verdict_bbcode` / `denial_take_bbcode` / `denial_party_needed` (a read of the REPLY, not of a table) / `denial_refusal_reason` / `denial_is_short_handed` / `denial_short_handed_reason` / `style_send_denial_button`, over the `DENIAL_VERDICTS` table — which is composed from the QUERY's reply row (`denialEstimates` is retired) and shares NONE of the raid vocabulary above: denial carries no floor and no delivery ETA, so its readout is a collapse verdict and its Send disables in exactly one case (`denial_is_short_handed` / `denial_short_handed_reason` — the band cannot field the party the herd REQUIRES; a party the player under-sized still launches). The rationale lives in `band-city-panel.md` → "DENIAL is a third MISSION on the parties footer". Plus the shared leaves those need — `format_magnitude`/`format_signed`/`format_yield`/`extractive_take`, `band_tile`/`hex_distance_wrapped`, `herd_display_name`, `is_managed_hunt_source`, and the two one-off leaks into the read-only detail layer, `flora_basket_entries` / `husbandry_ceiling`. **WHY ITS OWN FILE:** the next phase lifts a `DrawerComposeController` out of `Hud.gd`, but this layer is called by the work + parties zones too, so it cannot travel with the drawer; pure injection was measured at **54 Callables** and a `_hud` back-ref would weld an already-pure layer to the god object (and the band-panel extraction would then need a SECOND back-ref to the same place). All three consumers depend on THIS instead. **STATELESS IS THE INVARIANT** — no node, no `_hud`, no snapshot cache; if a new function needs HUD state, pass it in. The one non-plain-value is the grid-wrap pair (`grid_width`, `wrap_horizontal`), threaded as EXPLICIT PARAMETERS through `hex_distance_wrapped` → `round_trip_travel_turns` → `hunt_trip_forecast` / `expedition_policy_takes` so a stale grid can never be captured; `HudLayer._hex_distance_wrapped` is a one-line pass-through supplying the pair off `_band_labor`, so there is ONE hex implementation (`DrawerComposeController` calls the module directly with the same pair). The **forecast vocabulary constants moved here with the math** (`LABOR_KIND_*` / `LABOR_HUNT_POLICIES` / `DEFAULT_HUNT_POLICY` / `SOURCE_KIND_*` / `FORECAST_*` / `MAX_USEFUL_*` / `HUNT_FORECAST_*` / `SEND_HUNT_*` / `HUSBANDRY_CEILING_*` …) and `HudLayer` **re-exports the still-used ones as aliases** (`const X = SourceForecast.X`, one commented block) rather than redefining them — ONE definition, and every HudLayer call site reads unchanged |
 
 ## THE HARVEST AXIS IS AN ESCAPEMENT FLOOR, NOT A STANCE (`docs/plan_harvest_floor.md`, issue #455)
@@ -422,10 +422,39 @@ engageCrew      = ceil((floor(ceiling / bodyMass) + 1) / (engageRate × dip))
 - **The dip rides engagement exactly as it rides carry.** Omitting it re-opens the closed defect where
   a building crew and a harvesting crew reach the same count and the build is free.
 - **THE TAKE'S ARM IS APPLIED TO THE ANIMAL COUNT, NOT TO `collection`.** `_hunt_delivered_and_waste`
-  mins `animals_engaged` into its `carryable`; `floor(min(carry, engaged × fpa) / fpa)` is the same
+  mins `animals_stayed` into its own kill count; `floor(min(carry, engaged × fpa) / fpa)` is the same
   arithmetic but divides a product of `fpa` BY `fpa` and can land a whole engagement one animal short
-  on a rounding. It also leaves the partial-body branch reading the RAW carry, which is right —
-  engagement is never binding there, a party that exists reaching at least one animal.
+  on a rounding.
+- **THE `max(1.0)` SITS ON THE CARRY ARM ALONE, INSIDE THE `min`** — the sim's own
+  `killed = affordable.min(carryable.max(1.0)).min(brought_down)`, and the reason
+  `_hunt_delivered_and_waste` is ONE expression rather than a carryable-versus-partial-body pair. A
+  party that cannot carry a whole animal still kills one and wastes the rest, which is a fact about
+  the PACK; a party that brings down three quarters of an animal has brought down three quarters of
+  an animal and floors at nothing. While the carry quotient was the only arm that could go below one
+  body the two were indistinguishable, so a `carryable < 1` branch could price delivery as the crew's
+  whole raw `collection`. With the engagement arm in the same `min` that is false, and it read as a
+  cliff the wrong way up: a Wild Boar crew of six (`engage_rate` 0.33, `stay` 0.75 ⇒ 1 engaged, 0.75
+  stayed) quoted **4.80 food/turn** — its entire carry throughput, twenty boar, for a take of 0.18 —
+  then FELL to 0.36 at seven hunters, the readout dropping as the crew grew. Guarded by
+  `chapters/hunt.gd`'s `_engagement_quantisation_assertions`, PNG-less and driven: the played pair by
+  equality, plus MONOTONICITY over 1..12 hunters, which is the property the branch violated and the
+  one that catches its return in another species' numbers. **Collapsing the two branches moved no
+  frame** — the one expression is byte-identical to the pair everywhere but where the engagement binds
+  below one body, and no `ui_preview` fixture is in that state.
+- **THE CARRY CLAMP IS CHARGED PER BODY, NOT PER TURN**, and that is the other half of why one
+  expression replaces two branches. `killed` is BODIES PER TURN and goes fractional below one — a body
+  every `1/killed` turns — but a body lands WHOLE on the turn it drops, and the crew hauls one turn's
+  `collection` off it while the rest rots where it fell. So delivery is `killed × min(fpa, collection)`
+  and the clamp rides the per-BODY term. Averaging the kill and clamping THAT by the carry credits the
+  crew meat no single turn could hold: on a party whose collection, whose ceiling and whose 0.6-body
+  cadence all coincide it reads the full ceiling with no waste, where the honest answer is `0.6 ×
+  0.6 = 0.36` of a body's food and 40% wasted — 1.67× too high, and silent about the meat on the
+  ground. **A CEILING BELOW ONE BODY IS SMOOTHED RATHER THAN ZEROED**, which is where the sheet parts
+  from `quantise_animal_take` (it floors the room to whole animals first, so `affordable < 1` ⇒ no
+  take at all): the `now → after` row needs the fractional reading, the holding ceiling being one
+  turn's regrowth and routinely a fraction of a body. Guarded by `chapters/hunt.gd`'s cadence herd,
+  whose three arms coincide at 0.6 of a body with the engagement UNBOUNDED — the one shape that
+  isolates the carry clamp from the arm above it.
 - **The reach arm had to reach BOTH producers, and only one of them is `expected_yield`.** The hunt
   sheet's per-turn row comes from `_hunt_delivered_and_waste` (which composes its own `collection` so
   it can quantise), not from `expected_yield_account` — so an arm added to the shared layer alone would
@@ -1334,6 +1363,14 @@ the herd drawer's assign-hunters block and the land drawer's assign-foragers blo
 the crew, which is why it sits with the crew; every number under it is a function of it, which is why
 it sits above them.
 
+**…AND ON THE TWO BAND-WIDE ROLE CARDS, which are not sheets and take two documented deviations.**
+The WORKFORCE zone's Scout and Warrior cards mount the same builder with no field key and with
+`compact_chrome`, over a hint of their own (`KitRoster.role_hint` — a carry-axis wording says nothing
+about a vantage), and they COMMIT ON THE PRESS rather than at a Send. The spec is
+`band-city-panel.md` → "The role cards carry the band's OTHER two kits", including the per-ROLE AXIS
+table (`ROLE_AXES`) that prices a Scout on its vantage and a Warrior on its `attack`, and the
+`KitOption.item_ids` read that keeps a warrior's condition clause off the spears.
+
 **The control is a native `OptionButton`** — `HudWidgets.build_option_picker` — not a pill row, the
 roster growing toward a dozen kits that a row of pills cannot hold in a 354px dock column. No
 per-entry art: the client ships none per kit, and repeating ONE job glyph down every row is noise
@@ -1442,31 +1479,45 @@ not the forecast's — and priced on one side only, a pill names a count the `+`
 
 **THE RETREAT RIDES `stay_fraction` AND NEVER `engage_rate`.** The kit's `dispersion` multiplies the
 quarry's own wariness, and the substitution is `snapshot.fbs`'s own formula,
-`clamp(1 − (1 − stayFraction) × dispersion, 0, 1)`. Folding it into the reach instead reprices the take
-and the CREW COUNT together, and **the sim does not treat them together**: `fauna::hunt_engage_workers`
-sizes a crew on the RAW reach — the hands that can get to the herd — while `HuntParty::stayers` cuts
-only what those hands bring down. The fold shipped once and `ui_preview`'s *"the compose stepper caps at
-the crew the SIM asks for"* caught it immediately.
+`clamp(1 − (1 − stayFraction) × dispersion, 0, 1)`. It is applied to its OWN field rather than folded
+into the reach because the two stages are separately observable — `engage_rate` is a fact about the
+quarry, `dispersion` moves the retreat alone — and the fold makes Big-game and Trapping quote the
+identical hunt on a herd whose whole difference is how much of what they reach stands still.
 
 `SourceForecast.animals_stayed` is the client mirror of `animals_that_stay` at the quantile a forecast
-reads it at (the analytic mean `floor(engaged) × stay`; `animals_engaged` already floors). It is
-applied in the sim's own order — **engage → retreat → convert** — and **only where a TAKE is composed**:
+reads it at (the analytic mean `floor(engaged) × stay`; `animals_engaged` already floors), applied in
+the sim's own order — **engage → retreat → convert**.
 
-| carries the retreat | does NOT |
-|---|---|
-| `engaged_quantum` → `engagement_reach` → `expected_yield_account` | `engage_workers` / `take_workers` |
-| `_hunt_delivered_and_waste`'s `carryable` bound | `engagement_carry`, hence `crew_to_clear` / `crew_to_hold` / `crew_that_reaches` |
-| — | `max_useful_workers`' `hold_crew` / `reach_crew` floors |
+**IT PRICES THE CREW AS WELL AS THE TAKE, and that reverses what this file used to say.** A hand that
+keeps one animal in four draws a stock down a quarter as fast, so the crew that draws it down at all
+is four times as large — which makes every crew answer on this sheet a quotient of what STAYS:
+`engage_workers`, `take_workers` and through them `crew_to_hold` and `max_useful_workers`, beside
+`engagement_carry`'s `crew_to_clear` / `crew_that_reaches`, which divided by the retreat all along.
+The doctrine that survived here for a while was that `engage_workers` mirrors
+`fauna::hunt_engage_workers`' raw-reach sizing and must not cut, so the stepper cap could not disagree
+with the sim's `workersNeeded`; the consequence was a cap sized **82** on a played Wild Boar herd
+beside a *clear it now* pill naming **108** — the sheet offering a crew the panel then refused to let
+the player assign. 108 is the honest number, `server-dev` is making the matching change in
+`fauna::hunt_engage_workers` / `hunt_take_workers`, and `stay` is a REQUIRED parameter on
+`engage_workers` / `take_workers` / `crew_to_hold` / `engagement_carry` so no call site can take the
+raw reach back by omission.
 
-**Both take producers, because only one of them is `expected_yield`** — the same reason the reach arm
-needed both. `_hunt_delivered_and_waste` composes its own `collection` so it can quantise, so an arm
-added to the shared layer alone leaves the *rendered* green line unmoved while the cap beside it shifts.
+**`stay <= 0` answers a crew of NONE, not an infinite one.** Nothing the party reaches ever stands, so
+the take is identically zero at every size — there is no number of hands that achieves it, and the
+crew needed to achieve it is therefore none. `take_workers`' `max()` then keeps the haul crew, exactly
+as it does for a source with no engagement stage at all.
+
+**Both take producers carry it, because only one of them is `expected_yield`** — the same reason the
+reach arm needed both. `_hunt_delivered_and_waste` composes its own `collection` so it can quantise,
+so an arm added to the shared layer alone leaves the *rendered* green line unmoved while the cap
+beside it shifts.
 
 **A source with no retreat stage is byte-identical to before the stage existed.** A patch and a pen
 publish no `stayFraction`, `repriced_source` finds no key to substitute, and `forecast_inputs` reads the
 wire's own `1` — which `animals_stayed` short-circuits on, so an unbounded engagement passes straight
-through. Measured: with the whole substitution live, **zero of `ui_preview`'s 590 assertions move**, no
-fixture in that harness publishing the field.
+through. Measured twice: with the whole substitution live, **zero of `ui_preview`'s 590 assertions
+move**, and with the retreat reaching the crew answers as well, **zero of its frames move** — no
+fixture in that harness publishes the field.
 
 ### THE DOCK'S RAID CHART IS PRICED TOO, AND IT IS THE ONLY THING ON THAT SHEET THAT CAN BE
 
@@ -1487,35 +1538,38 @@ that sheet still answering for the kit the player actually picked.
 kit and runs `HuntParty::stayers` exactly as a resident hunt does, so `dispersion` belongs there; the
 carry tier scales the party's throughput the same way.
 
-### THE PROJECTION CARRIES THE RETREAT — and the line between it and the sim is `crew_to_hold`
+### THE PROJECTION CARRIES THE RETREAT, AND SO NOW DOES EVERY CREW ANSWER BESIDE IT
 
-`dispersion` reaches a chart at all only because `project_stock`'s engagement bound now takes the stay
+`dispersion` reaches a chart at all only because `project_stock`'s engagement bound takes the stay
 term. Without it the dock's sheet could be priced and still render identically for every kit, the
 curve being the one thing it draws.
 
-**The split is by WHOSE QUESTION the number answers, not by which function computes it:**
+**Only two things on this sheet still read the RAW reach, and both are readings of ONE TURN's contact
+rather than of a crew:**
 
-| retreat-aware — a DRAWDOWN answer, no sim twin | RAW reach — a SIM MIRROR |
+| divides by what STAYS | the RAW reach |
 |---|---|
-| `project_stock`'s bound at all three walks (`floor_chart_model`, `take_draws_down`, `crew_that_reaches`' probes) | `animals_engaged`, `engagement_per_worker` |
-| `engagement_carry`, hence `crew_to_clear` and `crew_that_reaches` | `engage_workers` (`fauna::hunt_engage_workers`) |
-| — | `take_workers` (`fauna::hunt_take_workers`), hence **`crew_to_hold`** |
+| `project_stock`'s bound at all three walks (`floor_chart_model`, `take_draws_down`, `crew_that_reaches`' probes) | `animals_engaged` — how many this party touches THIS turn, before the retreat is applied to it |
+| `engagement_carry`, hence `crew_to_clear` and `crew_that_reaches` | `engagement_per_worker` — the pair's composition, which `animals_stayed` is then applied to |
+| `engage_workers`, hence `take_workers`, hence **`crew_to_hold`** and `max_useful_workers` | — |
 
-**`crew_to_hold` IS `take_workers` ON A WHOLE-ANIMAL SOURCE, and `max_useful_workers` floors the
-stepper cap on it** — so a retreat reaching it would put the sheet at odds with the sim's own
-`workersNeeded`, which is the regression the `engage_rate` fold shipped and this table exists to keep
-closed. The other two crew answers have no sim twin: they ask how many hands pull a stock DOWN to a
-floor, and a party keeping one animal in four genuinely needs four times as many. The file already
-records that the two disagreeing is correct — *"Two different questions about two different stocks —
-the numbers agreeing would be the bug."*
+**The two surviving raw readings are INPUTS to the retreat, not answers that skip it**: every consumer
+of either passes it straight into `animals_stayed`. What changed is the third row — `crew_to_hold` was
+the last crew answer sized on the raw reach, on the grounds that it IS `fauna::hunt_take_workers` and
+the stepper cap floors on it, and the cost was a cap **below** the *clear it now* pill rendered beside
+it (82 against 108 on the played Wild Boar). The remark this file still makes about the two crew
+targets disagreeing stands and is a different point: *clear* and *hold* ask about different stocks, so
+their answers may differ — what they may not do is disagree about how many animals a hand lands.
 
 **Measured on one herd (`wariness 0.75`, `engageRate 4`, a party of 3):** the passive device walks the
-herd to its floor (`settled_fraction` 0.50) where the spear line settles at **0.70**, and *clear it
-now* reads **50 hands against 13** — while `crew_to_hold` is **2 either way**. Guarded by
-`band_panel_preview._assert_dock_chart_carries_the_kit`, whose two kits differ in `dispersion` ALONE
-(same carry, so the carry half cannot account for a unit of it) over a locally-built roster —
-`BandFx.kit_roster_fixture()` ships no `dispersion` at all, so asserting through it would compare a kit
-against itself.
+herd to its floor (`settled_fraction` 0.50) where the spear line settles at **0.70**, *clear it now*
+reads **50 hands against 13**, `crew_to_hold` **5 against 2**, and the stepper cap **61 against 16**.
+Guarded by `band_panel_preview._assert_dock_chart_carries_the_kit` and
+`_assert_kit_reprices_the_source`, whose two kits differ in `dispersion` ALONE (same carry, so the
+carry half cannot account for a unit of it) over a locally-built roster — `BandFx.kit_roster_fixture()`
+ships no `dispersion` at all, so asserting through it would compare a kit against itself. Beside them
+`chapters/hunt.gd`'s `_retreat_crew_assertions` holds the invariant the whole change exists to
+restore, over five species: **the cap reaches every crew target the same sheet renders.**
 
 **It moved ZERO frames and ZERO assertions in either harness**, measured by stashing the change and
 re-rendering: no rendered fixture on either side publishes `stayFraction`, so `animals_stayed`
@@ -1588,6 +1642,115 @@ while the hunt half correctly stays green (a different call site).
 > repricing and a dead one. Judging this feature by frames means judging it by one frame that moves for
 > a reason adjacent to it.
 
+### A KIT THAT CANNOT WORK ON THIS QUARRY IS GREYED, AND ITS TAKE IS ZERO
+
+Reported from play on the expanded roster: the compose sheet offered **Trapping** and **Husbandry**
+against a Red Deer as ordinary choices and quoted each a real take, for a hunt that brings home
+**exactly nothing**. `KitRoster.attack_against` — written precisely to resolve a kit's attack against
+a named animal — had **no callers**, so the sheet applied the trap's `dispersion 0` (nothing flees, so
+the take reads BETTER) while never applying its `attackMaxBodyMass 1.0`. Above that bound the snare
+grants nothing, the party falls back to the bare hand's `attack 1`, and the sim's
+`max(0, attack − defense)` refuses the hunt. Measured against the shipped roster, **three of the four
+options on a Red Deer sheet took nothing** and all four were presented alike.
+
+**The rule, and it introduces no config — every term is something the kit already declares against
+something the source already publishes:**
+
+> Offer a kit as selectable only if something it declares can change this source's outcome.
+
+`KitRoster.kit_offer` answers `{offered, reason}` for one (kit × source) pair, on two rules:
+
+| rule | what it reads | who it withholds |
+|---|---|---|
+| **the weapon cannot reach the quarry** | `attack_against(kit, body_mass, bare)` through `SourceForecast.hunt_gate_model_at` | a snare against a Red Deer; anything bare-handed against a defended species |
+| **the kit's contribution is an axis this source cannot read** | `kit_uses(…, pen_carry)` against the herd's `corralled` | the husbandry kit on any herd with no pen |
+
+- **`none` is NEVER greyed, and nothing spells its id to arrange that.** `kit_supplies_any` asks
+  whether the kit beats the roster's bare-handed tier on *any* axis; a kit that beats none of them
+  grants nothing anywhere, so there is no source it can be inapplicable *to*. It is the free
+  bare-handed comparison the whole wear model exists to protect, and a future `fishing` kit with an
+  empty `uses` inherits the treatment — which is the test of whether `none` has been special-cased.
+- **A PEN is exempt from the weapon rule**, gated on the same `has_engagement_stage` predicate the
+  gate LINE is mounted behind: a penned animal is slaughtered rather than stalked. Without it a
+  corralled Red Deer would withhold every kit but the spear line.
+- **The pen rule is asked FIRST**, so a kit states the same reason on every quarry. The husbandry kit
+  fails both tests on a Red Deer — it carries no weapon either — and *"what it adds is only used on a
+  penned herd"* is the fact about the KIT, where *"nothing it carries can bring down a Red Deer"* is a
+  fact about the deer that would then go unsaid on a rabbit, where the same kit is withheld anyway.
+- **Greyed, NOT hidden, and it states its reason on its own face.** *"A snare cannot hold a Red Deer"*
+  is a fact about the world worth teaching once, and invisibility is exactly what let this ship
+  unnoticed. The reason rides the entry's `label` and is repeated in its `tooltip`, because a disabled
+  popup row is the one control here a player cannot reliably hover.
+- **`resolve_selection` skips a withheld kit at every step**, so a trapping selection made on a warren
+  falls through to the default when a Red Deer's sheet opens rather than surviving as a greyed row the
+  picker is opened on.
+
+> #### WEAR MUST NOT ENTER THE CHOICE — the load-bearing constraint
+>
+> **Which kits are offered, and which is default, are properties of (kit × quarry) resolved at the
+> FRESH tier.** What the sheet QUOTES for the selected kit, and what the hint line says, are the
+> band's own worn tiers as before.
+>
+> | question | wear? |
+> |---|---|
+> | Is this kit greyed on this quarry? | **NO** — fresh tier |
+> | Which kit is the default? | **NO** — fresh tier |
+> | What take does the sheet quote? | **YES** — `effective_tiers` |
+> | What does the hint say? | **YES** — `spears 74`, `sled dry` |
+>
+> So a band whose spears are dry, looking at a Red Deer, still sees the stalking kit **listed,
+> selectable and default**, quoting zero, with the hint explaining the spears are gone. If wear drove
+> the list, the picker would silently reshuffle between turns and the player could not tell a kit that
+> *cannot* work on this animal from one that has merely *worn out*.
+
+**The "no disabled state" rule in `build_kit_row`'s doc was about WEAR and still holds** — a worn
+component degrades the tier rather than removing the kit. Applicability is a different axis, and the
+doc now says so in as many words rather than leaving the next reader to read the two as a
+contradiction and "fix" one of them.
+
+#### Filtering the LIST is not enough: the gate is priced too
+
+**The Band panel's raid chart reprices with no picker in sight** (`BandPanelController` calls
+`KitRoster.priced_source` directly), so the quoted number has to be honest on its own.
+`priced_source` therefore asks `hunt_gate_closes` **before** any repricing and answers
+`gate_closed_source` — every per-worker currency substituted flat to zero — when the fight is refused.
+The retreat is deliberately *not* substituted beside it: a stay fraction describes what a party keeps
+of what it brings down, and this one brings nothing down.
+
+- **Here the band's wear DOES apply**, this being the quoted number rather than the choice:
+  `effective_attack_against` composes the two floors — outside the weapon's size window the item was
+  never in play, and inside it the band's own condition decides — and it is the ONE resolution the two
+  gate LINES (`DrawerComposeController`, `BandPanelController._mount_kit_gate_line`) now share. Both
+  used to read `effective_tiers["attack"]` unbounded, i.e. a trapping sheet cleared a gate the sim
+  shuts.
+- **The quarry's terms come off `src`, which IS the herd on the hunt job.** What this stateless layer
+  may not do is consult `HudBandLaborState`, and it does not: roster, band and source are all
+  parameters.
+- **Because the offer test resolves at the fresh tier, a withheld kit is never the one priced** — so
+  the reachable case for this branch is WEAR: a band with dry spears against a Red Deer,
+  `max(0, 1 − 1)`, which is exactly the state the constraint above insists stays selectable.
+
+**Coverage** — `compose_rungs.gd`'s `_kit_offer_states`, over a locally-built roster (the shared
+`BandFx.kit_roster_fixture()` carries neither a trapping nor a husbandry kit, and adding them would
+re-list every hunt picker in both harnesses). Three frames — `herd_kit_offer_red_deer`, the same sheet
+with the picker OPEN (the closed face names the selected kit alone, so only the popup can show a
+withheld row and its reason), and `herd_kit_offer_rabbit` — plus nine assertions. **The pair of
+quarries is the claim**: a rule that greyed the trapping kit everywhere satisfies the deer half alone,
+and the positives beside it (the spear line untouched and default, `none` never withheld) are what
+stop "grey everything" passing. The zero-take half is PNG-less and DRIVEN through
+`_hunt_priced_herd` — a per-worker rate is a number, and a sheet quoting the wrong one renders a
+perfectly plausible forecast. Sabotage-verified on two disjoint mutations: an unconditional
+`kit_offer` fails exactly the three greying claims and leaves every positive green; disabling the
+`priced_source` gate fails exactly the zero-take claim, naming the `0.09` it would have quoted.
+
+#### The `big_game` kit is called the **Stalking kit**
+
+Four roster entries name a practice or a role and one named its prey, which misleads: a player reading
+*"Big-game kit"* on a rabbit sheet concludes it is the wrong tool when it merely performs worse. Only
+`display_name` moved — the id `big_game` is unchanged, so no sim code, test or wire contract does.
+The label is spelled in the harness fixtures and in `WorkbenchVocab`'s worked example, which moved
+with it.
+
 ### The hint states the EFFECTIVE tier, never the fresh one
 
 `KitOption`'s numbers are for a FRESH kit. The band's real condition is on its own cohort
@@ -1611,6 +1774,124 @@ in.
 **`stated` is false when the band says nothing about its condition at all** — the key absent, not
 zero, `0` being a real reading meaning DRY. The fresh tiers then stand and no condition clause prints,
 the "absent terms render no line" convention `hunt_gate_model` already takes.
+
+#### A PENNED herd is priced — and described — on the KEEPER'S carry
+
+**The carry axis is a property of the SOURCE, not of the job**, and `KitRoster.carry_axis_for(job,
+src)` is the one place that is decided. A corralled herd is worked from a Hunt row, so the job-keyed
+`JOB_CARRY_AXES` priced a pen on the SLED's tier while the sim collects one on
+`EquipmentStat::PenCarry`, which only the husbandry kit supplies. A sled drags a carcass in off the
+range; a pen stands at the camp.
+
+**Neither half of that error was visible, because on the shipped roster they CANCEL.** Husbandry and
+stalking both carry a sled, so both sat at the sled's equipped tier and every hunt kit quoted a pen
+the same number — under-stating the kit the pen exists for and over-stating every kit that carries a
+sled and no handling gear, into one plausible-looking sheet. Only a driven assertion can hold it;
+`ui_preview`'s `chapters/compose_rungs.gd` states the claim as a triple (the wild reading unmoved, the
+husbandry kit at the reference, the sled-only kit at the bare keeper's tier), because the pen pair
+alone is satisfied by pricing everything on the pen axis and the wild reading alone by no fix at all.
+
+- **The corral state comes off `src`, and that is not a reach for state** — on the hunt job `src` IS
+  the herd, handed in as a parameter exactly like the body mass the weapon's size window is tested
+  against, and read through the same `QUARRY_CORRALLED_KEY` the offer test and the fight's gate use.
+- **The reference tier moves with the axis, in one expression.** `equipped_tier(kits, carry_key)` is
+  the denominator; switching the axis without switching the reference resolves it to `0` off a roster
+  that states nothing there, the repricing short-circuits, and every kit quotes identical numbers —
+  which is exactly how the forage spelling bug shipped.
+
+#### …so the hunt HINT is gated on the source too
+
+A hunt row works two different things through one verb, and they read disjoint axes, so `tier_hint`
+takes the quarry (`build_kit_row` already had it, for the greying) and states what will actually be
+read. A WILD herd is stalked and hauled — `attack`, the sled's carry, spears and sled — byte-identical
+to what the line rendered before the pen axis existed. A PEN is collected: `pen 40.0 per keeper`, then
+the handling gear's condition and the SLED's.
+
+- **The tier line and the condition clauses answer different questions at a pen, which is why the sled
+  appears under one and not the other.** Only `pen_carry` sets the rate, but the sim charges a pen
+  slaughter over TWO quanta — the handling gear for what was butchered, the sled for what was hauled
+  home — so the sled's TIER is a number nothing on the sheet will read while the sled's CONDITION is
+  wear the player is paying. No attack and no spears: a penned beast is slaughtered rather than
+  stalked, it publishes no engagement stage (the predicate the gate LINE is mounted behind), and the
+  sim charges no weapon for the kill.
+- **The pen line is gated on the SOURCE, not on the KIT, and the difference is the point.** Gating it
+  on the kit printed a pen tier for a husbandry kit against a wild herd — a tier nothing would read —
+  and withheld it from a sled-only kit at a pen, which is the one place a player needs it: at a pen,
+  `pen 12.0 per keeper` beside `pen 40.0 per keeper` is the whole visible difference the handling gear
+  buys. The condition CLAUSES are the kit's own `item_ids` list and are not gated on the source at all
+  — see "THE HINT NAMES THE KIT'S OWN ITEMS" below.
+- **The pen carry is read off the band's row like every other tier**, `BandKitTiers` carrying
+  `penCarryPerWorkerBiomass` and `scoutVantageRange` alongside the fought, hauled and gathered axes.
+  Those two arrived on the table last and were the two the client had to answer off the ROSTER's fresh
+  tier in the meantime — so a band whose handling gear had run dry read `pen 40.0 per keeper` while the
+  sim collected 12, wrong in the reassuring direction. The per-key fall-through that stood in for them
+  is gone with the gap: `_row_tier` reads the row and nothing else, and a whole-row absence (a band the
+  wire has not described yet) is the only case the roster still answers.
+- **`KIT_SCOUT_VANTAGE_KEY` HAS a consumer now** — the WORKFORCE zone's role CARDS, which carry a
+  picker and a gear line each (`band-city-panel.md` → "The role cards carry the band's OTHER two
+  kits"). `role_gear` reads the same row, so the WARRIOR card reads the band's sim-resolved `attack`
+  under the warrior kit — clubs, not spears — and the SCOUT card its sim-resolved vantage under the
+  wayfinding kit, 1 tile once that gear is spent rather than the roster's fresh 2.
+- **`husbandry_gear` / `wayfinding` / `clubs` also joined `DetailFormat.KIT_ITEM_LABELS`**, so the
+  band's `Gear` summary row names them instead of falling through to the raw wire ids — and each has a
+  row in the kit BREAKDOWN too, that popover pairing an item with the resolved tier it sets and the
+  cohort publishing all three (`band-readouts.md` → "The other three tiers, and the kit each is quoted
+  at"). **The popover's rows and the picker's hint answer different questions off different fields**:
+  the popover states this band's tier at each JOB'S DEFAULT kit (the cohort's flat fields), the hint
+  states what the kit under the cursor would grant (that kit's `kitTiers` row).
+
+### THE SHEET OPENS ON THE KIT **THIS QUARRY** WANTS (`equipment.md` → "Which kit a QUARRY wants is DERIVED")
+
+`default_kits.hunt` is one id for the whole job and could not express *which kit this animal wants*,
+so the sim derives a per-herd one and publishes it as `HerdTelemetryState.defaultKitId` — decoded as
+`default_kit_id`, the newest LIVE slot on that table, following the two `(deprecated)` `*EstimatesKitId`
+ones the forecast query retired. On a Rabbit Warren it is the trap: a
+spear party's approach loses three animals in four to the `wariness 0.75` retreat where the trap's
+`dispersion 0` keeps all of them, so a sheet opening on the job's Stalking kit defaulted the player
+onto a ~4× worse tool on exactly the quarry the roster has a right one for.
+
+**`KitRoster.default_kit_for(job, source, job_default_id)` IS THE ONE PRECEDENCE**, and its whole
+value is that three surfaces cannot answer it differently: `resolve_selection` (what the sheet opens
+on) and `build_kit_row`'s `(default)` mark both call it. A picker
+that opened on the trap and printed `(default)` on the spear would contradict itself on every
+small-game herd, which is why the mark is asserted BESIDE the selection rather than trusted to follow
+it. Only a HUNT row has a source that publishes one; the forage web's patches carry no such field, so
+passing them through the same call is what keeps both webs on one seam.
+
+**THE HONESTY TEST THIS DEFAULT ONCE HAD TO KEEP IN STEP WITH IS RETIRED.** The two per-herd estimate
+tables were quoted at ONE kit and a sheet composing another had to refuse them; the forecast QUERY
+takes the kit as an argument, so a sheet's numbers are always its own and there is nothing left for a
+per-quarry default to fall out of step with.
+
+**THE COMPOSED KIT IS DROPPED ON A SOURCE CHANGE, and without that the whole thing is reachable
+exactly once per session.** Every render writes the RESOLVED id back onto `ComposeState`, so a kit
+resolved on a Red Deer reads as *the player's own choice* on the next warren — and a composed choice
+outranks any default, correctly. `ComposeState.reset_hunt_kit` (called from the drawer's existing
+`source_changed` branch, beside `seed_hunt`) and `set_party_quarry` / `clear_party_quarry` clearing
+`_party_kit_id` are what make the herd's own default reachable on every sheet. The kit was the odd one
+out: the count, the floor and the improvement have always re-seeded per source. A pick made ON this
+animal still survives its own re-render, which is the distinction — the reset is on the SOURCE
+changing, never on a render.
+
+**THE COMMAND'S OMISSION COMPARATOR HAD TO MOVE WITH IT, and it is `assign_labor`'s alone.**
+`Main._kit_token` omits `kit <id>` when the selection equals the payload's `default_kit_id`, and an
+absent token on a Hunt row now means *the HERD's default* to the sim (`equipment.md` → "It is resolved
+SIM-side"). Measured against the job default, a player who deliberately picks Stalking on a warren
+emits no token and the sim runs Trapping — the silent substitution the named path refuses, arriving
+through the absent-token door. `HudLayer._emit_assign_labor` therefore supplies
+`KitRoster.default_kit_for(kind, _band_labor.find_world_herd(herd_id), _band_labor.default_kit_id(kind))`.
+**The two RAID verbs deliberately keep the job default**: `resolve_raid_kit` still resolves
+`default_kits.hunt` for an absent token, so measuring them against the herd's would omit the token for
+a selection the sim would then not run.
+
+**Frames + assertions** — `herd_quarry_default_red_deer` / `herd_quarry_default_rabbit_warren`
+(`chapters/compose_rungs.gd`), rendered in that order with NO `reset_hunt_source` between them, so the
+warren's claim is made with the deer's `big_game` sitting in the compose state and the drawer's own
+source-change reset is the thing under test. Sabotage-verified on two DISJOINT mutations: pointing
+`resolve_selection` back at the job default fails the warren's selection and its precondition (naming
+`big_game`) while the two `(default)` marks stay green; pointing
+`build_kit_row` back at it fails exactly the two mark claims, printing `Trapping kit` unmarked beside
+`Stalking kit  (default)` — the self-contradiction, demonstrated.
 
 #### THE HINT NAMES THE KIT'S OWN ITEMS — `KitOption.itemIds`, not an axis→item guess
 
@@ -1643,6 +1924,13 @@ band's live wear ledger (`equipment.md` → "`kitTiers` — the resolved per-ban
 - **`effective_tiers` is a LOOKUP** (`band_kit_tiers(band, kit_id)`, the ONE reader of the field) and
   re-derives nothing. `stated` is false when the band publishes no row for that kit, and the ROSTER's
   fresh tiers then stand — the "absent terms render no line" convention, unchanged.
+- **THAT WHOLE-ROW ABSENCE IS THE ONLY FALL-BACK LEFT.** A per-KEY one stood beside it while the table
+  carried three axes and the client wanted five, and it is gone with the gap (see the pen bullet under
+  "…so the hunt HINT is gated on the source too"): `_row_tier` reads the axis off the row, and an axis
+  the row omits reads `TIER_ABSENT` rather than the roster's fresh number. That is the same direction
+  `condition_of` errs in — quoting a fresh tier for gear the server never confirmed is precisely the
+  reassuring lie this field was published to end, and a client that kept a per-key fall-through would
+  tell it again the moment a row arrived malformed.
 - **THE MASS WINDOW RIDES THAT ROW TOO, and a gate must read it from there.** `attack_min_body_mass` /
   `attack_max_body_mass` are on `KitOptionState` as well, but those are the FRESH-KIT reference: a spent
   item contributes no bound any more than it contributes a tier, so a kit whose mass-bounded weapon has
@@ -1651,9 +1939,12 @@ band's live wear ledger (`equipment.md` → "`kitTiers` — the resolved per-ban
   wearing different clothes — it would quote a band with dry traps the bare hand's attack (right) inside
   the TRAPS' 1 kg ceiling (wrong), so a bare-handed party after a rabbit would be told it had no weapon
   for it.
-- A band fixture must therefore **state its `kit_tiers` rows**, not just its item conditions
-  (`BandFx.kit_tiers_rows`). Authored, never derived from the conditions beside them: deriving them is
-  writing the guess the field replaced, and a client that had put the guess back would agree with it.
+- A band fixture must therefore **state its `kit_tiers` rows, all five axes of them**, not just its
+  item conditions (`BandFx.kit_tiers_rows`). Authored, never derived from the conditions beside them:
+  deriving them is writing the guess the field replaced, and a client that had put the guess back
+  would agree with it. **A row that OMITS an axis exercises the absence path rather than the real
+  one** — which is what kept the pen and the vantage untested while they were missing from the wire,
+  and is why the worn fixtures now step each of them down at the item that supplies it.
 
 **Assert the two kits as a PAIR** — `big_game` alone passes under the old guess (its attack really does
 come from spears) and `trapping` alone would pass on a hint naming every item there is — plus `none`
@@ -1766,11 +2057,13 @@ any positional form is read — so it may sit anywhere after the role and no gra
 for it. On the denial raid it is the ONE thing the closed four-token grammar admits, because a kit is
 a property of the PARTY rather than of the mission.
 
-**It is omitted when the choice equals the job default**, which is also what absent means to the
-parser — so a composition that never touched the picker emits the byte-identical line it emitted
-before the picker existed. Both the choice and the default therefore
+**It is omitted when the choice equals the default the SIM would resolve for an absent token**, which
+is what absent means to the parser — so a composition that never touched the picker emits the
+byte-identical line it emitted before the picker existed. Both the choice and that default therefore
 ride the payload: the builder cannot know the default on its own (it is world data), and
-`HudLayer._emit_assign_labor` supplies it from `_band_labor.default_kit_id(kind)`.
+`HudLayer._emit_assign_labor` supplies it through `KitRoster.default_kit_for` — the HERD's own default
+on a Hunt row, `_band_labor.default_kit_id(kind)` everywhere else. See "THE SHEET OPENS ON THE KIT
+**THIS QUARRY** WANTS" above for why the two raid verbs stay on the job default.
 
 **THE KIT RIDES EVERY CREW EDIT, for the improvement axis's reason.** `BandPanelController._emit_work_assign`
 restates the row model's own `kit_id` (off `LaborAssignment.kitId`): an omitted token means "the job's

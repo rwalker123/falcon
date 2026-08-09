@@ -28,10 +28,26 @@ use core_sim::{
 /// The crew every fixture in this file staffs, so two arms are only ever comparable to each other.
 const CREW: u32 = 4;
 
+/// **The one roster entry whose three appended tiers all differ from the job default each would
+/// otherwise resolve to** — pen 40 (the equipped rate) where the hunt default falls back to 12,
+/// vantage 1 where the scout default is 2, and no weapon at all where the warrior default carries
+/// clubs. Named here so the in-flight-party fixture says *why* it picks this kit.
+const HUSBANDRY_KIT: &str = "husbandry";
+
 /// **A quarry that cannot fight back** (`combat.attack 0`) and is light enough that a small crew
 /// engages several animals a turn — so a take is a real number at both tiers rather than a run of
 /// all-or-nothing draws. The same species `denial_raid.rs` measures on, for the same reason.
 const HARMLESS_QUARRY: &str = "Rabbit Warren";
+
+/// **A quarry past the trap's `max_body_mass` and carrying real `defense`** — the other side of the
+/// per-quarry default. A snare cannot hold a Red Deer, so `traps` grants no attack at all and the
+/// party falls back to the bare hand's `1` against `defense 1`: the gate refuses the hunt and the
+/// kit scores zero.
+const DEFENDED_QUARRY: &str = "Red Deer";
+
+/// The roster entry a small, wary quarry scores best against — named so the assertions read as the
+/// claim rather than as a string.
+const TRAPPING_KIT: &str = "trapping";
 
 /// The id every fixture renames its herd to. Pinned because the live retreat draws from
 /// `retreat_seed(map_seed, tick, herd_id, workers)` and the campaign's herd ids vary run to run.
@@ -56,6 +72,89 @@ fn placid_world() -> App {
     app.world.resource_mut::<SimulationConfig>().fog_enabled = false;
     app.update();
     app
+}
+
+/// **A world running the roster's AUTHORED wariness** — the opposite fixture to [`placid_world`],
+/// for the tests whose whole subject is the retreat the trap avoids. Holding wariness at `0` there
+/// would delete the term the per-quarry default turns on.
+fn wary_world() -> App {
+    let mut app = build_headless_app();
+    app.world.resource_mut::<SimulationConfig>().fog_enabled = false;
+    app.update();
+    app
+}
+
+/// Pin one stationary herd to its tile under `id`, re-badged as `species`. Unlike [`pin_herd`] it
+/// leaves the roster's own body mass and stock alone — the per-quarry default is scored off the
+/// **species row**, so a fixture that overrode `body_mass` would be measuring nothing.
+fn pin_herd_of(app: &mut App, species: &str, id: &str) -> String {
+    let picked = {
+        let registry = app.world.resource::<HerdRegistry>();
+        registry
+            .herds
+            .iter()
+            .find(|h| h.id.starts_with("game_") && h.route_length() == 1)
+            .map(|h| h.id.clone())
+            .expect("the campaign map seeds enough stationary game groups")
+    };
+    // `body_mass` and the ladder ceiling are CACHED on the `Herd` at spawn, so a re-badge that left
+    // them behind would leave a herd claiming one species and behaving as another — which the pen
+    // fixture below would hit as a silently-refused `corral_at`.
+    let (body_mass, husbandry_ceiling) = {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        let def = fauna
+            .species_by_display(species)
+            .expect("the roster ships this species");
+        (def.body_mass, def.husbandry_ceiling)
+    };
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == picked).unwrap();
+        herd.id = id.to_string();
+        herd.route = vec![herd.current_pos];
+        herd.step_index = 0;
+        herd.species = species.to_string();
+        herd.body_mass = body_mass;
+        herd.husbandry_ceiling = husbandry_ceiling;
+        herd.fodder_per_biomass = 0.0;
+    }
+    let entries = app.world.resource::<HerdRegistry>().snapshot_entries();
+    app.world.resource_mut::<HerdTelemetry>().entries = entries;
+    id.to_string()
+}
+
+/// `HerdTelemetryState.defaultKitId` read off the **encoded envelope**, through the client's own
+/// accessor chain — a field that never reached the codec still passes an in-process assertion.
+///
+/// **Encoded here rather than read back off the ring entry.** `StoredSnapshot::encode_flat` hands
+/// back the bytes cached when the entry was *first* published, and a mid-tick recapture refreshes
+/// the entry's `snapshot` without refreshing them — so a fixture that pins a herd and recaptures
+/// would be decoding the frame from before it pinned anything.
+fn published_default_kit(app: &App, herd_id: &str) -> String {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let herds = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .subsistence()
+        .and_then(|section| section.herds())
+        .expect("the subsistence section carries the herd list");
+    let herd = herds
+        .iter()
+        .find(|herd| herd.id() == Some(herd_id))
+        .unwrap_or_else(|| panic!("the pinned herd '{herd_id}' is on the wire"));
+    herd.defaultKitId()
+        .expect("every herd publishes the kit its sheet opens on")
+        .to_string()
 }
 
 fn equipment(app: &App) -> std::sync::Arc<EquipmentConfig> {
@@ -593,10 +692,18 @@ fn the_published_snapshot_carries_the_kit_roster() {
     );
 
     // The pinned herd still reaches the wire — the herd row outlived the two tables that used to
-    // hang off it.
-    assert!(
-        snapshot.herds.iter().any(|h| h.id == id),
-        "the pinned herd is on the wire"
+    // hang off it, and it still publishes the kit its compose sheet opens on. On this fixture that
+    // is the job default: `placid_world` holds the roster's wariness at `0`, which is exactly the
+    // term the trap's `dispersion 0` acts on, so a warren ties with the spear and a tie keeps the
+    // job default. That coincidence is asserted, not assumed.
+    let herd = snapshot
+        .herds
+        .iter()
+        .find(|h| h.id == id)
+        .expect("the pinned herd is on the wire");
+    assert_eq!(
+        herd.default_kit_id, expected_hunt_default,
+        "with no retreat to avoid, the trap has nothing on the spear and the job default stands"
     );
 }
 
@@ -697,6 +804,416 @@ fn a_bands_published_tiers_step_down_per_kit_by_which_item_that_kit_actually_use
         tiers("big_game").hunt_carry_per_worker_biomass
             > tiers("none").hunt_carry_per_worker_biomass,
         "…and it is still the SLEDDED rate, not the sledless one"
+    );
+}
+
+/// The axes [`published_kit_tiers`] reads off one **encoded** `BandKitTiers` row.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PublishedKitRow {
+    pen_carry_per_worker_biomass: f32,
+    scout_vantage_range: f32,
+    hunt_carry_per_worker_biomass: f32,
+}
+
+/// One band's whole `kitTiers` table, **off the encoded envelope**, keyed by kit id.
+///
+/// Encoded from the ring entry's *snapshot* rather than through `StoredSnapshot::encode_flat` for
+/// the reason [`published_default_kit`] states: the cached bytes are the ones published when the
+/// entry was first written, and a mid-tick recapture refreshes the snapshot without refreshing
+/// them — so a fixture that wears an item and recaptures would be decoding the frame from before it
+/// touched anything.
+fn published_kit_tiers(
+    app: &App,
+    band: bevy::prelude::Entity,
+) -> std::collections::BTreeMap<String, PublishedKitRow> {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let cohort = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.entity() == band.to_bits())
+        .expect("the band is on the wire");
+    cohort
+        .kitTiers()
+        .expect("the band publishes a tier row per roster kit")
+        .iter()
+        .map(|row| {
+            (
+                row.kitId()
+                    .expect("every published row names its kit")
+                    .to_string(),
+                PublishedKitRow {
+                    pen_carry_per_worker_biomass: row.penCarryPerWorkerBiomass(),
+                    scout_vantage_range: row.scoutVantageRange(),
+                    hunt_carry_per_worker_biomass: row.huntCarryPerWorkerBiomass(),
+                },
+            )
+        })
+        .collect()
+}
+
+/// **Wear one item to its durability cliff**, in the item's own use quantum.
+///
+/// `wear_item` charges `uses × the item's own wear amount`, so the count that empties it is
+/// `starting_durability / wear.amount` — derived from config rather than written as a number, or a
+/// retune of either dial silently stops a fixture reaching the cliff it is about.
+fn wear_to_the_cliff(app: &mut App, band: bevy::prelude::Entity, item_id: &str) {
+    let cfg = equipment(app);
+    let item = cfg
+        .item(item_id)
+        .unwrap_or_else(|| panic!("the shipped roster carries '{item_id}'"));
+    let uses_to_expiry = item.starting_durability / item.wear.amount;
+    let mut ledger = app
+        .world
+        .get_mut::<BandEquipment>(band)
+        .expect("a spawned band is kitted");
+    ledger.wear_item(&cfg, item_id, uses_to_expiry);
+}
+
+/// **THE PEN AND THE VANTAGE STEP DOWN PER KIT TOO — the twin of the test above for the two axes
+/// `BandKitTiers` did not carry.**
+///
+/// Those two rode the wire per band only at that band's **job default**
+/// (`PopulationCohortState.penCarryPerWorkerBiomass` / `scoutVantageRange`), so a picker asking what
+/// the kit *under the cursor* would grant had nothing to read and fell back to the ROSTER's **fresh**
+/// tier. The two live readings that produced: a pen compose sheet quoting **40 per keeper** while the
+/// sim collected **12** with the handling gear dry, and a Scout role card quoting **2 tiles** of sight
+/// while `calculate_visibility` revealed at **1**. Both wrong in the reassuring direction.
+///
+/// The band wears its **handling gear** and its **wayfinding gear** out and touches nothing else, so
+/// each axis is asserted three ways: the kit that supplies it steps down, a kit that supplies it not
+/// at all is unmoved, and the **sled** both hunt kits share keeps its haul tier — which is what a
+/// naive "any item in this kit is dry" rule would break.
+///
+/// **Every assertion is paired against the FRESH reading of the same row**, taken before the wear:
+/// *"the pen rate is 12"* passes on a table that publishes 12 for everything, and *"it is unmoved"*
+/// passes on a table that never moved at all.
+///
+/// Read off the **encoded envelope** — a field that never reached the codec still satisfies an
+/// in-process assertion.
+#[test]
+fn a_bands_published_pen_and_vantage_tiers_step_down_per_kit_at_the_item_that_supplies_them() {
+    let mut app = placid_world();
+    let band = app
+        .world
+        .query_filtered::<bevy::prelude::Entity, bevy::prelude::With<ResidentBand>>()
+        .iter(&app.world)
+        .next()
+        .expect("the placid world spawns a resident band");
+    recapture_snapshot_in_place(&mut app.world);
+    let fresh = published_kit_tiers(&app, band);
+
+    let row = |table: &std::collections::BTreeMap<String, PublishedKitRow>, kit_id: &str| {
+        *table
+            .get(kit_id)
+            .unwrap_or_else(|| panic!("the band publishes tiers for `{kit_id}`"))
+    };
+
+    // LIVENESS, before anything is worn: the two axes genuinely vary by kit on this roster, or every
+    // equality below would be the trivial truth about a table of one number.
+    assert!(
+        row(&fresh, HUSBANDRY_KIT).pen_carry_per_worker_biomass
+            > row(&fresh, "big_game").pen_carry_per_worker_biomass,
+        "only the handling gear supplies `pen_carry`, so a fresh husbandry kit must out-collect a \
+         fresh stalking kit at the pen"
+    );
+    assert!(
+        row(&fresh, "wayfinding").scout_vantage_range > row(&fresh, "none").scout_vantage_range,
+        "only the wayfinding gear supplies the vantage's reach, so a fresh scout kit must see \
+         further than no kit at all"
+    );
+
+    wear_to_the_cliff(&mut app, band, "husbandry_gear");
+    wear_to_the_cliff(&mut app, band, "wayfinding");
+    recapture_snapshot_in_place(&mut app.world);
+    let worn = published_kit_tiers(&app, band);
+
+    // --- the PEN -------------------------------------------------------------------------------
+    assert!(
+        row(&worn, HUSBANDRY_KIT).pen_carry_per_worker_biomass
+            < row(&fresh, HUSBANDRY_KIT).pen_carry_per_worker_biomass,
+        "the handling gear is dry, so the husbandry kit's published pen rate must fall — this is \
+         the readout that quoted 40 per keeper against a sim collecting 12"
+    );
+    assert_eq!(
+        row(&worn, HUSBANDRY_KIT).pen_carry_per_worker_biomass,
+        row(&fresh, "big_game").pen_carry_per_worker_biomass,
+        "…all the way to the bare rate, which is what a kit with no handling gear reads at every \
+         state of wear"
+    );
+    assert_eq!(
+        row(&worn, "big_game").pen_carry_per_worker_biomass,
+        row(&fresh, "big_game").pen_carry_per_worker_biomass,
+        "a kit that carries no handling gear is UNMOVED by wearing it out — the pairing that stops \
+         this passing on a sim which steps every kit down together"
+    );
+    assert_eq!(
+        row(&worn, HUSBANDRY_KIT).hunt_carry_per_worker_biomass,
+        row(&fresh, HUSBANDRY_KIT).hunt_carry_per_worker_biomass,
+        "the SLED beside the handling gear is untouched, so the husbandry kit keeps its haul tier — \
+         a step-down keyed on `any item in this kit is dry` would drop it"
+    );
+
+    // --- the VANTAGE ---------------------------------------------------------------------------
+    assert!(
+        row(&worn, "wayfinding").scout_vantage_range
+            < row(&fresh, "wayfinding").scout_vantage_range,
+        "the wayfinding gear is dry, so the scout kit's published reach must fall — this is the \
+         readout that quoted 2 tiles of sight against a reveal at 1"
+    );
+    assert_eq!(
+        row(&worn, "wayfinding").scout_vantage_range,
+        row(&fresh, "none").scout_vantage_range,
+        "…all the way to the unaided reach, which is what a kit with no wayfinding gear reads"
+    );
+    assert_eq!(
+        row(&worn, "big_game").scout_vantage_range,
+        row(&fresh, "big_game").scout_vantage_range,
+        "a kit that carries no wayfinding gear is UNMOVED by wearing it out"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// THE QUARRY'S OWN DEFAULT KIT
+// ---------------------------------------------------------------------------------------------
+
+/// **A warren wants the trap and a deer wants the spear, and the wire says so.**
+///
+/// `default_kits.hunt` is one id for the whole job, so a Rabbit Warren's compose sheet used to open
+/// on the Stalking kit — which works, and is ~4× worse than Trapping, because a rabbit's
+/// `wariness 0.75` loses a spear party three animals in four while the trap's `dispersion 0` keeps
+/// all of them. The default is now **derived**: every hunt kit is scored against the species with
+/// §4.6's own per-hunter-turn take.
+///
+/// Asserted off the **encoded envelope**, not the in-process struct: a field that never reached the
+/// codec still passes an in-process assertion.
+///
+/// **The liveness half is the `assert_ne!`.** "The rabbit reads `trapping`" is satisfiable by a
+/// scorer that has stopped scoring and answers a constant, so the two rows are also asserted to
+/// *differ* — which is the whole claim, since one job default cannot differ from itself.
+#[test]
+fn a_warren_defaults_to_the_trap_and_a_deer_to_the_spear_on_the_wire() {
+    let mut app = wary_world();
+    let warren = pin_herd_of(&mut app, HARMLESS_QUARRY, "warren_fixture_herd");
+    let deer = pin_herd_of(&mut app, DEFENDED_QUARRY, "deer_fixture_herd");
+    recapture_snapshot_in_place(&mut app.world);
+
+    let job_default = equipment(&app).default_kit_id(KitJob::Hunt).to_string();
+    let warren_kit = published_default_kit(&app, &warren);
+    let deer_kit = published_default_kit(&app, &deer);
+
+    assert_eq!(
+        warren_kit, TRAPPING_KIT,
+        "a rabbit is small enough for the snare to hold and wary enough for the spear to scatter"
+    );
+    assert_eq!(
+        deer_kit, job_default,
+        "a Red Deer is past the trap's `max_body_mass`, so the snare scores zero and the job \
+         default stands"
+    );
+    assert_ne!(
+        warren_kit, deer_kit,
+        "LIVENESS: a scorer that answered a constant would pass every equality above"
+    );
+}
+
+/// **A CORRALLED herd wants the handling gear, and a wild one of the same species does not.**
+///
+/// The score is a function of the *species*, so it answers the same kit for a warren on the range
+/// and a warren in a pen — and a pen has no fight stage for it to score, so it never could answer
+/// otherwise. A corralled Rabbit Warren therefore published `trapping`, a kit whose contribution at
+/// a pen is nil: a pen is collected on `EquipmentStat::PenCarry`, which only the husbandry kit
+/// supplies. It is a **source-axis** question, the same one the picker's greying and
+/// `KitRoster.priced_source` answer, and `fauna::herd_default_hunt_kit` answers it by asking the
+/// roster which hunt kit supplies the stat rather than by naming one.
+///
+/// **The two herds are compared to EACH OTHER**, which is the liveness half: one species cannot
+/// differ from itself, so a resolver that had stopped reading the herd — or that answered a
+/// constant — fails the `assert_ne!` however plausible each equality looks alone.
+///
+/// Read off the **encoded envelope** through [`published_default_kit`], which also asserts both
+/// estimate tables name that same kit — so the pen row's `huntTripEstimatesKitId` /
+/// `denialEstimatesKitId` are pinned to the herd's own default here too.
+#[test]
+fn a_corralled_herd_defaults_to_the_pen_kit_and_a_wild_one_of_the_same_species_does_not() {
+    let mut app = wary_world();
+    let ranging = pin_herd_of(&mut app, HARMLESS_QUARRY, "ranging_warren_herd");
+    let penned = pin_herd_of(&mut app, HARMLESS_QUARRY, "penned_warren_herd");
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry
+            .herds
+            .iter_mut()
+            .find(|herd| herd.id == penned)
+            .expect("the pen fixture herd is in the registry");
+        let anchor = herd.current_pos;
+        assert!(
+            herd.corral_at(anchor),
+            "the warren's husbandry ceiling allows a pen — `corral_at` refusing means the fixture \
+             re-badged a species that cannot be penned"
+        );
+    }
+    // The capture reads the DISPLAY list, so the pen has to be republished or the wire still
+    // describes the herd as it stood before it was fenced.
+    let entries = app.world.resource::<HerdRegistry>().snapshot_entries();
+    app.world.resource_mut::<HerdTelemetry>().entries = entries;
+    recapture_snapshot_in_place(&mut app.world);
+
+    let ranging_kit = published_default_kit(&app, &ranging);
+    let penned_kit = published_default_kit(&app, &penned);
+
+    assert_eq!(
+        penned_kit, HUSBANDRY_KIT,
+        "a pen is collected on `PenCarry`, and the handling gear is the only kit that supplies it"
+    );
+    assert_eq!(
+        ranging_kit, TRAPPING_KIT,
+        "the same animal on the range is still a scoring question, and the snare still wins it"
+    );
+    assert_ne!(
+        penned_kit, ranging_kit,
+        "LIVENESS: one species cannot differ from itself, so a resolver blind to the pen — or one \
+         answering a constant — fails here even though each equality above looks plausible alone"
+    );
+}
+
+/// **The margin lever is live, and a narrow win keeps the job default.**
+///
+/// Without a margin the published default flips on a trivial retune and the player watches their
+/// compose sheet move for reasons they cannot see. The lever is measured against the roster's own
+/// **narrowest genuine win** rather than a literal ratio, so a retune moves the test's threshold
+/// with the game instead of failing it.
+#[test]
+fn a_narrow_win_keeps_the_job_default_until_the_margin_lets_it_through() {
+    let fauna = core_sim::FaunaConfig::builtin();
+    let person = core_sim::CreaturesConfig::builtin().person();
+    let shipped = EquipmentConfig::builtin();
+    let job_default = shipped.default_kit(KitJob::Hunt);
+    let fresh = BandEquipment::default();
+
+    // The narrowest win on the shipped roster: the species where some hunt kit beats the job
+    // default by the *smallest* positive factor. Found rather than named, so this test cannot go
+    // stale against a roster edit.
+    let score = |cfg: &EquipmentConfig, kit: &KitChoice, species: &core_sim::SpeciesDef| {
+        core_sim::per_hunter_take_biomass(
+            cfg.hunter_profile_against(person, kit, &fresh, species.body_mass),
+            cfg.dispersion(kit, &fresh),
+            species,
+        )
+    };
+    let (narrowest, ratio) = fauna
+        .species
+        .values()
+        .filter_map(|species| {
+            let baseline = score(&shipped, &job_default, species);
+            if baseline <= 0.0 {
+                return None;
+            }
+            let best = shipped
+                .kits_for_job(KitJob::Hunt)
+                .map(|kit| score(&shipped, &kit, species))
+                .fold(0.0f32, f32::max);
+            (best > baseline).then(|| (species.clone(), best / baseline))
+        })
+        .min_by(|(_, a), (_, b)| a.partial_cmp(b).expect("scores are finite"))
+        .expect("some quarry on the shipped roster wants a kit other than the job default");
+    assert!(
+        ratio > 1.0,
+        "LIVENESS: the narrowest win is a real win, not a tie"
+    );
+
+    let with_margin = |margin: f32| {
+        let mut cfg = (*shipped).clone();
+        cfg.quarry_default_kit_margin = margin;
+        core_sim::quarry_default_hunt_kit(&cfg, person, &narrowest)
+            .id()
+            .to_string()
+    };
+    // A margin the win clears, and one it does not. `- 1.0` because the lever is a fraction of the
+    // default's own score, not a multiple of it.
+    let clears = (ratio - 1.0) * 0.5;
+    let blocks = (ratio - 1.0) * 2.0;
+    assert_ne!(
+        with_margin(clears),
+        job_default.id(),
+        "below the win, the better kit takes the slot"
+    );
+    assert_eq!(
+        with_margin(blocks),
+        job_default.id(),
+        "above it, a near-tie keeps the job default rather than flipping the published answer"
+    );
+}
+
+/// **Wear does not enter the score — a band worn to dry sees the same default.**
+///
+/// The default is a property of *quarry × roster*, a per-world constant per herd, so it cannot
+/// reshuffle under the player as their spears run out. Scoring at the live tier would do exactly
+/// that: a dry `big_game` party falls to the bare hand's `attack 1`, which on a `defense 0` warren
+/// is a 20× cut — enough to flip any margin.
+#[test]
+fn a_herds_default_kit_does_not_move_when_the_band_wears_its_kit_to_dry() {
+    let mut app = wary_world();
+    let warren = pin_herd_of(&mut app, HARMLESS_QUARRY, "warren_fixture_herd");
+    recapture_snapshot_in_place(&mut app.world);
+    let fresh = published_default_kit(&app, &warren);
+
+    // Run EVERY item in the table dry on the band that is working the herd, so no kit can be
+    // preferred merely because the band happens to have kept one item.
+    let tile = tile_at(
+        &app,
+        app.world
+            .resource::<HerdRegistry>()
+            .find(&warren)
+            .expect("pinned")
+            .position(),
+    );
+    let band = app
+        .world
+        .spawn((
+            cohort(tile, CREW),
+            ResidentBand,
+            BandEquipment::default(),
+            LaborAllocation::default(),
+        ))
+        .id();
+    {
+        let cfg = equipment(&app);
+        let items: Vec<(String, f32)> = cfg
+            .items()
+            .map(|(id, item)| (id.to_string(), item.starting_durability))
+            .collect();
+        let mut wear = app
+            .world
+            .get_mut::<BandEquipment>(band)
+            .expect("the band carries a wear ledger");
+        for (id, durability) in items {
+            wear.restore_wear(&id, durability);
+        }
+    }
+    recapture_snapshot_in_place(&mut app.world);
+
+    assert_eq!(
+        published_default_kit(&app, &warren),
+        fresh,
+        "the published default is scored at the FRESH tier, so a dry band does not move it"
+    );
+    assert_eq!(
+        fresh, TRAPPING_KIT,
+        "LIVENESS: the unchanged value is the real answer, not a default that never resolved"
     );
 }
 
@@ -861,8 +1378,10 @@ fn every_labor_row_publishes_the_kit_it_is_priced_at() {
         .find(|row| row.kind == "scout")
         .expect("the scout row is published");
     assert_eq!(
-        scout_row.kit_id, "",
-        "a band-wide role has no kit axis — that is `no selection to make`, not `no kit`"
+        scout_row.kit_id,
+        equipment(&app).default_kit_id(KitJob::Scout),
+        "a band-wide role publishes its own job's default now — it used to publish `\"\"`, because \
+         Scout and Warrior had no kit axis at all until the roster gained gear for them"
     );
 }
 
@@ -931,6 +1450,168 @@ fn a_resident_bands_published_kit_answers_for_the_hunt_tiers_only() {
         "…and the tier it IS quoted at is the FORAGE job's default, which rides the wire as \
          `default_forage_kit_id`"
     );
+}
+
+/// **Each of the three appended tiers answers for its OWN job's default** — the direct twin of the
+/// test above, for `penCarryPerWorkerBiomass` / `scoutVantageRange` / `warriorAttack`.
+///
+/// The roster gave husbandry gear, wayfinding gear and clubs a kit each, so a resident band now
+/// resolves **four** different kits across one cohort row: the hunt default for the two hunt tiers
+/// *and the pen* (a pen is worked from a Hunt row), the forage default for the gather tier, and the
+/// scout and warrior defaults for the two band-wide roles. Only the first rides the wire, as
+/// `kitId`.
+///
+/// **It fails if someone resolves all of them through `kitId`.** The scout and warrior asserts are
+/// each paired with an `assert_ne!` against the kit `kitId` actually names — a wayfinding vantage
+/// against `big_game`'s bare 1 tile, a club's `attack 6` against the stalking kit's spears at 20 —
+/// so the numbers a client would mis-pair are what the test compares, not the wording.
+#[test]
+fn a_resident_bands_appended_tiers_each_answer_for_their_own_jobs_default() {
+    let mut app = placid_world();
+    let (_id, pos) = pin_herd(&mut app);
+    let tile = tile_at(&app, pos);
+    let band = app
+        .world
+        .spawn((cohort(tile, CREW), ResidentBand, BandEquipment::default()))
+        .id();
+    recapture_snapshot_in_place(&mut app.world);
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let state = snapshot
+        .populations
+        .iter()
+        .find(|state| state.entity == band.to_bits())
+        .expect("the fixture band is on the wire");
+
+    let cfg = equipment(&app);
+    let roster = |id: &str| {
+        snapshot
+            .kits
+            .iter()
+            .find(|option| option.id == id)
+            .unwrap_or_else(|| panic!("'{id}' is on the published roster"))
+    };
+    let named = roster(&state.kit_id);
+
+    // --- the pen: quoted at the HUNT default, which IS what `kitId` names ---------------------
+    assert_eq!(
+        state.pen_carry_per_worker_biomass,
+        roster(cfg.default_kit_id(KitJob::Hunt)).pen_carry_per_worker_biomass,
+        "a pen is worked from a Hunt row, so its tier is the hunt job's default — the one job \
+         `kitId` does answer for"
+    );
+    // …and it is a real resolution rather than the equipped rate handed back unchanged: some kit on
+    // the roster grants a *different* pen tier, so the hunt default's is genuinely a resolved one.
+    assert!(
+        snapshot
+            .kits
+            .iter()
+            .any(|option| option.pen_carry_per_worker_biomass
+                != state.pen_carry_per_worker_biomass),
+        "if every kit granted the same pen tier this assertion could not tell a resolution from a \
+         constant"
+    );
+
+    // --- the vantage: quoted at the SCOUT default, NOT at `kitId` -------------------------------
+    assert_eq!(
+        state.scout_vantage_range,
+        roster(cfg.default_kit_id(KitJob::Scout)).scout_vantage_range,
+        "the vantage tier is the SCOUT job's default, which rides the wire as `default_scout_kit_id`"
+    );
+    assert_ne!(
+        state.scout_vantage_range, named.scout_vantage_range,
+        "…and reading it against `kitId` would quote the hunt kit's bare vantage instead — which is \
+         exactly the mis-pairing the `.fbs` note on `kitId` exists to prevent"
+    );
+
+    // --- the warrior: quoted at the WARRIOR default, NOT at `kitId` -----------------------------
+    assert_eq!(
+        state.warrior_attack,
+        roster(cfg.default_kit_id(KitJob::Warrior)).attack,
+        "a warrior fights at the WARRIOR job's default, which rides the wire as \
+         `default_warrior_kit_id`"
+    );
+    assert_ne!(
+        state.warrior_attack, named.attack,
+        "…and reading it against `kitId` would arm the band's defenders with the hunt kit's spears"
+    );
+    assert_ne!(
+        state.warrior_attack, state.hunter_attack,
+        "`attack` is one stat resolved through two different kits, so the two rows are two numbers \
+         on the same band — a readout must not render one as the other"
+    );
+}
+
+/// **An in-flight party carries ONE kit, so every tier on its row is quoted at it.** The resident
+/// band's four-way split above is a property of a *band* holding one kit per assignment; a detached
+/// party decided its kit at launch and fights, hauls, keeps and scouts at that one tier — which is
+/// what makes `kitId` a complete answer for a party and a partial one for a band.
+#[test]
+fn an_in_flight_partys_appended_tiers_are_all_quoted_at_the_kit_it_was_sent_with() {
+    let mut app = placid_world();
+    let (fauna_id, pos) = pin_herd(&mut app);
+    let home = spawn_home_band(&mut app, pos);
+    // **The husbandry kit, chosen because all three of its appended tiers differ from the job
+    // default each would otherwise resolve to** — pen 40 against the hunt default's bare 12,
+    // vantage 1 against the scout default's 2, and no weapon at all (`attack` 1) against the
+    // warrior default's clubs at 6. So a resolution that reached for a job default instead of the
+    // party's own kit fails all three asserts, not one.
+    let sent_with = kit(&app, HUSBANDRY_KIT);
+    let party = spawn_party(&mut app, home, pos, &fauna_id, sent_with.clone());
+    recapture_snapshot_in_place(&mut app.world);
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let state = snapshot
+        .populations
+        .iter()
+        .find(|state| state.entity == party.to_bits())
+        .expect("the party is on the wire");
+    let named = snapshot
+        .kits
+        .iter()
+        .find(|option| option.id == state.kit_id)
+        .expect("the published kit id names a real roster entry");
+
+    assert_eq!(
+        state.kit_id,
+        sent_with.id(),
+        "a party's row names the kit it was SENT OUT WITH, not any job's default"
+    );
+    assert_eq!(
+        state.pen_carry_per_worker_biomass,
+        named.pen_carry_per_worker_biomass
+    );
+    assert_eq!(state.scout_vantage_range, named.scout_vantage_range);
+    assert_eq!(state.warrior_attack, named.attack);
+    // Liveness: the three above are the party's kit's numbers, and they are NOT the job defaults'.
+    let cfg = equipment(&app);
+    let default_of = |job| {
+        let id = cfg.default_kit_id(job).to_string();
+        snapshot
+            .kits
+            .iter()
+            .find(|option| option.id == id)
+            .unwrap_or_else(|| panic!("the {job:?} default is on the roster"))
+    };
+    assert_ne!(
+        state.pen_carry_per_worker_biomass,
+        default_of(KitJob::Hunt).pen_carry_per_worker_biomass
+    );
+    assert_ne!(
+        state.scout_vantage_range,
+        default_of(KitJob::Scout).scout_vantage_range
+    );
+    assert_ne!(state.warrior_attack, default_of(KitJob::Warrior).attack);
 }
 
 /// **The shipped durability of one item**, by id — the tests read dials off the item table now that

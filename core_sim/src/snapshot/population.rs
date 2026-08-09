@@ -48,12 +48,10 @@ pub(crate) fn labor_assignment_to_state(
             .map(|improvement| improvement.as_str().to_string())
             .unwrap_or_default(),
         // **The kit this crew works under**, RESOLVED — the row's yields are priced at exactly it,
-        // so the wire states the kit rather than "the player named none". `""` on a band-wide role,
-        // which has no kit axis at all.
-        kit_id: assignment
-            .kit_choice(equipment)
-            .map(|kit| kit.id().to_string())
-            .unwrap_or_default(),
+        // so the wire states the kit rather than "the player named none". **Every role now names
+        // one**, including the two band-wide ones: this used to publish `""` for Scout/Warrior
+        // because neither had a kit axis, and the roster giving them one is what changed.
+        kit_id: assignment.kit_choice(equipment).id().to_string(),
         ..Default::default()
     };
     match &assignment.target {
@@ -186,18 +184,25 @@ pub(crate) struct ExpeditionLevers {
     pub(crate) band_move_tiles_per_turn: u32,
 }
 
-/// **The TOE levers a cohort's kit readout is resolved against** — the config, plus the two
-/// *equipped* tiers that live outside `equipment.json` (one home per fact): the bare-handed `person`
-/// profile from `creatures.json` and the kitted haul rate from `labor_config.json`. Bundled so the
-/// resolution happens in exactly one place ([`population_state`]) rather than at the capture site.
+/// **The TOE levers a cohort's kit readout is resolved against** — the config, plus the *equipped*
+/// tiers that live outside `equipment.json` (one home per fact): the bare-handed `person` profile
+/// from `creatures.json` and the kitted rates from `labor_config.json`. Bundled so the resolution
+/// happens in exactly one place ([`population_state`]) rather than at the capture site.
 pub(crate) struct BandKitLevers<'a> {
     pub(crate) config: &'a crate::equipment_config::EquipmentConfig,
-    /// The base human's intrinsic combat profile — the *unequipped* attack tier.
-    pub(crate) hunter_intrinsic: crate::combat::CombatStats,
-    /// `labor_config.hunt.per_worker_biomass_capacity` — the *equipped* HUNT haul tier (the sled's).
+    /// The base human's intrinsic combat profile — the *unequipped* attack tier, for a **hunter and
+    /// a warrior alike**: `attack` is one stat and `creatures.json`'s `person` row is its one home,
+    /// so both roles step up from this same number (`equipment_config::warrior_profile`).
+    pub(crate) person_intrinsic: crate::combat::CombatStats,
+    /// `labor_config.hunt.per_worker_biomass_capacity` — the *equipped* HUNT haul tier (the sled's),
+    /// and also the *equipped* PEN collection tier: a pen harvest has always been capped by this
+    /// same rate, and it keeps its one home rather than gaining a husbandry twin.
     pub(crate) equipped_haul_rate: f32,
     /// `labor_config.forage.per_worker_biomass_capacity` — the *equipped* GATHER tier (the basket's).
     pub(crate) equipped_gather_rate: f32,
+    /// `labor_config.scout.vantage_range` — the *equipped* vantage sight range (the wayfinding
+    /// gear's). Carried as `f32` because the effects axis is continuous; the reveal path rounds.
+    pub(crate) equipped_vantage_range: f32,
 }
 
 pub(crate) struct PopulationStateInputs<'a> {
@@ -265,19 +270,22 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // same reading the per-herd estimate tables take. The per-assignment truth rides
     // `LaborAssignmentState::kit_id` and that row's own yields.
     //
-    // **The two choices diverge for a band and coincide for a party**, which is why only the hunt
-    // one is published (see `kit_id` below): a party carries one kit across both jobs, a band does
-    // not.
-    let hunt_choice = expedition.map(|exp| exp.kit.clone()).unwrap_or_else(|| {
-        kit_levers
-            .config
-            .default_kit(crate::equipment_config::KitJob::Hunt)
-    });
-    let forage_choice = expedition.map(|exp| exp.kit.clone()).unwrap_or_else(|| {
-        kit_levers
-            .config
-            .default_kit(crate::equipment_config::KitJob::Forage)
-    });
+    // **The choices diverge for a band and coincide for a party**, which is why only the hunt one is
+    // published (see `kit_id` below): a party carries one kit across every job, a band does not.
+    //
+    // **One choice per JOB, not one per tier.** A resident band's tier is quoted at the default of
+    // the job that tier belongs to — the pen is a Hunt row, so it shares `hunt_choice`; the vantage
+    // and the warrior's `attack` get the Scout and Warrior defaults, which exist only because the
+    // expanded roster gave those two roles a kit axis.
+    let job_choice = |job| {
+        expedition
+            .map(|exp| exp.kit.clone())
+            .unwrap_or_else(|| kit_levers.config.default_kit(job))
+    };
+    let hunt_choice = job_choice(crate::equipment_config::KitJob::Hunt);
+    let forage_choice = job_choice(crate::equipment_config::KitJob::Forage);
+    let scout_choice = job_choice(crate::equipment_config::KitJob::Scout);
+    let warrior_choice = job_choice(crate::equipment_config::KitJob::Warrior);
     // **One row per ITEM the config carries, not three named floats.** The band's ledger is sparse
     // (an absent entry is zero wear), so the list is driven by the *config* — otherwise an item the
     // band has never used would simply be missing from the readout rather than showing as full.
@@ -291,7 +299,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         .collect();
     let hunter_attack = kit_levers
         .config
-        .hunter_profile_unbounded(kit_levers.hunter_intrinsic, &hunt_choice, &kit)
+        .hunter_profile_unbounded(kit_levers.person_intrinsic, &hunt_choice, &kit)
         .attack;
     let hunt_carry_per_worker_biomass = kit_levers.config.hunt_per_worker_biomass_capacity(
         kit_levers.equipped_haul_rate,
@@ -303,6 +311,26 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         &forage_choice,
         &kit,
     );
+    // **The pen collects against the HUNT haul's equipped rate** — the number `advance_labor_allocation`
+    // has always capped a pen harvest by — but through the `PenCarry` stat, so a Hunt row on the
+    // stalking kit works the pen bare-handed rather than at the sled's tier.
+    let pen_carry_per_worker_biomass = kit_levers.config.pen_per_worker_biomass_capacity(
+        kit_levers.equipped_haul_rate,
+        &hunt_choice,
+        &kit,
+    );
+    let scout_vantage_range = kit_levers.config.scout_vantage_range(
+        kit_levers.equipped_vantage_range,
+        &scout_choice,
+        &kit,
+    );
+    // **The same `attack` stat and the same seam the hunter's resolves through** — a weapon is a
+    // weapon whichever role carries it, and what keeps a spear out of a raid is the kit's `jobs`
+    // list. So this is *not* `hunter_attack` read twice: the two resolve through different kits.
+    let warrior_attack = kit_levers
+        .config
+        .warrior_profile(kit_levers.person_intrinsic, &warrior_choice, &kit)
+        .attack;
     // **WHAT EVERY OFFERED KIT WOULD GRANT THIS BAND, at its live wear** — the picker's real
     // numbers, resolved here so the client never steps a tier down for itself.
     //
@@ -321,9 +349,10 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         .filter_map(|definition| {
             let choice = kit_levers.config.kit(&definition.id)?;
             let tiers = kit_levers.config.resolve_kit_tiers(
-                kit_levers.hunter_intrinsic,
+                kit_levers.person_intrinsic,
                 kit_levers.equipped_haul_rate,
                 kit_levers.equipped_gather_rate,
+                kit_levers.equipped_vantage_range,
                 &choice,
                 &kit,
             );
@@ -336,6 +365,12 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 attack_max_body_mass: tiers.attack_max_body_mass,
                 dispersion: tiers.dispersion,
                 exposure: tiers.exposure,
+                // **The two axes the flat fields answer only at the JOB DEFAULT.** They ride here per
+                // kit as well, because a picker asks about the kit under the cursor and a readout
+                // that fell back to the roster's FRESH tier for them quoted a pen 40/keeper while the
+                // sim collected 12, and a vantage of 2 tiles against a reveal at 1.
+                pen_carry_per_worker_biomass: tiers.pen_carry_per_worker_biomass,
+                scout_vantage_range: tiers.scout_vantage_range,
             })
         })
         .collect();
@@ -610,18 +645,26 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         hunter_attack,
         hunt_carry_per_worker_biomass,
         forage_carry_per_worker_biomass,
-        // **Which roster kit the two HUNT tiers above are quoted at** — the party's own for an
-        // expedition (a party has one kit, so it covers the forage tier too), the **hunt** job's
-        // default for a resident band.
+        // **Which roster kit the HUNT tiers above are quoted at** — the party's own for an
+        // expedition (a party has one kit, so it covers every tier on the row), the **hunt** job's
+        // default for a resident band. `pen_carry_per_worker_biomass` below is a Hunt-row tier and
+        // so is quoted at this id too.
         //
-        // **It deliberately does not answer for a resident band's forage tier.** `forage_choice`
-        // above is a *different* kit for a band, so pairing `forage_carry_per_worker_biomass` with
-        // this id would quote a gathering rate against `big_game`, which carries no basket component
-        // at all. A second `forage_kit_id` field was considered and rejected: the forage default
-        // already rides the wire once as `SubsistenceSnapshot::default_forage_kit_id`, and the
-        // per-crew truth is the assignment row's own `kit_id`, so a per-cohort copy would be a third
-        // home for a fact that has two. The `.fbs` states the narrowed scope for readers.
+        // **It deliberately does not answer for the other three tiers.** `forage_choice` /
+        // `scout_choice` / `warrior_choice` above are *different* kits for a band, so pairing
+        // `forage_carry_per_worker_biomass` with this id would quote a gathering rate against
+        // `big_game` (no basket component at all) and pairing `warrior_attack` with it would read a
+        // warrior's tier off the hunt kit's spears. A per-tier `*_kit_id` field was considered and
+        // rejected: each of those defaults already rides the wire once as
+        // `SubsistenceSnapshot::default_{forage,scout,warrior}_kit_id`, and the per-crew truth is the
+        // assignment row's own `kit_id`, so a per-cohort copy would be a third home for a fact that
+        // has two. The `.fbs` states the narrowed scope for readers.
         kit_id: hunt_choice.id().to_string(),
+        // The three tiers the expanded roster added, each resolved above through its own job's
+        // default (the pen through the hunt's — see `job_choice`).
+        pen_carry_per_worker_biomass,
+        scout_vantage_range,
+        warrior_attack,
     }
 }
 
@@ -711,13 +754,16 @@ mod tests {
         let config = EQUIPMENT.get_or_init(crate::equipment_config::EquipmentConfig::builtin);
         BandKitLevers {
             config,
-            hunter_intrinsic: crate::creatures_config::CreaturesConfig::builtin().person(),
+            person_intrinsic: crate::creatures_config::CreaturesConfig::builtin().person(),
             equipped_haul_rate: crate::labor_config::LaborConfig::builtin()
                 .hunt
                 .per_worker_biomass_capacity,
             equipped_gather_rate: crate::labor_config::LaborConfig::builtin()
                 .forage
                 .per_worker_biomass_capacity,
+            equipped_vantage_range: crate::labor_config::LaborConfig::builtin()
+                .scout
+                .vantage_range as f32,
         }
     }
 

@@ -36,13 +36,31 @@
         { "stat": "dispersion", "equipped": 0.0 },
         { "stat": "exposure", "equipped": 0.0 }
       ]
+    },
+    "husbandry_gear": {
+      "starting_durability": 100.0,
+      "wear": { "per": "biomass_collected", "amount": 0.04 },
+      "effects": [{ "stat": "pen_carry", "unequipped": 12.0 }]
+    },
+    "wayfinding": {
+      "starting_durability": 100.0,
+      "wear": { "per": "tile_revealed", "amount": 0.05 },
+      "effects": [{ "stat": "scout_vantage_range", "unequipped": 1.0 }]
+    },
+    "clubs": {
+      "starting_durability": 100.0,
+      "wear": { "per": "fight", "amount": 2.0 },
+      "effects": [{ "stat": "attack", "equipped": 6.0 }]
     }
   },
-  "_comment_kits": "THE KIT ROSTER - what a party is SENT OUT WITH, chosen by name instead of implicitly using whatever the band owns. A kit is a MASK over the items above: effective_equipped(item) = kit uses it AND the band still has condition in it. `big_game` and `gathering` reproduce the pre-roster behaviour exactly, so choosing them is bit-for-bit the shipped game. `none` is an ORDINARY ROSTER MEMBER and NOT a sentinel: it simply uses nothing, so every predicate reads false and the party runs at the unequipped tiers throughout - and, because wear rides the same predicate, spends no durability on any item. That is what makes a bare-handed comparison free to run: it must not consume the very kit it is being compared against. `trapping` is the first kit that is not a subset of the old behaviour: traps clear no defence (a trapper falls back to the bare hand's attack 1), so it takes ONLY quarry with no defence at all - rabbit, fowl, grouse, snow hare, catfish - and on exactly that quarry it is the better instrument, because reach and not damage is what binds there. It carries the sled too: a trapper still has to get the catch home. `jobs` is what a kit may be sent on; a kit named for a job it does not list is a COMMAND FAILURE, never a silent fall back to the default. `default_kits` is what each verb uses when the player names none.",
+  "_comment_husbandry": "HUSBANDRY GEAR - hurdles, halters, a butchering stone, vessels. WHAT BOUNDS A PEN IS HANDLING, NOT DRAGGING, which is why it declares `pen_carry` and not the sled's `hunt_carry`: a sled brings a carcass in off the range, and a pen is at the camp. A pen harvest has always been capped by the same 40.0 the wild hunt is (labor_config.json `hunt.per_worker_biomass_capacity`), so that number stays where it is and this item declares only the OTHER side - 12.0, a keeper working a pen with whatever is to hand. THE CONSEQUENCE IS DELIBERATE AND IS THE POINT OF THE KIT: a band that corrals a herd and leaves the assignment on `big_game` is working its pen with a drag harness and no handling gear, and collects at 12 rather than 40. That is the same mistake as bringing baskets to a deer, and the roster exists so the player can stop making it. ITS QUANTUM IS `biomass_collected`, NOT `biomass_hauled`, though a pen charges both: the sled is being dragged and this is being worked, so a band that only keeps pens must never blunt a sled it did not take onto the range. AND `biomass_collected` IS WHAT WAS BUTCHERED, NOT WHAT CAME HOME: the hurdles, the halters and the butchering stone are worked on the whole beast brought out of the pen and killed, so this is charged over AnimalTake::killed_biomass while the sled beside it is charged over `carried`. The two numbers are the same on every pen a keeper can seat whole and part on the ones it cannot. 100 / 0.04 = 2500 biomass butchered - exactly the basket's clock, and halved from the 0.08 the collected-equals-carried basis shipped with. THE ONLY SHIPPED PEN SPECIES THE TWO BASES DIVERGE ON IS THE WILD AUROCHS, and it is what sets the rate: waste needs `workers x pen_carry < body_mass`, so at the equipped pen_carry of 40 nothing under 40 kg ever wastes (boar 12, crag goat 6, wild sheep 5.6, snow hare 0.6, rabbit 0.27, fowl 0.13 - all seated whole by one keeper) and the aurochs at 120 kg with its single required keeper (animals_per_herder 12) kills 120 and carries 40. A pen's MSY clears about one body a turn, so at 0.08 an aurochs keeper's gear ran dry in ~10 turns against plan_early_game_labor's 15-20 turn kit clock - half the target, and a third of the ~31 turns the old basis charged it. 0.04 puts the aurochs pen at ~21 turns, back on target; every other pen was already past 100 turns on either rate and was never the binding clock.",
+  "_comment_wayfinding": "WAYFINDING GEAR - tallies, marked staves, a fire-drill, whatever a forward observer carries. IT LIFTS WHAT A VANTAGE CAN MAKE OUT (`scout_vantage_range`), NOT HOW FAR OUT IT IS POSTED: the posting distance is three dials (labor_config.json `scout.vantage_distance_base` / `_per_scout` / `_max`) and a kit reaching into one of them would be a fourth authority over the same line. The equipped 2 is labor_config's `scout.vantage_range` and stays there; this declares the bare 1.0. ITS QUANTUM IS `tile_revealed`, AND `tile_revealed` MEANS FIRST-EVER-REVEALED. A parked band re-sees the same ring every turn, so charging per tile SEEN would be a turn clock in a per-use costume - precisely what docs/plan_denial_raid.md 1.2 forbids. What wears wayfinding gear is going somewhere new, so a band that stops exploring stops paying, and a band that never explores pays nothing at all. 100 / 0.05 = 2000 first-sights.",
+  "_comment_warrior": "CLUBS - the Warrior role's TOE, and the arc's 'weapons -> combat strength / rocks and fists -> weak force' made real. IT DECLARES `attack` - THE SAME STAT A SPEAR DOES - because attack is already 'what this person hits with' and a `warrior_attack` beside it would be a second authority over the one number the resolver reads. What keeps a club out of a hunt and a spear out of a raid is the kit's `jobs` list. Equipped 6.0 against the bare hand's 1.0 (creatures.json `person.combat.attack`), well under the spear's 20: a raid is people fighting animals at the camp with whatever is by the fire, not a hunting party that chose its ground. THIS IS THE ONE PLACE THE SHIPPED OPENING MOVES - a start-kitted band defends a predator raid at 6 where it used to defend at 1, and drops back to 1 when the clubs are gone. Predators Phase 1b is explicitly a placeholder resolver, so the raid tuning is the right place to absorb it. ITS QUANTUM IS `fight` - ONE ENGAGEMENT, ONE USE, not one casualty inflicted: a defence that killed nothing was still fought, and pricing gear on its results would charge a band that is losing the least. 100 / 2.0 = 50 raids fought.",
+  "_comment_kits": "THE KIT ROSTER - what a party is SENT OUT WITH, chosen by name instead of implicitly using whatever the band owns. A kit is a MASK over the items above: effective_equipped(item) = kit uses it AND the band still has condition in it. `big_game` and `gathering` reproduce the pre-roster behaviour exactly, so choosing them is bit-for-bit the shipped game. `none` is an ORDINARY ROSTER MEMBER and NOT a sentinel: it simply uses nothing, so every predicate reads false and the party runs at the unequipped tiers throughout - and, because wear rides the same predicate, spends no durability on any item. That is what makes a bare-handed comparison free to run: it must not consume the very kit it is being compared against. `trapping` is the first kit that is not a subset of the old behaviour: traps clear no defence (a trapper falls back to the bare hand's attack 1), so it takes ONLY quarry with no defence at all - rabbit, fowl, grouse, snow hare, catfish - and on exactly that quarry it is the better instrument, because reach and not damage is what binds there. It carries the sled too: a trapper still has to get the catch home. `jobs` is what a kit may be sent on; a kit named for a job it does not list is a COMMAND FAILURE, never a silent fall back to the default. `default_kits` is what each verb uses when the player names none. THE BAND-WIDE ROLES NOW HAVE A KIT AXIS: `scout` and `warrior` are jobs like the other two. They were absent on the grounds that they consumed no component, which was a statement about this file and not about the sim - scouts have posted forward-observer vantages and warriors have been the band's defending contingent against a predator raid for some time. `none` lists all four, so going bare is a choice on every role.",
   "kits": [
     {
       "id": "big_game",
-      "display_name": "Big-game kit",
+      "display_name": "Stalking kit",
       "jobs": ["hunt"],
       "uses": ["spears", "sled"]
     },
@@ -59,14 +77,36 @@
       "uses": ["baskets"]
     },
     {
+      "id": "husbandry",
+      "display_name": "Husbandry kit",
+      "jobs": ["hunt"],
+      "uses": ["husbandry_gear", "sled"]
+    },
+    {
+      "id": "wayfinding",
+      "display_name": "Wayfinding kit",
+      "jobs": ["scout"],
+      "uses": ["wayfinding"]
+    },
+    {
+      "id": "warrior",
+      "display_name": "Warrior kit",
+      "jobs": ["warrior"],
+      "uses": ["clubs"]
+    },
+    {
       "id": "none",
       "display_name": "No kit",
-      "jobs": ["hunt", "forage"],
+      "jobs": ["hunt", "forage", "scout", "warrior"],
       "uses": []
     }
   ],
   "default_kits": {
     "hunt": "big_game",
-    "forage": "gathering"
-  }
+    "forage": "gathering",
+    "scout": "wayfinding",
+    "warrior": "warrior"
+  },
+  "_comment_quarry_default_kit_margin": "WHICH KIT A QUARRY WANTS IS DERIVED, NOT AUTHORED. `default_kits.hunt` is one id for the whole job, so a Rabbit Warren's compose sheet used to open on the Stalking kit - which works on a rabbit and is 4x worse than Trapping, because a rabbit's wariness 0.75 loses a spear party three animals in four while the trap's dispersion 0 keeps all of them. The sim therefore SCORES every hunt-job kit against each species using 4.6's own per-hunter-turn take - min(engage_rate, (attack - defense)/durability) x (1 - clamp(wariness x dispersion, 0, 1)) x body_mass - and publishes the winner per herd. A CONFIG PREDICATE (`mass < X && wariness > Y`) WAS REJECTED: those facts already exist twice - the trap declares max_body_mass 1.0 and dispersion 0, the species declares body_mass, wariness and defense - and a third copy would drift on the first retune, exactly as a `size_class` or a 'jumpy' flag would. It would also be silently wrong on `defense`, which is what actually zeroes a trap party on Marsh Grazers. THE SCORE IS TAKEN AT THE FRESH TIER (zero wear), so a herd's default is a property of quarry x roster - a per-world constant - and cannot reshuffle as a band's spears wear down; the same rule the picker's greying already follows. THIS MARGIN IS HOW DECISIVE THE WINNER MUST BE: a kit replaces the job default only if it scores more than (1 + margin) x the default's own score, so a near-tie keeps the job default and the published default does not flip on a trivial retune for reasons the player cannot see. 0.25 against the shipped roster: every small-game row clears it comfortably (Silt Catfish is the closest at 1.67x, then Forest Grouse at 2.50x, up to 4.00x on both warrens) and no large-game row comes near - a trap's attack is bounded off them entirely, so it scores 0. A default the winner cannot beat at all (score 0) is replaced by anything positive: 'better than nothing' needs no margin. PLAYTEST DIAL.",
+  "quarry_default_kit_margin": 0.25
 }

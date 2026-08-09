@@ -959,6 +959,14 @@ mod tests {
         visibility: &crate::visibility::VisibilityLedger,
         fog_enabled: bool,
     ) -> Vec<HerdTelemetryState> {
+        // These fixtures test the FOG FILTER, not the pricing, so every species quotes the same
+        // ordinary band — `parties` is left empty and every row falls through to the fallback.
+        let fallback = QuotedParty {
+            party: crate::fauna::HuntingParty::builtin_equipped(),
+            kit_id: crate::equipment_config::EquipmentConfig::builtin()
+                .default_kit_id(crate::equipment_config::KitJob::Hunt)
+                .to_string(),
+        };
         herd_snapshot_entries(HerdSnapshotInputs {
             telemetry,
             registry,
@@ -970,7 +978,9 @@ mod tests {
             visibility,
             viewer: VIEWER,
             fog_enabled,
-            party: crate::fauna::HuntingParty::builtin_equipped(),
+            parties: &HashMap::new(),
+            penned_parties: &HashMap::new(),
+            fallback_party: &fallback,
         })
     }
 
@@ -1068,6 +1078,8 @@ mod tests {
             kits: Vec::new(),
             default_hunt_kit_id: String::new(),
             default_forage_kit_id: String::new(),
+            default_scout_kit_id: String::new(),
+            default_warrior_kit_id: String::new(),
             equipment_config_json: String::new(),
             tiles,
             logistics: Vec::new(),
@@ -1135,6 +1147,8 @@ mod tests {
             kits: Vec::new(),
             default_hunt_kit_id: String::new(),
             default_forage_kit_id: String::new(),
+            default_scout_kit_id: String::new(),
+            default_warrior_kit_id: String::new(),
             equipment_config_json: String::new(),
             tiles: Vec::new(),
             logistics: Vec::new(),
@@ -1197,6 +1211,8 @@ mod tests {
             kits: Vec::new(),
             default_hunt_kit_id: String::new(),
             default_forage_kit_id: String::new(),
+            default_scout_kit_id: String::new(),
+            default_warrior_kit_id: String::new(),
             equipment_config_json: String::new(),
             tiles: Vec::new(),
             logistics: Vec::new(),
@@ -1302,13 +1318,16 @@ mod tests {
         let equipment_config = crate::equipment_config::EquipmentConfig::builtin();
         let kit_levers = population::BandKitLevers {
             config: &equipment_config,
-            hunter_intrinsic: crate::creatures_config::CreaturesConfig::builtin().person(),
+            person_intrinsic: crate::creatures_config::CreaturesConfig::builtin().person(),
             equipped_haul_rate: crate::labor_config::LaborConfig::builtin()
                 .hunt
                 .per_worker_biomass_capacity,
             equipped_gather_rate: crate::labor_config::LaborConfig::builtin()
                 .forage
                 .per_worker_biomass_capacity,
+            equipped_vantage_range: crate::labor_config::LaborConfig::builtin()
+                .scout
+                .vantage_range as f32,
         };
         let levers = ExpeditionLevers {
             hunt_per_worker_carry: 0.0,

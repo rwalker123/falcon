@@ -22,6 +22,8 @@ pub(crate) fn serialize_subsistence_section<'a>(
     let kits = create_kits(builder, &snapshot.kits);
     let default_hunt_kit_id = builder.create_string(&snapshot.default_hunt_kit_id);
     let default_forage_kit_id = builder.create_string(&snapshot.default_forage_kit_id);
+    let default_scout_kit_id = builder.create_string(&snapshot.default_scout_kit_id);
+    let default_warrior_kit_id = builder.create_string(&snapshot.default_warrior_kit_id);
     let equipment_config_json = builder.create_string(&snapshot.equipment_config_json);
     fb::SubsistenceSection::create(
         builder,
@@ -34,6 +36,8 @@ pub(crate) fn serialize_subsistence_section<'a>(
             kits: Some(kits),
             defaultHuntKitId: Some(default_hunt_kit_id),
             defaultForageKitId: Some(default_forage_kit_id),
+            defaultScoutKitId: Some(default_scout_kit_id),
+            defaultWarriorKitId: Some(default_warrior_kit_id),
             // The designer surface's read-only catalogue — the whole TOE config as one JSON string.
             // Workbench-only; see the schema comment.
             equipmentConfigJson: Some(equipment_config_json),
@@ -77,6 +81,14 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
         .default_forage_kit_id
         .as_ref()
         .map(|id| builder.create_string(id));
+    let default_scout_kit_id = delta
+        .default_scout_kit_id
+        .as_ref()
+        .map(|id| builder.create_string(id));
+    let default_warrior_kit_id = delta
+        .default_warrior_kit_id
+        .as_ref()
+        .map(|id| builder.create_string(id));
     let equipment_config_json = delta
         .equipment_config_json
         .as_ref()
@@ -92,6 +104,8 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
             kits,
             defaultHuntKitId: default_hunt_kit_id,
             defaultForageKitId: default_forage_kit_id,
+            defaultScoutKitId: default_scout_kit_id,
+            defaultWarriorKitId: default_warrior_kit_id,
             equipmentConfigJson: equipment_config_json,
         },
     )
@@ -132,6 +146,10 @@ fn create_kits<'a>(
                 attack: state.attack,
                 huntCarryPerWorkerBiomass: state.hunt_carry_per_worker_biomass,
                 forageCarryPerWorkerBiomass: state.forage_carry_per_worker_biomass,
+                // The pen's and the scout vantage's tiers — the two roles the roster gained with
+                // husbandry gear and wayfinding gear.
+                penCarryPerWorkerBiomass: state.pen_carry_per_worker_biomass,
+                scoutVantageRange: state.scout_vantage_range,
                 // What the kit DOES beyond the tiers — all three neutral at 1.0, so a kit declaring
                 // none of them encodes exactly as it did before they existed.
                 attackMinBodyMass: state.attack_min_body_mass,
@@ -176,6 +194,10 @@ fn create_herds<'a>(
         let size_class = builder.create_string(herd.size_class.as_str());
         let ecology_phase = builder.create_string(herd.ecology_phase.as_str());
         let husbandry_ceiling = builder.create_string(herd.husbandry_ceiling.as_str());
+        // THE KIT THIS QUARRY WANTS — always written, even when it names the hunt job's default: a
+        // consumer comparing its player's selection against an absent string would read every herd
+        // as a mismatch.
+        let default_kit_id = builder.create_string(herd.default_kit_id.as_str());
         // **An EMPTY curve is absent, not a vector of zeros** — the convention every repeated field
         // on this table follows, and the one that lets a client tell "this source published no
         // curve" from "this source does not grow", which are different facts.
@@ -276,9 +298,8 @@ fn create_herds<'a>(
                 // The attrition denominator — appended last, so the slot stays positional.
                 durability: herd.durability,
                 stayFraction: herd.stay_fraction,
-                // The denial raid's pre-launch table — appended last.
-                // The party that table's sheet opens on — appended last, so the slot stays
-                // positional. `0` = no quoted party drives this herd down.
+                // The quarry's own default kit — appended last, so the slot stays positional.
+                defaultKitId: Some(default_kit_id),
             },
         );
         entries.push(entry);

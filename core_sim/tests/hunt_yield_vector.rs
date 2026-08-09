@@ -1963,6 +1963,14 @@ fn a_penned_herd_publishes_no_engagement_stage() {
 /// must exceed its own haul crew (the new term is live and binding), while the heavy-bodied one must
 /// still be its haul crew (the old term is not dead). Plus the standing invariant — a row may not
 /// report *overstaffed* and *understaffed* at once.
+///
+/// **The reach crew is re-derived at the band's OWN retreat**, through the same `stay_fraction` seam
+/// the take is priced with — the quarry's `wariness` against the assignment's default kit's
+/// `dispersion`. This harness holds wariness at its identity (`headless_with_species`, so a
+/// `forecast == actual` pin is not asserting that one draw equals a mean), so that term resolves to
+/// `1.0` here and the two units below are the only thing this case measures. The retreat's own effect
+/// on the exported crew is pinned by
+/// [`the_exported_crew_pays_for_the_retreat`], on the shipped roster's wariness.
 #[test]
 fn the_exported_crew_counts_the_hands_that_can_reach_the_herd() {
     let mut saw_reach_bound = false;
@@ -1971,15 +1979,29 @@ fn the_exported_crew_counts_the_hands_that_can_reach_the_herd() {
         let (mut app, id, pos) = headless_with_species(species);
         reveal_herd(&mut app, &id);
         let floor = MSY_BIOMASS_FRACTION;
-        let (haul, reach) = {
+        let (haul, reach, stay) = {
             let fauna = app.world.resource::<FaunaConfigHandle>().get();
             let labor = app.world.resource::<LaborConfigHandle>().get();
+            let equipment = app
+                .world
+                .resource::<core_sim::EquipmentConfigHandle>()
+                .get();
             let registry = app.world.resource::<HerdRegistry>();
             let herd = registry.find(&id).expect("the herd is on the map");
             let ceiling = core_sim::hunt_escapement_ceiling(
                 floor,
                 herd.biomass,
                 core_sim::herd_capacity(herd, &fauna),
+            );
+            // The band's own kit — `spawn_resident_hunters` names none, so the Hunt job default is
+            // what `LaborAssignment::kit_choice` resolves — at zero wear, which is what a
+            // freshly-spawned fixture band carries.
+            let stay = core_sim::stay_fraction(
+                fauna.wariness_for(&herd.species),
+                equipment.dispersion(
+                    &equipment.default_kit(core_sim::KitJob::Hunt),
+                    &core_sim::BandEquipment::default(),
+                ),
             );
             (
                 hunt_haul_workers(
@@ -1992,9 +2014,16 @@ fn the_exported_crew_counts_the_hands_that_can_reach_the_herd() {
                     herd.body_mass,
                     fauna.engage_rate_for(&herd.species),
                     NO_BUILD_UNDERWAY_DIP,
+                    stay,
                 ),
+                stay,
             )
         };
+        assert_eq!(
+            stay, NOTHING_BREAKS_OFF,
+            "{species}: this harness holds the retreat at its identity, so the sizing below is the \
+             two units and nothing else"
+        );
         let band = spawn_resident_hunters(&mut app, pos, &id, floor, LONE_HUNTER);
         app.world.run_system_once(advance_labor_allocation);
         recapture_snapshot_in_place(&mut app.world);
@@ -2027,3 +2056,89 @@ fn the_exported_crew_counts_the_hands_that_can_reach_the_herd() {
          carry={saw_carry_bound}"
     );
 }
+
+/// The retreat's identity — a quarry that never breaks off, which is what
+/// `FaunaConfigHandle::hold_wariness_at_zero` puts the whole roster at.
+const NOTHING_BREAKS_OFF: f32 = 1.0;
+
+/// **15. `workersNeeded` counts the hands that bring the animals DOWN, not the ones that get near
+/// them.**
+///
+/// A crew was sized on the raw reach (`engage_rate × dip`) while the take beside it was priced
+/// through the retreat as well, so on a Wild Boar herd the compose sheet's *clear it now* target and
+/// the stepper cap it was capped by named two different crews — the sheet asking for hands the panel
+/// refused to assign. The retreat prices both now: a party that keeps three animals in four needs
+/// four-thirds the hands to draw the same stock down.
+///
+/// Run on the **shipped** wariness (this file's fixture otherwise holds it at its identity, so #14
+/// deliberately cannot see this), against the same seam the sim uses, and paired sharply: the
+/// exported crew must be the retreat-aware count AND strictly above the retreat-blind one.
+#[test]
+fn the_exported_crew_pays_for_the_retreat() {
+    let (mut app, id, pos) = headless_with_species(WARY_SPECIES);
+    // **Undo the harness's retreat hold** — this case is about the retreat, so it needs the roster's
+    // authored wariness rather than the identity every other case in this file pins against.
+    *app.world.resource_mut::<FaunaConfigHandle>() = FaunaConfigHandle::default();
+    reveal_herd(&mut app, &id);
+    let floor = MSY_BIOMASS_FRACTION;
+
+    let (retreat_aware, retreat_blind, stay) = {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        let equipment = app
+            .world
+            .resource::<core_sim::EquipmentConfigHandle>()
+            .get();
+        let registry = app.world.resource::<HerdRegistry>();
+        let herd = registry.find(&id).expect("the herd is on the map");
+        let ceiling = core_sim::hunt_escapement_ceiling(
+            floor,
+            herd.biomass,
+            core_sim::herd_capacity(herd, &fauna),
+        );
+        // The band's own kit — `spawn_resident_hunters` names none, so the Hunt job default is what
+        // `LaborAssignment::kit_choice` resolves — at zero wear, which is what a freshly-spawned
+        // fixture band carries. The species' bare `1 − wariness` would be a second spelling of the
+        // retreat that a kit could silently move away from.
+        let stay = core_sim::stay_fraction(
+            fauna.wariness_for(&herd.species),
+            equipment.dispersion(
+                &equipment.default_kit(core_sim::KitJob::Hunt),
+                &core_sim::BandEquipment::default(),
+            ),
+        );
+        let engage = |stay| {
+            hunt_engage_workers(
+                ceiling,
+                herd.body_mass,
+                fauna.engage_rate_for(&herd.species),
+                NO_BUILD_UNDERWAY_DIP,
+                stay,
+            )
+        };
+        (engage(stay), engage(NOTHING_BREAKS_OFF), stay)
+    };
+    assert!(
+        stay < NOTHING_BREAKS_OFF,
+        "liveness: the shipped quarry must actually retreat, or this case measures nothing (stay \
+         {stay})"
+    );
+    assert!(
+        retreat_aware > retreat_blind,
+        "the retreat must COST hands: {retreat_aware} vs the raw reach's {retreat_blind}"
+    );
+
+    let band = spawn_resident_hunters(&mut app, pos, &id, floor, LONE_HUNTER);
+    app.world.run_system_once(advance_labor_allocation);
+    recapture_snapshot_in_place(&mut app.world);
+    let row = exported_row(&app, band);
+
+    assert_eq!(
+        row.workers_needed, retreat_aware,
+        "the exported crew must be sized on what the party puts DOWN ({retreat_aware}), not on what \
+         it gets near ({retreat_blind})"
+    );
+}
+
+/// A wary, light-bodied quarry — the reach term binds (so the exported crew *is* the engagement
+/// count) and the shipped `wariness 0.65` is high enough that the retreat moves it by a lot.
+const WARY_SPECIES: &str = SMALL_BODIED_SPECIES;

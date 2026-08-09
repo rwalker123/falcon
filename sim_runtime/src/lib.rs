@@ -417,6 +417,8 @@ pub mod knowledge {
                 kits: Vec::new(),
                 default_hunt_kit_id: String::new(),
                 default_forage_kit_id: String::new(),
+                default_scout_kit_id: String::new(),
+                default_warrior_kit_id: String::new(),
                 equipment_config_json: String::new(),
                 faction_inventory: Vec::new(),
                 sedentarization: Vec::new(),

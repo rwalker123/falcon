@@ -276,7 +276,7 @@ LEVEL reaches any client file.
 ### The ONE exception: the Kits page promotes an entry's name into its title
 
 `kits[0]` is a coordinate, not a name. So the Kits page composes each roster block's title out of the
-entry's own `display_name` and `id` — `Big-game kit (big_game)` — and then hides **only the rows the
+entry's own `display_name` and `id` — `Stalking kit (big_game)` — and then hides **only the rows the
 title consumed**. The two key names live beside the partition consts in `WorkbenchVocab`
 (`CONFIG_KIT_DISPLAY_NAME_KEY` / `CONFIG_KIT_ID_KEY`) and are the only other config knowledge the
 client holds.

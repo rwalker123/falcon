@@ -207,14 +207,27 @@ func trade_breakdown_lines(band: Dictionary) -> Array[String]:
         lines.append(DetailFormat.food_breakdown_row(hunted, DetailFormat.FOOD_LABEL_HUNTED))
     return lines
 
-## **THE THREE KITS, EACH BESIDE THE ROLE IT SETS** (`docs/plan_hunt_through_combat.md` §4.8) — the
-## Kit row's breakdown, and the only place a band's resolved tiers are stated.
+## **EVERY ITEM THE BAND CARRIES, EACH BESIDE THE ROLE IT SETS**
+## (`docs/plan_hunt_through_combat.md` §4.8) — the Kit row's breakdown, and the only place a band's
+## resolved tiers are stated.
 ##
-## **THE PAIRING IS THE READOUT.** Spears → `attack`, the SLED → the HUNT's carry, BASKETS → the
-## FORAGE web's. Those last two are separate wire fields with separate durabilities behind them (a
-## band can be out of baskets with its sled untouched), so each row reads its OWN tier key and the
-## two are never interchanged — that substitution, baskets boosting the hunt, is the defect slice 5
-## corrected in the sim and the one this readout would otherwise carry forward into the UI.
+## **THE PAIRING IS THE READOUT.** Spears → the hunt's `attack`, the SLED → the HUNT's carry, BASKETS
+## → the FORAGE web's, HANDLING GEAR → the PEN's, WAYFINDING → a scout vantage's sight, CLUBS → the
+## `attack` the camp is DEFENDED at. Every one of those is a separate wire field with its own
+## durability behind it (a band can be out of baskets with its sled untouched, and it fights raids
+## with clubs while it hunts with spears), so each row reads its OWN tier key and no two are ever
+## interchanged — that substitution, baskets boosting the hunt, is the defect slice 5 corrected in
+## the sim and the one this readout would otherwise carry forward into the UI.
+##
+## **THE ROWS ARE UNCONDITIONAL, including on a band with nobody on Scout or Warrior.** This popover
+## answers "what does this band's gear DO", not "what is it doing this turn" — and a row that
+## vanished when the role was unstaffed would hide the cliff exactly when a player is deciding
+## whether to staff it again.
+##
+## **THE TIERS ARE READ, NEVER RE-DERIVED, AND NOTHING HERE TOUCHES `kit_id`.** The sim has already
+## resolved each one through its OWN job's default kit, and that cohort id answers for the hunt job
+## alone — quoting the vantage or the warrior's attack against it would read a scout's reach and a
+## defender's fighting tier off the hunting kit (see `DetailFormat.KIT_TIER_KEY_PEN_CARRY`).
 ##
 ## **NOTHING HERE IS SCALED BY THE REMAINING CONDITION.** Performance is flat until expiry, so a kit
 ## at 3 quotes the same tier as one at 97 — the condition says how long, the tier says how well, and
@@ -239,6 +252,28 @@ func kit_breakdown_lines(band: Dictionary) -> Array[String]:
     # game, where a weapon's damage buys nothing because there is no defence to clear.
     lines.append(DetailFormat.kit_breakdown_row(band, DetailFormat.KIT_DURABILITY_KEY_TRAPS,
         DetailFormat.KIT_LABEL_TRAPS, DetailFormat.KIT_ROLE_TRAPS))
+    # **HANDLING GEAR IS THE PEN'S CARRY AND IT IS NOT THE SLED'S.** A sled drags a carcass in off
+    # the range; a pen stands at the camp, so a band on a stalking kit collects its pen at the bare
+    # rate however healthy the sled is. Two rows, two tiers, both quoted at the hunt job's default.
+    lines.append(DetailFormat.kit_breakdown_row(band,
+        DetailFormat.KIT_DURABILITY_KEY_HUSBANDRY_GEAR, DetailFormat.KIT_LABEL_HUSBANDRY_GEAR,
+        DetailFormat.KIT_ROLE_PEN_CARRY_FORMAT % String.num(
+            float(band.get(DetailFormat.KIT_TIER_KEY_PEN_CARRY, 0.0)),
+            DetailFormat.KIT_CARRY_DECIMALS)))
+    # **WAYFINDING STATES TILES, NOT A BIOMASS RATE**, so it takes the vantage's own rounding rather
+    # than the carries'. It is how far each POSTED vantage sees — how far out they are posted is not
+    # a kit axis at all, so this row must not be read as the scouting reach.
+    lines.append(DetailFormat.kit_breakdown_row(band, DetailFormat.KIT_DURABILITY_KEY_WAYFINDING,
+        DetailFormat.KIT_LABEL_WAYFINDING, DetailFormat.KIT_ROLE_SCOUT_VANTAGE_FORMAT % String.num(
+            float(band.get(DetailFormat.KIT_TIER_KEY_SCOUT_VANTAGE, 0.0)),
+            DetailFormat.KIT_VANTAGE_DECIMALS)))
+    # **CLUBS ARE THE DEFENDERS' ATTACK AND THEY ARE NOT THE SPEARS'.** Same stat, different item and
+    # a different kit: a raid is fought at the camp with whatever is by the fire, so this row reads
+    # `warrior_attack` and never `hunter_attack` — the tier `kit_id` would wrongly answer for.
+    lines.append(DetailFormat.kit_breakdown_row(band, DetailFormat.KIT_DURABILITY_KEY_CLUBS,
+        DetailFormat.KIT_LABEL_CLUBS, DetailFormat.KIT_ROLE_WARRIOR_ATTACK_FORMAT % String.num(
+            float(band.get(DetailFormat.KIT_TIER_KEY_WARRIOR_ATTACK, 0.0)),
+            DetailFormat.KIT_CONDITION_DECIMALS)))
     # A full-width sentence, deliberately NOT indented: `detail_bbcode` routes the indent to the
     # two-tone sub-row branch, and this is a caveat on every row rather than one more of them.
     lines.append(DetailFormat.KIT_BREAKDOWN_CLIFF_NOTE)

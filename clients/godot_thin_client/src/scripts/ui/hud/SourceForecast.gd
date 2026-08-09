@@ -520,16 +520,20 @@ const ENGAGEMENT_UNBOUNDED := INF
 const ENGAGED_AT_LEAST := 1.0
 # **THE RETREAT, AS A TERM — `1 − wariness`** (`HerdTelemetryState.stayFraction`): what fraction of the
 # animals a party REACHES actually stays to be fought. It is the stage between the engagement and the
-# fight, and it bounds the TAKE ALONE — never a crew size. The sim sizes a crew on the RAW reach
-# (`fauna::hunt_engage_workers`, the hands that can get to the herd) and lets the retreat cut only what
-# those hands bring down, so folding it into `engage_rate` makes the sheet's stepper cap disagree with
-# the sim's own `workersNeeded`. That fold shipped once and `ui_preview`'s "the compose stepper caps at
-# the crew the SIM asks for" is what caught it.
+# fight, and it prices BOTH the take and the CREW: a party that keeps one animal in four brings down a
+# quarter as much per hand, so it needs four times the hands to draw the same stock down. It is applied
+# as its own term rather than folded into `engage_rate`, because the two are separately observable —
+# a kit's `dispersion` moves the retreat alone — and the fold makes Big-game and Trapping quote one
+# identical hunt.
 const FORECAST_STAY_FRACTION_KEY := "stay_fraction"
 # **`1` MEANS NOTHING BREAKS OFF**, which is the honest reading for a source with no retreat stage — a
 # pen, the whole plant web, and a species the roster cannot resolve — and is the wire's own default, so
 # an absent field and a present `1.0` are one answer rather than two.
 const STAY_FRACTION_NONE_BREAKS_OFF := 1.0
+# **`0` MEANS NOTHING EVER STANDS** — the other end of the same fraction, and the one value that makes
+# the crew quotient degenerate: no number of hands lands an animal that always runs, so
+# `engage_workers` answers "no crew" there rather than dividing by nothing.
+const STAY_FRACTION_ALL_BREAK_OFF := 0.0
 # **THE PHASE, AND WHERE ITS BOUNDARIES ARE — both on the wire now.** `ecology_phase` is the source's
 # CURRENT band as a word (Thriving / Stressed / Collapsing); the two fractions below are the cut points
 # `classify_ecology_phase` used to reach it, **in the same units the floor is in** (fractions of `K`).
@@ -1625,10 +1629,23 @@ static func haul_workers(ceiling: float, body: float, per_worker: float) -> int:
 static func peak_animal_drop(ceiling: float, body: float) -> int:
     return floori(maxf(ceiling, 0.0) / body) + HUNT_PEAK_DROP_BANK_BONUS
 
-## **THE WHOLE-ANIMAL ENGAGEMENT CREW**, mirroring the sim's `fauna::hunt_engage_workers` exactly: how
-## many hunters it takes to bring the peak animal drop *into contact* in one turn. It is the exact
-## inverse of `animals_engaged` — that floors `workers × engage_rate × dip` to whole animals, so the
-## crew reaching `n` of them is `ceil(n / (engage_rate × dip))`.
+## **THE WHOLE-ANIMAL ENGAGEMENT CREW**, mirroring the sim's `fauna::hunt_engage_workers`: how many
+## hunters it takes to bring the peak animal drop DOWN in one turn. It is the inverse of the pair
+## `animals_engaged` → `animals_stayed` — those floor `workers × engage_rate × dip` and then cut it by
+## the retreat, so the crew that lands `n` animals is `ceil(n / (engage_rate × dip × stay))`.
+##
+## **THE RETREAT PRICES THE CREW AS WELL AS THE TAKE**, because a party that keeps one animal in four
+## needs four times the hands to draw the same stock down. Sizing on the RAW reach put this crew — and
+## through `take_workers` the stepper's own cap — BELOW the *clear it now* pill beside it, which has
+## divided by `engagement_carry`'s retreat-aware reach all along: 82 against 108 on a played Wild Boar
+## herd, the sheet naming a crew the panel then refused to let the player assign. 108 is the honest
+## number.
+##
+## **`stay <= STAY_FRACTION_ALL_BREAK_OFF` ANSWERS `0`, and that is not the degenerate reading it
+## looks like.** Nothing the party reaches ever stands, so the take is identically zero at every crew
+## size — there is no number of hands that achieves it, and the crew NEEDED to achieve the take is
+## therefore none. The `max()` in `take_workers` then keeps the haul crew, exactly as it does for a
+## source with no engagement stage at all.
 ##
 ## **IT CANNOT BE FOLDED INTO `haul_workers`, because the two scale on DIFFERENT UNITS** — hauling is
 ## per biomass (one hauler carries 40), engaging is per animal (one hunter reaches 10 fowl or 0.05
@@ -1643,13 +1660,17 @@ static func peak_animal_drop(ceiling: float, body: float) -> int:
 ## `0` where the term has nothing to say: a source with no engagement stage (`NO_ENGAGEMENT_STAGE` —
 ## a pen, the plant web) or a degenerate body/dip. The `max()` then keeps the haul crew and neither
 ## web regresses. Units on `ceiling`/`body` are free, exactly as they are for `haul_workers`.
-static func engage_workers(ceiling: float, body: float, engage_rate: float, dip: float) -> int:
+static func engage_workers(ceiling: float, body: float, engage_rate: float, dip: float,
+        stay: float) -> int:
     if body <= 0.0:
         return 0
     var reach := engagement_per_worker(engage_rate, dip)
     if is_inf(reach):
         return 0
-    return ceili(float(peak_animal_drop(ceiling, body)) / reach)
+    var landed := animals_stayed(reach, stay)
+    if landed <= STAY_FRACTION_ALL_BREAK_OFF:
+        return 0
+    return ceili(float(peak_animal_drop(ceiling, body)) / landed)
 
 ## **THE ANIMALS ONE WORKER BRINGS INTO CONTACT PER TURN** — `engageRate × dip`, and the ONE
 ## composition of that pair every engagement quotient in this file divides by. It exists so the three
@@ -1676,17 +1697,14 @@ static func engagement_per_worker(engage_rate: float, dip: float) -> float:
 ## (every forage patch), so `min(carry, …)` collapses to the carry alone and the plant web and the pens
 ## are byte-identical to before this arm existed. That is the regression that matters most here.
 ##
-## **IT IS WHAT A WORKER BRINGS DOWN, SO IT CARRIES THE RETREAT** — `stay` defaults to the wire's
-## "nothing breaks off", and both callers (`crew_to_clear`, `crew_that_reaches`) are DRAWDOWN answers:
-## how many hands it takes to pull a stock to a floor. A party that keeps one animal in four needs four
-## times the hands to do that, and quoting the raw reach there names a crew that never arrives — the
-## same defect the carry-only reading had before the engagement arm existed.
-##
-## **THE SIM-MIRROR SIDE MUST NOT CALL THIS.** `engage_workers` / `take_workers` size a crew on
-## `engagement_per_worker`, the RAW reach, because `fauna::hunt_engage_workers` does; they answer the
-## sim's `workersNeeded` and a retreat there would put the stepper cap at odds with it.
+## **IT IS WHAT A WORKER BRINGS DOWN, SO IT CARRIES THE RETREAT** — and so, since the retreat began
+## pricing crews as well as takes, does the sim-mirror `engage_workers` beside it. Every crew answer on
+## this sheet now divides by the same retreat-aware reach, which is what closed the gap where *clear it
+## now* named 108 hands and the stepper capped at 82. **`stay` is REQUIRED**: it has no default, so a
+## call site cannot silently take the raw reach by omission, which is exactly how the two arms came to
+## disagree.
 static func engagement_carry(body_mass: float, engage_rate: float, dip: float,
-        stay: float = STAY_FRACTION_NONE_BREAKS_OFF) -> float:
+        stay: float) -> float:
     if body_mass <= 0.0:
         return ENGAGEMENT_UNBOUNDED
     var reach := engagement_per_worker(engage_rate, dip)
@@ -1700,10 +1718,13 @@ static func engagement_carry(body_mass: float, engage_rate: float, dip: float,
 ##
 ## Units on `ceiling`/`body` are free (an animal count is a ratio), so this answers in biomass for the
 ## crew targets and in the paid account for the worker cap, exactly as its two halves do.
+##
+## `stay` is a pass-through to the engage half; the haul side knows nothing about a retreat, a body
+## weighing the same whether it was easy or hard to bring down.
 static func take_workers(ceiling: float, body: float, per_worker: float,
-        engage_rate: float, dip: float) -> int:
+        engage_rate: float, dip: float, stay: float) -> int:
     return maxi(haul_workers(ceiling, body, per_worker),
-        engage_workers(ceiling, body, engage_rate, dip))
+        engage_workers(ceiling, body, engage_rate, dip, stay))
 
 ## **HOW MANY ANIMALS THIS PARTY BRINGS INTO CONTACT THIS TURN** — the client mirror of the sim's
 ## `fauna::animals_engaged`, and the one definition of it, so no two readings of a herd can disagree
@@ -1726,11 +1747,12 @@ static func animals_engaged(workers: int, engage_rate: float, dip: float) -> flo
 ## buildFraction × stayFraction` with the engagement already floored. `animals_engaged` floors, so
 ## nothing here does.
 ##
-## **IT BOUNDS THE TAKE AND NEVER A CREW.** The sim sizes a crew on the RAW reach
-## (`fauna::hunt_engage_workers`) — the hands that can get to the herd — and cuts only what those hands
-## bring down, so `engage_workers` / `engagement_carry` / `take_workers` and both crew-target pills
-## must NOT call this. Folding the retreat into `engage_rate` to get it everywhere at once is the
-## shortcut that made the sheet's stepper cap disagree with the sim's own `workersNeeded`.
+## **IT BOUNDS THE TAKE AND, THROUGH `engage_workers`, THE CREW.** A hand that keeps one animal in four
+## draws a stock down a quarter as fast, so the crew that draws it down at all is four times as large —
+## which is why `engage_workers` / `engagement_carry` / `take_workers` and both crew-target pills all
+## divide by what STAYS. They read it through this function rather than through a retreat folded into
+## `engage_rate`: the two terms are separately observable, a kit's `dispersion` moving only the second,
+## and the fold makes Big-game and Trapping quote the identical hunt.
 ##
 ## An UNBOUNDED engagement passes straight through: a pen and the whole plant web have no retreat to
 ## take because they have no engagement stage, and iterating `INF` down by a fraction is still `INF`.
@@ -1788,14 +1810,14 @@ static func crew_to_clear(room: float, carry: float, reaching: int,
 ## engagement half answers 0 for a pen and for a species with no engagement stage, so the `max`
 ## collapses back to the haul crew and neither web moves.
 static func crew_to_hold(samples: PackedFloat32Array, floor: float, carry: float,
-        body_mass: float, engage_rate: float, dip: float) -> int:
+        body_mass: float, engage_rate: float, dip: float, stay: float) -> int:
     if not can_price_crew(carry):
         return NO_CREW_ANSWER
     var growth := regrowth_at(samples, clamp_floor(floor))
     if growth <= 0.0:
         return 0
     if body_mass > 0.0:
-        return take_workers(growth, body_mass, carry, engage_rate, dip)
+        return take_workers(growth, body_mass, carry, engage_rate, dip, stay)
     return maxi(1, ceili(growth / carry))
 
 ## The same *hold it after* crew, resolved straight from a SOURCE — the form `forecast_inputs` carries
@@ -1815,7 +1837,8 @@ static func hold_crew(src: Dictionary, kind: String, prefix: String, floor: floa
     var crew := crew_to_hold(regrowth_samples(src, prefix), floor,
         per_worker_biomass(src, prefix) * dip,
         float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)),
-        float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)), dip)
+        float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)), dip,
+        float(src.get(prefix + FORECAST_STAY_FRACTION_KEY, STAY_FRACTION_NONE_BREAKS_OFF)))
     return maxi(crew, 0)
 
 ## The *reaching* crew — `crew_that_reaches` resolved straight from a SOURCE, in the form
@@ -2442,14 +2465,13 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
     var stay := float(src.get(prefix + FORECAST_STAY_FRACTION_KEY, STAY_FRACTION_NONE_BREAKS_OFF))
     var walk := project_stock(samples, biomass, capacity, floor_value, float(workers) * carry,
         engaged_quantum(workers, body_mass, engage_rate, dip, stay))
-    # **`crew_to_hold` TAKES NO RETREAT AND THE OTHER TWO DO, which is the sim boundary rather than an
-    # inconsistency.** On a whole-animal source the hold crew IS `take_workers`, the client mirror of
-    # `fauna::hunt_take_workers`, and `max_useful_workers` floors the stepper cap on it — so a retreat
-    # there would put the cap at odds with the sim's own `workersNeeded`. The other two are DRAWDOWN
-    # answers with no sim twin: how many hands pull a stock to a floor, which a party losing three
-    # animals in four genuinely needs more of. The file already records that the two disagreeing is
-    # correct — "Two different questions about two different stocks".
-    var hold := crew_to_hold(samples, floor_value, carry, body_mass, engage_rate, dip)
+    # **ALL THREE CREW ANSWERS CARRY THE RETREAT.** They ask different questions about different stocks
+    # — hold the regrowth, clear the room this turn, draw the stock down at all — and they may disagree
+    # on that account, but they may not disagree about how many animals a hand lands. `crew_to_hold`
+    # was the last one sized on the RAW reach, on the grounds that it is the sim's `hunt_take_workers`
+    # and the stepper cap floors on it; the consequence was a cap BELOW the *clear it now* pill on the
+    # same sheet (82 against 108), naming a crew the panel then refused to let the player assign.
+    var hold := crew_to_hold(samples, floor_value, carry, body_mass, engage_rate, dip, stay)
     var reaching := crew_that_reaches(samples, biomass, capacity, floor_value, carry, body_mass,
         engage_rate, dip, stay)
     var quarry := herd_display_name(src) if kind == SOURCE_KIND_HERD else ""
@@ -2955,9 +2977,15 @@ static func max_useful_workers(forecast: Dictionary) -> int:
         # `take_workers` answers the haul crew alone for a pen and for a species with no engagement
         # stage, exactly as this line did before that `max` had a name of its own — and it now has
         # one because `crew_to_hold` asks the same question about the regrowth.
+        #
+        # **AND IT DIVIDES BY WHAT STAYS, so the cap can never sit below a target the sheet names.**
+        # The retreat is the source's own effective one, `repriced_source` having already folded the
+        # kit's `dispersion` into it, and it reaches here through the forecast rather than off the
+        # herd so the cap and the two pills cannot resolve one kit's dispersion two ways.
         return maxi(take_workers(ceiling, per_animal, per_worker,
             float(forecast.get("engage_rate", NO_ENGAGEMENT_STAGE)),
-            float(forecast.get("dip", NO_BUILD_DIP))), hold)
+            float(forecast.get("dip", NO_BUILD_DIP)),
+            float(forecast.get("stay", STAY_FRACTION_NONE_BREAKS_OFF))), hold)
     return maxi(int(ceilf(ceiling / per_worker)), hold)
 
 ## The herding crew this herd demands, as a FLOOR on a local-hunt worker cap — the one definition,
@@ -3999,7 +4027,11 @@ static func expedition_engage_crew(herd: Dictionary, floor: float) -> int:
     return engage_workers(escapement_room(herd, prefix, floor),
         float(herd.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)),
         float(herd.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)),
-        build_dip(herd, prefix, IMPROVEMENT_NONE))
+        build_dip(herd, prefix, IMPROVEMENT_NONE),
+        # The party's OWN retreat: `advance_expeditions` runs `HuntParty::stayers` exactly as a
+        # resident hunt does, and the herd handed in here is already kit-priced, so this is the
+        # effective stay fraction under the raid's chosen kit rather than the quarry's bare wariness.
+        float(herd.get(prefix + FORECAST_STAY_FRACTION_KEY, STAY_FRACTION_NONE_BREAKS_OFF)))
 
 ## The max-useful party for a raid, from the reply's own plateau scan plus the one thing the scan
 ## cannot see. `{cap, note}`, the raid twin of `_forecast_worker_cap` — same shape, same "max N useful"

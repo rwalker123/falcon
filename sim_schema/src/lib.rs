@@ -34,27 +34,42 @@ mod tests {
         }
     }
 
-    /// **The kit roster, the per-row kit ids and the estimate tables' quoted kit survive the wire.**
+    /// **The kit roster, its carry list, and every per-row kit id survive the wire.**
     ///
     /// Encode → decode through the generated reader, because a field appended behind an existing one
-    /// is exactly the shape that silently fails to serialize — and the estimate-table ids are the
-    /// field a client uses to *refuse* to present a table for a kit it was not computed for, so an
-    /// absent one reads as "quoted for nothing" and the refusal never fires.
+    /// is exactly the shape that silently fails to serialize — and every id here is what a consumer
+    /// resolves a readout against, so an absent one reads as "quoted for nothing" rather than as a
+    /// missing field.
     #[test]
     fn the_kit_roster_and_every_kit_id_ride_the_wire() {
         const BARE_HUNT_CARRY: f32 = 12.0;
         const BARE_FORAGE_CARRY: f32 = 1.6;
         const BARE_ATTACK: f32 = 1.0;
+        const BARE_PEN_CARRY: f32 = 12.0;
+        const BARE_VANTAGE_RANGE: f32 = 1.0;
+        // The BAND-resolved twins of the three above (`PopulationCohortState`), deliberately unlike
+        // the roster's fresh-kit numbers: a band's row is its own wear resolved against its own
+        // job defaults, and the two must never be read as one value.
+        const BAND_PEN_CARRY: f32 = 40.0;
+        const BAND_VANTAGE_RANGE: f32 = 2.0;
+        const BAND_WARRIOR_ATTACK: f32 = 6.0;
 
         let snapshot = WorldSnapshot {
             kits: vec![
                 KitOptionState {
                     id: "none".to_string(),
                     display_name: "No kit".to_string(),
-                    jobs: vec!["hunt".to_string(), "forage".to_string()],
+                    jobs: vec![
+                        "hunt".to_string(),
+                        "forage".to_string(),
+                        "scout".to_string(),
+                        "warrior".to_string(),
+                    ],
                     attack: BARE_ATTACK,
                     hunt_carry_per_worker_biomass: BARE_HUNT_CARRY,
                     forage_carry_per_worker_biomass: BARE_FORAGE_CARRY,
+                    pen_carry_per_worker_biomass: BARE_PEN_CARRY,
+                    scout_vantage_range: BARE_VANTAGE_RANGE,
                     // `none` carries nothing, so every multiplier reads its neutral and its attack —
                     // the bare hand's — is bounded by nothing.
                     attack_min_body_mass: 0.0,
@@ -77,12 +92,24 @@ mod tests {
             ],
             default_hunt_kit_id: "big_game".to_string(),
             default_forage_kit_id: "gathering".to_string(),
+            default_scout_kit_id: "wayfinding".to_string(),
+            default_warrior_kit_id: "warrior".to_string(),
             herds: vec![HerdTelemetryState {
                 id: "herd_wild".to_string(),
+                // The quarry's OWN default kit, deliberately not the snapshot's
+                // `default_hunt_kit_id` above: a slot wired to the wrong string then shows up as a
+                // swap rather than as a coincidence.
+                default_kit_id: "trapping".to_string(),
                 ..Default::default()
             }],
             populations: vec![PopulationCohortState {
                 kit_id: "none".to_string(),
+                // The three band-resolved tiers the expanded roster added. Given values DISTINCT
+                // from each other and from the roster row above, so a codec entry wired to the
+                // wrong field shows up as a swapped number rather than as a coincidence.
+                pen_carry_per_worker_biomass: BAND_PEN_CARRY,
+                scout_vantage_range: BAND_VANTAGE_RANGE,
+                warrior_attack: BAND_WARRIOR_ATTACK,
                 labor_assignments: vec![LaborAssignmentState {
                     kind: "hunt".to_string(),
                     kit_id: "big_game".to_string(),
@@ -100,17 +127,25 @@ mod tests {
         let subsistence = payload.subsistence().expect("subsistence section present");
         assert_eq!(subsistence.defaultHuntKitId(), Some("big_game"));
         assert_eq!(subsistence.defaultForageKitId(), Some("gathering"));
+        // The two band-wide roles' defaults ride the same way — they had no kit axis, and therefore
+        // no default to name, until the roster gained wayfinding gear and clubs.
+        assert_eq!(subsistence.defaultScoutKitId(), Some("wayfinding"));
+        assert_eq!(subsistence.defaultWarriorKitId(), Some("warrior"));
         let option = subsistence.kits().expect("the roster is published").get(0);
         assert_eq!(option.id(), Some("none"));
         assert_eq!(option.displayName(), Some("No kit"));
         assert_eq!(option.attack(), BARE_ATTACK);
         assert_eq!(option.huntCarryPerWorkerBiomass(), BARE_HUNT_CARRY);
         assert_eq!(option.forageCarryPerWorkerBiomass(), BARE_FORAGE_CARRY);
+        assert_eq!(option.penCarryPerWorkerBiomass(), BARE_PEN_CARRY);
+        assert_eq!(option.scoutVantageRange(), BARE_VANTAGE_RANGE);
         let jobs = option
             .jobs()
             .expect("a kit states the jobs it may be sent on");
-        assert_eq!(jobs.len(), 2);
+        assert_eq!(jobs.len(), 4);
         assert_eq!(jobs.get(0), "hunt");
+        assert_eq!(jobs.get(2), "scout");
+        assert_eq!(jobs.get(3), "warrior");
         assert_eq!(
             option
                 .itemIds()
@@ -139,6 +174,7 @@ mod tests {
         // publish when you cannot answer the question. The client asks now, and names the kit.
         let herd = subsistence.herds().expect("herds present").get(0);
         assert_eq!(herd.id(), Some("herd_wild"));
+        assert_eq!(herd.defaultKitId(), Some("trapping"));
 
         let cohort = payload
             .population()
@@ -147,6 +183,12 @@ mod tests {
             .expect("populations present")
             .get(0);
         assert_eq!(cohort.kitId(), Some("none"));
+        // Read off the DECODED cohort, not the in-process struct: a field that never reached the
+        // codec still passes an in-process assertion, which is the failure this whole test exists
+        // to catch for an appended slot.
+        assert_eq!(cohort.penCarryPerWorkerBiomass(), BAND_PEN_CARRY);
+        assert_eq!(cohort.scoutVantageRange(), BAND_VANTAGE_RANGE);
+        assert_eq!(cohort.warriorAttack(), BAND_WARRIOR_ATTACK);
         let row = cohort
             .laborAssignments()
             .expect("labor rows present")
