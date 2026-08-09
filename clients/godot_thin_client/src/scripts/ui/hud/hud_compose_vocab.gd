@@ -167,10 +167,14 @@ const CREW_TARGET_FACE_SEPARATION := 5
 # rung to state, which is why the box shows three registers as often as four. Loudest first, because
 # the order is the reading order:
 #
-#   a. THE YIELDS ROW — the answer. A big tabular number beside a small uppercase unit and the
-#      account's destination (`2.34  FOOD/TURN → CAMP`). The render-only-where-the-vector-pays rule is
-#      unchanged: a cash crop shows no food line and a wolf shows no food line at all, because
-#      `provisionsPerBiomass` is genuinely 0 there and a `0.00 food` reading would be false, not empty.
+#   a. THE YIELDS ROW — the answer. A big tabular number beside a small uppercase unit, and NOTHING
+#      else (`2.34  FOOD`). The rate lives in the CAPTION, so a `/TURN` on the reading says it twice;
+#      and a `→ CAMP` destination tail earned its width only while trade was the odd account out,
+#      banked faction-wide — #381 routed it band-local like the other two, after which the suffix was
+#      three identical words on the readout's widest line (`labor-ui.md` → "A reading states its unit
+#      and NO destination"). The render-only-where-the-vector-pays rule is unchanged: a cash crop
+#      shows no food line and a wolf shows no food line at all, because `provisionsPerBiomass` is
+#      genuinely 0 there and a `0.00 food` reading would be false, not empty.
 #   a2. THE IMPROVEMENT DEAL — ONE labelled row a composed or offered rung adds beneath the take:
 #      what the finished rung will pay. It renders only where there is a rung to state, which is why
 #      it is a register rather than a fourth permanent row. **A SECOND, `WITHOUT THE BUILD` BASELINE
