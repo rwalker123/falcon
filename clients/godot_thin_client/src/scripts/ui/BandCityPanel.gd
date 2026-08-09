@@ -62,7 +62,8 @@ const PANEL_WIDTH := 380.0
 ## stacking room than a one-column one, so `_horizontal_panel_height()` picks
 ## `PANEL_HEIGHT_WIDE_TWO_COLUMN` there instead — declared below, beside the column cap it keys off.
 const PANEL_HEIGHT_WIDE := 360.0
-## Cross-axis size when collapsed to a thin rail (both orientations).
+## FLOOR on the cross-axis size when collapsed to a thin rail (both orientations) — the rail is at
+## least this thin, and thicker when its own chrome needs more (`_collapsed_cross_axis_size`).
 const COLLAPSED_SIZE := 46.0
 ## Render above the map (and the HUD/Inspector) so the panel owns its reserved strip.
 const LAYER_INDEX := 103
@@ -308,16 +309,22 @@ const TAB_BADGE_PADDING_V := 1
 const CYCLE_PREV := -1
 const CYCLE_NEXT := 1
 
-# ---- the ACTION REGISTRY (one list, two mount points) -----------------------
-## Where the registered actions are CURRENTLY built. It is a LAYOUT answer, taken from the dock's
-## orientation — never from the registration, which is why no caller may pass or read it.
+# ---- the ACTION REGISTRY (one list, three mount points) ---------------------
+## Where the registered actions are CURRENTLY built. It is a LAYOUT answer, taken from the panel's own
+## state — the dock's orientation and whether it is collapsed — never from the registration, which is
+## why no caller may pass or read it.
 const ACTION_MOUNT_NONE := 0
-## The subject ROW, beside the cycler: a HORIZONTAL dock's mount. Width is plentiful across a whole
-## monitor and height is the axis the strip reserves, so a row of its own is map given up.
+## The subject ROW, beside the cycler: an EXPANDED HORIZONTAL dock's mount. Width is plentiful across a
+## whole monitor and height is the axis the strip reserves, so a row of its own is map given up.
 const ACTION_MOUNT_SUBJECT_ROW := 1
-## The BAR under the subject row: a VERTICAL dock's mount. There is no strip to grow — the card is the
-## window's height — so the row is nearly free, while the 380px width is the axis that binds.
+## The BAR under the subject row: an EXPANDED VERTICAL dock's mount. There is no strip to grow — the
+## card is the window's height — so the row is nearly free, while the 380px width is the axis that binds.
 const ACTION_MOUNT_BAR := 2
+## The COLLAPSED RAIL, in BOTH orientations: the verbs stay reachable from a railed panel, which is
+## what makes collapsing it a way to keep working rather than a way to put the panel away. The rail
+## runs along the dock's plentiful axis (`_apply_header_rail_orientation`), so the actions cost the
+## `COLLAPSED_SIZE` cross axis nothing whichever edge it is on.
+const ACTION_MOUNT_RAIL := 3
 ## Gap between two action glyphs — `HEADER_SEPARATION`, because the bar is a second row of the SAME
 ## chrome and its buttons must read as members of the header's icon family, not as a new control set.
 ## The subject-row mount inherits the same separation from the header it sits on.
@@ -422,7 +429,14 @@ var _root: Control
 var _panel: PanelContainer
 var _seam: ColorRect
 var _header_full: HBoxContainer
-var _header_rail: VBoxContainer
+## THE COLLAPSED RAIL. A bare `BoxContainer`, never an `HBox`/`VBox`: its `vertical` flips with the
+## dock's orientation (`_apply_header_rail_orientation`), and the two subclasses REFUSE that write
+## ("Can't change orientation of VBoxContainer").
+var _header_rail: BoxContainer
+## The rail's justification spacer, expanding on the LONG axis so the restore button lands at the far
+## end of a horizontal rail. Hidden on a vertical one, where a `BoxContainer` charges nothing for a
+## hidden child — the same rule the two action mounts rely on.
+var _rail_spacer: Control
 var _subject_cluster: PanelContainer
 var _stage_glyph_label: Label
 var _rail_glyph_label: Label
@@ -450,6 +464,10 @@ var _action_row: HBoxContainer
 ## so the row's own contents never move; it is HIDDEN when it is not the live mount or holds nothing,
 ## because a `BoxContainer` skips its separation only around a hidden child.
 var _header_action_row: HBoxContainer
+## THE COLLAPSED RAIL's mount, between the stage glyph and the justification spacer, so the restore
+## button stays at the rail's trailing end however many verbs are registered. A bare `BoxContainer`
+## for `_header_rail`'s reason: its `vertical` flips with the rail's.
+var _rail_action_row: BoxContainer
 ## The registered actions in DECLARED order — one `{id, glyph, tooltip, enabled}` descriptor each.
 ## The live mount is rebuilt from this list, never edited in place, so registration order is the only
 ## thing that decides the row's order.
@@ -793,6 +811,10 @@ func set_collapsed(collapsed: bool) -> void:
 	if collapsed == _collapsed:
 		return
 	_collapsed = collapsed
+	# BEFORE the layout, exactly as `set_dock` does it: collapsing moves the registered actions to the
+	# rail and expanding moves them back to the orientation's own mount, and both the bar's height and
+	# the subject row's feed the cross-axis size the layout then re-emits.
+	_refresh_action_mount()
 	_refresh_collapse_state()
 	_apply_dock_layout()
 	_save_prefs()
@@ -1105,8 +1127,14 @@ func _build_dock_chooser() -> GridContainer:
 		grid.add_child(cell)
 	return grid
 
-func _build_header_rail() -> VBoxContainer:
-	var rail := VBoxContainer.new()
+## **THE COLLAPSED RAIL RUNS ALONG THE DOCK'S PLENTIFUL AXIS** — the action registry's two mount
+## points, one level up. A left/right rail is tall and narrow, so the glyph and the restore button
+## STACK; a top/bottom rail is `COLLAPSED_SIZE` tall and a screen wide, so they share ONE LINE with
+## the button justified to the trailing end, exactly where the expanded header keeps its window
+## controls. Built horizontal and re-oriented by `_apply_header_rail_orientation` before the first
+## layout pass.
+func _build_header_rail() -> BoxContainer:
+	var rail := BoxContainer.new()
 	rail.name = "HeaderRail"
 	rail.alignment = BoxContainer.ALIGNMENT_CENTER
 	rail.add_theme_constant_override("separation", HEADER_SEPARATION)
@@ -1115,17 +1143,67 @@ func _build_header_rail() -> VBoxContainer:
 	_rail_glyph_label.add_theme_font_size_override("font_size", STAGE_GLYPH_FONT_SIZE)
 	_rail_glyph_label.text = DEFAULT_STAGE_GLYPH
 	_rail_glyph_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	# Centred on the cross axis of a HORIZONTAL rail, where the glyph's line box is taller than the
+	# rail's interior — the same treatment the expanded header's glyph gets beside its icon controls.
+	_rail_glyph_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	rail.add_child(_rail_glyph_label)
 
 	_rail_glyph_sprite = _make_stage_glyph_sprite()
 	rail.add_child(_rail_glyph_sprite)
 
+	# The registry's THIRD mount, next to the subject the same way the other two are — the glyph is all
+	# the subject a collapsed rail shows. Hidden when it is not the live mount or holds nothing.
+	_rail_action_row = BoxContainer.new()
+	_rail_action_row.name = "RailActionRow"
+	_rail_action_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	# Centred on BOTH axes for the restore button's reason: the rail's interior is narrower than one
+	# icon square on a vertical dock, and a row that filled it instead would seat its buttons a couple
+	# of pixels off the centre line the glyph and the restore toggle sit on.
+	_rail_action_row.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_rail_action_row.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_rail_action_row.add_theme_constant_override("separation", ACTION_BAR_SEPARATION)
+	_rail_action_row.visible = false
+	rail.add_child(_rail_action_row)
+
+	_rail_spacer = Control.new()
+	_rail_spacer.name = "RailSpacer"
+	_rail_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_rail_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rail.add_child(_rail_spacer)
+
 	_rail_expand_button = _make_icon_button(EXPAND_GLYPH, "Expand")
+	# Centred on the cross axis for the glyph's reason, and in the vertical rail so the button never
+	# stretches past the icon square it is styled as.
+	_rail_expand_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_rail_expand_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_rail_expand_button.pressed.connect(_on_collapse_pressed)
 	rail.add_child(_rail_expand_button)
 
 	rail.visible = false
 	return rail
+
+## Point the collapsed rail along the dock's PLENTIFUL axis. **The two orientations have OPPOSITE
+## SCARCE AXES**, so a control stacked down the rail is right on a vertical dock and unreachable on a
+## horizontal one: a T/B rail is only `COLLAPSED_SIZE` (46px) tall, less the card's own 22px of
+## vertical chrome, which one `ICON_BUTTON_SIZE` button fills on its own — stacking the stage glyph
+## above it pushed the button clean off the bottom of the card, i.e. off the screen edge on a bottom
+## dock, leaving no way back from a collapsed panel.
+##
+## The spacer is what justifies the button to the trailing end, and it is HIDDEN rather than
+## zero-sized on a vertical rail: a `BoxContainer` skips its separation only around a hidden child, so
+## a visible-but-empty spacer would charge the vertical rail a `HEADER_SEPARATION` gap it draws
+## nothing in.
+func _apply_header_rail_orientation() -> void:
+	if _header_rail == null:
+		return
+	var vertical := _is_vertical_edge(_dock_edge)
+	_header_rail.vertical = vertical
+	# The rail's action mount runs the SAME way the rail does — the verbs grow along the plentiful axis
+	# in both orientations, which is what keeps a growing registry off the 46px cross axis.
+	if _rail_action_row != null:
+		_rail_action_row.vertical = vertical
+	if _rail_spacer != null:
+		_rail_spacer.visible = not vertical
 
 # ---- the action registry ---------------------------------------------------
 #
@@ -1134,18 +1212,23 @@ func _build_header_rail() -> VBoxContainer:
 # is a one-line entry that no caller has to think about the panel's geometry to add. Same shape as the
 # reserved-edge registry, and for the same reason.
 #
-# **ONE REGISTRY, TWO MOUNT POINTS, CHOSEN BY THE DOCK'S ORIENTATION.** The two docks have OPPOSITE
+# **ONE REGISTRY, THREE MOUNT POINTS, CHOSEN BY THE PANEL'S OWN STATE.** The two docks have OPPOSITE
 # scarce axes. On a vertical dock the width is a fixed `PANEL_WIDTH` and the subject row's minimum is
 # the subject plus every control on it — so an action there makes the card's floor a function of its
 # CHROME — while the card's height is the window's and a row of its own is nearly free: the actions go
 # on the BAR. On a horizontal dock that is reversed — width is a whole monitor and the strip's HEIGHT
 # is what the panel reserves off the map, so a 44px row is real map given up while the subject row has
 # width to spare: the actions go on the SUBJECT ROW, and the bar takes zero height there.
+#
+# **A COLLAPSED PANEL KEEPS ITS VERBS** — the third mount. Both of the mounts above go with the
+# chrome that carries them when the panel rails, and a rail showing only a glyph and a restore toggle
+# makes collapsing an all-or-nothing choice between the map and the band's actions. On the rail they
+# run along whichever axis the rail runs along, so they are free on the axis `COLLAPSED_SIZE` binds.
 
 ## Register an action. Re-registering a live id REPLACES its descriptor and keeps its place in the
 ## row, so a caller may restate one without duplicating the button. **WHERE it renders is not part of
-## this contract** — the panel mounts it on the subject row or on the bar per the dock's orientation,
-## and re-homes it when that changes.
+## this contract** — the panel mounts it on the subject row, on the bar or on the collapsed rail per
+## its own orientation and collapse state, and re-homes it when either changes.
 ##
 ## - `id` — the stable key the press comes back on (`action_invoked`), and the handle
 ##   `unregister_action` takes.
@@ -1196,7 +1279,8 @@ func refresh_actions() -> void:
 		var button: Button = button_variant
 		button.disabled = not _action_is_enabled(spec)
 
-## Is `id` on the bar? For callers that register conditionally, and for the harness.
+## Is `id` REGISTERED? A question about the list, never about which mount is drawing it. For callers
+## that register conditionally, and for the harness.
 func has_action(id: StringName) -> bool:
 	return _action_index(id) >= 0
 
@@ -1237,17 +1321,20 @@ func _apply_action_registry() -> void:
 	_apply_dock_layout()
 	_republish_reservation_if_changed()
 
-## Which mount the dock's ORIENTATION calls for. The one place the two are chosen between, so nothing
-## else in the panel tests an edge to answer "where do the verbs go".
-func _action_mount_for_dock() -> int:
+## Which mount the panel's STATE calls for — collapse first, then the dock's orientation. The one
+## place the three are chosen between, so nothing else in the panel tests an edge or a collapse flag
+## to answer "where do the verbs go".
+func _action_mount_for_state() -> int:
+	if _collapsed:
+		return ACTION_MOUNT_RAIL
 	return ACTION_MOUNT_BAR if _is_vertical_edge(_dock_edge) else ACTION_MOUNT_SUBJECT_ROW
 
-## RE-HOME the actions if the dock's orientation now calls for the other mount. Called on a dock
-## change, so moving a panel from the left edge to the top moves the glyphs into the header with no
-## reload; a no-op when the orientation is unchanged, which is what keeps an ordinary layout pass from
-## rebuilding (and so re-disabling) every button.
+## RE-HOME the actions if the panel's state now calls for a different mount. Called on a dock change
+## and on a collapse, so moving a panel from the left edge to the top — or railing it — moves the
+## glyphs with no reload; a no-op when the answer is unchanged, which is what keeps an ordinary layout
+## pass from rebuilding (and so re-disabling) every button.
 func _refresh_action_mount() -> void:
-	if _action_mount_for_dock() == _action_mount:
+	if _action_mount_for_state() == _action_mount:
 		return
 	_rebuild_action_mount()
 
@@ -1256,13 +1343,14 @@ func _refresh_action_mount() -> void:
 ## row's order cannot drift from the registry's — and the one that cannot leave a button behind on the
 ## mount the panel just moved off.
 func _rebuild_action_mount() -> void:
-	if _action_row == null or _header_action_row == null:
+	if _action_row == null or _header_action_row == null or _rail_action_row == null:
 		return
-	_action_mount = _action_mount_for_dock()
+	_action_mount = _action_mount_for_state()
 	_clear_children(_action_row)
 	_clear_children(_header_action_row)
+	_clear_children(_rail_action_row)
 	_action_buttons.clear()
-	var host: HBoxContainer = _action_row if _action_mount == ACTION_MOUNT_BAR else _header_action_row
+	var host: BoxContainer = _action_host_for(_action_mount)
 	for spec in _actions:
 		var id := StringName(spec[ACTION_SPEC_ID])
 		var button := _make_icon_button(String(spec[ACTION_SPEC_GLYPH]), String(spec[ACTION_SPEC_TOOLTIP]))
@@ -1272,6 +1360,17 @@ func _rebuild_action_mount() -> void:
 		_action_buttons[id] = button
 	_refresh_action_mount_visibility()
 
+## The row a mount id names. Beside `_action_mount_for_state`, so the choice and the hosts it chooses
+## between cannot drift apart.
+func _action_host_for(mount: int) -> BoxContainer:
+	match mount:
+		ACTION_MOUNT_BAR:
+			return _action_row
+		ACTION_MOUNT_RAIL:
+			return _rail_action_row
+		_:
+			return _header_action_row
+
 func _clear_children(host: Node) -> void:
 	for child in host.get_children():
 		host.remove_child(child)
@@ -1280,14 +1379,17 @@ func _clear_children(host: Node) -> void:
 ## **A MOUNT THAT IS NOT CARRYING THE ACTIONS IS HIDDEN, NOT MERELY EMPTY** — a `BoxContainer` skips
 ## its separation only around a HIDDEN child, so an empty-but-visible row costs its parent a gap it
 ## draws nothing in: the bar would take a slice of the strip on every horizontal dock, and the header
-## row a slice of the width the seam exists to protect. The bar is additionally hidden while the panel
-## is COLLAPSED — the rail carries the stage glyph and the expand toggle and nothing else.
+## row a slice of the width the seam exists to protect, and the rail a gap between its glyph and its
+## restore toggle. **The collapse test is inside the MOUNT, not repeated here**: a collapsed panel's
+## live mount is the rail, so the other two answer false without a second reading of `_collapsed`.
 func _refresh_action_mount_visibility() -> void:
 	var carrying: bool = not _actions.is_empty()
 	if _action_bar != null:
-		_action_bar.visible = carrying and _action_mount == ACTION_MOUNT_BAR and not _collapsed
+		_action_bar.visible = carrying and _action_mount == ACTION_MOUNT_BAR
 	if _header_action_row != null:
 		_header_action_row.visible = carrying and _action_mount == ACTION_MOUNT_SUBJECT_ROW
+	if _rail_action_row != null:
+		_rail_action_row.visible = carrying and _action_mount == ACTION_MOUNT_RAIL
 
 ## The bar's own contribution to the card's chrome — its MARGINS INCLUDED, since they are part of what
 ## the row costs. Zero while it is hidden, which is what makes an unregistered bar free and what makes
@@ -1308,6 +1410,11 @@ func _on_action_invoked(id: StringName) -> void:
 # ---- layout ----------------------------------------------------------------
 
 func _apply_dock_layout() -> void:
+	# FIRST, and that is load-bearing: the collapsed strip is sized from the header rail's own minimum
+	# (`_collapsed_cross_axis_size`), so anchoring before the rail has been re-pointed reserves the
+	# OTHER orientation's rail — measured, a bottom dock reserved 128px (the tall rail's stacked
+	# minimum) while reporting the 56 it had re-measured by the time anyone asked.
+	_apply_header_rail_orientation()
 	_apply_root_anchors()
 	# BEFORE `_relayout_body`: a dock change can retire the rail (a vertical strip has none), and the
 	# shell is chosen from the width the rail leaves.
@@ -2330,10 +2437,35 @@ func _republish_reservation_if_changed() -> void:
 ## while the player edits the band, so a `+` press cannot flicker the map.
 func _cross_axis_size() -> float:
 	if _collapsed:
-		return COLLAPSED_SIZE
+		return _collapsed_cross_axis_size()
 	if _is_vertical_edge(_dock_edge):
 		return PANEL_WIDTH
 	return _horizontal_panel_height()
+
+## The collapsed strip: `COLLAPSED_SIZE`, or what the RAIL's own chrome needs when that is more.
+##
+## **`COLLAPSED_SIZE` IS A FLOOR, NOT AN ANSWER.** The card is a `PanelContainer` and a `Control`'s
+## size is clamped up to its minimum, so a rail needing more than the strip does not clip — it GROWS
+## the card past the reservation, off the screen edge on a bottom dock, taking whatever sits at the
+## rail's far end with it. Reserving what is actually drawn is what keeps the map's inset, the strip
+## the HUD reflows off and the card one number.
+##
+## **It is CHROME, not content**, so it does not breach the rule above it: the rail holds the stage
+## glyph, the registered verbs and the restore toggle, and those move only on a dock change, a
+## collapse or a registration — each of which republishes the reservation already. A band edit cannot
+## reach it.
+##
+## The chrome term is the card's CONTENT MARGINS alone, with no border: the stylebox's explicit
+## content margins ARE its minimum size (the 1px border is drawn inside them), so this is exactly what
+## the `PanelContainer` adds to the rail's own minimum. `PANEL_CHROME_H` is a declared width BUDGET
+## and carries the border for its own reasons; using it here would over-reserve by 2px.
+func _collapsed_cross_axis_size() -> float:
+	if _header_rail == null:
+		return COLLAPSED_SIZE
+	var vertical := _is_vertical_edge(_dock_edge)
+	var margin := float(PANEL_CONTENT_MARGIN_H if vertical else PANEL_CONTENT_MARGIN_V)
+	var needed := _header_rail.get_combined_minimum_size()
+	return maxf(COLLAPSED_SIZE, (needed.x if vertical else needed.y) + 2.0 * margin)
 
 ## True when the dock reserves a vertical strip (left/right → width on the x-axis).
 func _is_vertical_edge(edge: int) -> bool:
