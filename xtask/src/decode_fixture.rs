@@ -77,8 +77,10 @@ const ROWS: usize = 2;
 /// overwrites every value, and the guard is about the field being *present and repeated*.
 const REGROWTH_CURVE_SAMPLES: usize = 11;
 
-/// Where the encoded envelope lands. Committed, so `tools/decode_guard.tscn` runs standalone;
-/// `cargo xtask decode-guard` regenerates it first, so the gate can never run against a stale one.
+/// Where the encoded envelope lands. **Gitignored, not committed** — it is a pure function of this
+/// file, and `cargo xtask decode-guard` regenerates it before every run, so a committed copy would
+/// never be the copy under test: it could only go stale or collide (binary, so unmergeable). Run
+/// `tools/decode_guard.tscn` directly and the guard fails with the command that writes it.
 pub fn fixture_path() -> PathBuf {
     Path::new("clients")
         .join("godot_thin_client")
@@ -104,8 +106,7 @@ pub fn write_fixture() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Where the HEADERLESS envelope lands. Committed beside the main fixture for the same reason:
-/// `tools/decode_guard.tscn` must run standalone.
+/// Where the HEADERLESS envelope lands. Gitignored beside the main fixture, for the same reason.
 pub fn headerless_fixture_path() -> PathBuf {
     Path::new("clients")
         .join("godot_thin_client")
@@ -186,7 +187,7 @@ fn encode_headerless_envelope() -> Vec<u8> {
     builder.finished_data().to_vec()
 }
 
-/// Where the DELTA envelope lands, beside the others for the same standalone-run reason.
+/// Where the DELTA envelope lands, gitignored beside the others for the same reason.
 pub fn delta_fixture_path() -> PathBuf {
     fixture_dir().join("snapshot_delta_envelope.bin")
 }

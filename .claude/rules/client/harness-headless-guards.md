@@ -17,24 +17,33 @@ paths:
 
 The `--headless` gates: no window, no PNGs, a golden or a field contract each.
 
-## The committed fixtures are GENERATED — regenerate, never hand-merge
+## The fixtures are GENERATED and NOT committed — the golden is the committed half
 
-`tests/fixtures/*.bin` are the six FlatBuffers envelopes `cargo xtask decode-fixture` writes. They
-are **committed** so `tools/decode_guard.tscn` runs standalone, which is what makes them a recurring
-merge conflict: git cannot auto-merge a binary, so any two branches that both touch the schema
-conflict on every one they both regenerated.
+`tests/fixtures/*.bin` are the six FlatBuffers envelopes `cargo xtask decode-fixture` writes from
+`xtask/src/decode_fixture.rs`. They are **gitignored**
+(`clients/godot_thin_client/.gitignore`), and `tests/golden/snapshot_dict.json` is not: **the
+assertion is committed, the input is derived.** A fresh checkout or worktree therefore has no
+fixtures until something writes them, which is why every guard's missing-file path names the command
+rather than reporting a bare read error.
 
-**The resolution is always the same and never a merge.** Take either side to clear the index, then
-rebuild from the merged source and let the guard judge the result:
+**Nothing was ever testing the committed copies.** `cargo xtask decode-guard` regenerates all six
+*before* it launches Godot — step 1 of four — so the bytes under test were always the freshly
+written ones. A committed copy could only do two things: go stale (nothing verified it matched what
+the generator would produce, because the one gate that could notice overwrote it first) or collide.
+Being binary, git cannot merge one, so any two branches that both touched the schema conflicted on
+every fixture they both regenerated — 7 such merges before they were untracked.
+
+`cargo xtask decode-guard` needs nothing else. To drive a guard scene directly, write them first:
 
 ```bash
-cargo xtask decode-fixture     # rewrites all six from the merged schema
-cargo xtask decode-guard       # decodes them against tests/golden/snapshot_dict.json
+cargo xtask decode-fixture     # writes all six from the current schema
+godot --headless --path clients/godot_thin_client res://tools/decode_guard.tscn
 ```
 
-A conflict here carries no information — the bytes are a pure function of the merged Rust source, so
-the only wrong move is resolving one by hand and committing a fixture no generator would produce.
-`.gitattributes` marks them `binary` so git stops offering a textual diff that cannot be read.
+**Do not re-commit one to make a direct run cheaper.** Running any of these guards already requires
+the native extension (`SnapshotDecoder` lives in it, and `native/bin/` is gitignored too), so a
+checkout that can run the gate at all can run the generator — "standalone" only ever meant "without
+the `xtask` wrapper", never "without a Rust toolchain".
 
 ## `tools/decode_guard.gd` / `.tscn`
 
@@ -52,7 +61,8 @@ the committed fixture envelope (`tests/fixtures/snapshot_envelope.bin`) through 
 canonicalizes the resulting dict and diffs it against `tests/golden/snapshot_dict.json`; exits
 non-zero on mismatch (CI-usable). Drive it with `cargo xtask decode-guard` (regenerates the
 fixtures, builds the native extension, **imports the project if it never has been**, then runs this)
-or standalone: `godot --headless --path . res://tools/decode_guard.tscn`.
+or, after `cargo xtask decode-fixture` has written them, directly:
+`godot --headless --path . res://tools/decode_guard.tscn`.
 
 **That import step is not optional on a fresh checkout or WORKTREE, and its absence lies about the
 cause:** Godot loads GDExtensions from `.godot/extension_list.cfg`, which only the import pass
@@ -209,8 +219,8 @@ case, since each needs its own decoder baseline.
 
 **Mutation-tested both ways**: restoring keep-only-the-newest fails 3 of the 4 cases naming the
 regression, and swallowing the decoder's resync request fails the fourth. `godot --headless --path .
-res://tools/stream_frame_guard.tscn`; exits 0/1, CI-usable, no GPU. Regenerate its fixtures with
-`cargo xtask decode-fixture`.
+res://tools/stream_frame_guard.tscn`; exits 0/1, CI-usable, no GPU. Write its fixtures first with
+`cargo xtask decode-fixture` — they are gitignored, so a fresh checkout has none.
 
 ## `tools/party_removal_guard.gd` / `.tscn`
 
@@ -275,7 +285,8 @@ golden does not move — and appending rows the baseline never held is itself th
 spawned party takes in play. FoW is forced OFF (`Main._sync_fog_of_war` owns it in the client; the
 fixture world's `fogEnabled` saturates to `true`, and a fogged own-faction party would fail the
 marker precondition for an unrelated reason). `godot --headless --path .
-res://tools/party_removal_guard.tscn`; exits 0/1, CI-usable, no GPU.
+res://tools/party_removal_guard.tscn`; exits 0/1, CI-usable, no GPU. Its fixtures are gitignored —
+write them first with `cargo xtask decode-fixture`.
 
 ## `tools/marker_field_guard.gd` / `.tscn`
 
