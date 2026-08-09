@@ -41,6 +41,12 @@ signal send_denial_raid_requested(payload: Dictionary)
 ## Emitted when the player recalls the selected in-flight expedition (folds it home). Payload
 ## keys: { faction, expedition }. Main formats the `recall_expedition …` command.
 signal recall_expedition_requested(payload: Dictionary)
+## Emitted when the player has an arrived party STOP being an expedition and become a resident band
+## where it stands — the third arrival action beside onward and recall (issue #510,
+## `docs/plan_band_fission.md` §Q2). Payload keys: { faction, expedition_band_id } and nothing else:
+## the grammar `settle_expedition <faction> <expedition_band_id>` is CLOSED at two positional tokens.
+## Main formats the `settle_expedition …` command.
+signal settle_expedition_requested(payload: Dictionary)
 ## Emitted when the player extends a built pen by one fenced ring (Grazing 2d-γ). Payload keys:
 ## { faction, x, y } — the pen's anchor tile. Main formats the `extend_pen <faction> <x> <y>` command.
 signal extend_pen_requested(payload: Dictionary)
@@ -414,6 +420,8 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: send_denial_raid_requested.emit(payload))
     _bandpanel.recall_expedition_requested.connect(
         func(payload: Dictionary) -> void: recall_expedition_requested.emit(payload))
+    _bandpanel.settle_expedition_requested.connect(
+        func(payload: Dictionary) -> void: settle_expedition_requested.emit(payload))
     _bandpanel.alert_focus_requested.connect(
         func(x: int, y: int) -> void: alert_focus_requested.emit(x, y))
     _bandpanel.roster_occupant_selected.connect(

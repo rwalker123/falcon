@@ -665,7 +665,9 @@ func _build_expedition_panel(expedition: Dictionary) -> void:
         return
     var phase := String(expedition.get("expedition_phase", "")).strip_edges().to_lower()
     if phase == HudExpeditionVocab.EXPEDITION_PHASE_AWAITING:
-        var callout := HudWidgets.alloc_hint_label("Reached its objective — Recall it home, or Move it onward.")
+        # THE THREE ARRIVAL ANSWERS, named in the order the buttons below sit in (issue #510).
+        var callout := HudWidgets.alloc_hint_label(
+            "Reached its objective — Move it onward, Recall it home, or start a life here.")
         callout.add_theme_color_override("font_color", HudStyle.WARN)
         _allocation_panel.add_child(callout)
     var actions := HBoxContainer.new()
@@ -690,4 +692,15 @@ func _build_expedition_panel(expedition: Dictionary) -> void:
     recall_btn.disabled = returning
     recall_btn.pressed.connect(func() -> void: _bandpanel.confirm_recall_expedition(expedition))
     actions.add_child(recall_btn)
+    # THE THIRD ARRIVAL ACTION (issue #510), offered on the SAME predicate the parties zone's row and
+    # inspector strip read (`BandPanelController.party_may_settle`), so the drawer and the dock cannot
+    # offer the player different answers about one party. Ghost rather than primary: Recall keeps the
+    # emphasis, founding being the rarer and the irreversible of the two.
+    if _bandpanel.party_may_settle(expedition):
+        var settle_btn := Button.new()
+        settle_btn.text = HudComposeVocab.PARTY_SETTLE_ACTION
+        HudStyle.apply_button(settle_btn, "ghost")
+        settle_btn.tooltip_text = HudComposeVocab.PARTY_SETTLE_TOOLTIP
+        settle_btn.pressed.connect(func() -> void: _bandpanel.confirm_settle_expedition(expedition))
+        actions.add_child(settle_btn)
     _allocation_panel.add_child(actions)

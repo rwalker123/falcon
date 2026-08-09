@@ -322,10 +322,11 @@ pub use systems::spawn_initial_world;
 pub use systems::{
     advance_band_movement, advance_expeditions, advance_labor_allocation, advance_predator_raids,
     advance_tick, denial_forecast, expedition_returned_event, expedition_take_provisions,
-    fold_party_into_band, hunt_per_worker_provisions, hunt_report_event, hunt_take,
+    fold_party_into_band, found_band_from_expedition, founding_site_is_reachable,
+    founding_site_is_reachable_in_world, hunt_per_worker_provisions, hunt_report_event, hunt_take,
     hunt_trip_forecast, output_multiplier, party_owes_a_report, simulate_power, DenialForecast,
-    DenialOutcome, HuntOutcome, HuntTripBound, HuntTripForecast, MigrationKnowledgeEvent,
-    PowerSimParams, TradeDiffusionEvent,
+    DenialOutcome, FoundedBand, FoundingRefusal, HuntOutcome, HuntTripBound, HuntTripForecast,
+    MigrationKnowledgeEvent, PowerSimParams, TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,

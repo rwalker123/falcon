@@ -343,6 +343,10 @@ const HUNT_IN_CAMP_ENTITY := 955
 # **THE TALLEST PARTY THE INSPECTOR STRIP CAN BE ASKED TO HOLD** — every optional line of
 # `BandDetailLines.expedition_summary_lines` live at once. See `_worst_case_party_fixture`.
 const HUNT_WORST_CASE_ENTITY := 956
+# **THE ONLY PHASE "start a life here" IS OFFERED IN** (issue #510) — a scout that has arrived and is
+# waiting to be told what to do next. Every other party in this file is under orders, which is what
+# makes the settle pair's negative half real rather than staged.
+const SCOUT_AWAITING_ENTITY := 957
 # Its pack number: the carried figure EQUALS the cap so the `Carried:` row takes its longest form —
 # `N / cap` plus the `· FULL` badge — rather than the bare count a capless party gets.
 # The floor it was launched with, deliberately NOT the default — the Orders row is asserted against
@@ -1883,6 +1887,40 @@ func _ready() -> void:
 
 	# (d) The row ✕ recall must CONFIRM first (like "Recall all"), not emit immediately.
 	_assert_row_recall_confirms()
+
+	# (e) "START A LIFE HERE" — the THIRD arrival action (issue #510), rendered as a PAIR because a
+	# one-sided frame passes against a control that renders unconditionally. ONE roster carrying an
+	# ARRIVED scout and a party that is still hunting, so both halves are in every frame and the two
+	# states differ only in which party's inspector strip is open.
+	_set_world_herds(_herd_fixtures())
+	_push_bands([_band_fixture(), _awaiting_scout_expedition_fixture(), _hunt_expedition_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"parties")
+	_hud._bandpanel._toggle_parties_inspector(str(SCOUT_AWAITING_ENTITY))
+	await _settle()
+	await _save("band_panel_settle_offered")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_settle_affordance("band_panel_settle_offered", true)
+	_hud._bandpanel._toggle_parties_inspector(str(SCOUT_AWAITING_ENTITY))
+
+	# The SAME roster with the HUNTING party's strip open: its links are Jump + Recall and nothing
+	# else, while the arrived scout's ROW keeps its `Settle` control one line above — which is what
+	# makes this the other half of the pair rather than a frame with the feature switched off.
+	_hud._bandpanel._toggle_parties_inspector(str(HUNT_DELIVERING_ENTITY))
+	await _settle()
+	await _save("band_panel_settle_withheld")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_settle_affordance("band_panel_settle_withheld", false)
+	_assert_settle_confirms_before_emitting()
+	_hud._bandpanel._toggle_parties_inspector(str(HUNT_DELIVERING_ENTITY))
+	# PUT THE PREVIOUS ROSTER BACK — `update_band_alerts` diffs against the LAST roster pushed.
+	_push_bands([
+		_band_fixture(), _hunt_expedition_fixture(), _lean_hunt_expedition_fixture(),
+		_lost_hunt_expedition_fixture(),
+	])
+	await _settle()
 
 	# ---- THE FACTION PAGE (issue #450) -----------------------------------------------------------
 	#
@@ -4054,6 +4092,68 @@ func _assert_recall_press(label: String, exp: Dictionary, want_verb: String, wan
 		_assert_band_panel("recall ceremony — %s acts on the press, no dialog (dialog=%s, emitted=%s)" % [
 			label, dialog_shown, fired[0]], fired[0] and not dialog_shown)
 	_dismiss_dialogs()
+	row.queue_free()
+
+## **"START A LIFE HERE" IS OFFERED ON A PHASE, AND THE CLAIM IS THE PAIR** (issue #510). Both frames
+## render the SAME roster — one arrived scout, one party still hunting — so what moves between them is
+## which inspector strip is open, and a control that rendered unconditionally fails the second.
+##
+## `strip_offers` says whether the OPEN strip is the arrived party's. The ROW control is asserted in
+## BOTH states and must be found exactly once either way: it belongs to the scout's row, which is on
+## screen in both, and a row control keyed on the open strip rather than on the party would vanish.
+func _assert_settle_affordance(state_name: String, strip_offers: bool) -> void:
+	var rows := _settle_faces_in_panel(HudComposeVocab.PARTY_SETTLE_VERB)
+	_assert_band_panel("%s — exactly one party row offers `%s` (found %d)" % [
+		state_name, HudComposeVocab.PARTY_SETTLE_VERB, rows], rows == 1)
+	var links := _settle_faces_in_panel(HudComposeVocab.PARTY_SETTLE_ACTION)
+	var want := 1 if strip_offers else 0
+	_assert_band_panel("%s — the open strip offers `%s` %d time(s), found %d" % [
+		state_name, HudComposeVocab.PARTY_SETTLE_ACTION, want, links], links == want)
+
+## Controls in the PANEL whose face is exactly `face`. Both the row's button and the strip's inline
+## link are `Button`s, so one walk answers for both — and matching the face is right HERE because the
+## face is what the pair above is about.
+##
+## **SCOPED TO THE PANEL, NOT TO `Zone_parties`**, and that is not laziness: the NARROW shell (which
+## these two states use, a side dock being where a player reads the parties list) reparents the
+## active zone into `NarrowZoneHost`, so a `Zone_parties`-scoped walk finds nothing at all there and
+## every claim above passes as `0 == 0`. Measured — the first cut of this helper did exactly that.
+func _settle_faces_in_panel(face: String) -> int:
+	return _count_buttons_with_text(_panel, face)
+
+func _count_buttons_with_text(node: Node, face: String) -> int:
+	var found := 0
+	if node is Button and (node as Button).text == face:
+		found += 1
+	for child in node.get_children():
+		found += _count_buttons_with_text(child, face)
+	return found
+
+## **A FOUNDING ALWAYS ASKS FIRST — there is no press-through branch**, unlike a recall, which acts
+## straight off the press for a party still standing in camp. Driven through the REAL row builder and
+## the REAL `pressed` handler, and asserted as a PAIR of readings (a dialog appeared, nothing was
+## emitted), for the deferred-`queue_free` reason `_assert_recall_press` records.
+func _assert_settle_confirms_before_emitting() -> void:
+	var exp := _awaiting_scout_expedition_fixture()
+	var row: HBoxContainer = _hud._bandpanel._build_party_row(exp)
+	var settle: Button = null
+	for child in row.get_children():
+		if child is Button and (child as Button).text == HudComposeVocab.PARTY_SETTLE_VERB:
+			settle = child
+	if settle == null:
+		_fail("settle press — the arrived party's row built no `%s` control" % HudComposeVocab.PARTY_SETTLE_VERB)
+		row.queue_free()
+		return
+	var emitted: Array[Dictionary] = []
+	var sink := func(payload: Dictionary) -> void: emitted.append(payload)
+	_hud.settle_expedition_requested.connect(sink)
+	var before := _hud_dialog_count()
+	settle.pressed.emit()
+	var dialog_shown := _hud_dialog_count() > before
+	_assert_band_panel("settle ceremony — confirms first, no immediate emit (dialog=%s, emitted=%d)" % [
+		dialog_shown, emitted.size()], dialog_shown and emitted.is_empty())
+	_dismiss_dialogs()
+	_hud.settle_expedition_requested.disconnect(sink)
 	row.queue_free()
 
 ## Confirmation dialogs parented on the HUD right now, freed-but-not-yet-collected ones included —
@@ -8974,6 +9074,15 @@ func _scout_expedition_fixture() -> Dictionary:
 		"expedition_phase": "outbound",
 		"home_band_entity": 904,
 	}
+
+## A scout party that has ARRIVED and is awaiting orders — the one phase the founding action is
+## offered in. Its position is what the settle confirm quotes as the site.
+func _awaiting_scout_expedition_fixture() -> Dictionary:
+	var exp := _scout_expedition_fixture()
+	exp["entity"] = SCOUT_AWAITING_ENTITY
+	exp["id"] = "Scouts 2"
+	exp["expedition_phase"] = "awaiting"
+	return exp
 
 ## One expedition per PHASE, all homed on band 904 — the fixture set behind `band_panel_status_glyphs`:
 ## the Active-expeditions rows must render a distinct, legible glyph for each (➤ outbound / ● hunting /

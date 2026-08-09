@@ -520,6 +520,29 @@ renderer skipped. One pair per condition, so a regression names which one broke.
 assertion is the one to be careful with — see the `RungGates.gd` row in `labor-ui.md` for why it needs
 a WILD sowable patch rather than the obvious tended one.
 
+## "Start a life here" — the drawer pair, and the dock's prose branch (issue #510)
+
+**`expedition_panel` / `expedition_returning` already existed and now carry the claim.** They are the
+drawer's arrival pair — an ARRIVED scout and the same party once it is walking home — so the third
+action's presence and its absence are asserted on frames whose whole difference is the phase. A
+one-sided frame proves nothing here: a button rendered unconditionally passes the positive half. The
+negative also asserts the `Move` button is still there, so the absence is the settle control's and
+not a panel that failed to build.
+
+**`event_dock_band_founded`** (`chapters/event_dock.gd`, appended last) renders a founding and a
+founding REFUSED at the ALERTS-ONLY floor, which is what proves the rung rather than showing two rows
+the `notable` floor would have admitted anyway. Its two details are the pair the dock's prose branch
+needs — one PROSE (the sim's refusal sentence, which no other fixture in that chapter stages) and one
+TOKENS — and the token half is what proves the walk still runs for details that really are the
+machine contract. The rule is in `event-dock.md` → "…but a detail the sim wrote as a SENTENCE".
+
+**Both details are spelled out as chapter constants** rather than recomposed through
+`SourceForecast`/`HudEventVocab`, the `_assert_horizon_floor_is_the_whole_trip` rule: an expectation
+built from the code under test can only agree with itself.
+
+**A clean run is 282 frames / 694 `PASS`, exit 0** — one frame and six `PASS`es on the 281 / 688 this
+arc started from, three of them the drawer pair's and three the dock frame's.
+
 ## The UNBOUNDED-RAID floor: one frame, three equalities, and a driven denial pair
 
 `ui_preview` **`herd_hunt_horizon_travel`** (`chapters/hunt.gd`, appended last in the hunt chapter) is

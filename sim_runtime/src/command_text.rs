@@ -194,6 +194,13 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "recall_expedition <faction_id> <expedition_band_id>",
     },
     CommandVerbHelp {
+        verb: "settle_expedition",
+        aliases: &[],
+        summary: "Start a life here — an arrived party stops being an expedition and becomes a \
+                  resident band.",
+        usage: "settle_expedition <faction_id> <expedition_band_id>",
+    },
+    CommandVerbHelp {
         verb: "send_hunt_expedition",
         aliases: &[],
         summary: "Outfit a detached hunting party that follows a herd, harvests food, and delivers it.",
@@ -1050,6 +1057,29 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 )?,
             })
         }
+        // **The founding's grammar is DELIBERATELY CLOSED** — two positional tokens, naming the
+        // faction and the party, and nothing else. Everything that shapes a founding is either the
+        // party as it already stands or a gate the sim evaluates live, so a trailing token is a
+        // misunderstanding of the verb rather than a value to ignore. Same fail-closed reading as
+        // `send_denial_raid`.
+        "settle_expedition" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let expedition_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("expedition_band_id"))?;
+            if let Some(extra) = parts.next() {
+                return Err(CommandParseError::UnexpectedArgument(extra.to_string()));
+            }
+            Ok(CommandPayload::SettleExpedition {
+                faction_id: parse_u32(faction_str, "settle_expedition faction")?,
+                expedition_band_id: parse_u64(
+                    expedition_str,
+                    "settle_expedition expedition_band_id",
+                )?,
+            })
+        }
         "send_hunt_expedition" => {
             let faction_str = parts
                 .next()
@@ -1397,6 +1427,31 @@ mod tests {
         assert!(matches!(
             parse_command_line("send_denial_raid 0 7 4"),
             Err(CommandParseError::MissingArgument("fauna_id"))
+        ));
+    }
+
+    /// **The founding's grammar is CLOSED too** — two positional tokens, naming the faction and the
+    /// party. Everything that shapes a founding is either the party as it already stands or a gate
+    /// the sim evaluates live, so there is nothing a third token could legitimately mean; accepting
+    /// one silently would teach the player that founding takes an argument it does not.
+    ///
+    /// It carries the **`BandId`**, never entity bits — the identity that survives a rollback.
+    #[test]
+    fn parse_settle_expedition_takes_a_faction_and_a_party_and_nothing_else() {
+        assert_eq!(
+            parse_command_line("settle_expedition 0 9001").unwrap(),
+            CommandPayload::SettleExpedition {
+                faction_id: 0,
+                expedition_band_id: 9001,
+            }
+        );
+        assert!(matches!(
+            parse_command_line("settle_expedition 0 9001 4"),
+            Err(CommandParseError::UnexpectedArgument(_))
+        ));
+        assert!(matches!(
+            parse_command_line("settle_expedition 0"),
+            Err(CommandParseError::MissingArgument("expedition_band_id"))
         ));
     }
 

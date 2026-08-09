@@ -498,6 +498,8 @@ func _resolve_style(kind: String, detail: String, rung: String) -> Dictionary:
 static func detail_phrase(detail: String) -> String:
 	if detail == "":
 		return ""
+	if _is_prose_detail(detail):
+		return detail
 	var fragments: Array[String] = []
 	# Parallel to `fragments`: the raw value of the `key=value` each entry came from, or `""` for a
 	# coordinate / bare word. A continuation appends to the last entry that HAS one.
@@ -529,6 +531,24 @@ static func detail_phrase(detail: String) -> String:
 			continue
 		fragments.append(_english(token))
 	return HudEventVocab.DETAIL_PHRASE_SEPARATOR.join(fragments)
+
+## **A DETAIL THE SIM WROTE AS A SENTENCE, WHICH IS SHOWN VERBATIM.** Every COMMAND REFUSAL takes
+## this path — `emit_command_failure` puts the sim's own explanation in the `detail` slot ("Scouts 1
+## cannot start a life here — nobody at home could point at that place…") — and the token walk below
+## would split it on spaces and rejoin the words with ` · `, turning one sentence into a column of
+## capitalised words.
+##
+## **A SINGLE BARE TOKEN IS NOT PROSE**, which is why the word count is half the test: `herd_gone` is
+## an identifier and must keep going through `_english` to reach the screen as `Herd gone`. Nor is a
+## detail carrying a `key=value` fragment or a `(x,y)` coordinate anywhere in it — those are the
+## machine contract, and one token of it makes the whole string one.
+static func _is_prose_detail(detail: String) -> bool:
+	var words := 0
+	for token in detail.split(" ", false):
+		if token.find("=") > 0 or _coordinate_phrase(token) != "":
+			return false
+		words += 1
+	return words > 1
 
 ## One `key=value` as prose. A numeric value keeps its key (`Warriors 3`); an enumerated one is the
 ## whole phrase (`Settle site`), because the key restates what the value already says.

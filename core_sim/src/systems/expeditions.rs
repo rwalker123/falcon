@@ -1046,6 +1046,336 @@ pub fn party_owes_a_report(expedition: &Expedition) -> bool {
     !expedition.pending_reveal.is_empty()
 }
 
+// -------------------------------------------------------------------------------------------
+// "Start a life here" — a founding is an expedition that stops being one
+// (`docs/plan_band_fission.md` §Q2, issue #510)
+// -------------------------------------------------------------------------------------------
+
+/// **Why a founding was refused.**
+///
+/// **A refusal refuses the FOUNDING, never the party.** Every arm below leaves the expedition
+/// exactly as it stood — still in `AwaitingOrders`, still carrying its buffer and its pack — so
+/// *recall* remains available and nothing the player has invested is lost by asking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FoundingRefusal {
+    /// The entity carries no [`Expedition`]. A resident band cannot found itself.
+    NotAnExpedition,
+    /// The party still has orders. Founding is an **arrival** action, so it is only offered to a
+    /// party that has arrived and is waiting to be told what to do next.
+    NotAwaitingOrders,
+    /// The party's tile, or the world's tile grid, could not be resolved — nothing can be said
+    /// about ground the sim cannot find.
+    SiteUnresolved,
+    /// The site does not connect to one of the faction's own resident bands through discovered
+    /// land. See [`founding_site_is_reachable`].
+    Unreachable,
+}
+
+impl FoundingRefusal {
+    /// The machine token for the structured log — the `command.settle.rejected=` value.
+    pub fn token(self) -> &'static str {
+        match self {
+            FoundingRefusal::NotAnExpedition => "not_an_expedition",
+            FoundingRefusal::NotAwaitingOrders => "not_awaiting_orders",
+            FoundingRefusal::SiteUnresolved => "site_unresolved",
+            FoundingRefusal::Unreachable => "unreachable",
+        }
+    }
+
+    /// What the player is told, in the sim's voice — a refusal is loud, never silent.
+    pub fn explanation(self) -> &'static str {
+        match self {
+            FoundingRefusal::NotAnExpedition => "that band is not an expedition.",
+            FoundingRefusal::NotAwaitingOrders => {
+                "the party is still under orders — only a party that has arrived and is awaiting \
+                 orders can start a life where it stands."
+            }
+            FoundingRefusal::SiteUnresolved => "the party's position could not be resolved.",
+            FoundingRefusal::Unreachable => {
+                "nobody at home could point at that place — a founding site must join one of your \
+                 bands across ground your people have mapped."
+            }
+        }
+    }
+}
+
+/// What a successful founding produced, for the feed line that announces it.
+///
+/// The new band's own id is deliberately **absent**: the caller named the party by [`BandId`] to
+/// get here, and the founding keeps that id, so re-reporting it would be this function telling the
+/// caller what the caller just said.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FoundedBand {
+    /// Where the band now stands.
+    pub at: UVec2,
+    /// The band it split from. `None` only if the parent could not be resolved to an id, which a
+    /// live world does not produce — a party whose home band is gone folds back and despawns.
+    pub parent: Option<BandId>,
+    /// Tiles promoted from the party's private buffer to the faction map on the way out of being
+    /// an expedition — the map half of the dowry.
+    pub mapped_tiles: usize,
+    /// Trade goods settled out of the pack into the new band's **own** store.
+    pub trade_settled: Scalar,
+}
+
+/// **Whether a founding site can be pointed at from home** — the one eligibility rule this slice
+/// puts on the *place* (`docs/plan_band_fission.md` §Q2, *Reachability*).
+///
+/// The site must connect to a tile held by one of the faction's **resident** bands through a
+/// contiguous run of tiles that faction has **discovered**. The rule is the fiction rather than a
+/// balance lever on top of one: a splinter group can only announce where it is going by naming a
+/// place both halves of the band know — *we are going over to that valley we found* — so ground
+/// nobody has mapped cannot be named, and a party that walked into the unknown and stopped is not a
+/// colony but a party you have lost track of.
+///
+/// - **Resident bands only as anchors.** A party may not anchor to another party; that would let two
+///   expeditions bootstrap a colony out of ground neither has reported.
+/// - **Land only.** Water is discovered like anything else, but a path across a mapped strait would
+///   qualify a colony nobody can walk to — so `discovered_land` is the **conjunction**, one grid
+///   with one meaning: *mapped ground a person could put a foot on*.
+/// - **The site itself must be discovered land.** An expedition is excluded from live fog reveal
+///   (`Without<Expedition>` in `calculate_visibility`), so a party's own tile is not discovered
+///   unless the faction saw it some other way. That is the rule doing its job, not a hole in it.
+/// - **No length bound.** The discovered set is the bound, and it costs one BFS over the map, once,
+///   on a command the player presses by hand.
+///
+/// `discovered_land` is indexed `y * width + x`.
+pub fn founding_site_is_reachable(
+    site: UVec2,
+    anchors: &HashSet<UVec2>,
+    discovered_land: &[bool],
+    width: u32,
+    height: u32,
+    wrap_horizontal: bool,
+) -> bool {
+    if width == 0 || height == 0 || site.x >= width || site.y >= height {
+        return false;
+    }
+    let index = |pos: UVec2| (pos.y * width + pos.x) as usize;
+    if !discovered_land.get(index(site)).copied().unwrap_or(false) {
+        return false;
+    }
+    let mut visited = vec![false; discovered_land.len()];
+    let mut queue = VecDeque::new();
+    visited[index(site)] = true;
+    queue.push_back(site);
+    while let Some(pos) = queue.pop_front() {
+        if anchors.contains(&pos) {
+            return true;
+        }
+        // 6-neighbour odd-r adjacency honouring the x-wrap — the same steps a band walks.
+        for (nx, ny) in
+            crate::grid_utils::hex_neighbors_wrapped(pos.x, pos.y, width, height, wrap_horizontal)
+        {
+            let neighbor = UVec2::new(nx, ny);
+            let idx = index(neighbor);
+            if visited[idx] || !discovered_land[idx] {
+                continue;
+            }
+            visited[idx] = true;
+            queue.push_back(neighbor);
+        }
+    }
+    false
+}
+
+/// [`founding_site_is_reachable`] against a live world: builds the faction's mapped-land grid and
+/// its resident bands' tiles, then asks the predicate.
+pub fn founding_site_is_reachable_in_world(
+    world: &mut World,
+    faction: FactionId,
+    site: UVec2,
+) -> bool {
+    let (width, height) = {
+        let registry = world.resource::<TileRegistry>();
+        (registry.width, registry.height)
+    };
+    let total = (width as usize).saturating_mul(height as usize);
+    if total == 0 {
+        return false;
+    }
+    let wrap_horizontal = world
+        .resource::<SimulationConfig>()
+        .map_topology
+        .wrap_horizontal;
+
+    // One pass over the world for both inputs: the land mask, and the tiles this faction's
+    // resident bands are standing on.
+    let mut discovered_land = vec![false; total];
+    let mut anchor_tiles: Vec<Entity> = Vec::new();
+    for entity in world.iter_entities() {
+        if let Some(tile) = entity.get::<Tile>() {
+            // The same land test `send_expedition`'s target validation uses (`ensure_land_tile`),
+            // read off the tile's own tags rather than re-derived from terrain.
+            if !tile.terrain_tags.contains(sim_runtime::TerrainTags::WATER) {
+                let idx = (tile.position.y * width + tile.position.x) as usize;
+                if idx < total {
+                    discovered_land[idx] = true;
+                }
+            }
+            continue;
+        }
+        if entity.contains::<ResidentBand>() {
+            if let Some(cohort) = entity.get::<PopulationCohort>() {
+                if cohort.faction == faction {
+                    anchor_tiles.push(cohort.current_tile);
+                }
+            }
+        }
+    }
+    if anchor_tiles.is_empty() {
+        return false;
+    }
+    let anchors: HashSet<UVec2> = anchor_tiles
+        .into_iter()
+        .filter_map(|tile| world.get::<Tile>(tile).map(|tile| tile.position))
+        .collect();
+
+    // Intersect the land mask with what the faction has actually mapped. `is_discovered` is
+    // `Discovered` OR `Active` — anything but Unexplored.
+    let ledger = world.resource::<crate::visibility::VisibilityLedger>();
+    for y in 0..height {
+        for x in 0..width {
+            let idx = (y * width + x) as usize;
+            if discovered_land[idx] && !ledger.is_discovered(faction, x, y) {
+                discovered_land[idx] = false;
+            }
+        }
+    }
+
+    founding_site_is_reachable(
+        site,
+        &anchors,
+        &discovered_land,
+        width,
+        height,
+        wrap_horizontal,
+    )
+}
+
+/// **THE founding — a party stops being an expedition and becomes a band where it stands.**
+///
+/// The whole feature is one component swap: drop [`Expedition`], gain [`ResidentBand`], keep the
+/// [`BandId`] allocated at launch and the map learned on the way. Everything else here is the
+/// bookkeeping that swap implies.
+///
+/// **The order of the two halves is load-bearing.** The reachability gate is evaluated *before* the
+/// party's `pending_reveal` buffer is flushed to the faction map: flushing first would promote the
+/// corridor the party just walked and make the gate vacuous. The gate asks what the faction knew
+/// **before** the founding.
+///
+/// **No habitability or terrain-quality gate exists, deliberately** (`docs/plan_band_fission.md` §Q2,
+/// *There is deliberately NO habitability gate*). Founding raises a party to a band that can forage,
+/// hunt and move on its own and does nothing else — a band is mobile, so settling harsh ground is a
+/// mistake the player walks out of rather than an illegal move, and the land's quality already
+/// speaks through morale, yield and carrying capacity.
+pub fn found_band_from_expedition(
+    world: &mut World,
+    entity: Entity,
+) -> Result<FoundedBand, FoundingRefusal> {
+    let Some(mut expedition) = world.get::<Expedition>(entity).cloned() else {
+        return Err(FoundingRefusal::NotAnExpedition);
+    };
+    // **Founding is the third ARRIVAL action**, beside onward and recall: a party still walking,
+    // hunting, delivering or returning has orders, and this is the moment those run out. That
+    // implicitly restricts founding to **scout** parties — a hunt or denial mission never enters
+    // `AwaitingOrders`, it hunts until its trip ends and then walks home — and that is intended,
+    // not incidental: a raid is an errand, not a search for somewhere to live.
+    if !matches!(expedition.phase, ExpeditionPhase::AwaitingOrders) {
+        return Err(FoundingRefusal::NotAwaitingOrders);
+    }
+    let Some((faction, site_tile)) = world
+        .get::<PopulationCohort>(entity)
+        .map(|cohort| (cohort.faction, cohort.current_tile))
+    else {
+        return Err(FoundingRefusal::SiteUnresolved);
+    };
+    let Some(site) = world.get::<Tile>(site_tile).map(|tile| tile.position) else {
+        return Err(FoundingRefusal::SiteUnresolved);
+    };
+
+    // ---- The gate, and it runs BEFORE anything is written ----
+    if !founding_site_is_reachable_in_world(world, faction, site) {
+        return Err(FoundingRefusal::Unreachable);
+    }
+
+    // ---- The map the party learned is part of the dowry ----
+    // Flushed here rather than left to `advance_expeditions`, because dropping the component below
+    // would otherwise destroy the buffer silently — the party's findings would die with its
+    // expedition-hood. Same `FactionVisibilityMap::discover` promotion the comm-range flush uses
+    // (Unexplored → Discovered, never downgrading a live `Active`).
+    let current_turn = world.resource::<SimulationTick>().0;
+    let (map_width, map_height) = {
+        let registry = world.resource::<TileRegistry>();
+        (registry.width, registry.height)
+    };
+    let mapped_tiles = expedition.pending_reveal.len();
+    {
+        let mut ledger = world.resource_mut::<crate::visibility::VisibilityLedger>();
+        let map = ledger.ensure_faction(faction, map_width, map_height);
+        for pos in expedition.pending_reveal.drain(..) {
+            map.discover(pos.x, pos.y, current_turn);
+        }
+    }
+
+    let trade_settled = {
+        let Some(mut cohort) = world.get_mut::<PopulationCohort>(entity) else {
+            return Err(FoundingRefusal::SiteUnresolved);
+        };
+        // **The haul is the new band's own.** `settle_carried_trade` banks a pack into "the home
+        // band's" store; here the party *is* the home band, so the same conversion runs against its
+        // own cohort. The pelts never went home and there is nowhere else for them to land.
+        let banked = settle_carried_trade(&mut expedition, &mut cohort);
+        // **The band was founded now.** The party's cohort is a clone of the parent's, so without
+        // this it would carry the parent's age — and `migration_min_settled_turns` reads it, which
+        // would let a colony bleed people out on its first turn.
+        cohort.age_turns = 0;
+        // `home` is the tile a resident band's demographics resolve terrain off
+        // (`simulate_population` reads `tiles.get(cohort.home)`), and for a nomad band it tracks
+        // `current_tile` — `advance_band_movement` moves the two together. Founding names the site
+        // as home explicitly rather than leaning on that invariant.
+        cohort.home = site_tile;
+        // **A derived per-turn reading belongs to the band that earned it.** These are all
+        // recomputed on the next turn, but a founding publishes a frame before then, and the values
+        // sitting in them are the *parent's*, copied at launch — so the new band would open by
+        // narrating somebody else's morale swing, meal and migration.
+        cohort.last_food_consumption = 0.0;
+        cohort.last_morale_delta = scalar_zero();
+        cohort.last_morale_cause = MoraleCause::default();
+        cohort.last_morale_contributions = MoraleContributions::default();
+        cohort.last_fertility_factors = crate::components::FertilityFactors::default();
+        cohort.discontent_fraction = scalar_zero();
+        cohort.last_emigrated = 0;
+        cohort.last_immigrated = 0;
+        cohort.sync_size();
+        banked
+    };
+    if let Some(mut labor) = world.get_mut::<LaborAllocation>(entity) {
+        // The same rule, on the labor side: yields, pen feed and raid forfeit are last turn's
+        // readings for whoever earned them. Assignments are left alone — those are player intent.
+        labor.last_yields.clear();
+        labor.last_pen_feed_upkeep = 0.0;
+        labor.last_raid_forfeit = 0.0;
+    }
+
+    let parent = world.get::<BandId>(expedition.home_band).copied();
+
+    // ---- The swap ----
+    let mut founded = world.entity_mut(entity);
+    founded.remove::<Expedition>();
+    // **Every resident band carries a flow accumulator** or its births and deaths are unreportable
+    // (`demographic_events::every_resident_band_carries_a_flow_accumulator`). The party spawn does
+    // not give one, because until now a party was never a band that could give birth.
+    founded.insert((ResidentBand, DemographicFlowAccumulator::default()));
+
+    Ok(FoundedBand {
+        at: site,
+        parent,
+        mapped_tiles,
+        trade_settled,
+    })
+}
+
 /// A haul as feed-line prose — *"12 provisions"*, *"4.00 trade goods"*, or *"12 provisions and 4.00
 /// trade goods"*. **A zero component is omitted, never printed** (the render-only-when-non-zero rule
 /// the whole yield-vector arc runs on): a wolf raid does not report "0 provisions", and a species with

@@ -247,6 +247,8 @@ func _ready() -> void:
             hud.connect("send_denial_raid_requested", Callable(self, "_on_hud_send_denial_raid"))
         if hud.has_signal("recall_expedition_requested") and not hud.is_connected("recall_expedition_requested", Callable(self, "_on_hud_recall_expedition")):
             hud.connect("recall_expedition_requested", Callable(self, "_on_hud_recall_expedition"))
+        if hud.has_signal("settle_expedition_requested") and not hud.is_connected("settle_expedition_requested", Callable(self, "_on_hud_settle_expedition")):
+            hud.connect("settle_expedition_requested", Callable(self, "_on_hud_settle_expedition"))
         if hud.has_signal("extend_pen_requested") and not hud.is_connected("extend_pen_requested", Callable(self, "_on_hud_extend_pen")):
             hud.connect("extend_pen_requested", Callable(self, "_on_hud_extend_pen"))
         if hud.has_signal("improvement_requested") and not hud.is_connected("improvement_requested", Callable(self, "_on_hud_improvement")):
@@ -993,6 +995,21 @@ static func format_recall_expedition(payload: Dictionary) -> Dictionary:
         "message": "Recall expedition.",
     }
 
+## `settle_expedition <faction_id> <expedition_band_id>` — the party stops being an expedition and
+## becomes a resident band where it stands (issue #510). Same shape as `recall_expedition` above and
+## for the same reason: a detached party is a band, addressed by the same durable id, never by its
+## ECS entity bits. **The grammar is CLOSED at two positional tokens** — the sim's parser rejects a
+## third outright, so nothing about the site or the party may ride the line.
+static func format_settle_expedition(payload: Dictionary) -> Dictionary:
+    var expedition_band_id := int(payload.get("expedition_band_id", HudConst.NO_BAND_ID))
+    if expedition_band_id == HudConst.NO_BAND_ID:
+        return {}
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    return {
+        "line": "settle_expedition %d %d" % [faction, expedition_band_id],
+        "message": "Start a life here.",
+    }
+
 ## `extend_pen <faction> <x> <y>` targets the pen's ANCHOR TILE, so it names no band at all — it is
 ## here for company, not because it carries a band handle.
 static func format_extend_pen(payload: Dictionary) -> Dictionary:
@@ -1129,6 +1146,11 @@ func _on_hud_improvement(payload: Dictionary) -> void:
 ## Recall an in-flight expedition home (folds workers + provisions back on arrival).
 func _on_hud_recall_expedition(payload: Dictionary) -> void:
     _send_formatted_command(format_recall_expedition(payload))
+
+## Found a band where an arrived party stands. The sim answers the reachability gate when the command
+## lands, so a refusal comes back as a `band_founded` failure event rather than being predicted here.
+func _on_hud_settle_expedition(payload: Dictionary) -> void:
+    _send_formatted_command(format_settle_expedition(payload))
 
 func _on_hud_next_turn(steps: int) -> void:
     var clamped_steps: int = max(1, steps)

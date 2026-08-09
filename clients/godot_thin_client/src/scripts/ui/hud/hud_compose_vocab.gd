@@ -627,6 +627,40 @@ const PARTY_RECALL_ONE_CONFIRM_OK := "Recall"
 ## expedition party?" (the full mission label) reads doubled; a hunt party fills its herd name.
 const PARTY_RECALL_SCOUT_LABEL := "scouting"
 
+## ---- "Start a life here" — the THIRD arrival action (issue #510, `docs/plan_band_fission.md` §Q2)
+##
+## **IT IS OFFERED ONLY IN `awaiting`, and the phase is the whole gate.** A party under orders is
+## refused by the sim (`FoundingRefusal::NotAwaitingOrders`), and a hunt or denial mission never
+## enters that phase at all — so founding is a scout's arrival choice, beside *onward* and *recall*.
+##
+## **TWO FACES FOR ONE ACT, and the width is why.** The parties ROW spends its whole width on the
+## party's own summary and a 24px removal glyph, so its control takes the bare verb; every surface
+## with a sentence's room — the inspector strip's link, the Occupants drawer's button, the confirm's
+## OK — takes the full phrase the design doc names the action by.
+const PARTY_SETTLE_VERB := "Settle"
+
+const PARTY_SETTLE_ACTION := "Start a life here"
+
+## The row control's width, matching `PARTY_RECALL_WIDTH`'s role: a declared box so the row's
+## trailing controls line up whether or not this one is offered.
+const PARTY_SETTLE_WIDTH := 46.0
+
+## **THE TOOLTIP CARRIES THE IRREVERSIBILITY, because the face cannot.** "Settle" alone reads like a
+## posture the player could change their mind about; the party stops being an expedition and never
+## comes home.
+const PARTY_SETTLE_TOOLTIP := "Start a life here — the party stops being an expedition and becomes a band that will not come home"
+
+## The confirm body. `%s` = the party's own label (the same one `confirm_recall_expedition` names it
+## by), then its tile.
+##
+## **THE SECOND SENTENCE IS THE GATE, AND IT IS THERE BECAUSE THIS SLICE HAS NO FORECAST.** The sim
+## answers reachability only when the command lands (`founding_site_is_reachable`), so a press can
+## come back refused — and the prompt is the one place the client can say beforehand that a refusal
+## costs the party nothing. Issue #511's compose-sheet forecast is what replaces it.
+const PARTY_SETTLE_CONFIRM_FORMAT := "Start a life at (%d, %d) with the %s party? It stops being an expedition and becomes a band of its own — it will not come home, and a founding cannot be undone.\n\nIf nobody at home can point at that place across ground your people have mapped, the founding is refused and the party stands where it is."
+
+const PARTY_SETTLE_CONFIRM_OK := "Start a life here"
+
 ## The parties inspector strip is DENSER than the work inspector (up to SEVEN detail lines vs ~1), and
 ## the T/B parties zone is height-capped at ~300px and CLIPS, so its detail lines are tightened well
 ## below HudWorkVocab.ZONE_BLOCK_SEPARATION to keep the strip + a party row + the bottom-pinned footer

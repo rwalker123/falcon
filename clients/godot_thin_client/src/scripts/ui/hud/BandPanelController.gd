@@ -54,6 +54,10 @@ signal send_hunt_expedition_requested(payload: Dictionary)
 signal send_denial_raid_requested(payload: Dictionary)
 # A party was ordered home — relayed to HudLayer.recall_expedition_requested.
 signal recall_expedition_requested(payload: Dictionary)
+# A party stopped being an expedition and became a band where it stands (issue #510) — relayed to
+# HudLayer.settle_expedition_requested. **Its own signal beside the recall above**, not a mode on it:
+# the two are opposite arrival answers and their grammars are separate closed verbs.
+signal settle_expedition_requested(payload: Dictionary)
 # Recenter + select a hex (a zone row / cycler jump) — relayed to HudLayer.alert_focus_requested.
 signal alert_focus_requested(x: int, y: int)
 # Pin an exact occupant on the map after that recenter — relayed to HudLayer.roster_occupant_selected.
@@ -2151,6 +2155,12 @@ func _build_parties_inspector(exp: Dictionary) -> PanelContainer:
         select_expedition(entity, x, y)))
     links.add_child(HudWidgets.build_inline_link(recall_verb(exp), HudStyle.DANGER, func() -> void:
         confirm_recall_expedition(exp)))
+    # THE THIRD ARRIVAL ACTION, and it is offered on the same terms the row's control is (issue #510):
+    # only while the party is `awaiting`. HEALTHY rather than DANGER — founding builds a band where a
+    # recall dissolves a party, and the two links must not read as the same kind of act.
+    if party_may_settle(exp):
+        links.add_child(HudWidgets.build_inline_link(HudComposeVocab.PARTY_SETTLE_ACTION, HudStyle.HEALTHY,
+            func() -> void: confirm_settle_expedition(exp)))
     col.add_child(links)
     return strip
 
@@ -2176,6 +2186,21 @@ func _build_party_row(exp: Dictionary) -> HBoxContainer:
     var entity := int(exp.get("entity", -1))
     body.pressed.connect(func() -> void: _toggle_parties_inspector(str(entity)))
     row.add_child(body)
+    # "Start a life here" (issue #510), BEFORE the recall ✕ — the constructive act reads left of the
+    # removal, and the ✕ stays the row's LAST child, which `band_panel_preview._assert_recall_press`
+    # identifies it by. It renders only for an `awaiting` party, so an ordinary hunt row is unchanged.
+    if party_may_settle(exp):
+        var settle := Button.new()
+        settle.text = HudComposeVocab.PARTY_SETTLE_VERB
+        settle.focus_mode = Control.FOCUS_NONE
+        settle.tooltip_text = HudComposeVocab.PARTY_SETTLE_TOOLTIP
+        settle.custom_minimum_size = Vector2(HudComposeVocab.PARTY_SETTLE_WIDTH, 0.0)
+        HudStyle.apply_button(settle, "ghost")
+        # HEALTHY green, the opposite pole from the ✕'s DANGER: this press MAKES a band. It is
+        # irreversible rather than destructive, so the ceremony is the confirm, not the colour.
+        settle.add_theme_color_override("font_color", HudStyle.HEALTHY)
+        settle.pressed.connect(func() -> void: confirm_settle_expedition(exp))
+        row.add_child(settle)
     var recall := Button.new()
     recall.text = HudComposeVocab.PARTY_RECALL_GLYPH
     recall.focus_mode = Control.FOCUS_NONE
@@ -2218,12 +2243,45 @@ func confirm_recall_expedition(exp: Dictionary) -> void:
     if _band_labor.party_cancels_in_camp(exp):
         _on_recall_expedition_pressed(exp)
         return
-    var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
-    var label := _herd_label_for_id(String(exp.get("expedition_target_herd", "")).strip_edges()) \
-        if mission == HudExpeditionVocab.EXPEDITION_MISSION_HUNT \
-        else HudComposeVocab.PARTY_RECALL_SCOUT_LABEL
-    _confirm_destructive(HudComposeVocab.PARTY_RECALL_ONE_CONFIRM_FORMAT % label, HudComposeVocab.PARTY_RECALL_ONE_CONFIRM_OK,
+    _confirm_destructive(HudComposeVocab.PARTY_RECALL_ONE_CONFIRM_FORMAT % _party_confirm_label(exp),
+        HudComposeVocab.PARTY_RECALL_ONE_CONFIRM_OK,
         func() -> void: _on_recall_expedition_pressed(exp))
+
+## How a prompt NAMES a party — its herd for a hunt, the bare mission word otherwise. Shared by the
+## recall prompt and the founding one so the two cannot name one party two ways.
+func _party_confirm_label(exp: Dictionary) -> String:
+    var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
+    if mission == HudExpeditionVocab.EXPEDITION_MISSION_HUNT:
+        return _herd_label_for_id(String(exp.get("expedition_target_herd", "")).strip_edges())
+    return HudComposeVocab.PARTY_RECALL_SCOUT_LABEL
+
+## **May this party stop being an expedition and become a band where it stands?** (issue #510)
+##
+## **THE PHASE IS THE WHOLE CLIENT-SIDE TEST, and that is deliberate.** The sim's other refusals —
+## above all the reachability gate (`core_sim` `founding_site_is_reachable`, a BFS over the faction's
+## discovered land) — are answered only when the command lands, and there is no exported per-party
+## verdict to read. A client-side re-implementation would be a second copy of that rule, free to
+## drift, so the control stays ENABLED and the sim answers: a refusal comes back as a `band_founded`
+## failure event and leaves the party exactly as it stood. Issue #511 brings the compose-sheet
+## forecast; this slice deliberately has none.
+##
+## The row, the inspector strip's link and the Occupants drawer's button all read THIS, the way the
+## three recall surfaces read `recall_verb` — so the action cannot be offered on one and missing from
+## another.
+func party_may_settle(exp: Dictionary) -> bool:
+    return HudFormat.expedition_phase_key(exp) == HudExpeditionVocab.EXPEDITION_PHASE_AWAITING
+
+## Act on a party's founding. **It ALWAYS confirms**, where a recall's cancel branch acts on the
+## press: founding is the first act in the band economy that cannot be undone, so there is no
+## "re-make the decision" branch to skip the prompt for. The prompt names the party the same way the
+## recall prompt does and states the site it is about to become a band on.
+func confirm_settle_expedition(exp: Dictionary) -> void:
+    if exp.is_empty():
+        return
+    var body := HudComposeVocab.PARTY_SETTLE_CONFIRM_FORMAT % [
+        int(exp.get("current_x", -1)), int(exp.get("current_y", -1)), _party_confirm_label(exp)]
+    _confirm_destructive(body, HudComposeVocab.PARTY_SETTLE_CONFIRM_OK,
+        func() -> void: _on_settle_expedition_pressed(exp))
 
 ## Recall every party in one go — there is no bulk verb on the wire and parties are few, so this is
 ## one `recall_expedition` per party through the existing signal.
@@ -3100,6 +3158,19 @@ func _on_recall_expedition_pressed(expedition: Dictionary) -> void:
     # A detached party is a band too, and `recall_expedition <faction> <expedition_band_id>` names it
     # by the same durable id — never its ECS entity bits.
     emit_signal("recall_expedition_requested", {
+        "faction": int(expedition.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "expedition_band_id": int(expedition.get("band_id", HudConst.NO_BAND_ID)),
+    })
+
+## Found a band where the selected party stands. Emits settle_expedition_requested; Main formats the
+## `settle_expedition …` command.
+func _on_settle_expedition_pressed(expedition: Dictionary) -> void:
+    if expedition.is_empty():
+        return
+    # Same handle rule as the recall above: `settle_expedition <faction> <expedition_band_id>` names
+    # the party by its durable BandId — never its ECS entity bits, which the server would resolve to
+    # nothing at all, silently. `cargo xtask command-guard` is what asserts it.
+    emit_signal("settle_expedition_requested", {
         "faction": int(expedition.get("faction", HudConst.PLAYER_FACTION_ID)),
         "expedition_band_id": int(expedition.get("band_id", HudConst.NO_BAND_ID)),
     })

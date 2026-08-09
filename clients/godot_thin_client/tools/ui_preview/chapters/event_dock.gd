@@ -299,6 +299,32 @@ func _event_dock_pin_fixture() -> Array:
 		{"tick": 46, "kind": "tame", "faction": 0, "label": "The aurochs herd has grown tame", "detail": "", "seq": 107},
 	]
 
+## ---- "START A LIFE HERE" (issue #510) ---------------------------------------------------------
+## The founding's two rows, spelled out here so the assertions compare against strings the chapter
+## states rather than against strings recomposed through the code under test.
+
+## The DEED's label and its detail, in the sim's own shape (`server.rs handle_settle_expedition`):
+## every token numeric, so none has to be last. `parent=` is present here — the fixture's parent band
+## resolves — and the absent case is a shorter string rather than a `parent=0`.
+const FOUNDING_LABEL := "Scouts 1 started a life at (39, 26)"
+
+const FOUNDING_DETAIL := "status=founded band=71257 x=39 y=26 parent=71204 mapped_tiles=18 trade_goods=4.00"
+
+## The REFUSAL, which is where the command's reachability gate reaches the player in this slice.
+## `emit_command_failure` writes `"<Kind display> failed"` as the label and the sim's explanation as
+## the detail — PROSE, not tokens, which is the case the dock's prose branch exists for.
+const FOUNDING_REFUSAL_LABEL := "Band founded failed"
+
+const FOUNDING_REFUSAL_DETAIL := "Scouts 2 cannot start a life here — nobody at home could point at that place — a founding site must join one of your bands across ground your people have mapped."
+
+func _event_dock_founding_fixture() -> Array:
+	return [
+		{"tick": 71, "kind": "band_founded", "faction": 0,
+			"label": FOUNDING_LABEL, "detail": FOUNDING_DETAIL, "seq": 901},
+		{"tick": 71, "kind": "band_founded", "faction": 0,
+			"label": FOUNDING_REFUSAL_LABEL, "detail": FOUNDING_REFUSAL_DETAIL, "seq": 902},
+	]
+
 ## Assert the event bar clears one HUD region — **and that the claim is not vacuous**.
 ##
 ## The HUD's regions occupy different vertical bands, so most bar/region pairs share no `y` at all
@@ -1368,6 +1394,39 @@ func run(harness) -> void:
 		event_dock._root.offset_right <= narrow_viewport - event_dock._inset_right + CO_EDGE_RECT_EPSILON)
 	_preview_push_event_dock_insets(event_dock, 0.0, 0.0)
 	await h._settle()
+
+	# ---- "START A LIFE HERE" — a founding, and a founding REFUSED (issue #510) ------------------
+	# Both rows are `band_founded` and both sit on the ALERT rung: the kind is rare, player-initiated
+	# and irreversible, and the command's REFUSALS ride the same kind — a refused irreversible order
+	# is exactly as loud as a taken one. Rendered at the ALERTS-ONLY floor, which is what proves the
+	# rung rather than merely showing two rows the `notable` floor would have admitted anyway.
+	#
+	# **THE REFUSAL'S DETAIL IS PROSE, NOT TOKENS**, which no other fixture in this chapter stages:
+	# `emit_command_failure` puts the sim's own sentence in the `detail` slot, and the token walk
+	# would split it on spaces and rejoin the words with ` · ` — one sentence as a column of
+	# capitalised words. The pair is the claim: the token row proves the walk still runs.
+	event_dock.set_dock(SIDE_BOTTOM)
+	event_dock.set_expanded(false)
+	event_dock.set_recent_count(EVENT_DOCK_MAX_ROWS)
+	event_dock.set_detail_level(HudEventVocab.RUNG_ALERT)
+	event_dock.reset()
+	event_dock.ingest_events(_event_dock_founding_fixture())
+	await h._settle()
+	await h._save("event_dock_band_founded")
+	var founding_text := " ".join(_preview_dock_labels(event_dock))
+	h._assert_hud("a founding reaches the ALERTS-ONLY floor — both the deed and its refusal",
+		founding_text.contains(FOUNDING_LABEL) and founding_text.contains(FOUNDING_REFUSAL_LABEL))
+	h._assert_hud("the refusal's prose detail is shown as ONE sentence, not as middot-joined words — got \"%s\""
+			% EventDockPanel.detail_phrase(FOUNDING_REFUSAL_DETAIL),
+		EventDockPanel.detail_phrase(FOUNDING_REFUSAL_DETAIL) == FOUNDING_REFUSAL_DETAIL)
+	# …and the token walk is UNTOUCHED by that branch, which is the half a prose-only claim cannot
+	# make: a detail that IS the machine contract must still be rendered from it. `parent=` is read
+	# as absent-means-unknown, so the row a nameless parent produces states one fragment fewer and
+	# NEVER a `parent=0`.
+	var founded_phrase := EventDockPanel.detail_phrase(FOUNDING_DETAIL)
+	h._assert_hud("a founding's token detail is still rendered as prose — got \"%s\"" % founded_phrase,
+		not founded_phrase.contains("=") and founded_phrase.contains(
+			HudEventVocab.DETAIL_PHRASE_SEPARATOR))
 
 	event_dock.queue_free()
 	await h.get_tree().process_frame

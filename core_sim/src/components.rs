@@ -736,8 +736,13 @@ impl StartingUnit {
 /// (demographics, migration, sedentarization, startup seeding, supply networks, default-band
 /// command pickers). Attached to every band spawned by worldgen. A detached [`Expedition`]
 /// deliberately **lacks** this marker, so it is excluded from those systems *by construction* — the
-/// safe default survives new systems added to the settlement arc. A future breakaway-to-new-band is
-/// an expedition that drops `Expedition` and gains `ResidentBand` (`docs/plan_exploration_and_sites.md`).
+/// safe default survives new systems added to the settlement arc.
+///
+/// **It is a membership switch, not a label.** Gaining it puts a band into every one of those
+/// systems at once, which is exactly what the founding verb does: `settle_expedition` drops
+/// `Expedition` and inserts this marker
+/// ([`crate::systems::found_band_from_expedition`], `docs/plan_band_fission.md`). The other two
+/// places it is inserted are worldgen and checkpoint restore.
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct ResidentBand;
 
