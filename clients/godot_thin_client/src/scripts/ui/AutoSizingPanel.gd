@@ -28,8 +28,13 @@ class_name AutoSizingPanel
 ## using any more — so it grows over the docked panel and over whatever overlays the edge it just
 ## claimed.
 ##
-## Set this to the Control the registry has ALREADY inset — the HUD's `LayoutRoot` — and both the
-## placement (`available_room`) and the height ceiling (`fit_to_content`) fall out of one rect.
+## **AND IT IS NOT ONLY THE RESERVED EDGES.** A surface can cover a band of the window without
+## reserving it — the event dock overlays the map by design — and a docked panel is drawn UNDER such
+## a bar by its container while a free-floating card, placed by arithmetic, is drawn THROUGH it. So
+## the HUD keeps a second rect for exactly this: `FloatingRoom`, `LayoutRoot` pulled further off
+## every overlay (`Hud.set_overlay_inset`). Set this to THAT node and both the placement
+## (`available_room`) and the height ceiling (`fit_to_content`) fall out of one rect.
+##
 ## `null` keeps the raw viewport, which is the right answer for a card that IS a reserver (the
 ## Inspector reserves its own edge, so it must be measured against the whole window).
 var room_bounds: Control = null

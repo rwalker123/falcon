@@ -1312,6 +1312,11 @@ func _inspector_visible() -> bool:
 ## again — `_update_event_dock_insets`, which reads the left/right reservers.
 const RESERVER_PRIORITY := {&"inspector": 0, &"workbench": 0, &"band_panel": 1}
 const BAND_PANEL_RESERVER := &"band_panel"
+## The event dock's id in the HUD's OVERLAY registry — a different registry from `_reservations`
+## above, and it must stay that way: this one records pixels covered, not space taken. Named as a
+## const for the same reason `BAND_PANEL_RESERVER` is, so the push and any future release name the
+## same key.
+const EVENT_DOCK_OVERLAY := &"event_dock"
 
 ## Reserve space for a docked panel by insetting the game area (map + HUD) from
 ## the given edge, so the panel shrinks the play space instead of overlapping it.
@@ -1764,16 +1769,45 @@ func _connect_event_dock() -> void:
     if event_dock.has_signal("dock_changed") and not event_dock.is_connected(
             "dock_changed", Callable(self, "_on_event_dock_dock_changed")):
         event_dock.connect("dock_changed", Callable(self, "_on_event_dock_dock_changed"))
+    # …and the OTHER direction on the same axis: how deep the bar is DRAWN, which the HUD hands to
+    # its free-floating cards as a bound. Still not a reservation — nothing here calls
+    # `_apply_reservation` and the HUD's own layout does not move — see `_on_event_dock_occupancy_changed`.
+    if event_dock.has_signal("occupancy_changed") and not event_dock.is_connected(
+            "occupancy_changed", Callable(self, "_on_event_dock_occupancy_changed")):
+        event_dock.connect("occupancy_changed", Callable(self, "_on_event_dock_occupancy_changed"))
     # Seed BOTH bounds: nothing else will, since the dock never enters `_apply_reservation`'s fan-out.
     # Wiring runs after `_connect_band_city_panel`, so the reservers are already in `_reservations`.
     _update_event_dock_insets()
     _update_event_dock_edge_offset()
+    # …and the occupancy, for the same reason ONE step earlier: the dock emits it from its own
+    # `_ready`, which runs BEFORE this parent's, so the first emission is gone by the time the
+    # connect above happens. Seeded from the panel rather than re-derived here — the depth is its
+    # geometry, not ours.
+    _push_event_dock_occupancy()
 
 ## The bar changed edge; re-measure what displaces it on the new one. The edge is carried on the
 ## signal for legibility, but `_update_event_dock_edge_offset` re-reads it from the panel — one
 ## reader of `get_dock()`, so the offset can never be computed against a stale edge.
 func _on_event_dock_dock_changed(_edge: int) -> void:
     _update_event_dock_edge_offset()
+
+## **THE BAR COVERS PIXELS; IT STILL TAKES NO SPACE.** The HUD's free-floating cards place
+## themselves by arithmetic against a rect rather than by a container, so they are the one kind of
+## surface that cannot simply be drawn under the bar — hence `Hud.set_overlay_inset`, which shrinks
+## THAT rect and nothing else. It is deliberately not `_apply_reservation`: routing the bar through
+## the reservation fan-out would inset the map and the whole HUD layout, which is precisely the
+## decision `event-dock.md` records as made the other way.
+func _on_event_dock_occupancy_changed(edge: int, extent: float) -> void:
+    if hud == null or not hud.has_method("set_overlay_inset"):
+        return
+    hud.call("set_overlay_inset", EVENT_DOCK_OVERLAY, edge, extent)
+
+func _push_event_dock_occupancy() -> void:
+    if event_dock == null or not event_dock.has_method("occupied_extent") \
+            or not event_dock.has_method("get_dock"):
+        return
+    _on_event_dock_occupancy_changed(
+        int(event_dock.call("get_dock")), float(event_dock.call("occupied_extent")))
 
 func _on_band_labels_changed(labels: Dictionary) -> void:
     _event_dock_invoke("set_band_labels", [labels])

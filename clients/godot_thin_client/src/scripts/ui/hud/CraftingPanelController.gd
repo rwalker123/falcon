@@ -142,6 +142,16 @@ func render() -> void:
 		CraftingPanel.PAYLOAD_IDLE_WORKERS: _band_labor.benchable_workers(band),
 	})
 
+## The room the card is bounded by changed shape — a panel docked or released an edge, or the event
+## bar appeared, flipped edge, grew a row or was hidden. **Re-fit, do not re-render**: the payload is
+## unchanged, so rebuilding the ledger would throw away the player's scroll position to answer a
+## question about geometry. A closed panel needs nothing — it takes the room as it finds it when it
+## next opens.
+func refit_room() -> void:
+	if not is_open():
+		return
+	_panel.refit()
+
 ## The panel node, for the harnesses. `null` until the panel has been opened once.
 func panel() -> CraftingPanel:
 	return _panel

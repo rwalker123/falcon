@@ -65,6 +65,97 @@ const RESERVED_BOTTOM_HEIGHT := 360.0
 ## that the card got SHORTER — without it, a bound that never bit would pass every rect test below.
 var _unreserved_card_height: float = 0.0
 
+# ---- state 5: the event bar the card was drawn THROUGH ------------------------------------------
+
+## The notification bar is its own `CanvasLayer`, injected for this state and freed again — the
+## `event_dock` chapter's idiom, and for the same reason: nothing else in the run may inherit it.
+const EVENT_DOCK_SCENE := preload("res://src/ui/EventDockPanel.tscn")
+
+## The bar's id in the HUD's OVERLAY registry. `Main` owns the real push and is never instanced here,
+## so the chapter connects `occupancy_changed` straight to `Hud.set_overlay_inset` — the same hand
+## wiring it already does for the reserved-edge fan-out. Kept equal to `Main.EVENT_DOCK_OVERLAY` so
+## the harness and the client cannot be releasing different keys.
+const EVENT_DOCK_OVERLAY := &"event_dock"
+
+## The bar's own preferences, DECLARED rather than inherited: the dock persists its edge, row count,
+## detail floor and channels, and the `event_dock` chapter walks all four before this one runs. A
+## state that took whatever it left would render a different bar — and a different bar DEPTH — from
+## one run's chapter order to the next.
+const EVENT_BAR_ROWS := 2
+
+## **THE CARD'S TOP EDGE BEFORE THE BAR APPEARED.** The vacuity guard for the whole state: unless the
+## card was sitting where the bar is about to draw, "the card clears the bar" is a claim about two
+## things that were never going to touch.
+var _barless_card_top: float = 0.0
+
+## Stand the card up in a room a docked panel has already shortened — the live configuration, since
+## the launch button for this panel is on the Band/City dock — and then bring a TOP-docked event bar
+## in over it.
+##
+## **THE BAR IS NOT A RESERVER AND MUST NOT BECOME ONE** (`event-dock.md`): it overlays live map by
+## design, so nothing about the HUD's own layout may move for it. What it publishes is how deep it is
+## DRAWN, and only the free-floating room shrinks by that. The reported defect is the other half of
+## the same fact — the card is placed by arithmetic rather than by a container, so it is the one
+## surface that is not simply drawn underneath, and the panel's title was rendered through the bar.
+func _event_bar_state() -> void:
+	# A short room, so the ledger fills it and the card's top edge IS the room's top edge. In a tall
+	# window the card is centred with hundreds of pixels of slack above it and no bar can reach it —
+	# which is why the collision was reported from play and not from this harness.
+	h._hud.set_reserved_inset(RESERVER_BOTTOM, SIDE_BOTTOM, RESERVED_BOTTOM_HEIGHT)
+
+	var bar: EventDockPanel = EVENT_DOCK_SCENE.instantiate()
+	h.add_child(bar)
+	await h.get_tree().process_frame
+	bar.occupancy_changed.connect(
+		func(edge: int, extent: float) -> void:
+			h._hud.set_overlay_inset(EVENT_DOCK_OVERLAY, edge, extent))
+	# Hidden first, so the card is fitted against a room the bar is not in yet and the move it makes
+	# when the bar arrives is measurable.
+	bar.set_suppressed(true)
+	bar.set_dock(SIDE_TOP)
+	bar.set_recent_count(EVENT_BAR_ROWS)
+	bar.set_detail_level(HudEventVocab.DEFAULT_DETAIL_LEVEL)
+	for channel in HudEventVocab.CHANNEL_ORDER:
+		bar.set_channel_enabled(String(channel), true)
+	bar.set_perpendicular_insets(h._hud.left_column_width(), h._hud.right_column_width())
+	bar.ingest_events(_event_bar_fixture())
+	# Seed the overlay by hand as well as connecting: a dock that was ALREADY hidden published nothing
+	# above, and a state whose premise depends on a signal that may not have fired is not a state.
+	h._hud.set_overlay_inset(EVENT_DOCK_OVERLAY, bar.get_dock(), bar.occupied_extent())
+
+	h._hud.update_band_alerts([_crafting_band()])
+	h._hud.open_crafting_panel(_crafting_band())
+	await h._settle()
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	_barless_card_top = panel.get_global_rect().position.y if panel != null else 0.0
+
+	# **THE RE-FIT, not a re-open.** The bar is toggleable (`R`) and empty before anything is
+	# selected, so it arrives and leaves under an already-open card; a room that only bit at opening
+	# time would leave this frame exactly as broken as the reported one.
+	bar.set_suppressed(false)
+	await h._settle()
+	_assert_card_clears_the_event_bar(bar)
+	await h._save("crafting_panel_event_bar")
+
+	h._hud.set_overlay_inset(EVENT_DOCK_OVERLAY, bar.get_dock(), 0.0)
+	h._hud.set_reserved_inset(RESERVER_BOTTOM, SIDE_BOTTOM, 0.0)
+	bar.queue_free()
+
+## The rows the reported frame carried: a discovery whose detail renders as `Settle site · (58, 34)`,
+## plus enough beside it to FILL the bar at the default detail floor. Filling it is the point — the
+## bar's depth is content-independent by construction, so an empty strip would prove the geometry
+## while showing none of the frame the player complained about. Three rows for two slots because one
+## of them is Routine and the default floor drops it; that is the bar behaving normally.
+func _event_bar_fixture() -> Array:
+	return [
+		{"tick": 0, "kind": "site_discovered", "faction": 0, "label": "Verdant Basin",
+			"detail": "category=settle_site at (58,34)", "seq": 9701},
+		{"tick": 0, "kind": "came_of_age", "faction": 0, "label": "A child came of age in Band 1",
+			"detail": "count=1", "seq": 9702},
+		{"tick": 0, "kind": "tame", "faction": 0, "label": "The aurochs herd has grown tame",
+			"detail": "", "seq": 9703},
+	]
+
 func run(harness) -> void:
 	h = harness
 	await _crafting_states()
@@ -118,6 +209,8 @@ func _crafting_states() -> void:
 	await h._save("crafting_panel_reserved_edges")
 	h._hud.set_reserved_inset(RESERVER_LEFT, SIDE_LEFT, 0.0)
 	h._hud.set_reserved_inset(RESERVER_BOTTOM, SIDE_BOTTOM, 0.0)
+
+	await _event_bar_state()
 
 	# Hand everything back: the panel closed, the roster restored to the reference band.
 	h._hud.close_crafting_panel()
@@ -207,6 +300,33 @@ func _assert_card_fits_the_reserved_room() -> void:
 	# rows.
 	h._assert_hud("crafting — the ledger scrolls inside the bounded card",
 		_scroll_is_live(panel))
+
+## **THE REPORTED COLLISION, JUDGED AS TWO RECTS.** The bar is a `CanvasLayer` above the HUD's, so a
+## card drawn into its band is not merely adjacent to it — the card's header is UNDER it, which is
+## exactly what a screenshot shows and what no reading of the card's own size can. Asked of the
+## global rects for that reason.
+##
+## **Three claims, and the first two are what stop the third being decorative.** A card centred in a
+## tall room clears a top bar for free, so the state proves the collision was live (`_barless_card_top`
+## sat inside the bar's band) and that the two share a horizontal band at all, before claiming the
+## card now clears it. Remove the room's overlay inset and the third fails while the first two stay
+## green — which is the shape a vacuity guard has to have.
+func _assert_card_clears_the_event_bar(bar: EventDockPanel) -> void:
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null or bar._root == null:
+		h._assert_hud("crafting — the event-bar panel is open over a live bar", false)
+		return
+	var card: Rect2 = panel.get_global_rect()
+	var strip: Rect2 = bar._root.get_global_rect()
+	h._assert_hud("crafting — the bar draws where the card WAS (card top %.0f vs bar %.0f..%.0f)"
+			% [_barless_card_top, strip.position.y, strip.end.y],
+		_barless_card_top > 0.0 and _barless_card_top < strip.end.y)
+	h._assert_hud("crafting — the card and the bar share a horizontal band (card %.0f..%.0f vs bar %.0f..%.0f)"
+			% [card.position.x, card.end.x, strip.position.x, strip.end.x],
+		card.position.x < strip.end.x and strip.position.x < card.end.x)
+	h._assert_hud("crafting — the card's top clears the event bar's bottom (card top %.0f vs bar bottom %.0f)"
+			% [card.position.y, strip.end.y],
+		card.position.y >= strip.end.y)
 
 ## Whether the panel's own `ScrollContainer` is scrolling — `fit_to_content` turns it on exactly when
 ## the content did not fit the room it was given.

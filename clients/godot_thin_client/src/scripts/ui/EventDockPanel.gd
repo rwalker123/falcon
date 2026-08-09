@@ -207,6 +207,10 @@ static var config_path_override: String = ""
 ## Top and bottom only.
 const DOCK_EDGES: Array[int] = [SIDE_TOP, SIDE_BOTTOM]
 
+## "No occupancy has been published yet" — a negative depth, which no strip can measure, so the
+## first `_apply_dock_layout` always emits even if the strip happens to be suppressed at zero.
+const OCCUPANCY_UNPUBLISHED := -1.0
+
 # ---- signals ---------------------------------------------------------------
 ## The strip moved to the other horizontal edge (the log's dock chips are the only way this
 ## happens). **This is NOT `reservation_changed` and must never become it** — the dock still reserves
@@ -214,6 +218,17 @@ const DOCK_EDGES: Array[int] = [SIDE_TOP, SIDE_BOTTOM]
 ## edge it just landed on, so `Main` has to recompute `set_edge_offset` for the new edge; without it
 ## a dock chip press moves the bar onto the band panel's edge and straight over the top of it.
 signal dock_changed(edge: int)
+
+## **HOW DEEP THE STRIP IS DRAWN INTO ITS EDGE — a claim about PIXELS COVERED, not about space
+## taken.** Still not `reservation_changed` and still not a step towards becoming one: the map and
+## the HUD go on laying out underneath the bar exactly as they always have, and nothing here enters
+## `Main._reservations`. What this exists for is the one surface that cannot simply be drawn under —
+## a FREE-FLOATING card, which is placed by arithmetic rather than by a container and so has to be
+## told which band of the window is already spoken for (`panel-framework.md` → `room_bounds`).
+## Emitted from `_apply_dock_layout`, the single choke point every input to the strip's geometry
+## already runs through: the edge, the displacement, the row count, expanding, suppressing and the
+## viewport's own resize.
+signal occupancy_changed(edge: int, extent: float)
 
 # ---- state -----------------------------------------------------------------
 var _dock_edge: int = DEFAULT_EDGE
@@ -232,6 +247,12 @@ var _inset_right: float = 0.0
 ## reserver sitting on that edge, pushed by `Main` (`set_edge_offset`). The band panel keeps the
 ## screen edge; the bar sits just past it. See that method.
 var _edge_offset: float = 0.0
+## The last `(edge, extent)` handed to `occupancy_changed`, so the signal fires on a CHANGE rather
+## than on every layout pass. `_apply_dock_layout` runs on a viewport resize and on every preference
+## touch, and each emission re-fits whatever free-floating card is listening.
+## `OCCUPANCY_UNPUBLISHED` is a depth no strip can have, so the first pass always emits.
+var _published_edge: int = DEFAULT_EDGE
+var _published_extent: float = OCCUPANCY_UNPUBLISHED
 ## An unread Alert pins to the leading slot. Opening the log is what marks alerts read — the pin
 ## exists to survive until the player has actually had a chance to look.
 var _alert_seen: bool = true
@@ -1254,6 +1275,29 @@ func _apply_dock_layout() -> void:
 		_root.offset_bottom = -near
 	_order_column()
 	_position_seam()
+	_publish_occupancy()
+
+## **THE BAND OF THE WINDOW THIS STRIP COVERS, MEASURED FROM THE SCREEN EDGE IT IS DOCKED TO.** Its
+## own drawn depth PLUS the displacement that pushed it inboard of a co-edge reserver, because the
+## question a free-floating card asks is "how far in from the edge is clear", and answering with the
+## strip's height alone would leave the card free to sit in the gap the band panel is holding.
+##
+## **A hidden strip covers nothing** — `set_suppressed` runs through `_apply_dock_layout`, so the
+## room grows back the moment the player presses `R`. There is deliberately no "empty" case beside
+## it: the bar keeps its authored height with no events in it (`_bar_height`), because a strip that
+## shrank on a quiet turn would move the map underneath it, so an empty bar still covers its band.
+func occupied_extent() -> float:
+	if _suppressed or _root == null:
+		return 0.0
+	return _edge_offset + _cross_axis_size()
+
+func _publish_occupancy() -> void:
+	var extent := occupied_extent()
+	if _dock_edge == _published_edge and is_equal_approx(extent, _published_extent):
+		return
+	_published_edge = _dock_edge
+	_published_extent = extent
+	occupancy_changed.emit(_dock_edge, extent)
 
 ## THE BAR HUGS THE SCREEN EDGE AND THE LOG OPENS INWARD, on both edges. On a bottom dock the column
 ## therefore reads log-then-bar; on a top dock, bar-then-log. One `move_child` rather than two

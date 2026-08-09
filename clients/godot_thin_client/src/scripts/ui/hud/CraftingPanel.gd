@@ -1015,12 +1015,14 @@ func _amount_text(amount: float) -> String:
 ## The room the card may use. Unlike `BandComposeFloat` this panel is not anchored to another card —
 ## it is its own surface and is centred in what is left.
 ##
-## **"WHAT IS LEFT" IS THE RESERVED-EDGE ROOM, NOT THE RAW VIEWPORT.** Every docked panel reserves a
-## strip of one screen edge and the map and the HUD both live in the remainder; a card measured
-## against the whole window is measured against a rectangle nothing else is using, and it grows over
-## the dock. `AutoSizingPanel.room_bounds` is the seam — the controller hands the panel the HUD's
-## `LayoutRoot`, which the registry has already inset on all four sides — and `available_room` applies
-## this panel's own clearance to it.
+## **"WHAT IS LEFT" IS THE ROOM NOTHING ELSE HAS CLAIMED, NOT THE RAW VIEWPORT.** Two different
+## neighbours can take it away. A docked panel RESERVES a strip of one screen edge and the map and
+## the HUD both live in the remainder; the event bar reserves nothing but is DRAWN over a band of
+## its edge. A card measured against the whole window grows over the first and under the second —
+## both were reported in play, the second as the panel's own title drawn through a top-docked bar.
+## `AutoSizingPanel.room_bounds` is the one seam for both: the controller hands the panel the HUD's
+## `FloatingRoom`, which is `LayoutRoot` (inset by every reservation) pulled further off every
+## overlay, and `available_room` applies this panel's own clearance to it.
 func _room() -> Rect2:
 	return available_room(HudCraftingVocab.VIEWPORT_MARGIN)
 

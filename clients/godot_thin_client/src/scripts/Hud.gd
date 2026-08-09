@@ -103,6 +103,12 @@ var _build_label: Label = null
 var _server_build: String = "?"
 
 @onready var layout_root: Control = $LayoutRoot
+## **THE ROOM A FREE-FLOATING CARD MAY USE** — `LayoutRoot`'s rect pulled further off any surface
+## that OVERLAYS an edge without reserving it (`set_overlay_inset`). It holds no children and draws
+## nothing; it exists to BE a rect, so `AutoSizingPanel.room_bounds` goes on being one Control and a
+## card's placement and its height fit still fall out of one number. Two rects rather than one
+## because the HUD's own layout must NOT move for an overlay — that is what "overlay" means.
+@onready var floating_room: Control = $FloatingRoom
 @onready var left_dock_region: MarginContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock
 @onready var right_dock_region: MarginContainer = $LayoutRoot/RootColumn/ContentRow/RightDock
 @onready var bottom_bar: HBoxContainer = $LayoutRoot/RootColumn/BottomBar
@@ -283,6 +289,12 @@ var right_dock: PanelDock
 # registers a (edge, size) contribution keyed by a StringName id; the whole HUD
 # insets by the summed per-edge totals.
 var _reservations: Dictionary = {}
+## **SURFACES THAT COVER A BAND OF THE WINDOW WITHOUT RESERVING IT** — the event dock today, keyed by
+## the same StringName id shape as `_reservations` and holding the same `{edge, size}`. They change
+## NOTHING about the HUD's own layout (that is what makes them overlays), and exist so a
+## FREE-FLOATING card — placed by arithmetic instead of by a container — can be told which band is
+## already covered. See `set_overlay_inset`.
+var _overlays: Dictionary = {}
 # ---- The Telling (docs/plan_the_telling.md) --------------------------------
 # The turn-orb / attention / fork cluster (HUD decomposition Phase 1b, docs/plan_hud_decomposition.md).
 # The pending forks, stance axes, the cached `_band_attention` band half, the auto-opened set, and the
@@ -329,6 +341,16 @@ var _inset_left: float = 0.0
 var _inset_right: float = 0.0
 var _inset_top: float = 0.0
 var _inset_bottom: float = 0.0
+## The per-edge depths `_overlays` covers, measured from each screen edge. **A MAXIMUM, where the
+## reservations above are a SUM** — an overlay publishes how far in from the edge it is drawn, which
+## already includes whatever displaced it inboard, so adding two would double-count the strip they
+## share. Only the two horizontal edges are fed today (the event dock is the only overlay and it
+## docks top or bottom), and the other two stay at zero rather than being left out, so a future
+## overlay on a side edge needs no new arithmetic here.
+var _overlay_left: float = 0.0
+var _overlay_right: float = 0.0
+var _overlay_top: float = 0.0
+var _overlay_bottom: float = 0.0
 ## The `MarginContainer` theme constant `set_right_column_bottom_clearance` writes, and a sentinel no
 ## margin can hold, so "not captured yet" is distinguishable from a genuinely zero authored margin.
 const RIGHT_DOCK_MARGIN_BOTTOM := &"margin_bottom"
@@ -437,12 +459,13 @@ func _ready() -> void:
     # `RefCounted` cannot `add_child` — the `TurnOrbController` pattern). Its two command signals relay
     # onto HudLayer's, like every other controller's; the two controllers are mediated here and never
     # hold each other.
-    # `layout_root` rides along as the panel's room: the reserved-edge registry insets that node by
-    # every docked panel's strip (`set_reserved_inset` below), so a free-floating card bounded by it
-    # is bounded by the same rect the map and the rest of the HUD are drawn in — which the raw
-    # viewport is not, once anything is docked.
+    # `floating_room` rides along as the panel's room: it is `LayoutRoot`'s rect — which the
+    # reserved-edge registry insets by every docked panel's strip — pulled further off anything that
+    # merely OVERLAYS an edge (`set_overlay_inset`, the event bar). So the card is bounded both by
+    # what the map and the HUD are drawn in and by what is drawn OVER them, neither of which the raw
+    # viewport describes.
     _crafting = CraftingPanelController.new()
-    _crafting.setup(self, _band_labor, layout_root)
+    _crafting.setup(self, _band_labor, floating_room)
     _crafting.set_bench_requested.connect(
         func(payload: Dictionary) -> void: set_bench_requested.emit(payload))
     _crafting.bench_crew_requested.connect(
@@ -974,11 +997,58 @@ func set_reserved_inset(id: StringName, edge: int, size: float) -> void:
     else:
         _reservations[id] = {"edge": edge, "size": size}
     _recompute_insets()
+    _apply_room_rects()
+
+## **A SURFACE THAT COVERS PIXELS WITHOUT TAKING SPACE** — the twin of `set_reserved_inset`, for the
+## one kind of neighbour that one cannot express. The event dock overlays the map by design
+## (`event-dock.md`): the HUD and the map go on laying out underneath it, so it must NOT inset
+## `LayoutRoot` — doing that would push the whole layout down and undo a decision that has nothing to
+## do with whoever is colliding with the bar. But a FREE-FLOATING card is not laid out by a
+## container; it places itself by arithmetic against a rect, and a rect that ignores the bar puts the
+## card's header underneath it (reported in play: the Materials & Crafting title drawn through a
+## top-docked event bar).
+##
+## So the overlay publishes what it covers and only the FREE-FLOATING ROOM shrinks. `size` is the
+## depth covered measured from the screen `edge`, absolute — it already includes any displacement
+## that pushed the surface inboard — and `size <= 0` releases the overlay, which is what a hidden one
+## publishes. Re-registering the same `id` on a different edge MOVES it, exactly as a reservation
+## moves, so a bar that flips top→bottom frees the edge it left.
+func set_overlay_inset(id: StringName, edge: int, size: float) -> void:
+    if size <= 0.0:
+        if not _overlays.has(id):
+            return
+        _overlays.erase(id)
+    else:
+        var held: Dictionary = _overlays.get(id, {})
+        if int(held.get("edge", -1)) == edge and is_equal_approx(float(held.get("size", 0.0)), size):
+            return
+        _overlays[id] = {"edge": edge, "size": size}
+    _recompute_overlays()
+    _apply_room_rects()
+    # A card already open was placed against the OLD room, and nothing else will move it: the bar can
+    # appear, flip edge, grow a row or be hidden with `R` at any time, none of which is a snapshot or
+    # a reservation. Re-fitting here is what makes the room a live bound rather than an opening-time
+    # one.
+    if _crafting != null:
+        _crafting.refit_room()
+
+## Write the two rects every other surface measures itself against: `LayoutRoot`, which the docked
+## reservations inset and the HUD lays out inside, and `FloatingRoom`, which is that rect pulled
+## further off any OVERLAY. One writer, so the two can never be inset from different registries.
+func _apply_room_rects() -> void:
     if layout_root != null:
         layout_root.offset_left = _inset_left
         layout_root.offset_top = _inset_top
         layout_root.offset_right = -_inset_right
         layout_root.offset_bottom = -_inset_bottom
+    if floating_room != null:
+        # `max`, not `+`: both terms are depths from the SAME screen edge, so a reserved strip and an
+        # overlay drawn inboard of it overlap rather than stack, and summing them would hold clear a
+        # band twice the size of anything on screen.
+        floating_room.offset_left = maxf(_inset_left, _overlay_left)
+        floating_room.offset_top = maxf(_inset_top, _overlay_top)
+        floating_room.offset_right = -maxf(_inset_right, _overlay_right)
+        floating_room.offset_bottom = -maxf(_inset_bottom, _overlay_bottom)
 
 ## The RIGHT dock's own bottom clearance, in pixels — how far above `ContentRow`'s bottom edge the
 ## right column's CARDS must stop. `Main` pushes it; `size <= 0` releases it.
@@ -1036,6 +1106,26 @@ func _recompute_insets() -> void:
                 _inset_right += size
             SIDE_BOTTOM:
                 _inset_bottom += size
+
+## Reduce the registered overlays to the deepest one per edge. See `_overlay_left` for why this is a
+## maximum where `_recompute_insets` is a sum.
+func _recompute_overlays() -> void:
+    _overlay_left = 0.0
+    _overlay_right = 0.0
+    _overlay_top = 0.0
+    _overlay_bottom = 0.0
+    for overlay in _overlays.values():
+        var size: float = float(overlay["size"])
+        match int(overlay["edge"]):
+            SIDE_LEFT:
+                _overlay_left = maxf(_overlay_left, size)
+            SIDE_TOP:
+                _overlay_top = maxf(_overlay_top, size)
+            SIDE_RIGHT:
+                _overlay_right = maxf(_overlay_right, size)
+            SIDE_BOTTOM:
+                _overlay_bottom = maxf(_overlay_bottom, size)
+
 ## WORLD BOUNDARY (`Main._reset_per_world_state`): the snapshot about to be applied describes a
 ## DIFFERENT world, so every HUD cache keyed to the old one is dropped. Coordinator ONLY — each
 ## module resets ITSELF; nothing but delegation belongs here.

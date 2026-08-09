@@ -74,10 +74,40 @@ Inspector reserves its own edge, so it must be measured against the whole window
 handed a room it cannot fit does not overflow: `fit_to_content` turns its internal scroll on
 exactly when the content did not fit.
 
-**It does not clear an OVERLAY.** The event dock reserves nothing by design (it overlays the
-map — `event-dock.md`), so it is not in the registry and a card bounded by `LayoutRoot` can
-still share a band with it. A free-floating card that must clear the bar needs something the
-registry does not carry today.
+### AN OVERLAY IS A SECOND KIND OF NEIGHBOUR — `Hud.set_overlay_inset`
+
+The event dock reserves nothing by design (it overlays the map — `event-dock.md`), so it is
+not in the reservation registry and a card bounded by `LayoutRoot` shares a band with it: the
+Materials & Crafting header was reported drawn *underneath* a top-docked event bar.
+
+**A docked panel is drawn under the bar by its container; a free-floating card is drawn
+through it**, because it places itself by arithmetic against a rect. So the fix is a rect and
+not a reservation — making the bar a reserver would push the whole map layout down and undo a
+decision that has nothing to do with whoever is colliding with it.
+
+`Hud.set_overlay_inset(id, edge, size)` is the registry for it, the same `{edge, size}` shape
+keyed by the same StringName id, and it writes a SECOND node: **`FloatingRoom`**, which is
+`LayoutRoot`'s rect pulled further off every overlay. `LayoutRoot` is untouched, so the HUD's
+own layout does not move; free-floating cards take `FloatingRoom` as their `room_bounds` and
+get both bounds from one rect.
+
+Three properties it is easy to get wrong:
+
+- **`size` is ABSOLUTE — the depth covered measured from the screen edge**, already including
+  whatever displacement pushed the surface inboard. The per-edge totals are therefore a
+  **maximum**, where reservations are a **sum**: a reserved strip and an overlay drawn inboard
+  of it overlap rather than stack.
+- **`size <= 0` releases it, which is what a hidden surface publishes.** The event dock's
+  `occupied_extent()` answers 0 while suppressed; it does NOT shrink when empty, because its
+  height is content-independent by design.
+- **The room must re-fit when the overlay moves, not only when a card opens.** The bar is
+  toggleable (`R`), flips edge, and grows a row on a preference change — all under an
+  already-open card. `set_overlay_inset` therefore calls `CraftingPanelController.refit_room()`,
+  which re-fits (never re-renders — the payload is unchanged and a rebuild would lose the
+  player's scroll position). `EventDockPanel` publishes `occupancy_changed(edge, extent)` from
+  `_apply_dock_layout`, the one choke point every input to its geometry already runs through,
+  and `Main` relays it; the initial value is seeded by hand in `_connect_event_dock`, the dock's
+  own `_ready` having emitted before the parent could connect.
 
 **A card pinned narrower than its content does not fail; it lies.** The inner
 `PanelContainer` — a real Container — grows out of the card and draws the background at the
@@ -96,7 +126,7 @@ assertions that pin it are in `labor-ui.md` → "THE HEIGHT CHROME IS THE HEADER
 
 | Script | Purpose |
 |--------|---------|
-| `ui/AutoSizingPanel.gd` | Shared helper for panels that expand to fit content — `fit_to_content` (height, ceiling `max_height`) and `fit_width` (width, ceiling `max_width`), plus `available_room(margin)`, all measured against `room_bounds` where one was set and against the raw viewport where it was not. Callers: the Inspector, `ui/hud/BandComposeFloat.gd` and `ui/hud/CraftingPanel.gd` (the one that sets `room_bounds`) |
+| `ui/AutoSizingPanel.gd` | Shared helper for panels that expand to fit content — `fit_to_content` (height, ceiling `max_height`) and `fit_width` (width, ceiling `max_width`), plus `available_room(margin)`, all measured against `room_bounds` where one was set and against the raw viewport where it was not. Callers: the Inspector, `ui/hud/BandComposeFloat.gd` and `ui/hud/CraftingPanel.gd` (the one that sets `room_bounds`, to the HUD's `FloatingRoom`) |
 ## HUD Panel Framework (Docked PanelCards)
 
 The HUD (`HudLayer.tscn`) owns the screen regions with one layout authority — a
