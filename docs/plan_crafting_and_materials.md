@@ -24,8 +24,8 @@ three.
 
 ```json
 // materials.json
-"characteristic_bands": [ { "name": "low",  "from": 0.00 }, { "name": "fair", "from": 0.30 },
-                          { "name": "high", "from": 0.55 }, { "name": "top",  "from": 0.80 } ],
+"characteristic_bands": [ { "name": "poor", "from": 0.00 }, { "name": "fair",      "from": 0.30 },
+                          { "name": "good", "from": 0.55 }, { "name": "excellent", "from": 0.80 } ],
 
 "hide":   { "craft": "tanning",       "characteristics": ["toughness", "suppleness"], "hand_workable": true  },
 "fibre":  { "craft": "weaving",       "characteristics": ["fineness", "strength"],    "hand_workable": true  },
@@ -42,10 +42,14 @@ three.
 
 ### A characteristic VECTOR, never a quality scalar
 
-Mammoth hide is `toughness top · suppleness low`; a hare pelt is the reverse. A sled reads toughness
-and cordage reads suppleness, so those are not two rungs of a quality ladder — **there is no "best"
-hide**, only the right one for the job, and spending the mammoth hide on a basket is a mistake the
-player can make. A single quality scalar would rank them, name a winner and delete that decision.
+Mammoth hide is `toughness: excellent · suppleness: poor`; a hare pelt is the reverse. A sled reads
+toughness and cordage reads suppleness, so those are not two rungs of a quality ladder — **there is no
+"best" hide**, only the right one for the job, and spending the mammoth hide on a basket is a mistake
+the player can make. A single quality scalar would rank them, name a winner and delete that decision.
+
+**The rating belongs to the AXIS, not to the material.** "Excellent toughness" says the toughness is
+excellent; it makes no claim about the hide. That is what lets ordinary quality words coexist with
+there being no best hide.
 
 ### Varieties are NAMING, not materials
 
@@ -62,16 +66,16 @@ temperature ceiling decides which varieties are reachable.
 ### Bands: categories on screen, exact numbers underneath
 
 A source states an **exact** reading (`toughness 0.55`). The panel and the recipes speak in **four
-bands** — `low · fair · high · top`. Three consequences, and all three are load-bearing:
+bands** — `poor · fair · good · excellent`. Three consequences, and all three are load-bearing:
 
 1. **It is the merge rule.** Two arrivals landing in the same band become one batch, so a band hunting
    deer for two hundred turns holds one pile of hide rather than two hundred. Without this the store
    grows without bound.
 2. **The exact value survives the merge** as the batch's weighted average, and crafting resolves the
-   output's quality from it — so two `high` hides are not interchangeable, and a recipe wanting *high
+   output's quality from it — so two `good` hides are not interchangeable, and a recipe wanting *good
    toughness* pays out differently for `.58` than for `.79`.
-3. **A band name says how MUCH of the characteristic, never how good the material is.** `tough top ·
-   supple low` is a mammoth hide: right for a sled, wrong for cordage.
+3. **The band rates the AXIS, not the material** (see above). `tough: excellent · supple: poor` is a
+   mammoth hide: right for a sled, wrong for cordage.
 
 ---
 
