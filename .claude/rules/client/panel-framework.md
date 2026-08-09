@@ -97,17 +97,55 @@ Three properties it is easy to get wrong:
   whatever displacement pushed the surface inboard. The per-edge totals are therefore a
   **maximum**, where reservations are a **sum**: a reserved strip and an overlay drawn inboard
   of it overlap rather than stack.
+
+  **On a SHARED edge the maximum rests on that absoluteness and on nothing else**, so it is worth
+  knowing what makes it true. With the band panel and the event bar both on `SIDE_BOTTOM`, the bar
+  publishes `_edge_offset + _cross_axis_size()` and `_edge_offset` is
+  `Main._update_event_dock_edge_offset`'s sum over every reserver on that edge — the band panel
+  included, since it keeps its `_reservations` entry whether or not the HUD yields. So the deeper
+  term **contains** the shallower and the maximum drops nothing. Take the offset out of
+  `occupied_extent()` and it stops being true immediately: the panel's 335 outranks the bar's 66,
+  the room's bottom becomes 335, and the card is drawn straight through the bar
+  (`crafting_panel_co_edge_bottom` fails on exactly that, at `card bottom 805 vs bar top 751`).
+  **An overlay whose `size` is its own height rather than its depth from the edge cannot be
+  registered here** — it must publish the absolute figure or the max will lose it.
 - **`size <= 0` releases it, which is what a hidden surface publishes.** The event dock's
   `occupied_extent()` answers 0 while suppressed; it does NOT shrink when empty, because its
   height is content-independent by design.
-- **The room must re-fit when the overlay moves, not only when a card opens.** The bar is
-  toggleable (`R`), flips edge, and grows a row on a preference change — all under an
-  already-open card. `set_overlay_inset` therefore calls `CraftingPanelController.refit_room()`,
-  which re-fits (never re-renders — the payload is unchanged and a rebuild would lose the
-  player's scroll position). `EventDockPanel` publishes `occupancy_changed(edge, extent)` from
-  `_apply_dock_layout`, the one choke point every input to its geometry already runs through,
-  and `Main` relays it; the initial value is seeded by hand in `_connect_event_dock`, the dock's
-  own `_ready` having emitted before the parent could connect.
+- **The room must re-fit when EITHER registry moves, not only when a card opens.** The bar is
+  toggleable (`R`), flips edge, and grows a row on a preference change; a docked panel arrives,
+  changes edge, collapses and is released — all under an already-open card, and none of them is a
+  snapshot. So `set_reserved_inset` and `set_overlay_inset` both end in `Hud._refit_floating_cards`
+  → `CraftingPanelController.refit_room()`, which re-fits (never re-renders — the payload is
+  unchanged and a rebuild would lose the player's scroll position). **The reserved half is the one
+  that reads as optional and is not**: a card open while the Band/City panel docked stayed fitted to
+  a room that no longer existed and was sliced mid-row by the panel. `EventDockPanel` publishes
+  `occupancy_changed(edge, extent)` from `_apply_dock_layout`, the one choke point every input to
+  its geometry already runs through, and `Main` relays it; the initial value is seeded by hand in
+  `_connect_event_dock`, the dock's own `_ready` having emitted before the parent could connect.
+
+### THE TWO REGISTRIES ARE COMPLEMENTS — `Main.push_hud_strip`
+
+A reserver the HUD does **not** yield to is not a reserver that has gone away; it is a surface that
+covers pixels without taking space, which is the paragraph above reached from the opposite
+direction. `Main._reserver_overlays_hud` withholds a horizontal band dock's strip from the HUD
+(see "Reserved-edge docking" and `band-city-panel.md` for what that buys), and that exemption is
+about the HUD's own **containers**: they go on laying out through the strip and the band card is
+simply drawn over them. A free-floating card is the one surface that is not — it places itself by
+arithmetic against `FloatingRoom` — so with neither registry naming the strip it is drawn *through*
+the panel.
+
+**`Main.push_hud_strip(hud, id, edge, size, overlays)` is therefore the one publisher, and it
+charges exactly one of the two.** `overlays` is `band_dock_overlays_hud`'s verdict; this is what the
+verdict MEANS to the HUD. Both are `static` and node-free because the offline harnesses fan a
+reservation out by hand, and a harness publishing half of it renders a card the live client bounds —
+which is also the reason to call it rather than restate it (`band_panel_preview`, `crafting_bench`
+and `tile_panel` all do).
+
+The depth published to the overlay registry is absolute from the screen edge, as that registry
+requires: only a HORIZONTAL band dock reaches the overlay branch, and the only reservers that could
+displace one inboard (`RESERVER_PRIORITY`) are the two LEFT-edge dev surfaces, so a horizontal
+dock's own `_edge_offset` is 0 whenever a size is published this way.
 
 **A card pinned narrower than its content does not fail; it lies.** The inner
 `PanelContainer` — a real Container — grows out of the card and draws the background at the

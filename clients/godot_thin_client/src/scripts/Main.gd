@@ -1335,11 +1335,9 @@ func _apply_reservation(id: StringName, edge: int, size: float) -> void:
     # band panel keeps its `_reservations` entry either way, which is what still displaces the event dock
     # past it.
     var map_size: float = 0.0 if _reserver_overlays_map(id, edge) else size
-    var hud_size: float = 0.0 if _reserver_overlays_hud(id, edge, size) else size
     if map_view != null and map_view.has_method("set_reserved_inset"):
         map_view.call("set_reserved_inset", id, edge, map_size)
-    if hud != null and hud.has_method("set_reserved_inset"):
-        hud.call("set_reserved_inset", id, edge, hud_size)
+    push_hud_strip(hud, id, edge, size, _reserver_overlays_hud(id, edge, size))
     # A card sharing its strip with the HUD must be told what to keep clear of.
     _update_band_panel_lateral_bounds()
     # …and the HUD column that shares the strip's TRAILING corner with the parked chrome must be told
@@ -1449,6 +1447,37 @@ static func band_dock_overlays_hud(edge: int, size: float, hud_layer: Node, pane
         float(hud_layer.call("left_column_ceiling")),
         float(hud_layer.call("right_column_ceiling")),
         float(hud_layer.call("bottom_chrome_rail_width", edge, size))))
+
+## **ONE RESERVER'S STRIP, PUBLISHED TO THE HUD ACROSS BOTH REGISTRIES — AND THEY ARE COMPLEMENTS.**
+## `overlays` is `band_dock_overlays_hud`'s verdict; this is what that verdict MEANS to the HUD, and
+## it is a `static` beside it for the same reason that one is: the offline harnesses fan a reservation
+## out by hand, and a harness that publishes half of this is a harness that renders a card the live
+## client bounds (and vice versa).
+##
+## - **`set_reserved_inset`** — space TAKEN. `LayoutRoot` shrinks, so the HUD's containers reflow
+##   beside the strip and every docked card is drawn under it for free.
+## - **`set_overlay_inset`** — pixels COVERED. Withheld from the first registry, the strip is still
+##   there: the band card stands in it and the HUD's containers simply draw through it, which is the
+##   whole content of the exemption. But a FREE-FLOATING card is not laid out by a container — it
+##   places itself by arithmetic against `FloatingRoom` — so it is the one surface that is not drawn
+##   underneath, and with neither registry naming the strip it is drawn straight THROUGH the panel.
+##   Reported in play: the Materials & Crafting ledger sliced mid-row by a BOTTOM-docked Band/City
+##   panel. This is the event bar's case reached from the opposite direction, so it takes the event
+##   bar's registry.
+##
+## Exactly one of the two is ever charged, so a strip can never be counted twice, and the rule stays
+## `band_dock_overlays_hud`'s alone. **The published depth is absolute from the screen edge, as the
+## overlay registry requires**: only a HORIZONTAL band dock ever reaches the overlay branch, and the
+## sole reservers that could displace one inboard (`RESERVER_PRIORITY`) are the two LEFT-edge dev
+## surfaces, so a horizontal dock's `_edge_offset` is 0 whenever `size` is published here.
+static func push_hud_strip(hud_layer: Node, id: StringName, edge: int, size: float,
+        overlays: bool) -> void:
+    if hud_layer == null:
+        return
+    if hud_layer.has_method("set_reserved_inset"):
+        hud_layer.call("set_reserved_inset", id, edge, 0.0 if overlays else size)
+    if hud_layer.has_method("set_overlay_inset"):
+        hud_layer.call("set_overlay_inset", id, edge, size if overlays else 0.0)
 
 ## Tell the Band panel which HUD columns its card must keep clear of.
 ##

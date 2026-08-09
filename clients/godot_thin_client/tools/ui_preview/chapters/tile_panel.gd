@@ -988,9 +988,12 @@ func run(harness) -> void:
 	# behaviour-neutral at `SIDE_RIGHT`; it is routed through `Main`'s rule anyway so that re-docking
 	# this panel horizontally some day cannot leave the harness fanning out by a rule the client
 	# stopped using.
+	# Both registries, through `Main`'s own publisher — the reserved strip and its complement, the
+	# pixels an unyielded strip still covers (`Main.push_hud_strip`). Behaviour-neutral at `SIDE_RIGHT`
+	# for the same reason the verdict is, and routed the same way so neither can go stale here.
 	tile_panel_band_panel.reservation_changed.connect(func(edge: int, size: float):
-		h._hud.set_reserved_inset(&"band_panel", edge,
-			0.0 if MAIN_SCRIPT.band_dock_overlays_hud(edge, size, h._hud, tile_panel_band_panel) else size))
+		MAIN_SCRIPT.push_hud_strip(h._hud, &"band_panel", edge, size,
+			MAIN_SCRIPT.band_dock_overlays_hud(edge, size, h._hud, tile_panel_band_panel)))
 	tile_panel_band_panel.set_dock(SIDE_RIGHT)
 	# The panel's narrow shell shows ONE zone, and its prefs are a fresh profile (see the isolation
 	# block in `_ready`), so it opens on `DEFAULT_TAB` = work. This frame is about where the band

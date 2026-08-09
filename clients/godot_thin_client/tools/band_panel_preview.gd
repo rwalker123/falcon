@@ -759,8 +759,12 @@ func _ready() -> void:
 	# stuck; it does not any more, which is `Main`'s live behaviour and not a harness artifact.)
 	_reservation_listener = func(edge: int, size: float):
 		var hud_overlaid: bool = MAIN_SCRIPT.band_dock_overlays_hud(edge, size, _hud, _panel)
-		if _hud.has_method("set_reserved_inset"):
-			_hud.set_reserved_inset(&"band_panel", edge, 0.0 if hud_overlaid else size)
+		# **BOTH REGISTRIES, THROUGH `Main`'S OWN PUBLISHER.** An edge the HUD does not yield is still
+		# an edge the card COVERS, and a free-floating card placed by arithmetic against `FloatingRoom`
+		# is the one surface that is not simply drawn underneath — so the withheld reservation is
+		# published as an OVERLAY instead. Nothing in this harness reads that rect, but a mirror that
+		# fans out half of what `Main` does is a mirror that will be trusted wrongly.
+		MAIN_SCRIPT.push_hud_strip(_hud, &"band_panel", edge, size, hud_overlaid)
 		# The RIGHT column's own clearance, `Main._update_right_column_bottom_clearance`'s half: where
 		# the HUD keeps a BOTTOM strip, the parked chrome owns that strip's trailing corner and the
 		# right dock's cards must stop above it. Fanned out here for the same reason the inset is —

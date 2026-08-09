@@ -998,6 +998,7 @@ func set_reserved_inset(id: StringName, edge: int, size: float) -> void:
         _reservations[id] = {"edge": edge, "size": size}
     _recompute_insets()
     _apply_room_rects()
+    _refit_floating_cards()
 
 ## **A SURFACE THAT COVERS PIXELS WITHOUT TAKING SPACE** — the twin of `set_reserved_inset`, for the
 ## one kind of neighbour that one cannot express. The event dock overlays the map by design
@@ -1025,10 +1026,18 @@ func set_overlay_inset(id: StringName, edge: int, size: float) -> void:
         _overlays[id] = {"edge": edge, "size": size}
     _recompute_overlays()
     _apply_room_rects()
-    # A card already open was placed against the OLD room, and nothing else will move it: the bar can
-    # appear, flip edge, grow a row or be hidden with `R` at any time, none of which is a snapshot or
-    # a reservation. Re-fitting here is what makes the room a live bound rather than an opening-time
-    # one.
+    _refit_floating_cards()
+
+## **A ROOM THAT CHANGED SHAPE UNDER AN OPEN CARD.** A card already open was placed and sized against
+## the OLD rect, and nothing else will move it: a panel can dock, change edge, collapse or be
+## released, and the event bar can appear, flip edge, grow a row or be hidden with `R`, at any time —
+## none of which is a snapshot. So BOTH writers of `FloatingRoom` end here, and that symmetry is the
+## point: the reserved half was missing it, so a card left open while the Band/City panel docked
+## stayed fitted to a room that no longer existed and was sliced mid-row by the panel.
+##
+## **Re-FIT, never re-render.** The payload has not changed, and rebuilding the ledger to answer a
+## question about geometry would throw away the player's scroll position.
+func _refit_floating_cards() -> void:
     if _crafting != null:
         _crafting.refit_room()
 

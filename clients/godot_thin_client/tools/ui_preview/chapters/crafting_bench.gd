@@ -17,6 +17,10 @@ extends RefCounted
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
+## `Main`'s reservation rules, borrowed rather than restated — see `_push_band_dock`. `Main` itself is
+## never instanced here; only its `static` predicate is asked.
+const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
+
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
 
@@ -156,6 +160,240 @@ func _event_bar_fixture() -> Array:
 			"detail": "", "seq": 9703},
 	]
 
+# ---- states 6-8: the room a real DOCKED PANEL leaves ---------------------------------------------
+
+## The band panel's key in BOTH of the HUD's registries — `Main.BAND_PANEL_RESERVER`, restated as a
+## const so the harness and the client cannot end up pushing and releasing different keys.
+const BAND_PANEL_RESERVER := &"band_panel"
+
+## The event dock's key in the OVERLAY registry, kept equal to `Main.EVENT_DOCK_OVERLAY` for the same
+## reason. It is the second surface the co-edge state stands up.
+const CO_EDGE_BAR_ROWS := 2
+
+## Two rects computed from the same offsets can differ by a float ULP, so every edge comparison below
+## carries the tolerance `event_dock`'s own co-edge block uses.
+const DOCK_RECT_EPSILON := 0.5
+
+## **A CARD SHRUNK TO NOTHING CLEARS EVERY PANEL THERE IS**, so the clearance claim is never made
+## alone: beside it sits "and it is USING the room", i.e. the card's height is the room's to within
+## this. `fit_to_content` clamps to exactly the room when the content overflows, so the tolerance is
+## a float one and not a budget.
+const ROOM_FILL_EPSILON := 0.5
+
+## Fan the panel's reservation onto the HUD exactly as `Main._apply_reservation` does — BOTH
+## registries, because on an edge the HUD does not yield, the strip is not a reservation at all: it is
+## a surface that covers pixels without taking space, the event bar's case reached from the other
+## side, and `FloatingRoom` is the only rect that must know.
+##
+## **BOTH HALVES ARE CALLED, NEITHER IS RESTATED**, which is what makes the states below a test of the
+## client rather than of this file: `band_dock_overlays_hud` is the verdict and `push_hud_strip` is
+## what the verdict means to the HUD, and both are `static` and node-free for exactly this. A harness
+## spelling either one out is how one ends up green while testing a rule the client no longer has.
+func _push_band_dock(panel: BandCityPanel, edge: int, size: float) -> void:
+	MAIN_SCRIPT.push_hud_strip(h._hud, BAND_PANEL_RESERVER, edge, size,
+		MAIN_SCRIPT.band_dock_overlays_hud(edge, size, h._hud, panel))
+
+## The card's own room: `FloatingRoom` with this panel's clearance applied, i.e. the rect
+## `CraftingPanel._room()` answers. Restated from the HUD's node rather than read off the panel, so
+## the claims below are made against the room the HUD published and not against the panel's opinion
+## of it.
+func _card_room() -> Rect2:
+	return h._hud.floating_room.get_global_rect().grow(-HudCraftingVocab.VIEWPORT_MARGIN)
+
+## **THE THREE DOCK CONFIGURATIONS.** Every one of them is a room that changed shape while the card
+## was already open, which is the seam the reserved registry never reached: `set_overlay_inset` re-fit
+## an open card and `set_reserved_inset` did not, so a card open while a panel docked, moved or
+## collapsed stayed fitted to a room that no longer existed. Reported in play as the ledger sliced
+## mid-row through `Wayfinding gear` by a horizontally-docked Band/City panel.
+##
+## The panel is a REAL `BandCityPanel`, never a literal depth: the reservation, the collapse and the
+## HUD's yield verdict are all its own answers, and a literal would prove nothing about two rects
+## actually clearing each other.
+func _band_dock_states() -> void:
+	var panel: BandCityPanel = h.BAND_CITY_PANEL_SCENE.instantiate()
+	h.add_child(panel)
+	await h.get_tree().process_frame
+	panel.reservation_changed.connect(func(edge: int, size: float) -> void:
+		_push_band_dock(panel, edge, size))
+	# The HUD's bottom chrome parks into the card's own rail on a BOTTOM dock, and `Main` wires that
+	# as a SECOND listener on the same signal. It is load-bearing here rather than cosmetic:
+	# `band_dock_overlays_hud` asks whether the chrome has left the strip before it lets the HUD keep
+	# it, so a harness that never reflowed would be testing the yielding branch instead.
+	h._hud.set_band_city_panel(panel)
+	panel.reservation_changed.connect(Callable(h._hud, "reflow_dock_row"))
+	panel.set_active_tab(BandCityPanel.ZONE_BAND)
+	h._hud.update_band_alerts([_crafting_band()])
+	panel.set_dock(SIDE_BOTTOM)
+	_push_band_dock(panel, panel.get_dock(), panel.current_reservation_size())
+	h._hud.reflow_dock_row(panel.get_dock(), panel.current_reservation_size())
+	await h._settle()
+
+	# **STATE 6 — THE PANEL DOCKED HORIZONTALLY, which the reservation registry cannot see.** The card
+	# is opened AFTER the dock so this frame is the placement rather than the re-fit; states 7 and 8
+	# move the room under it.
+	h._hud.open_crafting_panel(_crafting_band())
+	await h._settle()
+	_assert_card_fits_the_band_dock(panel, "BOTTOM", true, true)
+	await h._save("crafting_panel_band_dock_bottom")
+
+	# **STATE 7 — THE BAR AND THE PANEL ON ONE EDGE.** `FloatingRoom`'s per-edge total is a MAXIMUM
+	# where a reservation is a SUM, on the reasoning that both terms are absolute depths from the same
+	# screen edge. On a shared edge that reasoning rests on something specific: the bar publishes
+	# `_edge_offset + cross`, and `_edge_offset` is the sum of every reserver on its edge — the band
+	# panel included, since it keeps its `_reservations` entry whether or not the HUD yields. So the
+	# deeper term CONTAINS the shallower and the max loses nothing. Asserted as arithmetic AND as two
+	# rects, because the arithmetic is the claim and the rects are what the player sees.
+	var bar: EventDockPanel = EVENT_DOCK_SCENE.instantiate()
+	h.add_child(bar)
+	await h.get_tree().process_frame
+	bar.occupancy_changed.connect(
+		func(edge: int, extent: float) -> void:
+			h._hud.set_overlay_inset(EVENT_DOCK_OVERLAY, edge, extent))
+	bar.set_dock(SIDE_BOTTOM)
+	bar.set_recent_count(CO_EDGE_BAR_ROWS)
+	bar.set_detail_level(HudEventVocab.DEFAULT_DETAIL_LEVEL)
+	for channel in HudEventVocab.CHANNEL_ORDER:
+		bar.set_channel_enabled(String(channel), true)
+	bar.set_perpendicular_insets(h._hud.left_column_width(), h._hud.right_column_width())
+	bar.ingest_events(_event_bar_fixture())
+	# The bar is the innermost thing on its edge by construction, so it is displaced past everything
+	# reserving that edge — `Main._update_event_dock_edge_offset`'s sum, with no priority test.
+	bar.set_edge_offset(panel.current_reservation_size())
+	h._hud.set_overlay_inset(EVENT_DOCK_OVERLAY, bar.get_dock(), bar.occupied_extent())
+	await h._settle()
+	_assert_card_clears_both_surfaces(panel, bar)
+	await h._save("crafting_panel_co_edge_bottom")
+	h._hud.set_overlay_inset(EVENT_DOCK_OVERLAY, bar.get_dock(), 0.0)
+	bar.queue_free()
+	await h.get_tree().process_frame
+
+	# **STATE 8 — COLLAPSED WHILE THE CARD IS OPEN.** A railed panel reserves 46 instead of ~360, so
+	# the room GROWS under an open card — the direction a re-fit that only ever shrank would pass, and
+	# the one a card left at its previous size fails by leaving a band of room unused.
+	var open_card_height: float = _crafting_card_rect().size.y
+	panel.set_collapsed(true)
+	await h._settle()
+	# A collapsed panel cannot pay for the HUD's exemption, so this configuration comes back through
+	# the RESERVED registry — which is what makes it the state that exercises the other half of the
+	# fix. It is also the room growing far enough for the whole ledger to fit, hence `false` for the
+	# overflow: the card is its content's height here, not the room's.
+	_assert_card_fits_the_band_dock(panel, "collapsed BOTTOM", false, false)
+	h._assert_hud("crafting — collapsing the panel under an open card GIVES the card the room (%.0f → %.0f)"
+			% [open_card_height, _crafting_card_rect().size.y],
+		_crafting_card_rect().size.y > open_card_height)
+	await h._save("crafting_panel_band_dock_collapsed")
+
+	# **THE RESERVED HALF, ISOLATED — PNG-less.** Every move above changes BOTH registries at once, so
+	# a re-fit driven by `set_overlay_inset` alone satisfies all of them and the `set_reserved_inset`
+	# half could be reverted with nothing going red. This one touches no overlay at all: a second
+	# reserver arriving on the bottom edge under the open card, which is the Inspector's or the
+	# Workbench's ordinary behaviour, and the card must shorten for it.
+	var railed_card_height: float = _crafting_card_rect().size.y
+	h._hud.set_reserved_inset(RESERVER_BOTTOM, SIDE_BOTTOM, RESERVED_BOTTOM_HEIGHT)
+	await h._settle()
+	var reserved_card := _crafting_card_rect()
+	h._assert_hud("crafting — a RESERVATION alone re-fits the open card (%.0f → %.0f for a %.0f strip)"
+			% [railed_card_height, reserved_card.size.y, RESERVED_BOTTOM_HEIGHT],
+		reserved_card.size.y < railed_card_height)
+	h._assert_hud("crafting — …and it lands inside the room that reservation left (card bottom %.0f vs room bottom %.0f)"
+			% [reserved_card.end.y, _card_room().end.y],
+		reserved_card.end.y <= _card_room().end.y + DOCK_RECT_EPSILON)
+	h._hud.set_reserved_inset(RESERVER_BOTTOM, SIDE_BOTTOM, 0.0)
+	await h._settle()
+
+	# Hand the HUD back: the chrome home, both registries released, the panel gone.
+	h._hud.close_crafting_panel()
+	panel.set_collapsed(false)
+	panel.reservation_changed.disconnect(Callable(h._hud, "reflow_dock_row"))
+	h._hud.reflow_dock_row(SIDE_BOTTOM, 0.0)
+	h._hud.set_band_city_panel(null)
+	h._hud.set_reserved_inset(BAND_PANEL_RESERVER, SIDE_BOTTOM, 0.0)
+	h._hud.set_overlay_inset(BAND_PANEL_RESERVER, SIDE_BOTTOM, 0.0)
+	panel.queue_free()
+	await h.get_tree().process_frame
+	await h._settle()
+
+## The card's rect, or a zero one when the panel is not up — which fails every claim below honestly
+## rather than passing on a card that never rendered.
+func _crafting_card_rect() -> Rect2:
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	return panel.get_global_rect() if panel != null else Rect2()
+
+## **THE PAIR: it clears the panel AND it leaves no room unused.** Either half alone is satisfied by a
+## card that is wrong in the other direction — a card grown through the strip clears nothing, and a
+## card shrunk to nothing clears everything — so the fit is only established by both.
+##
+## **The second half is phrased against the SCROLL, not as "the card equals the room".** A card whose
+## ledger already fits is SHORTER than its room for a perfectly good reason; what must never happen is
+## room left over while rows are still hidden. `expect_overflow` is which of those two the caller is
+## staging, asserted rather than assumed, so neither reading can go vacuous: with it `true` the fill
+## claim bites, with it `false` the state is claiming the opposite and says so.
+##
+## `expect_overlay` is the same discipline one layer down. On a horizontal dock the HUD does NOT yield
+## the strip, so nothing in `_reservations` bounds this card and only the OVERLAY registry can; a
+## COLLAPSED one cannot pay for that exemption, falls back to insetting, and is therefore the
+## configuration that exercises the reserved half of the same seam.
+func _assert_card_fits_the_band_dock(panel: BandCityPanel, edge_name: String, expect_overlay: bool,
+		expect_overflow: bool) -> void:
+	var card := _crafting_card_rect()
+	if card.size == Vector2.ZERO:
+		h._assert_hud("crafting — the %s-dock panel is open" % edge_name, false)
+		return
+	var strip: Rect2 = panel._root.get_global_rect()
+	var room := _card_room()
+	var overflowing := _scroll_is_live(h._hud.crafting_panel().panel())
+	h._assert_hud("crafting — precondition: the %s band dock %s the HUD" % [edge_name,
+			"overlays" if expect_overlay else "insets"],
+		MAIN_SCRIPT.band_dock_overlays_hud(panel.get_dock(), panel.current_reservation_size(),
+			h._hud, panel) == expect_overlay)
+	h._assert_hud("crafting — precondition: the %s-dock ledger %s its room" % [edge_name,
+			"outgrows" if expect_overflow else "fits inside"],
+		overflowing == expect_overflow)
+	h._assert_hud("crafting — the card clears the %s band dock (card bottom %.0f vs strip top %.0f)"
+			% [edge_name, card.end.y, strip.position.y],
+		card.end.y <= strip.position.y + DOCK_RECT_EPSILON)
+	h._assert_hud("crafting — …and leaves no room unused while rows are hidden (card %.0f of a %.0f room, scrolling %s)"
+			% [card.size.y, room.size.y, overflowing],
+		card.size.y >= room.size.y - ROOM_FILL_EPSILON or not overflowing)
+
+## **BOTH SURFACES ON ONE EDGE.** The arithmetic claim first — the bar's published extent contains the
+## panel's reserved depth, which is the whole reason `FloatingRoom` may take a MAXIMUM over the two
+## rather than a sum — then the two rects the player would see it in.
+func _assert_card_clears_both_surfaces(panel: BandCityPanel, bar: EventDockPanel) -> void:
+	var card := _crafting_card_rect()
+	if card.size == Vector2.ZERO or bar._root == null:
+		h._assert_hud("crafting — the co-edge panel is open over a live bar", false)
+		return
+	var strip: Rect2 = panel._root.get_global_rect()
+	var band: Rect2 = bar._root.get_global_rect()
+	var reserved: float = panel.current_reservation_size()
+	h._assert_hud("crafting — precondition: the bar and the panel share the BOTTOM edge and the bar is displaced past it (offset %.0f of %.0f reserved)"
+			% [bar._edge_offset, reserved],
+		bar.get_dock() == panel.get_dock() and bar._edge_offset >= reserved - DOCK_RECT_EPSILON)
+	# THE MAX'S PREMISE, stated as the inequality it rests on: the deeper of the two terms contains
+	# the shallower, so taking the maximum loses neither. Were the bar to publish its own height
+	# alone, this fails and the card is drawn through whichever surface the max dropped.
+	h._assert_hud("crafting — the bar's published extent contains the panel's strip (%.0f >= %.0f)"
+			% [bar.occupied_extent(), reserved],
+		bar.occupied_extent() >= reserved - DOCK_RECT_EPSILON)
+	h._assert_hud("crafting — …so the room's bottom is the deeper of the two, not their sum (%.0f)"
+			% h._hud._overlay_bottom,
+		is_equal_approx(h._hud._overlay_bottom, bar.occupied_extent()))
+	h._assert_hud("crafting — the card clears the co-edge BAR (card bottom %.0f vs bar top %.0f)"
+			% [card.end.y, band.position.y],
+		card.end.y <= band.position.y + DOCK_RECT_EPSILON)
+	h._assert_hud("crafting — …and the panel behind it (card bottom %.0f vs strip top %.0f)"
+			% [card.end.y, strip.position.y],
+		card.end.y <= strip.position.y + DOCK_RECT_EPSILON)
+	# …and the pair the clearance claims need: a card shrunk to nothing clears both surfaces, so the
+	# room the two of them left must actually be full — which is only the right claim while rows are
+	# still hidden, hence the overflow precondition beside it.
+	h._assert_hud("crafting — precondition: the co-edge ledger outgrows the room the pair left",
+		_scroll_is_live(h._hud.crafting_panel().panel()))
+	h._assert_hud("crafting — …while still USING the room the pair left (card %.0f of a %.0f room)"
+			% [card.size.y, _card_room().size.y],
+		card.size.y >= _card_room().size.y - ROOM_FILL_EPSILON)
+
 func run(harness) -> void:
 	h = harness
 	await _crafting_states()
@@ -211,6 +449,7 @@ func _crafting_states() -> void:
 	h._hud.set_reserved_inset(RESERVER_BOTTOM, SIDE_BOTTOM, 0.0)
 
 	await _event_bar_state()
+	await _band_dock_states()
 
 	# Hand everything back: the panel closed, the roster restored to the reference band.
 	h._hud.close_crafting_panel()
