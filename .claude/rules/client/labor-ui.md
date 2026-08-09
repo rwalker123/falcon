@@ -2143,16 +2143,21 @@ toward. The two answers differ on **the gate alone**, and that difference is the
 MARK (promises the verb is available, so a gated rung must not wear one) and a CONTROL (is how the
 player discovers the rung exists).
 
-### THE PAYOFF LIVES IN THE READOUT — the faces are bare, and the deal is back as labelled rows
+### THE PAYOFF LIVES IN THE READOUT — the faces are bare, and the deal is back as a labelled row
 
-The compose sheet states an improvement's terms as **rows inside the `PER TURN` readout**, directly
-under the take and above the verdict:
+The compose sheet states an improvement's terms as **a labelled row inside the `PER TURN` readout**,
+directly under the take and above the verdict:
 
 ```
-PER TURN · WHILE BUILDING, NOW → AFTER
-0.64 → 0.15  FOOD    RENEWABLE
+PER TURN · WHILE BUILDING
+0.64  FOOD    RENEWABLE
 ONCE TENDED  1.20 food
 ```
+
+**That example is the whole readout of a building sheet, and the absences in it are load-bearing.**
+There is no arrow on the reading and no `now → after` in the caption: a composed build suppresses the
+floor walk outright (see "A COMPOSED BUILD SUPPRESSES THE FLOOR WALK" below), because `ONCE TENDED` is
+already a *later* and two unlabelled ones in one box is the confusion that rule exists to prevent.
 
 **This reverses an earlier deletion, and the reason it was reversed is worth keeping.** The payoff
 had been moved onto the CHECKBOX FACE (`🌱 Cultivate this patch · then 1.20 food`), which put
@@ -2160,7 +2165,7 @@ it one line above a `PER TURN` box quoting a *different* number for the same sou
 — with nothing on either saying which question each was answering. The terms of the bargain and the
 take they are compared against were in two registers that did not know about each other; putting the
 payoff INSIDE that box is what joins them. The caption is what says which take the headline is (see
-the four-state table below), which is the other half of the same repair.
+the three-state table below), which is the other half of the same repair.
 
 | state | face |
 |---|---|

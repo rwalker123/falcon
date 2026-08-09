@@ -715,8 +715,10 @@ func run(harness) -> void:
 	# **THE THREE-LINE IDIOM, because this frame's own subject is a SELECTED Sow.** The first compose
 	# settles the source key — a source change re-seeds the improvement from the band's standing
 	# assignment — so setting the rung before it left the box UNCHECKED for as long as this state has
-	# existed, quietly contradicting the sentence above. Composing it is what puts the readout's two
-	# deal rows on screen, which is where the rung's asymmetric bargain is now stated.
+	# existed, quietly contradicting the sentence above. Composing it is what puts the rung's ONE deal
+	# row — its `ONCE SOWN` payoff — into the readout, and the bargain's asymmetry is then read across
+	# two REGISTERS of that box rather than across two rows of the deal: the dipped headline take
+	# against that payoff, which is exactly what the assertion below compares.
 	h._show_tile(ForageFx.sowable_tile_fixture())
 	h._compose_forage(ForageFx.sowable_tile_fixture())
 	h._hud._compose.set_forage_improvement("sow")

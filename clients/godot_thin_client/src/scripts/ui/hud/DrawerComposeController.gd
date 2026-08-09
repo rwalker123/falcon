@@ -1267,11 +1267,14 @@ func _mount_crew_row(parent: VBoxContainer, hosts: Array, crew_label: String, co
     block.add_child(line)
     parent.add_child(block)
 
-## **THE READOUT** (§7.1, §7.2, §7.7) — the sheet's bottom half as ONE bounded box with three
+## **THE READOUT** (§7.1, §7.2, §7.7) — the sheet's bottom half as ONE bounded box with four
 ## deliberately different registers, loudest first because that is the reading order:
 ##
 ##   a. THE YIELDS — what this crew, at this floor, brings home. The answer, and therefore the largest
 ##      type on the sheet. `yields_at(floor, crew)` recomposes it, which is what lets it follow a drag.
+##   a2. THE DEAL — what the rung on the table will pay once it stands, as ONE labelled row. It
+##      renders only where there is a rung to state, and it is deliberately OUTSIDE the live registry:
+##      the payoff is quoted at the food peak, so nothing in it moves under a floor drag.
 ##   b. THE VERDICT — which of the crew and the floor is binding, with its severity dot.
 ##   c. THE ASIDE — the idle-crew note and the floor's own teaching line, under a dashed rule at the
 ##      quietest size on the sheet. The teaching line used to stand between the chart and the stepper
@@ -1281,14 +1284,16 @@ func _mount_crew_row(parent: VBoxContainer, hosts: Array, crew_label: String, co
 ## No box at all when there is nothing to put in it — a source with no floor axis AND no priceable
 ## take has no readout, rather than an empty well.
 ##
-## **EVERY REGISTER IN THIS BOX IS LIVE**, including the aside's locked-account line. Anything whose
-## value — or whose PRESENCE — depends on the floor belongs in the live set: the lock's sentence
-## explains a `—` in the register above it, and raising the floor takes the fodder row away, so a
-## sentence resolved once before the render would outlive the mark it answers. The row and its
-## explanation cannot disagree in either direction, and what guarantees that is NOT a single call —
-## this function calls `yields_at` three times per refresh (the emptiness probe, the yields host, the
-## aside). It is that the yield models are PURE and every one of those calls passes IDENTICAL
-## arguments, which `_live_floor` / `_live_reaches` enforce by having one definition apiece.
+## **EVERY REGISTER IN THIS BOX THAT MOVES WITH THE FLOOR IS LIVE** — which is all of them but the
+## deal, whose exclusion is stated at its mount below. The aside's locked-account line is the case
+## worth stating: anything whose value — or whose PRESENCE — depends on the floor belongs in the
+## live set, and the lock's sentence explains a `—` in the register above it, so raising the floor
+## takes the fodder row away and a sentence resolved once before the render would outlive the mark it
+## answers. The row and its explanation cannot disagree in either direction, and what guarantees that
+## is NOT a single call — this function calls `yields_at` three times per refresh (the emptiness
+## probe, the yields host, the aside). It is that the yield models are PURE and every one of those
+## calls passes IDENTICAL arguments, which `_live_floor` / `_live_reaches` enforce by having one
+## definition apiece.
 func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, workers: int,
         yields_at: Callable, labor_kind: String,
         deal_row: Dictionary = {}, while_building: bool = false) -> void:

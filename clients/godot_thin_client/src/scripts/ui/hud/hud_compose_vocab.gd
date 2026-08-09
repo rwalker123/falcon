@@ -160,18 +160,25 @@ const CREW_TARGET_COUNT_FONT_SIZE := 13
 const CREW_TARGET_LABEL_FONT_SIZE := 11
 const CREW_TARGET_FACE_SEPARATION := 5
 
-# ---- THE READOUT: ONE BOX, THREE REGISTERS (docs/plan_harvest_floor.md §7.1/§7.2) ---------------
+# ---- THE READOUT: ONE BOX, FOUR REGISTERS (docs/plan_harvest_floor.md §7.1/§7.2) ----------------
 # The take, the verdict and the asides answer three different questions, and the panel's bottom half
-# read as three unrelated lines at one size until they were bounded and given three deliberately
-# different registers. Loudest first, because the order is the reading order:
+# read as three unrelated lines at one size until they were bounded and given deliberately different
+# registers. Those three are PERMANENT; the deal (a2) is CONDITIONAL, rendering only where there is a
+# rung to state, which is why the box shows three registers as often as four. Loudest first, because
+# the order is the reading order:
 #
 #   a. THE YIELDS ROW — the answer. A big tabular number beside a small uppercase unit and the
 #      account's destination (`2.34  FOOD/TURN → CAMP`). The render-only-where-the-vector-pays rule is
 #      unchanged: a cash crop shows no food line and a wolf shows no food line at all, because
 #      `provisionsPerBiomass` is genuinely 0 there and a `0.00 food` reading would be false, not empty.
-#   a2. THE IMPROVEMENT DEAL — the labelled rows a composed or offered rung adds beneath the take:
-#      what the crew carries NOW, and what the finished rung will pay. It renders only where there is
-#      a rung to state, which is why it is a register rather than a fourth permanent row.
+#   a2. THE IMPROVEMENT DEAL — ONE labelled row a composed or offered rung adds beneath the take:
+#      what the finished rung will pay. It renders only where there is a rung to state, which is why
+#      it is a register rather than a fourth permanent row. **A SECOND, `WITHOUT THE BUILD` BASELINE
+#      ROW WAS TRIED AND RETIRED**: the dip multiplies the CREW, so a crew big enough to saturate the
+#      source pays none of it and the baseline printed the headline straight back — and unticking the
+#      box states it live anyway, one click away in the register the player is already reading.
+#      `Readout.improvement_deal_rows(...) == 1` and `deal_repeats_a_yields_number` pin that removal;
+#      the long form is in `labor-ui.md` → "THE PAYOFF LIVES IN THE READOUT".
 #   b. THE VERDICT — which of the crew and the floor is binding, with its severity dot.
 #   c. THE ASIDE — the quietest register, cut off by a dashed rule: the idle-crew note and the floor's
 #      own teaching line. It is the panel's least urgent information and must never be its loudest.
@@ -191,9 +198,9 @@ const READOUT_YIELD_V_SEPARATION := 4
 const YIELD_LOCKED_GLYPH := "—"
 
 const READOUT_VERDICT_FONT_SIZE := 12
-# The deal rows read at the VERDICT's size, which is the register they belong to: they explain the
-# take above them, so they must not compete with it, and they are a live consequence of the composed
-# rung rather than a footnote, so they must not sink to the aside's.
+# The deal row reads at the VERDICT's size, which is the register it belongs to: it explains the take
+# above it, so it must not compete with that take, and it is a live consequence of the composed rung
+# rather than a footnote, so it must not sink to the aside's.
 const READOUT_DEAL_VALUE_FONT_SIZE := READOUT_VERDICT_FONT_SIZE
 const READOUT_ASIDE_FONT_SIZE := 11
 const READOUT_ASIDE_SEPARATION := 4
