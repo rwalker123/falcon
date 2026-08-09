@@ -146,11 +146,12 @@ And it cuts on the parent's side too: **sending dependents relieves the parent's
 while sending workers worsens it. A struggling band has a genuine reason to send families — which is
 exactly the historical push — and a comfortable one has a reason to send hands.
 
-**No travel-speed penalty for dependents.** There is no per-band movement-speed concept in the sim —
-`BandTravel` is a bare `target` (`core_sim/src/components.rs:1839`) and movement steps uniformly — so
-a "families are slower" rule means inventing a speed mechanism to express a cost that provisioning
-already expresses. The cost of bringing families is that you feed them the whole way and they cannot
-work when they arrive. That is enough.
+**No travel-speed penalty for dependents.** Speed is not a property a band has. `BandTravel` is a
+bare `target` (`core_sim/src/components.rs:1839`) and every band moves at the single global
+`labor_config.band_move_tiles_per_turn` — echoed per-cohort on the wire, but sourced from one number
+for everyone. So "families are slower" means **making movement speed per-band**, new machinery built
+to express a cost that provisioning already expresses. The cost of bringing families is that you feed
+them the whole way and they cannot work when they arrive. That is enough.
 
 ## Q4 — What do they carry? (the dowry)
 
@@ -259,6 +260,30 @@ Deliberately **not** levers: the seed larder's consumption rate (reuses
 `demographics_config.json` → `consumption.per_capita_draw`) and the party size bound (unchanged — the
 band is still the only bound on *detaching*).
 
+### Every settle dial ships in the Workbench
+
+These are numbers nobody can pick correctly at a desk — they are picked by playing. So they are
+**not** decided in this document; the values above are opening positions, and the slice's real
+obligation is to make them **live-adjustable in the Workbench's config tuning page** so playtest
+moves them without a rebuild.
+
+The surface already exists and already covers this file. `ConfigTuningPage` is manifest-driven
+(`.claude/rules/client/workbench.md`), and `clients/godot_thin_client/src/config/tuning_manifest.json`
+already carries an **`expedition`** kind bound to `EXPEDITION_CONFIG_PATH`. Each dial is therefore one
+manifest row, not new machinery:
+
+| pointer | type | min · max · step | default | unit | hint |
+|---|---|---|---|---|---|
+| `/settle/min_founding_workers` | int | 1 · 12 · 1 | 4 | workers | Working-age floor a party must clear to found a band. |
+| `/settle/parent_min_workers` | int | 0 · 20 · 1 | 6 | workers | Workers the home band must keep after the split. **0 turns the gate off** for a playtest run. |
+| `/settle/parent_max_dependency_ratio` | float | 0.5 · 2.5 · 0.05 | 1.0 | — | Dependents per worker the home band may be left with. |
+| `/settle/establishment_turns` | int | 0 · 60 · 1 | 20 | turns | Food the seed larder carries beyond the walk. |
+| `/settle/breeding_stock_fraction_max` | float | 0.0 · 1.0 · 0.05 | 0.5 | — | Share of a pen's stock that may leave with the party. |
+
+The ranges are wider than the values are likely to want, deliberately: a dial you cannot push past
+where it plays well cannot show you *why* it plays well. `min_site_habitability` gets no row — it
+reuses the settle-site threshold rather than being a number of its own.
+
 ## Sequencing
 
 1. **Design doc (this document).** ✅ #509.
@@ -266,8 +291,10 @@ band is still the only bound on *detaching*).
    mid-game founding (`sim_state.rs:487` must re-attach `ResidentBand` for a band worldgen never
    made), the event and feed lines, and the client affordance. Build it same-faction, with the party
    as it is composed today.
-3. **Compose the founding party** — #511. The Q2 gates, dependents travelling, the Q4 dowry, and the
-   compose sheet's parent-after forecast.
+3. **Compose the founding party** — #511. The Q2 gates, dependents travelling, the Q4 dowry, the
+   compose sheet's parent-after forecast, and the five `tuning_manifest.json` rows — the dials land
+   in the Workbench **with** the gates they govern, not as a follow-up, because a gate that cannot be
+   moved during a playtest cannot be judged during one.
 4. **Naming** — #271, generalized so it serves a founded band and not only the player's first one.
 5. **Blocked on #513, then:** the emergent half — #284 (drift → independent polity, on the Q1
    trigger), #512 (scouts defecting to a better-off faction), #458 (cross-faction proximity trade).
@@ -296,7 +323,7 @@ of.
 - **Snapshot / schema**: a mid-game founding must survive a rollback, which means the checkpoint path
   can no longer assume every `ResidentBand` came from worldgen.
 - **Client**: the compose-sheet forecast, the third arrival button, the dock entry, the new band on
-  the band/city dock's band list.
+  the band/city dock's band list, and the five `settle` rows on the Workbench config tuning page.
 
 ## Open items
 
