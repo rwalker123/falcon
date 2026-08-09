@@ -98,17 +98,32 @@ func run(harness) -> void:
 	h._assert_hud("…and the stance row is untouched, still on the band's own Sustain",
 		Readout.rung_is_selected(Q.find_policy_rung(h._hud._drawercompose._compose_sheet,
 			SourceForecast.FLOOR_PRESET_PEAK)))
-	# **THE DEAL LINE IS GONE AND ITS PAYOFF IS ON THE FACE — asserted as a PAIR**, because "gone" alone
-	# is satisfied by having deleted the payoff with it. The line's middle term restated the readout's
-	# own PER TURN headline verbatim and its first term the price of building, which the crew row states
-	# as a factor; only the payoff was unique to it, so only the payoff travelled — into the very
-	# `· then` grammar the OFFERED box already used, so the control reads alike in both states.
-	h._assert_hud("…and the deal LINE beneath the box is gone",
-		not Q.has_label_containing(h._hud._drawercompose._compose_sheet,
-			ForageFx.IMPROVEMENT_DEAL_MIDDLE_NEEDLE))
-	h._assert_hud("…with its payoff moved onto the running box's face, in the offer's own grammar",
-		ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, "cultivate")
+	# **THE PAYOFF LEFT THE FACE AND LANDS IN THE READOUT — asserted as a PAIR**, because "gone from
+	# the face" alone is satisfied by a sheet that lost the payoff altogether. The face used to close
+	# on `· then 1.39 food` directly above a PER TURN box quoting a different number for the same
+	# patch; the terms now read inside that box, beside the take they are meant to be compared with.
+	h._assert_hud("…and the running box's face carries no payoff at all",
+		not ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, "cultivate")
 			.contains(ForageFx.IMPROVEMENT_PAYOFF_NEEDLE))
+	h._assert_hud("…because it reads in the PER TURN readout, under the rung's own ONCE TENDED key",
+		Readout.improvement_deal_text(h._hud._drawercompose._compose_sheet).contains(
+			String(HudComposeVocab.IMPROVEMENT_PAYOFF_ROW_LABELS[
+				SourceForecast.IMPROVEMENT_CULTIVATE]).to_upper()))
+	# **AND THE UNDIPPED BASELINE IS BACK, which is the defect this move fixes.** Ticking the box
+	# makes the headline the DIPPED take, and until the deal returned the number it is a quarter of
+	# appeared nowhere on the sheet. This crew is staffed, so the `now` row must render.
+	h._assert_hud("…above a `now` row stating the undipped take the dip is a fraction of",
+		Readout.improvement_deal_text(h._hud._drawercompose._compose_sheet).contains(
+			HudComposeVocab.IMPROVEMENT_DEAL_BASELINE_LABEL.to_upper()))
+	# **THE CAPTION CARRIES BOTH KEYS AT ONCE, and this is the frame where both are true.** These
+	# readings are the DIPPED take AND they arrow toward a holding rate, so a caption stating only
+	# the dip leaves the row's `0.64 → 0.15` unkeyed — which shipped once, as an unconditional
+	# override, and is a caption that has stopped explaining a mark still on screen. Matched by
+	# EQUALITY against the both-true const: a `contains` on the dip half passes on exactly the
+	# collapsed caption this pins against, the two strings sharing a prefix.
+	h._assert_hud("…and the yields caption keys BOTH the dip and the row's own arrow",
+		Readout.yields_header(h._hud._drawercompose._compose_sheet)
+			== SourceForecast.YIELD_ROW_HEADER_WHILE_BUILDING_WITH_AFTER.to_upper())
 	# **KNOWN LESSON + A BUILD IN FLIGHT — the teaching line keeps the half that is still true.**
 	# Cultivation completed several frames above, so `Teaching cultivation at ×1.00` would be teaching a
 	# craft this faction finished learning; one multiplier paces the lesson and the build meter alike,

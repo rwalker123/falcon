@@ -70,6 +70,39 @@ static func yields_account_number(root: Node, account: String) -> String:
 			return lines[0]
 	return YIELDS_ACCOUNT_ABSENT
 
+## The READOUT's IMPROVEMENT-DEAL block as one string — every Label in it, joined, so a `now` row and
+## a payoff row read as `NOW 0.15 food ONCE TENDED 1.39 food`. Found by
+## `HudWidgets.IMPROVEMENT_DEAL_META`, its identity: its rows are key/value Label pairs at two sizes
+## carrying live numbers, so there is no single `text` to match — and a needle search across the
+## sheet would find whichever register happened to hold the same magnitude.
+##
+## "" when no deal block rendered, which is a REAL reading and half of what every payoff assertion is
+## made of: "the payoff left the face" also passes on a sheet that lost the payoff altogether, so a
+## claim about the face's absence must be paired with a `contains` here, which "" fails.
+static func improvement_deal_text(root: Node) -> String:
+	var block := Q.find_meta_node(root, HudWidgets.IMPROVEMENT_DEAL_META)
+	return " ".join(face_lines(block)) if block != null else ""
+
+## What `improvement_deal_row_value` answers when that key renders NO row. A SENTINEL, not "": an
+## absent row and a row whose value is empty are different findings, and a claim comparing two rows'
+## magnitudes must fail loudly on the first rather than parse `""` into a `0.0` that happens to
+## satisfy it.
+const DEAL_ROW_ABSENT := "<row absent>"
+
+## ONE deal row's VALUE, found by its key — the twin of `yields_account_number`, and structural for
+## the same reason: a row is a small uppercase key Label followed by its value Label inside one
+## `HBoxContainer`, so the key is matched exactly rather than searched for across a joined string
+## where `NOW` would also match `ONCE SOWN`.
+static func improvement_deal_row_value(root: Node, key: String) -> String:
+	var block := Q.find_meta_node(root, HudWidgets.IMPROVEMENT_DEAL_META)
+	if block == null:
+		return DEAL_ROW_ABSENT
+	for row in block.get_children():
+		var lines := face_lines(row)
+		if lines.size() >= 2 and lines[0] == key.to_upper():
+			return lines[1]
+	return DEAL_ROW_ABSENT
+
 ## The aside's LOCKED-ACCOUNT line alone, by its own meta — the twin of `teaching_line`, and separate
 ## for the same reason: its siblings move with the floor while this one does not, so a whole-aside
 ## comparison is satisfied by them and testifies about this sentence in neither direction.

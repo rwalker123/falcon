@@ -367,6 +367,29 @@ const YIELD_ACCOUNT_UNITS := {
 ## the unit alone.
 const YIELD_ROW_HEADER := "per turn"
 const YIELD_ROW_HEADER_WITH_AFTER := "per turn · now → after"
+## **THE TWO CAPTIONS A COMPOSED BUILD ADDS.** While a rung is going up the crew carries the rung's
+## `yield_fraction_while_building`, so the readings under this row are the DIPPED take — a number the
+## sheet otherwise gives no way to tell apart from the undipped one it replaced.
+##
+## **IT COMPOSES WITH THE ARROW'S KEY; IT DOES NOT REPLACE IT.** Shipped once as an unconditional
+## override, it left the row's own `0.64 → 0.15` reading with no key at all on exactly the sheets
+## that most need one — a caption that has stopped explaining a mark still on screen, which is worse
+## than the ambiguity it was added to fix. Both facts are true at once on a building sheet whose crew
+## reaches the floor, so the caption states both.
+const YIELD_ROW_HEADER_WHILE_BUILDING := "per turn · while building"
+const YIELD_ROW_HEADER_WHILE_BUILDING_WITH_AFTER := "per turn · while building, now → after"
+
+## **THE ONE RESOLUTION OF THE ROW'S CAPTION**, over the two INDEPENDENT facts that can key it: is a
+## build dipping these readings, and do they carry a holding rate to arrow toward. Four states, one
+## place — `build_yields_row` calls it and no caller composes a caption of its own, because two sites
+## deciding separately is exactly how the `while building` override came to swallow the arrow's key.
+## A caller with no per-turn rate AT ALL (the raid's whole-trip payload) supplies its own `header`
+## and never reaches here.
+static func yield_row_header(while_building: bool, has_after: bool) -> String:
+    if while_building:
+        return YIELD_ROW_HEADER_WHILE_BUILDING_WITH_AFTER if has_after \
+            else YIELD_ROW_HEADER_WHILE_BUILDING
+    return YIELD_ROW_HEADER_WITH_AFTER if has_after else YIELD_ROW_HEADER
 ## The transition inside ONE account's reading: `2.26 → 0.42`. The glyph is the row's second job for
 ## an arrow — the retired routing suffix (`→ CAMP`) was the first — but the two never coexisted, and
 ## this one is keyed by the header rather than left to be guessed.

@@ -341,35 +341,49 @@ func run(harness) -> void:
 			SourceForecast.IMPROVEMENT_CULTIVATE) != null
 		and ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet,
 			SourceForecast.IMPROVEMENT_SOW) == null)
+	# **THE HEADER IS THE RUNG'S, and this is the CULTIVATE half of the pair.** Cultivate only weeds
+	# the favored share upward and leaves the rest of the basket standing, so "commit" overstates what
+	# the rung does — the word is true of Sow alone, and `forage_crop_picker_sow` is where it is
+	# asserted. Either frame alone would pass a header hard-wired to the string it happens to expect.
+	h._assert_hud("the Cultivate picker asks which crop to TEND, not which to commit to",
+		Q.has_label_containing(h._hud._drawercompose._compose_sheet,
+			HudFloraVocab.FLORA_CROP_TEND_HEADER.to_upper()))
 
-	# State 2-crop-then-a / -b — THE PICKER ACTUALLY MOVES THE PAYOFF. The "· then" term used to quote
+	# State 2-crop-then-a / -b — THE PICKER ACTUALLY MOVES THE PAYOFF. The payoff term used to quote
 	# a species-BLIND patch number, so committing to Ground Nut showed Wild Emmer's payoff and the picker
 	# appeared to change nothing above it. These two frames are the SAME tile with a DIFFERENT crop
 	# selected; the assertion is that the payoff differs between them, which is the only thing
 	# that proves the substitution is wired to the selection rather than rendered once.
 	#
-	# **READ OFF THE RUNNING CONTROL'S OWN FACE, by meta.** The payoff used to ride a separate deal line
-	# beneath the box and now rides the face itself, in the offered box's `· then` grammar — so the one
-	# Callable feeding both states is asserted where the player actually reads it.
+	# **READ OFF THE READOUT'S DEAL BLOCK, by meta.** The payoff has moved twice — a deal line beneath
+	# the box, then the box's own face, and now the PER TURN readout — and this pair has to keep
+	# proving the substitution wherever it lands, so it follows the number rather than the widget.
+	# The FACE's absence is asserted beside it: the pair would otherwise pass on a sheet quoting the
+	# crop in two places, which is exactly the two-numbers-one-question defect being removed.
 	h._hud._compose.set_forage_count(1)
 	h._hud._compose.set_forage_species("wild_emmer")
 	h._compose_forage(_long_basket_tile_fixture())
 	await h._settle()
 	await h._save("forage_crop_then_emmer")
-	var then_emmer = ForageFx.improvement_face(
+	var then_emmer = Readout.improvement_deal_text(h._hud._drawercompose._compose_sheet)
+	var emmer_face = ForageFx.improvement_face(
 		h._hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CULTIVATE)
 
 	h._hud._compose.set_forage_species("ground_nut")
 	h._compose_forage(_long_basket_tile_fixture())
 	await h._settle()
 	await h._save("forage_crop_then_groundnut")
-	var then_groundnut = ForageFx.improvement_face(
-		h._hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CULTIVATE)
-	print("ui_preview: then-term  emmer=%s  ground_nut=%s" % [then_emmer, then_groundnut])
-	h._assert_hud("the running rung's 'then' payoff tracks the SELECTED crop",
-		then_emmer.contains(ForageFx.IMPROVEMENT_PAYOFF_NEEDLE)
-			and then_groundnut.contains(ForageFx.IMPROVEMENT_PAYOFF_NEEDLE)
+	var then_groundnut = Readout.improvement_deal_text(h._hud._drawercompose._compose_sheet)
+	print("ui_preview: deal-block  emmer=%s  ground_nut=%s" % [then_emmer, then_groundnut])
+	var payoff_key = String(HudComposeVocab.IMPROVEMENT_PAYOFF_ROW_LABELS[
+		SourceForecast.IMPROVEMENT_CULTIVATE]).to_upper()
+	h._assert_hud("the readout's payoff row tracks the SELECTED crop",
+		then_emmer.contains(payoff_key) and then_groundnut.contains(payoff_key)
 			and then_emmer != then_groundnut)
+	h._assert_hud("…and neither crop's payoff is restated on the box's face",
+		not emmer_face.contains(ForageFx.IMPROVEMENT_PAYOFF_NEEDLE)
+			and not ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
+				SourceForecast.IMPROVEMENT_CULTIVATE).contains(ForageFx.IMPROVEMENT_PAYOFF_NEEDLE))
 	h._hud._compose.set_forage_species("")
 
 	# State 2-crop-marginal — the ALL-MARGINAL tile (RollingHills' real ratios). Every legal crop is
@@ -424,14 +438,31 @@ func run(harness) -> void:
 	var unstaffed_btn = Q.compose_commit_button(h._hud._drawercompose._compose_sheet)
 	h._assert_hud("0 workers on an unassigned tile disables the submit (it would be a no-op)",
 		unstaffed_btn != null and unstaffed_btn.disabled)
-	# **THE DELETED DEAL LINE, ASSERTED AS A PAIR.** Absence alone is vacuous — deleting the payoff too
-	# would satisfy it — so the same frame asserts the payoff is ON the running control's face, in the
-	# offered box's own `· then` grammar.
-	h._assert_hud("the improvement deal LINE is gone from the sheet",
-		not Q.has_label_containing(h._hud._drawercompose._compose_sheet, ForageFx.IMPROVEMENT_DEAL_MIDDLE_NEEDLE))
-	h._assert_hud("…while what the tile would pay once prepared rides the running box's own face",
-		ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CULTIVATE)
+	# **THE PAYOFF'S TWO HALVES, ASSERTED AS A PAIR.** Absence from the face alone is vacuous —
+	# deleting the payoff outright would satisfy it — so the same frame asserts it reads in the PER
+	# TURN readout, which is how the player decides the tile is worth staffing at all.
+	h._assert_hud("no payoff is restated on the improvement box's face",
+		not ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CULTIVATE)
 			.contains(ForageFx.IMPROVEMENT_PAYOFF_NEEDLE))
+	h._assert_hud("…while what the tile would pay once prepared reads in the readout's payoff row",
+		Readout.improvement_deal_text(h._hud._drawercompose._compose_sheet).contains(
+			String(HudComposeVocab.IMPROVEMENT_PAYOFF_ROW_LABELS[
+				SourceForecast.IMPROVEMENT_CULTIVATE]).to_upper()))
+	# **AND NO `now` ROW AT ZERO CREW — the half that keeps the deal's return from re-creating the bug
+	# its UNSTAFFED variants were written for.** The `now` term is staffing-scaled where the payoff is
+	# not, so a zero crew showing both states a sequence this sheet is explicitly NOT on track for: an
+	# unstaffed build meter never advances. The payoff alone is a condition, which is honest.
+	h._assert_hud("…and NO `now` row, because a zero crew is not on track for the sequence it implies",
+		not Readout.improvement_deal_text(h._hud._drawercompose._compose_sheet).contains(
+			HudComposeVocab.IMPROVEMENT_DEAL_BASELINE_LABEL.to_upper()))
+	# **THE CAPTION'S OTHER BUILDING STATE — building, with NO arrow to key.** A zero crew reaches no
+	# holding rate, so this row states one reading and the caption must key the dip ALONE. It is the
+	# pair to `improvement_running_plant`'s both-true claim: between them the two building states of
+	# `SourceForecast.yield_row_header` are pinned, and a caption that composed the arrow's key
+	# unconditionally would fail here while passing there.
+	h._assert_hud("…under a caption keying the dip alone, this crew reaching no holding rate",
+		Readout.yields_header(h._hud._drawercompose._compose_sheet)
+			== SourceForecast.YIELD_ROW_HEADER_WHILE_BUILDING.to_upper())
 	# **A CREW OF ZERO IS BUILDING NOTHING, AND THE ASIDE MAY NOT SAY OTHERWISE.** `learn_multiplier`
 	# is a function of the FLOOR alone, so at the food peak it reads ×1.00 no matter who is assigned —
 	# and this frame has a composed Cultivate with NOBODY on it. The build half is gated on the same
@@ -684,11 +715,43 @@ func run(harness) -> void:
 	# deliberately shaped unlike Cultivate's: "Preparing: +0.02 /turn → then +2.40 /turn" — near-zero
 	# while the crop is in the ground (pure investment; there is no standing stand to take a fraction
 	# of), then 2× a tended patch. That asymmetry IS rung 3's bargain.
+	# **THE THREE-LINE IDIOM, because this frame's own subject is a SELECTED Sow.** The first compose
+	# settles the source key — a source change re-seeds the improvement from the band's standing
+	# assignment — so setting the rung before it left the box UNCHECKED for as long as this state has
+	# existed, quietly contradicting the sentence above. Composing it is what puts the readout's two
+	# deal rows on screen, which is where the rung's asymmetric bargain is now stated.
 	h._show_tile(ForageFx.sowable_tile_fixture())
+	h._compose_forage(ForageFx.sowable_tile_fixture())
 	h._hud._compose.set_forage_improvement("sow")
 	h._compose_forage(ForageFx.sowable_tile_fixture())
 	await h._settle()
 	await h._save("forage_sow")
+	# **THE SOW RUNG'S HALF OF THE PAYOFF CLAIM, and the rung the readout rows were unproven on.** No
+	# sowable fixture carried a build fraction until this pass — `seed_forage_rows` ignores the
+	# `patch_ceiling_sow` shorthand on a re-seed, so `improvement_forecast` answered `{}` and Sow
+	# quoted no deal on any frame in the corpus. The pair is asserted in the same shape the other
+	# rungs take: nothing on the face, the terms in the readout under this rung's own key.
+	h._assert_hud("a composed Sow states its payoff under the ONCE SOWN key, not on its box",
+		Readout.improvement_deal_text(h._hud._drawercompose._compose_sheet).contains(
+			String(HudComposeVocab.IMPROVEMENT_PAYOFF_ROW_LABELS[
+				SourceForecast.IMPROVEMENT_SOW]).to_upper()))
+	h._assert_hud("…and the box's own face carries none of it",
+		not ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
+			SourceForecast.IMPROVEMENT_SOW).contains(ForageFx.IMPROVEMENT_PAYOFF_NEEDLE))
+	# **THE ASYMMETRY THAT IS RUNG 3's BARGAIN, read off the two rows rather than described.** A bare
+	# sow has no standing stand to take a fraction of, so the crew carries almost nothing while the
+	# crop is in the ground and the Field then pays 2× a tended patch — which is exactly what the two
+	# labelled rows now put side by side. Asserted as `<`, not against literals: the claim is the
+	# ORDER of the two terms, and pinning either magnitude would pin this fixture's arithmetic.
+	var sow_baseline := Readout.improvement_deal_row_value(
+		h._hud._drawercompose._compose_sheet, HudComposeVocab.IMPROVEMENT_DEAL_BASELINE_LABEL)
+	var sow_payoff := Readout.improvement_deal_row_value(
+		h._hud._drawercompose._compose_sheet,
+		String(HudComposeVocab.IMPROVEMENT_PAYOFF_ROW_LABELS[SourceForecast.IMPROVEMENT_SOW]))
+	print("ui_preview: sow deal  without-the-build=%s  once-sown=%s" % [sow_baseline, sow_payoff])
+	h._assert_hud("…over a `without the build` row this staffed crew really is held to",
+		sow_baseline != Readout.DEAL_ROW_ABSENT and sow_payoff != Readout.DEAL_ROW_ABSENT
+			and float(sow_baseline.split(" ")[0]) < float(sow_payoff.split(" ")[0]))
 
 	# State 6b-crop-picker-sow — THE SAME long basket as `forage_crop_picker`, one rung up, on ground
 	# that will take seed. `can_sow` is a DIFFERENT flag from `can_cultivate`, so only Wild Emmer stays
@@ -700,6 +763,15 @@ func run(harness) -> void:
 	h._compose_forage(_sowable_long_basket_tile_fixture())
 	await h._settle()
 	await h._save("forage_crop_picker_sow")
+	# **THE SOW HALF OF THE HEADER PAIR.** A Field has no volunteers — the rung forces the favored
+	# species to 100% of the stand — so committing is exactly what this picker does, and the word that
+	# is wrong one rung down is right here. Both halves, or a single hard-wired string passes one.
+	h._assert_hud("the Sow picker asks which crop to COMMIT to, the word its own rung earns",
+		Q.has_label_containing(h._hud._drawercompose._compose_sheet,
+			HudFloraVocab.FLORA_CROP_PICKER_HEADER.to_upper()))
+	h._assert_hud("…and not the Cultivate rung's tending question",
+		not Q.has_label_containing(h._hud._drawercompose._compose_sheet,
+			HudFloraVocab.FLORA_CROP_TEND_HEADER.to_upper()))
 
 	# State F3 fodder crop — a basket with a HAY crop under Sow. Hay Grass pays fodder, not provisions,
 	# so its provisions ratio is 0 and the ordinary "N.N×" row would read it as worthless; the picker

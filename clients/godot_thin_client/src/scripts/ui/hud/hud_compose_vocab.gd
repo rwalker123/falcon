@@ -140,12 +140,14 @@ const CREW_ROW_SEPARATION := 6
 # It rides the CREW ROW because the two targets beside it are the numbers it explains, in the row
 # label's own faint register — the dip is context for the decision, never the decision.
 #
-# **IT DELIBERATELY DOES NOT SAY "while building"** — that was the middle term of the improvement
-# DEAL LINE, which is deleted (its payoff moved onto the running control's face; see
-# `IMPROVEMENT_RUNNING_FORMAT`). Two labels on one sheet carrying one phrase is how a search for
-# either silently finds the other, measured at seven of the deal's assertions when this line was first
-# worded. The wording stays because it says what this note is about — the CREW's carry, not the
-# build's terms — and the harness now uses that phrase as the needle proving the deal line is gone.
+# **IT DELIBERATELY DOES NOT SAY "while building"**, and the reason has changed twice. It was first
+# worded away from that phrase because the improvement DEAL LINE's middle term carried it, and two
+# labels on one sheet carrying one phrase is how a search for either silently finds the other
+# (measured at seven of the deal's assertions). The deal line was then deleted and the phrase became
+# the harness's needle for its ABSENCE — and the deal has since come BACK, into the readout, where
+# `SourceForecast.YIELD_ROW_HEADER_WHILE_BUILDING` prints it as the yields row's caption. So the
+# needle's premise is dead and the collision is live again: the wording stays because it says what
+# this note is about — the CREW's carry, not the caption over the take.
 const CREW_BUILD_DIP_NOTE_FORMAT := "— building this rung, each carries %d%% as much"
 # The row-label and its note are one phrase, so they sit closer than the stepper and the pills do.
 const CREW_ROW_NOTE_SEPARATION := 5
@@ -167,6 +169,9 @@ const CREW_TARGET_FACE_SEPARATION := 5
 #      account's destination (`2.34  FOOD/TURN → CAMP`). The render-only-where-the-vector-pays rule is
 #      unchanged: a cash crop shows no food line and a wolf shows no food line at all, because
 #      `provisionsPerBiomass` is genuinely 0 there and a `0.00 food` reading would be false, not empty.
+#   a2. THE IMPROVEMENT DEAL — the labelled rows a composed or offered rung adds beneath the take:
+#      what the crew carries NOW, and what the finished rung will pay. It renders only where there is
+#      a rung to state, which is why it is a register rather than a fourth permanent row.
 #   b. THE VERDICT — which of the crew and the floor is binding, with its severity dot.
 #   c. THE ASIDE — the quietest register, cut off by a dashed rule: the idle-crew note and the floor's
 #      own teaching line. It is the panel's least urgent information and must never be its loudest.
@@ -186,6 +191,10 @@ const READOUT_YIELD_V_SEPARATION := 4
 const YIELD_LOCKED_GLYPH := "—"
 
 const READOUT_VERDICT_FONT_SIZE := 12
+# The deal rows read at the VERDICT's size, which is the register they belong to: they explain the
+# take above them, so they must not compete with it, and they are a live consequence of the composed
+# rung rather than a footnote, so they must not sink to the aside's.
+const READOUT_DEAL_VALUE_FONT_SIZE := READOUT_VERDICT_FONT_SIZE
 const READOUT_ASIDE_FONT_SIZE := 11
 const READOUT_ASIDE_SEPARATION := 4
 
@@ -333,12 +342,11 @@ const IMPROVEMENT_DONE_LABELS := {
     "corral": "Penned",
 }
 
-# `<glyph> <verb phrase> · then <payoff>` — the offered checkbox's face. The terms are what makes it a
-# DEAL rather than a dare, and they are quoted from the sim's own payoff for this source and crop.
-const IMPROVEMENT_OFFER_FORMAT := "%s %s · then %s"
-
-# The same face where the wire quotes no payoff at all (a species/crop that pays nothing at this rung,
-# an older snapshot): the verb alone, never a fabricated "· then +0.00".
+# `<glyph> <verb phrase>` — the offered checkbox's face, and the ONLY one it has. **THE PAYOFF IS NOT
+# ON IT**: the face's `· then <payoff>` sat directly above a PER TURN box quoting a DIFFERENT number
+# for the same source, and a player reading the two together had no way to know which question each
+# was answering. The payoff is now a labelled row inside that box (`IMPROVEMENT_PAYOFF_ROW_LABELS`),
+# beside the take it is meant to be compared against, and the box states nothing but the choice.
 const IMPROVEMENT_OFFER_BARE_FORMAT := "%s %s"
 
 ## A GATED rung's whole line: the rung's glyph, then the unmet prerequisite in the gate's own words.
@@ -347,30 +355,45 @@ const IMPROVEMENT_OFFER_BARE_FORMAT := "%s %s"
 ## improvement axis visible and identifiable without making a promise.
 const IMPROVEMENT_GATED_FORMAT := "%s %s"
 
-# `<glyph> <participle> — 60% · then <payoff>` — the running checkbox's face. The percent comes from
-# the SAME `SourceForecast.improvement_progress` the map badge and the work board read, so the three
-# can never quote different meters.
-#
-# **THE PAYOFF RIDES THIS FACE IN THE OFFER'S OWN `· then` GRAMMAR, and that is what retired the DEAL
-# LINE.** The deal read `0.61 food · 1.25 trade → 0.15 food · 0.31 trade while building → 1.39 food ·
-# 0.38 trade`, and only its last term was unique to it: the middle term is byte-identical to the
-# readout's own PER TURN headline (the same crew, the same dipped forecast), and the first is the
-# price of building, which the crew row states qualitatively ("building this rung, each carries 25% as
-# much"). So the payoff moved to the face the OFFERED state already states it on, and the two states
-# now read identically — `🌱 Cultivate this patch · then 1.39 food` before, `🌱 Cultivating — 40% ·
-# then 1.39 food` after. What did NOT travel with the line is its UNSTAFFED variant, which existed
-# because the today/dip terms are staffing-scaled while the payoff is not; with only the payoff left
-# there is no sequence a zero crew could misread.
-const IMPROVEMENT_RUNNING_FORMAT := "%s %s — %d%% · then %s"
-
-# The same face for a rung that also carries a running feed cost (Corral only): the pen's projected
-# upkeep, subtracted so the payoff is never quoted gross on the control that commits to it.
-const IMPROVEMENT_RUNNING_FEED_FORMAT := "%s %s — %d%% · then %s − %s feed"
-
-# The meter ALONE, for a rung whose deal the wire does not quote (`improvement_forecast` answers `{}`
-# — a species that can never be penned, an absent build fraction). Never a fabricated "· then +0.00":
-# the same rule the offered box's `IMPROVEMENT_OFFER_BARE_FORMAT` follows.
+# `<glyph> <participle> — 60%` — the running checkbox's face, and the ONLY one it has. The percent
+# comes from the SAME `SourceForecast.improvement_progress` the map badge and the work board read, so
+# the three can never quote different meters. The payoff left this face with the offered one's, for
+# the reason recorded on `IMPROVEMENT_OFFER_BARE_FORMAT`; the meter is what this control uniquely
+# knows, and it keeps the whole of the face.
 const IMPROVEMENT_RUNNING_BARE_FORMAT := "%s %s — %d%%"
+
+# **THE DEAL'S ROW KEYS, one per rung** — the label the readout's payoff row wears, naming the STATE
+# the finished rung leaves the source in rather than the verb that gets it there (`ONCE TENDED`, not
+# `CULTIVATE`). The verb is already on the box two rows up; what this row adds is when the number
+# beside it starts arriving, which is a condition and reads as one.
+const IMPROVEMENT_PAYOFF_ROW_LABELS := {
+    "cultivate": "once tended",
+    "sow": "once sown",
+    "tame": "once tamed",
+    "corral": "once penned",
+}
+
+# The row above it: what this crew would carry if it were NOT building — the counterfactual. It
+# exists because ticking the box makes the PER TURN headline the DIPPED figure, and the baseline that
+# figure is a fraction of then appears nowhere, which is the whole defect the deal's return fixes.
+#
+# **IT SAYS `without the build`, NOT `now`, and the word matters.** The yields row directly above it
+# states its own `now → after` transition (a burst rate walking toward a holding rate), so a row
+# keyed `NOW` beside it puts two unrelated meanings of one word in one box — measured on
+# `improvement_running_plant`, where `0.64 → 0.15` sat one line above `NOW 0.96 food` and neither
+# reading explained the other. The counterfactual wording also pairs with its sibling key:
+# `WITHOUT THE BUILD 0.96 food` over `ONCE TENDED 1.20 food` is the whole bargain in two lines.
+#
+# **IT IS SUPPRESSED AT ZERO CREW, and that is not a tidy-up.** This term is staffing-scaled and the
+# payoff is not, so an unstaffed sheet showing both states a SEQUENCE the player is not on track for
+# — exactly what the deleted deal line's `INVESTMENT_FORECAST_UNSTAFFED` variants existed to dodge.
+# Do not re-create that bug by rendering this row at 0.
+const IMPROVEMENT_DEAL_BASELINE_LABEL := "without the build"
+
+# The pen's running upkeep, subtracted from the payoff on the row that states it (Corral only), so
+# the deal is never quoted gross on the register that commits to it. `corralYield` does NOT deduct
+# the feed, which is why this suffix has to be composed here rather than read off one wire field.
+const IMPROVEMENT_DEAL_FEED_FORMAT := "%s − %s feed"
 
 # `<glyph> <state noun>` — the done label. Static: there is nothing to uncheck and nothing to clear.
 const IMPROVEMENT_DONE_FORMAT := "%s %s"
@@ -421,13 +444,15 @@ const IMPROVEMENT_PAUSED_FORMAT := "⚠ Paused — the source is %s, and this on
 # `K/2`), so a herd at or below the MSY point honestly pays **0.00** until it rebuilds: penning it
 # would eat feed every turn and pay nothing. That must never be suppressed, blanked, or em-dashed away
 # — a player who pens a depleted herd because the UI declined to show them a zero has been actively
-# misled. So the zero renders in full on the control's face, and this WARN-inked note beneath it names
-# the remedy (let it rebuild). The feed term still shows, because the feed is what makes a zero payoff
-# a net LOSS rather than merely a nothing.
+# misled. So the zero renders in full on the readout's payoff row, and this WARN-inked note names the
+# remedy (let it rebuild). The feed term still shows, because the feed is what makes a zero payoff a
+# net LOSS rather than merely a nothing.
 #
-# **IT OUTLIVED THE DEAL LINE IT WAS WRITTEN FOR, DELIBERATELY.** It rides
-# `HudWidgets.build_improvement_control`'s note slot now — the same slot the paused-build line uses,
-# with the same WARN ink — because it is a warning about the rung, not a footnote to a forecast row.
+# **IT HAS OUTLIVED TWO HOMES FOR THE ZERO IT EXPLAINS, DELIBERATELY.** The zero was a deal LINE's
+# third term, then the control's own face, and is now the readout's payoff row; this note has stayed
+# on `HudWidgets.build_improvement_control`'s note slot throughout — the same slot the paused-build
+# line uses, with the same WARN ink — because it is a warning about the RUNG, which is what the
+# control is, rather than a footnote to whichever register currently prints the number.
 # (The "is it zero" floor is the shared `SourceForecast.FOOD_FLOW_MIN` — one definition of "below
 # this, there is no flow here", used by the band ledger's rows and by this note alike.)
 const IMPROVEMENT_DEAL_DEPLETED_NOTE := "⚠ Too depleted to pen — it would eat feed and pay nothing until the herd rebuilds."
