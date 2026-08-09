@@ -19,7 +19,7 @@ paths:
 | File | Purpose |
 |------|---------|
 | `src/data/sites_config.json` | Wondrous Sites catalog (`catalog`: per-`site_id` `category`/`display_name`/`glyph`/`placement_rule`/`discovery_reward.morale_bonus`) + `placement` rules (per-rule `max_sites`, `min_spacing`, and the union of rule inputs: `min_relief`, `max_habitability_pressure`, `min_food_weight`). Loader `sites_config.rs`, env override `SITES_CONFIG_PATH`. Not wired into the `reload_config` hot-reload path (mirrors `fauna_config.json`) |
-| `src/data/expedition_config.json` | Expedition tuning. Scout: `comm_range_tiles` (discovery-report range), `comm_range_tech_factor` (stubbed 1.0 tech hook), `observe_sight_range` (per-turn LOS radius, matches band base sight), `provision_draw_per_worker_per_tile` (launch larder draw = party × distance × this), `provision_upkeep_per_worker` (per-turn drain = party × this, scouts only). Hunt `hunt` block: `per_worker_carry` (carry cap = party × this), `reach_tiles` (how close to the herd to take), `drop_off_within_tiles` (herd-near-band delivery gate), `min_deliver_fraction` (herd-near-band early delivery needs carried ≥ this × cap), `viability_warn_turns` (**20** — a client display threshold on `turnsToFill`; = 4× the throughput-implied trip length `per_worker_carry / (per_worker_biomass_capacity × provisions_per_biomass)` = 5 turns), `forecast_horizon_turns` (**60** — how far `hunt_trip_forecast` simulates a raid before giving up on completion; a raid is short — grab the surplus, come home — so simulating each to completion is cheap; **echoed onto every cohort as `expeditionForecastHorizonTurns`**, and it bounds the HUNTING only, never the trip). Scout replenish `replenish` block: `low_turns` (top up below party × upkeep × this), `reach_tiles`. **Retired: `estimate_party_sizes` and the whole `deny` block (`requirement_rows`)** — both were sampling axes for the pre-computed estimate tables, and the forecast query answers exactly instead; see "The forecast is ASKED FOR". The retired `sustain_floor_fraction` is **gone** too: a hunting expedition is a **greedy raid** that grabs the standing surplus above the mission's **floor**, and the floor is chosen at launch (any fraction of `K` in `0.0..=1.0`; default `DEFAULT_ESCAPEMENT_FLOOR`, the food peak) rather than configured. Loader `expedition_config.rs`, env override `EXPEDITION_CONFIG_PATH`. Not on the `reload_config` hot-reload path (mirrors `sites_config.json`). **Validated** — `ExpeditionConfig::validate()` runs inside `from_json_str`, so *every* load path is covered; a broken invariant is logged at **error** level (`expedition_config.invalid_rejected`) and the config refused, falling back to the builtin rather than silently disabling a feature. Enforced: `comm_range_tech_factor` finite & `> 0`, `observe_sight_range ≥ 1`, `provision_draw_per_worker_per_tile`/`provision_upkeep_per_worker` finite & `≥ 0`, `hunt.per_worker_carry` finite & `> 0`, `hunt.reach_tiles ≥ 1`, `0 < hunt.min_deliver_fraction ≤ 1`, `hunt.viability_warn_turns ≥ 1`, **`hunt.forecast_horizon_turns ≥ max(1, hunt.viability_warn_turns)`** (at `0` the forecast's `1..=horizon` loop runs zero turns and *every* hunting expedition silently reports "won't fill"; below the warn threshold, a trip the player would be told is viable can never be discovered), `replenish.low_turns ≥ 1`, `replenish.reach_tiles ≥ 1`. Deliberately **left free**: `comm_range_tiles` (`0` = "walk back into camp to report"), `hunt.drop_off_within_tiles` (`0` = no early drop-off; a full pack still delivers), and the upper end of `forecast_horizon_turns` (it costs query time, on demand — an operator's call, not an invariant) |
+| `src/data/expedition_config.json` | Expedition tuning. Scout: `comm_range_tiles` (discovery-report range), `comm_range_tech_factor` (stubbed 1.0 tech hook), `observe_sight_range` (per-turn LOS radius, matches band base sight), `provision_draw_per_worker_per_tile` (launch larder draw = party × distance × this), `provision_upkeep_per_worker` (per-turn drain = party × this, scouts only). Hunt `hunt` block: `per_worker_carry` (carry cap = party × this), `reach_tiles` (how close to the herd to take), `drop_off_within_tiles` (herd-near-band delivery gate), `min_deliver_fraction` (herd-near-band early delivery needs carried ≥ this × cap), `viability_warn_turns` (**20** — a client display threshold on `turnsToFill`; = 4× the throughput-implied trip length `per_worker_carry / (per_worker_biomass_capacity × provisions_per_biomass)` = 5 turns), `forecast_horizon_turns` (**60** — how far `hunt_trip_forecast` simulates a raid before giving up on completion; a raid is short — grab the surplus, come home — so simulating each to completion is cheap; **echoed onto every cohort as `expeditionForecastHorizonTurns`**, and it bounds the HUNTING only, never the trip). Scout replenish `replenish` block: `low_turns` (top up below party × upkeep × this), `reach_tiles`. Founding `settle` block: `min_founding_workers` (**4** — working-age people a party must hold to found a band, the one gate on the *party*; see "Start a life here"). **Retired: `estimate_party_sizes` and the whole `deny` block (`requirement_rows`)** — both were sampling axes for the pre-computed estimate tables, and the forecast query answers exactly instead; see "The forecast is ASKED FOR". The retired `sustain_floor_fraction` is **gone** too: a hunting expedition is a **greedy raid** that grabs the standing surplus above the mission's **floor**, and the floor is chosen at launch (any fraction of `K` in `0.0..=1.0`; default `DEFAULT_ESCAPEMENT_FLOOR`, the food peak) rather than configured. Loader `expedition_config.rs`, env override `EXPEDITION_CONFIG_PATH`. Not on the `reload_config` hot-reload path (mirrors `sites_config.json`). **Validated** — `ExpeditionConfig::validate()` runs inside `from_json_str`, so *every* load path is covered; a broken invariant is logged at **error** level (`expedition_config.invalid_rejected`) and the config refused, falling back to the builtin rather than silently disabling a feature. Enforced: `comm_range_tech_factor` finite & `> 0`, `observe_sight_range ≥ 1`, `provision_draw_per_worker_per_tile`/`provision_upkeep_per_worker` finite & `≥ 0`, `hunt.per_worker_carry` finite & `> 0`, `hunt.reach_tiles ≥ 1`, `0 < hunt.min_deliver_fraction ≤ 1`, `hunt.viability_warn_turns ≥ 1`, **`hunt.forecast_horizon_turns ≥ max(1, hunt.viability_warn_turns)`** (at `0` the forecast's `1..=horizon` loop runs zero turns and *every* hunting expedition silently reports "won't fill"; below the warn threshold, a trip the player would be told is viable can never be discovered), `replenish.low_turns ≥ 1`, `replenish.reach_tiles ≥ 1`, `settle.min_founding_workers ≥ 1` (at `0` the gate cannot refuse anything — a silently disabled feature rather than a tuning; the "off for a playtest" value is `1`, which is a real party). Deliberately **left free**: `comm_range_tiles` (`0` = "walk back into camp to report"), `hunt.drop_off_within_tiles` (`0` = no early drop-off; a full pack still delivers), and the upper end of `forecast_horizon_turns` (it costs query time, on demand — an operator's call, not an invariant) |
 ## Wondrous Sites
 
 Data-driven catalog of notable map features tiles can hold, hidden under fog until a faction's
@@ -1067,12 +1067,41 @@ band actually walks.
 > would then always find a mapped path back along its own footsteps. The gate asks what the faction
 > knew *before* the founding.
 
-**There is deliberately NO habitability or terrain-quality gate.** Founding raises a party to a band
-that can forage, hunt and move on its own; it roots nobody. Settling harsh ground is a mistake the
-player walks out of, and pricing it as an illegal move confuses *bad idea* with *impossible*. The
-land already speaks through morale, yield and carrying capacity. This slice therefore adds **no**
-`settle` block to `expedition_config.json` — it has no levers, and the reachability gate wants none
-(its dial is `comm_range_tiles`, which belongs to scouting).
+**The reachability gate itself has no lever and wants none** — it is a yes/no question about the
+faction map, so there is no number to tune; the dial that moves it is `comm_range_tiles`, which
+belongs to scouting.
+
+### The party floor — a colony has to be able to staff itself
+
+**A founding party must hold at least `settle.min_founding_workers` (**4**) working-age people**
+(`docs/plan_band_fission.md` §Q2, *Party viability*). Below that there is no labor pool to allocate:
+the "colony" is one person who cannot forage and hunt at once, which is a death notice with a marker
+on it rather than a band. Playtest found the hole — a party of **one** walked out and founded.
+
+- **Counted off the party cohort's `PopulationCohort.working`**, the same pool `send_expedition` drew
+  it from, **floored to whole people**: a fixed-point `3.9` is three workers, not four.
+- **It runs before the reachability BFS.** Both are pure refusals that write nothing, so the O(1)
+  question goes ahead of the one that walks the map.
+- **The refusal names its own numbers.** `FoundingRefusal::PartyTooSmall { workers, required }`
+  carries them, which is why `FoundingRefusal::explanation()` returns a `String` rather than a
+  `&'static str` — a gate that refuses without saying *how short* leaves the player guessing at a
+  number the sim knows.
+- **The parent-side floors are NOT here.** `parent_min_workers` and `parent_max_dependency_ratio`
+  gate the band left behind and ship with #511, which is also where the compose sheet learns to
+  forecast all three. This is a floor on the *party*.
+
+> #### A FLOOR ON THE PARTY IS NOT A JUDGEMENT OF THE PLACE
+>
+> **There is deliberately NO habitability or terrain-quality gate**, and the party floor does not
+> reopen that question. Founding raises a party to a band that can forage, hunt and move on its own;
+> it roots nobody. Settling harsh ground is a mistake the player walks out of, and pricing it as an
+> illegal move confuses *bad idea* with *impossible* — the land already speaks through morale, yield
+> and carrying capacity. What the sim refuses is a colony that cannot staff a single food role; it
+> still refuses to rate the ground under it.
+
+**The dial ships in the Workbench.** `min_founding_workers` is a number nobody can pick at a desk, so
+`tuning_manifest.json`'s `expedition` kind carries `/settle/min_founding_workers` (1 · 12 · 1) and
+playtest moves it without a rebuild. `1` is the "off" setting and is still a real party.
 
 ### What the swap carries
 

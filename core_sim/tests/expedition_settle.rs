@@ -13,6 +13,7 @@
 //!   rather than inheriting whatever worldgen happened to reveal.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use bevy::app::App;
 use bevy::math::UVec2;
@@ -23,10 +24,10 @@ use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 use core_sim::{
     culture_region_at, found_band_from_expedition, founding_site_is_reachable, run_turn,
     BandEquipment, BandId, CultureManager, CultureOwner, DemographicFlowAccumulator,
-    EquipmentConfigHandle, Expedition, ExpeditionMission, ExpeditionPhase, FactionId,
-    FoundingRefusal, KitJob, LaborAllocation, PopulationCohort, ProvinceMap, ResidentBand,
-    SimulationConfig, StartingUnit, Tile, TileRegistry, VisibilityLedger, CULTURE_TRAIT_AXES,
-    TRADE_GOODS,
+    EquipmentConfigHandle, Expedition, ExpeditionConfig, ExpeditionConfigHandle, ExpeditionMission,
+    ExpeditionPhase, FactionId, FoundingRefusal, KitJob, LaborAllocation, PopulationCohort,
+    ProvinceMap, ResidentBand, SimulationConfig, StartingUnit, Tile, TileRegistry,
+    VisibilityLedger, CULTURE_TRAIT_AXES, TRADE_GOODS,
 };
 use sim_runtime::TerrainTags;
 
@@ -152,8 +153,42 @@ fn set_discovered(app: &mut App, faction: FactionId, tiles: &[UVec2]) {
     }
 }
 
+/// The founding floor as the shipped config states it. Read rather than restated, so a retune moves
+/// every fixture below with it instead of turning them red.
+fn min_founding_workers(app: &App) -> u32 {
+    app.world
+        .resource::<ExpeditionConfigHandle>()
+        .get()
+        .settle
+        .min_founding_workers
+}
+
+/// Staff `party` with exactly `working` working-age people (fractional on purpose — `working` carries
+/// sub-person demographic precision, and the gate floors it).
+fn staff_party(app: &mut App, party: Entity, working: f32) {
+    let mut cohort = app
+        .world
+        .get_mut::<PopulationCohort>(party)
+        .expect("the fixture party has a cohort");
+    cohort.working = core_sim::scalar_from_f32(working);
+    cohort.sync_size();
+}
+
+/// Install `config` as the live expedition tuning, so a test can drive the gate off a number nobody
+/// ships.
+fn set_expedition_config(app: &mut App, config: ExpeditionConfig) {
+    app.world
+        .insert_resource(ExpeditionConfigHandle::new(Arc::new(config)));
+}
+
 /// Spawn a detached party standing at `at`, shaped exactly as `handle_send_expedition` shapes one:
 /// its own `BandId`, a pristine kit, no `ResidentBand`, and **no** `DemographicFlowAccumulator`.
+///
+/// **The party is staffed at exactly `settle.min_founding_workers`** — the smallest party that may
+/// found. Every fixture here is about something other than party size, so sitting on the floor keeps
+/// them honest (a founding fixture that happened to carry the parent band's whole workforce would
+/// stop testing the gate the moment the floor was raised) and doubles as the admission twin for the
+/// refusal below it.
 fn spawn_party(
     app: &mut App,
     home: Entity,
@@ -176,6 +211,7 @@ fn spawn_party(
     cohort.children = core_sim::scalar_from_f32(0.0);
     cohort.elders = core_sim::scalar_from_f32(0.0);
     cohort.stores = core_sim::LocalStore::new();
+    cohort.working = core_sim::scalar_from_f32(min_founding_workers(app) as f32);
     // The parent's age, exactly as the launcher leaves it after twenty turns of walking — the value
     // `age_turns = 0` at founding exists to overwrite.
     cohort.age_turns = 42;
@@ -315,6 +351,163 @@ fn a_party_that_has_not_arrived_is_refused() {
     assert!(
         app.world.get::<ResidentBand>(party).is_none(),
         "a refused founding leaves the party detached"
+    );
+}
+
+// -------------------------------------------------------------------------------------------
+// The minimum-worker floor — a gate on the PARTY, not on the place
+// -------------------------------------------------------------------------------------------
+
+/// **A party below the floor cannot found**, and the refusal names the numbers it turned on. The
+/// founding is otherwise perfectly legal — mapped corridor, `AwaitingOrders` — so only the party's
+/// size can refuse it.
+///
+/// The load-bearing half is the second: a refusal refuses the *founding*, never the party. The
+/// expedition is left exactly as it stood, so recall still works and the player has lost nothing by
+/// asking.
+#[test]
+fn a_party_below_the_worker_floor_cannot_found_a_band() {
+    let mut app = spawn_world();
+    let (home, faction, home_pos) = home_band(&mut app);
+    let corridor = land_corridor(&app, home_pos);
+    let site = *corridor.last().expect("corridor has a tail");
+    set_discovered(&mut app, faction, &corridor);
+    let party = spawn_party(
+        &mut app,
+        home,
+        PARTY_BAND_ID,
+        site,
+        ExpeditionPhase::AwaitingOrders,
+    );
+    let floor = min_founding_workers(&app);
+    let short = floor.saturating_sub(1);
+    staff_party(&mut app, party, short as f32);
+
+    assert_eq!(
+        found_band_from_expedition(&mut app.world, party),
+        Err(FoundingRefusal::PartyTooSmall {
+            workers: short,
+            required: floor,
+        }),
+        "the refusal must name the party it counted and the floor it compared against — a gate \
+         that refuses with the wrong numbers tells the player something false"
+    );
+    assert!(
+        app.world.get::<Expedition>(party).is_some(),
+        "a refusal refuses the founding, not the party"
+    );
+    assert!(
+        app.world.get::<ResidentBand>(party).is_none(),
+        "a refused founding leaves the party detached"
+    );
+    assert_eq!(
+        app.world
+            .get::<Expedition>(party)
+            .map(|expedition| expedition.phase),
+        Some(ExpeditionPhase::AwaitingOrders),
+        "the party is still awaiting orders, so recall is still available"
+    );
+}
+
+/// **The floor admits the party standing on it.** Paired with the refusal above so "refuse
+/// everything" cannot pass: the same fixture at exactly `settle.min_founding_workers` founds.
+#[test]
+fn a_party_at_the_worker_floor_founds() {
+    let mut app = spawn_world();
+    let (home, faction, home_pos) = home_band(&mut app);
+    let corridor = land_corridor(&app, home_pos);
+    let site = *corridor.last().expect("corridor has a tail");
+    set_discovered(&mut app, faction, &corridor);
+    let party = spawn_party(
+        &mut app,
+        home,
+        PARTY_BAND_ID,
+        site,
+        ExpeditionPhase::AwaitingOrders,
+    );
+    let floor = min_founding_workers(&app);
+    staff_party(&mut app, party, floor as f32);
+
+    assert!(
+        found_band_from_expedition(&mut app.world, party).is_ok(),
+        "a party of exactly the floor is a party that may found — the gate is `<`, not `<=`"
+    );
+    assert!(
+        app.world.get::<ResidentBand>(party).is_some(),
+        "the admitted party became a resident band"
+    );
+}
+
+/// **The floor is the CONFIGURED number, not a constant in the code.** One fixture, driven twice: a
+/// floor of one admits the party a floor well above it refuses.
+#[test]
+fn the_worker_floor_is_the_configured_number() {
+    /// A floor no fixture party could ever clear — the "refuses" half.
+    const IMPOSSIBLE_FLOOR: u32 = 500;
+    /// The smallest floor the validator accepts: a party of one, which is a real party.
+    const PERMISSIVE_FLOOR: u32 = 1;
+    /// What both halves staff the party at — comfortably above `PERMISSIVE_FLOOR` and hopelessly
+    /// below `IMPOSSIBLE_FLOOR`, so only the config can decide the verdict.
+    const PARTY_WORKERS: f32 = 2.0;
+
+    for (floor, admits) in [(PERMISSIVE_FLOOR, true), (IMPOSSIBLE_FLOOR, false)] {
+        let mut app = spawn_world();
+        let (home, faction, home_pos) = home_band(&mut app);
+        let corridor = land_corridor(&app, home_pos);
+        let site = *corridor.last().expect("corridor has a tail");
+        set_discovered(&mut app, faction, &corridor);
+        let mut config = (*app.world.resource::<ExpeditionConfigHandle>().get()).clone();
+        config.settle.min_founding_workers = floor;
+        set_expedition_config(&mut app, config);
+        let party = spawn_party(
+            &mut app,
+            home,
+            PARTY_BAND_ID,
+            site,
+            ExpeditionPhase::AwaitingOrders,
+        );
+        staff_party(&mut app, party, PARTY_WORKERS);
+
+        let verdict = found_band_from_expedition(&mut app.world, party);
+        assert_eq!(
+            verdict.is_ok(),
+            admits,
+            "a party of {PARTY_WORKERS} against a configured floor of {floor} must follow the \
+             config, got {verdict:?}"
+        );
+    }
+}
+
+/// **A fraction of a person is not a worker.** `working` carries sub-person demographic precision,
+/// so the gate floors it: a party of 3.9 is three workers against a floor of four, and it is refused
+/// reporting *three* — the number the labor allocator would give it.
+#[test]
+fn a_fractional_worker_does_not_round_up_into_the_floor() {
+    /// How far below the floor the fixture sits — enough that rounding would cross it.
+    const SHORTFALL: f32 = 0.1;
+
+    let mut app = spawn_world();
+    let (home, faction, home_pos) = home_band(&mut app);
+    let corridor = land_corridor(&app, home_pos);
+    let site = *corridor.last().expect("corridor has a tail");
+    set_discovered(&mut app, faction, &corridor);
+    let party = spawn_party(
+        &mut app,
+        home,
+        PARTY_BAND_ID,
+        site,
+        ExpeditionPhase::AwaitingOrders,
+    );
+    let floor = min_founding_workers(&app);
+    staff_party(&mut app, party, floor as f32 - SHORTFALL);
+
+    assert_eq!(
+        found_band_from_expedition(&mut app.world, party),
+        Err(FoundingRefusal::PartyTooSmall {
+            workers: floor - 1,
+            required: floor,
+        }),
+        "a party a tenth of a person short of the floor is a party one worker short of it"
     );
 }
 

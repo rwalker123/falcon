@@ -54,6 +54,8 @@ pub struct ExpeditionConfig {
     pub hunt: HuntExpeditionConfig,
     /// Scout opportunistic-replenish (PR 2) tuning — when/where a scout tops up off passing game.
     pub replenish: ReplenishConfig,
+    /// "Start a life here" levers (`docs/plan_band_fission.md` §Q2).
+    pub settle: SettleConfig,
 }
 
 /// Hunting-expedition levers (`docs/plan_exploration_and_sites.md` §2b). A hunt party follows a
@@ -108,6 +110,15 @@ pub struct ReplenishConfig {
     pub low_turns: u32,
     /// The scout must be within this hex distance of a huntable herd to top up.
     pub reach_tiles: u32,
+}
+
+/// "Start a life here" levers (`docs/plan_band_fission.md` §Q2).
+#[derive(Debug, Clone, Deserialize)]
+pub struct SettleConfig {
+    /// The founding party must hold at least this many **working-age** people at the moment of
+    /// founding. Below it there is no labor pool to allocate and the new band is a death notice
+    /// with a marker on it.
+    pub min_founding_workers: u32,
 }
 
 /// The smallest meaningful value for a **counted** lever (turns or tiles). At `0` the behaviour the
@@ -219,6 +230,15 @@ impl ExpeditionConfig {
         require_at_least(
             "replenish.reach_tiles",
             self.replenish.reach_tiles,
+            MIN_COUNTED_LEVER,
+        )?;
+
+        // At `0` the founding-party gate cannot refuse anything — every party clears a floor of
+        // none — which is a silently disabled feature rather than a tuning. The value that means
+        // "turn the gate off for a playtest" is `1`: a party of one, which is a real party.
+        require_at_least(
+            "settle.min_founding_workers",
+            self.settle.min_founding_workers,
             MIN_COUNTED_LEVER,
         )?;
 
@@ -416,6 +436,8 @@ mod tests {
         assert!(config.hunt.forecast_horizon_turns >= config.hunt.viability_warn_turns);
         assert!(config.replenish.low_turns >= 1);
         assert!(config.replenish.reach_tiles >= 1);
+        // A floor of `0` would refuse nothing, so the gate must ship above it.
+        assert!(config.settle.min_founding_workers >= 1);
     }
 
     /// **The regression this validator exists for.** A `0` forecast horizon used to be accepted
@@ -505,6 +527,10 @@ mod tests {
             // 0 → a scout never tops up / must stand on the herd's exact tile.
             ("replenish.low_turns", |c| c.replenish.low_turns = 0),
             ("replenish.reach_tiles", |c| c.replenish.reach_tiles = 0),
+            // 0 → the founding-party floor refuses nothing; the gate is off rather than tuned.
+            ("settle.min_founding_workers", |c| {
+                c.settle.min_founding_workers = 0
+            }),
         ];
 
         for (field, break_it) in cases {

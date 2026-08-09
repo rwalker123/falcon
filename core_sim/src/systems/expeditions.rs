@@ -1063,6 +1063,8 @@ pub enum FoundingRefusal {
     /// The party still has orders. Founding is an **arrival** action, so it is only offered to a
     /// party that has arrived and is waiting to be told what to do next.
     NotAwaitingOrders,
+    /// The founding party is smaller than `settle.min_founding_workers`.
+    PartyTooSmall { workers: u32, required: u32 },
     /// The party's tile, or the world's tile grid, could not be resolved — nothing can be said
     /// about ground the sim cannot find.
     SiteUnresolved,
@@ -1077,23 +1079,36 @@ impl FoundingRefusal {
         match self {
             FoundingRefusal::NotAnExpedition => "not_an_expedition",
             FoundingRefusal::NotAwaitingOrders => "not_awaiting_orders",
+            FoundingRefusal::PartyTooSmall { .. } => "party_too_small",
             FoundingRefusal::SiteUnresolved => "site_unresolved",
             FoundingRefusal::Unreachable => "unreachable",
         }
     }
 
     /// What the player is told, in the sim's voice — a refusal is loud, never silent.
-    pub fn explanation(self) -> &'static str {
+    ///
+    /// A `String` rather than a `&'static str` because a refusal that turns on a *number* has to
+    /// name it: "a party needs at least 4 workers, this one has 1" is actionable where "the party
+    /// is too small" is a puzzle.
+    pub fn explanation(self) -> String {
         match self {
-            FoundingRefusal::NotAnExpedition => "that band is not an expedition.",
+            FoundingRefusal::NotAnExpedition => "that band is not an expedition.".to_string(),
             FoundingRefusal::NotAwaitingOrders => {
                 "the party is still under orders — only a party that has arrived and is awaiting \
                  orders can start a life where it stands."
+                    .to_string()
             }
-            FoundingRefusal::SiteUnresolved => "the party's position could not be resolved.",
+            FoundingRefusal::PartyTooSmall { workers, required } => format!(
+                "a founding party needs at least {required} workers to stand on its own — this \
+                 one has {workers}."
+            ),
+            FoundingRefusal::SiteUnresolved => {
+                "the party's position could not be resolved.".to_string()
+            }
             FoundingRefusal::Unreachable => {
                 "nobody at home could point at that place — a founding site must join one of your \
                  bands across ground your people have mapped."
+                    .to_string()
             }
         }
     }
@@ -1269,6 +1284,13 @@ pub fn founding_site_is_reachable_in_world(
 /// hunt and move on its own and does nothing else — a band is mobile, so settling harsh ground is a
 /// mistake the player walks out of rather than an illegal move, and the land's quality already
 /// speaks through morale, yield and carrying capacity.
+///
+/// **`settle.min_founding_workers` is a floor on the PARTY, and that is a different claim.** The sim
+/// refuses a colony with no labor pool to allocate — one worker cannot staff a food role, so the
+/// band is a death notice with a marker on it — while still refusing to judge the ground it stands
+/// on. Saying *"you do not have enough people for this"* is a statement about what the player is
+/// sending; saying *"that place is no good"* would be the habitability gate above, which is not the
+/// sim's call to make.
 pub fn found_band_from_expedition(
     world: &mut World,
     entity: Entity,
@@ -1284,12 +1306,35 @@ pub fn found_band_from_expedition(
     if !matches!(expedition.phase, ExpeditionPhase::AwaitingOrders) {
         return Err(FoundingRefusal::NotAwaitingOrders);
     }
-    let Some((faction, site_tile)) = world
-        .get::<PopulationCohort>(entity)
-        .map(|cohort| (cohort.faction, cohort.current_tile))
+    let Some((faction, site_tile, party_workers)) =
+        world.get::<PopulationCohort>(entity).map(|cohort| {
+            (
+                cohort.faction,
+                cohort.current_tile,
+                // The same pool `send_expedition` drew the party from, floored to whole people:
+                // a `working` of 3.9 is three workers, not four.
+                available_workers(cohort.working),
+            )
+        })
     else {
         return Err(FoundingRefusal::SiteUnresolved);
     };
+
+    // ---- The party floor, first: it is O(1) against a BFS over the whole map ----
+    // Both gates are pure refusals that write nothing, so the cheap one goes first and the
+    // reachability search is never paid for a party that could not found anywhere.
+    let required = world
+        .resource::<crate::expedition_config::ExpeditionConfigHandle>()
+        .get()
+        .settle
+        .min_founding_workers;
+    if party_workers < required {
+        return Err(FoundingRefusal::PartyTooSmall {
+            workers: party_workers,
+            required,
+        });
+    }
+
     let Some(site) = world.get::<Tile>(site_tile).map(|tile| tile.position) else {
         return Err(FoundingRefusal::SiteUnresolved);
     };

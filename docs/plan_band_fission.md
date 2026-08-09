@@ -1,8 +1,9 @@
 # Plan: Band Fission — a splinter group leaves and starts a new band
 
 Status: **The arrival verb ships; the party it sends is still today's.** `settle_expedition` (#510)
-founds a resident band, same-faction, gated on reachability. What a founding party is *made of* — the
-viability gates, dependents travelling, the dowry and the Workbench dials — is #511. The authoritative spec for arc
+founds a resident band, same-faction, gated on **reachability** and on a **minimum founding party**
+(`min_founding_workers`, live on the Workbench). What a founding party is *made of* — the parent-side
+viability gates, dependents travelling, the dowry and the remaining dials — is #511. The authoritative spec for arc
 [#508](https://github.com/rwalker123/falcon/issues/508): splitting a band. It answers the six
 questions the feature slices cannot answer for themselves — *does the new band stay yours, who is
 allowed to leave, who actually goes, what they take, why you would ever do it, and what the player
@@ -117,24 +118,30 @@ expedition. So that is the moment the sim checks:
 
 - **Party viability** — the founding party must have at least `min_founding_workers` working-age
   people. Below that there is no labor pool to allocate and the new band is a death notice with a
-  marker on it.
+  marker on it. **Shipped in #510** alongside reachability, out of sequence: playtest founded a
+  colony with **one** person, and a verb that ships without this gate is a verb that teaches the
+  player the wrong price for it.
 - **Parent viability** — the *parent as it stands right now* must clear two floors after the split
-  is made permanent: at least `parent_min_workers` remaining, and a post-split dependency ratio
+  is made permanent (**#511**): at least `parent_min_workers` remaining, and a post-split dependency ratio
   `(children + elders) / working` no worse than `parent_max_dependency_ratio`. This is the guard
   against the #431 spiral: the failure mode there is dependents outnumbering workers, and hollowing
   out the home band to crew a colony is the fastest way to arrange it.
 - **Reachability** — the founding tile must connect, through tiles the faction has **discovered**, to
-  a tile held by one of its **resident** bands. See below; this is the one gate #510 owns.
+  a tile held by one of its **resident** bands. See below. **Shipped in #510.**
 
 Evaluating the parent live at founding time — rather than freezing a verdict at launch — is what
 makes this honest: the home band may have grown, starved or split again in the twenty turns the party
 spent walking. **A refusal is a refusal to found, not a loss of the party** — it stays an expedition
 in `AwaitingOrders`, and *recall* is still there.
 
-**The compose sheet forecasts these gates and warns; it does not refuse.** Same pattern as the hunt
-trip forecast: the sim exports the verdict, the client reads it. The player should see "founding
+**The compose sheet forecasts these gates and warns; it does not refuse** (#511). Same pattern as the
+hunt trip forecast: the sim exports the verdict, the client reads it. The player should see "founding
 would leave the home band below its floor" before they walk twenty tiles, and should still be allowed
 to walk if they mean to.
+
+**Until that lands, a refusal is where the player learns the rule** — the sim names the shortfall
+("a founding party needs at least 4 workers … this one has 1") and the event dock carries it. That is
+honest but late, which is exactly the argument for the forecast, not against the gate.
 
 ### Reachability — you can only settle ground you can point at
 
@@ -301,7 +308,7 @@ say which way each one breaks, because that is what tells you which direction to
 
 | Lever | Opening | What it means | Too low | Too high |
 |---|---|---|---|---|
-| `min_founding_workers` | **4** | The founding party must hold at least this many **working-age** people at the moment of founding (Q2). | One or two people can found a band that cannot staff a single food role — a death notice with a marker on it. | At 8+ a split costs half the home workforce, so the verb ships and is never used. |
+| `min_founding_workers` | **4** | The founding party must hold at least this many **working-age** people at the moment of founding (Q2). **Shipped — #510.** | One or two people can found a band that cannot staff a single food role — a death notice with a marker on it. | At 8+ a split costs half the home workforce, so the verb ships and is never used. |
 | `parent_min_workers` | **6** | Workers the **parent** must still have once the split is permanent (Q2). | The home band can be hollowed out to crew a colony, killing both. | Only an already-large band can split, which pushes the first fission very late. |
 | `parent_max_dependency_ratio` | **1.0** | The parent's post-split `(children + elders) / working` ceiling — at most one dependent per worker. The #431 spiral guard. | The default start is ≈0.82 (30/55/15), so anything under ~0.9 means you can barely ever split. | At 1.5 you can leave home with three workers feeding five mouths — the spiral, arranged deliberately. |
 | `establishment_turns` | **20** | Turns of food the seed larder must cover **after arrival**, on top of the walk: `total_party_size × per_capita_draw × (distance + establishment_turns)` (Q4). How long the colony has to bring its own forage and hunt income up. | Every colony starves on arrival however good the tile is. | The dowry guts the parent's larder, so splitting is gated on food you rarely have. |
@@ -340,7 +347,7 @@ manifest row, not new machinery:
 
 | pointer | type | min · max · step | default | unit | hint |
 |---|---|---|---|---|---|
-| `/settle/min_founding_workers` | int | 1 · 12 · 1 | 4 | workers | Working-age floor a party must clear to found a band. |
+| `/settle/min_founding_workers` | int | 1 · 12 · 1 | 4 | workers | Working-age floor a party must clear to found a band. **Shipped — #510**, with the gate it governs. `1` is the "off" setting and is still a real party. |
 | `/settle/parent_min_workers` | int | 0 · 20 · 1 | 6 | workers | Workers the home band must keep after the split. **0 turns the gate off** for a playtest run. |
 | `/settle/parent_max_dependency_ratio` | float | 0.5 · 2.5 · 0.05 | 1.0 | — | Dependents per worker the home band may be left with. |
 | `/settle/establishment_turns` | int | 0 · 60 · 1 | 20 | turns | Food the seed larder carries beyond the walk. |
@@ -354,12 +361,15 @@ reuses the settle-site threshold rather than being a number of its own.
 
 1. **Design doc (this document).** ✅ #509.
 2. **"Start a life here"** — ✅ #510. The arrival verb: the component swap, the **reachability gate**
-   (Q2 — the only one of the three gates that ships here), snapshot persistence of a mid-game
+   and the **party floor** (`min_founding_workers`, with its Workbench row — the two of Q2's three
+   gates that ship here; the party floor came in on playtest, which founded a colony with one
+   person), snapshot persistence of a mid-game
    founding (`sim_state.rs:487` must re-attach `ResidentBand` for a band worldgen never made), the
    event and feed lines, and the client affordance. Build it same-faction, with the party as it is
    composed today.
-3. **Compose the founding party** — #511. The Q2 gates, dependents travelling, the Q4 dowry, the
-   compose sheet's parent-after forecast, and the five `tuning_manifest.json` rows — the dials land
+3. **Compose the founding party** — #511. The Q2 **parent** gates, dependents travelling, the Q4
+   dowry, the compose sheet's forecast of all three gates, and the remaining four
+   `tuning_manifest.json` rows — the dials land
    in the Workbench **with** the gates they govern, not as a follow-up, because a gate that cannot be
    moved during a playtest cannot be judged during one.
 4. **Naming** — #271, generalized so it serves a founded band and not only the player's first one.
