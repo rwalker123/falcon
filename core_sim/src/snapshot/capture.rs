@@ -89,6 +89,11 @@ pub struct SnapshotContext<'w> {
     /// Resolver tuning — read so a herd's pre-commit forecast resolves the SAME fight the take will
     /// (`docs/plan_hunt_through_combat.md` §4).
     pub combat: Res<'w, crate::combat_config::CombatConfigHandle>,
+    /// The materials table and the recipe book — read at capture for the two per-world catalogues
+    /// and for every band's craft offers. The refusal is resolved here, not on the client, so the
+    /// capture needs both tables in hand.
+    pub materials: Res<'w, crate::materials_config::MaterialsConfigHandle>,
+    pub recipes: Res<'w, crate::recipes_config::RecipesConfigHandle>,
     pub settlement_stage: Res<'w, crate::settlement_stage_config::SettlementStageConfigHandle>,
     pub supply_membership: Res<'w, SupplyNetworkMembership>,
     pub pipeline_config: Res<'w, TurnPipelineConfigHandle>,
@@ -260,6 +265,14 @@ pub(crate) struct PublishState {
     /// the roster above, and diffed for the same reason: it is the largest string on the section
     /// and nothing about it changes between world rebuilds.
     equipment_config_json: Whole<String>,
+    /// The crafting catalogues — per-world constants like the roster above, diffed for the same
+    /// reason: they are re-sent only when the world is rebuilt on new tuning.
+    materials: Whole<Vec<MaterialDefState>>,
+    characteristic_bands: Whole<Vec<CharacteristicBandState>>,
+    recipes: Whole<Vec<RecipeDefState>>,
+    /// **Not** a per-world constant — a craft is *learned* — so this one really does change, and is
+    /// diffed whole exactly like the ladder's own knowledge rows.
+    craft_knowledge: Whole<Vec<CraftKnowledgeState>>,
     history: VecDeque<StoredSnapshot>,
 }
 
@@ -622,6 +635,10 @@ struct SubsistenceParts {
     default_scout_kit_id: Option<String>,
     default_warrior_kit_id: Option<String>,
     equipment_config_json: Option<String>,
+    materials: Option<Vec<MaterialDefState>>,
+    characteristic_bands: Option<Vec<CharacteristicBandState>>,
+    recipes: Option<Vec<RecipeDefState>>,
+    craft_knowledge: Option<Vec<CraftKnowledgeState>>,
 }
 
 /// Fauna and flora: the herd roster, the forage patches, and the food-module map.
@@ -636,6 +653,10 @@ fn diff_subsistence(
     default_scout_kit_id: &mut Whole<String>,
     default_warrior_kit_id: &mut Whole<String>,
     equipment_config_json: &mut Whole<String>,
+    materials: &mut Whole<Vec<MaterialDefState>>,
+    characteristic_bands: &mut Whole<Vec<CharacteristicBandState>>,
+    recipes: &mut Whole<Vec<RecipeDefState>>,
+    craft_knowledge: &mut Whole<Vec<CraftKnowledgeState>>,
     snapshot: &WorldSnapshot,
     write: Baseline,
 ) -> SubsistenceParts {
@@ -665,6 +686,14 @@ fn diff_subsistence(
             &snapshot.equipment_config_json,
             write,
         ),
+        materials: diff_whole(materials, &snapshot.materials, write),
+        characteristic_bands: diff_whole(
+            characteristic_bands,
+            &snapshot.characteristic_bands,
+            write,
+        ),
+        recipes: diff_whole(recipes, &snapshot.recipes, write),
+        craft_knowledge: diff_whole(craft_knowledge, &snapshot.craft_knowledge, write),
     }
 }
 
@@ -818,6 +847,10 @@ impl PublishState {
             herds: Whole::default(),
             food_modules: Whole::default(),
             kits: Whole::default(),
+            materials: Whole::default(),
+            characteristic_bands: Whole::default(),
+            recipes: Whole::default(),
+            craft_knowledge: Whole::default(),
             default_hunt_kit_id: Whole::default(),
             default_forage_kit_id: Whole::default(),
             default_scout_kit_id: Whole::default(),
@@ -941,6 +974,10 @@ impl PublishState {
             forage_patches,
             food_modules,
             kits,
+            materials,
+            characteristic_bands,
+            recipes,
+            craft_knowledge,
             default_hunt_kit_id,
             default_forage_kit_id,
             default_scout_kit_id,
@@ -1057,6 +1094,10 @@ impl PublishState {
                         default_scout_kit_id,
                         default_warrior_kit_id,
                         equipment_config_json,
+                        materials,
+                        characteristic_bands,
+                        recipes,
+                        craft_knowledge,
                         captured,
                         write,
                     )
@@ -1138,6 +1179,10 @@ impl PublishState {
             forage_patches: subsistence_parts.forage_patches,
             food_modules: subsistence_parts.food_modules,
             kits: subsistence_parts.kits,
+            materials: subsistence_parts.materials,
+            characteristic_bands: subsistence_parts.characteristic_bands,
+            recipes: subsistence_parts.recipes,
+            craft_knowledge: subsistence_parts.craft_knowledge,
             default_hunt_kit_id: subsistence_parts.default_hunt_kit_id,
             default_forage_kit_id: subsistence_parts.default_forage_kit_id,
             default_scout_kit_id: subsistence_parts.default_scout_kit_id,
@@ -1344,6 +1389,12 @@ impl PublishState {
         self.herds.reset(entry.snapshot.herds.clone());
         self.food_modules.reset(entry.snapshot.food_modules.clone());
         self.kits.reset(entry.snapshot.kits.clone());
+        self.materials.reset(entry.snapshot.materials.clone());
+        self.characteristic_bands
+            .reset(entry.snapshot.characteristic_bands.clone());
+        self.recipes.reset(entry.snapshot.recipes.clone());
+        self.craft_knowledge
+            .reset(entry.snapshot.craft_knowledge.clone());
         self.default_hunt_kit_id
             .reset(entry.snapshot.default_hunt_kit_id.clone());
         self.default_forage_kit_id
@@ -1508,6 +1559,10 @@ impl PublishState {
             herds: None,
             food_modules: None,
             kits: None,
+            materials: None,
+            characteristic_bands: None,
+            recipes: None,
+            craft_knowledge: None,
             default_hunt_kit_id: None,
             default_forage_kit_id: None,
             default_scout_kit_id: None,
@@ -1643,6 +1698,10 @@ impl PublishState {
             herds: None,
             food_modules: None,
             kits: None,
+            materials: None,
+            characteristic_bands: None,
+            recipes: None,
+            craft_knowledge: None,
             default_hunt_kit_id: None,
             default_forage_kit_id: None,
             default_scout_kit_id: None,
@@ -1762,6 +1821,10 @@ impl PublishState {
             herds: None,
             food_modules: None,
             kits: None,
+            materials: None,
+            characteristic_bands: None,
+            recipes: None,
+            craft_knowledge: None,
             default_hunt_kit_id: None,
             default_forage_kit_id: None,
             default_scout_kit_id: None,
@@ -1948,6 +2011,7 @@ pub(crate) type PopulationSnapshotQuery<'w, 's> = Query<
         Option<&'static Expedition>,
         Option<&'static BandId>,
         Option<&'static BandEquipment>,
+        Option<&'static crate::components::BandBench>,
     ),
 >;
 
@@ -2094,6 +2158,8 @@ pub fn capture_snapshot(
         creatures,
         equipment,
         combat,
+        materials,
+        recipes,
         settlement_stage,
         supply_membership,
         pipeline_config,
@@ -2278,6 +2344,42 @@ pub fn capture_snapshot(
         baseline_gather_rate: labor_config.forage.per_worker_biomass_capacity,
         equipped_vantage_range: labor_config.scout.vantage_range as f32,
     };
+    // **The crafting readout's config half, resolved ONCE for the capture.** `craftOffers` is
+    // bands × recipes, and everything that is a function of the recipe alone — its group, its bench
+    // material, the tool that bounds it, the material's own word — is a constant across that
+    // product. Hoisting it is what keeps the per-band pass to the band's own three questions.
+    let materials_config = materials.get();
+    let recipes_config = recipes.get();
+    let craft_offer_plans =
+        crate::snapshot::crafting::plan_craft_offers(&recipes_config, &equipment_config);
+    let knowledge_threshold = ladder_config.knowledge.completion_threshold;
+    // **Per FACTION, not per band** — every band of a faction knows the same crafts, so a per-band
+    // resolution would be one discovery-ledger walk per band for one answer.
+    let known_crafts_by_faction: std::collections::HashMap<
+        crate::orders::FactionId,
+        std::collections::BTreeMap<String, bool>,
+    > = populations
+        .iter()
+        .map(|(_, cohort, _, _, _, _, _, _)| cohort.faction)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .map(|faction| {
+            (
+                faction,
+                crate::snapshot::crafting::known_crafts(
+                    &materials_config,
+                    &discovery_progress,
+                    faction,
+                    knowledge_threshold,
+                ),
+            )
+        })
+        .collect();
+    // **A faction with no ledger row knows nothing**, which is the opening state of every campaign:
+    // none of the three crafts ships known. An empty map is that answer, and it is a `static` rather
+    // than a per-band allocation because the fallback is taken on the first turn of every game.
+    static NO_CRAFTS_KNOWN: std::sync::LazyLock<std::collections::BTreeMap<String, bool>> =
+        std::sync::LazyLock::new(std::collections::BTreeMap::new);
     let expedition_levers = ExpeditionLevers {
         hunt_per_worker_carry: expedition_cfg.hunt.per_worker_carry,
         // **The EQUIPPED reference rate, resolved through the item table's default tier** — an
@@ -2298,7 +2400,7 @@ pub fn capture_snapshot(
     // (bands are nomadic). The `populations` query is read-only, so iterating it twice is fine.
     let cohort_positions: std::collections::HashMap<Entity, UVec2> = populations
         .iter()
-        .filter_map(|(entity, cohort, _, _, _, _, _)| {
+        .filter_map(|(entity, cohort, _, _, _, _, _, _)| {
             tile_positions
                 .get(&cohort.current_tile.to_bits())
                 .copied()
@@ -2308,7 +2410,7 @@ pub fn capture_snapshot(
     let mut population_states: Vec<PopulationCohortState> = populations
         .iter()
         .map(
-            |(entity, cohort, allocation, travel, expedition, band_id, equipment)| {
+            |(entity, cohort, allocation, travel, expedition, band_id, equipment, bench)| {
                 let current_pos = tile_positions.get(&cohort.current_tile.to_bits()).copied();
                 // A band is "traveling" while a `move_band` order is still en route to its target.
                 let is_traveling = travel
@@ -2410,6 +2512,18 @@ pub fn capture_snapshot(
                     expedition_delivery,
                     equipment,
                     kit_levers: &kit_levers,
+                    bench,
+                    // **This band's faction decides which crafts are known**, so the memo is keyed
+                    // per faction and resolved lazily — one entry per faction that owns a band,
+                    // not one per band.
+                    craft_inputs: &crate::snapshot::crafting::BandCraftInputs {
+                        materials: &materials_config,
+                        equipment: &equipment_config,
+                        plans: &craft_offer_plans,
+                        known_crafts: known_crafts_by_faction
+                            .get(&cohort.faction)
+                            .unwrap_or(&NO_CRAFTS_KNOWN),
+                    },
                 })
             },
         )
@@ -2852,9 +2966,27 @@ pub fn capture_snapshot(
     // it diffs out on every frame after the first.
     let kit_states = kit_roster_states(&equipment_config, &labor_config, &kit_levers);
     let equipment_config_json = serialize_equipment_config(&equipment_config);
+    // **The three per-world catalogues plus the learned one.** The first three are `Whole` baselines
+    // like the kit roster and diff out on every frame after the first; `craft_knowledge` genuinely
+    // moves, because a craft is learned by making things.
+    let material_catalogue =
+        crate::snapshot::crafting::material_catalogue(&materials_config, &equipment_config);
+    let characteristic_band_catalogue =
+        crate::snapshot::crafting::characteristic_band_catalogue(&materials_config);
+    let recipe_catalogue =
+        crate::snapshot::crafting::recipe_catalogue(&recipes_config, &equipment_config);
+    let craft_knowledge_states = crate::snapshot::crafting::craft_knowledge_states(
+        &materials_config,
+        &discovery_progress,
+        knowledge_threshold,
+    );
     let assembled = WorldSnapshot {
         header,
         kits: kit_states,
+        materials: material_catalogue,
+        characteristic_bands: characteristic_band_catalogue,
+        recipes: recipe_catalogue,
+        craft_knowledge: craft_knowledge_states,
         equipment_config_json,
         default_hunt_kit_id: equipment_config
             .default_kit_id(crate::equipment_config::KitJob::Hunt)

@@ -919,6 +919,94 @@ impl Default for KitOptionState {
     }
 }
 
+/// **One rung of the shared rating vocabulary** — `poor · fair · good · excellent`, ascending.
+///
+/// Published **once for the world**, not per material: it is one vocabulary, and every published
+/// reading already carries its own band name, so a copy per material row would be a second home for
+/// one fact. This is the legend.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct CharacteristicBandState {
+    pub name: String,
+    /// The reading at which this band opens. The first is `0.0` and the seams strictly ascend, so
+    /// every reading in `0..=1` selects exactly one band.
+    pub from: f32,
+}
+
+/// **One material the world contains** — a row of `SubsistenceSnapshot::materials`, the per-world
+/// catalogue. A `Whole` baseline like the kit roster: re-sent only on a world rebuild.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct MaterialDefState {
+    pub id: String,
+    /// The knowledge track that works it — `hide` → `tanning`. One craft per material.
+    pub craft: String,
+    /// The axes it is rated on, **in the order** a batch's readings are keyed by. The order is part
+    /// of the contract, not presentation.
+    pub axes: Vec<String>,
+    /// Whether it can be worked with **no tool at all**. `false` is the whole refusal mechanism for
+    /// a material with no bench tool present: the rate is `0` and nothing branches.
+    pub hand_workable: bool,
+    /// Bench progress multiplier bare-handed; `0` when not hand-workable.
+    pub hand_working_rate: f32,
+    /// The best reading a bare-handed craft can realize — fine flax with no loom still makes a
+    /// standard basket.
+    pub hand_working_quality_ceiling: f32,
+    /// The equipment item that **bounds** this material at the bench, or `""` when the roster has
+    /// none. It is what the *"No loom"* refusal names.
+    pub tool_item_id: String,
+}
+
+/// One input row of a published recipe.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct RecipeInputState {
+    pub material_id: String,
+    pub amount: f32,
+    /// The **one** characteristic this recipe judges, `""` on every other input row. It is the whole
+    /// of what separates two recipes over the same material.
+    pub reads_axis: String,
+}
+
+/// One output row of a published recipe. Exactly one of the two ids is set.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct RecipeOutputState {
+    pub equipment_id: String,
+    pub material_id: String,
+    pub amount: f32,
+}
+
+/// **One recipe in the book** — a row of `SubsistenceSnapshot::recipes`, the per-world catalogue.
+/// The band-relative half (can it be made, what would it come out at, what is missing) is the
+/// cohort's own `craft_offers`; this is the static half.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct RecipeDefState {
+    pub id: String,
+    pub display_name: String,
+    pub craft: String,
+    /// `kit` | `tool` | `stock` — the same three groups the ledger is drawn in.
+    pub group: String,
+    /// Worker-turns one pass costs.
+    pub work: f32,
+    /// Empty on every ordinary kit recipe. **Tools are earned, never a prerequisite**: a tool recipe
+    /// is gated on the crafts of what it is *made from*, never on the craft it unlocks.
+    pub requires_knowledge: Vec<String>,
+    pub inputs: Vec<RecipeInputState>,
+    pub outputs: Vec<RecipeOutputState>,
+}
+
+/// **One faction's standing in one craft.** The lesson is charged **per item completed**, so this
+/// meter moves when a bench delivers, not when a turn passes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct CraftKnowledgeState {
+    pub faction: u32,
+    pub craft_id: String,
+    /// `Bone-working` — the id, hyphenated and capitalized, resolved sim-side so the client never
+    /// maps an id to English.
+    pub display_name: String,
+    pub known: bool,
+    pub progress: f32,
+    /// What [`Self::progress`] has to reach. Published so the client draws no scale of its own.
+    pub completion_threshold: f32,
+}
+
 /// `TileState::graze_ecology_phase` — the biome carries no pasture at all (water, ice, bare rock).
 /// Deliberately the zero/default value: an absent reading must never masquerade as a healthy one.
 pub const GRAZE_PHASE_NONE: u8 = 0;

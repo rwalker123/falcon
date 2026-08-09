@@ -232,6 +232,13 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// a **full kit** — the component is the wear ledger, not the kit's existence.
     pub(crate) equipment: Option<&'a BandEquipment>,
     pub(crate) kit_levers: &'a BandKitLevers<'a>,
+    /// **What is on this band's bench.** `None` = no component at all (a hand-rolled fixture), which
+    /// reads as an idle bench — the same fallback `equipment` takes.
+    pub(crate) bench: Option<&'a crate::components::BandBench>,
+    /// The crafting readout's levers, bundled exactly as [`BandKitLevers`] is: the two configs, the
+    /// per-recipe plan resolved once for the whole capture, and this faction's known crafts. See
+    /// `snapshot::crafting` for why the recipe-only half is hoisted out of the per-band pass.
+    pub(crate) craft_inputs: &'a crate::snapshot::crafting::BandCraftInputs<'a>,
 }
 
 pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationCohortState {
@@ -256,6 +263,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         expedition_delivery,
         equipment,
         kit_levers,
+        bench,
+        craft_inputs,
     } = inputs;
     // **The minimal TOE, resolved for the wire.** The component records *wear*, so an absent one
     // reads as no wear — a full kit — exactly as the labor pass reads it. Durability and performance
@@ -286,15 +295,21 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     let forage_choice = job_choice(crate::equipment_config::KitJob::Forage);
     let scout_choice = job_choice(crate::equipment_config::KitJob::Scout);
     let warrior_choice = job_choice(crate::equipment_config::KitJob::Warrior);
-    // **One row per ITEM the config carries, not three named floats.** The band's ledger is sparse
-    // (an absent entry is zero wear), so the list is driven by the *config* — otherwise an item the
-    // band has never used would simply be missing from the readout rather than showing as full.
+    // **One row per ITEM the config carries, not three named floats.** The list is driven by the
+    // *config* rather than by the band's sparse ledger, so an item the band has never held still has
+    // a row — it reads `count 0` rather than going missing.
+    //
+    // **`count` is what stops a client inferring ownership from a condition of zero.** Since the
+    // count slice an absent entry is NOT OWNED, so `remaining` is `0` for an item the band has none
+    // of — the same `0` a reader used to take for *"dry"*. Which of the two it is now rides beside
+    // it, and *worn out* versus *never made* rides on `equipment_batches`.
     let kit_item_conditions = kit_levers
         .config
         .items()
         .map(|(id, _)| sim_schema::state::KitItemConditionState {
             item_id: id.to_string(),
             remaining: kit.remaining(id, kit_levers.config),
+            count: kit.count_of(id),
         })
         .collect();
     let hunter_attack = kit_levers
@@ -518,6 +533,16 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         }
         _ => 0.0,
     };
+    // **The crafting half of the row, resolved together** — the four readouts share this band's
+    // store, its ledger and its bench tiers, so resolving them apart would walk the same three
+    // structures four times. See `snapshot::crafting`: the refusal is turned into words *here*, not
+    // on the client.
+    let crate::snapshot::crafting::BandCraftState {
+        material_batches,
+        bench: bench_state,
+        craft_offers,
+        equipment_batches,
+    } = crate::snapshot::crafting::band_craft_state(&cohort.stores, bench, &kit, craft_inputs);
     PopulationCohortState {
         entity: entity.to_bits(),
         band_id: band_id.map(|id| id.0).unwrap_or_default(),
@@ -665,6 +690,10 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         pen_carry_per_worker_biomass,
         scout_vantage_range,
         warrior_attack,
+        material_batches,
+        bench: bench_state,
+        craft_offers,
+        equipment_batches,
     }
 }
 
@@ -847,6 +876,9 @@ mod tests {
             // These fixtures assert on the food ledger, not the TOE.
             equipment: None,
             kit_levers: &kit_levers(),
+            // These fixtures assert on the food ledger, not the bench.
+            bench: None,
+            craft_inputs: crate::snapshot::crafting::builtin_craft_inputs(),
         })
     }
 

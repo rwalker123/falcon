@@ -915,6 +915,16 @@ table PopulationCohortState {
   penCarryPerWorkerBiomass:float = 0;
   scoutVantageRange:float = 0;
   warriorAttack:float = 0;
+  // --- CRAFTING & MATERIALS (appended last, docs/plan_crafting_and_materials.md §7) -------------
+  // See the table docs above each of these for the contract. In one line each:
+  //   materialBatches  — what this band HAS, per rating, exact reading and band name both.
+  //   bench            — what it is making, against what work, with whom, and why it is stopped.
+  //   craftOffers      — ONE ROW PER RECIPE, with the refusal already resolved into words.
+  //   equipmentBatches — what it owns of each item, and how much life is left in the item's own quanta.
+  materialBatches:[MaterialBatchState];
+  bench:BenchState;
+  craftOffers:[CraftOffer];
+  equipmentBatches:[EquipmentBatchState];
 }
 
 // What ONE kit would grant ONE band at its current wear - a row of
@@ -2736,6 +2746,18 @@ table PopulationSection {
 table KitItemCondition {
   itemId:string;
   remaining:float = 0;
+  // --- OWNERSHIP, STATED (appended) -------------------------------------------------------------
+  // *** `remaining == 0` IS NOT "DRY". IT IS "OWNS NONE". ***
+  //
+  // The comment above is the pre-count reading and is kept for the field's history; the count slice
+  // inverted it. An item with no batch left is REMOVED from the band's ledger, so a worn-out item
+  // and one the band never had BOTH read `remaining 0` — the two are told apart by
+  // EquipmentBatchState.life ("Worn out" vs "Never made"), never by this number.
+  //
+  // This is the explicit ownership field, so no client has to infer ownership from a condition of
+  // zero: `count > 0` means the band holds units of it, and `remaining` is then the life left on the
+  // unit in hand. `count == 0` means it holds none, and `remaining` is 0 for that reason alone.
+  count:uint = 0;
 }
 
 table KitOption {
@@ -2805,6 +2827,197 @@ table KitOption {
   scoutVantageRange:float = 0;
 }
 
+// ==============================================================================================
+// CRAFTING & MATERIALS (docs/plan_crafting_and_materials.md §7)
+//
+// *** THE SIM RESOLVES THE REFUSAL, THE CLIENT RENDERS IT. ***
+//
+// There is no "you cannot craft that" branch in the sim's RESOLUTION — every refusal is a zero (a
+// zero bench rate, a zero draw, a zero crew), exactly as max(0, attack - defense) refuses a hunt.
+// But a bench that silently does nothing is not an answer, so the refusal is PUBLISHED: CraftOffer
+// carries a resolved `reason` string and a `severity`, one row per recipe, always.
+//
+// A CLIENT MUST NEVER RE-DERIVE A REASON, A SHORTFALL NUMBER, A STEP-DOWN OR A LIFE WORDING. That
+// is the same rule `kitTiers` exists to enforce, for the same reason: the derivation needs facts
+// (the band's batch readings, the tool that bounds a material, the recipe's grade seams, an item's
+// wear quantum) that either do not ride this wire or cannot be joined correctly from it.
+// ==============================================================================================
+
+// ONE AXIS OF ONE BATCH — the exact reading AND the band it falls in.
+//
+// BOTH, deliberately. The band (`poor`/`fair`/`good`/`excellent`) is the merge key and the word the
+// panel shows; the exact value is what crafting actually reads, so two `good` hides are NOT
+// interchangeable. A client that had only the band could not explain why one pile made a fine sled
+// and another made a standard one.
+//
+// THE BAND RATES THE AXIS, NOT THE MATERIAL. "Excellent toughness" says the toughness is excellent
+// and makes no claim about the hide — which is what lets ordinary quality words coexist with there
+// being no best hide.
+table CharacteristicReading {
+  axis:string;      // the material's own axis id — "toughness", "suppleness", "fineness", ...
+  value:float;      // the batch's EXACT amount-weighted average on this axis, 0..1
+  bandName:string;  // the `characteristic_bands` rung `value` falls in — the panel's word
+}
+
+// ONE PILE OF ONE MATERIAL AT ONE RATING — a row of PopulationCohortState.materialBatches.
+//
+// Same material, same per-axis band => one batch: that is the merge rule, and without it a band
+// hunting deer for two hundred turns holds two hundred piles of hide.
+table MaterialBatchState {
+  materialId:string;              // `materials.json` id — generic ("hide"), never "deer_hide"
+  amount:float;
+  readings:[CharacteristicReading];
+  // The nearest declared VARIETY of this material ("copper", "bronze"), or "" when the material
+  // declares none — which is every shipped material. Varieties are NAMING, not materials.
+  varietyName:string;
+}
+
+// WHAT A DRAW IS SHORT, AS A NUMBER. The panel says "Short 4.9 bone", never "cannot craft" — the
+// refusal that names its number is the whole point, so the arithmetic is done here and not there.
+table MaterialShortfall {
+  materialId:string;
+  required:float;  // the recipe's amount AFTER the bench tool's material efficiency
+  held:float;      // what the band's store actually holds, summed over its batches
+  short:float;     // required - held, always > 0 on a published row
+}
+
+// WHAT IS ON THIS BAND'S BENCH — one job at a time, so there is no queue to explain.
+//
+// `recipeId` empty = an idle bench. That is a different statement from a blocked one: a blocked
+// bench has a recipe AND a `blockedReason`.
+table BenchState {
+  recipeId:string;
+  displayName:string;
+  workers:uint;
+  progress:float;         // worker-turns accrued toward `work`
+  work:float;             // worker-turns one pass of this recipe costs
+  teaches:string;         // the craft id one completed item credits — crafting is the 4th teacher
+  // WHY THIS BENCH IS NOT MOVING, resolved sim-side. "" = it is working. It reads in exactly the
+  // CraftOffer vocabulary ("Short 4.9 bone", "No loom", joined with " · ") plus the crew's own
+  // refusal, because a bench with a full pile and nobody on it is also stopped.
+  blockedReason:string;
+  shortfalls:[MaterialShortfall];
+  itemsCompleted:uint;    // items finished on THIS job — the same count the wear and lesson charged
+  drawn:bool;             // the pile for the pass in flight is already cut
+  outputGrade:string;     // the grade that pile FIXED, "" before the draw or on an ungraded recipe
+}
+
+// ONE ROW PER RECIPE, ALWAYS — a row of PopulationCohortState.craftOffers.
+//
+// *** `reason` AND `severity` ARE THE CONTRACT, NOT `available`. ***
+//
+// "Not needed yet" is a SHRUG and a shortage is a PROBLEM. They are different strings and different
+// severities on this wire precisely because a client deriving both from a boolean cannot tell them
+// apart. The vocabulary (docs/plan_crafting_and_materials.md §7):
+//
+//   short of a material          "Short 4.9 bone"            danger
+//   the craft is unknown         "Needs Clay-working"        danger
+//   no tool, not hand-workable   "No crucible"               danger
+//   two reasons at once          joined with " · "           danger
+//   buildable                    "Hide + tanning frame → fine" / "Fibre, no loom → standard"
+//                                                            neutral
+//   buildable, a FIRST tool      "Unlocks fine fibre work"   good
+//   buildable, item untouched    "Not needed yet"            neutral (the panel dims the row)
+table CraftOffer {
+  recipeId:string;
+  displayName:string;
+  // "kit" (a party carries it) | "tool" (it bounds one material at the bench) | "stock" (it makes a
+  // material). The design's ledger is one table in exactly these three groups.
+  group:string;
+  outputItemId:string;   // the equipment id this recipe makes, "" for a material recipe
+  available:bool;        // would a pass make progress RIGHT NOW: craft known, tool/hand rate > 0, pile present
+  reason:string;         // RENDER IT VERBATIM. Never re-derive one, never substitute "cannot craft".
+  severity:string;       // "danger" | "neutral" | "good"
+  shortfalls:[MaterialShortfall];
+  // THE GRADE THE DRAW WOULD SELECT out of the band's stock right now, after the tool's quality
+  // ceiling — "coarse" / "standard" / "fine". "" on a recipe that reads no characteristic.
+  outputGrade:string;
+  onBench:bool;          // this recipe is the running job — the row's button is spent
+}
+
+// ONE BATCH OF ONE ITEM a band owns, plus the CONFIG's items it owns none of (one row each, count 0)
+// — so the ledger is complete and an item can never simply go missing from it.
+//
+// *** THE LIFE METER IS A FUEL GAUGE, NOT A PERFORMANCE METER. ***
+//
+// A spear at 34% is exactly as deadly as one at 100%. So `life` reads in the item's OWN USE QUANTA
+// and never in percent — a single percentage bar would draw a taper this model does not have. The
+// quantum's noun is resolved sim-side off the item's `wear.per` (a club that wears per fight reads
+// "raids", a sled per biomass hauled reads "biomass hauled"); THE CLIENT MUST NOT MAP QUANTA TO
+// ENGLISH.
+table EquipmentBatchState {
+  itemId:string;
+  tierId:string;      // the EquipmentTier these units were made at, "" when the band owns none
+  grade:string;       // the craft grade, "" for a start-stocked unit (a shipped kit was never on a bench)
+  count:uint;         // whole units in this batch. 0 = the band owns none of this item at all.
+  remaining:float;    // condition left on the unit IN HAND, 0-100. 0 when count is 0.
+  quantaLeft:float;   // uses of this item's own quantum this batch still has in it
+  quantumNoun:string; // the plural noun `quantaLeft` is counted in — "kills", "raids", "biomass hauled", ...
+  // THE ROW'S WORDING, resolved: "Untouched" | "48 raids left" | "~1 raid left" | "Worn out" |
+  // "Never made". WORN OUT AND NEVER MADE ARE DIFFERENT STATES and this is where they are told
+  // apart — both read count 0, because a batch that runs out of units is removed.
+  life:string;
+  lifeSeverity:string; // "healthy" | "warn" | "danger"
+}
+
+// --- THE PER-WORLD CATALOGUES -----------------------------------------------------------------
+// All three are Whole<> baselines like the kit roster: per-world constants, re-sent only on a world
+// rebuild, so they cost one frame each and diff out for the rest of the game.
+
+// One rung of the shared rating vocabulary, ascending. The first opens at 0.0 and the seams strictly
+// ascend, so every reading in 0..1 selects exactly one. Published ONCE for the whole world rather
+// than per material: it is one vocabulary, and every reading already carries its own band NAME.
+table CharacteristicBandState {
+  name:string;
+  from:float;
+}
+
+table MaterialDefState {
+  id:string;
+  craft:string;            // the knowledge track that works it — hide -> tanning
+  axes:[string];           // the axes it is rated on, IN THE ORDER a batch's readings are keyed by
+  // Whether it can be worked with NO tool at all. `false` is the whole refusal mechanism for a
+  // material with no bench tool present: the rate is 0 and nothing branches.
+  handWorkable:bool;
+  handWorkingRate:float;          // bench progress multiplier bare-handed, 0 when not hand-workable
+  handWorkingQualityCeiling:float;// the best reading a bare-handed craft can realize
+  toolItemId:string;       // the equipment item that bounds this material, "" if the roster has none
+}
+
+table RecipeInputState {
+  materialId:string;
+  amount:float;
+  readsAxis:string;  // the ONE characteristic this recipe judges, "" on every other input row
+}
+
+table RecipeOutputState {
+  equipmentId:string;  // exactly one of these two is set
+  materialId:string;
+  amount:float;
+}
+
+table RecipeDefState {
+  id:string;
+  displayName:string;
+  craft:string;
+  group:string;   // "kit" | "tool" | "stock", the same three the ledger groups by
+  work:float;
+  requiresKnowledge:[string];  // empty on every ordinary kit recipe — TOOLS ARE EARNED, NEVER A PREREQUISITE
+  inputs:[RecipeInputState];
+  outputs:[RecipeOutputState];
+}
+
+// One craft track per faction: whether it is known and how far along it is. The lesson is charged
+// per ITEM COMPLETED, so this meter moves when the bench delivers, not when a turn passes.
+table CraftKnowledgeState {
+  faction:uint;
+  craftId:string;
+  displayName:string;      // "Bone-working" — the id, hyphenated and capitalized, resolved sim-side
+  known:bool;
+  progress:float;
+  completionThreshold:float;  // what `progress` has to reach; a scale, so the client draws no bar of its own
+}
+
 table SubsistenceSection {
   herds:[HerdTelemetryState];
   foragePatches:[ForagePatchState];
@@ -2842,6 +3055,20 @@ table SubsistenceSection {
   // like the two above.
   defaultScoutKitId:string;
   defaultWarriorKitId:string;
+  // --- THE CRAFTING CATALOGUES, once per world (appended last) -----------------------------------
+  // Per-world constants, diffed like `kits` and re-sent only on a world rebuild. They are TYPED
+  // fields and not a second `equipmentConfigJson`: that blob is the Workbench's designer catalogue
+  // and has NO gameplay consumer, so a gameplay readout gets a field of its own rather than reaching
+  // into a string to dodge a schema change.
+  materials:[MaterialDefState];
+  // The shared rating vocabulary, once — NOT per material. Every published reading already carries
+  // its own band name, so this is only the legend, and a copy per material row would be a second
+  // home for one fact.
+  characteristicBands:[CharacteristicBandState];
+  recipes:[RecipeDefState];
+  // Per faction per craft. Not per-world-constant like the two above (a craft is learned), so it is
+  // diffed as a whole vector each frame — three crafts times the factions in the ledger.
+  craftKnowledge:[CraftKnowledgeState];
 }
 
 table KnowledgeSection {

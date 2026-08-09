@@ -495,22 +495,7 @@ impl LocalStore {
         let Some(batches) = self.materials.get_mut(material) else {
             return drawn;
         };
-        // Worst-first on the named axis, ties broken by the band key so the order is total and the
-        // draw is reproducible.
-        let mut order: Vec<crate::materials_config::BandKey> = batches.keys().cloned().collect();
-        order.sort_by(|a, b| {
-            let reading = |key: &crate::materials_config::BandKey| {
-                batches[key]
-                    .characteristics
-                    .get(axis)
-                    .copied()
-                    .unwrap_or(f32::INFINITY)
-            };
-            reading(a)
-                .partial_cmp(&reading(b))
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| a.cmp(b))
-        });
+        let order = spend_order(batches, axis);
         for key in order {
             if remaining <= scalar_zero() {
                 break;
@@ -576,6 +561,74 @@ impl LocalStore {
         }
         taken
     }
+
+    /// **What [`Self::take_material`] WOULD draw, without drawing it** — the readout's twin.
+    ///
+    /// The published craft offer has to state the grade a pass would come out at, and the grade is a
+    /// function of *which piles the draw would spend*: worst-first on the read axis, so a band with
+    /// one poor hide and one excellent one makes the poor sled first. Re-deriving that client-side is
+    /// impossible (the ordering is the store's) and re-deriving it here with a second walk is how the
+    /// preview and the draw come to disagree — so both run [`spend_order`].
+    ///
+    /// A short store previews what it *has*; the availability test is a separate question the caller
+    /// asks with [`Self::material_total`].
+    pub fn preview_take_material(
+        &self,
+        material: &str,
+        axis: &str,
+        amount: Scalar,
+    ) -> Vec<MaterialDraw> {
+        let mut remaining = amount.max(scalar_zero());
+        let mut drawn = Vec::new();
+        let Some(batches) = self.materials.get(material) else {
+            return drawn;
+        };
+        for key in spend_order(batches, axis) {
+            if remaining <= scalar_zero() {
+                break;
+            }
+            let batch = &batches[&key];
+            let taken = min(remaining, batch.amount);
+            if taken <= scalar_zero() {
+                continue;
+            }
+            remaining -= taken;
+            drawn.push(MaterialDraw {
+                band: key,
+                amount: taken,
+                characteristics: batch.characteristics.clone(),
+            });
+        }
+        drawn
+    }
+}
+
+/// **Worst-first on `axis`, ties broken by the band key** — the one spend order, shared by
+/// [`LocalStore::take_material`] and [`LocalStore::preview_take_material`] so a published grade
+/// cannot disagree with the grade the bench then fixes.
+///
+/// A batch that does not carry `axis` sorts **last**: it cannot occur (a yield row is validated to
+/// name exactly the material's axes), and spending it last means a mis-named axis burns the cheap
+/// stock rather than the good.
+fn spend_order(
+    batches: &BTreeMap<crate::materials_config::BandKey, MaterialBatch>,
+    axis: &str,
+) -> Vec<crate::materials_config::BandKey> {
+    let mut order: Vec<crate::materials_config::BandKey> = batches.keys().cloned().collect();
+    order.sort_by(|a, b| {
+        let reading = |key: &crate::materials_config::BandKey| {
+            batches[key]
+                .characteristics
+                .get(axis)
+                .copied()
+                .unwrap_or(f32::INFINITY)
+        };
+        reading(a)
+            .partial_cmp(&reading(b))
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.cmp(b))
+    });
+    order
 }
 
 /// Population representation bound to a home tile.
@@ -1693,6 +1746,17 @@ pub struct BandEquipment {
     /// frame — and a `Vec` inside it because batch order is insertion order, which is what makes
     /// *"the most worn first, earliest batch on a tie"* a deterministic rule.
     batches: std::collections::BTreeMap<String, Vec<EquipmentBatch>>,
+    /// **Whole units of each item this band has WORN OUT**, ever. Monotonic; only [`Self::wear_item`]
+    /// raises it.
+    ///
+    /// **It exists because a batch that runs out of units is REMOVED**, so *"the sled broke"* and
+    /// *"we have never had a sled"* are the same empty ledger — and they are not the same sentence to
+    /// a player. Without this the panel's `Worn out` wording is unrepresentable and every count of
+    /// zero has to read as *never made*, which is wrong for exactly the item the player just lost.
+    ///
+    /// An item with no entry has retired none. **Not gameplay**: nothing in the sim branches on it,
+    /// and it must not become a repair discount or a durability bonus — it is the readout's memory.
+    retired: std::collections::BTreeMap<String, u32>,
 }
 
 impl BandEquipment {
@@ -1742,6 +1806,16 @@ impl BandEquipment {
         self.batches
             .iter()
             .map(|(id, batches)| (id.as_str(), batches.as_slice()))
+    }
+
+    /// **This item's batches**, in insertion order — empty for one the band does not own. The
+    /// direct lookup beside [`Self::batches`]'s full walk, so a per-item readout does not scan the
+    /// whole ledger once per item.
+    pub fn batches_of(&self, item: &str) -> &[EquipmentBatch] {
+        self.batches
+            .get(item)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
 
     /// Restore an item's batches verbatim — the checkpoint's setter. Not for gameplay: the only
@@ -1883,17 +1957,37 @@ impl BandEquipment {
         let batch = &mut batches[index];
         let durability = def.tier_or_default(&batch.tier).starting_durability;
         batch.wear += charged;
+        let mut retired = 0u32;
         while batch.count > 0 && batch.wear >= durability {
             batch.count -= 1;
             batch.wear -= durability;
+            retired += 1;
         }
-        if batch.count == 0 {
+        let emptied = batch.count == 0;
+        if emptied {
             batches.remove(index);
             if batches.is_empty() {
                 self.batches.remove(item);
             }
         }
+        // **The readout's memory, written on the one seam that destroys a unit.** See the field's
+        // docs: an emptied batch is removed, so without this the panel could not say *"worn out"*.
+        if retired > 0 {
+            *self.retired.entry(item.to_string()).or_default() += retired;
+        }
         self
+    }
+
+    /// **Whole units of `item` this band has worn out**, ever. `0` for an item it has never
+    /// retired — including one it has never owned.
+    ///
+    /// Paired with [`Self::count_of`] it separates the two states a count of zero collapses:
+    /// `count 0, retired > 0` is **worn out**, `count 0, retired 0` is **never made**.
+    ///
+    /// **The checkpoint carries it for free**: `SimState`'s `BandRecord::equipment` clones the whole
+    /// [`BandEquipment`], so there is no restore setter beside [`Self::restore_batches`] to forget.
+    pub fn retired_of(&self, item: &str) -> u32 {
+        self.retired.get(item).copied().unwrap_or(0)
     }
 
     /// **Charge every item in `kit` whose quantum is `quantum`.** The seam every wear site calls, and

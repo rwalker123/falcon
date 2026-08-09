@@ -9,8 +9,9 @@ use bevy::{
 };
 use sim_runtime::{
     encode_delta_flatbuffer, encode_snapshot_flatbuffer, AxisBiasState, CampaignProfileState,
-    ClimateBandsState, CohortStoreState, CommandEventState, CorruptionLedger, CorruptionSubsystem,
-    CrisisGaugeState, CrisisMetricKind as SchemaCrisisMetricKind, CrisisOverlayState,
+    CharacteristicBandState, ClimateBandsState, CohortStoreState, CommandEventState,
+    CorruptionLedger, CorruptionSubsystem, CraftKnowledgeState, CrisisGaugeState,
+    CrisisMetricKind as SchemaCrisisMetricKind, CrisisOverlayState,
     CrisisSeverityBand as SchemaCrisisSeverityBand, CrisisTelemetryState,
     CrisisTrendSample as SchemaCrisisTrendSample, CultureLayerState, CultureTensionState,
     CultureTraitEntry, DiscoveredSiteState as SchemaDiscoveredSiteState,
@@ -22,9 +23,9 @@ use sim_runtime::{
     GreatDiscoveryTelemetryState, HerdTelemetryState, InfluentialIndividualState,
     IntensificationKnowledgeState, KitOptionState, KnowledgeLedgerEntryState,
     KnowledgeMetricsState, KnowledgeTimelineEventState, LaborAssignmentState, LogisticsLinkState,
-    MountainKind, PendingForkState, PendingForksState, PendingMigrationState,
+    MaterialDefState, MountainKind, PendingForkState, PendingForksState, PendingMigrationState,
     PopulationCohortState, PopulationDemographicsState as SchemaPopulationDemographicsState,
-    PowerIncidentSeverity, PowerIncidentState, PowerNodeState, PowerTelemetryState,
+    PowerIncidentSeverity, PowerIncidentState, PowerNodeState, PowerTelemetryState, RecipeDefState,
     ScalarRasterState, SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
     SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
     SettlementStageViewState, SnapshotHeader, StanceAxisState, StanceState, StartMarkerState,
@@ -109,6 +110,7 @@ use crate::crisis::{
 
 mod campaign;
 mod capture;
+pub(crate) mod crafting;
 mod culture;
 mod economy;
 mod flora_quotes;
@@ -1080,6 +1082,10 @@ mod tests {
         WorldSnapshot {
             header,
             kits: Vec::new(),
+            materials: Vec::new(),
+            characteristic_bands: Vec::new(),
+            recipes: Vec::new(),
+            craft_knowledge: Vec::new(),
             default_hunt_kit_id: String::new(),
             default_forage_kit_id: String::new(),
             default_scout_kit_id: String::new(),
@@ -1149,6 +1155,10 @@ mod tests {
         WorldSnapshot {
             header,
             kits: Vec::new(),
+            materials: Vec::new(),
+            characteristic_bands: Vec::new(),
+            recipes: Vec::new(),
+            craft_knowledge: Vec::new(),
             default_hunt_kit_id: String::new(),
             default_forage_kit_id: String::new(),
             default_scout_kit_id: String::new(),
@@ -1213,6 +1223,10 @@ mod tests {
         WorldSnapshot {
             header,
             kits: Vec::new(),
+            materials: Vec::new(),
+            characteristic_bands: Vec::new(),
+            recipes: Vec::new(),
+            craft_knowledge: Vec::new(),
             default_hunt_kit_id: String::new(),
             default_forage_kit_id: String::new(),
             default_scout_kit_id: String::new(),
@@ -1363,6 +1377,8 @@ mod tests {
             // This fixture asserts on the food ledger, not the TOE.
             equipment: None,
             kit_levers: &kit_levers,
+            bench: None,
+            craft_inputs: crate::snapshot::crafting::builtin_craft_inputs(),
         })
     }
 

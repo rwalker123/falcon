@@ -119,31 +119,74 @@ fn draw_inputs(
             return None;
         }
     }
-    let mut read_amount = scalar_zero();
-    let mut read_weighted = 0.0f32;
+    let mut reading = None;
     for input in &recipe.inputs {
-        // **Worst-first on the axis this row is judged by** — the read axis where this row names
-        // one, and the material's own **first declared axis** everywhere else. Either way the poor
-        // stock is spent before the good, which is the only ordering that does not silently burn the
-        // player's best hide on the first thing they make; the fallback only decides *which pile*,
-        // never how much, and it has to be deterministic rather than right.
-        let axis = input
-            .reads
-            .as_deref()
-            .or_else(|| spend_axis_for(&input.material, materials))
-            .unwrap_or_default();
+        let axis = spend_axis(input, materials);
         let draws = store.take_material(&input.material, axis, required(input.amount, efficiency));
-        let Some(read) = input.reads.as_deref() else {
-            continue;
-        };
-        for draw in draws {
-            let reading = draw.characteristics.get(read).copied().unwrap_or_default();
-            read_weighted += reading * draw.amount.to_f32();
-            read_amount += draw.amount;
+        if let Some(read) = input.reads.as_deref() {
+            reading = weighted_reading(&draws, read);
         }
     }
-    let reading = (read_amount > scalar_zero()).then(|| read_weighted / read_amount.to_f32());
     Some(reading)
+}
+
+/// **Which axis a row is SPENT worst-first on** — the read axis where the row names one, and the
+/// material's own **first declared axis** everywhere else.
+///
+/// Either way the poor stock goes before the good, which is the only ordering that does not silently
+/// burn the player's best hide on the first thing they make. The fallback decides only *which pile*,
+/// never how much, so it has to be deterministic rather than right.
+fn spend_axis<'a>(
+    input: &'a crate::recipes_config::RecipeInput,
+    materials: &'a MaterialsConfig,
+) -> &'a str {
+    input
+        .reads
+        .as_deref()
+        .or_else(|| spend_axis_for(&input.material, materials))
+        .unwrap_or_default()
+}
+
+/// **The amount-weighted average of a set of draws on one axis** — the number the grade is selected
+/// from. `None` when nothing came out, which is what an empty store gives.
+fn weighted_reading(draws: &[crate::components::MaterialDraw], axis: &str) -> Option<f32> {
+    let mut amount = scalar_zero();
+    let mut weighted = 0.0f32;
+    for draw in draws {
+        let reading = draw.characteristics.get(axis).copied().unwrap_or_default();
+        weighted += reading * draw.amount.to_f32();
+        amount += draw.amount;
+    }
+    (amount > scalar_zero()).then(|| weighted / amount.to_f32())
+}
+
+/// **The grade a draw WOULD fix, without drawing** — what a published craft offer quotes.
+///
+/// It runs the same two steps the bench runs and in the same order — the store's own worst-first
+/// spend order ([`LocalStore::preview_take_material`]), then `min(reading, ceiling)` against the
+/// recipe's seams — so the number on the panel is the number the next completion is stamped with.
+/// Anything less shared would let the two drift, and a grade that changes the moment you press Make
+/// is worse than no grade at all.
+///
+/// `None` for a recipe that reads nothing, and for a band whose store holds none of the read
+/// material: an offer that is short quotes no grade rather than quoting the grade of nothing.
+pub fn preview_grade(
+    store: &LocalStore,
+    recipe: &RecipeDef,
+    tiers: &BenchTiers,
+    materials: &MaterialsConfig,
+) -> Option<String> {
+    let input = recipe.reading_input()?;
+    let axis = input.reads.as_deref()?;
+    let draws = store.preview_take_material(
+        &input.material,
+        spend_axis(input, materials),
+        required(input.amount, tiers.material_efficiency),
+    );
+    let reading = weighted_reading(&draws, axis)?;
+    recipe
+        .grade_for(reading.min(tiers.quality_ceiling))
+        .map(str::to_string)
 }
 
 /// The material's first declared axis — the deterministic spend order for a row the recipe does not

@@ -206,6 +206,12 @@ impl RecipeDef {
             .and_then(|input| input.reads.as_deref())
     }
 
+    /// **The equipment id this recipe makes**, or `None` for one that makes only a material. The
+    /// join key from a published craft offer to the band's own batches of the thing it would make.
+    pub fn output_equipment_id(&self) -> Option<&str> {
+        self.outputs.iter().find_map(|output| output.equipment_id())
+    }
+
     /// **The grades in seam order, lowest first.** Total by construction: `validate` requires the
     /// lowest seam to be [`FIRST_GRADE_WHEN`] and no two to be equal.
     pub fn grades_by_seam(&self) -> Vec<(&str, &RecipeGrade)> {
@@ -275,6 +281,21 @@ impl RecipesConfig {
     /// Every recipe, in id order — the stable iteration a catalogue rides.
     pub fn recipes(&self) -> impl Iterator<Item = (&str, &RecipeDef)> {
         self.recipes.iter().map(|(id, def)| (id.as_str(), def))
+    }
+
+    /// **What a readout calls an equipment item** — the display name of the recipe that makes it,
+    /// or the item's own id when no recipe does.
+    ///
+    /// **The book is the item's name because `equipment.json` carries none.** An item id is a key
+    /// (`bone_awl`, `husbandry_gear`); the recipe that makes it is where a human already wrote the
+    /// player-facing words, so a refusal that has to say *"No bone awl"* asks here rather than
+    /// growing a second name table beside the first. The fallback is the id, which is the honest
+    /// answer for a thing the book cannot make.
+    pub fn item_display_name<'a>(&'a self, item: &'a str) -> &'a str {
+        self.recipes()
+            .find(|(_, recipe)| recipe.output_equipment_id() == Some(item))
+            .map(|(_, recipe)| recipe.display_name.as_str())
+            .unwrap_or(item)
     }
 
     /// The book's ids, for a refusal message — a player who mistypes a recipe is told what there is.

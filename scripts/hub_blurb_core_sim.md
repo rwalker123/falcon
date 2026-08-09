@@ -31,7 +31,7 @@ environment overrides. A new config's row goes in its arc's rule, not here.
 | `graze.md` | The pasture layer, the two food webs, ecological carrying capacity, the pen economy | `graze.rs`, `tests/grazing_*.rs` |
 | `combat.md` | Combat & casualties, predation | `combat/`, `tests/predators.rs` |
 | `equipment.md` | The minimal TOE — the spear / sled / basket kits, the two-tier rule, the durability cliff, the named-kit roster a party is sent out with | `equipment_config.rs`, `creatures_config.rs`, `data/equipment.json`, `tests/kit_selection.rs` |
-| `crafting.md` | Materials and the bench — the characteristic vector, the band merge rule, the batch store, the yield edges, recipes and grades, the crafts as knowledge, bench tools | `materials_config.rs`, `recipes_config.rs`, `crafting.rs`, `systems/crafting.rs`, `data/{materials,recipes}.json`, `tests/{materials,crafting}.rs` |
+| `crafting.md` | Materials and the bench — the characteristic vector, the band merge rule, the batch store, the yield edges, recipes and grades, the crafts as knowledge, bench tools, and the crafting wire (batches, the bench, the reasoned craft offers, equipment life) | `materials_config.rs`, `recipes_config.rs`, `crafting.rs`, `systems/crafting.rs`, `snapshot/crafting.rs`, `data/{materials,recipes}.json`, `tests/{materials,crafting,crafting_wire}.rs` |
 | `yield-forecast.md` | Pre-commit per-source yield forecast, assign-time seeding | `labor_config.rs`, `snapshot/`, `orders.rs` |
 | `telling.md` | The narrative beat engine, `when` grammar, stance, fork tier, memory threads | `telling/`, `tests/telling*.rs` |
 | `expeditions.md` | Wondrous sites, scouting & hunting expeditions | `sites.rs`, `expedition_config.rs` |

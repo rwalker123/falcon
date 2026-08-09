@@ -209,9 +209,18 @@ pub struct LaborAssignmentState {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct KitItemConditionState {
     pub item_id: String,
-    /// Remaining condition on `equipment.json`'s 0–100 scale, clamped at `0`. **`0` = dry.** Never a
-    /// performance reading — see the field's docs.
+    /// Remaining condition on `equipment.json`'s 0–100 scale, clamped at `0`. Never a performance
+    /// reading — see the field's docs.
+    ///
+    /// **`0` means the band OWNS NONE**, not *"owns one that is dry"*. A batch that runs out of
+    /// units is removed from the ledger, so a dry item and one the band never had both read `0`
+    /// here; [`Self::count`] is what says whether it owns any, and
+    /// [`EquipmentBatchState::life`] is what tells *worn out* from *never made*.
     pub remaining: f32,
+    /// **Whole units the band owns**, across every batch. The explicit ownership statement, so no
+    /// client has to infer ownership from a condition of zero.
+    #[serde(default)]
+    pub count: u32,
 }
 
 /// **What one kit would grant THIS band, at its current wear** — a row of
@@ -768,6 +777,163 @@ pub struct PopulationCohortState {
     /// **warrior** job's default, *not* at [`Self::kit_id`]. Appended last (append-only).
     #[serde(default)]
     pub warrior_attack: f32,
+    /// **What this band HAS, per rating** — one row per (material, band key) batch it holds. Empty
+    /// for a band that has banked no material at all, which is a real answer.
+    #[serde(default)]
+    pub material_batches: Vec<MaterialBatchState>,
+    /// **What is on this band's bench.** `recipe_id` empty = idle; a *blocked* bench has a recipe
+    /// and a [`BenchState::blocked_reason`].
+    #[serde(default)]
+    pub bench: BenchState,
+    /// **One row per recipe, always** — with the refusal already resolved into words. See
+    /// [`CraftOfferState`]: `reason`/`severity` are the contract, not `available`.
+    #[serde(default)]
+    pub craft_offers: Vec<CraftOfferState>,
+    /// **What this band owns of each item, and how much life is in it** — one row per batch, plus
+    /// one `count: 0` row for every config item it owns none of, so the ledger is never missing a
+    /// row. See [`EquipmentBatchState`] for why the life wording is in use quanta and not percent.
+    #[serde(default)]
+    pub equipment_batches: Vec<EquipmentBatchState>,
+}
+
+/// **One axis of one batch — the exact reading AND the band it falls in.**
+///
+/// Both, deliberately. The band is the merge key and the panel's word; the **exact** value is what
+/// crafting reads, so two `good` hides are not interchangeable and a client with only the band could
+/// not explain why one pile made a fine sled and another a standard one.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct CharacteristicReadingState {
+    /// The material's own axis id — `toughness`, `suppleness`, `fineness`, …
+    pub axis: String,
+    /// The batch's **exact** amount-weighted average on this axis, `0..1`.
+    pub value: f32,
+    /// The `characteristic_bands` rung [`Self::value`] falls in — `poor` / `fair` / `good` /
+    /// `excellent`. **It rates the AXIS, not the material.**
+    pub band_name: String,
+}
+
+/// **One pile of one material at one rating** — a row of
+/// [`PopulationCohortState::material_batches`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct MaterialBatchState {
+    /// The `materials.json` id. **Generic** — `hide`, never `deer_hide`.
+    pub material_id: String,
+    pub amount: f32,
+    pub readings: Vec<CharacteristicReadingState>,
+    /// The nearest declared **variety** of this material, or `""` when it declares none — which is
+    /// every shipped material. Varieties are naming, not materials.
+    pub variety_name: String,
+}
+
+/// **What a draw is short, as a number.** The panel says *"Short 4.9 bone"*, never *"cannot craft"*,
+/// so the arithmetic is done sim-side and never re-derived.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct MaterialShortfallState {
+    pub material_id: String,
+    /// The recipe's stated amount **after** the bench tool's material efficiency.
+    pub required: f32,
+    /// What the band's store holds, summed over its batches.
+    pub held: f32,
+    /// `required − held`. Always `> 0` on a published row.
+    pub short: f32,
+}
+
+/// **What is on a band's bench** — one job at a time, so no surface has to explain a queue.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct BenchState {
+    /// `""` = an idle bench, which is a *different* state from a blocked one.
+    pub recipe_id: String,
+    pub display_name: String,
+    pub workers: u32,
+    /// Worker-turns accrued toward [`Self::work`].
+    pub progress: f32,
+    /// Worker-turns one pass of this recipe costs.
+    pub work: f32,
+    /// The craft id one completed item credits — crafting is the fourth teacher, and **what is being
+    /// made decides what is learned**.
+    pub teaches: String,
+    /// **Why this bench is not moving**, resolved sim-side. `""` = it is working. Same vocabulary as
+    /// [`CraftOfferState::reason`], plus the crew's own refusal: a bench with a full pile and nobody
+    /// on it is also stopped.
+    pub blocked_reason: String,
+    pub shortfalls: Vec<MaterialShortfallState>,
+    /// Items finished on **this** job — the same count the tool's wear and the craft's lesson were
+    /// charged, so a readout of one is a readout of the others.
+    pub items_completed: u32,
+    /// The pile for the pass in flight is already cut. A short draw takes **nothing**, so this stays
+    /// `false` rather than leaving a half-spent pile.
+    pub drawn: bool,
+    /// The grade that pile **fixed** — `""` before the draw or on a recipe that reads nothing. It
+    /// never moves once set: a tool running dry mid-craft does not retroactively coarsen the thing
+    /// on the bench.
+    pub output_grade: String,
+}
+
+/// **One recipe, offered or refused** — a row of [`PopulationCohortState::craft_offers`], and there
+/// is one for **every** recipe in the book, always.
+///
+/// # `reason` and `severity` are the contract, not `available`
+///
+/// *"Not needed yet"* is a **shrug** and a shortage is a **problem**. They are different strings and
+/// different severities on this wire precisely because a client deriving both from a boolean cannot
+/// tell them apart. Render [`Self::reason`] verbatim; never substitute *"cannot craft"*, and never
+/// re-derive a reason, a shortfall or a grade.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct CraftOfferState {
+    pub recipe_id: String,
+    pub display_name: String,
+    /// `kit` (a party carries it) | `tool` (it bounds one material at the bench) | `stock` (it makes
+    /// a material) — the three groups the design's ledger is drawn in.
+    pub group: String,
+    /// The equipment id this recipe makes, `""` for a material recipe. The join key from an offer
+    /// row to its [`EquipmentBatchState`] rows.
+    pub output_item_id: String,
+    /// Would a pass make progress **right now**: the craft is known, the bench rate is non-zero, and
+    /// the pile is there.
+    pub available: bool,
+    /// The resolved refusal or invitation. See the type docs.
+    pub reason: String,
+    /// `danger` | `neutral` | `good`.
+    pub severity: String,
+    pub shortfalls: Vec<MaterialShortfallState>,
+    /// **The grade the draw would select** out of the band's stock right now, after the tool's
+    /// quality ceiling. `""` on a recipe that reads no characteristic.
+    pub output_grade: String,
+    /// This recipe is the running job — the row's button is spent (*"On the bench"*).
+    pub on_bench: bool,
+}
+
+/// **One batch of one item a band owns**, plus a `count: 0` row for every config item it owns none
+/// of — so the ledger always has a row and an item can never simply go missing from it.
+///
+/// # The life meter is a fuel gauge, not a performance meter
+///
+/// A spear at 34% is exactly as deadly as one at 100%, so [`Self::life`] reads in the item's **own
+/// use quanta** and never in percent — a single percentage bar would draw a taper this model does
+/// not have. The quantum's noun is resolved sim-side off `wear.per`; **the client must not map
+/// quanta to English**.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct EquipmentBatchState {
+    pub item_id: String,
+    /// The `EquipmentTier` these units were made at; `""` when the band owns none.
+    pub tier_id: String,
+    /// The craft grade; `""` for a start-stocked unit — a shipped kit has a tier but was never on
+    /// anyone's bench.
+    pub grade: String,
+    /// Whole units in this batch. **`0` = the band owns none of this item at all.**
+    pub count: u32,
+    /// Condition left on the unit **in hand**, `0..100`. `0` when [`Self::count`] is `0`.
+    pub remaining: f32,
+    /// Uses of this item's own quantum this batch still has in it.
+    pub quanta_left: f32,
+    /// The plural noun [`Self::quanta_left`] is counted in — `kills`, `raids`, `biomass hauled`, …
+    pub quantum_noun: String,
+    /// The row's wording, resolved: `Untouched` | `48 raids left` | `~1 raid left` | `Worn out` |
+    /// `Never made`. **`Worn out` and `Never made` are different states** and this is where they are
+    /// told apart — both read `count 0`, because a batch that runs out of units is removed.
+    pub life: String,
+    /// `healthy` | `warn` | `danger`.
+    pub life_severity: String,
 }
 
 /// Presentation view of a band's resolved settlement stage (mirror of the `SettlementStageView`

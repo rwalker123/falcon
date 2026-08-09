@@ -2,8 +2,9 @@
 paths:
   - "core_sim/src/{materials_config,recipes_config,crafting}.rs"
   - "core_sim/src/systems/crafting.rs"
+  - "core_sim/src/snapshot/crafting.rs"
   - "core_sim/src/data/{materials,recipes}.json"
-  - "core_sim/tests/{materials,crafting}.rs"
+  - "core_sim/tests/{materials,crafting,crafting_wire}.rs"
 ---
 
 # Materials and the bench — the stuff a craftable thing is made of, and how it gets made
@@ -410,20 +411,134 @@ four turns bare-handed, against ten turns of banked hide. **A craft is ~5 items*
 intensification ladder — and the tool it unlocks is a further ~20-turn investment (a tanning frame is
 8 fibre + 2 bone) that then pays back over the 25 items it lasts.
 
+---
+
+# On the wire — the refusal is RESOLVED here and RENDERED there
+
+`snapshot/crafting.rs` is the whole publication (`docs/plan_crafting_and_materials.md` §7). It exists
+because of one asymmetry: the sim's **resolution** has no *"you cannot craft that"* branch — every
+refusal is a zero — but a bench that silently does nothing is not an answer, so the reason has to be
+**published**. It is the same split `KitRoster.kit_offer` already makes for a snare against a Red
+Deer, and the same rule `kitTiers` enforces: **a client must never re-derive a reason, a shortfall
+number, a grade or a step-down.**
+
+## Four fields on `PopulationCohortState`, and what each answers
+
+| Field | Answers |
+|---|---|
+| `materialBatches:[MaterialBatchState]` | *what have I got* — one row per (material, band key) batch: `amount`, plus a `CharacteristicReading` per axis carrying **both** the exact value and its band name, in the material's **declared** axis order |
+| `bench:BenchState` | *what am I making* — `recipeId` (`""` = idle), crew, `progress` against `work`, `teaches` (the recipe's craft), `itemsCompleted`, whether the pile is `drawn` and the grade it fixed, and `blockedReason` |
+| `craftOffers:[CraftOffer]` | *what could I make* — **one row per recipe, always**, with `available`, a resolved `reason` + `severity`, the `shortfalls`, the `outputGrade` a draw would select, `group`, `outputItemId` and `onBench` |
+| `equipmentBatches:[EquipmentBatchState]` | *what have I got, and how long will it last* — one row per **batch**, plus one `count: 0` row per config item the band owns none of, so the ledger is never missing a row |
+
+**`craftOffers` is the field that keeps the refusal out of the client**, and the reason vocabulary is
+the contract. `reason` and `severity` are what a client renders — **not `available`**:
+
+| situation | `reason` | `severity` |
+|---|---|---|
+| a material is short | `Short 6.0 hide` — the **number**, never "cannot craft" | `danger` |
+| the craft is unknown | `Needs Bone-working` | `danger` |
+| no tool and the material cannot be hand-worked | `No loom` (the bounding tool's display name, lowercased) | `danger` |
+| two reasons at once | joined with ` · ` | `danger` |
+| buildable | `Hide + tanning frame → fine` / `Fibre, no loom → standard`, with `· Hide costs −20%` appended when the tool saves material | `neutral` |
+| buildable and this is a **first tool** | `Unlocks fine hide work` | `good` |
+| buildable but the item is untouched | **`Not needed yet`** | `neutral`, dimmed |
+
+> **"Not needed yet" reading differently from a shortage is the entire point of publishing the reason
+> at all.** One is a shrug and the other is a problem; a client deriving both from a boolean cannot
+> tell them apart. Pinned as a *pairing* by
+> `crafting_wire::not_needed_yet_and_a_shortage_are_different_strings_and_severities`, which asserts
+> the two rows differ in **both** the string and the severity — asserting one row's wording alone
+> would pass on a wire that said the same thing everywhere.
+
+**Nothing here is authored.** `group` (`kit`/`tool`/`stock`) is derived from whether the output item
+declares a `bounds_material`; a craft's display name is `crafting::title_from_id`
+(`clay_working` → *Clay-working*, underscores to hyphens, first letter up), which is why there is no
+`display_name` beside a craft in `materials.json`; and an **item**'s player-facing name is
+`RecipesConfig::item_display_name` — the book already writes it, and `equipment.json` carries none.
+
+**The grade an offer quotes is the grade the bench will fix.** `systems::crafting::preview_grade`
+runs the same two steps the draw runs, in the same order — the store's own worst-first spend order
+(`LocalStore::preview_take_material`, which shares `spend_order` with `take_material`) and then
+`min(reading, ceiling)` against the recipe's seams. Anything less shared would let the panel's grade
+change the moment the player pressed Make.
+
+## `equipmentBatches` — the life meter is a fuel gauge
+
+`life` reads in the item's **own use quanta** and never in percent: a spear at 34% is exactly as
+deadly as one at 100%, so a single percentage bar would draw a taper the model does not have. The
+quantum's noun is `WearQuantum::noun` — a club that wears per `fight` reads *raids*, a spear per
+`kill` reads *kills* — resolved **sim-side**, because a client mapping the enum to English would be a
+second copy of that table that a new quantum would not update. A *count* quantum gets a count noun; a
+*continuous* one keeps its own unit (`biomass hauled`), because a "biomass" is not a countable event
+and a turns conversion would need a forecast of what the band is about to do.
+
+Five wordings: `Untouched` · `48 kills left` · `~1 kill left` · **`Worn out`** · **`Never made`**.
+
+> ### `Worn out` and `Never made` both read `count 0`, and telling them apart needed STATE
+>
+> A batch that runs out of units is **removed** from `BandEquipment`, so *"the sled broke"* and
+> *"we have never had a sled"* were the same empty ledger — and they are not the same sentence to a
+> player. `BandEquipment::retired` is the readout's memory: a `BTreeMap<String, u32>` incremented by
+> `wear_item`, the one seam that destroys a unit, and read by `retired_of`. **Nothing in the sim
+> branches on it** and nothing may — it must not become a repair discount. The checkpoint carries it
+> for free, because `BandRecord::equipment` clones the whole component.
+>
+> Deriving it from config instead (*"a start-stocked item at count 0 must have worn out"*) is right
+> for kit items and **wrong for a tool the band built and then wore out**, which is exactly the case
+> a bench introduces.
+
+`lifeSeverity` (`healthy`/`warn`/`danger`) comes off `equipment.json`'s **`life_readout`** seams,
+which are fractions of *one fresh unit's* quanta rather than absolutes — a spear's life is 250 kills
+and a sled's is 5000 biomass, so any single absolute count would colour one of them permanently red.
+
+**`KitItemCondition` gained `count`, and `remaining == 0` no longer means "dry".** Since the count
+slice an absent entry is NOT OWNED, so an item the band has none of reads `remaining 0` — the same
+`0` a pre-count reader took for *"dry"*. `count` is the explicit ownership statement so nothing has
+to infer ownership from a condition of zero; *worn out* versus *never made* is `equipmentBatches`'
+job.
+
+## The three per-world catalogues, plus the learned one
+
+`SubsistenceSection` gains `materials` (id, craft, axes **in declared order**, hand-workability and
+its two readings, the tool that bounds it), `characteristicBands`, `recipes` (the static half — the
+band-relative half is `craftOffers`) and `craftKnowledge` (per faction per craft: `known`, `progress`,
+`completionThreshold`). The first three are `Whole<…>` baselines like the kit roster and re-send only
+on a world rebuild; **`craftKnowledge` is not**, because a craft is *learned*.
+
+**The rating vocabulary rides ONCE, at the section, not per material** — a deliberate departure from
+the spec's sketch. It is one vocabulary, and every published reading already carries its own band
+*name*, so a copy per material row would be a second home for one fact and the row would never be
+read.
+
+**None of this goes in `equipmentConfigJson`.** That blob is the Workbench's designer catalogue with
+no gameplay consumer; a gameplay readout gets a typed field of its own, or the blob becomes a second,
+untyped wire contract.
+
+## What it costs, and how it stays cheap
+
+`craftOffers` is **bands × recipes**, so everything that is a function of the recipe alone is hoisted
+into a `CraftOfferPlan` resolved **once per capture** (`plan_craft_offers`): the group, the bench
+material, the tool that bounds it, the material's own word. Known crafts are memoized **per faction**,
+not per band. Inside a band, `BenchTiers` is memoized **per material** — three resolutions for ten
+recipes — and each offer costs one store total per input row plus one preview draw over one
+material's batches. Nothing re-walks the item table or the recipe book per band.
+
+The whole cohort row is diffed by `PartialEq` (`Indexed<u64, PopulationCohortState>`), so a band whose
+store, bench and ledger are unchanged diffs out entirely. `equipment.md` records capture going from
+49.51 ms to 3.15 ms when the estimate tables were retired; this arc adds no per-frame table.
+
 ## What is deliberately not wired
 
-**The snapshot wire** (§7) is the remaining stage. Equipment counts and quality tiers are landed
-(`equipment.md`), but nothing publishes a batch, a bench or a craft offer to a client yet, so the
-panel's reasoned refusals — *"Short 4.9 bone"*, *"Needs Clay-working"*, *"No loom"* — have no field to
-ride on. The sim resolves none of them, by design: every refusal here is a zero, and the reason is a
-publication.
-
-**`BandBench::items_completed` is a readout with no reader**, and so is a batch's `count`. They exist
-because the bench has to record them for the wear/lesson pairing to be testable at all; the client
-half is what consumes them. `last_output_grade` **does** have a reader now — it is the grade stamped
-onto the batch the pass delivered.
+**The panel itself.** The Rust half publishes; `docs/plan_crafting_and_materials.md` §8 and the client
+rules own the GDScript.
 
 **A material output and an input `variety` are parsed, validated and shipped by nothing** — the alloy
 shape, exercised by a fixture, exactly as the materials table treats `varieties` and `equipment.json`
 treats the bronze tier. There is no producer for a material a recipe would make until the minerals
-arc lands.
+arc lands. `MaterialBatchState::varietyName` is therefore always `""` on the shipped roster, which is
+a real answer rather than a gap.
+
+**No `turns left` conversion for a continuous quantum.** A sled wears per biomass hauled, and turning
+that into turns needs a per-band forecast of what the band is about to haul — a projection, not a
+readout. It reads `N biomass hauled left` until something tracks that rate.

@@ -72,6 +72,26 @@ pub fn crafts_declared_by(materials: &MaterialsConfig) -> Vec<&str> {
     crafts
 }
 
+/// **How an id becomes the word a player reads** — underscores become hyphens and the first letter
+/// is capitalized, so `bone_working` reads *Bone-working* and `clay_working` reads *Clay-working*.
+///
+/// **Resolved sim-side, and derived rather than authored.** The panel's refusals are published
+/// strings (*"Needs Clay-working"*), so something has to turn an id into English — and a client that
+/// did it would be a second copy of this rule that a new craft would not update. A per-craft
+/// `display_name` in config was rejected for the same reason `RecipeDef::craft` is derived: the id
+/// already says it, and a second spelling drifts.
+///
+/// Used for a **craft** and for a **material** alike (`hide` → *Hide*), which is why it is named for
+/// neither.
+pub fn title_from_id(id: &str) -> String {
+    let hyphenated = id.replace('_', "-");
+    let mut chars = hyphenated.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
 /// **What working a material bare-handed spends of the recipe's inputs: all of it.**
 ///
 /// The tool's `craft_material_efficiency` is the *fraction actually consumed*, so the no-tool answer

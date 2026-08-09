@@ -332,6 +332,65 @@ pub enum WearQuantum {
     ItemCrafted,
 }
 
+impl WearQuantum {
+    /// **The plural noun a life readout counts this quantum in** — `48 raids left`, `120 kills left`.
+    ///
+    /// **Resolved sim-side, deliberately.** The life meter is a fuel gauge and reads in the item's
+    /// own use quanta, never in percent, so *something* has to turn the enum into English — and a
+    /// client that did it would be a second, silent copy of this table that a new quantum would not
+    /// update. It is `wear.per` that decides the word: a club that wears per fight reads **raids**,
+    /// a sled per biomass hauled reads **biomass hauled**.
+    ///
+    /// A *count* quantum gets a count noun; a *continuous* one keeps its own unit, because a
+    /// "biomass" is not a countable event and inventing a per-turn conversion here would need a
+    /// forecast of what the band is about to do.
+    pub fn noun(self) -> &'static str {
+        match self {
+            Self::Kill => "kills",
+            Self::BiomassHauled => "biomass hauled",
+            Self::BiomassGathered => "biomass gathered",
+            Self::BiomassCollected => "biomass butchered",
+            Self::TileRevealed => "new tiles",
+            Self::Fight => "raids",
+            Self::ItemCrafted => "crafts",
+        }
+    }
+
+    /// The singular of [`Self::noun`], for the `~1 raid left` rung — the one place a readout says
+    /// *one*. A quantum whose noun is a mass term (`biomass hauled`) has no singular and reads the
+    /// same either way.
+    pub fn singular_noun(self) -> &'static str {
+        match self {
+            Self::Kill => "kill",
+            Self::BiomassHauled => "biomass hauled",
+            Self::BiomassGathered => "biomass gathered",
+            Self::BiomassCollected => "biomass butchered",
+            Self::TileRevealed => "new tile",
+            Self::Fight => "raid",
+            Self::ItemCrafted => "craft",
+        }
+    }
+}
+
+/// **When a life readout stops being green** — the two seams of the fuel gauge's colour, as
+/// fractions of **one fresh unit's** worth of quanta.
+///
+/// A *fraction* rather than an absolute count because the quanta are not comparable across items: a
+/// spear's life is 250 kills and a sled's is 5000 biomass, so one number would colour one of them
+/// permanently red. It is only the **colour**; the wording itself is always the count
+/// ([`WearQuantum::noun`]), because a percentage bar would draw a taper this model does not have.
+///
+/// A band holding several units reads above `1.0` and is therefore healthy, which is right: stock is
+/// life.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LifeReadoutConfig {
+    /// Below this fraction of a fresh unit the row is `warn`.
+    pub warn_fraction: f32,
+    /// Below this fraction it is `danger`. Must be `< warn_fraction`.
+    pub danger_fraction: f32,
+}
+
 /// An item's use quantum and what one use costs it.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct WearConfig {
@@ -802,6 +861,9 @@ pub struct EquipmentConfig {
     /// exactly the flapping the lever exists to prevent, and a silently-defaulted lever is
     /// `config-loading.md`'s "looks live but isn't".
     pub quarry_default_kit_margin: f32,
+    /// **The life readout's two colour seams.** See [`LifeReadoutConfig`] — presentation tuning for
+    /// the published `lifeSeverity`, and the only thing in this file the sim itself never reads.
+    pub life_readout: LifeReadoutConfig,
 }
 
 impl EquipmentConfig {
@@ -1451,6 +1513,29 @@ impl EquipmentConfig {
                 field: "quarry_default_kit_margin".to_string(),
                 constraint: "be finite and not negative".to_string(),
                 value: self.quarry_default_kit_margin.to_string(),
+            });
+        }
+        // **The life readout's two seams**: both fractions of one fresh unit, both in `0..=1`, and
+        // `danger` strictly below `warn` — a danger seam at or above the warn seam would make the
+        // warn band unreachable, so one colour would simply never appear.
+        let life = self.life_readout;
+        for (field, value) in [
+            ("life_readout.warn_fraction", life.warn_fraction),
+            ("life_readout.danger_fraction", life.danger_fraction),
+        ] {
+            if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+                return Err(EquipmentConfigError::Invalid {
+                    field: field.to_string(),
+                    constraint: "be finite and within 0..=1".to_string(),
+                    value: value.to_string(),
+                });
+            }
+        }
+        if life.danger_fraction >= life.warn_fraction {
+            return Err(EquipmentConfigError::Invalid {
+                field: "life_readout.danger_fraction".to_string(),
+                constraint: "be strictly below warn_fraction".to_string(),
+                value: format!("{} vs warn {}", life.danger_fraction, life.warn_fraction),
             });
         }
         self.validate_bench_tools()?;
@@ -2554,7 +2639,8 @@ mod tests {
                     { "id": "big_game", "display_name": "B", "jobs": ["hunt"], "uses": [] }
                 ],
                 "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game" },
-                "quarry_default_kit_margin": 0.25"#,
+                "quarry_default_kit_margin": 0.25,
+            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
             ),
             (
                 "a kit that can be sent on nothing",
@@ -2562,7 +2648,8 @@ mod tests {
                     { "id": "big_game", "display_name": "A", "jobs": [], "uses": [] }
                 ],
                 "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game" },
-                "quarry_default_kit_margin": 0.25"#,
+                "quarry_default_kit_margin": 0.25,
+            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
             ),
             (
                 "a default naming no roster entry",
@@ -2570,7 +2657,8 @@ mod tests {
                     { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": [] }
                 ],
                 "default_kits": { "hunt": "ghost", "forage": "big_game", "scout": "big_game", "warrior": "big_game" },
-                "quarry_default_kit_margin": 0.25"#,
+                "quarry_default_kit_margin": 0.25,
+            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
             ),
             (
                 "a default whose jobs do not cover its own job",
@@ -2579,7 +2667,8 @@ mod tests {
                     { "id": "gathering", "display_name": "B", "jobs": ["forage"], "uses": [] }
                 ],
                 "default_kits": { "hunt": "gathering", "forage": "gathering", "scout": "gathering", "warrior": "gathering" },
-                "quarry_default_kit_margin": 0.25"#,
+                "quarry_default_kit_margin": 0.25,
+            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
             ),
         ];
         for (what, roster) in cases {
@@ -2607,7 +2696,8 @@ mod tests {
                 { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": ["net_kit"] }
             ],
             "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game" },
-                "quarry_default_kit_margin": 0.25"#,
+                "quarry_default_kit_margin": 0.25,
+            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
         ))
         .expect_err("an item that does not exist is invalid");
         assert!(
@@ -2657,7 +2747,8 @@ mod tests {
                 { "id": "warrior", "display_name": "W", "jobs": ["warrior", "scout"], "uses": ["snares"] }
             ],
             "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "warrior", "warrior": "warrior" },
-            "quarry_default_kit_margin": 0.25
+            "quarry_default_kit_margin": 0.25,
+            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }
         }"#;
         let err = EquipmentConfig::from_json_str(json)
             .expect_err("a warrior kit carrying a mass-bounded weapon is invalid");
@@ -2677,5 +2768,6 @@ mod tests {
                 { "id": "none", "display_name": "No kit", "jobs": ["hunt", "forage", "scout", "warrior"], "uses": [] }
             ],
             "default_kits": { "hunt": "big_game", "forage": "gathering", "scout": "none", "warrior": "none" },
-            "quarry_default_kit_margin": 0.25"#;
+            "quarry_default_kit_margin": 0.25,
+            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#;
 }
