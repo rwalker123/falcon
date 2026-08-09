@@ -1111,8 +1111,14 @@ Kept: `BandId`, `PopulationCohort`, `BandEquipment`, `StartingUnit`, `LaborAlloc
   `demographic_events::every_resident_band_carries_a_flow_accumulator` is the invariant.
 - **`carried_trade` settles into the band's OWN store** through the same `settle_carried_trade` a
   homecoming uses — it is its own band now, and the haul never went home.
-- **`age_turns = 0`.** The party's cohort is a clone of the parent's, so it arrives carrying the
-  parent's age; the band was founded now, and `migration_min_settled_turns` reads that field.
+- **`age_turns = 0` — the founding asserting its own precondition, not repairing an inherited
+  value.** It is a **no-op today**, and the reason is worth knowing rather than rediscovering: both
+  outfit paths already zero the field when they spawn a party (`handle_send_expedition`,
+  `outfit_raiding_party`), and the only writer of `age_turns` is `simulate_population`, whose band
+  query is `With<ResidentBand>` — so **a party never ages**. The line stays because the claim *this
+  band's life starts now* belongs to the founding rather than to an invariant two other functions
+  happen to maintain, and `migration_min_settled_turns` reads that field: a future party path that
+  forgot to zero it would otherwise hand a colony the parent's whole settled life.
 - **`home = current_tile`.** `simulate_population` resolves terrain off `home`, and for a nomad band
   the two already track together (`advance_band_movement` moves both) — the founding names the site
   explicitly rather than leaning on that.

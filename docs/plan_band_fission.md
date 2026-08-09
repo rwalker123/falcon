@@ -43,16 +43,20 @@ instead of coming home, you stay.
   around the `max_party`/provision-draw block at `:2903–2975`), `fold_party_into_band`
   (`core_sim/src/systems/expeditions.rs:989`), `BandIdAllocator`, and `ResidentBand` as a positive
   isolation marker.
-- **`AwaitingOrders` has exactly two exits** — re-aim via `move_band`, or `recall_expedition`. There
-  is no third.
-- **No code path creates a resident band at runtime.** `ResidentBand` is inserted in exactly two
+- **`AwaitingOrders` had exactly two exits** — re-aim via `move_band`, or `recall_expedition`.
+  ✅ **#510 added the third**, `settle_expedition`, which is the whole of this arc's opening slice.
+- **No code path created a resident band at runtime.** `ResidentBand` was inserted in exactly two
   places: worldgen (`core_sim/src/systems/worldgen.rs:3018`) and checkpoint restore
-  (`core_sim/src/sim_state.rs:487`).
+  (`core_sim/src/sim_state.rs:487`). ✅ **#510 added the third**,
+  `systems::expeditions::found_band_from_expedition` — which is why `components.rs`'s note on the
+  marker now reads "the *other* two places".
 - **A party is 100% working-age.** The launcher clones the parent cohort, then sets
   `children = 0`, `working = party`, `elders = 0` (`server.rs:2937–2939`). Nobody's family goes.
 - **The party bound is availability and nothing else** — `1..=available_workers(cohort.working)`,
   and the comment above it is explicit that this is deliberate: *"you cannot detach workers you do
   not have, and you may detach all the ones you do."* There is no floor and no parent check.
+  **Still true, and deliberately** — #510's `min_founding_workers` floor fires at the *founding*, not
+  at the detaching, exactly as Q2 places it. Walking out is still free and still reversible.
 - **The only thing a party carries is food** — `party × distance × provision_draw_per_worker_per_tile`
   off the parent's larder (`server.rs:2919–2921`). Not stock, not stores beyond food.
 - **A party leaves with a pristine kit.** `BandEquipment` is a *wear ledger*

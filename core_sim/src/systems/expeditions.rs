@@ -1154,7 +1154,8 @@ pub struct FoundedBand {
 /// - **No length bound.** The discovered set is the bound, and it costs one BFS over the map, once,
 ///   on a command the player presses by hand.
 ///
-/// `discovered_land` is indexed `y * width + x`.
+/// `discovered_land` is indexed `y * width + x`, and its length **is** `width * height` — it is one
+/// entry per tile of the map being asked about, never a prefix or a differently-sized grid.
 pub fn founding_site_is_reachable(
     site: UVec2,
     anchors: &HashSet<UVec2>,
@@ -1163,7 +1164,16 @@ pub fn founding_site_is_reachable(
     height: u32,
     wrap_horizontal: bool,
 ) -> bool {
+    // **Anything it cannot answer is a `false`, never a panic.** This is a `pub` predicate whose
+    // whole contract is a yes/no question about a map: a zero-sized map, a site off the edge of it,
+    // or a `discovered_land` that is not that map's own size is not a question it can answer, so it
+    // refuses. Asserting instead would turn a caller's mistake into a crash out of a signature that
+    // promises a total `-> bool`, and the BFS below hard-indexes the grid for every neighbour, so
+    // the length is checked once here rather than defended at each step.
     if width == 0 || height == 0 || site.x >= width || site.y >= height {
+        return false;
+    }
+    if discovered_land.len() != (width as usize) * (height as usize) {
         return false;
     }
     let index = |pos: UVec2| (pos.y * width + pos.x) as usize;
@@ -1371,9 +1381,15 @@ pub fn found_band_from_expedition(
         // band's" store; here the party *is* the home band, so the same conversion runs against its
         // own cohort. The pelts never went home and there is nowhere else for them to land.
         let banked = settle_carried_trade(&mut expedition, &mut cohort);
-        // **The band was founded now.** The party's cohort is a clone of the parent's, so without
-        // this it would carry the parent's age — and `migration_min_settled_turns` reads it, which
-        // would let a colony bleed people out on its first turn.
+        // **The band was founded now — the founding asserting its own precondition, not repairing
+        // an inherited value.** A party's `age_turns` is already `0` when it gets here: both outfit
+        // paths zero it as they detach the cloned cohort (`handle_send_expedition`,
+        // `outfit_raiding_party`), and the only writer of the field is `simulate_population`, whose
+        // band query is `With<ResidentBand>` — so an expedition never ages. This line is kept
+        // anyway because *this band's life starts now* is a claim the founding owns rather than one
+        // it borrows from a launch-path invariant, and `migration_min_settled_turns` reads the
+        // field: a future party path that forgot to zero it would otherwise hand a colony the
+        // parent's whole settled duration and let it bleed people out on its first turn.
         cohort.age_turns = 0;
         // `home` is the tile a resident band's demographics resolve terrain off
         // (`simulate_population` reads `tiles.get(cohort.home)`), and for a nomad band it tracks
@@ -2899,6 +2915,57 @@ mod denial_outcome_tests {
         assert!(
             !DenialOutcome::Horizon.succeeded(),
             "a raid still grinding when the forecast ran out has not driven the herd down"
+        );
+    }
+}
+
+#[cfg(test)]
+mod reachability_tests {
+    //! The refusal contract of [`founding_site_is_reachable`] — a `pub` predicate that answers a
+    //! yes/no question about a map, and so must *answer* rather than crash when handed a question
+    //! about no map at all.
+
+    use super::founding_site_is_reachable;
+    use bevy::math::UVec2;
+    use std::collections::HashSet;
+
+    /// A 3×3 map with every tile mapped land, and a resident band anchored in the far corner.
+    fn mapped_three_by_three() -> (HashSet<UVec2>, Vec<bool>) {
+        let anchors = HashSet::from([UVec2::new(2, 2)]);
+        (anchors, vec![true; 9])
+    }
+
+    /// **A grid that is not the map's own size is refused, not indexed.**
+    ///
+    /// The BFS hard-indexes `discovered_land` for every neighbour it walks, so a slice shorter than
+    /// `width * height` would panic out of a signature that promises a total `-> bool`. The
+    /// positive control is in the same test deliberately: a guard that returned `false`
+    /// unconditionally would satisfy the refusals on their own.
+    #[test]
+    fn a_grid_that_is_not_the_maps_size_is_refused_rather_than_panicking() {
+        let (anchors, discovered_land) = mapped_three_by_three();
+        let site = UVec2::new(0, 0);
+
+        assert!(
+            founding_site_is_reachable(site, &anchors, &discovered_land, 3, 3, false),
+            "mapped land joining the site to a resident band is the case this predicate says yes to"
+        );
+
+        assert!(
+            !founding_site_is_reachable(site, &anchors, &discovered_land[..4], 3, 3, false),
+            "a grid shorter than the map cannot answer for the tiles it is missing"
+        );
+        assert!(
+            !founding_site_is_reachable(site, &anchors, &[true; 16], 3, 3, false),
+            "a grid longer than the map is a different map, not a superset of this one"
+        );
+        assert!(
+            !founding_site_is_reachable(site, &anchors, &discovered_land, 0, 0, false),
+            "a map with no tiles holds no site to point at"
+        );
+        assert!(
+            !founding_site_is_reachable(UVec2::new(3, 0), &anchors, &discovered_land, 3, 3, false),
+            "a site off the edge of the map is not on it"
         );
     }
 }

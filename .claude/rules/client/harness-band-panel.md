@@ -121,10 +121,13 @@ guard in place.
 **A clean run exits 0 and prints 231 `assert OK` lines, 265 `PASS` ones and ZERO `FAIL` ones.** (It
 was 231/264 before the founding prompt's copy was cut to one line and
 `_assert_settle_confirms_before_emitting` gained its EQUALITY claim on that line — one `PASS` and one
-frame, `band_panel_settle_confirm`, and no `assert OK`.) (It was 229/259 before the THIRD ARRIVAL
-ACTION (issue #510) added `band_panel_settle_offered` /
-`band_panel_settle_withheld` — two frames, their two content-fits `assert OK`s, the four
-`_assert_settle_affordance` claims and `_assert_settle_confirms_before_emitting`'s one.) (The
+frame, `band_panel_settle_confirm`, and no `assert OK`.) (It was 227/259 before the THIRD ARRIVAL
+ACTION (issue #510) added `band_panel_settle_offered` / `band_panel_settle_withheld` — two frames,
+**four** `assert OK`s, the four `_assert_settle_affordance` claims and
+`_assert_settle_confirms_before_emitting`'s one. **Four, not two: a new frame costs a zone-rect claim
+AND a content-fits claim**, `_assert_zones_within_bounds` and `_assert_zone_content_fits`, one of
+each per state — the content-fits line names its state and the zone-rect line does not, which is
+what makes the second easy to miss when counting a log by eye.) (The
 only `ERROR:` lines in a clean log are Godot's own shutdown RID-leak noise, which is why the status
 is the verdict and an `ERROR:` count is not.) (The two tallies are no longer equal, and that is not
 a miscount: `_assert_scroll_only_where_sanctioned` and `_assert_band_columns_ignore_content` each
