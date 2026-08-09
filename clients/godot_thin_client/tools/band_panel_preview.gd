@@ -2073,7 +2073,7 @@ func _ready() -> void:
 	_assert_growth_row_not_merged("compact_tier_probe")
 	await _pin_canvas(PREVIEW_SIZE)
 
-	await _assert_action_bar_registry()
+	await _assert_action_registry()
 
 	_assert_herd_field_pairs()
 	_finish()
@@ -2948,20 +2948,17 @@ func _render_band_column_states() -> void:
 	# is satisfied by any cut, including one that drops the strip under the parked chrome's
 	# requirement, which is the failure `_assert_parked_chrome_margin` exists for.
 	#
-	# **THE ACTION BAR IS SUBTRACTED FIRST, and that is what makes the claim a BODY-BUDGET one.** The
-	# strip is the body budget plus whatever chrome it carries, and the bar is a third such term
-	# (`_horizontal_panel_height`); comparing the raw strip to `PANEL_HEIGHT_WIDE` would fail the moment
-	# any chrome moved, while saying nothing more about the zone's box than this does.
-	# `_assert_action_bar_registry` is what pins the subtracted term itself — that the strip pays the
-	# bar exactly and the zone's box does not move — so neither claim rests on the other.
-	var strip_bar: float = _panel._action_bar_height()
-	_assert_band_panel("band columns: ONE column keeps the full body budget (%.0f less the %.0fpx action bar, want %.0f) — its flank still stacks 299 of a 300px box"
-		% [one_column_strip, strip_bar, BandCityPanel.PANEL_HEIGHT_WIDE],
-		is_equal_approx(one_column_strip - strip_bar, BandCityPanel.PANEL_HEIGHT_WIDE))
-	_assert_band_panel("band columns: TWO columns shorten the strip to the two-column budget (%.0f less the %.0fpx action bar, want %.0f) — %.0fpx of map handed back"
-		% [two_column_strip, strip_bar, BandCityPanel.PANEL_HEIGHT_WIDE_TWO_COLUMN,
+	# **THE RAW STRIP IS COMPARED, ACTION REGISTRY AND ALL, and that is a claim about the registry too.**
+	# A horizontal dock mounts its actions on the SUBJECT ROW, so the bar is hidden and charges the
+	# strip nothing; a bar that leaked a row here would push both numbers off their consts and fail
+	# these two before `_assert_action_mount_pairing` ever ran.
+	_assert_band_panel("band columns: ONE column keeps the full body budget (%.0f, want %.0f) — its flank still stacks 299 of a 300px box"
+		% [one_column_strip, BandCityPanel.PANEL_HEIGHT_WIDE],
+		is_equal_approx(one_column_strip, BandCityPanel.PANEL_HEIGHT_WIDE))
+	_assert_band_panel("band columns: TWO columns shorten the strip to the two-column budget (%.0f, want %.0f) — %.0fpx of map handed back"
+		% [two_column_strip, BandCityPanel.PANEL_HEIGHT_WIDE_TWO_COLUMN,
 			one_column_strip - two_column_strip],
-		is_equal_approx(two_column_strip - strip_bar, BandCityPanel.PANEL_HEIGHT_WIDE_TWO_COLUMN))
+		is_equal_approx(two_column_strip, BandCityPanel.PANEL_HEIGHT_WIDE_TWO_COLUMN))
 
 	await _pin_canvas(Vector2i(ULTRAWIDE_WIDTH, DOCKROW_CANVAS.y))
 	await _settle()
@@ -3860,32 +3857,37 @@ func _assert_chrome_home_exact(state_name: String) -> void:
 ## the same expression evaluated twice, and anything that moves them moves them by a whole button.
 const ACTION_BAR_MEASURE_TOLERANCE := 0.5
 ## A SECOND action, registered by the harness the way any caller registers one — the one-line entry
-## the bar exists to make cheap. Its glyph and tooltip are the harness's own; nothing ships them.
+## the registry exists to make cheap. Its glyph and tooltip are the harness's own; nothing ships them.
 const PROBE_ACTION_ID := &"preview_probe"
 const PROBE_ACTION_GLYPH := "✦"
 const PROBE_ACTION_TOOLTIP := "Preview probe action"
 
-## GUARD: **THE ACTION BAR'S WHOLE CLAIM — a second action must cost the docked panel NO WIDTH, and a
-## bar with nothing on it must cost it NO HEIGHT.** Neither is visible in a PNG: a panel one button
-## wider is a plausible panel, and a bar that reserved a row for nothing renders as a slightly taller
-## card. Both are driven through the REAL `register_action` / `unregister_action` seam.
+## GUARD: **ONE REGISTRY, TWO MOUNT POINTS — the actions ride the BAR on a vertical dock and the
+## SUBJECT ROW on a horizontal one, they RE-HOME when the edge changes under them, and the mount that
+## is not carrying them costs nothing.** None of it is visible in a PNG: a panel one button wider is a
+## plausible panel, a bar that reserved a row for nothing renders as a slightly taller card, and a
+## button drawn on either row looks deliberate. Driven through the REAL `register_action` /
+## `unregister_action` / `set_dock` seams.
 ##
-## It runs LAST and PNG-LESS for the tier probes' own reason — it registers and retires actions, which
-## moves the strip's height on a horizontal dock, so anything rendered after it would render against a
-## panel the run never chose. It restores the shipped registration on the way out regardless.
-func _assert_action_bar_registry() -> void:
+## **EVERY MOUNT CLAIM IS A PAIRING**, never "the glyph is here": a panel that lost the button
+## altogether satisfies any one-sided form of it, and so does one that drew it on BOTH rows.
+##
+## It runs LAST and PNG-LESS for the tier probes' own reason — it registers and retires actions and
+## re-docks the panel, so anything rendered after it would render against a panel the run never chose.
+## It restores the shipped registration and the LEFT dock on the way out regardless.
+func _assert_action_registry() -> void:
 	_panel.set_dock(SIDE_LEFT)
 	await _settle()
 	var card: Control = _panel._panel
 	var header: Control = _panel._header_full
-	# PRECONDITION: the ⚒ really left the subject row. Every width claim below is about a row that no
-	# longer carries actions, so a ⚒ still sitting there would make them measure the wrong thing.
-	_assert_band_panel("the ⚒ is registered on the action bar (%d action(s) registered)" % _panel._actions.size(),
+	_assert_band_panel("the ⚒ is registered (%d action(s) registered)" % _panel._actions.size(),
 		_panel.has_action(BandCityPanel.ACTION_CRAFTING))
-	_assert_band_panel("…and no action glyph is left on the subject row (%s)"
-		% [_header_button_glyphs()],
-		not _header_button_glyphs().has(BandCityPanel.CRAFTING_GLYPH))
+	_assert_action_mount_pairing("a LEFT dock", true)
 
+	# ---- a second action costs the VERTICAL dock no width -----------------------------------------
+	# The bar's whole reason: on this dock the width is a fixed PANEL_WIDTH and the subject row's
+	# minimum is the subject plus every control on it, so a verb there makes the card's floor track the
+	# feature count.
 	var one_card := card.get_combined_minimum_size().x
 	var one_header := header.get_combined_minimum_size().x
 	var one_bar := _panel._action_row.get_combined_minimum_size().x
@@ -3909,50 +3911,116 @@ func _assert_action_bar_registry() -> void:
 		% [one_card, two_card, BandCityPanel.PANEL_WIDTH],
 		absf(two_card - one_card) <= ACTION_BAR_MEASURE_TOLERANCE)
 
-	# ---- an EMPTY bar costs no height -------------------------------------------------------------
-	# Measured on a TOP dock, where the strip's height is the reservation and a row spent for nothing
-	# would be a row taken off the map.
+	var vertical_bar_height := _panel._action_bar_height()
+	var vertical_bar_gap := _header_to_body_gap()
+	var vertical_zone_with_bar := _panel.zone_size(BandCityPanel.ZONE_BAND).y
+
+	# ---- the RE-HOME: a runtime edge change moves the glyphs to the other mount --------------------
+	# The dock is changed exactly as the chooser changes it, with no rebuild and no reload, and the
+	# pairing is re-asserted on the far side.
 	_panel.set_dock(SIDE_TOP)
 	await _settle()
-	var with_bar_strip := _panel.current_reservation_size()
-	var with_bar_zone := _panel.zone_size(BandCityPanel.ZONE_BAND).y
-	var with_bar_height := _panel._action_bar_height()
-	var with_bar_gap := _header_to_body_gap()
+	_assert_action_mount_pairing("re-docking LEFT -> TOP", false)
+	# The strip is what a horizontal dock reserves off the map, so the actions riding the subject row
+	# must open NO row in the card's content column: the body sits flush under the header, exactly as
+	# it does with nothing registered at all.
+	var horizontal_gap := _header_to_body_gap()
+	_assert_band_panel("…and the body sits flush under the subject row on a horizontal dock (gap %.1fpx, against %.1f on the vertical one)"
+		% [horizontal_gap, vertical_bar_gap],
+		horizontal_gap <= ACTION_BAR_MEASURE_TOLERANCE
+			and vertical_bar_gap > ACTION_BAR_MEASURE_TOLERANCE)
+	_report_action_row_headroom("a TOP dock")
 
+	# The BUDGET half, stated as the difference the registry makes to the strip: retire every action
+	# and the reservation must not move by a pixel, because it never paid for one.
+	var horizontal_strip_with_actions := _panel.current_reservation_size()
 	_panel.unregister_action(PROBE_ACTION_ID)
 	_panel.unregister_action(BandCityPanel.ACTION_CRAFTING)
 	await _settle()
-	var bare_strip := _panel.current_reservation_size()
-	var bare_zone := _panel.zone_size(BandCityPanel.ZONE_BAND).y
-	var bare_gap := _header_to_body_gap()
+	var horizontal_strip_bare := _panel.current_reservation_size()
+	# VACUITY for it: the glyph really did leave the row, so "unchanged" is not "nothing happened".
+	_assert_band_panel("retiring every action clears the subject row (%s)" % [_header_button_glyphs()],
+		not _header_button_glyphs().has(BandCityPanel.CRAFTING_GLYPH))
+	_assert_band_panel("…and the TOP dock's strip does not move by a pixel (%.0f -> %.0fpx) — the registry costs a horizontal dock NOTHING"
+		% [horizontal_strip_with_actions, horizontal_strip_bare],
+		absf(horizontal_strip_with_actions - horizontal_strip_bare) <= ACTION_BAR_MEASURE_TOLERANCE)
 
-	_assert_band_panel("a bar with no registrations is hidden and measures 0px (was %.0fpx with two)"
-		% with_bar_height,
-		not _panel._action_bar.visible and is_zero_approx(_panel._action_bar_height()))
-	# The GEOMETRIC half: a hidden child contributes neither its own height nor the column's separation,
-	# so the body sits flush under the subject row. Its paired positive is the gap the bar DID open.
-	_assert_band_panel("…the body sits flush under the subject row with no bar (gap %.1fpx, was %.1f)"
-		% [bare_gap, with_bar_gap],
-		bare_gap <= ACTION_BAR_MEASURE_TOLERANCE and with_bar_gap > ACTION_BAR_MEASURE_TOLERANCE)
-	# The BUDGET half: the bar is charged to the STRIP, never to the zone the content is tuned against.
-	_assert_band_panel("…the top dock's strip pays for it exactly (%.0f -> %.0fpx, bar %.0f)"
-		% [with_bar_strip, bare_strip, with_bar_height],
-		absf((with_bar_strip - bare_strip) - with_bar_height) <= ACTION_BAR_MEASURE_TOLERANCE)
-	_assert_band_panel("…and the band zone's box is UNCHANGED by it (%.0fpx, both)" % bare_zone,
-		absf(with_bar_zone - bare_zone) <= ACTION_BAR_MEASURE_TOLERANCE)
-
-	# Put the shipped registration back, so nothing after this runs against a panel with no ⚒.
-	_panel.register_action(BandCityPanel.ACTION_CRAFTING, BandCityPanel.CRAFTING_GLYPH,
-		BandCityPanel.CRAFTING_TOOLTIP)
+	# ---- an EMPTY bar costs the VERTICAL dock nothing either --------------------------------------
 	_panel.set_dock(SIDE_LEFT)
 	await _settle()
+	var bare_gap := _header_to_body_gap()
+	var bare_zone := _panel.zone_size(BandCityPanel.ZONE_BAND).y
+	_assert_band_panel("a bar with no registrations is hidden and measures 0px (was %.0fpx carrying two)"
+		% vertical_bar_height,
+		not _panel._action_bar.visible and is_zero_approx(_panel._action_bar_height()))
+	# A hidden child contributes neither its own height nor the column's separation, so the body sits
+	# flush. Its paired positive is the gap the bar DID open two docks ago.
+	_assert_band_panel("…the body sits flush under the subject row with no bar (gap %.1fpx, was %.1f)"
+		% [bare_gap, vertical_bar_gap],
+		bare_gap <= ACTION_BAR_MEASURE_TOLERANCE and vertical_bar_gap > ACTION_BAR_MEASURE_TOLERANCE)
+	# A VERTICAL dock has no strip to grow — its height is the window's — so the bar is paid by the
+	# ZONE there, and that is what the emptied bar hands back.
+	_assert_band_panel("…and the band zone gets the bar's %.0fpx back (%.0f -> %.0fpx)"
+		% [vertical_bar_height, vertical_zone_with_bar, bare_zone],
+		absf((bare_zone - vertical_zone_with_bar) - vertical_bar_height) <= ACTION_BAR_MEASURE_TOLERANCE)
+
+	# Put the shipped registration back, so nothing after this runs against a panel with no ⚒ — and
+	# assert the RE-HOME the other way, the ⚒ landing back on the bar the vertical dock mounts on.
+	_panel.register_action(BandCityPanel.ACTION_CRAFTING, BandCityPanel.CRAFTING_GLYPH,
+		BandCityPanel.CRAFTING_TOOLTIP)
+	await _settle()
+	_assert_action_mount_pairing("re-docking TOP -> LEFT", true)
+
+## **THE PAIRING, which is the only honest form of this claim.** Both mounts are asked, in both
+## directions: the ⚒ must be on the one the orientation calls for and ABSENT from the other, and the
+## bar must measure a row only when it is the one carrying it. A one-sided assertion ("the glyph is on
+## the bar") passes on a panel that lost the button entirely, and a glyph-only assertion passes on one
+## that mounted it twice.
+func _assert_action_mount_pairing(where: String, expect_bar: bool) -> void:
+	var on_bar := _bar_button_glyphs().has(BandCityPanel.CRAFTING_GLYPH)
+	var on_row := _header_button_glyphs().has(BandCityPanel.CRAFTING_GLYPH)
+	var bar_height := _panel._action_bar_height()
+	var wanted := "the BAR" if expect_bar else "the SUBJECT ROW"
+	_assert_band_panel("%s mounts the ⚒ on %s and nowhere else (bar %s, subject row %s)"
+		% [where, wanted, on_bar, on_row],
+		on_bar == expect_bar and on_row == (not expect_bar))
+	_assert_band_panel("…and the bar takes a row only where it carries them (%.0fpx on %s)"
+		% [bar_height, where],
+		(bar_height > ACTION_BAR_MEASURE_TOLERANCE) == expect_bar)
+
+## MEASUREMENT (not an assertion): how much width the subject row has left before its own minimum
+## binds the card. That figure is what says how many more actions a horizontal dock's header can
+## absorb before this arrangement has to be revisited — the card's interior is built up from a declared
+## column count, so the row binds only once its minimum outgrows it.
+func _report_action_row_headroom(where: String) -> void:
+	var row_minimum: float = _panel._header_full.get_combined_minimum_size().x
+	var interior: float = _panel._interior_size().x
+	# What ONE more glyph costs the row: the mount's own minimum plus the gap that joins it to the row,
+	# divided by what is on it — never the mount's whole width, which counts every button already there.
+	var mounted: int = maxi(_panel._action_buttons.size(), 1)
+	var glyph_span: float = (_panel._header_action_row.get_combined_minimum_size().x
+		+ float(BandCityPanel.ACTION_BAR_SEPARATION)) / float(mounted)
+	var spare: float = interior - row_minimum
+	print("band_panel_preview: action row on %s — subject row wants %.0fpx of a %.0fpx card interior, %.0fpx spare (~%d more glyphs at %.0fpx each, %d mounted)" % [
+		where, row_minimum, interior, spare,
+		int(spare / maxf(glyph_span, 1.0)), glyph_span, mounted])
 
 ## Every glyph the SUBJECT ROW's own buttons wear — the dock chooser's four blank cells included, which
-## is why the test above asks whether the ⚒ is among them rather than counting them.
+## is why the tests above ask whether the ⚒ is among them rather than counting them. It walks the WHOLE
+## row, so it sees a button on the horizontal mount and one hand-added beside the cycler alike.
 func _header_button_glyphs() -> Array[String]:
 	var glyphs: Array[String] = []
 	var buttons: Array[Node] = []
 	_collect_buttons(_panel._header_full, buttons)
+	for node in buttons:
+		glyphs.append((node as Button).text)
+	return glyphs
+
+## Every glyph on the ACTION BAR's own row — the other half of every pairing claim.
+func _bar_button_glyphs() -> Array[String]:
+	var glyphs: Array[String] = []
+	var buttons: Array[Node] = []
+	_collect_buttons(_panel._action_row, buttons)
 	for node in buttons:
 		glyphs.append((node as Button).text)
 	return glyphs

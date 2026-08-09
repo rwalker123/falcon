@@ -167,14 +167,16 @@ own centring had put above it.
 
 ## Launching it: one entry on the panel's ACTION BAR, and it carries no subject
 
-A `register_action(ACTION_CRAFTING, LAUNCH_GLYPH, LAUNCH_TOOLTIP)` on `BandCityPanel`'s action bar —
-the row under the subject that holds every verb the panel offers, built with the same
-`_make_icon_button` the collapse toggle and the `◀`/`▶` arrows use. **The bar is subject-independent
-chrome**, so ONE button serves a band page and the faction page, and the band zone's 300px budget is
-untouched. It is registered through the ordinary seam rather than special-cased, and
-`crafting_requested` is a relay of `action_invoked(ACTION_CRAFTING)` — see `band-city-panel.md` →
-"The action bar is a REGISTRY, not a layout" for why a verb on the subject ROW made the docked
-panel's width a function of its chrome.
+A `register_action(ACTION_CRAFTING, LAUNCH_GLYPH, LAUNCH_TOOLTIP)` on `BandCityPanel`'s action
+registry — which holds every verb the panel offers and renders it beside the cycler on a horizontal
+dock and on its own bar row under the subject on a vertical one, built either way with the same
+`_make_icon_button` the collapse toggle and the `◀`/`▶` arrows use. **The registry is
+subject-independent chrome**, so ONE button serves a band page and the faction page, and the band
+zone's 300px budget is untouched. It is registered through the ordinary seam rather than
+special-cased — this panel's launcher gets no branch of its own and re-homes with every other action
+when the dock edge changes — and `crafting_requested` is a relay of `action_invoked(ACTION_CRAFTING)`.
+See `band-city-panel.md` → "The action registry is ONE list with TWO mount points" for the opposite
+scarce axes that decide the mount.
 
 Which band it opens on is `BandPanelController`'s answer, not the panel's: from a band page that
 band, from the faction page the last band loaded — which is sitting on the model already, because
@@ -240,7 +242,7 @@ craft's name is the sim's `display_name` because the client never maps a craft i
 |--------|---------|
 | `ui/hud/CraftingPanel.gd` | The surface (`AutoSizingPanel`): header + `Band:` picker/cycler, the 250px material rail, the bench well and its crew stepper, and the four-column ledger (Item · Tier · Rebuild costs · action) in three groups. Emits `closed` / `band_selected` / `cycle_requested` / `make_requested` / `crew_changed` and holds no snapshot state — `render(payload)` is its whole input. Builds its rows as a VBox of `HBoxContainer`s rather than a `GridContainer` because a GROUP HEAD spans the width and a grid cannot span. **The ACTION column is sized by the refusal under the button, not by the button** — a published `reason` is a whole clause, and it was the column's 132px that wrapped every one of them onto two lines and inflated every row |
 | `ui/hud/CraftingPanelController.gd` | `RefCounted` controller: owns the panel node (parented into the HUD CanvasLayer — a `RefCounted` cannot `add_child`), holds the four per-world catalogues, resolves the subject band by ENTITY each snapshot, and turns the panel's five signals into `set_bench_requested` / `bench_crew_requested`. It also carries the **room** the card is bounded by (`HudLayer.floating_room`, handed in through `setup` and set on the panel as `room_bounds`) — handed down rather than looked up, a `RefCounted` reaching into its host's tree being the coupling this pattern exists to avoid — and exposes **`refit_room()`**, which `Hud.set_overlay_inset` calls when that room changes shape under an open card. `HudLayer` holds it as `_crafting`, relays both signals, and refreshes it from the same per-snapshot seam the Band/City dock uses |
-| `ui/hud/hud_crafting_vocab.gd` | The vocabulary leaf (`HudCraftingVocab`) — ALL-`const`, zero funcs, zero vars: the wire keys, the chrome words, the severity→tint table and the geometry measured off the prototype. **Nothing here is a refusal, a grade or a shortfall** — those are the sim's — and there is no condition wording at all, that reading belonging to the role cards. `BandCityPanel` reads its `LAUNCH_GLYPH` / `LAUNCH_TOOLTIP` back, so the action-bar button and the panel it opens cannot drift |
+| `ui/hud/hud_crafting_vocab.gd` | The vocabulary leaf (`HudCraftingVocab`) — ALL-`const`, zero funcs, zero vars: the wire keys, the chrome words, the severity→tint table and the geometry measured off the prototype. **Nothing here is a refusal, a grade or a shortfall** — those are the sim's — and there is no condition wording at all, that reading belonging to the role cards. `BandCityPanel` reads its `LAUNCH_GLYPH` / `LAUNCH_TOOLTIP` back, so the registered launcher and the panel it opens cannot drift |
 | `tools/ui_preview/chapters/crafting_bench.gd` | The harness chapter: the prototype's own band (every ledger state at once), a bare band with an idle bench, the bench-bound band that separates idle from benchable, and the RESERVED-EDGE state. Its assertions are the claims no picture can carry — the refusal rendered verbatim with its number, the urgency order, the shrug dimmed **while a used row is not** (asserted as a pair, since a panel dimming every neutral row satisfies the first half alone), and the ownership/condition pair: the tier chip states ownership **and** no condition wording reaches the ledger, over a fixture that deliberately keeps publishing `life` so the negative is not vacuous. **`crafting_panel_reserved_edges` is the height bound**: `Main` is never instanced here, so the chapter pushes a left and a bottom reservation into `Hud.set_reserved_inset` by hand (the `event_dock` chapter's idiom), asserts the card's rect sits inside `layout_root`'s on both axes with its ledger scrolling internally, and releases them again. **The "it got shorter than state 1" claim is the vacuity guard** — every rect test passes trivially on a card that already fitted. **`crafting_panel_event_bar` is the OVERLAY bound**, and it is a different failure: it injects a real `EventDockPanel` docked TOP, connects `occupancy_changed` to `Hud.set_overlay_inset`, opens the card while the bar is SUPPRESSED, and only then un-suppresses it — so what is under test is the re-fit, not the opening. It keeps the bottom reservation, because a card centred in a tall room clears a top bar for free and the collision only exists once the ledger fills its room; that is why it was reported from play and not from here. Two vacuity guards carry it: the card's pre-bar top edge lay inside the bar's band, and the two rects share a horizontal one. Sabotage-verified by dropping the overlay term from the room's top edge — the clearance claim fails at `card top 12 vs bar bottom 66` while both guards stay green |
 
 ---

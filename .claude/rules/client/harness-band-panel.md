@@ -118,7 +118,9 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 227 `assert OK` lines, 259 `PASS` ones and ZERO `FAIL` ones.** (The
+**A clean run exits 0 and prints 227 `assert OK` lines, 275 `PASS` ones and ZERO `FAIL` ones.** (The
+`PASS` figure was 259 before the ACTION REGISTRY's own block added sixteen — see
+"`_assert_action_registry`" below.) (The
 only `ERROR:` lines in a clean log are Godot's own shutdown RID-leak noise, which is why the status
 is the verdict and an `ERROR:` count is not.) (The two tallies are no longer equal, and that is not
 a miscount: `_assert_scroll_only_where_sanctioned` and `_assert_band_columns_ignore_content` each
@@ -291,42 +293,45 @@ either** — 229 + 16 and 619 + 6, which is how that merge was checked: a tally 
 sum of the two sides is evidence no claim was dropped resolving it, and a tally that is not is the
 first sign one was.
 
-## `_assert_action_bar_registry` — the ACTION BAR's whole claim, PNG-less
+## `_assert_action_registry` — one registry, two mount points, PNG-less
 
-**Nine `PASS`, no frame** (259 -> 268 here; `ui_preview` untouched at 713). Neither half of the claim
-is visible in a picture: a panel one button wider is a plausible panel, and a bar that reserved a row
-for nothing renders as a slightly taller card. The behaviour it guards is specified in
-`band-city-panel.md` -> "The action bar is a REGISTRY, not a layout".
+**Sixteen `PASS`, no frame** (259 -> 275 here; `ui_preview` untouched at 713). Nothing in it is
+visible in a picture: a panel one button wider is a plausible panel, a bar that reserved a row for
+nothing renders as a slightly taller card, and a glyph drawn on either row looks deliberate. The
+behaviour it guards is specified in `band-city-panel.md` -> "The action registry is ONE list with TWO
+mount points".
 
-It runs **LAST and PNG-less**, for the tier probes' own reason — it registers and retires actions,
-which moves the strip's height on a horizontal dock, so anything rendered after it would render
-against a panel the run never chose. It restores the shipped `⚒` registration on the way out.
+It runs **LAST and PNG-less**, for the tier probes' own reason — it registers and retires actions and
+re-docks the panel, so anything rendered after it would render against a panel the run never chose. It
+restores the shipped `⚒` registration and the LEFT dock on the way out.
 
-- **Two preconditions**, without which every claim under them measures the wrong row: the `⚒` really
-  is registered, and no action glyph is left on the subject row (it prints the row's whole glyph
-  list, blank dock cells included, rather than counting buttons).
-- **The WIDTH claims** register a second action through the REAL `register_action` and assert the
-  subject row's minimum width and the docked card's are unmoved (302.0 / 326.0, against the 380px the
-  dock reserves), with the **vacuity** that the action ROW's own minimum did grow (30 -> 71px) —
-  otherwise both hold because nothing was added.
-- **The HEIGHT claims** unregister everything on a TOP dock, where the strip's height IS the
-  reservation, and assert the bar is hidden and measures 0, that the body sits **flush** under the
-  subject row (gap 0.0px against 44.0 with the bar up — a hidden child contributes neither its height
-  nor the column's separation), that the strip pays the bar's height **exactly** (439 -> 395), and
-  that the band zone's box is **unchanged** by it (298px both ways) — the budget half.
+- **EVERY MOUNT CLAIM IS A PAIRING** (`_assert_action_mount_pairing`, two `PASS` per call): the `⚒` on
+  the mount the orientation calls for AND absent from the other, plus the bar measuring a row only
+  where it carries them. A one-sided form — "the glyph is on the bar" — passes on a panel that lost
+  the button entirely, and a glyph-only form passes on one that mounted it twice. It is asked four
+  times: on the LEFT dock, across the runtime **re-home** LEFT -> TOP, and across the re-home back.
+- **The WIDTH claims** (LEFT dock) register a second action through the REAL `register_action` and
+  assert the subject row's minimum width and the docked card's are unmoved (302.0 / 326.0, against the
+  380px the dock reserves), with the **vacuity** that the action ROW's own minimum did grow (30 ->
+  71px) — otherwise both hold because nothing was added.
+- **The HORIZONTAL claims** assert the body sits **flush** under the subject row with actions
+  registered (gap 0.0px, against 44.0 on the vertical dock — the paired positive), and that retiring
+  every action does not move the TOP dock's strip by a pixel (395 -> 395), with the vacuity that the
+  glyph really did leave the row. The registry costs a horizontal dock nothing in either state.
+- **The EMPTY-BAR claims** are back on the vertical dock, which is the only place the bar is ever
+  live: hidden and measuring 0, the body flush under the subject row, and the band zone getting the
+  bar's **44px back** (759 -> 803) — a vertical dock has no strip to grow, so the zone is what pays.
 
-Sabotage-verified on two DISJOINT mutations, and neither set overlaps: mounting the action buttons on
-`_header_full` (the layout this replaced) fails **four** — the glyph-on-the-row precondition, the bar
-vacuity, and both width claims, naming the pre-change **340.0 / 364.0** the row and card measured with
-ONE action on the header; forcing the bar visible when empty fails **three** — the hidden/zero claim,
-the flush-body claim (8.0px of margin taken for an empty row) and the strip-pays-exactly claim — while
-every width claim stays green.
+Sabotage-verified on three mutations. Pinning the mount to the BAR (the layout this replaced) fails
+**three** — the LEFT -> TOP pairing pair and the horizontal flush claim; dropping `_refresh_action_mount()`
+from `set_dock` fails **the same three**, the re-home being what both mutations break (the walk back
+to LEFT then finds the mount already where it wants it, so that pairing stays green). Pinning the
+mount to the SUBJECT ROW fails a DISJOINT **nine** — both vertical pairings, the bar vacuity, both
+width claims naming the pre-change **340.0 / 364.0**, both flush claims and the return-leg pairing.
 
-**`_assert_band_columns`' two body-budget claims now subtract the bar before comparing.** The strip is
-the body budget plus whatever chrome it carries, and the bar is a third such term; the raw strip reads
-404 / 379 where the consts are 360 / 335. The subtracted term is pinned independently by the block
-above (the strip pays the bar exactly, the zone's box does not move), so neither claim rests on the
-other.
+**`_assert_band_columns` compares the RAW strip again** (360 / 335 against the two consts), which is
+itself a registry claim: a horizontal dock mounts its actions on the subject row, so a bar leaking a
+row there fails those two before any mount assertion runs.
 
 **(1) COUNT FRAMES FROM A RUN INTO AN EMPTIED `ui_preview_out/`.** It is gitignored and never
 cleaned, so PNGs written by an experiment that was measured, rejected and REVERTED sat on disk and
