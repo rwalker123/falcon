@@ -169,6 +169,12 @@ func run(harness) -> void:
 		Readout.improvement_deal_text(h._hud._drawercompose._compose_sheet).contains(
 			String(HudComposeVocab.IMPROVEMENT_PAYOFF_ROW_LABELS[
 				SourceForecast.IMPROVEMENT_TAME]).to_upper()))
+	# The animal web's half of the one-row claim — see its plant twin on `improvement_running_plant`
+	# for why a `contains` cannot make it and the count must.
+	h._assert_hud("…as the block's ONLY row on this web too",
+		Readout.improvement_deal_rows(h._hud._drawercompose._compose_sheet) == 1)
+	h._assert_hud("…repeating no magnitude the yields row already states",
+		not Readout.deal_repeats_a_yields_number(h._hud._drawercompose._compose_sheet))
 	# KNOWN LESSON + A BUILD IN FLIGHT, on the animal web: Herding is complete for this faction, so the
 	# aside drops the craft and keeps the build the same multiplier paces. Both halves, for the reason
 	# the plant twin states.

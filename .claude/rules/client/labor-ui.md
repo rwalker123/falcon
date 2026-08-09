@@ -660,15 +660,14 @@ false failures. The line was then deleted and the phrase served as the harness's
 absence. The deal is BACK in the readout (see "THE PAYOFF LIVES IN THE READOUT" below) and
 `SourceForecast.YIELD_ROW_HEADER_WHILE_BUILDING` prints the phrase as the yields caption, so the
 collision is live again and the avoidance keeps the crew note about the CREW's carry rather than
-about the take above it. The absence needle is retired. The deal block's own baseline row avoids
-`now` for the mirror-image reason — see "THE PAYOFF LIVES IN THE READOUT".
+about the take above it. The absence needle is retired.
 
 **The readout is one bounded well with four registers** (`_mount_readout`, `HudStyle.readout_stylebox`):
 
 | register | what it answers | treatment |
 |---|---|---|
 | **yields** | what this crew brings home at this floor, now and once holding | a header (`PER TURN · NOW → AFTER`) over 15px tabular numbers + 10px uppercase account names (`2.26 → 0.42  FOOD`) |
-| **deal** | what the composed or offered rung will pay, and what the crew would carry without it | 10px uppercase key + 12px value per row, `INK_DIM` for the baseline and `SIGNAL` for the payoff — renders only where there is a rung to state |
+| **deal** | what the rung on the table will pay once it stands | ONE row — a 10px uppercase key beside a 12px `SIGNAL` value — rendering only where there is a rung to state |
 | **verdict** | which of the crew and the floor is binding | 12px + the severity dot, colour by severity |
 | **aside** | the floor's zone hint and its teaching line | 11px `INK_FAINT` under a dashed rule |
 
@@ -2140,18 +2139,17 @@ under the take and above the verdict:
 
 ```
 PER TURN · WHILE BUILDING, NOW → AFTER
-0.64 → 0.15        FOOD    RENEWABLE
-WITHOUT THE BUILD  0.96 food
-ONCE TENDED        1.20 food
+0.64 → 0.15  FOOD    RENEWABLE
+ONCE TENDED  1.20 food
 ```
 
 **This reverses an earlier deletion, and the reason it was reversed is worth keeping.** The payoff
 had been moved onto the CHECKBOX FACE (`🌱 Cultivate this patch · then 1.20 food`), which put
 it one line above a `PER TURN` box quoting a *different* number for the same source — the dipped take
-— with nothing on either saying which question each was answering. And once the box was ticked the
-headline BECAME that dipped figure, so the undipped baseline it is a quarter of appeared nowhere on
-the sheet at all. Both faults are the same fault: the terms of the bargain and the take they are
-compared against were in two registers that did not know about each other.
+— with nothing on either saying which question each was answering. The terms of the bargain and the
+take they are compared against were in two registers that did not know about each other; putting the
+payoff INSIDE that box is what joins them. The caption is what says which take the headline is (see
+the four-state table below), which is the other half of the same repair.
 
 | state | face |
 |---|---|
@@ -2169,32 +2167,40 @@ takes the caption as `parent.get_child(index - 1)`, and both webs' take assertio
 joined text by splitting on an account word — so a deal term folded in corrupts both, silently. Its
 own block, its own meta, its own reader (`Readout.improvement_deal_text`).
 
-**Which rows render:**
+**When it renders:**
 
-| condition | rows |
+| condition | block |
 |---|---|
-| no rung composed and none ungated-offered | no block at all |
-| rung OFFERED (box unticked) | the payoff row only |
-| rung COMPOSED (box ticked), crew > 0 | `without the build`, then the payoff row |
-| rung COMPOSED, crew == 0 | the payoff row only |
+| no rung composed and none ungated-offered | not rendered at all |
+| a rung OFFERED, or a rung COMPOSED, at any crew | the payoff row — the block's only row |
+
+**IT IS ONE ROW, AND A SECOND ONE HAS BEEN TRIED AND RETIRED.** The block briefly carried a
+`WITHOUT THE BUILD` row above the payoff, stating the crew's UNDIPPED take, on the reasoning that
+ticking the box makes the headline the dipped figure and hides the baseline it is a fraction of. It
+went for two reasons and the second is the one to remember:
+
+- **The baseline is one click away.** Unticking the box shows it, live, in the register the player
+  is already reading — so the row spent a line of the panel restating something the control directly
+  above it produces on demand.
+- **WHERE THE DIP COSTS NOTHING THE ROW PRINTED THE HEADLINE BACK.** The build fraction multiplies
+  the CREW, not the ceiling, so a crew big enough to saturate the source pays no dip at all — and on
+  one the undipped take and the dipped take are the same number. The panel then read
+  `0.96 → 0.15 FOOD` over `WITHOUT THE BUILD 0.96 food`, under a crew note saying *each carries 50%
+  as much*: correct arithmetic, unreadable panel.
+
+`Readout.improvement_deal_rows` pins the count at 1 on both webs, and
+`deal_repeats_a_yields_number` pins the general form — no magnitude in the deal may restate one the
+take above it already prints. **A `contains` claim cannot see either return**: a re-added baseline
+row satisfies every one of them, and its numbers are legitimate.
 
 - **A GATED rung quotes no payoff, here or anywhere.** The gated control spends its whole slot on the
   unmet prerequisite deliberately — a number you cannot act on is noise at the moment you are told you
   cannot act — so `_improvement_deal_rung` answers `""` for one, and the readout does not put back what
   that branch removes. `improvement_offered_gated` / `forage_sow_locked` are the frames.
-- **The baseline row is the undipped take**, off `improvement_forecast`'s `base_forecast` through the
-  same `expected_yield_account` calls the yields row is built from, stated in `picker_products` words
-  so it and the payoff can be compared without a change of grammar. It exists because the headline
-  becomes the dipped figure the moment the box is ticked.
-- **It is keyed `without the build`, NOT `now`, and the word is load-bearing.** The yields row
-  directly above states its own `now → after` transition, so a row keyed `NOW` beside it puts two
-  unrelated meanings of one word in one box — measured on `improvement_running_plant`, where
-  `0.64 → 0.15` sat one line above `NOW 0.96 food` and neither reading explained the other. The
-  counterfactual wording also pairs with its sibling key, which is the whole bargain in two lines.
-- **It is SUPPRESSED AT ZERO CREW, and that is the old `INVESTMENT_FORECAST_UNSTAFFED` bug
-  in a new place.** The term is staffing-scaled where the payoff is not, so a zero crew showing
-  both states a sequence the sheet is explicitly not on track for — an unstaffed build meter never
-  advances. The payoff alone is a condition, which is honest. `forage_unstaffed` pins the absence.
+- **The row is floor-independent, so the block is deliberately OUT of the live registry.** A payoff
+  is a property of the finished rung and `_improvement_deal_row` asks `improvement_forecast` at the
+  FOOD PEAK, the floor `_improvement_payoff_terms` already quotes it at — nothing in the block moves
+  under a drag, and that registry's own rule is that a host which does not move stays out of it.
 - **The payoff follows the SELECTED CROP, resolved ONCE per sheet.** The forage builder computes
   `_crop_payoff_terms` a single time against `_improvement_deal_rung` and threads that string into the
   readout; the crop picker is built for the same rung. One seam, so the list and the terms cannot name
@@ -2233,7 +2239,7 @@ own block, its own meta, its own reader (`Readout.improvement_deal_text`).
   `IMPROVEMENT_DEAL_META`: `improvement_running_plant`, `improvement_running_animal`,
   `forage_crop_then_emmer` / `_groundnut` (which additionally prove the terms MOVE with the crop),
   `forage_unstaffed`, `forage_sow`, `herd_investment_both_products`, `herd_investment_corral_offer`,
-  `herd_corral_depleted`. Sabotage-verified six ways, each failing a disjoint set.
+  `herd_corral_depleted`.
 - **THE SOW RUNG WAS UNPROVEN UNTIL ITS FIXTURE WAS REPAIRED, and the bug was in the harness.**
   `BaseFx.seed_forage_rows` converts the `patch_ceiling_*` authoring shorthand only *if the fraction
   key is absent* — and `food_tile_fixture()` has already run it once, writing
@@ -2243,8 +2249,9 @@ own block, its own meta, its own reader (`Readout.improvement_deal_text`).
   (`ForageFx.SOW_BUILD_FRACTION`, the docstring's own "a fixture that states a fraction outright
   wins"), and `forage_sow` composes the rung through the three-line idiom so the frame renders the
   selected Sow its own comment has always claimed. Its assertion is the rung's ASYMMETRY read off
-  the two rows — `WITHOUT THE BUILD 0.32 food` under `ONCE SOWN 2.40 food` — as an ORDERING rather
-  than against literals, since pinning either magnitude would pin this fixture's arithmetic.
+  the rung's dipped headline against its payoff — `0.01 FOOD` while building against
+  `ONCE SOWN 2.40 food` — as an ORDERING rather than against literals, since pinning either
+  magnitude would pin this fixture's arithmetic.
 
 **THE CONTROL SITS ABOVE THE READOUT ON BOTH SHEETS**, which is what makes the block legible at all:
 … crew stepper → kit row → improvement control (+ crop picker) → `PER TURN` readout → action button.

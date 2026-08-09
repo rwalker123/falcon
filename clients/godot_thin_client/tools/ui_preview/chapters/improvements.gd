@@ -109,12 +109,18 @@ func run(harness) -> void:
 		Readout.improvement_deal_text(h._hud._drawercompose._compose_sheet).contains(
 			String(HudComposeVocab.IMPROVEMENT_PAYOFF_ROW_LABELS[
 				SourceForecast.IMPROVEMENT_CULTIVATE]).to_upper()))
-	# **AND THE UNDIPPED BASELINE IS BACK, which is the defect this move fixes.** Ticking the box
-	# makes the headline the DIPPED take, and until the deal returned the number it is a quarter of
-	# appeared nowhere on the sheet. This crew is staffed, so the `now` row must render.
-	h._assert_hud("…above a `now` row stating the undipped take the dip is a fraction of",
-		Readout.improvement_deal_text(h._hud._drawercompose._compose_sheet).contains(
-			HudComposeVocab.IMPROVEMENT_DEAL_BASELINE_LABEL.to_upper()))
+	# **THE BLOCK IS EXACTLY ONE ROW, AND THE COUNT IS HOW THAT IS PINNED.** It briefly carried a
+	# second row stating the crew's undipped take; that went because the baseline is visible by
+	# unticking the box, and because at a crew that saturates the source the dip costs nothing — so
+	# the row printed the SAME figures as the headline directly above it, under a crew note saying
+	# each carries half as much. No `contains` claim can see that return: a baseline row satisfies
+	# every one of them and its numbers are legitimate.
+	h._assert_hud("…as the block's ONLY row, the undipped baseline having been retired",
+		Readout.improvement_deal_rows(h._hud._drawercompose._compose_sheet) == 1)
+	# …and the general form of the same defect: nothing in the deal may restate a number the take
+	# above it already prints, whatever row it arrives on.
+	h._assert_hud("…repeating no magnitude the yields row already states",
+		not Readout.deal_repeats_a_yields_number(h._hud._drawercompose._compose_sheet))
 	# **THE CAPTION CARRIES BOTH KEYS AT ONCE, and this is the frame where both are true.** These
 	# readings are the DIPPED take AND they arrow toward a holding rate, so a caption stating only
 	# the dip leaves the row's `0.64 → 0.15` unkeyed — which shipped once, as an unconditional

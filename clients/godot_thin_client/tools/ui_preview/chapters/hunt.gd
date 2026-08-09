@@ -1621,9 +1621,8 @@ func run(harness) -> void:
 		corral_offer is CheckBox
 		and Readout.improvement_deal_text(h._hud._drawercompose._compose_sheet)
 			.ends_with(BOAR_CORRAL_PAYOFF_FACE))
-	h._assert_hud("…with no `now` row, this rung being offered rather than composed",
-		not Readout.improvement_deal_text(h._hud._drawercompose._compose_sheet).contains(
-			HudComposeVocab.IMPROVEMENT_DEAL_BASELINE_LABEL.to_upper()))
+	h._assert_hud("…as the block's ONLY row, an offered rung stating its payoff and nothing else",
+		Readout.improvement_deal_rows(h._hud._drawercompose._compose_sheet) == 1)
 
 	# Reset so later states render their usual single-band dropdown + default band/policy.
 	h._hud._band_labor._player_bands = []

@@ -373,22 +373,6 @@ const IMPROVEMENT_PAYOFF_ROW_LABELS := {
     "corral": "once penned",
 }
 
-# The row above it: what this crew would carry if it were NOT building — the counterfactual. It
-# exists because ticking the box makes the PER TURN headline the DIPPED figure, and the baseline that
-# figure is a fraction of then appears nowhere, which is the whole defect the deal's return fixes.
-#
-# **IT SAYS `without the build`, NOT `now`, and the word matters.** The yields row directly above it
-# states its own `now → after` transition (a burst rate walking toward a holding rate), so a row
-# keyed `NOW` beside it puts two unrelated meanings of one word in one box — measured on
-# `improvement_running_plant`, where `0.64 → 0.15` sat one line above `NOW 0.96 food` and neither
-# reading explained the other. The counterfactual wording also pairs with its sibling key:
-# `WITHOUT THE BUILD 0.96 food` over `ONCE TENDED 1.20 food` is the whole bargain in two lines.
-#
-# **IT IS SUPPRESSED AT ZERO CREW, and that is not a tidy-up.** This term is staffing-scaled and the
-# payoff is not, so an unstaffed sheet showing both states a SEQUENCE the player is not on track for
-# — exactly what the deleted deal line's `INVESTMENT_FORECAST_UNSTAFFED` variants existed to dodge.
-# Do not re-create that bug by rendering this row at 0.
-const IMPROVEMENT_DEAL_BASELINE_LABEL := "without the build"
 
 # The pen's running upkeep, subtracted from the payoff on the row that states it (Corral only), so
 # the deal is never quoted gross on the register that commits to it. `corralYield` does NOT deduct

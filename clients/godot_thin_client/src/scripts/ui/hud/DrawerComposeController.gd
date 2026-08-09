@@ -859,7 +859,7 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int, useful_floor: i
 ## **THE FACES CARRY NO PAYOFF, AND THE `payoff_face` CALLABLE THAT FED THEM IS GONE.** Both states
 ## state the CHOICE and nothing else — the verb, or the verb and its meter. The terms moved one
 ## register down into the readout, where they sit beside the take they are meant to be compared with;
-## see `_improvement_deal_rows`. The one number this control still resolves for itself is the pen's
+## see `_improvement_deal_row`. The one number this control still resolves for itself is the pen's
 ## zero-payoff-under-a-feed test, which is a warning about the RUNG and belongs in its note slot.
 ##
 ## `extra_rows` is the caller's whole-control hook: the plant web drops its CROP PICKER beneath the
@@ -1051,39 +1051,29 @@ func _improvement_deal_rung(kind: String, source: Dictionary, prefix: String,
         return ""
     return rung
 
-## **THE DEAL, AS THE READOUT'S LABELLED ROWS** — what this crew carries NOW and what the rung will
-## pay ONCE TENDED / SOWN / TAMED / PENNED, in the order a player reads them. `[]` where there is
-## nothing to state, which `_mount_readout` renders as no block at all rather than an empty well.
+## **THE DEAL, AS THE READOUT'S ONE LABELLED ROW** — what the rung on the table will pay ONCE TENDED
+## / SOWN / TAMED / PENNED. `{}` where there is nothing to state, which `_mount_readout` renders as no
+## block at all rather than an empty well.
 ##
 ## `payoff_terms` is the CALLER's, already resolved: the plant web substitutes the SELECTED CROP's
 ## own payoff and the animal web quotes the herd's, and both sheets resolve it exactly once so the
 ## crop picker and this row can never name different crops (issue #419). `""` means the wire quotes
-## no deal for this rung, and the payoff row is then not rendered at all — never a fabricated `0.00`,
-## the same rule the bare face formats follow.
+## no deal for this rung, and no row is then rendered at all — never a fabricated `0.00`, the same
+## rule the bare face formats follow.
 ##
-## **THE `now` ROW IS SUPPRESSED AT ZERO CREW.** It is staffing-scaled where the payoff is not, so an
-## unstaffed sheet showing both states a sequence the player is not on track for — the bug the
-## deleted deal line's UNSTAFFED variants existed to dodge. Do not re-create it.
-func _improvement_deal_rows(kind: String, source: Dictionary, prefix: String, band: Dictionary,
-        rung: String, composed: bool, payoff_terms: String,
-        floor_value: float, crew: int) -> Array:
-    if rung == "":
-        return []
-    var rows: Array = []
-    # Resolved at the LIVE floor, because the `now` term is: it is this crew's undipped take, and a
-    # take moves with the floor it is held at. The payoff does not — `improvement_forecast` is asked
-    # at the food peak by the caller's own terms resolver, a rung's pay being a property of the
-    # finished rung rather than of the floor the crew holds while building it.
-    var deal := SourceForecast.improvement_forecast(source,
-        SourceForecast.source_kind_for_labor(kind), prefix, floor_value, rung)
-    if composed and crew > 0 and not deal.is_empty():
-        var now_terms := _base_take_terms(deal, band, crew)
-        if now_terms != "":
-            rows.append(HudWidgets.improvement_deal_row(
-                HudComposeVocab.IMPROVEMENT_DEAL_BASELINE_LABEL, now_terms, HudStyle.INK_DIM))
-    if payoff_terms == "":
-        return rows
+## **THE FORECAST LOOKUP SURVIVED THE ROW THAT NEEDED A FLOOR.** Corral's feed debit rides this row's
+## value, and `feed_rung` / `feed` are what say whether there is one — a structural test, so a rung
+## the wire does not describe can never quote an upkeep. Everything read here is floor-independent,
+## which is why the block is NOT in the live registry: `improvement_forecast` is asked at the FOOD
+## PEAK, the floor `_improvement_payoff_terms` already quotes the payoff at, a rung's pay being a
+## property of the finished rung rather than of the floor the crew holds while building it.
+func _improvement_deal_row(kind: String, source: Dictionary, prefix: String, band: Dictionary,
+        rung: String, payoff_terms: String) -> Dictionary:
+    if rung == "" or payoff_terms == "":
+        return {}
     var value := payoff_terms
+    var deal := SourceForecast.improvement_forecast(source,
+        SourceForecast.source_kind_for_labor(kind), prefix, SourceForecast.FLOOR_FOOD_PEAK, rung)
     # THE PEN'S UPKEEP RIDES THE PAYOFF ROW, Corral only. `corralYield` is GROSS, so the row would
     # otherwise promise a rate the pen never nets.
     if not deal.is_empty() and bool(deal["feed_rung"]):
@@ -1092,30 +1082,11 @@ func _improvement_deal_rows(kind: String, source: Dictionary, prefix: String, ba
         if feed >= SourceForecast.FOOD_FLOW_MIN:
             value = HudComposeVocab.IMPROVEMENT_DEAL_FEED_FORMAT % [
                 payoff_terms, SourceForecast.format_magnitude(feed)]
-    rows.append(HudWidgets.improvement_deal_row(
-        String(HudComposeVocab.IMPROVEMENT_PAYOFF_ROW_LABELS.get(rung, rung)),
-        value, HudStyle.SIGNAL))
-    return rows
-
-## **THE UNDIPPED TAKE, in the payoff's own grammar** — what `crew` carries at this floor with the
-## build's `yield_fraction_while_building` NOT applied, read off `improvement_forecast`'s
-## `base_forecast` (which is exactly the same forecast minus the dip) through the SAME
-## `expected_yield_account` calls the yields row above it is built from, so the two registers cannot
-## arrive at one crew's take two ways. Stated in `picker_products` words rather than
-## `yield_components`' signed rates, because the row it is compared against is the payoff and a
-## comparison between two grammars is not one.
-## The band's output multiplier is already inside every one of those calls, so it is not applied
-## again here — the two `_payoff_terms` scalings below are the ones that need it, `payoff` being a
-## raw wire field rather than a priced take.
-func _base_take_terms(deal: Dictionary, band: Dictionary, crew: int) -> String:
-    var base: Dictionary = deal["base_forecast"]
-    return SourceForecast.picker_products(
-        SourceForecast.expected_yield(base, crew, band),
-        SourceForecast.expected_yield_account(base, crew, band,
-            "per_worker_trade", "ceiling_trade", SourceForecast.FORECAST_TRADE_PER_ANIMAL_KEY),
-        SourceForecast.expected_yield_account(base, crew, band,
-            "per_worker_fodder", "ceiling_fodder"),
-        String(deal["zero_account"]))
+    return {
+        HudWidgets.IMPROVEMENT_DEAL_ROW_LABEL:
+            String(HudComposeVocab.IMPROVEMENT_PAYOFF_ROW_LABELS.get(rung, rung)),
+        HudWidgets.IMPROVEMENT_DEAL_ROW_VALUE: value,
+    }
 
 ## The payoff terms for a rung — the payoff VECTOR the built rung pays, each account only when
 ## non-zero, so a hay meadow reads `1.80 fodder` and a pelt species `0.37 trade`. "" when the wire
@@ -1299,7 +1270,7 @@ func _mount_crew_row(parent: VBoxContainer, hosts: Array, crew_label: String, co
 ## arguments, which `_live_floor` / `_live_reaches` enforce by having one definition apiece.
 func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, workers: int,
         yields_at: Callable, labor_kind: String,
-        deal_rows_at: Callable = Callable(), while_building: bool = false) -> void:
+        deal_row: Dictionary = {}, while_building: bool = false) -> void:
     var known := bool(model.get("known", false))
     var floor_value := float(model.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))
     if not known and (yields_at.call(floor_value, workers, false) as Dictionary).is_empty():
@@ -1316,25 +1287,20 @@ func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, work
         func(host: Container, live: Dictionary, crew: int) -> void:
             _fill_yields_host(host, yields_at.call(
                 _live_floor(live), crew, _live_reaches(live)), labor_kind, while_building))
-    # **THE IMPROVEMENT DEAL — a SIBLING of the yields block, never rows inside its flow.** Two
+    # **THE IMPROVEMENT DEAL — a SIBLING of the yields block, never a row inside its flow.** Two
     # harness contracts read that flow structurally (the caption is `parent.get_child(index - 1)`;
     # both webs' take assertions parse the flow's joined text by splitting on an account word), so a
     # deal term folded in would corrupt both — silently, which is why it has a block and a meta of
     # its own. See `HudWidgets.IMPROVEMENT_DEAL_META`.
     #
-    # It is LIVE for the registry's own rule: the `now` row is this crew's take at the floor being
-    # dragged, so it belongs in the set exactly as the yields row does. `[]` renders nothing at all —
+    # **IT IS DELIBERATELY OUT OF THE LIVE REGISTRY**, by that registry's own rule: a payoff is a
+    # property of the finished rung, quoted at the food peak, so nothing in it moves under a floor
+    # drag and a host in the set would pay for work it does not need. `{}` renders nothing at all —
     # a source with no rung on the table has no deal, not an empty one.
-    if deal_rows_at.is_valid():
-        var deal_host := VBoxContainer.new()
-        deal_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-        column.add_child(deal_host)
-        _register_live(hosts, deal_host, model, workers,
-            func(host: Container, live: Dictionary, crew: int) -> void:
-                var rows: Array = deal_rows_at.call(_live_floor(live), crew)
-                if rows.is_empty():
-                    return
-                host.add_child(HudWidgets.build_improvement_deal(rows)))
+    if not deal_row.is_empty():
+        column.add_child(HudWidgets.build_improvement_deal(
+            String(deal_row.get(HudWidgets.IMPROVEMENT_DEAL_ROW_LABEL, "")),
+            String(deal_row.get(HudWidgets.IMPROVEMENT_DEAL_ROW_VALUE, ""))))
     if known:
         var verdict_host := VBoxContainer.new()
         verdict_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1870,7 +1836,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         # the forage sheet has no counterpart for. The window computation is unchanged.
         # **THE READOUT** — the LIVE per-turn take for the floor being composed (no carry cap on a
         # local hunt, so turns-to-fill is meaningless — the delivered rate is the number that decides
-        # it), then the deal the composed rung offers, then the verdict (§7.1: which of the two
+        # it), then the rung's payoff, then the verdict (§7.1: which of the two
         # independent statements is binding, the crew or the floor), then the idle-crew note (§7.2 —
         # reported, never acted on) and the teaching line. The take is recomposed from the LIVE floor,
         # so the numbers the player is dragging toward move while the drag runs.
@@ -1879,11 +1845,8 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
                 return _hunt_yield_model(band, herd, floor_value, crew,
                     composed_improvement, reaches),
             SourceForecast.LABOR_KIND_HUNT,
-            func(floor_value: float, crew: int) -> Array:
-                return _improvement_deal_rows(SourceForecast.LABOR_KIND_HUNT, herd,
-                    HudComposeVocab.BARE_FORECAST_PREFIX, band, deal_rung,
-                    composed_improvement != SourceForecast.IMPROVEMENT_NONE, deal_payoff,
-                    floor_value, crew),
+            _improvement_deal_row(SourceForecast.LABOR_KIND_HUNT, herd,
+                HudComposeVocab.BARE_FORECAST_PREFIX, band, deal_rung, deal_payoff),
             composed_improvement != SourceForecast.IMPROVEMENT_NONE)
         # A dead button is always explained (the `+` stepper's cap note is the precedent) — but only
         # when the cap note has not already said it, so the panel never states one fact twice.
@@ -2517,7 +2480,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         composed_improvement)
     var deal_payoff := "" if deal_rung == "" else _crop_payoff_terms(
         tile_info, basket, _compose.forage_species(), band, deal_rung)
-    # **THE READOUT** — the take, the deal the composed rung offers, the verdict, and the idle-crew
+    # **THE READOUT** — the take, the rung's payoff, the verdict, and the idle-crew
     # note + teaching line, in one bounded box (§7.1, §7.2). The take is recomposed from the LIVE
     # floor, which is what lets the numbers the player is dragging toward move while the drag runs.
     _mount_readout(target, live_hosts, chart_model, _compose.forage_count(),
@@ -2525,11 +2488,8 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
             return _forage_yield_model(band, tile_info, floor_value, crew, composed_improvement,
                 reaches),
         SourceForecast.LABOR_KIND_FORAGE,
-        func(floor_value: float, crew: int) -> Array:
-            return _improvement_deal_rows(SourceForecast.LABOR_KIND_FORAGE, tile_info,
-                HudComposeVocab.FORAGE_FORECAST_PREFIX, band, deal_rung,
-                composed_improvement != SourceForecast.IMPROVEMENT_NONE, deal_payoff,
-                floor_value, crew),
+        _improvement_deal_row(SourceForecast.LABOR_KIND_FORAGE, tile_info,
+            HudComposeVocab.FORAGE_FORECAST_PREFIX, band, deal_rung, deal_payoff),
         composed_improvement != SourceForecast.IMPROVEMENT_NONE)
     # Range-aware: foraging is stationary gathering (there is NO forage-expedition alternative), so a
     # tile beyond the SELECTED band's work_range DISABLES the button + shows an out-of-range hint,

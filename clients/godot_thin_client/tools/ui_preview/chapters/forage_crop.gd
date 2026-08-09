@@ -448,13 +448,10 @@ func run(harness) -> void:
 		Readout.improvement_deal_text(h._hud._drawercompose._compose_sheet).contains(
 			String(HudComposeVocab.IMPROVEMENT_PAYOFF_ROW_LABELS[
 				SourceForecast.IMPROVEMENT_CULTIVATE]).to_upper()))
-	# **AND NO `now` ROW AT ZERO CREW — the half that keeps the deal's return from re-creating the bug
-	# its UNSTAFFED variants were written for.** The `now` term is staffing-scaled where the payoff is
-	# not, so a zero crew showing both states a sequence this sheet is explicitly NOT on track for: an
-	# unstaffed build meter never advances. The payoff alone is a condition, which is honest.
-	h._assert_hud("…and NO `now` row, because a zero crew is not on track for the sequence it implies",
-		not Readout.improvement_deal_text(h._hud._drawercompose._compose_sheet).contains(
-			HudComposeVocab.IMPROVEMENT_DEAL_BASELINE_LABEL.to_upper()))
+	# The block is that ONE row at every crew — see `improvement_running_plant` for why the count is
+	# what pins the retired baseline rather than a `contains`.
+	h._assert_hud("…as the block's ONLY row, at a crew of zero as at any other",
+		Readout.improvement_deal_rows(h._hud._drawercompose._compose_sheet) == 1)
 	# **THE CAPTION'S OTHER BUILDING STATE — building, with NO arrow to key.** A zero crew reaches no
 	# holding rate, so this row states one reading and the caption must key the dip ALONE. It is the
 	# pair to `improvement_running_plant`'s both-true claim: between them the two building states of
@@ -738,20 +735,19 @@ func run(harness) -> void:
 	h._assert_hud("…and the box's own face carries none of it",
 		not ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
 			SourceForecast.IMPROVEMENT_SOW).contains(ForageFx.IMPROVEMENT_PAYOFF_NEEDLE))
-	# **THE ASYMMETRY THAT IS RUNG 3's BARGAIN, read off the two rows rather than described.** A bare
-	# sow has no standing stand to take a fraction of, so the crew carries almost nothing while the
-	# crop is in the ground and the Field then pays 2× a tended patch — which is exactly what the two
-	# labelled rows now put side by side. Asserted as `<`, not against literals: the claim is the
-	# ORDER of the two terms, and pinning either magnitude would pin this fixture's arithmetic.
-	var sow_baseline := Readout.improvement_deal_row_value(
-		h._hud._drawercompose._compose_sheet, HudComposeVocab.IMPROVEMENT_DEAL_BASELINE_LABEL)
-	var sow_payoff := Readout.improvement_deal_row_value(
-		h._hud._drawercompose._compose_sheet,
-		String(HudComposeVocab.IMPROVEMENT_PAYOFF_ROW_LABELS[SourceForecast.IMPROVEMENT_SOW]))
-	print("ui_preview: sow deal  without-the-build=%s  once-sown=%s" % [sow_baseline, sow_payoff])
-	h._assert_hud("…over a `without the build` row this staffed crew really is held to",
-		sow_baseline != Readout.DEAL_ROW_ABSENT and sow_payoff != Readout.DEAL_ROW_ABSENT
-			and float(sow_baseline.split(" ")[0]) < float(sow_payoff.split(" ")[0]))
+	# **THE ASYMMETRY THAT IS RUNG 3's BARGAIN, read across the two registers rather than described.**
+	# A bare sow has no standing stand to take a fraction of, so the crew carries almost nothing while
+	# the crop is in the ground and the Field then pays 2× a tended patch. Asserted as `<` against the
+	# HEADLINE take, not against literals: the claim is the ORDER of the two terms, and pinning either
+	# magnitude would pin this fixture's arithmetic.
+	var sow_payoff := Readout.improvement_deal_value(h._hud._drawercompose._compose_sheet)
+	var sow_now := Readout.yields_account_number(
+		h._hud._drawercompose._compose_sheet, SourceForecast.YIELD_ACCOUNT_FOOD)
+	print("ui_preview: sow deal  while-building=%s  once-sown=%s" % [sow_now, sow_payoff])
+	h._assert_hud("…far above the dipped take the same sheet is quoting while it builds",
+		sow_payoff != Readout.DEAL_ROW_ABSENT
+			and sow_now != Readout.YIELDS_ACCOUNT_ABSENT
+			and float(sow_now) < float(sow_payoff.split(" ")[0]))
 
 	# State 6b-crop-picker-sow — THE SAME long basket as `forage_crop_picker`, one rung up, on ground
 	# that will take seed. `can_sow` is a DIFFERENT flag from `can_cultivate`, so only Wild Emmer stays
