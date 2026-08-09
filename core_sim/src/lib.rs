@@ -22,6 +22,7 @@ mod combat_config;
 mod components;
 mod config_load;
 pub mod config_override;
+pub mod crafting;
 mod creatures_config;
 mod crisis;
 mod crisis_config;
@@ -58,6 +59,7 @@ mod orders;
 pub mod port_alloc;
 mod power;
 mod provinces;
+mod recipes_config;
 mod resources;
 mod scalar;
 mod sedentarization;
@@ -102,13 +104,14 @@ pub use combat_config::{
     BUILTIN_COMBAT_CONFIG,
 };
 pub use components::{
-    available_workers, floor_is_valid, floor_overdraws, raid_is_recurring, BandEquipment, BandId,
-    BandTravel, DeathCause, DemographicFlowAccumulator, ElementKind, Expedition, ExpeditionMission,
-    ExpeditionPhase, Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget,
-    LocalStore, LogisticsLink, MaterialBatch, MaterialDraw, MoraleCause, PendingMigration,
-    PopulationCohort, PowerNode, ResidentBand, Settlement, SourceYield, StartingUnit, Tile,
-    TownCenter, TradeLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD,
-    NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE, TRADE_GOODS,
+    available_workers, floor_is_valid, floor_overdraws, raid_is_recurring, BandBench,
+    BandEquipment, BandId, BandTravel, DeathCause, DemographicFlowAccumulator, DrawnInputs,
+    ElementKind, Expedition, ExpeditionMission, ExpeditionPhase, Improvement, KnowledgeFragment,
+    LaborAllocation, LaborAssignment, LaborTarget, LocalStore, LogisticsLink, MaterialBatch,
+    MaterialDraw, MoraleCause, PendingMigration, PopulationCohort, PowerNode, ResidentBand,
+    Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink, YieldRange,
+    DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE,
+    TRADE_GOODS,
 };
 pub use config_load::ConfigLoadError;
 pub use config_override::{
@@ -241,6 +244,11 @@ pub use materials_config::{
     HandWorking, MaterialDef, MaterialYieldDef, MaterialYieldError, MaterialsConfig,
     MaterialsConfigError, MaterialsConfigHandle, MaterialsConfigMetadata, BUILTIN_MATERIALS_CONFIG,
 };
+pub use recipes_config::{
+    load_recipes_config_from_env, CraftingTuning, RecipeDef, RecipeGrade, RecipeInput,
+    RecipeOutput, RecipesConfig, RecipesConfigError, RecipesConfigHandle, RecipesConfigMetadata,
+    BUILTIN_RECIPES_CONFIG,
+};
 pub use sedentarization::{
     sedentarization_tick, SedentarizationEntry, SedentarizationScore, SedentarizationStage,
 };
@@ -326,12 +334,12 @@ pub use snapshot::{
 };
 pub use systems::spawn_initial_world;
 pub use systems::{
-    advance_band_movement, advance_expeditions, advance_labor_allocation, advance_predator_raids,
-    advance_tick, denial_forecast, expedition_returned_event, expedition_take_provisions,
-    fold_party_into_band, hunt_per_worker_provisions, hunt_report_event, hunt_take,
-    hunt_trip_forecast, output_multiplier, party_owes_a_report, simulate_power, DenialForecast,
-    DenialOutcome, HuntOutcome, HuntTripBound, HuntTripForecast, MigrationKnowledgeEvent,
-    PowerSimParams, TradeDiffusionEvent,
+    advance_band_movement, advance_crafting, advance_expeditions, advance_labor_allocation,
+    advance_predator_raids, advance_tick, bench_tiers, denial_forecast, expedition_returned_event,
+    expedition_take_provisions, fold_party_into_band, hunt_per_worker_provisions,
+    hunt_report_event, hunt_take, hunt_trip_forecast, output_multiplier, party_owes_a_report,
+    simulate_power, BenchTiers, DenialForecast, DenialOutcome, HuntOutcome, HuntTripBound,
+    HuntTripForecast, MigrationKnowledgeEvent, PowerSimParams, TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,
@@ -511,7 +519,21 @@ pub fn build_headless_app() -> App {
     let (creatures_config, creatures_metadata) = creatures_config::load_creatures_config_from_env();
     let creatures_handle = creatures_config::CreaturesConfigHandle::new(creatures_config);
     let (equipment_config, equipment_metadata) = equipment_config::load_equipment_config_from_env();
-    let equipment_handle = equipment_config::EquipmentConfigHandle::new(equipment_config);
+    // **The item table's `bounds_material` is reconciled against the materials table**, the same
+    // `UnknownItem` debt the two food webs' yield edges pay: a tool bounding `hyde` would parse,
+    // validate, and then be the bench tool for nothing.
+    if let Err(err) = equipment_config.validate_against_materials(&materials_config) {
+        panic!("equipment config does not reconcile with the materials table: {err}");
+    }
+    let equipment_handle = equipment_config::EquipmentConfigHandle::new(equipment_config.clone());
+    // **The recipe book is reconciled against BOTH tables**, here and only here, because this is the
+    // one place all three configs are in scope at once — a recipe naming a material or an item that
+    // does not exist would otherwise parse, validate, and make nothing forever.
+    let (recipes_config, recipes_metadata) = recipes_config::load_recipes_config_from_env();
+    if let Err(err) = recipes_config.validate_against(&materials_config, &equipment_config) {
+        panic!("recipes config does not reconcile with the materials and equipment tables: {err}");
+    }
+    let recipes_handle = recipes_config::RecipesConfigHandle::new(recipes_config);
     let (demographics_config, demographics_metadata) =
         demographics_config::load_demographics_config_from_env();
     let demographics_handle =
@@ -581,6 +603,8 @@ pub fn build_headless_app() -> App {
         .insert_resource(visibility_metadata)
         .insert_resource(materials_handle)
         .insert_resource(materials_metadata)
+        .insert_resource(recipes_handle)
+        .insert_resource(recipes_metadata)
         .insert_resource(fauna_handle)
         .insert_resource(fauna_metadata)
         .insert_resource(flora_handle)
@@ -869,6 +893,10 @@ pub fn build_headless_app() -> App {
                     // `discover_sites` picks up any site on the newly-flushed Discovered tiles.
                     systems::advance_expeditions,
                     systems::advance_labor_allocation,
+                    // The bench runs right after labor, for two reasons that both have to hold: it
+                    // draws on the materials THIS turn's take just delivered, and its crew came out
+                    // of the same worker pool the assignment loop above spends.
+                    systems::advance_crafting,
                     // Predator raids fire right after labor so warrior counts and band positions are
                     // current: a carnivore with `aggression > 0` within `predators.raid_radius` of a band
                     // raids its camp, the band defended by its Warriors (the role's first live consumer).

@@ -913,6 +913,21 @@ pub struct LadderKnowledge {
     /// learned (every gate open from turn 1); above `1` no gate could **ever** open, since
     /// `DiscoveryProgressLedger` clamps accrual to `1.0`.
     pub completion_threshold: f32,
+    /// **What one item finished at a bench teaches of its craft** (`docs/plan_crafting_and_materials.md`
+    /// §5). So `completion_threshold / lesson_per_crafted_item` is a craft's length **in items**
+    /// (`1.0 / 0.2` → 5), the way the two dials above give a ladder lesson's length in turns.
+    ///
+    /// **It is a sibling of [`Self::progress_per_turn`] rather than a reading of it, because the
+    /// quantum differs.** A ladder lesson is charged per *turn worked* and scaled by the crew's
+    /// floor; a craft lesson is charged **per item completed**, on the same quantum as the tool's
+    /// wear, so the two cannot drift. There is no floor to scale it by and no turn to charge it on.
+    /// It lives here rather than in `recipes.json` so that **every knowledge pace in the game is
+    /// tuned in one file**, which is the whole reason the ladder's two moved here in slice 4.
+    ///
+    /// **The crafts pace themselves off the land, which is the point.** Weaving is learned quickly
+    /// by a gathering band (fibre is everywhere) and Bone-working slowly by anyone (bone is the
+    /// scarcest yield on the roster), with no per-craft dial saying so.
+    pub lesson_per_crafted_item: f32,
 }
 
 /// The whole ladder: every rung of both branches, plus the pace they are learned at
@@ -1142,7 +1157,12 @@ fn discovery_id_for(name: &str) -> Option<u32> {
         // Flora Roster F3 — the `animal:pen` rung's `earns_knowledge`. Running a pen teaches
         // Foddering, which unlocks the fodder-draw (feed + `K_pen` term); it gates no rung of its own.
         "foddering" => Some(FODDERING_DISCOVERY_ID),
-        _ => None,
+        // **The three CRAFTS** (`crafting.rs`). They are not ladder rungs and nothing here earns
+        // them — a bench does, per item completed. They are named in this lookup for the same
+        // reason the ladder's five are: it is the sim's one bounded set of knowledge names, and a
+        // knowledge reachable by no name is a knowledge no start profile could ever grant and no
+        // config could ever reference.
+        name => crate::crafting::craft_discovery_id(name),
     }
 }
 
@@ -1171,6 +1191,19 @@ fn validate_knowledge(knowledge: &LadderKnowledge) -> Result<(), LadderConfigErr
                          accrual to 1.0)"
                 .to_string(),
             value: format!("completion_threshold = {}", knowledge.completion_threshold),
+        });
+    }
+    if !knowledge.lesson_per_crafted_item.is_finite() || knowledge.lesson_per_crafted_item <= 0.0 {
+        return Err(LadderConfigError::Invalid {
+            field: "knowledge".to_string(),
+            constraint: "teach a positive amount per item crafted — at `lesson_per_crafted_item \
+                         <= 0` no craft is ever learned and every tool stays permanently \
+                         unreachable"
+                .to_string(),
+            value: format!(
+                "lesson_per_crafted_item = {}",
+                knowledge.lesson_per_crafted_item
+            ),
         });
     }
     Ok(())

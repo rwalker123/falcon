@@ -29,13 +29,13 @@ use core_sim::{
     apply_port_base, available_workers, floor_is_valid, forage_source_yield_preview,
     hunt_source_yield_preview, knows, load_simulation_config_for_new_world, output_multiplier,
     resolve_active_profile, resolve_committed_species, rung_site_refusal, tile_flora_composition,
-    tile_is_fresh_watered, ActiveStartProfile, BandEquipment, BandTravel, BeatCatalogHandle,
-    BeatConfigHandle, BeatLedger, CampaignLabel, CombatConfigHandle, CreaturesConfigHandle,
-    Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FloraConfigHandle,
-    FoodModuleTag, ForkAnswerError, HuntingParty, KitChoice, KitJob, LaborAllocation, LaborTarget,
-    LadderConfigHandle, LocalStore, ResidentBand, RungKey, SiteRefusal, SpeciesRefusal,
-    StartProfile, StartProfileOverrides, WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR,
-    NO_FORAGE_SEASON,
+    tile_is_fresh_watered, ActiveStartProfile, BandBench, BandEquipment, BandTravel,
+    BeatCatalogHandle, BeatConfigHandle, BeatLedger, CampaignLabel, CombatConfigHandle,
+    CreaturesConfigHandle, Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase,
+    FloraConfigHandle, FoodModuleTag, ForkAnswerError, HuntingParty, KitChoice, KitJob,
+    LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore, RecipesConfigHandle,
+    ResidentBand, RungKey, SiteRefusal, SpeciesRefusal, StartProfile, StartProfileOverrides,
+    WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR, NO_FORAGE_SEASON,
 };
 use core_sim::{
     build_headless_app, clear_config_overrides, denial_forecast, expedition_returned_event,
@@ -597,6 +597,26 @@ enum Command {
         faction: FactionId,
         target_x: u32,
         target_y: u32,
+    },
+    /// Put a recipe on a band's crafting bench and draw idle workers onto it. See
+    /// `handle_set_bench` — **make IS the assignment**, so there is no Crafter role card and no
+    /// `LaborTarget` variant.
+    SetBench {
+        faction: FactionId,
+        band_id: Option<u64>,
+        recipe_id: String,
+        workers: u32,
+    },
+    /// Take the job off a band's bench and hand its crew back.
+    ClearBench {
+        faction: FactionId,
+        band_id: Option<u64>,
+    },
+    /// Re-crew a band's running bench, leaving the job and its progress alone.
+    BenchCrew {
+        faction: FactionId,
+        band_id: Option<u64>,
+        workers: u32,
     },
     CancelOrder {
         faction: FactionId,
@@ -2724,11 +2744,21 @@ fn handle_assign_labor(
         return;
     };
 
+    // **The bench's crew is off the table.** `Make` draws idle workers onto a recipe, so a band with
+    // four hands at the bench has four fewer to send anywhere — see `band_idle_workers`. Subtracted
+    // here rather than modelled as a `LaborTarget` because a bench is not an in-range source, and
+    // giving it one would put a fictitious row on every yield readout in the game.
     let available = app
         .world
         .get::<PopulationCohort>(band.entity)
         .map(|cohort| available_workers(cohort.working))
-        .unwrap_or(0);
+        .unwrap_or(0)
+        .saturating_sub(
+            app.world
+                .get::<BandBench>(band.entity)
+                .map(|bench| bench.workers)
+                .unwrap_or(0),
+        );
 
     let kind_label = target.kind();
     let (applied, assigned_total, improvement) = {
@@ -3849,7 +3879,7 @@ fn cancel_party_standing_in_camp(
     if party_owes_a_report(&expedition) {
         return None;
     }
-    let party = app.world.get::<PopulationCohort>(entity)?.clone();
+    let mut party = app.world.get::<PopulationCohort>(entity)?.clone();
     let position = app.world.get::<Tile>(party.current_tile)?.position;
     let home_tile = app
         .world
@@ -3862,7 +3892,7 @@ fn cancel_party_standing_in_camp(
     let mut home = app
         .world
         .get_mut::<PopulationCohort>(expedition.home_band)?;
-    let banked_trade = fold_party_into_band(&party, &mut expedition, &mut home);
+    let banked_trade = fold_party_into_band(&mut party, &mut expedition, &mut home);
     Some(CancelledInCamp {
         position,
         banked_trade,
@@ -4695,6 +4725,245 @@ fn handle_abandon_improvement(
             "status=abandoned action=abandon_improvement improvement={} bands={}",
             improvement.as_str(),
             cleared
+        )),
+    );
+}
+
+/// **The workers a band has spare right now** — its pool, less what the assignment loop already
+/// staffs, less what is standing at the bench.
+///
+/// **The bench spends the same pool `assign_labor` does**, and that is the whole of *"make is the
+/// assignment"*: a crew at the bench is not gathering, and a band cannot staff the range and the
+/// bench with the same people. Its crew is a number on [`BandBench`] rather than a `LaborTarget`
+/// variant, because a bench is not an in-range source and giving it one would put a fictitious row
+/// on every yield readout in the game.
+fn band_idle_workers(app: &mut bevy::prelude::App, band: Entity) -> u32 {
+    let pool = app
+        .world
+        .get::<PopulationCohort>(band)
+        .map(|cohort| available_workers(cohort.working))
+        .unwrap_or(0);
+    let assigned = app
+        .world
+        .get::<LaborAllocation>(band)
+        .map(|allocation| allocation.assigned_total())
+        .unwrap_or(0);
+    let benched = app
+        .world
+        .get::<BandBench>(band)
+        .map(|bench| bench.workers)
+        .unwrap_or(0);
+    pool.saturating_sub(assigned).saturating_sub(benched)
+}
+
+/// The band's bench, inserted on demand so a band spawned before the component existed still has
+/// one — the same shape `band_allocation_mut` uses for the labor allocation.
+fn band_bench_mut(app: &mut bevy::prelude::App, band: Entity) -> bevy::prelude::Mut<'_, BandBench> {
+    if app.world.get::<BandBench>(band).is_none() {
+        app.world.entity_mut(band).insert(BandBench::default());
+    }
+    app.world
+        .get_mut::<BandBench>(band)
+        .expect("bench inserted above")
+}
+
+/// **Put a recipe on a band's bench and draw idle workers onto it** — `set_bench <faction> <band>
+/// recipe <id> [workers <n>]`.
+///
+/// Two refusals, both **command failures with a reason** rather than silent no-ops, for the same
+/// reason an unknown kit id is one: the player is choosing between recipes, so a quiet substitution
+/// or a quiet nothing answers a different question than the one asked.
+///
+/// - an id the book does not carry, and
+/// - a recipe whose `requires_knowledge` this faction has not learned — which is only ever a **tool**
+///   (see `recipes.json`), so *"you cannot build a loom yet"* is a sentence the player is told, not
+///   a bench that sits there doing nothing.
+///
+/// **There is no third refusal for material.** A band that is short simply makes no progress — the
+/// draw takes nothing and the turn is a no-op — which is `docs/plan_crafting_and_materials.md` §5's
+/// *"no 'you cannot craft that' branch in the sim"*: the panel names the shortfall, the sim just
+/// does not move.
+fn handle_set_bench(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: Option<u64>,
+    recipe_id: &str,
+    workers: u32,
+) {
+    let event_kind = CommandEventKind::Craft;
+    let recipes = app.world.resource::<RecipesConfigHandle>().get();
+    let Some(recipe) = recipes.recipe(recipe_id) else {
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!(
+                "set_bench: unknown recipe '{recipe_id}' — the book offers {}.",
+                recipes.recipe_ids_for_message()
+            ),
+        );
+        return;
+    };
+    let threshold = app
+        .world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .knowledge
+        .completion_threshold;
+    let unknown_craft = {
+        let ledger = app.world.resource::<DiscoveryProgressLedger>();
+        recipe
+            .requires_knowledge
+            .iter()
+            .find(|craft| {
+                core_sim::crafting::craft_discovery_id(craft)
+                    .is_none_or(|id| !knows(ledger, faction, id, threshold))
+            })
+            .cloned()
+    };
+    if let Some(craft) = unknown_craft {
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!(
+                "set_bench: {} needs {craft}, which this people has not learned — a craft is \
+                 learned by practising it bare-handed.",
+                recipe.display_name
+            ),
+        );
+        return;
+    }
+    let display_name = recipe.display_name.clone();
+
+    let Some(band) = select_starting_band(app, faction, band_id, "set_bench", event_kind) else {
+        return;
+    };
+    // The band's OWN crew stays on the bench while the job is swapped, so the idle pool this is
+    // clamped against must not count them twice.
+    let idle = band_idle_workers(app, band.entity)
+        + app
+            .world
+            .get::<BandBench>(band.entity)
+            .map(|bench| bench.workers)
+            .unwrap_or(0);
+    let applied = workers.min(idle);
+    {
+        let mut bench = band_bench_mut(app, band.entity);
+        bench.set_job(recipe_id, applied);
+    }
+    let tick = app.world.resource::<SimulationTick>().0;
+    let clamp_note = if applied < workers {
+        format!(" (clamped from {workers} — only {idle} idle)")
+    } else {
+        String::new()
+    };
+    push_command_event(
+        app,
+        tick,
+        event_kind,
+        faction,
+        format!(
+            "{} is making {display_name} x{applied}{clamp_note}",
+            band.label
+        ),
+        Some(format!(
+            "status=applied action=set_bench recipe={recipe_id} workers={applied} idle={idle}"
+        )),
+    );
+}
+
+/// **Take the job off a band's bench** — `clear_bench <faction> <band>`. The crew returns to the
+/// idle pool.
+///
+/// **Materials already drawn for the pass in flight are spent.** They were cut for the thing the
+/// player has just stopped making, and the store has no representation for a half-worked pile; the
+/// command's help text says so rather than the sim pretending otherwise.
+fn handle_clear_bench(app: &mut bevy::prelude::App, faction: FactionId, band_id: Option<u64>) {
+    let event_kind = CommandEventKind::Craft;
+    let Some(band) = select_starting_band(app, faction, band_id, "clear_bench", event_kind) else {
+        return;
+    };
+    let running = {
+        let mut bench = band_bench_mut(app, band.entity);
+        let running = bench.recipe_id.clone();
+        bench.clear_job();
+        running
+    };
+    let Some(recipe_id) = running else {
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!("clear_bench: {} has nothing on its bench.", band.label),
+        );
+        return;
+    };
+    let tick = app.world.resource::<SimulationTick>().0;
+    push_command_event(
+        app,
+        tick,
+        event_kind,
+        faction,
+        format!("{} stopped making {recipe_id}", band.label),
+        Some(format!(
+            "status=cleared action=clear_bench recipe={recipe_id}"
+        )),
+    );
+}
+
+/// **Re-crew a band's running bench** — `bench_crew <faction> <band> workers <n>`. The job and its
+/// progress are untouched, exactly as `assign_labor` leaves an improvement in flight alone: editing
+/// the crew is a crew-side edit and must not restart a build the player committed to.
+fn handle_bench_crew(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: Option<u64>,
+    workers: u32,
+) {
+    let event_kind = CommandEventKind::Craft;
+    let Some(band) = select_starting_band(app, faction, band_id, "bench_crew", event_kind) else {
+        return;
+    };
+    if app
+        .world
+        .get::<BandBench>(band.entity)
+        .is_none_or(|bench| !bench.is_running())
+    {
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!("bench_crew: {} has nothing on its bench.", band.label),
+        );
+        return;
+    }
+    let idle = band_idle_workers(app, band.entity)
+        + app
+            .world
+            .get::<BandBench>(band.entity)
+            .map(|bench| bench.workers)
+            .unwrap_or(0);
+    let applied = workers.min(idle);
+    let recipe_id = {
+        let mut bench = band_bench_mut(app, band.entity);
+        bench.workers = applied;
+        bench.recipe_id.clone().unwrap_or_default()
+    };
+    let tick = app.world.resource::<SimulationTick>().0;
+    let clamp_note = if applied < workers {
+        format!(" (clamped from {workers} — only {idle} idle)")
+    } else {
+        String::new()
+    };
+    push_command_event(
+        app,
+        tick,
+        event_kind,
+        faction,
+        format!("{} bench crew x{applied}{clamp_note}", band.label),
+        Some(format!(
+            "status=applied action=bench_crew recipe={recipe_id} workers={applied} idle={idle}"
         )),
     );
 }
@@ -5701,6 +5970,33 @@ fn command_from_payload(
             target_x,
             target_y,
         }),
+        ProtoCommandPayload::SetBench {
+            faction_id,
+            band_id,
+            recipe_id,
+            workers,
+        } => Some(Command::SetBench {
+            faction: FactionId(faction_id),
+            band_id: Some(band_id),
+            recipe_id,
+            workers,
+        }),
+        ProtoCommandPayload::ClearBench {
+            faction_id,
+            band_id,
+        } => Some(Command::ClearBench {
+            faction: FactionId(faction_id),
+            band_id: Some(band_id),
+        }),
+        ProtoCommandPayload::BenchCrew {
+            faction_id,
+            band_id,
+            workers,
+        } => Some(Command::BenchCrew {
+            faction: FactionId(faction_id),
+            band_id: Some(band_id),
+            workers,
+        }),
         ProtoCommandPayload::CancelOrder {
             faction_id,
             band_id,
@@ -6053,6 +6349,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::Cultivate => "Cultivate",
         CommandEventKind::Sow => "Sow",
         CommandEventKind::Corral => "Corral",
+        CommandEventKind::Craft => "Craft",
         CommandEventKind::HuntDanger => "Dangerous hunt",
         CommandEventKind::HuntReport => "Hunt report",
         CommandEventKind::PredatorRaid => "Predator raid",
@@ -6520,6 +6817,24 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
             target_y,
         } => {
             handle_extend_pen(app, faction, UVec2::new(target_x, target_y));
+        }
+        Command::SetBench {
+            faction,
+            band_id,
+            recipe_id,
+            workers,
+        } => {
+            handle_set_bench(app, faction, band_id, &recipe_id, workers);
+        }
+        Command::ClearBench { faction, band_id } => {
+            handle_clear_bench(app, faction, band_id);
+        }
+        Command::BenchCrew {
+            faction,
+            band_id,
+            workers,
+        } => {
+            handle_bench_crew(app, faction, band_id, workers);
         }
         Command::CancelOrder {
             faction,

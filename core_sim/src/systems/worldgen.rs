@@ -3004,6 +3004,11 @@ fn spawn_population_entity(
     // (zero wear) IS a full hunting kit and a full carry kit, and "start-stocked, not craftable"
     // needs no config read and no seeding pass here.
     entity.insert(BandEquipment::default());
+    // **And an EMPTY BENCH.** `Default` is *no job*, so a fresh band crafts nothing until the
+    // player puts a recipe on it — there is no opening move where everyone builds tools first
+    // (`docs/plan_crafting_and_materials.md` §5). Inserted here rather than on first use so the
+    // bench's crew comes out of the same worker pool the assignment loop reads, on turn one.
+    entity.insert(crate::components::BandBench::default());
     // The band's durable identity — see `BandId`. Allocated here rather than derived from position
     // because several bands can share a hex and a band outlives the hex it started on.
     entity.insert(band_ids.allocate());

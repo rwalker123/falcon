@@ -119,6 +119,21 @@ pub enum EquipmentStat {
     /// one of them would be a fourth authority over the same line. What wayfinding gear buys is what
     /// an observer can make out once they are there.
     ScoutVantageRange,
+    /// **The rate a bench works at with this tool in hand** — the value
+    /// `workers × progress_per_worker_turn ×` is multiplied by. Declared **equipped only**; the
+    /// unequipped side is the MATERIAL's own [`crate::materials_config::HandWorking::rate`], which
+    /// is `0` for a material that cannot be worked bare-handed. See [`Self::CRAFT_ONLY`].
+    CraftSpeed,
+    /// **The best reading a craft on this tool can realize** — the output grade is selected by
+    /// `min(material reading, ceiling)`, so fine flax with no loom still makes a standard basket.
+    /// Declared **equipped only**; the bare-handed ceiling is the material's
+    /// [`crate::materials_config::HandWorking::quality_ceiling`].
+    CraftQualityCeiling,
+    /// **The fraction of a recipe's stated input amounts a draw on this tool actually consumes.**
+    /// Declared **equipped only**; the bare-handed side is the identity
+    /// ([`crate::crafting::HAND_WORKING_MATERIAL_EFFICIENCY`]) — a bench with nothing on it saves
+    /// nothing.
+    CraftMaterialEfficiency,
 }
 
 impl EquipmentStat {
@@ -132,7 +147,10 @@ impl EquipmentStat {
             | EquipmentStat::HuntCarry
             | EquipmentStat::ForageCarry
             | EquipmentStat::PenCarry
-            | EquipmentStat::ScoutVantageRange => None,
+            | EquipmentStat::ScoutVantageRange
+            | EquipmentStat::CraftSpeed
+            | EquipmentStat::CraftQualityCeiling
+            | EquipmentStat::CraftMaterialEfficiency => None,
         }
     }
 
@@ -147,6 +165,26 @@ impl EquipmentStat {
         EquipmentStat::PenCarry,
         EquipmentStat::ScoutVantageRange,
     ];
+
+    /// **The stats only a bench TOOL may declare** — a tool bounds one material and grants nothing
+    /// outside it, the shape `max_body_mass` already runs on.
+    ///
+    /// **Deliberately NOT in [`Self::TWO_TIER`]**, though each has an unequipped reading: that
+    /// fallback searches the whole item table and takes the first match, so it would answer the
+    /// *loom's* speed for a band scraping a hide bare-handed. Every one of these three falls back to
+    /// a property of the **material** instead ([`crate::materials_config::HandWorking`]), which is
+    /// the only thing that knows which material is being worked. One home per fact, and the home is
+    /// the material.
+    pub const CRAFT_ONLY: [EquipmentStat; 3] = [
+        EquipmentStat::CraftSpeed,
+        EquipmentStat::CraftQualityCeiling,
+        EquipmentStat::CraftMaterialEfficiency,
+    ];
+
+    /// Whether this stat is one of [`Self::CRAFT_ONLY`].
+    pub fn is_craft_stat(self) -> bool {
+        Self::CRAFT_ONLY.contains(&self)
+    }
 }
 
 /// **Which tier of a stat an effect declares** — exactly one, never both, because the other tier
@@ -259,6 +297,14 @@ pub enum WearQuantum {
     /// nobody raided pays nothing, and a band three packs turned on pays three — a use count, not a
     /// clock.
     Fight,
+    /// Per **item completed on the bench**. Bench tools.
+    ///
+    /// **The lesson the craft teaches is charged on this SAME quantum**
+    /// ([`crate::systems::advance_crafting`]) — one wear and one lesson per item — so the thing that
+    /// consumes the tool and the thing that teaches the craft cannot drift apart. It is a use count
+    /// like the six above it, not a clock: a bench standing idle wears nothing, and one that
+    /// finished nothing this turn pays nothing.
+    ItemCrafted,
 }
 
 /// An item's use quantum and what one use costs it.
@@ -288,6 +334,17 @@ pub struct ItemDefinition {
     pub wear: WearConfig,
     /// What this item sets while it is intact.
     pub effects: Vec<EquipmentEffect>,
+    /// **The ONE material this item is a bench tool for.** Absent on everything a party carries.
+    ///
+    /// A tool bounds one material and grants nothing outside it — the shape `max_body_mass` already
+    /// runs on. It is what makes a loom useless on a hide with no *"this tool does not apply"*
+    /// branch: the bench asks for the tool bounding the material it is working, and a loom is not
+    /// that tool.
+    ///
+    /// **A tool serves the BENCH, not a party**: `validate` rejects a kit that names one, and its
+    /// live predicate is ownership + condition rather than a kit mask.
+    #[serde(default)]
+    pub bounds_material: Option<String>,
 }
 
 impl ItemDefinition {
@@ -297,6 +354,22 @@ impl ItemDefinition {
             .iter()
             .find(|effect| effect.stat == stat)
             .map(|effect| effect.tier)
+    }
+
+    /// The material this item is a bench tool for, or `None` for ordinary party gear.
+    pub fn bounds_material(&self) -> Option<&str> {
+        self.bounds_material.as_deref()
+    }
+
+    /// **The equipped value this item declares for a craft stat.** `None` when it says nothing about
+    /// it — *present effects apply, absent ones do not*, the same "only declared values participate"
+    /// clause [`KitChoice::multiplier`] runs on. A speed-only tool therefore leaves the ceiling and
+    /// the efficiency exactly where the bare hand had them.
+    pub fn craft_stat(&self, stat: EquipmentStat) -> Option<f32> {
+        match self.effect(stat) {
+            Some(EffectTier::Equipped(value)) => Some(value),
+            _ => None,
+        }
     }
 }
 
@@ -679,6 +752,37 @@ impl EquipmentConfig {
     /// The item with this id, or `None`.
     pub fn item(&self, id: &str) -> Option<&ItemDefinition> {
         self.items.get(id)
+    }
+
+    /// **The bench tool for a material, whether or not this band has one** — the item whose
+    /// `bounds_material` names it. Unique by `validate`, so there is one answer.
+    ///
+    /// Used for the *refusal* readout (*"No loom"*) and for nothing that resolves a rate; a rate
+    /// goes through [`Self::live_bench_tool`], which also asks whether the band owns it.
+    pub fn bench_tool_for(&self, material: &str) -> Option<(&str, &ItemDefinition)> {
+        self.items()
+            .find(|(_, item)| item.bounds_material() == Some(material))
+    }
+
+    /// **The tool a band actually has at the bench for `material`** — owned *and* with condition
+    /// left. `None` is the ordinary opening state and it is not an error: the band works the
+    /// material bare-handed, at the rate and ceiling the **material** declares.
+    ///
+    /// **Ownership is a real question here, unlike for party gear.** `BandEquipment`'s absent entry
+    /// reads as a full item for everything a spawn stocks — but nothing stocks a tool, so an absent
+    /// entry can only mean *"never made one"*, and reading it as a free loom on turn 1 would delete
+    /// *"tools are earned, never a prerequisite"* outright. See
+    /// [`crate::components::BandEquipment::owns`].
+    ///
+    /// **Nothing resolves a stat by naming an item**: the caller passes the *material*, so a roster
+    /// that renames the loom moves the bench with it and the id is spelled only in config.
+    pub fn live_bench_tool(
+        &self,
+        material: &str,
+        wear: &crate::components::BandEquipment,
+    ) -> Option<&ItemDefinition> {
+        let (id, item) = self.bench_tool_for(material)?;
+        (wear.owns(id) && wear.has_condition(id, self)).then_some(item)
     }
 
     /// **The item that declares `stat`, whatever kit is in play** — how a two-tier stat finds its
@@ -1146,9 +1250,146 @@ impl EquipmentConfig {
                 value: self.quarry_default_kit_margin.to_string(),
             });
         }
+        self.validate_bench_tools()?;
         self.validate_roster()?;
         self.validate_default_hunt_kit_is_quarry_blind()?;
         self.validate_warrior_kits_have_no_quarry()
+    }
+
+    /// **A BENCH TOOL'S OWN INVARIANTS.** Each failure below is silent at runtime — the item parses,
+    /// validates, and then either stretches nothing or is never worn — which is exactly
+    /// `config-loading.md`'s "looks live but isn't".
+    ///
+    /// - **A craft stat needs a `bounds_material`.** The three craft stats fall back to a property
+    ///   of the *material*, so a craft stat on an item that names no material has nothing to be the
+    ///   equipped side *of*.
+    /// - **A craft stat is EQUIPPED-only.** Its unequipped side is the material's `hand_working`,
+    ///   and an `unequipped` here would be a second, wrong home for it — read by nothing, since the
+    ///   bench falls back to the material rather than to the table.
+    /// - **One tool per material.** [`Self::bench_tool_for`] answers the first match, so two would
+    ///   resolve by `BTreeMap` order, i.e. alphabetically.
+    /// - **A tool wears on `item_crafted`, and only a tool does.** The bench is the only site that
+    ///   charges that quantum, so a tool on any other quantum would be immortal and a spear on this
+    ///   one would never wear at all.
+    /// - **A tool declares at least one craft stat**, or it is gear that costs material, wears out
+    ///   at a bench, and buys nothing.
+    fn validate_bench_tools(&self) -> Result<(), EquipmentConfigError> {
+        for (id, item) in &self.items {
+            let is_tool = item.bounds_material().is_some();
+            for effect in &item.effects {
+                if !effect.stat.is_craft_stat() {
+                    continue;
+                }
+                if !is_tool {
+                    return Err(EquipmentConfigError::InvalidRoster {
+                        reason: format!(
+                            "item '{id}' declares the craft stat {:?} but bounds no material - a \
+                             craft stat's unequipped side is a property of the MATERIAL, so there \
+                             is nothing for this to be the equipped side of",
+                            effect.stat
+                        ),
+                    });
+                }
+                if let EffectTier::Unequipped(_) = effect.tier {
+                    return Err(EquipmentConfigError::InvalidRoster {
+                        reason: format!(
+                            "item '{id}' declares {:?} `unequipped` - the unequipped side of every \
+                             craft stat is the material's own `hand_working`, and this would be a \
+                             second home read by nothing",
+                            effect.stat
+                        ),
+                    });
+                }
+            }
+            let charges_bench_wear = item.wear.per == WearQuantum::ItemCrafted;
+            if is_tool != charges_bench_wear {
+                return Err(EquipmentConfigError::InvalidRoster {
+                    reason: format!(
+                        "item '{id}' bounds a material: {is_tool}, but wears per {:?} - the bench \
+                         is the only site that charges `item_crafted`, so a tool on another \
+                         quantum is immortal and anything else on this one never wears at all",
+                        item.wear.per
+                    ),
+                });
+            }
+            if is_tool
+                && !item
+                    .effects
+                    .iter()
+                    .any(|effect| effect.stat.is_craft_stat())
+            {
+                return Err(EquipmentConfigError::InvalidRoster {
+                    reason: format!(
+                        "item '{id}' is a bench tool but declares no craft stat - it would cost \
+                         material, wear out, and buy nothing"
+                    ),
+                });
+            }
+            if let Some(material) = item.bounds_material() {
+                let others: Vec<&str> = self
+                    .items
+                    .iter()
+                    .filter(|(other, def)| {
+                        other.as_str() != id.as_str() && def.bounds_material() == Some(material)
+                    })
+                    .map(|(other, _)| other.as_str())
+                    .collect();
+                if !others.is_empty() {
+                    return Err(EquipmentConfigError::InvalidRoster {
+                        reason: format!(
+                            "items {id}, {} all bound '{material}' - the bench resolves the first \
+                             match, so the tool would be picked by name order",
+                            others.join(", ")
+                        ),
+                    });
+                }
+            }
+        }
+        // **A TOOL SERVES THE BENCH, NOT A PARTY.** A kit naming one would carry it onto the range,
+        // where it grants nothing (no take path reads a craft stat) and is never worn (no take site
+        // charges `item_crafted`) — a kit slot spent on nothing.
+        for kit in &self.kits {
+            for item in &kit.uses {
+                if self
+                    .item(item)
+                    .and_then(ItemDefinition::bounds_material)
+                    .is_some()
+                {
+                    return Err(EquipmentConfigError::InvalidRoster {
+                        reason: format!(
+                            "kit '{}' uses '{item}', which is a bench tool - a tool serves the \
+                             bench and grants nothing to a party",
+                            kit.id
+                        ),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// **Every `bounds_material` reconciled against the materials table** — the cross-config half,
+    /// run at the composition seam in `build_headless_app` where both configs are in scope. Same
+    /// `UnknownItem` debt the two food webs' yield edges pay: a tool bounding `hyde` would parse,
+    /// validate, and then be the tool for nothing.
+    pub fn validate_against_materials(
+        &self,
+        materials: &crate::materials_config::MaterialsConfig,
+    ) -> Result<(), EquipmentConfigError> {
+        for (id, item) in &self.items {
+            let Some(material) = item.bounds_material() else {
+                continue;
+            };
+            if materials.material(material).is_none() {
+                return Err(EquipmentConfigError::InvalidRoster {
+                    reason: format!(
+                        "item '{id}' bounds '{material}', which is not a material - it would be the \
+                         bench tool for nothing"
+                    ),
+                });
+            }
+        }
+        Ok(())
     }
 
     /// **A WARRIOR KIT'S ATTACK MUST NOT BE BOUNDED BY BODY MASS**, because there is nothing on the

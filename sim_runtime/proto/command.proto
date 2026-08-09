@@ -391,6 +391,9 @@ enum ConfigOverrideKind {
   CONFIG_OVERRIDE_KIND_DEMOGRAPHICS = 3;
   CONFIG_OVERRIDE_KIND_EXPEDITION = 4;
   CONFIG_OVERRIDE_KIND_COMBAT = 5;
+  // The crafting arc's two tables. Append-only: 6 and 7 are the next free numbers.
+  CONFIG_OVERRIDE_KIND_MATERIALS = 6;
+  CONFIG_OVERRIDE_KIND_RECIPES = 7;
 }
 
 // Stage a config-tuning override that takes effect at the NEXT new_game — `build_headless_app`
@@ -409,6 +412,34 @@ message SetConfigOverrideCommand {
 
 // Drop every staged override, so the next new_game boots on the shipped configs again.
 message ClearConfigOverridesCommand {}
+
+// Put a recipe on a band's crafting bench and draw idle workers onto it. MAKE IS THE ASSIGNMENT:
+// there is no Crafter role and no labor target — crafting always has a subject, so it is staffed
+// like a worked source. ONE JOB AT A TIME, so this replaces whatever was on the bench.
+//
+// An unknown recipe id, or one whose `requires_knowledge` the faction has not learned, is a command
+// FAILURE with a reason — never a silent no-op, for the same reason an unknown kit id is.
+message SetBenchCommand {
+  uint32 faction_id = 1;
+  uint64 band_id = 2;
+  string recipe_id = 3;
+  // Workers to draw onto the bench, clamped to the band's idle pool. Absent (0) leaves the bench
+  // staffed but idle, which is a legal state: progress is `workers x rate`, so nobody means nothing.
+  uint32 workers = 4;
+}
+
+// Take the job off a band's bench and hand its crew back to the idle pool.
+message ClearBenchCommand {
+  uint32 faction_id = 1;
+  uint64 band_id = 2;
+}
+
+// Change the crew on a band's running bench, leaving the job and its progress alone.
+message BenchCrewCommand {
+  uint32 faction_id = 1;
+  uint64 band_id = 2;
+  uint32 workers = 3;
+}
 
 // ---------------------------------------------------------------------------------------------
 // THE QUERY CHANNEL — the one message on this socket the server ANSWERS.
@@ -656,5 +687,9 @@ message CommandEnvelope {
     // 49 is held by `send_denial_raid`, so the query channel takes 50. The ONE payload here the
     // server answers rather than applies — see `QueryCommand`.
     QueryCommand query = 50;
+    // 50 is held by `query`, so the crafting bench's three take 51-53 (append-only).
+    SetBenchCommand set_bench = 51;
+    ClearBenchCommand clear_bench = 52;
+    BenchCrewCommand bench_crew = 53;
   }
 }

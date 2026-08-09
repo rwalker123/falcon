@@ -155,6 +155,29 @@ pub enum CommandPayload {
         target_x: u32,
         target_y: u32,
     },
+    /// **Put a recipe on a band's crafting bench and draw idle workers onto it.**
+    ///
+    /// *Make is the assignment* (`docs/plan_crafting_and_materials.md` §7): there is no Crafter role
+    /// and no labor target, because crafting always has a subject and is therefore staffed like a
+    /// worked source rather than like a standing role. **One job at a time**, so this replaces
+    /// whatever the bench was making — and the pile that job had already drawn goes with it.
+    SetBench {
+        faction_id: u32,
+        band_id: u64,
+        recipe_id: String,
+        workers: u32,
+    },
+    /// Take the job off a band's bench and hand its crew back to the idle pool.
+    ClearBench {
+        faction_id: u32,
+        band_id: u64,
+    },
+    /// Change the crew on a band's running bench, leaving the job and its progress alone.
+    BenchCrew {
+        faction_id: u32,
+        band_id: u64,
+        workers: u32,
+    },
     /// The Telling: answer a pending narrative fork with one of its authored choices.
     AnswerFork {
         faction_id: u32,
@@ -504,6 +527,11 @@ pub enum ConfigOverrideKind {
     Demographics,
     Expedition,
     Combat,
+    /// The materials table (`materials.json`). Retuning `characteristic_bands` re-partitions every
+    /// batch on the map, which is why it is worth staging rather than editing under a running world.
+    Materials,
+    /// The recipe book (`recipes.json`) — the costs, the `work` values and the grade seams.
+    Recipes,
 }
 
 impl ConfigOverrideKind {
@@ -515,6 +543,8 @@ impl ConfigOverrideKind {
         ConfigOverrideKind::Demographics,
         ConfigOverrideKind::Expedition,
         ConfigOverrideKind::Combat,
+        ConfigOverrideKind::Materials,
+        ConfigOverrideKind::Recipes,
     ];
 
     /// The wire spelling, shared with the client's `tuning_manifest.json` `kind` field.
@@ -525,6 +555,8 @@ impl ConfigOverrideKind {
             ConfigOverrideKind::Demographics => "demographics",
             ConfigOverrideKind::Expedition => "expedition",
             ConfigOverrideKind::Combat => "combat",
+            ConfigOverrideKind::Materials => "materials",
+            ConfigOverrideKind::Recipes => "recipes",
         }
     }
 
@@ -820,6 +852,33 @@ impl CommandEnvelope {
                 target_x: *target_x,
                 target_y: *target_y,
                 fauna_id: fauna_id.clone(),
+            }),
+            CommandPayload::SetBench {
+                faction_id,
+                band_id,
+                recipe_id,
+                workers,
+            } => pb::command_envelope::Command::SetBench(pb::SetBenchCommand {
+                faction_id: *faction_id,
+                band_id: *band_id,
+                recipe_id: recipe_id.clone(),
+                workers: *workers,
+            }),
+            CommandPayload::ClearBench {
+                faction_id,
+                band_id,
+            } => pb::command_envelope::Command::ClearBench(pb::ClearBenchCommand {
+                faction_id: *faction_id,
+                band_id: *band_id,
+            }),
+            CommandPayload::BenchCrew {
+                faction_id,
+                band_id,
+                workers,
+            } => pb::command_envelope::Command::BenchCrew(pb::BenchCrewCommand {
+                faction_id: *faction_id,
+                band_id: *band_id,
+                workers: *workers,
             }),
             CommandPayload::Corral {
                 faction_id,
@@ -1191,6 +1250,21 @@ impl CommandEnvelope {
                     fauna_id: cmd.fauna_id,
                 }
             }
+            pb::command_envelope::Command::SetBench(cmd) => CommandPayload::SetBench {
+                faction_id: cmd.faction_id,
+                band_id: cmd.band_id,
+                recipe_id: cmd.recipe_id,
+                workers: cmd.workers,
+            },
+            pb::command_envelope::Command::ClearBench(cmd) => CommandPayload::ClearBench {
+                faction_id: cmd.faction_id,
+                band_id: cmd.band_id,
+            },
+            pb::command_envelope::Command::BenchCrew(cmd) => CommandPayload::BenchCrew {
+                faction_id: cmd.faction_id,
+                band_id: cmd.band_id,
+                workers: cmd.workers,
+            },
             pb::command_envelope::Command::ExtendPen(cmd) => CommandPayload::ExtendPen {
                 faction_id: cmd.faction_id,
                 target_x: cmd.target_x,
@@ -1516,6 +1590,8 @@ fn config_override_kind_to_proto(kind: ConfigOverrideKind) -> pb::ConfigOverride
         ConfigOverrideKind::Demographics => pb::ConfigOverrideKind::Demographics,
         ConfigOverrideKind::Expedition => pb::ConfigOverrideKind::Expedition,
         ConfigOverrideKind::Combat => pb::ConfigOverrideKind::Combat,
+        ConfigOverrideKind::Materials => pb::ConfigOverrideKind::Materials,
+        ConfigOverrideKind::Recipes => pb::ConfigOverrideKind::Recipes,
     }
 }
 
@@ -1526,6 +1602,8 @@ fn config_override_kind_from_proto(value: i32) -> Result<ConfigOverrideKind, Com
         Ok(pb::ConfigOverrideKind::Demographics) => Ok(ConfigOverrideKind::Demographics),
         Ok(pb::ConfigOverrideKind::Expedition) => Ok(ConfigOverrideKind::Expedition),
         Ok(pb::ConfigOverrideKind::Combat) => Ok(ConfigOverrideKind::Combat),
+        Ok(pb::ConfigOverrideKind::Materials) => Ok(ConfigOverrideKind::Materials),
+        Ok(pb::ConfigOverrideKind::Recipes) => Ok(ConfigOverrideKind::Recipes),
         Ok(pb::ConfigOverrideKind::Unspecified) | Err(_) => Err(CommandDecodeError::InvalidEnum {
             field: "ConfigOverrideKind",
             value,

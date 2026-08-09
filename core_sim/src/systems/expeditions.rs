@@ -39,6 +39,9 @@ pub struct ExpeditionConfigs<'w> {
     pub creatures: Res<'w, CreaturesConfigHandle>,
     /// The TOE kit table — a detached party resolves its own attack/haul tiers off it and wears them.
     pub equipment: Res<'w, EquipmentConfigHandle>,
+    /// The materials table — a raid's take is a yield edge like any other, so the party banks hide,
+    /// bone and fibre off what it carries and hands them to the band on arrival.
+    pub materials: Res<'w, crate::materials_config::MaterialsConfigHandle>,
 }
 
 /// Advance any `move_band` order one step toward its target. The band travels at
@@ -143,6 +146,7 @@ pub fn advance_expeditions(
     // *same* party and one of them had already forgotten the scaling. See
     // `CombatConfig::expedition_tuning`.
     let combat_tuning = combat_config.expedition_tuning();
+    let materials_cfg = configs.materials.get();
     let person_profile = configs.creatures.get().person();
     // **The minimal TOE** — the two-tier table and the durability dials, resolved once. What varies
     // per party is only its `BandEquipment` *wear*.
@@ -424,6 +428,16 @@ pub fn advance_expeditions(
                         cohort.stores.add(FOOD, added);
                     }
                     expedition.carried_trade += landed.trade_goods;
+                    // **The MATERIAL account of the same roadside kill.** Off `take.carried`, like
+                    // the two above it and like every resident seam: you cannot tan a hide you left
+                    // on the range, so a scout that hauled nothing banks nothing.
+                    crate::materials_config::credit_material_yield(
+                        &mut cohort.stores,
+                        &materials_cfg,
+                        fauna.hunt_materials_for(&herds.herds[idx].species),
+                        take.carried,
+                        EXPEDITION_OUTPUT_MULTIPLIER,
+                    );
                 }
             }
         }
@@ -473,7 +487,8 @@ pub fn advance_expeditions(
                     // the haul is simply lost, exactly as the carried food is.
                     let mut banked_trade = scalar_zero();
                     if let Ok(mut home) = bands.get_mut(expedition.home_band) {
-                        banked_trade = fold_party_into_band(&cohort, &mut expedition, &mut home);
+                        banked_trade =
+                            fold_party_into_band(&mut cohort, &mut expedition, &mut home);
                     }
                     event_log.push(expedition_returned_event(
                         current_turn,
@@ -681,6 +696,21 @@ pub fn advance_expeditions(
                                 cohort.stores.add(FOOD, added);
                             }
                             expedition.carried_trade += landed.trade_goods;
+                            // **The MATERIAL account of the raid.** The fourth account of one
+                            // haul, credited on the SAME `take.carried` the food and the pelts are
+                            // — so a party that hauled nothing yields nothing, exactly as the four
+                            // resident seams do. It banks into the PARTY's own store rather than
+                            // a scalar on the expedition, because a material is a batch with a
+                            // characteristic vector and there is nothing to flatten it to; it
+                            // travels home in `LocalStore` and merges into the band's stock at the
+                            // drop-off ([`LocalStore::drain_materials_into`]).
+                            crate::materials_config::credit_material_yield(
+                                &mut cohort.stores,
+                                &materials_cfg,
+                                fauna.hunt_materials_for(&species_name),
+                                take.carried,
+                                EXPEDITION_OUTPUT_MULTIPLIER,
+                            );
                         }
 
                         // Trip-completion + early-delivery decision (arrived parties only). The pack is
@@ -890,6 +920,9 @@ pub fn advance_expeditions(
                         if delivered > scalar_zero() {
                             home.stores.add(FOOD, delivered);
                         }
+                        // **The materials ride the same delivery**, batch by batch so a mammoth
+                        // hide is never averaged into a hare pelt on the walk home.
+                        cohort.stores.drain_materials_into(&mut home.stores);
                         banked_trade = settle_carried_trade(&mut expedition, &mut home);
                     }
                     event_log.push(CommandEventEntry::new(
@@ -987,7 +1020,7 @@ fn settle_carried_trade(expedition: &mut Expedition, home: &mut PopulationCohort
 /// to zero would only be bookkeeping for a corpse. **Two call sites, one routine** — the two paths
 /// differ only in *when* they fire, never in what a homecoming pays.
 pub fn fold_party_into_band(
-    party: &PopulationCohort,
+    party: &mut PopulationCohort,
     expedition: &mut Expedition,
     home: &mut PopulationCohort,
 ) -> Scalar {
@@ -996,6 +1029,10 @@ pub fn fold_party_into_band(
     if leftover > scalar_zero() {
         home.stores.add(FOOD, leftover);
     }
+    // **The party's materials come home too, batch by batch.** They are drained rather than read,
+    // which is why `party` is `&mut` where the pack above is only read: a material batch carries a
+    // characteristic vector, so "hand it over" is a move and not a copy of a number.
+    party.stores.drain_materials_into(&mut home.stores);
     let banked_trade = settle_carried_trade(expedition, home);
     home.sync_size();
     banked_trade

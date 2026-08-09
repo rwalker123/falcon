@@ -49,9 +49,9 @@ use bevy::utils::HashMap;
 
 use crate::{
     components::{
-        BandEquipment, BandId, BandTravel, DemographicFlowAccumulator, Expedition, LaborAllocation,
-        LogisticsLink, PopulationCohort, PowerNode, ResidentBand, Settlement, StartingUnit, Tile,
-        TownCenter, TradeLink,
+        BandBench, BandEquipment, BandId, BandTravel, DemographicFlowAccumulator, Expedition,
+        LaborAllocation, LogisticsLink, PopulationCohort, PowerNode, ResidentBand, Settlement,
+        StartingUnit, Tile, TownCenter, TradeLink,
     },
     crisis::{ActiveCrisisLedger, CrisisTelemetry},
     culture::{CultureManager, CultureManagerCheckpoint},
@@ -130,6 +130,11 @@ pub struct BandRecord {
     /// spears were would silently re-stock them on rollback, which is the one thing a consumable
     /// kit must never do.
     pub equipment: BandEquipment,
+    /// **What is on this band's crafting bench** — the job, its crew, its progress and the pile it
+    /// has already drawn. Carried unconditionally, like [`Self::equipment`]: a checkpoint that
+    /// forgot a half-finished craft would silently hand back the materials the bench had already
+    /// cut, and re-fix a grade that the design says never moves.
+    pub bench: BandBench,
     pub resident: bool,
     pub starting_unit: Option<StartingUnit>,
     /// A pending `move_band` order. **Carried**, because a checkpoint is lossless: a band that was
@@ -313,6 +318,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
                 current,
                 labor: entity.get::<LaborAllocation>().cloned(),
                 equipment: entity.get::<BandEquipment>().cloned().unwrap_or_default(),
+                bench: entity.get::<BandBench>().cloned().unwrap_or_default(),
                 resident: entity.contains::<ResidentBand>(),
                 starting_unit: entity.get::<StartingUnit>().cloned(),
                 travel: entity.get::<BandTravel>().copied(),
@@ -479,6 +485,7 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
             record.id,
             record.flow_accumulator,
             record.equipment.clone(),
+            record.bench.clone(),
         ));
         if let Some(labor) = &record.labor {
             entity.insert(labor.clone());

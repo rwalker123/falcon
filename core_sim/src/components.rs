@@ -537,6 +537,21 @@ impl LocalStore {
         drawn
     }
 
+    /// **Move every material batch out of this store and into `into`**, keeping each batch's exact
+    /// readings — an expedition's homecoming, the material twin of the leftover pack.
+    ///
+    /// **Batch by batch rather than pooled**, for the same reason the supply network balances per
+    /// rating: one averaged arrival would drag a mammoth hide down to a hare pelt on the walk home.
+    /// The destination's ordinary merge rule then runs per batch, which is where merging belongs.
+    pub fn drain_materials_into(&mut self, into: &mut LocalStore) {
+        let moving = std::mem::take(&mut self.materials);
+        for (material, batches) in moving {
+            for (band, batch) in batches {
+                into.deposit_material(&material, band, batch.amount, &batch.characteristics);
+            }
+        }
+    }
+
     /// **Withdraw from ONE named batch** — the supply network's move, which knows exactly which
     /// rating it is shipping and must not re-sort by anything. Returns what was actually taken.
     pub fn take_material_batch(
@@ -1646,9 +1661,39 @@ impl BandEquipment {
     }
 
     /// Restore a ledger entry verbatim — the checkpoint's setter. Not for gameplay: the only
-    /// gameplay-side mutation is [`Self::wear_item`], which can never *reduce* wear.
+    /// gameplay-side mutations are [`Self::wear_item`], which can never *reduce* wear, and
+    /// [`Self::restock`], which is the bench delivering a finished item.
     pub fn restore_wear(&mut self, item: &str, wear: f32) {
         self.wear.insert(item.to_string(), wear);
+    }
+
+    /// **Does the ledger NAME this item at all?** — the ownership half, and the only reading that
+    /// distinguishes *"never had one"* from *"has a fresh one"*.
+    ///
+    /// **Absent still reads as a FULL item for everything a spawn stocks**, which is the invariant
+    /// the whole TOE rests on and nothing here changes. This is the question a **bench tool** asks
+    /// instead, and it can ask it honestly because no spawn path inserts a tool: an absent entry for
+    /// a tool can only mean nobody has made one, and reading it as a free loom on turn 1 would
+    /// delete *"tools are earned, never a prerequisite"*.
+    ///
+    /// Crate-private for the same reason [`Self::has_condition`] is: the bench joins the two halves
+    /// in exactly one place ([`crate::equipment_config::EquipmentConfig::live_bench_tool`]).
+    pub(crate) fn owns(&self, item: &str) -> bool {
+        self.wear.contains_key(item)
+    }
+
+    /// **The bench delivering a finished item** — the band now names it and it is unworn.
+    ///
+    /// This is the **one** seam in the sim that reduces wear, and it is what ends *"start-stocked
+    /// and NOT craftable"*: running dry stopped being a one-way door the moment a bench could
+    /// replace the thing.
+    ///
+    /// **It records CONDITION, not a count, because that is all this ledger can say today.** Making
+    /// a second sled while the first is fresh therefore buys nothing, and ten spears made together
+    /// are one spear's worth of life. That is the equipment-count slice's job, not this one's — see
+    /// `.claude/rules/core_sim/crafting.md` → "What a completed craft can and cannot say yet".
+    pub fn restock(&mut self, item: &str) {
+        self.wear.insert(item.to_string(), 0.0);
     }
 
     /// **Does the band still have condition in this item?** — half of the effective predicate, never
@@ -1753,6 +1798,81 @@ fn usable_uses(uses: f32) -> f32 {
         uses.max(0.0)
     } else {
         0.0
+    }
+}
+
+/// **What one draw of a recipe's inputs came out at** — fixed when the materials leave the store and
+/// never touched again.
+///
+/// **The grade is resolved HERE, at draw time, and never moves.** It is not a taper: an item made
+/// from the last good hide in the pile is that good however poor the pile gets while it is being
+/// made, and a tool that runs dry mid-craft does not retroactively coarsen the thing on the bench.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DrawnInputs {
+    /// The amount-weighted average reading of everything drawn on the recipe's `reads` axis.
+    /// `None` for a recipe that reads nothing (an alloy).
+    pub reading: Option<f32>,
+    /// The grade that reading selected, **after** the tool's quality ceiling. `None` for a recipe
+    /// that declares no grades.
+    pub grade: Option<String>,
+}
+
+/// **A band's crafting bench — ONE job at a time.**
+///
+/// Design: `docs/plan_crafting_and_materials.md` §5/§7. **Make IS the assignment**: putting a recipe
+/// on the bench draws idle workers onto it, so there is no Crafter role card and no
+/// [`LaborTarget`] variant. Crafting always has a subject, so it is staffed like a worked source
+/// rather than like a standing role.
+///
+/// **The crew is its own number and it comes out of the same pool `assign_labor` spends**
+/// ([`crate::components::available_workers`] minus what the bench holds), so a band cannot staff the
+/// bench and the range with the same people. Clearing the job returns them.
+///
+/// **Persisted** (`SimState`'s `BandRecord::bench`) — a checkpoint that forgot a half-finished craft
+/// would silently hand back the materials it had already drawn.
+#[derive(Component, Debug, Clone, Default, PartialEq)]
+pub struct BandBench {
+    /// The recipe on the bench, or `None` for an idle bench. An id from `recipes.json`, resolved at
+    /// the command boundary so an unknown one is a command failure rather than a bench that quietly
+    /// does nothing.
+    pub recipe_id: Option<String>,
+    /// How many of the band's workers are on it.
+    pub workers: u32,
+    /// Progress toward this pass's `work`. Fixed-point, so a slow bench accumulates instead of
+    /// rounding to nothing each turn.
+    pub progress: Scalar,
+    /// The materials already withdrawn for the pass in flight, and the grade they fixed. `None`
+    /// before the draw — a **short draw withdraws nothing at all**, so this stays `None` and the
+    /// turn is a no-op rather than a half-spent pile.
+    pub drawn: Option<DrawnInputs>,
+    /// **How many items this bench has finished on the current job** — the same count the wear and
+    /// the lesson were charged, so a readout of one is a readout of the others.
+    pub items_completed: u32,
+    /// The grade of the last item this bench finished, for the readout. Cleared with the job.
+    pub last_output_grade: Option<String>,
+}
+
+impl BandBench {
+    /// **Put a recipe on the bench**, discarding whatever was there. Progress and the drawn pile go
+    /// with it: a job swapped out mid-pass has to draw again, because the materials it drew were for
+    /// the thing it is no longer making.
+    pub fn set_job(&mut self, recipe_id: &str, workers: u32) {
+        self.recipe_id = Some(recipe_id.to_string());
+        self.workers = workers;
+        self.progress = scalar_zero();
+        self.drawn = None;
+        self.items_completed = 0;
+        self.last_output_grade = None;
+    }
+
+    /// Take the job off the bench and hand the crew back.
+    pub fn clear_job(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Whether anything is on the bench at all.
+    pub fn is_running(&self) -> bool {
+        self.recipe_id.is_some()
     }
 }
 
