@@ -32,7 +32,7 @@ invisible yet still holding its reservation. It goes away with the Inspector.
 | `ui/workbench/pages/EquipmentPage.gd` | Page two — every top-level block of the sim's effective `EquipmentConfig` EXCEPT the kit roster and the job defaults. It names no field |
 | `ui/workbench/pages/KitsPage.gd` | Page three — the other two: the kit roster and the job defaults, drawn with the same generic tree |
 | `src/config/tuning_manifest.json` | What is tunable: per config kind a `kind`/`label`/`env_var` and rows of `{pointer, label, type, min, max, step, default, unit?, hint}` |
-| `tools/workbench_preview.gd` / `.tscn` | PNG preview harness for the surface (see `test-harnesses.md`) |
+| `tools/workbench_preview.gd` / `.tscn` | PNG preview harness for the surface (see `harness-menu-workbench.md`) |
 | `tools/workbench_shell_budget.gd` / `.tscn` | The decomposition guard — see "The shell cannot grow" |
 
 ## The shell cannot grow, and that is enforced

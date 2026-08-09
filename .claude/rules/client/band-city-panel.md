@@ -2341,7 +2341,7 @@ sheet leaves the zone** — an empty box fits anything — so moving the overflo
 would look exactly like a fix. The state therefore asserts that the sheet is really gone from the
 zone, that the zone holds what is left, that the float fits the VIEWPORT and holds its own content,
 and that it clears the panel card, plus the paired negative on `band_panel_compose_hunt` that a dock
-with room keeps its sheet. See `test-harnesses.md` for the assertion set and its sabotage results.
+with room keeps its sheet. See `harness-band-panel.md` for the assertion set and its sabotage results.
 
 ### THE RECALL VERB FOLLOWS THE SIM, AND A CANCEL ASKS NOTHING
 
@@ -2381,7 +2381,7 @@ satisfy either. `band_panel_preview`'s `_assert_row_recall_confirms` drives the 
 REAL `pressed` handler over three fixtures differing only in the terms under test: a field party
 (Recall + dialog + no emit), a camped one (Cancel + emit + no dialog), and a camped one that still owes
 a map report (Recall again — the case that separates the predicate from *"is it on the band's tile"*).
-Sabotage results are in `test-harnesses.md`.
+Sabotage results are in `harness-band-panel.md`.
 
 ### BOTH ESTIMATE AXES ARE SAMPLED, AND THE SHEET NAMES THE PARTY IT QUOTES
 

@@ -20,10 +20,11 @@ extends Node
 ## (`docs/plan_delta_streaming.md` §3.3, §7).
 ##
 ## The transport is faked (a stub exposing the two methods `poll_stream` calls) but nothing else is:
-## the payloads are the committed fixtures and the decode is the live `SnapshotDecoder`, so a
+## the payloads are the generated fixtures and the decode is the live `SnapshotDecoder`, so a
 ## decoder that stops accepting the delta fails here too.
 ##
-## Regenerate the fixtures with `cargo xtask decode-fixture` after any schema change.
+## The fixtures are gitignored: write them with `cargo xtask decode-fixture` before a direct run,
+## and again after any schema change.
 ##
 ## Run as a scene (NOT --script: the loader chain reaches project autoloads). No GPU needed:
 ##   godot --headless --path . res://tools/stream_frame_guard.tscn

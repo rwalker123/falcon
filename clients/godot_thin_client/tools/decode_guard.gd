@@ -19,7 +19,7 @@ extends Node
 ##
 ## ## How it works
 ##
-## Decode the committed fixture envelope (`cargo xtask decode-fixture` writes it from a synthetic
+## Decode the generated fixture envelope (`cargo xtask decode-fixture` writes it from a synthetic
 ## `WorldSnapshot` in which every section is non-empty), canonicalize the resulting `Dictionary` to
 ## JSON, and diff it against `tests/golden/snapshot_dict.json`.
 ##
@@ -47,7 +47,7 @@ extends Node
 ##   cargo xtask decode-guard                  # regenerate fixture, build native, diff
 ##   cargo xtask decode-guard --write-golden   # re-record instead of diffing
 ##   cargo xtask decode-guard --no-build       # skip the native rebuild, when you just built it
-##   godot --headless --path . res://tools/decode_guard.tscn    # standalone, current fixture
+##   godot --headless --path . res://tools/decode_guard.tscn    # after decode-fixture has run
 ##
 ## Exits 0 on PASS, 1 on FAIL (CI-usable).
 

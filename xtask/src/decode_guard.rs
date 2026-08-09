@@ -4,9 +4,10 @@
 //!
 //! 1. **Regenerate the fixtures** ([`crate::decode_fixture`]) — the saturated one the golden is
 //!    diffed against, the headerless one the malformed-snapshot assertion decodes, and the DELTA
-//!    one the merge assertions apply to the baseline. All three `.bin`s are committed so the Godot
-//!    harness runs standalone, but regenerating first means the gate can never be measuring a stale
-//!    envelope against a current decoder.
+//!    one the merge assertions apply to the baseline. The `.bin`s are gitignored — regenerating
+//!    here is what puts them on disk, and it is why the gate can never be measuring a stale
+//!    envelope against a current decoder. The golden they are diffed against IS committed: that is
+//!    the assertion, and only the input is derivable.
 //! 2. **Build the native extension** (`godot-build`), because the guard calls the *real*
 //!    `SnapshotDecoder`, which lives in it. Skipped with `--no-build` when you have just built it.
 //! 3. **Import the project if it has never been imported** ([`ensure_project_imported`]) — building

@@ -183,7 +183,7 @@ arc. Nothing failed: a plain `+0.48` on a pill is a perfectly plausible label, a
 would have shown it were frozen with it missing. The parameter carries its content in its NAME now
 (`floor_glyph`), which is what makes the second lookup unwritable.
 
-The guard is `map_preview._assert_work_floor_marks` — see `test-harnesses.md`.
+The guard is `map_preview._assert_work_floor_marks` — see `harness-map-probes.md`.
 
 
 ---
