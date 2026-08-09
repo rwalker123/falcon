@@ -19,16 +19,17 @@ use bevy::app::App;
 use bevy::math::UVec2;
 use bevy::prelude::{Entity, With};
 
-use core_sim::grid_utils::hex_neighbors_wrapped;
+use core_sim::grid_utils::{hex_distance_wrapped, hex_neighbors_wrapped};
 use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 use core_sim::{
-    culture_region_at, found_band_from_expedition, founding_site_is_reachable, run_turn,
-    BandEquipment, BandId, CultureManager, CultureOwner, DemographicFlowAccumulator,
+    culture_region_at, found_band_from_expedition, founding_refusals, founding_site_is_reachable,
+    run_turn, BandEquipment, BandId, CultureManager, CultureOwner, DemographicFlowAccumulator,
     EquipmentConfigHandle, Expedition, ExpeditionConfig, ExpeditionConfigHandle, ExpeditionMission,
-    ExpeditionPhase, FactionId, FoundingRefusal, KitJob, LaborAllocation, PopulationCohort,
-    ProvinceMap, ResidentBand, SimulationConfig, StartingUnit, Tile, TileRegistry,
-    VisibilityLedger, CULTURE_TRAIT_AXES, TRADE_GOODS,
+    ExpeditionPhase, FactionId, FoundedBand, FoundingRefusal, FoundingRefusals, KitJob,
+    LaborAllocation, PopulationCohort, ProvinceMap, ResidentBand, SimulationConfig, StartingUnit,
+    Tile, TileRegistry, VisibilityLedger, CULTURE_TRAIT_AXES, TRADE_GOODS,
 };
+use core_sim::{recapture_snapshot_in_place, SnapshotHistory};
 use sim_runtime::TerrainTags;
 
 /// The id every fixture party carries. Worldgen's own bands take the low ids, so a value well clear
@@ -163,6 +164,44 @@ fn min_founding_workers(app: &App) -> u32 {
         .min_founding_workers
 }
 
+/// **Ground this faction genuinely cannot see** — the farthest undiscovered land tile from `from`.
+///
+/// The corridor fixtures state what the faction knows by *replacing* the ledger, which works because
+/// they never advance a turn: `calculate_visibility` rebuilds the faction map every turn, and a
+/// starting band's scout vantages map ~12 tiles out, so a wiped ledger is partly undone by the very
+/// next turn. A fixture that has to still be standing on unmapped ground *after* a turn therefore
+/// has to find ground the band cannot reach at all, and the far side of the map is that ground.
+fn farthest_undiscovered_land(app: &App, faction: FactionId, from: UVec2) -> UVec2 {
+    let registry = app.world.resource::<TileRegistry>();
+    let (width, height) = (registry.width, registry.height);
+    let wrap = app
+        .world
+        .resource::<SimulationConfig>()
+        .map_topology
+        .wrap_horizontal;
+    let ledger = app.world.resource::<VisibilityLedger>();
+    let mut best: Option<(u32, UVec2)> = None;
+    for y in 0..height {
+        for x in 0..width {
+            let position = UVec2::new(x, y);
+            let is_land = registry
+                .index(x, y)
+                .and_then(|tile| app.world.get::<Tile>(tile))
+                .map(|tile| !tile.terrain_tags.contains(TerrainTags::WATER))
+                .unwrap_or(false);
+            if !is_land || ledger.is_discovered(faction, x, y) {
+                continue;
+            }
+            let distance = hex_distance_wrapped(from, position, width, wrap);
+            if best.map(|(far, _)| distance > far).unwrap_or(true) {
+                best = Some((distance, position));
+            }
+        }
+    }
+    best.expect("a seeded map holds land the starting band has never seen")
+        .1
+}
+
 /// Staff `party` with exactly `working` working-age people (fractional on purpose — `working` carries
 /// sub-person demographic precision, and the gate floors it).
 fn staff_party(app: &mut App, party: Entity, working: f32) {
@@ -236,9 +275,59 @@ fn spawn_party(
                 pending_reveal: Vec::new(),
                 carried_trade: FIXTURE_CARRIED_TRADE,
                 kit,
+                // Derived per-turn telemetry: `assess_foundings` fills it on the next Visibility
+                // stage, so a freshly spawned fixture party starts with no verdict.
+                founding_refusals: Vec::new(),
             },
         ))
         .id()
+}
+
+/// **The refusal set a founding attempt produced**, as a plain vec.
+///
+/// An `Ok` maps to the **empty** set on purpose: empty *is* the "you may found" signal, so a test
+/// that expects a legal founding and one that expects a refusal compare the same kind of thing.
+fn refusals_of(result: Result<FoundedBand, FoundingRefusals>) -> Vec<FoundingRefusal> {
+    result
+        .err()
+        .map(|refusals| refusals.to_vec())
+        .unwrap_or_default()
+}
+
+/// **What the sim actually SHIPPED for `band_id`** — the founding refusal tokens and the published
+/// worker floor, read back off the encoded FlatBuffers frame rather than off the in-process state.
+///
+/// The whole point of the field is that a client reads it, and a field that never reached the codec
+/// still passes an in-process assertion — so every wire claim in this file goes through here.
+fn published_founding_verdict(app: &mut App, band_id: u64) -> (Vec<String>, u32) {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    recapture_snapshot_in_place(&mut app.world);
+    let bytes = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .encode_flat();
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let cohorts = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the snapshot carries a population section");
+    let cohort = cohorts
+        .iter()
+        .find(|cohort| cohort.bandId() == band_id)
+        .expect("the fixture band is on the wire");
+    let tokens = cohort
+        .foundingRefusals()
+        .expect("the refusal list is always written, empty or not")
+        .iter()
+        .map(|token| token.to_string())
+        .collect();
+    (tokens, cohort.foundingMinWorkers())
 }
 
 /// The entity carrying `band_id`, whatever components it happens to hold.
@@ -341,8 +430,10 @@ fn a_party_that_has_not_arrived_is_refused() {
     );
 
     assert_eq!(
-        found_band_from_expedition(&mut app.world, party),
-        Err(FoundingRefusal::NotAwaitingOrders)
+        refusals_of(found_band_from_expedition(&mut app.world, party)),
+        vec![FoundingRefusal::NotAwaitingOrders],
+        "a structural refusal stands alone: nothing else can be assessed about a party that is \
+         not there yet"
     );
     assert!(
         app.world.get::<Expedition>(party).is_some(),
@@ -384,11 +475,11 @@ fn a_party_below_the_worker_floor_cannot_found_a_band() {
     staff_party(&mut app, party, short as f32);
 
     assert_eq!(
-        found_band_from_expedition(&mut app.world, party),
-        Err(FoundingRefusal::PartyTooSmall {
+        refusals_of(found_band_from_expedition(&mut app.world, party)),
+        vec![FoundingRefusal::PartyTooSmall {
             workers: short,
             required: floor,
-        }),
+        }],
         "the refusal must name the party it counted and the floor it compared against — a gate \
          that refuses with the wrong numbers tells the player something false"
     );
@@ -502,11 +593,11 @@ fn a_fractional_worker_does_not_round_up_into_the_floor() {
     staff_party(&mut app, party, floor as f32 - SHORTFALL);
 
     assert_eq!(
-        found_band_from_expedition(&mut app.world, party),
-        Err(FoundingRefusal::PartyTooSmall {
+        refusals_of(found_band_from_expedition(&mut app.world, party)),
+        vec![FoundingRefusal::PartyTooSmall {
             workers: floor - 1,
             required: floor,
-        }),
+        }],
         "a party a tenth of a person short of the floor is a party one worker short of it"
     );
 }
@@ -553,8 +644,8 @@ fn the_gate_admits_a_mapped_corridor_and_refuses_an_unmapped_one() {
         ExpeditionPhase::AwaitingOrders,
     );
     assert_eq!(
-        found_band_from_expedition(&mut app.world, party),
-        Err(FoundingRefusal::Unreachable),
+        refusals_of(found_band_from_expedition(&mut app.world, party)),
+        vec![FoundingRefusal::Unreachable],
         "a party that walked into the unknown and stopped is a party you have lost track of"
     );
     assert!(
@@ -590,8 +681,8 @@ fn another_party_cannot_anchor_a_founding() {
     );
 
     assert_eq!(
-        found_band_from_expedition(&mut app.world, party),
-        Err(FoundingRefusal::Unreachable),
+        refusals_of(found_band_from_expedition(&mut app.world, party)),
+        vec![FoundingRefusal::Unreachable],
         "a party may not anchor a path to another party"
     );
 }
@@ -810,5 +901,208 @@ fn a_founding_survives_a_rollback() {
             .map(|cohort| cohort.age_turns),
         Some(0),
         "the restore puts the band back at the age it was checkpointed at"
+    );
+}
+
+// -------------------------------------------------------------------------------------------
+// The refusal SET — the sim reports every applicable reason, not the first one
+// -------------------------------------------------------------------------------------------
+
+/// A party of one — the playtest case. Well under any shipped floor, and small enough that no
+/// retune of `settle.min_founding_workers` above `1` makes this fixture stop testing the floor.
+const LONE_WORKER: f32 = 1.0;
+
+/// **The shipped founding floor.** Restated here rather than read from config on purpose: this file
+/// asserts the number reaches the *client*, and a wire test that reads its expectation out of the
+/// same config the capture reads would pass against a field that shipped a zero.
+const SHIPPED_MIN_FOUNDING_WORKERS: u32 = 4;
+
+/// **Both reasons at once, and this is the whole point of the refusal set.** A party of one standing
+/// on ground nobody has mapped fails *both* eligibility gates, and each has to be fixed before the
+/// founding is legal — so telling the player one of them means they fix it, press again, and learn
+/// the second rule from a second refusal.
+#[test]
+fn a_small_party_on_unmapped_ground_is_refused_for_both_reasons() {
+    let mut app = spawn_world();
+    let (home, faction, home_pos) = home_band(&mut app);
+    let corridor = land_corridor(&app, home_pos);
+    let site = *corridor.last().expect("corridor has a tail");
+    // The faction knows where it stands and where the party is, and nothing joining the two.
+    set_discovered(&mut app, faction, &[home_pos, site]);
+    let party = spawn_party(
+        &mut app,
+        home,
+        PARTY_BAND_ID,
+        site,
+        ExpeditionPhase::AwaitingOrders,
+    );
+    let floor = min_founding_workers(&app);
+    staff_party(&mut app, party, LONE_WORKER);
+
+    assert_eq!(
+        refusals_of(found_band_from_expedition(&mut app.world, party)),
+        vec![
+            FoundingRefusal::PartyTooSmall {
+                workers: LONE_WORKER as u32,
+                required: floor,
+            },
+            FoundingRefusal::Unreachable,
+        ],
+        "both eligibility gates hold, so both are reported — party size first, because it is the \
+         O(1) one and it reads first"
+    );
+}
+
+/// **One reason when only one holds — as a PAIR**, so "always report both" cannot pass. Same two
+/// gates, each isolated by making the other pass.
+#[test]
+fn each_eligibility_gate_is_reported_alone_when_it_is_the_only_one_that_holds() {
+    // --- a full-size party on unmapped ground: reachability alone -------------------------------
+    let mut app = spawn_world();
+    let (home, faction, home_pos) = home_band(&mut app);
+    let corridor = land_corridor(&app, home_pos);
+    let site = *corridor.last().expect("corridor has a tail");
+    set_discovered(&mut app, faction, &[home_pos, site]);
+    let party = spawn_party(
+        &mut app,
+        home,
+        PARTY_BAND_ID,
+        site,
+        ExpeditionPhase::AwaitingOrders,
+    );
+    // `spawn_party` staffs at exactly the floor, so the party gate passes.
+    assert_eq!(
+        refusals_of(found_band_from_expedition(&mut app.world, party)),
+        vec![FoundingRefusal::Unreachable],
+        "a party that clears the floor is refused for the ground alone"
+    );
+
+    // --- a small party on mapped ground: the floor alone ----------------------------------------
+    let mut app = spawn_world();
+    let (home, faction, home_pos) = home_band(&mut app);
+    let corridor = land_corridor(&app, home_pos);
+    let site = *corridor.last().expect("corridor has a tail");
+    set_discovered(&mut app, faction, &corridor);
+    let party = spawn_party(
+        &mut app,
+        home,
+        PARTY_BAND_ID,
+        site,
+        ExpeditionPhase::AwaitingOrders,
+    );
+    let floor = min_founding_workers(&app);
+    staff_party(&mut app, party, LONE_WORKER);
+    assert_eq!(
+        refusals_of(found_band_from_expedition(&mut app.world, party)),
+        vec![FoundingRefusal::PartyTooSmall {
+            workers: LONE_WORKER as u32,
+            required: floor,
+        }],
+        "a party standing on ground it can be pointed at is refused for its size alone"
+    );
+}
+
+/// **The empty set is the "you may found" signal, and it has to be reachable.** A legal founding
+/// reports no refusals at all — otherwise the client's affordance could never enable.
+#[test]
+fn a_legal_founding_reports_no_refusals() {
+    let mut app = spawn_world();
+    let (home, faction, home_pos) = home_band(&mut app);
+    let corridor = land_corridor(&app, home_pos);
+    let site = *corridor.last().expect("corridor has a tail");
+    set_discovered(&mut app, faction, &corridor);
+    let party = spawn_party(
+        &mut app,
+        home,
+        PARTY_BAND_ID,
+        site,
+        ExpeditionPhase::AwaitingOrders,
+    );
+
+    assert!(
+        founding_refusals(&mut app.world, party).is_empty(),
+        "a founding that would succeed is refused for nothing"
+    );
+    assert!(
+        found_band_from_expedition(&mut app.world, party).is_ok(),
+        "…and the command it gates agrees, which is the only thing that makes the empty set \
+         readable as permission"
+    );
+}
+
+// -------------------------------------------------------------------------------------------
+// The wire — the verdict a client actually reads
+// -------------------------------------------------------------------------------------------
+
+/// **The PUBLISHED verdict is the verdict.** Run a turn so `assess_foundings` writes it, encode the
+/// frame, and check the party's exported `foundingRefusals` carries exactly the tokens
+/// `found_band_from_expedition` refuses with — plus the floor the tooltip has to name.
+///
+/// Asserted on the encoded frame rather than on the component, because a field that never reached
+/// the codec still passes an in-process assertion.
+#[test]
+fn the_published_refusals_are_the_tokens_the_command_refuses_with() {
+    let mut app = spawn_world();
+    let (home, faction, home_pos) = home_band(&mut app);
+    // Ground the faction has never seen, rather than a wiped ledger: this fixture advances a turn,
+    // and a turn rebuilds the faction map (see `farthest_undiscovered_land`).
+    let site = farthest_undiscovered_land(&app, faction, home_pos);
+    let party = spawn_party(
+        &mut app,
+        home,
+        PARTY_BAND_ID,
+        site,
+        ExpeditionPhase::AwaitingOrders,
+    );
+    staff_party(&mut app, party, LONE_WORKER);
+    run_turn(&mut app);
+
+    let (published, floor) = published_founding_verdict(&mut app, PARTY_BAND_ID);
+    assert_eq!(
+        floor, SHIPPED_MIN_FOUNDING_WORKERS,
+        "the tooltip has to be able to name the number, so the shipped floor rides every cohort"
+    );
+
+    // The party has not moved and the map has not changed, so the command must reach the same
+    // verdict the turn published.
+    let party = entity_for_band(&mut app, PARTY_BAND_ID);
+    let refused_with: Vec<String> = refusals_of(found_band_from_expedition(&mut app.world, party))
+        .into_iter()
+        .map(|refusal| refusal.token().to_string())
+        .collect();
+    assert_eq!(
+        published, refused_with,
+        "the button's reason and the command's refusal are one assessment, in one order — a client \
+         that greys the button out must be able to say exactly why it will fail"
+    );
+    assert_eq!(
+        published,
+        vec!["party_too_small".to_string(), "unreachable".to_string()],
+        "…and that assessment is both gates, on the wire, for a lone party on unmapped ground"
+    );
+}
+
+/// **A resident band publishes an empty set**, so a client reading the field on a normal band is
+/// never shown a phantom refusal. The field speaks only to a party the arrival affordance is
+/// offered for, and a band is not one.
+#[test]
+fn a_resident_band_publishes_no_founding_refusals() {
+    let mut app = spawn_world();
+    let (home, _, _) = home_band(&mut app);
+    let home_id = app
+        .world
+        .get::<BandId>(home)
+        .copied()
+        .expect("a worldgen band carries an id");
+    run_turn(&mut app);
+
+    let (published, floor) = published_founding_verdict(&mut app, home_id.0);
+    assert!(
+        published.is_empty(),
+        "a resident band has nothing to found, so it carries no refusal — got {published:?}"
+    );
+    assert_eq!(
+        floor, SHIPPED_MIN_FOUNDING_WORKERS,
+        "the floor rides EVERY cohort, because the outfit and arrival readouts both need it"
     );
 }

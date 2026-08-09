@@ -663,6 +663,55 @@ const PARTY_SETTLE_CONFIRM := "Starting a life here cannot be undone, confirm to
 
 const PARTY_SETTLE_CONFIRM_OK := "Start a life here"
 
+## ---- WHY a founding would be refused — the tooltip on the disabled affordance
+##
+## **THE AFFORDANCE IS DISABLED AND SAYS WHY; IT IS NEVER HIDDEN.** A control that vanishes teaches
+## nothing — the player who reads "Settle" only on parties that may found never learns that a party
+## needs four workers. The sim assesses the founding every turn and publishes the machine tokens
+## (`PopulationCohortState.foundingRefusals`); these are their player-facing sentences.
+##
+## **SECOND PERSON, ONE SENTENCE PER REASON.** The sim's own refusal strings are log-voice and far too
+## long for a tooltip, so they are NOT reused; and two reasons can hold at once, which is why each is
+## a whole sentence joined by `PARTY_SETTLE_BLOCKED_SEPARATOR` rather than a clause list — fixing one
+## reason otherwise just reveals the other, one refusal at a time.
+##
+## `%d` is the party's own `founding_min_workers` (the sim's `settle.min_founding_workers`, echoed per
+## cohort), never a client-side copy of that config.
+const PARTY_SETTLE_BLOCKED_TOO_SMALL := "Too few people — a party needs %d workers to start a life here."
+
+const PARTY_SETTLE_BLOCKED_UNREACHABLE := "No mapped route home — the site must join one of your bands across ground your people have mapped."
+
+## The three tokens that cannot co-occur with the affordance being offered (it is offered only in
+## `awaiting`, which is exactly `not_awaiting_orders` / `not_an_expedition` being false, and a party
+## awaiting orders stands on a resolved tile). Mapped anyway: a token that fell through to an empty
+## tooltip would leave a greyed control with nothing to say, which is the worst outcome here.
+const PARTY_SETTLE_BLOCKED_NOT_AWAITING := "These people are already under orders — they must be waiting where they stand."
+
+const PARTY_SETTLE_BLOCKED_NOT_EXPEDITION := "Only a party out in the field can start a life somewhere new."
+
+const PARTY_SETTLE_BLOCKED_SITE_UNRESOLVED := "This party's place on the map is unclear — advance a turn and try again."
+
+## **AN UNKNOWN TOKEN MUST STILL SAY SOMETHING.** A refusal the sim adds later reaches a client that
+## has never heard of it, and a silently empty tooltip on a greyed button is indistinguishable from a
+## broken control. This is the honest floor: the founding is refused, the reason is not one we can name.
+const PARTY_SETTLE_BLOCKED_UNKNOWN := "This party cannot start a life here yet."
+
+## One sentence per reason, one reason per LINE — two run-on sentences in a tooltip read as one
+## rambling excuse rather than as two things to fix.
+const PARTY_SETTLE_BLOCKED_SEPARATOR := "\n"
+
+## The sim's token spellings (`core_sim` `FoundingRefusal::as_token`). They are the wire contract, so
+## they are written down HERE, once, rather than as literals at the `match` that maps them.
+const PARTY_SETTLE_REFUSAL_TOO_SMALL := "party_too_small"
+const PARTY_SETTLE_REFUSAL_UNREACHABLE := "unreachable"
+const PARTY_SETTLE_REFUSAL_NOT_AWAITING := "not_awaiting_orders"
+const PARTY_SETTLE_REFUSAL_NOT_EXPEDITION := "not_an_expedition"
+const PARTY_SETTLE_REFUSAL_SITE_UNRESOLVED := "site_unresolved"
+
+## The wire keys the refusal pair rides on a cohort dict (`native/src/dict/population.rs`).
+const PARTY_SETTLE_REFUSALS_KEY := "founding_refusals"
+const PARTY_SETTLE_MIN_WORKERS_KEY := "founding_min_workers"
+
 ## The parties inspector strip is DENSER than the work inspector (up to SEVEN detail lines vs ~1), and
 ## the T/B parties zone is height-capped at ~300px and CLIPS, so its detail lines are tightened well
 ## below HudWorkVocab.ZONE_BLOCK_SEPARATION to keep the strip + a party row + the bottom-pinned footer

@@ -2410,14 +2410,34 @@ predicate `BandPanelController.party_may_settle`, exactly as the three recall su
 `recall_verb`. An action present on one of the three and missing from another is the failure that
 shape exists to prevent.
 
-**THE PHASE IS THE WHOLE CLIENT-SIDE TEST, and the gate the player actually cares about is not
-here.** The sim refuses any other phase (`FoundingRefusal::NotAwaitingOrders`) and a hunt or denial
-mission never enters that phase at all, so founding is a SCOUT's arrival choice by construction. The
-**reachability** gate — the founding site must join one of the faction's resident bands across
-DISCOVERED land — is answered only when the command lands (`core_sim` `founding_site_is_reachable`, a
-BFS), and this slice exports no per-party verdict to read. So the control stays **ENABLED** and the
-sim answers. A client-side re-implementation would be a second copy of that BFS, free to drift; issue
-#511's compose-sheet forecast is what replaces the guesswork.
+**THE PHASE DECIDES WHETHER THE CONTROL EXISTS; THE SIM DECIDES WHETHER IT WORKS.** Those are two
+questions and the client answers only the first. `party_may_settle` is the phase test — the sim
+refuses any other phase (`FoundingRefusal::NotAwaitingOrders`) and a hunt or denial mission never
+enters `AwaitingOrders` at all, so founding is a SCOUT's arrival choice by construction.
+
+The two gates the player can actually *fail* — a party under `settle.min_founding_workers`, and a
+site that does not join a resident band across DISCOVERED land — are the sim's, and the client
+**could not** answer either: it holds neither the config nor a BFS over the faction map, and a
+client-side copy of that rule is a second model free to drift from the one that refuses the command.
+So the sim publishes its verdict per party and the client reads it:
+
+- **`founding_refusals`** (wire `foundingRefusals`) — every refusal token that applies right now, and
+  **`founding_min_workers`** for the number a tooltip has to name. `BandPanelController.settle_refusals`
+  / `settle_blocked_reason` are the seam; the sentences live in `HudComposeVocab`.
+- **DISABLED, never hidden.** A control that vanishes teaches nothing; a greyed one carrying its
+  reason teaches the rule. Blocked reads `HudStyle.INK_FAINT` against the enabled HEALTHY, and the
+  inline link takes `disabled = true` rather than a faint-but-live face — a link the player can still
+  press only fires a refusal.
+- **EVERY reason, one per line.** The two eligibility gates are independent and both must be fixed,
+  so a one-worker party on unmapped ground states both. Reporting the first alone makes the player
+  fix it, press again, and meet the second.
+- **An empty list means two different things** — "the founding would succeed" *and* "this cohort is
+  not a party awaiting orders" — so it is read **only** where `party_may_settle` already offered the
+  control.
+
+An unknown token still produces a sentence: a silently empty tooltip on a disabled button is the
+worst outcome of all. Issue #511 moves the same warning onto the **compose sheet**, so a party learns
+it before walking twenty tiles rather than after.
 
 **THE CONFIRM DOES NOT CARRY THAT CAVEAT, and it did for one release.** The prompt's second paragraph
 explained the reachability gate — that a founding the sim cannot join to a resident band is refused

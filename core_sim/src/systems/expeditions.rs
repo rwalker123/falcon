@@ -1114,6 +1114,83 @@ impl FoundingRefusal {
     }
 }
 
+/// **Every reason a founding would be refused, together.**
+///
+/// A founding is refused by a *set* rather than by a first-failing gate, because the two eligibility
+/// gates are independent: a party can be too small **and** standing on ground nobody has mapped, and
+/// a player told one reason at a time fixes it, presses again, and learns the next rule from a
+/// second refusal. **Empty means the founding would succeed.**
+///
+/// The structural refusals ([`FoundingRefusal::NotAnExpedition`],
+/// [`FoundingRefusal::NotAwaitingOrders`], [`FoundingRefusal::SiteUnresolved`]) stand **alone** — see
+/// [`founding_refusals`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FoundingRefusals(Vec<FoundingRefusal>);
+
+impl FoundingRefusals {
+    /// The machine tokens for the structured log — the `command.settle.rejected=` value. Comma
+    /// separated because the field is a *list*, and a reader that split on the separator gets the
+    /// same set the sim assessed.
+    pub fn tokens(&self) -> String {
+        self.0
+            .iter()
+            .map(|refusal| refusal.token())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    /// What the player is told, in the sim's voice — **one line, reading as one thought**.
+    ///
+    /// Each arm's own [`FoundingRefusal::explanation`] is a lowercase sentence, because the first one
+    /// is spoken mid-clause (*"… cannot start a life here — a founding party needs at least 4
+    /// workers"*). Every sentence **after** the first therefore opens a new sentence and is
+    /// capitalized here rather than at the arm, which has no way to know whether it is first.
+    pub fn explanation(&self) -> String {
+        let mut sentences = self.0.iter().map(|refusal| refusal.explanation());
+        let Some(first) = sentences.next() else {
+            return String::new();
+        };
+        sentences.fold(first, |mut line, sentence| {
+            line.push(' ');
+            line.push_str(&capitalize_sentence(sentence));
+            line
+        })
+    }
+}
+
+impl From<Vec<FoundingRefusal>> for FoundingRefusals {
+    fn from(refusals: Vec<FoundingRefusal>) -> Self {
+        Self(refusals)
+    }
+}
+
+impl std::ops::Deref for FoundingRefusals {
+    type Target = [FoundingRefusal];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl IntoIterator for FoundingRefusals {
+    type Item = FoundingRefusal;
+    type IntoIter = std::vec::IntoIter<FoundingRefusal>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+/// Uppercase the first character of a sentence, leaving the rest untouched — the join in
+/// [`FoundingRefusals::explanation`] needs it and nothing else does.
+fn capitalize_sentence(sentence: String) -> String {
+    let mut chars = sentence.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => sentence,
+    }
+}
+
 /// What a successful founding produced, for the feed line that announces it.
 ///
 /// The new band's own id is deliberately **absent**: the caller named the party by [`BandId`] to
@@ -1204,8 +1281,87 @@ pub fn founding_site_is_reachable(
     false
 }
 
+/// **The two map-wide inputs [`founding_site_is_reachable`] needs, built once for one faction.**
+///
+/// The grid is a whole-map allocation and the anchor scan walks every band, so the cost belongs to
+/// the *faction*, not to the party: [`assess_foundings`] builds one of these per faction and asks it
+/// about every party that faction has waiting. `founding_site_is_reachable_in_world` builds one for
+/// the single site a player's command named. **Both go through this one constructor** — a second
+/// hand-rolled grid would be a second definition of "mapped ground a person could stand on".
+pub(crate) struct FoundingGround {
+    width: u32,
+    height: u32,
+    wrap_horizontal: bool,
+    /// `y * width + x`, the **conjunction** of "is land" and "this faction has discovered it".
+    discovered_land: Vec<bool>,
+    /// The tiles this faction's **resident** bands stand on. Empty = nothing to anchor to, so no
+    /// site is reachable at all.
+    anchors: HashSet<UVec2>,
+}
+
+impl FoundingGround {
+    /// Build the grid from the map's dimensions, every tile's position + land tag, and the faction's
+    /// resident-band tiles.
+    ///
+    /// `tiles` yields **every** tile so the land mask can be stamped in one pass; `anchor_tiles`
+    /// yields the positions of this faction's resident bands, already resolved to coordinates
+    /// (the two callers resolve a cohort's tile entity by different means).
+    fn build<'a>(
+        faction: FactionId,
+        width: u32,
+        height: u32,
+        wrap_horizontal: bool,
+        tiles: impl Iterator<Item = &'a Tile>,
+        anchor_tiles: impl Iterator<Item = UVec2>,
+        ledger: &crate::visibility::VisibilityLedger,
+    ) -> Self {
+        let total = (width as usize).saturating_mul(height as usize);
+        let mut discovered_land = vec![false; total];
+        for tile in tiles {
+            // The same land test `send_expedition`'s target validation uses (`ensure_land_tile`),
+            // read off the tile's own tags rather than re-derived from terrain.
+            if tile.terrain_tags.contains(sim_runtime::TerrainTags::WATER) {
+                continue;
+            }
+            let idx = (tile.position.y * width + tile.position.x) as usize;
+            if idx < total {
+                // Intersect with what the faction has actually mapped as the mask is stamped.
+                // `is_discovered` is `Discovered` OR `Active` — anything but Unexplored.
+                discovered_land[idx] =
+                    ledger.is_discovered(faction, tile.position.x, tile.position.y);
+            }
+        }
+        Self {
+            width,
+            height,
+            wrap_horizontal,
+            discovered_land,
+            anchors: anchor_tiles.collect(),
+        }
+    }
+
+    /// Whether a founding at `site` could be pointed at from home. `false` with no anchors at all —
+    /// a faction with no resident band has nobody to point from.
+    fn reaches(&self, site: UVec2) -> bool {
+        if self.anchors.is_empty() {
+            return false;
+        }
+        founding_site_is_reachable(
+            site,
+            &self.anchors,
+            &self.discovered_land,
+            self.width,
+            self.height,
+            self.wrap_horizontal,
+        )
+    }
+}
+
 /// [`founding_site_is_reachable`] against a live world: builds the faction's mapped-land grid and
 /// its resident bands' tiles, then asks the predicate.
+///
+/// **One site, one grid.** A caller with many sites to ask about builds a [`FoundingGround`] itself
+/// rather than calling this in a loop — see [`assess_foundings`].
 pub fn founding_site_is_reachable_in_world(
     world: &mut World,
     faction: FactionId,
@@ -1215,8 +1371,7 @@ pub fn founding_site_is_reachable_in_world(
         let registry = world.resource::<TileRegistry>();
         (registry.width, registry.height)
     };
-    let total = (width as usize).saturating_mul(height as usize);
-    if total == 0 {
+    if (width as usize).saturating_mul(height as usize) == 0 {
         return false;
     }
     let wrap_horizontal = world
@@ -1224,20 +1379,14 @@ pub fn founding_site_is_reachable_in_world(
         .map_topology
         .wrap_horizontal;
 
-    // One pass over the world for both inputs: the land mask, and the tiles this faction's
-    // resident bands are standing on.
-    let mut discovered_land = vec![false; total];
+    // One pass over the world for both inputs: the tiles, and the tile entities this faction's
+    // resident bands are standing on. The entities are resolved to positions afterwards, because
+    // `iter_entities` already holds a borrow while it runs.
+    let mut tiles: Vec<&Tile> = Vec::new();
     let mut anchor_tiles: Vec<Entity> = Vec::new();
     for entity in world.iter_entities() {
         if let Some(tile) = entity.get::<Tile>() {
-            // The same land test `send_expedition`'s target validation uses (`ensure_land_tile`),
-            // read off the tile's own tags rather than re-derived from terrain.
-            if !tile.terrain_tags.contains(sim_runtime::TerrainTags::WATER) {
-                let idx = (tile.position.y * width + tile.position.x) as usize;
-                if idx < total {
-                    discovered_land[idx] = true;
-                }
-            }
+            tiles.push(tile);
             continue;
         }
         if entity.contains::<ResidentBand>() {
@@ -1248,34 +1397,102 @@ pub fn founding_site_is_reachable_in_world(
             }
         }
     }
-    if anchor_tiles.is_empty() {
-        return false;
-    }
-    let anchors: HashSet<UVec2> = anchor_tiles
+    let anchors: Vec<UVec2> = anchor_tiles
         .into_iter()
         .filter_map(|tile| world.get::<Tile>(tile).map(|tile| tile.position))
         .collect();
 
-    // Intersect the land mask with what the faction has actually mapped. `is_discovered` is
-    // `Discovered` OR `Active` — anything but Unexplored.
-    let ledger = world.resource::<crate::visibility::VisibilityLedger>();
-    for y in 0..height {
-        for x in 0..width {
-            let idx = (y * width + x) as usize;
-            if discovered_land[idx] && !ledger.is_discovered(faction, x, y) {
-                discovered_land[idx] = false;
-            }
-        }
-    }
-
-    founding_site_is_reachable(
-        site,
-        &anchors,
-        &discovered_land,
+    let ground = FoundingGround::build(
+        faction,
         width,
         height,
         wrap_horizontal,
-    )
+        tiles.into_iter(),
+        anchors.into_iter(),
+        world.resource::<crate::visibility::VisibilityLedger>(),
+    );
+    ground.reaches(site)
+}
+
+/// **THE assessment — every reason a founding would be refused, from facts the caller has already
+/// gathered.**
+///
+/// The one implementation of the founding rules; [`founding_refusals`] reads them off a `&mut World`
+/// and [`assess_foundings`] off a turn's queries, so neither owns a second copy of the decision.
+///
+/// - **The structural refusals stand alone.** Nothing else can be meaningfully assessed about an
+///   entity that is not an expedition, is not waiting for orders, or whose tile the sim cannot
+///   resolve — so each returns a one-element vec.
+/// - **The two eligibility gates accumulate.** Too small *and* unreachable is a real state and each
+///   must be fixed before founding, so both are reported. `PartyTooSmall` comes first: it is the
+///   O(1) one, and it reads first.
+///
+/// `reachable` is a closure so the BFS is only paid when there is a resolved site to ask about.
+fn assess_founding(
+    phase: Option<ExpeditionPhase>,
+    site: Option<UVec2>,
+    party_workers: u32,
+    required_workers: u32,
+    reachable: impl FnOnce(UVec2) -> bool,
+) -> Vec<FoundingRefusal> {
+    let Some(phase) = phase else {
+        return vec![FoundingRefusal::NotAnExpedition];
+    };
+    // **Founding is the third ARRIVAL action**, beside onward and recall: a party still walking,
+    // hunting, delivering or returning has orders, and this is the moment those run out. That
+    // implicitly restricts founding to **scout** parties — a hunt or denial mission never enters
+    // `AwaitingOrders`, it hunts until its trip ends and then walks home — and that is intended,
+    // not incidental: a raid is an errand, not a search for somewhere to live.
+    if !matches!(phase, ExpeditionPhase::AwaitingOrders) {
+        return vec![FoundingRefusal::NotAwaitingOrders];
+    }
+    let Some(site) = site else {
+        return vec![FoundingRefusal::SiteUnresolved];
+    };
+
+    let mut refusals = Vec::new();
+    if party_workers < required_workers {
+        refusals.push(FoundingRefusal::PartyTooSmall {
+            workers: party_workers,
+            required: required_workers,
+        });
+    }
+    if !reachable(site) {
+        refusals.push(FoundingRefusal::Unreachable);
+    }
+    refusals
+}
+
+/// **Would a founding be refused right now, and for which reasons?** — the question the client's
+/// "start a life here" affordance asks, answered against a live world.
+///
+/// **An empty result means the founding would succeed.** [`found_band_from_expedition`] calls this
+/// and refuses on anything non-empty, so the affordance and the command cannot disagree about the
+/// rules.
+pub fn founding_refusals(world: &mut World, entity: Entity) -> Vec<FoundingRefusal> {
+    let phase = world.get::<Expedition>(entity).map(|exp| exp.phase);
+    let party = world.get::<PopulationCohort>(entity).map(|cohort| {
+        (
+            cohort.faction,
+            cohort.current_tile,
+            // The same pool `send_expedition` drew the party from, floored to whole people:
+            // a `working` of 3.9 is three workers, not four.
+            available_workers(cohort.working),
+        )
+    });
+    let site = party.and_then(|(_, tile, _)| world.get::<Tile>(tile).map(|tile| tile.position));
+    let required = world
+        .resource::<crate::expedition_config::ExpeditionConfigHandle>()
+        .get()
+        .settle
+        .min_founding_workers;
+    let faction = party.map(|(faction, _, _)| faction);
+    let party_workers = party.map(|(_, _, workers)| workers).unwrap_or(0);
+    assess_founding(phase, site, party_workers, required, |site| {
+        faction
+            .map(|faction| founding_site_is_reachable_in_world(world, faction, site))
+            .unwrap_or(false)
+    })
 }
 
 /// **THE founding — a party stops being an expedition and becomes a band where it stands.**
@@ -1304,55 +1521,32 @@ pub fn founding_site_is_reachable_in_world(
 pub fn found_band_from_expedition(
     world: &mut World,
     entity: Entity,
-) -> Result<FoundedBand, FoundingRefusal> {
+) -> Result<FoundedBand, FoundingRefusals> {
+    // ---- Every gate, and they ALL run BEFORE anything is written ----
+    // The whole rule set lives in `founding_refusals`, so the refusal the player sees on the button
+    // and the refusal the command produces are one assessment rather than two that agree by habit.
+    let refusals = founding_refusals(world, entity);
+    if !refusals.is_empty() {
+        return Err(FoundingRefusals::from(refusals));
+    }
+
+    // Everything below re-reads what the assessment already proved resolvable. A missing value here
+    // is not a state the assessment admits, so it refuses rather than unwrapping.
+    let unresolved = || FoundingRefusals::from(vec![FoundingRefusal::SiteUnresolved]);
     let Some(mut expedition) = world.get::<Expedition>(entity).cloned() else {
-        return Err(FoundingRefusal::NotAnExpedition);
+        return Err(FoundingRefusals::from(vec![
+            FoundingRefusal::NotAnExpedition,
+        ]));
     };
-    // **Founding is the third ARRIVAL action**, beside onward and recall: a party still walking,
-    // hunting, delivering or returning has orders, and this is the moment those run out. That
-    // implicitly restricts founding to **scout** parties — a hunt or denial mission never enters
-    // `AwaitingOrders`, it hunts until its trip ends and then walks home — and that is intended,
-    // not incidental: a raid is an errand, not a search for somewhere to live.
-    if !matches!(expedition.phase, ExpeditionPhase::AwaitingOrders) {
-        return Err(FoundingRefusal::NotAwaitingOrders);
-    }
-    let Some((faction, site_tile, party_workers)) =
-        world.get::<PopulationCohort>(entity).map(|cohort| {
-            (
-                cohort.faction,
-                cohort.current_tile,
-                // The same pool `send_expedition` drew the party from, floored to whole people:
-                // a `working` of 3.9 is three workers, not four.
-                available_workers(cohort.working),
-            )
-        })
+    let Some((faction, site_tile)) = world
+        .get::<PopulationCohort>(entity)
+        .map(|cohort| (cohort.faction, cohort.current_tile))
     else {
-        return Err(FoundingRefusal::SiteUnresolved);
+        return Err(unresolved());
     };
-
-    // ---- The party floor, first: it is O(1) against a BFS over the whole map ----
-    // Both gates are pure refusals that write nothing, so the cheap one goes first and the
-    // reachability search is never paid for a party that could not found anywhere.
-    let required = world
-        .resource::<crate::expedition_config::ExpeditionConfigHandle>()
-        .get()
-        .settle
-        .min_founding_workers;
-    if party_workers < required {
-        return Err(FoundingRefusal::PartyTooSmall {
-            workers: party_workers,
-            required,
-        });
-    }
-
     let Some(site) = world.get::<Tile>(site_tile).map(|tile| tile.position) else {
-        return Err(FoundingRefusal::SiteUnresolved);
+        return Err(unresolved());
     };
-
-    // ---- The gate, and it runs BEFORE anything is written ----
-    if !founding_site_is_reachable_in_world(world, faction, site) {
-        return Err(FoundingRefusal::Unreachable);
-    }
 
     // ---- The map the party learned is part of the dowry ----
     // Flushed here rather than left to `advance_expeditions`, because dropping the component below
@@ -1375,7 +1569,7 @@ pub fn found_band_from_expedition(
 
     let trade_settled = {
         let Some(mut cohort) = world.get_mut::<PopulationCohort>(entity) else {
-            return Err(FoundingRefusal::SiteUnresolved);
+            return Err(unresolved());
         };
         // **The haul is the new band's own.** `settle_carried_trade` banks a pack into "the home
         // band's" store; here the party *is* the home band, so the same conversion runs against its
@@ -1456,6 +1650,79 @@ pub fn found_band_from_expedition(
         mapped_tiles,
         trade_settled,
     })
+}
+
+/// **Publish, once a turn, why "start a life here" would be refused for every waiting party**
+/// (`TurnStage::Visibility`, after `calculate_visibility`).
+///
+/// The client cannot answer the question itself — it does not know `settle.min_founding_workers`, and
+/// reachability is a BFS over the faction map anchored on resident-band tiles — so the sim exports
+/// the verdict and the client renders it (`yield-forecast.md` → *the sim exports the answer*). The
+/// set lands on [`Expedition::founding_refusals`], which the snapshot capture reads.
+///
+/// - **It runs in the Visibility stage** so it reads the faction map as it stands after this turn's
+///   reveals, and after `advance_expeditions` (Population) has flushed any `pending_reveal`. A
+///   verdict computed before those would refuse ground the party had already reported.
+/// - **Only a party in `AwaitingOrders` is assessed**; every other cohort publishes an **empty** set.
+///   The field answers *"would founding be refused right now"*, and no other phase can found at all,
+///   so a resident band or a walking party carries no phantom refusal.
+/// - **One [`FoundingGround`] per FACTION, not per party.** The grid is a whole-map allocation and
+///   the anchor scan walks every band; a per-party build would pay both once for each waiting party.
+pub fn assess_foundings(
+    mut parties: Query<(&PopulationCohort, &mut Expedition)>,
+    residents: Query<&PopulationCohort, With<ResidentBand>>,
+    tiles: Query<&Tile>,
+    registry: Res<TileRegistry>,
+    config: Res<SimulationConfig>,
+    ledger: Res<crate::visibility::VisibilityLedger>,
+    expedition_config: Res<crate::expedition_config::ExpeditionConfigHandle>,
+) {
+    let required = expedition_config.get().settle.min_founding_workers;
+    let (width, height) = (registry.width, registry.height);
+    let wrap_horizontal = config.map_topology.wrap_horizontal;
+    let mut grounds: HashMap<FactionId, FoundingGround> = HashMap::new();
+
+    for (cohort, mut expedition) in parties.iter_mut() {
+        if !matches!(expedition.phase, ExpeditionPhase::AwaitingOrders) {
+            // Cleared rather than skipped: the field is a per-turn reading, so a party that walked on
+            // must not keep the verdict it carried while it stood still.
+            expedition.founding_refusals.clear();
+            continue;
+        }
+        let site = tiles
+            .get(cohort.current_tile)
+            .ok()
+            .map(|tile| tile.position);
+        let faction = cohort.faction;
+        let ground = grounds.entry(faction).or_insert_with(|| {
+            FoundingGround::build(
+                faction,
+                width,
+                height,
+                wrap_horizontal,
+                tiles.iter(),
+                residents
+                    .iter()
+                    .filter(|resident| resident.faction == faction)
+                    .filter_map(|resident| {
+                        tiles
+                            .get(resident.current_tile)
+                            .ok()
+                            .map(|tile| tile.position)
+                    }),
+                &ledger,
+            )
+        });
+        let phase = expedition.phase;
+        let refusals = assess_founding(
+            Some(phase),
+            site,
+            available_workers(cohort.working),
+            required,
+            |site| ground.reaches(site),
+        );
+        expedition.founding_refusals = refusals;
+    }
 }
 
 /// A haul as feed-line prose — *"12 provisions"*, *"4.00 trade goods"*, or *"12 provisions and 4.00
@@ -2966,6 +3233,69 @@ mod reachability_tests {
         assert!(
             !founding_site_is_reachable(UVec2::new(3, 0), &anchors, &discovered_land, 3, 3, false),
             "a site off the edge of the map is not on it"
+        );
+    }
+}
+
+#[cfg(test)]
+mod founding_refusals_tests {
+    //! How a *set* of refusals is rendered — the two strings the server hands to the log and to the
+    //! feed. The set itself is pinned end-to-end in `core_sim/tests/expedition_settle.rs`; what is
+    //! here is only the join, which no world fixture exercises directly.
+
+    use super::{FoundingRefusal, FoundingRefusals};
+
+    /// The party size and floor the fixture refusal names — any pair where the first is short of the
+    /// second; the numbers themselves are inert to the join being tested.
+    const SHORT_PARTY: u32 = 1;
+    const FLOOR: u32 = 4;
+
+    fn both_gates() -> FoundingRefusals {
+        FoundingRefusals::from(vec![
+            FoundingRefusal::PartyTooSmall {
+                workers: SHORT_PARTY,
+                required: FLOOR,
+            },
+            FoundingRefusal::Unreachable,
+        ])
+    }
+
+    /// **Two reasons read as one thought, not as two log lines glued together.** The first sentence
+    /// is spoken mid-clause (*"… cannot start a life here — a founding party needs …"*) so it stays
+    /// lowercase; every one after it opens a new sentence and is capitalized.
+    #[test]
+    fn the_joined_explanation_opens_mid_clause_and_then_starts_sentences() {
+        let line = both_gates().explanation();
+        let first = FoundingRefusal::PartyTooSmall {
+            workers: SHORT_PARTY,
+            required: FLOOR,
+        }
+        .explanation();
+
+        assert!(
+            line.starts_with(&first),
+            "the first reason is spoken as the caller's clause continues, verbatim: {line}"
+        );
+        assert!(
+            line.contains(". Nobody at home"),
+            "the second reason opens a sentence of its own: {line}"
+        );
+        assert_eq!(
+            FoundingRefusals::default().explanation(),
+            "",
+            "no refusals is not a sentence — an empty set is permission, and has nothing to say"
+        );
+    }
+
+    /// **The log token list is the machine half of the same set**, comma separated so a reader that
+    /// splits on the separator recovers exactly the refusals the sim assessed.
+    #[test]
+    fn the_tokens_are_the_whole_set_comma_separated() {
+        assert_eq!(both_gates().tokens(), "party_too_small,unreachable");
+        assert_eq!(
+            FoundingRefusals::default().tokens(),
+            "",
+            "a founding that would succeed rejects with nothing"
         );
     }
 }

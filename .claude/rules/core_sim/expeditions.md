@@ -1080,10 +1080,11 @@ on it rather than a band. Playtest found the hole — a party of **one** walked 
 
 - **Counted off the party cohort's `PopulationCohort.working`**, the same pool `send_expedition` drew
   it from, **floored to whole people**: a fixed-point `3.9` is three workers, not four.
-- **It runs before the reachability BFS.** Both are pure refusals that write nothing, so the O(1)
-  question goes ahead of the one that walks the map.
+- **It is assessed before the reachability BFS, and does not short-circuit it.** Both are pure
+  refusals that write nothing, so the O(1) question reads first — but a party can fail *both*, and
+  both are reported; see "EVERY reason, not the first one" below.
 - **The refusal names its own numbers.** `FoundingRefusal::PartyTooSmall { workers, required }`
-  carries them, which is why `FoundingRefusal::explanation()` returns a `String` rather than a
+  carries them, which is why `FoundingRefusals::explanation()` returns a `String` rather than a
   `&'static str` — a gate that refuses without saying *how short* leaves the player guessing at a
   number the sim knows.
 - **The parent-side floors are NOT here.** `parent_min_workers` and `parent_max_dependency_ratio`
@@ -1131,8 +1132,52 @@ Kept: `BandId`, `PopulationCohort`, `BandEquipment`, `StartingUnit`, `LaborAlloc
 
 **A refusal refuses the founding, not the party.** Every `FoundingRefusal` arm leaves the expedition
 exactly as it stood, in `AwaitingOrders` with its buffer and pack intact, so recall still works.
-Refusals are loud — a `warn!` carrying `refusal.token()` plus a feed failure carrying
-`refusal.explanation()`.
+Refusals are loud — a `warn!` carrying `refusals.tokens()` plus a feed failure carrying
+`refusals.explanation()`.
+
+### EVERY reason, not the first one — and the client is told before the press
+
+`found_band_from_expedition` refuses with a `FoundingRefusals` **set**, not a single arm, and
+`founding_refusals(world, entity)` is the one assessment both it and the wire read.
+
+- **The structural refusals stand alone**: `NotAnExpedition`, `NotAwaitingOrders`, `SiteUnresolved`.
+  Nothing further can be said about a party that is not there, is not waiting, or whose tile cannot
+  be resolved, so those short-circuit to a set of one.
+- **The two eligibility gates accumulate.** `PartyTooSmall` and `Unreachable` are independent and
+  both can hold at once, and **both must be fixed before founding** — so reporting only the first
+  makes the player fix it, press again, and discover the second. `PartyTooSmall` reads first because
+  it is the O(1) one.
+
+**The verdict is published, so the affordance can refuse before the press.**
+`PopulationCohortState.foundingRefusals` carries the tokens and `foundingMinWorkers` echoes
+`settle.min_founding_workers` (the `expeditionForecastHorizonTurns` idiom), so the client greys the
+button out with every reason on it instead of letting the player fire a command and read a feed line
+seconds later. **The client could not have answered either question itself** — it does not hold the
+config, and reachability is a BFS over the faction map anchored on resident-band tiles; a client-side
+copy of that rule is exactly the second model `yield-forecast.md` → "the sim exports the answer"
+forbids.
+
+**An empty list means two different things, and the client must only read it in one of them.** It is
+empty when a founding would succeed **and** when the cohort is not a party awaiting orders — the
+field speaks only to a party the arrival affordance is offered for.
+
+`assess_foundings` computes it once a turn in `TurnStage::Visibility`, ordered `.after(discover_sites)`
+— not merely after `calculate_visibility`, because it reads `VisibilityLedger` *and*
+`PopulationCohort`, which `discover_sites` writes for its morale reward; an edge on
+`calculate_visibility` alone leaves ambiguous pairs and the ambiguity gate boot-panics. It is
+**derived per-turn telemetry** on the `Expedition` component: `sim_state.rs` clears it on capture, so
+it is neither captured nor restored.
+
+**The grid is built once per faction, lazily, inside the `AwaitingOrders` branch** (`FoundingGround`,
+the single builder `founding_site_is_reachable_in_world` also uses). A turn with no waiting party
+builds nothing at all; a turn with N waiting parties in one faction builds one grid and runs N BFS
+calls.
+
+> **A fixture cannot state "unmapped ground" by wiping the visibility ledger and advancing a turn.**
+> `run_turn` rebuilds the faction map, and a starting band's scout vantages map **~12 tiles** out —
+> further than the 6-tile corridor fixtures reach, so the whole corridor comes back Discovered. A
+> wire test that wants genuinely unseen ground has to go find some
+> (`expedition_settle::farthest_undiscovered_land`).
 
 **Persistence needed nothing.** `sim_state.rs` captures `resident: entity.contains::<ResidentBand>()`
 — presence, not origin — and restores from that flag, and a founded band's record carries no

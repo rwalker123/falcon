@@ -118,7 +118,12 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 231 `assert OK` lines, 265 `PASS` ones and ZERO `FAIL` ones.** (It
+**A clean run exits 0 and prints 235 `assert OK` lines, 293 `PASS` ones and ZERO `FAIL` ones.** (It
+was 231/265 before the founding affordance learned to REFUSE — `band_panel_settle_too_small` and
+`band_panel_settle_blocked_both`, two frames, their four `assert OK`s and 28 `PASS` lines across the
+row button, the strip's inline link, the drawer's seam and the hover probe. The `blocked_both` state
+is the one that earns its keep: truncating `settle_blocked_reason` to the first token fails **exactly
+five** assertions, all on that frame.) (It
 was 231/264 before the founding prompt's copy was cut to one line and
 `_assert_settle_confirms_before_emitting` gained its EQUALITY claim on that line — one `PASS` and one
 frame, `band_panel_settle_confirm`, and no `assert OK`.) (It was 227/259 before the THIRD ARRIVAL

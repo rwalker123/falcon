@@ -300,6 +300,16 @@ fn create_populations<'a>(
                     .collect();
                 builder.create_vector(&rows)
             };
+            // **Why a founding would be refused for this party**, one token per applicable reason.
+            // Built before the parent table like every other nested vector.
+            let founding_refusals = {
+                let tokens: Vec<_> = cohort
+                    .founding_refusals
+                    .iter()
+                    .map(|token| builder.create_string(token))
+                    .collect();
+                builder.create_vector(&tokens)
+            };
             let expedition_mission = if cohort.expedition_mission.is_empty() {
                 None
             } else {
@@ -452,6 +462,11 @@ fn create_populations<'a>(
                     penCarryPerWorkerBiomass: cohort.pen_carry_per_worker_biomass,
                     scoutVantageRange: cohort.scout_vantage_range,
                     warriorAttack: cohort.warrior_attack,
+                    // The founding verdict and the floor it is measured against — appended last.
+                    // The list is always written: an empty vector is the "you may found" signal and
+                    // an absent one would be indistinguishable from a cohort the sim never assessed.
+                    foundingRefusals: Some(founding_refusals),
+                    foundingMinWorkers: cohort.founding_min_workers,
                 },
             )
         })

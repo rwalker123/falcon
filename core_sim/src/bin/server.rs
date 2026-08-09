@@ -2987,6 +2987,9 @@ fn handle_send_expedition(
                     .resource::<EquipmentConfigHandle>()
                     .get()
                     .default_kit(KitJob::Hunt),
+                // Derived per-turn telemetry — `assess_foundings` fills it on the party's first
+                // Visibility stage; a launched party has nothing to found yet.
+                founding_refusals: Vec::new(),
             },
             BandTravel { target },
         ))
@@ -3352,6 +3355,9 @@ fn launch_detached_party(
                 pending_reveal: Vec::new(),
                 carried_trade: 0.0,
                 kit,
+                // Derived per-turn telemetry — see the scout launch above. A raid never enters
+                // `AwaitingOrders`, so this stays empty for its whole life.
+                founding_refusals: Vec::new(),
             },
             BandTravel { target: herd_pos },
         ))
@@ -3857,14 +3863,17 @@ fn handle_settle_expedition(
     let label = starting_unit_label(app, entity);
     let founded = match found_band_from_expedition(&mut app.world, entity) {
         Ok(founded) => founded,
-        Err(refusal) => {
+        // **Every applicable reason, not the first one.** A party that is both too small and on
+        // unmapped ground has two things to fix, and reporting one at a time teaches the rules one
+        // refusal at a time — so the log token list and the feed line both carry the whole set.
+        Err(refusals) => {
             warn!(
                 target: "shadow_scale::command",
                 command = "settle_expedition",
                 faction = %faction.0,
                 band_id = expedition_band_id,
                 "command.settle.rejected={}",
-                refusal.token()
+                refusals.tokens()
             );
             emit_command_failure(
                 app,
@@ -3873,7 +3882,7 @@ fn handle_settle_expedition(
                 format!(
                     "{} cannot start a life here — {}",
                     label,
-                    refusal.explanation()
+                    refusals.explanation()
                 ),
             );
             return;
@@ -8093,6 +8102,7 @@ mod tests {
                 pending_reveal: Vec::new(),
                 carried_trade: 0.0,
                 kit: core_sim::EquipmentConfig::builtin().default_kit(KitJob::Hunt),
+                founding_refusals: Vec::new(),
             },
         ));
 

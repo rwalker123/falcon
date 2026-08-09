@@ -143,9 +143,21 @@ hunt trip forecast: the sim exports the verdict, the client reads it. The player
 would leave the home band below its floor" before they walk twenty tiles, and should still be allowed
 to walk if they mean to.
 
-**Until that lands, a refusal is where the player learns the rule** — the sim names the shortfall
-("a founding party needs at least 4 workers … this one has 1") and the event dock carries it. That is
-honest but late, which is exactly the argument for the forecast, not against the gate.
+**The two gates #510 ships already forecast, on the ARRIVAL affordance rather than on the compose
+sheet.** A refusal delivered after the press is honest but late — playtest pressed *Start a life
+here* with one worker and read the reason in the event dock seconds later — so the sim publishes its
+verdict (`PopulationCohortState.foundingRefusals`) and the button greys out carrying **every** reason
+that applies. That the client is told rather than deciding is the same rule the hunt forecast follows:
+it holds neither `min_founding_workers` nor the faction map's connectivity, and a client-side copy of
+either is a second model that can disagree with the sim.
+
+**All applicable reasons, never the first one.** A one-worker party on unmapped ground fails both
+gates and is told both. Reporting one at a time means the player fixes it, presses again, and
+discovers the next — learning the rules by a sequence of refusals rather than reading them.
+
+What #511 still adds is the forecast on the **compose sheet**, before the party walks: the parent
+floors it introduces are the ones you most want to see *at* twenty tiles' distance rather than after
+them.
 
 ### Reachability — you can only settle ground you can point at
 
@@ -369,10 +381,12 @@ reuses the settle-site threshold rather than being a number of its own.
    gates that ship here; the party floor came in on playtest, which founded a colony with one
    person), snapshot persistence of a mid-game
    founding (`sim_state.rs:487` must re-attach `ResidentBand` for a band worldgen never made), the
-   event and feed lines, and the client affordance. Build it same-faction, with the party as it is
-   composed today.
+   event and feed lines, and the client affordance — **which forecasts both of its gates**, since the
+   sim publishes the whole refusal set per party and the button greys out carrying every reason.
+   Build it same-faction, with the party as it is composed today.
 3. **Compose the founding party** — #511. The Q2 **parent** gates, dependents travelling, the Q4
-   dowry, the compose sheet's forecast of all three gates, and the remaining four
+   dowry, the **compose-sheet** forecast of all three gates (#510 forecasts its two on the arrival
+   affordance; #511 moves the warning to before the party walks), and the remaining four
    `tuning_manifest.json` rows — the dials land
    in the Workbench **with** the gates they govern, not as a follow-up, because a gate that cannot be
    moved during a playtest cannot be judged during one.

@@ -700,7 +700,15 @@ func _build_expedition_panel(expedition: Dictionary) -> void:
         var settle_btn := Button.new()
         settle_btn.text = HudComposeVocab.PARTY_SETTLE_ACTION
         HudStyle.apply_button(settle_btn, "ghost")
-        settle_btn.tooltip_text = HudComposeVocab.PARTY_SETTLE_TOOLTIP
+        # DISABLED WITH ITS REASON, never hidden, off the same seam the dock's two surfaces read
+        # (`BandPanelController.settle_blocked_reason`) — a greyed control naming the worker floor
+        # teaches the rule where a vanished one teaches nothing. `Returning` above it takes the same
+        # shape: the button reads its own state rather than disappearing.
+        var settle_blocked: String = _bandpanel.settle_blocked_reason(expedition)
+        settle_btn.disabled = settle_blocked != ""
+        settle_btn.tooltip_text = settle_blocked if settle_btn.disabled else HudComposeVocab.PARTY_SETTLE_TOOLTIP
+        if settle_btn.disabled:
+            settle_btn.add_theme_color_override("font_disabled_color", HudStyle.INK_FAINT)
         settle_btn.pressed.connect(func() -> void: _bandpanel.confirm_settle_expedition(expedition))
         actions.add_child(settle_btn)
     _allocation_panel.add_child(actions)

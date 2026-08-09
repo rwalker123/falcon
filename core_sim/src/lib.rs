@@ -321,11 +321,12 @@ pub use snapshot::{
 pub use systems::spawn_initial_world;
 pub use systems::{
     advance_band_movement, advance_expeditions, advance_labor_allocation, advance_predator_raids,
-    advance_tick, denial_forecast, expedition_returned_event, expedition_take_provisions,
-    fold_party_into_band, found_band_from_expedition, founding_site_is_reachable,
-    founding_site_is_reachable_in_world, hunt_per_worker_provisions, hunt_report_event, hunt_take,
-    hunt_trip_forecast, output_multiplier, party_owes_a_report, simulate_power, DenialForecast,
-    DenialOutcome, FoundedBand, FoundingRefusal, HuntOutcome, HuntTripBound, HuntTripForecast,
+    advance_tick, assess_foundings, denial_forecast, expedition_returned_event,
+    expedition_take_provisions, fold_party_into_band, found_band_from_expedition,
+    founding_refusals, founding_site_is_reachable, founding_site_is_reachable_in_world,
+    hunt_per_worker_provisions, hunt_report_event, hunt_take, hunt_trip_forecast,
+    output_multiplier, party_owes_a_report, simulate_power, DenialForecast, DenialOutcome,
+    FoundedBand, FoundingRefusal, FoundingRefusals, HuntOutcome, HuntTripBound, HuntTripForecast,
     MigrationKnowledgeEvent, PowerSimParams, TradeDiffusionEvent,
 };
 pub use systems::{
@@ -892,6 +893,13 @@ pub fn build_headless_app() -> App {
                 // than sitting between the two.
                 visibility_systems::prune_sweep_tracker
                     .before(visibility_systems::calculate_visibility),
+                // **The founding verdict is read off the faction map, so it is assessed after the
+                // map is final for the turn.** It conflicts with the whole serial run above — it
+                // reads `VisibilityLedger` (written by the four systems before `discover_sites`)
+                // and `PopulationCohort` (which `discover_sites` writes for its morale reward) —
+                // so the only edge that leaves nothing ambiguous is one after the chain's tail,
+                // which is also the freshest map a verdict could be built from.
+                systems::assess_foundings.after(sites::discover_sites),
             )
                 .in_set(TurnStage::Visibility)
                 .run_if(capability_enabled(CapabilityFlags::ALWAYS_ON)),
