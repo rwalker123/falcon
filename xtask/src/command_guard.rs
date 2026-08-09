@@ -207,10 +207,9 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                 continue;
             }
         };
-        let expected = if matches!(
-            payload,
-            CommandPayload::RecallExpedition { .. } | CommandPayload::SplitBand { .. }
-        ) {
+        // **A SPLIT NAMES A BAND, A RECALL NAMES A PARTY**, so only the recall reads the party
+        // handle. Fission divides the band where it stands; there is no party in the payload at all.
+        let expected = if matches!(payload, CommandPayload::RecallExpedition { .. }) {
             expedition_band_id
         } else {
             band_id

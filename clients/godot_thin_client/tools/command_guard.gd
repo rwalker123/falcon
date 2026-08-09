@@ -114,6 +114,9 @@ const RAID_MAX_PARTY := 8
 ## Frames to let the HUD/panel rebuild between drives. Nothing renders, so this is layout settling
 ## only — the controls have to exist before a button can be pressed.
 const SETTLE_FRAMES := 3
+## The worker count the split drive leaves the stepper at. Any value clear of the floors will do —
+## this guard asserts the LINE the client builds, not whether the sim would accept it.
+const SPLIT_WORKERS := 5
 
 # ---- Recording ----------------------------------------------------------------------------------
 
@@ -152,7 +155,7 @@ func _ready() -> void:
 	await _drive_move_band()
 	await _drive_send_expedition()
 	await _drive_recall_expedition()
-	await _drive_settle_expedition()
+	await _drive_split_band()
 	await _drive_send_hunt_expedition_from_band_panel()
 	await _drive_send_hunt_expedition_from_herd_drawer()
 	await _drive_send_denial_raid()
@@ -204,10 +207,11 @@ func _drive_recall_expedition() -> void:
 	_hud._bandpanel._on_recall_expedition_pressed(_party_fixture())
 	await _settle()
 
-## `settle_expedition` — the parties zone's row `Settle` control (its confirm dialog wraps this same
-## call), driven against an ARRIVED party, the one phase the control is ever offered in.
-func _drive_settle_expedition() -> void:
-	_hud._bandpanel._on_settle_expedition_pressed(_awaiting_party_fixture())
+## `split_band` — the parties zone's Form-a-new-band sheet, driven against the BAND rather than a
+## party: fission divides the band where it stands, so the payload names the band the sheet was
+## opened on and the worker count the stepper was left at.
+func _drive_split_band() -> void:
+	_hud._bandpanel._on_split_band_pressed(_band_fixture(), SPLIT_WORKERS)
 	await _settle()
 
 ## `send_hunt_expedition`, site 1 of 2 — the Band panel's parties compose sheet.
@@ -369,8 +373,8 @@ func _connect_recorders() -> void:
 		_record("send_denial_raid", p, MAIN_SCRIPT.format_send_denial_raid(p)))
 	_hud.recall_expedition_requested.connect(func(p: Dictionary) -> void:
 		_record("recall_expedition", p, MAIN_SCRIPT.format_recall_expedition(p)))
-	_hud.settle_expedition_requested.connect(func(p: Dictionary) -> void:
-		_record("settle_expedition", p, MAIN_SCRIPT.format_settle_expedition(p)))
+	_hud.split_band_requested.connect(func(p: Dictionary) -> void:
+		_record("split_band", p, MAIN_SCRIPT.format_split_band(p)))
 	_hud.cancel_order_requested.connect(func(band: Dictionary, scope: String) -> void:
 		_record("cancel_order", band, MAIN_SCRIPT.format_cancel_order(band, scope)))
 
@@ -419,9 +423,9 @@ const EXPECTED_KINDS := {
 	"move_band": 1,
 	"send_expedition": 1,
 	"recall_expedition": 1,
-	# The founding's own verb — same two-token grammar and the same `BandId`, so the handle assertion
-	# is what proves the client does not send entity bits down the THIRD arrival action either.
-	"settle_expedition": 1,
+	# Fission's own verb. It names a BAND rather than a party, so the handle assertion is what proves
+	# the client does not send entity bits down the split either.
+	"split_band": 1,
 	# TWO — the Band panel's parties compose and the herd drawer's, which build their payloads
 	# independently and so can drift apart.
 	"send_hunt_expedition": 2,
@@ -512,13 +516,6 @@ func _party_fixture() -> Dictionary:
 		"home_band_entity": BAND_ENTITY,
 	}
 
-## The same party AFTER it has arrived — the only phase `settle_expedition` is offered in. It keeps
-## `PARTY_ID` / `PARTY_ENTITY`, so the handle assertion is the identical one the recall drive makes.
-func _awaiting_party_fixture() -> Dictionary:
-	var party := _party_fixture()
-	party["expedition_mission"] = "scout"
-	party["expedition_phase"] = "awaiting"
-	return party
 
 func _herd_fixtures() -> Array:
 	return [_near_herd_fixture(), _far_herd_fixture()]
