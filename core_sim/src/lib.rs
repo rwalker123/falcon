@@ -105,13 +105,13 @@ pub use combat_config::{
 };
 pub use components::{
     available_workers, floor_is_valid, floor_overdraws, raid_is_recurring, BandBench,
-    BandEquipment, BandId, BandTravel, BatchGrade, DeathCause, DemographicFlowAccumulator,
-    DrawnInputs, ElementKind, EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase,
-    Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
-    LogisticsLink, MaterialBatch, MaterialDraw, MoraleCause, PendingMigration, PopulationCohort,
-    PowerNode, ResidentBand, Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink,
-    YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR,
-    STRIP_IT_BARE, TRADE_GOODS,
+    BandEquipment, BandId, BandTravel, BandWorkforce, BatchGrade, DeathCause,
+    DemographicFlowAccumulator, DrawnInputs, ElementKind, EquipmentBatch, Expedition,
+    ExpeditionMission, ExpeditionPhase, Improvement, KnowledgeFragment, LaborAllocation,
+    LaborAssignment, LaborTarget, LocalStore, LogisticsLink, MaterialBatch, MaterialDraw,
+    MoraleCause, PendingMigration, PopulationCohort, PowerNode, ResidentBand, Settlement,
+    SourceYield, StartingUnit, Tile, TownCenter, TradeLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR,
+    FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE, TRADE_GOODS,
 };
 pub use config_load::ConfigLoadError;
 pub use config_override::{

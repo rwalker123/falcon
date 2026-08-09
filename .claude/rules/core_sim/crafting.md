@@ -276,10 +276,27 @@ no Crafter role card and **no `LaborTarget` variant**. Scout and Warrior are sta
 nothing to point at, and crafting always has a subject, so it is staffed like a worked source. A
 `LaborTarget::Craft` would also put a fictitious row on every per-source yield readout in the game.
 
-**The crew comes out of the same pool `assign_labor` spends.** `band_idle_workers` is
-`available_workers(working) − assigned_total − bench.workers`, and `handle_assign_labor` subtracts
-the bench's crew from the headroom it clamps against. A band cannot staff the range and the bench
-with the same people.
+**The crew comes out of the same pool `assign_labor` spends**, and **`BandWorkforce`
+(`components.rs`) is the ONE place that says so.** A band's people are spent on exactly two things —
+the `LaborAllocation` and the bench — so it resolves `{ pool, assigned, benched }` off the three
+components and answers the three questions anyone asks:
+
+| reading | value | who reads it |
+|---|---|---|
+| `idle()` | `pool − assigned − benched` | **the published `PopulationCohortState.idleWorkers`**, and every "n idle of m" readout downstream of it |
+| `assignable()` | `pool − benched` | `handle_assign_labor`, as the ceiling `LaborAllocation::set_assignment` clamps against (that helper nets out the other assignments itself) |
+| `benchable()` | `pool − assigned` | `set_bench` / `bench_crew` — a band's own crew stays put while its job is swapped, so it is idle **plus** the crew already there |
+
+**The bench is netted out exactly once, and that is the point.** It was subtracted at each command
+site and *not* at the publish site, so a band with four hands at the bench published them as idle:
+the Band panel's workforce zone, the compose sheet's available-worker count and the turn orb's
+attention model all over-reported, in the *reassuring* direction — the player was told they had hands
+free that were already busy, and a compose sheet sized against it could not be staffed. Two
+authorities over one number is how they drift, so a second subtraction must not be added beside this
+one. Pinned by the liveness pair `server::tests::a_bench_crew_is_missing_from_the_published_idle_count`
+(fewer published idle with a crew at the bench, restored when the job is cleared) and
+`::the_published_idle_count_is_what_assign_labor_will_staff` (the published number is exactly what the
+command path staffs — without it, a sim that stopped publishing idle at all would pass the first).
 
 ## `advance_crafting`, and why every refusal is a zero
 

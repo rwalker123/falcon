@@ -7017,8 +7017,9 @@ func _many_sources_band_fixture() -> Dictionary:
 func _deep_party_band_fixture() -> Dictionary:
 	var band := _band_fixture()
 	# **THE WORKFORCE IS WHAT IS RAISED, NOT `idle_workers`.** `HudBandLaborState.effective_idle`
-	# derives idle as `working_age − assigned`, so writing the idle count alone would leave every
-	# surface — the stepper's cap included — still reading the reference band's 3.
+	# derives idle as `working_age − assigned − the bench crew` (this band runs no bench), so writing
+	# the idle count alone would leave every surface — the stepper's cap included — still reading the
+	# reference band's 3.
 	var assigned := 0
 	for assignment_variant in (band["labor_assignments"] as Array):
 		assigned += int((assignment_variant as Dictionary).get("workers", 0))

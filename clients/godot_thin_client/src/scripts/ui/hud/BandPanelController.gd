@@ -790,6 +790,10 @@ func _build_workforce_block(band: Dictionary) -> VBoxContainer:
         [HudWorkVocab.WORKFORCE_KEY_HUNT, hunt_workers, HudStyle.SIGNAL],
         [HudWorkVocab.WORKFORCE_KEY_ROLES, role_workers, HudStyle.VOICE_INK],
         [HudWorkVocab.WORKFORCE_KEY_PARTIES, party_workers, HudStyle.WARN],
+        # The bench's crew, between the work and the residual: `effective_idle` nets it out (a worker
+        # at the bench is assigned labor), so without a segment of its own it would vanish from a bar
+        # whose segments are supposed to partition the same `working_age` the header counts against.
+        [HudWorkVocab.WORKFORCE_KEY_BENCH, _band_labor.bench_workers(band), HudStyle.VOICE_PIGMENT],
         [HudWorkVocab.WORKFORCE_KEY_IDLE, idle, HudStyle.INK_FAINT],
     ]:
         if int(spec[1]) > 0:

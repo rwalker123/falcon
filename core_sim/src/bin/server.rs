@@ -29,7 +29,7 @@ use core_sim::{
     apply_port_base, available_workers, floor_is_valid, forage_source_yield_preview,
     hunt_source_yield_preview, knows, load_simulation_config_for_new_world, output_multiplier,
     resolve_active_profile, resolve_committed_species, rung_site_refusal, tile_flora_composition,
-    tile_is_fresh_watered, ActiveStartProfile, BandBench, BandEquipment, BandTravel,
+    tile_is_fresh_watered, ActiveStartProfile, BandBench, BandEquipment, BandTravel, BandWorkforce,
     BeatCatalogHandle, BeatConfigHandle, BeatLedger, CampaignLabel, CombatConfigHandle,
     CreaturesConfigHandle, Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase,
     FloraConfigHandle, FoodModuleTag, ForkAnswerError, HuntingParty, KitChoice, KitJob,
@@ -2752,20 +2752,11 @@ fn handle_assign_labor(
     };
 
     // **The bench's crew is off the table.** `Make` draws idle workers onto a recipe, so a band with
-    // four hands at the bench has four fewer to send anywhere — see `band_idle_workers`. Subtracted
-    // here rather than modelled as a `LaborTarget` because a bench is not an in-range source, and
-    // giving it one would put a fictitious row on every yield readout in the game.
-    let available = app
-        .world
-        .get::<PopulationCohort>(band.entity)
-        .map(|cohort| available_workers(cohort.working))
-        .unwrap_or(0)
-        .saturating_sub(
-            app.world
-                .get::<BandBench>(band.entity)
-                .map(|bench| bench.workers)
-                .unwrap_or(0),
-        );
+    // four hands at the bench has four fewer to send anywhere — see [`BandWorkforce::assignable`],
+    // which nets the bench out for the command path and the published `idleWorkers` alike. Not
+    // modelled as a `LaborTarget` because a bench is not an in-range source, and giving it one would
+    // put a fictitious row on every yield readout in the game.
+    let available = band_workforce(app, band.entity).assignable();
 
     let kind_label = target.kind();
     let (applied, assigned_total, improvement) = {
@@ -4750,31 +4741,17 @@ fn handle_abandon_improvement(
     );
 }
 
-/// **The workers a band has spare right now** — its pool, less what the assignment loop already
-/// staffs, less what is standing at the bench.
+/// **A band's head-count, read off the world for a command to clamp against.**
 ///
-/// **The bench spends the same pool `assign_labor` does**, and that is the whole of *"make is the
-/// assignment"*: a crew at the bench is not gathering, and a band cannot staff the range and the
-/// bench with the same people. Its crew is a number on [`BandBench`] rather than a `LaborTarget`
-/// variant, because a bench is not an in-range source and giving it one would put a fictitious row
-/// on every yield readout in the game.
-fn band_idle_workers(app: &mut bevy::prelude::App, band: Entity) -> u32 {
-    let pool = app
-        .world
-        .get::<PopulationCohort>(band)
-        .map(|cohort| available_workers(cohort.working))
-        .unwrap_or(0);
-    let assigned = app
-        .world
-        .get::<LaborAllocation>(band)
-        .map(|allocation| allocation.assigned_total())
-        .unwrap_or(0);
-    let benched = app
-        .world
-        .get::<BandBench>(band)
-        .map(|bench| bench.workers)
-        .unwrap_or(0);
-    pool.saturating_sub(assigned).saturating_sub(benched)
+/// The arithmetic lives on [`BandWorkforce`] — the one authority, shared with the snapshot that
+/// publishes `idleWorkers` — so a command and the readout the player sized it against can never
+/// disagree about who is free. This is only the ECS lookup.
+fn band_workforce(app: &bevy::prelude::App, band: Entity) -> BandWorkforce {
+    BandWorkforce::resolve(
+        app.world.get::<PopulationCohort>(band),
+        app.world.get::<LaborAllocation>(band),
+        app.world.get::<BandBench>(band),
+    )
 }
 
 /// The band's bench, inserted on demand so a band spawned before the component existed still has
@@ -4860,14 +4837,10 @@ fn handle_set_bench(
     let Some(band) = select_starting_band(app, faction, band_id, "set_bench", event_kind) else {
         return;
     };
-    // The band's OWN crew stays on the bench while the job is swapped, so the idle pool this is
-    // clamped against must not count them twice.
-    let idle = band_idle_workers(app, band.entity)
-        + app
-            .world
-            .get::<BandBench>(band.entity)
-            .map(|bench| bench.workers)
-            .unwrap_or(0);
+    // The band's OWN crew stays on the bench while the job is swapped, so the pool this is clamped
+    // against is the free hands PLUS the crew already standing there — [`BandWorkforce::benchable`],
+    // which is the one place that decides not to count them twice.
+    let idle = band_workforce(app, band.entity).benchable();
     let applied = workers.min(idle);
     {
         let mut bench = band_bench_mut(app, band.entity);
@@ -4959,12 +4932,9 @@ fn handle_bench_crew(
         );
         return;
     }
-    let idle = band_idle_workers(app, band.entity)
-        + app
-            .world
-            .get::<BandBench>(band.entity)
-            .map(|bench| bench.workers)
-            .unwrap_or(0);
+    // Same ceiling `set_bench` clamps against, and for the same reason: the crew already on the
+    // bench is being re-set, not added to.
+    let idle = band_workforce(app, band.entity).benchable();
     let applied = workers.min(idle);
     let recipe_id = {
         let mut bench = band_bench_mut(app, band.entity);
@@ -11628,19 +11598,10 @@ mod tests {
         (band, coord)
     }
 
-    /// Unassigned workers, exactly as the snapshot derives them.
+    /// Unassigned workers, through the same seam the snapshot publishes and the commands clamp
+    /// against — so a fixture cannot drift from either.
     fn idle_workers(app: &bevy::prelude::App, band: Entity) -> u32 {
-        let working = app
-            .world
-            .get::<PopulationCohort>(band)
-            .expect("band has a cohort")
-            .working;
-        let assigned = app
-            .world
-            .get::<LaborAllocation>(band)
-            .map(|allocation| allocation.assigned_total())
-            .unwrap_or(0);
-        available_workers(working).saturating_sub(assigned)
+        band_workforce(app, band).idle()
     }
 
     fn staffed_kinds(app: &bevy::prelude::App, band: Entity) -> Vec<&'static str> {
@@ -12024,6 +11985,150 @@ mod tests {
         assert!(
             is_replayable(&Command::Turn(1)),
             "the predicate must still admit an ordinary command, or it proves nothing"
+        );
+    }
+
+    // --- the bench crew is not idle -------------------------------------------------------------
+
+    /// An **ungated** recipe — nothing in `requires_knowledge` a fresh faction lacks — so the bench
+    /// fixtures below are about the crew, not about a refusal.
+    const BENCH_IDLE_RECIPE: &str = "sled";
+    /// The crew the fixtures stand at the bench. Small enough that any campaign band has the hands,
+    /// large enough that a lost subtraction is unmistakable in the assertion.
+    const BENCH_IDLE_CREW: u32 = 3;
+
+    /// `PopulationCohortState.idleWorkers` for one band, read off the **encoded** envelope. The claim
+    /// is about what the client is told, and a field that never reached the codec still satisfies an
+    /// in-process check.
+    fn published_idle_workers(app: &mut bevy::prelude::App, band: Entity) -> u32 {
+        use core_sim::{recapture_snapshot_in_place, SnapshotHistory};
+        use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+        recapture_snapshot_in_place(&mut app.world);
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+        let envelope = fb::root_as_envelope(&bytes).expect("the snapshot encodes");
+        envelope
+            .payload_as_snapshot()
+            .expect("the envelope carries a snapshot")
+            .population()
+            .and_then(|section| section.populations())
+            .expect("the population section carries the cohort list")
+            .iter()
+            .find(|cohort| cohort.entity() == band.to_bits())
+            .expect("the band is on the wire")
+            .idleWorkers()
+    }
+
+    /// The world's first resident band, the one a band-less command picks — see
+    /// `select_starting_band`'s default picker.
+    fn first_resident_band(app: &mut bevy::prelude::App) -> Entity {
+        let mut query = app
+            .world
+            .query_filtered::<Entity, (With<PopulationCohort>, With<ResidentBand>)>();
+        query
+            .iter(&app.world)
+            .next()
+            .expect("worldgen spawned a resident band")
+    }
+
+    /// **A crew at the bench is published as BUSY** — the same hands `assign_labor` refuses to send
+    /// anywhere.
+    ///
+    /// The published field was `working_age − assigned`, and a bench crew is a number on
+    /// [`BandBench`] rather than a `LaborTarget`, so it was never in `assigned`: every "n idle of m"
+    /// readout in the game counted the bench's hands as free, in the *reassuring* direction.
+    #[test]
+    fn a_bench_crew_is_missing_from_the_published_idle_count() {
+        let mut app = build_headless_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = first_resident_band(&mut app);
+        let idle_before = published_idle_workers(&mut app, band);
+        assert!(
+            idle_before >= BENCH_IDLE_CREW,
+            "the fixture band must have the hands to staff the bench at all"
+        );
+
+        handle_set_bench(&mut app, faction, None, BENCH_IDLE_RECIPE, BENCH_IDLE_CREW);
+        // Liveness: the crew really is standing there. Without this the assertion below passes on a
+        // bench that silently refused the job — and on a sim that stopped publishing idle at all.
+        assert_eq!(
+            app.world
+                .get::<BandBench>(band)
+                .map(|bench| bench.workers)
+                .unwrap_or(0),
+            BENCH_IDLE_CREW,
+            "the command must have put the crew on the bench"
+        );
+
+        assert_eq!(
+            published_idle_workers(&mut app, band),
+            idle_before - BENCH_IDLE_CREW,
+            "the bench's crew must leave the published idle count"
+        );
+
+        // …and handing them back restores it, so the subtraction is a live one rather than a band
+        // that simply lost workers.
+        handle_clear_bench(&mut app, faction, None);
+        assert_eq!(
+            published_idle_workers(&mut app, band),
+            idle_before,
+            "clearing the job returns the crew to the idle pool"
+        );
+    }
+
+    /// **The published idle count is exactly what the command path will let the player assign.**
+    ///
+    /// The liveness half of the pair above: a sim that published `0` idle forever would satisfy
+    /// "fewer with a bench crew" and fail here. Asserted by asking `assign_labor` for *more* hands
+    /// than exist and reading what it applied — the clamp is `BandWorkforce::assignable()` minus the
+    /// other assignments, which is the same arithmetic `idle()` reports.
+    #[test]
+    fn the_published_idle_count_is_what_assign_labor_will_staff() {
+        let mut app = build_headless_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = first_resident_band(&mut app);
+        handle_set_bench(&mut app, faction, None, BENCH_IDLE_RECIPE, BENCH_IDLE_CREW);
+        let published = published_idle_workers(&mut app, band);
+        assert!(
+            published > 0,
+            "the fixture must leave hands free, or the equality below proves nothing"
+        );
+
+        // A band-wide role, so the answer is about the head-count and not about a source's range.
+        handle_assign_labor(
+            &mut app,
+            faction,
+            None,
+            "scout".to_string(),
+            published + BENCH_IDLE_CREW,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(
+            app.world
+                .get::<LaborAllocation>(band)
+                .map(|allocation| allocation.assigned_total())
+                .unwrap_or(0),
+            published,
+            "the command staffs exactly the workers the wire called idle — no more, and not fewer"
+        );
+        assert_eq!(
+            published_idle_workers(&mut app, band),
+            0,
+            "and with them staffed the band publishes nobody idle"
         );
     }
 }

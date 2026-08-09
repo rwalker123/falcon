@@ -129,7 +129,10 @@ func render() -> void:
 		# knowledge vectors do, and this is the ONE place they are filtered — so the rail cannot end up
 		# quoting another people's Tanning.
 		CraftingPanel.PAYLOAD_CRAFT_KNOWLEDGE: _player_craft_knowledge(),
-		CraftingPanel.PAYLOAD_IDLE_WORKERS: _band_labor.effective_idle(band),
+		# **THE CREW STEPPER'S CEILING, NOT THE BAND'S IDLE COUNT.** `effective_idle` nets the bench
+		# out (a worker at the bench is assigned labor); the stepper asks how many COULD stand at the
+		# bench, which keeps the crew already on it — the sim's `benchable()` against its `idle()`.
+		CraftingPanel.PAYLOAD_IDLE_WORKERS: _band_labor.benchable_workers(band),
 	})
 
 ## The panel node, for the harnesses. `null` until the panel has been opened once.

@@ -392,6 +392,12 @@ const WORKFORCE_KEY_ROLES := "Roles"
 
 const WORKFORCE_KEY_PARTIES := "Parties"
 
+## The crafting bench's crew. **The segments PARTITION the workforce**, so the bench needs one of its
+## own the moment idle stops counting it: netting the crew out of idle without naming it here would
+## drop those hands off the bar entirely, and the key beneath would no longer add up to the head count
+## the zone's own header states.
+const WORKFORCE_KEY_BENCH := "Bench"
+
 const WORKFORCE_KEY_IDLE := "Idle"
 
 ## Standing-role CARDS (the fix for roles reading as one more worked source in a list).

@@ -398,9 +398,14 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         &demographics.consumption,
     );
     let activity = allocation_summary(allocation);
-    let working_age = available_workers(cohort.working);
-    let assigned = allocation.map(|a| a.assigned_total()).unwrap_or(0);
-    let idle_workers = working_age.saturating_sub(assigned);
+    // **The head-count, through the one seam the COMMANDS clamp against**
+    // ([`crate::components::BandWorkforce`]). The bench's crew is spent labor that is not a
+    // `LaborTarget`, so it is nowhere in `assigned`; publishing `working_age − assigned` counted
+    // those hands as free, and every "n idle of m" readout in the game over-reported in the
+    // reassuring direction — a compose sheet sized against it could not be staffed.
+    let workforce = crate::components::BandWorkforce::resolve(Some(cohort), allocation, bench);
+    let working_age = workforce.pool;
+    let idle_workers = workforce.idle();
     // Zip each assignment with its retained per-source yield telemetry (same index order). An
     // assignment with no telemetry row yet → default 0 yields rather than a panic.
     const NO_YIELD: SourceYield = SourceYield::ZERO;

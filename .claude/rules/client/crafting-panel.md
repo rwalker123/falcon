@@ -95,14 +95,26 @@ re-authoring that split.
 **`set_bench` sends the recipe and NOT a crew.** The grammar admits `[workers <n>]`, and omitting it
 is the point: a client-chosen crew would be a second answer to a question the sim already answers.
 
-### The stepper's ceiling is the idle count AS PUBLISHED, and the crew is not added to it
+### The stepper's ceiling is `idle + the crew at the bench`, which is NOT the band's idle count
 
-`PopulationCohortState.idleWorkers` is `working_age − assigned`, and a bench crew is not a
-`LaborTarget` — it is a number on the band's bench — so it is never in `assigned`. The crew at the
-bench is therefore **already inside** the idle count, and adding it would count the same hands twice.
-(The server's own `band_idle_workers` DOES subtract the bench before staffing one; the published
-field does not. That divergence is a sim-side gap, not something to correct here — correcting it
-client-side would put a second definition of idle into the client.)
+**IDLE MEANS IDLE.** `PopulationCohortState.idleWorkers` is `working_age − assigned − bench.workers`
+— the sim's `BandWorkforce::idle()`, the one seam every head-count reading resolves through,
+including the clamp `assign_labor` makes — because a band's people are spent on the labor assignments
+AND on the bench, and a bench crew is not a `LaborTarget`. `HudBandLaborState.effective_idle` makes
+the same subtraction over its optimistic overlay, so the WORKFORCE zone's three "n idle" sites and
+`FactionRollup`'s faction total report hands that are actually free.
+
+**The stepper asks a different question and so takes a different number**
+(`HudBandLaborState.benchable_workers` = `effective_idle + bench.workers`, the sim's
+`BandWorkforce::benchable()`). Re-crewing a bench does not require freeing its crew first — those
+hands stay put while the job is swapped — so a ceiling of `idle` alone would pin the stepper to the
+crew already standing there and make `+` dead on every running bench.
+
+> `effective_idle` STAYS a local computation rather than reading the published `idleWorkers`: the `+`
+> steppers gate on an OPTIMISTIC idle, so a just-issued assign counts before the turn resolves, and
+> that overlay (`pending_labor`) is exactly what the wire's answer cannot carry. The bench crew has no
+> such overlay — a `bench_crew` edit shows on the next snapshot — so the published crew is the honest
+> third term.
 
 ## It is the FREE-FLOATING case, hence `AutoSizingPanel`
 

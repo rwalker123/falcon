@@ -74,7 +74,9 @@ const PAYLOAD_MATERIALS := "materials"
 const PAYLOAD_BAND_LEGEND := "band_legend"
 const PAYLOAD_RECIPES := "recipes"
 const PAYLOAD_CRAFT_KNOWLEDGE := "craft_knowledge"
-## The band's idle workers, which is the ceiling the crew stepper may raise the bench to.
+## The ceiling the crew stepper may raise the bench to — the band's idle workers **plus the crew
+## already at the bench** (`HudBandLaborState.benchable_workers`), which is a different question from
+## "how many are idle" and is why the key's name outlives its meaning. See `_build_crew_stepper`.
 const PAYLOAD_IDLE_WORKERS := "idle_workers"
 
 var _card: PanelContainer = null
@@ -511,15 +513,15 @@ func _bench_sub_line(bench: Dictionary) -> String:
 	return HudCraftingVocab.BENCH_SUB_SEPARATOR.join(parts)
 
 ## The `− n +` crew stepper. **It spends the same pool `assign_labor` does** — a crew at the bench is
-## not gathering — so `+` greys out at the band's idle count rather than sending a command the sim
-## will clamp.
+## not gathering — so `+` greys out at the ceiling rather than sending a command the sim will clamp.
 ##
-## **THE IDLE COUNT ALREADY INCLUDES THE CREW AT THE BENCH, so it is the ceiling as it stands and the
-## crew is not added to it.** `PopulationCohortState.idleWorkers` is `working_age − assigned`, and a
-## bench crew is not a `LaborTarget` — it is a number on the band's bench — so it is never in
-## `assigned`. (The server's own `band_idle_workers` DOES subtract it before staffing a bench; the
-## published field does not, which is a sim-side gap flagged with this slice.) Adding the crew here
-## would therefore count the same hands twice.
+## **THE IDLE COUNT NETS THE BENCH OUT, SO THE CREW IS ADDED BACK TO REACH THIS CEILING.**
+## `PopulationCohortState.idleWorkers` is `working_age − assigned − bench.workers` (the sim's
+## `BandWorkforce::idle()`, the same seam `assign_labor` clamps against), and `effective_idle`
+## subtracts the crew for the same reason — a worker at the bench is assigned labor. But re-crewing
+## does not have to free those hands first: the crew already standing at the bench stays put while
+## the job is swapped, which is `BandWorkforce::benchable()`. The payload therefore carries
+## `idle + bench.workers`, and capping the stepper at idle alone would pin it to the crew on it.
 func _build_crew_stepper(bench: Dictionary, payload: Dictionary, running: bool) -> Control:
 	var column := VBoxContainer.new()
 	column.alignment = BoxContainer.ALIGNMENT_CENTER

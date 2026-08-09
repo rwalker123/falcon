@@ -579,6 +579,13 @@ table PopulationCohortState {
   // also the rollback-persisted staffing. Appended last (append-only schema discipline).
   laborAssignments:[LaborAssignment];
   // Whole working-age workers left unassigned (idle: eat but produce nothing). Derived.
+  //
+  // *** THE BENCH'S CREW IS ALREADY OUT OF THIS NUMBER. *** A band's people are spent on the
+  // laborAssignments above AND on the crafting bench (bench.workers), and a bench crew is NOT a
+  // labor assignment, so both are netted out here — `core_sim`'s `BandWorkforce::idle()`, the same
+  // seam assign_labor clamps against. A reader must not subtract bench.workers again; a surface that
+  // wants "how many may I put on the BENCH" wants idleWorkers + bench.workers, because the crew
+  // already standing there stays put while the job is swapped.
   idleWorkers:uint = 0;
   // Whole assignable working-age workers this band supplies (the Σ-invariant ceiling). Derived.
   workingAge:uint = 0;

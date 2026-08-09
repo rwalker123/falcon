@@ -2122,6 +2122,70 @@ impl BandBench {
     }
 }
 
+/// **A band's head-count, resolved in ONE place for every reader of it.**
+///
+/// A band's working-age people are spent on exactly two things — the [`LaborAllocation`]'s
+/// assignments and the [`BandBench`]'s crew — and every question anyone asks about staffing is one
+/// of the three differences below. They live together because they are the same arithmetic read
+/// three ways: the command clamps, the published `idleWorkers`, and the client readouts that size a
+/// stepper must agree by construction.
+///
+/// **The bench is netted out exactly once, here.** It used to be subtracted at each command site
+/// and *not* at the publish site, so a band with four hands at the bench published them as idle —
+/// and it over-reported in the reassuring direction, telling the player it had hands free that were
+/// already busy. Two authorities over one number is how they drift; this is the one authority.
+pub struct BandWorkforce {
+    /// Every whole working-age person the band has, before anything is staffed
+    /// ([`available_workers`] of the cohort's `working` bracket).
+    pub pool: u32,
+    /// What the labor allocation already staffs across all its sources and roles.
+    pub assigned: u32,
+    /// What is standing at the bench. Not a [`LaborTarget`] — a bench is not an in-range source, and
+    /// giving it one would put a fictitious row on every yield readout in the game — so it is never
+    /// part of `assigned` and has to be subtracted on its own.
+    pub benched: u32,
+}
+
+impl BandWorkforce {
+    /// Read the three numbers off a band's components. Each is optional because a hand-rolled
+    /// fixture (and a band spawned before a component existed) may carry none of them; an absent
+    /// component reads as zero, which is the same fallback the rest of the band pass takes.
+    pub fn resolve(
+        cohort: Option<&PopulationCohort>,
+        allocation: Option<&LaborAllocation>,
+        bench: Option<&BandBench>,
+    ) -> Self {
+        Self {
+            pool: cohort.map(|c| available_workers(c.working)).unwrap_or(0),
+            assigned: allocation.map(|a| a.assigned_total()).unwrap_or(0),
+            benched: bench.map(|b| b.workers).unwrap_or(0),
+        }
+    }
+
+    /// **Free hands: staffed on neither the range nor the bench.** The published
+    /// `PopulationCohortState.idleWorkers`, and the number every "n idle of m" readout in the game
+    /// shows.
+    pub fn idle(&self) -> u32 {
+        self.pool
+            .saturating_sub(self.assigned)
+            .saturating_sub(self.benched)
+    }
+
+    /// **The ceiling an `assign_labor` clamps against** — the pool the *range* may spend, which the
+    /// bench's crew has already left. Passed to [`LaborAllocation::set_assignment`], which nets out
+    /// the other assignments itself (and lets a re-staffed source reuse its own crew), so this must
+    /// NOT have `assigned` taken off it.
+    pub fn assignable(&self) -> u32 {
+        self.pool.saturating_sub(self.benched)
+    }
+
+    /// **The ceiling a bench command clamps against** — `idle` plus the crew already at the bench,
+    /// because a band's own crew stays put while its job is swapped and must not be counted twice.
+    pub fn benchable(&self) -> u32 {
+        self.pool.saturating_sub(self.assigned)
+    }
+}
+
 /// A band's partition of its working-age pool across labor demands. Replaces the retired
 /// single-task model (`HarvestAssignment`/`ScoutAssignment`/`FaunaPursuit`): a band now draws from
 /// many sources at once, with the invariant `Σ assignments.workers ≤ available_workers(working)`.

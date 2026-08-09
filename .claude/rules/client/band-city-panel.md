@@ -469,9 +469,18 @@ stretch, and widening it into that gap would put it over a live HUD column.
   top bar about how many people are in the band reads as a bug in both.
   **Absent age data OMITS the whole block** — never a fabricated split.
   Its palette is deliberately MUTED (`VOICE_PIGMENT` / `INK_DIM` / `VOICE_INK`) against
-  **WORKFORCE**'s saturated one (`HEALTHY` / `SIGNAL` / `VOICE_INK` / `WARN` / `INK_FAINT`): two bars,
+  **WORKFORCE**'s saturated one (`HEALTHY` / `SIGNAL` / `VOICE_INK` / `WARN` / `VOICE_PIGMENT` /
+  `INK_FAINT`): two bars,
   same shape, different question — *who they are* vs *what they do* — and they must not read as the
-  same chart twice. Scout + Warrior are **CARDS** now (bordered, name · the `−/+` stepper and its
+  same chart twice.
+  **THE WORKFORCE SEGMENTS PARTITION `working_age`, WHICH IS WHY THE BENCH HAS ONE.** Forage · Hunt ·
+  Roles · Parties · **Bench** · Idle, and the head states `n idle of m` off the same
+  `HudBandLaborState.effective_idle` — which nets the crafting bench's crew out, a worker at the bench
+  being assigned labor (`crafting-panel.md` → "The stepper's ceiling"). Without a segment of its own
+  that crew would leave idle and appear nowhere, so the bar would quietly stop adding up to the head
+  beside it. `FactionRollup._build_workforce_block` carries the identical segment for the identical
+  reason — the two bars are one chart at two scales, and a faction total missing a segment the band
+  bar has is the same hole one level up. Scout + Warrior are **CARDS** now (bordered, name · the `−/+` stepper and its
   `assign_labor` emit · **the kit picker and its gear line** · the role's description LAST), not rows
   in a list — the fix for a standing role being indistinguishable from a worked source. See "The role
   cards carry the band's OTHER two kits" below for the picker half and for why the prose trails.

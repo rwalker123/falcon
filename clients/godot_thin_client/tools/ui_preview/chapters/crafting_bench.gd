@@ -31,6 +31,14 @@ const CRAFT_THRESHOLD := 100.0
 ## Where each of the three crafts stands. Weaving is DONE (this band gathers), Tanning is climbing (it
 ## hunts deer) and Bone-working is stalled at 12% — which is not an error state but a band standing in
 ## country with no bone game. The land decides what you are good at.
+## The crew weaving baskets on the running bench — named because the head-count claims below are
+## arithmetic ABOUT it, and a literal repeated in three places is a claim nobody can re-derive.
+const BENCH_CREW := 2
+
+## The workforce of the bench-bound band: all but one worker is at the bench, which is the only shape
+## in which "idle" and "how many could be at the bench" produce a visibly different stepper.
+const BENCH_BOUND_WORKING_AGE := 3
+
 const WEAVING_PROGRESS := 100.0
 const TANNING_PROGRESS := 41.0
 const BONE_WORKING_PROGRESS := 12.0
@@ -61,6 +69,17 @@ func _crafting_states() -> void:
 	await h._settle()
 	_assert_idle_bench()
 	await h._save("crafting_bench_idle")
+
+	# The two head counts, on a band whose bench holds all but one of its workers: the WORKFORCE zone
+	# reports `1 idle of 3` with the crew on its own Bench segment, while the panel's crew stepper
+	# still reaches all 3. The zone and the stepper in ONE frame is the whole point — they read the
+	# same band and answer different questions, and only side by side is that visibly deliberate.
+	h._hud.update_band_alerts([_bench_bound_band()])
+	h._hud.open_crafting_panel(_bench_bound_band())
+	h._hud.show_unit_selection(_bench_bound_band())
+	await h._settle()
+	_assert_bench_crew_is_not_idle()
+	await h._save("crafting_bench_workforce")
 
 	# Hand everything back: the panel closed, the roster restored to the reference band.
 	h._hud.close_crafting_panel()
@@ -124,6 +143,51 @@ func _assert_idle_bench() -> void:
 		texts.has(HudCraftingVocab.BENCH_IDLE_TITLE))
 	h._assert_hud("crafting — an empty rail says so",
 		texts.has(HudCraftingVocab.RAIL_EMPTY))
+
+## **IDLE AND BENCHABLE ARE TWO DIFFERENT NUMBERS, AND THE PANEL READS THE SECOND.** A worker at the
+## bench is assigned labor, so `effective_idle` nets the crew out exactly as the sim's
+## `BandWorkforce::idle()` does — but re-crewing does not have to free those hands first, so the
+## stepper's ceiling is `idle + the crew already there` (`benchable()`).
+##
+## **THE PAIR IS THE CLAIM, and the fixture is what makes it discriminating**: on a band with three
+## working-age people and two of them at the bench, idle is 1 and benchable is 3, so a panel handed
+## `effective_idle` would cap the stepper AT the crew standing on it and grey the `+` — which is a
+## perfectly plausible-looking frame. The rendered half is asserted for that reason; the arithmetic
+## half is what says the subtraction happened at all.
+func _assert_bench_crew_is_not_idle() -> void:
+	var band := _bench_bound_band()
+	var labor: HudBandLaborState = h._hud._band_labor
+	h._assert_hud("crafting — the bench crew is not idle",
+		labor.effective_idle(band) == BENCH_BOUND_WORKING_AGE - BENCH_CREW)
+	h._assert_hud("crafting — the crew stepper's ceiling keeps the crew already at the bench",
+		labor.benchable_workers(band) == BENCH_BOUND_WORKING_AGE)
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting — the bench-bound panel is open", false)
+		return
+	h._assert_hud("crafting — `+` is live at a crew the band's idle count alone could not reach",
+		not _crew_button_disabled(panel, HudCraftingVocab.BENCH_CREW_INCREMENT))
+	# **THE ZONE SAYS IT TOO, and its two claims are a PAIR.** The head is what the player reads as
+	# "hands I can spend", and the segment is where the hands it stopped counting went — a head that
+	# nets the bench out over a bar that never names it drops the crew off a chart whose segments are
+	# supposed to add up to the same workforce.
+	var hud_texts := _label_texts(h._hud)
+	h._assert_hud("crafting — the WORKFORCE head does not count the bench crew as idle",
+		hud_texts.has(HudWorkVocab.WORKFORCE_IDLE_FORMAT
+			% [BENCH_BOUND_WORKING_AGE - BENCH_CREW, BENCH_BOUND_WORKING_AGE]))
+	h._assert_hud("crafting — …and the bar names the crew it stopped counting",
+		hud_texts.has("%s %d" % [HudWorkVocab.WORKFORCE_KEY_BENCH, BENCH_CREW]))
+
+## The `disabled` state of the crew stepper's `−`/`+`, found by its face — the two are the only
+## buttons in the panel wearing those single glyphs. `true` when no such button was found, which
+## fails the live claim honestly rather than passing on a stepper that never rendered.
+func _crew_button_disabled(node: Node, face: String) -> bool:
+	if node is Button and (node as Button).text == face:
+		return (node as Button).disabled
+	for child in node.get_children():
+		if not _crew_button_disabled(child, face):
+			return false
+	return true
 
 func _label_texts(node: Node) -> Array:
 	var texts: Array = []
@@ -270,6 +334,15 @@ func _bare_band() -> Dictionary:
 	band["craft_offers"] = []
 	return band
 
+## **A BAND WHOSE BENCH HOLDS ALL BUT ONE OF ITS WORKERS.** `working_age` is what is lowered, never
+## `idle_workers`: `effective_idle` derives idle from the workforce, its assignments and the bench, so
+## writing the published field alone would leave every claim below reading the reference band's 16.
+func _bench_bound_band() -> Dictionary:
+	var band := _crafting_band()
+	band["working_age"] = BENCH_BOUND_WORKING_AGE
+	band["idle_workers"] = BENCH_BOUND_WORKING_AGE - BENCH_CREW
+	return band
+
 ## What the band holds, per rating. **The band rates the AXIS, not the material**: the second hide is
 ## excellent at being tough and poor at being supple, which is right for a sled and wrong for cordage.
 func _material_batches() -> Array:
@@ -290,7 +363,7 @@ func _batch(material_id: String, amount: float, readings: Array) -> Dictionary:
 
 func _bench() -> Dictionary:
 	return {
-		"recipe_id": "baskets", "display_name": "Baskets", "workers": 2,
+		"recipe_id": "baskets", "display_name": "Baskets", "workers": BENCH_CREW,
 		"progress": 3.0, "work": 5.0, "teaches": "weaving", "blocked_reason": "",
 		"shortfalls": [], "items_completed": 1, "drawn": true, "output_grade": "standard",
 	}
