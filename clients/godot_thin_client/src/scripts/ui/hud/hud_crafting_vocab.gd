@@ -72,16 +72,21 @@ const SHORTFALL_SHORT_KEY := "short"
 
 ## `PopulationCohortState.equipmentBatches`. **`count == 0` MEANS THE BAND OWNS NONE** and is the only
 ## honest ownership test: a batch that runs out of units is removed, so worn-out and never-made both
-## read 0 here and are told apart by `life` alone.
+## read 0 here.
+##
+## **THE LEDGER READS NO CONDITION WORDING FROM THIS ARRAY.** How worn the gear is has one home — the
+## Band panel's WORKFORCE role cards, off `kit_item_conditions` — and this panel answers what a
+## rebuild costs, so `life`, `quanta_left` and `quantum_noun` have no key here. The two condition
+## numbers below are read as a RANKING and as a threshold, never printed.
 const BAND_EQUIPMENT_BATCHES_KEY := "equipment_batches"
 const EQUIPMENT_ITEM_ID_KEY := "item_id"
 const EQUIPMENT_TIER_ID_KEY := "tier_id"
 const EQUIPMENT_GRADE_KEY := "grade"
 const EQUIPMENT_COUNT_KEY := "count"
-## Condition left on the unit IN HAND, 0–100. The life BAR's fill, and nothing else — the row's words
-## are `life`, in the item's own use quanta, and this number is never spoken as a percentage.
+## Condition left on the unit IN HAND, 0–100. Read twice and shown never: it breaks the urgency sort's
+## severity ties, and `>= 100` is the "nothing spent yet" test that dims a shrug row.
 const EQUIPMENT_REMAINING_KEY := "remaining"
-const EQUIPMENT_LIFE_KEY := "life"
+## Which severity band that condition falls in — the urgency sort's primary key.
 const EQUIPMENT_LIFE_SEVERITY_KEY := "life_severity"
 
 ## The per-world catalogues, on the snapshot dict beside `kits`.
@@ -172,9 +177,11 @@ const BENCH_TEACH_FORMAT := "Teaching %s — every one finished teaches it."
 ## saying "teaches nothing".
 const BENCH_TEACH_NONE := ""
 
+## **FOUR COLUMNS: Item · Tier · Rebuild costs · action.** There is no condition column — the role
+## cards on the Band panel state how worn each kit's item is, and this table states what replacing it
+## costs.
 const LEDGER_COLUMN_ITEM := "Item"
 const LEDGER_COLUMN_TIER := "Tier"
-const LEDGER_COLUMN_LIFE := "Life left"
 const LEDGER_COLUMN_COST := "Rebuild costs"
 ## The action column's head is deliberately blank — a column of buttons names itself.
 const LEDGER_COLUMN_ACTION := ""
@@ -183,8 +190,8 @@ const MAKE_LABEL := "Make"
 ## The running row's button is SPENT — make IS the assignment, and one job at a time means the row
 ## that is running has nothing left to ask for.
 const ON_BENCH_LABEL := "On the bench"
-## The empty cell. A stock recipe has no equipment and therefore no life to report, and a dash is the
-## honest reading of that — never a zeroed bar.
+## The empty cell. A recipe with no inputs has no cost to report, and a dash is the honest reading of
+## that — never a zero.
 const EMPTY_CELL := "—"
 
 ## **THE TIER CHIP WHEN THE BAND OWNS NO UNITS**, keyed off the published `group` and nothing else.
@@ -200,8 +207,9 @@ const TIER_CHIP_GRADED_FORMAT := "%s · %s"
 ## A STOCK recipe makes no equipment, so its Tier cell states what a pass yields instead.
 const TIER_CHIP_STOCK_FORMAT := "→ %s %s"
 
-## `CraftOffer.severity` and `EquipmentBatchState.lifeSeverity` — two vocabularies on purpose (a life
-## bar is a fuel gauge, an offer is an invitation, so `good` means nothing on a bar).
+## `CraftOffer.severity` and `EquipmentBatchState.lifeSeverity` — two vocabularies on purpose (an
+## offer is an invitation, a condition band is a reading of wear, so `good` means nothing on the
+## second). Only the offer's is rendered here; the life one is the urgency sort's key.
 const SEVERITY_DANGER := "danger"
 const SEVERITY_NEUTRAL := "neutral"
 const SEVERITY_GOOD := "good"
@@ -214,11 +222,6 @@ const LIFE_SEVERITY_DANGER := "danger"
 const REASON_COLORS := {
 	SEVERITY_DANGER: HudStyle.DANGER,
 	SEVERITY_GOOD: HudStyle.SIGNAL,
-}
-const LIFE_COLORS := {
-	LIFE_SEVERITY_DANGER: HudStyle.DANGER,
-	LIFE_SEVERITY_WARN: HudStyle.WARN,
-	LIFE_SEVERITY_HEALTHY: HudStyle.HEALTHY,
 }
 ## How the urgency sort ranks a row: worn first, untouched last. Read off the PUBLISHED life
 ## severity, so the order the player sees is the sim's own reading of what is running out.
@@ -263,17 +266,21 @@ const ICON_BUTTON_SIZE := 26.0
 ## The prototype's own 150.
 const BAND_PICKER_MIN_WIDTH := 150.0
 
-## The ledger's five columns. ITEM expands into the slack; the other four are fixed so the table
-## reads as columns rather than as five independently-wrapping stacks.
+## The ledger's four columns. ITEM expands into the slack; the other three are fixed so the table
+## reads as columns rather than as four independently-wrapping stacks.
 const COLUMN_ITEM_MIN_WIDTH := 150.0
 const COLUMN_TIER_WIDTH := 104.0
-const COLUMN_LIFE_WIDTH := 132.0
 const COLUMN_COST_WIDTH := 140.0
-const COLUMN_ACTION_WIDTH := 132.0
+## **THE ACTION COLUMN IS SIZED BY THE REFUSAL, NOT BY THE BUTTON.** `Make` is 40-odd pixels wide;
+## what sets this number is the published `reason` under it, which is a whole clause — *"Hide +
+## tanning frame → standard"*, *"Short 5.0 fibre · Short 1.0 hide"* — autowrapped to exactly this
+## width. At the 132 it shared with the retired condition column those clauses ran to two lines and
+## every row in the table paid for it, so retiring that column bought the width back here rather than
+## narrowing the card.
+const COLUMN_ACTION_WIDTH := 210.0
 const COLUMN_SEPARATION := 10
 
-const LIFE_BAR_HEIGHT := 4.0
-const LIFE_BAR_CORNER_RADIUS := 2
+const BAR_CORNER_RADIUS := 2
 const BENCH_BAR_HEIGHT := 3.0
 const ROW_SEPARATION := 4
 const GROUP_HEAD_TOP_MARGIN := 14
@@ -302,7 +309,7 @@ const COLUMN_HEAD_FONT_SIZE := 10
 const ITEM_NAME_FONT_SIZE := 14
 const ITEM_ROLE_FONT_SIZE := 11
 const TIER_CHIP_FONT_SIZE := 10
-const LIFE_TEXT_FONT_SIZE := 11
+const EMPTY_CELL_FONT_SIZE := 11
 const COST_FONT_SIZE := 12
 const ACTION_FONT_SIZE := 12
 const REASON_FONT_SIZE := 11

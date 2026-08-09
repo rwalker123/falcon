@@ -294,13 +294,25 @@ that split.
 
 ### Readout rules
 
-- **The life meter is a fuel gauge, not a performance meter.** A spear at 34% is exactly as deadly as
-  one at 100%. So the tier/grade is a discrete chip that does not move until it flips to *Bare hands*,
-  and the bar beside it reads in **turns left**, never percent — a single percentage bar would draw
-  the taper the model does not have.
+- **The ledger carries no condition column.** Its four columns are **Item · Tier · Rebuild costs ·
+  action**. How worn a thing is has one home — the Band panel's WORKFORCE role cards, which state the
+  condition of the item behind each kit beside the role that kit sets — and that is where a player
+  asks *"how worn is my gear"*. This panel answers *"what does it cost to rebuild"*, so a condition
+  readout here would be the same fact in two places free to disagree. The **tier chip stays**: it
+  carries the grade, and for an item the band owns none of it states that (*Bare hands* / *Not made*),
+  which is a statement of OWNERSHIP rather than of wear.
+- **The life meter is a fuel gauge, not a performance meter** — the rule still governs every surface
+  that *does* show condition. A spear at 34% is exactly as deadly as one at 100%, so condition is a
+  discrete chip and is read in **turns left**, never as a percentage: a single percentage bar would
+  draw the taper the model does not have.
 - **A refusal names its number.** *"Short 4.9 bone"*, never *"cannot craft"*; and *"Not needed yet"*
   reads differently from a shortage, because one is a shrug and the other is a problem.
-- **Sorted by urgency** — worn first, untouched last, dimmed rather than hidden.
+- **Sorted by urgency** — worn first, untouched last, dimmed rather than hidden. The ledger reads
+  condition as a RANKING (which rebuild is most urgent) without printing any of it.
+- **The card is bounded by the room, not by the window.** A docked panel reserves a strip of one
+  screen edge and every other surface lives in what is left; this one is free-floating, so it is
+  measured against the HUD's already-inset `LayoutRoot` and scrolls its ledger internally when the
+  room is short.
 
 ### Deferred
 

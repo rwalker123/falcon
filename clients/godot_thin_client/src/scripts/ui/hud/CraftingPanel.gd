@@ -15,15 +15,15 @@ class_name CraftingPanel
 ## a problem**, and they are different strings with different severities precisely so they can read
 ## differently.
 ##
-## **THE LIFE METER IS A FUEL GAUGE, NOT A PERFORMANCE METER.** A spear at 34% is exactly as deadly as
-## one at 100% — the sim is flat until expiry and then steps down — so the tier is a DISCRETE chip
-## that does not move until the band owns none, and the bar beside it is labelled in the item's own
-## USE QUANTA (`EquipmentBatchState.life`), never in percent. One percentage bar would draw the taper
-## this model does not have.
+## **THIS PANEL ANSWERS "WHAT DOES IT COST TO REBUILD", SO IT CARRIES NO CONDITION READOUT.** How worn
+## the gear is has one home and it is the Band panel's WORKFORCE role cards, which state the condition
+## of the item behind each kit beside the role that kit sets. The ledger's four columns are Item ·
+## Tier · Rebuild costs · action, and `EquipmentBatchState.life` is not among them: a second copy of
+## condition here would be the same fact stated twice, in two places free to disagree.
 ##
 ## **OWNERSHIP IS `count`, NEVER `remaining == 0`.** A batch that runs out of units is removed, so a
-## worn-out item and one the band never made both read `remaining 0`; they are two different states
-## and the wire tells them apart through `life` ("Worn out" vs "Never made").
+## worn-out item and one the band never made both read `remaining 0` — which is why the tier chip is
+## keyed off `count` and states OWNERSHIP (`Bare hands` / `Not made`) rather than a step-down.
 ##
 ## **MAKE IS THE ASSIGNMENT.** Pressing Make emits `make_requested` (→ `set_bench`), the running row's
 ## button reads *On the bench* and is spent, and the crew stepper emits `crew_changed` (→
@@ -32,9 +32,10 @@ class_name CraftingPanel
 ## the bench like a worked source.
 ##
 ## **THIS IS THE FREE-FLOATING CASE, hence `AutoSizingPanel`** (`.claude/rules/client/panel-framework.md`):
-## the card is measured against the VIEWPORT, not against a dock's remaining height, so `PanelCard` +
-## `DockScrollFit` is the wrong half of the pair and would misbehave silently. Both axes are fitted
-## explicitly because this node is a plain `Control` and no child minimum ever reaches it.
+## the card is measured against the ROOM — the viewport MINUS every reserved edge strip, which is the
+## rect the map and the HUD are already living in — rather than against a dock's remaining height, so
+## `PanelCard` + `DockScrollFit` is the wrong half of the pair and would misbehave silently. Both axes
+## are fitted explicitly because this node is a plain `Control` and no child minimum ever reaches it.
 ##
 ## **PROVENANCE IS DEFERRED AND MUST ARRIVE AS A POPOVER.** Where a batch came from and what it earns
 ## per turn is a second question; putting it on the rail row made the rail a wall of prose. When it
@@ -564,8 +565,8 @@ func _build_crew_stepper(bench: Dictionary, payload: Dictionary, running: bool) 
 
 ## **ONE TABLE IN THREE GROUPS, AND EVERY ROW IS A JOIN.** `CraftOffer.outputItemId` is the key: the
 ## offer supplies the name, the group, the cost and the refusal; `equipment_batches` grouped by
-## `itemId` supplies the tier, the grade, the count and the life. Neither half can answer alone —
-## which is why the ledger is built here rather than off either array on its own.
+## `itemId` supplies the tier, the grade and the count. Neither half can answer alone — which is why
+## the ledger is built here rather than off either array on its own.
 func _build_ledger(payload: Dictionary) -> void:
 	var band: Dictionary = payload.get(PAYLOAD_BAND, {})
 	var batches_by_item := _equipment_by_item(band)
@@ -600,13 +601,18 @@ func _build_ledger(payload: Dictionary) -> void:
 		for offer in offers:
 			table.add_child(_build_ledger_row(offer, batches_by_item, payload))
 			# A hairline UNDER each row rather than separation between them: the rule is what makes a
-			# five-column row read across, and separation alone leaves five stacks side by side.
+			# four-column row read across, and separation alone leaves four stacks side by side.
 			table.add_child(_rule(HudStyle.LINE_SOFT))
 	_main.add_child(table)
 
 ## The sort key: the PUBLISHED life severity first (worn before running-down before comfortable),
 ## then how much condition is left, so a spent row leads its severity band. A row with no equipment
-## behind it (a stock recipe) sorts after everything with life to report.
+## behind it (a stock recipe) sorts after everything with condition to report.
+##
+## **CONDITION STILL DECIDES THE ORDER THOUGH THE LEDGER PRINTS NONE OF IT.** The player's question
+## here is "what does it cost to rebuild", and the rows worth rebuilding first are the worn ones — so
+## `life_severity` and `remaining` are read as a RANKING, which is a different use from the readout
+## the role cards own and does not restate it anywhere on screen.
 func _urgency_key(offer: Dictionary, batches_by_item: Dictionary) -> float:
 	var batch := _batch_for(offer, batches_by_item)
 	if batch.is_empty():
@@ -621,10 +627,9 @@ func _urgency_key(offer: Dictionary, batches_by_item: Dictionary) -> float:
 func _build_column_heads() -> Control:
 	var row := _ledger_row_container()
 	var heads := [HudCraftingVocab.LEDGER_COLUMN_ITEM, HudCraftingVocab.LEDGER_COLUMN_TIER,
-		HudCraftingVocab.LEDGER_COLUMN_LIFE, HudCraftingVocab.LEDGER_COLUMN_COST,
-		HudCraftingVocab.LEDGER_COLUMN_ACTION]
-	var widths := [0.0, HudCraftingVocab.COLUMN_TIER_WIDTH, HudCraftingVocab.COLUMN_LIFE_WIDTH,
-		HudCraftingVocab.COLUMN_COST_WIDTH, HudCraftingVocab.COLUMN_ACTION_WIDTH]
+		HudCraftingVocab.LEDGER_COLUMN_COST, HudCraftingVocab.LEDGER_COLUMN_ACTION]
+	var widths := [0.0, HudCraftingVocab.COLUMN_TIER_WIDTH, HudCraftingVocab.COLUMN_COST_WIDTH,
+		HudCraftingVocab.COLUMN_ACTION_WIDTH]
 	for i in range(heads.size()):
 		var label := Label.new()
 		label.text = String(heads[i]).to_upper()
@@ -650,7 +655,6 @@ func _build_ledger_row(offer: Dictionary, batches_by_item: Dictionary, payload: 
 	row.add_child(_column_cell(_build_item_cell(offer, payload), 0.0, true))
 	row.add_child(_column_cell(_build_tier_cell(offer, batch, group, payload),
 		HudCraftingVocab.COLUMN_TIER_WIDTH, false))
-	row.add_child(_column_cell(_build_life_cell(batch), HudCraftingVocab.COLUMN_LIFE_WIDTH, false))
 	row.add_child(_column_cell(_build_cost_cell(offer, payload), HudCraftingVocab.COLUMN_COST_WIDTH, false))
 	row.add_child(_column_cell(_build_action_cell(offer), HudCraftingVocab.COLUMN_ACTION_WIDTH, false))
 
@@ -754,27 +758,6 @@ func _build_tier_cell(offer: Dictionary, batch: Dictionary, group: String, paylo
 	var grade := String(batch.get(HudCraftingVocab.EQUIPMENT_GRADE_KEY, ""))
 	var face := tier if grade == "" else HudCraftingVocab.TIER_CHIP_GRADED_FORMAT % [tier, grade]
 	return _chip(face, HudStyle.SIGNAL, HudCraftingVocab.TIER_CHIP_FONT_SIZE)
-
-## **THE BAR IS THE FUEL LEFT; THE WORDS ARE THE SIM'S.** `life` is rendered verbatim, in the item's
-## own use quanta — the client never maps a quantum to English and never prints a percentage — and the
-## bar's colour is the published `life_severity`. A band that owns no units gets the words alone: an
-## empty bar under "Never made" would draw a gauge for a tank that was never filled.
-func _build_life_cell(batch: Dictionary) -> Control:
-	if batch.is_empty():
-		return _empty_cell()
-	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
-	var severity := String(batch.get(HudCraftingVocab.EQUIPMENT_LIFE_SEVERITY_KEY, ""))
-	var color: Color = HudCraftingVocab.LIFE_COLORS.get(severity, HudStyle.INK_DIM)
-	if int(batch.get(HudCraftingVocab.EQUIPMENT_COUNT_KEY, 0)) > 0:
-		column.add_child(_bar(clampf(float(batch.get(HudCraftingVocab.EQUIPMENT_REMAINING_KEY, 0.0))
-			/ HudConst.PROGRESS_PERCENT_SCALE, 0.0, 1.0), color, HudCraftingVocab.LIFE_BAR_HEIGHT))
-	var words := Label.new()
-	words.text = String(batch.get(HudCraftingVocab.EQUIPMENT_LIFE_KEY, ""))
-	words.add_theme_font_size_override("font_size", HudCraftingVocab.LIFE_TEXT_FONT_SIZE)
-	words.add_theme_color_override("font_color", color)
-	column.add_child(words)
-	return column
 
 ## **WHAT REBUILDING COSTS, WITH THE SHORTFALL MARKED.** The amounts are the recipe's own inputs,
 ## except where the offer publishes a shortfall for that material — there the `required` figure is
@@ -980,17 +963,17 @@ func _rule(color: Color) -> Control:
 func _bar_stylebox(color: Color) -> StyleBoxFlat:
 	var box := StyleBoxFlat.new()
 	box.bg_color = color
-	box.set_corner_radius_all(HudCraftingVocab.LIFE_BAR_CORNER_RADIUS)
+	box.set_corner_radius_all(HudCraftingVocab.BAR_CORNER_RADIUS)
 	return box
 
 func _empty_cell() -> Control:
 	var label := Label.new()
 	label.text = HudCraftingVocab.EMPTY_CELL
-	label.add_theme_font_size_override("font_size", HudCraftingVocab.LIFE_TEXT_FONT_SIZE)
+	label.add_theme_font_size_override("font_size", HudCraftingVocab.EMPTY_CELL_FONT_SIZE)
 	label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
 	return label
 
-## One ledger row's host: five cells, the first expanding, on a hairline that separates it from the
+## One ledger row's host: four cells, the first expanding, on a hairline that separates it from the
 ## next. The table is a column of these rather than a `GridContainer` because a GROUP HEAD spans the
 ## whole width and a grid cannot span.
 func _ledger_row_container() -> HBoxContainer:
@@ -1029,10 +1012,17 @@ func _amount_text(amount: float) -> String:
 
 # ---- geometry ---------------------------------------------------------------
 
-## The room the card may use: the viewport inside its margin. Unlike `BandComposeFloat` this panel is
-## not anchored to another card — it is its own surface and is centred in what is left.
+## The room the card may use. Unlike `BandComposeFloat` this panel is not anchored to another card —
+## it is its own surface and is centred in what is left.
+##
+## **"WHAT IS LEFT" IS THE RESERVED-EDGE ROOM, NOT THE RAW VIEWPORT.** Every docked panel reserves a
+## strip of one screen edge and the map and the HUD both live in the remainder; a card measured
+## against the whole window is measured against a rectangle nothing else is using, and it grows over
+## the dock. `AutoSizingPanel.room_bounds` is the seam — the controller hands the panel the HUD's
+## `LayoutRoot`, which the registry has already inset on all four sides — and `available_room` applies
+## this panel's own clearance to it.
 func _room() -> Rect2:
-	return _viewport_rect().grow(-HudCraftingVocab.VIEWPORT_MARGIN)
+	return available_room(HudCraftingVocab.VIEWPORT_MARGIN)
 
 func _place() -> void:
 	var room := _room()
@@ -1058,9 +1048,3 @@ func _scroll_gutter() -> float:
 	if _scroll == null:
 		return 0.0
 	return _scroll.get_v_scroll_bar().get_combined_minimum_size().x
-
-func _viewport_rect() -> Rect2:
-	var viewport := get_viewport()
-	if viewport != null:
-		return viewport.get_visible_rect()
-	return Rect2(Vector2.ZERO, Vector2(DisplayServer.window_get_size()))

@@ -53,6 +53,32 @@ own content, which is the same lie as a card fitted too short, upside down.
 width every pass, and re-asserting `target_width` there would silently undo `fit_width` on
 the next height fit.
 
+### "AGAINST THE VIEWPORT" MEANS AGAINST THE ROOM — `room_bounds`
+
+The reserved-edge registry below insets `MapView` and the HUD's `LayoutRoot` by every docked
+panel's strip, so once anything is docked the raw viewport is a rectangle **nothing else in
+the client is using**. A free-floating card measured against it grows over the dock and over
+whatever overlays the edge it just claimed — reported in play on the Materials & Crafting
+panel, which ran the full height of the window and covered the top of the screen.
+
+**`room_bounds` is the seam, and it is one rect for both jobs.** Set it to the Control the
+registry has already inset (the HUD's `LayoutRoot`) and `available_room(margin)` gives the
+caller its placement rect while `fit_to_content` takes its ceiling from the same rect's
+bottom edge, so the placement and the height fit cannot disagree about how much room there
+is. Take the height fit at the TOP of that room, never while the card is centred — the
+ceiling derives from `global_position.y`, so a centred card throws away everything above it
+(`crafting-panel.md` records the measured clamp).
+
+It is **opt-in, and `null` is the correct answer for a card that IS a reserver** — the
+Inspector reserves its own edge, so it must be measured against the whole window. A card
+handed a room it cannot fit does not overflow: `fit_to_content` turns its internal scroll on
+exactly when the content did not fit.
+
+**It does not clear an OVERLAY.** The event dock reserves nothing by design (it overlays the
+map — `event-dock.md`), so it is not in the registry and a card bounded by `LayoutRoot` can
+still share a band with it. A free-floating card that must clear the bar needs something the
+registry does not carry today.
+
 **A card pinned narrower than its content does not fail; it lies.** The inner
 `PanelContainer` — a real Container — grows out of the card and draws the background at the
 content's width, so the card *looks* right while its own rect, and every placement decision
@@ -70,7 +96,7 @@ assertions that pin it are in `labor-ui.md` → "THE HEIGHT CHROME IS THE HEADER
 
 | Script | Purpose |
 |--------|---------|
-| `ui/AutoSizingPanel.gd` | Shared helper for panels that expand to fit content — `fit_to_content` (height, ceiling `max_height`) and `fit_width` (width, ceiling `max_width`), both against the viewport. Callers: the Inspector and `ui/hud/BandComposeFloat.gd` |
+| `ui/AutoSizingPanel.gd` | Shared helper for panels that expand to fit content — `fit_to_content` (height, ceiling `max_height`) and `fit_width` (width, ceiling `max_width`), plus `available_room(margin)`, all measured against `room_bounds` where one was set and against the raw viewport where it was not. Callers: the Inspector, `ui/hud/BandComposeFloat.gd` and `ui/hud/CraftingPanel.gd` (the one that sets `room_bounds`) |
 ## HUD Panel Framework (Docked PanelCards)
 
 The HUD (`HudLayer.tscn`) owns the screen regions with one layout authority — a

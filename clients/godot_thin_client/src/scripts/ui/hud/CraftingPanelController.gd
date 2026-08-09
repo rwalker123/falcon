@@ -33,6 +33,12 @@ signal bench_crew_requested(payload: Dictionary)
 var _band_labor: HudBandLaborState = null
 ## The HUD CanvasLayer, so this `RefCounted` has a node to parent the panel into.
 var _host: Node = null
+## **THE ROOM THE CARD IS BOUNDED BY — the HUD's `LayoutRoot`, NOT the window.** The reserved-edge
+## registry has already inset that node by every docked panel's strip, so a card bounded by it is
+## bounded by the same rect the map and the rest of the HUD are drawn in. Handed down rather than
+## looked up, because a `RefCounted` reaching into its host's scene tree is the coupling the
+## controller pattern exists to avoid.
+var _room_bounds: Control = null
 
 var _panel: CraftingPanel = null
 ## The band entity the panel is open on; `NO_BAND_ENTITY` when it is closed.
@@ -48,9 +54,10 @@ var _band_legend: Array = []
 var _recipes: Array = []
 var _craft_knowledge: Array = []
 
-func setup(host: Node, band_labor: HudBandLaborState) -> void:
+func setup(host: Node, band_labor: HudBandLaborState, room_bounds: Control = null) -> void:
 	_host = host
 	_band_labor = band_labor
+	_room_bounds = room_bounds
 
 ## Ingest the four catalogues as ONE call, because they are one fact: a recipe book without its
 ## materials would render a rail with no craft tracks and a ledger with costs in materials the panel
@@ -145,6 +152,7 @@ func _ensure_panel() -> void:
 	if _panel != null and is_instance_valid(_panel):
 		return
 	_panel = CraftingPanel.new()
+	_panel.room_bounds = _room_bounds
 	_host.add_child(_panel)
 	_panel.closed.connect(close)
 	_panel.band_selected.connect(_on_band_selected)

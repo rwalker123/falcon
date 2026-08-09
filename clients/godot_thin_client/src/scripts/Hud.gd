@@ -437,8 +437,12 @@ func _ready() -> void:
     # `RefCounted` cannot `add_child` — the `TurnOrbController` pattern). Its two command signals relay
     # onto HudLayer's, like every other controller's; the two controllers are mediated here and never
     # hold each other.
+    # `layout_root` rides along as the panel's room: the reserved-edge registry insets that node by
+    # every docked panel's strip (`set_reserved_inset` below), so a free-floating card bounded by it
+    # is bounded by the same rect the map and the rest of the HUD are drawn in — which the raw
+    # viewport is not, once anything is docked.
     _crafting = CraftingPanelController.new()
-    _crafting.setup(self, _band_labor)
+    _crafting.setup(self, _band_labor, layout_root)
     _crafting.set_bench_requested.connect(
         func(payload: Dictionary) -> void: set_bench_requested.emit(payload))
     _crafting.bench_crew_requested.connect(

@@ -43,6 +43,28 @@ const WEAVING_PROGRESS := 100.0
 const TANNING_PROGRESS := 41.0
 const BONE_WORKING_PROGRESS := 12.0
 
+## **THE CONDITION WORDINGS THE WIRE STILL CARRIES AND THIS PANEL MUST NOT RENDER.** Every one of them
+## is a `life` string the fixture below publishes, plus the head of the column that used to show them:
+## how worn the gear is has ONE home, the Band panel's WORKFORCE role cards, and this table answers
+## what a rebuild costs. The fixture keeps publishing them deliberately — a negative assertion over
+## data that is not there proves nothing.
+const RETIRED_CONDITION_WORDINGS: Array[String] = [
+	"Life left", "Worn out", "Never made", "Untouched", "48 raids left", "~15 turns left",
+	"~19 turns left", "~28 turns left", "~42 turns left", "~1 turn left",
+]
+
+## The two reservers the height-bound state stands up — a left COLUMN the width of the HUD's own left
+## dock (the Inspector's edge) and a bottom STRIP the depth of a docked Band/City panel. Both axes at
+## once, because a card bounded on one and not the other looks fixed from the wrong screenshot.
+const RESERVER_LEFT := &"crafting_preview_left"
+const RESERVER_BOTTOM := &"crafting_preview_bottom"
+const RESERVED_LEFT_WIDTH := 360.0
+const RESERVED_BOTTOM_HEIGHT := 360.0
+
+## What the card measured at with nothing docked, captured in state 1. The reserved state's claim is
+## that the card got SHORTER — without it, a bound that never bit would pass every rect test below.
+var _unreserved_card_height: float = 0.0
+
 func run(harness) -> void:
 	h = harness
 	await _crafting_states()
@@ -81,6 +103,22 @@ func _crafting_states() -> void:
 	_assert_bench_crew_is_not_idle()
 	await h._save("crafting_bench_workforce")
 
+	# State 4 — **THE HEIGHT BOUND.** A docked panel does not overlap the game, it RESERVES a strip of
+	# one screen edge and every other surface lives in what is left; this card is free-floating and was
+	# measuring itself against the whole window, so it grew straight through both the strip and
+	# whatever overlays the edge it had just claimed. `Main` owns the reservation fan-out and is never
+	# instanced here, so the reservations are pushed into `Hud.set_reserved_inset` by hand — the
+	# `event_dock` chapter's idiom — and released again before the chapter hands the HUD back.
+	h._hud.set_reserved_inset(RESERVER_LEFT, SIDE_LEFT, RESERVED_LEFT_WIDTH)
+	h._hud.set_reserved_inset(RESERVER_BOTTOM, SIDE_BOTTOM, RESERVED_BOTTOM_HEIGHT)
+	h._hud.update_band_alerts([_crafting_band()])
+	h._hud.open_crafting_panel(_crafting_band())
+	await h._settle()
+	_assert_card_fits_the_reserved_room()
+	await h._save("crafting_panel_reserved_edges")
+	h._hud.set_reserved_inset(RESERVER_LEFT, SIDE_LEFT, 0.0)
+	h._hud.set_reserved_inset(RESERVER_BOTTOM, SIDE_BOTTOM, 0.0)
+
 	# Hand everything back: the panel closed, the roster restored to the reference band.
 	h._hud.close_crafting_panel()
 	h._hud._band_labor._player_bands = []
@@ -104,16 +142,20 @@ func _assert_panel_renders() -> void:
 	# …and the shrug reads differently from the shortage, which is the whole reason the reason is
 	# published rather than derived from `available`.
 	h._assert_hud("crafting — the shrug is its own string", texts.has("Not needed yet"))
-	# Worn out and never made are DIFFERENT states, told apart by `life` and never by a zero.
-	h._assert_hud("crafting — worn out and never made are both stated",
-		texts.has("Worn out") and texts.has("Never made"))
-	# The life column is in the item's own use quanta and never in percent.
-	h._assert_hud("crafting — the life meter reads in quanta, not percent",
-		texts.has("48 raids left") and texts.has("~15 turns left"))
-	# The tier chip flips only on OWNERSHIP: the band holds no wayfinding gear, so it reads bare hands
-	# while every held batch still reads its tier.
+	# **OWNERSHIP IS STATED AND CONDITION IS NOT — and the two claims are a PAIR.** The condition
+	# readout has one home (the Band panel's role cards), so no `life` wording may reach this table;
+	# but a table that had also stopped saying whether the band OWNS the thing would satisfy that
+	# negative on its own, and the tier chip is what has to carry the ownership reading alone.
 	h._assert_hud("crafting — the tier chip states ownership",
 		texts.has(HudCraftingVocab.TIER_CHIP_KIT_NONE) and texts.has(HudCraftingVocab.TIER_CHIP_TOOL_NONE))
+	h._assert_hud("crafting — no condition wording reaches the ledger",
+		_missing_from(texts, RETIRED_CONDITION_WORDINGS) == RETIRED_CONDITION_WORDINGS.size())
+	# The ledger is FOUR columns — Item · Tier · Rebuild costs · action — and the action head is blank
+	# by design, so the three named ones are what the claim can name.
+	h._assert_hud("crafting — the ledger heads its four columns",
+		texts.has(HudCraftingVocab.LEDGER_COLUMN_ITEM.to_upper())
+			and texts.has(HudCraftingVocab.LEDGER_COLUMN_TIER.to_upper())
+			and texts.has(HudCraftingVocab.LEDGER_COLUMN_COST.to_upper()))
 	# The running row's button is SPENT — one job at a time, so it has nothing left to ask for.
 	h._assert_hud("crafting — the running row reads On the bench",
 		texts.has(HudCraftingVocab.ON_BENCH_LABEL))
@@ -132,6 +174,58 @@ func _assert_panel_renders() -> void:
 	var used_alpha := _row_alpha(panel, "Sled")
 	h._assert_hud("crafting — the untouched row is dimmed and the used one is not",
 		untouched_alpha >= 0.0 and untouched_alpha < 1.0 and is_equal_approx(used_alpha, 1.0))
+	# The reading state 4 measures its own against: nothing is docked here, so this is the tallest the
+	# card ever wants to be.
+	_unreserved_card_height = panel.size.y
+
+## **THE CARD IS BOUNDED BY THE ROOM, NOT BY THE WINDOW.** `LayoutRoot` is the node the reserved-edge
+## registry insets, so it IS the room the map and the rest of the HUD are drawn in; a card that fits
+## inside it cannot be drawn over a docked panel. Asserted on the RECT rather than on the height
+## alone, because the placement and the fit are two different pieces of arithmetic and either can
+## strand the card outside a room the other sized it for.
+##
+## **The "it got shorter" claim is the vacuity guard.** Every rect test here passes trivially on a
+## fixture whose ledger already fitted, so the fixture has to be one the bound actually bites: the
+## same band as state 1, against a room 360px shorter.
+func _assert_card_fits_the_reserved_room() -> void:
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting — the reserved-room panel is open", false)
+		return
+	var room: Rect2 = h._hud.layout_root.get_global_rect()
+	var card: Rect2 = panel.get_global_rect()
+	h._assert_hud("crafting — the card is shorter once an edge is reserved",
+		_unreserved_card_height > 0.0 and card.size.y < _unreserved_card_height)
+	h._assert_hud("crafting — the card's top clears the reserved room's top",
+		card.position.y >= room.position.y)
+	h._assert_hud("crafting — the card's bottom clears the reserved room's bottom",
+		card.end.y <= room.end.y)
+	h._assert_hud("crafting — the card sits inside the reserved room horizontally",
+		card.position.x >= room.position.x and card.end.x <= room.end.x)
+	# The scroll is what pays for the shorter card: the ledger did not fit, so it scrolls INTERNALLY
+	# rather than the card growing past the room. Without this the bound could be "fits" by dropping
+	# rows.
+	h._assert_hud("crafting — the ledger scrolls inside the bounded card",
+		_scroll_is_live(panel))
+
+## Whether the panel's own `ScrollContainer` is scrolling — `fit_to_content` turns it on exactly when
+## the content did not fit the room it was given.
+func _scroll_is_live(node: Node) -> bool:
+	if node is ScrollContainer:
+		return (node as ScrollContainer).vertical_scroll_mode != ScrollContainer.SCROLL_MODE_DISABLED
+	for child in node.get_children():
+		if _scroll_is_live(child):
+			return true
+	return false
+
+## How many of `needles` are absent from `texts`. A COUNT rather than a bool so a failure says how
+## many wordings leaked rather than only that one did.
+func _missing_from(texts: Array, needles: Array[String]) -> int:
+	var missing := 0
+	for needle in needles:
+		if not texts.has(needle):
+			missing += 1
+	return missing
 
 func _assert_idle_bench() -> void:
 	var panel: CraftingPanel = h._hud.crafting_panel().panel()

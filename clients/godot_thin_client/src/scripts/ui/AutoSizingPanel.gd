@@ -19,6 +19,21 @@ class_name AutoSizingPanel
 @export var max_width: float = 0.0
 @export var bottom_margin: float = 24.0
 
+## **THE ROOM A FREE-FLOATING CARD MAY USE IS THE VIEWPORT MINUS THE RESERVED EDGES, NOT THE RAW
+## VIEWPORT.** A docked panel does not overlap the game — it RESERVES a strip of one screen edge and
+## every other surface lives in what is left (`.claude/rules/client/panel-framework.md` →
+## "Reserved-edge docking"). A free-floating card is the one thing that used to miss that: the
+## registry insets `MapView` and the HUD's `LayoutRoot`, and a card measured against
+## `get_viewport().get_visible_rect()` is measured against a rectangle nothing else in the client is
+## using any more — so it grows over the docked panel and over whatever overlays the edge it just
+## claimed.
+##
+## Set this to the Control the registry has ALREADY inset — the HUD's `LayoutRoot` — and both the
+## placement (`available_room`) and the height ceiling (`fit_to_content`) fall out of one rect.
+## `null` keeps the raw viewport, which is the right answer for a card that IS a reserver (the
+## Inspector reserves its own edge, so it must be measured against the whole window).
+var room_bounds: Control = null
+
 ## The width the last fit settled on. The height fit re-asserts the card's width every pass (the
 ## layout under it can push the rect around), and re-asserting `target_width` there would silently
 ## undo `fit_width` on the very next `fit_to_content` — the two fits must agree on one number.
@@ -42,10 +57,17 @@ func fit_width(content_width: float, extra_width: float = 0.0) -> void:
     var ceiling: float = max_width if max_width > 0.0 else target_width
     _apply_width(clamp(desired, target_width, max(ceiling, target_width)))
 
+## The rect this card may place and size itself in, inset by `margin` on every side: `room_bounds`
+## where one was given, else the whole viewport. One seam, so a caller's placement and its height
+## ceiling can never disagree about how much room there is.
+func available_room(margin: float = 0.0) -> Rect2:
+    return _bounds_rect().grow(-margin)
+
 func fit_to_content(content_height: float, extra_height: float = 0.0, scroll: ScrollContainer = null) -> void:
     var desired_height: float = max(content_height + extra_height, min_height)
-    var viewport_height: float = _viewport_height()
-    var max_available: float = viewport_height - global_position.y - bottom_margin
+    # The room's BOTTOM EDGE, not the window's — a bottom reservation ends the room early, and a card
+    # measured to the window would size itself straight through the panel holding that strip.
+    var max_available: float = _bounds_rect().end.y - global_position.y - bottom_margin
     var clamped_height: float = clamp(desired_height, min_height, min(max_height, max_available))
 
     if target_width > 0.0:
@@ -61,11 +83,16 @@ func fit_to_content(content_height: float, extra_height: float = 0.0, scroll: Sc
             scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
             scroll.scroll_vertical = 0
 
-func _viewport_height() -> float:
+func _bounds_rect() -> Rect2:
+    if room_bounds != null and is_instance_valid(room_bounds):
+        return room_bounds.get_global_rect()
+    return _viewport_rect()
+
+func _viewport_rect() -> Rect2:
     var viewport: Viewport = get_viewport()
     if viewport != null:
-        return viewport.get_visible_rect().size.y
-    return DisplayServer.window_get_size().y
+        return viewport.get_visible_rect()
+    return Rect2(Vector2.ZERO, Vector2(DisplayServer.window_get_size()))
 
 func _apply_width(width: float) -> void:
     _fitted_width = width
