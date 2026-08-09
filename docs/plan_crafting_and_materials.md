@@ -128,16 +128,42 @@ equipment.** Bronze and steel are not special cases.
   "craft": "tanning",
   "inputs":  [ { "material": "hide", "amount": 18, "reads": "toughness" } ],
   "outputs": [ { "equipment": "sled", "amount": 1 } ],
-  "grades": {
-    "coarse":   { "when": 0.00, "effects": [ { "stat": "hunt_carry", "equipped": 34.0 } ] },
-    "standard": { "when": 0.45, "effects": [ { "stat": "hunt_carry", "equipped": 40.0 } ] },
-    "fine":     { "when": 0.75, "effects": [ { "stat": "hunt_carry", "equipped": 46.0 } ] }
+  "grades": {                                  // KEYED BY characteristic_bands, and validated
+    "poor":      { "effects": [ { "stat": "hunt_carry", "equipped": 30.0 } ] },
+    "fair":      { "effects": [ { "stat": "hunt_carry", "equipped": 34.0 } ] },
+    "good":      { "effects": [ { "stat": "hunt_carry", "equipped": 40.0 } ] },
+    "excellent": { "effects": [ { "stat": "hunt_carry", "equipped": 46.0 } ] }
   }
 }
 ```
 
-**A recipe reads ONE characteristic** (`reads`), which is what makes "no best hide" real. `when` is
-the seam where the continuous reading quantises into a discrete output grade.
+**A recipe reads ONE characteristic** (`reads`), which is what makes "no best hide" real.
+
+### ONE QUALITY LADDER FOR THE WHOLE GAME — the grades ARE the bands
+
+**A grade is named by a `characteristic_bands` entry, and a recipe declares no seams of its own.**
+The same four words rate a hide's toughness on the panel's rail and rate the sled you make out of it:
+a reading of `.55` is *good* in both places. An earlier cut invented `coarse / standard / fine` for
+crafted things, which is a **second vocabulary for one idea** — the player learns quality twice and
+each ladder reads as though it measured something else.
+
+**It also deletes a set of numbers, and that is the load-bearing half.** The cut points already exist
+in `characteristic_bands`; a per-recipe `when` beside them is a **second authority to drift from**,
+which is the mistake this design already records rejecting twice — `dispersion` multiplies a species'
+own `wariness` rather than reading a "jumpy" flag, and `max_body_mass` reads `body_mass` rather than a
+`size_class`. So the output's grade is simply the band of `min(material reading, tool ceiling)`.
+
+**Enforced at load, never by convention.** `validate` rejects a grade key that is not a declared
+band, and a recipe whose lowest declared grade is not the **first** band (something must answer for a
+reading of `0.0`). A band a recipe does not declare **inherits the one below it**, so a recipe wanting
+three steps writes three. That is the `UnknownItem` rule again: a key is a `String`, so validate is
+the only thing between the file and a running sim.
+
+> **The migration is NOT a rename.** The shipped seams (`0.00 / 0.45 / 0.75`) do not line up with the
+> band cuts (`0.00 / 0.30 / 0.55 / 0.80`), and today's `standard` grade is pinned to the shipped
+> equipped rate so that a standard-grade craft reproduces the current game exactly. Under the band
+> cuts that anchor lands on **`good`** — so hold `good` at the shipped number and fan the other three
+> around it, or the shipped opening moves.
 
 > **Continuous in, discrete out — and this is a constraint, not a preference.**
 > `EquipmentEffect` names the value a stat **takes** and has no representation for a multiplier
@@ -294,13 +320,38 @@ that split.
 
 ### Readout rules
 
-- **The ledger carries no condition column.** Its four columns are **Item · Tier · Rebuild costs ·
+- **The ledger carries no condition column.** Its four columns are **Item · Owned · Rebuild costs ·
   action**. How worn a thing is has one home — the Band panel's WORKFORCE role cards, which state the
   condition of the item behind each kit beside the role that kit sets — and that is where a player
   asks *"how worn is my gear"*. This panel answers *"what does it cost to rebuild"*, so a condition
-  readout here would be the same fact in two places free to disagree. The **tier chip stays**: it
-  carries the grade, and for an item the band owns none of it states that (*Bare hands* / *Not made*),
-  which is a statement of OWNERSHIP rather than of wear.
+  readout here would be the same fact in two places free to disagree.
+- **The OWNED cell is count and grade** — `×3 · good`. It is the question the panel could not
+  previously answer at all, and it is what tells a player that the thing they just crafted exists.
+  Owning none states the **consequence** rather than the arithmetic (*Bare hands* for a kit, *Not
+  made* for a tool): `×0` is the same fact and the worse sentence. A stock recipe, which owns nothing,
+  states what a pass yields instead (`→ 6 cordage`).
+- **A band may hold one item at two grades, and the cell lists them** — three spears knapped off poor
+  bone and two off excellent are genuinely different objects, and the sim already stores them as
+  separate batches for that reason. `×5 · excellent` would be a lie. Collapsing to one grade needs a
+  rule for *which*, and every candidate misleads: the best flatters, the worst alarms, and the batch
+  currently in service is chosen by **wear, not quality** — so it would move for a reason that has
+  nothing to do with what the row claims.
+- **TIER IS A GROUP HEAD, NOT A COLUMN.** A column spends its width saying `flint` on every row for
+  the whole early game; a head says it once and can **fold away**, which is what a column can never
+  do. The head is the tier a row would be **made** at — a recipe produces the best tier the faction
+  knows and upgrades nest inside the item, so a row *moves* rather than splitting. The **cell** is
+  what the band actually **has**, so the two can disagree, and that disagreement is the readout: a
+  Clubs row under **Bronze** whose cell says *carrying flint · poor* is telling you something worth
+  knowing. **The tier word appears in the cell only then** — only when it is news.
+
+  > **OPEN — "outdated" is doing two jobs.** Grouping answers *"what tier is this made at"* while
+  > fold-away asks *"is everything here superseded"*. Those coincide for spears and clubs and never
+  > coincide for baskets and cordage, which are woven fibre and will never have a bronze version —
+  > flint is not an *old* tier for them, it is the **only** one they will ever have, so folding
+  > **Flint** hides gear that is not outdated at all. The recommendation is to **name a group by what
+  > it is rather than by material age** (*Metalwork* / *Woven & tanned*), so the head states a fact
+  > about the item instead of a claim about its recency — which also stops **Bench tools** being a
+  > special case, a tool having no tier because it is the thing that makes a tier reachable.
 - **The life meter is a fuel gauge, not a performance meter** — the rule still governs every surface
   that *does* show condition. A spear at 34% is exactly as deadly as one at 100%, so condition is a
   discrete chip and is read in **turns left**, never as a percentage: a single percentage bar would
