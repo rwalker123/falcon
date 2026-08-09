@@ -752,6 +752,15 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = row.insert("shortfalls", &shortfalls_to_array(offer.shortfalls()));
             let _ = row.insert("output_grade", offer.outputGrade().unwrap_or(""));
             let _ = row.insert("on_bench", offer.onBench());
+            // **THE LEDGER'S GROUP HEAD** — the tier a craft would produce right now, and its rank
+            // in the item's own list. The heads run rank-DESCENDING (newest first), which is the
+            // client's only honest ordering: alphabetical would put Iron above Bronze.
+            let _ = row.insert("output_tier_name", offer.outputTierName().unwrap_or(""));
+            let _ = row.insert("output_tier_rank", offer.outputTierRank() as i64);
+            // **RENDER IT VERBATIM, and only this carries a tier word into the Owned cell.** `""`
+            // when there is no news — what the band carries is said only when it disagrees with
+            // what the band could now make.
+            let _ = row.insert("owned_note", offer.ownedNote().unwrap_or(""));
             craft_offers.push(&row.to_variant());
         }
     }

@@ -32,6 +32,36 @@ const CRAFTING_BAND_ENTITY := 971
 ## `completion_threshold`, which is what stops the client inventing a scale of its own.
 const CRAFT_THRESHOLD := 100.0
 
+## **THE TIERS, AND THE RANKS THE HEADS ARE ORDERED BY.** The shipped roster has exactly one — `flint`
+## at rank 0 — so every ledger here renders under a single `Flint` head. `bronze` at rank 1 exists
+## only in the second-tier fixture, which is the one shape that can stage a head disagreeing with a
+## cell and therefore the only one that can produce an `ownedNote` at all.
+const TIER_FLINT := "flint"
+const TIER_FLINT_RANK := 0
+const TIER_BRONZE := "bronze"
+const TIER_BRONZE_RANK := 1
+
+## The heads as the ledger names them — the tier ids capitalized, which is how the panel keys its fold
+## state and what the harness looks a head up by.
+const HEAD_FLINT := "Flint"
+const HEAD_BRONZE := "Bronze"
+
+## **THE TIER WORDS THAT MAY NOT REACH AN OWNED CELL EXCEPT INSIDE `ownedNote`.** The head IS a tier
+## word by design, so this claim is scoped to the CELLS; the second-tier fixture publishes a `tier_id`
+## on every batch it owns, which is what stops the negative being vacuous.
+const TIER_WORDS: Array[String] = [TIER_FLINT, TIER_BRONZE]
+
+## The band's two-tier stock, batch by batch. Spears sit at two GRADES — and the `good` pair at
+## different wear, which the cell must sum into one line rather than list twice — while the clubs are
+## a single grade at the older tier, which is what the note is about.
+const TWO_TIER_SPEARS_GOOD_A := 3
+const TWO_TIER_SPEARS_GOOD_B := 2
+const TWO_TIER_SPEARS_EXCELLENT := 1
+const TWO_TIER_CLUBS_POOR := 4
+
+## The sim's own resolved note for a band carrying the older tier — rendered VERBATIM, never composed.
+const TWO_TIER_CLUBS_NOTE := "carrying flint · poor"
+
 ## Where each of the three crafts stands. Weaving is DONE (this band gathers), Tanning is climbing (it
 ## hunts deer) and Bone-working is stalled at 12% — which is not an error state but a band standing in
 ## country with no bone game. The land decides what you are good at.
@@ -566,12 +596,129 @@ func _crafting_states() -> void:
 	await _event_bar_state()
 	await _band_dock_states()
 	await _rerender_state()
+	await _two_tier_states()
 
 	# Hand everything back: the panel closed, the roster restored to the reference band.
 	h._hud.close_crafting_panel()
 	h._hud._band_labor._player_bands = []
 	h._hud._band_labor._player_band = BandFx.band_fixture()
 	await h._settle()
+
+# ---- states 12-13: TWO TIERS, which is the only shape the readout can be judged on ---------------
+
+## **THE HEAD IS WHAT A ROW WOULD BE MADE AT; THE CELL IS WHAT THE BAND HAS.** On the shipped one-tier
+## roster the two can never disagree, so no state above can show the readout the Owned column exists
+## for — a Clubs row under **Bronze** whose cell says *carrying flint · poor* — and no sim can publish
+## an `ownedNote` there either. This fixture is the second tier, and everything downstream of the
+## disagreement is asserted against it.
+func _two_tier_states() -> void:
+	h._hud.update_band_alerts([_two_tier_band()])
+	h._hud.open_crafting_panel(_two_tier_band())
+	await h._settle()
+	_assert_owned_cell_reads_what_the_band_has()
+	_assert_no_tier_word_reaches_a_cell()
+	await h._save("crafting_panel_two_tiers")
+
+	await _assert_folding_a_head_hides_only_its_own_rows()
+
+	h._hud.close_crafting_panel()
+	await h._settle()
+
+## **THE GRADE LINES AND THE NOTE, EACH AS A PAIR.** A one-sided claim passes on a panel that lost the
+## thing entirely: "two lines" is satisfied by a cell that lists every batch, so the single-grade row
+## is asserted beside it; and "the note is rendered" is satisfied by a panel printing it on every row,
+## so the row WITHOUT one is asserted beside that.
+func _assert_owned_cell_reads_what_the_band_has() -> void:
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting — the two-tier panel is open", false)
+		return
+	# Two grades ⇒ two lines, best first, with the two `good` batches summed into one — wear is what
+	# separates them and wear is not this panel's fact.
+	var spears := _owned_cell_texts(panel, "Spears")
+	h._assert_hud("crafting — an item owned at two grades renders a line each (%s)" % [spears],
+		spears.has(HudCraftingVocab.OWNED_COUNT_FORMAT % TWO_TIER_SPEARS_EXCELLENT)
+			and spears.has("excellent")
+			and spears.has(HudCraftingVocab.OWNED_COUNT_FORMAT
+				% (TWO_TIER_SPEARS_GOOD_A + TWO_TIER_SPEARS_GOOD_B))
+			and spears.has("good"))
+	# …and the single-grade row renders exactly ONE, which is what says the cell groups by grade rather
+	# than listing every batch it was handed.
+	var clubs := _owned_cell_texts(panel, "Clubs")
+	h._assert_hud("crafting — …while a single-grade item renders exactly one (%s)" % [clubs],
+		_count_matching(clubs, HudCraftingVocab.OWNED_COUNT_FORMAT % TWO_TIER_CLUBS_POOR) == 1
+			and _count_starting_with(clubs, "×") == 1)
+	# **THE NOTE, VERBATIM AND ALONE, on the row whose stock disagrees with its head.** Asked as
+	# "everything in the cell that is not a count or a grade", rather than as `has(the note)`: a panel
+	# COMPOSING a note of its own — the defect the published field exists to prevent — satisfies a
+	# `has` on the row that has one, and satisfies "…and does not carry the OTHER row's note" too.
+	h._assert_hud("crafting — the owned note is rendered verbatim on the row that has one (%s)"
+			% [_non_grade_texts(clubs)],
+		_non_grade_texts(clubs) == [TWO_TIER_CLUBS_NOTE])
+	# …and the row the sim published no note for carries NOTHING beside its grade lines, which is the
+	# half a panel printing a note on every row fails.
+	h._assert_hud("crafting — …and the row that has none carries nothing beside its grades (%s)"
+			% [_non_grade_texts(spears)],
+		_non_grade_texts(spears).is_empty())
+
+## **NO TIER WORD REACHES A CELL EXCEPT THROUGH `ownedNote`.** Scoped to the Owned CELLS rather than to
+## the ledger, because the group head is a tier word by design and a panel-wide scan cannot tell the
+## two apart. Non-vacuous by construction: every batch this band owns publishes a `tier_id`, so there
+## is a tier word sitting one field away from every cell asserted about.
+func _assert_no_tier_word_reaches_a_cell() -> void:
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting — the tier-word panel is open", false)
+		return
+	var notes := _published_owned_notes()
+	var cells := _all_owned_cell_texts(panel)
+	h._assert_hud("crafting — precondition: the fixture publishes a tier id on every batch it owns",
+		_batches_carrying_a_tier(_two_tier_equipment_batches()) > 0 and not cells.is_empty())
+	var leaked: Array = []
+	for text_variant in cells:
+		var text := String(text_variant)
+		if notes.has(text):
+			continue
+		for word in TIER_WORDS:
+			if text.to_lower().contains(word):
+				leaked.append(text)
+	h._assert_hud("crafting — no tier word reaches an Owned cell except through the owned note (%s)"
+			% [leaked],
+		leaked.is_empty())
+
+## **FOLDING A HEAD HIDES ITS OWN ROWS AND NOTHING ELSE, AND THE HEAD STAYS.** Both halves, and the
+## reverse toggle: a panel that hid the whole table satisfies the first alone, and one that never
+## restored the rows satisfies the pair on the way down.
+func _assert_folding_a_head_hides_only_its_own_rows() -> void:
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	var head := _group_head(panel, HEAD_BRONZE) if panel != null else null
+	if panel == null or head == null:
+		h._assert_hud("crafting — the two-tier panel offers a %s head" % HEAD_BRONZE, false)
+		return
+	h._assert_hud("crafting — precondition: both tier groups render their rows open",
+		_label_texts(panel).has("Clubs") and _label_texts(panel).has("Traps"))
+
+	head.pressed.emit()
+	await h._settle()
+	var folded := _label_texts(panel)
+	h._assert_hud("crafting — folding a head hides ITS rows (%s under %s)" % ["Clubs", HEAD_BRONZE],
+		not folded.has("Clubs") and not folded.has("Spears"))
+	h._assert_hud("crafting — …while another group's rows stay visible (%s under %s)"
+			% ["Traps", HEAD_FLINT],
+		folded.has("Traps"))
+	h._assert_hud("crafting — …and the folded head itself remains, dimmed and carrying its caret",
+		folded.has(_head_face(HEAD_BRONZE, true)))
+	await h._save("crafting_panel_group_folded")
+
+	var reopen := _group_head(panel, HEAD_BRONZE)
+	if reopen == null:
+		h._assert_hud("crafting — the folded head is still pressable", false)
+		return
+	reopen.pressed.emit()
+	await h._settle()
+	var reopened := _label_texts(panel)
+	h._assert_hud("crafting — unfolding it brings its rows back",
+		reopened.has("Clubs") and reopened.has("Spears") and reopened.has("Traps"))
 
 # ---- assertions ---------------------------------------------------------------------------------
 
@@ -593,17 +740,27 @@ func _assert_panel_renders() -> void:
 	# **OWNERSHIP IS STATED AND CONDITION IS NOT — and the two claims are a PAIR.** The condition
 	# readout has one home (the Band panel's role cards), so no `life` wording may reach this table;
 	# but a table that had also stopped saying whether the band OWNS the thing would satisfy that
-	# negative on its own, and the tier chip is what has to carry the ownership reading alone.
-	h._assert_hud("crafting — the tier chip states ownership",
-		texts.has(HudCraftingVocab.TIER_CHIP_KIT_NONE) and texts.has(HudCraftingVocab.TIER_CHIP_TOOL_NONE))
+	# negative on its own, and the Owned cell is what has to carry the ownership reading alone.
+	#
+	# **THE TWO CONSEQUENCE WORDINGS ARE THEMSELVES A PAIR**, since a panel printing one of them on
+	# every row satisfies either half alone: a kit the band is without is bare hands, a tool it never
+	# built is not made, and only both together say the cell is keyed off the published `group`.
+	h._assert_hud("crafting — owning none reads Bare hands on a kit AND Not made on a tool",
+		texts.has(HudCraftingVocab.OWNED_KIT_NONE) and texts.has(HudCraftingVocab.OWNED_TOOL_NONE))
 	h._assert_hud("crafting — no condition wording reaches the ledger",
 		_missing_from(texts, RETIRED_CONDITION_WORDINGS) == RETIRED_CONDITION_WORDINGS.size())
-	# The ledger is FOUR columns — Item · Tier · Rebuild costs · action — and the action head is blank
+	# The ledger is FOUR columns — Item · Owned · Rebuild costs · action — and the action head is blank
 	# by design, so the three named ones are what the claim can name.
 	h._assert_hud("crafting — the ledger heads its four columns",
 		texts.has(HudCraftingVocab.LEDGER_COLUMN_ITEM.to_upper())
-			and texts.has(HudCraftingVocab.LEDGER_COLUMN_TIER.to_upper())
+			and texts.has(HudCraftingVocab.LEDGER_COLUMN_OWNED.to_upper())
 			and texts.has(HudCraftingVocab.LEDGER_COLUMN_COST.to_upper()))
+	# **TIER IS A HEAD, NOT A COLUMN** — one `Flint` head over every kit row on the shipped roster,
+	# with the two other groups joining it as the same kind of head. All three carry the open caret.
+	h._assert_hud("crafting — the three group heads read as one foldable family",
+		texts.has(_head_face(HEAD_FLINT, false))
+			and texts.has(_head_face(String(HudCraftingVocab.GROUP_HEADS[HudCraftingVocab.GROUP_TOOL]), false))
+			and texts.has(_head_face(String(HudCraftingVocab.GROUP_HEADS[HudCraftingVocab.GROUP_STOCK]), false)))
 	# The running row's button is SPENT — one job at a time, so it has nothing left to ask for.
 	h._assert_hud("crafting — the running row reads On the bench",
 		texts.has(HudCraftingVocab.ON_BENCH_LABEL))
@@ -795,6 +952,111 @@ func _row_alpha(node: Node, item_name: String) -> float:
 		return (node as HBoxContainer).modulate.a
 	return -1.0
 
+## A head's rendered face — the caret the fold state picks, then the name, uppercased exactly as the
+## panel builds it. Composed through the panel's own vocabulary rather than typed out, so the claim
+## cannot pass on a head that renders a different caret from the one the panel means.
+func _head_face(head_name: String, folded: bool) -> String:
+	return (HudCraftingVocab.GROUP_HEAD_FORMAT % [
+		HudCraftingVocab.GROUP_HEAD_CARET_FOLDED if folded else HudCraftingVocab.GROUP_HEAD_CARET_OPEN,
+		head_name]).to_upper()
+
+## A group head, by IDENTITY — its `GROUP_HEAD_META`, never its face. A face carries the caret, which
+## is exactly the thing the fold assertions are about.
+func _group_head(node: Node, head_name: String) -> Button:
+	if node is Button and (node as Button).get_meta(HudCraftingVocab.GROUP_HEAD_META, "") == head_name:
+		return node as Button
+	for child in node.get_children():
+		var found := _group_head(child, head_name)
+		if found != null:
+			return found
+	return null
+
+## The ledger row naming `item_name` — the INNERMOST matching `HBoxContainer`, the same walk
+## `_row_alpha` needs and for the same reason: the zones row is an `HBoxContainer` too, and so is every
+## grade line inside an Owned cell, so a match taken from the top answers about the wrong node.
+func _ledger_row(node: Node, item_name: String) -> Node:
+	for child in node.get_children():
+		var found := _ledger_row(child, item_name)
+		if found != null:
+			return found
+	if node is HBoxContainer and _label_texts(node).has(item_name):
+		return node
+	return null
+
+## Every text inside ONE row's Owned cell, reached through the cell's own meta. An empty array when
+## the row or its cell was not found, which fails a positive claim honestly.
+func _owned_cell_texts(panel: Node, item_name: String) -> Array:
+	var row := _ledger_row(panel, item_name)
+	if row == null:
+		return []
+	var cell := _owned_cell(row)
+	return _label_texts(cell) if cell != null else []
+
+func _owned_cell(node: Node) -> Node:
+	if node.has_meta(HudCraftingVocab.OWNED_CELL_META):
+		return node
+	for child in node.get_children():
+		var found := _owned_cell(child)
+		if found != null:
+			return found
+	return null
+
+## Every text in EVERY Owned cell the panel rendered — the scope the tier-word negative is asked over.
+func _all_owned_cell_texts(node: Node) -> Array:
+	var texts: Array = []
+	if node.has_meta(HudCraftingVocab.OWNED_CELL_META):
+		return _label_texts(node)
+	for child in node.get_children():
+		texts.append_array(_all_owned_cell_texts(child))
+	return texts
+
+## What an Owned cell says BESIDE its grade lines — everything that is neither a `×n` count nor one of
+## the published legend's band words. On a row the sim gave a note that is the note and nothing else;
+## on a row it gave none that is empty. Derived rather than listed, so a cell growing a line nobody
+## asked for shows up here instead of slipping past a `has()`.
+func _non_grade_texts(cell_texts: Array) -> Array:
+	var bands: Array = []
+	for band in _characteristic_bands():
+		bands.append(String((band as Dictionary).get("name", "")))
+	var rest: Array = []
+	for text_variant in cell_texts:
+		var text := String(text_variant)
+		if text.begins_with("×") or bands.has(text):
+			continue
+		rest.append(text)
+	return rest
+
+func _count_matching(texts: Array, needle: String) -> int:
+	var found := 0
+	for text in texts:
+		if String(text) == needle:
+			found += 1
+	return found
+
+func _count_starting_with(texts: Array, prefix: String) -> int:
+	var found := 0
+	for text in texts:
+		if String(text).begins_with(prefix):
+			found += 1
+	return found
+
+## Every note the two-tier fixture publishes — the whitelist the tier-word negative subtracts, since a
+## note is the one place a tier word is meant to reach a cell.
+func _published_owned_notes() -> Array:
+	var notes: Array = []
+	for offer in _two_tier_offers():
+		var note := String((offer as Dictionary).get("owned_note", ""))
+		if note != "" and not notes.has(note):
+			notes.append(note)
+	return notes
+
+func _batches_carrying_a_tier(batches: Array) -> int:
+	var carrying := 0
+	for batch in batches:
+		if String((batch as Dictionary).get("tier_id", "")) != "":
+			carrying += 1
+	return carrying
+
 func _has_prefix(texts: Array, prefix: String) -> bool:
 	for text in texts:
 		if String(text).begins_with(prefix):
@@ -958,7 +1220,7 @@ func _bench() -> Dictionary:
 	return {
 		"recipe_id": "baskets", "display_name": "Baskets", "workers": BENCH_CREW,
 		"progress": 3.0, "work": 5.0, "teaches": "weaving", "blocked_reason": "",
-		"shortfalls": [], "items_completed": 1, "drawn": true, "output_grade": "standard",
+		"shortfalls": [], "items_completed": 1, "drawn": true, "output_grade": "good",
 	}
 
 func _idle_bench() -> Dictionary:
@@ -975,34 +1237,42 @@ func _craft_offers() -> Array:
 		_offer("wayfinding", "Wayfinding gear", HudCraftingVocab.GROUP_KIT, "wayfinding", true,
 			"Scouts see 1 tile, not 2", HudCraftingVocab.SEVERITY_DANGER),
 		_offer("baskets", "Baskets", HudCraftingVocab.GROUP_KIT, "baskets", true,
-			"Reed, no loom → standard", HudCraftingVocab.SEVERITY_NEUTRAL, [], true),
+			"Reed, no loom → fair", HudCraftingVocab.SEVERITY_NEUTRAL, [], true),
 		_offer("spears", "Spears", HudCraftingVocab.GROUP_KIT, "spears", false,
 			"Short 4.9 bone", HudCraftingVocab.SEVERITY_DANGER,
 			[{"material_id": "bone", "required": 8.0, "held": 3.1, "short": 4.9}]),
 		_offer("husbandry_gear", "Husbandry gear", HudCraftingVocab.GROUP_KIT, "husbandry_gear", true,
-			"Hide + tanning frame → standard", HudCraftingVocab.SEVERITY_NEUTRAL),
+			"Hide + tanning frame → good", HudCraftingVocab.SEVERITY_NEUTRAL),
 		_offer("sled", "Sled", HudCraftingVocab.GROUP_KIT, "sled", true,
-			"Mammoth hide → fine", HudCraftingVocab.SEVERITY_NEUTRAL),
+			"Mammoth hide → excellent", HudCraftingVocab.SEVERITY_NEUTRAL),
 		_offer("clubs", "Clubs", HudCraftingVocab.GROUP_KIT, "clubs", false,
 			"Short 6.9 bone", HudCraftingVocab.SEVERITY_DANGER,
 			[{"material_id": "bone", "required": 10.0, "held": 3.1, "short": 6.9}]),
 		_offer("traps", "Traps", HudCraftingVocab.GROUP_KIT, "traps", true,
 			"Not needed yet", HudCraftingVocab.SEVERITY_NEUTRAL),
 		_offer("loom", "Loom", HudCraftingVocab.GROUP_TOOL, "loom", true,
-			"Unlocks fine fibre work", HudCraftingVocab.SEVERITY_GOOD),
+			"Unlocks excellent fibre work", HudCraftingVocab.SEVERITY_GOOD),
 		_offer("bone_awl", "Bone awl", HudCraftingVocab.GROUP_TOOL, "bone_awl", true,
 			"Bone costs −25%", HudCraftingVocab.SEVERITY_NEUTRAL),
 		_offer("cordage", "Cordage", HudCraftingVocab.GROUP_STOCK, "", true,
 			"Reed .70 → strong", HudCraftingVocab.SEVERITY_NEUTRAL),
 	]
 
+## **EVERY OFFER CARRIES ITS GROUP HEAD AND ITS OWNED NOTE**, both resolved sim-side. On the shipped
+## one-tier roster the head is `flint` at rank 0 for every equipment recipe and the note is `""` on
+## every one of them — a note is published only when what the band carries disagrees with what it
+## could now make, which one tier can never produce. The second-tier fixture below is what stages the
+## disagreement.
 func _offer(recipe_id: String, display_name: String, group: String, output_item_id: String,
 		available: bool, reason: String, severity: String, shortfalls: Array = [],
-		on_bench: bool = false) -> Dictionary:
+		on_bench: bool = false, tier_name: String = TIER_FLINT, tier_rank: int = TIER_FLINT_RANK,
+		owned_note: String = "") -> Dictionary:
 	return {
 		"recipe_id": recipe_id, "display_name": display_name, "group": group,
 		"output_item_id": output_item_id, "available": available, "reason": reason,
 		"severity": severity, "shortfalls": shortfalls, "output_grade": "", "on_bench": on_bench,
+		"output_tier_name": tier_name if output_item_id != "" else "",
+		"output_tier_rank": tier_rank, "owned_note": owned_note,
 	}
 
 ## What the band OWNS, and how much life is in it. **`count == 0` means it owns none**, and `life` is
@@ -1010,21 +1280,70 @@ func _offer(recipe_id: String, display_name: String, group: String, output_item_
 func _equipment_batches() -> Array:
 	return [
 		_batch_row("wayfinding", "", "", 0, 0.0, "Worn out", HudCraftingVocab.LIFE_SEVERITY_DANGER),
-		_batch_row("baskets", "flint", "standard", 4, 8.0, "~1 turn left",
+		_batch_row("baskets", TIER_FLINT, "good", 4, 8.0, "~1 turn left",
 			HudCraftingVocab.LIFE_SEVERITY_DANGER),
-		_batch_row("spears", "flint", "standard", 6, 34.0, "~15 turns left",
+		_batch_row("spears", TIER_FLINT, "good", 6, 34.0, "~15 turns left",
 			HudCraftingVocab.LIFE_SEVERITY_WARN),
-		_batch_row("husbandry_gear", "flint", "standard", 2, 62.0, "~28 turns left",
+		_batch_row("husbandry_gear", TIER_FLINT, "good", 2, 62.0, "~28 turns left",
 			HudCraftingVocab.LIFE_SEVERITY_HEALTHY),
-		_batch_row("sled", "flint", "standard", 1, 71.0, "~42 turns left",
+		_batch_row("sled", TIER_FLINT, "fair", 1, 71.0, "~42 turns left",
 			HudCraftingVocab.LIFE_SEVERITY_HEALTHY),
-		_batch_row("clubs", "flint", "fine", 5, 96.0, "48 raids left",
+		_batch_row("clubs", TIER_FLINT, "excellent", 5, 96.0, "48 raids left",
 			HudCraftingVocab.LIFE_SEVERITY_HEALTHY),
-		_batch_row("traps", "flint", "standard", 8, 100.0, "Untouched",
+		_batch_row("traps", TIER_FLINT, "good", 8, 100.0, "Untouched",
 			HudCraftingVocab.LIFE_SEVERITY_HEALTHY),
 		_batch_row("loom", "", "", 0, 0.0, "Never made", HudCraftingVocab.LIFE_SEVERITY_WARN),
-		_batch_row("bone_awl", "flint", "standard", 1, 47.0, "~19 turns left",
+		_batch_row("bone_awl", TIER_FLINT, "poor", 1, 47.0, "~19 turns left",
 			HudCraftingVocab.LIFE_SEVERITY_WARN),
+	]
+
+# ---- the SECOND-TIER fixture --------------------------------------------------------------------
+
+## **A BAND THAT KNOWS BRONZE AND IS STILL CARRYING FLINT.** The one shape in which the head and the
+## cell can disagree, which is the readout the Owned column exists for — and the only one in which the
+## sim publishes an `ownedNote` at all. Everything in it is what the sim would have resolved: the note
+## verbatim, the tier ranks its own, the grades the shared `characteristic_bands` words.
+func _two_tier_band() -> Dictionary:
+	var band := _crafting_band()
+	band["craft_offers"] = _two_tier_offers()
+	band["equipment_batches"] = _two_tier_equipment_batches()
+	return band
+
+## Two heads over the kit group — `Bronze` above `Flint`, rank descending — plus the bench tools' own.
+## Traps sit at flint because their recipe has no bronze rung, which is what makes the fold claim a
+## statement about ONE group rather than about the table.
+func _two_tier_offers() -> Array:
+	return [
+		_offer("spears", "Spears", HudCraftingVocab.GROUP_KIT, "spears", true,
+			"Bone + bone awl → good", HudCraftingVocab.SEVERITY_NEUTRAL, [], false,
+			TIER_BRONZE, TIER_BRONZE_RANK),
+		_offer("clubs", "Clubs", HudCraftingVocab.GROUP_KIT, "clubs", true,
+			"Bone → good", HudCraftingVocab.SEVERITY_NEUTRAL, [], false,
+			TIER_BRONZE, TIER_BRONZE_RANK, TWO_TIER_CLUBS_NOTE),
+		_offer("traps", "Traps", HudCraftingVocab.GROUP_KIT, "traps", true,
+			"Reed → fair", HudCraftingVocab.SEVERITY_NEUTRAL, [], false,
+			TIER_FLINT, TIER_FLINT_RANK),
+		_offer("loom", "Loom", HudCraftingVocab.GROUP_TOOL, "loom", true,
+			"Unlocks excellent fibre work", HudCraftingVocab.SEVERITY_GOOD, [], false,
+			TIER_FLINT, TIER_FLINT_RANK),
+	]
+
+## **THE SPEARS ARE THREE BATCHES AND TWO LINES.** Two of them are `good` at different wear and merge
+## into one `×5`; the third is `excellent` and gets its own. The clubs are one batch at the OLDER tier,
+## which is what the note is reporting. Every owned batch states its `tier_id`, so the negative that no
+## tier word reaches a cell is asked over data that could leak one.
+func _two_tier_equipment_batches() -> Array:
+	return [
+		_batch_row("spears", TIER_BRONZE, "good", TWO_TIER_SPEARS_GOOD_A, 71.0, "~42 turns left",
+			HudCraftingVocab.LIFE_SEVERITY_HEALTHY),
+		_batch_row("spears", TIER_BRONZE, "good", TWO_TIER_SPEARS_GOOD_B, 34.0, "~15 turns left",
+			HudCraftingVocab.LIFE_SEVERITY_WARN),
+		_batch_row("spears", TIER_BRONZE, "excellent", TWO_TIER_SPEARS_EXCELLENT, 96.0,
+			"48 raids left", HudCraftingVocab.LIFE_SEVERITY_HEALTHY),
+		_batch_row("clubs", TIER_FLINT, "poor", TWO_TIER_CLUBS_POOR, 47.0, "~19 turns left",
+			HudCraftingVocab.LIFE_SEVERITY_WARN),
+		_batch_row("traps", "", "", 0, 0.0, "Never made", HudCraftingVocab.LIFE_SEVERITY_WARN),
+		_batch_row("loom", "", "", 0, 0.0, "Never made", HudCraftingVocab.LIFE_SEVERITY_WARN),
 	]
 
 func _batch_row(item_id: String, tier_id: String, grade: String, count: int, remaining: float,

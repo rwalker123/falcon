@@ -25,25 +25,73 @@ they can read differently, and a client deriving both from a boolean cannot tell
 panel therefore renders the reason as it arrives, tinted by the published severity, and composes no
 sentence of its own — least of all *"cannot craft"*.
 
-## The three readout rules the design is built on
+## The readout rules the design is built on
 
-- **THE LEDGER CARRIES NO CONDITION COLUMN — its four are Item · Tier · Rebuild costs · action.** How
+- **THE LEDGER CARRIES NO CONDITION COLUMN — its four are Item · Owned · Rebuild costs · action.** How
   worn a thing is has ONE home: the Band panel's WORKFORCE role cards, which state the condition of
   the item behind each kit beside the role that kit sets, off `kit_item_conditions`. That is where a
   player asks *"how worn is my gear"*; this panel answers *"what does it cost to rebuild"*, and a
   second copy of condition here is one fact in two places free to disagree. What the ledger keeps of
-  the item is the **tier chip** — the grade, and for an item the band owns none of, the fact that it
-  owns none.
+  the item is the **Owned cell** — what the band has, and how good it is.
 - **OWNERSHIP IS `count`, NEVER `remaining == 0`.** A batch that runs out of units is REMOVED, so a
-  worn-out item and one the band never made both read `remaining 0` — which is why the chip is keyed
+  worn-out item and one the band never made both read `remaining 0` — which is why the cell is keyed
   off `count` and says what owning none MEANS (*Bare hands* for a kit, *Not made* for a tool) rather
   than re-deriving a step-down. **It is a statement of ownership, and that is all this surface owes:**
   worn-out and never-made are a distinction about WEAR, so they are told apart where wear is reported.
+- **OWNING UNITS IS ONE LINE PER GRADE, BEST FIRST, `×3` AND A CHIP.** Counts are summed across the
+  batches sharing a grade — two `good` batches at different wear are one line of `×5`, wear not being
+  this panel's fact — and two grades of one item get a line each, because `×5 · excellent` would be a
+  lie and every rule for collapsing to one misleads: the best flatters, the worst alarms, and the
+  batch actually in service is chosen by **wear, not quality**, so it would move for a reason
+  unrelated to what the row claims. A STOCK recipe owns nothing and states what a pass yields instead
+  (`→ 6 cordage`, from the recipe's outputs).
+- **THE GRADE CHIP'S TINT IS THE BAND'S POSITION IN THE PUBLISHED LEGEND, never a match on its name.**
+  `characteristic_bands` rides the wire ascending and the material rail already takes its
+  strength/weakness reading off its ENDS; the chip resolves by INDEX — last rung `HEALTHY`, the rung
+  below it `SIGNAL`, the first `INK_FAINT`, anything between `INK_DIM`. A `{"excellent": HEALTHY}`
+  table would be a client-side copy of a vocabulary the sim owns and would render every chip neutral
+  the day a band is renamed or a fifth added. **A grade the legend does not contain draws no chip** —
+  a start-stocked unit publishes `""`, and a spawn's kit was never on a bench and makes no quality
+  claim.
 - **SORTED BY URGENCY — worn first, untouched last, DIMMED rather than hidden.** The player's real
   question is *"what am I about to lose?"*, so the ledger opens on the answer; a kit you own and
   never use is information too. The key is the published `life_severity` rank, then `remaining`
   ascending, so a spent row leads its severity band. **Condition therefore decides the ORDER while
   the table prints none of it** — a ranking is a different use from a readout and restates nothing.
+  It ranks on the item's FIRST batch, in wire order: the sort and the shrug test are readings of
+  wear, which is the axis this table does not report, while the Owned cell reads every batch.
+
+## TIER IS A FOLDABLE GROUP HEAD, AND IT IS THE HEAD THAT MAY DISAGREE WITH THE CELL
+
+**The head is the tier a row would be MADE at; the cell is what the band HAS.** A column could only
+ever spend its width saying `flint` on every row for the whole early game; a head says it once and can
+**fold away**, which is what a column can never do. The two can disagree, and that disagreement is the
+readout — a Clubs row under **Bronze** whose cell reads *carrying flint · poor*.
+
+- **The `kit` group SPLITS by `outputTierName`**, one head per distinct tier, ordered by
+  **`outputTierRank` DESCENDING** — newest first. The rank is the sim's, and it is the client's only
+  honest ordering: alphabetical would put Iron above Bronze. On the shipped one-tier roster that is a
+  single `Flint` head over every kit row; once minerals land it is `Bronze` above it. A recipe makes
+  the best tier the faction knows, so a row MOVES between heads rather than splitting.
+- **`tool` heads `Bench tools` and `stock` heads `Materials`**, after the tier heads, and all three are
+  built by ONE head builder so they read as one family. Both carried a trailing explanation
+  (`Bench tools — each stretches one material`) until the heads became foldable: a caret invites a
+  click, and a clause after the name reads as part of what is being folded away. The head is a name
+  and a caret.
+- **The whole head is the click target** — a `Button` stripped of its chrome, not a Label with a
+  glyph beside it, because a head that responded only on its caret is a head you have to aim at. A
+  folded head keeps its name, swaps `▾` for `▸` and DIMS, which is the difference between folding a
+  group away and losing it.
+- **The fold state is a plain member keyed by head NAME, and it does not breach
+  "`render(payload)` is its whole input"** — it is VIEW state with exactly the standing of the scroll
+  offset the panel already carries across a rebuild. Keyed by name rather than by index so it survives
+  a band switch, whose ledger may hold a different set of heads in a different order.
+
+**`ownedNote` IS THE ONLY ROUTE BY WHICH A TIER WORD REACHES THE CELL.** It is the sim's resolved
+*"what you carry is older than what you could now make"* line (`carrying flint · poor`, `last flint
+set wore out`), published only when it is news, rendered VERBATIM on its own line under the grade
+lines in the warn ink. Nothing composes one, nothing re-derives one, and the row's `tier_id` is
+rendered nowhere — a cell showing it would be the retired column again, one field lower down.
 
 > The design's fuel-gauge rule is unchanged and still governs every surface that *does* show
 > condition (`docs/plan_crafting_and_materials.md` §7): a spear at 34% is exactly as deadly as one at
@@ -66,25 +114,28 @@ which is the conservative direction — nothing is hidden, one row merely reads 
 
 ## The ledger row is a JOIN, and neither half can answer alone
 
-`CraftOffer.outputItemId` is the key. The **offer** supplies the name, the group, the refusal and the
-shortfalls; **`equipment_batches` grouped by `itemId`** supplies the tier, the grade and the count
-(plus `life_severity` + `remaining`, which the urgency sort ranks on and nothing renders); the
-**recipe book** supplies the rebuild cost. That is why the table is built from all three rather than
-off any one array.
+`CraftOffer.outputItemId` is the key. The **offer** supplies the name, the group, the refusal, the
+shortfalls, the group HEAD (`outputTierName` + `outputTierRank`) and the owned NOTE;
+**`equipment_batches` grouped by `itemId`** supplies the grades and the counts — ALL of an item's
+batches, not the first, since one item may be held at two grades — plus `life_severity` + `remaining`,
+which the urgency sort ranks on and nothing renders; the **recipe book** supplies the rebuild cost.
+That is why the table is built from all three rather than off any one array.
 
-**Three published `equipmentBatches` fields are read by NO client surface** — `life`, `quanta_left`
-and `quantum_noun`, the condition WORDING and its unit. They are still correct and still on the wire;
-the role cards answer condition off `kit_item_conditions` instead, so nothing consumes them today.
+**FOUR published `equipmentBatches` fields are read by NO client surface** — `life`, `quanta_left`
+and `quantum_noun` (the condition WORDING and its unit), and **`tier_id`**. The first three are still
+correct and still on the wire; the role cards answer condition off `kit_item_conditions` instead. The
+fourth is deliberate: the tier a row would be made at is the group HEAD, and the tier the band carries
+reaches the cell only through the sim's resolved `ownedNote`, so a cell reading `tier_id` would say
+`flint` on every row of the early game — the column the head replaced.
 
 - **The cost cell prefers a shortfall's `required` over the recipe's input amount** where the offer
   publishes one: it is already net of the bench tool's material efficiency, and it is the number the
   refusal beside it was computed against. A short material is tinted so the eye finds it without
   reading the button.
-- **The tier chip when the band owns none is keyed off the published `group`** — `Bare hands` for a
-  kit, `Not made` for a tool — and a STOCK recipe's cell states what a pass yields instead
-  (`→ 6 cordage`, from the recipe's outputs). The wire carries no chip for a tier that does not
-  exist, because there are no units at a tier; what the panel says is what owning none MEANS for that
-  group, which is a statement of ownership rather than a re-derived step-down.
+- **The Owned cell when the band owns none is keyed off the published `group`** — `Bare hands` for a
+  kit, `Not made` for a tool. What the panel says is what owning none MEANS for that group, which is a
+  statement of ownership rather than a re-derived step-down; `×0` is the same fact and the worse
+  sentence.
 - **The Item cell's second line is a join of published fields, never an authored table**: a TOOL
   names the material it bounds (`materials[].tool_item_id`), a STOCK recipe names the characteristic
   its input is judged on (`inputs[].reads_axis`), and a KIT row names the craft that makes it, at the
@@ -175,7 +226,7 @@ overflowing ledger fills the room exactly and scrolls inside it; one that fits i
 height with room to spare. Neither reading is the claim on its own — *"it clears the panel"* passes
 on a card shrunk to nothing — so the property worth stating is that **no room is left over while rows
 are still hidden**, with the scroll's own liveness saying which of the two cases a frame is in.
-**The WIDTH is deliberately not part of it**: the ledger's Tier, Rebuild-costs and action columns are
+**The WIDTH is deliberately not part of it**: the ledger's Owned, Rebuild-costs and action columns are
 fixed and only the Item column expands, so a card widened toward a short-and-wide room would spend
 every pixel on the one column that does not wrap and buy back no height at all.
 
@@ -282,9 +333,9 @@ craft's name is the sim's `display_name` because the client never maps a craft i
 
 | Script | Purpose |
 |--------|---------|
-| `ui/hud/CraftingPanel.gd` | The surface (`AutoSizingPanel`): header + `Band:` picker/cycler, the 250px material rail, the bench well and its crew stepper, and the four-column ledger (Item · Tier · Rebuild costs · action) in three groups. Emits `closed` / `band_selected` / `cycle_requested` / `make_requested` / `crew_changed` and holds no snapshot state — `render(payload)` is its whole input. Builds its rows as a VBox of `HBoxContainer`s rather than a `GridContainer` because a GROUP HEAD spans the width and a grid cannot span. **The ACTION column is sized by the refusal under the button, not by the button** — a published `reason` is a whole clause, and it was the column's 132px that wrapped every one of them onto two lines and inflated every row |
+| `ui/hud/CraftingPanel.gd` | The surface (`AutoSizingPanel`): header + `Band:` picker/cycler, the 250px material rail, the bench well and its crew stepper, and the four-column ledger (Item · Owned · Rebuild costs · action) in FOLDABLE groups — one head per kit TIER, rank-descending, then `Bench tools` and `Materials`, all three built by one head builder. Emits `closed` / `band_selected` / `cycle_requested` / `make_requested` / `crew_changed` and holds no snapshot state — `render(payload)` is its whole input. Builds its rows as a VBox of `HBoxContainer`s rather than a `GridContainer` because a GROUP HEAD spans the width and a grid cannot span. **The ACTION column is sized by the refusal under the button, not by the button** — a published `reason` is a whole clause, and it was the column's 132px that wrapped every one of them onto two lines and inflated every row |
 | `ui/hud/CraftingPanelController.gd` | `RefCounted` controller: owns the panel node (parented into the HUD CanvasLayer — a `RefCounted` cannot `add_child`), holds the four per-world catalogues, resolves the subject band by ENTITY each snapshot, and turns the panel's five signals into `set_bench_requested` / `bench_crew_requested`. It also carries the **room** the card is bounded by (`HudLayer.floating_room`, handed in through `setup` and set on the panel as `room_bounds`) — handed down rather than looked up, a `RefCounted` reaching into its host's tree being the coupling this pattern exists to avoid — and exposes **`refit_room()`**, which `Hud.set_overlay_inset` calls when that room changes shape under an open card. `HudLayer` holds it as `_crafting`, relays both signals, and refreshes it from the same per-snapshot seam the Band/City dock uses |
-| `ui/hud/hud_crafting_vocab.gd` | The vocabulary leaf (`HudCraftingVocab`) — ALL-`const`, zero funcs, zero vars: the wire keys, the chrome words, the severity→tint table and the geometry measured off the prototype. **Nothing here is a refusal, a grade or a shortfall** — those are the sim's — and there is no condition wording at all, that reading belonging to the role cards. `BandCityPanel` reads its `LAUNCH_GLYPH` / `LAUNCH_TOOLTIP` back, so the registered launcher and the panel it opens cannot drift |
-| `tools/ui_preview/chapters/crafting_bench.gd` | The harness chapter: the prototype's own band (every ledger state at once), a bare band with an idle bench, the bench-bound band that separates idle from benchable, and the RESERVED-EDGE state. Its assertions are the claims no picture can carry — the refusal rendered verbatim with its number, the urgency order, the shrug dimmed **while a used row is not** (asserted as a pair, since a panel dimming every neutral row satisfies the first half alone), and the ownership/condition pair: the tier chip states ownership **and** no condition wording reaches the ledger, over a fixture that deliberately keeps publishing `life` so the negative is not vacuous. **`crafting_panel_reserved_edges` is the height bound**: `Main` is never instanced here, so the chapter pushes a left and a bottom reservation into `Hud.set_reserved_inset` by hand (the `event_dock` chapter's idiom), asserts the card's rect sits inside `layout_root`'s on both axes with its ledger scrolling internally, and releases them again. **The "it got shorter than state 1" claim is the vacuity guard** — every rect test passes trivially on a card that already fitted. **`crafting_panel_event_bar` is the OVERLAY bound**, and it is a different failure: it injects a real `EventDockPanel` docked TOP, connects `occupancy_changed` to `Hud.set_overlay_inset`, opens the card while the bar is SUPPRESSED, and only then un-suppresses it — so what is under test is the re-fit, not the opening. It keeps the bottom reservation, because a card centred in a tall room clears a top bar for free and the collision only exists once the ledger fills its room; that is why it was reported from play and not from here. Two vacuity guards carry it: the card's pre-bar top edge lay inside the bar's band, and the two rects share a horizontal one. Sabotage-verified by dropping the overlay term from the room's top edge — the clearance claim fails at `card top 12 vs bar bottom 66` while both guards stay green. **Three more states stand a REAL `BandCityPanel` up** rather than pushing a depth, since the reservation, the collapse and the HUD's yield verdict all have to be the panel's own answers: `crafting_panel_band_dock_bottom` (docked BOTTOM, fanned out through `Main.band_dock_overlays_hud` + `Main.push_hud_strip` so the harness restates neither), `crafting_panel_co_edge_bottom` (the bar on that SAME edge, displaced past it) and `crafting_panel_band_dock_collapsed` (railed under an OPEN card, so the room GROWS — the direction a re-fit that only ever shrank would pass). Each pairs a clearance claim with "no room is left over while rows are still hidden" and declares which of the two fit cases it is staging; the co-edge one additionally states the MAXIMUM's premise as the inequality it rests on. **A fourth, PNG-less, isolates the reserved half**: every move above changes both registries at once, so a bare reservation is pushed under a second id and the open card must shorten for it. Sabotage-verified three ways, each failing a DISJOINT subset — dropping `_refit_floating_cards` from `set_reserved_inset` fails only that isolated pair (`1030 → 1030 for a 360 strip`); dropping the overlay half of `push_hud_strip` puts the card 274px through the strip (`card bottom 1091 vs strip top 817`), which is the reported defect, while the co-edge frame correctly stays green because the bar's extent already covers the panel; and taking `_edge_offset` out of `occupied_extent()` fails the co-edge frame alone (`card bottom 805 vs bar top 751`). **A last PNG-less block is the RE-RENDER pair, and its two halves need opposite fixtures** — a ledger only scrolls when it did not fit, and a card that did not fit is already at the room's top edge, where a park moves it nowhere. So the RECT is asked of the bare band in an undocked room (card top 450 against a room top of 12, and 999px wide against a 960 nominal — both stated as preconditions, since a card filling its room or never wider than its nominal cannot be seen to jump), read the instant `refresh_snapshot` returns rather than after it settles, and the OFFSET is asked of the prototype's band in a room a reservation has shortened, ticked with `_ticked_crafting_band` because Next Turn changes the payload. Sabotage-verified: parking before the fit fails the rect claim alone at `450 → 12`, re-applying the nominal width unconditionally fails it alone at `999 → 960`, and `centred_in_room = false` fails three — the two "no room left over while rows are hidden" claims (the clamp the ceiling protects against) plus the filled card's rect, which the re-render RATCHETS (330 tall before it, 549 after — a card clamped by its own centring, then re-clamped from the higher top edge that left it). **The scroll carry-across is the one thing NO sabotage fails**: measured, the offset already survives the tear-down for the reason recorded above, so the assertion pins the property rather than the mechanism |
+| `ui/hud/hud_crafting_vocab.gd` | The vocabulary leaf (`HudCraftingVocab`) — ALL-`const`, zero funcs, zero vars: the wire keys, the chrome words, the severity→tint table and the geometry measured off the prototype. **Nothing here is a refusal, a grade, a shortfall, a tier word or an owned note** — those are the sim's — and there is no condition wording at all, that reading belonging to the role cards. It holds the two OWNERSHIP words (`Bare hands` / `Not made`, keyed off the published `group`), the four legend-INDEX tints the grade chip resolves through, and the caret pair + `GROUP_HEAD_META` / `OWNED_CELL_META` the harness reaches a head and a cell by. `BandCityPanel` reads its `LAUNCH_GLYPH` / `LAUNCH_TOOLTIP` back, so the registered launcher and the panel it opens cannot drift |
+| `tools/ui_preview/chapters/crafting_bench.gd` | The harness chapter: the prototype's own band (every ledger state at once), a bare band with an idle bench, the bench-bound band that separates idle from benchable, and the RESERVED-EDGE state. Its assertions are the claims no picture can carry — the refusal rendered verbatim with its number, the urgency order, the shrug dimmed **while a used row is not** (asserted as a pair, since a panel dimming every neutral row satisfies the first half alone), and the ownership/condition pair: the Owned cell states ownership **and** no condition wording reaches the ledger, over a fixture that deliberately keeps publishing `life` so the negative is not vacuous. **`crafting_panel_two_tiers` + `crafting_panel_group_folded` are the OWNED readout**, and they need a second tier because the shipped one-tier roster can never make a head disagree with a cell and therefore can never produce an `ownedNote` at all: a `Bronze` head over Clubs the band still carries in flint, above a `Flint` head over Traps. Five claims, every one a PAIRING, since a one-sided assertion passes on a panel that lost the thing entirely — two grades render a line each **while** a single-grade item renders exactly one; the note is verbatim on the row that has one **and** the row that has none carries nothing beside its grades (phrased as *everything that is not a count or a legend word*, because a `has()` on the first row is satisfied by a panel COMPOSING a note of its own); `Bare hands` on a kit **and** `Not made` on a tool; folding hides ITS rows **while** another group's stay visible, the head remains, and the reverse toggle restores them; and no tier word reaches an Owned CELL except through the note — scoped to the cells by `OWNED_CELL_META`, since the head is a tier word by design and a panel-wide scan cannot tell the two apart, over a fixture publishing a `tier_id` on every batch it owns. Sabotage-verified five ways, each failing a DISJOINT subset: collapsing the cell to one grade line fails the two-grade claim alone; dropping the note fails the verbatim claim alone; **composing the note client-side out of `tier_id` + `grade` — the forbidden implementation — fails the no-note row AND the tier-word negative, and nothing else**; printing one ownership wording everywhere fails that pair alone; a fold that never bites fails the hides-its-rows claim and the folded-caret claim while the other-group and reverse-toggle halves correctly stay green; and a fold that hides the WHOLE table fails only the other-group half, which is what that half is for. **`crafting_panel_reserved_edges` is the height bound**: `Main` is never instanced here, so the chapter pushes a left and a bottom reservation into `Hud.set_reserved_inset` by hand (the `event_dock` chapter's idiom), asserts the card's rect sits inside `layout_root`'s on both axes with its ledger scrolling internally, and releases them again. **The "it got shorter than state 1" claim is the vacuity guard** — every rect test passes trivially on a card that already fitted. **`crafting_panel_event_bar` is the OVERLAY bound**, and it is a different failure: it injects a real `EventDockPanel` docked TOP, connects `occupancy_changed` to `Hud.set_overlay_inset`, opens the card while the bar is SUPPRESSED, and only then un-suppresses it — so what is under test is the re-fit, not the opening. It keeps the bottom reservation, because a card centred in a tall room clears a top bar for free and the collision only exists once the ledger fills its room; that is why it was reported from play and not from here. Two vacuity guards carry it: the card's pre-bar top edge lay inside the bar's band, and the two rects share a horizontal one. Sabotage-verified by dropping the overlay term from the room's top edge — the clearance claim fails at `card top 12 vs bar bottom 66` while both guards stay green. **Three more states stand a REAL `BandCityPanel` up** rather than pushing a depth, since the reservation, the collapse and the HUD's yield verdict all have to be the panel's own answers: `crafting_panel_band_dock_bottom` (docked BOTTOM, fanned out through `Main.band_dock_overlays_hud` + `Main.push_hud_strip` so the harness restates neither), `crafting_panel_co_edge_bottom` (the bar on that SAME edge, displaced past it) and `crafting_panel_band_dock_collapsed` (railed under an OPEN card, so the room GROWS — the direction a re-fit that only ever shrank would pass). Each pairs a clearance claim with "no room is left over while rows are still hidden" and declares which of the two fit cases it is staging; the co-edge one additionally states the MAXIMUM's premise as the inequality it rests on. **A fourth, PNG-less, isolates the reserved half**: every move above changes both registries at once, so a bare reservation is pushed under a second id and the open card must shorten for it. Sabotage-verified three ways, each failing a DISJOINT subset — dropping `_refit_floating_cards` from `set_reserved_inset` fails only that isolated pair (`1030 → 1030 for a 360 strip`); dropping the overlay half of `push_hud_strip` puts the card 274px through the strip (`card bottom 1091 vs strip top 817`), which is the reported defect, while the co-edge frame correctly stays green because the bar's extent already covers the panel; and taking `_edge_offset` out of `occupied_extent()` fails the co-edge frame alone (`card bottom 805 vs bar top 751`). **A last PNG-less block is the RE-RENDER pair, and its two halves need opposite fixtures** — a ledger only scrolls when it did not fit, and a card that did not fit is already at the room's top edge, where a park moves it nowhere. So the RECT is asked of the bare band in an undocked room (card top 450 against a room top of 12, and 999px wide against a 960 nominal — both stated as preconditions, since a card filling its room or never wider than its nominal cannot be seen to jump), read the instant `refresh_snapshot` returns rather than after it settles, and the OFFSET is asked of the prototype's band in a room a reservation has shortened, ticked with `_ticked_crafting_band` because Next Turn changes the payload. Sabotage-verified: parking before the fit fails the rect claim alone at `450 → 12`, re-applying the nominal width unconditionally fails it alone at `999 → 960`, and `centred_in_room = false` fails three — the two "no room left over while rows are hidden" claims (the clamp the ceiling protects against) plus the filled card's rect, which the re-render RATCHETS (330 tall before it, 549 after — a card clamped by its own centring, then re-clamped from the higher top edge that left it). **The scroll carry-across is the one thing NO sabotage fails**: measured, the offset already survives the tear-down for the reason recorded above, so the assertion pins the property rather than the mechanism |
 
 ---

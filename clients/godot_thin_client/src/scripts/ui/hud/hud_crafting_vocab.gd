@@ -63,6 +63,15 @@ const OFFER_REASON_KEY := "reason"
 const OFFER_SEVERITY_KEY := "severity"
 const OFFER_SHORTFALLS_KEY := "shortfalls"
 const OFFER_ON_BENCH_KEY := "on_bench"
+## **THE GROUP HEAD** — the tier this recipe would be MADE at right now, and its rank in the item's
+## own tier list. The kit group splits by the name and orders its heads by the rank DESCENDING, which
+## is the only honest ordering a client has: alphabetical would put Iron above Bronze.
+const OFFER_OUTPUT_TIER_NAME_KEY := "output_tier_name"
+const OFFER_OUTPUT_TIER_RANK_KEY := "output_tier_rank"
+## **WHAT THE BAND CARRIES, SAID ONLY WHEN IT IS NEWS** — `carrying flint · poor`, `last flint set
+## wore out`, `""` the rest of the time. It is the ONE route by which a tier word reaches the Owned
+## cell: resolved sim-side, rendered verbatim, never composed and never re-derived here.
+const OFFER_OWNED_NOTE_KEY := "owned_note"
 
 ## `MaterialShortfall` — the number a refusal names. `required` is already net of the bench tool's
 ## material efficiency, which is why the cost cell prefers it over the recipe's own input amount.
@@ -78,9 +87,13 @@ const SHORTFALL_SHORT_KEY := "short"
 ## Band panel's WORKFORCE role cards, off `kit_item_conditions` — and this panel answers what a
 ## rebuild costs, so `life`, `quanta_left` and `quantum_noun` have no key here. The two condition
 ## numbers below are read as a RANKING and as a threshold, never printed.
+##
+## **`tier_id` HAS NO KEY HERE EITHER.** The tier a row would be MADE at is the ledger's group head
+## (`OFFER_OUTPUT_TIER_NAME_KEY`), and the tier the band CARRIES reaches the Owned cell only through
+## the sim's resolved `ownedNote` — and only when the two disagree. A cell rendering this field would
+## say `flint` on every row of the early game, which is exactly the column the head replaced.
 const BAND_EQUIPMENT_BATCHES_KEY := "equipment_batches"
 const EQUIPMENT_ITEM_ID_KEY := "item_id"
-const EQUIPMENT_TIER_ID_KEY := "tier_id"
 const EQUIPMENT_GRADE_KEY := "grade"
 const EQUIPMENT_COUNT_KEY := "count"
 ## Condition left on the unit IN HAND, 0–100. Read twice and shown never: it breaks the urgency sort's
@@ -115,18 +128,34 @@ const CRAFT_KNOWLEDGE_PROGRESS_KEY := "progress"
 ## denominator was guessed would disagree with the sim's own reading of the same track.
 const CRAFT_KNOWLEDGE_THRESHOLD_KEY := "completion_threshold"
 
-# ---- the three ledger groups --------------------------------------------------------------------
-## `CraftOffer.group`, and the order the ledger's one table renders them in: the band's KIT first (it
-## is what a party carries and what wears out), then the bench TOOLS, then the recipes that make
-## STOCK rather than kit. The kit group takes no sub-head — it is the table's default group.
+# ---- the ledger's groups, and the heads they fold under -------------------------------------------
+## `CraftOffer.group`. The KIT group SPLITS by `output_tier_name` — one head per tier, ordered by
+## `output_tier_rank` descending — and the other two take one head each; all three kinds are built by
+## the same head builder so they read as one family.
 const GROUP_KIT := "kit"
 const GROUP_TOOL := "tool"
 const GROUP_STOCK := "stock"
-const GROUP_ORDER: Array[String] = [GROUP_KIT, GROUP_TOOL, GROUP_STOCK]
+## The order the two NON-tier groups follow the tier heads in: the bench TOOLS, then the recipes that
+## make STOCK rather than kit.
+const GROUP_ORDER: Array[String] = [GROUP_TOOL, GROUP_STOCK]
+## **A HEAD IS A NAME AND A CARET, AND NOTHING ELSE.** These carried a trailing explanation
+## (`Bench tools — each stretches one material`) until the heads became foldable: a caret invites a
+## click, and a clause after the name reads as part of what is being folded away. The rationale it
+## carried belongs in `.claude/rules/client/crafting-panel.md`, not on screen.
 const GROUP_HEADS := {
-	GROUP_TOOL: "Bench tools — each stretches one material",
-	GROUP_STOCK: "Materials — recipes that make stock, not kit",
+	GROUP_TOOL: "Bench tools",
+	GROUP_STOCK: "Materials",
 }
+
+## **EVERY HEAD FOLDS**, and the caret is what says which way. A folded group keeps its head and
+## hides its rows, so the ledger can be narrowed to the one group being worked on without losing the
+## way back.
+const GROUP_HEAD_CARET_OPEN := "▾"
+const GROUP_HEAD_CARET_FOLDED := "▸"
+const GROUP_HEAD_FORMAT := "%s %s"
+## How a head is found by IDENTITY rather than by its face — the `HudWidgets.POLICY_RUNG_META` idiom.
+## The meta carries the head's own name, which is also the key its fold state is held under.
+const GROUP_HEAD_META := "crafting_group_head"
 
 # ---- the words ----------------------------------------------------------------------------------
 const PANEL_TITLE := "⚒ Materials & Crafting"
@@ -177,11 +206,12 @@ const BENCH_TEACH_FORMAT := "Teaching %s — every one finished teaches it."
 ## saying "teaches nothing".
 const BENCH_TEACH_NONE := ""
 
-## **FOUR COLUMNS: Item · Tier · Rebuild costs · action.** There is no condition column — the role
+## **FOUR COLUMNS: Item · Owned · Rebuild costs · action.** There is no condition column — the role
 ## cards on the Band panel state how worn each kit's item is, and this table states what replacing it
-## costs.
+## costs. **Tier is not a column either**: it could only ever say `flint` for the whole early game, so
+## it is a foldable group HEAD and what the column says instead is what the band actually owns.
 const LEDGER_COLUMN_ITEM := "Item"
-const LEDGER_COLUMN_TIER := "Tier"
+const LEDGER_COLUMN_OWNED := "Owned"
 const LEDGER_COLUMN_COST := "Rebuild costs"
 ## The action column's head is deliberately blank — a column of buttons names itself.
 const LEDGER_COLUMN_ACTION := ""
@@ -194,18 +224,21 @@ const ON_BENCH_LABEL := "On the bench"
 ## that — never a zero.
 const EMPTY_CELL := "—"
 
-## **THE TIER CHIP WHEN THE BAND OWNS NO UNITS**, keyed off the published `group` and nothing else.
-## The wire states ownership (`count`) and states the life wording (`Worn out` / `Never made`); what
-## it does not carry is a chip for a tier that does not exist, because there are no units at a tier.
-## So the chip says what owning none MEANS for that group: a kit you are without is bare hands, a
-## tool you never built is not made. It is a statement of ownership, not a re-derived step-down.
-const TIER_CHIP_KIT_NONE := "Bare hands"
-const TIER_CHIP_TOOL_NONE := "Not made"
-## A held batch: the tier, then the craft grade it was made at. A start-stocked unit was never on a
-## bench and carries no grade, so it shows the tier alone.
-const TIER_CHIP_GRADED_FORMAT := "%s · %s"
-## A STOCK recipe makes no equipment, so its Tier cell states what a pass yields instead.
-const TIER_CHIP_STOCK_FORMAT := "→ %s %s"
+## **WHEN THE BAND OWNS NO UNITS THE CELL STATES THE CONSEQUENCE, NOT THE ARITHMETIC**, keyed off the
+## published `group` and off `count` — never off `remaining == 0`, since a spent batch is REMOVED and
+## worn-out and never-made both read zero condition. A kit you are without is bare hands; a tool you
+## never built is not made. `×0` is the same fact and the worse sentence.
+const OWNED_KIT_NONE := "Bare hands"
+const OWNED_TOOL_NONE := "Not made"
+## **ONE LINE PER GRADE**, counts summed across the batches that share one — two `good` batches at
+## different wear are one line of `×5`, wear not being this panel's fact. Best grade first.
+const OWNED_COUNT_FORMAT := "×%d"
+## A STOCK recipe owns nothing, so its cell states what a pass yields instead.
+const OWNED_STOCK_FORMAT := "→ %s %s"
+## How the Owned cell is found by IDENTITY. It carries the row's own item id, so a claim about what
+## reaches the CELL (a tier word, an owned note) can be scoped to the cell rather than to the ledger —
+## the group HEAD is a tier word by design, and a panel-wide text scan cannot tell the two apart.
+const OWNED_CELL_META := "crafting_owned_cell"
 
 ## `CraftOffer.severity` and `EquipmentBatchState.lifeSeverity` — two vocabularies on purpose (an
 ## offer is an invitation, a condition band is a reading of wear, so `good` means nothing on the
@@ -240,6 +273,23 @@ const CHIP_HIGH_COLOR := HudStyle.SIGNAL
 const CHIP_LOW_COLOR := HudStyle.INK_FAINT
 const CHIP_NEUTRAL_COLOR := HudStyle.INK_DIM
 
+## **THE OWNED GRADE CHIP'S TINT IS THE BAND'S POSITION IN THE PUBLISHED LEGEND, never a match on its
+## name.** `characteristic_bands` rides the wire ascending and the rail above already takes its
+## strength/weakness reading off the legend's ENDS; a `{"excellent": HEALTHY}` table here would be a
+## client-side copy of a vocabulary the sim owns, and would silently render every chip neutral the day
+## a band is renamed or a fifth one is added. Resolved by INDEX: the last rung reads as the best work
+## the ladder has, the rung below it as good work, the first as the bottom of the ladder, and anything
+## between stays quiet. A grade the legend does not contain renders NO chip at all — a start-stocked
+## unit publishes `""`, and a spawn's kit was never on a bench and makes no quality claim.
+const OWNED_GRADE_TOP_COLOR := HudStyle.HEALTHY
+const OWNED_GRADE_HIGH_COLOR := HudStyle.SIGNAL
+const OWNED_GRADE_LOW_COLOR := HudStyle.INK_FAINT
+const OWNED_GRADE_MID_COLOR := HudStyle.INK_DIM
+
+## The `ownedNote`'s own tint. It is news rather than an alarm — the band is carrying something older
+## than what it could now make — so it reads in the warn ink, one step short of a refusal's danger.
+const OWNED_NOTE_COLOR := HudStyle.WARN
+
 # ---- geometry, measured off the prototype -------------------------------------------------------
 ## The panel's NOMINAL width. It is a floor, not a cap: the card refits to its content through
 ## `AutoSizingPanel.fit_width`, so a long recipe name widens the card instead of clipping the table.
@@ -269,7 +319,9 @@ const BAND_PICKER_MIN_WIDTH := 150.0
 ## The ledger's four columns. ITEM expands into the slack; the other three are fixed so the table
 ## reads as columns rather than as four independently-wrapping stacks.
 const COLUMN_ITEM_MIN_WIDTH := 150.0
-const COLUMN_TIER_WIDTH := 104.0
+## The prototype's OWNED column. It is wider than the 104 the retired Tier column took because it
+## carries a count and a grade chip on one line, and `ownedNote` — a whole clause — under them.
+const COLUMN_OWNED_WIDTH := 172.0
 const COLUMN_COST_WIDTH := 140.0
 ## **THE ACTION COLUMN IS SIZED BY THE REFUSAL, NOT BY THE BUTTON.** `Make` is 40-odd pixels wide;
 ## what sets this number is the published `reason` under it, which is a whole clause — *"Hide +
@@ -308,7 +360,11 @@ const CREW_BUTTON_FONT_SIZE := 13
 const COLUMN_HEAD_FONT_SIZE := 10
 const ITEM_NAME_FONT_SIZE := 14
 const ITEM_ROLE_FONT_SIZE := 11
-const TIER_CHIP_FONT_SIZE := 10
+const OWNED_CHIP_FONT_SIZE := 10
+## The `×3` beside the chip — the count is the number the eye goes to, so it reads a size up from the
+## grade chip rather than matching it.
+const OWNED_COUNT_FONT_SIZE := 13
+const OWNED_NOTE_FONT_SIZE := 10
 const EMPTY_CELL_FONT_SIZE := 11
 const COST_FONT_SIZE := 12
 const ACTION_FONT_SIZE := 12

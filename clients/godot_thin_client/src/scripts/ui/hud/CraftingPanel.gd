@@ -18,12 +18,21 @@ class_name CraftingPanel
 ## **THIS PANEL ANSWERS "WHAT DOES IT COST TO REBUILD", SO IT CARRIES NO CONDITION READOUT.** How worn
 ## the gear is has one home and it is the Band panel's WORKFORCE role cards, which state the condition
 ## of the item behind each kit beside the role that kit sets. The ledger's four columns are Item ·
-## Tier · Rebuild costs · action, and `EquipmentBatchState.life` is not among them: a second copy of
+## Owned · Rebuild costs · action, and `EquipmentBatchState.life` is not among them: a second copy of
 ## condition here would be the same fact stated twice, in two places free to disagree.
 ##
+## **TIER IS A FOLDABLE GROUP HEAD, NOT A COLUMN, AND THE CELL IS WHAT THE BAND HAS.** The head is the
+## tier a row would be MADE at (`outputTierName`, rank-descending); the Owned cell is what the band
+## actually carries. The two can disagree, and that disagreement is the readout — a Clubs row under
+## **Bronze** whose cell reads *carrying flint · poor*. **The tier word reaches the cell ONLY through
+## the published `ownedNote`**, and only when it is news: nothing here composes one, re-derives one, or
+## renders a row's `tier_id`.
+##
 ## **OWNERSHIP IS `count`, NEVER `remaining == 0`.** A batch that runs out of units is removed, so a
-## worn-out item and one the band never made both read `remaining 0` — which is why the tier chip is
-## keyed off `count` and states OWNERSHIP (`Bare hands` / `Not made`) rather than a step-down.
+## worn-out item and one the band never made both read `remaining 0` — which is why the Owned cell is
+## keyed off `count` and states the CONSEQUENCE of owning none (`Bare hands` / `Not made`) rather than
+## a step-down. Owning units reads **one line per GRADE**, because a band may hold one item at two and
+## `×5 · excellent` would be a lie.
 ##
 ## **MAKE IS THE ASSIGNMENT.** Pressing Make emits `make_requested` (→ `set_bench`), the running row's
 ## button reads *On the bench* and is spent, and the crew stepper emits `crew_changed` (→
@@ -97,6 +106,14 @@ const SCROLL_UNSET := -1
 ## The ledger's scroll offset, carried by `render` across its rebuild and re-applied by `refit` once
 ## the card's height is settled. See `render`.
 var _pending_scroll: int = SCROLL_UNSET
+
+## **WHICH GROUP HEADS ARE FOLDED, keyed by head name.** It is VIEW state and not snapshot state, so
+## it does not breach `render(payload)`-is-the-whole-input: it has exactly the standing of the scroll
+## offset above, which the panel already carries across a rebuild. Held by NAME rather than by index
+## so it survives a band switch, whose ledger may hold a different set of tier heads in a different
+## order — and so folding `Flint` on one band leaves it folded on the next, which is what a reader who
+## has stopped looking at a group meant.
+var _folded: Dictionary = {}
 
 func _ready() -> void:
 	super()
@@ -596,22 +613,13 @@ func _build_crew_stepper(bench: Dictionary, payload: Dictionary, running: bool) 
 
 # ---- the ledger -------------------------------------------------------------
 
-## **ONE TABLE IN THREE GROUPS, AND EVERY ROW IS A JOIN.** `CraftOffer.outputItemId` is the key: the
-## offer supplies the name, the group, the cost and the refusal; `equipment_batches` grouped by
-## `itemId` supplies the tier, the grade and the count. Neither half can answer alone — which is why
+## **ONE TABLE IN FOLDABLE SECTIONS, AND EVERY ROW IS A JOIN.** `CraftOffer.outputItemId` is the key:
+## the offer supplies the name, the group, the cost, the refusal and the tier head; `equipment_batches`
+## grouped by `itemId` supplies the grades and the counts. Neither half can answer alone — which is why
 ## the ledger is built here rather than off either array on its own.
 func _build_ledger(payload: Dictionary) -> void:
 	var band: Dictionary = payload.get(PAYLOAD_BAND, {})
 	var batches_by_item := _equipment_by_item(band)
-	var offers_by_group := {}
-	for offer_variant in band.get(HudCraftingVocab.BAND_CRAFT_OFFERS_KEY, []):
-		if not (offer_variant is Dictionary):
-			continue
-		var offer: Dictionary = offer_variant
-		var group := String(offer.get(HudCraftingVocab.OFFER_GROUP_KEY, ""))
-		if not offers_by_group.has(group):
-			offers_by_group[group] = []
-		offers_by_group[group].append(offer)
 
 	var table := VBoxContainer.new()
 	table.add_theme_constant_override("separation", 0)
@@ -619,16 +627,18 @@ func _build_ledger(payload: Dictionary) -> void:
 	table.add_child(_build_column_heads())
 	table.add_child(_rule(HudStyle.LINE))
 
-	for group in HudCraftingVocab.GROUP_ORDER:
-		var offers: Array = offers_by_group.get(group, [])
-		if offers.is_empty():
+	for section in _ledger_sections(band):
+		var head_name := String(section["head"])
+		table.add_child(_build_group_head(head_name))
+		table.add_child(_rule(HudStyle.LINE))
+		if _is_folded(head_name):
+			# A folded group keeps its head and hides its rows — the way back is the caret, which is
+			# what a head buys that a column never could.
 			continue
-		if HudCraftingVocab.GROUP_HEADS.has(group):
-			table.add_child(_build_group_head(String(HudCraftingVocab.GROUP_HEADS[group])))
-			table.add_child(_rule(HudStyle.LINE))
 		# **SORTED BY URGENCY — worn first, untouched last.** The player's real question is "what am I
 		# about to lose?", so the ledger opens on the answer; a full-life row is DIMMED to the bottom
 		# rather than hidden, because a kit you own and never use is information too.
+		var offers: Array = section["offers"]
 		offers.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 			return _urgency_key(a, batches_by_item) < _urgency_key(b, batches_by_item))
 		for offer in offers:
@@ -637,6 +647,50 @@ func _build_ledger(payload: Dictionary) -> void:
 			# four-column row read across, and separation alone leaves four stacks side by side.
 			table.add_child(_rule(HudStyle.LINE_SOFT))
 	_main.add_child(table)
+
+## **THE SECTIONS, IN THE ORDER THEY RENDER: the TIER heads first, then `Bench tools`, then
+## `Materials`.** The kit group SPLITS by the published `outputTierName` — one head per distinct tier,
+## ordered by `outputTierRank` DESCENDING, newest first — because a recipe makes the best tier the
+## faction knows and a row therefore MOVES between heads rather than splitting. On the shipped one-tier
+## roster that is a single `Flint` head over every kit row; once minerals land it is `Bronze` above it.
+##
+## The rank ordering is the sim's own and is not re-derived: alphabetical would put Iron above Bronze,
+## and the client has no other honest way to say which tier is newer.
+func _ledger_sections(band: Dictionary) -> Array:
+	var kit_offers := {}
+	var kit_ranks := {}
+	var other_offers := {}
+	for offer_variant in band.get(HudCraftingVocab.BAND_CRAFT_OFFERS_KEY, []):
+		if not (offer_variant is Dictionary):
+			continue
+		var offer: Dictionary = offer_variant
+		var group := String(offer.get(HudCraftingVocab.OFFER_GROUP_KEY, ""))
+		if group == HudCraftingVocab.GROUP_KIT:
+			var tier := String(offer.get(HudCraftingVocab.OFFER_OUTPUT_TIER_NAME_KEY, ""))
+			if not kit_offers.has(tier):
+				kit_offers[tier] = []
+				kit_ranks[tier] = int(offer.get(HudCraftingVocab.OFFER_OUTPUT_TIER_RANK_KEY, 0))
+			kit_offers[tier].append(offer)
+			continue
+		if not other_offers.has(group):
+			other_offers[group] = []
+		other_offers[group].append(offer)
+
+	var tiers: Array = kit_offers.keys()
+	tiers.sort_custom(func(a: String, b: String) -> bool:
+		return int(kit_ranks[a]) > int(kit_ranks[b]))
+	var sections: Array = []
+	for tier in tiers:
+		sections.append({"head": String(tier).capitalize(), "offers": kit_offers[tier]})
+	for group in HudCraftingVocab.GROUP_ORDER:
+		var offers: Array = other_offers.get(group, [])
+		if offers.is_empty():
+			continue
+		sections.append({"head": String(HudCraftingVocab.GROUP_HEADS[group]), "offers": offers})
+	return sections
+
+func _is_folded(head_name: String) -> bool:
+	return bool(_folded.get(head_name, false))
 
 ## The sort key: the PUBLISHED life severity first (worn before running-down before comfortable),
 ## then how much condition is left, so a spent row leads its severity band. A row with no equipment
@@ -659,9 +713,9 @@ func _urgency_key(offer: Dictionary, batches_by_item: Dictionary) -> float:
 
 func _build_column_heads() -> Control:
 	var row := _ledger_row_container()
-	var heads := [HudCraftingVocab.LEDGER_COLUMN_ITEM, HudCraftingVocab.LEDGER_COLUMN_TIER,
+	var heads := [HudCraftingVocab.LEDGER_COLUMN_ITEM, HudCraftingVocab.LEDGER_COLUMN_OWNED,
 		HudCraftingVocab.LEDGER_COLUMN_COST, HudCraftingVocab.LEDGER_COLUMN_ACTION]
-	var widths := [0.0, HudCraftingVocab.COLUMN_TIER_WIDTH, HudCraftingVocab.COLUMN_COST_WIDTH,
+	var widths := [0.0, HudCraftingVocab.COLUMN_OWNED_WIDTH, HudCraftingVocab.COLUMN_COST_WIDTH,
 		HudCraftingVocab.COLUMN_ACTION_WIDTH]
 	for i in range(heads.size()):
 		var label := Label.new()
@@ -671,23 +725,57 @@ func _build_column_heads() -> Control:
 		row.add_child(_column_cell(label, float(widths[i]), i == 0))
 	return row
 
-func _build_group_head(text: String) -> Control:
+## **ONE HEAD BUILDER FOR ALL THREE KINDS — a tier, `Bench tools`, `Materials` — so they read as one
+## family rather than as a tier head and two labels.** A caret leads it and the whole head is the
+## click target, which is why it is a `Button` stripped of its chrome rather than a Label with a
+## button beside it: a head that only responded on its glyph would be a head you have to aim at.
+##
+## The folded head DIMS. It is still there and still says what it is hiding, which is the difference
+## between folding a group away and losing it.
+func _build_group_head(head_name: String) -> Control:
 	var host := MarginContainer.new()
 	host.add_theme_constant_override("margin_top", HudCraftingVocab.GROUP_HEAD_TOP_MARGIN)
-	var label := Label.new()
-	label.text = text.to_upper()
-	label.add_theme_font_size_override("font_size", HudCraftingVocab.GROUP_HEAD_FONT_SIZE)
-	label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-	host.add_child(label)
+	var folded := _is_folded(head_name)
+	var head := Button.new()
+	head.text = (HudCraftingVocab.GROUP_HEAD_FORMAT % [
+		HudCraftingVocab.GROUP_HEAD_CARET_FOLDED if folded else HudCraftingVocab.GROUP_HEAD_CARET_OPEN,
+		head_name]).to_upper()
+	head.flat = true
+	head.focus_mode = Control.FOCUS_NONE
+	head.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	head.add_theme_stylebox_override("normal", HudStyle.empty_stylebox())
+	head.add_theme_stylebox_override("hover", HudStyle.empty_stylebox())
+	head.add_theme_stylebox_override("pressed", HudStyle.empty_stylebox())
+	head.add_theme_stylebox_override("focus", HudStyle.empty_stylebox())
+	head.add_theme_font_size_override("font_size", HudCraftingVocab.GROUP_HEAD_FONT_SIZE)
+	head.add_theme_color_override("font_color",
+		HudStyle.INK_FAINT if folded else HudStyle.INK_DIM)
+	head.add_theme_color_override("font_hover_color", HudStyle.INK)
+	head.add_theme_color_override("font_pressed_color", HudStyle.INK)
+	# Reached by IDENTITY, never by its face — the `HudWidgets.POLICY_RUNG_META` idiom. The meta is the
+	# head's own name, which is also the key its fold state is held under.
+	head.set_meta(HudCraftingVocab.GROUP_HEAD_META, head_name)
+	head.pressed.connect(func() -> void: _toggle_fold(head_name))
+	host.add_child(head)
 	return host
+
+## Fold or unfold a group and re-render the panel against the payload it is already holding. A rebuild
+## rather than a `visible` flip because the ledger is rebuilt on every snapshot anyway, and a hidden
+## subtree waiting to be shown is a second representation of the same state.
+func _toggle_fold(head_name: String) -> void:
+	_folded[head_name] = not _is_folded(head_name)
+	if not _payload.is_empty():
+		render(_payload)
 
 func _build_ledger_row(offer: Dictionary, batches_by_item: Dictionary, payload: Dictionary) -> Control:
 	var row := _ledger_row_container()
 	var group := String(offer.get(HudCraftingVocab.OFFER_GROUP_KEY, ""))
 	var batch := _batch_for(offer, batches_by_item)
 	row.add_child(_column_cell(_build_item_cell(offer, payload), 0.0, true))
-	row.add_child(_column_cell(_build_tier_cell(offer, batch, group, payload),
-		HudCraftingVocab.COLUMN_TIER_WIDTH, false))
+	var owned := _build_owned_cell(offer, _batches_for(offer, batches_by_item), group, payload)
+	owned.set_meta(HudCraftingVocab.OWNED_CELL_META,
+		String(offer.get(HudCraftingVocab.OFFER_OUTPUT_ITEM_ID_KEY, "")))
+	row.add_child(_column_cell(owned, HudCraftingVocab.COLUMN_OWNED_WIDTH, false))
 	row.add_child(_column_cell(_build_cost_cell(offer, payload), HudCraftingVocab.COLUMN_COST_WIDTH, false))
 	row.add_child(_column_cell(_build_action_cell(offer), HudCraftingVocab.COLUMN_ACTION_WIDTH, false))
 
@@ -762,11 +850,22 @@ func _role_line(offer: Dictionary, payload: Dictionary) -> String:
 					String(input.get(HudCraftingVocab.RECIPE_INPUT_MATERIAL_ID_KEY, "")), axis]
 	return _craft_display_name(String(recipe.get(HudCraftingVocab.MATERIAL_CRAFT_KEY, "")), payload)
 
-## **THE TIER IS A DISCRETE CHIP AND IT DOES NOT MOVE.** Performance is flat until expiry, so this
-## chip changes only when the band's ownership does. Owning units ⇒ the tier the units were made at,
-## plus the craft grade where there is one; owning none ⇒ what owning none MEANS for the group. A
-## stock recipe makes no equipment, so its cell states what a pass yields instead.
-func _build_tier_cell(offer: Dictionary, batch: Dictionary, group: String, payload: Dictionary) -> Control:
+## **WHAT THE BAND HAS, AND HOW GOOD IT IS.** Three cases, and only the last of them is a count:
+##
+## - A **stock** recipe owns nothing, so the cell states what a pass yields — `→ 6 cordage`.
+## - Owning **none** states the CONSEQUENCE rather than the arithmetic — `Bare hands` for a kit,
+##   `Not made` for a tool. Keyed off the published `group` and off `count`, NEVER off
+##   `remaining == 0`: a spent batch is removed, so worn-out and never-made both read zero condition.
+## - Owning **units** reads one line per GRADE, best first, with the counts of the batches sharing a
+##   grade summed — two `good` batches at different wear are one line of `×5`, wear not being this
+##   panel's fact. **TWO GRADES GET A LINE EACH**: `×5 · excellent` would be a lie, and every rule for
+##   collapsing to one misleads — the best flatters, the worst alarms, and the batch actually in
+##   service is chosen by wear rather than by quality, so it would move for a reason unrelated to what
+##   the row claims.
+##
+## Under the lines, `ownedNote` VERBATIM when the sim published one. **It is the only route by which a
+## tier word reaches this cell**, it arrives only when it is news, and no `tier_id` is rendered here.
+func _build_owned_cell(offer: Dictionary, batches: Array, group: String, payload: Dictionary) -> Control:
 	if group == HudCraftingVocab.GROUP_STOCK:
 		var recipe := _recipe_of(String(offer.get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, "")), payload)
 		for output_variant in recipe.get(HudCraftingVocab.RECIPE_OUTPUTS_KEY, []):
@@ -775,22 +874,108 @@ func _build_tier_cell(offer: Dictionary, batch: Dictionary, group: String, paylo
 			var output: Dictionary = output_variant
 			var material_id := String(output.get(HudCraftingVocab.RECIPE_OUTPUT_MATERIAL_ID_KEY, ""))
 			if material_id != "":
-				return _chip(HudCraftingVocab.TIER_CHIP_STOCK_FORMAT % [
+				return _chip(HudCraftingVocab.OWNED_STOCK_FORMAT % [
 					_amount_text(float(output.get(HudCraftingVocab.RECIPE_OUTPUT_AMOUNT_KEY, 0.0))),
-					material_id], HudStyle.INK_FAINT, HudCraftingVocab.TIER_CHIP_FONT_SIZE)
+					material_id], HudStyle.INK_FAINT, HudCraftingVocab.OWNED_CHIP_FONT_SIZE)
 		return _empty_cell()
-	# `count`, never `remaining == 0` — the two states a zero condition can mean are told apart on the
-	# wire and must be told apart here.
-	if int(batch.get(HudCraftingVocab.EQUIPMENT_COUNT_KEY, 0)) <= 0:
+
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
+	var lines := _owned_lines(batches, payload)
+	if lines.is_empty():
 		if group == HudCraftingVocab.GROUP_TOOL:
-			return _chip(HudCraftingVocab.TIER_CHIP_TOOL_NONE, HudStyle.INK_FAINT,
-				HudCraftingVocab.TIER_CHIP_FONT_SIZE)
-		return _chip(HudCraftingVocab.TIER_CHIP_KIT_NONE, HudStyle.DANGER,
-			HudCraftingVocab.TIER_CHIP_FONT_SIZE)
-	var tier := String(batch.get(HudCraftingVocab.EQUIPMENT_TIER_ID_KEY, ""))
-	var grade := String(batch.get(HudCraftingVocab.EQUIPMENT_GRADE_KEY, ""))
-	var face := tier if grade == "" else HudCraftingVocab.TIER_CHIP_GRADED_FORMAT % [tier, grade]
-	return _chip(face, HudStyle.SIGNAL, HudCraftingVocab.TIER_CHIP_FONT_SIZE)
+			column.add_child(_chip(HudCraftingVocab.OWNED_TOOL_NONE, HudStyle.INK_FAINT,
+				HudCraftingVocab.OWNED_CHIP_FONT_SIZE))
+		else:
+			column.add_child(_chip(HudCraftingVocab.OWNED_KIT_NONE, HudStyle.DANGER,
+				HudCraftingVocab.OWNED_CHIP_FONT_SIZE))
+	for line_variant in lines:
+		var line: Dictionary = line_variant
+		column.add_child(_owned_line(int(line["count"]), String(line["grade"]), payload))
+
+	var note := String(offer.get(HudCraftingVocab.OFFER_OWNED_NOTE_KEY, ""))
+	if note != "":
+		var note_label := Label.new()
+		note_label.text = note
+		note_label.add_theme_font_size_override("font_size", HudCraftingVocab.OWNED_NOTE_FONT_SIZE)
+		note_label.add_theme_color_override("font_color", HudCraftingVocab.OWNED_NOTE_COLOR)
+		note_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		note_label.custom_minimum_size = Vector2(HudCraftingVocab.COLUMN_OWNED_WIDTH, 0.0)
+		column.add_child(note_label)
+	return column
+
+## One owned line: the count, then the grade as a chip. **A grade the published legend does not
+## contain renders NO chip** — a start-stocked unit publishes `""`, and a spawn's kit was never on a
+## bench and makes no quality claim to render.
+func _owned_line(count: int, grade: String, payload: Dictionary) -> Control:
+	var line := HBoxContainer.new()
+	line.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
+	var count_label := Label.new()
+	count_label.text = HudCraftingVocab.OWNED_COUNT_FORMAT % count
+	count_label.add_theme_font_size_override("font_size", HudCraftingVocab.OWNED_COUNT_FONT_SIZE)
+	count_label.add_theme_color_override("font_color", HudStyle.INK)
+	line.add_child(count_label)
+	if _grade_rung(grade, payload) >= 0:
+		line.add_child(_chip(grade, _grade_color(grade, payload),
+			HudCraftingVocab.OWNED_CHIP_FONT_SIZE))
+	return line
+
+## **THE BATCHES COLLAPSED TO ONE LINE PER GRADE, BEST FIRST.** Counts are summed across the batches
+## sharing a grade because wear is what separates those batches and wear is not this panel's fact; the
+## grades themselves are kept apart because they are genuinely different objects.
+##
+## A grade outside the published legend has no rung, so it sorts last — it is a claim about nothing
+## rather than a bad one, and it renders without a chip.
+func _owned_lines(batches: Array, payload: Dictionary) -> Array:
+	var counts := {}
+	for batch_variant in batches:
+		if not (batch_variant is Dictionary):
+			continue
+		var batch: Dictionary = batch_variant
+		var count := int(batch.get(HudCraftingVocab.EQUIPMENT_COUNT_KEY, 0))
+		# `count`, never `remaining == 0` — the two states a zero condition can mean are told apart on
+		# the wire and must be told apart here.
+		if count <= 0:
+			continue
+		var grade := String(batch.get(HudCraftingVocab.EQUIPMENT_GRADE_KEY, ""))
+		counts[grade] = int(counts.get(grade, 0)) + count
+	var grades: Array = counts.keys()
+	grades.sort_custom(func(a: String, b: String) -> bool:
+		return _grade_rung(a, payload) > _grade_rung(b, payload))
+	var lines: Array = []
+	for grade in grades:
+		lines.append({"count": int(counts[grade]), "grade": String(grade)})
+	return lines
+
+## Where a grade sits in the published `characteristic_bands` legend, ascending — `-1` for a name the
+## legend does not carry. **The legend is the sim's, and this is a lookup in it rather than a table of
+## grade names typed here**: a client-side copy would disagree with the sim the day a band is renamed.
+func _grade_rung(grade: String, payload: Dictionary) -> int:
+	if grade == "":
+		return -1
+	var legend: Array = payload.get(PAYLOAD_BAND_LEGEND, [])
+	for i in range(legend.size()):
+		if not (legend[i] is Dictionary):
+			continue
+		if String((legend[i] as Dictionary).get(HudCraftingVocab.BAND_LEGEND_NAME_KEY, "")) == grade:
+			return i
+	return -1
+
+## **THE CHIP'S TINT IS THE RUNG'S POSITION IN THE LEGEND, never a match on its name.** The last rung
+## is the best work the ladder has, the one below it is good work, the first is the bottom of it, and
+## anything between stays quiet — so a fifth band added sim-side lands in the quiet middle instead of
+## rendering every chip neutral, which is what a `{"excellent": HEALTHY}` table here would do.
+func _grade_color(grade: String, payload: Dictionary) -> Color:
+	var legend: Array = payload.get(PAYLOAD_BAND_LEGEND, [])
+	var rung := _grade_rung(grade, payload)
+	var top := legend.size() - 1
+	if rung == top:
+		return HudCraftingVocab.OWNED_GRADE_TOP_COLOR
+	if rung == top - 1:
+		return HudCraftingVocab.OWNED_GRADE_HIGH_COLOR
+	if rung == 0:
+		return HudCraftingVocab.OWNED_GRADE_LOW_COLOR
+	return HudCraftingVocab.OWNED_GRADE_MID_COLOR
 
 ## **WHAT REBUILDING COSTS, WITH THE SHORTFALL MARKED.** The amounts are the recipe's own inputs,
 ## except where the offer publishes a shortfall for that material — there the `required` figure is
@@ -874,9 +1059,10 @@ func _batches_by_material(band: Dictionary) -> Dictionary:
 		grouped[material_id].append(batch)
 	return grouped
 
-## The band's equipment batches, keyed by item id. **A row per item always arrives** — the sim
-## publishes a `count: 0` row for every config item the band owns none of — so a lookup that misses
-## means the item is not in the config at all, never that the band has none of it.
+## The band's equipment batches, grouped by item id in wire order. **ALL of them, not the first** — a
+## band may hold one item at two grades, and the Owned cell gives each of them a line. **A row per item
+## always arrives** — the sim publishes a `count: 0` row for every config item the band owns none of —
+## so a lookup that misses means the item is not in the config at all, never that the band has none.
 func _equipment_by_item(band: Dictionary) -> Dictionary:
 	var by_item := {}
 	for batch_variant in band.get(HudCraftingVocab.BAND_EQUIPMENT_BATCHES_KEY, []):
@@ -885,14 +1071,22 @@ func _equipment_by_item(band: Dictionary) -> Dictionary:
 		var batch: Dictionary = batch_variant
 		var item_id := String(batch.get(HudCraftingVocab.EQUIPMENT_ITEM_ID_KEY, ""))
 		if not by_item.has(item_id):
-			by_item[item_id] = batch
+			by_item[item_id] = []
+		by_item[item_id].append(batch)
 	return by_item
 
-func _batch_for(offer: Dictionary, batches_by_item: Dictionary) -> Dictionary:
+func _batches_for(offer: Dictionary, batches_by_item: Dictionary) -> Array:
 	var item_id := String(offer.get(HudCraftingVocab.OFFER_OUTPUT_ITEM_ID_KEY, ""))
 	if item_id == "":
-		return {}
-	return batches_by_item.get(item_id, {})
+		return []
+	return batches_by_item.get(item_id, [])
+
+## The one batch the urgency SORT and the shrug test read — the item's first, in wire order. They are
+## rankings over `life_severity` / `remaining`, i.e. over WEAR, and wear is the axis this panel does
+## not report; the Owned cell reads every batch instead (`_batches_for`).
+func _batch_for(offer: Dictionary, batches_by_item: Dictionary) -> Dictionary:
+	var batches := _batches_for(offer, batches_by_item)
+	return batches[0] if not batches.is_empty() else {}
 
 func _recipe_of(recipe_id: String, payload: Dictionary) -> Dictionary:
 	for recipe_variant in payload.get(PAYLOAD_RECIPES, []):
