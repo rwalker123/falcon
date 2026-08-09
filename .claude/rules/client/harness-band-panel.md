@@ -2,6 +2,15 @@
 paths:
   - "clients/godot_thin_client/tools/band_panel_preview.gd"
   - "clients/godot_thin_client/tools/band_panel_preview.tscn"
+  # `command_guard` is gated HERE, not in `harness-headless-guards.md`, because the rationale it
+  # needs is the KIT PICKER's: it `preload`s `BandFx.kit_roster_fixture()` — the only cross-harness
+  # fixture preload in the tree — and the "compose a NON-DEFAULT kit on every path, and write the id
+  # BEFORE the sheet opens" rule is what keeps its assertion capable of failing.
+  - "clients/godot_thin_client/tools/command_guard.gd"
+  - "clients/godot_thin_client/tools/command_guard.tscn"
+  # The DENIAL raid arc below spans two harnesses: `expedition_denial_panel` is a `ui_preview` state
+  # living in this chapter, so the chapter loads this file as well as `harness-ui-preview.md`.
+  - "clients/godot_thin_client/tools/ui_preview/chapters/band_expedition.gd"
 ---
 
 <!-- Split out of .claude/rules/client/test-harnesses.md, which was itself extracted from

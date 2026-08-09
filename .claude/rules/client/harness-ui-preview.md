@@ -485,8 +485,8 @@ alive after 59 minutes, and it is invisible to every check we have. The three pa
   run exits `0`, a run with any `FAIL` in it exits non-zero, so `grep FAIL` and `$?` cannot disagree.
   **Nothing consumes the status** — no `xtask` task runs `ui_preview`, no CI job does, and the agent
   instructions read the output — so it is free for a caller to start relying on. All five sibling
-  render harnesses derive their status the same way; the shared contract is "The exit status IS the
-  verdict" above.
+  render harnesses derive their status the same way; the shared contract is `test-harnesses.md` →
+  "The exit status IS the verdict".
 
 **ONE HANG SHAPE THE WATCHDOG STRUCTURALLY CANNOT CATCH: a stall BEFORE the scene loads.** It arms
 from its own `_ready`, so a run that never reaches the scene never arms it — and the symptom is
@@ -500,10 +500,11 @@ forever. `--headless` sidesteps it — the compile gate and every non-capture as
 plus one `the window never held the pinned canvas` **warning**, which is the dummy renderer being
 reported as the driver fact it is rather than counted against the run) — which makes it the fast way
 to answer "does this still compile?" without waiting on a display. **It exits 0 on a clean tree**,
-so the `$?` rule above reads a headless run the same way it reads a windowed one.
+so `test-harnesses.md` → "The exit status IS the verdict" reads a headless run the same way it
+reads a windowed one.
 
 **Every other hang shape is caught by `preview_watchdog.gd`**, a sibling node in both preview scenes
-— see its row in the table above.
+— see its section in `test-harnesses.md`.
 
 **A textually clean merge of this harness is not a working one.** Merging `main` into the split
 auto-resolved `ui_preview.gd` with no conflict and produced a harness that did not parse: the

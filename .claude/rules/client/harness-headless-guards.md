@@ -1,11 +1,21 @@
 ---
 paths:
+  # Each guard is a SCRIPT AND ITS SCENE. The scene is the entry point every invocation names
+  # (`res://tools/<guard>.tscn`), so gating on the `.gd` alone would leave the wiring edit — the one
+  # that can silently stop a gate running at all — without this file. The pre-split rule reached
+  # them through a `tools/**` glob; these lists are what replaced it.
   - "clients/godot_thin_client/tools/decode_guard.gd"
+  - "clients/godot_thin_client/tools/decode_guard.tscn"
   - "clients/godot_thin_client/tools/stream_frame_guard.gd"
+  - "clients/godot_thin_client/tools/stream_frame_guard.tscn"
   - "clients/godot_thin_client/tools/party_removal_guard.gd"
+  - "clients/godot_thin_client/tools/party_removal_guard.tscn"
   - "clients/godot_thin_client/tools/marker_field_guard.gd"
+  - "clients/godot_thin_client/tools/marker_field_guard.tscn"
   - "clients/godot_thin_client/tools/snapshot_alias_guard.gd"
+  - "clients/godot_thin_client/tools/snapshot_alias_guard.tscn"
   - "clients/godot_thin_client/tools/inspector_hidden_guard.gd"
+  - "clients/godot_thin_client/tools/inspector_hidden_guard.tscn"
   - "clients/godot_thin_client/tests/**"
 ---
 
@@ -57,7 +67,7 @@ as names `SnapshotDecoder` — so a fully green PNG run was compatible with a co
 decoder, and the only in-process guard was `dict::population::cohort_decode_tests` (one struct's
 fixed-point scale, and it exists precisely because `VarDictionary` cannot be built outside a live
 engine). That engine requirement is why this is a Godot scene rather than a `cargo test`. It decodes
-the committed fixture envelope (`tests/fixtures/snapshot_envelope.bin`) through the REAL decoder,
+the GENERATED fixture envelope (`tests/fixtures/snapshot_envelope.bin`) through the REAL decoder,
 canonicalizes the resulting dict and diffs it against `tests/golden/snapshot_dict.json`; exits
 non-zero on mismatch (CI-usable). Drive it with `cargo xtask decode-guard` (regenerates the
 fixtures, builds the native extension, **imports the project if it never has been**, then runs this)
@@ -212,7 +222,7 @@ delta whose `baseFrameSeq` names a frame the client no longer holds is DROPPED a
 raising the flag leaves the client frozen with nothing asking for a resync).
 
 **Only the transport is faked** — a two-method stub (`poll`/`status`), deliberately not a
-`SnapshotStream` subclass, which would drag in a real socket; the payloads are the committed
+`SnapshotStream` subclass, which would drag in a real socket; the payloads are the generated
 `snapshot_envelope.bin` + `snapshot_delta_envelope.bin` and the decode is the live
 `SnapshotDecoder`, so a decoder that stops accepting the delta fails here too. A fresh loader per
 case, since each needs its own decoder baseline.

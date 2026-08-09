@@ -1,8 +1,13 @@
 ---
 paths:
+  # Script AND scene for each, for the reason `harness-headless-guards.md` states: the `.tscn` is
+  # what an invocation names, and this file's own headings are written `<script>.gd` / `.tscn`.
   - "clients/godot_thin_client/tools/menu_preview.gd"
+  - "clients/godot_thin_client/tools/menu_preview.tscn"
   - "clients/godot_thin_client/tools/workbench_preview.gd"
+  - "clients/godot_thin_client/tools/workbench_preview.tscn"
   - "clients/godot_thin_client/tools/workbench_shell_budget.gd"
+  - "clients/godot_thin_client/tools/workbench_shell_budget.tscn"
 ---
 
 <!-- Split out of .claude/rules/client/test-harnesses.md, which was itself extracted from

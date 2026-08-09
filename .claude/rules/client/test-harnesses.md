@@ -28,10 +28,10 @@ keeps two worktrees adding states to different harnesses off the same file.
 | Rule file | Covers | Loads when you touch |
 |---|---|---|
 | `harness-ui-preview.md` | The HUD PNG walk, its chapters, its frame/`PASS` tally | `ui_preview.gd`, `ui_preview/**` |
-| `harness-band-panel.md` | The Band/City panel walk, the denial-raid and recall arcs | `band_panel_preview.gd` |
+| `harness-band-panel.md` | The Band/City panel walk, the denial-raid and recall arcs, and `command_guard`'s shared kit roster | `band_panel_preview.gd`, `command_guard.gd`, `ui_preview/chapters/band_expedition.gd` |
 | `harness-map-probes.md` | `map_preview` marker states, `blend_probe` edge blending | `map_preview.gd`, `blend_probe.gd` |
 | `harness-menu-workbench.md` | `MenuShell`, the workbench, the shell budget gate | `menu_preview.gd`, `workbench_*.gd` |
-| `harness-headless-guards.md` | The `--headless` decode/field/alias guards | `decode_guard.gd`, `*_guard.gd` |
+| `harness-headless-guards.md` | The `--headless` decode/field/alias guards | `decode_guard.gd` + the five other `tools/*_guard.gd`/`.tscn` pairs it lists |
 
 ## `tools/preview_watchdog.gd`
 
@@ -72,8 +72,8 @@ The six render harnesses — `ui_preview`, `band_panel_preview`, `workbench_prev
   a stall).
 
 **So the check is `$?`, and a green log is not evidence.** The `assert OK` / `PASS` tallies recorded
-against each harness below answer a different question — whether an assertion was LOST — and they
-stay for that; they are not how a run is judged clean.
+against each harness in its own `harness-*.md` answer a different question — whether an assertion
+was LOST — and they stay for that; they are not how a run is judged clean.
 
 **The token is `<name>: FAIL — <text>`, spelled identically in all six sinks.** The `ui_preview`
 categories (`hud — `, `turn-orb — `, `chapter — `, `herd fields — `) keep a separator of their own,
@@ -83,8 +83,8 @@ the token, the second to the category. They are not redundant — the category m
 pair.
 
 **But the sinks are not the only reporter, which is the second reason not to grep.** The hang guard
-prints `<name>: FAIL watchdog — ` and quits 1 on its own, from outside the harness script (see the
-`preview_watchdog.gd` row) — so a scanner keyed to `: FAIL — ` reads a 180 s stall as a clean run,
+prints `<name>: FAIL watchdog — ` and quits 1 on its own, from outside the harness script (see
+"`tools/preview_watchdog.gd`" above) — so a scanner keyed to `: FAIL — ` reads a 180 s stall as a clean run,
 while `$?` reads it correctly. Any reporter that has to live outside a `_fail` sink is in the same
 position, and the status is what covers them all.
 
@@ -93,7 +93,8 @@ counted failure.** Under `--headless` Godot selects the dummy renderer: the view
 null image and the window never holds a pinned canvas. Those are facts about the driver, not about
 the code under test, so `_capture`, `_stabilize_canvas` / `_pin_window` and the one chapter that
 saves outside `_save` all warn and skip there rather than reaching `_fail`. This is what keeps the
-`--headless` compile check below meaningful: on a clean tree it still exits 0.
+`--headless` compile check meaningful — `harness-ui-preview.md` → "The `--headless` run is a
+COMPILE check": on a clean tree it still exits 0.
 
 **Godot prints `ERROR:` lines on a PASSING run.** Shutdown reports `N resources still in use at exit`
 and `RID allocations … leaked at exit` after the harness's own summary, so counting `ERROR:` lines
@@ -114,7 +115,7 @@ sabotage is what shows the two paths agree: inverting the `err != OK` test on bo
 `FAIL` lines against 275 frames**, not 274.
 
 **`command_guard` and `turn_orb_click_probe` aggregate their own verdict and quit `0`/`1`**, as does
-every headless guard in the table above (`decode_guard`, `stream_frame_guard`, `marker_field_guard`,
+every headless guard in `harness-headless-guards.md` (`decode_guard`, `stream_frame_guard`, `marker_field_guard`,
 `snapshot_alias_guard`, `party_removal_guard`, `inspector_hidden_guard`, `workbench_shell_budget`).
 They sit outside the `_fail`/`_finish` shape and are correct that way — a gate whose entire output is
 one verdict has nothing for a tally to add.
