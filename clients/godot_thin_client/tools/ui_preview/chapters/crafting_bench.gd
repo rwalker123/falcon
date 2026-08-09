@@ -180,6 +180,17 @@ const DOCK_RECT_EPSILON := 0.5
 ## a float one and not a budget.
 const ROOM_FILL_EPSILON := 0.5
 
+## How far down the ledger the re-render state scrolls before it ticks the turn. Any offset a short
+## room genuinely admits would do — what the claim needs is that it is not the TOP of the table, since
+## the top is exactly where a lost offset lands.
+const SCROLL_PROBE_OFFSET := 120
+
+## What one turn moves on the ticked band: a pass of work on the bench, and the fibre that pass ate
+## off the batch the rail lists first. Both are ordinary readings the panel prints, so the ledger
+## re-renders with different numbers in it and the same rows.
+const TICKED_BENCH_WORK := 1.0
+const TICKED_FIBRE_SPENT := 2.0
+
 ## Fan the panel's reservation onto the HUD exactly as `Main._apply_reservation` does — BOTH
 ## registries, because on an edge the HUD does not yield, the strip is not a reservation at all: it is
 ## a surface that covers pixels without taking space, the event bar's case reached from the other
@@ -394,6 +405,110 @@ func _assert_card_clears_both_surfaces(panel: BandCityPanel, bar: EventDockPanel
 			% [card.size.y, _card_room().size.y],
 		card.size.y >= _card_room().size.y - ROOM_FILL_EPSILON)
 
+## **THE TURN TICK MAY NOT MOVE THE CARD, AND MAY NOT COST THE PLAYER HIS PLACE IN THE LEDGER** — the
+## two halves of the reported *"the Materials & Crafting card shakes when I press Next Turn"*. It is
+## PNG-less: both halves are about what happens BETWEEN two frames that look identical.
+##
+## The turn is ticked through `refresh_snapshot()`, the real per-snapshot seam `Hud` calls, over the
+## same fixture — so anything that moves here moved for no reason at all.
+##
+## **THE RECT IS ASKED TWICE AND THE FIRST ASK IS THE ONE THAT CATCHES THE SHAKE.** `render` mounts its
+## content and then AWAITS a whole frame before it can measure it (the content's height being a
+## function of the card's width), so whatever it does to the card before that await is DRAWN. Asked
+## only once the dust has settled, a card that snapped back to its nominal width, jumped to the top of
+## the room and then put itself back reads as perfectly still — which is why the first reading is taken
+## the instant `refresh_snapshot` returns, i.e. at `render`'s own await.
+## **THE TWO HALVES NEED OPPOSITE FIXTURES, and staging them on one card is how the rect claim goes
+## vacuous.** A ledger only scrolls when it did not fit, and a card that did not fit is fitted to the
+## whole room — so it is ALREADY at the room's top edge and a park there moves it nowhere. The jump is
+## only visible on a card SHORTER than its room, and that is a card whose table fits and has no scroll
+## offset to lose. So: the rect on the bare band in an undocked room, the offset on the prototype's
+## band in a room a reservation has shortened.
+func _rerender_state() -> void:
+	h._hud.update_band_alerts([_bare_band()])
+	h._hud.open_crafting_panel(_bare_band())
+	await h._settle()
+	await _assert_the_re_render_moves_nothing()
+
+	# The same short room the height bound stages: the offset half needs a ledger that genuinely
+	# overflows, since a card whose table fits has no place in it for the player to lose.
+	h._hud.set_reserved_inset(RESERVER_LEFT, SIDE_LEFT, RESERVED_LEFT_WIDTH)
+	h._hud.set_reserved_inset(RESERVER_BOTTOM, SIDE_BOTTOM, RESERVED_BOTTOM_HEIGHT)
+	h._hud.update_band_alerts([_crafting_band()])
+	h._hud.open_crafting_panel(_crafting_band())
+	await h._settle()
+	await _assert_the_re_render_keeps_the_players_place()
+
+	h._hud.close_crafting_panel()
+	h._hud.set_reserved_inset(RESERVER_LEFT, SIDE_LEFT, 0.0)
+	h._hud.set_reserved_inset(RESERVER_BOTTOM, SIDE_BOTTOM, 0.0)
+	await h._settle()
+
+## **THE RECT IS ASKED TWICE AND THE FIRST ASK IS THE ONE THAT CATCHES THE SHAKE**, with the room the
+## card is leaving unused as the vacuity guard: a card already filling its room cannot be seen to jump
+## to the top of it, and a card whose width never grew past the nominal cannot be seen to snap back to
+## it.
+func _assert_the_re_render_moves_nothing() -> void:
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting — the re-render panel is open", false)
+		return
+	var before := panel.get_global_rect()
+	var room := _card_room()
+	h._assert_hud("crafting — precondition: the card leaves room above it to jump to (card top %.0f vs room top %.0f)"
+			% [before.position.y, room.position.y],
+		before.position.y > room.position.y + DOCK_RECT_EPSILON)
+	h._assert_hud("crafting — precondition: the card is wider than its nominal, so a snap back to it would show (%.0f vs %.0f)"
+			% [before.size.x, HudCraftingVocab.PANEL_WIDTH],
+		before.size.x > HudCraftingVocab.PANEL_WIDTH + DOCK_RECT_EPSILON)
+
+	h._hud.crafting_panel().refresh_snapshot()
+	# NOT settled: this is the card as the very next frame DRAWS it, mid-`render` at the await its
+	# measurement needs, which is the only place the jump ever existed.
+	var during := panel.get_global_rect()
+	h._assert_hud("crafting — the re-render draws no frame at a different rect (was %s, drew %s)"
+			% [before, during],
+		during.is_equal_approx(before))
+	await h._settle()
+	h._assert_hud("crafting — …and it settles back at the same rect (was %s, settled %s)"
+			% [before, panel.get_global_rect()],
+		panel.get_global_rect().is_equal_approx(before))
+
+## **A REBUILD MAY NOT COST THE PLAYER HIS PLACE.** The ledger is torn down and rebuilt on every
+## snapshot, so a player scrolled down to the bench tools is thrown back to the top once a turn unless
+## the offset is carried across it.
+func _assert_the_re_render_keeps_the_players_place() -> void:
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	var scroll := _ledger_scroll(panel) if panel != null else null
+	if panel == null or scroll == null:
+		h._assert_hud("crafting — the re-render panel is open on a scrolling ledger", false)
+		return
+	# **THE TWO VACUITY GUARDS.** "The offset survived" passes trivially on a ledger that cannot scroll
+	# and on one left at the top, so the state has to prove it staged neither.
+	h._assert_hud("crafting — precondition: the re-render ledger outgrows its room",
+		_scroll_is_live(panel))
+	scroll.scroll_vertical = SCROLL_PROBE_OFFSET
+	await h._settle()
+	var scrolled := scroll.scroll_vertical
+	h._assert_hud("crafting — precondition: the player is scrolled off the top of the ledger (%d)"
+			% scrolled,
+		scrolled > 0)
+
+	var before := panel.get_global_rect()
+	# A REAL tick: the same band with its bench a pass on and the fibre it spent gone. An identical
+	# payload would leave the ledger nothing to rebuild differently, which is not what Next Turn does.
+	h._hud.update_band_alerts([_ticked_crafting_band()])
+	h._hud.crafting_panel().refresh_snapshot()
+	await h._settle()
+	h._assert_hud("crafting — the player's place in the ledger survives the turn tick (%d of %d)"
+			% [scroll.scroll_vertical, scrolled],
+		scroll.scroll_vertical == scrolled)
+	# …and the card it scrolled inside is still where it was, which is the rect claim in the OTHER of
+	# the two fit cases — a card fitted to the whole room rather than to its own content.
+	h._assert_hud("crafting — …and the filled card is still where it was (was %s, settled %s)"
+			% [before, panel.get_global_rect()],
+		panel.get_global_rect().is_equal_approx(before))
+
 func run(harness) -> void:
 	h = harness
 	await _crafting_states()
@@ -450,6 +565,7 @@ func _crafting_states() -> void:
 
 	await _event_bar_state()
 	await _band_dock_states()
+	await _rerender_state()
 
 	# Hand everything back: the panel closed, the roster restored to the reference band.
 	h._hud.close_crafting_panel()
@@ -570,12 +686,20 @@ func _assert_card_clears_the_event_bar(bar: EventDockPanel) -> void:
 ## Whether the panel's own `ScrollContainer` is scrolling — `fit_to_content` turns it on exactly when
 ## the content did not fit the room it was given.
 func _scroll_is_live(node: Node) -> bool:
+	var scroll := _ledger_scroll(node)
+	return scroll != null and scroll.vertical_scroll_mode != ScrollContainer.SCROLL_MODE_DISABLED
+
+## The panel's one `ScrollContainer`, found by walking rather than read off the panel's member, so the
+## two questions asked of it — is it scrolling, and where is the player in it — resolve to the same
+## node by the same route.
+func _ledger_scroll(node: Node) -> ScrollContainer:
 	if node is ScrollContainer:
-		return (node as ScrollContainer).vertical_scroll_mode != ScrollContainer.SCROLL_MODE_DISABLED
+		return node as ScrollContainer
 	for child in node.get_children():
-		if _scroll_is_live(child):
-			return true
-	return false
+		var found := _ledger_scroll(child)
+		if found != null:
+			return found
+	return null
 
 ## How many of `needles` are absent from `texts`. A COUNT rather than a bool so a failure says how
 ## many wordings leaked rather than only that one did.
@@ -785,6 +909,22 @@ func _bare_band() -> Dictionary:
 	band["bench"] = _idle_bench()
 	band["equipment_batches"] = []
 	band["craft_offers"] = []
+	return band
+
+## **THE SAME BAND ONE TURN LATER** — the bench a pass further along and the fibre it spent gone from
+## the rail. The re-render state ticks with this rather than with the identical fixture, because a
+## turn tick is what the player pressed and an unchanged payload is a re-render that had nothing to
+## rebuild differently.
+func _ticked_crafting_band() -> Dictionary:
+	var band := _crafting_band()
+	var bench: Dictionary = band["bench"]
+	bench["progress"] = float(bench["progress"]) + TICKED_BENCH_WORK
+	band["bench"] = bench
+	var batches: Array = band["material_batches"]
+	var spent: Dictionary = batches[0]
+	spent["amount"] = maxf(float(spent["amount"]) - TICKED_FIBRE_SPENT, 0.0)
+	batches[0] = spent
+	band["material_batches"] = batches
 	return band
 
 ## **A BAND WHOSE BENCH HOLDS ALL BUT ONE OF ITS WORKERS.** `working_age` is what is lowered, never

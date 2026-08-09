@@ -63,11 +63,21 @@ panel, which ran the full height of the window and covered the top of the screen
 
 **`room_bounds` is the seam, and it is one rect for both jobs.** Set it to the Control the
 registry has already inset (the HUD's `LayoutRoot`) and `available_room(margin)` gives the
-caller its placement rect while `fit_to_content` takes its ceiling from the same rect's
-bottom edge, so the placement and the height fit cannot disagree about how much room there
-is. Take the height fit at the TOP of that room, never while the card is centred — the
-ceiling derives from `global_position.y`, so a centred card throws away everything above it
-(`crafting-panel.md` records the measured clamp).
+caller its placement rect while `fit_to_content` takes its ceiling from the same rect, so the
+placement and the height fit cannot disagree about how much room there is.
+
+**WHICH PART of that rect is the ceiling is decided by where the card will SIT, and the caller
+declares it with `centred_in_room`.** A card pinned where it is and growing downward (the
+compose sheets, the fork card) may use only what lies below its own top edge — a fit that took
+the whole room would run it off the bottom with its internal scroll left disabled. A card the
+caller CENTRES once the fit is done is nowhere in particular at fit time, so it may use the
+room's whole height, and it is measured **without being moved**: the ceiling comes off the room
+rect, never off `global_position.y`. The constraint is the same either way — a centred card
+measured against the room beneath it throws away everything above it, which is the measured
+clamp `crafting-panel.md` records — but satisfying it by parking the card at the top of the
+room, measuring, and centring it again puts the card there for a whole RENDERED frame, because
+a measurement can only be taken a frame after its content was mounted. That is a visible jump on
+both axes every re-render.
 
 It is **opt-in, and `null` is the correct answer for a card that IS a reserver** — the
 Inspector reserves its own edge, so it must be measured against the whole window. A card
@@ -164,7 +174,7 @@ assertions that pin it are in `labor-ui.md` → "THE HEIGHT CHROME IS THE HEADER
 
 | Script | Purpose |
 |--------|---------|
-| `ui/AutoSizingPanel.gd` | Shared helper for panels that expand to fit content — `fit_to_content` (height, ceiling `max_height`) and `fit_width` (width, ceiling `max_width`), plus `available_room(margin)`, all measured against `room_bounds` where one was set and against the raw viewport where it was not. Callers: the Inspector, `ui/hud/BandComposeFloat.gd` and `ui/hud/CraftingPanel.gd` (the one that sets `room_bounds`, to the HUD's `FloatingRoom`) |
+| `ui/AutoSizingPanel.gd` | Shared helper for panels that expand to fit content — `fit_to_content` (height, ceiling `max_height`) and `fit_width` (width, ceiling `max_width`), plus `available_room(margin)`, all measured against `room_bounds` where one was set and against the raw viewport where it was not. **`centred_in_room`** picks which half of the room the height ceiling is (see above) and **`has_fitted_width()`** answers whether a width has ever been applied, which is how a caller applies its nominal before the measuring frame on the FIRST mount only. Callers: the Inspector, `ui/hud/BandComposeFloat.gd` and `ui/hud/CraftingPanel.gd` (the one that sets `room_bounds`, to the HUD's `FloatingRoom`) |
 ## HUD Panel Framework (Docked PanelCards)
 
 The HUD (`HudLayer.tscn`) owns the screen regions with one layout authority — a

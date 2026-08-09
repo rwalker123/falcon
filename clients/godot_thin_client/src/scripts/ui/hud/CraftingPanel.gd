@@ -91,6 +91,13 @@ var _fit_pending: bool = false
 ## The last payload rendered, so a re-fit after a viewport change has something to measure.
 var _payload: Dictionary = {}
 
+## "No scroll offset is waiting to be restored." A real offset is `>= 0`, so the sentinel has to sit
+## outside that range rather than at the top of the ledger, which is a place a player can genuinely be.
+const SCROLL_UNSET := -1
+## The ledger's scroll offset, carried by `render` across its rebuild and re-applied by `refit` once
+## the card's height is settled. See `render`.
+var _pending_scroll: int = SCROLL_UNSET
+
 func _ready() -> void:
 	super()
 	name = "CraftingPanel"
@@ -100,6 +107,9 @@ func _ready() -> void:
 	target_width = HudCraftingVocab.PANEL_WIDTH
 	min_height = HudCraftingVocab.PANEL_MIN_HEIGHT
 	bottom_margin = HudCraftingVocab.VIEWPORT_MARGIN
+	# `_place()` CENTRES this card in its room, so the height fit's ceiling is the room's whole height
+	# and is taken off the room rect — the card is never moved in order to be measured. See `refit`.
+	centred_in_room = true
 	visible = false
 
 	_card = PanelContainer.new()
@@ -174,6 +184,12 @@ func _ready() -> void:
 ## Rebuild the whole panel against `payload` (see the `PAYLOAD_*` keys) and show it.
 func render(payload: Dictionary) -> void:
 	_payload = payload
+	# **THE REBUILD MAY NOT COST THE PLAYER HIS PLACE IN THE LEDGER.** This is a rebuild rather than a
+	# diff, and it runs on EVERY snapshot — so a player scrolled down to the bench tools would be thrown
+	# back to the top of the table once a turn. The offset is carried across the rebuild instead of the
+	# rebuild being skipped, because every turn tick genuinely changes the payload (the bench's
+	# progress, an item's life) and a skip would do nothing on the frames that actually shake.
+	_pending_scroll = _scroll.scroll_vertical if visible and _scroll != null else SCROLL_UNSET
 	HudWidgets.clear_children(_header)
 	HudWidgets.clear_children(_rail)
 	HudWidgets.clear_children(_main)
@@ -185,16 +201,24 @@ func render(payload: Dictionary) -> void:
 	# on a hidden subtree, so a card kept hidden until it had been measured would never lay its
 	# content out and would measure the unwrapped lower bound forever.
 	visible = true
-	# …and it shows at its NOMINAL width, so the height read a frame from now is a function of the
-	# width the content was actually laid out at. `fit_width(0, 0)` is the base class's way of saying
-	# "apply the nominal": with no content measurement it can only resolve to `target_width`.
-	fit_width(0.0, 0.0)
-	_park_at_top()
+	# …and on its FIRST mount it shows at its NOMINAL width, so the height read a frame from now is a
+	# function of the width the content was actually laid out at. `fit_width(0, 0)` is the base class's
+	# way of saying "apply the nominal": with no content measurement it can only resolve to
+	# `target_width`. **A card that has already been fitted is left where it is** — it is at a perfectly
+	# good width to lay content out at (the width the fit below will most likely settle on again), and
+	# snapping it back to the nominal would draw one whole frame at a width the card is about to leave.
+	if not has_fitted_width():
+		fit_width(0.0, 0.0)
 	refit()
 
 func dismiss() -> void:
 	visible = false
 	_payload = {}
+	# A card that is opened again is a fresh reading and opens at the top of the ledger, so nothing
+	# survives the dismissal — least of all an offset into a table that has been torn down.
+	_pending_scroll = SCROLL_UNSET
+	if _scroll != null:
+		_scroll.scroll_vertical = 0
 	HudWidgets.clear_children(_header)
 	HudWidgets.clear_children(_rail)
 	HudWidgets.clear_children(_main)
@@ -222,15 +246,24 @@ func refit() -> void:
 	var chrome := HudStyle.card_stylebox().get_minimum_size()
 	max_width = maxf(room.size.x, target_width)
 	fit_width(_body.get_combined_minimum_size().x, chrome.x + _scroll_gutter())
-	# **THE CARD IS PARKED AT THE TOP OF THE ROOM BEFORE THE HEIGHT FIT, AND CENTRED ONLY AFTER IT.**
-	# `AutoSizingPanel.fit_to_content` derives its real ceiling from `global_position.y` — the room
-	# BELOW the card — so fitting a card that is currently centred at its PREVIOUS (small) height
-	# throws away everything above it: measured, a ledger with room for every row was clamped to four
-	# of them by exactly the height its own centring had put above it. Parked at the top the ceiling
-	# is the whole room, and the final `_place()` then centres a card whose height is settled.
-	_park_at_top()
+	# **THE HEIGHT FIT'S CEILING IS THE WHOLE ROOM, AND THE CARD DOES NOT MOVE TO BE MEASURED.**
+	# `centred_in_room` is how the base class is told so: this card is centred by `_place()` below, so
+	# the room it may spend is the room's own height rather than the room beneath wherever it currently
+	# sits. Fitting a centred card against the room BELOW it throws away everything above it —
+	# measured, a ledger with room for every row was clamped to four of them by exactly the height its
+	# own centring had put above it — and the older answer to that, parking the card at the top of the
+	# room first, put it there for the whole frame this fit awaits.
 	max_height = room.size.y
 	fit_to_content(_body.get_combined_minimum_size().y + _header_height(), chrome.y, _scroll)
+	# The offset `render` carried across its rebuild, restored now the fit has settled the card's height
+	# and `fit_to_content` has decided whether the ledger scrolls at all. **Only into a ledger that
+	# still scrolls** — a rebuild whose table now fits its room has nowhere left to be scrolled to, and
+	# the fit has just said so by disabling the scroll and returning it to the top. A re-fit that
+	# follows no rebuild has nothing pending and leaves the player's scroll where he left it.
+	if _pending_scroll != SCROLL_UNSET and _scroll != null:
+		if _scroll.vertical_scroll_mode != ScrollContainer.SCROLL_MODE_DISABLED:
+			_scroll.scroll_vertical = _pending_scroll
+		_pending_scroll = SCROLL_UNSET
 	_place()
 
 # ---- header -----------------------------------------------------------------
@@ -1031,12 +1064,6 @@ func _place() -> void:
 	position = Vector2(
 		room.position.x + maxf((room.size.x - size.x) * 0.5, 0.0),
 		room.position.y + maxf((room.size.y - size.y) * 0.5, 0.0))
-
-## Horizontally centred, pinned to the TOP of the room — the position the height fit must be taken
-## at. See `refit`.
-func _park_at_top() -> void:
-	var room := _room()
-	position = Vector2(room.position.x + maxf((room.size.x - size.x) * 0.5, 0.0), room.position.y)
 
 func _header_height() -> float:
 	if _header == null:
