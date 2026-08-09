@@ -308,6 +308,23 @@ const TAB_BADGE_PADDING_V := 1
 const CYCLE_PREV := -1
 const CYCLE_NEXT := 1
 
+# ---- the ACTION BAR (its own row, under the subject) ------------------------
+## Gap between two action glyphs — `HEADER_SEPARATION`, because the bar is a second row of the SAME
+## chrome and its buttons must read as members of the header's icon family, not as a new control set.
+const ACTION_BAR_SEPARATION := HEADER_SEPARATION
+## Breathing room above and below the bar, so it reads as its own row rather than as a second line of
+## the subject block. HALF the body gutter: this is chrome sitting next to chrome, not a separated
+## region — the full `BODY_SEPARATION` is what the narrow shell puts between its tab bar and content.
+const ACTION_BAR_MARGIN_V := BODY_SEPARATION / 2
+## Registry keys of an action descriptor (`register_action` builds them; nothing else writes one).
+const ACTION_SPEC_ID := "id"
+const ACTION_SPEC_GLYPH := "glyph"
+const ACTION_SPEC_TOOLTIP := "tooltip"
+const ACTION_SPEC_ENABLED := "enabled"
+## The Materials & Crafting launcher's registry id — the panel registers its own ⚒ through the same
+## seam every other action uses, so there is no privileged action.
+const ACTION_CRAFTING := &"crafting"
+
 # ---- chrome glyphs (geometric — render reliably, unlike emoji magnifiers) ---
 const COLLAPSE_GLYPH := "▾"   # ▾  minimize
 const EXPAND_GLYPH := "▸"     # ▸  restore
@@ -358,14 +375,19 @@ signal reservation_changed(edge: int, size: float)
 signal cycle_requested(delta: int)
 ## The header subject cluster (stage glyph + name + stage label) was clicked — "jump to my band".
 signal subject_activated
-## The header's `⚒` was pressed — open the Materials & Crafting panel
+## The `⚒` on the action bar was pressed — open the Materials & Crafting panel
 ## (`.claude/rules/client/crafting-panel.md`).
 ##
-## **IT CARRIES NO SUBJECT, and that is the point of putting it in the HEADER.** The header is
-## subject-independent chrome, so ONE button serves a band page and the faction page and the band
-## zone's 300px budget is untouched; which band it opens on is `BandPanelController`'s answer, not
-## this panel's.
+## **IT CARRIES NO SUBJECT, and that is the point of putting it on subject-independent chrome.** ONE
+## button serves a band page and the faction page and the band zone's 300px budget is untouched;
+## which band it opens on is `BandPanelController`'s answer, not this panel's. It is a RELAY of
+## `action_invoked(ACTION_CRAFTING)` — the ⚒ is registered like any other action — kept as its own
+## named edge so the crafting controller connects to a signal that says what happened rather than
+## filtering an id.
 signal crafting_requested
+## An ACTION BAR button was pressed, named by the id it was registered under. THE registry's one
+## outbound edge: a caller that registers an action listens here and filters on its own id.
+signal action_invoked(id: StringName)
 ## `work_zone_size()` changed — a shell flip, dock change, collapse or viewport resize. Hud re-pages
 ## its work board on this rather than re-rendering everything.
 signal zones_resized
@@ -407,10 +429,18 @@ var _stage_label: Label
 var _position_label: Label
 var _count_label: Label
 var _collapse_button: Button
-## The header's Materials & Crafting launcher. Subject-independent chrome, so it is built once and
-## never re-made per subject — the same lifetime the collapse toggle and the cycler arrows have.
-var _crafting_button: Button
 var _rail_expand_button: Button
+## THE ACTION BAR. `_action_bar` is the outer MarginContainer (what is hidden, and what
+## `_action_bar_height` measures — the margins are part of the row's cost); `_action_row` is the
+## HBox the buttons live in.
+var _action_bar: MarginContainer
+var _action_row: HBoxContainer
+## The registered actions in DECLARED order — one `{id, glyph, tooltip, enabled}` descriptor each.
+## The bar is rebuilt from this list, never edited in place, so registration order is the only thing
+## that decides the row's order.
+var _actions: Array[Dictionary] = []
+## id:StringName -> Button, so `refresh_actions` can re-evaluate a predicate without a rebuild.
+var _action_buttons: Dictionary = {}
 # Body layout: `_body_host` holds the two alternative SHELLS, exactly one visible at a time (chosen by
 # panel width — see `_shell_is_wide`). The wide shell is an HBox of one zone host per DECLARED zone
 # (the flanks fixed-width, work expanding) with hairline separators; the narrow shell is a tab bar
@@ -613,7 +643,9 @@ func zone_size(zone: StringName) -> Vector2:
 	if _collapsed or not _shown:
 		return Vector2.ZERO
 	var interior := _interior_size()
-	var body_height: float = maxf(interior.y - _header_height(), 0.0)
+	# The action bar is card chrome in BOTH shells (unlike the tab bar), so it comes off here rather
+	# than out of `_shell_chrome_height`.
+	var body_height: float = maxf(interior.y - _header_height() - _action_bar_height(), 0.0)
 	if not _shell_is_wide():
 		return Vector2(interior.x, maxf(body_height - _tab_bar_height(), 0.0))
 	# A FIXED zone's width is its declared column times however many columns it was GRANTED, so this is
@@ -827,6 +859,12 @@ func _build() -> void:
 	_header_rail = _build_header_rail()
 	column.add_child(_header_rail)
 
+	# TITLE -> ACTIONS -> TABS -> CONTENT. The bar acts on the SUBJECT whichever view is showing, so it
+	# sits above the tab strip; the tabs select a view and must stay adjacent to the content they
+	# switch (the strip is built inside `_narrow_shell`, one level down).
+	_action_bar = _build_action_bar()
+	column.add_child(_action_bar)
+
 	# The body host holds both alternative shells + the empty-state; only one shell is visible at a
 	# time. Collapse hides the whole host.
 	_body_host = VBoxContainer.new()
@@ -878,6 +916,14 @@ func _build() -> void:
 	_seam.color = HudStyle.SIGNAL_DEEP
 	_seam.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_root.add_child(_seam)
+
+	# **THE ⚒ GOES ON THE BAR THROUGH THE REGISTRY, exactly as any other action would.** The panel's own
+	# launcher is not privileged: it is a `register_action` call like the ones a caller makes, and its
+	# `crafting_requested` edge is a RELAY of `action_invoked`. Registering it here (rather than letting
+	# the crafting controller do it) keeps the button's presence a property of the panel — the ⚒ is
+	# subject-independent chrome that must exist on a band page and on the faction page alike.
+	register_action(ACTION_CRAFTING, CRAFTING_GLYPH, CRAFTING_TOOLTIP)
+	action_invoked.connect(_on_action_invoked)
 
 func _build_header_full() -> HBoxContainer:
 	var header := HBoxContainer.new()
@@ -951,14 +997,11 @@ func _build_header_full() -> HBoxContainer:
 
 	header.add_child(_build_cycler())
 
-	# **THE MATERIALS & CRAFTING LAUNCHER, beside the cycler and the dock chooser** — the same
-	# `_make_icon_button` the collapse toggle and the two arrows use, so it reads as a member of the
-	# header's own family rather than as a new kind of control. It is subject-independent chrome: one
-	# button serves a band page and the faction page, and the band zone's 300px budget is untouched.
-	_crafting_button = _make_icon_button(CRAFTING_GLYPH, CRAFTING_TOOLTIP)
-	_crafting_button.pressed.connect(func(): crafting_requested.emit())
-	header.add_child(_crafting_button)
-
+	# **NO ACTIONS LIVE ON THIS ROW.** Its minimum width is the subject plus every control on it, so a
+	# row that also carried the verbs made the docked panel's width a function of its CHROME — each new
+	# action widening the dock again. Actions go on `_build_action_bar()`'s own row; what stays here is
+	# the subject, the cycler over it, and the WINDOW controls (dock chooser + collapse), which act on
+	# the panel rather than on the band.
 	var dock_chooser := _build_dock_chooser()
 	header.add_child(dock_chooser)
 
@@ -1053,6 +1096,145 @@ func _build_header_rail() -> VBoxContainer:
 
 	rail.visible = false
 	return rail
+
+# ---- the action bar --------------------------------------------------------
+#
+# **THE BAR IS A REGISTRY, NOT A LAYOUT, AND THAT IS THE WHOLE POINT OF IT.** The subject row's
+# minimum width is the subject plus every control on it, so while the verbs lived there the docked
+# panel's width was a function of its CHROME rather than of its content, and every action added in
+# future widened the dock again. Actions register instead — id, glyph, tooltip, an enabled predicate
+# — and the bar lays them out on its own row, so a new action is a one-line entry that costs the
+# panel's width nothing. Same shape as the reserved-edge registry, and for the same reason.
+
+## Register an action on the bar. Re-registering a live id REPLACES its descriptor and keeps its
+## place in the row, so a caller may restate one without duplicating the button.
+##
+## - `id` — the stable key the press comes back on (`action_invoked`), and the handle
+##   `unregister_action` takes.
+## - `glyph` / `tooltip` — the face. Built with `_make_icon_button`, the same builder the collapse
+##   toggle and the cycler arrows use, so every action reads as a member of the panel's icon family.
+## - `enabled` — a zero-argument `Callable` answering `bool`, re-asked by `refresh_actions()`. An
+##   EMPTY Callable means always enabled; a predicate is never called during layout, only when the
+##   caller says the world moved, so the bar's geometry can never become a function of band state.
+##
+## Registration changes the bar's height, and on a HORIZONTAL dock the strip's height IS the
+## reservation — so this republishes it, the `set_rail_width` contract. It is a DECLARED input, made
+## at wiring time and not per snapshot, so it cannot put the reservation on the render's hot path.
+func register_action(id: StringName, glyph: String, tooltip: String,
+		enabled: Callable = Callable()) -> void:
+	if id.is_empty():
+		return
+	var spec := {
+		ACTION_SPEC_ID: id,
+		ACTION_SPEC_GLYPH: glyph,
+		ACTION_SPEC_TOOLTIP: tooltip,
+		ACTION_SPEC_ENABLED: enabled,
+	}
+	var at := _action_index(id)
+	if at >= 0:
+		_actions[at] = spec
+	else:
+		_actions.append(spec)
+	_apply_action_registry()
+
+## Retire an action. Silent on an id that was never registered — a caller tearing down does not have
+## to remember what it managed to register.
+func unregister_action(id: StringName) -> void:
+	var at := _action_index(id)
+	if at < 0:
+		return
+	_actions.remove_at(at)
+	_apply_action_registry()
+
+## Re-ask every registered `enabled` predicate. The CALLER's cue, not the panel's: the panel has no
+## idea when a band's stores changed, and a predicate asked from `_process` or from a layout pass
+## would make the bar's state (and, through a disabled face's own minimum, its geometry) content-driven.
+func refresh_actions() -> void:
+	for spec in _actions:
+		var button_variant: Variant = _action_buttons.get(spec[ACTION_SPEC_ID])
+		if not (button_variant is Button):
+			continue
+		var button: Button = button_variant
+		button.disabled = not _action_is_enabled(spec)
+
+## Is `id` on the bar? For callers that register conditionally, and for the harness.
+func has_action(id: StringName) -> bool:
+	return _action_index(id) >= 0
+
+func _action_index(id: StringName) -> int:
+	for i in range(_actions.size()):
+		if StringName(_actions[i].get(ACTION_SPEC_ID, &"")) == id:
+			return i
+	return -1
+
+## An empty predicate means "always" — the common case, so a caller with no gate writes nothing.
+func _action_is_enabled(spec: Dictionary) -> bool:
+	var enabled: Variant = spec.get(ACTION_SPEC_ENABLED, Callable())
+	if not (enabled is Callable) or not (enabled as Callable).is_valid():
+		return true
+	return bool((enabled as Callable).call())
+
+## The bar's row, empty at construction. **An empty bar takes NO vertical space** — the outer
+## MarginContainer is hidden, and a hidden child contributes neither its own height nor the column's
+## separation — so a panel with no actions pays nothing for the seam existing.
+func _build_action_bar() -> MarginContainer:
+	var bar := MarginContainer.new()
+	bar.name = "ActionBar"
+	bar.add_theme_constant_override("margin_top", ACTION_BAR_MARGIN_V)
+	bar.add_theme_constant_override("margin_bottom", ACTION_BAR_MARGIN_V)
+	bar.visible = false
+	_action_row = HBoxContainer.new()
+	_action_row.name = "ActionRow"
+	_action_row.add_theme_constant_override("separation", ACTION_BAR_SEPARATION)
+	bar.add_child(_action_row)
+	return bar
+
+## Rebuild the row from `_actions`, then republish the reservation the new height may have moved.
+func _apply_action_registry() -> void:
+	_rebuild_action_bar()
+	if _root == null:
+		return   # registered before `_build` ran: `_ready` lays the panel out itself
+	_apply_dock_layout()
+	_republish_reservation_if_changed()
+
+## The buttons, in declared order. Rebuilt wholesale rather than patched: the row is a handful of
+## icon buttons, and a rebuild is the one arrangement in which the row's order cannot drift from the
+## registry's.
+func _rebuild_action_bar() -> void:
+	if _action_row == null:
+		return
+	for child in _action_row.get_children():
+		_action_row.remove_child(child)
+		child.queue_free()
+	_action_buttons.clear()
+	for spec in _actions:
+		var id := StringName(spec[ACTION_SPEC_ID])
+		var button := _make_icon_button(String(spec[ACTION_SPEC_GLYPH]), String(spec[ACTION_SPEC_TOOLTIP]))
+		button.disabled = not _action_is_enabled(spec)
+		button.pressed.connect(func(): action_invoked.emit(id))
+		_action_row.add_child(button)
+		_action_buttons[id] = button
+	_refresh_action_bar_visibility()
+
+## The bar shows iff it has something to show and the panel is expanded — the collapsed rail carries
+## the stage glyph and the expand toggle and nothing else.
+func _refresh_action_bar_visibility() -> void:
+	if _action_bar != null:
+		_action_bar.visible = not _actions.is_empty() and not _collapsed
+
+## The bar's own contribution to the card's chrome — its MARGINS INCLUDED, since they are part of what
+## the row costs. Zero while it is hidden, which is what makes an unregistered bar free.
+func _action_bar_height() -> float:
+	if _action_bar == null or not _action_bar.visible:
+		return 0.0
+	return _action_bar.get_combined_minimum_size().y
+
+## The ⚒'s relay. The registry's outbound edge is `action_invoked(id)`; `crafting_requested` is a
+## named alias of the one entry this panel registers itself, so `BandPanelController` connects to a
+## signal that names the act rather than filtering ids it did not register.
+func _on_action_invoked(id: StringName) -> void:
+	if id == ACTION_CRAFTING:
+		crafting_requested.emit()
 
 # ---- layout ----------------------------------------------------------------
 
@@ -1452,8 +1634,15 @@ func _panel_width_extent() -> float:
 ## **AND THE COLUMN TERM IS THE SAME ARGUMENT AGAIN.** `_body_budget()` picks the budget from
 ## `band_zone_columns()`, which is as purely geometric as `_shell_chrome_height()` is — so the strip
 ## can get shorter when the flank widens without the height ever becoming a function of content.
+##
+## **AND THE ACTION BAR IS A THIRD CHROME TERM, ADDED FOR THE VERY SAME REASON.** `PANEL_HEIGHT_WIDE`
+## is the budget the zones' content is tuned against — the band zone's SHORT tier reads 299px of the
+## 300px box — so a bar spent out of the STRIP's fixed height would have taken its 32px straight out
+## of that 300 and clipped the flank on a horizontal dock. The strip grows by the bar instead
+## (360 -> 392 at one band column), the zones keep their box, and the growth is still purely
+## geometric: the bar's height is a function of what is REGISTERED, never of what a band holds.
 func _horizontal_panel_height() -> float:
-	return minf(_body_budget() + _shell_chrome_height(),
+	return minf(_body_budget() + _shell_chrome_height() + _action_bar_height(),
 		_viewport_size().y * MAX_WIDE_HEIGHT_FRACTION)
 
 ## The body budget for the CURRENT flank layout: a two-column flank stacks its blocks side by side and
@@ -2023,6 +2212,7 @@ func _refresh_collapse_state() -> void:
 		_body_host.visible = not _collapsed
 	if _header_rail != null:
 		_header_rail.visible = _collapsed
+	_refresh_action_bar_visibility()
 
 func _refresh_dock_cells() -> void:
 	for edge in _dock_cells:
