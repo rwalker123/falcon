@@ -115,10 +115,16 @@ pub struct ReplenishConfig {
 /// "Start a life here" levers (`docs/plan_band_fission.md` §Q2).
 #[derive(Debug, Clone, Deserialize)]
 pub struct SettleConfig {
-    /// The founding party must hold at least this many **working-age** people at the moment of
-    /// founding. Below it there is no labor pool to allocate and the new band is a death notice
-    /// with a marker on it.
+    /// The **new** band must start with at least this many working-age people. Below it there is no
+    /// labor pool to allocate and the band is a death notice with a marker on it.
     pub min_founding_workers: u32,
+    /// The **parent** must still hold at least this many working-age people once the split is made.
+    /// The guard against hollowing out the home band to crew a second one and killing both.
+    ///
+    /// **`0` is a legitimate setting here, unlike its sibling above** — it means "the parent may
+    /// give everything", which is a real (if unwise) policy and the way a playtest turns the floor
+    /// off. `min_founding_workers` has no such reading: a band of nobody is not a band.
+    pub parent_min_workers: u32,
 }
 
 /// The smallest meaningful value for a **counted** lever (turns or tiles). At `0` the behaviour the

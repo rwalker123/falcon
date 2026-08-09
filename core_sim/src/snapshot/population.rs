@@ -186,6 +186,7 @@ pub(crate) struct ExpeditionLevers {
     /// found a band, echoed per-cohort so the client's "start a life here" tooltip can name the
     /// number instead of keeping a second copy of the config. Same idiom as the four above.
     pub(crate) settle_min_founding_workers: u32,
+    pub(crate) settle_parent_min_workers: u32,
 }
 
 /// **The TOE levers a cohort's kit readout is resolved against** — the config, plus the *equipped*
@@ -669,19 +670,11 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         pen_carry_per_worker_biomass,
         scout_vantage_range,
         warrior_attack,
-        // **The founding verdict, read straight off the party** — `assess_foundings` decided it this
-        // turn (Visibility stage) and the capture republishes it rather than re-deriving it, which
-        // is the only way the button's reason and the command's refusal can be the same answer.
-        // A non-expedition cohort has nothing to found and publishes the empty set.
-        founding_refusals: expedition
-            .map(|exp| {
-                exp.founding_refusals
-                    .iter()
-                    .map(|refusal| refusal.token().to_string())
-                    .collect()
-            })
-            .unwrap_or_default(),
+        // **The two split floors, echoed off config.** The sheet composes its own forecast from
+        // them (`sim_schema` → `founding_parent_min_workers` for why the verdict itself does not
+        // cross), and `systems::fission::split_refusals` is the one rule set the command runs.
         founding_min_workers: expedition_levers.settle_min_founding_workers,
+        founding_parent_min_workers: expedition_levers.settle_parent_min_workers,
     }
 }
 
@@ -793,6 +786,7 @@ mod tests {
             hunt_forecast_horizon_turns: cfg.hunt.forecast_horizon_turns,
             band_move_tiles_per_turn: 1,
             settle_min_founding_workers: cfg.settle.min_founding_workers,
+            settle_parent_min_workers: cfg.settle.parent_min_workers,
         }
     }
 
@@ -954,7 +948,6 @@ mod tests {
             carried_trade: 0.0,
             kit: crate::equipment_config::EquipmentConfig::builtin()
                 .default_kit(crate::equipment_config::KitJob::Hunt),
-            founding_refusals: Vec::new(),
         };
         let runway = captured_runway(&cohort, None, Some(&expedition));
         let historical = TEST_LARDER / demand_of(&cohort);

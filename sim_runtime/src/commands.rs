@@ -210,13 +210,14 @@ pub enum CommandPayload {
         faction_id: u32,
         expedition_band_id: u64,
     },
-    /// **"Start a life here"** — the third *arrival* action beside onward and recall. The party
-    /// stops being an expedition and becomes a resident band on the spot, keeping the
-    /// `expedition_band_id` it was allocated at launch (so the founding is the same band, seen
-    /// from a different side, for every id-keyed consumer including the replay log).
-    SettleExpedition {
+    /// **Form a new band** — a resident band splits in two on the tile it is standing on
+    /// (`docs/plan_band_fission.md`). `workers` is the player's ONE input; children, elders and
+    /// every store divide on the share it implies, so the new band is a smaller copy of the one it
+    /// came from rather than a party with a composition of its own.
+    SplitBand {
         faction_id: u32,
-        expedition_band_id: u64,
+        band_id: Option<u64>,
+        workers: u32,
     },
     SendHuntExpedition {
         faction_id: u32,
@@ -921,12 +922,14 @@ impl CommandEnvelope {
                 faction_id: *faction_id,
                 expedition_band_id: *expedition_band_id,
             }),
-            CommandPayload::SettleExpedition {
+            CommandPayload::SplitBand {
                 faction_id,
-                expedition_band_id,
-            } => pb::command_envelope::Command::SettleExpedition(pb::SettleExpeditionCommand {
+                band_id,
+                workers,
+            } => pb::command_envelope::Command::SplitBand(pb::SplitBandCommand {
                 faction_id: *faction_id,
-                expedition_band_id: *expedition_band_id,
+                band_id: *band_id,
+                workers: *workers,
             }),
             CommandPayload::SendHuntExpedition {
                 faction_id,
@@ -1259,12 +1262,11 @@ impl CommandEnvelope {
                     expedition_band_id: cmd.expedition_band_id,
                 }
             }
-            pb::command_envelope::Command::SettleExpedition(cmd) => {
-                CommandPayload::SettleExpedition {
-                    faction_id: cmd.faction_id,
-                    expedition_band_id: cmd.expedition_band_id,
-                }
-            }
+            pb::command_envelope::Command::SplitBand(cmd) => CommandPayload::SplitBand {
+                faction_id: cmd.faction_id,
+                band_id: cmd.band_id,
+                workers: cmd.workers,
+            },
             pb::command_envelope::Command::SendHuntExpedition(cmd) => {
                 CommandPayload::SendHuntExpedition {
                     faction_id: cmd.faction_id,
@@ -1607,14 +1609,15 @@ mod tests {
         }
     }
 
-    /// **The founding rides the wire as a `BandId`**, and it has to survive the envelope intact:
-    /// the command is replayed out of the log after a rollback, where an entity handle would resolve
-    /// to nothing but an id still names the same band.
+    /// **The split rides the wire as a `BandId`**, and it has to survive the envelope intact: the
+    /// command is replayed out of the log after a rollback, where an entity handle would resolve to
+    /// nothing but an id still names the same band.
     #[test]
-    fn settle_expedition_round_trips_through_the_envelope() {
-        let payload = CommandPayload::SettleExpedition {
+    fn split_band_round_trips_through_the_envelope() {
+        let payload = CommandPayload::SplitBand {
             faction_id: 0,
-            expedition_band_id: 9_001,
+            band_id: Some(9_001),
+            workers: 6,
         };
         let envelope = CommandEnvelope {
             payload: payload.clone(),

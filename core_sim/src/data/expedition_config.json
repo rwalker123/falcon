@@ -17,6 +17,7 @@
     "reach_tiles": 1
   },
   "settle": {
-    "min_founding_workers": 4
+    "min_founding_workers": 4,
+    "parent_min_workers": 6
   }
 }

@@ -276,12 +276,13 @@ message RecallExpeditionCommand {
   uint64 expedition_band_id = 2;
 }
 
-// "Start a life here" — the third ARRIVAL action beside onward and recall. A party sitting in
-// AwaitingOrders drops its Expedition component and gains ResidentBand, keeping the BandId it was
-// allocated at launch and the map it learned on the way.
-message SettleExpeditionCommand {
+// Form a new band — a resident band splits in two on the tile it is standing on. `workers` is the
+// player's ONE input; children, elders and every store divide on the share it implies
+// (docs/plan_band_fission.md §Q3).
+message SplitBandCommand {
   uint32 faction_id = 1;
-  uint64 expedition_band_id = 2;
+  optional uint64 band_id = 2;
+  uint32 workers = 3;
 }
 
 // Outfit and launch a hunting expedition: draw party_workers off the home band and send a detached
@@ -664,7 +665,10 @@ message CommandEnvelope {
     // 49 is held by `send_denial_raid`, so the query channel takes 50. The ONE payload here the
     // server answers rather than applies — see `QueryCommand`.
     QueryCommand query = 50;
-    // 50 is held by `query`, so the founding verb takes 51 (append-only; never renumber).
-    SettleExpeditionCommand settle_expedition = 51;
+    // 50 is held by `query`, so the fission verb takes 51 (append-only; never renumber). The slot
+    // carried `settle_expedition` when a founding was an expedition that stopped being one; that
+    // framing is retired (docs/plan_band_fission.md → "Why not an expedition that settles") and the
+    // slot was reused rather than burned, there being no shipped client to keep compatible with.
+    SplitBandCommand split_band = 51;
   }
 }

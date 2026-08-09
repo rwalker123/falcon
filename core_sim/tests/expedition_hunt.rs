@@ -339,7 +339,6 @@ fn spawn_hunt_party_of(
                 pending_reveal: Vec::new(),
                 carried_trade: 0.0,
                 kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Hunt),
-                founding_refusals: Vec::new(),
             },
         ))
         .id()
