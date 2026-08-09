@@ -132,14 +132,14 @@ impl RecipeOutput {
 /// `when` is the seam the continuous reading quantises at; `effects` is the set of **absolutes** the
 /// output takes at this grade.
 ///
-/// **`effects` may be empty, and every shipped grade's is.** A grade can only declare a stat whose
-/// value does not already live somewhere else, and today every stat the shipped items own is homed:
-/// `attack` on the item, the two carry rates in `labor_config.json`. Writing them here as well would
-/// give a shipped number a second home to drift from — the exact mistake `equipment.json`'s
-/// one-home-per-fact rule exists to prevent — while the numbers sat inert, which is
-/// `config-loading.md`'s *"looks live but isn't"*. The grade **name** is live now (it is what the
-/// draw selects and what the finished item carries); the payload lands with the quality-tier slice
-/// that re-homes those rates onto the tier.
+/// **A grade may only declare a stat the output item's TIERS declare**, and the `standard` rung must
+/// declare the same value that tier does ([`RecipesConfig::validate_grades_against_item`]). That is
+/// what keeps a grade from becoming a second home for a shipped number: the tier stays the one home,
+/// the grades are a spread around it, and a standard-grade craft reproduces the game as shipped.
+///
+/// **`effects` may still be empty**, and the shipped empties are the items whose whole payload is
+/// *shared* rather than tier-bought (the handling gear's `pen_carry`, the wayfinding gear's vantage)
+/// or is a bench stat nothing yet grades.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RecipeGrade {
@@ -575,6 +575,19 @@ impl RecipesConfig {
                             });
                         }
                     }
+                    // **A COUNT-BEARING LEDGER CANNOT BANK HALF A SPEAR.** An equipment output's
+                    // `amount` becomes a batch's `count`, so a fractional row would either round
+                    // (inventing or destroying an item) or truncate to nothing.
+                    if output.amount.fract() != 0.0 {
+                        return Err(RecipesConfigError::InvalidBook {
+                            reason: format!(
+                                "recipe '{id}' makes {} of '{item}' - an equipment output is counted \
+                                 in whole items",
+                                output.amount
+                            ),
+                        });
+                    }
+                    Self::validate_grades_against_item(id, recipe, item, equipment)?;
                 }
                 if let Some(material) = output.material_id() {
                     let Some(def) = materials.material(material) else {
@@ -667,7 +680,87 @@ impl RecipesConfig {
         }
         Ok(())
     }
+
+    /// **WHAT A GRADE MAY SAY ABOUT THE THING IT MAKES.** A grade declares absolutes on a *crafted*
+    /// item, so every rule here is about it not becoming a second home for a number that already
+    /// has one — the objection that kept every grade's payload empty until the tier owned these.
+    ///
+    /// - **Only a stat the item's own tiers declare.** What the material buys sits on the tier; a
+    ///   grade *replaces* one of those values and may never introduce a stat the item does not
+    ///   otherwise have. A grade naming `pen_carry` — whose equipped side is the hunt haul's —
+    ///   would be exactly the second home.
+    /// - **The mass bounds are restated verbatim.** A grade's effect is what
+    ///   [`crate::equipment_config::LiveItem::effect_entry`] answers with, bounds included, so a
+    ///   fine snare that dropped `max_body_mass` would quietly become a mammoth trap.
+    /// - **The STANDARD grade equals the shipped tier value.** That is what makes a standard-grade
+    ///   craft reproduce today's game exactly, and it is what stops the two numbers drifting: the
+    ///   tier stays the one home, and the grades are a spread around it.
+    fn validate_grades_against_item(
+        id: &str,
+        recipe: &RecipeDef,
+        item: &str,
+        equipment: &EquipmentConfig,
+    ) -> Result<(), RecipesConfigError> {
+        let Some(def) = equipment.item(item) else {
+            return Ok(());
+        };
+        for (name, grade) in &recipe.grades {
+            for effect in &grade.effects {
+                let Some(tier_effect) = def
+                    .tiers
+                    .iter()
+                    .find_map(|tier| tier.effects.iter().find(|e| e.stat == effect.stat))
+                else {
+                    return Err(RecipesConfigError::InvalidBook {
+                        reason: format!(
+                            "recipe '{id}' grade '{name}' declares {:?}, which no tier of '{item}' \
+                             declares - a grade replaces what the material bought, it may not be a \
+                             second home for a number that lives elsewhere",
+                            effect.stat
+                        ),
+                    });
+                };
+                if effect.min_body_mass != tier_effect.min_body_mass
+                    || effect.max_body_mass != tier_effect.max_body_mass
+                {
+                    return Err(RecipesConfigError::InvalidBook {
+                        reason: format!(
+                            "recipe '{id}' grade '{name}' declares {:?} without '{item}''s own mass \
+                             bounds - a grade replaces the effect entire, so a dropped bound would \
+                             silently widen what the item reaches",
+                            effect.stat
+                        ),
+                    });
+                }
+                if name == STANDARD_GRADE
+                    && effect.tier.value()
+                        != def
+                            .default_tier()
+                            .effects
+                            .iter()
+                            .find(|e| e.stat == effect.stat)
+                            .map_or(effect.tier.value(), |e| e.tier.value())
+                {
+                    return Err(RecipesConfigError::InvalidBook {
+                        reason: format!(
+                            "recipe '{id}' grade '{STANDARD_GRADE}' declares {:?} = {}, which is not \
+                             what '{item}''s default tier declares - a standard-grade craft must \
+                             reproduce the shipped item exactly",
+                            effect.stat,
+                            effect.tier.value()
+                        ),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
 }
+
+/// **The grade a standard craft comes out at, and therefore the one pinned to the shipped item.**
+/// Named because it is a *rule* rather than a label: the middle rung is what an ordinary draw off
+/// ordinary stock selects, so it is what has to reproduce the game as shipped.
+pub const STANDARD_GRADE: &str = "standard";
 
 /// A reading is a position on an axis, so it has both ends. Same bound the materials table applies,
 /// named once per file that checks one.
@@ -808,20 +901,61 @@ mod tests {
         }
     }
 
-    /// **Every shipped grade's payload is empty**, which is the deliberate state — see
-    /// [`RecipeGrade`]. Pinned so the day someone writes a number in one, they have to come back
-    /// here and say why it does not already live on the item.
+    /// **THE STANDARD GRADE IS THE SHIPPED NUMBER.** It replaces `no_shipped_grade_declares_an_effect`,
+    /// which pinned the *previous* stage's deliberate emptiness — a grade could not declare a stat
+    /// while every stat the shipped items own lived somewhere else. The tier owns them now, so the
+    /// grades declare real absolutes and the rule that keeps them honest is this one: a **standard**
+    /// craft must reproduce today's game exactly, so its value is the item's own default-tier value
+    /// and the other two rungs are a spread around it.
+    ///
+    /// **Paired with a liveness assertion**, because "every standard grade agrees with its item"
+    /// is trivially true of a book whose grades declare nothing at all — which is exactly the state
+    /// this test replaced.
     #[test]
-    fn no_shipped_grade_declares_an_effect() {
+    fn the_standard_grade_reproduces_the_shipped_item_and_the_others_bracket_it() {
+        let equipment = EquipmentConfig::builtin();
+        let mut saw_a_declared_effect = false;
         for (id, recipe) in builtin().recipes() {
+            let Some(item) = recipe
+                .outputs
+                .iter()
+                .find_map(|output| output.equipment_id())
+                .and_then(|item| equipment.item(item))
+            else {
+                continue;
+            };
             for (name, grade) in recipe.grades_by_seam() {
-                assert!(
-                    grade.effects.is_empty(),
-                    "recipe '{id}' grade '{name}' declares effects - every stat the shipped items \
-                     own is already homed, so this is a second home for a shipped number"
-                );
+                for effect in &grade.effects {
+                    saw_a_declared_effect = true;
+                    let shipped = item
+                        .default_tier()
+                        .effects
+                        .iter()
+                        .find(|tier| tier.stat == effect.stat)
+                        .map(|tier| tier.tier.value())
+                        .unwrap_or_else(|| {
+                            panic!("recipe '{id}' grade '{name}' declares a stat no tier declares")
+                        });
+                    let value = effect.tier.value();
+                    match name {
+                        STANDARD_GRADE => assert_eq!(
+                            value, shipped,
+                            "recipe '{id}' grade '{name}': a standard craft must reproduce the \
+                             shipped item exactly"
+                        ),
+                        _ => assert_ne!(
+                            value, shipped,
+                            "recipe '{id}' grade '{name}' equals the shipped value - a grade that \
+                             does not move is a rung the player cannot feel"
+                        ),
+                    }
+                }
             }
         }
+        assert!(
+            saw_a_declared_effect,
+            "no shipped grade declares an effect at all - the agreement above is vacuous"
+        );
     }
 
     /// The grade ladder is total and monotone: a reading anywhere in range selects exactly one, and

@@ -163,13 +163,23 @@ pub fn advance_labor_allocation(
     // **The materials table** (`docs/plan_crafting_and_materials.md` §1) — resolved once, because it
     // decides only how a stated reading BANDS. What each source yields is that source's own config.
     let materials_cfg = configs.materials.get();
-    // The **equipped** tiers of the two carry kits. `labor_config.json`'s shipped rates ARE the
-    // kitted tiers (the game has always run kitted); each kit's own
-    // `unequipped_per_worker_biomass_capacity` is the step down a band takes when that kit is gone.
-    // **One kit, one job** (§4.8): the sled answers for the hunt, baskets for the gather, and neither
-    // can be read for the other.
-    let equipped_haul_rate = labor.hunt.per_worker_biomass_capacity;
-    let equipped_gather_rate = labor.forage.per_worker_biomass_capacity;
+    // The **no-equipment baselines** of the two carry kits. `labor_config.json`'s rates are what a
+    // sledless party drags and a bare-handed forager holds; the *equipped* side of each lives on its
+    // item's own tier now, and `EquipmentConfig::{hunt,forage}_per_worker_biomass_capacity` is what
+    // steps a band up to it. **One kit, one job** (§4.8): the sled answers for the hunt, baskets for
+    // the gather, and neither can be read for the other.
+    let baseline_haul_rate = labor.hunt.per_worker_biomass_capacity;
+    let baseline_gather_rate = labor.forage.per_worker_biomass_capacity;
+    // **The EQUIPPED reference gather rate** — what a *kitted* crew carries, off the item table's
+    // default tier. A rung-3 **Field**'s collection cap is quoted at this rather than at the working
+    // crew's own basket tier, deliberately: a Field's harvest is quoted per account and draws no
+    // biomass down, so it has no quantum to charge a basket against, and pricing it at the crew's
+    // tier would be a balance change rather than a re-homing (`equipment.md` → "What is NOT wired
+    // yet"). Rungs 1–2 are basket-resolved as before.
+    let equipped_gather_reference = equipment_cfg.equipped_reference(
+        crate::equipment_config::EquipmentStat::ForageCarry,
+        baseline_gather_rate,
+    );
     let map_seed = sim_config.map_seed;
     let husbandry = &fauna.husbandry;
     let work_range = labor.band_work_range;
@@ -232,14 +242,17 @@ pub fn advance_labor_allocation(
     let wrap_horizontal = sim_config.map_topology.wrap_horizontal;
 
     for (mut cohort, mut allocation, mut band_equipment) in cohorts.iter_mut() {
-        // **This band's carry tier, resolved ONCE per band per turn.** The component records *wear*,
-        // so an absent one reads as **no wear — a full kit** (the same `unwrap_or_default()` reading
-        // `SimState` gives `DemographicFlowAccumulator`); every band starts stocked, and "dry" is
-        // expressed as wear reaching the kit's durability, never as an absent component. Resolved
-        // *before* the assignment loop so every source this band works is priced on one kit state: a
-        // kit that expires part-way through the loop must not pay two different rates to two herds in
-        // the same turn.
-        let band_kit = band_equipment.as_deref().cloned().unwrap_or_default();
+        // **This band's carry tier, resolved ONCE per band per turn.** The component records what
+        // the band OWNS, so an absent **entry inside it** means *not owned* — but an absent
+        // **component** means the ledger was never built, and that reads as start-stocked, which is
+        // what every spawn path inserts. The two are different questions and only the first is the
+        // count slice's flip. Resolved *before* the assignment loop so every source this band works
+        // is priced on one kit state: a kit that expires part-way through the loop must not pay two
+        // different rates to two herds in the same turn.
+        let band_kit = band_equipment
+            .as_deref()
+            .cloned()
+            .unwrap_or_else(|| BandEquipment::start_stocked(&equipment_cfg));
         // Normalize each turn: if `working` shrank, trim assignments so Σ ≤ available.
         let available = available_workers(cohort.working);
         let faction = cohort.faction;
@@ -318,18 +331,18 @@ pub fn advance_labor_allocation(
             // This crew's HUNT haul tier — the **sled**, if its kit carries one and the band still
             // has condition in it.
             let hunt_per_worker_biomass = equipment_cfg.hunt_per_worker_biomass_capacity(
-                equipped_haul_rate,
+                baseline_haul_rate,
                 &crew_kit,
                 &band_kit,
             );
             // **And its PEN collection tier** — the **husbandry gear's**, resolved against the same
-            // shipped `equipped_haul_rate` a pen harvest has always been capped by, so a keeper who
+            // shipped `baseline_haul_rate` a pen harvest has always been capped by, so a keeper who
             // brought handling gear collects exactly what a pen always collected. A separate stat
             // from the haul above because a sled drags a carcass in off the range and a pen stands
             // at the camp: a crew that corralled its herd and stayed on the big-game kit is working
             // the pen with the wrong tool, and collects at the bare rate.
             let pen_per_worker_biomass = equipment_cfg.pen_per_worker_biomass_capacity(
-                equipped_haul_rate,
+                baseline_haul_rate,
                 &crew_kit,
                 &band_kit,
             );
@@ -338,7 +351,7 @@ pub fn advance_labor_allocation(
             // throughput every `forage_take`, gather forecast and staffing inversion below is capped
             // by; a hunt item can never reach it, because the two declare different stats.
             let forage_per_worker_capacity = equipment_cfg.forage_per_worker_biomass_capacity(
-                equipped_gather_rate,
+                baseline_gather_rate,
                 &crew_kit,
                 &band_kit,
             );
@@ -591,6 +604,7 @@ pub fn advance_labor_allocation(
                         &tile_composition,
                         &labor.forage,
                         &flora,
+                        equipped_gather_reference,
                         &ladder,
                         forage_per_worker_capacity,
                         seasonal,
@@ -645,6 +659,7 @@ pub fn advance_labor_allocation(
                                 patch,
                                 &tile_composition,
                                 &labor.forage,
+                                equipped_gather_reference,
                                 &flora,
                                 mult_f,
                             );
@@ -682,6 +697,7 @@ pub fn advance_labor_allocation(
                                 patch,
                                 &tile_composition,
                                 &labor.forage,
+                                equipped_gather_reference,
                                 &flora,
                                 mult_f,
                             );
@@ -707,6 +723,7 @@ pub fn advance_labor_allocation(
                                 patch,
                                 &tile_composition,
                                 &labor.forage,
+                                equipped_gather_reference,
                                 &flora,
                                 mult_f,
                             );
@@ -730,7 +747,12 @@ pub fn advance_labor_allocation(
                                 &flora,
                                 &labor.forage,
                             ),
-                            crate::forage::field_harvest_biomass(patch, &labor.forage, workers),
+                            crate::forage::field_harvest_biomass(
+                                patch,
+                                &labor.forage,
+                                equipped_gather_reference,
+                                workers,
+                            ),
                             mult_f,
                         );
                         // **The arrival schedule — computed POST-take, unlike `realized`.** It
@@ -743,6 +765,7 @@ pub fn advance_labor_allocation(
                             &tile_composition,
                             &labor.forage,
                             &flora,
+                            equipped_gather_reference,
                             &ladder,
                             forage_per_worker_capacity,
                             seasonal,
@@ -794,6 +817,7 @@ pub fn advance_labor_allocation(
                                         patch,
                                         &tile_composition,
                                         &labor.forage,
+                                        equipped_gather_reference,
                                         &flora,
                                         mult_f,
                                     ),
@@ -1110,6 +1134,7 @@ pub fn advance_labor_allocation(
                         &tile_composition,
                         &labor.forage,
                         &flora,
+                        equipped_gather_reference,
                         &ladder,
                         forage_per_worker_capacity,
                         seasonal,
@@ -2737,6 +2762,7 @@ pub fn advance_predator_raids(
 
 #[cfg(test)]
 mod labor_yield_tests {
+
     //! Retained per-source food-yield telemetry (`LaborAllocation.last_yields`): a depletable
     //! forage patch's `sustainable = sustainable_yield(pre-take biomass) ×
     //! provisions_per_biomass × output_multiplier` (MSY-based — regrowth at the most-productive
@@ -2749,6 +2775,29 @@ mod labor_yield_tests {
     //! `actual` pays in lumps around that rate instead of tracking it, and comparing the two per turn
     //! is no longer the overdraw question — `SourceYield::overdraws` answers it from the policy's own
     //! escapement floor. See `SourceYield`.
+    /// **The shipped EQUIPPED haul rate** — what a kitted band drags, off the sled's own tier.
+    /// `labor_config`'s `hunt.per_worker_biomass_capacity` is the *bare-handed* baseline since
+    /// quality tiers landed, so a fixture that wants "an ordinary band" asks the item table.
+    #[allow(dead_code)]
+    fn equipped_haul_rate() -> f32 {
+        crate::equipment_config::EquipmentConfig::builtin().equipped_reference(
+            crate::equipment_config::EquipmentStat::HuntCarry,
+            crate::labor_config::LaborConfig::builtin()
+                .hunt
+                .per_worker_biomass_capacity,
+        )
+    }
+
+    /// The gather twin of [`equipped_haul_rate`] — the baskets' own tier.
+    #[allow(dead_code)]
+    fn equipped_gather_rate() -> f32 {
+        crate::equipment_config::EquipmentConfig::builtin().equipped_reference(
+            crate::equipment_config::EquipmentStat::ForageCarry,
+            crate::labor_config::LaborConfig::builtin()
+                .forage
+                .per_worker_biomass_capacity,
+        )
+    }
     use super::advance_labor_allocation;
     use crate::{FoodSiteEntry, FoodSiteRegistry};
 
@@ -3278,7 +3327,6 @@ mod labor_yield_tests {
         // The crew the escapement ceiling asks for, off the same helper the sim uses.
         let expected_crew = {
             let fauna = world.resource::<FaunaConfigHandle>().get();
-            let labor = world.resource::<LaborConfigHandle>().get();
             let herd = world.resource::<HerdRegistry>().find(HERD_ID).unwrap();
             crate::fauna::hunt_haul_workers(
                 crate::fauna::hunt_escapement_ceiling(
@@ -3287,7 +3335,7 @@ mod labor_yield_tests {
                     crate::fauna::herd_capacity(herd, &fauna),
                 ),
                 herd.body_mass,
-                labor.hunt.per_worker_biomass_capacity,
+                equipped_haul_rate(),
             )
         };
 
@@ -3316,7 +3364,7 @@ mod labor_yield_tests {
         let (mut world, tile) = world_with_source(CAP);
         let cfg = world.resource::<LaborConfigHandle>().get();
         let patch_cap = cfg.forage.capacity_for(SOURCE_BIOME);
-        let capacity = cfg.forage.per_worker_biomass_capacity;
+        let capacity = equipped_gather_rate();
         drop(cfg);
         set_wild_patch_biomass(&mut world, patch_cap); // full patch.
         let assigned = 2;
@@ -3385,6 +3433,7 @@ mod labor_yield_tests {
     #[test]
     fn tended_patch_and_corral_report_their_staffing_need() {
         let (mut world, tile) = world_with_source(CAP);
+        let world_labor = world.resource::<LaborConfigHandle>().get();
         let patch_cap = world
             .resource::<LaborConfigHandle>()
             .get()
@@ -3448,7 +3497,6 @@ mod labor_yield_tests {
         // carries, so the honest count is `ceil(take / per-worker throughput)`, not a fixed `1`.
         // Asserted against the shared helper rather than a magic number, so it tracks a gain retune.
         let expected_foragers = {
-            let world_labor = world.resource::<LaborConfigHandle>().get();
             let flora = world
                 .resource::<crate::flora_config::FloraConfigHandle>()
                 .get();
@@ -3464,10 +3512,7 @@ mod labor_yield_tests {
                 &world_labor.forage,
             );
             let take_biomass = tended.actual / rate;
-            let per_worker = crate::forage::forage_per_worker_biomass(
-                world_labor.forage.per_worker_biomass_capacity,
-                1.0,
-            );
+            let per_worker = crate::forage::forage_per_worker_biomass(equipped_gather_rate(), 1.0);
             (take_biomass / per_worker).ceil() as u32
         };
         assert!(
@@ -3482,11 +3527,10 @@ mod labor_yield_tests {
         // against the shared helpers rather than magic numbers, so it tracks a roster retune.
         let (herders, haulers) = {
             let world_fauna = world.resource::<FaunaConfigHandle>().get();
-            let world_labor = world.resource::<LaborConfigHandle>().get();
             let registry = world.resource::<HerdRegistry>();
             let herders = crate::fauna::herd_herders_needed(&registry.herds[0], &world_fauna);
             let per_worker = crate::fauna::herd_hunt_yield(&registry.herds[0], &world_fauna)
-                .apply(world_labor.hunt.per_worker_biomass_capacity, 1.0)
+                .apply(equipped_haul_rate(), 1.0)
                 .provisions;
             (herders, (corral.actual / per_worker).ceil() as u32)
         };
@@ -3513,6 +3557,7 @@ mod labor_yield_tests {
     #[test]
     fn a_wild_herd_being_tamed_reports_its_full_crew_without_the_ownership_lag() {
         let (mut world, tile) = world_with_source(CAP);
+        let labor = world.resource::<LaborConfigHandle>().get();
         // Reseat the wild fixture so its would-be herder crew clearly EXCEEDS the Tame-dip haul crew
         // (the rabbit-warren shape where the lag showed).
         let crew = {
@@ -3541,14 +3586,13 @@ mod labor_yield_tests {
         let (haul, gated) = {
             let fauna = world.resource::<FaunaConfigHandle>().get();
             let ladder = world.resource::<LadderConfigHandle>().get();
-            let labor = world.resource::<LaborConfigHandle>().get();
             let registry = world.resource::<HerdRegistry>();
             let herd = &registry.herds[0];
             let forecast = crate::fauna::hunt_forecast(
                 herd,
                 &fauna,
                 &ladder,
-                labor.hunt.per_worker_biomass_capacity,
+                equipped_haul_rate(),
                 &crate::fauna::HuntingParty::builtin_equipped(),
                 1.0,
             );
@@ -3576,13 +3620,12 @@ mod labor_yield_tests {
         let seed = |improvement: Option<Improvement>, world: &World| {
             let fauna = world.resource::<FaunaConfigHandle>().get();
             let ladder = world.resource::<LadderConfigHandle>().get();
-            let labor = world.resource::<LaborConfigHandle>().get();
             let registry = world.resource::<HerdRegistry>();
             crate::fauna::hunt_source_yield_preview(
                 &registry.herds[0],
                 &fauna,
                 &ladder,
-                labor.hunt.per_worker_biomass_capacity,
+                equipped_haul_rate(),
                 &crate::fauna::HuntingParty::builtin_equipped(),
                 1.0,
                 crew,
@@ -3651,6 +3694,7 @@ mod labor_yield_tests {
     #[test]
     fn a_patch_being_cultivated_seeds_the_same_build_crew_the_turn_resolves() {
         let (mut world, tile) = world_with_source(CAP);
+        let labor = world.resource::<LaborConfigHandle>().get();
         // The same committed-crop ground the other rung-2 payoff tests stand on, so the dipped take
         // is priced off a realization a crop is actually at home in (#433).
         world.resource_mut::<SimulationConfig>().map_seed = WORTH_TENDING_SEED;
@@ -3672,7 +3716,6 @@ mod labor_yield_tests {
         // same Sustain stance — the axis under test is the improvement.
         let composition = source_tile_composition(&world);
         let seed = |improvement: Option<Improvement>, world: &World| {
-            let labor = world.resource::<LaborConfigHandle>().get();
             let flora = world
                 .resource::<crate::flora_config::FloraConfigHandle>()
                 .get();
@@ -3683,8 +3726,12 @@ mod labor_yield_tests {
                 &composition,
                 &labor.forage,
                 &flora,
+                crate::equipment_config::EquipmentConfig::builtin().equipped_reference(
+                    crate::equipment_config::EquipmentStat::ForageCarry,
+                    equipped_gather_rate(),
+                ),
                 &ladder,
-                labor.forage.per_worker_biomass_capacity,
+                equipped_gather_rate(),
                 SEASONAL_WEIGHT,
                 NEUTRAL_OUTPUT_MULT,
                 crew,
@@ -3706,7 +3753,6 @@ mod labor_yield_tests {
         // in *below* the crew, or the floor is invisible and this test asserts nothing — which is
         // what [`SHALLOW_DRAW_FLOOR`] buys.
         let per_worker = {
-            let labor = world.resource::<LaborConfigHandle>().get();
             let flora = world
                 .resource::<crate::flora_config::FloraConfigHandle>()
                 .get();
@@ -3717,11 +3763,12 @@ mod labor_yield_tests {
                 &composition,
                 &labor.forage,
                 &flora,
-                &ladder,
-                crate::forage::forage_per_worker_biomass(
-                    labor.forage.per_worker_biomass_capacity,
-                    SEASONAL_WEIGHT,
+                crate::equipment_config::EquipmentConfig::builtin().equipped_reference(
+                    crate::equipment_config::EquipmentStat::ForageCarry,
+                    equipped_gather_rate(),
                 ),
+                &ladder,
+                crate::forage::forage_per_worker_biomass(equipped_gather_rate(), SEASONAL_WEIGHT),
                 NEUTRAL_OUTPUT_MULT,
             )
             .per_worker_yield
@@ -3793,6 +3840,7 @@ mod labor_yield_tests {
     #[test]
     fn a_labor_bound_cultivate_crew_is_not_reported_overstaffed() {
         let (mut world, tile) = world_with_source(CAP);
+        let labor = world.resource::<LaborConfigHandle>().get();
         world.resource_mut::<SimulationConfig>().map_seed = WORTH_TENDING_SEED;
         grant_knowledge(&mut world, CULTIVATION_DISCOVERY_ID);
 
@@ -3801,14 +3849,13 @@ mod labor_yield_tests {
         // (2) is well below the head-count, so it cannot be what the assertion is reading.
         let workers = LABOR_BOUND_CULTIVATE_CREW;
         let (offered, carried) = {
-            let labor = world.resource::<LaborConfigHandle>().get();
             let registry = world.resource::<ForageRegistry>();
             let patch = registry.patch(SOURCE).expect("the fixture seeded a patch");
             (
                 patch.biomass,
                 workers as f32
                     * crate::forage::forage_per_worker_biomass(
-                        labor.forage.per_worker_biomass_capacity,
+                        equipped_gather_rate(),
                         SEASONAL_WEIGHT,
                     )
                     * build_dip(&world, Improvement::Cultivate),
@@ -3825,7 +3872,6 @@ mod labor_yield_tests {
         // shows before the turn resolves. Both halves inverted by the undipped rate, so they agreed
         // with each other and both disagreed with the take.
         let seed = {
-            let labor = world.resource::<LaborConfigHandle>().get();
             let flora = world
                 .resource::<crate::flora_config::FloraConfigHandle>()
                 .get();
@@ -3837,8 +3883,12 @@ mod labor_yield_tests {
                 &composition,
                 &labor.forage,
                 &flora,
+                crate::equipment_config::EquipmentConfig::builtin().equipped_reference(
+                    crate::equipment_config::EquipmentStat::ForageCarry,
+                    equipped_gather_rate(),
+                ),
                 &ladder,
-                labor.forage.per_worker_biomass_capacity,
+                equipped_gather_rate(),
                 SEASONAL_WEIGHT,
                 NEUTRAL_OUTPUT_MULT,
                 workers,
@@ -3940,10 +3990,7 @@ mod labor_yield_tests {
         let taming = row(Some(Improvement::Tame));
         let hunting = row(NO_IMPROVEMENT_UNDERWAY);
 
-        let per_worker = LaborConfigHandle::default()
-            .get()
-            .hunt
-            .per_worker_biomass_capacity;
+        let per_worker = equipped_haul_rate();
         let ceiling = crate::fauna::escapement_ceiling(
             crate::fauna::MSY_BIOMASS_FRACTION,
             SLOW_BREEDER_KILL_BIOMASS,
@@ -3968,16 +4015,16 @@ mod labor_yield_tests {
         // bug, and why the assertion above had to come first.
         let seed = {
             let (mut world, _) = world_with_source(CAP);
+            let labor = world.resource::<LaborConfigHandle>().get();
             reseat_slow_breeder(&mut world, SLOW_BREEDER_KILL_BIOMASS);
             let fauna = world.resource::<FaunaConfigHandle>().get();
-            let labor = world.resource::<LaborConfigHandle>().get();
             let ladder = world.resource::<LadderConfigHandle>().get();
             let registry = world.resource::<HerdRegistry>();
             crate::fauna::hunt_source_yield_preview(
                 registry.find(HERD_ID).expect("the fixture seeded a herd"),
                 &fauna,
                 &ladder,
-                labor.hunt.per_worker_biomass_capacity,
+                equipped_haul_rate(),
                 &crate::fauna::HuntingParty::builtin_equipped(),
                 NEUTRAL_OUTPUT_MULT,
                 WORKERS,
@@ -4214,10 +4261,7 @@ mod labor_yield_tests {
     /// taken on the same number `wasted_yield` is.
     #[test]
     fn a_slow_breeder_hunt_reports_its_carry_crew_on_a_wait_turn_never_zero() {
-        let per_worker = LaborConfigHandle::default()
-            .get()
-            .hunt
-            .per_worker_biomass_capacity;
+        let per_worker = equipped_haul_rate();
         // The crew each turn's ceiling asks for, off the same helper the sim uses.
         let crew_for = |biomass: f32| {
             crate::fauna::hunt_haul_workers(
@@ -4309,7 +4353,6 @@ mod labor_yield_tests {
         // with the take that just drew it, so reading it afterwards would measure a different turn).
         let (herders, steady_haul, client_max_useful) = {
             let fauna = world.resource::<FaunaConfigHandle>().get();
-            let labor = world.resource::<LaborConfigHandle>().get();
             let ladder = LadderConfig::builtin();
             let herd = world.resource::<HerdRegistry>().find(HERD_ID).unwrap();
             let herders = crate::fauna::herd_herders_needed(herd, &fauna);
@@ -4321,7 +4364,7 @@ mod labor_yield_tests {
             let steady_haul = crate::fauna::hunt_haul_workers(
                 ceiling_biomass,
                 herd.body_mass,
-                labor.hunt.per_worker_biomass_capacity,
+                equipped_haul_rate(),
             );
             // The client's `_max_useful_workers`, in food-space off the same forecast the compose panel
             // reads: ceil((floor(ceiling / foodPerAnimal) + 1) × foodPerAnimal / perWorkerYield).
@@ -4329,7 +4372,7 @@ mod labor_yield_tests {
                 herd,
                 &fauna,
                 &ladder,
-                labor.hunt.per_worker_biomass_capacity,
+                equipped_haul_rate(),
                 &crate::fauna::HuntingParty::builtin_equipped(),
                 1.0,
             );
@@ -4464,6 +4507,7 @@ mod labor_yield_tests {
             for improvement in FORAGE_IMPROVEMENTS {
                 for workers in [1u32, 2, 20] {
                     let (mut world, tile) = world_with_source(CAP);
+                    let labor = world.resource::<LaborConfigHandle>().get();
                     // Forecast off the PRE-turn patch state, exactly as the client reads it from the
                     // snapshot captured at the end of last turn.
                     let patch = world
@@ -4472,15 +4516,18 @@ mod labor_yield_tests {
                         .cloned()
                         .expect("seeded patch");
                     let composition = source_tile_composition(&world);
-                    let labor = world.resource::<LaborConfigHandle>().get();
                     let forecast = forage_forecast(
                         &patch,
                         &composition,
                         &labor.forage,
                         &FloraConfig::builtin(),
+                        crate::equipment_config::EquipmentConfig::builtin().equipped_reference(
+                            crate::equipment_config::EquipmentStat::ForageCarry,
+                            equipped_gather_rate(),
+                        ),
                         &LadderConfig::builtin(),
                         crate::forage::forage_per_worker_biomass(
-                            labor.forage.per_worker_biomass_capacity,
+                            equipped_gather_rate(),
                             SEASONAL_WEIGHT,
                         ),
                         NEUTRAL_OUTPUT_MULT,
@@ -4561,11 +4608,7 @@ mod labor_yield_tests {
                             "the resident take path must not read or write the expedition's bank"
                         );
                         let fauna = world.resource::<FaunaConfigHandle>().get();
-                        let per_worker = world
-                            .resource::<LaborConfigHandle>()
-                            .get()
-                            .hunt
-                            .per_worker_biomass_capacity;
+                        let per_worker = equipped_haul_rate();
                         let forecast = hunt_forecast(
                             &herd,
                             &fauna,
@@ -4652,6 +4695,7 @@ mod labor_yield_tests {
     #[test]
     fn a_field_and_a_pen_collapse_the_policy_axis_but_still_need_carrying_home() {
         let (mut world, tile) = world_with_source(CAP);
+        let labor = world.resource::<LaborConfigHandle>().get();
         let patch_cap = world
             .resource::<LaborConfigHandle>()
             .get()
@@ -4672,20 +4716,20 @@ mod labor_yield_tests {
             .cloned()
             .expect("seeded patch");
         let composition = source_tile_composition(&world);
-        let labor = world.resource::<LaborConfigHandle>().get();
         let patch_forecast = forage_forecast(
             &patch,
             &composition,
             &labor.forage,
             &FloraConfig::builtin(),
-            &LadderConfig::builtin(),
-            crate::forage::forage_per_worker_biomass(
-                labor.forage.per_worker_biomass_capacity,
-                SEASONAL_WEIGHT,
+            crate::equipment_config::EquipmentConfig::builtin().equipped_reference(
+                crate::equipment_config::EquipmentStat::ForageCarry,
+                equipped_gather_rate(),
             ),
+            &LadderConfig::builtin(),
+            crate::forage::forage_per_worker_biomass(equipped_gather_rate(), SEASONAL_WEIGHT),
             NEUTRAL_OUTPUT_MULT,
         );
-        let hunt_per_worker = labor.hunt.per_worker_biomass_capacity;
+        let hunt_per_worker = equipped_haul_rate();
         drop(labor);
         let herd = world
             .resource::<HerdRegistry>()
@@ -4771,7 +4815,7 @@ mod labor_yield_tests {
                 // is collected at `EquipmentStat::PenCarry`, which only the husbandry kit supplies;
                 // the hunt job's default (`None` → `big_game`) carries a sled, which drags a carcass
                 // in off the range and does nothing for a pen at the camp. `herd_forecast` above is
-                // quoted at `labor.hunt.per_worker_biomass_capacity` — the equipped rate on both
+                // quoted at `equipped_haul_rate()` — the equipped rate on both
                 // stats — so naming the kit is what makes the forecast and the payout the same
                 // number. Leaving it `None` prices this crew bare-handed, which is a real reading
                 // and a different test.
@@ -4822,7 +4866,7 @@ mod labor_yield_tests {
 
     /// **A body no single keeper can seat.** Waste in the pen branch needs
     /// `workers × pen_carry < body_mass`, and the equipped `pen_carry` is
-    /// `labor_config.hunt.per_worker_biomass_capacity` (40), so one keeper leaves most of this behind.
+    /// `equipped_haul_rate()` (40), so one keeper leaves most of this behind.
     /// It is the **Wild Aurochs**' own mass — the one shipped pen species that reaches this regime,
     /// at its single required keeper (`animals_per_herder 12`).
     const UNSEATABLE_BODY_MASS: f32 = 120.0;
@@ -4887,11 +4931,13 @@ mod labor_yield_tests {
                 ),
             }],
         );
-        // A fresh ledger — `spawn_band` builds no equipment, and wear is only charged where a band
-        // carries one.
+        // A start-stocked ledger — `spawn_band` builds no equipment, and wear is only charged on an
+        // item the band actually owns (an absent entry is NOT OWNED since the count slice).
         world
             .entity_mut(keeper)
-            .insert(crate::components::BandEquipment::default());
+            .insert(crate::components::BandEquipment::start_stocked(
+                &crate::equipment_config::EquipmentConfig::builtin(),
+            ));
 
         world.run_system_once(advance_labor_allocation);
 
@@ -4962,29 +5008,23 @@ mod labor_yield_tests {
         let forage = cfg.forage.clone();
         let patch_cap = forage.capacity_for(SOURCE_BIOME);
         let biomass = patch_cap;
-        drop(cfg);
         // **The wild rate is this tile's own basket average** (#433), not the flat
         // `provisions_per_biomass` — the point of "bare tended is neutral" is that a patch with no
         // crop committed reads exactly what the same ground reads wild, whatever that ground grows.
         let composition = source_tile_composition(&world);
         let wild_rate = {
-            let cfg = world.resource::<LaborConfigHandle>().get();
             let flora = world
                 .resource::<crate::flora_config::FloraConfigHandle>()
                 .get();
             let wild = ForagePatch::new(SOURCE, patch_cap);
-            crate::forage::patch_provisions_per_biomass(&wild, &composition, &flora, &cfg.forage)
+            crate::forage::patch_provisions_per_biomass(&wild, &composition, &flora, &forage)
         };
         // The **wild counterfactual take**: the stock standing above Sustain's escapement floor,
         // capped by the crew. It is deliberately computed off the wild patch's numbers — the whole
         // claim is that a bare tended patch pays exactly this.
         let wild_take = {
-            let cfg = world.resource::<LaborConfigHandle>().get();
             let crew = WORKERS as f32
-                * crate::forage::forage_per_worker_biomass(
-                    cfg.forage.per_worker_biomass_capacity,
-                    1.0,
-                );
+                * crate::forage::forage_per_worker_biomass(equipped_gather_rate(), 1.0);
             crew.min(biomass - patch_cap * crate::fauna::MSY_BIOMASS_FRACTION) * wild_rate
         };
         cultivate_source_patch(&mut world, biomass);
@@ -5681,23 +5721,24 @@ mod labor_yield_tests {
         floor: f32,
         improvement: Option<Improvement>,
     ) -> f32 {
+        let labor = world.resource::<LaborConfigHandle>().get();
         let patch = world
             .resource::<ForageRegistry>()
             .patch(SOURCE)
             .cloned()
             .expect("seeded patch");
         let composition = source_tile_composition(world);
-        let labor = world.resource::<LaborConfigHandle>().get();
         let forecast = forage_forecast(
             &patch,
             &composition,
             &labor.forage,
             &FloraConfig::builtin(),
-            &LadderConfig::builtin(),
-            crate::forage::forage_per_worker_biomass(
-                labor.forage.per_worker_biomass_capacity,
-                SEASONAL_WEIGHT,
+            crate::equipment_config::EquipmentConfig::builtin().equipped_reference(
+                crate::equipment_config::EquipmentStat::ForageCarry,
+                equipped_gather_rate(),
             ),
+            &LadderConfig::builtin(),
+            crate::forage::forage_per_worker_biomass(equipped_gather_rate(), SEASONAL_WEIGHT),
             NEUTRAL_OUTPUT_MULT,
         );
         expected_yield(&forecast, workers, floor, improvement)

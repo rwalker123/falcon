@@ -169,23 +169,34 @@ Thunder Mammoth (`0.92 / 0.10`) makes a **fine** sled and **coarse** halters and
 
 `validate` rejects a second `reads`, because one reading answers one question.
 
-## Continuous in, discrete out — and the grade's payload is EMPTY on purpose
+## Continuous in, discrete out — and the STANDARD grade is the shipped number
 
 The drawn reading never scales a resolved stat; it **selects** a grade, and a grade declares
 absolutes. That is not a preference — `EquipmentEffect` has no representation for a multiplier
 stacking on something else, which is what makes *flat until expiry, then a step down* structural
 rather than remembered (`equipment.md` → "The three rules").
 
-**Every shipped grade's `effects` list is empty, and that is a deliberate state rather than an
-oversight.** A grade may only declare a stat whose value does not already live somewhere else, and
-today every stat the shipped items own is homed: `attack` on the item, the two carry rates in
-`labor_config.json`. Writing them into `recipes.json` as well would give a shipped number a second
-home to drift from *and* leave the numbers inert, which is `config-loading.md`'s "looks live but
-isn't" in both directions at once. **The grade NAME is live now** — it is what the draw selects and
-what the finished item carries — and the payload lands with the quality-tier slice that re-homes
-those rates onto the tier. Pinned by `recipes_config::no_shipped_grade_declares_an_effect`, so the
-day someone writes a number in one they have to come back and say why it does not already live on
-the item.
+**A grade's payload was empty until the TIER owned these numbers, and now it is real.** The
+objection was never to grades — it was that a grade may only declare a stat whose value does not
+already live somewhere else, and while `attack` sat on the item and the two carry rates in
+`labor_config.json`, writing them into `recipes.json` too would have given a shipped number a second
+home to drift from *and* left the numbers inert. Quality tiers moved them onto the item's tier
+(`equipment.md` → "Quality tiers"), so the grades declare absolutes against **that**:
+
+- **The STANDARD grade is the shipped number, always.** `validate_against` rejects one that disagrees
+  with the output item's default tier, so a standard-grade craft reproduces today's game exactly and
+  the two rungs either side are what quality is worth — `coarse −15% · standard · fine +15%`, the
+  design's own sled example (`34 / 40 / 46` on a shipped `40`).
+- **A grade may only name a stat the item's TIERS declare**, and must restate that effect's mass
+  bounds verbatim: a grade *replaces* a number rather than adding one, and a fine snare that dropped
+  `max_body_mass` would quietly become a mammoth trap.
+- **The empty payloads that remain are the items whose whole payload is shared** (husbandry gear's
+  `pen_carry`, the wayfinding gear's vantage) or is a bench stat nothing yet grades.
+
+`recipes_config::no_shipped_grade_declares_an_effect` is **replaced** by
+`the_standard_grade_reproduces_the_shipped_item_and_the_others_bracket_it`, which pins the rule in
+both directions and carries a liveness assertion — *"every standard grade agrees with its item"* is
+trivially true of a book whose grades declare nothing, which is exactly the state it replaced.
 
 Three rungs ship on every equipment recipe: `coarse 0.00 · standard 0.45 · fine 0.75`. The lowest
 seam must be `0.00` and no two may be equal, so every reading selects exactly one — the same
@@ -301,28 +312,44 @@ proportionally, and a `work: 8` recipe wants about four hands rather than sixtee
 the player stopped making, and a `LocalStore` has no representation for a half-worked pile. The
 command help says so rather than the sim pretending otherwise.
 
-## What a completed craft can and cannot say yet
+## What a completed craft delivers
 
-`BandEquipment::restock(item)` is the delivery seam, and it is **the one place in the sim that
-reduces wear** — which is what ends `equipment.md`'s *"start-stocked and NOT craftable"*.
+`BandEquipment::stock(item, count, tier, grade)` is the delivery seam — **a new batch, never a merge
+into one already standing**, because *"the next ten are their own batch"* is what keeps a fresh craft
+from averaging into a half-spent pile. It is what ends `equipment.md`'s *"start-stocked and NOT
+craftable"*, and a second sled made while the first is fresh is now genuinely a second sled.
 
-**It records CONDITION, not count, because that is all this ledger can say today.** So a second sled
-made while the first is fresh buys nothing, and ten spears made together are one spear's worth of
-life. The equipment-count slice is what re-points it: `restock` becomes *insert a batch*
-`{count, tier, grade, wear: 0}`, and `BandBench::last_output_grade` — which today is a readout —
-becomes the grade that batch carries.
+Three things the batch carries, each resolved at the moment of the craft:
 
-## A BENCH TOOL's ownership is a real question, and it is not the count flip
+- **`count` is `RecipeOutput::amount`.** A pass of a recipe that makes three makes three. The seam
+  used to deliver one item's worth of *condition* however many the row named — invisible because
+  every shipped equipment recipe makes exactly one, which is why the fixture in
+  `crafting::a_completion_delivers_the_recipes_whole_output_amount` states an `amount` of three.
+  `validate_against` now rejects a fractional equipment `amount`: a ledger that counts things cannot
+  bank half a spear.
+- **`tier` is the best tier the faction knows** (`ItemDefinition::craftable_tier`), resolved off the
+  same `DiscoveryProgressLedger` and the same completion threshold `set_bench` gates a recipe on. On
+  the shipped roster that is always the one tier that ships known, so the opening makes exactly what
+  it always made.
+- **`grade` carries the drawn grade's ABSOLUTES, copied here rather than looked up later.** That is
+  what makes *"the grade is fixed at craft time and never moves"* structural: a recipe retuned under
+  a running world — or simply swapped off the bench — cannot re-grade a sled already in the band's
+  hands. It is the same reason `DrawnInputs` carries its reading. `BandBench::last_output_grade` was
+  a readout with no reader; it is now the same string every batch of that craft is stamped with.
 
-`BandEquipment`'s absent entry still reads as a **full item** for everything a spawn stocks; that
-invariant is untouched. A **tool** asks a different question — `BandEquipment::owns`, i.e. *does the
-ledger name it at all* — and it can ask it honestly for one reason: **nothing stocks a tool at
-spawn**, so an absent entry for one can only mean nobody has made it. Reading it as a free loom on
-turn 1 would delete *"tools are earned, never a prerequisite"* outright.
+## A BENCH TOOL's ownership was the FIRST honest reading, and the count slice generalised it
 
-`EquipmentConfig::live_bench_tool(material, wear)` joins ownership and condition in exactly one
-place, the way `KitChoice::item_live` joins the mask and condition for party gear. **The caller
-passes the MATERIAL, never an item id**, so a roster that renames the loom moves the bench with it.
+A tool could ask *"does the band own one"* before anything else could, for one reason: **nothing
+stocks a tool at spawn**, so an absent entry for one could only mean nobody had made it. Reading it
+as a free loom on turn 1 would delete *"tools are earned, never a prerequisite"* outright.
+
+The count slice made that the **universal** reading — an absent entry is NOT OWNED for every item
+(`equipment.md` → "The band carries BATCHES") — so `BandEquipment::owns` is gone and
+`EquipmentConfig::live_bench_tool(material, wear)` is now the material lookup joined to the one
+condition test, the way `KitChoice::item_live` joins the mask and condition for party gear. **The
+caller passes the MATERIAL, never an item id**, so a roster that renames the loom moves the bench
+with it. `start_stocked` stocks only what a kit `uses`, and `validate` forbids a kit naming a tool,
+so *"tools are earned"* survives the flip by construction rather than by the old special case.
 
 ## Config files
 
@@ -330,7 +357,7 @@ passes the MATERIAL, never an item id**, so a roster that renames the loom moves
 |---|---|
 | `src/data/materials.json` | **The materials table** (loader `materials_config.rs`, env override `MATERIALS_CONFIG_PATH`, validated inside `from_json_str` so every load path is covered). Two blocks. **`characteristic_bands`** — the shared rating vocabulary, `[{ name, from }]` ascending: `poor 0.0 · fair 0.30 · good 0.55 · excellent 0.80`. Retuning these re-partitions every batch on the map. **`materials`** — id → `{ craft, characteristics[], hand_working?, varieties? }`. Shipped: **`hide`** (tanning; `toughness`/`suppleness`), **`fibre`** (weaving; `fineness`/`strength`), **`bone`** (bone_working; `density`/`length`), each `hand_working { rate 0.5, quality_ceiling 0.60 }`. **Only the three organics ship** — wood, stone, clay and metal have no producer until the minerals arc and an unreachable material is dead content the catalogue publishes. **`hand_working` absent means the material cannot be worked bare-handed at all** (rate `0`, which is how metal will refuse itself with no branch), and the bare-handed ceiling belongs to the **material**, not to the absent tool. **`varieties` are parsed, validated, and none ships** — named presets over the material's own axes (`copper`, `bronze`), exercised by a test fixture for the same reason the bronze equipment tier is. **`validate` rejects**: an empty material table; a band list that is empty, does not open at `0.0`, does not strictly ascend, or carries a seam outside `0..=1`; a material with no craft or no characteristics; a duplicate characteristic on one material; a non-finite or negative `hand_working.rate`; a `quality_ceiling` outside `0..=1`; a variety that omits an axis the material declares or names one it does not, or states a reading off the range. **The root is open (`_comment*` keys) and `MaterialDef` is CLOSED** — a mistyped `hand_workng` would silently make a material unworkable, while a stray key at the root can only be prose. |
 
-| `src/data/recipes.json` | **The recipe book** (loader `recipes_config.rs`, env override `RECIPES_CONFIG_PATH`, `validate` inside `from_json_str`, cross-config `validate_against(&materials, &equipment)` at the `build_headless_app` seam). Two blocks. **`crafting`** — `progress_per_worker_turn` (**1.0**). **`recipes`** — id → `{ display_name, craft, work, requires_knowledge[]?, inputs[], outputs[], grades? }`, where an input is `{ material, amount, variety?, reads? }` and an output is exactly one of `{ equipment }` or `{ material, characteristics }`. Ten ship: the seven kit items (`sled` 6 hide + 2 fibre / work 8; `husbandry_gear` 4 hide + 3 fibre / 7; `baskets` 5 fibre + 1 hide / 6; `traps` 6 fibre + 1 bone / 6; `spears` 1 bone + 2 fibre + 1 hide / 6; `clubs` 2 bone + 1 hide / 4; `wayfinding` 1 bone + 1 hide + 1 fibre / 4) and the three bench tools (`tanning_frame` 8 fibre + 2 bone / 12; `loom` 3 bone + 4 hide / 14; `bone_awl` 3 hide + 3 fibre / 10). **Costs are sized so MATERIAL, not bench time, is what binds** — see the file's `_comment_work_and_costs` for the measured income figures. **Bone is the scarce one by an order of magnitude** (0.0012–0.003 per biomass against hide's 0.006–0.022), so nothing costs more than 3 of it. **`validate` rejects**: a non-positive `progress_per_worker_turn`; an empty book; a non-positive `work` or `amount`; a recipe with no inputs or no outputs; the same material twice in one recipe's inputs; **more than one input carrying `reads`**; an output naming both or neither of `equipment`/`material`; an equipment output stating characteristics, or a material output stating none; a duplicate output; grades on a recipe that reads nothing or outputs only materials; a lowest grade seam that is not `0.00`; two grades sharing a seam; a duplicate stat in one grade's effects. **`validate_against` additionally rejects**: an unknown material, item, variety or axis; a `craft` that is not the craft of the material the recipe reads; a `requires_knowledge` naming a craft no material declares **or one that none of the recipe's own inputs is worked by**; and a tool recipe whose inputs include the material it bounds. |
+| `src/data/recipes.json` | **The recipe book** (loader `recipes_config.rs`, env override `RECIPES_CONFIG_PATH`, `validate` inside `from_json_str`, cross-config `validate_against(&materials, &equipment)` at the `build_headless_app` seam). Two blocks. **`crafting`** — `progress_per_worker_turn` (**1.0**). **`recipes`** — id → `{ display_name, craft, work, requires_knowledge[]?, inputs[], outputs[], grades? }`, where an input is `{ material, amount, variety?, reads? }` and an output is exactly one of `{ equipment }` or `{ material, characteristics }`. Ten ship: the seven kit items (`sled` 6 hide + 2 fibre / work 8; `husbandry_gear` 4 hide + 3 fibre / 7; `baskets` 5 fibre + 1 hide / 6; `traps` 6 fibre + 1 bone / 6; `spears` 1 bone + 2 fibre + 1 hide / 6; `clubs` 2 bone + 1 hide / 4; `wayfinding` 1 bone + 1 hide + 1 fibre / 4) and the three bench tools (`tanning_frame` 8 fibre + 2 bone / 12; `loom` 3 bone + 4 hide / 14; `bone_awl` 3 hide + 3 fibre / 10). **Costs are sized so MATERIAL, not bench time, is what binds** — see the file's `_comment_work_and_costs` for the measured income figures. **Bone is the scarce one by an order of magnitude** (0.0012–0.003 per biomass against hide's 0.006–0.022), so nothing costs more than 3 of it. **`validate` rejects**: a non-positive `progress_per_worker_turn`; an empty book; a non-positive `work` or `amount`; a recipe with no inputs or no outputs; the same material twice in one recipe's inputs; **more than one input carrying `reads`**; an output naming both or neither of `equipment`/`material`; an equipment output stating characteristics, or a material output stating none; a duplicate output; grades on a recipe that reads nothing or outputs only materials; a lowest grade seam that is not `0.00`; two grades sharing a seam; a duplicate stat in one grade's effects. **`validate_against` additionally rejects**: an unknown material, item, variety or axis; a `craft` that is not the craft of the material the recipe reads; a `requires_knowledge` naming a craft no material declares **or one that none of the recipe's own inputs is worked by**; a tool recipe whose inputs include the material it bounds; **a fractional `amount` on an equipment output** (a batch's `count` cannot bank half a spear); and **a grade effect that names a stat no tier of the output item declares, drops that effect's mass bounds, or — at the `standard` rung — disagrees with the item's default tier** (see "Continuous in, discrete out"). |
 
 The two **yield edges** are rows on the rosters that own them — `fauna_config.json`'s
 `hunt_yield.materials` (`fauna.md`) and `flora_config.json`'s `yield.materials` (`flora.md`) — and
@@ -385,14 +412,16 @@ intensification ladder — and the tool it unlocks is a further ~20-turn investm
 
 ## What is deliberately not wired
 
-**Equipment counts and quality tiers** (§4/§6) and **the snapshot wire** (§7) are the remaining
-stages. Nothing publishes a batch, a bench or a craft offer to a client yet, so the panel's reasoned
-refusals — *"Short 4.9 bone"*, *"Needs Clay-working"*, *"No loom"* — have no field to ride on. The
-sim resolves none of them, by design: every refusal here is a zero, and the reason is a publication.
+**The snapshot wire** (§7) is the remaining stage. Equipment counts and quality tiers are landed
+(`equipment.md`), but nothing publishes a batch, a bench or a craft offer to a client yet, so the
+panel's reasoned refusals — *"Short 4.9 bone"*, *"Needs Clay-working"*, *"No loom"* — have no field to
+ride on. The sim resolves none of them, by design: every refusal here is a zero, and the reason is a
+publication.
 
-**`BandBench::last_output_grade` and `items_completed` are readouts with no reader.** They exist
-because the bench has to record them for the wear/lesson pairing and the grade to be testable at all;
-the client half is what consumes them.
+**`BandBench::items_completed` is a readout with no reader**, and so is a batch's `count`. They exist
+because the bench has to record them for the wear/lesson pairing to be testable at all; the client
+half is what consumes them. `last_output_grade` **does** have a reader now — it is the grade stamped
+onto the batch the pass delivered.
 
 **A material output and an input `variety` are parsed, validated and shipped by nothing** — the alloy
 shape, exercised by a fixture, exactly as the materials table treats `varieties` and `equipment.json`

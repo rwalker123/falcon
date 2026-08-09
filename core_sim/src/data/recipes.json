@@ -1,8 +1,8 @@
 {
   "_comment": "THE RECIPE BOOK (docs/plan_crafting_and_materials.md section 3). ONE STRUCTURE: inputs -> outputs, both lists of THINGS, where a thing is a material or a piece of equipment. An alloy, a sled and a loom are the same record with different rows - bronze is not a special case and neither is a tool. A RECIPE READS ONE CHARACTERISTIC (`reads`), and that is what makes 'there is no best hide' real: the sled reads toughness and the husbandry gear reads suppleness, so a mammoth pelt makes a fine sled and poor halters and a hare pelt does the reverse. Spending the wrong hide on the wrong thing is a mistake the player is free to make. PLAYTEST DIALS.",
-  "_comment_grades": "CONTINUOUS IN, DISCRETE OUT, AND THAT IS A CONSTRAINT RATHER THAN A PREFERENCE. An EquipmentEffect names the value a stat TAKES and has no representation for a multiplier stacking on something else - that is what makes 'flat until expiry, then a step down' structural instead of remembered (equipment.md, 'The three rules'). So the drawn reading may never scale a resolved stat: it SELECTS a grade, and the grade declares absolutes. `when` is the seam it quantises at; the lowest must be 0.00 so every reading selects one, and no two may share a seam. THE GRADE IS FIXED AT DRAW TIME AND NEVER MOVES - it is not a taper, and a tool that runs dry mid-craft does not retroactively coarsen the thing on the bench. EVERY SHIPPED GRADE'S `effects` IS EMPTY, DELIBERATELY: a grade may only declare a stat whose value does not already live somewhere else, and today every stat the shipped items own is homed (attack on the item, the two carry rates in labor_config.json). Writing them here as well would give a shipped number a second home to drift from and the numbers would sit inert, which is config-loading.md's 'looks live but isn't'. The grade NAME is live now - it is what the draw selects and what the finished item carries; the payload lands with the quality-tier slice that re-homes those rates onto the tier. THE THREE RUNGS AGAINST THE BARE HAND: hand_working's quality_ceiling is 0.60 on all three organics, which sits between `standard` (0.45) and `fine` (0.75) - so a bare-handed band can reach `standard` off any decent material and CANNOT reach `fine` at all, whatever it is working. That gap is exactly what a bench tool buys.",
   "_comment_work_and_costs": "`work` IS WORKER-TURNS FOR ONE OUTPUT PASS, at progress_per_worker_turn x a rate of 1.0. The bench accrues workers x progress_per_worker_turn x craft_speed, and craft_speed is the bounding tool's equipped value or - with no tool - the MATERIAL's own hand_working.rate, which is 0.5 on all three organics and would be 0 for something that cannot be worked bare-handed at all. THAT ZERO IS THE WHOLE REFUSAL MECHANISM: there is no 'you cannot craft that' branch anywhere in the sim, exactly as max(0, attack - defense) refuses a hunt. THE COSTS ARE SIZED SO MATERIAL, NOT BENCH TIME, IS WHAT BINDS. Against the shipped ~16-worker band (equipment.md's kit clock): a gathering half reaches ~64 biomass a turn, so reeds at 0.02 fibre/biomass pay ~1.3 fibre a turn; a hunting half on Red Deer hauls ~42 biomass, paying ~0.6 hide, ~0.08 bone and ~0.04 fibre. So 6 hide is ~10 turns of banked hide and 5 fibre is ~4 turns of banked fibre, while a 4-hand bench works a `work: 8` sled off in 4 turns bare-handed. BONE IS THE SCARCE ONE BY AN ORDER OF MAGNITUDE (0.0012-0.003 per biomass against hide's 0.006-0.022), so nothing costs more than 3 of it, and that scarcity is what makes Bone-working the slow craft with no dial saying so. AGAINST THE ~15-20 TURN KIT CLOCK: baskets run dry in ~19.5 turns and cost ~4 turns of fibre plus ~2 of hide to replace, so a band keeps its kit alive on roughly a quarter of its material income and spends the rest on tools and stock. Spears last ~45 turns and cost 1 bone, which is ~12 turns of hunting - comfortable. TOOLS ARE THE INVESTMENT: a tanning frame is 8 fibre + 2 bone, ~30 turns of banked material, and it then pays for itself over the 25 items it lasts.",
   "_comment_knowledge": "KNOWLEDGE GATES A RECIPE ONLY WHEN THE RECIPE SAYS SO. `requires_knowledge` is absent on every ordinary kit recipe - you can make a sled by hand on turn one, and DOING IT is what teaches Tanning. Every TOOL recipe carries one entry per material it is made from, and validate enforces exactly that: a named craft must be the craft of one of this recipe's own INPUT materials. Paired with the rule that a tool is never made from the material it bounds, that makes the deadlock UNREPRESENTABLE rather than merely avoided - metal needing a crucible that needs metalworking cannot be written down here. TOOLS ARE EARNED, NEVER A PREREQUISITE: there is no opening move where everyone builds tools first, and a tool run dry drops the band back to the rate the game already ships at rather than into a spiral. THE LESSON IS THE RECIPE'S OWN `craft`, charged per ITEM COMPLETED on the same quantum as the tool's wear (intensification_ladder.json's `knowledge.lesson_per_crafted_item`), so what is being made decides what is learned.",
+  "_comment_grades": "CONTINUOUS IN, DISCRETE OUT - the drawn reading never scales a resolved stat, it SELECTS a grade, and a grade declares ABSOLUTES (EquipmentEffect names the value a stat TAKES, and has no representation for a multiplier stacking on something else - that is what keeps 'flat until expiry, then a step down' structural rather than remembered). Three rungs on every equipment recipe: coarse 0.00 / standard 0.45 / fine 0.75, the lowest seam at 0.00 and no two equal, so every reading selects exactly one. THE STANDARD GRADE IS THE SHIPPED NUMBER, ALWAYS - validate rejects a standard grade that disagrees with the item's default tier - so a standard-grade craft reproduces today's game exactly and the two spreads are what quality is worth: coarse -15%, fine +15% (the design's own sled example, 34 / 40 / 46 on a shipped 40). A GRADE MAY ONLY DECLARE A STAT THE OUTPUT ITEM'S TIERS DECLARE, and must restate that effect's mass bounds verbatim: a grade REPLACES a number rather than adding one, and a fine snare that dropped `max_body_mass` would quietly become a mammoth trap. The empty payloads are the items whose whole payload is shared rather than tier-bought (husbandry gear's `pen_carry`, the wayfinding gear's vantage) or is a bench stat nothing yet grades - a grade may not be the second home of a number that already lives somewhere else, which is why every grade shipped empty until the tier owned these.",
   "_comment_craft_is_derived": "`craft` IS THE CRAFT OF THE MATERIAL THE RECIPE READS, and validate rejects any other value. It is written out because that is where a reader needs it, not because it is a second decision - one home per fact, guarded. That is also what keeps the whole model free of a 'primary material' field: the material the recipe READS is the material the bench works, whose tool is consulted, whose bare-handed rate applies and whose craft is practised.",
   "crafting": {
     "progress_per_worker_turn": 1.0
@@ -13,14 +13,50 @@
       "craft": "tanning",
       "work": 8.0,
       "inputs": [
-        { "material": "hide", "amount": 6.0, "reads": "toughness" },
-        { "material": "fibre", "amount": 2.0 }
+        {
+          "material": "hide",
+          "amount": 6.0,
+          "reads": "toughness"
+        },
+        {
+          "material": "fibre",
+          "amount": 2.0
+        }
       ],
-      "outputs": [{ "equipment": "sled", "amount": 1.0 }],
+      "outputs": [
+        {
+          "equipment": "sled",
+          "amount": 1.0
+        }
+      ],
       "grades": {
-        "coarse": { "when": 0.0 },
-        "standard": { "when": 0.45 },
-        "fine": { "when": 0.75 }
+        "coarse": {
+          "when": 0.0,
+          "effects": [
+            {
+              "stat": "hunt_carry",
+              "equipped": 34.0
+            }
+          ]
+        },
+        "standard": {
+          "when": 0.45,
+          "effects": [
+            {
+              "stat": "hunt_carry",
+              "equipped": 40.0
+            }
+          ]
+        },
+        "fine": {
+          "when": 0.75,
+          "effects": [
+            {
+              "stat": "hunt_carry",
+              "equipped": 46.0
+            }
+          ]
+        }
       }
     },
     "husbandry_gear": {
@@ -28,14 +64,32 @@
       "craft": "tanning",
       "work": 7.0,
       "inputs": [
-        { "material": "hide", "amount": 4.0, "reads": "suppleness" },
-        { "material": "fibre", "amount": 3.0 }
+        {
+          "material": "hide",
+          "amount": 4.0,
+          "reads": "suppleness"
+        },
+        {
+          "material": "fibre",
+          "amount": 3.0
+        }
       ],
-      "outputs": [{ "equipment": "husbandry_gear", "amount": 1.0 }],
+      "outputs": [
+        {
+          "equipment": "husbandry_gear",
+          "amount": 1.0
+        }
+      ],
       "grades": {
-        "coarse": { "when": 0.0 },
-        "standard": { "when": 0.45 },
-        "fine": { "when": 0.75 }
+        "coarse": {
+          "when": 0.0
+        },
+        "standard": {
+          "when": 0.45
+        },
+        "fine": {
+          "when": 0.75
+        }
       }
     },
     "baskets": {
@@ -43,14 +97,50 @@
       "craft": "weaving",
       "work": 6.0,
       "inputs": [
-        { "material": "fibre", "amount": 5.0, "reads": "fineness" },
-        { "material": "hide", "amount": 1.0 }
+        {
+          "material": "fibre",
+          "amount": 5.0,
+          "reads": "fineness"
+        },
+        {
+          "material": "hide",
+          "amount": 1.0
+        }
       ],
-      "outputs": [{ "equipment": "baskets", "amount": 1.0 }],
+      "outputs": [
+        {
+          "equipment": "baskets",
+          "amount": 1.0
+        }
+      ],
       "grades": {
-        "coarse": { "when": 0.0 },
-        "standard": { "when": 0.45 },
-        "fine": { "when": 0.75 }
+        "coarse": {
+          "when": 0.0,
+          "effects": [
+            {
+              "stat": "forage_carry",
+              "equipped": 6.8
+            }
+          ]
+        },
+        "standard": {
+          "when": 0.45,
+          "effects": [
+            {
+              "stat": "forage_carry",
+              "equipped": 8.0
+            }
+          ]
+        },
+        "fine": {
+          "when": 0.75,
+          "effects": [
+            {
+              "stat": "forage_carry",
+              "equipped": 9.2
+            }
+          ]
+        }
       }
     },
     "traps": {
@@ -58,14 +148,53 @@
       "craft": "weaving",
       "work": 6.0,
       "inputs": [
-        { "material": "fibre", "amount": 6.0, "reads": "strength" },
-        { "material": "bone", "amount": 1.0 }
+        {
+          "material": "fibre",
+          "amount": 6.0,
+          "reads": "strength"
+        },
+        {
+          "material": "bone",
+          "amount": 1.0
+        }
       ],
-      "outputs": [{ "equipment": "traps", "amount": 1.0 }],
+      "outputs": [
+        {
+          "equipment": "traps",
+          "amount": 1.0
+        }
+      ],
       "grades": {
-        "coarse": { "when": 0.0 },
-        "standard": { "when": 0.45 },
-        "fine": { "when": 0.75 }
+        "coarse": {
+          "when": 0.0,
+          "effects": [
+            {
+              "stat": "attack",
+              "equipped": 17.0,
+              "max_body_mass": 1.0
+            }
+          ]
+        },
+        "standard": {
+          "when": 0.45,
+          "effects": [
+            {
+              "stat": "attack",
+              "equipped": 20.0,
+              "max_body_mass": 1.0
+            }
+          ]
+        },
+        "fine": {
+          "when": 0.75,
+          "effects": [
+            {
+              "stat": "attack",
+              "equipped": 23.0,
+              "max_body_mass": 1.0
+            }
+          ]
+        }
       }
     },
     "spears": {
@@ -73,15 +202,54 @@
       "craft": "bone_working",
       "work": 6.0,
       "inputs": [
-        { "material": "bone", "amount": 1.0, "reads": "density" },
-        { "material": "fibre", "amount": 2.0 },
-        { "material": "hide", "amount": 1.0 }
+        {
+          "material": "bone",
+          "amount": 1.0,
+          "reads": "density"
+        },
+        {
+          "material": "fibre",
+          "amount": 2.0
+        },
+        {
+          "material": "hide",
+          "amount": 1.0
+        }
       ],
-      "outputs": [{ "equipment": "spears", "amount": 1.0 }],
+      "outputs": [
+        {
+          "equipment": "spears",
+          "amount": 1.0
+        }
+      ],
       "grades": {
-        "coarse": { "when": 0.0 },
-        "standard": { "when": 0.45 },
-        "fine": { "when": 0.75 }
+        "coarse": {
+          "when": 0.0,
+          "effects": [
+            {
+              "stat": "attack",
+              "equipped": 17.0
+            }
+          ]
+        },
+        "standard": {
+          "when": 0.45,
+          "effects": [
+            {
+              "stat": "attack",
+              "equipped": 20.0
+            }
+          ]
+        },
+        "fine": {
+          "when": 0.75,
+          "effects": [
+            {
+              "stat": "attack",
+              "equipped": 23.0
+            }
+          ]
+        }
       }
     },
     "clubs": {
@@ -89,14 +257,50 @@
       "craft": "bone_working",
       "work": 4.0,
       "inputs": [
-        { "material": "bone", "amount": 2.0, "reads": "density" },
-        { "material": "hide", "amount": 1.0 }
+        {
+          "material": "bone",
+          "amount": 2.0,
+          "reads": "density"
+        },
+        {
+          "material": "hide",
+          "amount": 1.0
+        }
       ],
-      "outputs": [{ "equipment": "clubs", "amount": 1.0 }],
+      "outputs": [
+        {
+          "equipment": "clubs",
+          "amount": 1.0
+        }
+      ],
       "grades": {
-        "coarse": { "when": 0.0 },
-        "standard": { "when": 0.45 },
-        "fine": { "when": 0.75 }
+        "coarse": {
+          "when": 0.0,
+          "effects": [
+            {
+              "stat": "attack",
+              "equipped": 5.1
+            }
+          ]
+        },
+        "standard": {
+          "when": 0.45,
+          "effects": [
+            {
+              "stat": "attack",
+              "equipped": 6.0
+            }
+          ]
+        },
+        "fine": {
+          "when": 0.75,
+          "effects": [
+            {
+              "stat": "attack",
+              "equipped": 6.9
+            }
+          ]
+        }
       }
     },
     "wayfinding": {
@@ -104,63 +308,147 @@
       "craft": "bone_working",
       "work": 4.0,
       "inputs": [
-        { "material": "bone", "amount": 1.0, "reads": "length" },
-        { "material": "hide", "amount": 1.0 },
-        { "material": "fibre", "amount": 1.0 }
+        {
+          "material": "bone",
+          "amount": 1.0,
+          "reads": "length"
+        },
+        {
+          "material": "hide",
+          "amount": 1.0
+        },
+        {
+          "material": "fibre",
+          "amount": 1.0
+        }
       ],
-      "outputs": [{ "equipment": "wayfinding", "amount": 1.0 }],
+      "outputs": [
+        {
+          "equipment": "wayfinding",
+          "amount": 1.0
+        }
+      ],
       "grades": {
-        "coarse": { "when": 0.0 },
-        "standard": { "when": 0.45 },
-        "fine": { "when": 0.75 }
+        "coarse": {
+          "when": 0.0
+        },
+        "standard": {
+          "when": 0.45
+        },
+        "fine": {
+          "when": 0.75
+        }
       }
     },
     "tanning_frame": {
       "display_name": "Tanning frame",
       "craft": "weaving",
       "work": 12.0,
-      "requires_knowledge": ["weaving", "bone_working"],
-      "inputs": [
-        { "material": "fibre", "amount": 8.0, "reads": "strength" },
-        { "material": "bone", "amount": 2.0 }
+      "requires_knowledge": [
+        "weaving",
+        "bone_working"
       ],
-      "outputs": [{ "equipment": "tanning_frame", "amount": 1.0 }],
+      "inputs": [
+        {
+          "material": "fibre",
+          "amount": 8.0,
+          "reads": "strength"
+        },
+        {
+          "material": "bone",
+          "amount": 2.0
+        }
+      ],
+      "outputs": [
+        {
+          "equipment": "tanning_frame",
+          "amount": 1.0
+        }
+      ],
       "grades": {
-        "coarse": { "when": 0.0 },
-        "standard": { "when": 0.45 },
-        "fine": { "when": 0.75 }
+        "coarse": {
+          "when": 0.0
+        },
+        "standard": {
+          "when": 0.45
+        },
+        "fine": {
+          "when": 0.75
+        }
       }
     },
     "loom": {
       "display_name": "Loom",
       "craft": "bone_working",
       "work": 14.0,
-      "requires_knowledge": ["bone_working", "tanning"],
-      "inputs": [
-        { "material": "bone", "amount": 3.0, "reads": "length" },
-        { "material": "hide", "amount": 4.0 }
+      "requires_knowledge": [
+        "bone_working",
+        "tanning"
       ],
-      "outputs": [{ "equipment": "loom", "amount": 1.0 }],
+      "inputs": [
+        {
+          "material": "bone",
+          "amount": 3.0,
+          "reads": "length"
+        },
+        {
+          "material": "hide",
+          "amount": 4.0
+        }
+      ],
+      "outputs": [
+        {
+          "equipment": "loom",
+          "amount": 1.0
+        }
+      ],
       "grades": {
-        "coarse": { "when": 0.0 },
-        "standard": { "when": 0.45 },
-        "fine": { "when": 0.75 }
+        "coarse": {
+          "when": 0.0
+        },
+        "standard": {
+          "when": 0.45
+        },
+        "fine": {
+          "when": 0.75
+        }
       }
     },
     "bone_awl": {
       "display_name": "Bone awl",
       "craft": "tanning",
       "work": 10.0,
-      "requires_knowledge": ["tanning", "weaving"],
-      "inputs": [
-        { "material": "hide", "amount": 3.0, "reads": "toughness" },
-        { "material": "fibre", "amount": 3.0 }
+      "requires_knowledge": [
+        "tanning",
+        "weaving"
       ],
-      "outputs": [{ "equipment": "bone_awl", "amount": 1.0 }],
+      "inputs": [
+        {
+          "material": "hide",
+          "amount": 3.0,
+          "reads": "toughness"
+        },
+        {
+          "material": "fibre",
+          "amount": 3.0
+        }
+      ],
+      "outputs": [
+        {
+          "equipment": "bone_awl",
+          "amount": 1.0
+        }
+      ],
       "grades": {
-        "coarse": { "when": 0.0 },
-        "standard": { "when": 0.45 },
-        "fine": { "when": 0.75 }
+        "coarse": {
+          "when": 0.0
+        },
+        "standard": {
+          "when": 0.45
+        },
+        "fine": {
+          "when": 0.75
+        }
       }
     }
   },

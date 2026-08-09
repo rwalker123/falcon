@@ -31,6 +31,30 @@
 //! shipped config. The two files together cover the invariant: a point where nothing is stochastic,
 //! a real band where something is.
 
+/// **The shipped EQUIPPED haul rate** — what a kitted band drags, off the sled's own tier.
+/// `labor_config`'s `hunt.per_worker_biomass_capacity` is the *bare-handed* baseline since quality
+/// tiers landed, so a fixture that wants "an ordinary band" asks the item table.
+#[allow(dead_code)]
+fn equipped_haul_rate() -> f32 {
+    core_sim::EquipmentConfig::builtin().equipped_reference(
+        core_sim::EquipmentStat::HuntCarry,
+        core_sim::LaborConfig::builtin()
+            .hunt
+            .per_worker_biomass_capacity,
+    )
+}
+
+/// The gather twin of [`equipped_haul_rate`] — the baskets' own tier.
+#[allow(dead_code)]
+fn equipped_gather_rate() -> f32 {
+    core_sim::EquipmentConfig::builtin().equipped_reference(
+        core_sim::EquipmentStat::ForageCarry,
+        core_sim::LaborConfig::builtin()
+            .forage
+            .per_worker_biomass_capacity,
+    )
+}
+
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
@@ -212,7 +236,7 @@ fn seed_the_forecast(app: &mut App, band: bevy::prelude::Entity, fauna_id: &str,
             herd,
             &fauna,
             &ladder,
-            labor.hunt.per_worker_biomass_capacity,
+            equipped_haul_rate(),
             &party_at(&combat),
             CONTENT_BAND_OUTPUT_MULTIPLIER,
             CREW,
@@ -411,7 +435,7 @@ fn the_range_widens_with_a_stochastic_fight_and_contains_the_take_across_many_se
 
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
     let ladder = app.world.resource::<LadderConfigHandle>().get();
-    let labor = app.world.resource::<LaborConfigHandle>().get();
+
     let combat = app.world.resource::<CombatConfigHandle>().get();
     let party = party_at(&combat);
     let herd = app
@@ -429,7 +453,7 @@ fn the_range_widens_with_a_stochastic_fight_and_contains_the_take_across_many_se
             CREW,
             FOOD_PEAK,
             NO_IMPROVEMENT_UNDERWAY,
-            labor.hunt.per_worker_biomass_capacity,
+            equipped_haul_rate(),
             &party,
             &fauna,
             &ladder,
@@ -730,7 +754,7 @@ fn the_exported_terms_compose_the_gate_and_the_forecast_agrees() {
             registry.find(&id).expect("the herd is on the map"),
             &fauna,
             &ladder,
-            labor.hunt.per_worker_biomass_capacity,
+            equipped_haul_rate(),
             &HuntingParty {
                 tuning: combat.tuning(),
                 injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
@@ -907,8 +931,9 @@ fn a_gather_reports_a_point_and_pays_it() {
             &composition,
             &labor.forage,
             &flora,
+            equipped_gather_rate(),
             &ladder,
-            labor.forage.per_worker_biomass_capacity,
+            equipped_gather_rate(),
             seasonal,
             CONTENT_BAND_OUTPUT_MULTIPLIER,
             CREW,

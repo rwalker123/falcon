@@ -35,6 +35,8 @@ const STANDARD: &str = "standard";
 const FINE: &str = "fine";
 const TANNING_FRAME: &str = "tanning_frame";
 const SLED: &str = "sled";
+/// The tier every shipped item's one quality rung carries — the flint age.
+const FLINT_TIER: &str = "flint";
 
 fn readings(pairs: &[(&str, f32)]) -> BTreeMap<String, f32> {
     pairs
@@ -84,8 +86,10 @@ impl Bench {
             .insert_resource(MaterialsConfigHandle::new(std::sync::Arc::new(materials)));
         app.world
             .insert_resource(RecipesConfigHandle::new(std::sync::Arc::new(recipes)));
+        let equipment = std::sync::Arc::new(equipment);
+        let equipment_for_stock = std::sync::Arc::clone(&equipment);
         app.world
-            .insert_resource(EquipmentConfigHandle::new(std::sync::Arc::new(equipment)));
+            .insert_resource(EquipmentConfigHandle::new(equipment));
         app.world.insert_resource(LadderConfigHandle::default());
         app.world
             .insert_resource(DiscoveryProgressLedger::default());
@@ -94,7 +98,9 @@ impl Bench {
             .spawn((
                 cohort(BAND_POP as f32, LocalStore::new()),
                 BandBench::default(),
-                BandEquipment::default(),
+                // A spawned band is start-stocked; `Default` means *owns nothing* since the count
+                // slice, and a bench fixture that started bare would have no kit to replenish.
+                BandEquipment::start_stocked(&equipment_for_stock),
                 BandId(1),
             ))
             .id();
@@ -132,7 +138,8 @@ impl Bench {
             .world
             .get_mut::<BandEquipment>(self.band)
             .expect("the band has a ledger")
-            .restock(item);
+            // A crafted tool arrives as its own batch of one, at the tier that ships known.
+            .stock(item, 1, FLINT_TIER, None);
         self
     }
 
@@ -165,6 +172,25 @@ impl Bench {
             .get::<BandEquipment>(self.band)
             .expect("the band has a ledger")
             .wear_of(item)
+    }
+
+    /// Whole units of an item the band holds, across every batch.
+    fn count_of(&self, item: &str) -> u32 {
+        self.app
+            .world
+            .get::<BandEquipment>(self.band)
+            .expect("the band has a ledger")
+            .count_of(item)
+    }
+
+    /// Condition left on the unit in hand.
+    fn remaining(&self, item: &str) -> f32 {
+        let equipment = self.app.world.resource::<EquipmentConfigHandle>().get();
+        self.app
+            .world
+            .get::<BandEquipment>(self.band)
+            .expect("the band has a ledger")
+            .remaining(item, &equipment)
     }
 
     fn stock_of(&self, material: &str) -> Scalar {
@@ -367,31 +393,30 @@ fn a_short_draw_withdraws_nothing_at_all() {
     assert!(bench.bench().drawn.is_none());
 }
 
-/// The bench delivers: a finished sled lands in the band's ledger, unworn.
+/// The bench delivers: a finished sled lands in the band's ledger as **its own batch**, unworn.
 ///
-/// **This is the seam the equipment-count slice re-points.** `BandEquipment` records condition, not
-/// count, so "delivered" is the only thing it can say — see `BandEquipment::restock`.
+/// **A second sled is a second sled now.** The ledger counts, so the band that started this test
+/// with one nearly-spent unit ends it holding that unit *and* a fresh one — the replenishment loop
+/// the whole arc exists for.
 #[test]
 fn a_finished_item_lands_in_the_bands_equipment_ledger_unworn() {
     let mut bench = Bench::shipped();
     bench
         .stock(HIDE, 12.0, &[(TOUGHNESS, 0.6), (SUPPLENESS, 0.5)])
         .stock("fibre", 8.0, &[("fineness", 0.5), ("strength", 0.5)]);
-    // Wear the sled most of the way out first, so "unworn afterwards" is a change rather than the
-    // default reading of an absent entry.
+    // Wear the band's own sled most of the way out first, so a fresh batch is a visible change
+    // rather than the reading a start-stocked band already gives.
     let equipment =
         EquipmentConfig::from_json_str(core_sim::BUILTIN_EQUIPMENT_CONFIG).expect("equipment");
-    let spent = equipment
-        .item(SLED)
-        .expect("the sled is shipped")
-        .starting_durability
-        - 1.0;
+    let sled = equipment.item(SLED).expect("the sled is shipped");
+    let uses = (sled.default_tier().starting_durability - 1.0) / sled.wear.amount;
     bench
         .app
         .world
         .get_mut::<BandEquipment>(bench.band)
         .expect("ledger")
-        .restore_wear(SLED, spent);
+        .wear_item(&equipment, SLED, uses);
+    assert_eq!(bench.count_of(SLED), 1, "the band starts with one sled");
 
     bench.start(SLED, CREW).turns(6);
     assert!(
@@ -399,9 +424,15 @@ fn a_finished_item_lands_in_the_bands_equipment_ledger_unworn() {
         "the bench must finish one"
     );
     assert_eq!(
-        bench.wear_of(SLED),
-        0.0,
-        "a delivered sled is a fresh sled - this is the ONE seam in the sim that reduces wear"
+        bench.count_of(SLED),
+        1 + bench.bench().items_completed,
+        "every delivered sled is a NEW one, not a repair of the first"
+    );
+    assert_eq!(
+        bench.remaining(SLED),
+        1.0,
+        "the band keeps SERVING its nearly-spent sled - the fresh batch is stock, worst-first is \
+         what makes the stock run out one batch at a time, and idle stock does not rot"
     );
     assert_eq!(bench.bench().last_output_grade.as_deref(), Some(STANDARD));
 }
@@ -451,7 +482,7 @@ fn validate_rejects_a_craft_stat_on_an_item_that_bounds_no_material() {
 #[test]
 fn validate_rejects_a_craft_stat_declaring_an_unequipped_side() {
     let err = mutate_shipped_equipment(|json| {
-        json["items"][TANNING_FRAME]["effects"][0] =
+        json["items"][TANNING_FRAME]["tiers"][0]["effects"][0] =
             serde_json::json!({ "stat": "craft_speed", "unequipped": 0.5 });
     });
     assert!(err.contains("unequipped"), "got {err}");
@@ -548,17 +579,27 @@ const FIXTURE_RECIPES: &str = r#"{
 const FIXTURE_EQUIPMENT: &str = r#"{
   "items": {
     "spears": {
-      "starting_durability": 100.0,
       "wear": { "per": "kill", "amount": 0.4 },
-      "effects": [{ "stat": "attack", "equipped": 20.0 }]
+      "tiers": [
+        {
+          "id": "flint",
+          "starting_durability": 100.0,
+          "effects": [{ "stat": "attack", "equipped": 20.0 }]
+        }
+      ]
     },
     "crucible": {
-      "starting_durability": 100.0,
       "wear": { "per": "item_crafted", "amount": 4.0 },
       "bounds_material": "ore",
-      "effects": [
-        { "stat": "craft_speed", "equipped": 1.0 },
-        { "stat": "craft_quality_ceiling", "equipped": 1.0 }
+      "tiers": [
+        {
+          "id": "flint",
+          "starting_durability": 100.0,
+          "effects": [
+            { "stat": "craft_speed", "equipped": 1.0 },
+            { "stat": "craft_quality_ceiling", "equipped": 1.0 }
+          ]
+        }
       ]
     }
   },
@@ -569,3 +610,140 @@ const FIXTURE_EQUIPMENT: &str = r#"{
   "default_kits": { "hunt": "big_game", "forage": "none", "scout": "none", "warrior": "none" },
   "quarry_default_kit_margin": 0.25
 }"#;
+
+/// **A PASS THAT MAKES THREE MAKES THREE.** `RecipeOutput::amount` used to be read by nothing on
+/// the equipment side: one completion delivered one item's worth of *condition* however many the
+/// row named, which a ledger that counts things has no excuse for.
+///
+/// Exercised by a fixture rather than a shipped recipe, because every shipped equipment recipe
+/// makes exactly one — the defect was invisible for that reason and would stay invisible.
+#[test]
+fn a_completion_delivers_the_recipes_whole_output_amount() {
+    let mut book: serde_json::Value =
+        serde_json::from_str(core_sim::BUILTIN_RECIPES_CONFIG).expect("the book is json");
+    const BATCH: u32 = 3;
+    book["recipes"][SLED]["outputs"][0]["amount"] = serde_json::json!(BATCH);
+    let mut bench = Bench::new(
+        MaterialsConfig::from_json_str(core_sim::BUILTIN_MATERIALS_CONFIG).expect("materials"),
+        RecipesConfig::from_json_str(&book.to_string())
+            .expect("a batch of three is a valid recipe"),
+        EquipmentConfig::from_json_str(core_sim::BUILTIN_EQUIPMENT_CONFIG).expect("equipment"),
+    );
+    bench
+        .stock(HIDE, 12.0, &[(TOUGHNESS, 0.6), (SUPPLENESS, 0.5)])
+        .stock("fibre", 8.0, &[("fineness", 0.5), ("strength", 0.5)])
+        .start(SLED, CREW)
+        .turns(6);
+
+    let completed = bench.bench().items_completed;
+    assert!(completed >= 1, "the bench must finish at least one pass");
+    assert_eq!(
+        bench.count_of(SLED),
+        1 + completed * BATCH,
+        "each completed pass delivers the row's whole `amount`, on top of the one the band spawned \
+         with"
+    );
+}
+
+/// **THE GRADE THE DRAW SELECTED RIDES THE BATCH, AND ITS ABSOLUTES WITH IT.**
+///
+/// A grade declares what a stat *takes* on the thing that was made, so the value has to reach the
+/// item — and it is copied at craft time rather than looked up later, which is what makes *"fixed at
+/// craft time and never moves"* structural: swapping the bench's recipe afterwards cannot re-grade a
+/// sled already in the band's hands.
+///
+/// Both directions: a **fine** sled hauls more than the shipped rate, and a **standard** one hauls
+/// exactly it — the rule that makes a standard-grade craft reproduce today's game.
+#[test]
+fn a_crafted_items_grade_decides_what_it_grants() {
+    let equipment =
+        EquipmentConfig::from_json_str(core_sim::BUILTIN_EQUIPMENT_CONFIG).expect("equipment");
+    let recipes = RecipesConfig::from_json_str(core_sim::BUILTIN_RECIPES_CONFIG).expect("recipes");
+    let labor = core_sim::LaborConfig::builtin();
+    let big_game = equipment
+        .kit("big_game")
+        .expect("the roster ships big_game");
+    let shipped = equipment
+        .item(SLED)
+        .expect("the sled is shipped")
+        .default_tier()
+        .effects
+        .iter()
+        .find(|effect| effect.stat == core_sim::EquipmentStat::HuntCarry)
+        .map(|effect| effect.tier.value())
+        .expect("the sled's tier declares a haul rate");
+
+    let haul_at = |grade_id: &str| {
+        let grade = recipes
+            .recipe(SLED)
+            .expect("the sled recipe is shipped")
+            .grades
+            .get(grade_id)
+            .unwrap_or_else(|| panic!("the sled recipe ships a '{grade_id}' grade"));
+        let mut ledger = BandEquipment::default();
+        ledger.stock(
+            SLED,
+            1,
+            FLINT_TIER,
+            Some(core_sim::BatchGrade {
+                id: grade_id.to_string(),
+                effects: grade.effects.clone(),
+            }),
+        );
+        equipment.hunt_per_worker_biomass_capacity(
+            labor.hunt.per_worker_biomass_capacity,
+            &big_game,
+            &ledger,
+        )
+    };
+
+    assert_eq!(
+        haul_at(STANDARD),
+        shipped,
+        "a STANDARD craft reproduces the shipped sled exactly"
+    );
+    assert!(
+        haul_at(FINE) > shipped,
+        "a fine sled hauls more: {} vs {shipped}",
+        haul_at(FINE)
+    );
+    assert!(
+        haul_at("coarse") < shipped,
+        "and a coarse one less: {} vs {shipped}",
+        haul_at("coarse")
+    );
+}
+
+/// **A CRAFT COMES OUT AT THE BEST TIER THE FACTION KNOWS**, which on the shipped roster is the one
+/// that ships known — so the shipped opening makes exactly what it always made.
+#[test]
+fn a_delivered_item_carries_the_tier_that_ships_known() {
+    let mut bench = Bench::shipped();
+    bench
+        .stock(HIDE, 12.0, &[(TOUGHNESS, 0.6), (SUPPLENESS, 0.5)])
+        .stock("fibre", 8.0, &[("fineness", 0.5), ("strength", 0.5)])
+        .start(SLED, CREW)
+        .turns(6);
+    assert!(bench.bench().items_completed >= 1, "the bench finishes one");
+
+    let ledger = bench
+        .app
+        .world
+        .get::<BandEquipment>(bench.band)
+        .expect("the band has a ledger");
+    let batches: Vec<_> = ledger
+        .batches()
+        .find(|(item, _)| *item == SLED)
+        .map(|(_, batches)| batches.to_vec())
+        .expect("the band holds sleds");
+    assert!(
+        batches.iter().all(|batch| batch.tier == FLINT_TIER),
+        "every batch is at the tier that ships known: {batches:?}"
+    );
+    assert!(
+        batches
+            .iter()
+            .any(|batch| batch.grade.as_ref().is_some_and(|g| g.id == STANDARD)),
+        "and the crafted one carries the grade its draw selected: {batches:?}"
+    );
+}

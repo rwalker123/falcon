@@ -23,10 +23,10 @@
 use bevy::prelude::*;
 
 use crate::{
-    components::{BandBench, BandEquipment, DrawnInputs, LocalStore, PopulationCohort},
+    components::{BandBench, BandEquipment, BatchGrade, DrawnInputs, LocalStore, PopulationCohort},
     crafting::{craft_discovery_id, HAND_WORKING_MATERIAL_EFFICIENCY},
     equipment_config::{EquipmentConfigHandle, EquipmentStat},
-    intensification::LadderConfigHandle,
+    intensification::{knows, LadderConfigHandle},
     materials_config::{MaterialsConfig, MaterialsConfigHandle},
     orders::FactionId,
     recipes_config::{RecipeDef, RecipesConfigHandle},
@@ -177,7 +177,9 @@ pub fn advance_crafting(
     let materials = materials_handle.get();
     let recipes = recipes_handle.get();
     let equipment = equipment_handle.get();
-    let lesson = ladder_handle.get().knowledge.lesson_per_crafted_item;
+    let ladder = ladder_handle.get();
+    let lesson = ladder.knowledge.lesson_per_crafted_item;
+    let knowledge_threshold = ladder.knowledge.completion_threshold;
 
     for (mut cohort, mut bench, mut wear, _) in bands.iter_mut() {
         let Some(recipe_id) = bench.recipe_id.clone() else {
@@ -219,7 +221,23 @@ pub fn advance_crafting(
             continue;
         }
 
-        emit_outputs(recipe, &mut cohort.stores, &mut wear, &materials);
+        // **The tier a craft comes out at is the best this faction knows** — resolved here, at the
+        // moment of delivery, off the same ledger and the same completion threshold `set_bench`
+        // gates a recipe on, so one reading of "does this people know that craft" serves both.
+        let known = |craft: &str| {
+            craft_discovery_id(craft)
+                .is_some_and(|id| knows(&discovery, faction, id, knowledge_threshold))
+        };
+        let drawn_grade = bench.drawn.as_ref().and_then(|drawn| drawn.grade.clone());
+        emit_outputs(
+            recipe,
+            drawn_grade.as_deref(),
+            &mut cohort.stores,
+            &mut wear,
+            &materials,
+            &equipment,
+            &known,
+        );
         // **THE SAME QUANTUM, CHARGED ONCE, SIDE BY SIDE.** Splitting these across two sites is how
         // a tool that lasts 25 items ends up teaching a craft in 30.
         if tiers.tooled {
@@ -231,7 +249,9 @@ pub fn advance_crafting(
         credit_craft_lesson(&recipe.craft, lesson * ONE_ITEM, faction, &mut discovery);
 
         bench.items_completed = bench.items_completed.saturating_add(1);
-        bench.last_output_grade = bench.drawn.as_ref().and_then(|drawn| drawn.grade.clone());
+        // **The grade the batch just delivered carries.** It was a readout with no reader until the
+        // count slice; it is now the same string every batch of that craft is stamped with.
+        bench.last_output_grade = drawn_grade;
         // **The overflow is not carried.** Progress past `work` was done on an item whose materials
         // have not been drawn yet, so there is nothing for it to have been spent on — the same
         // shape as the ladder's `crew_scale`, where over-crewing buys nothing.
@@ -260,18 +280,41 @@ fn fix_grade(recipe: &RecipeDef, reading: Option<f32>, ceiling: f32) -> DrawnInp
 
 /// Deliver one pass's outputs.
 ///
-/// **Equipment lands through the ONE seam this ledger has**
-/// ([`BandEquipment::restock`]): the band names the item and it is unworn. Condition, not count —
-/// see that method for what the equipment-count slice has to re-point.
+/// **Equipment lands as a NEW BATCH** ([`BandEquipment::stock`]) carrying `amount` units, the tier
+/// the faction can reach, and the grade the draw fixed. It is never merged into a batch already
+/// standing: *"the next ten are their own batch"* is what keeps a fresh craft from averaging into a
+/// half-spent pile.
+///
+/// **`RecipeOutput::amount` is honoured** — a pass of a recipe that makes three makes three. It used
+/// to deliver exactly one pass's worth of *condition* however many the row named, which a
+/// count-bearing ledger has no excuse for.
 fn emit_outputs(
     recipe: &RecipeDef,
+    drawn_grade: Option<&str>,
     store: &mut LocalStore,
     wear: &mut BandEquipment,
     materials: &MaterialsConfig,
+    equipment: &crate::equipment_config::EquipmentConfig,
+    known: &dyn Fn(&str) -> bool,
 ) {
     for output in &recipe.outputs {
         if let Some(item) = output.equipment_id() {
-            wear.restock(item);
+            let Some(def) = equipment.item(item) else {
+                continue;
+            };
+            // **The best tier this faction can reach**, which is the default one until something
+            // gated is learned — so the shipped opening makes exactly what it always made.
+            let tier = def.craftable_tier(known).id.clone();
+            // **The grade's absolutes are copied HERE and carried on the batch**, which is what
+            // makes "fixed at craft time and never moves" structural: a recipe retuned under a
+            // running world cannot re-grade a sled already in the band's hands.
+            let grade = drawn_grade.and_then(|id| {
+                recipe.grades.get(id).map(|grade| BatchGrade {
+                    id: id.to_string(),
+                    effects: grade.effects.clone(),
+                })
+            });
+            wear.stock(item, whole_units(output.amount), &tier, grade);
         }
         if let Some(material) = output.material_id() {
             let Some(band) = materials.band_key(material, &output.characteristics) else {
@@ -284,6 +327,18 @@ fn emit_outputs(
                 &output.characteristics,
             );
         }
+    }
+}
+
+/// **How many whole units an equipment output row delivers.** `validate` rejects a non-whole
+/// `amount` on an equipment row — a ledger that counts things cannot bank half a spear — so this is
+/// a cast rather than a rounding policy, and a negative or non-finite amount (also rejected) reads
+/// as none rather than wrapping.
+fn whole_units(amount: f32) -> u32 {
+    if amount.is_finite() && amount > 0.0 {
+        amount as u32
+    } else {
+        0
     }
 }
 

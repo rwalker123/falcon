@@ -1,90 +1,254 @@
 {
-  "_comment": "THE TOE (docs/plan_early_game_labor.md 'Equipment / TOE', docs/plan_hunt_through_combat.md 4.8). TWO NOUNS, AND THEY ARE NOT THE SAME: an ITEM is a piece of equipment (spears, sled, baskets, traps) that owns its own effects, its own durability and its own use quantum; a KIT is a roster entry that LISTS the items a party is sent out with. The items used to be named `hunting_kit`/`sled_kit`/`basket_kit`, which called both concepts 'kit' and made a kit look like a leaf; they are `items` now and 'kit' means only the roster entry. Consumable, START-STOCKED and NOT CRAFTABLE: running one dry is the intended pressure and the pull into the Milestone-2 crafting economy. TWO TIERS, NEVER A TAPER: performance is FLAT until expiry and then the role STEPS DOWN - durability and performance are deliberately ORTHOGONAL axes so a future crafting system can tune them independently. THE TIER IS PER-BAND, PER-ROLE, not per-hunter inventory. WEAR IS CHARGED FOR USE, NEVER FOR TURNS ELAPSED (docs/plan_denial_raid.md 1.2): a turn clock would charge an idle march the same as a slaughter, which would make denial free. QUALITY TIERS (flint vs bronze spears) are NOT here: they are unobtainable until something can craft them, so they ride the crafting slice. PLAYTEST DIALS.",
-  "_comment_effects": "AN EFFECT NAMES THE VALUE A STAT TAKES, never a delta and never a multiplier stacking on something else - that is what keeps 'flat until expiry, then a step down' structurally true instead of a rule someone has to remember. Each effect declares exactly ONE tier, and WHICH tier it declares is the one-home-per-fact rule showing through: the OTHER tier already had a home and keeps it. `equipped` = the value while the item is intact, so the baseline lives elsewhere (attack's bare-handed 1.0 is creatures.json `person.combat.attack`; dispersion and exposure are both NEUTRAL AT 1.0, which is why an item that does not mention them changes nothing). `unequipped` = the value once the item is spent, so the equipped value lives elsewhere (the hunt's 40.0 is labor_config.json `hunt.per_worker_biomass_capacity`, the gather's 8.0 its `forage.per_worker_biomass_capacity` - the rates the shipped, start-kitted game has always run on). Copying either into this file would give a shipped number a second home to drift from.",
-  "_comment_shapes": "THE TWO CARRY ITEMS WANT DIFFERENT SHAPES, NOT MERELY DIFFERENT NUMBERS (4.8). FORAGE IS CONTAINMENT-BOUND - bare hands is a handful against a basketful - so its ratio is LARGE: 8.0 equipped against 1.6 bare, exactly one fifth, which is about what a forager keeps when the only vessel is two cupped hands and the fold of a hide. THE HUNT IS TRANSPORT-BOUND - a sledless party can always drag SOMETHING - so its ratio is SMALLER: 40.0 equipped against 12.0, under a third. The hunt's shortfall needs no new mechanic: a party that cannot haul its kill leaves more of it on the range, which AnimalTake.wasted already computes and the client already shows.",
+  "_comment": "THE TOE (docs/plan_early_game_labor.md 'Equipment / TOE', docs/plan_hunt_through_combat.md 4.8). TWO NOUNS, AND THEY ARE NOT THE SAME: an ITEM is a piece of equipment (spears, sled, baskets, traps) that owns its own effects, its own tiers and its own use quantum; a KIT is a roster entry that LISTS the items a party is sent out with. The items used to be named `hunting_kit`/`sled_kit`/`basket_kit`, which called both concepts 'kit' and made a kit look like a leaf; they are `items` now and 'kit' means only the roster entry. START-STOCKED AND CRAFTABLE: a band spawns with ONE unit of every item some kit carries, and the bench (docs/plan_crafting_and_materials.md) is what makes a second. TWO TIERS, NEVER A TAPER: performance is FLAT until expiry and then the role STEPS DOWN - durability and performance are deliberately ORTHOGONAL axes so crafting can tune them independently. THE TIER IS PER-BAND, PER-ROLE, not per-hunter inventory. WEAR IS CHARGED FOR USE, NEVER FOR TURNS ELAPSED (docs/plan_denial_raid.md 1.2): a turn clock would charge an idle march the same as a slaughter, which would make denial free. PLAYTEST DIALS.",
+  "_comment_effects": "AN EFFECT NAMES THE VALUE A STAT TAKES, never a delta and never a multiplier stacking on something else - that is what keeps 'flat until expiry, then a step down' structurally true instead of a rule someone has to remember. Each effect declares exactly ONE side, and WHICH side it declares is the one-home-per-fact rule showing through: the OTHER side already had a home and keeps it. `equipped` = the value while the item is intact, so the baseline lives elsewhere (attack's bare-handed 1.0 is creatures.json `person.combat.attack`; the sledless 12.0 and bare-handed 1.6 are labor_config.json's `hunt.per_worker_biomass_capacity` and `forage.per_worker_biomass_capacity`, which are the NO-EQUIPMENT BASELINES; dispersion and exposure are both NEUTRAL AT 1.0, which is why an item that does not mention them changes nothing). `unequipped` = the value once the item is spent, so the equipped value lives elsewhere (a keeper's collection rate is the hunt haul's own equipped rate, shared off the sled's tier; a vantage's equipped 2 is labor_config.json `scout.vantage_range`). Copying either into this file twice would give a shipped number a second home to drift from.",
+  "_comment_tiers": "QUALITY TIERS - what the MATERIAL buys, and the axis crafting upgrades along (docs/plan_crafting_and_materials.md section 6). WHAT IS SHARED STAYS ON THE ITEM and what the material buys sits on the TIER: a spear is a thrown weapon whatever it is tipped with (dispersion, exposure), while `attack`, `starting_durability` and the carry rates are what the material changes. A TIER IS AN AGE, AND THE VOCABULARY IS SHARED ACROSS ITEMS: every shipped item's one tier is `flint`, so the day metal lands each gains a `bronze` beside it and the ladder is legible and gated once ('bronze needs Smithing') rather than per item. FLINT IS TODAY'S SPEAR, VERBATIM - starting_durability 100, attack 20 - so this whole move is a re-homing in which NOT ONE NUMBER CHANGES VALUE, which is what preserves the shipped opening. THE ORDER IS THE MODEL: tiers run worst-first, a bench makes the best tier the faction knows, and `tiers[0]` is the default - what a spawn stocks, what every reference rate resolves through, and the one tier that may NOT be knowledge-gated (a gate there would lock the opening behind a craft nobody knows on turn 1). NO BRONZE ROW SHIPS: an unreachable tier is dead content that SubsistenceSection.equipmentConfigJson publishes to the Workbench, so tier switching is covered by a test fixture instead and bronze becomes a config row the day the minerals arc (#325) lands. A MASS BOUND RIDES WITH THE EFFECT IT BOUNDS, so the trap's max_body_mass sits on its tier's `attack`: an effect with a bound but no value is not representable, and a second tier of the passive device restates it.",
+  "_comment_shapes": "THE TWO CARRY ITEMS WANT DIFFERENT SHAPES, NOT MERELY DIFFERENT NUMBERS (4.8). FORAGE IS CONTAINMENT-BOUND - bare hands is a handful against a basketful - so its ratio is LARGE: the baskets' flint tier buys 8.0 against the bare-handed 1.6 baseline in labor_config.json, exactly one fifth, which is about what a forager keeps when the only vessel is two cupped hands and the fold of a hide. THE HUNT IS TRANSPORT-BOUND - a sledless party can always drag SOMETHING - so its ratio is SMALLER: the sled's flint tier buys 40.0 against a baseline of 12.0, under a third. The hunt's shortfall needs no new mechanic: a party that cannot haul its kill leaves more of it on the range, which AnimalTake.wasted already computes and the client already shows.",
   "_comment_declaring_the_neutral": "SPEARS DECLARE `dispersion 1.0` AND `exposure 1.0` THOUGH BOTH ARE THE NEUTRAL VALUE, and that is load-bearing rather than noise. A kit resolves a multiplier stat as the MAXIMUM of what its LIVE items DECLARE, and an item that says nothing contributes nothing (not the neutral) - which is what stops the sled, carry gear nobody approaches an animal with, from dragging a trapping party's dispersion back to 1.0 just by being in the kit. The declaration is therefore what makes a spears-AND-traps kit resolve to LOUD and EXPOSED instead of inheriting the trap's stand-off for free: if you are running up throwing spears you are scaring the herd and you are in reach of it, however many traps you also set. Nothing shipped pairs them today; the declaration is what keeps the answer right the day something does.",
   "_comment_traps": "THE PASSIVE DEVICE - snares, nets, weirs, all one item because at this game's abstraction they are one thing: something you set down, walk away from, and come back to. Whether a given device holds one animal or a whole run, and whether it is discriminate, is detail the game never surfaces; two items separated by numbers that mean nothing would be worse than one honest one. ITS WHOLE ADVANTAGE IS `dispersion 0` - it is not there to be seen, so nothing bolts and the party keeps everything it reaches. Against a Rabbit Warren at `wariness 0.75` a spear party loses three animals in four to the retreat and this loses none, which is the entire 50 -> 200 gap. ITS `attack` IS THE SPEAR'S OWN NUMBER, and that is the point rather than a coincidence: at 0.13-0.67 kg the weapon is not what is scarce, so the device must not win by hitting harder - it wins by not scaring anything. `max_body_mass` is what keeps it off everything else. NO REACH MULTIPLIER: a x4 was authored here and MEASURED INERT - the fight binds before reach does on every small-game row (reach/worker `engage_rate x mult` against fight/worker `attack / durability` is 40 vs 10 on a rabbit, 60 vs 10 on a catfish), so it changed no outcome anywhere. The stat was REMOVED rather than shipped neutral: a lever with no effect is worse than no lever, and the thing it superficially resembled - an archer reaching what it cannot close with - is `RangeBand` on the combat resolver, reserved for the ranged pre-phase on #501. Re-add it the day something genuinely raises reach (dogs, a drive), with its own justification and its own test.",
   "_comment_dispersion": "DISPERSION MULTIPLIES THE QUARRY'S OWN FLIGHT RESPONSE: effective_wariness = clamp(wariness * dispersion, 0, 1), and stayers = engaged * (1 - effective_wariness). It is NEUTRAL AT 1.0, so every item that does not declare it - and every kit that carries no item declaring it - leaves the shipped retreat untouched. TRAPS SHIP 0.0: a trap line does not scare anything, because nothing runs up to the animal. THE SPECIES DECIDES HOW MUCH IT MATTERS, which is the whole reason this is a multiplier and not a subtraction: a Gazelle at wariness 0.85 loses almost everything to a noisy approach while a Mammoth at 0.10 barely notices, so ONE spear line scatters a warren and contains a mammoth with no special-casing and no per-target authoring. wariness 0 is already an exact identity in the retreat (no draw is made), so dispersion 0 lands in a regime the sim has always had rather than a new one.",
   "_comment_mass_bound": "A SNARE HOLDS A HARE AND NOT A DEER, which `dispersion` cannot say: dispersion answers *does the animal bolt before you reach it*, a different question from *what can this thing physically hold*. Collapsing the two is what made a flat `attack 8` take Red Deer - a deer's `defense` is 1, so a trap cleared it like everything else's. `max_body_mass` bounds the effect to quarry it can actually hold; above it the item contributes NO attack, the party falls back to the bare hand's 1, and `max(0, 1 - defense)` is the EXISTING gate refusing the hunt. No new rule, no 'cannot trap that' branch. IT READS `body_mass`, WHICH THE ROSTER ALREADY AUTHORS, NOT A SIZE CATEGORY - a `size_class` here would be a second authority to drift from the masses, exactly as `dispersion` reads `wariness` rather than a 'jumpy' flag. The shipped roster separates cleanly: every `defense 0` row is 0.13-0.67 (fowl, rabbit, grouse, snow hare, catfish) and the next species up is a Desert Gazelle at 3.3, so ANY ceiling in that gap behaves identically and 1.0 is the round number in it. `min_body_mass` is the same field's other end - a bow is poor against something small and fast - and is reserved for the ranged work on #501; nothing ships one. ONLY `attack` IS RESOLVED AGAINST A QUARRY TODAY, so a bound on any other stat is REJECTED at validate rather than silently ignored.",
   "_comment_exposure": "EXPOSURE IS WHETHER THE ITEM'S USERS ARE IN REACH OF THE ANIMAL, and it multiplies the hunt's baseline injury hazard (fauna::hunt_injuries = combat_config.hunt_injury_damage_per_animal * animals engaged * lethality). NEUTRAL AT 1.0. TRAPS SHIP 0.0 - a trap is a stand-off instrument, so it wears out INSTEAD of the trapper getting hurt, which is the trade and not a free lunch. It is deliberately NOT a weapon-vs-gear classification: what matters is whether the users are exposed, because that is what the resolver keys casualties on.",
-  "_comment_durability": "DURABILITY IS A 0-100 CONDITION SCALE ON EVERY ITEM, and the per-use wear rate is what says how long each lasts - that is what keeps the two axes orthogonal (change how long an item lasts without touching what it does). A band carries WEAR (BandEquipment, persisted); an item is EQUIPPED while its wear is strictly below its starting_durability, and the drop at expiry is a cliff. Spears: 100 / 0.4 per kill = 250 kills. Sled: 100 / 0.02 per biomass hauled = 5000 biomass. Baskets: 100 / 0.04 per biomass gathered = 2500 biomass. Traps: 100 / 0.2 per kill = 500 kills, twice the spear's life per kill because a trap is worked rather than thrown - and it is charged on the SAME quantum as spears so a trapping party cannot hunt for free. AGAINST THE SHIPPED ~16-WORKER STARTING BAND THE BASKET HITS plan_early_game_labor's ~15-20 TURN KIT-DURATION TARGET AND THE TWO HUNT ITEMS OVERSHOOT IT BY ~3x (gathering reaches 16 x 8 = 128 biomass a turn, so 2500/128 = ~19.5 turns of baskets; hunting Red Deer the retreat leaves ~5.6 kills a turn, so 250/5.6 = ~45 turns of spears and 5000/(5.6 x 15) = ~60 turns of sled). Closing that gap is a balance change, not a comment fix, and it belongs with the hunt-effectiveness tuning tracked on issue #495. THE QUANTA ARE INDEPENDENT BY CONSTRUCTION: a band that only hunts wears no baskets and a band that only gathers wears no sled. KNOWN SKEW, a config problem not a model one: a per-KILL charge is species-blind, so a party on Wild Fowl shreds the same spears in ~4.5 turns. The quantum is deliberate (docs/plan_denial_raid.md 1.2 requires wear to track USE, and for a spear a use IS a kill); if small game proves to wreck the pacing, the lever is a per-species use cost, not a turn clock.",
+  "_comment_durability": "DURABILITY IS A 0-100 CONDITION SCALE ON EVERY TIER, and the item's per-use wear rate is what says how long each lasts - that is what keeps the two axes orthogonal (change how long an item lasts without touching what it does). A band carries BATCHES (BandEquipment, persisted): {count, tier, grade, wear}, where a batch of `count` holds count x starting_durability of life spent ONE UNIT AT A TIME, an absent entry means NOT OWNED, and IDLE STOCK DOES NOT ROT. A SPAWN STOCKS ONE UNIT of each start-kit item, which is exactly the life the shipped game has always had; a count above 1 is something crafting bought. Spears: 100 / 0.4 per kill = 250 kills. Sled: 100 / 0.02 per biomass hauled = 5000 biomass. Baskets: 100 / 0.04 per biomass gathered = 2500 biomass. Traps: 100 / 0.2 per kill = 500 kills, twice the spear's life per kill because a trap is worked rather than thrown - and it is charged on the SAME quantum as spears so a trapping party cannot hunt for free. AGAINST THE SHIPPED ~16-WORKER STARTING BAND THE BASKET HITS plan_early_game_labor's ~15-20 TURN KIT-DURATION TARGET AND THE TWO HUNT ITEMS OVERSHOOT IT BY ~3x (gathering reaches 16 x 8 = 128 biomass a turn, so 2500/128 = ~19.5 turns of baskets; hunting Red Deer the retreat leaves ~5.6 kills a turn, so 250/5.6 = ~45 turns of spears and 5000/(5.6 x 15) = ~60 turns of sled). Closing that gap is a balance change, not a comment fix, and it belongs with the hunt-effectiveness tuning tracked on issue #495. THE QUANTA ARE INDEPENDENT BY CONSTRUCTION: a band that only hunts wears no baskets and a band that only gathers wears no sled. KNOWN SKEW, a config problem not a model one: a per-KILL charge is species-blind, so a party on Wild Fowl shreds the same spears in ~4.5 turns. The quantum is deliberate (docs/plan_denial_raid.md 1.2 requires wear to track USE, and for a spear a use IS a kill); if small game proves to wreck the pacing, the lever is a per-species use cost, not a turn clock.",
   "items": {
     "spears": {
-      "starting_durability": 100.0,
-      "wear": { "per": "kill", "amount": 0.4 },
+      "wear": {
+        "per": "kill",
+        "amount": 0.4
+      },
       "effects": [
-        { "stat": "attack", "equipped": 20.0 },
-        { "stat": "dispersion", "equipped": 1.0 },
-        { "stat": "exposure", "equipped": 1.0 }
+        {
+          "stat": "dispersion",
+          "equipped": 1.0
+        },
+        {
+          "stat": "exposure",
+          "equipped": 1.0
+        }
+      ],
+      "tiers": [
+        {
+          "id": "flint",
+          "starting_durability": 100.0,
+          "effects": [
+            {
+              "stat": "attack",
+              "equipped": 20.0
+            }
+          ]
+        }
       ]
     },
     "sled": {
-      "starting_durability": 100.0,
-      "wear": { "per": "biomass_hauled", "amount": 0.02 },
-      "effects": [{ "stat": "hunt_carry", "unequipped": 12.0 }]
+      "wear": {
+        "per": "biomass_hauled",
+        "amount": 0.02
+      },
+      "effects": [],
+      "tiers": [
+        {
+          "id": "flint",
+          "starting_durability": 100.0,
+          "effects": [
+            {
+              "stat": "hunt_carry",
+              "equipped": 40.0
+            }
+          ]
+        }
+      ]
     },
     "baskets": {
-      "starting_durability": 100.0,
-      "wear": { "per": "biomass_gathered", "amount": 0.04 },
-      "effects": [{ "stat": "forage_carry", "unequipped": 1.6 }]
+      "wear": {
+        "per": "biomass_gathered",
+        "amount": 0.04
+      },
+      "effects": [],
+      "tiers": [
+        {
+          "id": "flint",
+          "starting_durability": 100.0,
+          "effects": [
+            {
+              "stat": "forage_carry",
+              "equipped": 8.0
+            }
+          ]
+        }
+      ]
     },
     "traps": {
-      "starting_durability": 100.0,
-      "wear": { "per": "kill", "amount": 0.2 },
+      "wear": {
+        "per": "kill",
+        "amount": 0.2
+      },
       "effects": [
-        { "stat": "attack", "equipped": 20.0, "max_body_mass": 1.0 },
-        { "stat": "dispersion", "equipped": 0.0 },
-        { "stat": "exposure", "equipped": 0.0 }
+        {
+          "stat": "dispersion",
+          "equipped": 0.0
+        },
+        {
+          "stat": "exposure",
+          "equipped": 0.0
+        }
+      ],
+      "tiers": [
+        {
+          "id": "flint",
+          "starting_durability": 100.0,
+          "effects": [
+            {
+              "stat": "attack",
+              "equipped": 20.0,
+              "max_body_mass": 1.0
+            }
+          ]
+        }
       ]
     },
     "husbandry_gear": {
-      "starting_durability": 100.0,
-      "wear": { "per": "biomass_collected", "amount": 0.04 },
-      "effects": [{ "stat": "pen_carry", "unequipped": 12.0 }]
+      "wear": {
+        "per": "biomass_collected",
+        "amount": 0.04
+      },
+      "effects": [
+        {
+          "stat": "pen_carry",
+          "unequipped": 12.0
+        }
+      ],
+      "tiers": [
+        {
+          "id": "flint",
+          "starting_durability": 100.0,
+          "effects": []
+        }
+      ]
     },
     "wayfinding": {
-      "starting_durability": 100.0,
-      "wear": { "per": "tile_revealed", "amount": 0.05 },
-      "effects": [{ "stat": "scout_vantage_range", "unequipped": 1.0 }]
+      "wear": {
+        "per": "tile_revealed",
+        "amount": 0.05
+      },
+      "effects": [
+        {
+          "stat": "scout_vantage_range",
+          "unequipped": 1.0
+        }
+      ],
+      "tiers": [
+        {
+          "id": "flint",
+          "starting_durability": 100.0,
+          "effects": []
+        }
+      ]
     },
     "clubs": {
-      "starting_durability": 100.0,
-      "wear": { "per": "fight", "amount": 2.0 },
-      "effects": [{ "stat": "attack", "equipped": 6.0 }]
+      "wear": {
+        "per": "fight",
+        "amount": 2.0
+      },
+      "effects": [],
+      "tiers": [
+        {
+          "id": "flint",
+          "starting_durability": 100.0,
+          "effects": [
+            {
+              "stat": "attack",
+              "equipped": 6.0
+            }
+          ]
+        }
+      ]
     },
     "tanning_frame": {
-      "starting_durability": 100.0,
-      "wear": { "per": "item_crafted", "amount": 4.0 },
+      "wear": {
+        "per": "item_crafted",
+        "amount": 4.0
+      },
       "bounds_material": "hide",
-      "effects": [
-        { "stat": "craft_speed", "equipped": 2.0 },
-        { "stat": "craft_quality_ceiling", "equipped": 0.9 },
-        { "stat": "craft_material_efficiency", "equipped": 0.8 }
+      "effects": [],
+      "tiers": [
+        {
+          "id": "flint",
+          "starting_durability": 100.0,
+          "effects": [
+            {
+              "stat": "craft_speed",
+              "equipped": 2.0
+            },
+            {
+              "stat": "craft_quality_ceiling",
+              "equipped": 0.9
+            },
+            {
+              "stat": "craft_material_efficiency",
+              "equipped": 0.8
+            }
+          ]
+        }
       ]
     },
     "loom": {
-      "starting_durability": 100.0,
-      "wear": { "per": "item_crafted", "amount": 4.0 },
+      "wear": {
+        "per": "item_crafted",
+        "amount": 4.0
+      },
       "bounds_material": "fibre",
-      "effects": [
-        { "stat": "craft_speed", "equipped": 2.0 },
-        { "stat": "craft_quality_ceiling", "equipped": 0.95 },
-        { "stat": "craft_material_efficiency", "equipped": 0.85 }
+      "effects": [],
+      "tiers": [
+        {
+          "id": "flint",
+          "starting_durability": 100.0,
+          "effects": [
+            {
+              "stat": "craft_speed",
+              "equipped": 2.0
+            },
+            {
+              "stat": "craft_quality_ceiling",
+              "equipped": 0.95
+            },
+            {
+              "stat": "craft_material_efficiency",
+              "equipped": 0.85
+            }
+          ]
+        }
       ]
     },
     "bone_awl": {
-      "starting_durability": 100.0,
-      "wear": { "per": "item_crafted", "amount": 4.0 },
+      "wear": {
+        "per": "item_crafted",
+        "amount": 4.0
+      },
       "bounds_material": "bone",
-      "effects": [
-        { "stat": "craft_speed", "equipped": 1.6 },
-        { "stat": "craft_quality_ceiling", "equipped": 0.85 },
-        { "stat": "craft_material_efficiency", "equipped": 0.7 }
+      "effects": [],
+      "tiers": [
+        {
+          "id": "flint",
+          "starting_durability": 100.0,
+          "effects": [
+            {
+              "stat": "craft_speed",
+              "equipped": 1.6
+            },
+            {
+              "stat": "craft_quality_ceiling",
+              "equipped": 0.85
+            },
+            {
+              "stat": "craft_material_efficiency",
+              "equipped": 0.7
+            }
+          ]
+        }
       ]
     }
   },
   "_comment_bench_tools": "BENCH TOOLS - the band-local, consumable half of the crafting model (docs/plan_crafting_and_materials.md section 5). A TOOL BOUNDS ONE MATERIAL (`bounds_material`) and grants nothing outside it, the same shape `max_body_mass` already runs on: a loom is useless on a hide, with no 'this tool does not apply' branch anywhere - the bench asks for the tool bounding the material it is working, and a loom is not that tool. A TOOL SERVES THE BENCH, NOT A PARTY: no kit may name one (validate rejects it), and its live predicate is OWNERSHIP plus condition rather than a kit mask. Ownership is a real question for a tool alone: nothing stocks one at spawn, so an absent ledger entry can only mean nobody has made one - reading it as a free loom on turn 1 would delete 'tools are earned, never a prerequisite' outright. ITS THREE STATS ARE EQUIPPED-ONLY, and their unequipped side is the MATERIAL's own `hand_working` in materials.json (rate 0.5, quality_ceiling 0.60, and an efficiency of 1.0 that needs no authoring because by hand IS the baseline). That is one home per fact taken seriously: a tool that is not there cannot declare anything, and the two-tier fallback used by the carries would answer the LOOM's numbers for a band scraping a hide. PRESENT EFFECTS APPLY AND ABSENT ONES DO NOT - a speed-only tool would leave the ceiling and the efficiency exactly where the bare hand had them, which is fine because no land is better at speed and a speed-only tool therefore never touches the move/stay decision. WHAT THE SHIPPED THREE BUY, against the bare hand's 0.5 rate and 0.60 ceiling: all three roughly QUADRUPLE the bench (1.6-2.0 against 0.5) and all three lift the ceiling past `fine`'s 0.75 seam, which a bare-handed band cannot reach at all whatever it is working. The efficiencies differ deliberately, by how scarce the bounded material is: the bone awl saves the most (0.70) because bone is an order of magnitude scarcer than hide or fibre, and it is the slowest (1.6) because bone is worked slowly. ITS QUANTUM IS `item_crafted`, one per item the bench finishes, AND THE CRAFT'S LESSON IS CHARGED ON THE SAME ONE - so the thing that consumes the tool and the thing that teaches the craft cannot drift apart. 100 / 4.0 = 25 items, which against ~5 items per craft lesson and a 15-20 turn kit clock is an infrastructure investment that pays back over several kits rather than a consumable like the gear itself.",
-  "_comment_husbandry": "HUSBANDRY GEAR - hurdles, halters, a butchering stone, vessels. WHAT BOUNDS A PEN IS HANDLING, NOT DRAGGING, which is why it declares `pen_carry` and not the sled's `hunt_carry`: a sled brings a carcass in off the range, and a pen is at the camp. A pen harvest has always been capped by the same 40.0 the wild hunt is (labor_config.json `hunt.per_worker_biomass_capacity`), so that number stays where it is and this item declares only the OTHER side - 12.0, a keeper working a pen with whatever is to hand. THE CONSEQUENCE IS DELIBERATE AND IS THE POINT OF THE KIT: a band that corrals a herd and leaves the assignment on `big_game` is working its pen with a drag harness and no handling gear, and collects at 12 rather than 40. That is the same mistake as bringing baskets to a deer, and the roster exists so the player can stop making it. ITS QUANTUM IS `biomass_collected`, NOT `biomass_hauled`, though a pen charges both: the sled is being dragged and this is being worked, so a band that only keeps pens must never blunt a sled it did not take onto the range. AND `biomass_collected` IS WHAT WAS BUTCHERED, NOT WHAT CAME HOME: the hurdles, the halters and the butchering stone are worked on the whole beast brought out of the pen and killed, so this is charged over AnimalTake::killed_biomass while the sled beside it is charged over `carried`. The two numbers are the same on every pen a keeper can seat whole and part on the ones it cannot. 100 / 0.04 = 2500 biomass butchered - exactly the basket's clock, and halved from the 0.08 the collected-equals-carried basis shipped with. THE ONLY SHIPPED PEN SPECIES THE TWO BASES DIVERGE ON IS THE WILD AUROCHS, and it is what sets the rate: waste needs `workers x pen_carry < body_mass`, so at the equipped pen_carry of 40 nothing under 40 kg ever wastes (boar 12, crag goat 6, wild sheep 5.6, snow hare 0.6, rabbit 0.27, fowl 0.13 - all seated whole by one keeper) and the aurochs at 120 kg with its single required keeper (animals_per_herder 12) kills 120 and carries 40. A pen's MSY clears about one body a turn, so at 0.08 an aurochs keeper's gear ran dry in ~10 turns against plan_early_game_labor's 15-20 turn kit clock - half the target, and a third of the ~31 turns the old basis charged it. 0.04 puts the aurochs pen at ~21 turns, back on target; every other pen was already past 100 turns on either rate and was never the binding clock.",
+  "_comment_husbandry": "HUSBANDRY GEAR - hurdles, halters, a butchering stone, vessels. WHAT BOUNDS A PEN IS HANDLING, NOT DRAGGING, which is why it declares `pen_carry` and not the sled's `hunt_carry`: a sled brings a carcass in off the range, and a pen is at the camp. A pen harvest has always been capped by the same 40.0 the wild hunt is, so `pen_carry` BORROWS the hunt haul's equipped rate off the sled's own tier (EquipmentStat::shares_equipped_rate_with) rather than restating it, and this item declares only the OTHER side - 12.0, a keeper working a pen with whatever is to hand. THE CONSEQUENCE IS DELIBERATE AND IS THE POINT OF THE KIT: a band that corrals a herd and leaves the assignment on `big_game` is working its pen with a drag harness and no handling gear, and collects at 12 rather than 40. That is the same mistake as bringing baskets to a deer, and the roster exists so the player can stop making it. ITS QUANTUM IS `biomass_collected`, NOT `biomass_hauled`, though a pen charges both: the sled is being dragged and this is being worked, so a band that only keeps pens must never blunt a sled it did not take onto the range. AND `biomass_collected` IS WHAT WAS BUTCHERED, NOT WHAT CAME HOME: the hurdles, the halters and the butchering stone are worked on the whole beast brought out of the pen and killed, so this is charged over AnimalTake::killed_biomass while the sled beside it is charged over `carried`. The two numbers are the same on every pen a keeper can seat whole and part on the ones it cannot. 100 / 0.04 = 2500 biomass butchered - exactly the basket's clock, and halved from the 0.08 the collected-equals-carried basis shipped with. THE ONLY SHIPPED PEN SPECIES THE TWO BASES DIVERGE ON IS THE WILD AUROCHS, and it is what sets the rate: waste needs `workers x pen_carry < body_mass`, so at the equipped pen_carry of 40 nothing under 40 kg ever wastes (boar 12, crag goat 6, wild sheep 5.6, snow hare 0.6, rabbit 0.27, fowl 0.13 - all seated whole by one keeper) and the aurochs at 120 kg with its single required keeper (animals_per_herder 12) kills 120 and carries 40. A pen's MSY clears about one body a turn, so at 0.08 an aurochs keeper's gear ran dry in ~10 turns against plan_early_game_labor's 15-20 turn kit clock - half the target, and a third of the ~31 turns the old basis charged it. 0.04 puts the aurochs pen at ~21 turns, back on target; every other pen was already past 100 turns on either rate and was never the binding clock.",
   "_comment_wayfinding": "WAYFINDING GEAR - tallies, marked staves, a fire-drill, whatever a forward observer carries. IT LIFTS WHAT A VANTAGE CAN MAKE OUT (`scout_vantage_range`), NOT HOW FAR OUT IT IS POSTED: the posting distance is three dials (labor_config.json `scout.vantage_distance_base` / `_per_scout` / `_max`) and a kit reaching into one of them would be a fourth authority over the same line. The equipped 2 is labor_config's `scout.vantage_range` and stays there; this declares the bare 1.0. ITS QUANTUM IS `tile_revealed`, AND `tile_revealed` MEANS FIRST-EVER-REVEALED. A parked band re-sees the same ring every turn, so charging per tile SEEN would be a turn clock in a per-use costume - precisely what docs/plan_denial_raid.md 1.2 forbids. What wears wayfinding gear is going somewhere new, so a band that stops exploring stops paying, and a band that never explores pays nothing at all. 100 / 0.05 = 2000 first-sights.",
   "_comment_warrior": "CLUBS - the Warrior role's TOE, and the arc's 'weapons -> combat strength / rocks and fists -> weak force' made real. IT DECLARES `attack` - THE SAME STAT A SPEAR DOES - because attack is already 'what this person hits with' and a `warrior_attack` beside it would be a second authority over the one number the resolver reads. What keeps a club out of a hunt and a spear out of a raid is the kit's `jobs` list. Equipped 6.0 against the bare hand's 1.0 (creatures.json `person.combat.attack`), well under the spear's 20: a raid is people fighting animals at the camp with whatever is by the fire, not a hunting party that chose its ground. THIS IS THE ONE PLACE THE SHIPPED OPENING MOVES - a start-kitted band defends a predator raid at 6 where it used to defend at 1, and drops back to 1 when the clubs are gone. Predators Phase 1b is explicitly a placeholder resolver, so the raid tuning is the right place to absorb it. ITS QUANTUM IS `fight` - ONE ENGAGEMENT, ONE USE, not one casualty inflicted: a defence that killed nothing was still fought, and pricing gear on its results would charge a band that is losing the least. 100 / 2.0 = 50 raids fought.",
   "_comment_kits": "THE KIT ROSTER - what a party is SENT OUT WITH, chosen by name instead of implicitly using whatever the band owns. A kit is a MASK over the items above: effective_equipped(item) = kit uses it AND the band still has condition in it. `big_game` and `gathering` reproduce the pre-roster behaviour exactly, so choosing them is bit-for-bit the shipped game. `none` is an ORDINARY ROSTER MEMBER and NOT a sentinel: it simply uses nothing, so every predicate reads false and the party runs at the unequipped tiers throughout - and, because wear rides the same predicate, spends no durability on any item. That is what makes a bare-handed comparison free to run: it must not consume the very kit it is being compared against. `trapping` is the first kit that is not a subset of the old behaviour: traps clear no defence (a trapper falls back to the bare hand's attack 1), so it takes ONLY quarry with no defence at all - rabbit, fowl, grouse, snow hare, catfish - and on exactly that quarry it is the better instrument, because reach and not damage is what binds there. It carries the sled too: a trapper still has to get the catch home. `jobs` is what a kit may be sent on; a kit named for a job it does not list is a COMMAND FAILURE, never a silent fall back to the default. `default_kits` is what each verb uses when the player names none. THE BAND-WIDE ROLES NOW HAVE A KIT AXIS: `scout` and `warrior` are jobs like the other two. They were absent on the grounds that they consumed no component, which was a statement about this file and not about the sim - scouts have posted forward-observer vantages and warriors have been the band's defending contingent against a predator raid for some time. `none` lists all four, so going bare is a choice on every role.",
@@ -92,43 +256,75 @@
     {
       "id": "big_game",
       "display_name": "Stalking kit",
-      "jobs": ["hunt"],
-      "uses": ["spears", "sled"]
+      "jobs": [
+        "hunt"
+      ],
+      "uses": [
+        "spears",
+        "sled"
+      ]
     },
     {
       "id": "trapping",
       "display_name": "Trapping kit",
-      "jobs": ["hunt"],
-      "uses": ["traps", "sled"]
+      "jobs": [
+        "hunt"
+      ],
+      "uses": [
+        "traps",
+        "sled"
+      ]
     },
     {
       "id": "gathering",
       "display_name": "Gathering kit",
-      "jobs": ["forage"],
-      "uses": ["baskets"]
+      "jobs": [
+        "forage"
+      ],
+      "uses": [
+        "baskets"
+      ]
     },
     {
       "id": "husbandry",
       "display_name": "Husbandry kit",
-      "jobs": ["hunt"],
-      "uses": ["husbandry_gear", "sled"]
+      "jobs": [
+        "hunt"
+      ],
+      "uses": [
+        "husbandry_gear",
+        "sled"
+      ]
     },
     {
       "id": "wayfinding",
       "display_name": "Wayfinding kit",
-      "jobs": ["scout"],
-      "uses": ["wayfinding"]
+      "jobs": [
+        "scout"
+      ],
+      "uses": [
+        "wayfinding"
+      ]
     },
     {
       "id": "warrior",
       "display_name": "Warrior kit",
-      "jobs": ["warrior"],
-      "uses": ["clubs"]
+      "jobs": [
+        "warrior"
+      ],
+      "uses": [
+        "clubs"
+      ]
     },
     {
       "id": "none",
       "display_name": "No kit",
-      "jobs": ["hunt", "forage", "scout", "warrior"],
+      "jobs": [
+        "hunt",
+        "forage",
+        "scout",
+        "warrior"
+      ],
       "uses": []
     }
   ],

@@ -9,6 +9,30 @@
 //! zero food; a **defaulting** species' food is byte-identical to the pre-arc arithmetic; and
 //! **every** rung, Eradicate included, is paid its species' vector.
 
+/// **The shipped EQUIPPED haul rate** — what a kitted band drags, off the sled's own tier.
+/// `labor_config`'s `hunt.per_worker_biomass_capacity` is the *bare-handed* baseline since quality
+/// tiers landed, so a fixture that wants "an ordinary band" asks the item table.
+#[allow(dead_code)]
+fn equipped_haul_rate() -> f32 {
+    core_sim::EquipmentConfig::builtin().equipped_reference(
+        core_sim::EquipmentStat::HuntCarry,
+        core_sim::LaborConfig::builtin()
+            .hunt
+            .per_worker_biomass_capacity,
+    )
+}
+
+/// The gather twin of [`equipped_haul_rate`] — the baskets' own tier.
+#[allow(dead_code)]
+fn equipped_gather_rate() -> f32 {
+    core_sim::EquipmentConfig::builtin().equipped_reference(
+        core_sim::EquipmentStat::ForageCarry,
+        core_sim::LaborConfig::builtin()
+            .forage
+            .per_worker_biomass_capacity,
+    )
+}
+
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
@@ -709,7 +733,7 @@ fn precommit_pair_at_band_morale(
         herd,
         &fauna,
         &ladder,
-        labor.hunt.per_worker_biomass_capacity,
+        equipped_haul_rate(),
         &HuntingParty::builtin_equipped(),
         multiplier,
         workers,
@@ -742,7 +766,7 @@ fn precommit_pair_building(
         herd,
         &fauna,
         &ladder,
-        labor.hunt.per_worker_biomass_capacity,
+        equipped_haul_rate(),
         &HuntingParty::builtin_equipped(),
         FORECAST_OUTPUT_MULTIPLIER,
         workers,
@@ -846,7 +870,7 @@ fn the_forecast_equals_the_paid_take_in_both_products_on_the_wire() {
                 // Which term binds, off the same two numbers the take composes.
                 {
                     let fauna = app.world.resource::<FaunaConfigHandle>().get();
-                    let labor = app.world.resource::<LaborConfigHandle>().get();
+
                     let registry = app.world.resource::<HerdRegistry>();
                     let herd = registry.find(&id).expect("the herd is on the map");
                     let ceiling = core_sim::hunt_escapement_ceiling(
@@ -854,7 +878,7 @@ fn the_forecast_equals_the_paid_take_in_both_products_on_the_wire() {
                         herd.biomass,
                         core_sim::herd_capacity(herd, &fauna),
                     );
-                    let collection = crew as f32 * labor.hunt.per_worker_biomass_capacity;
+                    let collection = crew as f32 * equipped_haul_rate();
                     if collection < ceiling {
                         saw_labor_bound = true;
                     } else {
@@ -1002,7 +1026,7 @@ fn the_forecast_equals_the_paid_take_with_a_build_in_flight_at_every_floor() {
                     let (mut app, id, pos) = headless_with_species(species);
                     {
                         let fauna = app.world.resource::<FaunaConfigHandle>().get();
-                        let labor = app.world.resource::<LaborConfigHandle>().get();
+
                         let ladder = app.world.resource::<LadderConfigHandle>().get();
                         let registry = app.world.resource::<HerdRegistry>();
                         let herd = registry.find(&id).expect("the herd is on the map");
@@ -1013,9 +1037,8 @@ fn the_forecast_equals_the_paid_take_with_a_build_in_flight_at_every_floor() {
                         );
                         // The dipped collection — which term binds is itself a function of the
                         // improvement now, so the regime has to be judged with the dip in place.
-                        let collection = crew as f32
-                            * labor.hunt.per_worker_biomass_capacity
-                            * ladder.build_dip(improvement);
+                        let collection =
+                            crew as f32 * equipped_haul_rate() * ladder.build_dip(improvement);
                         if collection < ceiling {
                             saw_labor_bound = true;
                         } else {
@@ -1422,7 +1445,7 @@ fn spawn_raid_home_band(app: &mut App, herd_pos: UVec2) -> bevy::prelude::Entity
             // Addressable + zero wear, so the pre-launch promise can be ASKED for through the same
             // query the client uses now that the estimate tables are retired.
             core_sim::BandId(FIXTURE_BAND_ID),
-            core_sim::BandEquipment::default(),
+            core_sim::BandEquipment::start_stocked(&core_sim::EquipmentConfig::builtin()),
         ))
         .id()
 }
@@ -1983,7 +2006,7 @@ fn the_exported_crew_counts_the_hands_that_can_reach_the_herd() {
         let floor = MSY_BIOMASS_FRACTION;
         let (haul, reach, stay) = {
             let fauna = app.world.resource::<FaunaConfigHandle>().get();
-            let labor = app.world.resource::<LaborConfigHandle>().get();
+
             let equipment = app
                 .world
                 .resource::<core_sim::EquipmentConfigHandle>()
@@ -2002,15 +2025,11 @@ fn the_exported_crew_counts_the_hands_that_can_reach_the_herd() {
                 fauna.wariness_for(&herd.species),
                 equipment.dispersion(
                     &equipment.default_kit(core_sim::KitJob::Hunt),
-                    &core_sim::BandEquipment::default(),
+                    &core_sim::BandEquipment::start_stocked(&core_sim::EquipmentConfig::builtin()),
                 ),
             );
             (
-                hunt_haul_workers(
-                    ceiling,
-                    herd.body_mass,
-                    labor.hunt.per_worker_biomass_capacity,
-                ),
+                hunt_haul_workers(ceiling, herd.body_mass, equipped_haul_rate()),
                 hunt_engage_workers(
                     ceiling,
                     herd.body_mass,
@@ -2105,7 +2124,7 @@ fn the_exported_crew_pays_for_the_retreat() {
             fauna.wariness_for(&herd.species),
             equipment.dispersion(
                 &equipment.default_kit(core_sim::KitJob::Hunt),
-                &core_sim::BandEquipment::default(),
+                &core_sim::BandEquipment::start_stocked(&core_sim::EquipmentConfig::builtin()),
             ),
         );
         let engage = |stay| {

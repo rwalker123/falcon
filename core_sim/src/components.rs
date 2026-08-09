@@ -1616,20 +1616,66 @@ impl SourceYield {
     };
 }
 
-/// **A band's TOE, as WEAR** — how much of each consumable item it has used up (the TOE,
-/// `docs/plan_early_game_labor.md` → "Equipment / TOE", `docs/plan_hunt_through_combat.md` §4.8).
-/// What each item does, how long it lasts and what wears it are config
-/// ([`crate::equipment_config::EquipmentConfig`]); what a band owns is only *how worn* its items are.
+/// **The craft quality one batch came out at** — the grade the bench selected, and the absolutes it
+/// declared.
 ///
-/// **Wear, not stock, and that is what makes the band START KITTED for free**: `Default` is an empty
-/// ledger, so every spawn site inserts a full kit without reading config, and "start-stocked, not
-/// craftable" needs no seeding pass. An item is **equipped while its wear is strictly below its
-/// `starting_durability`**; past that the role steps down to its unequipped tier and **stays there**
-/// — nothing in this slice ever reduces wear.
+/// **The effects are resolved at CRAFT TIME and carried, not looked up later**, which is what makes
+/// *"the grade is fixed at craft time and never moves"* structural rather than remembered: a recipe
+/// retuned under a running world cannot re-grade a sled already in the band's hands, and neither can
+/// the recipe being swapped off the bench. It is the same reason [`DrawnInputs`] carries its reading.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BatchGrade {
+    /// The grade id the draw selected (`coarse` / `standard` / `fine`) — the readout's word.
+    pub id: String,
+    /// The absolutes this grade declares, copied from the recipe at the moment of the craft.
+    pub effects: Vec<crate::equipment_config::EquipmentEffect>,
+}
+
+/// **One batch of an item a band owns** — a count of interchangeable units, what they were made at,
+/// and the condition spent on the one currently in hand.
 ///
-/// **An ABSENT entry reads as zero wear, not as "no such item".** That is the same reading the
-/// three named fields this replaced had by construction, and it is what keeps a band spawned before
-/// a config gained an item from being born with it already spent.
+/// **Ten spears made together wear together**: the batch carries **one** wear number, and it is the
+/// unit in use that is spending it. A batch of `count` therefore holds `count ×
+/// starting_durability` of life, spent one unit at a time — crossing the durability retires a unit
+/// and starts the next, exactly as a fractional flow becomes an event on a whole-unit crossing.
+///
+/// **Idle stock does not rot.** Nothing charges a batch that did not go out, and nothing decays one
+/// over turns, so stockpiling ahead of a hard season is a real strategy rather than a slow loss.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EquipmentBatch {
+    /// Whole units left in this batch, the one in hand included. A batch that reaches `0` is
+    /// removed rather than kept at zero, so *"does the band own one"* is a question about presence.
+    pub count: u32,
+    /// The [`crate::equipment_config::EquipmentTier`] id these units were made at.
+    pub tier: String,
+    /// The craft grade, or `None` for a **start-stocked** unit: a shipped kit has a tier but was
+    /// never on anyone's bench, so it has no grade to carry.
+    pub grade: Option<BatchGrade>,
+    /// Condition spent on the unit currently in hand, on the config's 0–100 scale. Kept strictly
+    /// below the tier's `starting_durability` while `count > 0`.
+    pub wear: f32,
+}
+
+/// **A band's TOE, as BATCHES** — what it owns of each consumable item and how worn the unit in hand
+/// is (the TOE, `docs/plan_early_game_labor.md` → "Equipment / TOE",
+/// `docs/plan_hunt_through_combat.md` §4.8). What each item does, how long each tier lasts and what
+/// wears it are config ([`crate::equipment_config::EquipmentConfig`]).
+///
+/// > **AN ABSENT ENTRY IS *NOT OWNED*.** It used to read as a *full* item, which was correct for
+/// > exactly as long as nothing could make a second spear: crafting can introduce an item a band has
+/// > never had, and the old reading made that state unrepresentable. Every spawn and restore path
+/// > therefore **inserts explicitly** — `spawn_profile_population`, both expedition-outfitting paths
+/// > in `bin/server.rs`, and `sim_state.rs` — and
+/// > [`crate::equipment_config::EquipmentConfig::start_stocked_items`] is what they stock.
+///
+/// **A spawn inserts `count: 1` per item, at the tier that ships known, and that is what preserves
+/// the shipped opening exactly**: one unit is one item's `starting_durability`, which is the life
+/// the game has always had. A count above 1 is something crafting bought — counts do **not**
+/// multiply the shipped kit's life.
+///
+/// An item is **equipped while some batch's wear is strictly below its tier's
+/// `starting_durability`**; with none left the role steps down to its unequipped tier and stays
+/// there until a bench makes another.
 ///
 /// **Wear is charged for USE, never for turns elapsed** (`docs/plan_denial_raid.md` §1.2) — a turn
 /// clock would charge an idle march the same as a slaughter and make denial free. **Each item has its
@@ -1642,97 +1688,179 @@ impl SourceYield {
 /// spears were would silently re-stock them on rollback.
 #[derive(Component, Debug, Clone, Default, PartialEq)]
 pub struct BandEquipment {
-    /// Condition spent per item id, on the config's 0–100 scale. A `BTreeMap` rather than a `HashMap`
-    /// so the checkpoint and the wire serialize in a stable order — a rollback that reordered this
-    /// would diff as a change every frame.
-    wear: std::collections::BTreeMap<String, f32>,
+    /// Batches per item id. A `BTreeMap` rather than a `HashMap` so the checkpoint and the wire
+    /// serialize in a stable order — a rollback that reordered this would diff as a change every
+    /// frame — and a `Vec` inside it because batch order is insertion order, which is what makes
+    /// *"the most worn first, earliest batch on a tie"* a deterministic rule.
+    batches: std::collections::BTreeMap<String, Vec<EquipmentBatch>>,
 }
 
 impl BandEquipment {
-    /// Condition spent on `item` so far. **Absent reads as `0.0`** — see the type's docs.
-    pub fn wear_of(&self, item: &str) -> f32 {
-        self.wear.get(item).copied().unwrap_or(0.0)
-    }
-
-    /// Every item this band has spent condition on, in id order — the checkpoint's and the wire's
-    /// iteration.
-    pub fn worn_items(&self) -> impl Iterator<Item = (&str, f32)> {
-        self.wear.iter().map(|(id, wear)| (id.as_str(), *wear))
-    }
-
-    /// Restore a ledger entry verbatim — the checkpoint's setter. Not for gameplay: the only
-    /// gameplay-side mutations are [`Self::wear_item`], which can never *reduce* wear, and
-    /// [`Self::restock`], which is the bench delivering a finished item.
-    pub fn restore_wear(&mut self, item: &str, wear: f32) {
-        self.wear.insert(item.to_string(), wear);
-    }
-
-    /// **Does the ledger NAME this item at all?** — the ownership half, and the only reading that
-    /// distinguishes *"never had one"* from *"has a fresh one"*.
+    /// **A fully start-stocked band** — one unit of every item some kit carries, at that item's
+    /// default tier and unworn.
     ///
-    /// **Absent still reads as a FULL item for everything a spawn stocks**, which is the invariant
-    /// the whole TOE rests on and nothing here changes. This is the question a **bench tool** asks
-    /// instead, and it can ask it honestly because no spawn path inserts a tool: an absent entry for
-    /// a tool can only mean nobody has made one, and reading it as a free loom on turn 1 would
-    /// delete *"tools are earned, never a prerequisite"*.
+    /// It is what a spawn inserts, and it is also the **fresh reference ledger** every
+    /// quarry-scoring and roster-quoting surface resolves against (`kit_supplying`,
+    /// `quarry_default_hunt_kit`, the published kit roster, a launch forecast): *which* kit supplies
+    /// a stat is a property of quarry × roster and must not move as one band wears its gear down.
     ///
-    /// Crate-private for the same reason [`Self::has_condition`] is: the bench joins the two halves
-    /// in exactly one place ([`crate::equipment_config::EquipmentConfig::live_bench_tool`]).
-    pub(crate) fn owns(&self, item: &str) -> bool {
-        self.wear.contains_key(item)
+    /// **`Default` is an EMPTY ledger and now means "owns nothing"**, so a site that wants the fresh
+    /// tier has to say so with this — which is precisely the flip, made impossible to miss.
+    pub fn start_stocked(config: &crate::equipment_config::EquipmentConfig) -> Self {
+        let mut stocked = Self::default();
+        for (id, item) in config.start_stocked_items() {
+            stocked.stock(id, ONE_UNIT, &item.default_tier().id, None);
+        }
+        stocked
     }
 
-    /// **The bench delivering a finished item** — the band now names it and it is unworn.
+    /// **Add a batch of `count` units** — a spawn's start kit, or the bench delivering a finished
+    /// craft. Unworn, because nothing has used it yet.
     ///
-    /// This is the **one** seam in the sim that reduces wear, and it is what ends *"start-stocked
+    /// This is the **one** seam in the sim that adds condition, and it is what ends *"start-stocked
     /// and NOT craftable"*: running dry stopped being a one-way door the moment a bench could
-    /// replace the thing.
+    /// replace the thing. It never touches an existing batch — *"the next ten are their own batch"*
+    /// is what keeps a fresh craft from averaging into a half-spent pile.
+    pub fn stock(&mut self, item: &str, count: u32, tier: &str, grade: Option<BatchGrade>) {
+        if count == 0 {
+            return;
+        }
+        self.batches
+            .entry(item.to_string())
+            .or_default()
+            .push(EquipmentBatch {
+                count,
+                tier: tier.to_string(),
+                grade,
+                wear: 0.0,
+            });
+    }
+
+    /// Every batch this band holds, item by item in id order — the checkpoint's and the wire's
+    /// iteration.
+    pub fn batches(&self) -> impl Iterator<Item = (&str, &[EquipmentBatch])> {
+        self.batches
+            .iter()
+            .map(|(id, batches)| (id.as_str(), batches.as_slice()))
+    }
+
+    /// Restore an item's batches verbatim — the checkpoint's setter. Not for gameplay: the only
+    /// gameplay-side mutations are [`Self::wear_item`], which can never *reduce* wear, and
+    /// [`Self::stock`], which is a spawn or the bench delivering a finished item.
+    pub fn restore_batches(&mut self, item: &str, batches: Vec<EquipmentBatch>) {
+        if batches.is_empty() {
+            self.batches.remove(item);
+        } else {
+            self.batches.insert(item.to_string(), batches);
+        }
+    }
+
+    /// **Condition spent on the units the band still holds** — the sum of every batch's `wear`.
     ///
-    /// **It records CONDITION, not a count, because that is all this ledger can say today.** Making
-    /// a second sled while the first is fresh therefore buys nothing, and ten spears made together
-    /// are one spear's worth of life. That is the equipment-count slice's job, not this one's — see
-    /// `.claude/rules/core_sim/crafting.md` → "What a completed craft can and cannot say yet".
-    pub fn restock(&mut self, item: &str) {
-        self.wear.insert(item.to_string(), 0.0);
+    /// **A retired unit is not counted**, because a batch that ran out of units is gone: this reads
+    /// what is *in hand*, which is what a wear-charge assertion over a single unbroken batch wants
+    /// and what the *"how much of this quantum was charged"* arithmetic divides.
+    pub fn wear_of(&self, item: &str) -> f32 {
+        self.batches
+            .get(item)
+            .map(|batches| batches.iter().map(|batch| batch.wear).sum())
+            .unwrap_or(0.0)
+    }
+
+    /// **Whole units of `item` the band owns**, across every batch — the count a *"turns left"*
+    /// readout and a stockpiling decision both need.
+    pub fn count_of(&self, item: &str) -> u32 {
+        self.batches
+            .get(item)
+            .map(|batches| batches.iter().map(|batch| batch.count).sum())
+            .unwrap_or(0)
+    }
+
+    /// **The batch actually in use** — the **most worn** one that still has condition, earliest on a
+    /// tie.
+    ///
+    /// Worst-first is what makes the stock run out **one batch at a time** rather than all at once,
+    /// which is what makes *"turns left"* a real readout; and because the same batch answers for the
+    /// party's tier ([`crate::equipment_config::EquipmentConfig::live_item`]), what the party is
+    /// priced at is always what the party is spending.
+    ///
+    /// **An item the config does not carry has no serving batch**, rather than an immortal one: a
+    /// kit cannot reference one (validate rejects it), so this arm is reachable only by a band
+    /// restored from a checkpoint written against a config that has since dropped the item.
+    pub(crate) fn serving_batch(
+        &self,
+        item: &str,
+        config: &crate::equipment_config::EquipmentConfig,
+    ) -> Option<&EquipmentBatch> {
+        let def = config.item(item)?;
+        self.serving_index(item, def)
+            .map(|index| &self.batches[item][index])
+    }
+
+    /// The index of [`Self::serving_batch`] within the item's own `Vec`.
+    fn serving_index(
+        &self,
+        item: &str,
+        def: &crate::equipment_config::ItemDefinition,
+    ) -> Option<usize> {
+        let batches = self.batches.get(item)?;
+        batches
+            .iter()
+            .enumerate()
+            .filter(|(_, batch)| {
+                batch.count > 0 && batch.wear < def.tier_or_default(&batch.tier).starting_durability
+            })
+            // The greatest wear wins; `>` rather than `>=` keeps the earliest batch on a tie, the
+            // same tie-break the kit roster's file order uses.
+            .max_by(|(_, a), (_, b)| {
+                a.wear
+                    .partial_cmp(&b.wear)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|(index, _)| index)
     }
 
     /// **Does the band still have condition in this item?** — half of the effective predicate, never
-    /// the whole of it. **Strictly below** `starting_durability`, so an item worn exactly to its limit
-    /// is spent: the cliff lands on the turn the last charge is used, not one turn later.
+    /// the whole of it. **Strictly below** the tier's `starting_durability`, so a unit worn exactly
+    /// to its limit is spent: the cliff lands on the turn the last charge is used, not one turn
+    /// later.
     ///
     /// **Crate-private on purpose.** Whether that condition is *serving* also depends on whether the
     /// party's chosen kit reaches for the item at all, and
     /// [`crate::equipment_config::KitChoice::item_live`] is the one place the two halves are joined. A
     /// caller that could ask this directly would be a second way to ask the question — and the one
     /// that silently re-arms a party sent out with no kit.
-    ///
-    /// **An item the config does not carry has no condition**, rather than infinite condition: a kit
-    /// cannot reference one (validate rejects it), so this arm is reachable only by a band restored
-    /// from a checkpoint written against a config that has since dropped the item.
     pub(crate) fn has_condition(
         &self,
         item: &str,
         config: &crate::equipment_config::EquipmentConfig,
     ) -> bool {
-        config
-            .item(item)
-            .is_some_and(|def| self.wear_of(item) < def.starting_durability)
+        self.serving_batch(item, config).is_some()
     }
 
-    /// Remaining condition on an item, clamped at `0` — the wire readout, and the number a player
-    /// watches run down. `0` for an item the config does not carry.
+    /// Remaining condition on the unit in hand, clamped at `0` — the wire readout, and the number a
+    /// player watches run down. **`0` for an item the band does not own**, which is the flip: an
+    /// absent entry is not a fresh item.
     pub fn remaining(&self, item: &str, config: &crate::equipment_config::EquipmentConfig) -> f32 {
-        config.item(item).map_or(0.0, |def| {
-            (def.starting_durability - self.wear_of(item)).max(0.0)
+        let Some(def) = config.item(item) else {
+            return 0.0;
+        };
+        self.serving_batch(item, config).map_or(0.0, |batch| {
+            (def.tier_or_default(&batch.tier).starting_durability - batch.wear).max(0.0)
         })
     }
 
-    /// **Charge `item` for `uses` of its own quantum.** One entry point for every item, so no item can
-    /// grow a private flooring rule: a non-finite or negative `uses` reads as **no use**, because a
-    /// degenerate take must never *restore* a kit and nothing in this slice replenishes one.
+    /// **Charge `item` for `uses` of its own quantum**, against the batch in hand. One entry point
+    /// for every item, so no item can grow a private flooring rule: a non-finite or negative `uses`
+    /// reads as **no use**, because a degenerate take must never *restore* a kit.
     ///
-    /// A no-op for an item the config does not carry — there is no rate to bill at, and inventing one
-    /// would be a silent second source for a number that lives in the config.
+    /// **A crossing retires a unit rather than the batch.** Wear past the tier's durability consumes
+    /// the unit in hand and carries the remainder onto the next one, so ten spears really are ten
+    /// spears' worth of life; a batch that runs out of units is dropped, and the charge stops there
+    /// rather than spilling onto stock that never went out.
+    ///
+    /// A no-op for an item the band does not own or the config does not carry — there is no rate to
+    /// bill at, and inventing one would be a silent second source for a number that lives in config.
     pub fn wear_item(
         &mut self,
         config: &crate::equipment_config::EquipmentConfig,
@@ -1743,8 +1871,27 @@ impl BandEquipment {
             return self;
         };
         let charged = usable_uses(uses) * def.wear.amount;
-        if charged > 0.0 {
-            *self.wear.entry(item.to_string()).or_insert(0.0) += charged;
+        if charged <= 0.0 {
+            return self;
+        }
+        let Some(index) = self.serving_index(item, def) else {
+            return self;
+        };
+        let Some(batches) = self.batches.get_mut(item) else {
+            return self;
+        };
+        let batch = &mut batches[index];
+        let durability = def.tier_or_default(&batch.tier).starting_durability;
+        batch.wear += charged;
+        while batch.count > 0 && batch.wear >= durability {
+            batch.count -= 1;
+            batch.wear -= durability;
+        }
+        if batch.count == 0 {
+            batches.remove(index);
+            if batches.is_empty() {
+                self.batches.remove(item);
+            }
         }
         self
     }
@@ -1789,6 +1936,11 @@ impl BandEquipment {
         self
     }
 }
+
+/// **What a spawn stocks of each start-kit item: one.** One unit is one item's
+/// `starting_durability`, which is the life the shipped game has always had — so the opening is
+/// preserved exactly and a count above `1` is something crafting bought.
+const ONE_UNIT: u32 = 1;
 
 /// The uses a wear charge may actually bill for: non-finite or negative input reads as **no use**.
 /// One helper for every item and every quantum, so none can grow its own flooring rule — a negative

@@ -11,6 +11,30 @@
 //! is zeroed and the herd declines irreversibly with the party gone, which is why a small party can
 //! erase a large placid herd and why ordinary hunting never does it by accident.
 
+/// **The shipped EQUIPPED haul rate** — what a kitted band drags, off the sled's own tier.
+/// `labor_config`'s `hunt.per_worker_biomass_capacity` is the *bare-handed* baseline since quality
+/// tiers landed, so a fixture that wants "an ordinary band" asks the item table.
+#[allow(dead_code)]
+fn equipped_haul_rate() -> f32 {
+    core_sim::EquipmentConfig::builtin().equipped_reference(
+        core_sim::EquipmentStat::HuntCarry,
+        core_sim::LaborConfig::builtin()
+            .hunt
+            .per_worker_biomass_capacity,
+    )
+}
+
+/// The gather twin of [`equipped_haul_rate`] — the baskets' own tier.
+#[allow(dead_code)]
+fn equipped_gather_rate() -> f32 {
+    core_sim::EquipmentConfig::builtin().equipped_reference(
+        core_sim::EquipmentStat::ForageCarry,
+        core_sim::LaborConfig::builtin()
+            .forage
+            .per_worker_biomass_capacity,
+    )
+}
+
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
@@ -21,9 +45,8 @@ use core_sim::{
     scalar_one, scalar_zero, BandEquipment, CombatConfigHandle, CommandEventLog, DenialOutcome,
     EquipmentConfigHandle, Expedition, ExpeditionConfig, ExpeditionConfigHandle, ExpeditionMission,
     ExpeditionPhase, FactionId, FaunaConfigHandle, GenerationId, HerdRegistry, HerdTelemetry,
-    HuntingParty, LaborAllocation, LaborConfigHandle, LocalStore, MoraleCause, PopulationCohort,
-    ResidentBand, SimulationConfig, StartingUnit, TileRegistry, VisibilityLedger, FOOD,
-    STRIP_IT_BARE,
+    HuntingParty, LaborAllocation, LocalStore, MoraleCause, PopulationCohort, ResidentBand,
+    SimulationConfig, StartingUnit, TileRegistry, VisibilityLedger, FOOD, STRIP_IT_BARE,
 };
 
 /// The reference denial party — four people, the same crew every raid fixture in
@@ -292,7 +315,7 @@ fn spawn_home_band(app: &mut App, herd_pos: UVec2) -> bevy::prelude::Entity {
             // Addressable + zero wear: the denial readouts are ASKED for now (the pre-launch table
             // is retired), and a query needs a band to price against.
             core_sim::BandId(FIXTURE_BAND_ID),
-            core_sim::BandEquipment::default(),
+            core_sim::BandEquipment::start_stocked(&core_sim::EquipmentConfig::builtin()),
         ))
         .id()
 }
@@ -311,11 +334,11 @@ fn spawn_party(
         .spawn((
             cohort(tile, workers),
             LaborAllocation::default(),
-            // **The party leaves outfitted, and wears its own kit** — `BandEquipment::default()` is
+            // **The party leaves outfitted, and wears its own kit** — start-stocked, because
             // zero wear (`docs/plan_denial_raid.md` §1.2). Carried explicitly rather than left to
             // `advance_expeditions`' absent-component default, because these fixtures read the wear
             // back off it.
-            BandEquipment::default(),
+            BandEquipment::start_stocked(&core_sim::EquipmentConfig::builtin()),
             StartingUnit::new("expedition".to_string(), Vec::new()),
             Expedition {
                 home_band,
@@ -381,7 +404,7 @@ fn party_profile() -> HuntingParty {
 
 fn forecast(app: &App, id: &str, workers: u32) -> core_sim::DenialForecast {
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
-    let labor = app.world.resource::<LaborConfigHandle>().get();
+
     let cfg = expedition_cfg(app);
     let sigmas = app
         .world
@@ -394,7 +417,7 @@ fn forecast(app: &App, id: &str, workers: u32) -> core_sim::DenialForecast {
         workers,
         herd,
         &fauna,
-        labor.hunt.per_worker_biomass_capacity,
+        equipped_haul_rate(),
         &cfg,
         &party_profile(),
         sigmas,

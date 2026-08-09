@@ -1876,6 +1876,13 @@ fn seed_source_yield(
                 &tile_composition,
                 &labor.forage,
                 &flora,
+                // A rung-3 Field's collection cap is quoted at the EQUIPPED reference rate, not at
+                // this crew's basket tier — the same seam `advance_labor_allocation` reads, so the
+                // seed and the resolved row agree (`equipment.md` → "What is NOT wired yet").
+                equipment_cfg.equipped_reference(
+                    core_sim::EquipmentStat::ForageCarry,
+                    labor.forage.per_worker_biomass_capacity,
+                ),
                 &ladder,
                 per_worker_biomass,
                 seasonal,
@@ -2986,12 +2993,14 @@ fn handle_send_expedition(
             LaborAllocation::default(),
             // **The party leaves OUTFITTED** — a detached party is a band in its own right, so it
             // carries the same full kit a band spawns with, and `advance_expeditions` then **wears**
-            // it: `BandEquipment::wear_hunting` per animal killed and `wear_sled` per unit hauled,
-            // charged on a scout's opportunistic roadside kill exactly as on a raid's take
+            // it: the hunting kit per animal killed and the sled per unit hauled, charged on a
+            // scout's opportunistic roadside kill exactly as on a raid's take
             // (`.claude/rules/core_sim/equipment.md`). Without the component there would be nothing
             // for that wear to land on, and the party would publish a dry kit beside an equipped
-            // haul rate — a contradiction on the wire.
-            BandEquipment::default(),
+            // haul rate — a contradiction on the wire. **Stated rather than defaulted**: an absent
+            // ledger entry means NOT OWNED since the count slice, so `Default` would send the party
+            // out bare-handed.
+            outfitted_party_equipment(app),
             StartingUnit::new(unit_kind, unit_tags),
             Expedition {
                 home_band: band.entity,
@@ -3141,6 +3150,16 @@ fn outfit_raiding_party(
     })
 }
 
+/// **What a detached party leaves outfitted with** — one unworn unit of every item some kit
+/// carries, exactly as a band spawns.
+///
+/// One helper for both outfitting paths, because *"a party leaves outfitted"* is one fact: two
+/// call sites reaching for the ledger separately is how one of them ends up sending a bare-handed
+/// raid out under a kitted forecast.
+fn outfitted_party_equipment(app: &bevy::prelude::App) -> BandEquipment {
+    BandEquipment::start_stocked(&app.world.resource::<EquipmentConfigHandle>().get())
+}
+
 /// **The party a launch forecast is quoted for** — the kit the player is sending it with, over a
 /// **fresh** set of components ([`BandEquipment::default`] is zero wear), because the party leaves
 /// outfitted and that is the tier it will fight its first turns at. Wear is what moves it later, and
@@ -3161,7 +3180,7 @@ fn launch_forecast_party(
     let combat = app.world.resource::<CombatConfigHandle>().get();
     // A fresh ledger: the launch line quotes the KIT the party is being sent with, before it has worn
     // any of it. The party's own wear then moves its tiers turn by turn once it is in flight.
-    let fresh = BandEquipment::default();
+    let fresh = BandEquipment::start_stocked(&equipment_cfg);
     HuntingParty {
         hunter: equipment_cfg.hunter_profile_against(
             app.world.resource::<CreaturesConfigHandle>().get().person(),
@@ -3182,13 +3201,14 @@ fn launch_forecast_party(
 /// party that kills nothing and drags it home fast.
 fn launch_forecast_haul(app: &bevy::prelude::App, kit: &KitChoice) -> f32 {
     let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
-    let equipped_rate = app
+    let baseline_rate = app
         .world
         .resource::<LaborConfigHandle>()
         .get()
         .hunt
         .per_worker_biomass_capacity;
-    equipment_cfg.hunt_per_worker_biomass_capacity(equipped_rate, kit, &BandEquipment::default())
+    let fresh = BandEquipment::start_stocked(&equipment_cfg);
+    equipment_cfg.hunt_per_worker_biomass_capacity(baseline_rate, kit, &fresh)
 }
 
 /// Resolve the kit a raiding verb was given, or refuse the launch with a reason.
@@ -3365,7 +3385,8 @@ fn launch_detached_party(
             cohort,
             expedition_band_id,
             LaborAllocation::default(),
-            BandEquipment::default(),
+            // **Outfitted, stated rather than defaulted** — see the scout's spawn above.
+            outfitted_party_equipment(app),
             StartingUnit::new(unit_kind, unit_tags),
             Expedition {
                 home_band: band.entity,
@@ -7359,6 +7380,27 @@ fn handle_rollback(
 
 #[cfg(test)]
 mod tests {
+    /// **The shipped EQUIPPED haul rate** — off the sled's own tier. `labor_config`'s
+    /// `hunt.per_worker_biomass_capacity` is the *bare-handed* baseline since quality tiers landed.
+    fn equipped_haul_reference() -> f32 {
+        core_sim::EquipmentConfig::builtin().equipped_reference(
+            core_sim::EquipmentStat::HuntCarry,
+            core_sim::LaborConfig::builtin()
+                .hunt
+                .per_worker_biomass_capacity,
+        )
+    }
+
+    /// The gather twin of [`equipped_haul_reference`] — the baskets' own tier.
+    fn equipped_gather_reference() -> f32 {
+        core_sim::EquipmentConfig::builtin().equipped_reference(
+            core_sim::EquipmentStat::ForageCarry,
+            core_sim::LaborConfig::builtin()
+                .forage
+                .per_worker_biomass_capacity,
+        )
+    }
+
     use super::*;
     use bevy::math::UVec2;
     // The ladder's knowledge ids are named only by the tests now: the handlers resolve their gate
@@ -7451,8 +7493,9 @@ mod tests {
                     }],
                     ..Default::default()
                 },
-                // A spawned band is KITTED, exactly as `spawn_profile_population` spawns one.
-                BandEquipment::default(),
+                // A spawned band is KITTED, exactly as `spawn_profile_population` spawns one —
+                // **stated**, because an absent ledger entry means NOT OWNED since the count slice.
+                BandEquipment::start_stocked(&core_sim::EquipmentConfig::builtin()),
             ))
             .id()
     }
@@ -11056,10 +11099,11 @@ mod tests {
             &composition,
             &labor.forage,
             &flora,
+            equipped_gather_reference(),
             &ladder,
             // The band under test is freshly spawned, so its baskets are whole — the seed path
             // resolves the same equipped tier.
-            labor.forage.per_worker_biomass_capacity,
+            equipped_gather_reference(),
             1.0,
             1.0,
             BAND_WORKERS,
@@ -11130,7 +11174,7 @@ mod tests {
             herd,
             &fauna,
             &ladder,
-            labor.hunt.per_worker_biomass_capacity,
+            equipped_haul_reference(),
             &HuntingParty::builtin_equipped(),
             1.0,
             BAND_WORKERS,

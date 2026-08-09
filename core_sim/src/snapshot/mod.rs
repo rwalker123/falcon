@@ -71,7 +71,7 @@ use crate::{
     influencers::InfluentialRoster,
     intensification::{LadderConfig, RungKey, SiteRefusal, SITE_ACCEPTED},
     knowledge_ledger::{encode_ledger_key, KnowledgeLedger, KnowledgeSnapshotPayload},
-    labor_config::{ForageLaborConfig, LaborConfig},
+    labor_config::ForageLaborConfig,
     map_preset::MapPresetsHandle,
     metrics::SimulationMetrics,
     orders::FactionId,
@@ -972,7 +972,11 @@ mod tests {
             registry,
             fauna,
             ladder: &LadderConfig::builtin(),
-            labor,
+            equipped_haul_rate: crate::equipment_config::EquipmentConfig::builtin()
+                .equipped_reference(
+                    crate::equipment_config::EquipmentStat::HuntCarry,
+                    labor.hunt.per_worker_biomass_capacity,
+                ),
             grid_size: UVec2::new(64, 64),
             wrap_horizontal: false,
             visibility,
@@ -1319,10 +1323,10 @@ mod tests {
         let kit_levers = population::BandKitLevers {
             config: &equipment_config,
             person_intrinsic: crate::creatures_config::CreaturesConfig::builtin().person(),
-            equipped_haul_rate: crate::labor_config::LaborConfig::builtin()
+            baseline_haul_rate: crate::labor_config::LaborConfig::builtin()
                 .hunt
                 .per_worker_biomass_capacity,
-            equipped_gather_rate: crate::labor_config::LaborConfig::builtin()
+            baseline_gather_rate: crate::labor_config::LaborConfig::builtin()
                 .forage
                 .per_worker_biomass_capacity,
             equipped_vantage_range: crate::labor_config::LaborConfig::builtin()
@@ -2137,6 +2141,10 @@ mod tests {
         let patches = snapshot_forage_patches(
             &registry,
             &labor.forage,
+            crate::equipment_config::EquipmentConfig::builtin().equipped_reference(
+                crate::equipment_config::EquipmentStat::ForageCarry,
+                labor.forage.per_worker_biomass_capacity,
+            ),
             &FloraConfig::builtin(),
             &LadderConfig::builtin(),
             &HashMap::new(),

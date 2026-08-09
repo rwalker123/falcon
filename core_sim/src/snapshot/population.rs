@@ -194,12 +194,12 @@ pub(crate) struct BandKitLevers<'a> {
     /// a warrior alike**: `attack` is one stat and `creatures.json`'s `person` row is its one home,
     /// so both roles step up from this same number (`equipment_config::warrior_profile`).
     pub(crate) person_intrinsic: crate::combat::CombatStats,
-    /// `labor_config.hunt.per_worker_biomass_capacity` — the *equipped* HUNT haul tier (the sled's),
-    /// and also the *equipped* PEN collection tier: a pen harvest has always been capped by this
-    /// same rate, and it keeps its one home rather than gaining a husbandry twin.
-    pub(crate) equipped_haul_rate: f32,
-    /// `labor_config.forage.per_worker_biomass_capacity` — the *equipped* GATHER tier (the basket's).
-    pub(crate) equipped_gather_rate: f32,
+    /// `labor_config.hunt.per_worker_biomass_capacity` — the **no-equipment** HUNT haul baseline,
+    /// and the pen collection baseline with it. The *equipped* side of both lives on the sled's own
+    /// tier now and is resolved through the item table, so a pen still shares the haul's one home.
+    pub(crate) baseline_haul_rate: f32,
+    /// `labor_config.forage.per_worker_biomass_capacity` — the **no-equipment** GATHER baseline.
+    pub(crate) baseline_gather_rate: f32,
     /// `labor_config.scout.vantage_range` — the *equipped* vantage sight range (the wayfinding
     /// gear's). Carried as `f32` because the effects axis is continuous; the reveal path rounds.
     pub(crate) equipped_vantage_range: f32,
@@ -302,12 +302,12 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         .hunter_profile_unbounded(kit_levers.person_intrinsic, &hunt_choice, &kit)
         .attack;
     let hunt_carry_per_worker_biomass = kit_levers.config.hunt_per_worker_biomass_capacity(
-        kit_levers.equipped_haul_rate,
+        kit_levers.baseline_haul_rate,
         &hunt_choice,
         &kit,
     );
     let forage_carry_per_worker_biomass = kit_levers.config.forage_per_worker_biomass_capacity(
-        kit_levers.equipped_gather_rate,
+        kit_levers.baseline_gather_rate,
         &forage_choice,
         &kit,
     );
@@ -315,7 +315,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // has always capped a pen harvest by — but through the `PenCarry` stat, so a Hunt row on the
     // stalking kit works the pen bare-handed rather than at the sled's tier.
     let pen_carry_per_worker_biomass = kit_levers.config.pen_per_worker_biomass_capacity(
-        kit_levers.equipped_haul_rate,
+        kit_levers.baseline_haul_rate,
         &hunt_choice,
         &kit,
     );
@@ -350,8 +350,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             let choice = kit_levers.config.kit(&definition.id)?;
             let tiers = kit_levers.config.resolve_kit_tiers(
                 kit_levers.person_intrinsic,
-                kit_levers.equipped_haul_rate,
-                kit_levers.equipped_gather_rate,
+                kit_levers.baseline_haul_rate,
+                kit_levers.baseline_gather_rate,
                 kit_levers.equipped_vantage_range,
                 &choice,
                 &kit,
@@ -755,10 +755,10 @@ mod tests {
         BandKitLevers {
             config,
             person_intrinsic: crate::creatures_config::CreaturesConfig::builtin().person(),
-            equipped_haul_rate: crate::labor_config::LaborConfig::builtin()
+            baseline_haul_rate: crate::labor_config::LaborConfig::builtin()
                 .hunt
                 .per_worker_biomass_capacity,
-            equipped_gather_rate: crate::labor_config::LaborConfig::builtin()
+            baseline_gather_rate: crate::labor_config::LaborConfig::builtin()
                 .forage
                 .per_worker_biomass_capacity,
             equipped_vantage_range: crate::labor_config::LaborConfig::builtin()

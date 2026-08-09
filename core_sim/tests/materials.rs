@@ -430,3 +430,88 @@ fn material_batches_survive_a_checkpoint_round_trip() {
         restored.characteristics
     );
 }
+
+/// **EQUIPMENT BATCHES RIDE THE CHECKPOINT — count, tier, grade and wear.**
+///
+/// A rollback that forgot how many spears a band held would silently re-stock it, and one that
+/// forgot a batch's *grade* would re-grade the band's gear — a fine sled quietly becoming standard.
+/// The ledger is cloned whole, so this is free; it is pinned because "free" is a property of the
+/// current shape and the wipe below is what makes the assertion mean anything.
+#[test]
+fn equipment_batches_survive_a_checkpoint_round_trip() {
+    use core_sim::sim_state::{capture_sim_state, restore_sim_state};
+
+    let mut app = build_headless_app();
+    core_sim::run_turn(&mut app);
+
+    let band = app
+        .world
+        .query_filtered::<Entity, (
+            bevy::prelude::With<PopulationCohort>,
+            bevy::prelude::With<core_sim::BandId>,
+        )>()
+        .iter(&app.world)
+        .next()
+        .expect("the shipped opening spawns a band");
+
+    const SPEARS: &str = "spears";
+    const FINE: &str = "fine";
+    let equipment = core_sim::EquipmentConfig::builtin();
+    let graded = core_sim::BatchGrade {
+        id: FINE.to_string(),
+        effects: Vec::new(),
+    };
+    {
+        let mut ledger = app
+            .world
+            .get_mut::<core_sim::BandEquipment>(band)
+            .expect("a spawned band carries a ledger");
+        ledger.stock(SPEARS, 4, "flint", Some(graded.clone()));
+    }
+    let before = app
+        .world
+        .get::<core_sim::BandEquipment>(band)
+        .expect("ledger")
+        .clone();
+    assert_eq!(before.count_of(SPEARS), 5, "one spawned plus the four made");
+
+    let checkpoint = capture_sim_state(&app.world);
+
+    // Wipe it, and prove it is gone before the restore, or the test proves nothing.
+    app.world
+        .get_mut::<core_sim::BandEquipment>(band)
+        .expect("ledger")
+        .restore_batches(SPEARS, Vec::new());
+    assert_eq!(
+        app.world
+            .get::<core_sim::BandEquipment>(band)
+            .expect("ledger")
+            .count_of(SPEARS),
+        0,
+        "the ledger is empty before the restore"
+    );
+
+    restore_sim_state(&mut app.world, &checkpoint);
+
+    let band = app
+        .world
+        .query_filtered::<Entity, (
+            bevy::prelude::With<PopulationCohort>,
+            bevy::prelude::With<core_sim::BandId>,
+        )>()
+        .iter(&app.world)
+        .next()
+        .expect("the restore re-spawns the band");
+    let after = app
+        .world
+        .get::<core_sim::BandEquipment>(band)
+        .expect("the restored band carries a ledger");
+    assert_eq!(
+        after, &before,
+        "every batch comes back verbatim — count, tier, grade and wear"
+    );
+    assert_eq!(
+        after.remaining(SPEARS, &equipment),
+        before.remaining(SPEARS, &equipment)
+    );
+}

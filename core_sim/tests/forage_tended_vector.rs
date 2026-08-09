@@ -14,6 +14,30 @@
 //! Every assertion runs against the sim's own payoff functions or the published `SourceYield` row —
 //! never a re-derivation of their arithmetic (the §4.3 rule).
 
+/// **The shipped EQUIPPED haul rate** — what a kitted band drags, off the sled's own tier.
+/// `labor_config`'s `hunt.per_worker_biomass_capacity` is the *bare-handed* baseline since quality
+/// tiers landed, so a fixture that wants "an ordinary band" asks the item table.
+#[allow(dead_code)]
+fn equipped_haul_rate() -> f32 {
+    core_sim::EquipmentConfig::builtin().equipped_reference(
+        core_sim::EquipmentStat::HuntCarry,
+        core_sim::LaborConfig::builtin()
+            .hunt
+            .per_worker_biomass_capacity,
+    )
+}
+
+/// The gather twin of [`equipped_haul_rate`] — the baskets' own tier.
+#[allow(dead_code)]
+fn equipped_gather_rate() -> f32 {
+    core_sim::EquipmentConfig::builtin().equipped_reference(
+        core_sim::EquipmentStat::ForageCarry,
+        core_sim::LaborConfig::builtin()
+            .forage
+            .per_worker_biomass_capacity,
+    )
+}
+
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
@@ -392,10 +416,8 @@ fn the_published_per_biomass_rate_is_what_a_real_turn_credits_on_both_binding_si
                 &labor_config.forage,
             );
             let room = (patch.biomass - floor * patch.carrying_capacity).max(0.0);
-            let throughput = core_sim::forage_per_worker_biomass(
-                labor_config.forage.per_worker_biomass_capacity,
-                seasonal,
-            ) * workers as f32;
+            let throughput = core_sim::forage_per_worker_biomass(equipped_gather_rate(), seasonal)
+                * workers as f32;
             let expected_trade =
                 core_sim::forage_provisions(room.min(throughput), rate, NEUTRAL_MULTIPLIER);
 

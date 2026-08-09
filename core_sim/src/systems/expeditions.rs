@@ -180,7 +180,13 @@ pub fn advance_expeditions(
         // **This party's two kit tiers, resolved ONCE per party per turn** — the same discipline
         // `advance_labor_allocation` applies to a resident band, through the same
         // `EquipmentConfig` seams. An absent component reads as a full kit (wear, not stock).
-        let party_wear = party_equipment.as_deref().cloned().unwrap_or_default();
+        // An absent **component** means the party's ledger was never built (a hand-rolled fixture),
+        // which reads as outfitted — the state every launch path actually inserts. An absent
+        // **entry inside** a ledger is *not owned*; see `BandEquipment`.
+        let party_wear = party_equipment
+            .as_deref()
+            .cloned()
+            .unwrap_or_else(|| BandEquipment::start_stocked(&equipment_cfg));
         // **The kit this party was SENT OUT WITH** — stored on the `Expedition` at launch and read
         // from there, never re-resolved against the home band's current stock. A party sent out with
         // `none` stays bare-handed for its whole life; re-reading the band's spears each turn would
@@ -1302,6 +1308,10 @@ fn expedition_take_biomass(
 /// The quarry's engagement/retreat dials come in resolved (`FaunaConfig::engage_rate_for` /
 /// `wariness_for`) alongside its [`HuntYield`], and the caller composes the retreat seed the way the
 /// take path does (`fauna::HuntDraw::Seeded`) — this function reads no config handle, only numbers.
+///
+/// **`per_worker_biomass_capacity` is a RESOLVED haul tier, not a config read.** Since the equipped
+/// rate moved onto the sled's tier, `labor_config`'s key is the *bare-handed* baseline, so a caller
+/// that reached for it here would quote every party the sledless rate.
 #[allow(clippy::too_many_arguments)] // the herd's state, the labor tier and the species vector are all inputs
 pub fn expedition_take_provisions(
     workers: u32,
@@ -1309,7 +1319,7 @@ pub fn expedition_take_provisions(
     biomass: f32,
     carrying_capacity: f32,
     body_mass: f32,
-    labor: &LaborConfig,
+    per_worker_biomass_capacity: f32,
     hunt_yield: HuntYield,
     engage_rate: f32,
     wariness: f32,
@@ -1322,7 +1332,7 @@ pub fn expedition_take_provisions(
     let mut credit = 0.0_f32;
     let outcome = expedition_take_biomass(
         workers,
-        labor.hunt.per_worker_biomass_capacity,
+        per_worker_biomass_capacity,
         floor,
         biomass,
         carrying_capacity,
@@ -1717,11 +1727,9 @@ pub struct HuntTripForecast {
 /// 4-worker party), and that sliver is enough to turn an exactly-divisible trip into a phantom extra
 /// turn in any `ceil()` downstream — including the client's, which multiplies this constant by the
 /// party size. Snapping here keeps the exported constant on the same grid as the sim's reality.
-pub fn hunt_per_worker_provisions(labor: &LaborConfig, fauna: &FaunaConfig) -> f32 {
+pub fn hunt_per_worker_provisions(equipped_haul_rate: f32, fauna: &FaunaConfig) -> f32 {
     scalar_from_f32(
-        labor.hunt.per_worker_biomass_capacity
-            * fauna.hunt.provisions_per_biomass
-            * EXPEDITION_OUTPUT_MULTIPLIER,
+        equipped_haul_rate * fauna.hunt.provisions_per_biomass * EXPEDITION_OUTPUT_MULTIPLIER,
     )
     .to_f32()
 }

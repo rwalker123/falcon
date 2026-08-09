@@ -1843,7 +1843,7 @@ impl PublishState {
 }
 
 /// **The kit roster for the wire** — one row per `equipment.json` kit, carrying the tiers that kit
-/// grants a party whose components are all **fresh** (`BandEquipment::default()` is zero wear).
+/// grants a party whose components are all **fresh** (`BandEquipment::start_stocked`).
 ///
 /// The tiers are resolved through the **same three seams** the take path reads
 /// (`hunter_profile` / `hunt_per_worker_biomass_capacity` / `forage_per_worker_biomass_capacity`),
@@ -1854,7 +1854,7 @@ fn kit_roster_states(
     labor: &crate::labor_config::LaborConfig,
     kit_levers: &crate::snapshot::population::BandKitLevers<'_>,
 ) -> Vec<KitOptionState> {
-    let fresh = BandEquipment::default();
+    let fresh = BandEquipment::start_stocked(equipment);
     equipment
         .kits()
         .iter()
@@ -2274,13 +2274,22 @@ pub fn capture_snapshot(
     let kit_levers = crate::snapshot::population::BandKitLevers {
         config: &equipment_config,
         person_intrinsic: creatures.get().person(),
-        equipped_haul_rate: labor_config.hunt.per_worker_biomass_capacity,
-        equipped_gather_rate: labor_config.forage.per_worker_biomass_capacity,
+        baseline_haul_rate: labor_config.hunt.per_worker_biomass_capacity,
+        baseline_gather_rate: labor_config.forage.per_worker_biomass_capacity,
         equipped_vantage_range: labor_config.scout.vantage_range as f32,
     };
     let expedition_levers = ExpeditionLevers {
         hunt_per_worker_carry: expedition_cfg.hunt.per_worker_carry,
-        hunt_per_worker_provisions: hunt_per_worker_provisions(&labor_config, &fauna_config),
+        // **The EQUIPPED reference rate, resolved through the item table's default tier** — an
+        // outfitting lever is quoted for a party that leaves kitted, and `labor_config`'s key is the
+        // sledless baseline now.
+        hunt_per_worker_provisions: hunt_per_worker_provisions(
+            equipment_config.equipped_reference(
+                crate::equipment_config::EquipmentStat::HuntCarry,
+                labor_config.hunt.per_worker_biomass_capacity,
+            ),
+            &fauna_config,
+        ),
         hunt_viability_warn_turns: expedition_cfg.hunt.viability_warn_turns,
         hunt_forecast_horizon_turns: expedition_cfg.hunt.forecast_horizon_turns,
         band_move_tiles_per_turn: labor_config.band_move_tiles_per_turn,
@@ -2324,7 +2333,9 @@ pub fn capture_snapshot(
                     // its `BandEquipment` wear, through the same seams `advance_expeditions` reads,
                     // so the ETA projects the take the party can actually make: bare-handed if it
                     // left bare-handed, and stepped down once its spears are gone.
-                    let party_wear = equipment.cloned().unwrap_or_default();
+                    let party_wear = equipment
+                        .cloned()
+                        .unwrap_or_else(|| BandEquipment::start_stocked(&equipment_config));
                     // **The party's TARGET, so a mass-bounded weapon is judged against the animal it
                     // was actually sent after.** A party whose mission names no herd (a scout) has no
                     // quarry, and its ETA is a travel figure rather than a take — the unbounded
@@ -2358,7 +2369,7 @@ pub fn capture_snapshot(
                     // And the same kit's haul tier — the ETA has to project what THIS party can drag
                     // home, not what a kitted one could.
                     let party_haul = equipment_config.hunt_per_worker_biomass_capacity(
-                        kit_levers.equipped_haul_rate,
+                        kit_levers.baseline_haul_rate,
                         &exp.kit,
                         &party_wear,
                     );
@@ -2713,7 +2724,7 @@ pub fn capture_snapshot(
     // the pen map answers a corralled one, so a lookup is still one probe.
     // A fresh ledger to price every kit against — a herd row describes the KIT, not any band's wear
     // on it, and the default itself is resolved at the fresh tier for the same reason.
-    let quoted_wear = BandEquipment::default();
+    let quoted_wear = BandEquipment::start_stocked(&equipment_config);
     let quote_species = |species: &crate::fauna_config::SpeciesDef, corralled: bool| {
         let kit = crate::fauna::herd_default_hunt_kit(
             &equipment_config,
@@ -2772,7 +2783,13 @@ pub fn capture_snapshot(
         registry: &herd_registry,
         fauna: &fauna_config,
         ladder: &ladder_config,
-        labor: &labor_config,
+        // **The EQUIPPED reference haul rate, off the item table's default tier** — a herd row has
+        // no band to resolve a sled tier against, and `labor_config`'s key is the sledless baseline
+        // since the carries moved onto their tiers.
+        equipped_haul_rate: equipment_config.equipped_reference(
+            crate::equipment_config::EquipmentStat::HuntCarry,
+            labor_config.hunt.per_worker_biomass_capacity,
+        ),
         grid_size: config.grid_size,
         wrap_horizontal: config.map_topology.wrap_horizontal,
         visibility: &visibility_ledger,
@@ -2781,7 +2798,7 @@ pub fn capture_snapshot(
         // **THIS QUARRY'S own default kit, deliberately** — the herd row is a fact about the herd
         // and has no band to ask, but it can ask the *animal*, so each species' row is quoted at
         // the kit its compose sheet opens on and **publishes which**. A fresh kit
-        // (`BandEquipment::default()` is zero wear), because the row describes the kit rather than
+        // (`BandEquipment::start_stocked`), because the row describes the kit rather than
         // any band's wear on it.
         //
         // **This prices the per-worker YIELD row only.** The two pre-launch estimate tables that
@@ -2803,6 +2820,12 @@ pub fn capture_snapshot(
     let forage_patches_state = snapshot_forage_patches(
         &forage_registry,
         &labor_config.forage,
+        // The gather twin of the herd row's haul rate above — the basket's equipped tier, because a
+        // patch has no band either.
+        equipment_config.equipped_reference(
+            crate::equipment_config::EquipmentStat::ForageCarry,
+            labor_config.forage.per_worker_biomass_capacity,
+        ),
         &flora_config,
         &ladder_config,
         &seasonal_weights,

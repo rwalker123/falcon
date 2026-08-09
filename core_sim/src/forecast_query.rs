@@ -591,6 +591,30 @@ const NEVER_PAST_RECOVERY: u32 = 0;
 
 #[cfg(test)]
 mod tests {
+    /// **The shipped EQUIPPED haul rate** — what a kitted band drags, off the sled's own tier.
+    /// `labor_config`'s `hunt.per_worker_biomass_capacity` is the *bare-handed* baseline since
+    /// quality tiers landed, so a fixture that wants "an ordinary band" asks the item table.
+    #[allow(dead_code)]
+    fn equipped_haul_rate() -> f32 {
+        crate::equipment_config::EquipmentConfig::builtin().equipped_reference(
+            crate::equipment_config::EquipmentStat::HuntCarry,
+            crate::labor_config::LaborConfig::builtin()
+                .hunt
+                .per_worker_biomass_capacity,
+        )
+    }
+
+    /// The gather twin of [`equipped_haul_rate`] — the baskets' own tier.
+    #[allow(dead_code)]
+    fn equipped_gather_rate() -> f32 {
+        crate::equipment_config::EquipmentConfig::builtin().equipped_reference(
+            crate::equipment_config::EquipmentStat::ForageCarry,
+            crate::labor_config::LaborConfig::builtin()
+                .forage
+                .per_worker_biomass_capacity,
+        )
+    }
+
     use super::*;
     use bevy::math::UVec2;
     use bevy::prelude::Entity;
@@ -678,7 +702,7 @@ mod tests {
                     knowledge: Vec::new(),
                     migration: None,
                 },
-                BandEquipment::default(),
+                BandEquipment::start_stocked(&EquipmentConfig::builtin()),
             ))
             .id()
     }
@@ -890,7 +914,7 @@ mod tests {
         let kit = equipment
             .resolve_kit_for_job(Some(DEFAULT_HUNT_KIT), KitJob::Hunt)
             .expect("the shipped default hunt kit resolves");
-        let fresh = BandEquipment::default();
+        let fresh = BandEquipment::start_stocked(&EquipmentConfig::builtin());
         let party = query_hunting_party(&world, &equipment, &kit, &fresh, herd.body_mass);
         let per_worker_haul = query_per_worker_haul(&world, &equipment, &kit, &fresh);
         let resolved = ResolvedAsk {
@@ -968,7 +992,7 @@ mod tests {
             &world,
             &equipment,
             &kit,
-            &BandEquipment::default(),
+            &BandEquipment::start_stocked(&EquipmentConfig::builtin()),
             test_herd().body_mass,
         );
 
@@ -1044,7 +1068,7 @@ mod tests {
         let kit = equipment
             .resolve_kit_for_job(Some(DEFAULT_HUNT_KIT), KitJob::Hunt)
             .expect("the shipped default hunt kit resolves");
-        let fresh = BandEquipment::default();
+        let fresh = BandEquipment::start_stocked(&EquipmentConfig::builtin());
         let party = query_hunting_party(&world, &equipment, &kit, &fresh, herd.body_mass);
         let per_worker_haul = query_per_worker_haul(&world, &equipment, &kit, &fresh);
         let range_sigmas = combat.forecast_range_sigmas;
@@ -1107,7 +1131,7 @@ mod tests {
         let kit = equipment
             .resolve_kit_for_job(Some(DEFAULT_HUNT_KIT), KitJob::Hunt)
             .expect("the shipped default hunt kit resolves");
-        let fresh = BandEquipment::default();
+        let fresh = BandEquipment::start_stocked(&EquipmentConfig::builtin());
         let party = query_hunting_party(&world, &equipment, &kit, &fresh, herd.body_mass);
         let per_worker_haul = query_per_worker_haul(&world, &equipment, &kit, &fresh);
 
@@ -1160,7 +1184,7 @@ mod tests {
         let kit = equipment
             .resolve_kit_for_job(Some(DEFAULT_HUNT_KIT), KitJob::Hunt)
             .expect("the shipped default hunt kit resolves");
-        let fresh = BandEquipment::default();
+        let fresh = BandEquipment::start_stocked(&EquipmentConfig::builtin());
         let resolved = ResolvedAsk {
             herd: herd.clone(),
             party: query_hunting_party(&world, &equipment, &kit, &fresh, herd.body_mass),
@@ -1216,7 +1240,7 @@ mod tests {
         let kit = equipment
             .resolve_kit_for_job(Some(DEFAULT_HUNT_KIT), KitJob::Hunt)
             .expect("the shipped default hunt kit resolves");
-        let fresh = BandEquipment::default();
+        let fresh = BandEquipment::start_stocked(&EquipmentConfig::builtin());
         let resolved = ResolvedAsk {
             herd: herd.clone(),
             party: query_hunting_party(&world, &equipment, &kit, &fresh, herd.body_mass),

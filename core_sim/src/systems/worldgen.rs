@@ -68,6 +68,11 @@ pub fn spawn_initial_world(
     mut discovery: ResMut<DiscoveryProgressLedger>,
     mut faction_inventory: ResMut<FactionInventory>,
     snapshot_overlays: Res<SnapshotOverlaysConfigHandle>,
+    // **`Option`, like `tile_registry` beside it**: the handle only decides which items a spawned
+    // band is stocked with, and a hand-rolled test `World` that never installs it would otherwise
+    // panic worldgen outright. Absent reads as the builtin table — the same table
+    // `EquipmentConfigHandle::default()` installs.
+    equipment: Option<Res<crate::equipment_config::EquipmentConfigHandle>>,
     tile_registry: Option<Res<TileRegistry>>,
 ) {
     // Guard FIRST: the starting inventory, knowledge and culture seeding below all run ahead of any
@@ -823,6 +828,10 @@ pub fn spawn_initial_world(
             config.population_cluster_stride,
             &mut cohort_index,
             &knowledge_fragments,
+            &equipment
+                .as_ref()
+                .map(|handle| handle.get())
+                .unwrap_or_else(crate::equipment_config::EquipmentConfig::builtin),
         );
     } else {
         spawn_profile_population(
@@ -837,6 +846,10 @@ pub fn spawn_initial_world(
             &config.start_profile_overrides,
             &mut cohort_index,
             &knowledge_fragments,
+            &equipment
+                .as_ref()
+                .map(|handle| handle.get())
+                .unwrap_or_else(crate::equipment_config::EquipmentConfig::builtin),
         );
     }
 
@@ -2865,6 +2878,7 @@ fn spawn_default_population_clusters(
     stride_tiles: u32,
     cohort_index: &mut usize,
     knowledge: &[KnowledgeFragment],
+    equipment: &crate::equipment_config::EquipmentConfig,
 ) {
     let stride = max(1, stride_tiles) as i32;
     let radius: i32 = (stride * 3).max(3);
@@ -2890,6 +2904,7 @@ fn spawn_default_population_clusters(
                     cohort_index,
                     None,
                     knowledge,
+                    equipment,
                 );
             }
         }
@@ -2909,6 +2924,7 @@ fn spawn_profile_population(
     overrides: &StartProfileOverrides,
     cohort_index: &mut usize,
     knowledge: &[KnowledgeFragment],
+    equipment: &crate::equipment_config::EquipmentConfig,
 ) {
     let mut spawned_total = 0u32;
     for spec in &overrides.starting_units {
@@ -2928,6 +2944,7 @@ fn spawn_profile_population(
                     cohort_index,
                     Some(marker),
                     knowledge,
+                    equipment,
                 );
                 spawned_total += 1;
             }
@@ -2947,6 +2964,7 @@ fn spawn_profile_population(
             1,
             cohort_index,
             knowledge,
+            equipment,
         );
     } else {
         info!(
@@ -2967,6 +2985,7 @@ fn spawn_population_entity(
     cohort_index: &mut usize,
     marker: Option<StartingUnit>,
     knowledge: &[KnowledgeFragment],
+    equipment: &crate::equipment_config::EquipmentConfig,
 ) {
     let generation = registry.assign_for_index(*cohort_index);
     *cohort_index = cohort_index.saturating_add(1);
@@ -3000,10 +3019,12 @@ fn spawn_population_entity(
     // Every band carries a labor allocation (default empty = fully idle). The client drives
     // assignment; the startup food reserve covers the ramp before the first orders land.
     entity.insert(LaborAllocation::default());
-    // **The band starts KITTED** (the minimal TOE) — `BandEquipment` carries *wear*, so the default
-    // (zero wear) IS a full hunting kit and a full carry kit, and "start-stocked, not craftable"
-    // needs no config read and no seeding pass here.
-    entity.insert(BandEquipment::default());
+    // **The band starts KITTED, and it is stated rather than implied**: one unit of every item some
+    // kit carries, at the tier that ships known. An absent ledger entry means NOT OWNED since the
+    // count slice, so a spawn that inserted `Default` would send the band out bare-handed — this is
+    // the flip's load-bearing call site (`.claude/rules/core_sim/equipment.md`). One unit is one
+    // item's `starting_durability`, which is exactly the life the shipped opening has always had.
+    entity.insert(BandEquipment::start_stocked(equipment));
     // **And an EMPTY BENCH.** `Default` is *no job*, so a fresh band crafts nothing until the
     // player puts a recipe on it — there is no opening move where everyone builds tools first
     // (`docs/plan_crafting_and_materials.md` §5). Inserted here rather than on first use so the
@@ -3303,6 +3324,7 @@ mod terrain_tag_tests {
         ));
         world.insert_resource(DiscoveryProgressLedger::default());
         world.insert_resource(FactionInventory::default());
+        world.init_resource::<crate::equipment_config::EquipmentConfigHandle>();
         world.insert_resource(SnapshotOverlaysConfigHandle::new(
             SnapshotOverlaysConfig::builtin(),
         ));
@@ -3660,6 +3682,7 @@ mod terrain_tag_tests {
         world.insert_resource(StartProfileKnowledgeTagsHandle::new(
             StartProfileKnowledgeTags::builtin(),
         ));
+        world.init_resource::<crate::equipment_config::EquipmentConfigHandle>();
         world.insert_resource(SnapshotOverlaysConfigHandle::new(
             SnapshotOverlaysConfig::builtin(),
         ));
@@ -3741,6 +3764,7 @@ mod terrain_tag_tests {
         world.insert_resource(StartProfileKnowledgeTagsHandle::new(
             StartProfileKnowledgeTags::builtin(),
         ));
+        world.init_resource::<crate::equipment_config::EquipmentConfigHandle>();
         world.insert_resource(SnapshotOverlaysConfigHandle::new(
             SnapshotOverlaysConfig::builtin(),
         ));
@@ -3885,6 +3909,7 @@ mod inventory_effect_tests {
         world.insert_resource(StartProfileKnowledgeTagsHandle::new(
             StartProfileKnowledgeTags::builtin(),
         ));
+        world.init_resource::<crate::equipment_config::EquipmentConfigHandle>();
         world.insert_resource(SnapshotOverlaysConfigHandle::new(
             SnapshotOverlaysConfig::builtin(),
         ));
