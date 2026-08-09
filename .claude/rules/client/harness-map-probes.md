@@ -1,0 +1,530 @@
+---
+paths:
+  - "clients/godot_thin_client/tools/map_preview.gd"
+  - "clients/godot_thin_client/tools/blend_probe.gd"
+  - "clients/godot_thin_client/tools/map_preview.tscn"
+  - "clients/godot_thin_client/tools/blend_probe.tscn"
+---
+
+<!-- Split out of .claude/rules/client/test-harnesses.md, which was itself extracted from
+     clients/godot_thin_client/CLAUDE.md at blob 20553fb8f9b193b80338a8c06765d511b81b601e.
+     The pseudo-table cells this file carries were re-wrapped at 100 columns; no wording changed. -->
+
+# The `map_preview` and `blend_probe` harnesses
+
+The two map-side render probes: marker//overlay states and the edge-blend renderer.
+
+## `tools/map_preview.gd` / `.tscn`
+
+Dev-only **MapView** preview harness (HUD-only ui_preview's companion): instances the real
+`MapView`, feeds a canned `display_snapshot` + selects a band, and dumps PNGs (`map_*.png`) to
+`ui_preview_out/`. Verifies the selected-band labor highlights (work-range ring / worked forage
+tiles / hunted-herd ring+link; scouting draws no disc — it extends sight in the fog), the
+terrain/blend states, and the **rivers** state (`map_rivers*.png` — hex-edge Minor/Major rivers +
+the NavigableRiver terrain chain, incl. `map_rivers_join.png`: a zoomed, hex-anchored close-up of
+the trunk HEAD, where two tributaries hand over at corners — the frame the `river_inflow` spurs are
+judged on — `map_rivers_head_minor.png`: a second navigable head fed by a **Minor tributary only**,
+the frame the HEAD TAPER is judged on; **`map_rivers_midchain.png`**: a Minor tributary handing over
+at a vertex of a **MID-CHAIN** trunk hex (upstream *and* downstream channel exits) — the frame the
+head-taper's **exit-count gate** is judged on: the trunk must hold **constant full width through the
+junction** (any pinch-and-swell at the hex centre is the HOURGLASS the gate exists to prevent) while
+the spur still reaches its vertex. The case the drainage-network rewrite created and the fixtures
+never had; **`map_rivers_notch.png`**: a chain HEAD whose tributary hands over at its BOTTOM vertex
+(corner 1) and whose single channel exit is the ADJACENT SW side — both flanking the same corner,
+the geometry the old centre-hub routing drew a NOTCH / inverted-V on. The direct
+inflow-corner→exit-midpoint routing must draw ONE smooth tapered channel with no notch (zoomed via
+`NOTCH_ZOOM_IN`); **`map_rivers_lake_alongside.png`**: a one-hex `inland_sea` ringed by three
+navigable hexes whose `river_channel` exits all run along their own chain / out to the sea — NONE
+into the lake (the @21,61 case). The shore pass's per-edge MOUTH test must draw the lake's FULL
+beach/foam ring INCLUDING the navigable-adjacent edges (the old "any navigable adjacency" exclusion
+ate them); the true mouth into the eastern sea in the same frame STAYS open; and
+`map_rivers_web.png`: a solid CLUMP of adjacent navigable hexes with `river_channel` winding through
+it as ONE snake — the **regression guard** for the spider-web bug, since the other river fixtures
+build their chain by hand and are paths by construction, which is why the harness never caught it.
+Any cross-link/triangle there = the terrain-inferred arm rule is back) and the **starving-pen
+distress badge** (`map_herd_starving` — a starving pen beside a fed one, **plus a third starving pen
+(boar)**: every species now has bundled sprite art, so all three pens are `FaunaSprites` markers and
+the frame proves the ring/badge reads over a sprite — it no longer exercises the emoji fallback at
+all) and **`map_fauna_sprites`** (the SPRITE ROSTER: one herd per bundled-art ALIAS GROUP on its own
+hex — the only frame where the whole art set is judged at once for swapped/clipped/fringed sprites.
+
+**The four cervids lead the list, adjacent** (issue #439): Red Deer / Wild Elk / Wild Reindeer /
+Desert Gazelle all drew `deer.png` for the life of the roster, and what hid it was that no frame
+ever stood them side by side. It is **rows of eight — two full and a short third** (18 entries) —
+the roster outgrew a single spaced row across `GRID_W` (16), and `seal` + `catfish` were absent
+entirely from a frame whose whole job is coverage, as later were `steppe_runner` + `marsh_grazer`.
+It STARTS on row **4, not 5**, because the band camp stands on `(BAND_X, BAND_Y) = (8, 6)` and a
+roster entry landing there renders STACKED under the camp marker instead of alone at true marker
+size — which is what happened to the Jungle Fowl when the origin was 5.
+
+**The roster does reach row 6 today** (entries 17-18, the two species added last), and that is safe
+only because it wraps at column 4, nowhere near the camp's column 8.
+
+**Past 20 entries the wrap reaches column 8 on row 6 and the collision returns**, so move the origin
+or widen `FAUNA_ROSTER_COLUMNS` at that point; the arithmetic lives on the constants in
+`map_preview.gd`.
+
+**This frame does NOT prove coverage** — it enumerates a hand-written CLIENT-side list, so it is
+blind to a species that list has never heard of; that claim belongs to `cargo xtask
+fauna-icon-guard`, which checks against the sim's `fauna_config.json`. What the frame is for is
+judging art that EXISTS, at true marker size. On this state's `DEFAULT_CANVAS_SIZE` the cover-fit
+crops the **columns**, not the rows — all twelve rows are on screen and roughly cols 2–14 survive —
+so a third row is affordable and a wider row is not) and its food twin **`map_site_sprites`** (the
+same idea for `SiteSprites`: one food site per bundled art key in one row, including a `game_trail`
+site — which must draw the fauna DEER — and an unknown module, which must fall to the `default`
+sprig; the riverine fish↔reeds pair is judged separately on `map_riverine_split`, since one module
+drawing two icons needs two terrains, not two hexes) Also state **"pasture"** (`map_pasture.png`) —
+the **graze distribution** on an earthlike-shaped fixture map under the `pasture` overlay channel
+(see Overlay Channels): the frame Phase 2a exists to be judged on (is prairie really pasture? is the
+alluvial fallback dominant? are glacier/lava/water distinct from merely-poor ground?). It stages a
+**woodland block a live map does not have** (the palette thins forest out), sizes the window to the
+grid's aspect (MapView is **cover-fit**, so a mismatch CROPS exactly the distribution you came to
+see), and **prints the legend dict** (this harness has no HUD to draw it into). Also state
+**"forage"** (`map_forage.png`) — the **human-food distribution**, the SAME earthlike fixture
+painted from the human-food table under the `forage` channel, so it compares tile-for-tile with
+`map_pasture` and the two food webs' divergence reads directly (forest/river rich on forage / poor
+on pasture; the shelf column glows on forage where it is barren on pasture) without a server:
+`scripts/preview.sh res://tools/map_preview.tscn`. Also the four **ANNOTATION states**, added by the
+`AnnotationRenderer` extraction because that family had **no fixture at all** and so no refactor of
+it could be pixel-checked:
+
+**`map_trade_overlay`** (the Trade tab's diffusion links, pushed exactly the way `TradePanel` pushes
+them — `update_trade_overlay` → `set_trade_overlay_enabled` → `set_trade_overlay_selection` — with a
+SELECTED link, a busy open one, a thin closed one whose leak fires the red midpoint pip, and a
+fourth whose endpoints are not in `tile_lookup` so the skip guard is exercised; it is the one
+flat-backdrop state that publishes a `tiles` array, since links address their endpoints by tile
+ENTITY); **`map_crisis_annotations`** (all four shapes the draw can produce in one frame: a
+multi-hop path in the `PackedInt32Array` wire form, a multi-hop path in the Array-of-`[col,row]`
+form, a single-tile halo+core marker, and a single-tile marker with an unknown severity — the
+`CRISIS_COLOR` fallback — and no label; the `crisis` channel is selected AFTER the snapshot, because
+`display_snapshot` clears the active overlay every time); **`map_terrain_highlight`** (the Terrain
+tab's highlight tool on the four-band biome map, so the MATCHED band and the three UNMATCHED ones
+are both in frame); and **`map_routes`** (three multi-hop turning order paths covering
+`faction_colors`' INT key, its STRING key and an unknown faction's amber default, plus a
+one-waypoint order the draw must bail on). They run LAST, each clearing its own state afterwards,
+and they switch the canvas back to `DEFAULT_CANVAS_SIZE` (the river states leave the pasture aspect
+pinned).
+
+**THESE FOUR PROVE "UNCHANGED", NOT "CORRECT"** — they were written AFTER the code they cover, so
+they encode current behaviour including any bugs in it. That is exactly the right tool for a
+decomposition safety net and the wrong one to mistake for a correctness test; the same caveat
+applies to any fixture added to protect a refactor rather than to pin a decision.
+
+**It PINS ITS CANVAS AND WAITS FOR THE WM** — the `blend_probe` treatment (`_pin_canvas` /
+`_ensure_canvas` from `_settle` / the `_capture` geometry guard / `CANVAS_PIN_MAX_FRAMES`), because
+`project.godot` opens MAXIMIZED and macOS applies — and RE-applies — that asynchronously, so the
+bare `get_window().size = …` + two `process_frame`s it used to do in `_ready` was a RACE it mostly
+LOST: measured on a clean run, **33 of 41 saved frames came out at the monitor's 3840×1050 instead
+of the intended 1000×800**, and the four earliest states flipped between the two from run to run.
+`_canvas_size` (not a const) tracks the per-state canvas, so the aspect-matched pasture/forage
+states still switch to `PASTURE_WINDOW_SIZE` via `_set_canvas` — MapView is cover-fit, so a
+mismatched aspect CROPS the very distribution those states exist to show — and, as before, never
+switch back.
+
+**`content_scale_size` / `content_scale_factor` are deliberately NOT pinned here** (blend_probe pins
+both for its 1:1 canvas): `project.godot` stretches `canvas_items` with an `expand` aspect, so
+pinning them would re-project EVERY frame — a mass pixel change, not a race fix. That is also why
+the `_capture` guard measures the **window-sized canvas** rather than copying blend_probe's
+viewport-rect test: with content scaling live the captured image matches the WINDOW (1:1 measured),
+while the viewport's logical rect is the `expand` projection and matches neither (a 1000×800 window
+reports a 1920×1536 rect), so a viewport-rect guard here could never be satisfied.
+
+**It also FREEZES ANIMATION TIME** (`Engine.time_scale = 0.0` in `_ready`), which is what closes the
+last 14: with the canvas pinned, the only remaining run-to-run difference was genuinely ANIMATED
+content — the 11 `map_rivers*` frames (the shader's `TIME × river_flow_speed` channel scroll) plus
+`map_quarry_targeting` / `map_expeditions` (the `delta`-driven targeting and awaiting-expedition
+pulses).
+
+**The frame set is consequently a STRICT BIT-IDENTITY REFERENCE — 65/65 frames byte-identical across
+runs** (verified over consecutive runs, most recently while adding five fauna sprites for issue #439
+— which added no states, the count having read a stale 62 since some run before that; note the
+harness has 50 `_save` CALL SITES and saves 65 frames, because several states save inside a loop, so
+the two numbers are not meant to match), which is the property the decomposition passes rely on: a
+frame that varies cannot be pixel-diffed to prove a refactor changed nothing.
+
+**The cost is that every animation renders at a FIXED PHASE** rather than wherever the clock landed,
+so those 14 frames moved once when it landed (a deliberate re-baseline; the other 42 are
+byte-identical with or without it).
+
+**Freezing at phase 0 erases nothing, and that was checked against the draw code before it was
+taken** — both pulses use the `0.5 + 0.5 * sin(t)` idiom, so `t = 0` is the MIDPOINT, not zero
+amplitude (the awaiting ring draws at 1.46× radius / 0.65 alpha, the quarry glow at 0.60× / 0.675),
+and the river's phase is a UV OFFSET whose coverage alpha is a purely geometric `smoothstep`, so
+channel, banks and taper are untouched.
+
+**If a future animated element is added, re-check it the same way**: an amplitude term (`A ·
+sin(t)`) WOULD vanish at phase 0, and a frame that is deterministic because its subject disappeared
+is worse than one that varies.
+
+**A THIRD determinism source was the DEVELOPER'S OWN PREFS FILE**, and it is the
+`band_panel_preview` / `ui_preview` config-isolation bug wearing a different hat: `ClientSettings`
+is an autoload that has already loaded the real `user://client_settings.cfg` by the time `_ready`
+runs. When it was found, `MapView.zoom_step` scaled `ZOOM_BUTTON_STEP` by `zoom_speed_multiplier`,
+so every state reaching its zoom through `zoom_step` (the three
+`map_rivers_join`/`_head_minor`/`_midchain` close-ups and both `map_swim_*panzoom` frames) rendered
+at a DIFFERENT zoom on a machine whose Options slider had been moved: measured at the slider's max
+(3.0), `RIVER_JOIN_ZOOM_STEPS × 0.5 × 3.0` asked for 4.5 and was CLAMPED by `MAX_ZOOM_FACTOR`, so
+those frames silently tracked the cap rather than the 3 steps their const names.
+
+**That mechanism is GONE** — the rail is now a snapped ladder that ignores the slider entirely (see
+`map-renderers.md` → Zoom rail), and no state here currently reaches a scaled input path — so the
+pin is now PRECAUTIONARY rather than load-bearing for those five frames.
+
+**It stays**, by the same "state the condition, never inherit it" rule as the fog line one row
+above: the next state to use a continuous zoom path would silently re-acquire the bug. `_ready` pins
+`zoom_speed_multiplier` / `pan_speed_multiplier` to their `*_DEFAULT`s by assigning the MEMBERS
+DIRECTLY — never the setters, which `_save` over the player's own file.
+
+**A FOURTH source was the OS CURSOR**, the treatment `blend_probe` already carried and this harness
+did not: it renders in a REAL window, so `MapView._unhandled_input` picked up the pointer and drew a
+faint HOVER hex outline into whichever frame was rendering. Measured here, `map_riverine_split` came
+back with a brightened hex outline on ~1 run in 5 — **319 pixels at a max channel delta of 37**, on
+a DIFFERENT hex each time, i.e. far too small to catch by eye and easily large enough to break the
+byte-diff. `_ready` now calls `_map.set_process_unhandled_input(false)`; three consecutive runs
+after it are 62/62 identical.
+
+**The lesson generalises: a harness that renders in a real window must drop input, not try to park
+the pointer.** Also state **`map_max_zoom`** — the OTHER END OF THE ZOOM RAIL, added with issue
+#375's raise of `MAX_ZOOM_FACTOR` from 4.0 to 7.0. Every other state renders at the cover fit
+(`MIN_ZOOM_FACTOR`), so nothing judged the cap; this one sits at exactly `MAX_ZOOM_FACTOR`
+(referenced through `MAP_VIEW`, never a literal) with textured terrain + edge blending, the worked
+band's per-source yield labels, and BOTH marker families, then centres the band hex — at the cap the
+viewport holds a handful of hexes, so an unpanned frame is an arbitrary corner with none of the
+subject in it.
+
+**The GRID is the load-bearing choice**: `zoom_factor` is a multiple of the COVER FIT, so what 7×
+means in pixels is decided by the grid, and `MAX_ZOOM_GRID` therefore mirrors `MapSizes`' SMALLEST
+offered map (Tiny, 56×36) — the smallest map has the largest fitted radius, hence the most magnified
+terrain texture the rail can reach in a real game. A bigger grid would flatter the cap; this
+harness's own 16×12 grid would slander it (one hex comes out WIDER THAN THE VIEWPORT, so every label
+and marker falls off-frame and the state judges nothing). A `push_warning` fires if
+`last_hex_radius` drifts from `base_hex_radius × MAX_ZOOM_FACTOR`, so the state cannot silently stop
+sitting at the cap the way `map_band_yield_farzoom` once stopped guarding the LOD gate. It shares
+`_snapshot_work_on_grid(w, h)` with that LOD state — one fixture, the same subject at the two ends
+of the rail.
+
+**A PNG-LESS `_assert_zoom_ladder` block rides after it** (no `_save`, deliberately, so the frame
+count stays 62 and the bit-identity claim is untouched): six assertions that the rail's LADDER holds
+— an on-rung click moves exactly one rung in each direction, an OFF-GRID start (mid-way between two
+rungs, so neither a round-up nor a round-down bug can pass by luck) SNAPS to the adjacent rung in
+the direction of travel, and a click at either limit is a clean no-op. It also prints the ladder as
+a player walks it (`1.0 → 1.5 → … → 7.0`). A picture could never carry these claims — every rung
+renders as a plausible map — and the harness pins the speed slider, so an assertion is the ONLY
+thing here that can see the rail regress **THE WORKED-BAND FIXTURES STATE A HARVEST FLOOR, AND TWO
+DIFFERENT ONES.** Every yield label ends in its assignment's floor ZONE mark
+(`BandOverlayRenderer._entry_floor_glyph`), so these fixtures are the only thing deciding which
+marks the frame set ever renders — and they carried the retired `policy` stance strings (`sustain` /
+`deplete`), which no client code reads, long after `band_panel_preview` had migrated. Every row
+therefore fell through to `DEFAULT_HARVEST_FLOOR` and the frames were frozen on ONE glyph. They now
+carry `WORK_PEAK_FLOOR` / `WORK_DRAWDOWN_FLOOR` (0.15, the floor
+`band_panel_preview.LEGACY_STANCE_FLOORS` maps `deplete` onto), split across both the flat-grid
+fixture and `_snapshot_work_on_grid`, so `map_band_work` reads `+0.48 ♻` beside `+0.27 ⚠ ⇊` and
+`map_max_zoom` draws both marks large.
+
+**A SECOND PNG-LESS BLOCK, `_assert_work_floor_marks`, is what stops it regressing to
+one-glyph-everywhere**: it asks the RENDERER (`_entry_floor_glyph`) rather than the fixtures' floats
+— the fixtures differing is the premise, not the claim — and makes TWO assertions, that the rows
+render at least `WORK_FLOOR_MARKS_MIN` (2) DISTINCT marks and that none resolves to `""`. Both
+sabotage-verified and they fail independently: pinning the glyph to the peak zone fails the first
+alone, resolving an unknown zone fails both.
+
+**Writing it exposed a live defect** — `_draw_yield_label` re-resolved its already-resolved glyph
+through `FoodIcons.for_policy`, so the map had drawn NO harvest mark at all (`overlay-channels.md` →
+"The floor MARK is resolved ONCE"); the before/after frames were byte-identical until it was fixed,
+which is exactly how a one-glyph frame set hides a no-glyph one. `map_band_yield_farzoom` is
+deliberately NOT in the changed set: it LOD-suppresses every label, so a floor it cannot draw cannot
+move it.
+
+**A THIRD PNG-less block rides beside them, `_assert_yield_label_component`** (issue #449): the
+label has room for exactly ONE rate, so WHICH account it states is the whole claim, and `+0.00` and
+`+0.40 fodder` are the same badge at map scale. It asks `BandOverlayRenderer._yield_label_rate_text`
+directly — the choice is split out of `_draw_yield_label` for that reason, a draw call rendering to
+a canvas nothing can read a glyph back off — over values rather than a fixture, and pairs every
+fall-through with the case that must NOT change: food still leads wherever there is food (which is
+what stops "always show fodder" passing), trade still wins the slot ahead of fodder, and a source
+paying into no account at all still prints its food zero. `_entry_fodder` is asked beside them,
+since the fall-through is unreachable if the entry's feed rate is never read — and it has no
+realized fallback to make, fodder being plant-only.
+
+**A THIRD WORKED FORAGE TILE RENDERS THE LABEL, because the guard's claim is not the frame's**
+(`FODDER_FIELD_*`, a sown hay Field paying feed and neither provisions nor trade). The guard pins
+WHICH account fills the one slot; only a frame can say whether the chosen STRING fits beside its
+neighbours, and `_draw_pill_plate` sizes to the measured run rather than clipping, so a label that
+spans hexes overdraws an adjacent marker with every assertion green — the class
+`map_band_label_overlap` exists for. Measured on `map_band_work`: the plate is **67px against a 74px
+hex-column pitch**, i.e. just inside its own hex's band, against 49px for `+0.27 ⚠ ⇊` and 47px for
+the wolf's `⇄+0.22 ⇊`.
+
+**The 2.5× figure that motivated the state is wrong — it is 1.4×** — and the reason is the plate
+rather than the text: padding is a fixed fraction of the font size, so it does not scale with the
+run. Nothing is overdrawn on any of the four frames. It sits three hexes west of forage tile B on
+the same row, deliberately NOT touching it: two adjacent hexes' labels crowd each other whatever
+they say, so an adjacent pair could not separate the plate's own REACH from ordinary neighbour
+crowding
+
+## `tools/blend_probe.gd` / `.tscn`
+
+Dev-only **edge-blend probe rendered at the GAME's on-screen hex radius** — the other harnesses
+*fit* their grid to the window (r ≈ 83–178) and the blend look is radius-relative, so every
+judgement made in a fitted frame was wrong. Pins a 1:1 1920×1080 canvas + a grid sized so
+`_fit_map_to_view` lands on the target radius (it prints the achieved radius and warns if it
+drifts).
+
+**Two states:** (1) a **band strip** of flat biomes at r≈45 (desert · prairie · scrub · alluvial ·
+tundra · salt flat — every adjacent pair is a flat↔flat seam) → `blend_bands_*.png`; (2) **ISOLATED
+prairie hexes surrounded on all six sides by dark rocky soil** at **r≈75** (the user's on-screen
+size) → `blend_isolated_shipped.png` + one full frame & native-res close-up per tuning variant + a
+labelled contact sheet (`V6_*.png`).
+
+**State 2 is mandatory for any blend change**: a straight band seam looks fine even when the blend
+is tearing holes in hex interiors — only a surrounded hex exposes it (that is how the shredding
+regression shipped).
+
+**Two more states (V7, water↔water):** (3) an irregular **deep-ocean region embedded in continental
+shelf** (plus isolated deep hexes) at r≈77 → `V7_water_W1.png` (water on the shared LAND levers —
+still a soft-edged hexagon) vs `V7_water_W2.png` (the shipped `water_blend` block — the silhouette
+dissolves); (4) a ragged **coast** frame with a single water id → `V7_coast_unchanged.png`, the
+**bit-identical reference** any blend-eligibility change is pixel-diffed against (it must not move
+the shoreline).
+
+**Two more states:** (5, V8) the water patch rendered **FoW OFF vs FoW ON** (a mix of active +
+discovered hexes, nothing unexplored) → `V8_water_fow_off.png` / `V8_water_fow_on.png` — the FoW
+tint comes from a **per-hex, NEAREST-sampled vis-map**, which used to make every discovered↔active
+adjacency a **hard hex-shaped tint boundary that is not a terrain seam**. Any "hard straight edges
+are back" report must be checked against this pair BEFORE the blend is touched. This is also the
+frame the **FoW boundary softening** is judged on (see Fog-of-war softening: the steps must be gone,
+pure states unchanged); (6, V10) the shipped **shoreline profile** on the ragged coast at r≈75,
+rendered against TWO land biomes → `V10_shore.png` + `V10_shore_closeup.png` (prairie) and
+**`V10_shore_dark_land.png` + `V10_shore_dark_land_closeup.png`** (rocky_regolith). The close-ups
+are where the "is there a hard line anywhere on land→sand→foam→water?" call is made (the downscaled
+full frame hides a 1px line; see Shoreline), and **the DARK-land one is decisive** — prairie's tan
+hides sand-vs-land contrast and masked an invisible-beach bug through several passes, so never judge
+the beach on prairie alone. `_render_variant(overrides, name, crop…)` overrides any `terrain_config`
+lever (incl. the nested `water_blend` / `shore` blocks) live, which is how the shipped values were
+swept.
+
+**One more state (8, W): the FoW hex-step BEFORE vs AFTER the boundary softening** — one camera, one
+terrain, one visibility map, only `fow_softness` varying → `W_fow_off.png` (FoW off, the
+terrain-only reference: the deep-ocean blob's edges are already soft, which **exonerates the
+blend**), `W_fow_on.png` (softness `0` — reproduces the **unsmoothed per-hex tint**, i.e. the hard
+hexagonal brightness steps), `W_fow_fixed.png` (the shipped softness — steps gone, mist preserved).
+Each also dumps a `_closeup` and, decisively, a **`_same_terrain`** crop straddling hexes **(4,3)
+Active / (3,3) Discovered — BOTH continental shelf**, so the only thing that can draw an edge
+between them is the FoW tint. That crop answers any "hard straight edges in open water, even between
+hexes of the same terrain" report.
+
+**One more state (9, X): the DARK-WATER report on REAL game terrain** → `X_dark_water.png` +
+`X_dark_water_closeup.png`, rendered from a **verbatim 14×10 window of a LIVE snapshot's id-map**
+(`X_WATER_IDS`), FoW OFF, r≈75. The synthetic water states (3/5/8) never reproduced the "dark
+patches of open water with hard full-hexagon edges" report because their deep-ocean region is ONE
+clean ragged blob; the real ocean is **salt-and-pepper** shelf/deep, and a lone deep hex ringed by
+shelf can only read as a dark HEXAGON.
+
+**Any "dark water hexagons" report must be rendered on THIS state** — a synthetic blob will not show
+it. It is the frame the water **depth field** (see Edge Blending → water) was verified against.
+
+**One more state (10, L): the PER-WATER-TERRAIN shore profile on a SMALL INLAND SEA** →
+`L1_current.png` / `L2_no_wisp.png` / `L3_half.png` / `L4_tenth.png` (+ `*_full.png`), a 7-hex
+`inland_sea` lake in a field of **dark rocky_regolith** (prairie's tan camouflages both sand and
+foam) at r≈75, one camera/crop across all four. `_render_lake_variant` overrides the inland_sea
+entry's `shore_profile` in the live config and calls
+`TerrainTextureManager.rebuild_layer_shore_map()` — the sweep for choosing a lake's coast (now in
+the three-scale scheme; **L3 IS the shipped lake**, `sand 0.5 / foam 0.5 / wisp 0`, and L4 = the
+whole profile scaled so its OUTERMOST reach, `wisp_center + wisp_half` = 0.68·r, lands at ~0.10·r →
+0.147).
+
+**The harness disables `MapView._unhandled_input`** — it renders in a REAL window, so the OS cursor
+otherwise drew a faint HOVER hex outline into the frames, a run-to-run difference of a few thousand
+pixels that silently defeats the pixel-diff the coast states exist for. With it off, consecutive
+runs are **byte-identical**, so `V7_coast_unchanged.png` / `V10_shore*.png` are usable as strict
+bit-identity references.
+
+**One more state (11, H): ROLLING HILLS "cut off at the hex edge"** → `H_*.png`, a `rolling_hills`
+(24) blob + **isolated** hills hexes + an **isolated alpine (26)** hex in a field that is dark
+`rocky_reg` west / tan `prairie` east, at r≈75 with the **hex grid overlay OFF** (a drawn hexagon
+would answer the very question under test). Frames: `H_before` (the artifact), **`H_base_only`**
+(peaks skipped by pushing `peak_min_radius` above the render radius — isolates the BASE floor, and
+is what proved the cut is the rugged base hexagon, **not** a weak mound overhang), `H_peaks_only`
+(the amplified `before − base_only` pixel diff = the peak pass's exact footprint: it shows the
+mounds DO overhang, and that the peak **cast shadow darkens the whole neighbour hex**, a second hard
+hexagon), and the candidate fixes `H_fix_overhang` / **`H_fix_base`** (`blend_rugged_land`) /
+`H_fix_both`. Each renders a full frame + a seam close-up + the **isolated-hex** and **alpine**
+close-ups (the mandatory shred checks). `H_gate_bands_full` / `H_gate_coast` re-render the flat↔flat
+strip and the coast with the rugged gate ON — they must byte-compare **identical** to
+`blend_bands_full` / `V7_coast_unchanged`.
+
+**One more state (12, R): the RUGGED-GATE SWEEP** — `blend_rugged_land` is GLOBAL, so shipping it
+lets EVERY rugged biome's base floor blend, and the failure mode is SHREDDING. R renders **each
+rugged biome as an ISOLATED hex** (even col + even row ⇒ never adjacent to another subject) in TWO
+fields, each **gate OFF vs gate ON** so every biome is a controlled A/B: `R_flatoff_*` / `R_flat_*`
+(dark `rocky_reg` west, tan `prairie` east) and `R_ruggedoff_*` / `R_rugged_*` (a field of
+`canyon_badlands` — the rugged↔rugged case), plus `R_*_field_full`.
+
+**The gate-OFF pair is not optional**: several biomes' own art (e.g. `karst_highland`'s
+semi-transparent overhanging spires) *looks* like neighbour texture leaking into the hex, and only
+the A/B tells art from tear.
+
+**One more state (13, S): the PEAK CAST-SHADOW HEXAGONS** — an alpine massif + an isolated
+`rolling_hills` hex in a light prairie field, grid OFF → `S_shadow.png` + `_closeup` + `_iso`, and
+decisively **`S_shadow_footprint*.png`**, the amplified diff against a `shadow_strength = 0` render
+(the cast shadow **in isolation** — the only frame on which "is it hex-shaped? is it still
+directional?" can actually be answered, since the semi-transparent mound fringe contaminates every
+other measurement).
+
+**Two harness bugs were fixed here and must not regress:** (a) `project.godot` opens the window
+**MAXIMIZED** (`window/size/mode=3`) and the WM applies that a few frames into the run — *after*
+`_ready` sized it — so the viewport became the whole monitor and every state after the second
+silently rendered at **r ≈ 154, not the game's 75** (and the taller states overflowed the canvas,
+clipping the close-ups). `_pin_canvas` re-asserts WINDOWED + 1920×1080 on every `_refit`. (b) Lever
+overrides now go through **`_override_config`/`_restore_config`**, which **ERASE** a key that was
+absent instead of writing `null` back: TerrainRenderer reads levers as `bool(config.get(key,
+DEFAULT))`, the default only applies when the key is **missing**, and a present-but-null key reaches
+`bool(null)` — a **runtime error that aborts `TerrainRenderer.update_shader_quad` before it pushes a
+single uniform**, so every later frame renders with STALE uniforms and lies.
+
+**One more state (14, G): the REAL NEIGHBOURHOOD from the user's screenshot** — the "hills are STILL
+cut off, with the rugged gate ON" report → `G_*.png`. State H could not see why: its hills blob sits
+in FLAT fields only, so every peak edge in it is a peak↔non-peak one (which the overhang feathers).
+G rebuilds the screenshot — a `rolling_hills` blob against `canyon_badlands` (rugged, **no** peak
+asset), **`alpine_mountain` (which HAS one → the peak↔PEAK case)**, `high_plateau` (a peak at ~the
+SAME elevation as the hills → the near-zero-Δ case), `alluvial_plain`, `rocky_reg` and an
+`inland_sea` lake hex — at r ≈ 75, grid OFF. It is the **only** probe state that ships a real
+**elevation raster** (`G_ELEVATION_BY_ID` + `elevation_sea_level`): every other snapshot omits the
+channel, so MapView falls back to `PEAK_ELEV_FALLBACK` for EVERY hex and **no elevation asymmetry
+can be judged in them**. Frames: `G_before` (shipped), **`G_no_peaks`** (peak pass skipped — it
+renders the same seam as a soft ecotone, which **exonerated the base blend** and convicted the peak
+overlay), `G_no_shadow` (cast shadow off, peaks on — attributes a residual line to the shadow vs the
+art), `G_peaks_only` (the amplified diff = the peak pass's exact footprint), each with native-res
+crops `_peakpeak` (hills↔alpine, big Δelev), `_sameelev` (hills↔plateau, Δ≈0 → must stay a soft
+symmetric cross-fade), `_canyon` (peak↔non-peak — the control), `_lake` (the shoreline — hard BY
+DESIGN), `_iso` + `_iso_alpine` (the mandatory isolated-hex shred checks; both sit on the LEFT of
+the frame because MapView's minimap CanvasLayer is NOT hidden and a bottom-right crop captures IT).
+
+**A `--only=` state filter** (`scripts/preview.sh res://tools/blend_probe.tscn -- --only=G`, or
+`--only=1,4,G`; keys are `<number>/<letter>`, no filter = every state) renders one state instead of
+all 14 — a diagnosis loop re-renders one state many times.
+
+**A third harness bug was fixed here and must not regress:** `project.godot` opens the window
+**MAXIMIZED** and macOS applies — and **RE-applies** — that asynchronously, many frames in, so a
+fixed pair of `process_frame`s is a RACE that does not stay won. A filtered run puts a
+radius-critical state FIRST and it fitted at **r ≈ 154, not the game's 75**; a re-maximize BETWEEN
+two frames of one state rendered them at different resolutions (the pixel-diff then dies on a size
+mismatch); and one DURING a crop sequence made the captured image the monitor's while the viewport
+still reported the pinned size (`content_scale_size` pins the viewport, so **only
+`get_window().size` can see the maximize**) — the crop then landed off-frame as a 686×1 sliver.
+`_ensure_canvas` (called from `_settle`) re-pins and WAITS on the window; `_capture` re-draws until
+the captured geometry is the canvas's (or an integer HiDPI multiple) instead of silently saving a
+bad frame.
+
+**A FOURTH determinism fix closes that arc, and it is what makes the set a STRICT BIT-IDENTITY
+REFERENCE: ANIMATION TIME IS FROZEN** (`Engine.time_scale = 0.0` at the top of `_ready` — the same
+treatment `map_preview` got, and taken for the same reason). With the canvas pinned, animated
+content was the ONLY remaining run-to-run difference, and it left the set at **205 stable frames and
+25 that drifted**: the `BANK_*` state is the only one here carrying a navigable river, hence the
+only consumer of the shader's `TIME * river_flow_speed` channel scroll. Frozen, the whole set is
+**230/230 byte-identical across runs** (verified over three consecutive runs) — the property every
+MapView decomposition pass leans on, since a frame that varies cannot be pixel-diffed to prove a
+refactor changed nothing, and the reference any NEW fixture gets judged against.
+
+**The cost is that animation renders at a FIXED PHASE**; it moved exactly the 25 `BANK_*` frames
+once, a deliberate re-baseline, and **the other 205 were byte-identical with and without it**
+(measured — the prediction was made first and held: every bit-identity reference,
+`V7_coast_unchanged` / `V10_shore*` / `H_gate_*` / `blend_bands_*` / `blend_isolated_shipped`, moved
+0 bytes, as none contains a river).
+
+**Freezing at phase 0 erases nothing, and that was checked against the shader before it was taken**:
+`terrain_blend.gdshader` reads `TIME` in exactly TWO places (the edge-class river pass and the
+navigable-channel pass) and both enter identically as a **UV OFFSET** into the `river_tex` sample,
+while every term deciding whether water DRAWS is purely geometric — the channel `alpha` and the bank
+`bank_alpha` are both `smoothstep(-river_softness, river_softness, <signed coverage>)` and
+`class_mix` comes from coverage differences — so channel, banks, taper and corridor blend are
+untouched and only which texels of the water art land where is pinned (confirmed visually on
+`BANK_shipped` + `BANK_shipped_iso_dark`). This harness has no time-dependent GDScript of its own
+(no `Time.` reads, no tween, no pulse), and `_settle` waits on `process_frame`, which still fires at
+`time_scale` 0.
+
+**RE-CHECK RULE for anything animated added later** (the same one `map_preview` carries): an
+AMPLITUDE term (`A * sin(t)`) VANISHES at phase 0 and a frame that is deterministic because its
+subject disappeared is worse than one that varies, whereas an offset or a midpoint idiom (`0.5 + 0.5
+* sin(t)` → 0.5 at t = 0) survives — classify the new term before trusting the freeze.
+
+**One more state (15, D): the THREE-SCALE shore profile — CLIFF vs BEACH vs LAKE, and the MIXED
+coast** → `D*.png`, the ragged coast against **dark `rocky_reg`** (prairie's tan camouflages both
+sand and foam) at r≈75, **grid overlay OFF**, one camera/crop per comparison set.
+`_snapshot_coast(shore_id, water_id)` now takes the SEA's id, which is what selects the
+`shore_profile` under test. Frames:
+
+**`D1_cliff`** (`deep_ocean` meeting land — NO sand anywhere, big surf, and the full-strength surf
+peak must still conceal the base's own step at the waterline, since there is no sand out there to
+hide it); **`D2_shelf_C1/C2/C3`** (the shelf's muting ladder, `foam_scale` 0.85/0.75/0.65 ×
+`wisp_scale` 0.5 — the surf's measured footprint falls 18.0k → 15.8k → 13.9k → 12.2k px against the
+cliff's; **C2 ships**); **`D3_mixed_coast`** — THE DECISIVE FRAME: a `deep_ocean` hex and a
+`continental_shelf` hex **adjacent along ONE coastline**, both touching the same land
+(`_snapshot_mixed_coast` swaps the sea by row), where a nearest-water PICK would jump the profile at
+their bisector and make the sand appear along a **hard line**; the weighted-mean profile field must
+instead **fade the beach in** along the shore (measured: the land-pixel difference vs `D1_cliff`
+ramps from 0.00 over ~220px ≈ 3 hex radii — not a step); and **`D4_lake_unchanged`** (the lake,
+shipped config — the two-lever → three-scale migration must be a no-op).
+
+**One more state (16, SURF): THE BRIGHT WHITE SHORELINE OUTLINE** → `W_*.png`, the state the
+**waterline base cross-fade** + **`foam_opacity`** were built and chosen on (r≈75, grid OFF; the
+archipelago frames also render at **r≈30 — map scale**, which is the zoom the complaint was made
+at). The report was that the surf reads as "an obvious bright white outline on most land". Every
+frame uses the **MIXED coast** (`_snapshot_mixed_coast`: deep_ocean CLIFF in the north rows,
+continental_shelf BEACH in the south, both against **dark rocky_reg**) so each rung is cropped on
+**both coast types at once** (`_cliff` / `_beach`) — they fail differently. Frames: `W_base` (the
+shipped near-white ring — the complaint, and it is unmistakable); **`W_optA_1/2/3`** (option A, the
+**recolour-only** ladder: still an OPAQUE ring, just greyer — rendered so the "just make it grey"
+idea can be *seen* to be insufficient); **`W_optB_1/2/3`** (option B's `foam_opacity` ladder
+0.35/0.55/0.75 on the cross-fade + muted colour; **0.55 ships**); and **THE MAKE-OR-BREAK PAIR —
+`W_step_control` vs `W_optB_step_check`**, the CLIFF coast with the **foam disabled entirely**
+(`foam_opacity 0` kills surf *and* wisp): the control (cross-fade also off) shows the **raw base
+step — a razor-straight hex-edge cut**, which is what the opaque foam was hiding all along, and the
+step check must show it GONE.
+
+**Any change to the surf must re-render that pair** — a translucent surf over a live base step is
+exactly the bug that broke this shoreline four times. `W_step_wl_1/2/3` is the `waterline_width`
+sweep it was chosen on (0.08 dissolves the step, **0.14** reads as a wet-rock rim, 0.20 ghosts land
+pebbles out to sea).
+
+**Judge the step check at 4× magnification** — at 1:1 the cross-fade and the razor step look nearly
+identical, and the first (too-narrow) cut was wrongly passed by eye before the magnified strip
+caught it. `W_base_wide` / `W_optB_wide` (+ `_farzoom`) are the **archipelago**
+(`_snapshot_archipelago` — islands on a lattice, alternating shelf-ringed BEACH coasts and
+deep-touching CLIFF coasts, so both types are in one frame; deterministic and grid-size independent,
+so the same map renders at r≈75 and at map scale):
+
+**`W_base_farzoom` vs `W_optB_farzoom` is the frame that actually answers the complaint.** **One
+more state (17, BANK): the NAVIGABLE-RIVER BANK CORRIDOR reading as a CHAIN OF HEXAGONS** →
+`BANK_*.png`, the state the per-terrain **`blend_profile`** (see Edge Blending) was diagnosed and
+chosen on. A navigable hex is a silty **bank** whose `blend_class` is `flat`, so the flat↔flat
+interlock IS eligible on its land edges — and a shader probe (tint the mix factor `t` on id 37)
+confirmed it **FIRES**: this was never a gate/eligibility bug, and no amount of re-checking
+`blend_class` or the water gates will find one. It is a LOOK failure — the global ecotone is
+~`0.35·r` wide and near-straight, which is invisible between two tan grasslands and glaring between
+grey gravel and orange grass. The frame renders the corridor (a real `river_channel` chain, so the
+water draws) at the game's **r ≈ 75** crossing a field that is **floodplain (9, luma 58) in its west
+half and prairie (11, luma 112) in its east** — **both ends of the brightness range a river corridor
+actually touches, in ONE frame**, because the bank is *darker* than prairie but *brighter* than
+floodplain and a fix tuned against only one of them fails on the other. Plus an **ISOLATED bank hex
+in each field** (the mandatory shred crops — a corridor seam cannot show a torn interior; they sit
+in the TOP rows because a bottom-right crop captures MapView's minimap). `_render_bank_variant`
+sweeps the profile live via `_set_blend_profile` +
+`TerrainTextureManager.rebuild_layer_blend_map()`:
+
+**`BANK_off` is the NEUTRAL profile — i.e. the BEFORE**, the shipped global levers, in the same
+camera, and it reproduces the report exactly. `BANK_v1/v2/v3` are the ladder (**v2 = 2.6/2.2/2.6
+SHIPS**; v1 still traces the hexagon, v3 dissolves the bank) and `BANK_shipped` is config's.
+`scripts/preview.sh res://tools/blend_probe.tscn` (or `-- --only=SURF` / `-- --only=BANK`)
+
+## Worked-source mark states (issue #412)
+
+**`map_preview`** — `map_worked_ready` (the ⌃ CONTRAST: a tended patch offers Sow, a tamed
+"pen"-ceiling deer offers Corral, a "wild"-ceiling wolf offers nothing; a chevron on every marker would
+prove nothing) · `map_hunt_expedition_quarry` (an outbound party's quarry marked beside a resident
+band's local hunt — two routes to a worked source, one grammar) · `map_overflow_worked` (three wonders
+take every visible slot, so both worked sources roll into the chip as `+2 ⌃`). **Both new states push
+`set_faction_knowledge` explicitly**: `map_preview` has no HUD, so without it every source reads "not
+ready" — the correct degradation, but an unreadable frame. `map_band_work`'s fixture gained a food site
+on each worked tile, and that is load-bearing: the first cut of the ring rendered nothing at all
+because the fixture had none, and the mark correctly degraded to the bare tile outline.

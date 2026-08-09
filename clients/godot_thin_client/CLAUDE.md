@@ -158,7 +158,12 @@ for the scripts it covers. The boot/menu/settings rows stay above.
 | `workbench.md` | The designer surface replacing the Inspector: shell, page registry, config tuning | `ui/workbench/**`, `tools/workbench_*` |
 | `telling-panel.md` | The Telling book UX and the narrative fork | `TellingPanel.gd`, `NarrativeForkPanel.gd` |
 | `sprites-widgets.md` | Sprites, icons, `HudStyle`, small widgets | `*Sprites.gd`, `HudStyle.gd`, `IconSprites.gd` |
-| `test-harnesses.md` | `ui_preview`, `map_preview`, `blend_probe`, `decode_guard`, `marker_field_guard`, `inspector_hidden_guard` | `tools/**` |
+| `test-harnesses.md` | The shared harness contract: the exit-status verdict, the quiet window, the hang guard | `tools/**` |
+| `harness-ui-preview.md` | The HUD PNG walk, its chapters, its frame/`PASS` tally | `ui_preview.gd`, `ui_preview/**` |
+| `harness-band-panel.md` | The Band/City panel walk, the denial-raid and recall arcs | `band_panel_preview.gd` |
+| `harness-map-probes.md` | `map_preview` marker states, `blend_probe` edge blending | `map_preview.gd`, `blend_probe.gd` |
+| `harness-menu-workbench.md` | `MenuShell`, the workbench, the shell budget gate | `menu_preview.gd`, `workbench_*.gd` |
+| `harness-headless-guards.md` | The `--headless` decode/field/alias guards | `decode_guard.gd`, `*_guard.gd` |
 | `turn-profiling.md` | Where an applied snapshot's time goes (the client costs ~10× the sim), the `TurnProfile` contract and its flag | `TurnProfile.gd`, `Main.gd`, `SnapshotLoader.gd`, `MapView.gd`, `bridge/decoder.rs` |
 | `native-extension.md` | The GDExtension module map | `native/src/**` |
 | `scripting-capability.md` | The scripting capability model | `src/scripts/scripting/**` |

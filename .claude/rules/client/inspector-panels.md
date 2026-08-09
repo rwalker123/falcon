@@ -123,7 +123,7 @@ Three clauses, and the third is the one that bites:
    on the delta branch, which is never gated; `KnowledgePanel.append_events` accumulates but hangs
    off `ingest_log_entry`, the log-stream path, not this one.
 
-`tools/inspector_hidden_guard.gd` pins all of it (see `test-harnesses.md`) — the property is
+`tools/inspector_hidden_guard.gd` pins all of it (see `harness-headless-guards.md`) — the property is
 invisible in normal play, since a stale-when-opened Inspector looks like a panel that just hasn't
 updated yet.
 

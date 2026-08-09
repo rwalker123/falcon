@@ -184,7 +184,7 @@ second path. Two decisions:
 (at today's 7.0 it does lie on it, exactly 12 rungs up). At either limit the delta is 0 and
 `_apply_zoom`'s `is_zero_approx` early-out makes the click a clean no-op with no spurious
 `zoom_changed`. **The ladder is guarded behaviourally, not by a picture** — `map_preview`'s
-`_assert_zoom_ladder` (see `test-harnesses.md`), because every rung renders as a plausible map and
+`_assert_zoom_ladder` (see `harness-map-probes.md`), because every rung renders as a plausible map and
 the harness pins the speed slider anyway, so only an assertion can see a regression here.
 
 The map view displays this minimap showing the full map with a viewport indicator rectangle.

@@ -1,0 +1,6 @@
+# Generated FlatBuffers fixtures — `cargo xtask decode-fixture` writes all six, and they are
+# committed so `tools/decode_guard.tscn` runs standalone. Marking them `binary` stops git offering
+# an unreadable textual diff and a merge it cannot do. A conflict on one carries no information:
+# take either side, re-run the generator, and let `cargo xtask decode-guard` judge the result.
+# See .claude/rules/client/harness-headless-guards.md -> "The committed fixtures are GENERATED".
+clients/godot_thin_client/tests/fixtures/*.bin binary
