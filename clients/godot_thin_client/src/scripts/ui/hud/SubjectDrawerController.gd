@@ -665,9 +665,8 @@ func _build_expedition_panel(expedition: Dictionary) -> void:
         return
     var phase := String(expedition.get("expedition_phase", "")).strip_edges().to_lower()
     if phase == HudExpeditionVocab.EXPEDITION_PHASE_AWAITING:
-        # THE THREE ARRIVAL ANSWERS, named in the order the buttons below sit in (issue #510).
-        var callout := HudWidgets.alloc_hint_label(
-            "Reached its objective — Move it onward, Recall it home, or start a life here.")
+        # THE ARRIVAL ANSWERS, named in the order the buttons below sit in.
+        var callout := HudWidgets.alloc_hint_label(HudExpeditionVocab.EXPEDITION_AWAITING_CALLOUT)
         callout.add_theme_color_override("font_color", HudStyle.WARN)
         _allocation_panel.add_child(callout)
     var actions := HBoxContainer.new()

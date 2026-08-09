@@ -968,9 +968,6 @@ fn seed_snapshot() -> WorldSnapshot {
         for assignment in &mut cohort.labor_assignments {
             assignment.arrival_schedule = vec![0.0f32; 4];
         }
-        // **Why a founding would be refused**, both eligibility gates at once — the state the field
-        // exists for. Spelled out rather than `rows()`ed: these are the sim's own machine tokens,
-        // and a golden full of default-empty strings would not show a client what it decodes.
         cohort.pending_reveal_x = vec![0u32; ROWS];
         cohort.pending_reveal_y = vec![0u32; ROWS];
         cohort.knowledge_fragments = rows();

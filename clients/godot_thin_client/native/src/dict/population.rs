@@ -620,8 +620,6 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "band_move_tiles_per_turn",
         f64::from(cohort.bandMoveTilesPerTurn()),
     );
-    // **WHY "start a life here" WOULD BE REFUSED for this party right now** — the sim's own machine
-    // tokens (`core_sim` `FoundingRefusal`: `not_an_expedition`, `not_awaiting_orders`,
     // **The two split floors** (`docs/plan_band_fission.md` §Config levers), echoed per-cohort the
     // way `bandMoveTilesPerTurn` directly above is, so the compose sheet can state each number
     // without a second copy of the config.

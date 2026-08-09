@@ -60,6 +60,7 @@ environment overrides. A new config's row goes in its arc's rule, not here.
 | `yield-forecast.md` | Pre-commit per-source yield forecast, assign-time seeding | `labor_config.rs`, `snapshot/`, `orders.rs` |
 | `telling.md` | The narrative beat engine, `when` grammar, stance, fork tier, memory threads | `telling/`, `tests/telling*.rs` |
 | `expeditions.md` | Wondrous sites, scouting & hunting expeditions | `sites.rs`, `expedition_config.rs` |
+| `fission.md` | Band fission — a band splits in two where it stands, the worker share, the two floors | `systems/fission.rs`, `tests/band_fission.rs` |
 | `campaign.md` | Start flow, population & demographics, supply network, sedentarization, wellbeing, victory | `supply.rs`, `demographics_config.rs`, `sedentarization*.rs` |
 | `ecs-systems.md` | Power, crisis, culture, knowledge & espionage, great discovery, fog of war, trade diffusion | `power.rs`, `crisis.rs`, `culture.rs`, `visibility*.rs` |
 | `turn-profiling.md` | Where a turn's time goes (the sim is ~5%, publishing is ~94%), the `turn.profile` event, which snapshot encodes are load-bearing | `turn_profile.rs`, `snapshot/capture.rs`, `network.rs`, `sim_schema/world.rs` |

@@ -182,10 +182,12 @@ pub(crate) struct ExpeditionLevers {
     /// can add a raid's round-trip travel (`ceil(2 × hex_distance / this)`) to the band-agnostic
     /// pre-launch `huntTripEstimates`. Same global-config-surfaced-per-band idiom as the others.
     pub(crate) band_move_tiles_per_turn: u32,
-    /// `expedition_config.settle.min_founding_workers` — the working-age floor a party must clear to
-    /// found a band, echoed per-cohort so the client's "start a life here" tooltip can name the
-    /// number instead of keeping a second copy of the config. Same idiom as the four above.
+    /// `expedition_config.settle.min_founding_workers` — the working-age floor the **new** band must
+    /// clear, echoed per-cohort so the compose sheet can name the number (and word its own refusal)
+    /// instead of keeping a second copy of the config. Same idiom as the four above.
     pub(crate) settle_min_founding_workers: u32,
+    /// `expedition_config.settle.parent_min_workers` — the twin floor on what the **parent** keeps.
+    /// Both floors ship because both are evaluated at the split and reported together.
     pub(crate) settle_parent_min_workers: u32,
 }
 

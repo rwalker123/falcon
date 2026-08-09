@@ -4125,12 +4125,26 @@ func _assert_recall_press(label: String, exp: Dictionary, want_verb: String, wan
 	_dismiss_dialogs()
 	row.queue_free()
 
-## Open the parties compose sheet on the SPLIT mission at `workers`, driving the real footer button
-## rather than writing the controller's state — a sheet reached by assignment would pass against a
-## mission button that no longer opens it.
+## Open the parties compose sheet on the SPLIT mission at `workers`, driving the real `⌂ Split`
+## footer button rather than writing the controller's state — a sheet reached by assignment would
+## pass against a mission button that no longer opens it, or one gated on the wrong worker pool.
+##
+## **THE PREVIOUS SHEET IS CLOSED FIRST, and that is not tidiness.** An open sheet renders IN PLACE
+## OF the footer's four buttons, so a second call would find nothing to press — every caller after
+## the first opens over a sheet the one before it left up.
+##
+## Only the STEPPER is written, which is the state the states below deliberately vary; the OPENING
+## is the path under test.
 func _open_split_sheet(workers: int) -> void:
-	_hud._bandpanel._party_compose_open = true
-	_hud._bandpanel._party_compose_mission = HudComposeVocab.COMPOSE_MISSION_SPLIT
+	_hud._bandpanel._close_party_compose()
+	_hud._bandpanel.rerender()
+	var launch := _find_meta_control_valued(_panel, HudWidgets.MISSION_LAUNCH_META,
+		HudComposeVocab.COMPOSE_MISSION_SPLIT) as Button
+	if launch == null or launch.disabled:
+		_fail("split sheet — no live %s launch button, so the sheet was never opened"
+			% HudComposeVocab.COMPOSE_MISSION_LABEL_SPLIT)
+		return
+	launch.emit_signal("pressed")
 	_hud._bandpanel._split_workers = workers
 	_hud._bandpanel.rerender()
 
@@ -4194,15 +4208,6 @@ func _split_new_too_small_sentence() -> String:
 func _split_parent_too_small_sentence(pool: int) -> String:
 	return HudComposeVocab.SPLIT_BLOCKED_PARENT_TOO_SMALL % [
 		pool - SPLIT_TOO_FEW_WORKERS, SPLIT_PARENT_MIN_WORKERS]
-
-## The LIVE confirm dialog on the HUD — the last still-visible one, since `_dismiss_dialogs` frees
-## with the deferred `queue_free` and a spent dialog stays a child for the rest of the frame.
-func _hud_confirm_dialog() -> ConfirmationDialog:
-	var found: ConfirmationDialog = null
-	for child in _hud.get_children():
-		if child is ConfirmationDialog and (child as ConfirmationDialog).visible:
-			found = child
-	return found
 
 ## Confirmation dialogs parented on the HUD right now, freed-but-not-yet-collected ones included —
 ## which is exactly why `_assert_recall_press` compares two readings rather than testing presence.
@@ -9130,18 +9135,14 @@ func _scout_expedition_fixture() -> Dictionary:
 		"home_band_entity": 904,
 	}
 
-## A scout party that has ARRIVED and is awaiting orders — the one phase the founding action is
-## offered in. Its position is what the settle confirm quotes as the site.
-##
-## **It publishes an EMPTY `founding_refusals`, deliberately spelled out rather than omitted**: an
-## absent key and an empty list are the same answer on this seam (the founding would succeed), and
-## stating it is what makes this fixture the enabled control the blocked pair below is judged against.
+## A scout party that has ARRIVED and is awaiting orders — the phase whose drawer carries the amber
+## callout and the two arrival actions. It rides the split states' roster as an ORDINARY party, so
+## the parties zone is never rendered with expeditions of one phase only.
 func _awaiting_scout_expedition_fixture() -> Dictionary:
 	var exp := _scout_expedition_fixture()
 	exp["entity"] = SCOUT_AWAITING_ENTITY
 	exp["id"] = "Scouts 2"
 	exp["expedition_phase"] = "awaiting"
-	exp["founding_refusals"] = []
 	return exp
 
 ## A band squeezed small enough that ONE composition trips BOTH split floors — the shared fixture's

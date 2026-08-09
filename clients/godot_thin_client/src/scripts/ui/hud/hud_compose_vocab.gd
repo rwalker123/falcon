@@ -657,12 +657,12 @@ const PARTY_RECALL_SCOUT_LABEL := "scouting"
 ##
 ## **IT IS NOT AN EXPEDITION.** No destination, no walk, no arrival: both halves stand where the band
 ## stood, and the new one moves under the ordinary move order.
-## What the share works out to, under the stepper. The player is choosing a size, so the size is what
-## the sheet echoes back.
 ## The split's ONE input, and deliberately NOT `Party`: what is being composed is a band, and the
 ## sheet's whole claim is that it is not sending anyone out.
 const SPLIT_STEPPER_LABEL := "Workers"
 
+## What the share works out to, under the stepper. The player is choosing a size, so the size is what
+## the sheet echoes back.
 const SPLIT_SHARE_FORMAT := "%d%% of the band goes with them"
 
 ## The two readouts, in the order the decision is made: what you are making, then what it costs.
@@ -739,7 +739,11 @@ const SPLIT_AGE_ELDERS_KEY := "age_elders"
 ## the two ORDERS lines into one — see `DetailFormat.expedition_orders_line`.
 const PARTIES_INSPECTOR_LINE_SEPARATION := 2
 
-const SEND_PARTY_NO_IDLE_REASON := "No idle workers to spare. Free some from Work."
+## Why the three EXPEDITION buttons are disabled — and it says "expedition" because the fourth button
+## beside them is NOT one: a split is gated on the band's workers, not on its idle ones, so it can be
+## live in the same row. A hint that named the row rather than the missions would flatly contradict a
+## button the player can press.
+const SEND_PARTY_NO_IDLE_REASON := "No idle workers to spare for an expedition. Free some from Work."
 
 ## The compose sheet — MISSION FIRST: the footer launches straight into a mission, so the sheet is
 ## always already on one and the policy picker is unreachable except under Hunt.

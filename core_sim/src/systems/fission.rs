@@ -86,7 +86,9 @@ impl SplitRefusals {
         self.0.is_empty()
     }
 
-    /// Space-joined tokens for the structured log line.
+    /// Comma-joined tokens for the structured log line — one field, so the whole set survives a
+    /// whitespace-split log reader. (Its sibling [`explanation`](Self::explanation) joins with
+    /// spaces because that one is a sentence.)
     pub fn tokens(&self) -> String {
         self.0
             .iter()

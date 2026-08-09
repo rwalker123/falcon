@@ -1149,8 +1149,10 @@ func _on_hud_improvement(payload: Dictionary) -> void:
 func _on_hud_recall_expedition(payload: Dictionary) -> void:
     _send_formatted_command(format_recall_expedition(payload))
 
-## Found a band where an arrived party stands. The sim answers the reachability gate when the command
-## lands, so a refusal comes back as a `band_founded` failure event rather than being predicted here.
+## Split a resident band in two where it stands. The client FORECASTS whether a given worker count
+## is viable — the compose sheet disables Send and says why, off the two floors published per-cohort
+## — but the SIM's verdict is the authority: a refusal comes back on the `band_founded` event
+## channel (`handle_split_band` reports through `CommandEventKind::BandFounded`), not as a reply.
 func _on_hud_split_band(payload: Dictionary) -> void:
     _send_formatted_command(format_split_band(payload))
 

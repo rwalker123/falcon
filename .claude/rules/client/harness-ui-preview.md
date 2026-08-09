@@ -520,29 +520,38 @@ renderer skipped. One pair per condition, so a regression names which one broke.
 assertion is the one to be careful with — see the `RungGates.gd` row in `labor-ui.md` for why it needs
 a WILD sowable patch rather than the obvious tended one.
 
-## "Start a life here" — the drawer pair, and the dock's prose branch (issue #510)
+## Band fission — the arrival drawer, and the dock's prose branch (issue #511)
 
-**`expedition_panel` / `expedition_returning` already existed and now carry the claim.** They are the
-drawer's arrival pair — an ARRIVED scout and the same party once it is walking home — so the third
-action's presence and its absence are asserted on frames whose whole difference is the phase. A
-one-sided frame proves nothing here: a button rendered unconditionally passes the positive half. The
-negative also asserts the `Move` button is still there, so the absence is the settle control's and
-not a panel that failed to build.
+**THE ARRIVAL DRAWER HAS TWO ACTIONS AND ASSERTS NEITHER'S PRESENCE ANY MORE.** `expedition_panel` /
+`expedition_returning` carried a PAIR of claims about a third arrival action — a settle button
+offered to an arrived party and withheld from one under orders — and a band splits where it stands
+now, so the affordance is GONE rather than renamed and both claims went with it. The surviving
+assertion on the returning frame is that `Move` is still there, which is what tells a phase branch
+that built nothing from one that built the right thing. **The two frames still render**; only the
+callout's wording moved (`HudExpeditionVocab.EXPEDITION_AWAITING_CALLOUT` names the two actions the
+drawer builds, and only those).
 
-**`event_dock_band_founded`** (`chapters/event_dock.gd`, appended last) renders a founding and a
-founding REFUSED at the ALERTS-ONLY floor, which is what proves the rung rather than showing two rows
-the `notable` floor would have admitted anyway. Its two details are the pair the dock's prose branch
-needs — one PROSE (the sim's refusal sentence, which no other fixture in that chapter stages) and one
-TOKENS — and the token half is what proves the walk still runs for details that really are the
-machine contract. The rule is in `event-dock.md` → "…but a detail the sim wrote as a SENTENCE".
+**A chapter that outlives a deleted `const` fails at LOAD, not at the call**, and that is the shape
+to remember here: those assertions referenced `HudComposeVocab.PARTY_SETTLE_ACTION` after the
+vocabulary block was retired, so `chapters/band_expedition.gd` — `CHAPTERS[0]` — would not compile
+and the whole harness reported a bad chapter before writing a frame.
+
+**`event_dock_band_founded`** (`chapters/event_dock.gd`, appended last) renders a SPLIT and a split
+REFUSED at the ALERTS-ONLY floor, which is what proves the rung rather than showing two rows the
+`notable` floor would have admitted anyway. Its two details are the pair the dock's prose branch
+needs — one PROSE (the sim's refusal sentence, which no other fixture in that chapter stages, and
+which carries TWO sentences because `SplitRefusals::explanation` reports every applicable refusal)
+and one TOKENS (`status=split band=… parent=… x=… y=… workers=… share=… provisions=…`) — and the
+token half is what proves the walk still runs for details that really are the machine contract. The
+rule is in `event-dock.md` → "…but a detail the sim wrote as a SENTENCE".
 
 **Both details are spelled out as chapter constants** rather than recomposed through
 `SourceForecast`/`HudEventVocab`, the `_assert_horizon_floor_is_the_whole_trip` rule: an expectation
-built from the code under test can only agree with itself.
+built from the code under test can only agree with itself. **They are the SIM's own shapes**, copied
+from `server.rs handle_split_band` — a fixture in the shape of a retired handler asserts against a
+payload no server can produce, which is what these two were when `handle_settle_expedition` went.
 
-**A clean run is 284 frames / 700 `PASS`, exit 0** — three frames and twelve `PASS`es on the 281 / 688
-this arc started from: the drawer pair's three, the dock frame's three, and the two-band compose pair
-below.
+**A clean run is 284 frames / 723 `PASS`, exit 0.**
 
 ### The compose sheet composes for the PANEL band, not the first one
 

@@ -2989,8 +2989,6 @@ fn handle_send_expedition(
                     .resource::<EquipmentConfigHandle>()
                     .get()
                     .default_kit(KitJob::Hunt),
-                // Derived per-turn telemetry — `assess_foundings` fills it on the party's first
-                // Visibility stage; a launched party has nothing to found yet.
             },
             BandTravel { target },
         ))
@@ -3356,8 +3354,6 @@ fn launch_detached_party(
                 pending_reveal: Vec::new(),
                 carried_trade: 0.0,
                 kit,
-                // Derived per-turn telemetry — see the scout launch above. A raid never enters
-                // `AwaitingOrders`, so this stays empty for its whole life.
             },
             BandTravel { target: herd_pos },
         ))

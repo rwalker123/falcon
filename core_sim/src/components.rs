@@ -739,10 +739,10 @@ impl StartingUnit {
 /// safe default survives new systems added to the settlement arc.
 ///
 /// **It is a membership switch, not a label.** Gaining it puts a band into every one of those
-/// systems at once, which is exactly what the founding verb does: `settle_expedition` drops
-/// `Expedition` and inserts this marker
-/// ([`crate::systems::found_band_from_expedition`], `docs/plan_band_fission.md`). The other two
-/// places it is inserted are worldgen and checkpoint restore.
+/// systems at once, which is what makes band fission cheap: `split_band` divides a resident band in
+/// two on the tile it stands on, and the half that leaves is spawned carrying this marker from its
+/// first turn ([`crate::systems::split_band_from_parent`], `docs/plan_band_fission.md`). The other
+/// two places it is inserted are worldgen and checkpoint restore.
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct ResidentBand;
 

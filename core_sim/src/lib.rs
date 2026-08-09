@@ -892,12 +892,6 @@ pub fn build_headless_app() -> App {
                 // than sitting between the two.
                 visibility_systems::prune_sweep_tracker
                     .before(visibility_systems::calculate_visibility),
-                // **The founding verdict is read off the faction map, so it is assessed after the
-                // map is final for the turn.** It conflicts with the whole serial run above — it
-                // reads `VisibilityLedger` (written by the four systems before `discover_sites`)
-                // and `PopulationCohort` (which `discover_sites` writes for its morale reward) —
-                // so the only edge that leaves nothing ambiguous is one after the chain's tail,
-                // which is also the freshest map a verdict could be built from.
             )
                 .in_set(TurnStage::Visibility)
                 .run_if(capability_enabled(CapabilityFlags::ALWAYS_ON)),

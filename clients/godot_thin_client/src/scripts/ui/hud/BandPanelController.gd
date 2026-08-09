@@ -2244,8 +2244,7 @@ func _party_confirm_label(exp: Dictionary) -> String:
         return _herd_label_for_id(String(exp.get("expedition_target_herd", "")).strip_edges())
     return HudComposeVocab.PARTY_RECALL_SCOUT_LABEL
 
-## **IS THE FOUNDING AFFORDANCE OFFERED AT ALL for this party?** (issue #510) — the PHASE test, and
-### Recall every party in one go — there is no bulk verb on the wire and parties are few, so this is
+## Recall every party in one go — there is no bulk verb on the wire and parties are few, so this is
 ## one `recall_expedition` per party through the existing signal.
 func _on_recall_all_parties_pressed(parties: Array) -> void:
     if parties.is_empty():
@@ -2255,10 +2254,13 @@ func _on_recall_all_parties_pressed(parties: Array) -> void:
             for exp in parties:
                 _on_recall_expedition_pressed(exp))
 
-## The parties footer: the two missions offered DIRECTLY (Scout / Hunt), each opening the compose
-## sheet already on that mission, or the compose sheet in their place. With no idle workers the
-## buttons stay VISIBLE and DISABLED with their reason — the section vanishing is what made
-## expeditions look like they had been removed from the game.
+## The parties footer: FOUR buttons offered directly — the three expedition missions (Scout / Hunt /
+## Deny) and the SPLIT, which is not a mission — each opening the compose sheet already on that
+## verb, or the compose sheet in their place. A button with nothing to spend stays VISIBLE and
+## DISABLED with its reason: the section vanishing is what made expeditions look like they had been
+## removed from the game. **The two gates are different pools** — the three expeditions want idle
+## workers, the split wants workers — so the no-idle hint below names the expeditions rather than the
+## row, or it would contradict a live Split beside it.
 func _build_party_footer(band: Dictionary) -> VBoxContainer:
     var idle := _band_labor.effective_idle(band)
     var foot := HudWidgets.make_zone_block()

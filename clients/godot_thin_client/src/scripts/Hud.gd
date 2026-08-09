@@ -41,10 +41,14 @@ signal send_denial_raid_requested(payload: Dictionary)
 ## Emitted when the player recalls the selected in-flight expedition (folds it home). Payload
 ## keys: { faction, expedition }. Main formats the `recall_expedition …` command.
 signal recall_expedition_requested(payload: Dictionary)
-## Emitted when the player has an arrived party STOP being an expedition and become a resident band
-## where it stands — the third arrival action beside onward and recall (issue #510,
-## `docs/plan_band_fission.md` §Q2). Payload keys: { faction, expedition_band_id } and nothing else:
-## the grammar `split_band <faction> <band_id> <workers>` is CLOSED at three positional tokens.
+## Emitted when the player splits a RESIDENT band in two where it stands — fission, not an
+## expedition (issue #511, `docs/plan_band_fission.md`). Both halves are ordinary bands the moment
+## the command lands: no party, no walk, no arrival. The player picks `workers`, and children,
+## elders and every store divide on the share that count implies.
+## Payload keys: { faction, band_id, workers } and nothing else — **all three are REQUIRED**, since
+## `Main.format_split_band` returns `{}` (a silent no-op, no command sent) when `band_id` or
+## `workers` is missing. The grammar `split_band <faction> <band_id> <workers>` is CLOSED at three
+## positional tokens.
 ## Main formats the `split_band …` command.
 signal split_band_requested(payload: Dictionary)
 ## Emitted when the player extends a built pen by one fenced ring (Grazing 2d-γ). Payload keys:

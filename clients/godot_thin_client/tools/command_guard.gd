@@ -516,7 +516,6 @@ func _party_fixture() -> Dictionary:
 		"home_band_entity": BAND_ENTITY,
 	}
 
-
 func _herd_fixtures() -> Array:
 	return [_near_herd_fixture(), _far_herd_fixture()]
 
