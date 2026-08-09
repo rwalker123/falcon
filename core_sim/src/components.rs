@@ -1,5 +1,5 @@
 use std::cmp::min;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 
 use bevy::{math::UVec2, prelude::*};
@@ -289,14 +289,61 @@ pub const FODDER: &str = "fodder";
 /// and every consumer must agree on one string.
 pub const TRADE_GOODS: &str = "trade_goods";
 
+/// **One pile of a material at one rating** — a quantity plus the exact reading it stands for.
+///
+/// The reading is the batch's **amount-weighted average** per axis, in the material's declared axis
+/// order, and it is what crafting reads. **Never the band alone**: the band is what decides whether
+/// two arrivals merge, and it is derived for display; storing only the band would make two `good`
+/// hides interchangeable, which is the whole thing the characteristic vector exists to prevent.
+///
+/// See `docs/plan_crafting_and_materials.md` §1 → "Bands: categories on screen, exact numbers
+/// underneath".
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MaterialBatch {
+    /// How much of the material this batch holds. Fixed-point, so a fractional per-turn arrival
+    /// accumulates toward a whole unit instead of rounding away.
+    pub amount: Scalar,
+    /// The batch's **exact** amount-weighted-average reading per axis. See the type doc.
+    pub characteristics: BTreeMap<String, f32>,
+}
+
+/// One batch's contribution to a withdrawal — what came out, and the reading it came out at.
+///
+/// A partial take leaves the source batch's readings untouched (an average does not move when a
+/// uniform part of it is removed), so this reports the batch's reading verbatim.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MaterialDraw {
+    /// Which batch it came from.
+    pub band: crate::materials_config::BandKey,
+    /// How much came out of that batch.
+    pub amount: Scalar,
+    /// That batch's exact reading per axis.
+    pub characteristics: BTreeMap<String, f32>,
+}
+
 /// A location-local store of goods held by a band (and, later, a populated tile or storage pit).
 /// Keyed by commodity so the supply network can balance *any* good; a `BTreeMap` keeps iteration
 /// deterministic for balancing and snapshotting. Quantities are fixed-point (`Scalar`) so small
 /// per-turn flows accumulate without rounding to zero. An absent key reads as zero, and setting a
 /// key to zero prunes it, so two stores with the same goods always compare equal.
+///
+/// # Materials are a SECOND map, and `goods` is untouched
+///
+/// Provisions, fodder and trade goods are interchangeable scalars: two units of grain are two units
+/// of grain. **A material is not** — a mammoth hide and a hare pelt are both `hide` and are not the
+/// same thing — so materials are held as [`MaterialBatch`]es keyed by their per-axis
+/// [`crate::materials_config::BandKey`], and a single pooled average would silently drag the one
+/// down to the other the moment they met.
+///
+/// **This store stores; it does not interpret.** Deriving a band from a reading needs the material's
+/// axis list, so that lives on [`crate::materials_config::MaterialsConfig`] and the key arrives here
+/// already resolved.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct LocalStore {
     goods: BTreeMap<String, Scalar>,
+    /// `material id → band key → batch`. `BTreeMap` on both levels so the checkpoint and any
+    /// published readout iterate in a stable order — the same reason `BandEquipment` is one.
+    materials: BTreeMap<String, BTreeMap<crate::materials_config::BandKey, MaterialBatch>>,
 }
 
 impl LocalStore {
@@ -334,6 +381,185 @@ impl LocalStore {
     /// `(item, quantity)` pairs in deterministic (sorted-key) order.
     pub fn iter(&self) -> impl Iterator<Item = (&str, Scalar)> {
         self.goods.iter().map(|(k, v)| (k.as_str(), *v))
+    }
+
+    /// **THE MERGE RULE.** Add `amount` of `material` at `band`, merging into the batch already
+    /// standing at that key: the amounts add, and **each axis's reading becomes the amount-weighted
+    /// average of the two**.
+    ///
+    /// Without the merge a band hunting deer for two hundred turns would hold two hundred piles of
+    /// hide; without the *weighted average* the merged pile would claim one of the two arrivals'
+    /// readings and quietly re-grade the other. A non-positive amount is a no-op, so a degenerate
+    /// take cannot invent a batch with no material in it.
+    pub fn deposit_material(
+        &mut self,
+        material: &str,
+        band: crate::materials_config::BandKey,
+        amount: Scalar,
+        characteristics: &BTreeMap<String, f32>,
+    ) {
+        if amount <= scalar_zero() {
+            return;
+        }
+        let batch = self
+            .materials
+            .entry(material.to_string())
+            .or_default()
+            .entry(band)
+            .or_default();
+        let existing = batch.amount;
+        let total = existing + amount;
+        // The blend weights, taken once: `total > 0` because `amount > 0` and `existing >= 0`.
+        let (existing_share, arriving_share) = (
+            existing.to_f32() / total.to_f32(),
+            amount.to_f32() / total.to_f32(),
+        );
+        // Every axis EITHER side names, so an arrival can neither drop an axis the batch carries nor
+        // silently ignore one it brings.
+        let axes: BTreeSet<&String> = batch
+            .characteristics
+            .keys()
+            .chain(characteristics.keys())
+            .collect();
+        let blended: BTreeMap<String, f32> = axes
+            .into_iter()
+            .map(|axis| {
+                let held = batch.characteristics.get(axis).copied().unwrap_or_default();
+                let arriving = characteristics.get(axis).copied().unwrap_or_default();
+                (
+                    axis.clone(),
+                    held * existing_share + arriving * arriving_share,
+                )
+            })
+            .collect();
+        batch.amount = total;
+        batch.characteristics = blended;
+    }
+
+    /// Every batch of `material`, in band-key order. Empty for a material the store holds none of.
+    pub fn material_batches(
+        &self,
+        material: &str,
+    ) -> impl Iterator<Item = (&crate::materials_config::BandKey, &MaterialBatch)> {
+        self.materials
+            .get(material)
+            .into_iter()
+            .flat_map(|batches| batches.iter())
+    }
+
+    /// **How much of `material` the store holds in total** — the sum over its batches, which is the
+    /// shortfall readout's number. Never stored beside the batches: a cached total is a second
+    /// statement of one fact.
+    pub fn material_total(&self, material: &str) -> Scalar {
+        self.material_batches(material)
+            .fold(scalar_zero(), |total, (_, batch)| total + batch.amount)
+    }
+
+    /// Every material the store holds, in id order.
+    pub fn materials(
+        &self,
+    ) -> impl Iterator<
+        Item = (
+            &str,
+            &BTreeMap<crate::materials_config::BandKey, MaterialBatch>,
+        ),
+    > {
+        self.materials
+            .iter()
+            .map(|(id, batches)| (id.as_str(), batches))
+    }
+
+    /// **Withdraw up to `amount` of `material`, WORST-FIRST on `axis`** — you spend the poor hide
+    /// before the excellent one, which is the only ordering that does not silently burn the player's
+    /// best stock on the first thing they make.
+    ///
+    /// Returns what came out of each batch, so the caller can resolve the drawn reading (the
+    /// amount-weighted average of the draws) without the store having to know what a recipe is. A
+    /// partial take leaves the batch's readings untouched; an emptied batch is pruned, so two stores
+    /// holding the same materials always compare equal.
+    ///
+    /// A batch that does not carry `axis` sorts **last** — it cannot occur (a source's yield row is
+    /// validated to name exactly the material's axes), and spending it last means a mis-named axis
+    /// burns the cheap stock rather than the good.
+    pub fn take_material(
+        &mut self,
+        material: &str,
+        axis: &str,
+        amount: Scalar,
+    ) -> Vec<MaterialDraw> {
+        let mut remaining = amount.max(scalar_zero());
+        let mut drawn = Vec::new();
+        if remaining <= scalar_zero() {
+            return drawn;
+        }
+        let Some(batches) = self.materials.get_mut(material) else {
+            return drawn;
+        };
+        // Worst-first on the named axis, ties broken by the band key so the order is total and the
+        // draw is reproducible.
+        let mut order: Vec<crate::materials_config::BandKey> = batches.keys().cloned().collect();
+        order.sort_by(|a, b| {
+            let reading = |key: &crate::materials_config::BandKey| {
+                batches[key]
+                    .characteristics
+                    .get(axis)
+                    .copied()
+                    .unwrap_or(f32::INFINITY)
+            };
+            reading(a)
+                .partial_cmp(&reading(b))
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.cmp(b))
+        });
+        for key in order {
+            if remaining <= scalar_zero() {
+                break;
+            }
+            let batch = batches.get_mut(&key).expect("key came from this map");
+            let taken = min(remaining, batch.amount);
+            if taken <= scalar_zero() {
+                continue;
+            }
+            batch.amount -= taken;
+            remaining -= taken;
+            drawn.push(MaterialDraw {
+                band: key.clone(),
+                amount: taken,
+                characteristics: batch.characteristics.clone(),
+            });
+            if batch.amount <= scalar_zero() {
+                batches.remove(&key);
+            }
+        }
+        if batches.is_empty() {
+            self.materials.remove(material);
+        }
+        drawn
+    }
+
+    /// **Withdraw from ONE named batch** — the supply network's move, which knows exactly which
+    /// rating it is shipping and must not re-sort by anything. Returns what was actually taken.
+    pub fn take_material_batch(
+        &mut self,
+        material: &str,
+        band: &crate::materials_config::BandKey,
+        amount: Scalar,
+    ) -> Scalar {
+        let Some(batches) = self.materials.get_mut(material) else {
+            return scalar_zero();
+        };
+        let Some(batch) = batches.get_mut(band) else {
+            return scalar_zero();
+        };
+        let taken = min(amount.max(scalar_zero()), batch.amount);
+        batch.amount -= taken;
+        if batch.amount <= scalar_zero() {
+            batches.remove(band);
+        }
+        if batches.is_empty() {
+            self.materials.remove(material);
+        }
+        taken
     }
 }
 
@@ -2408,5 +2634,181 @@ mod tests {
         reported += DemographicFlowAccumulator::accrue(&mut carry, flow);
         reported += DemographicFlowAccumulator::accrue(&mut carry, flow);
         assert_eq!(reported, 3, "5 × 0.6 = 3.0 people");
+    }
+
+    // ---- The material batch map (`docs/plan_crafting_and_materials.md` §1) ----
+
+    /// A fixture material with two axes and two bands, so a reading either side of `0.5` lands in a
+    /// different band and the merge rule has something to refuse to merge.
+    const AXIS_TOUGH: &str = "toughness";
+    const AXIS_SUPPLE: &str = "suppleness";
+    const HIDE: &str = "hide";
+
+    fn readings(tough: f32, supple: f32) -> BTreeMap<String, f32> {
+        BTreeMap::from([
+            (AXIS_TOUGH.to_string(), tough),
+            (AXIS_SUPPLE.to_string(), supple),
+        ])
+    }
+
+    fn reading_of(batch: &MaterialBatch, axis: &str) -> f32 {
+        batch.characteristics.get(axis).copied().expect("axis")
+    }
+
+    /// **THE MERGE RULE, both halves.** Two arrivals in the same band become **one** batch, and the
+    /// surviving reading is the amount-weighted average — *not* either input's.
+    ///
+    /// The liveness half is the value assertion: a store that simply kept the first arrival, or the
+    /// last, would also report one batch, so counting batches alone cannot tell the merge from a
+    /// silent overwrite.
+    #[test]
+    fn two_arrivals_in_one_band_become_one_batch_at_the_weighted_average() {
+        let band = crate::materials_config::BandKey(vec![1, 1]);
+        let mut store = LocalStore::new();
+        store.deposit_material(
+            HIDE,
+            band.clone(),
+            Scalar::from_f32(10.0),
+            &readings(0.60, 0.70),
+        );
+        store.deposit_material(
+            HIDE,
+            band.clone(),
+            Scalar::from_f32(30.0),
+            &readings(0.80, 0.50),
+        );
+
+        let batches: Vec<_> = store.material_batches(HIDE).collect();
+        assert_eq!(batches.len(), 1, "one band, one batch");
+        let (_, batch) = batches[0];
+        assert_eq!(batch.amount, Scalar::from_f32(40.0));
+        // 10 × 0.60 + 30 × 0.80 over 40 = 0.75, which is NEITHER input.
+        assert!(
+            (reading_of(batch, AXIS_TOUGH) - 0.75).abs() < 1e-5,
+            "the batch must read the weighted average, got {}",
+            reading_of(batch, AXIS_TOUGH)
+        );
+        assert!(
+            (reading_of(batch, AXIS_SUPPLE) - 0.55).abs() < 1e-5,
+            "every axis blends, not just the first"
+        );
+        assert_eq!(store.material_total(HIDE), Scalar::from_f32(40.0));
+    }
+
+    /// The other half of the rule: **different bands never merge**, however close the readings. This
+    /// is what stops a mammoth hide being averaged into a hare pelt.
+    #[test]
+    fn two_arrivals_in_different_bands_stay_two_batches() {
+        let mut store = LocalStore::new();
+        store.deposit_material(
+            HIDE,
+            crate::materials_config::BandKey(vec![0, 1]),
+            Scalar::from_f32(10.0),
+            &readings(0.10, 0.90),
+        );
+        store.deposit_material(
+            HIDE,
+            crate::materials_config::BandKey(vec![1, 0]),
+            Scalar::from_f32(10.0),
+            &readings(0.90, 0.10),
+        );
+        assert_eq!(store.material_batches(HIDE).count(), 2);
+        assert_eq!(store.material_total(HIDE), Scalar::from_f32(20.0));
+    }
+
+    /// **Worst-first on the named axis** — the poor hide is spent before the excellent one, and the
+    /// axis the caller names is the one that decides. Both halves are asserted against each other:
+    /// drawing on `toughness` and drawing on `suppleness` must empty *opposite* batches, so an
+    /// implementation that ignored the axis (or sorted by band key) fails one of them.
+    #[test]
+    fn a_withdrawal_spends_the_worst_batch_on_the_named_axis_first() {
+        let tough = crate::materials_config::BandKey(vec![1, 0]);
+        let supple = crate::materials_config::BandKey(vec![0, 1]);
+        let stocked = || {
+            let mut store = LocalStore::new();
+            store.deposit_material(
+                HIDE,
+                tough.clone(),
+                Scalar::from_f32(10.0),
+                &readings(0.9, 0.1),
+            );
+            store.deposit_material(
+                HIDE,
+                supple.clone(),
+                Scalar::from_f32(10.0),
+                &readings(0.1, 0.9),
+            );
+            store
+        };
+
+        let mut store = stocked();
+        let drawn = store.take_material(HIDE, AXIS_TOUGH, Scalar::from_f32(10.0));
+        assert_eq!(drawn.len(), 1, "one batch covered the whole draw");
+        assert_eq!(drawn[0].band, supple, "the poorest TOUGHNESS goes first");
+        assert_eq!(
+            store
+                .material_batches(HIDE)
+                .map(|(band, _)| band.clone())
+                .collect::<Vec<_>>(),
+            vec![tough.clone()],
+            "the tough batch is untouched and the emptied one is pruned"
+        );
+
+        let mut store = stocked();
+        let drawn = store.take_material(HIDE, AXIS_SUPPLE, Scalar::from_f32(10.0));
+        assert_eq!(
+            drawn[0].band, tough,
+            "on the other axis the ordering must reverse, or the axis is being ignored"
+        );
+    }
+
+    /// A partial take leaves the batch's readings alone — an average does not move when a uniform
+    /// part of it is removed — and reports what it actually took.
+    #[test]
+    fn a_partial_withdrawal_leaves_the_batchs_reading_untouched() {
+        let band = crate::materials_config::BandKey(vec![1, 1]);
+        let mut store = LocalStore::new();
+        store.deposit_material(
+            HIDE,
+            band.clone(),
+            Scalar::from_f32(10.0),
+            &readings(0.62, 0.71),
+        );
+
+        let drawn = store.take_material(HIDE, AXIS_TOUGH, Scalar::from_f32(4.0));
+        assert_eq!(drawn.len(), 1);
+        assert_eq!(drawn[0].amount, Scalar::from_f32(4.0));
+        assert!((drawn[0].characteristics[AXIS_TOUGH] - 0.62).abs() < 1e-6);
+
+        let batches: Vec<_> = store.material_batches(HIDE).collect();
+        assert_eq!(batches[0].1.amount, Scalar::from_f32(6.0));
+        assert!(
+            (reading_of(batches[0].1, AXIS_TOUGH) - 0.62).abs() < 1e-6,
+            "removing a uniform part of a batch must not move its average"
+        );
+    }
+
+    /// A draw for more than the store holds takes everything and says so — the shortfall is the
+    /// caller's to report, and there is no partial-batch residue left behind.
+    #[test]
+    fn a_short_withdrawal_empties_the_store_and_reports_what_it_took() {
+        let mut store = LocalStore::new();
+        store.deposit_material(
+            HIDE,
+            crate::materials_config::BandKey(vec![0, 0]),
+            Scalar::from_f32(3.0),
+            &readings(0.2, 0.2),
+        );
+        let drawn = store.take_material(HIDE, AXIS_TOUGH, Scalar::from_f32(8.0));
+        let taken = drawn
+            .iter()
+            .fold(Scalar::zero(), |total, draw| total + draw.amount);
+        assert_eq!(taken, Scalar::from_f32(3.0));
+        assert_eq!(store.material_total(HIDE), Scalar::zero());
+        assert_eq!(
+            store.material_batches(HIDE).count(),
+            0,
+            "an emptied material leaves no husk, so two equal stores compare equal"
+        );
     }
 }

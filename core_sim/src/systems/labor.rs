@@ -91,6 +91,10 @@ pub struct LaborConfigs<'w> {
     pub combat: Res<'w, CombatConfigHandle>,
     pub creatures: Res<'w, CreaturesConfigHandle>,
     pub equipment: Res<'w, EquipmentConfigHandle>,
+    /// The materials table — needed to turn a source's stated reading into the batch's merge key
+    /// (`docs/plan_crafting_and_materials.md` §1). The *rows* come from the source's own config; only
+    /// the banding lives here, because deriving a band needs the material's axis list.
+    pub materials: Res<'w, crate::materials_config::MaterialsConfigHandle>,
 }
 
 /// Resolve each band's per-worker labor yields (Early-Game Labor, slice 3a). Replaces the retired
@@ -156,6 +160,9 @@ pub fn advance_labor_allocation(
     // **The minimal TOE** (`docs/plan_hunt_through_combat.md` §4.8) — the two-tier table and the
     // durability dials, resolved once. What varies per band is only its `BandEquipment` *wear*.
     let equipment_cfg = configs.equipment.get();
+    // **The materials table** (`docs/plan_crafting_and_materials.md` §1) — resolved once, because it
+    // decides only how a stated reading BANDS. What each source yields is that source's own config.
+    let materials_cfg = configs.materials.get();
     // The **equipped** tiers of the two carry kits. `labor_config.json`'s shipped rates ARE the
     // kitted tiers (the game has always run kitted); each kit's own
     // `unequipped_per_worker_biomass_capacity` is the step down a band takes when that kit is gone.
@@ -707,6 +714,25 @@ pub fn advance_labor_allocation(
                         if trade_goods > scalar_zero() {
                             cohort.stores.add(TRADE_GOODS, trade_goods);
                         }
+                        // **The MATERIAL account of the same managed harvest**
+                        // (`docs/plan_crafting_and_materials.md` §2) — a sown flax Field is the whole
+                        // point of sowing flax. It reads the harvest in **biomass**
+                        // ([`crate::forage::field_harvest_biomass`]) rather than scaling off one of
+                        // the three currencies, because a cash Field's provisions are `0` and there
+                        // would be nothing to scale. A Field's basket is 100% its crop, so this
+                        // credits exactly that crop's reading and nothing else.
+                        crate::materials_config::credit_material_yield(
+                            &mut cohort.stores,
+                            &materials_cfg,
+                            &crate::forage::patch_material_yields(
+                                patch,
+                                &tile_composition,
+                                &flora,
+                                &labor.forage,
+                            ),
+                            crate::forage::field_harvest_biomass(patch, &labor.forage, workers),
+                            mult_f,
+                        );
                         // **The arrival schedule — computed POST-take, unlike `realized`.** It
                         // answers "when does the next food land", so it must start from the state the
                         // turn leaves behind: projecting from the pre-take state would re-promise the
@@ -1004,6 +1030,25 @@ pub fn advance_labor_allocation(
                             cohort.stores.add(TRADE_GOODS, trade_goods);
                         }
                     }
+                    // **The MATERIAL account of the same take** (`docs/plan_crafting_and_materials.md`
+                    // §2) — the bast, boll and stem in what the crew carried off the patch. It is
+                    // **decomposed** rather than averaged: one credit per species in the basket, each
+                    // keeping its own exact reading, because averaging two plants' characteristic
+                    // vectors would invent a plant that is not growing there
+                    // ([`crate::forage::patch_material_yields`]). Credits that land in the same band
+                    // merge in the store, which is where merging belongs.
+                    crate::materials_config::credit_material_yield(
+                        &mut cohort.stores,
+                        &materials_cfg,
+                        &crate::forage::patch_material_yields(
+                            patch,
+                            &tile_composition,
+                            &flora,
+                            &labor.forage,
+                        ),
+                        take,
+                        mult_f,
+                    );
                     // Sustainable = one turn's MSY of the patch at its **pre-take** biomass, in
                     // provisions (same conversion + output multiplier as the actual take), against
                     // the patch's **own** curve (`patch_ecology`) — a tended patch's sustainable line
@@ -1451,6 +1496,16 @@ pub fn advance_labor_allocation(
                         if pen_trade > scalar_zero() {
                             cohort.stores.add(TRADE_GOODS, pen_trade);
                         }
+                        // **A pen changes the INTENSITY, never the PRODUCT** — so the keeper is paid
+                        // this herd's own material rows too, off what was carried home, exactly as
+                        // the range take is. Penning an animal does not change what it is made of.
+                        crate::materials_config::credit_material_yield(
+                            &mut cohort.stores,
+                            &materials_cfg,
+                            fauna.hunt_materials_for(&herd.species),
+                            take.carried,
+                            mult_f,
+                        );
                         let tended = provisions.to_f32();
                         // Accrue the extension ring **after** the take (mirroring `accrue_corral`), so
                         // this turn pays exactly the dipped yield the forecast promised; the completed
@@ -1764,6 +1819,17 @@ pub fn advance_labor_allocation(
                     if trade_goods > scalar_zero() {
                         cohort.stores.add(TRADE_GOODS, trade_goods);
                     }
+                    // **The MATERIAL account of the same take** (`docs/plan_crafting_and_materials.md`
+                    // §2) — hide, sinew and bone, off the meat **carried home** exactly as the two
+                    // accounts above are, so a party that killed a mammoth and hauled a leg of it
+                    // brings back a leg's worth of hide. A take that hauls nothing home yields none.
+                    crate::materials_config::credit_material_yield(
+                        &mut cohort.stores,
+                        &materials_cfg,
+                        fauna.hunt_materials_for(&herd.species),
+                        take.carried,
+                        mult_f,
+                    );
                     // **The LONG-RUN sustainable rate** — one turn's net regrowth at the herd's
                     // **pre-take** biomass (the herd's OWN ecology/capacity: a tamed herd grows 1.5×
                     // faster, so its sustainable skim is 1.5× a wild one's).
@@ -2767,6 +2833,7 @@ mod labor_yield_tests {
         world.insert_resource(crate::combat_config::CombatConfigHandle::default());
         world.insert_resource(crate::creatures_config::CreaturesConfigHandle::default());
         world.insert_resource(crate::equipment_config::EquipmentConfigHandle::default());
+        world.insert_resource(crate::materials_config::MaterialsConfigHandle::default());
         world.insert_resource(FactionInventory::default());
         world.insert_resource(DiscoveryProgressLedger::default());
         world.insert_resource(CommandEventLog::default());

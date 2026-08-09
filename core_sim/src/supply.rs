@@ -19,8 +19,9 @@ use bevy::math::UVec2;
 use bevy::prelude::*;
 
 use crate::{
-    components::{PopulationCohort, ResidentBand, Tile},
+    components::{MaterialBatch, PopulationCohort, ResidentBand, Tile},
     grid_utils::wrapped_distance_sq,
+    materials_config::BandKey,
     orders::FactionId,
     resources::{SimulationConfig, TileRegistry},
     scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar},
@@ -47,6 +48,15 @@ const MIN_NETWORK_MEMBERS: usize = 2;
 /// First multi-band network's id (singletons read `0`).
 const FIRST_NETWORK_ID: u32 = 1;
 
+/// **What a material batch is balanced AS** — one material at one per-axis band.
+///
+/// This is the whole of "materials never pool as a scalar": the balancer is run once per *rating*,
+/// not once per material, so a mammoth hide (`toughness excellent`) and a hare pelt
+/// (`toughness poor`) are two different commodities to it and can never be averaged into each
+/// other. Inside one rating the exact readings **are** blended, and that is the store's own merge
+/// rule — the same thing that happens when two of the band's own hunts land in the same band.
+type MaterialKey = (String, BandKey);
+
 /// One band participating in the supply network this turn (a snapshot taken before any transfers,
 /// so all flows resolve against the turn's opening stores).
 struct Node {
@@ -57,6 +67,8 @@ struct Node {
     weight: Scalar,
     /// Opening goods store (commodity → quantity), sorted for determinism.
     stores: Vec<(String, Scalar)>,
+    /// Opening **material** batches, keyed by rating. Sorted for determinism, exactly as `stores` is.
+    materials: BTreeMap<MaterialKey, MaterialBatch>,
 }
 
 impl Node {
@@ -65,6 +77,13 @@ impl Node {
             .iter()
             .find(|(k, _)| k == commodity)
             .map(|(_, v)| *v)
+            .unwrap_or_else(scalar_zero)
+    }
+
+    fn material_amount(&self, key: &MaterialKey) -> Scalar {
+        self.materials
+            .get(key)
+            .map(|batch| batch.amount)
             .unwrap_or_else(scalar_zero)
     }
 }
@@ -177,6 +196,15 @@ pub fn balance_supply_networks(
                 .iter()
                 .map(|(k, v)| (k.to_string(), v))
                 .collect(),
+            materials: cohort
+                .stores
+                .materials()
+                .flat_map(|(material, batches)| {
+                    batches.iter().map(move |(band, batch)| {
+                        ((material.to_string(), band.clone()), batch.clone())
+                    })
+                })
+                .collect(),
         });
     }
     if nodes.len() < 2 {
@@ -263,6 +291,9 @@ pub fn balance_supply_networks(
 
     // Compute all transfers against the opening snapshot, then apply them once at the end.
     let mut applied: Vec<(Entity, String, Scalar)> = Vec::new();
+    /// `(band, rating, signed amount, the reading a RECEIVED amount arrives at)`.
+    type MaterialTransfer = (Entity, MaterialKey, Scalar, BTreeMap<String, f32>);
+    let mut applied_materials: Vec<MaterialTransfer> = Vec::new();
     for members in components.values() {
         if members.len() < MIN_NETWORK_MEMBERS {
             continue;
@@ -286,11 +317,79 @@ pub fn balance_supply_networks(
                 }
             }
         }
+
+        // **Materials pool per RATING, never as a scalar.** One `balance_commodity` run per
+        // `(material, band key)` — see [`MaterialKey`] — so the balancer never sees two different
+        // ratings of one material as the same thing. What moves keeps its exact characteristics: a
+        // sender's remaining half is untouched (an average does not move when a uniform part of it
+        // is removed) and the shipped half arrives carrying the senders' own amount-weighted
+        // reading, which the receiver then merges by the store's ordinary rule.
+        let mut ratings: BTreeSet<&MaterialKey> = BTreeSet::new();
+        for &m in members {
+            ratings.extend(nodes[m].materials.keys());
+        }
+        for rating in ratings {
+            let stores: Vec<Scalar> = members
+                .iter()
+                .map(|&m| nodes[m].material_amount(rating))
+                .collect();
+            let deltas = balance_commodity(&weights, &stores, throughput, friction, min_transfer);
+            // The reading everything shipped this turn carries — the amount-weighted average of the
+            // **senders'**, which is one rating's worth of readings and therefore cannot smear a
+            // mammoth hide into a hare pelt. Resolved before any delta is applied, off the same
+            // opening snapshot every other flow reads.
+            let mut shipped_total = scalar_zero();
+            let mut shipped_reading: BTreeMap<String, f32> = BTreeMap::new();
+            for (k, &m) in members.iter().enumerate() {
+                if deltas[k] >= scalar_zero() {
+                    continue;
+                }
+                let sent = -deltas[k];
+                let Some(batch) = nodes[m].materials.get(rating) else {
+                    continue;
+                };
+                shipped_total += sent;
+                for (axis, reading) in &batch.characteristics {
+                    *shipped_reading.entry(axis.clone()).or_insert(0.0) += reading * sent.to_f32();
+                }
+            }
+            if shipped_total > scalar_zero() {
+                for value in shipped_reading.values_mut() {
+                    *value /= shipped_total.to_f32();
+                }
+            }
+            for (k, &m) in members.iter().enumerate() {
+                if deltas[k] == scalar_zero() {
+                    continue;
+                }
+                applied_materials.push((
+                    nodes[m].entity,
+                    rating.clone(),
+                    deltas[k],
+                    shipped_reading.clone(),
+                ));
+            }
+        }
     }
 
     for (entity, commodity, delta) in applied {
         if let Ok((_, mut cohort)) = cohorts.get_mut(entity) {
             cohort.stores.add(&commodity, delta);
+        }
+    }
+
+    for (entity, (material, band), delta, reading) in applied_materials {
+        let Ok((_, mut cohort)) = cohorts.get_mut(entity) else {
+            continue;
+        };
+        if delta < scalar_zero() {
+            // A send comes out of exactly the batch it was priced against — never re-sorted, since
+            // the rating is already named.
+            cohort.stores.take_material_batch(&material, &band, -delta);
+        } else {
+            cohort
+                .stores
+                .deposit_material(&material, band, delta, &reading);
         }
     }
 }

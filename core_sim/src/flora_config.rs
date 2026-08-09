@@ -139,7 +139,7 @@ impl CultivationCeiling {
 /// (`labor_config`'s `forage.provisions_per_biomass` and `forage.market.trade_goods_per_biomass`,
 /// fodder `0.0`), so today's behaviour is the degenerate case and the slice cannot move the economy.
 /// **Parsed and validated only** — nothing reads it in F1.
-#[derive(Debug, Clone, Copy, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct YieldVector {
     /// Human food per unit biomass — the shipped forage path.
@@ -148,6 +148,15 @@ pub struct YieldVector {
     pub fodder_per_biomass: f32,
     /// Trade value per unit biomass — what differentiates today's single flat scalar.
     pub trade_goods_per_biomass: f32,
+    /// **What the plant is MADE OF** — bast, cordage fibre — per unit of biomass gathered
+    /// (`docs/plan_crafting_and_materials.md` §2). **The same type, and the same shape, the fauna
+    /// roster's `hunt_yield.materials` carries**: the yield edge is deliberately neither
+    /// plant-shaped nor animal-shaped, and a deposit's will be the same again.
+    ///
+    /// An empty list is the ordinary case — most plants are food and nothing else. Validated
+    /// against the materials table at load
+    /// ([`crate::materials_config::MaterialsConfig::validate_yield`]).
+    pub materials: Vec<crate::materials_config::MaterialYieldDef>,
 }
 
 impl YieldVector {
@@ -658,6 +667,35 @@ impl FloraConfig {
 
         Ok(())
     }
+
+    /// Reconcile every species' material yield with the materials table — the plant twin of
+    /// [`crate::fauna_config::FaunaConfig::validate_against_materials`], and the *same* check, since
+    /// the yield edge is the same type on both configs. Run by [`load_flora_config_from_env`] with
+    /// the loaded table passed in so it keeps one copy.
+    pub fn validate_against_materials(
+        &self,
+        materials: &crate::materials_config::MaterialsConfig,
+    ) -> Result<(), crate::materials_config::MaterialYieldError> {
+        let mut keys: Vec<&String> = self.species.keys().collect();
+        keys.sort_unstable();
+        for key in keys {
+            materials.validate_yield(
+                &format!("species.{key}.yield"),
+                &self.species[key].yield_.materials,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// **The material rows a species gives**, by config key — the plant twin of
+    /// [`crate::fauna_config::FaunaConfig::hunt_materials_for`]. Empty for an unknown key, which is
+    /// the honest answer rather than a panic (a test fixture may name a synthetic species).
+    pub fn materials_for(&self, species: &str) -> &[crate::materials_config::MaterialYieldDef] {
+        self.species
+            .get(species)
+            .map(|def| def.yield_.materials.as_slice())
+            .unwrap_or_default()
+    }
 }
 
 /// Normalize the affinity weights into per-biome shares. `share = weight / Σ weights hosting the
@@ -760,6 +798,9 @@ pub enum FloraConfigError {
     },
     #[error("failed to parse flora config: {0}")]
     Parse(#[from] serde_json::Error),
+    /// The cross-config half: a species' `yield.materials` row that the materials table refuses.
+    #[error("invalid flora config: {0}")]
+    MaterialYield(#[from] crate::materials_config::MaterialYieldError),
     #[error("invalid flora config: species `{species}` has an empty display_name")]
     EmptyDisplayName { species: String },
     #[error(
@@ -860,9 +901,12 @@ impl FloraConfigMetadata {
 /// [`FloraConfig::validate_against_forage`] against the caller's `forage.capacity_by_biome`, so a
 /// roster that would leave a food-bearing biome nameless — or claim barren ground — is a boot
 /// panic, not a silent swap to the builtin ([`crate::config_load::resolve_config`]). The forage
-/// table is taken as an argument rather than re-read here so it has exactly one copy.
+/// table is taken as an argument rather than re-read here so it has exactly one copy — and so is the
+/// materials table, against which every species' `yield.materials` is reconciled
+/// ([`FloraConfig::validate_against_materials`]).
 pub fn load_flora_config_from_env(
     forage_capacity_by_biome: &HashMap<TerrainType, f32>,
+    materials: &crate::materials_config::MaterialsConfig,
 ) -> (Arc<FloraConfig>, FloraConfigMetadata) {
     let (config, source) = load_config_from_env(
         "FLORA_CONFIG_PATH",
@@ -872,6 +916,7 @@ pub fn load_flora_config_from_env(
         |path| -> Result<FloraConfig, FloraConfigError> {
             let config = FloraConfig::from_file(path)?;
             config.validate_against_forage(forage_capacity_by_biome)?;
+            config.validate_against_materials(materials)?;
             Ok(config)
         },
     );
@@ -886,6 +931,13 @@ pub fn load_flora_config_from_env(
                 target: "shadow_scale::config",
                 error = %err,
                 "flora_config.builtin_coverage_broken"
+            );
+        }
+        if let Err(err) = config.validate_against_materials(materials) {
+            tracing::error!(
+                target: "shadow_scale::config",
+                error = %err,
+                "flora_config.builtin_material_yield_broken"
             );
         }
     }

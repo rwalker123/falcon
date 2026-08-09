@@ -244,9 +244,11 @@ const CONFIG_RESOURCES: [&str; 42] = [
 
 /// The remaining config handles, split out only because Rust array consts need a fixed length and
 /// one 50-entry literal reads worse than two.
-const CONFIG_RESOURCES_CONT: [&str; 15] = [
+const CONFIG_RESOURCES_CONT: [&str; 17] = [
     "EquipmentConfigHandle",
     "EquipmentConfigMetadata",
+    "MaterialsConfigHandle",
+    "MaterialsConfigMetadata",
     "StartProfileKnowledgeTagsHandle",
     "StartProfileKnowledgeTagsMetadata",
     "StartProfilesHandle",

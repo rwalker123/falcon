@@ -958,6 +958,8 @@ fn spawn_standard_world() -> App {
         .insert_resource(core_sim::CreaturesConfigHandle::default());
     app.world
         .insert_resource(core_sim::EquipmentConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::MaterialsConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.run_system_once(spawn_initial_forage);
     app

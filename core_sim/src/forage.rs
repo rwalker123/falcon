@@ -819,6 +819,49 @@ fn basket_rate(
     }
 }
 
+/// **The MATERIAL account of the same basket** — what a harvest of this patch is *made of*, per unit
+/// of biomass (`docs/plan_crafting_and_materials.md` §2).
+///
+/// It cannot ride [`basket_rate`]'s closure the way the other three accounts do, and the reason is
+/// the model rather than the plumbing: food, fodder and trade are interchangeable **scalars**, so a
+/// basket averages them into one number, while a material carries a **characteristic vector** and
+/// averaging two species' would invent a plant that is not growing there. So the basket is
+/// *decomposed* instead of summed: one row per species per material, each keeping that species' own
+/// exact reading and carrying its share in the rate. Rows that land in the same band merge in the
+/// store, which is where merging belongs.
+///
+/// Reads the patch's **standing** rung and applies the same favored-crop conversion gain the other
+/// three accounts get — tending is knowing your crop, whichever account it pays into.
+pub fn patch_material_yields(
+    patch: &ForagePatch,
+    tile_composition: &[FloraShare],
+    flora: &FloraConfig,
+    forage: &ForageLaborConfig,
+) -> Vec<crate::materials_config::MaterialYieldDef> {
+    let rung = standing_rung(patch);
+    let composition = composition_for_rung(patch, tile_composition, forage, rung);
+    let favored_gain = favored_conversion_gain(rung, forage);
+    let mut rows = Vec::new();
+    for entry in composition.iter() {
+        let Some(def) = flora.species.get(&entry.species) else {
+            continue;
+        };
+        let gain = if patch.species.as_deref() == Some(entry.species.as_str()) {
+            favored_gain
+        } else {
+            NO_CONVERSION_GAIN
+        };
+        for row in &def.yield_.materials {
+            rows.push(crate::materials_config::MaterialYieldDef {
+                material: row.material.clone(),
+                per_biomass: entry.share * row.per_biomass * gain,
+                characteristics: row.characteristics.clone(),
+            });
+        }
+    }
+    rows
+}
+
 /// **THE conversion seam** — how well one unit of this patch's biomass turns into food
 /// (`docs/plan_flora_roster.md` §4.3): the share-weighted average of the patch's **effective** basket
 /// ([`patch_composition`]), with the tended rung's conversion gain on the favored crop's term.
@@ -1855,6 +1898,28 @@ pub(crate) fn field_provisions(
         * forage.cultivation.field_provisions_per_biomass
         * patch_species_quality(patch, tile_composition, flora, forage)
         * output_multiplier
+}
+
+/// **What a sown Field hands over each turn, stated in BIOMASS** — the managed harvest before it is
+/// routed into any one currency, capped by what the crew can carry.
+///
+/// The three scalar accounts each convert this through their own rate, so none of them ever needs
+/// the biomass itself. The **material** account does: a material's `per_biomass` is a rate on the
+/// crop rather than on the currency it would otherwise have been sold as, and a cash Field's
+/// provisions are `0`, so there is no currency to scale off. Same `min(production, collection)` shape
+/// the other three run — an understaffed Field brings home less of everything, in step.
+///
+/// A Field is never drawn down, so this is a *rate on the standing crop* and `patch.biomass` is
+/// unchanged by it.
+pub(crate) fn field_harvest_biomass(
+    patch: &ForagePatch,
+    forage: &ForageLaborConfig,
+    workers: u32,
+) -> f32 {
+    let production = patch.biomass * forage.cultivation.field_provisions_per_biomass;
+    let collection = workers as f32
+        * forage_per_worker_biomass(forage.per_worker_biomass_capacity, MANAGED_HARVEST_SEASON);
+    production.min(collection)
 }
 
 /// The **projected** fodder conversion rate — the projected basket's `yield.fodder_per_biomass`

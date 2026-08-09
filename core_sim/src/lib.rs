@@ -51,6 +51,7 @@ mod labor_config;
 pub mod log_stream;
 mod map_preset;
 mod mapgen;
+mod materials_config;
 pub mod metrics;
 pub mod network;
 mod orders;
@@ -104,10 +105,10 @@ pub use components::{
     available_workers, floor_is_valid, floor_overdraws, raid_is_recurring, BandEquipment, BandId,
     BandTravel, DeathCause, DemographicFlowAccumulator, ElementKind, Expedition, ExpeditionMission,
     ExpeditionPhase, Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget,
-    LocalStore, LogisticsLink, MoraleCause, PendingMigration, PopulationCohort, PowerNode,
-    ResidentBand, Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink, YieldRange,
-    DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE,
-    TRADE_GOODS,
+    LocalStore, LogisticsLink, MaterialBatch, MaterialDraw, MoraleCause, PendingMigration,
+    PopulationCohort, PowerNode, ResidentBand, Settlement, SourceYield, StartingUnit, Tile,
+    TownCenter, TradeLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD,
+    NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE, TRADE_GOODS,
 };
 pub use config_load::ConfigLoadError;
 pub use config_override::{
@@ -235,6 +236,11 @@ pub use labor_config::{
     BUILTIN_LABOR_CONFIG, NO_FORAGE_CAPACITY,
 };
 pub use map_preset::{ErosionConfig, MapPreset, MapPresets, MapPresetsHandle, BUILTIN_MAP_PRESETS};
+pub use materials_config::{
+    credit_material_yield, load_materials_config_from_env, BandKey, CharacteristicBand,
+    HandWorking, MaterialDef, MaterialYieldDef, MaterialYieldError, MaterialsConfig,
+    MaterialsConfigError, MaterialsConfigHandle, MaterialsConfigMetadata, BUILTIN_MATERIALS_CONFIG,
+};
 pub use sedentarization::{
     sedentarization_tick, SedentarizationEntry, SedentarizationScore, SedentarizationStage,
 };
@@ -461,15 +467,24 @@ pub fn build_headless_app() -> App {
     let (visibility_config, visibility_metadata) =
         visibility_config::load_visibility_config_from_env();
     let visibility_handle = visibility_config::VisibilityConfigHandle::new(visibility_config);
-    let (fauna_config, fauna_metadata) = fauna_config::load_fauna_config_from_env();
+    // **The materials table loads FIRST of the three**, because both food webs' yield edges are
+    // reconciled against it: a species (plant or animal) naming a material that does not exist, or
+    // stating a reading on an axis that material does not declare, is a boot panic rather than a
+    // source that silently yields nothing (`docs/plan_crafting_and_materials.md` §2).
+    let (materials_config, materials_metadata) = materials_config::load_materials_config_from_env();
+    let materials_handle = materials_config::MaterialsConfigHandle::new(materials_config.clone());
+    let (fauna_config, fauna_metadata) =
+        fauna_config::load_fauna_config_from_env(&materials_config);
     let fauna_handle = fauna_config::FaunaConfigHandle::new(fauna_config);
     let (labor_config, labor_metadata) = labor_config::load_labor_config_from_env();
     // The flora roster is validated AGAINST the human food web's own capacity table — every
     // food-bearing biome must be named, and no named plant may claim barren ground
-    // (`FloraConfig::validate_against_forage`). The table is passed in rather than re-read so it
-    // keeps exactly one copy.
-    let (flora_config, flora_metadata) =
-        flora_config::load_flora_config_from_env(&labor_config.forage.capacity_by_biome);
+    // (`FloraConfig::validate_against_forage`) — and against the materials table beside it. Both
+    // tables are passed in rather than re-read so each keeps exactly one copy.
+    let (flora_config, flora_metadata) = flora_config::load_flora_config_from_env(
+        &labor_config.forage.capacity_by_biome,
+        &materials_config,
+    );
     let flora_handle = flora_config::FloraConfigHandle::new(flora_config);
     let labor_handle = labor_config::LaborConfigHandle::new(labor_config);
     let (ladder_config, ladder_metadata) = intensification::load_intensification_ladder_from_env();
@@ -564,6 +579,8 @@ pub fn build_headless_app() -> App {
         .insert_resource(CrisisOverlayCache::default())
         .insert_resource(visibility_handle)
         .insert_resource(visibility_metadata)
+        .insert_resource(materials_handle)
+        .insert_resource(materials_metadata)
         .insert_resource(fauna_handle)
         .insert_resource(fauna_metadata)
         .insert_resource(flora_handle)
