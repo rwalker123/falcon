@@ -230,16 +230,30 @@ what makes that a fork rather than a slogan.
 
 A new `settle` block in `expedition_config.json`, beside `hunt` and `replenish`. Opening values are
 dials to be tuned live, sized against the ~30-person / ~16-worker starting band
-(`plan_early_game_labor.md` §Starting state).
+(`plan_early_game_labor.md` §Starting state). **Only two numbers below are derived rather than
+chosen** — `per_capita_draw` (0.16) and `food_reserve_days` (20), both already in
+`demographics_config.json`; the rest are opening positions that want playtest. The failure columns
+say which way each one breaks, because that is what tells you which direction to move it.
 
-| Lever | Opening value | What it does |
-|---|---|---|
-| `min_founding_workers` | 4 | Floor on the founding party's working-age at the moment of founding (Q2). |
-| `parent_min_workers` | 6 | Workers the parent must still have after the split is permanent (Q2). |
-| `parent_max_dependency_ratio` | 1.0 | Parent's post-split `(children + elders) / working` ceiling. The default start is ≈0.82 (30/55/15), so this leaves real headroom before it bites (Q2). |
-| `establishment_turns` | 10 | The window the seed larder must cover beyond travel (Q4). |
-| `breeding_stock_fraction_max` | 0.5 | Most of a pen's stock that may leave with the party (Q4). |
-| `min_site_habitability` | *(matches the settle-site derivation threshold)* | The founding tile must be somewhere people can live. |
+| Lever | Opening | What it means | Too low | Too high |
+|---|---|---|---|---|
+| `min_founding_workers` | **4** | The founding party must hold at least this many **working-age** people at the moment of founding (Q2). | One or two people can found a band that cannot staff a single food role — a death notice with a marker on it. | At 8+ a split costs half the home workforce, so the verb ships and is never used. |
+| `parent_min_workers` | **6** | Workers the **parent** must still have once the split is permanent (Q2). | The home band can be hollowed out to crew a colony, killing both. | Only an already-large band can split, which pushes the first fission very late. |
+| `parent_max_dependency_ratio` | **1.0** | The parent's post-split `(children + elders) / working` ceiling — at most one dependent per worker. The #431 spiral guard. | The default start is ≈0.82 (30/55/15), so anything under ~0.9 means you can barely ever split. | At 1.5 you can leave home with three workers feeding five mouths — the spiral, arranged deliberately. |
+| `establishment_turns` | **20** | Turns of food the seed larder must cover **after arrival**, on top of the walk: `total_party_size × per_capita_draw × (distance + establishment_turns)` (Q4). How long the colony has to bring its own forage and hunt income up. | Every colony starves on arrival however good the tile is. | The dowry guts the parent's larder, so splitting is gated on food you rarely have. |
+| `breeding_stock_fraction_max` | **0.5** | The most of a pen's stock that may leave with the party (Q4). | At 0.1 the animals that go cannot breed a viable herd — pastoral colonies are impossible. | At 1.0 one command empties a pen the player spent many turns filling. |
+| `min_site_habitability` | *(reuse)* | The founding tile must be somewhere people can live. **Not a new number** — settle-site placement already derives this threshold, and a second one here would drift from it. | — | — |
+
+**`establishment_turns` defaults to 20 to match `startup.food_reserve_days`.** Worldgen already
+answers *how much food does a brand-new band need in order not to immediately die* — it seeds every
+band it spawns with 20 turns of reserve (`demographics_config.json`, `startup.food_reserve_days`).
+Choosing a different number here would be a second, quieter answer to the same question, which is the
+drift the `per_capita_draw` reuse below exists to avoid. It stays a **separate** lever only so
+splitting can be priced above or below worldgen's gift as a balance decision, not by accident.
+
+*What that costs in practice:* a party of 6 walking 8 tiles draws `6 × 0.16 × 28 ≈ 27` food, against
+a healthy 30-person band's `30 × 0.16 × 20 = 96`. Under a third of a full larder — a subtraction the
+player feels, not a prohibition.
 
 Deliberately **not** levers: the seed larder's consumption rate (reuses
 `demographics_config.json` → `consumption.per_capita_draw`) and the party size bound (unchanged — the
