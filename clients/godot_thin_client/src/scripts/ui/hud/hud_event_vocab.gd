@@ -106,6 +106,13 @@ const RUNG_BY_KIND := {
 	"predator_raid": RUNG_ALERT,
 	"hunt_danger": RUNG_ALERT,
 	KIND_SYSTEM: RUNG_ALERT,
+	# **A FOUNDING IS AN ALERT, AND `expedition_arrived` SITTING AT NOTABLE TWO LINES DOWN IS WHY THIS
+	# NEEDS SAYING.** The Notable rung is for things that happen to a band as a matter of course — a
+	# death, a migration, a party reaching its objective. A founding is the opposite on every count:
+	# rare, player-initiated, and the first act in the band economy that cannot be undone
+	# (`docs/plan_band_fission.md` §Q6, issue #510). The same kind carries the command's REFUSALS, and
+	# a refused irreversible order is exactly as loud as a taken one.
+	"band_founded": RUNG_ALERT,
 	# Notable — the world changed in a way worth knowing.
 	"died": RUNG_NOTABLE,
 	"migrated": RUNG_NOTABLE,

@@ -15,14 +15,19 @@
 //!
 //! And the reconcile pass's own guard: a resident band is live whether or not its tile resolves, so
 //! an unresolvable `current_tile` never routes the band through the stale sweep.
+//!
+//! Plus the founding seed (`attach_band_from_source`): a colony carries the culture of the band
+//! that sent it, mints its own character offset, and parents on the province it landed in. The
+//! fixtures stage a real divergence first, because every layer on a fresh manager is the baseline
+//! and both candidate seeds would otherwise give the same answer.
 
 use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::{Entity, With};
 use core_sim::{
     build_headless_app, recapture_snapshot_in_place, reconcile_band_culture_layers,
-    scalar_from_f32, BandId, CultureCorruptionConfig, CultureLayerScope, CultureManager,
-    CultureOwner, CultureTensionKind, InfluencerCultureResonance, PopulationCohort, ResidentBand,
-    SimulationTick, SnapshotHistory, CULTURE_TRAIT_AXES,
+    scalar_from_f32, seeded_modifiers_for_band, BandId, CultureCorruptionConfig, CultureLayerScope,
+    CultureManager, CultureOwner, CultureTensionKind, InfluencerCultureResonance, PopulationCohort,
+    ResidentBand, SimulationTick, SnapshotHistory, CULTURE_TRAIT_AXES,
 };
 
 /// The axis every test below writes; any single axis would do, the rollup is per-axis.
@@ -272,6 +277,147 @@ fn band_layers_survive_a_checkpoint_round_trip() {
     assert_eq!(restored.scope, CultureLayerScope::Band);
     assert_eq!(restored.parent, Some(region));
     assert!((restored.traits.values()[AXIS].to_f32() - 0.7).abs() < 1e-4);
+}
+
+/// **A colony carries the culture of the band that sent it, not of the ground it landed on.**
+///
+/// The parent is **staged into a real divergence first** — its values are pushed a full unit clear
+/// of both provinces — because on a fresh manager every layer is still neutral and a colony seeded
+/// from either source would land on the same numbers, so the test would pass without asserting
+/// anything. The destination province is pinned in the opposite direction for the same reason.
+///
+/// The lag half is the point of parenting on the destination: the colony *starts* as its parent and
+/// then chases the locals at the band scope's elasticity, exactly as a band that walked there does.
+#[test]
+fn a_colony_seeded_from_its_parent_starts_as_the_parent_and_then_chases_its_new_province() {
+    const PARENT_VALUE: f32 = 1.5;
+    let mut manager = manager_from_json(0.2, 9.0, 9.0, 99, 99, 0.0);
+    manager.ensure_global();
+    let home = manager.upsert_regional(1);
+    let destination = manager.upsert_regional(2);
+    manager
+        .regional_layer_mut_by_region(2)
+        .expect("regional layer exists")
+        .traits
+        .modifier_mut()[AXIS] = scalar_from_f32(-1.0);
+    reconcile(&mut manager, 1);
+
+    let parent = BandId(31);
+    manager.attach_band(parent, home);
+    set_band_values(&mut manager, parent, PARENT_VALUE);
+
+    let destination_value = region_axis(&manager, 2);
+    assert!(
+        (PARENT_VALUE - destination_value).abs() > 1.0,
+        "the fixture must stage a real divergence between the parent ({PARENT_VALUE}) and the \
+         destination province ({destination_value}), or a colony seeded from either source looks \
+         the same and the test is vacuous"
+    );
+
+    let colony = BandId(32);
+    manager.attach_band_from_source(colony, destination, parent);
+
+    let seeded = band_axis(&manager, colony);
+    assert!(
+        (seeded - PARENT_VALUE).abs() < 1e-3,
+        "the colony opens as its parent ({PARENT_VALUE}), got {seeded}"
+    );
+    assert!(
+        (seeded - destination_value).abs() > 1.0,
+        "…and NOT as the province it landed in ({destination_value})"
+    );
+    assert_eq!(
+        manager
+            .band_layer_by_owner(CultureOwner::from_band(colony))
+            .expect("the colony owns a layer")
+            .parent,
+        Some(destination),
+        "the colony is parented on the province it was founded in, so it chases the locals"
+    );
+
+    reconcile(&mut manager, 2);
+    let after_one = band_axis(&manager, colony);
+    assert!(
+        (after_one - destination_value).abs() < (seeded - destination_value).abs(),
+        "one turn moves the colony toward its new province"
+    );
+    assert!(
+        (after_one - destination_value).abs() > 0.5,
+        "…but must not arrive: a founding lags exactly as a migration does, got {after_one} \
+         against {destination_value}"
+    );
+}
+
+/// **A colony is not a clone of its parent.** It inherits the traits and mints its *own* character
+/// offset — inheriting that too would fix the two bands together forever, since the offset is the
+/// only reason any two bands diverge at all.
+#[test]
+fn a_colony_carries_its_own_character_offset() {
+    const AMPLITUDE: f32 = 0.2;
+    let mut manager = manager_from_json(1.0, 9.0, 9.0, 99, 99, AMPLITUDE);
+    manager.ensure_global();
+    let region = manager.upsert_regional(1);
+
+    let parent = BandId(41);
+    let colony = BandId(42);
+    manager.attach_band(parent, region);
+    set_band_values(&mut manager, parent, 0.9);
+    manager.attach_band_from_source(colony, region, parent);
+
+    let parent_modifier = *manager
+        .band_layer_by_owner(CultureOwner::from_band(parent))
+        .expect("parent layer")
+        .traits
+        .modifier();
+    let colony_modifier = *manager
+        .band_layer_by_owner(CultureOwner::from_band(colony))
+        .expect("colony layer")
+        .traits
+        .modifier();
+    let expected = seeded_modifiers_for_band(colony, AMPLITUDE);
+    for idx in 0..CULTURE_TRAIT_AXES {
+        assert!(
+            (colony_modifier[idx].to_f32() - expected[idx].to_f32()).abs() < 1e-4,
+            "the colony's offset is its own seeded character, axis {idx}"
+        );
+    }
+    let spread: f32 = (0..CULTURE_TRAIT_AXES)
+        .map(|idx| (colony_modifier[idx].to_f32() - parent_modifier[idx].to_f32()).abs())
+        .fold(0.0, f32::max);
+    assert!(
+        spread > 1e-3,
+        "the colony must not inherit the parent's offset, or the two are the same band forever \
+         (max axis gap {spread})"
+    );
+}
+
+/// **A source with no layer falls back to the province** — today's behaviour, and the honest answer
+/// when the home band cannot be resolved at all.
+#[test]
+fn a_colony_whose_source_owns_no_layer_is_seeded_from_the_province() {
+    let mut manager = manager_from_json(0.2, 9.0, 9.0, 99, 99, 0.0);
+    manager.ensure_global();
+    let region = manager.upsert_regional(1);
+    manager
+        .regional_layer_mut_by_region(1)
+        .expect("regional layer exists")
+        .traits
+        .modifier_mut()[AXIS] = scalar_from_f32(0.8);
+    reconcile(&mut manager, 1);
+
+    let colony = BandId(51);
+    manager.attach_band_from_source(colony, region, BandId(52));
+
+    let region_value = region_axis(&manager, 1);
+    assert!(
+        region_value.abs() > 0.1,
+        "the province must be somewhere other than neutral, or the fallback is untestable"
+    );
+    let seeded = band_axis(&manager, colony);
+    assert!(
+        (seeded - region_value).abs() < 1e-3,
+        "with no source layer the colony is seeded from its province ({region_value}), got {seeded}"
+    );
 }
 
 /// **A band's character is not the province's.** Two bands in one province must resolve to

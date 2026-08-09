@@ -469,6 +469,24 @@ func _kit_priced_source(src: Dictionary, prefix: String, band: Dictionary, job: 
     return KitRoster.priced_source(src, prefix, _band_labor.kits(), job,
         _band_labor.default_kit_id(job), kit_id, band)
 
+## **DOES THIS READOUT STATE THE FLOOR WALK AT ALL?** — the one gate on every `after` reading both
+## webs compose, and therefore on the row's arrow and on the caption's `now → after` alike.
+##
+## A crew reaching its floor is only half of it. The other half is that a COMPOSED BUILD suppresses
+## the walk entirely, because the readout would otherwise stack two unrelated "laters" with nothing
+## marking them apart: the row's `now → after` is this rung's burst falling to its steady rate over
+## a handful of turns, while the `ONCE TENDED` row directly beneath it is the NEXT rung's payoff
+## after a ~25-turn build. Reported from play — the caption sat one line above the labelled row and
+## was read as naming it. One transition on screen, labelled, and it is the one being decided; the
+## walk is not lost, the verdict two lines down still narrates it in prose ("Reaches the floor in 13
+## turns, then holds it").
+##
+## **IT IS ASKED AT THE MODEL, and one seam serves both webs.** The caption's `has_after` is derived
+## from the rows the model emits, so gating here is what makes it impossible for the arrow and the
+## key over it to disagree — which is the failure the caption resolver has already paid for once.
+func _walks_to_the_floor(reaches: bool, improvement: String) -> bool:
+    return reaches and improvement == SourceForecast.IMPROVEMENT_NONE
+
 func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, workers: int,
         improvement: String, reaches: bool = false) -> Dictionary:
     # **PRICED AT THE KIT THE CREW WILL BE SENT WITH, ONCE, BEFORE A SINGLE TERM IS READ** — so the
@@ -511,11 +529,12 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
         var account := SourceForecast.YIELD_ACCOUNT_TRADE if trade_axis \
             else SourceForecast.YIELD_ACCOUNT_FOOD
         var smooth_after := {}
-        var smooth_hold := _hunt_take_rate(herd, floor, workers, improvement, true)
-        if reaches and bool(smooth_hold.get("available", false)):
-            smooth_after = SourceForecast.rescaled_accounts(herd,
-                HudComposeVocab.BARE_FORECAST_PREFIX, String(smooth_hold["axis"]),
-                float(smooth_hold["rate"]) * output)
+        if _walks_to_the_floor(reaches, improvement):
+            var smooth_hold := _hunt_take_rate(herd, floor, workers, improvement, true)
+            if bool(smooth_hold.get("available", false)):
+                smooth_after = SourceForecast.rescaled_accounts(herd,
+                    HudComposeVocab.BARE_FORECAST_PREFIX, String(smooth_hold["axis"]),
+                    float(smooth_hold["rate"]) * output)
         return {
             YIELD_MODEL_ROWS: SourceForecast.yield_rows(
                 float(smooth[SourceForecast.YIELD_ACCOUNT_FOOD]),
@@ -567,10 +586,11 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
     # beside a take credited on two would arrow only half the reading. `yield_rows` drops an `after`
     # equal to its take, which is the same "an arrow to itself is noise" test this used to make here.
     var after := {}
-    var held := _hunt_delivered_and_waste(band, herd, floor, workers, improvement, true)
-    if reaches and bool(held.get("available", false)):
-        after = SourceForecast.rescaled_accounts(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
-            String(held["axis"]), float(held["delivered"]))
+    if _walks_to_the_floor(reaches, improvement):
+        var held := _hunt_delivered_and_waste(band, herd, floor, workers, improvement, true)
+        if bool(held.get("available", false)):
+            after = SourceForecast.rescaled_accounts(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
+                String(held["axis"]), float(held["delivered"]))
     return {
         YIELD_MODEL_ROWS: SourceForecast.yield_rows(
             float(take[SourceForecast.YIELD_ACCOUNT_FOOD]),
@@ -675,10 +695,11 @@ func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
     var zero_account := String(forecast["zero_account"])
     # THE STEADY-STATE TAKE, one `min` against a different ceiling — the SAME `expected_yield_account`,
     # reached by key, so the burst and the hold rate cannot be computed two ways. Composed only when
-    # the crew actually reaches the floor: a crew that settles short never enters the holding state,
-    # and promising it a rate it never attains is the failure this whole reading exists to fix.
+    # this sheet states the floor walk at all: a crew that settles short never enters the holding state
+    # (promising it a rate it never attains is the failure this whole reading exists to fix), and a
+    # sheet composing a BUILD suppresses the walk outright — see `_walks_to_the_floor`.
     var after := {}
-    if reaches:
+    if _walks_to_the_floor(reaches, improvement):
         after = {
             SourceForecast.YIELD_ACCOUNT_FOOD: SourceForecast.expected_yield_account(
                 forecast, workers, band, "per_worker", "hold_ceiling",
@@ -838,7 +859,7 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int, useful_floor: i
     return {"cap": useful, "note": SourceForecast.MAX_USEFUL_NOTE_FORMAT % [useful, noun]}
 
 ## **THE IMPROVEMENT CONTROL** (issue #442 §3) — the second axis, in whichever ONE of its states this
-## source is in, plus the deal it offers. Shared verbatim by both webs: the plant ladder
+## source is in. Shared verbatim by both webs: the plant ladder
 ## (Cultivate → Sow) and the animal one (Tame → Corral) get the same control, the same states and the
 ## same forecast, because they are the same decision about different stock.
 ##
@@ -852,19 +873,23 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int, useful_floor: i
 ##       (`_tame_stalled_hint`) because the plant web had no control to hang it on.
 ##   DONE next — the source stands on a built rung, so the state gets a static label, and the NEXT
 ##       rung's checkbox renders beneath it if there is one.
-##   OFFERED last — an unchecked box naming the next rung and its terms. When that rung is GATED the
+##   OFFERED last — an unchecked box naming the next rung. When that rung is GATED the
 ##       box is not built at all: the reason takes the control's slot as a plain label (the fourth
 ##       state, `IMPROVEMENT_STATE_GATED` — see the gated branch below for why).
 ##
-## `payoff_face` is the caller's per-rung terms Callable (`improvement -> String`), because the plant
-## web substitutes the CROP the rung would commit to and the animal web quotes the herd. `extra_rows`
-## is the same idea for whole controls: the plant web drops its CROP PICKER beneath the box, since
-## which crop this rung commits to is part of the same decision. Passing both in rather than branching
-## keeps this function free of flora knowledge.
+## **THE FACES CARRY NO PAYOFF, AND THE `payoff_face` CALLABLE THAT FED THEM IS GONE.** Both states
+## state the CHOICE and nothing else — the verb, or the verb and its meter. The terms moved one
+## register down into the readout, where they sit beside the take they are meant to be compared with;
+## see `_improvement_deal_row`. The one number this control still resolves for itself is the pen's
+## zero-payoff-under-a-feed test, which is a warning about the RUNG and belongs in its note slot.
+##
+## `extra_rows` is the caller's whole-control hook: the plant web drops its CROP PICKER beneath the
+## box, since which crop this rung commits to is part of the same decision. Passing it in rather than
+## branching keeps this function free of flora knowledge.
 func _build_improvement_control(kind: String, source: Dictionary, prefix: String, floor: float,
         composed: String, band: Dictionary,
         on_toggle: Callable, target: VBoxContainer,
-        payoff_face: Callable = Callable(), extra_rows: Callable = Callable()) -> void:
+        extra_rows: Callable = Callable()) -> void:
     # RUNNING — a composed improvement that is not yet built. `composed` covers both the wire's
     # standing value and a box the player just ticked, so a fresh commitment reads as running
     # immediately rather than waiting a turn to stop looking like an offer.
@@ -875,11 +900,9 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
             HudComposeVocab.IMPROVEMENT_RUNNING_LABELS.get(composed, composed.capitalize()))
         var percent := HudFormat.progress_percent(
             SourceForecast.improvement_progress(source, prefix, composed))
-        # **THE PAYOFF ON THE RUNNING FACE, IN THE OFFERED BOX'S OWN `· then` GRAMMAR.** It is the one
-        # term of the deleted deal line that was unique to it: the line's middle term restated the
-        # readout's PER TURN headline verbatim, and its first term is the price of building, which the
-        # crew row states as a factor. So the two states of one control now read alike — the box that
-        # offers the rung and the box that is running it quote the same promise.
+        # **THE METER IS THE WHOLE FACE.** The payoff that used to close it (`· then 1.39 food`) is a
+        # readout row now — it stood one line above a PER TURN box quoting a different number for the
+        # same source, with nothing on either to say which question each was answering.
         #
         # `kind` here is the LABOR kind (`hunt`/`forage`); the forecast layer speaks SOURCE kinds
         # (`herd`/`forage`). They differ on the animal web, so this conversion is not optional.
@@ -890,25 +913,14 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
             glyph, participle, percent]
         if not deal.is_empty():
             var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
-            # The payoff terms follow the CROP on the plant web, exactly as the offered box's do — one
-            # Callable, both states, so a box that starts a rung and a box running it can never quote
-            # different crops.
-            var payoff_terms := String(payoff_face.call(composed)) if payoff_face.is_valid() \
-                else _payoff_terms(deal, band)
             var feed := float(deal["feed"]) * output
-            var has_feed := bool(deal["feed_rung"]) and feed >= SourceForecast.FOOD_FLOW_MIN
-            if payoff_terms != "":
-                running_face = HudComposeVocab.IMPROVEMENT_RUNNING_FEED_FORMAT % [
-                    glyph, participle, percent, payoff_terms,
-                    SourceForecast.format_magnitude(feed)] if has_feed \
-                    else HudComposeVocab.IMPROVEMENT_RUNNING_FORMAT % [
-                        glyph, participle, percent, payoff_terms]
-            # **A ZERO PAYOFF UNDER A RUNNING FEED IS A PURE LOSS, and the note that says so outlived
-            # the line it was written for.** The pen harvests by constant escapement, so a herd at or
-            # below the MSY point pays 0.00 while still eating feed every turn. It rides the control's
-            # own note slot (WARN-inked, beside the paused line) rather than a forecast row, because
-            # it is a warning about the rung the player is committing to.
-            if has_feed and float(deal["payoff"]) * output < SourceForecast.FOOD_FLOW_MIN:
+            # **A ZERO PAYOFF UNDER A RUNNING FEED IS A PURE LOSS, and the note that says so has now
+            # outlived two homes for the zero itself.** The pen harvests by constant escapement, so a
+            # herd at or below the MSY point pays 0.00 while still eating feed every turn. It rides
+            # the control's own note slot (WARN-inked, beside the paused line) wherever the number
+            # renders, because it is a warning about the rung the player is committing to.
+            if bool(deal["feed_rung"]) and feed >= SourceForecast.FOOD_FLOW_MIN \
+                    and float(deal["payoff"]) * output < SourceForecast.FOOD_FLOW_MIN:
                 notes.append(HudComposeVocab.IMPROVEMENT_DEAL_DEPLETED_NOTE)
         target.add_child(HudWidgets.build_improvement_control(composed,
             HudWidgets.IMPROVEMENT_STATE_RUNNING, running_face,
@@ -935,14 +947,10 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
     if offer.is_empty():
         return
     var rung := String(offer["policy"])
-    var terms := String(payoff_face.call(rung)) if payoff_face.is_valid() \
-        else _improvement_payoff_terms(source, kind, prefix, rung, band)
-    var offer_face := HudComposeVocab.IMPROVEMENT_OFFER_FORMAT % [
+    # The verb alone — the payoff this used to close on now reads in the readout, one register down.
+    var offer_face := HudComposeVocab.IMPROVEMENT_OFFER_BARE_FORMAT % [
         FoodIcons.for_policy(rung),
-        String(HudComposeVocab.IMPROVEMENT_OFFER_LABELS.get(rung, rung.capitalize())), terms] \
-        if terms != "" else HudComposeVocab.IMPROVEMENT_OFFER_BARE_FORMAT % [
-            FoodIcons.for_policy(rung),
-            String(HudComposeVocab.IMPROVEMENT_OFFER_LABELS.get(rung, rung.capitalize()))]
+        String(HudComposeVocab.IMPROVEMENT_OFFER_LABELS.get(rung, rung.capitalize()))]
     var reasons := RungGates.gate_reasons_for({rung: offer.get("reasons", [])}, rung)
     # **GATED — THE REASON IS THE CONTROL, and the offer text is not shown at all.** This used to
     # render the full offer ("🌱 Cultivate this patch · then 0.04 food · 2.74 trade · 0.81 fodder") as
@@ -1045,9 +1053,65 @@ func _improvement_done_face(source: Dictionary, prefix: String, rung: String,
                 glyph, noun, SourceForecast.format_magnitude(feed)]
     return HudComposeVocab.IMPROVEMENT_DONE_FORMAT % [glyph, noun]
 
-## The "then <X>" terms on an offered box — the payoff VECTOR the built rung pays, each account only
-## when non-zero, so a hay meadow reads `1.80 fodder` and a pelt species `0.37 trade`. "" when the
-## wire quotes no payoff at all, which the caller renders as the bare verb rather than "· then +0.00".
+## **THE RUNG THE READOUT'S DEAL BLOCK QUOTES** — the composed verb while a build is in flight, else
+## the rung on OFFER, and `""` when there is no offer or the offer is GATED.
+##
+## The gated case is the one worth writing down: a gated control spends its whole slot on the unmet
+## prerequisite and states no payoff at all, deliberately (a number you cannot act on is noise at the
+## moment you are told you cannot act), so quoting the same payoff one register down would put back
+## exactly what that branch removes. `RungGates.gate_reasons_for` is the same test the control makes.
+func _improvement_deal_rung(kind: String, source: Dictionary, prefix: String,
+        composed: String) -> String:
+    if composed != SourceForecast.IMPROVEMENT_NONE:
+        return composed
+    var offer := RungGates.next_rung_offered(kind, source, composed, _player_knowledge(), prefix)
+    if offer.is_empty():
+        return ""
+    var rung := String(offer["policy"])
+    if not RungGates.gate_reasons_for({rung: offer.get("reasons", [])}, rung).is_empty():
+        return ""
+    return rung
+
+## **THE DEAL, AS THE READOUT'S ONE LABELLED ROW** — what the rung on the table will pay ONCE TENDED
+## / SOWN / TAMED / PENNED. `{}` where there is nothing to state, which `_mount_readout` renders as no
+## block at all rather than an empty well.
+##
+## `payoff_terms` is the CALLER's, already resolved: the plant web substitutes the SELECTED CROP's
+## own payoff and the animal web quotes the herd's, and both sheets resolve it exactly once so the
+## crop picker and this row can never name different crops (issue #419). `""` means the wire quotes
+## no deal for this rung, and no row is then rendered at all — never a fabricated `0.00`, the same
+## rule the bare face formats follow.
+##
+## **THE FORECAST LOOKUP SURVIVED THE ROW THAT NEEDED A FLOOR.** Corral's feed debit rides this row's
+## value, and `feed_rung` / `feed` are what say whether there is one — a structural test, so a rung
+## the wire does not describe can never quote an upkeep. Everything read here is floor-independent,
+## which is why the block is NOT in the live registry: `improvement_forecast` is asked at the FOOD
+## PEAK, the floor `_improvement_payoff_terms` already quotes the payoff at, a rung's pay being a
+## property of the finished rung rather than of the floor the crew holds while building it.
+func _improvement_deal_row(kind: String, source: Dictionary, prefix: String, band: Dictionary,
+        rung: String, payoff_terms: String) -> Dictionary:
+    if rung == "" or payoff_terms == "":
+        return {}
+    var value := payoff_terms
+    var deal := SourceForecast.improvement_forecast(source,
+        SourceForecast.source_kind_for_labor(kind), prefix, SourceForecast.FLOOR_FOOD_PEAK, rung)
+    # THE PEN'S UPKEEP RIDES THE PAYOFF ROW, Corral only. `corralYield` is GROSS, so the row would
+    # otherwise promise a rate the pen never nets.
+    if not deal.is_empty() and bool(deal["feed_rung"]):
+        var feed := float(deal["feed"]) \
+            * float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
+        if feed >= SourceForecast.FOOD_FLOW_MIN:
+            value = HudComposeVocab.IMPROVEMENT_DEAL_FEED_FORMAT % [
+                payoff_terms, SourceForecast.format_magnitude(feed)]
+    return {
+        HudWidgets.IMPROVEMENT_DEAL_ROW_LABEL:
+            String(HudComposeVocab.IMPROVEMENT_PAYOFF_ROW_LABELS.get(rung, rung)),
+        HudWidgets.IMPROVEMENT_DEAL_ROW_VALUE: value,
+    }
+
+## The payoff terms for a rung — the payoff VECTOR the built rung pays, each account only when
+## non-zero, so a hay meadow reads `1.80 fodder` and a pelt species `0.37 trade`. "" when the wire
+## quotes no payoff at all, which the readout renders as no payoff row rather than "0.00".
 ##
 ## Quoted at the FOOD PEAK, because a payoff is a property of the finished rung and not of the floor
 ## the crew happens to hold while building it. The floor reaches the deal only through the crew's dip.
@@ -1058,9 +1122,9 @@ func _improvement_payoff_terms(source: Dictionary, kind: String, prefix: String,
         band)
 
 ## An already-resolved deal's payoff VECTOR as products, scaled by the acting band's output
-## multiplier — "" for a deal the wire does not quote. Both states of the control read it: the OFFERED
-## box through `_improvement_payoff_terms` (which resolves the deal itself) and the RUNNING box from
-## the deal it has already resolved for the feed term, so one payoff is composed one way.
+## multiplier — "" for a deal the wire does not quote. Reached through `_improvement_payoff_terms`
+## (which resolves the deal itself), so one payoff is composed one way whichever rung is being asked
+## about; the plant web's crop substitution answers in the same grammar through `_crop_payoff_terms`.
 func _payoff_terms(deal: Dictionary, band: Dictionary) -> String:
     if deal.is_empty():
         return ""
@@ -1203,11 +1267,14 @@ func _mount_crew_row(parent: VBoxContainer, hosts: Array, crew_label: String, co
     block.add_child(line)
     parent.add_child(block)
 
-## **THE READOUT** (§7.1, §7.2, §7.7) — the sheet's bottom half as ONE bounded box with three
+## **THE READOUT** (§7.1, §7.2, §7.7) — the sheet's bottom half as ONE bounded box with four
 ## deliberately different registers, loudest first because that is the reading order:
 ##
 ##   a. THE YIELDS — what this crew, at this floor, brings home. The answer, and therefore the largest
 ##      type on the sheet. `yields_at(floor, crew)` recomposes it, which is what lets it follow a drag.
+##   a2. THE DEAL — what the rung on the table will pay once it stands, as ONE labelled row. It
+##      renders only where there is a rung to state, and it is deliberately OUTSIDE the live registry:
+##      the payoff is quoted at the food peak, so nothing in it moves under a floor drag.
 ##   b. THE VERDICT — which of the crew and the floor is binding, with its severity dot.
 ##   c. THE ASIDE — the idle-crew note and the floor's own teaching line, under a dashed rule at the
 ##      quietest size on the sheet. The teaching line used to stand between the chart and the stepper
@@ -1217,16 +1284,19 @@ func _mount_crew_row(parent: VBoxContainer, hosts: Array, crew_label: String, co
 ## No box at all when there is nothing to put in it — a source with no floor axis AND no priceable
 ## take has no readout, rather than an empty well.
 ##
-## **EVERY REGISTER IN THIS BOX IS LIVE**, including the aside's locked-account line. Anything whose
-## value — or whose PRESENCE — depends on the floor belongs in the live set: the lock's sentence
-## explains a `—` in the register above it, and raising the floor takes the fodder row away, so a
-## sentence resolved once before the render would outlive the mark it answers. The row and its
-## explanation cannot disagree in either direction, and what guarantees that is NOT a single call —
-## this function calls `yields_at` three times per refresh (the emptiness probe, the yields host, the
-## aside). It is that the yield models are PURE and every one of those calls passes IDENTICAL
-## arguments, which `_live_floor` / `_live_reaches` enforce by having one definition apiece.
+## **EVERY REGISTER IN THIS BOX THAT MOVES WITH THE FLOOR IS LIVE** — which is all of them but the
+## deal, whose exclusion is stated at its mount below. The aside's locked-account line is the case
+## worth stating: anything whose value — or whose PRESENCE — depends on the floor belongs in the
+## live set, and the lock's sentence explains a `—` in the register above it, so raising the floor
+## takes the fodder row away and a sentence resolved once before the render would outlive the mark it
+## answers. The row and its explanation cannot disagree in either direction, and what guarantees that
+## is NOT a single call — this function calls `yields_at` three times per refresh (the emptiness
+## probe, the yields host, the aside). It is that the yield models are PURE and every one of those
+## calls passes IDENTICAL arguments, which `_live_floor` / `_live_reaches` enforce by having one
+## definition apiece.
 func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, workers: int,
-        yields_at: Callable, labor_kind: String) -> void:
+        yields_at: Callable, labor_kind: String,
+        deal_row: Dictionary = {}, while_building: bool = false) -> void:
     var known := bool(model.get("known", false))
     var floor_value := float(model.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))
     if not known and (yields_at.call(floor_value, workers, false) as Dictionary).is_empty():
@@ -1242,7 +1312,21 @@ func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, work
     _register_live(hosts, yields_host, model, workers,
         func(host: Container, live: Dictionary, crew: int) -> void:
             _fill_yields_host(host, yields_at.call(
-                _live_floor(live), crew, _live_reaches(live)), labor_kind))
+                _live_floor(live), crew, _live_reaches(live)), labor_kind, while_building))
+    # **THE IMPROVEMENT DEAL — a SIBLING of the yields block, never a row inside its flow.** Two
+    # harness contracts read that flow structurally (the caption is `parent.get_child(index - 1)`;
+    # both webs' take assertions parse the flow's joined text by splitting on an account word), so a
+    # deal term folded in would corrupt both — silently, which is why it has a block and a meta of
+    # its own. See `HudWidgets.IMPROVEMENT_DEAL_META`.
+    #
+    # **IT IS DELIBERATELY OUT OF THE LIVE REGISTRY**, by that registry's own rule: a payoff is a
+    # property of the finished rung, quoted at the food peak, so nothing in it moves under a floor
+    # drag and a host in the set would pay for work it does not need. `{}` renders nothing at all —
+    # a source with no rung on the table has no deal, not an empty one.
+    if not deal_row.is_empty():
+        column.add_child(HudWidgets.build_improvement_deal(
+            String(deal_row.get(HudWidgets.IMPROVEMENT_DEAL_ROW_LABEL, "")),
+            String(deal_row.get(HudWidgets.IMPROVEMENT_DEAL_ROW_VALUE, ""))))
     if known:
         var verdict_host := VBoxContainer.new()
         verdict_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1308,7 +1392,15 @@ func _live_reaches(live: Dictionary) -> bool:
 ## a suffix**: the row is the loudest thing in the box, so a take the source cannot pay forever has to
 ## read amber where the player is already looking. The waste note is always amber, even under a green
 ## take — a kill the crew could not carry is its own concern.
-func _fill_yields_host(host: Container, model: Dictionary, labor_kind: String) -> void:
+##
+## `while_building` says these readings are the DIPPED take, which the caption is the only place on
+## the sheet that can say. It is passed as a FLAG and not as a composed caption: `build_yields_row`
+## is the only place that knows whether the readings also carry a holding rate, so it is the only
+## place the two can be resolved together. On a building sheet they never both apply — the model
+## drops the floor walk (`_walks_to_the_floor`) — but the flag says nothing about that, and it must
+## not: the rows are what decide the arrow, here as everywhere else in this readout.
+func _fill_yields_host(host: Container, model: Dictionary, labor_kind: String,
+        while_building: bool = false) -> void:
     if model.is_empty():
         return
     var overdraws := bool(model[YIELD_MODEL_OVERDRAW])
@@ -1319,7 +1411,9 @@ func _fill_yields_host(host: Container, model: Dictionary, labor_kind: String) -
         HudStyle.WARN if overdraws else HudStyle.INK,
         note,
         HudStyle.WARN if overdraws else HudStyle.HEALTHY,
-        String(model[YIELD_MODEL_WASTE])))
+        String(model[YIELD_MODEL_WASTE]),
+        "",
+        while_building))
 
 
 ## The herd "Assign hunters" controls (compose a count + policy, then Assign). Shown
@@ -1737,21 +1831,15 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         # number, so it now rides the RUNG's tooltip beside the metric it qualifies (`_hunt_floor_takes`
         # fills the take pair's `note`) — the panel is where the hunt sheet could least afford a sentence
         # the forage sheet has no counterpart for. The window computation is unchanged.
-        # **THE READOUT** — the LIVE per-turn take for the floor being composed (no carry cap on a
-        # local hunt, so turns-to-fill is meaningless — the delivered rate is the number that decides
-        # it), then the verdict (§7.1: which of the two independent statements is binding, the crew or
-        # the floor), then the idle-crew note (§7.2 — reported, never acted on) and the teaching line.
-        # The take is recomposed from the LIVE floor, so the numbers the player is dragging toward
-        # move while the drag runs.
-        _mount_readout(target, live_hosts, chart_model, _compose.hunt_count(),
-            func(floor_value: float, crew: int, reaches: bool) -> Dictionary:
-                return _hunt_yield_model(band, herd, floor_value, crew,
-                    composed_improvement, reaches),
-            SourceForecast.LABOR_KIND_HUNT)
-        # THE IMPROVEMENT ROW — the second axis, beneath the stance it multiplies. Nothing is offered on
-        # an UNASSIGN, for the reason the forage sheet already records: what abandoning costs is stated
-        # in the rung's own hint ("It must stay staffed or the herd goes wild again"), so a second
-        # warning at the moment of unassigning states one fact twice.
+        # THE IMPROVEMENT ROW — the second axis, ABOVE the readout that prices it. Nothing is offered
+        # on an UNASSIGN, for the reason the forage sheet already records: what abandoning costs is
+        # stated in the rung's own hint ("It must stay staffed or the herd goes wild again"), so a
+        # second warning at the moment of unassigning states one fact twice.
+        #
+        # **THE CONTROL LEADS THE READOUT, and the order is the reading order**: the box is the last
+        # thing composed, and the box's terms are stated in the readout beneath it. It used to follow
+        # the readout, which put the payoff (then on the box's own face) BELOW the PER TURN box it
+        # differs from and gave the two numbers no visible relationship at all.
         if not is_unassign:
             _build_improvement_control(SourceForecast.LABOR_KIND_HUNT, herd,
                 HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_floor(), composed_improvement,
@@ -1760,6 +1848,34 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
                     _compose.set_hunt_improvement(improvement)
                     _build_herd_assign_controls(_live_herd(herd_id, herd), target),
                 target)
+        # THE ONE RESOLUTION OF THIS SHEET'S DEAL, spent by the readout below. An unassign quotes
+        # none: the control above is not built either, so there would be no rung on the card for the
+        # rows to be about.
+        var deal_rung := "" if is_unassign else _improvement_deal_rung(
+            SourceForecast.LABOR_KIND_HUNT, herd, HudComposeVocab.BARE_FORECAST_PREFIX,
+            composed_improvement)
+        var deal_payoff := "" if deal_rung == "" else _improvement_payoff_terms(
+            herd, SourceForecast.LABOR_KIND_HUNT, HudComposeVocab.BARE_FORECAST_PREFIX,
+            deal_rung, band)
+        # The averaging-window disclaimer USED TO STAND HERE, as a wrapped body line under the hint: the
+        # delivered rate is a long-run average of lumpy whole-animal delivery. It is a caveat on ONE
+        # number, so it now rides the RUNG's tooltip beside the metric it qualifies (`_hunt_floor_takes`
+        # fills the take pair's `note`) — the panel is where the hunt sheet could least afford a sentence
+        # the forage sheet has no counterpart for. The window computation is unchanged.
+        # **THE READOUT** — the LIVE per-turn take for the floor being composed (no carry cap on a
+        # local hunt, so turns-to-fill is meaningless — the delivered rate is the number that decides
+        # it), then the rung's payoff, then the verdict (§7.1: which of the two
+        # independent statements is binding, the crew or the floor), then the idle-crew note (§7.2 —
+        # reported, never acted on) and the teaching line. The take is recomposed from the LIVE floor,
+        # so the numbers the player is dragging toward move while the drag runs.
+        _mount_readout(target, live_hosts, chart_model, _compose.hunt_count(),
+            func(floor_value: float, crew: int, reaches: bool) -> Dictionary:
+                return _hunt_yield_model(band, herd, floor_value, crew,
+                    composed_improvement, reaches),
+            SourceForecast.LABOR_KIND_HUNT,
+            _improvement_deal_row(SourceForecast.LABOR_KIND_HUNT, herd,
+                HudComposeVocab.BARE_FORECAST_PREFIX, band, deal_rung, deal_payoff),
+            composed_improvement != SourceForecast.IMPROVEMENT_NONE)
         # A dead button is always explained (the `+` stepper's cap note is the precedent) — but only
         # when the cap note has not already said it, so the panel never states one fact twice.
         if is_noop and cap_note == "":
@@ -2052,8 +2168,15 @@ func _build_crop_picker(
     # commitment is still stated; an uncommitted one with nothing to pick has nothing to say at all.
     if entries.is_empty() and not is_committed:
         return null
-    block.add_child(HudWidgets.alloc_section_label(
-        HudFloraVocab.FLORA_CROP_COMMITTED_HEADER if is_committed else HudFloraVocab.FLORA_CROP_PICKER_HEADER))
+    # **THE HEADER IS PER RUNG, and `policy` is already the rung** — no new parameter. Sow forces the
+    # favored species to 100% of the stand, so committing is exactly what its picker does; Cultivate
+    # only weeds that share upward and leaves the rest of the basket standing, so calling it a
+    # commitment overstates what the rung does. The const carries the sim seams.
+    var header := HudFloraVocab.FLORA_CROP_COMMITTED_HEADER if is_committed \
+        else (HudFloraVocab.FLORA_CROP_TEND_HEADER \
+            if policy == SourceForecast.IMPROVEMENT_CULTIVATE \
+            else HudFloraVocab.FLORA_CROP_PICKER_HEADER)
+    block.add_child(HudWidgets.alloc_section_label(header))
     var rows := VBoxContainer.new()
     rows.add_theme_constant_override("separation", HudFloraVocab.FLORA_CROP_BLOCK_SEPARATION)
     rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -2343,23 +2466,17 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # for THIS band, so the two zero-worker cases are DIFFERENT SUBMITS, and the block below —
     # forecast line and button TOGETHER — has to read coherently for each:
     #   • 0 on a tile this band does NOT work → the command would do nothing. Dead button (still
-    #     "Forage"), and the improvement deal states the payoff as a CONDITION ("Assign foragers…").
+    #     "Forage"), and the readout's deal block states the PAYOFF alone — the `now` row is dropped,
+    #     since a staffing-scaled term beside a staffing-free one reads as a sequence at zero crew.
     #   • 0 on a tile it DOES work → the sim's unassign (server.rs: "Unassigning (workers == 0) is
     #     always allowed"). Live button, renamed, and NO "assign to begin" line — a panel whose button
     #     says Unassign above a line reading "assign to begin" tells the player two opposite things.
     # Gating on the raw count instead would fix the no-op and break the unassign the Work zone needs.
     var is_unassign := _compose.forage_count() <= 0 and current > 0
     var is_noop := _compose.forage_count() <= 0 and current <= 0
-    # **THE READOUT** — the take, the verdict, and the idle-crew note + teaching line, in one bounded
-    # box at three registers (§7.1, §7.2). The take is recomposed from the LIVE floor, which is what
-    # lets the numbers the player is dragging toward move while the drag runs.
-    _mount_readout(target, live_hosts, chart_model, _compose.forage_count(),
-        func(floor_value: float, crew: int, reaches: bool) -> Dictionary:
-            return _forage_yield_model(band, tile_info, floor_value, crew, composed_improvement,
-                reaches),
-        SourceForecast.LABOR_KIND_FORAGE)
-    # THE IMPROVEMENT ROW — the second axis, beneath the stance it multiplies. Nothing is forecast for
-    # an UNASSIGN: what abandoning costs is already on the card in the rung's own hint ("It must stay
+    # THE IMPROVEMENT ROW — the second axis, ABOVE the readout that prices it, so the box and the crop
+    # beneath it are read first and the terms they buy immediately after. Nothing is offered on an
+    # UNASSIGN: what abandoning costs is already on the card in the rung's own hint ("It must stay
     # staffed or it goes feral"), so a second warning here would state one fact twice.
     if not is_unassign:
         _build_improvement_control(SourceForecast.LABOR_KIND_FORAGE, tile_info,
@@ -2369,10 +2486,6 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
                 _compose.set_forage_improvement(improvement)
                 _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target),
             target,
-            # THE PAYOFF TERMS FOLLOW THE CROP, on the OFFERED box and the RUNNING one alike — one
-            # Callable, both states, so the two can never quote different crops (issue #419).
-            func(rung: String) -> String:
-                return _crop_payoff_terms(tile_info, basket, _compose.forage_species(), band, rung),
             # WHICH CROP this rung commits the patch to (flora roster S1), beneath the box
             # because it is part of the same decision. Re-resolved every render (the rung can
             # change), so the composed crop can never name a plant this tile+rung cannot take — and ""
@@ -2385,6 +2498,27 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
                         _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target))
                 if crop_picker != null:
                     host.add_child(crop_picker))
+    # **THE PAYOFF FOLLOWS THE SELECTED CROP, AND IT IS RESOLVED EXACTLY ONCE** (issue #419). The
+    # readout's payoff row and the crop picker one control up must read ONE seam or they quote
+    # different crops — which is the whole defect that issue named, in its second home. `deal_rung` is
+    # the rung the picker is rendered for wherever there is one to render (composed verb, else the
+    # ungated offer), so the terms and the list can only ever be about the same rung.
+    var deal_rung := "" if is_unassign else _improvement_deal_rung(
+        SourceForecast.LABOR_KIND_FORAGE, tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+        composed_improvement)
+    var deal_payoff := "" if deal_rung == "" else _crop_payoff_terms(
+        tile_info, basket, _compose.forage_species(), band, deal_rung)
+    # **THE READOUT** — the take, the rung's payoff, the verdict, and the idle-crew
+    # note + teaching line, in one bounded box (§7.1, §7.2). The take is recomposed from the LIVE
+    # floor, which is what lets the numbers the player is dragging toward move while the drag runs.
+    _mount_readout(target, live_hosts, chart_model, _compose.forage_count(),
+        func(floor_value: float, crew: int, reaches: bool) -> Dictionary:
+            return _forage_yield_model(band, tile_info, floor_value, crew, composed_improvement,
+                reaches),
+        SourceForecast.LABOR_KIND_FORAGE,
+        _improvement_deal_row(SourceForecast.LABOR_KIND_FORAGE, tile_info,
+            HudComposeVocab.FORAGE_FORECAST_PREFIX, band, deal_rung, deal_payoff),
+        composed_improvement != SourceForecast.IMPROVEMENT_NONE)
     # Range-aware: foraging is stationary gathering (there is NO forage-expedition alternative), so a
     # tile beyond the SELECTED band's work_range DISABLES the button + shows an out-of-range hint,
     # rather than a fallback. Distance is wrap-aware from the picked band's OWN tile — distance,

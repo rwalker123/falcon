@@ -22,6 +22,16 @@ const IMPROVEMENT_PAUSED_NEEDLE := "ease off and it resumes"
 ## exists to remove. Kept as a literal so a reworded offer cannot silently pass this assertion.
 const GATED_OFFER_NEEDLE := "Cultivate this patch"
 
+## **THE REPORTED PAIR, in numbers** — a burst and a holding rate the MODEL can tell apart and the
+## READOUT cannot: both render `0.26` at `SourceForecast.YIELD_DECIMALS`, so a gate asked of the raw
+## floats drew an arrow between two identical strings.
+const ARROW_ROUNDING_NOW := 0.2612
+const ARROW_ROUNDING_HOLD := 0.2588
+## The trade account standing beside it on that same frame, and correctly arrowed: a pair that
+## differs at the readout's own resolution keeps its transition.
+const ARROW_VISIBLE_NOW := 0.90
+const ARROW_VISIBLE_HOLD := 0.87
+
 ## Dialed past every plausible cap on that frame, so what the stepper renders IS the cap.
 const BUILD_CREW_DIALED_FORAGERS := 14
 
@@ -78,15 +88,16 @@ func run(harness) -> void:
 	h._hud._compose.reset_forage_source()
 	h._show_tile(BaseFx.food_tile_fixture())
 	h._compose_forage(BaseFx.food_tile_fixture())
-	# CEILING-BOUND ON PURPOSE, and it is what makes the frame beneath this one legible. The readout's
-	# take is `min(crew x per_worker, ceiling)`, so at a small crew LABOR binds and every floor quotes
-	# the same number — the two frames would then differ only in which rung is lit. Saturating the
-	# patch puts the CEILING in charge, which is the term the floor actually moves.
+	# **LABOUR-BOUND ON PURPOSE, and the frame beneath this one is read against that.** The readout's
+	# take is `min(crew x per_worker x dip, ceiling)`, and the dip multiplies the CREW — so this crew
+	# binds under both floors' ceilings and the take is the same at either. That is the deep-floor
+	# frame's whole point: a deeper draw buys this crew nothing today and still stalls its meter.
 	h._hud._compose.set_forage_count(ForageFx.IMPROVEMENT_STANCE_FRAME_FORAGERS)
 	h._compose_forage(BaseFx.food_tile_fixture())
 	await h._settle()
 	await h._save("improvement_running_plant")
 	var sustain_yields = Readout.yields_text(h._hud._drawercompose._compose_sheet)
+	var sustain_teaching = Readout.teaching_line(h._hud._drawercompose._compose_sheet)
 	var running_box = ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet, "cultivate")
 	h._assert_hud("a running Cultivate renders a CHECKED improvement box",
 		running_box is CheckBox and (running_box as CheckBox).button_pressed)
@@ -98,17 +109,44 @@ func run(harness) -> void:
 	h._assert_hud("…and the stance row is untouched, still on the band's own Sustain",
 		Readout.rung_is_selected(Q.find_policy_rung(h._hud._drawercompose._compose_sheet,
 			SourceForecast.FLOOR_PRESET_PEAK)))
-	# **THE DEAL LINE IS GONE AND ITS PAYOFF IS ON THE FACE — asserted as a PAIR**, because "gone" alone
-	# is satisfied by having deleted the payoff with it. The line's middle term restated the readout's
-	# own PER TURN headline verbatim and its first term the price of building, which the crew row states
-	# as a factor; only the payoff was unique to it, so only the payoff travelled — into the very
-	# `· then` grammar the OFFERED box already used, so the control reads alike in both states.
-	h._assert_hud("…and the deal LINE beneath the box is gone",
-		not Q.has_label_containing(h._hud._drawercompose._compose_sheet,
-			ForageFx.IMPROVEMENT_DEAL_MIDDLE_NEEDLE))
-	h._assert_hud("…with its payoff moved onto the running box's face, in the offer's own grammar",
-		ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, "cultivate")
+	# **THE PAYOFF LEFT THE FACE AND LANDS IN THE READOUT — asserted as a PAIR**, because "gone from
+	# the face" alone is satisfied by a sheet that lost the payoff altogether. The face used to close
+	# on `· then 1.39 food` directly above a PER TURN box quoting a different number for the same
+	# patch; the terms now read inside that box, beside the take they are meant to be compared with.
+	h._assert_hud("…and the running box's face carries no payoff at all",
+		not ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, "cultivate")
 			.contains(ForageFx.IMPROVEMENT_PAYOFF_NEEDLE))
+	h._assert_hud("…because it reads in the PER TURN readout, under the rung's own ONCE TENDED key",
+		Readout.improvement_deal_text(h._hud._drawercompose._compose_sheet).contains(
+			String(HudComposeVocab.IMPROVEMENT_PAYOFF_ROW_LABELS[
+				SourceForecast.IMPROVEMENT_CULTIVATE]).to_upper()))
+	# **THE BLOCK IS EXACTLY ONE ROW, AND THE COUNT IS HOW THAT IS PINNED.** It briefly carried a
+	# second row stating the crew's undipped take; that went because the baseline is visible by
+	# unticking the box, and because at a crew that saturates the source the dip costs nothing — so
+	# the row printed the SAME figures as the headline directly above it, under a crew note saying
+	# each carries half as much. No `contains` claim can see that return: a baseline row satisfies
+	# every one of them and its numbers are legitimate.
+	h._assert_hud("…as the block's ONLY row, the undipped baseline having been retired",
+		Readout.improvement_deal_rows(h._hud._drawercompose._compose_sheet) == 1)
+	# …and the general form of the same defect: nothing in the deal may restate a number the take
+	# above it already prints, whatever row it arrives on.
+	h._assert_hud("…repeating no magnitude the yields row already states",
+		not Readout.deal_repeats_a_yields_number(h._hud._drawercompose._compose_sheet))
+	# **A COMPOSED BUILD STATES ONE TRANSITION, AND IT IS THE LABELLED ONE.** This crew reaches its
+	# floor, so the sheet has a floor walk it COULD state — and must not, because the `ONCE TENDED`
+	# row directly beneath the caption is a different "later" (the next rung, after a ~25-turn build)
+	# and the player read the labelled row as the caption's `after`. Reported from play. Nothing is
+	# lost: the verdict two lines down still narrates the walk in prose.
+	#
+	# **ASSERTED AS A PAIR, caption AND readings**, because either alone is satisfied by the mismatch
+	# this arc exists to prevent: a caption that dropped `now → after` over rows still drawing arrows
+	# reads exactly like the fix to a header-only claim. Matched by EQUALITY, since a `contains` on
+	# the dip half passes on any caption sharing that prefix.
+	h._assert_hud("a composed build's yields caption keys the dip ALONE, with no floor walk in it",
+		Readout.yields_header(h._hud._drawercompose._compose_sheet)
+			== SourceForecast.YIELD_ROW_HEADER_WHILE_BUILDING.to_upper())
+	h._assert_hud("…and no reading under it draws an arrow for the caption to have keyed",
+		not Readout.yields_show_a_transition(h._hud._drawercompose._compose_sheet))
 	# **KNOWN LESSON + A BUILD IN FLIGHT — the teaching line keeps the half that is still true.**
 	# Cultivation completed several frames above, so `Teaching cultivation at ×1.00` would be teaching a
 	# craft this faction finished learning; one multiplier paces the lesson and the build meter alike,
@@ -124,26 +162,57 @@ func run(harness) -> void:
 	# introduced by accident (under the old model, picking another policy always walked a build away).
 	h._assert_hud("a running improvement's box is LIVE — unchecking is always allowed",
 		running_box is CheckBox and not (running_box as CheckBox).disabled)
+	# **THE NON-VACUITY HALF OF THE SUPPRESSION CLAIM, and it is not optional here.** Both caption
+	# claims above are satisfied for free by a crew that never reaches its floor — there would be no
+	# walk to suppress — so the SAME patch, crew and floor are re-composed with the box UNTICKED,
+	# where the walk must be back in full. Only the BUILD moves between the two readings, which is
+	# what makes the suppression attributable to it rather than to the fixture.
+	#
+	# PNG-less, and placed AFTER every assertion that holds a node from the saved frame: a re-compose
+	# frees the sheet's children, so a captured `CheckBox` read afterwards is a freed instance. The
+	# composed Cultivate is restored immediately, leaving the sheet as the saved frame had it.
+	h._hud._compose.set_forage_improvement(SourceForecast.IMPROVEMENT_NONE)
+	h._compose_forage(BaseFx.food_tile_fixture())
+	await h._settle()
+	h._assert_hud("…while the SAME crew with the box unticked walks to its floor and says so",
+		Readout.yields_show_a_transition(h._hud._drawercompose._compose_sheet)
+			and Readout.yields_header(h._hud._drawercompose._compose_sheet)
+				== SourceForecast.YIELD_ROW_HEADER_WITH_AFTER.to_upper())
+	h._hud._compose.set_forage_improvement(SourceForecast.IMPROVEMENT_CULTIVATE)
+	h._compose_forage(BaseFx.food_tile_fixture())
+	await h._settle()
 
 	# State 442-deplete-beside-cultivate — **THE FRAME THE WHOLE TWO-AXIS MODEL EXISTS TO MAKE SAYABLE.**
 	# The same running Cultivate at a DEEP FLOOR: legal, un-gated, and self-defeating through the
-	# ecology rather than through a rule. The deeper floor frees a larger ceiling, so the crew's take
-	# TODAY is bigger than the food-peak frame's — which is exactly the trap: you take more now and
-	# drive the patch out of Thriving, stalling your own meter.
+	# ecology rather than through a rule. The deeper floor frees a larger ceiling, and on this
+	# deliberately labour-bound crew that buys NOTHING — the take is the food-peak frame's to the
+	# decimal — while the lesson the same crew is building at slows with the floor. That is the trap
+	# stated at its sharpest: you drive the patch out of Thriving and stall your own meter for nothing.
 	h._hud._compose.set_forage_floor(ForageFx.DEEP_DRAW_FLOOR)
 	h._hud._compose.set_forage_count(ForageFx.IMPROVEMENT_STANCE_FRAME_FORAGERS)
 	h._compose_forage(BaseFx.food_tile_fixture())
 	await h._settle()
 	await h._save("improvement_deplete_while_building")
-	# THE READING THAT MOVES IS THE READOUT'S, and it is the one the deal's middle term used to restate
-	# — which is why deleting that term lost no information. Compared against the food-peak frame above:
-	# a deeper floor frees a larger ceiling, so the same crew on the same patch must quote a different
-	# take. The PAYOFF deliberately does not move (it is a property of the finished rung, not of the
-	# floor), so asserting the face here would assert a constant.
+	# **THE RENDERED TAKE IS THE SAME AT BOTH FLOORS, and asserting that is what makes this pair agree
+	# with the floor-independence claim forty lines down** — they are two readings of ONE number, the
+	# crew's dipped take, and they used to contradict each other outright. The rendered claim said the
+	# take MOVED and passed anyway, because it compared the whole yields string and the string carried
+	# a `now → after` reading that did move; the take itself never did. That walk is suppressed while a
+	# build is composed, so the string is now the take alone and the old claim fails honestly.
+	#
+	# **The non-vacuity companion is the teaching line**, which really is floor-driven on these two
+	# frames (`learn_multiplier` is `floor / the food peak`, so ×1.00 here and ×0.30 at the deep
+	# draw) — without it, "the take did not move" would pass on a sheet that had stopped rendering.
+	# The PAYOFF is deliberately floor-independent too (a property of the finished rung), so it can
+	# stand in for neither.
 	var deplete_yields = Readout.yields_text(h._hud._drawercompose._compose_sheet)
+	var deplete_teaching = Readout.teaching_line(h._hud._drawercompose._compose_sheet)
 	print("ui_preview: take  peak=%s  deep=%s" % [sustain_yields, deplete_yields])
-	h._assert_hud("…and the RENDERED take moves with the floor, not just the model behind it",
-		sustain_yields != "" and deplete_yields != "" and sustain_yields != deplete_yields)
+	print("ui_preview: build rate  peak=%s  deep=%s" % [sustain_teaching, deplete_teaching])
+	h._assert_hud("…and the RENDERED take does NOT move with the floor — this crew binds at both",
+		sustain_yields != "" and deplete_yields != "" and sustain_yields == deplete_yields)
+	h._assert_hud("…while the build rate the same crew earns DOES fall with the deeper draw",
+		sustain_teaching != "" and deplete_teaching != "" and sustain_teaching != deplete_teaching)
 	# BOTH AXES, READ OFF THEIR OWN CONTROLS. This asserted the two compose-model fields the frame had
 	# just written, which is true whatever the sheet rendered — and "no gate, no repaint" is precisely a
 	# claim about the rendering: the Deplete rung must be lit AND live, with the Cultivate box still
@@ -179,7 +248,7 @@ func run(harness) -> void:
 		peak_deal["build_forecast"], ForageFx.IMPROVEMENT_STANCE_FRAME_FORAGERS, band)
 	h._assert_hud("the build term is floor-INDEPENDENT on a labour-bound crew — a deep floor builds no faster",
 		is_equal_approx(deep_building, peak_building))
-	h._assert_hud("…while the take TODAY still rises with the deeper draw, so the frame is not vacuous",
+	h._assert_hud("…while the UNDIPPED take still rises with it, so the forecast is not floor-blind",
 		SourceForecast.expected_yield(deep_deal["base_forecast"], ForageFx.IMPROVEMENT_STANCE_FRAME_FORAGERS, band)
 		>= SourceForecast.expected_yield(peak_deal["base_forecast"], ForageFx.IMPROVEMENT_STANCE_FRAME_FORAGERS, band))
 
@@ -403,3 +472,40 @@ func run(harness) -> void:
 	h._hud._compose.reset_forage_source()
 	h._hud._compose.set_forage_count(1)
 	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
+
+	_arrow_is_gated_on_what_is_SHOWN()
+
+## **AN ARROW BETWEEN TWO IDENTICAL NUMBERS** — `0.26 → 0.26 FOOD`, reported from play beside a trade
+## account correctly reading `0.90 → 0.87`. The `after` reading is attached where it DIFFERS from the
+## take, and "differs" was asked of the raw floats while the reading renders through
+## `format_magnitude` at two decimals — so any pair closer than the display's own resolution drew a
+## transition from a number to itself.
+##
+## **DRIVEN, NOT RENDERED, and the pair is the claim.** No fixture in the corpus lands two accounts
+## that close, and staging one would pin a whole frame's arithmetic to a rounding; `yield_rows` is
+## pure, so the two cases are stated directly. The visible pair is what stops "never arrow"
+## satisfying this — the gate exists to suppress a mark, and suppressing all of them passes any lone
+## negative. The PRECONDITION is the other half: the two food values must be genuinely different
+## floats that format alike, or the claim is about equality rather than about precision.
+func _arrow_is_gated_on_what_is_SHOWN() -> void:
+	var rows := SourceForecast.yield_rows(ARROW_ROUNDING_NOW, ARROW_VISIBLE_NOW, 0.0,
+		SourceForecast.YIELD_ACCOUNT_FOOD, {
+			SourceForecast.YIELD_ACCOUNT_FOOD: ARROW_ROUNDING_HOLD,
+			SourceForecast.YIELD_ACCOUNT_TRADE: ARROW_VISIBLE_HOLD,
+		})
+	h._assert_hud("the rounding pair is two DIFFERENT rates that print as one reading",
+		not is_equal_approx(ARROW_ROUNDING_NOW, ARROW_ROUNDING_HOLD)
+			and SourceForecast.format_magnitude(ARROW_ROUNDING_NOW)
+				== SourceForecast.format_magnitude(ARROW_ROUNDING_HOLD))
+	h._assert_hud("…so its account states ONE number and no arrow, the transition being invisible",
+		not _row_for(rows, SourceForecast.YIELD_ACCOUNT_FOOD).has(SourceForecast.YIELD_ROW_AFTER))
+	h._assert_hud("…while the account beside it, which the readout CAN tell apart, keeps its arrow",
+		_row_for(rows, SourceForecast.YIELD_ACCOUNT_TRADE).has(SourceForecast.YIELD_ROW_AFTER))
+
+## One account's row out of a `yield_rows` answer — `{}` when that account states none, which fails a
+## `has()` claim rather than satisfying it.
+func _row_for(rows: Array[Dictionary], account: String) -> Dictionary:
+	for row in rows:
+		if String(row.get(SourceForecast.YIELD_ROW_ACCOUNT, "")) == account:
+			return row
+	return {}

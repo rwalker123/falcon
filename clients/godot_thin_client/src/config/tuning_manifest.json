@@ -253,6 +253,17 @@
           "default": 0.8,
           "unit": "prov/worker",
           "hint": "Pack capacity per worker. Party size times this is one trip's haul."
+        },
+        {
+          "pointer": "/settle/min_founding_workers",
+          "label": "Founding party floor",
+          "type": "int",
+          "min": 1,
+          "max": 12,
+          "step": 1,
+          "default": 4,
+          "unit": "workers",
+          "hint": "Working-age people a party needs before it can start a life where it stands."
         }
       ]
     },

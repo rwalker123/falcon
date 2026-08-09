@@ -187,7 +187,19 @@ paths:
   idea here" — and the gate reads **the composed rung's own flag** (`_flora_entry_allows`), which is
   why Hazel is pressable under Cultivate and greyed under Sow. An illegal entry stays **visible and
   disabled with its reason in the tooltip, never hidden**: that a tile carries Oak Mast you cannot farm
-  is information about the LAND, and hiding it would make the tile read poorer than it is. **A
+  is information about the LAND, and hiding it would make the tile read poorer than it is.
+  **THE HEADER IS PER RUNG, because "commit" is true of only ONE of the two committing rungs**
+  (`FLORA_CROP_TEND_HEADER` *"Crop to tend to"* under Cultivate, `FLORA_CROP_PICKER_HEADER` *"Crop to
+  commit to"* under Sow, `FLORA_CROP_COMMITTED_HEADER` on an already-committed patch). Sow forces the
+  favored species to 100% of the stand (`forage.rs::planted` — a Field has no volunteers), so
+  committing is exactly what its picker does; Cultivate only weeds that share UPWARD by
+  `tended_weeding_gain` and leaves the rest of the basket standing (`forage.rs::weeded`), so a tended
+  patch keeps growing everything it grew before. Calling that a commitment overstates the rung — and
+  it is the belief issue #433 already had to delete from the tile card, where a 64/36 tile read as
+  100% one crop the moment a crop was picked. `_build_crop_picker` already takes the rung as its
+  `policy` parameter, so the split needed none. Asserted as a PAIR (`forage_crop_picker` expects
+  `CROP TO TEND TO`, `forage_crop_picker_sow` expects `CROP TO COMMIT TO` *and* the absence of the
+  other), because a header hard-wired to either string passes one frame alone. **A
   legal-but-marginal crop is NEVER disabled** — a 20%-share plant is a bad choice, not an illegal one,
   and being free to make it is the decision §4.3 exists to create; only the two flags disable anything.
   The selection (`_forage_assign_species`) is re-resolved **every render** by `_resolve_crop_selection`

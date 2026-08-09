@@ -50,6 +50,21 @@ A **resident** band (`ResidentBand` — an expedition is detached and deliberate
 
 - **`bands` is a separate map from `locals`**, which is what makes it impossible for a band layer to be returned by the tile lookups or walked as a tile.
 - **`attach_band` seeds from the parent province's *current* values**, not neutral: a band born into a long-diverged province starts assimilated rather than schisming for existing.
+- **A band that CAME from somewhere is seeded from where it came from — `attach_band_from_source`.**
+  A colony founded by an expedition is attached at founding time
+  (`systems::found_band_from_expedition`) from its **home band**'s current values, parented on the
+  destination province, so the reconcile's "no layer" branch never sees it and there is still exactly
+  one attach path per band. Without it a colony founded twenty tiles away seeded from the province it
+  landed in and opened *as the locals*, while a band that **walked** the same twenty tiles kept its
+  culture under `set_band_parent` — the difference was an artifact of whether a layer already existed,
+  not a decision. **The character offset is not inherited**: the colony mints its own
+  `seeded_modifiers_for_band`, because that offset is the only reason two bands ever diverge and a
+  copied one would make the colony a permanent clone of its parent. A source band with no layer (an
+  unresolvable home band; an expedition never owns one) falls back to the province, i.e. plain
+  `attach_band`.
+- **`culture_region_at` is the one position → region resolution.** The reconcile and the founding both
+  call it, so a colony's layer cannot be parented on a different province than the one its first
+  reconcile reads; a tile off every province falls back to `FALLBACK_CULTURE_REGION_ID`.
 - **A band's liveness comes from the query, not from its tile.** The reconcile's live set is built before the `current_tile` lookup, because a live band omitted from it is indistinguishable to the stale sweep from a dead one — and detaching a live band's layer is not a skipped turn but silent state loss, since re-attachment reseeds from the province instead of restoring the drift, divergence and trigger timers. A band whose tile does not resolve keeps its layer untouched and is simply not re-homed that turn. The reverse order is safe: the sweep only removes layers that exist.
 - **`set_band_parent` leaves traits alone.** That is the whole point of parenting on the province — a migrating band keeps the culture it arrived with and chases the new one at the band scope's elasticity, so a move **lags** instead of snapping.
 - **Bands take no direct influencer resonance** (`resolve_against(parent, None)`). It reaches them through their province. A fourth channel would mean changing how influencers *attribute* resonance, which is a different arc.

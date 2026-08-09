@@ -922,6 +922,21 @@ table PopulationCohortState {
   penCarryPerWorkerBiomass:float = 0;
   scoutVantageRange:float = 0;
   warriorAttack:float = 0;
+  // Why "start a life here" would be refused for this party RIGHT NOW — the machine tokens of
+  // systems::expeditions::FoundingRefusal, in the order the sim assesses them. EMPTY means either
+  // that the founding would succeed, or that this cohort is not a party awaiting orders at all —
+  // the field speaks only to a party the arrival affordance is offered for, which is the only place
+  // the client reads it. Recomputed every turn by `assess_foundings` (Visibility stage, after
+  // calculate_visibility); derived, never persisted.
+  //
+  // It is a LIST because the two eligibility gates are independent and both can hold at once: a
+  // party that is too small AND on unmapped ground must be told both, or fixing one reveals the
+  // other and the player learns the rules one refusal at a time.
+  foundingRefusals:[string];
+  // settle.min_founding_workers — the working-age floor a party must clear to found. A global config
+  // lever echoed onto every cohort (the `expeditionForecastHorizonTurns` / `bandMoveTilesPerTurn`
+  // idiom), so the client can name the number in a tooltip without a second copy of the config.
+  foundingMinWorkers:uint = 0;
   // --- CRAFTING & MATERIALS (appended last, docs/plan_crafting_and_materials.md §7) -------------
   // See the table docs above each of these for the contract. In one line each:
   //   materialBatches  — what this band HAS, per rating, exact reading and band name both.

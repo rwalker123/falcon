@@ -675,6 +675,16 @@ const CREW_TARGET_COUNT_META := "crew_target_count"
 ## Its face is a flow of Labels at three sizes carrying live numbers, so there is no single `text` to
 ## match and a needle search would find whichever Label happened to hold it.
 const YIELDS_ROW_META := "yields_row"
+## The READOUT's IMPROVEMENT-DEAL block, as `Control` meta — the labelled row stating what the rung
+## on the table will pay once it stands.
+##
+## **IT IS A SIBLING OF THE YIELDS FLOW, NEVER A ROW INSIDE IT, and the meta is what lets a harness
+## say so.** Two harness contracts read the flow structurally — `Readout.yields_header` finds it by
+## `YIELDS_ROW_META` and takes `parent.get_child(index - 1)` as its caption, and both webs' take
+## assertions parse `yields_text` by splitting on an account word — so a deal term folded into the
+## flow would corrupt the caption AND put unparseable tokens in front of the numbers. Its own block,
+## its own meta, its own reader.
+const IMPROVEMENT_DEAL_META := "improvement_deal"
 ## The readout ASIDE block's identity. Its lines are plain Labels at one size and the teaching one
 ## carries live numbers, so a harness matching text would find whichever Label happened to hold the
 ## needle — or nothing, and pass.
@@ -1283,18 +1293,28 @@ static func build_readout_box(parent: Container) -> VBoxContainer:
 ## that reaches for the row by identity still finds the readings and not the caption over them.
 ##
 ## `header` OVERRIDES that caption for a caller whose readings are not a per-turn rate at all — the
-## raid's whole-trip payload, which has no `/turn` and no holding state to arrow toward. Left empty,
-## the per-turn pair is derived from the rows as before, so no rate-stating caller can drift.
+## raid's whole-trip payload, which has no `/turn` and no holding state to arrow toward.
+##
+## `while_building` is the OTHER key a per-turn caption can carry: these readings are the DIPPED
+## take. It is a FLAG rather than a second header string, and that is the whole point — the caption is
+## resolved in ONE place (`SourceForecast.yield_row_header`) over that flag and the `has_after` this
+## function is the only place that knows, so the caption and the marks under it cannot be composed
+## separately. A caller that composed its own caption did exactly that once: the `while building`
+## string replaced `now → after` and left the row's arrow unkeyed.
+##
+## **A BUILDING ROW CARRIES NO ARROW TO KEY.** The floor walk is suppressed at the yield model while a
+## build is composed, so `has_after` is false whenever `while_building` is true and the resolver has
+## three states rather than four. `has_after` is still read here rather than assumed, because it is
+## the ROWS that decide it and a widget that inferred it from the flag would be a second opinion.
 static func build_yields_row(rows: Array, number_tint: Color, note: String, note_tint: Color,
-        waste: String, header: String = "") -> VBoxContainer:
+        waste: String, header: String = "", while_building: bool = false) -> VBoxContainer:
     var block := VBoxContainer.new()
     block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     block.add_theme_constant_override("separation", HudComposeVocab.READOUT_YIELD_V_SEPARATION)
     var has_after := rows.any(func(row: Dictionary) -> bool:
         return row.has(SourceForecast.YIELD_ROW_AFTER))
     var caption := header if header != "" \
-        else (SourceForecast.YIELD_ROW_HEADER_WITH_AFTER if has_after \
-            else SourceForecast.YIELD_ROW_HEADER)
+        else SourceForecast.yield_row_header(while_building, has_after)
     block.add_child(alloc_section_label(caption))
     var flow := HFlowContainer.new()
     flow.set_meta(YIELDS_ROW_META, true)
@@ -1368,6 +1388,45 @@ static func _readout_unit_label(text: String, tint: Color) -> Label:
     label.add_theme_color_override("font_color", tint)
     label.add_theme_font_size_override("font_size", HudComposeVocab.READOUT_YIELD_UNIT_FONT_SIZE)
     return label
+
+## The row's two halves as a dict, so a caller answers "the row, or none" with ONE value (`{}`) and
+## `_mount_readout` has no second flag to keep in step with it.
+const IMPROVEMENT_DEAL_ROW_LABEL := "label"
+const IMPROVEMENT_DEAL_ROW_VALUE := "value"
+
+## **THE IMPROVEMENT DEAL** — the readout's register between the take and the verdict, and it is
+## exactly ONE labelled row: what the rung on the table will pay once it stands
+## (`ONCE TENDED  1.39 food · 0.38 trade`).
+##
+## The key wears the readout's own small-print uppercase — the same `_readout_unit_label` treatment
+## the yields row gives an ACCOUNT, because a term of the deal is read exactly as an account's unit
+## is: the word tells you what the number beside it is. The value takes the verdict's size, which is
+## the register this block belongs to (louder than the aside it sits above, quieter than the take it
+## explains) and `SIGNAL`, this HUD's word for a live promise everywhere else.
+##
+## **IT TAKES A ROW, NOT A LIST OF THEM, AND THAT IS THE SHAPE THE BLOCK IS ALLOWED.** It shipped
+## briefly as an array API over a `{label, value, tint}` triple, for a second row stating the
+## undipped take — see `labor-ui.md` for why that row went. An array parameter with one possible
+## length, and a tint parameter with one possible value, are both the unused-API liability this repo
+## already refuses; the block is a single row, so the signature says so.
+static func build_improvement_deal(label: String, value: String) -> VBoxContainer:
+    var block := VBoxContainer.new()
+    block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    block.add_theme_constant_override("separation", HudComposeVocab.READOUT_YIELD_V_SEPARATION)
+    block.set_meta(IMPROVEMENT_DEAL_META, true)
+    var line := HBoxContainer.new()
+    line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    line.add_theme_constant_override("separation", HudComposeVocab.READOUT_YIELD_PART_SEPARATION)
+    line.add_child(_readout_unit_label(label, HudStyle.INK_FAINT))
+    var reading := Label.new()
+    reading.text = value
+    reading.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+    reading.add_theme_color_override("font_color", HudStyle.SIGNAL)
+    reading.add_theme_font_size_override("font_size",
+        HudComposeVocab.READOUT_DEAL_VALUE_FONT_SIZE)
+    line.add_child(reading)
+    block.add_child(line)
+    return block
 
 ## ONE line of the aside, as the `{text, color}` pair `build_readout_aside` renders. The ink is a
 ## PARAMETER rather than a per-line branch inside the builder because only the CALLER knows whether a

@@ -1030,8 +1030,13 @@ impl StartingUnit {
 /// (demographics, migration, sedentarization, startup seeding, supply networks, default-band
 /// command pickers). Attached to every band spawned by worldgen. A detached [`Expedition`]
 /// deliberately **lacks** this marker, so it is excluded from those systems *by construction* — the
-/// safe default survives new systems added to the settlement arc. A future breakaway-to-new-band is
-/// an expedition that drops `Expedition` and gains `ResidentBand` (`docs/plan_exploration_and_sites.md`).
+/// safe default survives new systems added to the settlement arc.
+///
+/// **It is a membership switch, not a label.** Gaining it puts a band into every one of those
+/// systems at once, which is exactly what the founding verb does: `settle_expedition` drops
+/// `Expedition` and inserts this marker
+/// ([`crate::systems::found_band_from_expedition`], `docs/plan_band_fission.md`). The other two
+/// places it is inserted are worldgen and checkpoint restore.
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct ResidentBand;
 
@@ -1284,6 +1289,16 @@ pub struct Expedition {
     /// A scouting party carries the hunt job's default: its roadside kills resolve through the same
     /// hunt seams, and `send_expedition` names no kit.
     pub kit: crate::equipment_config::KitChoice,
+    /// **Why "start a life here" would be refused for this party right now** — every applicable
+    /// reason, in the order the sim assesses them. **Empty means the founding would succeed**, or
+    /// that this party is not in `AwaitingOrders` at all (no other phase can found, so the field
+    /// speaks only to a party the arrival affordance is offered for).
+    ///
+    /// **Derived per-turn telemetry, exactly like the cohort's `last_*` readings** — recomputed
+    /// every turn by `systems::expeditions::assess_foundings` and deliberately **not** persisted:
+    /// `sim_state.rs` clears it on capture, because a restored verdict would describe a faction map
+    /// as it stood at the checkpoint rather than as the restored world holds it.
+    pub founding_refusals: Vec<crate::systems::FoundingRefusal>,
 }
 
 /// Permanent settlement seeded by a founding action.

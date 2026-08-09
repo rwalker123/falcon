@@ -276,6 +276,14 @@ message RecallExpeditionCommand {
   uint64 expedition_band_id = 2;
 }
 
+// "Start a life here" — the third ARRIVAL action beside onward and recall. A party sitting in
+// AwaitingOrders drops its Expedition component and gains ResidentBand, keeping the BandId it was
+// allocated at launch and the map it learned on the way.
+message SettleExpeditionCommand {
+  uint32 faction_id = 1;
+  uint64 expedition_band_id = 2;
+}
+
 // Outfit and launch a hunting expedition: draw party_workers off the home band and send a detached
 // party to follow the herd fauna_id (lives off its kills — no provisions drawn).
 message SendHuntExpeditionCommand {
@@ -687,9 +695,11 @@ message CommandEnvelope {
     // 49 is held by `send_denial_raid`, so the query channel takes 50. The ONE payload here the
     // server answers rather than applies — see `QueryCommand`.
     QueryCommand query = 50;
-    // 50 is held by `query`, so the crafting bench's three take 51-53 (append-only).
-    SetBenchCommand set_bench = 51;
-    ClearBenchCommand clear_bench = 52;
-    BenchCrewCommand bench_crew = 53;
+    // 50 is held by `query`, so the founding verb takes 51 (append-only; never renumber).
+    SettleExpeditionCommand settle_expedition = 51;
+    // 51 is held by `settle_expedition`, so the crafting bench's three take 52-54 (append-only).
+    SetBenchCommand set_bench = 52;
+    ClearBenchCommand clear_bench = 53;
+    BenchCrewCommand bench_crew = 54;
   }
 }

@@ -364,8 +364,8 @@ own deal line — which all carry the composed verb — were not. A herd mid-Tam
 sim would pay, and the sheet contradicted itself inside one card: the deal's *while building* term and
 the readout's take are the same quantity and disagreed. `improvement` is now a **required** parameter
 there, so no call site can take the identity by omission. (That the two are ONE quantity is also what
-later retired the deal line — see "THE DEAL LINE IS DELETED"; the readout is now the only place it is
-stated, so the disagreement is no longer expressible.)
+later retired the deal LINE — see "THE PAYOFF LIVES IN THE READOUT"; the readout's own row is the
+only place that quantity is stated now, so the disagreement is no longer expressible.)
 
 - **THE DIP MULTIPLIES THE COLLECTION, AND `quantise_animal_take` RUNS AFTER IT.** The sim composes
   `collection = workers × per_worker × build_dip` and *then* takes
@@ -653,17 +653,21 @@ cue was a ticked box further down, which says a build is running and never says 
 line, *"six foragers cannot out-take one patch"* is inexplicable. It renders **only** where a dip is
 live, because a line on every sheet claims nothing (frames: `forage_build_dip` /
 `forage_build_dip_none`, asserted by presence AND by absence through `HudWidgets.CREW_ROW_DIP_META`).
-Its wording deliberately avoids `while building` — that was the DEAL LINE's middle term and the phrase
-that line was IDENTIFIED by; two labels on one sheet carrying one phrase is how a search for either
-finds the other, measured at seven false failures. The deal line is gone (see "THE DEAL LINE IS
-DELETED" below) and `ui_preview` now spends that phrase as the needle proving its absence, so the
-avoidance is what keeps that needle unambiguous rather than merely tidy.
+Its wording deliberately avoids `while building`, and that avoidance has now survived two different
+reasons. It was first the DEAL LINE's middle term and the phrase that line was IDENTIFIED by; two
+labels on one sheet carrying one phrase is how a search for either finds the other, measured at seven
+false failures. The line was then deleted and the phrase served as the harness's needle for its
+absence. The deal is BACK in the readout (see "THE PAYOFF LIVES IN THE READOUT" below) and
+`SourceForecast.YIELD_ROW_HEADER_WHILE_BUILDING` prints the phrase as the yields caption, so the
+collision is live again and the avoidance keeps the crew note about the CREW's carry rather than
+about the take above it. The absence needle is retired.
 
-**The readout is one bounded well with three registers** (`_mount_readout`, `HudStyle.readout_stylebox`):
+**The readout is one bounded well with four registers** (`_mount_readout`, `HudStyle.readout_stylebox`):
 
 | register | what it answers | treatment |
 |---|---|---|
 | **yields** | what this crew brings home at this floor, now and once holding | a header (`PER TURN · NOW → AFTER`) over 15px tabular numbers + 10px uppercase account names (`2.26 → 0.42  FOOD`) |
+| **deal** | what the rung on the table will pay once it stands | ONE row — a 10px uppercase key beside a 12px `SIGNAL` value — rendering only where there is a rung to state |
 | **verdict** | which of the crew and the floor is binding | 12px + the severity dot, colour by severity |
 | **aside** | the floor's zone hint and its teaching line | 11px `INK_FAINT` under a dashed rule |
 
@@ -908,7 +912,18 @@ Four things follow, and each is load-bearing:
 - **It renders only where the crew REACHES the floor**, gated on the walk's `reached_turn` — the same
   walk the verdict one line down narrates ("Reaches the floor in 3 turns"). A crew that settles short
   never enters the holding state, and promising it a held rate is the failure this reading exists to
-  fix. `yield_rows` additionally drops it where the two are equal: an arrow to itself is noise.
+  fix. **And only where no BUILD is composed** — see "A COMPOSED BUILD SUPPRESSES THE FLOOR WALK"
+  below. Both tests are the yield models' (`_walks_to_the_floor`), so the rows and the caption over
+  them answer one question.
+- **"Differs from the take" is asked of the FORMATTED strings, because that is what an arrow claims.**
+  `yield_rows` drops the second reading where the two are equal — an arrow to itself is noise — and
+  that test read `is_equal_approx` on the raw floats while the row renders through `format_magnitude`
+  at `YIELD_DECIMALS`. Any pair closer than the display's own resolution therefore drew `0.26 → 0.26
+  FOOD`, reported from play beside a trade account correctly reading `0.90 → 0.87`. It is the same
+  mistake `COMPONENT_RENDER_MIN` records one function along: **a gate finer than its formatter's
+  resolution admits exactly what it exists to stop.** Driven, PNG-less, in `chapters/improvements.gd`
+  — a rounding pair and a visible pair asserted together, since suppressing every arrow satisfies the
+  negative alone, plus a precondition that the rounding pair really is two different floats.
 - **A managed rung-3 source has no burst** — the sim never draws a Field or built Pen down, so its
   `hold_ceiling` IS its ceiling and one reading renders.
 - **The unit is hoisted into the header.** Three `/TURN`s were the widest thing on the row and it
@@ -1437,6 +1452,46 @@ where a hex genuinely holds more than one eligible quarry.
 
 **The PARTY stepper row is deliberately not in the family.** It is a control you operate rather than a
 value box, so its key still expands and its `−/+` sits at the row's trailing edge.
+
+### The `Band:` picker opens on the band the player is LOOKING AT
+
+`Hud._resolve_assign_band` answers which band a sheet composes for — and every command it can emit
+targets — in three rungs: **the selected player unit → the PANEL band → `player_band()`**. Both
+compose sheets seed their picker from it (`begin_hunt_source` / `begin_forage_source`), and it is
+injected into `DrawerComposeController` and `TargetingController` alike, so the sheet, the map pick
+and the move all name one band.
+
+**The middle rung is the whole of it, and it exists because the first rung is empty exactly when a
+sheet is open.** Selecting a HERD or a TILE clears `HudSelectionState`'s unit (`select_herd` /
+`select_tile` drop it by design), and selecting a herd or a tile is *how* a compose sheet is opened.
+The resolver therefore used to reach `player_band()` — the FIRST player-faction cohort in
+`update_band_alerts` — on the ordinary path. That was harmless while a faction had one band and
+became a defect the moment an expedition could found a second (issue #510): the sheet composed for
+the PARENT while the Band/City panel showed the colony, so the picker read `Band 1` under a `Band 2`
+header and the crew stepper capped at the parent's spent idle workers ("1 of 30 useful — free up idle
+workers to send more"). Every number was arithmetically honest and about the wrong band.
+
+**The panel band is the right subject because it survives everything a sheet does to the selection.**
+Selecting a herd or an empty tile leaves it intact (`band-city-panel.md` — the panel persists across
+selection changes), the faction page leaves it alone as the subject the cycler walks back into, and
+`refresh_snapshot` re-resolves it every turn. It is the only piece of state that still names the band
+the player was reading when they clicked the map.
+
+**It is re-resolved LIVE by entity; the stored dict is never returned.** `set_panel_band` keeps
+`unit.duplicate(true)`, a copy taken at render time, and this answer feeds `assignable_hunt_workers` /
+`assignable_forage_workers` — the very idle counts the steppers cap against — so returning that copy
+would put a stale crew under the steppers this fix exists for. A lookup that FAILS is not staleness
+either: the panel band only ever comes from `player_bands()`, so an entity the roster no longer lists
+is a band that has left the world, and the last rung takes that case rather than addressing a command
+to it. The panel rung carries the same `_is_player_unit` guard the selection rung does.
+
+**Verified by `ui_preview`'s `compose_panel_band_hunt` / `compose_panel_band_forage`**
+(`chapters/hunt.gd`, appended last). Both sheets are asserted, because they are two injection sites
+and one passing says nothing about the other. Three numbers are staged deliberately unlike each other
+— a parent with NO idle crew, the colony's live 2, and a panel copy stale at 9 — so each wrong rung
+fails as its own distinct answer instead of hiding inside another's. Sabotage-verified by restoring
+the bare `player_band()` fallback: exactly those six assertions fail (`Band 1`, entity 841, a stepper
+capped at 0) and nothing else in the run does.
 
 ### THE SHEET'S NUMBERS ARE REPRICED AT THE CHOSEN KIT, through ONE seam
 
@@ -2100,8 +2155,9 @@ retires, so no rung of that picker can be disabled.
 **The improvement ROW is one control below it** (`HudWidgets.build_improvement_control` +
 `DrawerComposeController._build_improvement_control`), in exactly one of three states:
 
-1. **Offered** — an unchecked `CheckBox` naming the next rung and its terms
-   (`🌱 Cultivate this patch · then 1.20 food`). A rung you can actually take.
+1. **Offered** — an unchecked `CheckBox` naming the next rung
+   (`🌱 Cultivate this patch`). A rung you can actually take; what it PAYS reads in the readout
+   beneath (see "THE PAYOFF LIVES IN THE READOUT" below).
 1b. **Gated** — **a `Label`, NOT a disabled checkbox** (`HudWidgets.IMPROVEMENT_STATE_GATED`), whose
    own text IS the first unmet prerequisite, rung glyph and all: `▦ This ground is rich but too dry to
    farm — …`. **The offer wording is gone, not greyed**, and the crop picker does not render —
@@ -2114,9 +2170,8 @@ retires, so no rung of that picker can be disabled.
    **On the COMPOSE SHEET this state is reached by a SOURCE gate only** — a knowledge gate builds no
    control here at all, which is why the example above is the ground's refusal and not the knowledge
    line it used to be; see "A KNOWLEDGE gate renders NO improvement control on the compose sheet".
-2. **Running** — checked and **LIVE**, carrying the build meter AND the rung's payoff
-   (`🌱 Cultivating — 60% · then 1.20 food`, the offered box's own `· then` grammar). Unchecking
-   it abandons the build (`abandon_improvement`, below).
+2. **Running** — checked and **LIVE**, carrying the build meter and nothing else
+   (`🌱 Cultivating — 60%`). Unchecking it abandons the build (`abandon_improvement`, below).
 3. **Done** — a static `Label` naming the state (`🌾 Tended Patch`), with the NEXT rung's checkbox
    beneath it when there is one.
 
@@ -2128,54 +2183,193 @@ toward. The two answers differ on **the gate alone**, and that difference is the
 MARK (promises the verb is available, so a gated rung must not wear one) and a CONTROL (is how the
 player discovers the rung exists).
 
-### THE DEAL LINE IS DELETED — its payoff rides the running control's face
+### THE PAYOFF LIVES IN THE READOUT — the faces are bare, and the deal is back as a labelled row
 
-The improvement forecast used to render a line of its own beneath the box:
+The compose sheet states an improvement's terms as **a labelled row inside the `PER TURN` readout**,
+directly under the take and above the verdict:
 
 ```
-0.61 food · 1.25 trade → 0.15 food · 0.31 trade while building → 1.39 food · 0.38 trade
-        today                    preparing (WARN-amber)                  payoff
+PER TURN · WHILE BUILDING
+0.64  FOOD    RENEWABLE
+ONCE TENDED  1.20 food
 ```
 
-**Two of its three terms were already on the sheet.** The MIDDLE term is byte-identical to the
-readout's own `PER TURN` headline — the same crew through the same dipped forecast, which is why the
-harness assertion pairing them never once disagreed — and the FIRST is the price of building, which
-the crew row states qualitatively as a factor (*"building this rung, each carries 50% as much"* on
-shipped values). Only
-the payoff was unique to it, and the OFFERED state already puts the payoff on the checkbox face. So
-the payoff moved to the RUNNING face in the offer's own grammar and the line went:
+**That example is the whole readout of a building sheet, and the absences in it are load-bearing.**
+There is no arrow on the reading and no `now → after` in the caption: a composed build suppresses the
+floor walk outright (see "A COMPOSED BUILD SUPPRESSES THE FLOOR WALK" below), because `ONCE TENDED` is
+already a *later* and two unlabelled ones in one box is the confusion that rule exists to prevent.
+
+**This reverses an earlier deletion, and the reason it was reversed is worth keeping.** The payoff
+had been moved onto the CHECKBOX FACE (`🌱 Cultivate this patch · then 1.20 food`), which put
+it one line above a `PER TURN` box quoting a *different* number for the same source — the dipped take
+— with nothing on either saying which question each was answering. The terms of the bargain and the
+take they are compared against were in two registers that did not know about each other; putting the
+payoff INSIDE that box is what joins them. The caption is what says which take the headline is (see
+the three-state table below), which is the other half of the same repair.
 
 | state | face |
 |---|---|
-| offered | `🌱 Cultivate this patch · then 1.39 food` (`IMPROVEMENT_OFFER_FORMAT`) |
-| running | `🌱 Cultivating — 40% · then 1.39 food` (`IMPROVEMENT_RUNNING_FORMAT`) |
-| running, feed rung | `🐄 Building the pen — 0% · then 0.00 food − 0.14 feed` (`…_FEED_FORMAT`) |
-| running, no quoted deal | `🌱 Cultivating — 40%` (`…_BARE_FORMAT`) — never a fabricated `· then +0.00` |
+| offered | `🌱 Cultivate this patch` (`IMPROVEMENT_OFFER_BARE_FORMAT`) |
+| gated | `▦ This ground is rich but too dry to farm — …` (`IMPROVEMENT_GATED_FORMAT`) |
+| running | `🌱 Cultivating — 40%` (`IMPROVEMENT_RUNNING_BARE_FORMAT`) |
+| done | `🌾 Tended Patch` (`IMPROVEMENT_DONE_FORMAT`; Corral's carries its upkeep) |
 
-- **The payoff is composed the way the deal composed it**, from `improvement_forecast` at the
-  composed floor: the caller's `payoff_face` Callable where there is one (the plant web substitutes
-  the CROP, so the box that offers a rung and the box running it can never quote different crops),
-  else `picker_products` over the payoff vector × the band's `output_multiplier`.
-- **`IMPROVEMENT_DEAL_DEPLETED_NOTE` OUTLIVED THE LINE, deliberately.** A pen whose payoff is 0.00
-  under a running feed is a pure loss and that is the most valuable thing this control can say; it
-  rides `build_improvement_control`'s note slot now — the same WARN-inked slot the paused-build line
-  uses — beside the zero on the face, which still renders in full. Frame + assertion:
+The `· then` formats and the `payoff_face` Callable that fed them are **deleted**, faces having no
+terms left to compose. What survives on the control is the rung, the meter and the notes.
+
+**The deal block is a SIBLING of the yields flow, never rows inside it** (`HudWidgets.build_improvement_deal`,
+`IMPROVEMENT_DEAL_META`). Two harness contracts read that flow structurally — `Readout.yields_header`
+takes the caption as `parent.get_child(index - 1)`, and both webs' take assertions parse the flow's
+joined text by splitting on an account word — so a deal term folded in corrupts both, silently. Its
+own block, its own meta, its own reader (`Readout.improvement_deal_text`).
+
+**When it renders:**
+
+| condition | block |
+|---|---|
+| no rung composed and none ungated-offered | not rendered at all |
+| a rung OFFERED, or a rung COMPOSED, at any crew | the payoff row — the block's only row |
+
+**IT IS ONE ROW, AND A SECOND ONE HAS BEEN TRIED AND RETIRED.** The block briefly carried a
+`WITHOUT THE BUILD` row above the payoff, stating the crew's UNDIPPED take, on the reasoning that
+ticking the box makes the headline the dipped figure and hides the baseline it is a fraction of. It
+went for two reasons and the second is the one to remember:
+
+- **The baseline is one click away.** Unticking the box shows it, live, in the register the player
+  is already reading — so the row spent a line of the panel restating something the control directly
+  above it produces on demand.
+- **WHERE THE DIP COSTS NOTHING THE ROW PRINTED THE HEADLINE BACK.** The build fraction multiplies
+  the CREW, not the ceiling, so a crew big enough to saturate the source pays no dip at all — and on
+  one the undipped take and the dipped take are the same number. The panel then read
+  `0.96 → 0.15 FOOD` over `WITHOUT THE BUILD 0.96 food`, under a crew note saying *each carries 50%
+  as much*: correct arithmetic, unreadable panel.
+
+`Readout.improvement_deal_rows` pins the count at 1 on both webs, and
+`deal_repeats_a_yields_number` pins the general form — no magnitude in the deal may restate one the
+take above it already prints. **A `contains` claim cannot see either return**: a re-added baseline
+row satisfies every one of them, and its numbers are legitimate.
+
+- **A GATED rung quotes no payoff, here or anywhere.** The gated control spends its whole slot on the
+  unmet prerequisite deliberately — a number you cannot act on is noise at the moment you are told you
+  cannot act — so `_improvement_deal_rung` answers `""` for one, and the readout does not put back what
+  that branch removes. `improvement_offered_gated` / `forage_sow_locked` are the frames.
+- **The row is floor-independent, so the block is deliberately OUT of the live registry.** A payoff
+  is a property of the finished rung and `_improvement_deal_row` asks `improvement_forecast` at the
+  FOOD PEAK, the floor `_improvement_payoff_terms` already quotes it at — nothing in the block moves
+  under a drag, and that registry's own rule is that a host which does not move stays out of it.
+- **The payoff follows the SELECTED CROP, resolved ONCE per sheet.** The forage builder computes
+  `_crop_payoff_terms` a single time against `_improvement_deal_rung` and threads that string into the
+  readout; the crop picker is built for the same rung. One seam, so the list and the terms cannot name
+  different crops — the issue-#419 invariant, in its third home. The hunt sheet's equivalent is one
+  `_improvement_payoff_terms` call.
+- **A payoff of `""` renders NO row** — never a fabricated `0.00`. `improvement_forecast` answers `{}`
+  for a rung the wire does not describe, and the bare face formats already followed the same rule.
+- **Corral's feed rides the payoff row's value** (`IMPROVEMENT_DEAL_FEED_FORMAT`, `… − 0.14 feed`),
+  because `corralYield` is GROSS and the row would otherwise promise a rate the pen never nets.
+- **`IMPROVEMENT_DEAL_DEPLETED_NOTE` has now outlived TWO homes for the zero it explains** — a deal
+  line's third term, then the control's face, now this row — and has stayed on
+  `build_improvement_control`'s note slot throughout, because it is a warning about the RUNG rather
+  than a footnote to whichever register prints the number. Frame: `herd_corral_depleted`.
+- **The yields caption says which take it is.** A composed build passes a `while_building` FLAG — not
+  a caption string — into `build_yields_row`, which is the only place that knows whether the readings
+  also carry a holding rate, and `SourceForecast.yield_row_header` resolves the THREE states in ONE
+  place:
+
+  | building? | arrow present? | caption |
+  |---|---|---|
+  | no | no | `per turn` |
+  | no | yes | `per turn · now → after` |
+  | yes | — | `per turn · while building` |
+
+  It shipped once as an UNCONDITIONAL override while a building row could still carry an arrow, which
+  left the row's own `0.64 → 0.15` reading with no key at all on exactly the sheets that most need
+  one — a caption that has stopped explaining a mark still on screen, which is worse than the
+  ambiguity it was added to fix. Two call sites deciding separately is how that happened, so no
+  caller composes a caption of its own; a caller with no per-turn rate AT ALL (the raid's trip
+  payload) supplies its own `header` and never reaches the resolver. **`has_after` is still READ on
+  the building branch's way in rather than assumed**, because the rows decide it and a widget
+  inferring it from the flag would be a second opinion — but the resolver has nothing to do with it
+  there, the fourth combination being unreachable:
+
+  > #### A COMPOSED BUILD SUPPRESSES THE FLOOR WALK — both the `after` readings and the caption's key
+  >
+  > The readout was stacking two unrelated meanings of *later* with nothing marking them apart. The
+  > row's `now → after` is the **floor walk at the CURRENT rung** — the burst take now, the steady
+  > rate once the source is drawn to its floor, ~13 turns out on the reported frame. The `ONCE TENDED`
+  > row directly beneath the caption is the **payoff at the NEXT rung**, after a ~25-turn build.
+  > `PER TURN · WHILE BUILDING, NOW → AFTER` sat one line above `ONCE TENDED 1.20 food` and the
+  > labelled row was read as the caption's *after*. Reported from play.
+  >
+  > So while an improvement is composed the sheet states ONE transition, and it is the one being
+  > decided. **Nothing is lost**: the verdict two lines down narrates the walk in prose (*"Reaches the
+  > floor in 13 turns, then holds it — taking only what grows back"*), which is why the fix is
+  > suppression rather than a second label.
+  >
+  > **It is gated at the MODEL, in `DrawerComposeController._walks_to_the_floor`** — one seam both
+  > `_forage_yield_model` and `_hunt_yield_model` compose their `after` dict through, beside the
+  > `reaches` test that was already there. The caption's `has_after` is derived from the rows the
+  > model emits, so gating at the render instead would let the arrow and the key over it disagree,
+  > which is the failure this resolver has already paid for once.
+  >
+  > **Assert the caption AND the readings, or the claim is half made.** With the both-true caption
+  > deleted, a model that kept its `after` renders the SAME `per turn · while building` caption over
+  > rows still drawing arrows — measured: the header-only assertion passes with the suppression fully
+  > reverted, and only the row claim fails. `improvement_running_plant` (plant) and
+  > `improvement_running_animal` (animal, whose model rescales a quantised take through code the
+  > plant one shares none of) each pin both halves. The plant frame carries the **non-vacuity** half
+  > too: both claims are free on a crew that never reaches its floor, so the same patch, crew and
+  > floor are re-composed with the box UNTICKED and must state the walk in full.
+  >
+  > `forage_unstaffed` is no longer the pair to a both-true frame — it is a crew of 0 with a build
+  > composed, i.e. two reasons for one answer.
+- **Assert the PAIR, never the absence alone** — "the payoff left the face" also passes on a sheet
+  that lost the payoff entirely. Every frame that pins the face's `· then` absence
+  (`IMPROVEMENT_PAYOFF_NEEDLE`, kept and re-pointed) also pins the payoff's presence in the readout by
+  `IMPROVEMENT_DEAL_META`: `improvement_running_plant`, `improvement_running_animal`,
+  `forage_crop_then_emmer` / `_groundnut` (which additionally prove the terms MOVE with the crop),
+  `forage_unstaffed`, `forage_sow`, `herd_investment_both_products`, `herd_investment_corral_offer`,
   `herd_corral_depleted`.
-- **The UNSTAFFED variants died BY DESIGN.** They existed because the today/dip terms are
-  staffing-scaled while the payoff is not, so a zero crew read as a sequence it was not on track for.
-  With only the payoff left there is no sequence to misread.
-- **Assert the pair, never the absence alone** — "the line is gone" also passes on a sheet that lost
-  the payoff with it. `forage_unstaffed`, `improvement_running_plant` and `improvement_running_animal`
-  each pin the absence (by the `while building` needle) AND the payoff on the face (by
-  `IMPROVEMENT_CONTROL_META`), both webs, sabotage-verified in both directions.
+- **THE SOW RUNG WAS UNPROVEN UNTIL ITS FIXTURE WAS REPAIRED, and the bug was in the harness.**
+  `BaseFx.seed_forage_rows` converts the `patch_ceiling_*` authoring shorthand only *if the fraction
+  key is absent* — and `food_tile_fixture()` has already run it once, writing
+  `patch_sow_build_fraction = 0.0` and erasing the shorthand — so `ForageFx.sowable_tile_fixture`'s
+  restated `patch_ceiling_sow` was ignored on the re-seed, `improvement_forecast` answered `{}` for
+  Sow, and the rung quoted no deal on any frame in the corpus. It states the FRACTION outright now
+  (`ForageFx.SOW_BUILD_FRACTION`, the docstring's own "a fixture that states a fraction outright
+  wins"), and `forage_sow` composes the rung through the three-line idiom so the frame renders the
+  selected Sow its own comment has always claimed. Its assertion is the rung's ASYMMETRY read off
+  the rung's dipped headline against its payoff — `0.01 FOOD` while building against
+  `ONCE SOWN 2.40 food` — as an ORDERING rather than against literals, since pinning either
+  magnitude would pin this fixture's arithmetic.
+
+**THE CONTROL SITS ABOVE THE READOUT ON BOTH SHEETS**, which is what makes the block legible at all:
+… crew stepper → kit row → improvement control (+ crop picker) → `PER TURN` readout → action button.
+It used to follow the readout, which put the terms BELOW the box they price. The spine
+(`Spine.collect_compose_spine`) is unmoved — it tags on `IMPROVEMENT_CONTROL_META` and the readout
+carries no spine tag — so the two webs' order assertions read exactly as before.
+
+**`CREW_BUILD_DIP_NOTE_FORMAT` still avoids the phrase "while building", and the reason changed
+again.** It was worded away from it because the deleted deal line's middle term carried it; the
+harness then used the phrase as that line's absence needle; and the readout's caption prints it now.
+The collision is live again, so the wording stays — the crew note is about the CREW's carry, not the
+caption over the take. The `while building` absence needle is retired.
 
 The dip itself is unchanged: `build_forecast` is the crew's own forecast with its throughput dipped
 per account, and it is what the readout's `PER TURN` row has quoted since §3.1.
 
 **A non-Sustain stance beside a running build is LEGAL and is not an error state.** It defeats itself
 through the ecology, not through a gate: the build meter accrues only while the source is Thriving,
-and Deplete is what drives it out. The dip rides the LARGER ceiling, so a Deplete builder takes more
-now and stalls their own meter. `ui_preview`'s `improvement_deplete_while_building` is that frame.
+and Deplete is what drives it out. `ui_preview`'s `improvement_deplete_while_building` is that frame.
+
+**On a LABOUR-BOUND crew it takes no more now, which is the trap at its sharpest** — and that frame's
+crew is deliberately one (`ForageFx.IMPROVEMENT_STANCE_FRAME_FORAGERS`, sized under the food peak's
+dipped crew count). Since the dip moved onto the CREW (§3.1) a deeper floor frees a ceiling such a
+crew cannot reach, so the rendered take is identical at both floors while the build rate the same
+crew earns falls with the floor. **The frame's assertion said the opposite for a while and passed
+anyway**, because it compared the whole yields STRING and that string carried a `now → after` reading
+which did move; suppressing the walk under a composed build is what exposed it, and the claim is now
+the equality — agreeing with the floor-independence claim beside it, which is the same number — over
+a teaching-line companion that keeps it non-vacuous.
 
 **The pause line is both webs' now.** A build accrues only while its source is Thriving, and that is
 deliberately not a gate (a source's phase swings as it is worked). The sim PAUSES, losing nothing, and
@@ -2347,13 +2541,14 @@ discard is precisely what this axis split removed.
 
 - **Labor allocation UI** (`Hud.gd`, Early-Game Labor slice 3b — `docs/plan_early_game_labor.md`):
   the band is a **labor pool** whose working-age workers are assigned source-centrically to
-  in-range sources/roles. There is **exactly one player band today**, captured each snapshot
-  into `_player_band` (first player-faction cohort in `update_band_alerts`); assign/move/clear
-  all target it. Every player band is also collected into `_player_bands`, which backs the
-  **band-picker dropdown** on the herd/tile assign controls (see `%HerdAssignControls` /
-  `%ForageAssignControls` below) — an assignment explicitly names WHICH band supplies the
-  workers (built for N even though only one exists live). Three runtime-built control sets replace the retired single-task Scout/Cancel,
-  Hunt/policy, and Forage buttons:
+  in-range sources/roles. **The player has as many bands as it has founded** — an arrived expedition
+  can start a life where it stands (issue #510) — so every player-faction cohort is collected each
+  snapshot into `_player_bands`, which backs the **band-picker dropdown** on the herd/tile assign
+  controls (see `%HerdAssignControls` / `%ForageAssignControls` below) and the Band/City panel's
+  cycler; an assignment explicitly names WHICH band supplies the workers.
+  `player_band()` — the FIRST of that list — is the last-resort fallback and nothing else; which band
+  a sheet actually composes for is `Hud._resolve_assign_band`'s answer, below. Three runtime-built
+  control sets replace the retired single-task Scout/Cancel, Hunt/policy, and Forage buttons:
   - **`%AllocationPanel`** (band drawer, player band only, `_build_allocation_panel`): reads as a
     "current actions" report — a `Population <size> · Workers <working_age> (Idle <n>)` line (spells
     out that only the ~16 working-age labor, not the 30 people — children/elders are dependents;

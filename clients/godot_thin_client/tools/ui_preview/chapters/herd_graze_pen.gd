@@ -630,7 +630,7 @@ func run(harness) -> void:
 	var corral_gated = ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet,
 		SourceForecast.IMPROVEMENT_CORRAL)
 	# **THE FAILURE THIS CATCHES IS AN OFFER, not a hidden Label.** Suppressing the reason without
-	# suppressing the control leaves an unchecked, live `Pen this herd · then 1.50 food` box on a
+	# suppressing the control leaves an unchecked, live `Pen this herd` box on a
 	# faction 35% of the way through Penning — a commitment the sim rejects — so the assertion is
 	# ABSENCE, and the DONE label below is what proves the sheet did not simply fail to build.
 	h._assert_hud("a Corral blocked ONLY on knowledge renders NO improvement control on this sheet",
@@ -771,17 +771,21 @@ func run(harness) -> void:
 	h._compose_herd(_depleted_corral_herd_fixture(), Spine.COMPOSE_COUNT_UNSET, ForageFx.COMPOSE_FLOOR_UNSET, "corral")
 	await h._settle()
 	await h._save("herd_corral_depleted")
-	# **THE WARNING SURVIVED THE DEAL LINE IT WAS WRITTEN UNDER.** It rides the improvement control's
-	# own note slot now (the slot the paused-build line uses), so this frame — the only one that
-	# produces it — is where a silent loss would show. The zero it explains is asserted beside it: a
-	# note over a suppressed payoff would be a warning about a number the player cannot see.
+	# **THE WARNING HAS OUTLIVED TWO HOMES FOR THE ZERO IT EXPLAINS** — a deal LINE, then the control's
+	# face, now the readout's payoff row — and has stayed on the improvement control's own note slot
+	# throughout (the slot the paused-build line uses), because it is a warning about the RUNG. This
+	# frame is the only one that produces it, so it is where a silent loss would show. The zero is
+	# asserted beside it: a note over a suppressed payoff warns about a number the player cannot see.
 	h._assert_hud("a pen that would pay nothing says so, in the note slot under its own box",
 		Q.has_label_containing(h._hud._drawercompose._compose_sheet,
 			HudComposeVocab.IMPROVEMENT_DEAL_DEPLETED_NOTE))
-	h._assert_hud("…above a face that still states the zero payoff and the feed it would still eat",
-		ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CORRAL)
+	h._assert_hud("…beside a readout row that still states the zero payoff and the feed it would eat",
+		Readout.improvement_deal_text(h._hud._drawercompose._compose_sheet)
 			.contains(SourceForecast.PICKER_FOOD_PRODUCT_FORMAT
 				% SourceForecast.format_magnitude(0.0)))
+	h._assert_hud("…and the box's own face carries no payoff to state it a second time",
+		not ForageFx.improvement_face(h._hud._drawercompose._compose_sheet,
+			SourceForecast.IMPROVEMENT_CORRAL).contains(ForageFx.IMPROVEMENT_PAYOFF_NEEDLE))
 
 	# ---- THE INTENSIFICATION LADDER, slice 6b -----------------------------------------------------
 	# THE TWO-METER SPLIT (docs/plan_intensification_ladder.md §4.1) — the headline of this slice, and

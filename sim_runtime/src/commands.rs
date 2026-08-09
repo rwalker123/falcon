@@ -233,6 +233,14 @@ pub enum CommandPayload {
         faction_id: u32,
         expedition_band_id: u64,
     },
+    /// **"Start a life here"** — the third *arrival* action beside onward and recall. The party
+    /// stops being an expedition and becomes a resident band on the spot, keeping the
+    /// `expedition_band_id` it was allocated at launch (so the founding is the same band, seen
+    /// from a different side, for every id-keyed consumer including the replay log).
+    SettleExpedition {
+        faction_id: u32,
+        expedition_band_id: u64,
+    },
     SendHuntExpedition {
         faction_id: u32,
         band_id: Option<u64>,
@@ -972,6 +980,13 @@ impl CommandEnvelope {
                 faction_id: *faction_id,
                 expedition_band_id: *expedition_band_id,
             }),
+            CommandPayload::SettleExpedition {
+                faction_id,
+                expedition_band_id,
+            } => pb::command_envelope::Command::SettleExpedition(pb::SettleExpeditionCommand {
+                faction_id: *faction_id,
+                expedition_band_id: *expedition_band_id,
+            }),
             CommandPayload::SendHuntExpedition {
                 faction_id,
                 band_id,
@@ -1314,6 +1329,12 @@ impl CommandEnvelope {
             },
             pb::command_envelope::Command::RecallExpedition(cmd) => {
                 CommandPayload::RecallExpedition {
+                    faction_id: cmd.faction_id,
+                    expedition_band_id: cmd.expedition_band_id,
+                }
+            }
+            pb::command_envelope::Command::SettleExpedition(cmd) => {
+                CommandPayload::SettleExpedition {
                     faction_id: cmd.faction_id,
                     expedition_band_id: cmd.expedition_band_id,
                 }
@@ -1662,6 +1683,24 @@ mod tests {
             let decoded = CommandEnvelope::decode(&bytes).expect("decode");
             assert_eq!(decoded.payload, payload);
         }
+    }
+
+    /// **The founding rides the wire as a `BandId`**, and it has to survive the envelope intact:
+    /// the command is replayed out of the log after a rollback, where an entity handle would resolve
+    /// to nothing but an id still names the same band.
+    #[test]
+    fn settle_expedition_round_trips_through_the_envelope() {
+        let payload = CommandPayload::SettleExpedition {
+            faction_id: 0,
+            expedition_band_id: 9_001,
+        };
+        let envelope = CommandEnvelope {
+            payload: payload.clone(),
+            correlation_id: None,
+        };
+        let bytes = envelope.encode_to_vec().expect("encode");
+        let decoded = CommandEnvelope::decode(&bytes).expect("decode");
+        assert_eq!(decoded.payload, payload);
     }
 
     /// `0` is the protobuf default, so an unset `kind` field decodes as UNSPECIFIED. Accepting it

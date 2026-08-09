@@ -118,10 +118,24 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 227 `assert OK` lines, 308 `PASS` ones and ZERO `FAIL` ones, over 88
+**A clean run exits 0 and prints 235 `assert OK` lines, 343 `PASS` ones and ZERO `FAIL` ones, over 93
 frames.** (The `PASS` figure was 259 before the ACTION REGISTRY's own block added sixteen and 275
 before the COLLAPSED RAIL added thirty-three — see "`_assert_action_registry`" and "The collapsed
-rail's two frames" below.) (The
+rail's two frames" below.) (It
+was 231/265 before the founding affordance learned to REFUSE — `band_panel_settle_too_small` and
+`band_panel_settle_blocked_both`, two frames, their four `assert OK`s and 28 `PASS` lines across the
+row button, the strip's inline link, the drawer's seam and the hover probe. The `blocked_both` state
+is the one that earns its keep: truncating `settle_blocked_reason` to the first token fails **exactly
+five** assertions, all on that frame.) (It
+was 231/264 before the founding prompt's copy was cut to one line and
+`_assert_settle_confirms_before_emitting` gained its EQUALITY claim on that line — one `PASS` and one
+frame, `band_panel_settle_confirm`, and no `assert OK`.) (It was 227/259 before the THIRD ARRIVAL
+ACTION (issue #510) added `band_panel_settle_offered` / `band_panel_settle_withheld` — two frames,
+**four** `assert OK`s, the four `_assert_settle_affordance` claims and
+`_assert_settle_confirms_before_emitting`'s one. **Four, not two: a new frame costs a zone-rect claim
+AND a content-fits claim**, `_assert_zones_within_bounds` and `_assert_zone_content_fits`, one of
+each per state — the content-fits line names its state and the zone-rect line does not, which is
+what makes the second easy to miss when counting a log by eye.) (The
 only `ERROR:` lines in a clean log are Godot's own shutdown RID-leak noise, which is why the status
 is the verdict and an `ERROR:` count is not.) (The two tallies are no longer equal, and that is not
 a miscount: `_assert_scroll_only_where_sanctioned` and `_assert_band_columns_ignore_content` each

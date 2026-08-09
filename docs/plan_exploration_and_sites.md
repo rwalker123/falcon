@@ -379,6 +379,8 @@ depletion) lives in a new `advance_expeditions` system in the Population stage, 
 - `docs/plan_early_game_labor.md` — the Scout labor role (local scout is its completion); the
   band/labor-pool model expeditions draw workers from; the TOE slice that later gates scouting gear.
 - `docs/plan_settlement_population.md` — settle-site discoveries feed the emergent-settlement arc.
+- `docs/plan_band_fission.md` — realizes the **deferred breakaway** of §2: the `Expedition` →
+  `ResidentBand` swap as a third arrival verb, and what the party carries when it never comes home.
 - `docs/plan_wildlife_hunting_overlay.md` — the fauna-config/loader pattern the sites catalog mirrors.
 - `core_sim/CLAUDE.md` — Visibility Systems (sight ranges, fog states), the config-loader pattern.
 - `clients/godot_thin_client/CLAUDE.md` — fog rendering (Active/Discovered/Unexplored), the

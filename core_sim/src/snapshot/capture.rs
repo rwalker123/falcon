@@ -2395,6 +2395,7 @@ pub fn capture_snapshot(
         hunt_viability_warn_turns: expedition_cfg.hunt.viability_warn_turns,
         hunt_forecast_horizon_turns: expedition_cfg.hunt.forecast_horizon_turns,
         band_move_tiles_per_turn: labor_config.band_move_tiles_per_turn,
+        settle_min_founding_workers: expedition_cfg.settle.min_founding_workers,
     };
     // A cohort → live-tile map so an in-flight expedition can find its home band's CURRENT tile
     // (bands are nomadic). The `populations` query is read-only, so iterating it twice is fine.

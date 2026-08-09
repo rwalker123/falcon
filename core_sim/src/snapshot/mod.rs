@@ -1353,6 +1353,7 @@ mod tests {
             hunt_viability_warn_turns: 0,
             hunt_forecast_horizon_turns: 0,
             band_move_tiles_per_turn: 0,
+            settle_min_founding_workers: 0,
         };
         population_state(PopulationStateInputs {
             entity: Entity::from_raw(1),

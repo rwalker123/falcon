@@ -9,7 +9,6 @@ extends RefCounted
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
-const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
@@ -160,15 +159,22 @@ func run(harness) -> void:
 	var tame_box = ForageFx.find_improvement_control(h._hud._drawercompose._compose_sheet, "tame")
 	h._assert_hud("a running Tame renders a CHECKED improvement box, as Cultivate does",
 		tame_box is CheckBox and (tame_box as CheckBox).button_pressed)
-	# **THE SAME PAIR ITS PLANT TWIN CARRIES, on the web that shares the control.** The deal LINE is
-	# gone from both sheets and the payoff rides both faces; asserting only the absence would pass on a
-	# sheet that had lost the payoff too, which is why the second half names the face.
-	h._assert_hud("…with no deal LINE beneath it, exactly as the plant web has none",
-		not Q.has_label_containing(h._hud._drawercompose._compose_sheet,
-			ForageFx.IMPROVEMENT_DEAL_MIDDLE_NEEDLE))
-	h._assert_hud("…and the payoff on the running box's face, in the offer's own grammar",
-		ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, "tame")
+	# **THE SAME PAIR ITS PLANT TWIN CARRIES, on the web that shares the control.** The payoff is off
+	# both sheets' faces and in both readouts; asserting only the absence would pass on a sheet that
+	# had lost the payoff too, which is why the second half names where it went.
+	h._assert_hud("…with no payoff on its face, exactly as the plant web has none",
+		not ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, "tame")
 			.contains(ForageFx.IMPROVEMENT_PAYOFF_NEEDLE))
+	h._assert_hud("…and the terms in the PER TURN readout, under this rung's ONCE TAMED key",
+		Readout.improvement_deal_text(h._hud._drawercompose._compose_sheet).contains(
+			String(HudComposeVocab.IMPROVEMENT_PAYOFF_ROW_LABELS[
+				SourceForecast.IMPROVEMENT_TAME]).to_upper()))
+	# The animal web's half of the one-row claim — see its plant twin on `improvement_running_plant`
+	# for why a `contains` cannot make it and the count must.
+	h._assert_hud("…as the block's ONLY row on this web too",
+		Readout.improvement_deal_rows(h._hud._drawercompose._compose_sheet) == 1)
+	h._assert_hud("…repeating no magnitude the yields row already states",
+		not Readout.deal_repeats_a_yields_number(h._hud._drawercompose._compose_sheet))
 	# KNOWN LESSON + A BUILD IN FLIGHT, on the animal web: Herding is complete for this faction, so the
 	# aside drops the craft and keeps the build the same multiplier paces. Both halves, for the reason
 	# the plant twin states.
@@ -178,6 +184,16 @@ func run(harness) -> void:
 		Readout.teaching_line(h._hud._drawercompose._compose_sheet).contains(Readout.TEACHING_BUILD_NEEDLE))
 	h._assert_hud("a running Tame's box is LIVE too — the abandon path is ungated on both webs",
 		tame_box is CheckBox and not (tame_box as CheckBox).disabled)
+	# **THE SUPPRESSED FLOOR WALK, on the web whose model composes its `after` a different way.** The
+	# hunt model rescales a quantised take into every account it pays, so its holding rate is built by
+	# code the plant model shares none of — a gate added to one web only would leave this sheet
+	# stacking the floor walk under the `ONCE TAMED` row exactly as the reported plant frame did.
+	# Caption AND readings, for the reason the plant twin states.
+	h._assert_hud("a composed Tame's caption keys the dip alone, as the plant web's does",
+		Readout.yields_header(h._hud._drawercompose._compose_sheet)
+			== SourceForecast.YIELD_ROW_HEADER_WHILE_BUILDING.to_upper())
+	h._assert_hud("…over readings that draw no arrow either",
+		not Readout.yields_show_a_transition(h._hud._drawercompose._compose_sheet))
 	# **THE HERD FORM, which is the one a shared branch gets wrong.** `abandon_improvement` targets by
 	# WEB (`hunt` → herd id) while the SET verbs target by VERB — and `corral` is a herd's rung
 	# addressed by a TILE, so a formatter that reused the set-verb rule would send coordinates here.

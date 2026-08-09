@@ -35,6 +35,13 @@ options rather than a checklist of twenty-seven kinds, and it is why the channel
 *alongside* it: a player who wants world events but not socket chatter says so without touching the
 floor.
 
+**`band_founded` is ALERT, and `died` / `migrated` sitting at Notable is exactly why it has to be
+said out loud** (issue #510). Notable is for things that happen to a band as a matter of course — a
+death, a migration, a party reaching its objective (`expedition_arrived`, one table row away). A
+founding is the opposite on every count: rare, player-initiated, and the first act in the band economy
+that cannot be undone. The same kind carries the command's REFUSALS, which belong there too — a
+refused irreversible order is as loud as a taken one.
+
 **`died` and `migrated` are NOTABLE, not Alert.** Bands lose elders to cold as a matter of course,
 and a rung that interrupts for every one of them trains the player to stop reading the bar — the
 precise failure the three-rung ladder exists to prevent. A death that *matters* (a whole band
@@ -201,6 +208,33 @@ Three details in the walk are not obvious:
 **The RAW string stays the input to `DETAIL_STATUS_STYLE`.** That rule matches whole `key=value`
 fragments against the wire text and must never start matching prose, which is why the phrase is
 built at RENDER time and never stored back onto the event.
+
+### …but a detail the sim wrote as a SENTENCE is shown verbatim
+
+**Every COMMAND REFUSAL takes that shape.** `emit_command_failure` puts the sim's own explanation in
+the `detail` slot — *"Scouts 2 cannot start a life here — nobody at home could point at that place —
+a founding site must join one of your bands across ground your people have mapped."* — and the token
+walk splits on spaces, so it rejoined that sentence as a column of capitalised words separated by
+` · `. `detail_phrase` therefore short-circuits on prose (`_is_prose_detail`).
+
+**A SINGLE BARE TOKEN IS NOT PROSE**, which is half the test: `herd_gone` is an identifier and must
+keep reaching the screen as `Herd gone` through the generic fallback. Nor is a detail carrying a
+`key=value` fragment or a `(x,y)` coordinate anywhere in it — one token of the machine contract makes
+the whole string one. So the rule is *more than one word, and no contract token anywhere*.
+
+It surfaced with `band_founded`'s refusals (issue #510) and it was never specific to them: it fixes
+every command failure the sim emits, all of which had been rendering that way.
+
+**Assert the two as a PAIR** — `event_dock_band_founded` carries a refusal and a founding side by
+side, and the token row is what proves the walk still runs for details that really are the contract.
+
+**STILL OPEN — a band id in a DETAIL is not joined to its roster name.** That founding's detail
+renders `… · Parent 71204 · …`: the `band=` join is `_row_label`'s and is LABEL-scoped, so a second
+band id carried as a detail token reaches the player as a raw durable id. Closing it means teaching
+`detail_phrase` which keys are band-valued and giving it the roster, which it cannot have today —
+it is `static` and takes no roster. The same detail also renders its site as `X 39 · Y 26`, the
+existing treatment of every `x=`/`y=` pair in the corpus rather than anything this kind does
+differently.
 
 ## De-duplication is on `seq`, and that fixed a real bug
 

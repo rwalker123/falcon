@@ -4,6 +4,7 @@ paths:
   - "core_sim/src/systems/expeditions.rs"
   - "core_sim/src/data/{sites_config,expedition_config}.json"
   - "core_sim/tests/expedition_hunt.rs"
+  - "core_sim/tests/expedition_settle.rs"
 ---
 
 <!-- Extracted verbatim from lines 52-53;4004-4381 of core_sim/CLAUDE.md at blob dcc757587f8c9308590997ee600abc64a34e6712
@@ -18,7 +19,7 @@ paths:
 | File | Purpose |
 |------|---------|
 | `src/data/sites_config.json` | Wondrous Sites catalog (`catalog`: per-`site_id` `category`/`display_name`/`glyph`/`placement_rule`/`discovery_reward.morale_bonus`) + `placement` rules (per-rule `max_sites`, `min_spacing`, and the union of rule inputs: `min_relief`, `max_habitability_pressure`, `min_food_weight`). Loader `sites_config.rs`, env override `SITES_CONFIG_PATH`. Not wired into the `reload_config` hot-reload path (mirrors `fauna_config.json`) |
-| `src/data/expedition_config.json` | Expedition tuning. Scout: `comm_range_tiles` (discovery-report range), `comm_range_tech_factor` (stubbed 1.0 tech hook), `observe_sight_range` (per-turn LOS radius, matches band base sight), `provision_draw_per_worker_per_tile` (launch larder draw = party × distance × this), `provision_upkeep_per_worker` (per-turn drain = party × this, scouts only). Hunt `hunt` block: `per_worker_carry` (carry cap = party × this), `reach_tiles` (how close to the herd to take), `drop_off_within_tiles` (herd-near-band delivery gate), `min_deliver_fraction` (herd-near-band early delivery needs carried ≥ this × cap), `viability_warn_turns` (**20** — a client display threshold on `turnsToFill`; = 4× the throughput-implied trip length `per_worker_carry / (per_worker_biomass_capacity × provisions_per_biomass)` = 5 turns), `forecast_horizon_turns` (**60** — how far `hunt_trip_forecast` simulates a raid before giving up on completion; a raid is short — grab the surplus, come home — so simulating each to completion is cheap; **echoed onto every cohort as `expeditionForecastHorizonTurns`**, and it bounds the HUNTING only, never the trip). Scout replenish `replenish` block: `low_turns` (top up below party × upkeep × this), `reach_tiles`. **Retired: `estimate_party_sizes` and the whole `deny` block (`requirement_rows`)** — both were sampling axes for the pre-computed estimate tables, and the forecast query answers exactly instead; see "The forecast is ASKED FOR". The retired `sustain_floor_fraction` is **gone** too: a hunting expedition is a **greedy raid** that grabs the standing surplus above the mission's **floor**, and the floor is chosen at launch (any fraction of `K` in `0.0..=1.0`; default `DEFAULT_ESCAPEMENT_FLOOR`, the food peak) rather than configured. Loader `expedition_config.rs`, env override `EXPEDITION_CONFIG_PATH`. Not on the `reload_config` hot-reload path (mirrors `sites_config.json`). **Validated** — `ExpeditionConfig::validate()` runs inside `from_json_str`, so *every* load path is covered; a broken invariant is logged at **error** level (`expedition_config.invalid_rejected`) and the config refused, falling back to the builtin rather than silently disabling a feature. Enforced: `comm_range_tech_factor` finite & `> 0`, `observe_sight_range ≥ 1`, `provision_draw_per_worker_per_tile`/`provision_upkeep_per_worker` finite & `≥ 0`, `hunt.per_worker_carry` finite & `> 0`, `hunt.reach_tiles ≥ 1`, `0 < hunt.min_deliver_fraction ≤ 1`, `hunt.viability_warn_turns ≥ 1`, **`hunt.forecast_horizon_turns ≥ max(1, hunt.viability_warn_turns)`** (at `0` the forecast's `1..=horizon` loop runs zero turns and *every* hunting expedition silently reports "won't fill"; below the warn threshold, a trip the player would be told is viable can never be discovered), `replenish.low_turns ≥ 1`, `replenish.reach_tiles ≥ 1`. Deliberately **left free**: `comm_range_tiles` (`0` = "walk back into camp to report"), `hunt.drop_off_within_tiles` (`0` = no early drop-off; a full pack still delivers), and the upper end of `forecast_horizon_turns` (it costs query time, on demand — an operator's call, not an invariant) |
+| `src/data/expedition_config.json` | Expedition tuning. Scout: `comm_range_tiles` (discovery-report range), `comm_range_tech_factor` (stubbed 1.0 tech hook), `observe_sight_range` (per-turn LOS radius, matches band base sight), `provision_draw_per_worker_per_tile` (launch larder draw = party × distance × this), `provision_upkeep_per_worker` (per-turn drain = party × this, scouts only). Hunt `hunt` block: `per_worker_carry` (carry cap = party × this), `reach_tiles` (how close to the herd to take), `drop_off_within_tiles` (herd-near-band delivery gate), `min_deliver_fraction` (herd-near-band early delivery needs carried ≥ this × cap), `viability_warn_turns` (**20** — a client display threshold on `turnsToFill`; = 4× the throughput-implied trip length `per_worker_carry / (per_worker_biomass_capacity × provisions_per_biomass)` = 5 turns), `forecast_horizon_turns` (**60** — how far `hunt_trip_forecast` simulates a raid before giving up on completion; a raid is short — grab the surplus, come home — so simulating each to completion is cheap; **echoed onto every cohort as `expeditionForecastHorizonTurns`**, and it bounds the HUNTING only, never the trip). Scout replenish `replenish` block: `low_turns` (top up below party × upkeep × this), `reach_tiles`. Founding `settle` block: `min_founding_workers` (**4** — working-age people a party must hold to found a band, the one gate on the *party*; see "Start a life here"). **Retired: `estimate_party_sizes` and the whole `deny` block (`requirement_rows`)** — both were sampling axes for the pre-computed estimate tables, and the forecast query answers exactly instead; see "The forecast is ASKED FOR". The retired `sustain_floor_fraction` is **gone** too: a hunting expedition is a **greedy raid** that grabs the standing surplus above the mission's **floor**, and the floor is chosen at launch (any fraction of `K` in `0.0..=1.0`; default `DEFAULT_ESCAPEMENT_FLOOR`, the food peak) rather than configured. Loader `expedition_config.rs`, env override `EXPEDITION_CONFIG_PATH`. Not on the `reload_config` hot-reload path (mirrors `sites_config.json`). **Validated** — `ExpeditionConfig::validate()` runs inside `from_json_str`, so *every* load path is covered; a broken invariant is logged at **error** level (`expedition_config.invalid_rejected`) and the config refused, falling back to the builtin rather than silently disabling a feature. Enforced: `comm_range_tech_factor` finite & `> 0`, `observe_sight_range ≥ 1`, `provision_draw_per_worker_per_tile`/`provision_upkeep_per_worker` finite & `≥ 0`, `hunt.per_worker_carry` finite & `> 0`, `hunt.reach_tiles ≥ 1`, `0 < hunt.min_deliver_fraction ≤ 1`, `hunt.viability_warn_turns ≥ 1`, **`hunt.forecast_horizon_turns ≥ max(1, hunt.viability_warn_turns)`** (at `0` the forecast's `1..=horizon` loop runs zero turns and *every* hunting expedition silently reports "won't fill"; below the warn threshold, a trip the player would be told is viable can never be discovered), `replenish.low_turns ≥ 1`, `replenish.reach_tiles ≥ 1`, `settle.min_founding_workers ≥ 1` (at `0` the gate cannot refuse anything — a silently disabled feature rather than a tuning; the "off for a playtest" value is `1`, which is a real party). Deliberately **left free**: `comm_range_tiles` (`0` = "walk back into camp to report"), `hunt.drop_off_within_tiles` (`0` = no early drop-off; a full pack still delivers), and the upper end of `forecast_horizon_turns` (it costs query time, on demand — an operator's call, not an invariant) |
 ## Wondrous Sites
 
 Data-driven catalog of notable map features tiles can hold, hidden under fog until a faction's
@@ -99,8 +100,8 @@ default-band command pickers (`select_starting_band` / `select_founder_band` `No
 Left **bare** (expeditions included): `advance_band_movement`, `advance_expeditions`,
 `advance_labor_allocation`, the snapshot capture query, `collect_metrics`, `discover_sites`,
 `advance_husbandry`. So expeditions are excluded **by construction** — the safe default survives new
-settlement-arc systems. (A future breakaway-to-new-band is an expedition that drops `Expedition` and
-gains `ResidentBand`.)
+settlement-arc systems. (The breakaway-to-new-band is exactly that swap, and it ships as
+`settle_expedition` — see "Start a life here".)
 
 **`advance_expeditions`** (`systems.rs`, `TurnStage::Population`, registered right after
 `advance_band_movement`, before the Visibility stage's `discover_sites`) runs per expedition each
@@ -428,11 +429,20 @@ branches on mission:
   (works for both verbs). Feed `ExpeditionRecalled`. **A party standing in its home band's own camp
   is CANCELLED on the spot** rather than sent on a round trip — see "One fold-back, two moments"
   below.
+- `settle_expedition <faction> <expedition_band_id>` — **"start a life here"** (`SettleExpeditionCommand`,
+  proto field **51**). Resolves the entity through the same `resolve_expedition_entity` `recall` uses,
+  then hands the founding to `systems::expeditions::found_band_from_expedition`. **Its grammar is
+  CLOSED**: two positional tokens and nothing else, because everything that shapes a founding is
+  either the party as it stands or a gate the sim evaluates live — a third token is
+  `CommandParseError::UnexpectedArgument`. Feed `CommandEventKind::BandFounded`, detail
+  `status=founded band=… x=… y=… parent=… mapped_tiles=… trade_goods=…` (every token numeric, so
+  none has to be last; `parent=` is omitted rather than sentinelled when the parent band cannot be
+  named). See "Start a life here" below.
 - **Retargeting a scout waypoint is just `move_band` on the expedition entity** — `handle_move_band`
   has a hook that re-arms a moved expedition to `Outbound` + `announced = false`.
 - New `CommandEventKind` variants: `ExpeditionSent`, `ExpeditionArrived`, `ExpeditionRecalled`,
-  `ExpeditionReturned` (in `as_str` + the server label map); the hunt drop-off / lost-herd feed lines
-  reuse `Hunt`.
+  `ExpeditionReturned`, `BandFounded` (in `as_str` + the server label map); the hunt drop-off /
+  lost-herd feed lines reuse `Hunt`.
 
 **Snapshot.** `PopulationCohortState` gains client discriminators `isExpedition` / `expeditionMission`
 (`"scout"`|`"hunt"`|`"deny"`) / `expeditionPhase` (`outbound`|`awaiting`|`returning`|`hunting`|`delivering`) /
@@ -1013,9 +1023,193 @@ a_party_recalled_in_the_field_walks_home_and_folds_back}` — the pair, so "canc
 become the only way a recall ever completes — and
 `expedition_hunt::a_returning_party_with_no_home_band_left_does_not_haunt_the_map`.
 
+## Start a life here — a founding is an expedition that stops being one
+
+The third **arrival** action, beside onward (`move_band`) and recall: `settle_expedition` drops the
+party's `Expedition` component and gives it `ResidentBand`, keeping the `BandId` allocated at launch
+and the map learned on the way. Design of record: `docs/plan_band_fission.md` (issue #510). The whole
+routine is `systems::expeditions::found_band_from_expedition`, taking `&mut World` so the sim owns
+the gate and the swap and `bin/server.rs` owns only the wire and the feed line.
+
+**`AwaitingOrders` is the gate on the party, and it restricts founding to scouts.** A party still
+walking, hunting, delivering or returning has orders; that phase is where they run out. A hunt or
+denial mission never enters it — it hunts until its trip ends and then walks home — so a raid can
+never found, which is intended rather than incidental: a raid is an errand, not a search for
+somewhere to live.
+
+### The reachability gate — you can only settle ground you can point at
+
+**The founding tile must connect to a tile held by one of the faction's *resident* bands through
+tiles that faction has *discovered*.** `founding_site_is_reachable` is a pure predicate over a
+`discovered_land` grid (`y * width + x`) plus the anchor set;
+`founding_site_is_reachable_in_world` builds both off the live world and asks it. BFS over
+`grid_utils::hex_neighbors_wrapped`, so it honours the x-wrap and the 6-neighbour odd-r adjacency a
+band actually walks.
+
+- **The grid is the CONJUNCTION of two facts, one meaning: mapped ground a person could stand on.**
+  Discovery says nothing about walkability, so a mapped strait would otherwise qualify a colony
+  nobody can reach. "Discovered" is `VisibilityLedger::is_discovered` (`Discovered` **or** `Active`);
+  land is the same `!TerrainTags::WATER` test `ensure_land_tile` gives `send_expedition`'s target.
+- **Resident bands only as anchors.** A party may not anchor to another party — that would let two
+  expeditions bootstrap a colony out of ground neither has reported.
+- **The site itself must be discovered land.** A party is excluded from live fog reveal
+  (`Without<Expedition>` in `calculate_visibility`), so its own tile is *not* discovered unless the
+  faction saw it some other way. The loop that falls out — scout out, report, then send the founding
+  party along ground you now hold — is the rule doing its job.
+- **No length bound**; the discovered set is the bound. One BFS over ~4k tiles, once, on a command a
+  human presses.
+
+> #### ORDER IS LOAD-BEARING: the gate runs BEFORE the `pending_reveal` flush
+>
+> The party's private buffer is promoted to the faction map as part of the founding (the map is
+> part of the dowry, and dropping the component would otherwise destroy the buffer silently). Doing
+> that **first** would promote the corridor the party just walked and make the gate vacuous — it
+> would then always find a mapped path back along its own footsteps. The gate asks what the faction
+> knew *before* the founding.
+
+**The reachability gate itself has no lever and wants none** — it is a yes/no question about the
+faction map, so there is no number to tune; the dial that moves it is `comm_range_tiles`, which
+belongs to scouting.
+
+### The party floor — a colony has to be able to staff itself
+
+**A founding party must hold at least `settle.min_founding_workers` (**4**) working-age people**
+(`docs/plan_band_fission.md` §Q2, *Party viability*). Below that there is no labor pool to allocate:
+the "colony" is one person who cannot forage and hunt at once, which is a death notice with a marker
+on it rather than a band. Playtest found the hole — a party of **one** walked out and founded.
+
+- **Counted off the party cohort's `PopulationCohort.working`**, the same pool `send_expedition` drew
+  it from, **floored to whole people**: a fixed-point `3.9` is three workers, not four.
+- **It is assessed before the reachability BFS, and does not short-circuit it.** Both are pure
+  refusals that write nothing, so the O(1) question reads first — but a party can fail *both*, and
+  both are reported; see "EVERY reason, not the first one" below.
+- **The refusal names its own numbers.** `FoundingRefusal::PartyTooSmall { workers, required }`
+  carries them, which is why `FoundingRefusals::explanation()` returns a `String` rather than a
+  `&'static str` — a gate that refuses without saying *how short* leaves the player guessing at a
+  number the sim knows.
+- **The parent-side floors are NOT here.** `parent_min_workers` and `parent_max_dependency_ratio`
+  gate the band left behind and ship with #511, which is also where the compose sheet learns to
+  forecast all three. This is a floor on the *party*.
+
+> #### A FLOOR ON THE PARTY IS NOT A JUDGEMENT OF THE PLACE
+>
+> **There is deliberately NO habitability or terrain-quality gate**, and the party floor does not
+> reopen that question. Founding raises a party to a band that can forage, hunt and move on its own;
+> it roots nobody. Settling harsh ground is a mistake the player walks out of, and pricing it as an
+> illegal move confuses *bad idea* with *impossible* — the land already speaks through morale, yield
+> and carrying capacity. What the sim refuses is a colony that cannot staff a single food role; it
+> still refuses to rate the ground under it.
+
+**The dial ships in the Workbench.** `min_founding_workers` is a number nobody can pick at a desk, so
+`tuning_manifest.json`'s `expedition` kind carries `/settle/min_founding_workers` (1 · 12 · 1) and
+playtest moves it without a rebuild. `1` is the "off" setting and is still a real party.
+
+### What the swap carries
+
+Kept: `BandId`, `PopulationCohort`, `BandEquipment`, `StartingUnit`, `LaborAllocation`. Then:
+
+- **`DemographicFlowAccumulator` is inserted**, because the party spawn does not give one and
+  `demographic_events::every_resident_band_carries_a_flow_accumulator` is the invariant.
+- **`carried_trade` settles into the band's OWN store** through the same `settle_carried_trade` a
+  homecoming uses — it is its own band now, and the haul never went home.
+- **`age_turns = 0` — the founding asserting its own precondition, not repairing an inherited
+  value.** It is a **no-op today**, and the reason is worth knowing rather than rediscovering: both
+  outfit paths already zero the field when they spawn a party (`handle_send_expedition`,
+  `outfit_raiding_party`), and the only writer of `age_turns` is `simulate_population`, whose band
+  query is `With<ResidentBand>` — so **a party never ages**. The line stays because the claim *this
+  band's life starts now* belongs to the founding rather than to an invariant two other functions
+  happen to maintain, and `migration_min_settled_turns` reads that field: a future party path that
+  forgot to zero it would otherwise hand a colony the parent's whole settled life.
+- **`home = current_tile`.** `simulate_population` resolves terrain off `home`, and for a nomad band
+  the two already track together (`advance_band_movement` moves both) — the founding names the site
+  explicitly rather than leaning on that.
+- **Derived per-turn readings are cleared** — `last_food_consumption`, `last_morale_delta`/`_cause`/
+  `_contributions`, `last_fertility_factors`, `discontent_fraction`, `last_emigrated`/`last_immigrated`,
+  and `LaborAllocation`'s `last_yields` / `last_pen_feed_upkeep` / `last_raid_forfeit`. They are all
+  recomputed next turn, but a founding publishes a frame before then and the values sitting in them
+  are the *parent's*, copied at launch. Assignments are left alone: those are player intent, not a
+  reading.
+
+**A refusal refuses the founding, not the party.** Every `FoundingRefusal` arm leaves the expedition
+exactly as it stood, in `AwaitingOrders` with its buffer and pack intact, so recall still works.
+Refusals are loud — a `warn!` carrying `refusals.tokens()` plus a feed failure carrying
+`refusals.explanation()`.
+
+### EVERY reason, not the first one — and the client is told before the press
+
+`found_band_from_expedition` refuses with a `FoundingRefusals` **set**, not a single arm, and
+`founding_refusals(world, entity)` is the one assessment both it and the wire read.
+
+- **The structural refusals stand alone**: `NotAnExpedition`, `NotAwaitingOrders`, `SiteUnresolved`.
+  Nothing further can be said about a party that is not there, is not waiting, or whose tile cannot
+  be resolved, so those short-circuit to a set of one.
+- **The two eligibility gates accumulate.** `PartyTooSmall` and `Unreachable` are independent and
+  both can hold at once, and **both must be fixed before founding** — so reporting only the first
+  makes the player fix it, press again, and discover the second. `PartyTooSmall` reads first because
+  it is the O(1) one.
+
+**The verdict is published, so the affordance can refuse before the press.**
+`PopulationCohortState.foundingRefusals` carries the tokens and `foundingMinWorkers` echoes
+`settle.min_founding_workers` (the `expeditionForecastHorizonTurns` idiom), so the client greys the
+button out with every reason on it instead of letting the player fire a command and read a feed line
+seconds later. **The client could not have answered either question itself** — it does not hold the
+config, and reachability is a BFS over the faction map anchored on resident-band tiles; a client-side
+copy of that rule is exactly the second model `yield-forecast.md` → "the sim exports the answer"
+forbids.
+
+**An empty list means two different things, and the client must only read it in one of them.** It is
+empty when a founding would succeed **and** when the cohort is not a party awaiting orders — the
+field speaks only to a party the arrival affordance is offered for.
+
+`assess_foundings` computes it once a turn in `TurnStage::Visibility`, ordered `.after(discover_sites)`
+— not merely after `calculate_visibility`, because it reads `VisibilityLedger` *and*
+`PopulationCohort`, which `discover_sites` writes for its morale reward; an edge on
+`calculate_visibility` alone leaves ambiguous pairs and the ambiguity gate boot-panics. It is
+**derived per-turn telemetry** on the `Expedition` component: `sim_state.rs` clears it on capture, so
+it is neither captured nor restored.
+
+**The grid is built once per faction, lazily, inside the `AwaitingOrders` branch** (`FoundingGround`,
+the single builder `founding_site_is_reachable_in_world` also uses). A turn with no waiting party
+builds nothing at all; a turn with N waiting parties in one faction builds one grid and runs N BFS
+calls.
+
+> **A fixture cannot state "unmapped ground" by wiping the visibility ledger and advancing a turn.**
+> `run_turn` rebuilds the faction map, and a starting band's scout vantages map **~12 tiles** out —
+> further than the 6-tile corridor fixtures reach, so the whole corridor comes back Discovered. A
+> wire test that wants genuinely unseen ground has to go find some
+> (`expedition_settle::farthest_undiscovered_land`).
+
+**Persistence needed nothing.** `sim_state.rs` captures `resident: entity.contains::<ResidentBand>()`
+— presence, not origin — and restores from that flag, and a founded band's record carries no
+`expedition`, so nothing re-attaches `Expedition`. A mid-game founding survives a rollback for free;
+`expedition_settle::a_founding_survives_a_rollback` is the guard. The command itself is replayable by
+default (it is not in `server::is_replayable`'s exclusion list) and names a `BandId`, which is the
+identity a restore preserves.
+
+**The founded band joins every `With<ResidentBand>` system on its founding turn** — supply pooling,
+sedentarization, migration, herd drift, `simulate_population`, the band culture layers and the
+default-band pickers. Two consequences worth knowing rather than fixing:
+
+- **The colony's culture is the HOME BAND's, and the founding is what attaches it.**
+  `found_band_from_expedition` calls `CultureManager::attach_band_from_source(colony, destination
+  province, home band)` before the component swap, so `reconcile_band_culture_layers` finds a layer
+  already there on the next turn and its "no layer → `attach_band`" branch — which seeds from the
+  *destination province* — never sees a colony. The settlers therefore open as the people who left
+  rather than as the locals, and then chase the new province at the band scope's elasticity, exactly
+  as a band that **walked** the same distance does under `set_band_parent`. Both halves of the
+  founding's province resolution go through the one `culture::culture_region_at`, so the layer's
+  parent and its first reconcile's parent cannot disagree. See `ecs-systems.md` → "Bands carry their
+  own culture" for the seeding rule, the un-inherited character offset and the no-layer fallback.
+- **`select_founder_band` picks the first matching band, and a colony inherits the parent's
+  `StartingUnit.kind`.** A band founded off a `founders` band is also `founders`, so a `found_settlement`
+  issued with no band handle now has two candidates.
+
+`apply_starting_inventory_effects` is a `Startup` system, so a founded band is never re-seeded with
+worldgen's larder: its stores are the dowry it walked in with.
+
 See Also: `docs/plan_exploration_and_sites.md` §2 (design), `docs/plan_denial_raid.md` (the third
-verb), "Wondrous Sites" (discovery rides the flushed tiles), "Visibility Systems" (the
-`Without<Expedition>` gate).
+verb), `docs/plan_band_fission.md` (the fission arc this founding opens), "Wondrous Sites"
+(discovery rides the flushed tiles), "Visibility Systems" (the `Without<Expedition>` gate).
 
 ---
 

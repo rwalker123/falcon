@@ -704,6 +704,55 @@ impl CultureManager {
     /// Seeding neutral would make every new band maximally diverged from its own home and trip a
     /// schism for existing. If the parent region is missing the seed falls back to neutral.
     pub fn attach_band(&mut self, band: BandId, parent_region: CultureLayerId) -> CultureLayerId {
+        let seed = self
+            .regional_layer_by_id(parent_region)
+            .map(|parent| *parent.traits.values());
+        self.insert_band_layer(band, parent_region, seed)
+    }
+
+    /// [`attach_band`](Self::attach_band) for a band that **came from somewhere** — a colony founded
+    /// by an expedition ([`crate::systems::found_band_from_expedition`]). Same layer, parented on
+    /// the same destination province; only the trait seed differs, and it is `source`'s current
+    /// values rather than the destination's.
+    ///
+    /// That is the migration rule applied to the other way of getting somewhere: `set_band_parent`
+    /// lets a band that *walks* twenty tiles keep the culture it arrived with and chase its new
+    /// province at the band scope's elasticity. A colony seeded off its destination would instead
+    /// snap to the locals the moment it was founded — the settlers would be the people they had
+    /// just travelled away from. Parenting on the destination is what makes it lag toward them
+    /// instead.
+    ///
+    /// **The character offset is NOT inherited.** The colony gets its own
+    /// [`seeded_modifiers_for_band`], because that offset is the only reason two bands ever diverge;
+    /// copying the parent's would make the colony a permanent clone of the band that sent it.
+    ///
+    /// If `source` has no layer of its own the seed falls back to the province, i.e. plain
+    /// `attach_band`. An expedition never owns a layer, so the source is always the *home band*, and
+    /// a home band that can no longer be resolved leaves the destination as the only honest seed.
+    pub fn attach_band_from_source(
+        &mut self,
+        band: BandId,
+        parent_region: CultureLayerId,
+        source: BandId,
+    ) -> CultureLayerId {
+        match self
+            .band_layer_by_owner(CultureOwner::from_band(source))
+            .map(|layer| *layer.traits.values())
+        {
+            Some(seed) => self.insert_band_layer(band, parent_region, Some(seed)),
+            None => self.attach_band(band, parent_region),
+        }
+    }
+
+    /// The one construction both `attach_band` flavours run through: a band-scope layer parented on
+    /// `parent_region`, seeded from `seed` (neutral when there is none) and carrying its own
+    /// character offset. Idempotent — an existing layer's id comes back untouched.
+    fn insert_band_layer(
+        &mut self,
+        band: BandId,
+        parent_region: CultureLayerId,
+        seed: Option<[Scalar; CULTURE_TRAIT_AXES]>,
+    ) -> CultureLayerId {
         let owner = CultureOwner::from_band(band);
         if let Some(layer) = self.bands.get(&owner.0) {
             return layer.id;
@@ -713,8 +762,8 @@ impl CultureManager {
         layer.parent = Some(parent_region);
         layer.owner = owner;
         layer.apply_scope_settings(self.settings.scope(CultureLayerScope::Band), false);
-        layer.traits = match self.regional_layer_by_id(parent_region) {
-            Some(parent) => CultureTraitVector::with_baseline(*parent.traits.values()),
+        layer.traits = match seed {
+            Some(values) => CultureTraitVector::with_baseline(values),
             None => CultureTraitVector::neutral(),
         };
         *layer.traits.modifier_mut() =
@@ -1236,6 +1285,19 @@ pub fn seeded_modifiers_for_band(band: BandId, amplitude: f32) -> [Scalar; CULTU
     modifiers
 }
 
+/// **The one resolution from a map position to the region a culture layer parents on.** A tile off
+/// every province — or a world with no [`ProvinceMap`] at all — falls back to
+/// [`FALLBACK_CULTURE_REGION_ID`], which worldgen always mints.
+///
+/// Shared by [`reconcile_band_culture_layers`] (every turn, for the band that stands there) and by
+/// the founding ([`crate::systems::found_band_from_expedition`], for the site a colony was founded
+/// on), so a colony's province and its first reconcile's province can never disagree.
+pub fn culture_region_at(province_map: Option<&ProvinceMap>, position: UVec2) -> u32 {
+    province_map
+        .and_then(|map| map.province_at(position.x, position.y))
+        .unwrap_or(FALLBACK_CULTURE_REGION_ID)
+}
+
 /// Keeps the band culture layers in step with the live set of **resident** bands, ahead of
 /// [`reconcile_culture_layers`] each turn.
 ///
@@ -1243,6 +1305,10 @@ pub fn seeded_modifiers_for_band(band: BandId, amplitude: f32) -> [Scalar; CULTU
 /// its current province, a layer whose band is gone (or has become an expedition) is dropped, and a
 /// resident band standing in a different province than its layer's parent is re-homed — traits
 /// intact, which is what makes a migration lag.
+///
+/// **A founded colony arrives with its layer already attached** — `found_band_from_expedition` calls
+/// `CultureManager::attach_band_from_source` at founding time, so the "no layer" case here never
+/// sees it and a colony is never seeded from the province it landed in.
 ///
 /// **Only `ResidentBand` owns a layer.** An expedition is detached and does not vote in the faction
 /// rollup (`faction_trait_average`'s contract), so it must not carry a culture either.
@@ -1269,10 +1335,7 @@ pub fn reconcile_band_culture_layers(
         let Ok(tile) = tiles.get(cohort.current_tile) else {
             continue;
         };
-        let region_id = province_map
-            .as_ref()
-            .and_then(|map| map.province_at(tile.position.x, tile.position.y))
-            .unwrap_or(FALLBACK_CULTURE_REGION_ID);
+        let region_id = culture_region_at(province_map.as_deref(), tile.position);
         let parent = manager.upsert_regional(region_id);
 
         let current_parent = manager

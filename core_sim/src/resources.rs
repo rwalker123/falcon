@@ -1312,6 +1312,15 @@ pub enum CommandEventKind {
     ExpeditionArrived,
     ExpeditionRecalled,
     ExpeditionReturned,
+    /// **A party stopped being an expedition and became a band** — the `settle_expedition` arrival
+    /// verb ("start a life here", `docs/plan_band_fission.md`). It is also the failure channel for
+    /// a refused founding, so a party that cannot found says why on the same kind the success
+    /// would have used.
+    ///
+    /// Rare, player-initiated and irreversible, which is what separates it from the
+    /// expedition lines around it: those report a party's ordinary progress, this reports the map
+    /// gaining a second band.
+    BandFounded,
     /// A narrative beat from The Telling (`core_sim::telling`). The wire field is already a
     /// string, so the feed renders new kinds generically — no schema or client change.
     NarrativeBeat,
@@ -1373,6 +1382,7 @@ impl CommandEventKind {
             CommandEventKind::ExpeditionArrived => "expedition_arrived",
             CommandEventKind::ExpeditionRecalled => "expedition_recalled",
             CommandEventKind::ExpeditionReturned => "expedition_returned",
+            CommandEventKind::BandFounded => "band_founded",
             CommandEventKind::NarrativeBeat => "narrative_beat",
             CommandEventKind::NarrativeFork => "narrative_fork",
             CommandEventKind::HerdUnderHerded => "herd_under_herded",
