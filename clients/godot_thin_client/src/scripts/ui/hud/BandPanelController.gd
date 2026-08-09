@@ -54,10 +54,10 @@ signal send_hunt_expedition_requested(payload: Dictionary)
 signal send_denial_raid_requested(payload: Dictionary)
 # A party was ordered home — relayed to HudLayer.recall_expedition_requested.
 signal recall_expedition_requested(payload: Dictionary)
-# A party stopped being an expedition and became a band where it stands (issue #510) — relayed to
-# HudLayer.settle_expedition_requested. **Its own signal beside the recall above**, not a mode on it:
-# the two are opposite arrival answers and their grammars are separate closed verbs.
-signal settle_expedition_requested(payload: Dictionary)
+# A band was split in two where it stands (issue #511) — relayed to HudLayer.split_band_requested.
+# **Its own signal, not a mode on the recall above**: a split makes a band where a recall dissolves a
+# party, and their grammars are separate closed verbs.
+signal split_band_requested(payload: Dictionary)
 # Recenter + select a hex (a zone row / cycler jump) — relayed to HudLayer.alert_focus_requested.
 signal alert_focus_requested(x: int, y: int)
 # Pin an exact occupant on the map after that recenter — relayed to HudLayer.roster_occupant_selected.
@@ -227,6 +227,10 @@ const FACTION_ZONE_LAYOUT: Array[Dictionary] = [
 ## keeps the party size / floor / forecast fields hidden until the mission decides them).
 var _party_compose_open: bool = false
 var _party_compose_mission: String = ""
+## The split's ONE input. Kept beside `_send_expedition_count` rather than reusing it: the two are
+## bounded by different pools (a party comes out of IDLE workers, a split out of ALL of them), so
+## sharing the field would clamp one of them against the other's ceiling.
+var _split_workers: int = 1
 ## The live PARTIES zone column, the parties twin of `_work_zone_host` — held so the deferred
 ## measurement below can read what the zone's content demands off the REAL laid-out tree rather than
 ## off a detached one. `HudWidgets.wrap_zone` anchors this column full-rect into the panel's zone host,
@@ -2161,23 +2165,6 @@ func _build_parties_inspector(exp: Dictionary) -> PanelContainer:
         select_expedition(entity, x, y)))
     links.add_child(HudWidgets.build_inline_link(recall_verb(exp), HudStyle.DANGER, func() -> void:
         confirm_recall_expedition(exp)))
-    # THE THIRD ARRIVAL ACTION, and it is offered on the same terms the row's control is (issue #510):
-    # only while the party is `awaiting`. HEALTHY rather than DANGER — founding builds a band where a
-    # recall dissolves a party, and the two links must not read as the same kind of act.
-    if party_may_settle(exp):
-        # **A BLOCKED LINK IS STILL A LINK NODE, DISABLED** — `build_inline_link` returns a `Button`, so
-        # it takes `disabled` like the row control does, and `HudStyle.apply_link_button` already
-        # declares a link's disabled face (`font_disabled_color` = INK_FAINT, a rest stylebox). That is
-        # the honest option of the two available: rendering a plain status part instead would take the
-        # act off the strip entirely on exactly the parties that need to be told about it, and a live
-        # link tinted faint would still fire a refusal on press. Disabled cannot be pressed at all.
-        var strip_blocked := settle_blocked_reason(exp)
-        var settle_link := HudWidgets.build_inline_link(HudComposeVocab.PARTY_SETTLE_ACTION,
-            HudStyle.INK_FAINT if strip_blocked != "" else HudStyle.HEALTHY,
-            func() -> void: confirm_settle_expedition(exp))
-        settle_link.disabled = strip_blocked != ""
-        settle_link.tooltip_text = strip_blocked if settle_link.disabled else HudComposeVocab.PARTY_SETTLE_TOOLTIP
-        links.add_child(settle_link)
     col.add_child(links)
     return strip
 
@@ -2203,31 +2190,6 @@ func _build_party_row(exp: Dictionary) -> HBoxContainer:
     var entity := int(exp.get("entity", -1))
     body.pressed.connect(func() -> void: _toggle_parties_inspector(str(entity)))
     row.add_child(body)
-    # "Start a life here" (issue #510), BEFORE the recall ✕ — the constructive act reads left of the
-    # removal, and the ✕ stays the row's LAST child, which `band_panel_preview._assert_recall_press`
-    # identifies it by. It renders only for an `awaiting` party, so an ordinary hunt row is unchanged.
-    if party_may_settle(exp):
-        var settle := Button.new()
-        settle.text = HudComposeVocab.PARTY_SETTLE_VERB
-        settle.focus_mode = Control.FOCUS_NONE
-        settle.custom_minimum_size = Vector2(HudComposeVocab.PARTY_SETTLE_WIDTH, 0.0)
-        HudStyle.apply_button(settle, "ghost")
-        # HEALTHY green, the opposite pole from the ✕'s DANGER: this press MAKES a band. It is
-        # irreversible rather than destructive, so the ceremony is the confirm, not the colour.
-        settle.add_theme_color_override("font_color", HudStyle.HEALTHY)
-        # **BLOCKED IS DISABLED-WITH-ITS-REASON, NEVER HIDDEN** — the row keeps its control so the
-        # player can see the act exists and read what stands in the way of it. A disabled Godot Button
-        # still resolves its tooltip (hit-testing reads `mouse_filter`, which `disabled` does not
-        # touch), which is what makes the greyed state legible rather than mute.
-        var blocked := settle_blocked_reason(exp)
-        settle.disabled = blocked != ""
-        settle.tooltip_text = blocked if settle.disabled else HudComposeVocab.PARTY_SETTLE_TOOLTIP
-        if settle.disabled:
-            # A blocked control must not read as HEALTHY — that is the colour of an act the player can
-            # take. `apply_button`'s own disabled tint is the ghost variant's, so it is restated here.
-            settle.add_theme_color_override("font_disabled_color", HudStyle.INK_FAINT)
-        settle.pressed.connect(func() -> void: confirm_settle_expedition(exp))
-        row.add_child(settle)
     var recall := Button.new()
     recall.text = HudComposeVocab.PARTY_RECALL_GLYPH
     recall.focus_mode = Control.FOCUS_NONE
@@ -2283,92 +2245,7 @@ func _party_confirm_label(exp: Dictionary) -> String:
     return HudComposeVocab.PARTY_RECALL_SCOUT_LABEL
 
 ## **IS THE FOUNDING AFFORDANCE OFFERED AT ALL for this party?** (issue #510) — the PHASE test, and
-## nothing else. A party under orders shows no settle control anywhere; a party awaiting orders shows
-## one, whether or not the sim would accept the founding today.
-##
-## **IT IS DELIBERATELY NOT "would the founding succeed"** — that is `settle_blocked_reason`, and the
-## split is the whole design: an affordance that VANISHED when a party was one worker short would
-## teach the player nothing, where a greyed one naming the worker floor teaches the rule. So this
-## decides EXISTENCE and the refusals decide ENABLEDNESS.
-##
-## The row, the inspector strip's link and the Occupants drawer's button all read THIS, the way the
-## three recall surfaces read `recall_verb` — so the action cannot be offered on one and missing from
-## another.
-func party_may_settle(exp: Dictionary) -> bool:
-    return HudFormat.expedition_phase_key(exp) == HudExpeditionVocab.EXPEDITION_PHASE_AWAITING
-
-## **WHY the sim would refuse this party's founding right now** — its `foundingRefusals` tokens, in the
-## sim's own assessment order, recomputed every turn by `assess_foundings`.
-##
-## **READ IT ONLY WHERE `party_may_settle` HOLDS.** Empty is ambiguous on the wire: it means either
-## "the founding would succeed" OR "this cohort is not a party awaiting orders at all", so asked of a
-## resident band it answers `[]` and would read as a green light.
-##
-## Coerced defensively because the decoder publishes a `PackedStringArray` (`string_vector_to_packed`,
-## the `dict/` family's idiom) while every harness fixture hand-writes a plain `Array` — both are
-## legitimate inputs to this seam and neither is `is Array` in both cases.
-func settle_refusals(exp: Dictionary) -> Array:
-    var raw: Variant = exp.get(HudComposeVocab.PARTY_SETTLE_REFUSALS_KEY, null)
-    var tokens: Array = []
-    if raw is PackedStringArray:
-        for token in (raw as PackedStringArray):
-            tokens.append(String(token))
-    elif raw is Array:
-        for token in (raw as Array):
-            tokens.append(String(token))
-    return tokens
-
-## **The tooltip copy for a BLOCKED founding — `""` when the party may found.** One sentence per
-## refusal, joined one-per-line: two reasons hold at once often enough (a one-worker party on unmapped
-## ground publishes both) that a run-on would read as one rambling excuse rather than as two things to
-## fix, and fixing only the first otherwise just reveals the second.
-##
-## **AN UNRECOGNISED TOKEN STILL SAYS SOMETHING.** A refusal the sim adds later reaches a client that
-## has never heard of it, and a silently empty tooltip on a greyed button is indistinguishable from a
-## broken control — so the fall-through is the honest floor, not a skip.
-##
-## The three surfaces all read THIS, exactly as they read `party_may_settle` above, so a party cannot
-## be refused with one reason on the row and another in the drawer.
-func settle_blocked_reason(exp: Dictionary) -> String:
-    var tokens := settle_refusals(exp)
-    if tokens.is_empty():
-        return ""
-    var min_workers := int(exp.get(HudComposeVocab.PARTY_SETTLE_MIN_WORKERS_KEY, 0))
-    var lines: Array[String] = []
-    for token in tokens:
-        var line := _settle_refusal_sentence(String(token), min_workers)
-        if not lines.has(line):
-            lines.append(line)
-    return HudComposeVocab.PARTY_SETTLE_BLOCKED_SEPARATOR.join(lines)
-
-## One refusal token → its player-facing sentence. The worker floor is the party's OWN
-## `founding_min_workers` (the sim's `settle.min_founding_workers`, echoed per cohort), never a
-## client-side copy of that config.
-func _settle_refusal_sentence(token: String, min_workers: int) -> String:
-    match token:
-        HudComposeVocab.PARTY_SETTLE_REFUSAL_TOO_SMALL:
-            return HudComposeVocab.PARTY_SETTLE_BLOCKED_TOO_SMALL % min_workers
-        HudComposeVocab.PARTY_SETTLE_REFUSAL_UNREACHABLE:
-            return HudComposeVocab.PARTY_SETTLE_BLOCKED_UNREACHABLE
-        HudComposeVocab.PARTY_SETTLE_REFUSAL_NOT_AWAITING:
-            return HudComposeVocab.PARTY_SETTLE_BLOCKED_NOT_AWAITING
-        HudComposeVocab.PARTY_SETTLE_REFUSAL_NOT_EXPEDITION:
-            return HudComposeVocab.PARTY_SETTLE_BLOCKED_NOT_EXPEDITION
-        HudComposeVocab.PARTY_SETTLE_REFUSAL_SITE_UNRESOLVED:
-            return HudComposeVocab.PARTY_SETTLE_BLOCKED_SITE_UNRESOLVED
-    return HudComposeVocab.PARTY_SETTLE_BLOCKED_UNKNOWN
-
-## Act on a party's founding. **It ALWAYS confirms**, where a recall's cancel branch acts on the
-## press: founding is the first act in the band economy that cannot be undone, so there is no
-## "re-make the decision" branch to skip the prompt for. The prompt states THAT and nothing else —
-## it takes no arguments, the row that was just pressed already naming the party and its place.
-func confirm_settle_expedition(exp: Dictionary) -> void:
-    if exp.is_empty():
-        return
-    _confirm_destructive(HudComposeVocab.PARTY_SETTLE_CONFIRM, HudComposeVocab.PARTY_SETTLE_CONFIRM_OK,
-        func() -> void: _on_settle_expedition_pressed(exp))
-
-## Recall every party in one go — there is no bulk verb on the wire and parties are few, so this is
+### Recall every party in one go — there is no bulk verb on the wire and parties are few, so this is
 ## one `recall_expedition` per party through the existing signal.
 func _on_recall_all_parties_pressed(parties: Array) -> void:
     if parties.is_empty():
@@ -2385,7 +2262,11 @@ func _on_recall_all_parties_pressed(parties: Array) -> void:
 func _build_party_footer(band: Dictionary) -> VBoxContainer:
     var idle := _band_labor.effective_idle(band)
     var foot := HudWidgets.make_zone_block()
-    if _party_compose_open and _party_compose_mission != "" and idle > 0:
+    # The three EXPEDITION missions need idle workers to compose with; a split needs workers, which is
+    # a different pool — see `_split_worker_pool`.
+    var compose_pool := _split_worker_pool(band) \
+        if _party_compose_mission == HudComposeVocab.COMPOSE_MISSION_SPLIT else idle
+    if _party_compose_open and _party_compose_mission != "" and compose_pool > 0:
         var sheet := _build_compose_sheet(band, idle)
         _party_compose_sheet = sheet
         # **THE ONE FORK, AND IT IS DECIDED BY A MEASUREMENT** (`_party_compose_needed` carries the
@@ -2415,6 +2296,14 @@ func _build_party_footer(band: Dictionary) -> VBoxContainer:
     # unclamp. Same button, same idle gate — the difference is entirely in the form it opens.
     missions.add_child(_build_mission_launch_button(HudComposeVocab.COMPOSE_MISSION_DENY,
         HudComposeVocab.COMPOSE_MISSION_LABEL_DENY, HudComposeVocab.SEND_DENIAL_RAID_HINT, idle))
+    # **THE FOURTH BUTTON IS NOT A MISSION** (issue #511) — a split makes a band rather than sending a
+    # party. It sits here because this is where the player already comes to divide people out of a
+    # band, and it is gated on WORKERS rather than on idle workers: splitting is not staffing a job,
+    # so a band whose every hand is assigned may still divide (the assignments lapse with the people
+    # who held them).
+    missions.add_child(_build_mission_launch_button(HudComposeVocab.COMPOSE_MISSION_SPLIT,
+        HudComposeVocab.COMPOSE_MISSION_LABEL_SPLIT, HudComposeVocab.SPLIT_BAND_HINT,
+        _split_worker_pool(band)))
     foot.add_child(missions)
     if idle <= 0:
         foot.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.SEND_PARTY_NO_IDLE_REASON))
@@ -2459,6 +2348,8 @@ func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
         title.text = HudComposeVocab.COMPOSE_TITLE_HUNT
     elif is_deny:
         title.text = HudComposeVocab.COMPOSE_TITLE_DENY
+    elif _party_compose_mission == HudComposeVocab.COMPOSE_MISSION_SPLIT:
+        title.text = HudComposeVocab.COMPOSE_TITLE_SPLIT
     title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     head.add_child(title)
     var cancel := Button.new()
@@ -2475,6 +2366,9 @@ func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
         return sheet
     if is_deny:
         _fill_denial_compose_sheet(sheet, band, idle)
+        return sheet
+    if _party_compose_mission == HudComposeVocab.COMPOSE_MISSION_SPLIT:
+        _fill_split_compose_sheet(sheet, band)
         return sheet
     # SCOUT — a single input. Its only question is party size, and nothing about a scouting party
     # depends on where it is going, so the destination is still picked on the map after the send.
@@ -2499,6 +2393,150 @@ func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
         _targeting.begin_send_expedition(band, _send_expedition_count))
     sheet.add_child(confirm)
     return sheet
+
+## **The SPLIT form** (`docs/plan_band_fission.md` §Q6) — one stepper, two readouts and a verdict.
+##
+## **THE PLAYER PICKS ONE NUMBER and everything else divides on the share it implies**, so there is
+## nothing else to ask. What the sheet spends its room on instead is the consequence: what the new
+## band would be, and what this one would be left as.
+func _fill_split_compose_sheet(sheet: VBoxContainer, band: Dictionary) -> void:
+    var pool := _split_worker_pool(band)
+    _split_workers = clampi(_split_workers, HudConst.WORKER_STEP, pool)
+    sheet.add_child(HudWidgets.build_party_stepper_row(_split_workers, pool,
+        func(n: int) -> void:
+            _split_workers = clampi(n, HudConst.WORKER_STEP, pool)
+            rerender(),
+        HudComposeVocab.SPLIT_STEPPER_LABEL))
+    var working := _split_cohort_working(band)
+    var share := (float(_split_workers) / working) if working > 0.0 else 0.0
+    sheet.add_child(HudWidgets.alloc_hint_label(
+        HudComposeVocab.SPLIT_SHARE_FORMAT % int(round(share * 100.0))))
+
+    # **BOTH HALVES ARE APPORTIONED IN ONE PASS.** Running `apportion_people` separately over each
+    # half lets both round the same way and show 31 people leaving a band of 30 — precisely the bug
+    # that function exists to prevent (`_build_people_block`), reintroduced on a new surface. The
+    # chosen worker count is PINNED to the integer the player picked and left out of the
+    # apportionment, so the stepper can never disagree with the readout.
+    var whole := _split_apportioned(band, share)
+    var new_children: int = whole[0]
+    var new_elders: int = whole[1]
+    var kept_children: int = whole[2]
+    var kept_working: int = whole[3]
+    var kept_elders: int = whole[4]
+    var new_people := _split_workers + new_children + new_elders
+
+    var provisions := DetailFormat.band_provisions(band)
+    sheet.add_child(HudWidgets.alloc_section_label(HudComposeVocab.SPLIT_NEW_BAND_HEADER))
+    sheet.add_child(_split_row(HudComposeVocab.SPLIT_ROW_PEOPLE,
+        str(new_people)))
+    sheet.add_child(_split_row(HudComposeVocab.SPLIT_ROW_BRACKETS,
+        HudComposeVocab.SPLIT_BRACKETS_FORMAT % [_split_workers, new_children, new_elders]))
+    sheet.add_child(_split_row(HudComposeVocab.SPLIT_ROW_PROVISIONS,
+        HudComposeVocab.SPLIT_STOCK_FORMAT % (provisions * share)))
+
+    sheet.add_child(HudWidgets.alloc_section_label(HudComposeVocab.SPLIT_HOME_AFTER_HEADER))
+    # **EVERY `now` IS THE TWO HALVES ADDED BACK UP, NEVER A SECOND READING OF THE BAND.** `pool` is
+    # the ASSIGNABLE worker count — `floor()` of a fractional cohort — while the `after` side comes out
+    # of the apportionment, so quoting `pool` here rendered `16 → 12` beside a new band of 5 and
+    # invited the player to find the missing person. Composing it from the halves makes the row sum by
+    # construction, which is the same rule the PEOPLE block's apportionment exists to keep.
+    sheet.add_child(_split_row(HudComposeVocab.SPLIT_ROW_WORKERS,
+        HudComposeVocab.SPLIT_BEFORE_AFTER_FORMAT % [
+            str(kept_working + _split_workers), str(kept_working)]))
+    sheet.add_child(_split_row(HudComposeVocab.SPLIT_ROW_CHILDREN,
+        HudComposeVocab.SPLIT_BEFORE_AFTER_FORMAT % [
+            str(kept_children + new_children), str(kept_children)]))
+    sheet.add_child(_split_row(HudComposeVocab.SPLIT_ROW_ELDERS,
+        HudComposeVocab.SPLIT_BEFORE_AFTER_FORMAT % [
+            str(kept_elders + new_elders), str(kept_elders)]))
+    sheet.add_child(_split_row(HudComposeVocab.SPLIT_ROW_PROVISIONS,
+        HudComposeVocab.SPLIT_BEFORE_AFTER_FORMAT % [
+            HudComposeVocab.SPLIT_STOCK_FORMAT % provisions,
+            HudComposeVocab.SPLIT_STOCK_FORMAT % (provisions * (1.0 - share))]))
+
+    # **THE FLOORS COME FROM THE SIM, THE SENTENCE IS THE CLIENT'S.** The sheet moves a stepper, so a
+    # published verdict would need one field per possible composition; what crosses the wire is the
+    # pair of thresholds (`SPLIT_MIN_WORKERS_KEY` / `SPLIT_PARENT_MIN_WORKERS_KEY`), never a copy of
+    # the rule. Both are checked and BOTH are reported — fixing one otherwise just reveals the other.
+    var blocked := split_blocked_reason(band, _split_workers, pool)
+    var confirm := Button.new()
+    confirm.text = HudComposeVocab.SPLIT_BAND_BUTTON
+    confirm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    HudStyle.apply_button(confirm, "primary")
+    confirm.disabled = blocked != ""
+    confirm.tooltip_text = blocked if confirm.disabled else HudComposeVocab.SPLIT_BAND_HINT
+    if not confirm.disabled:
+        confirm.pressed.connect(func() -> void:
+            var workers := _split_workers
+            _close_party_compose()
+            _on_split_band_pressed(band, workers))
+    sheet.add_child(confirm)
+    sheet.add_child(HudWidgets.alloc_hint_label(
+        blocked if blocked != "" else HudComposeVocab.SPLIT_BAND_AFTER_NOTE))
+
+## One `key   value` line on the split sheet — the `FactionRollup._stat_row` shape, kept local
+## because the parties zone has no shared detail-row widget and one sheet does not justify minting a
+## shared one.
+func _split_row(key: String, value: String) -> HBoxContainer:
+    var row := HBoxContainer.new()
+    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    var name_label := HudWidgets.build_field_key(key)
+    name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.add_child(name_label)
+    var value_label := Label.new()
+    value_label.text = value
+    value_label.add_theme_color_override("font_color", HudStyle.INK)
+    row.add_child(value_label)
+    return row
+
+## **What a split may draw from: the band's WORKERS, not its idle ones.** A split is not staffing a
+## job — it divides the band, and an assignment held by someone who leaves lapses with them. This is
+## the same quantity the sim bounds the command by (`available_workers`), so the stepper's ceiling
+## and the server's refusal cannot disagree.
+func _split_worker_pool(band: Dictionary) -> int:
+    return int(floor(_split_cohort_working(band)))
+
+## The band's working-age cohort as the sim carries it — FRACTIONAL. A real band is 16.54 workers, and
+## the share has to divide by that rather than by the rounded count, or the new band would get a
+## slightly different slice of children than of workers.
+func _split_cohort_working(band: Dictionary) -> float:
+    var working := float(band.get(HudComposeVocab.SPLIT_AGE_WORKING_KEY, 0.0))
+    if working <= 0.0:
+        # `age_working` is the age COHORT; `working_age` is the count of ASSIGNABLE workers (a
+        # different quantity that happens to track it). Same fallback `_build_people_block` takes.
+        working = float(band.get("working_age", 0))
+    return working
+
+## Both halves' dependants as WHOLE BODIES, from one apportionment pass — see the call site for why
+## it must be one. Returns `[new_children, new_elders, kept_children, kept_working, kept_elders]`.
+func _split_apportioned(band: Dictionary, share: float) -> Array[int]:
+    var children := float(band.get(HudComposeVocab.SPLIT_AGE_CHILDREN_KEY, 0.0))
+    var elders := float(band.get(HudComposeVocab.SPLIT_AGE_ELDERS_KEY, 0.0))
+    var working := _split_cohort_working(band)
+    var people := int(round(children + working + elders))
+    var parts: Array[float] = [
+        children * share,
+        elders * share,
+        children * (1.0 - share),
+        working - float(_split_workers),
+        elders * (1.0 - share),
+    ]
+    return HudFormat.apportion_people_to(parts, people - _split_workers)
+
+## **WHY the sim would refuse this split** — both floors, both reported.
+##
+## The numbers are the sim's, echoed onto the cohort; only the sentences are the client's, because the
+## sim's own refusal strings are log-voice and far too long for a tooltip.
+func split_blocked_reason(band: Dictionary, workers: int, pool: int) -> String:
+    var lines: Array[String] = []
+    var min_new := int(band.get(HudComposeVocab.SPLIT_MIN_WORKERS_KEY, 0))
+    var min_parent := int(band.get(HudComposeVocab.SPLIT_PARENT_MIN_WORKERS_KEY, 0))
+    if workers < min_new:
+        lines.append(HudComposeVocab.SPLIT_BLOCKED_NEW_TOO_SMALL % min_new)
+    var remaining := pool - workers
+    if remaining < min_parent:
+        lines.append(HudComposeVocab.SPLIT_BLOCKED_PARENT_TOO_SMALL % [remaining, min_parent])
+    return HudComposeVocab.SPLIT_BLOCKED_SEPARATOR.join(lines)
 
 ## The HUNT form, in the order the decision is actually made: QUARRY → POLICY → PARTY → forecast →
 ## send. The quarry leads because it is what makes every field under it answerable — the per-policy
@@ -3058,6 +3096,7 @@ func _build_quarry_choices_menu(band: Dictionary, chosen: Dictionary,
 func _close_party_compose() -> void:
     _party_compose_open = false
     _party_compose_mission = ""
+    _split_workers = 1
     _clear_party_quarry()
     _targeting.cancel_pick_quarry()
     # The measured requirement belongs to ONE composing act — see `_party_compose_needed`. Carrying a
@@ -3247,17 +3286,18 @@ func _on_recall_expedition_pressed(expedition: Dictionary) -> void:
         "expedition_band_id": int(expedition.get("band_id", HudConst.NO_BAND_ID)),
     })
 
-## Found a band where the selected party stands. Emits settle_expedition_requested; Main formats the
-## `settle_expedition …` command.
-func _on_settle_expedition_pressed(expedition: Dictionary) -> void:
-    if expedition.is_empty():
+## Split the panel's band in two. Emits split_band_requested; Main formats the `split_band …`
+## command.
+func _on_split_band_pressed(band: Dictionary, workers: int) -> void:
+    if band.is_empty() or workers <= 0:
         return
-    # Same handle rule as the recall above: `settle_expedition <faction> <expedition_band_id>` names
-    # the party by its durable BandId — never its ECS entity bits, which the server would resolve to
-    # nothing at all, silently. `cargo xtask command-guard` is what asserts it.
-    emit_signal("settle_expedition_requested", {
-        "faction": int(expedition.get("faction", HudConst.PLAYER_FACTION_ID)),
-        "expedition_band_id": int(expedition.get("band_id", HudConst.NO_BAND_ID)),
+    # Same handle rule as the recall above: `split_band <faction> <band> <workers>` names the band by
+    # its durable BandId — never its ECS entity bits, which the server would resolve to nothing at
+    # all, silently. `cargo xtask command-guard` is what asserts it.
+    emit_signal("split_band_requested", {
+        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+        "workers": workers,
     })
 
 ## Render a player band's detail + labor allocation into the dockable Band/City panel and
@@ -3275,6 +3315,7 @@ func render_band(unit: Dictionary) -> void:
         _clear_party_quarry()
         _party_compose_open = false
         _party_compose_mission = ""
+        _split_workers = 1
         _party_compose_needed = 0.0
         _party_compose_measured_box = Vector2.ZERO
     # A quarry is chosen FOR a band (its travel time and useful party size are band-relative), so the
@@ -3286,6 +3327,7 @@ func render_band(unit: Dictionary) -> void:
         _clear_party_quarry()
         _party_compose_open = false
         _party_compose_mission = ""
+        _split_workers = 1
         _party_compose_needed = 0.0
         _party_compose_measured_box = Vector2.ZERO
     # DEEP-COPY the subject: the panel band must NOT alias the selection's unit dict (the
@@ -3349,6 +3391,7 @@ func render_faction() -> void:
     _clear_party_quarry()
     _party_compose_open = false
     _party_compose_mission = ""
+    _split_workers = 1
     _party_compose_needed = 0.0
     _party_compose_measured_box = Vector2.ZERO
     _party_compose_sheet = null
@@ -3614,6 +3657,7 @@ func refresh_snapshot() -> void:
         # the one piece of this panel that lives OUTSIDE it, and it must go down with the panel.
         _party_compose_open = false
         _party_compose_mission = ""
+        _split_workers = 1
         _party_compose_needed = 0.0
         _party_compose_measured_box = Vector2.ZERO
         _party_compose_sheet = null

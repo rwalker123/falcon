@@ -692,23 +692,4 @@ func _build_expedition_panel(expedition: Dictionary) -> void:
     recall_btn.disabled = returning
     recall_btn.pressed.connect(func() -> void: _bandpanel.confirm_recall_expedition(expedition))
     actions.add_child(recall_btn)
-    # THE THIRD ARRIVAL ACTION (issue #510), offered on the SAME predicate the parties zone's row and
-    # inspector strip read (`BandPanelController.party_may_settle`), so the drawer and the dock cannot
-    # offer the player different answers about one party. Ghost rather than primary: Recall keeps the
-    # emphasis, founding being the rarer and the irreversible of the two.
-    if _bandpanel.party_may_settle(expedition):
-        var settle_btn := Button.new()
-        settle_btn.text = HudComposeVocab.PARTY_SETTLE_ACTION
-        HudStyle.apply_button(settle_btn, "ghost")
-        # DISABLED WITH ITS REASON, never hidden, off the same seam the dock's two surfaces read
-        # (`BandPanelController.settle_blocked_reason`) — a greyed control naming the worker floor
-        # teaches the rule where a vanished one teaches nothing. `Returning` above it takes the same
-        # shape: the button reads its own state rather than disappearing.
-        var settle_blocked: String = _bandpanel.settle_blocked_reason(expedition)
-        settle_btn.disabled = settle_blocked != ""
-        settle_btn.tooltip_text = settle_blocked if settle_btn.disabled else HudComposeVocab.PARTY_SETTLE_TOOLTIP
-        if settle_btn.disabled:
-            settle_btn.add_theme_color_override("font_disabled_color", HudStyle.INK_FAINT)
-        settle_btn.pressed.connect(func() -> void: _bandpanel.confirm_settle_expedition(expedition))
-        actions.add_child(settle_btn)
     _allocation_panel.add_child(actions)
