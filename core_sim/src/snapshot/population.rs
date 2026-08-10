@@ -235,8 +235,10 @@ pub(crate) struct PopulationStateInputs<'a> {
     pub(crate) travel_target: Option<UVec2>,
     pub(crate) hunt_reach: u32,
     pub(crate) expedition_delivery: Option<crate::systems::ExpeditionDelivery>,
-    /// The band's kit **wear** (the minimal TOE). `None` = no wear has been recorded, which reads as
-    /// a **full kit** — the component is the wear ledger, not the kit's existence.
+    /// The band's kit ledger (the minimal TOE). `None` = the ledger was never built (a hand-rolled
+    /// fixture), which reads as a **start-stocked** band — the state every spawn path inserts.
+    /// **Not `Default`**, which is an empty ledger owning nothing; an absent *entry inside* a ledger
+    /// is what "not owned" looks like. See [`BandEquipment`].
     pub(crate) equipment: Option<&'a BandEquipment>,
     pub(crate) kit_levers: &'a BandKitLevers<'a>,
     /// **What is on this band's bench.** `None` = no component at all (a hand-rolled fixture), which
@@ -273,13 +275,18 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         bench,
         craft_inputs,
     } = inputs;
-    // **The minimal TOE, resolved for the wire.** The component records *wear*, so an absent one
-    // reads as no wear — a full kit — exactly as the labor pass reads it. Durability and performance
-    // stay ORTHOGONAL: the tiers below are read off each kit's equipped/dry *predicate*, never scaled
-    // by the remaining condition. **Three kits, three independent readouts** (§4.8): the sled's tier
+    // **The minimal TOE, resolved for the wire.** An absent component means the ledger was never
+    // built, which reads as **start-stocked** — the same fallback `advance_labor_allocation`,
+    // `advance_expeditions` and the party-wear site in `capture.rs` take, and it has to be, or this
+    // band would be published owning nothing while the labor pass pays it an equipped rate.
+    // `Default` is the *empty* ledger and would say exactly that. Durability and performance stay
+    // ORTHOGONAL: the tiers below are read off each kit's equipped/dry *predicate*, never scaled by
+    // the remaining condition. **Three kits, three independent readouts** (§4.8): the sled's tier
     // says nothing about the basket's, so they are published as separate fields rather than one
     // "carry" number the client would have to guess the job of.
-    let kit = equipment.cloned().unwrap_or_default();
+    let kit = equipment
+        .cloned()
+        .unwrap_or_else(|| BandEquipment::start_stocked(kit_levers.config));
     // **WHICH kit these tiers are quoted for.** A detached party has one, decided at launch, so its
     // row states the tier it will actually fight and haul at. A **resident band** has one per
     // assignment, and this row is per *cohort* — so it is quoted at the job's **default** kit, the

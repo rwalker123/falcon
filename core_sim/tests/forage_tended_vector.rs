@@ -14,21 +14,9 @@
 //! Every assertion runs against the sim's own payoff functions or the published `SourceYield` row —
 //! never a re-derivation of their arithmetic (the §4.3 rule).
 
-/// **The shipped EQUIPPED haul rate** — what a kitted band drags, off the sled's own tier.
-/// `labor_config`'s `hunt.per_worker_biomass_capacity` is the *bare-handed* baseline since quality
+/// **The shipped EQUIPPED gather rate** — what a kitted crew carries, off the baskets' own tier.
+/// `labor_config`'s `forage.per_worker_biomass_capacity` is the *bare-handed* baseline since quality
 /// tiers landed, so a fixture that wants "an ordinary band" asks the item table.
-#[allow(dead_code)]
-fn equipped_haul_rate() -> f32 {
-    core_sim::EquipmentConfig::builtin().equipped_reference(
-        core_sim::EquipmentStat::HuntCarry,
-        core_sim::LaborConfig::builtin()
-            .hunt
-            .per_worker_biomass_capacity,
-    )
-}
-
-/// The gather twin of [`equipped_haul_rate`] — the baskets' own tier.
-#[allow(dead_code)]
 fn equipped_gather_rate() -> f32 {
     core_sim::EquipmentConfig::builtin().equipped_reference(
         core_sim::EquipmentStat::ForageCarry,

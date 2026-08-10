@@ -85,7 +85,7 @@ pub struct HandWorking {
     /// Bench progress multiplier with no tool — the value the rate **takes**, never a delta.
     pub rate: f32,
     /// The best reading a bare-handed craft can realize: the output reads
-    /// `min(material reading, ceiling)`. Fine flax with no loom still makes a standard basket.
+    /// `min(material reading, ceiling)`. Excellent flax with no loom still makes a fair basket.
     pub quality_ceiling: f32,
 }
 

@@ -2,6 +2,8 @@ use std::num::{ParseFloatError, ParseIntError};
 
 use thiserror::Error;
 
+use crate::commands::BENCH_CREW_UNSPECIFIED;
+
 /// Describes a runtime command verb, its aliases, and usage hint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommandVerbHelp {
@@ -10,13 +12,6 @@ pub struct CommandVerbHelp {
     pub summary: &'static str,
     pub usage: &'static str,
 }
-
-/// **A `set_bench` with no `workers` token: the job is chosen, nobody is on it yet.**
-///
-/// A legal, meaningful state rather than a missing argument — bench progress is
-/// `workers × rate`, so nobody means nothing happens, and the player can put the recipe up and
-/// staff it with `bench_crew` afterwards.
-const BENCH_UNSTAFFED: u32 = 0;
 
 /// Canonical list of supported runtime command verbs.
 pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
@@ -155,7 +150,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "set_bench",
         aliases: &[],
-        summary: "Put a recipe on a band's crafting bench and draw idle workers onto it. MAKE IS THE ASSIGNMENT - there is no Crafter role, because crafting always has a subject and is staffed like a worked source rather than like a standing role. ONE JOB AT A TIME: this replaces whatever was on the bench, and the materials that job had already drawn go with it. An unknown recipe, or one whose crafts the faction has not learned, is refused with a reason.",
+        summary: "Put a recipe on a band's crafting bench and draw idle workers onto it. MAKE IS THE ASSIGNMENT - there is no Crafter role, because crafting always has a subject and is staffed like a worked source rather than like a standing role. Omit 'workers' (or pass 0) and the sim staffs the job with every hand the band has off other work, keeping any crew already at the bench; name a number and exactly that crew is applied. ONE JOB AT A TIME: this replaces whatever was on the bench, and the materials that job had already drawn go with it. An unknown recipe, or one whose crafts the faction has not learned, is refused with a reason.",
         usage: "set_bench <faction_id> <band_id> recipe <recipe_id> [workers <n>]",
     },
     CommandVerbHelp {
@@ -854,7 +849,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 workers: workers
                     .map(|value| parse_u32(&value, "set_bench workers"))
                     .transpose()?
-                    .unwrap_or(BENCH_UNSTAFFED),
+                    .unwrap_or(BENCH_CREW_UNSPECIFIED),
             })
         }
         "clear_bench" => {

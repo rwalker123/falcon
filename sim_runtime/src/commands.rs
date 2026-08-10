@@ -165,6 +165,8 @@ pub enum CommandPayload {
         faction_id: u32,
         band_id: u64,
         recipe_id: String,
+        /// [`BENCH_CREW_UNSPECIFIED`] hands the staffing decision to the sim, which is the shape
+        /// the client always sends.
         workers: u32,
     },
     /// Take the job off a band's bench and hand its crew back to the idle pool.
@@ -610,6 +612,15 @@ pub enum SecurityPolicyKind {
 /// oversized must not go on the wire at all. There it costs one unanswered query instead of the
 /// connection.
 pub const MAX_PROTO_FRAME: usize = 64 * 1024;
+
+/// **A `set_bench` that names no crew: the sim draws the band's idle workers onto the job.**
+///
+/// *Make is the assignment*, so choosing the recipe is the whole gesture — the client sends this and
+/// the server staffs it. The value is `0` and the reading of it is deliberate: `workers` rides a
+/// proto3 scalar, which cannot distinguish an absent field from an explicit zero, so the handler
+/// treats zero as *"you decide"*. No intent is lost by that, because `bench_crew <n>` is how a
+/// player sets an explicit crew — zero included.
+pub const BENCH_CREW_UNSPECIFIED: u32 = 0;
 
 /// Error returned when encoding a command envelope fails.
 #[derive(Debug, Error)]

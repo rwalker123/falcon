@@ -1683,7 +1683,9 @@ impl SourceYield {
 /// the recipe being swapped off the bench. It is the same reason [`DrawnInputs`] carries its reading.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BatchGrade {
-    /// The grade id the draw selected (`coarse` / `standard` / `fine`) — the readout's word.
+    /// The grade id the draw selected — a `characteristic_bands` name (`poor` / `fair` / `good` /
+    /// `excellent`), because there is **one quality ladder for the whole game**: the same four words
+    /// rate the hide and the sled made out of it. The readout's word.
     pub id: String,
     /// The absolutes this grade declares, copied from the recipe at the moment of the craft.
     pub effects: Vec<crate::equipment_config::EquipmentEffect>,

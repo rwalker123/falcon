@@ -4,7 +4,6 @@
 /// **The shipped EQUIPPED haul rate** — what a kitted band drags, off the sled's own tier.
 /// `labor_config`'s `hunt.per_worker_biomass_capacity` is the *bare-handed* baseline since quality
 /// tiers landed, so a fixture that wants "an ordinary band" asks the item table.
-#[allow(dead_code)]
 fn equipped_haul_rate() -> f32 {
     core_sim::EquipmentConfig::builtin().equipped_reference(
         core_sim::EquipmentStat::HuntCarry,
@@ -29,17 +28,6 @@ fn equipment_with_hunt_carry(rate: f32) -> Arc<core_sim::EquipmentConfig> {
     Arc::new(
         core_sim::EquipmentConfig::from_json_str(&json.to_string())
             .expect("a re-tuned haul rate is still a valid item table"),
-    )
-}
-
-/// The gather twin of [`equipped_haul_rate`] — the baskets' own tier.
-#[allow(dead_code)]
-fn equipped_gather_rate() -> f32 {
-    core_sim::EquipmentConfig::builtin().equipped_reference(
-        core_sim::EquipmentStat::ForageCarry,
-        core_sim::LaborConfig::builtin()
-            .forage
-            .per_worker_biomass_capacity,
     )
 }
 

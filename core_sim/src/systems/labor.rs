@@ -2778,7 +2778,6 @@ mod labor_yield_tests {
     /// **The shipped EQUIPPED haul rate** — what a kitted band drags, off the sled's own tier.
     /// `labor_config`'s `hunt.per_worker_biomass_capacity` is the *bare-handed* baseline since
     /// quality tiers landed, so a fixture that wants "an ordinary band" asks the item table.
-    #[allow(dead_code)]
     fn equipped_haul_rate() -> f32 {
         crate::equipment_config::EquipmentConfig::builtin().equipped_reference(
             crate::equipment_config::EquipmentStat::HuntCarry,
@@ -2789,7 +2788,6 @@ mod labor_yield_tests {
     }
 
     /// The gather twin of [`equipped_haul_rate`] — the baskets' own tier.
-    #[allow(dead_code)]
     fn equipped_gather_rate() -> f32 {
         crate::equipment_config::EquipmentConfig::builtin().equipped_reference(
             crate::equipment_config::EquipmentStat::ForageCarry,

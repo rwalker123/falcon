@@ -2955,10 +2955,15 @@ table BenchState {
 //   the craft is unknown         "Needs Clay-working"        danger
 //   no tool, not hand-workable   "No crucible"               danger
 //   two reasons at once          joined with " · "           danger
-//   buildable                    "Hide + tanning frame → fine" / "Fibre, no loom → standard"
+//   buildable                    "Hide + tanning frame → excellent" / "Fibre, no loom → fair"
 //                                                            neutral
-//   buildable, a FIRST tool      "Unlocks fine fibre work"   good
+//   buildable, a FIRST tool      "Unlocks excellent fibre work"
+//                                                            good
 //   buildable, item untouched    "Not needed yet"            neutral (the panel dims the row)
+//
+// The grade word in those two rows is a `characteristic_bands` name — "poor" / "fair" / "good" /
+// "excellent", the ONE quality ladder, the same vocabulary `outputGrade` below carries. There is no
+// second set of grade words anywhere on this wire.
 table CraftOffer {
   recipeId:string;
   displayName:string;

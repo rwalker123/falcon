@@ -128,7 +128,7 @@ pub enum EquipmentStat {
     /// is `0` for a material that cannot be worked bare-handed. See [`Self::CRAFT_ONLY`].
     CraftSpeed,
     /// **The best reading a craft on this tool can realize** — the output grade is selected by
-    /// `min(material reading, ceiling)`, so fine flax with no loom still makes a standard basket.
+    /// `min(material reading, ceiling)`, so excellent flax with no loom still makes a fair basket.
     /// Declared **equipped only**; the bare-handed ceiling is the material's
     /// [`crate::materials_config::HandWorking::quality_ceiling`].
     CraftQualityCeiling,

@@ -13,8 +13,9 @@ const HERD_GONE_MID_HUNT: &str = "herd_gone";
 
 /// **Everything one detached party is, as a query tuple.** Named because the tuple grew past the
 /// point of readability when the party's own kit joined it: **a detached party carries its OWN kit**
-/// (`docs/plan_denial_raid.md` §1.2). It leaves outfitted (`BandEquipment::default()` is zero wear)
-/// and, since the take resolves through the fight (`docs/plan_hunt_through_combat.md` §4), it must
+/// (`docs/plan_denial_raid.md` §1.2). It leaves outfitted — a party with no ledger of its own falls
+/// back to [`BandEquipment::start_stocked`], **not** `Default`, which owns nothing — and, since the
+/// take resolves through the fight (`docs/plan_hunt_through_combat.md` §4), it must
 /// also *wear* that kit — a raid on free, immortal equipment is denial for nothing, and its `attack`
 /// tier is what the fight's gate compares against.
 type ExpeditionParty = (
@@ -179,7 +180,7 @@ pub fn advance_expeditions(
         let workers = available_workers(cohort.working);
         // **This party's two kit tiers, resolved ONCE per party per turn** — the same discipline
         // `advance_labor_allocation` applies to a resident band, through the same
-        // `EquipmentConfig` seams. An absent component reads as a full kit (wear, not stock).
+        // `EquipmentConfig` seams.
         // An absent **component** means the party's ledger was never built (a hand-rolled fixture),
         // which reads as outfitted — the state every launch path actually inserts. An absent
         // **entry inside** a ledger is *not owned*; see `BandEquipment`.

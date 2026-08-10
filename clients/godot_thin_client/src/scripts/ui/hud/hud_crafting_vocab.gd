@@ -386,7 +386,7 @@ const COLUMN_OWNED_WIDTH := 172.0
 const COLUMN_COST_WIDTH := 140.0
 ## **THE ACTION COLUMN IS SIZED BY THE REFUSAL, NOT BY THE BUTTON.** `Make` is 40-odd pixels wide;
 ## what sets this number is the published `reason` under it, which is a whole clause — *"Hide +
-## tanning frame → standard"*, *"Short 5.0 fibre · Short 1.0 hide"* — autowrapped to exactly this
+## tanning frame → excellent"*, *"Short 5.0 fibre · Short 1.0 hide"* — autowrapped to exactly this
 ## width. At the 132 it shared with the retired condition column those clauses ran to two lines and
 ## every row in the table paid for it, so retiring that column bought the width back here rather than
 ## narrowing the card.

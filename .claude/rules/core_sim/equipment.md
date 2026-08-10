@@ -487,7 +487,13 @@ every frame — and a `Vec` inside it because batch order is insertion order, wh
 > **An absent COMPONENT is a different question and still reads as start-stocked.** `Default` is
 > *owns nothing*; a band with no `BandEquipment` component at all has no ledger rather than an empty
 > one, which is a hand-rolled fixture, and `advance_labor_allocation` / `advance_expeditions` /
-> `snapshot/capture.rs` fall back to `start_stocked` there.
+> `snapshot/capture.rs` / **`snapshot/population.rs`** fall back to `start_stocked` there.
+>
+> **The publish site is on that list for a reason a reader will otherwise miss.** It is the only one
+> of the four whose fallback is *observable* rather than arithmetic: a `Default` there publishes
+> `kitItemConditions` at `count 0 / remaining 0`, every `equipmentBatches` row as `Never made` and
+> bare-handed carry tiers, **while `advance_labor_allocation` pays that same band the equipped
+> rate**. The four sites are one fact; a fifth reader must take the same fallback.
 
 **A SPAWN STOCKS `count: 1`, AND THAT IS WHAT PRESERVES THE SHIPPED OPENING.** One unit is one item's
 `starting_durability` — the life the game has always had — so **a count above 1 is something crafting

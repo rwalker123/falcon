@@ -432,8 +432,11 @@ message SetBenchCommand {
   uint32 faction_id = 1;
   uint64 band_id = 2;
   string recipe_id = 3;
-  // Workers to draw onto the bench, clamped to the band's idle pool. Absent (0) leaves the bench
-  // staffed but idle, which is a legal state: progress is `workers x rate`, so nobody means nothing.
+  // Workers to draw onto the bench, clamped to the band's hands off other work. Absent — which for
+  // a proto3 scalar is indistinguishable from an explicit 0, and is the shape the client always
+  // sends — means "the sim decides": it staffs the job with every idle hand, and keeps any crew
+  // already standing at the bench through a job swap. `BenchCrewCommand` is how an explicit crew is
+  // set, zero included.
   uint32 workers = 4;
 }
 

@@ -369,7 +369,8 @@ that split.
 
 Where a batch came from and what it earns per turn belongs in a **popover off the material row**, the
 idiom `DisclosureController` already provides for Food / Morale / Growth / Trade / Kit. **It must be a
-popover, not an inline expansion** — `band-readouts.md` records that as a correctness rule: expanding
+popover, not an inline expansion** — `.claude/rules/client/band-readouts.md` records that as a
+correctness rule: expanding
 inline grew a label *after* its zone had picked a height tier, and the `clip_contents` host silently
 sliced the rows beneath it.
 

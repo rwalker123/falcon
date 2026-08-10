@@ -334,6 +334,29 @@ no Crafter role card and **no `LaborTarget` variant**. Scout and Warrior are sta
 nothing to point at, and crafting always has a subject, so it is staffed like a worked source. A
 `LaborTarget::Craft` would also put a fictitious row on every per-source yield readout in the game.
 
+**A CREW OF ZERO MEANS "YOU DECIDE", and `set_bench` then staffs the job with every hand the band
+has off other work** — `BandWorkforce::benchable()`, so the crew already at the bench stays put
+through a job swap and the free hands join them. The command's `workers` rides a proto3 scalar, which
+cannot tell an absent field from an explicit `0`, and the client sends neither number: pressing
+**Make** is the whole gesture. Reading `0` literally is therefore the same as reading it as
+*"unspecified"* on every reachable path, and the literal reading is the one that leaves the panel
+saying *"No one at the bench"* after a Make and dismisses a running bench's crew on a swap.
+`sim_runtime`'s `BENCH_CREW_UNSPECIFIED` is the shared spelling of that `0`, read by the text parser
+and the handler alike.
+
+**`bench_crew` reads the same zero as an ORDER**, and that asymmetry is what keeps the reinterpretation
+free: that verb exists to name a crew, so it is how a player stands the bench down without taking the
+job off it. No intent is lost. Pinned as a pairing by
+`server::tests::a_set_bench_with_no_crew_named_draws_the_bands_idle_workers` (no crew named staffs the
+idle count; a crew named applies exactly that crew — the second half is what stops the draw from
+becoming "the bench always takes everybody") and
+`::swapping_the_job_on_a_running_bench_keeps_its_crew`.
+
+**The draw is unbounded by the recipe** — it takes every idle hand, not as many as the job can
+absorb. Over-crewing therefore buys less than proportionally: `progress` accrues at `workers × rate`,
+but a pass finishes **one** item and `advance_crafting` zeroes the meter rather than carrying the
+overflow, so everything above `work` in the turn that crosses it is dropped.
+
 **The crew comes out of the same pool `assign_labor` spends**, and **`BandWorkforce`
 (`components.rs`) is the ONE place that says so.** A band's people are spent on exactly two things —
 the `LaborAllocation` and the bench — so it resolves `{ pool, assigned, benched }` off the three

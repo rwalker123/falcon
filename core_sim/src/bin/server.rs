@@ -61,7 +61,8 @@ use core_sim::{
 use sim_runtime::{
     commands::{
         query_error, ConfigOverrideKind, EspionageGeneratorUpdate as CommandGeneratorUpdate,
-        QueryPayload, QueryReply, QueryReplyEnvelope, ReloadConfigKind, MAX_PROTO_FRAME,
+        QueryPayload, QueryReply, QueryReplyEnvelope, ReloadConfigKind, BENCH_CREW_UNSPECIFIED,
+        MAX_PROTO_FRAME,
     },
     CancelScope, CommandEnvelope as ProtoCommandEnvelope, CommandPayload as ProtoCommandPayload,
     OrdersDirective as ProtoOrdersDirective, SecurityPolicyKind, TerrainTags,
@@ -4876,6 +4877,9 @@ fn band_bench_mut(app: &mut bevy::prelude::App, band: Entity) -> bevy::prelude::
 /// draw takes nothing and the turn is a no-op — which is `docs/plan_crafting_and_materials.md` §5's
 /// *"no 'you cannot craft that' branch in the sim"*: the panel names the shortfall, the sim just
 /// does not move.
+///
+/// **The crew is optional and the sim staffs it** — see [`BENCH_CREW_UNSPECIFIED`] at the clamp
+/// below. Choosing the recipe is the player's whole gesture; `bench_crew` is what takes a number.
 fn handle_set_bench(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -4935,15 +4939,25 @@ fn handle_set_bench(
     // The band's OWN crew stays on the bench while the job is swapped, so the pool this is clamped
     // against is the free hands PLUS the crew already standing there — [`BandWorkforce::benchable`],
     // which is the one place that decides not to count them twice.
-    let idle = band_workforce(app, band.entity).benchable();
-    let applied = workers.min(idle);
+    let benchable = band_workforce(app, band.entity).benchable();
+    // **A crew of zero means "you decide", so draw every hand the bench may have.** The command
+    // arrives over a proto3 scalar, which cannot tell an absent `workers` from an explicit `0`, and
+    // the client deliberately sends neither — `make` is the assignment, so the sim staffs the job.
+    // Reading `0` as an order to stand nobody there is what left the bench with no crew, and it also
+    // dismissed the crew of a *running* bench on a job swap. Nothing reachable is lost by the
+    // reinterpretation: `bench_crew <n>` is how a player sets an explicit crew, zero included.
+    let applied = if workers == BENCH_CREW_UNSPECIFIED {
+        benchable
+    } else {
+        workers.min(benchable)
+    };
     {
         let mut bench = band_bench_mut(app, band.entity);
         bench.set_job(recipe_id, applied);
     }
     let tick = app.world.resource::<SimulationTick>().0;
     let clamp_note = if applied < workers {
-        format!(" (clamped from {workers} — only {idle} idle)")
+        format!(" (clamped from {workers} — the band has only {benchable} hands off other work)")
     } else {
         String::new()
     };
@@ -4957,7 +4971,8 @@ fn handle_set_bench(
             band.label
         ),
         Some(format!(
-            "status=applied action=set_bench recipe={recipe_id} workers={applied} idle={idle}"
+            "status=applied action=set_bench recipe={recipe_id} workers={applied} \
+             benchable={benchable}"
         )),
     );
 }
@@ -5029,8 +5044,11 @@ fn handle_bench_crew(
     }
     // Same ceiling `set_bench` clamps against, and for the same reason: the crew already on the
     // bench is being re-set, not added to.
-    let idle = band_workforce(app, band.entity).benchable();
-    let applied = workers.min(idle);
+    let benchable = band_workforce(app, band.entity).benchable();
+    // **Zero is an order here, not a question.** This verb exists to name a crew, so it is the one
+    // way to stand the bench down without taking the job off it — the opposite reading from
+    // `set_bench`'s [`BENCH_CREW_UNSPECIFIED`].
+    let applied = workers.min(benchable);
     let recipe_id = {
         let mut bench = band_bench_mut(app, band.entity);
         bench.workers = applied;
@@ -5038,7 +5056,7 @@ fn handle_bench_crew(
     };
     let tick = app.world.resource::<SimulationTick>().0;
     let clamp_note = if applied < workers {
-        format!(" (clamped from {workers} — only {idle} idle)")
+        format!(" (clamped from {workers} — the band has only {benchable} hands off other work)")
     } else {
         String::new()
     };
@@ -5049,7 +5067,8 @@ fn handle_bench_crew(
         faction,
         format!("{} bench crew x{applied}{clamp_note}", band.label),
         Some(format!(
-            "status=applied action=bench_crew recipe={recipe_id} workers={applied} idle={idle}"
+            "status=applied action=bench_crew recipe={recipe_id} workers={applied} \
+             benchable={benchable}"
         )),
     );
 }
@@ -12241,6 +12260,108 @@ mod tests {
             published_idle_workers(&mut app, band),
             0,
             "and with them staffed the band publishes nobody idle"
+        );
+    }
+
+    /// A **second** ungated recipe, so a swap is a real change of job rather than a re-set of the
+    /// same one.
+    const BENCH_SWAP_RECIPE: &str = "baskets";
+
+    /// What is actually standing at a band's bench.
+    fn bench_crew(app: &bevy::prelude::App, band: Entity) -> u32 {
+        app.world
+            .get::<BandBench>(band)
+            .map(|bench| bench.workers)
+            .unwrap_or(0)
+    }
+
+    /// **Naming no crew staffs the job; naming one is obeyed to the head.**
+    ///
+    /// A pairing, because every other bench fixture passes an explicit crew — which is the one call
+    /// shape the client never makes. *Make is the assignment*, so the panel sends the recipe and
+    /// nothing else, and the sim is what draws the hands; a handler that clamped the proto's `0`
+    /// left the player staring at "No one at the bench" after pressing **Make**. The second half is
+    /// what stops the fix from becoming "the bench always takes everybody".
+    #[test]
+    fn a_set_bench_with_no_crew_named_draws_the_bands_idle_workers() {
+        let mut app = build_headless_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = first_resident_band(&mut app);
+        let idle_before = published_idle_workers(&mut app, band);
+        assert!(
+            idle_before > BENCH_IDLE_CREW,
+            "the fixture band must have more hands than the explicit crew, or the two halves \
+             below cannot be told apart"
+        );
+
+        handle_set_bench(
+            &mut app,
+            faction,
+            None,
+            BENCH_IDLE_RECIPE,
+            BENCH_CREW_UNSPECIFIED,
+        );
+        assert_eq!(
+            bench_crew(&app, band),
+            idle_before,
+            "a set_bench that names no crew must staff the job with the band's idle workers"
+        );
+        assert_eq!(
+            published_idle_workers(&mut app, band),
+            0,
+            "…and those hands are then busy, so nobody is published idle"
+        );
+
+        handle_set_bench(&mut app, faction, None, BENCH_IDLE_RECIPE, BENCH_IDLE_CREW);
+        assert_eq!(
+            bench_crew(&app, band),
+            BENCH_IDLE_CREW,
+            "a set_bench that DOES name a crew applies exactly that crew — the draw is what a \
+             missing number means, not what every set_bench does"
+        );
+    }
+
+    /// **Swapping the job on a running bench keeps the crew standing there.**
+    ///
+    /// `BandBench::set_job` overwrites `workers`, so a swap that applied the proto's `0` dismissed a
+    /// crew the player never asked to send home — the exact case `BandWorkforce::benchable()` (pool
+    /// − assigned, deliberately *not* netting the bench) exists to preserve.
+    #[test]
+    fn swapping_the_job_on_a_running_bench_keeps_its_crew() {
+        let mut app = build_headless_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = first_resident_band(&mut app);
+        let idle_before = published_idle_workers(&mut app, band);
+
+        handle_set_bench(&mut app, faction, None, BENCH_IDLE_RECIPE, BENCH_IDLE_CREW);
+        assert_eq!(
+            bench_crew(&app, band),
+            BENCH_IDLE_CREW,
+            "the fixture must have a crew at the bench, or the swap below proves nothing"
+        );
+
+        handle_set_bench(
+            &mut app,
+            faction,
+            None,
+            BENCH_SWAP_RECIPE,
+            BENCH_CREW_UNSPECIFIED,
+        );
+        assert_eq!(
+            app.world
+                .get::<BandBench>(band)
+                .and_then(|bench| bench.recipe_id.clone())
+                .unwrap_or_default(),
+            BENCH_SWAP_RECIPE,
+            "the swap must actually have changed the job"
+        );
+        assert_eq!(
+            bench_crew(&app, band),
+            idle_before,
+            "the crew already at the bench stays put across the swap, and the band's remaining \
+             free hands join them"
         );
     }
 }
