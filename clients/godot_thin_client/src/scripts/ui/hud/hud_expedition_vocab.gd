@@ -82,3 +82,9 @@ const STATUS_HINTS := {
 }
 
 const STATUS_HINT_FORMAT := "%s — %s"
+
+## The amber callout on a party that has reached its objective and is standing there for orders.
+## **IT NAMES EVERY ACTION THE DRAWER OFFERS, AND ONLY THOSE.** Founding a band is no longer one of
+## them — a band splits where it stands (issue #511, `docs/plan_band_fission.md`), so an arrived
+## scouting party has exactly the two answers below and this sentence must not imply a third.
+const EXPEDITION_AWAITING_CALLOUT := "Reached its objective — Move it onward or Recall it home."

@@ -915,21 +915,21 @@ table PopulationCohortState {
   penCarryPerWorkerBiomass:float = 0;
   scoutVantageRange:float = 0;
   warriorAttack:float = 0;
-  // Why "start a life here" would be refused for this party RIGHT NOW — the machine tokens of
-  // systems::expeditions::FoundingRefusal, in the order the sim assesses them. EMPTY means either
-  // that the founding would succeed, or that this cohort is not a party awaiting orders at all —
-  // the field speaks only to a party the arrival affordance is offered for, which is the only place
-  // the client reads it. Recomputed every turn by `assess_foundings` (Visibility stage, after
-  // calculate_visibility); derived, never persisted.
-  //
-  // It is a LIST because the two eligibility gates are independent and both can hold at once: a
-  // party that is too small AND on unmapped ground must be told both, or fixing one reveals the
-  // other and the player learns the rules one refusal at a time.
-  foundingRefusals:[string];
-  // settle.min_founding_workers — the working-age floor a party must clear to found. A global config
-  // lever echoed onto every cohort (the `expeditionForecastHorizonTurns` / `bandMoveTilesPerTurn`
-  // idiom), so the client can name the number in a tooltip without a second copy of the config.
+  // settle.min_founding_workers — the working-age floor the NEW band must clear when a band splits
+  // (docs/plan_band_fission.md §Q2). A global config lever echoed onto every cohort (the
+  // `expeditionForecastHorizonTurns` / `bandMoveTilesPerTurn` idiom), so the compose sheet can state
+  // the number without a second copy of the config.
   foundingMinWorkers:uint = 0;
+  // settle.parent_min_workers — the workers the PARENT must still hold after the split, the other
+  // half of the same gate. Echoed the same way and for the same reason.
+  //
+  // *** THE TWO FLOORS ARE PUBLISHED, THE VERDICT IS NOT. ***
+  //
+  // The split sheet moves a stepper, so a per-composition verdict would be one wire field per
+  // possible answer. What crosses instead is the pair of THRESHOLDS the sim owns, exactly as the
+  // per-source forecast publishes rates rather than an answer per party size — the client renders a
+  // published number, it does not hold a second copy of the rule.
+  foundingParentMinWorkers:uint = 0;
 }
 
 // What ONE kit would grant ONE band at its current wear - a row of

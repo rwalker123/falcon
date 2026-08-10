@@ -247,8 +247,8 @@ func _ready() -> void:
             hud.connect("send_denial_raid_requested", Callable(self, "_on_hud_send_denial_raid"))
         if hud.has_signal("recall_expedition_requested") and not hud.is_connected("recall_expedition_requested", Callable(self, "_on_hud_recall_expedition")):
             hud.connect("recall_expedition_requested", Callable(self, "_on_hud_recall_expedition"))
-        if hud.has_signal("settle_expedition_requested") and not hud.is_connected("settle_expedition_requested", Callable(self, "_on_hud_settle_expedition")):
-            hud.connect("settle_expedition_requested", Callable(self, "_on_hud_settle_expedition"))
+        if hud.has_signal("split_band_requested") and not hud.is_connected("split_band_requested", Callable(self, "_on_hud_split_band")):
+            hud.connect("split_band_requested", Callable(self, "_on_hud_split_band"))
         if hud.has_signal("extend_pen_requested") and not hud.is_connected("extend_pen_requested", Callable(self, "_on_hud_extend_pen")):
             hud.connect("extend_pen_requested", Callable(self, "_on_hud_extend_pen"))
         if hud.has_signal("improvement_requested") and not hud.is_connected("improvement_requested", Callable(self, "_on_hud_improvement")):
@@ -995,19 +995,21 @@ static func format_recall_expedition(payload: Dictionary) -> Dictionary:
         "message": "Recall expedition.",
     }
 
-## `settle_expedition <faction_id> <expedition_band_id>` — the party stops being an expedition and
-## becomes a resident band where it stands (issue #510). Same shape as `recall_expedition` above and
-## for the same reason: a detached party is a band, addressed by the same durable id, never by its
-## ECS entity bits. **The grammar is CLOSED at two positional tokens** — the sim's parser rejects a
-## third outright, so nothing about the site or the party may ride the line.
-static func format_settle_expedition(payload: Dictionary) -> Dictionary:
-    var expedition_band_id := int(payload.get("expedition_band_id", HudConst.NO_BAND_ID))
-    if expedition_band_id == HudConst.NO_BAND_ID:
+## `split_band <faction_id> <band_id> <workers>` — a band divides in two where it stands
+## (issue #511). Same handle rule as `recall_expedition` above: the band is named by its durable id,
+## never by its ECS entity bits. **The grammar is CLOSED at three positional tokens** — the sim's
+## parser rejects a fourth outright, the worker count being the only input a split takes.
+static func format_split_band(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID:
+        return {}
+    var workers := int(payload.get("workers", 0))
+    if workers <= 0:
         return {}
     var faction := int(payload.get("faction", PLAYER_FACTION_ID))
     return {
-        "line": "settle_expedition %d %d" % [faction, expedition_band_id],
-        "message": "Start a life here.",
+        "line": "split_band %d %d %d" % [faction, band_id, workers],
+        "message": "Form a new band.",
     }
 
 ## `extend_pen <faction> <x> <y>` targets the pen's ANCHOR TILE, so it names no band at all — it is
@@ -1147,10 +1149,12 @@ func _on_hud_improvement(payload: Dictionary) -> void:
 func _on_hud_recall_expedition(payload: Dictionary) -> void:
     _send_formatted_command(format_recall_expedition(payload))
 
-## Found a band where an arrived party stands. The sim answers the reachability gate when the command
-## lands, so a refusal comes back as a `band_founded` failure event rather than being predicted here.
-func _on_hud_settle_expedition(payload: Dictionary) -> void:
-    _send_formatted_command(format_settle_expedition(payload))
+## Split a resident band in two where it stands. The client FORECASTS whether a given worker count
+## is viable — the compose sheet disables Send and says why, off the two floors published per-cohort
+## — but the SIM's verdict is the authority: a refusal comes back on the `band_founded` event
+## channel (`handle_split_band` reports through `CommandEventKind::BandFounded`), not as a reply.
+func _on_hud_split_band(payload: Dictionary) -> void:
+    _send_formatted_command(format_split_band(payload))
 
 func _on_hud_next_turn(steps: int) -> void:
     var clamped_steps: int = max(1, steps)

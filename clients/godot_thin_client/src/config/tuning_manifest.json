@@ -256,14 +256,25 @@
         },
         {
           "pointer": "/settle/min_founding_workers",
-          "label": "Founding party floor",
+          "label": "New band worker floor",
           "type": "int",
           "min": 1,
           "max": 12,
           "step": 1,
           "default": 4,
           "unit": "workers",
-          "hint": "Working-age people a party needs before it can start a life where it stands."
+          "hint": "Working-age people a new band must start with when a band splits. 1 turns the floor off and is still a real band."
+        },
+        {
+          "pointer": "/settle/parent_min_workers",
+          "label": "Home band worker floor",
+          "type": "int",
+          "min": 0,
+          "max": 20,
+          "step": 1,
+          "default": 6,
+          "unit": "workers",
+          "hint": "Workers the home band must keep after a split. 0 turns the floor off for a playtest run."
         }
       ]
     },

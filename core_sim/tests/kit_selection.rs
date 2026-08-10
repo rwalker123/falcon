@@ -286,7 +286,6 @@ fn spawn_party(
                 pending_reveal: Vec::new(),
                 carried_trade: 0.0,
                 kit,
-                founding_refusals: Vec::new(),
             },
         ))
         .id()

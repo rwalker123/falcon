@@ -533,8 +533,8 @@ static func detail_phrase(detail: String) -> String:
 	return HudEventVocab.DETAIL_PHRASE_SEPARATOR.join(fragments)
 
 ## **A DETAIL THE SIM WROTE AS A SENTENCE, WHICH IS SHOWN VERBATIM.** Every COMMAND REFUSAL takes
-## this path — `emit_command_failure` puts the sim's own explanation in the `detail` slot ("Scouts 1
-## cannot start a life here — nobody at home could point at that place…") — and the token walk below
+## this path — `emit_command_failure` puts the sim's own explanation in the `detail` slot ("Ashfoot
+## cannot split — a new band starts with 4 workers and this one would have 2.") — and the token walk below
 ## would split it on spaces and rejoin the words with ` · `, turning one sentence into a column of
 ## capitalised words.
 ##

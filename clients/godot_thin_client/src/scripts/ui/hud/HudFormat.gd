@@ -226,15 +226,26 @@ static func progress_percent(progress: float) -> int:
 ## 30.47 rounds to 9 + 17 + 5 = 31), and a Band panel that disagrees with the top bar about how many
 ## people are in the band reads as a bug in both.
 static func apportion_people(parts: Array[float]) -> Array[int]:
+    var total := 0.0
+    for part in parts:
+        total += maxf(part, 0.0)
+    return apportion_people_to(parts, roundi(total))
+
+## The same apportionment against an EXPLICIT total, for a caller that already knows what the parts
+## must sum to.
+##
+## **The split sheet is why this exists.** It apportions both halves of a band in ONE pass so their
+## displayed people sum to the band's own displayed total — and it holds the chosen worker count out
+## of the parts entirely, that being an integer the player picked rather than a fraction to round. So
+## the target is not `round(sum(parts))`; it is the band's people minus those pinned workers.
+static func apportion_people_to(parts: Array[float], target: int) -> Array[int]:
     var whole: Array[int] = []
     var assigned := 0
-    var total := 0.0
     for part in parts:
         var floored: int = maxi(int(floor(part)), 0)
         whole.append(floored)
         assigned += floored
-        total += maxf(part, 0.0)
-    var leftover := roundi(total) - assigned
+    var leftover := target - assigned
     while leftover > 0:
         var best := -1
         var best_fraction := -1.0

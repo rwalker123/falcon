@@ -52,7 +52,7 @@ A **resident** band (`ResidentBand` — an expedition is detached and deliberate
 - **`attach_band` seeds from the parent province's *current* values**, not neutral: a band born into a long-diverged province starts assimilated rather than schisming for existing.
 - **A band that CAME from somewhere is seeded from where it came from — `attach_band_from_source`.**
   A colony founded by an expedition is attached at founding time
-  (`systems::found_band_from_expedition`) from its **home band**'s current values, parented on the
+  (`systems::split_band_from_parent`) from its **home band**'s current values, parented on the
   destination province, so the reconcile's "no layer" branch never sees it and there is still exactly
   one attach path per band. Without it a colony founded twenty tiles away seeded from the province it
   landed in and opened *as the locals*, while a band that **walked** the same twenty tiles kept its

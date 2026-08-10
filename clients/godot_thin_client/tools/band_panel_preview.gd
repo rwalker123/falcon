@@ -343,17 +343,23 @@ const HUNT_IN_CAMP_ENTITY := 955
 # **THE TALLEST PARTY THE INSPECTOR STRIP CAN BE ASKED TO HOLD** — every optional line of
 # `BandDetailLines.expedition_summary_lines` live at once. See `_worst_case_party_fixture`.
 const HUNT_WORST_CASE_ENTITY := 956
-# **THE ONLY PHASE "start a life here" IS OFFERED IN** (issue #510) — a scout that has arrived and is
-# waiting to be told what to do next. Every other party in this file is under orders, which is what
-# makes the settle pair's negative half real rather than staged.
+# A scout that has arrived and is waiting to be told what to do next — the phase the parties rows
+# spell out in WARN amber.
 const SCOUT_AWAITING_ENTITY := 957
-# `settle.min_founding_workers` as the sim echoes it onto every cohort — the number the refusal
-# tooltip names. Stated here rather than read from the shipped config: this file is fixtures, and a
-# refusal sentence asserted against a config value would move with a balance dial.
-const SETTLE_MIN_FOUNDING_WORKERS := 4
-# The blocked scout's party size, deliberately UNDER that floor, so the fixture is a party the sim
-# would genuinely refuse rather than a legal one wearing a token.
-const SETTLE_TOO_SMALL_PARTY := 1
+# The two split floors as the sim echoes them onto every cohort (`docs/plan_band_fission.md`
+# §Config levers) — the numbers the refusal sentences name. Stated here rather than read from the
+# shipped config: this file is fixtures, and a refusal sentence asserted against a config value would
+# move with a balance dial.
+const SPLIT_MIN_NEW_WORKERS := 4
+const SPLIT_PARENT_MIN_WORKERS := 6
+# A split the NEW band's floor refuses, and one the PARENT's floor refuses, against the shared band
+# fixture's 16 assignable workers. Both are deliberately over the line rather than on it — the
+# admission twin at the boundary is what pins the gate as `<` rather than `<=`.
+const SPLIT_TOO_FEW_WORKERS := 2
+const SPLIT_HOLLOWING_WORKERS := 12
+# The squeezed band's assignable workers — small enough that a split under the new band's floor
+# also leaves the parent under its own, which is the only way one composition trips both.
+const SPLIT_SQUEEZED_WORKERS := 7
 # Its pack number: the carried figure EQUALS the cap so the `Carried:` row takes its longest form —
 # `N / cap` plus the `· FULL` badge — rather than the bare count a capless party gets.
 # The floor it was launched with, deliberately NOT the default — the Orders row is asserted against
@@ -1895,71 +1901,50 @@ func _ready() -> void:
 	# (d) The row ✕ recall must CONFIRM first (like "Recall all"), not emit immediately.
 	_assert_row_recall_confirms()
 
-	# (e) "START A LIFE HERE" — the THIRD arrival action (issue #510), rendered as a PAIR because a
-	# one-sided frame passes against a control that renders unconditionally. ONE roster carrying an
-	# ARRIVED scout and a party that is still hunting, so both halves are in every frame and the two
-	# states differ only in which party's inspector strip is open.
+	# (e) **FORM A NEW BAND** (issue #511) — the split sheet, rendered as a PAIR because a one-sided
+	# frame passes against a Send that is disabled unconditionally. The SAME band composes all three
+	# states; what moves between them is the worker count on the stepper.
 	_set_world_herds(_herd_fixtures())
 	_push_bands([_band_fixture(), _awaiting_scout_expedition_fixture(), _hunt_expedition_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	_panel.set_active_tab(&"parties")
-	_hud._bandpanel._toggle_parties_inspector(str(SCOUT_AWAITING_ENTITY))
-	await _settle()
-	await _save("band_panel_settle_offered")
-	_assert_zones_within_bounds()
-	_assert_zone_content_fits()
-	_assert_settle_affordance("band_panel_settle_offered", true)
-	# The ENABLED half of the blocked pair below. Without it "grey everything out" passes every claim
-	# the refusal states make, and the affordance would be dead on the party it exists for.
-	_assert_settle_enabled("band_panel_settle_offered")
-	_hud._bandpanel._toggle_parties_inspector(str(SCOUT_AWAITING_ENTITY))
 
-	# The SAME roster with the HUNTING party's strip open: its links are Jump + Recall and nothing
-	# else, while the arrived scout's ROW keeps its `Settle` control one line above — which is what
-	# makes this the other half of the pair rather than a frame with the feature switched off.
-	_hud._bandpanel._toggle_parties_inspector(str(HUNT_DELIVERING_ENTITY))
+	# The VIABLE composition — the half that has to exist, or "grey everything out" would satisfy
+	# every claim the two refusals below make.
+	_open_split_sheet(SPLIT_MIN_NEW_WORKERS + 1)
 	await _settle()
-	await _save("band_panel_settle_withheld")
+	await _save("band_panel_split_ready")
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
-	_assert_settle_affordance("band_panel_settle_withheld", false)
-	_assert_settle_confirms_before_emitting()
-	# The founding prompt itself, left standing by the assertion above. An embedded subwindow lands in
-	# the capture (the kit picker's popup precedent), so this is where the SHARED confirm chrome —
-	# `HudStyle.apply_dialog`, worn by all four of this panel's prompts — is judged by eye.
-	await _settle()
-	await _save("band_panel_settle_confirm")
-	_dismiss_dialogs()
-	_hud._bandpanel._toggle_parties_inspector(str(HUNT_DELIVERING_ENTITY))
+	_assert_split_send("band_panel_split_ready", true)
 
-	# (f) THE SAME ARRIVED SCOUT, REFUSED BY THE SIM (`foundingRefusals`). The affordance is DISABLED
-	# WITH ITS REASON, never hidden: a control that vanishes teaches nothing, where a greyed one naming
-	# the worker floor teaches the rule the player just ran into. ONE reason first.
-	_push_bands([_band_fixture(), _too_small_scout_expedition_fixture(), _hunt_expedition_fixture()])
-	_hud._bandpanel._toggle_parties_inspector(str(SCOUT_AWAITING_ENTITY))
+	# Under the NEW band's floor. The Send is DISABLED WITH ITS REASON, never hidden: a control that
+	# vanishes teaches nothing, where a greyed one naming the worker floor teaches the rule the player
+	# just ran into.
+	_open_split_sheet(SPLIT_TOO_FEW_WORKERS)
 	await _settle()
-	await _save("band_panel_settle_too_small")
+	await _save("band_panel_split_too_few")
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
-	# The control is still THERE — the affordance's existence is the phase's answer, not the refusal's.
-	_assert_settle_affordance("band_panel_settle_too_small", true)
-	_assert_settle_blocked("band_panel_settle_too_small", [_settle_too_small_sentence()])
-	await _assert_blocked_settle_tooltip_is_reachable("band_panel_settle_too_small")
-	_hud._bandpanel._toggle_parties_inspector(str(SCOUT_AWAITING_ENTITY))
+	_assert_split_send("band_panel_split_too_few", false)
+	_assert_split_blocked("band_panel_split_too_few", [_split_new_too_small_sentence()])
 
-	# **THE LOAD-BEARING HALF: TWO REASONS AT ONCE.** A one-worker party on unmapped ground publishes
-	# both, and the player must be told both — fixing one otherwise just reveals the other, so a
-	# tooltip naming only the sim's first refusal teaches the rules one refusal per attempt.
-	_push_bands([_band_fixture(), _doubly_blocked_scout_expedition_fixture(), _hunt_expedition_fixture()])
-	_hud._bandpanel._toggle_parties_inspector(str(SCOUT_AWAITING_ENTITY))
+	# **THE LOAD-BEARING HALF: BOTH FLOORS AT ONCE.** A split that is too small AND hollows out the
+	# parent must be told both — fixing one otherwise just reveals the other, so a tooltip naming only
+	# the first teaches the rules one refusal per attempt. Reached by narrowing the band rather than the
+	# stepper: one composition cannot trip both floors on a band of 16.
+	_push_bands([_split_squeezed_band_fixture(), _awaiting_scout_expedition_fixture(),
+		_hunt_expedition_fixture()])
+	_open_split_sheet(SPLIT_TOO_FEW_WORKERS)
 	await _settle()
-	await _save("band_panel_settle_blocked_both")
+	await _save("band_panel_split_blocked_both")
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
-	_assert_settle_affordance("band_panel_settle_blocked_both", true)
-	_assert_settle_blocked("band_panel_settle_blocked_both",
-		[_settle_too_small_sentence(), HudComposeVocab.PARTY_SETTLE_BLOCKED_UNREACHABLE])
-	_hud._bandpanel._toggle_parties_inspector(str(SCOUT_AWAITING_ENTITY))
+	_assert_split_send("band_panel_split_blocked_both", false)
+	_assert_split_blocked("band_panel_split_blocked_both",
+		[_split_new_too_small_sentence(), _split_parent_too_small_sentence(SPLIT_SQUEEZED_WORKERS)])
+	_close_split_sheet()
+	_push_bands([_band_fixture(), _awaiting_scout_expedition_fixture(), _hunt_expedition_fixture()])
 
 	# PUT THE PREVIOUS ROSTER BACK — `update_band_alerts` diffs against the LAST roster pushed.
 	_push_bands([
@@ -4140,201 +4125,89 @@ func _assert_recall_press(label: String, exp: Dictionary, want_verb: String, wan
 	_dismiss_dialogs()
 	row.queue_free()
 
-## **"START A LIFE HERE" IS OFFERED ON A PHASE, AND THE CLAIM IS THE PAIR** (issue #510). Both frames
-## render the SAME roster — one arrived scout, one party still hunting — so what moves between them is
-## which inspector strip is open, and a control that rendered unconditionally fails the second.
+## Open the parties compose sheet on the SPLIT mission at `workers`, driving the real `⌂ Split`
+## footer button rather than writing the controller's state — a sheet reached by assignment would
+## pass against a mission button that no longer opens it, or one gated on the wrong worker pool.
 ##
-## `strip_offers` says whether the OPEN strip is the arrived party's. The ROW control is asserted in
-## BOTH states and must be found exactly once either way: it belongs to the scout's row, which is on
-## screen in both, and a row control keyed on the open strip rather than on the party would vanish.
-func _assert_settle_affordance(state_name: String, strip_offers: bool) -> void:
-	var rows := _settle_faces_in_panel(HudComposeVocab.PARTY_SETTLE_VERB)
-	_assert_band_panel("%s — exactly one party row offers `%s` (found %d)" % [
-		state_name, HudComposeVocab.PARTY_SETTLE_VERB, rows], rows == 1)
-	var links := _settle_faces_in_panel(HudComposeVocab.PARTY_SETTLE_ACTION)
-	var want := 1 if strip_offers else 0
-	_assert_band_panel("%s — the open strip offers `%s` %d time(s), found %d" % [
-		state_name, HudComposeVocab.PARTY_SETTLE_ACTION, want, links], links == want)
-
-## **THE ENABLED CONTROL, and it is half of every blocked claim below.** "Disable everything" satisfies
-## every refusal assertion in this file; only a state where the founding WOULD succeed can say that the
-## affordance is still live and still wears the ordinary irreversibility tooltip.
+## **THE PREVIOUS SHEET IS CLOSED FIRST, and that is not tidiness.** An open sheet renders IN PLACE
+## OF the footer's four buttons, so a second call would find nothing to press — every caller after
+## the first opens over a sheet the one before it left up.
 ##
-## BOTH surfaces are asserted — the row's `Settle` and the open strip's `Start a life here` — because
-## they are two call sites of one seam and a fix applied to one is exactly the drift the seam exists to
-## prevent.
-func _assert_settle_enabled(state_name: String) -> void:
-	for face in [HudComposeVocab.PARTY_SETTLE_VERB, HudComposeVocab.PARTY_SETTLE_ACTION]:
-		var control := _settle_control_in_panel(face)
-		if control == null:
-			_fail("%s — no `%s` control to check the ENABLED case on" % [state_name, face])
-			continue
-		_assert_band_panel("%s — `%s` is live for a party that may found (disabled=%s)" % [
-			state_name, face, control.disabled], not control.disabled)
-		_assert_band_panel("%s — `%s` keeps the ordinary tooltip (got \"%s\")" % [
-			state_name, face, control.tooltip_text],
-			control.tooltip_text == HudComposeVocab.PARTY_SETTLE_TOOLTIP)
-
-## **A REFUSED FOUNDING IS DISABLED AND SAYS WHY, ON ALL THREE SURFACES THAT READ THE ONE SEAM.** Two
-## of them live in this panel (the party row's button, the inspector strip's inline link); the
-## Occupants drawer's button is the third and reads the same `settle_blocked_reason`, which is checked
-## directly here so the drawer cannot answer differently without a panel render.
-##
-## `want_lines` is EVERY reason that must appear, and the tooltip is asserted by **EQUALITY against the
-## joined set** rather than by `contains`: an implementation that renders only the sim's first refusal
-## passes every containment test on the two-reason state while telling the player half the truth, which
-## is the exact defect the list-valued wire field exists to prevent.
-##
-## The COLOUR is asserted too — a blocked control must not read as `HEALTHY`, the ink of an act the
-## player can take — and a tooltip that a disabled Button cannot be hovered for would be no tooltip at
-## all, which `_assert_blocked_settle_tooltip_is_reachable` drives for real.
-func _assert_settle_blocked(state_name: String, want_lines: Array) -> void:
-	var want := HudComposeVocab.PARTY_SETTLE_BLOCKED_SEPARATOR.join(want_lines)
-	for face in [HudComposeVocab.PARTY_SETTLE_VERB, HudComposeVocab.PARTY_SETTLE_ACTION]:
-		var control := _settle_control_in_panel(face)
-		if control == null:
-			_fail("%s — the refused party built no `%s` control (it must be DISABLED, never hidden)" % [
-				state_name, face])
-			continue
-		_assert_band_panel("%s — `%s` is disabled for a refused founding" % [state_name, face],
-			control.disabled)
-		_assert_band_panel("%s — `%s` names every reason (want \"%s\", got \"%s\")" % [
-			state_name, face, want, control.tooltip_text], control.tooltip_text == want)
-		# One reason per LINE: two sentences run together read as one rambling excuse rather than as
-		# two things to fix, and the count is what a naive `" "`-join would fail.
-		_assert_band_panel("%s — `%s` states %d reason(s), one per line (found %d)" % [
-			state_name, face, want_lines.size(), control.tooltip_text.split("\n").size()],
-			control.tooltip_text.split("\n").size() == want_lines.size())
-		_assert_band_panel("%s — `%s` does not read as HEALTHY while blocked" % [state_name, face],
-			control.get_theme_color("font_disabled_color") == HudStyle.INK_FAINT)
-	# THE THIRD SURFACE, asked of the seam itself: the Occupants drawer builds its button from this
-	# same answer, and it is not on screen in a parties-zone state.
-	var drawer_reason: String = _hud._bandpanel.settle_blocked_reason(_doubly_blocked_or(state_name))
-	_assert_band_panel("%s — the seam the drawer reads answers the same reasons (got \"%s\")" % [
-		state_name, drawer_reason], drawer_reason == want)
-
-## The party a state's assertions are about, resolved off the roster the state pushed rather than
-## restated — so the drawer claim above cannot drift from the fixture the frame rendered.
-func _doubly_blocked_or(state_name: String) -> Dictionary:
-	for exp in _hud._band_labor.player_expeditions():
-		if int((exp as Dictionary).get("entity", -1)) == SCOUT_AWAITING_ENTITY:
-			return exp
-	_fail("%s — the arrived scout is not in the pushed roster" % state_name)
-	return {}
-
-## **DOES A DISABLED BUTTON'S TOOLTIP ACTUALLY REACH THE POINTER?** The whole design rests on it —
-## a greyed control with an unreachable reason is a mute control — and it is an ENGINE behaviour, so
-## it is measured rather than assumed: Godot picks the control under the pointer by `mouse_filter`,
-## which `disabled` does not touch, and resolves the tooltip off whatever it picked.
-##
-## Driven through `Viewport.push_input`, the `_assert_open_strip_reaches_the_map` idiom: a hover is
-## pushed at the control's own centre and the Viewport is asked what it is hovering. Reading
-## `mouse_filter` back would assert the cause and not the effect.
-func _assert_blocked_settle_tooltip_is_reachable(state_name: String) -> void:
-	var control := _settle_control_in_panel(HudComposeVocab.PARTY_SETTLE_VERB)
-	if control == null or not control.disabled:
-		_fail("%s — no disabled `%s` control to hover" % [state_name, HudComposeVocab.PARTY_SETTLE_VERB])
+## Only the STEPPER is written, which is the state the states below deliberately vary; the OPENING
+## is the path under test.
+func _open_split_sheet(workers: int) -> void:
+	_hud._bandpanel._close_party_compose()
+	_hud._bandpanel.rerender()
+	var launch := _find_meta_control_valued(_panel, HudWidgets.MISSION_LAUNCH_META,
+		HudComposeVocab.COMPOSE_MISSION_SPLIT) as Button
+	if launch == null or launch.disabled:
+		_fail("split sheet — no live %s launch button, so the sheet was never opened"
+			% HudComposeVocab.COMPOSE_MISSION_LABEL_SPLIT)
 		return
-	if not get_viewport().has_method("gui_get_hovered_control"):
-		push_warning("band_panel_preview: no `gui_get_hovered_control` — tooltip reachability unmeasured")
-		return
-	var motion := InputEventMouseMotion.new()
-	motion.position = _canvas_to_window(control.get_global_rect().get_center())
-	get_viewport().push_input(motion)
-	await get_tree().process_frame
-	var hovered: Control = get_viewport().gui_get_hovered_control()
-	var reached := hovered == control
-	_assert_band_panel("%s — the disabled `%s` is what the pointer finds, so its reason is hoverable (found %s)" % [
-		state_name, HudComposeVocab.PARTY_SETTLE_VERB,
-		"nothing" if hovered == null else hovered.name], reached)
-	_assert_band_panel("%s — …and its tooltip is non-empty, so the hover has something to say" % state_name,
-		control.tooltip_text != "")
-	# PARK THE POINTER, or the hover latches on this control and every later state renders with a
-	# button lit that the frame set's bit-identity reference does not have lit.
-	var park := InputEventMouseMotion.new()
-	park.position = _canvas_to_window(get_viewport().get_visible_rect().size * PROBE_CANVAS_CENTRE_FRACTION)
-	get_viewport().push_input(park)
-	await get_tree().process_frame
+	launch.emit_signal("pressed")
+	_hud._bandpanel._split_workers = workers
+	_hud._bandpanel.rerender()
 
-## The ONE control in the PANEL whose face is exactly `face`, or `null`. The row's button and the
-## strip's inline link are both `Button`s (`HudWidgets.build_inline_link` returns one), so one walk
-## reaches both — and matching the face is right here for `_settle_faces_in_panel`'s reason.
-func _settle_control_in_panel(face: String) -> Button:
-	return _first_button_with_text(_panel, face)
+func _close_split_sheet() -> void:
+	_hud._bandpanel._close_party_compose()
 
-func _first_button_with_text(node: Node, face: String) -> Button:
-	if node is Button and (node as Button).text == face:
+## The split sheet's Send, found by its face. `null` when the sheet is not open at all, which every
+## caller treats as a failure rather than as "not blocked".
+## **FOUND BY NODE IDENTITY, NOT BY WALKING THE PANEL** — the compose sheet FLOATS off the zone when
+## the zone cannot hold it (`BandComposeFloat`), and a panel-rooted walk would then find nothing and
+## report a missing control on a sheet that rendered perfectly. The controller's own
+## `_party_compose_sheet` is the sheet either way.
+func _split_send_button() -> Button:
+	var sheet: Control = _hud._bandpanel._party_compose_sheet
+	if sheet == null:
+		return null
+	return _button_with_exact_text(sheet, HudComposeVocab.SPLIT_BAND_BUTTON)
+
+## The first Button under `node` whose face is EXACTLY `text`. Exact rather than `contains`, the way
+## `_has_text_containing` is deliberately loose: the split Send is being told apart from the other
+## primaries on one sheet, so a substring match would find a longer face and pass.
+func _button_with_exact_text(node: Node, text: String) -> Button:
+	if node is Button and (node as Button).text == text:
 		return node as Button
 	for child in node.get_children():
-		var found := _first_button_with_text(child, face)
+		var found := _button_with_exact_text(child, text)
 		if found != null:
 			return found
 	return null
 
-## Controls in the PANEL whose face is exactly `face`. Both the row's button and the strip's inline
-## link are `Button`s, so one walk answers for both — and matching the face is right HERE because the
-## face is what the pair above is about.
-##
-## **SCOPED TO THE PANEL, NOT TO `Zone_parties`**, and that is not laziness: the NARROW shell (which
-## these two states use, a side dock being where a player reads the parties list) reparents the
-## active zone into `NarrowZoneHost`, so a `Zone_parties`-scoped walk finds nothing at all there and
-## every claim above passes as `0 == 0`. Measured — the first cut of this helper did exactly that.
-func _settle_faces_in_panel(face: String) -> int:
-	return _count_buttons_with_text(_panel, face)
-
-func _count_buttons_with_text(node: Node, face: String) -> int:
-	var found := 0
-	if node is Button and (node as Button).text == face:
-		found += 1
-	for child in node.get_children():
-		found += _count_buttons_with_text(child, face)
-	return found
-
-## **A FOUNDING ALWAYS ASKS FIRST — there is no press-through branch**, unlike a recall, which acts
-## straight off the press for a party still standing in camp. Driven through the REAL row builder and
-## the REAL `pressed` handler, and asserted as a PAIR of readings (a dialog appeared, nothing was
-## emitted), for the deferred-`queue_free` reason `_assert_recall_press` records.
-##
-## **IT LEAVES THE DIALOG UP.** The caller renders `band_panel_settle_confirm` off it — the founding
-## prompt is the one confirm in this file whose COPY is a claim rather than chrome — and dismisses.
-func _assert_settle_confirms_before_emitting() -> void:
-	var exp := _awaiting_scout_expedition_fixture()
-	var row: HBoxContainer = _hud._bandpanel._build_party_row(exp)
-	var settle: Button = null
-	for child in row.get_children():
-		if child is Button and (child as Button).text == HudComposeVocab.PARTY_SETTLE_VERB:
-			settle = child
-	if settle == null:
-		_fail("settle press — the arrived party's row built no `%s` control" % HudComposeVocab.PARTY_SETTLE_VERB)
-		row.queue_free()
+## **THE SEND'S ENABLEDNESS IS THE CLAIM, and it is asserted in BOTH directions.** A viable
+## composition must be pressable and a refused one must not — one without the other passes against a
+## button that never changes.
+func _assert_split_send(state_name: String, want_enabled: bool) -> void:
+	var send := _split_send_button()
+	if send == null:
+		_fail("%s — the split sheet built no `%s` control" % [
+			state_name, HudComposeVocab.SPLIT_BAND_BUTTON])
 		return
-	var emitted: Array[Dictionary] = []
-	var sink := func(payload: Dictionary) -> void: emitted.append(payload)
-	_hud.settle_expedition_requested.connect(sink)
-	var before := _hud_dialog_count()
-	settle.pressed.emit()
-	var dialog_shown := _hud_dialog_count() > before
-	_assert_band_panel("settle ceremony — confirms first, no immediate emit (dialog=%s, emitted=%d)" % [
-		dialog_shown, emitted.size()], dialog_shown and emitted.is_empty())
-	# **THE COPY IS ASSERTED BY EQUALITY, and that is the whole point of asserting it at all.** The
-	# prompt shipped as two paragraphs naming the party and its tile and explaining the reachability
-	# gate; a `contains` on any phrase of the surviving sentence passes on that version too, so only
-	# equality can keep it from coming back.
-	var prompt := _hud_confirm_dialog()
-	var prompt_text := prompt.dialog_text if prompt != null else ""
-	_assert_band_panel("settle prompt — one line, no coordinates, no party name (got \"%s\")" % prompt_text,
-		prompt_text == HudComposeVocab.PARTY_SETTLE_CONFIRM)
-	_hud.settle_expedition_requested.disconnect(sink)
-	row.queue_free()
+	_assert_band_panel("%s — Send is %s" % [
+		state_name, "live" if want_enabled else "blocked"], send.disabled != want_enabled)
 
-## The LIVE confirm dialog on the HUD — the last still-visible one, since `_dismiss_dialogs` frees
-## with the deferred `queue_free` and a spent dialog stays a child for the rest of the frame.
-func _hud_confirm_dialog() -> ConfirmationDialog:
-	var found: ConfirmationDialog = null
-	for child in _hud.get_children():
-		if child is ConfirmationDialog and (child as ConfirmationDialog).visible:
-			found = child
-	return found
+## **EVERY APPLICABLE REASON, NEVER THE FIRST ONE.** The tooltip is compared by EQUALITY against the
+## joined set — a `contains` on one sentence passes on a build that reports only that one, which is
+## precisely the regression this exists to catch.
+func _assert_split_blocked(state_name: String, want_lines: Array) -> void:
+	var send := _split_send_button()
+	if send == null:
+		_fail("%s — the split sheet built no `%s` control" % [
+			state_name, HudComposeVocab.SPLIT_BAND_BUTTON])
+		return
+	var want := HudComposeVocab.SPLIT_BLOCKED_SEPARATOR.join(want_lines)
+	_assert_band_panel("%s — the Send names all %d reasons (got \"%s\")" % [
+		state_name, want_lines.size(), send.tooltip_text], send.tooltip_text == want)
+
+## The two refusal sentences at THIS file's fixture floors, composed from the vocabulary's own
+## formats so a re-worded refusal moves the expectation with it, and never spelled out as literals.
+func _split_new_too_small_sentence() -> String:
+	return HudComposeVocab.SPLIT_BLOCKED_NEW_TOO_SMALL % SPLIT_MIN_NEW_WORKERS
+
+func _split_parent_too_small_sentence(pool: int) -> String:
+	return HudComposeVocab.SPLIT_BLOCKED_PARENT_TOO_SMALL % [
+		pool - SPLIT_TOO_FEW_WORKERS, SPLIT_PARENT_MIN_WORKERS]
 
 ## Confirmation dialogs parented on the HUD right now, freed-but-not-yet-collected ones included —
 ## which is exactly why `_assert_recall_press` compares two readings rather than testing presence.
@@ -9077,6 +8950,13 @@ func _band_fixture() -> Dictionary:
 		"age_working": 16.5375,
 		"age_elders": 4.6425,
 		"max_expedition_party_size": 8,
+		# **THE TWO SPLIT FLOORS, ON THE SHARED FIXTURE BECAUSE EVERY LIVE COHORT CARRIES THEM**
+		# (`docs/plan_band_fission.md` §Config levers). The split sheet composes its refusals from
+		# these rather than from a client-side copy of the config, so a fixture that omits them
+		# renders a Send that is live at every worker count — which is a sheet with its gate switched
+		# off, not a sheet with nothing to refuse.
+		"founding_min_workers": SPLIT_MIN_NEW_WORKERS,
+		"founding_parent_min_workers": SPLIT_PARENT_MIN_WORKERS,
 		# **THE BAND'S KIT, ON THE SHARED FIXTURE BECAUSE EVERY LIVE COHORT CARRIES IT**
 		# (`docs/plan_hunt_through_combat.md` §4.8). `DetailFormat.band_states_kit` is a bare `has()`
 		# on the spears key, so a fixture that omits these renders no `Kit` vitals row — and the band
@@ -9255,46 +9135,29 @@ func _scout_expedition_fixture() -> Dictionary:
 		"home_band_entity": 904,
 	}
 
-## A scout party that has ARRIVED and is awaiting orders — the one phase the founding action is
-## offered in. Its position is what the settle confirm quotes as the site.
-##
-## **It publishes an EMPTY `founding_refusals`, deliberately spelled out rather than omitted**: an
-## absent key and an empty list are the same answer on this seam (the founding would succeed), and
-## stating it is what makes this fixture the enabled control the blocked pair below is judged against.
+## A scout party that has ARRIVED and is awaiting orders — the phase whose drawer carries the amber
+## callout and the two arrival actions. It rides the split states' roster as an ORDINARY party, so
+## the parties zone is never rendered with expeditions of one phase only.
 func _awaiting_scout_expedition_fixture() -> Dictionary:
 	var exp := _scout_expedition_fixture()
 	exp["entity"] = SCOUT_AWAITING_ENTITY
 	exp["id"] = "Scouts 2"
 	exp["expedition_phase"] = "awaiting"
-	exp["founding_refusals"] = []
-	exp["founding_min_workers"] = SETTLE_MIN_FOUNDING_WORKERS
 	return exp
 
-## The SAME arrived scout, one refusal deep: too few working-age people to found
-## (`FoundingRefusal::PartyTooSmall`). Its party size is BELOW the floor it publishes, so the fixture
-## is a party the sim really would refuse rather than a token grafted onto a legal one.
-func _too_small_scout_expedition_fixture() -> Dictionary:
-	var exp := _awaiting_scout_expedition_fixture()
-	exp["size"] = SETTLE_TOO_SMALL_PARTY
-	exp["founding_refusals"] = [HudComposeVocab.PARTY_SETTLE_REFUSAL_TOO_SMALL]
-	return exp
-
-## …and the shape the whole feature exists for: **BOTH eligibility gates holding at once**, in the
-## sim's own assessment order. A one-worker party standing on ground its faction has never mapped
-## publishes exactly this, and a tooltip naming only the first would send the player to fix a floor
-## that merely reveals the route problem behind it.
-func _doubly_blocked_scout_expedition_fixture() -> Dictionary:
-	var exp := _too_small_scout_expedition_fixture()
-	exp["founding_refusals"] = [
-		HudComposeVocab.PARTY_SETTLE_REFUSAL_TOO_SMALL,
-		HudComposeVocab.PARTY_SETTLE_REFUSAL_UNREACHABLE,
-	]
-	return exp
-
-## The worker-floor sentence at THIS file's fixture floor — composed from the vocabulary's own format
-## so a re-worded refusal moves the expectation with it, and never spelled out as a literal.
-func _settle_too_small_sentence() -> String:
-	return HudComposeVocab.PARTY_SETTLE_BLOCKED_TOO_SMALL % SETTLE_MIN_FOUNDING_WORKERS
+## A band squeezed small enough that ONE composition trips BOTH split floors — the shared fixture's
+## 16 workers cannot, since a split small enough to fail the new band's floor leaves 14 at home.
+## Its brackets stay in step (`age_working` == `working_age`, all three summing to `size`), the rule
+## `_band_fixture` states at length.
+func _split_squeezed_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["size"] = 13
+	band["working_age"] = SPLIT_SQUEEZED_WORKERS
+	band["idle_workers"] = 2
+	band["age_working"] = float(SPLIT_SQUEEZED_WORKERS)
+	band["age_children"] = 4.0
+	band["age_elders"] = 2.0
+	return band
 
 ## One expedition per PHASE, all homed on band 904 — the fixture set behind `band_panel_status_glyphs`:
 ## the Active-expeditions rows must render a distinct, legible glyph for each (➤ outbound / ● hunting /

@@ -631,12 +631,16 @@ static func _fill_menu_popup(popup: PopupMenu, entries: Array) -> void:
 const PARTY_STEPPER_COUNT_META := "party_stepper_count"
 
 ## The party stepper row, shared by both missions so they cannot drift apart in shape.
-static func build_party_stepper_row(count: int, party_max: int, on_change: Callable) -> HBoxContainer:
+## `key_text` defaults to the word the three EXPEDITION sheets want. The split sheet passes its own,
+## because a sheet whose whole thesis is *this is not a party* must not label its one input `Party` —
+## the wrong word there teaches the wrong model more effectively than any amount of prose fixes.
+static func build_party_stepper_row(count: int, party_max: int, on_change: Callable,
+        key_text: String = HudComposeVocab.COMPOSE_FIELD_PARTY) -> HBoxContainer:
     var row := HBoxContainer.new()
     row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     row.set_meta(PARTY_STEPPER_COUNT_META, count)
     var key := Label.new()
-    key.text = HudComposeVocab.COMPOSE_FIELD_PARTY
+    key.text = key_text
     key.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_child(key)
     add_stepper_controls(row, count, count < party_max, on_change)

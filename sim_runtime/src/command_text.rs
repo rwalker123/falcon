@@ -194,11 +194,11 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "recall_expedition <faction_id> <expedition_band_id>",
     },
     CommandVerbHelp {
-        verb: "settle_expedition",
+        verb: "split_band",
         aliases: &[],
-        summary: "Start a life here — an arrived party stops being an expedition and becomes a \
-                  resident band.",
-        usage: "settle_expedition <faction_id> <expedition_band_id>",
+        summary: "Form a new band — a resident band splits in two where it stands; `workers` is the \
+                  only input and everything else divides on the share it implies.",
+        usage: "split_band <faction_id> <band_id> <workers>",
     },
     CommandVerbHelp {
         verb: "send_hunt_expedition",
@@ -1062,22 +1062,23 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
         // party as it already stands or a gate the sim evaluates live, so a trailing token is a
         // misunderstanding of the verb rather than a value to ignore. Same fail-closed reading as
         // `send_denial_raid`.
-        "settle_expedition" => {
+        "split_band" => {
             let faction_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("faction_id"))?;
-            let expedition_str = parts
+            let band_str = parts
                 .next()
-                .ok_or(CommandParseError::MissingArgument("expedition_band_id"))?;
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            let workers_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("workers"))?;
             if let Some(extra) = parts.next() {
                 return Err(CommandParseError::UnexpectedArgument(extra.to_string()));
             }
-            Ok(CommandPayload::SettleExpedition {
-                faction_id: parse_u32(faction_str, "settle_expedition faction")?,
-                expedition_band_id: parse_u64(
-                    expedition_str,
-                    "settle_expedition expedition_band_id",
-                )?,
+            Ok(CommandPayload::SplitBand {
+                faction_id: parse_u32(faction_str, "split_band faction")?,
+                band_id: Some(parse_u64(band_str, "split_band band_id")?),
+                workers: parse_u32(workers_str, "split_band workers")?,
             })
         }
         "send_hunt_expedition" => {
@@ -1430,28 +1431,29 @@ mod tests {
         ));
     }
 
-    /// **The founding's grammar is CLOSED too** — two positional tokens, naming the faction and the
-    /// party. Everything that shapes a founding is either the party as it already stands or a gate
-    /// the sim evaluates live, so there is nothing a third token could legitimately mean; accepting
-    /// one silently would teach the player that founding takes an argument it does not.
+    /// **`split_band` is CLOSED at three positional tokens** — faction, band, workers — and a
+    /// fourth is a parse error rather than a silently ignored extra. The worker count is the
+    /// player's only input; everything else about the split divides on the share it implies, so
+    /// there is nothing a fourth token could legitimately mean.
     ///
     /// It carries the **`BandId`**, never entity bits — the identity that survives a rollback.
     #[test]
-    fn parse_settle_expedition_takes_a_faction_and_a_party_and_nothing_else() {
+    fn parse_split_band_takes_a_faction_a_band_and_a_worker_count() {
         assert_eq!(
-            parse_command_line("settle_expedition 0 9001").unwrap(),
-            CommandPayload::SettleExpedition {
+            parse_command_line("split_band 0 9001 6").unwrap(),
+            CommandPayload::SplitBand {
                 faction_id: 0,
-                expedition_band_id: 9001,
+                band_id: Some(9001),
+                workers: 6,
             }
         );
         assert!(matches!(
-            parse_command_line("settle_expedition 0 9001 4"),
+            parse_command_line("split_band 0 9001 6 2"),
             Err(CommandParseError::UnexpectedArgument(_))
         ));
         assert!(matches!(
-            parse_command_line("settle_expedition 0"),
-            Err(CommandParseError::MissingArgument("expedition_band_id"))
+            parse_command_line("split_band 0 9001"),
+            Err(CommandParseError::MissingArgument("workers"))
         ));
     }
 
