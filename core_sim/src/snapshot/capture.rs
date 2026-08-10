@@ -2525,6 +2525,7 @@ pub fn capture_snapshot(
                         known_crafts: known_crafts_by_faction
                             .get(&cohort.faction)
                             .unwrap_or(&NO_CRAFTS_KNOWN),
+                        crafting: &recipes_config.crafting,
                     },
                 })
             },

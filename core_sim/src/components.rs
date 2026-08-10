@@ -2138,6 +2138,25 @@ pub struct DrawnInputs {
     /// The grade that reading selected, **after** the tool's quality ceiling. `None` for a recipe
     /// that declares no grades.
     pub grade: Option<String>,
+    /// **What actually came out of the store**, one row per input material in the recipe's own input
+    /// order — the pile a clear or a swap destroys.
+    ///
+    /// It is the **withdrawn** amount rather than the recipe's stated one, because a bench tool's
+    /// `craft_material_efficiency` sits between them, and the readout that names what will be lost
+    /// has to name what was really taken.
+    pub withdrawn: Vec<DrawnMaterial>,
+}
+
+/// **One material's share of a draw** — a row of [`DrawnInputs::withdrawn`].
+///
+/// Distinct from [`MaterialDraw`], which is one *batch* of one material: a draw walks the store
+/// worst-first and may take from several batches, and what the bench holds afterwards is the total.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DrawnMaterial {
+    /// The `materials.json` id — **generic**, `hide` and never `deer_hide`.
+    pub material: String,
+    /// What the store actually lost on this row, summed over every batch the draw touched.
+    pub amount: Scalar,
 }
 
 /// **A band's crafting bench — ONE job at a time.**

@@ -2903,6 +2903,12 @@ table MaterialShortfall {
   short:float;     // required - held, always > 0 on a published row
 }
 
+// One material of the pile a bench has already withdrawn for the item in flight.
+table DrawnInput {
+  materialId:string;
+  amount:float;
+}
+
 // WHAT IS ON THIS BAND'S BENCH — one job at a time, so there is no queue to explain.
 //
 // `recipeId` empty = an idle bench. That is a different statement from a blocked one: a blocked
@@ -2922,6 +2928,19 @@ table BenchState {
   itemsCompleted:uint;    // items finished on THIS job — the same count the wear and lesson charged
   drawn:bool;             // the pile for the pass in flight is already cut
   outputGrade:string;     // the grade that pile FIXED, "" before the draw or on an ungraded recipe
+  // --- WHAT THE BENCH WILL SPEND AND WHAT IT ALREADY SPENT (appended last) ----------------------
+  // WHAT THIS BENCH WILL ACCRUE NEXT TURN — `workers × progress_per_worker_turn × craft_speed`,
+  // already resolved through the bounding tool (or the material's bare-handed rate, which is what
+  // makes a "worker-turn" not a worker's turn). `0` when nothing will accrue: no crew, no recipe, or
+  // a craft speed of zero. THE CLIENT MUST NOT RE-DERIVE THIS — `craft_speed` is the tool join.
+  //
+  // It is a TERM, not an answer: the finish estimate is `ceil((work - progress) / ratePerTurn)`,
+  // exact arithmetic over three numbers all on this wire. A turns-remaining field would be a second
+  // home for one fact.
+  ratePerTurn:float = 0;
+  // THE PILE ALREADY CUT FOR THE JOB IN FLIGHT, so a clear/swap can name what it destroys. Empty
+  // when nothing is drawn. One row per input material, in the recipe's own input order.
+  drawnInputs:[DrawnInput];
 }
 
 // ONE ROW PER RECIPE, ALWAYS — a row of PopulationCohortState.craftOffers.

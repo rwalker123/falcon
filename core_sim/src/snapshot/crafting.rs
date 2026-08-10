@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 
 use sim_runtime::{
     BenchState, CharacteristicBandState, CharacteristicReadingState, CraftKnowledgeState,
-    CraftOfferState, EquipmentBatchState, MaterialBatchState, MaterialDefState,
+    CraftOfferState, DrawnInputState, EquipmentBatchState, MaterialBatchState, MaterialDefState,
     MaterialShortfallState, RecipeDefState, RecipeInputState, RecipeOutputState,
 };
 
@@ -41,7 +41,7 @@ use crate::{
     recipes_config::{RecipeDef, RecipesConfig},
     resources::DiscoveryProgressLedger,
     scalar::scalar_from_f32,
-    systems::{bench_tiers, preview_grade, BenchTiers},
+    systems::{bench_tiers, preview_grade, rate_per_turn, BenchTiers},
 };
 
 /// The three severities a craft offer may carry. Opaque presentation tokens the sim never branches
@@ -160,6 +160,10 @@ pub(crate) struct BandCraftInputs<'a> {
     /// rather than per recipe, because a discovery lookup is a map probe and there are ten recipes
     /// naming three crafts.
     pub(crate) known_crafts: &'a BTreeMap<String, bool>,
+    /// The book's bench dials — `progress_per_worker_turn` is the one term of the bench's accrual
+    /// that lives on no recipe row, carried here so [`bench_state`] can publish the whole product
+    /// through the same [`crate::systems::rate_per_turn`] the bench applies.
+    pub(crate) crafting: &'a crate::recipes_config::CraftingTuning,
 }
 
 /// **The whole crafting half of one cohort's row**, resolved together because the four readouts
@@ -336,6 +340,28 @@ fn bench_state(
             .drawn
             .as_ref()
             .and_then(|drawn| drawn.grade.clone())
+            .unwrap_or_default(),
+        // **The accrual itself, not its parts.** `craft_speed` is the tool-or-bare-hand join, and a
+        // client that multiplied `workers × work` would read a bare-handed organic's `0.5` as `1.0`
+        // and promise a finish in half the turns it takes. Resolved through the same helper
+        // `advance_crafting` accrues with, so the published rate is the applied rate.
+        rate_per_turn: rate_per_turn(bench.workers, inputs.crafting, tiers.speed),
+        // **What the store already lost for the job in flight** — the withdrawn amounts, not the
+        // recipe's stated inputs, so a clear or a swap can name what it destroys. Empty on an
+        // undrawn bench, which is the honest answer: nothing has been cut yet.
+        drawn_inputs: bench
+            .drawn
+            .as_ref()
+            .map(|drawn| {
+                drawn
+                    .withdrawn
+                    .iter()
+                    .map(|input| DrawnInputState {
+                        material_id: input.material.clone(),
+                        amount: input.amount.to_f32(),
+                    })
+                    .collect()
+            })
             .unwrap_or_default(),
     }
 }
@@ -878,6 +904,7 @@ pub(crate) fn builtin_craft_inputs() -> &'static BandCraftInputs<'static> {
             equipment,
             plans: PLANS.get_or_init(|| plan_craft_offers(recipes, equipment)),
             known_crafts: KNOWN.get_or_init(BTreeMap::new),
+            crafting: &recipes.crafting,
         }
     })
 }

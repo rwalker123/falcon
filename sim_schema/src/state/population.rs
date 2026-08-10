@@ -881,6 +881,36 @@ pub struct BenchState {
     /// never moves once set: a tool running dry mid-craft does not retroactively coarsen the thing
     /// on the bench.
     pub output_grade: String,
+    /// **What this bench will accrue next turn** — `workers × progress_per_worker_turn ×
+    /// craft_speed`, already resolved through the bounding tool (or the material's bare-handed rate,
+    /// which is what makes a *worker-turn* not a worker's turn). `0` when nothing will accrue: no
+    /// crew, no recipe, or a craft speed of zero.
+    ///
+    /// **A client must not re-derive it** — `craft_speed` is the tool-or-bare-hand join, the same
+    /// one `kitTiers` exists to keep sim-side. It is a **term**, not an answer: the finish estimate
+    /// is `ceil((work − progress) / rate_per_turn)`, exact arithmetic over three numbers all on this
+    /// wire, and a turns-remaining field would be a second home for one fact. Appended last
+    /// (append-only).
+    #[serde(default)]
+    pub rate_per_turn: f32,
+    /// **The pile already cut for the job in flight**, so a clear or a swap can name what it
+    /// destroys. Empty when nothing is drawn. One row per input material, in the recipe's own input
+    /// order. Appended last (append-only).
+    #[serde(default)]
+    pub drawn_inputs: Vec<DrawnInputState>,
+}
+
+/// **One material of the pile a bench has already withdrawn** for the item in flight — a row of
+/// [`BenchState::drawn_inputs`].
+///
+/// It is the **withdrawn** amount, not the recipe's stated input and not a shortfall's `required`:
+/// those differ once a bench tool's material efficiency applies, and the readout's whole job is to
+/// name what will really be lost when the job is cleared.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct DrawnInputState {
+    /// The `materials.json` id. **Generic** — `hide`, never `deer_hide`.
+    pub material_id: String,
+    pub amount: f32,
 }
 
 /// **One recipe, offered or refused** — a row of [`PopulationCohortState::craft_offers`], and there

@@ -357,6 +357,24 @@ fn create_populations<'a>(
                 let blocked_reason = builder.create_string(&cohort.bench.blocked_reason);
                 let output_grade = builder.create_string(&cohort.bench.output_grade);
                 let shortfalls = create_shortfalls(builder, &cohort.bench.shortfalls);
+                // **The pile already withdrawn**, in the recipe's own input order — what a clear or
+                // a swap will destroy, which the client cannot name from `drawn: bool` alone.
+                let drawn_inputs: Vec<_> = cohort
+                    .bench
+                    .drawn_inputs
+                    .iter()
+                    .map(|input| {
+                        let material_id = builder.create_string(&input.material_id);
+                        fb::DrawnInput::create(
+                            builder,
+                            &fb::DrawnInputArgs {
+                                materialId: Some(material_id),
+                                amount: input.amount,
+                            },
+                        )
+                    })
+                    .collect();
+                let drawn_inputs = builder.create_vector(&drawn_inputs);
                 fb::BenchState::create(
                     builder,
                     &fb::BenchStateArgs {
@@ -371,6 +389,8 @@ fn create_populations<'a>(
                         itemsCompleted: cohort.bench.items_completed,
                         drawn: cohort.bench.drawn,
                         outputGrade: Some(output_grade),
+                        ratePerTurn: cohort.bench.rate_per_turn,
+                        drawnInputs: Some(drawn_inputs),
                     },
                 )
             };

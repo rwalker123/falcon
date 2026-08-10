@@ -5,8 +5,8 @@
 //! 1. **No recipe ⇒ nothing.** An idle bench is not a state that costs anything.
 //! 2. **Nothing drawn ⇒ draw.** Withdraw each input's `amount × craft_material_efficiency`
 //!    worst-first ([`LocalStore::take_material`]), record the exact reading on the recipe's `reads`
-//!    axis, and **fix the grade there**. A short draw withdraws **nothing** — the turn is a no-op,
-//!    not a half-spent pile.
+//!    axis **and what each row actually cost the store**, and **fix the grade there**. A short draw
+//!    withdraws **nothing** — the turn is a no-op, not a half-spent pile.
 //! 3. **Accrue** `workers × progress_per_worker_turn × craft_speed`, where `craft_speed` is the
 //!    bounding tool's equipped value if the band has one, else the **material's** own
 //!    `hand_working.rate`. **That is `0` for a material with no `hand_working`, which is how metal
@@ -23,7 +23,10 @@
 use bevy::prelude::*;
 
 use crate::{
-    components::{BandBench, BandEquipment, BatchGrade, DrawnInputs, LocalStore, PopulationCohort},
+    components::{
+        BandBench, BandEquipment, BatchGrade, DrawnInputs, DrawnMaterial, LocalStore,
+        PopulationCohort,
+    },
     crafting::{craft_discovery_id, HAND_WORKING_MATERIAL_EFFICIENCY},
     equipment_config::{EquipmentConfigHandle, EquipmentStat},
     intensification::{knows, LadderConfigHandle},
@@ -103,31 +106,68 @@ fn required(amount: f32, efficiency: f32) -> Scalar {
     scalar_from_f32(amount * efficiency)
 }
 
-/// **Draw a pass's inputs, or nothing at all.**
+/// **Draw a pass's inputs and fix the grade, or draw nothing at all.**
 ///
 /// The availability test runs over **every** input before a single unit moves, which is what makes
-/// *"a short draw withdraws nothing"* true rather than "withdraws until it runs out". Returns the
-/// drawn reading on the recipe's `reads` axis (`None` for a recipe that reads nothing).
-fn draw_inputs(
+/// *"a short draw withdraws nothing"* true rather than "withdraws until it runs out". `None` is a
+/// short draw: the store is untouched and the bench stays undrawn.
+///
+/// The returned pile carries **what the store actually lost**, per input row and in the recipe's own
+/// order. The recipe's stated amount is not that number — the tool's material efficiency sits
+/// between them — and the readout that names what a cleared job destroys has to name the real one.
+fn draw_pass(
     store: &mut LocalStore,
     recipe: &RecipeDef,
-    efficiency: f32,
+    tiers: &BenchTiers,
     materials: &MaterialsConfig,
-) -> Option<Option<f32>> {
+) -> Option<DrawnInputs> {
+    let efficiency = tiers.material_efficiency;
     for input in &recipe.inputs {
         if store.material_total(&input.material) < required(input.amount, efficiency) {
             return None;
         }
     }
     let mut reading = None;
+    let mut withdrawn = Vec::with_capacity(recipe.inputs.len());
     for input in &recipe.inputs {
         let axis = spend_axis(input, materials);
         let draws = store.take_material(&input.material, axis, required(input.amount, efficiency));
         if let Some(read) = input.reads.as_deref() {
             reading = weighted_reading(&draws, read);
         }
+        withdrawn.push(DrawnMaterial {
+            material: input.material.clone(),
+            // **Summed over the batches the draw touched**, because worst-first spends a row across
+            // as many piles as it needs to fill it.
+            amount: draws
+                .iter()
+                .map(|draw| draw.amount)
+                .fold(scalar_zero(), |total, amount| total + amount),
+        });
     }
-    Some(reading)
+    Some(fix_grade(
+        recipe,
+        reading,
+        withdrawn,
+        tiers.quality_ceiling,
+        materials,
+    ))
+}
+
+/// **What a bench accrues in one turn** — `workers × progress_per_worker_turn × craft_speed`.
+///
+/// **One authority**, because the sim applies it and the wire publishes it: a readout that recomputed
+/// the product beside this one would be free to drop the `craft_speed` term, and that term is exactly
+/// what makes a *worker-turn* not a worker's turn (bare-handed organics work at `0.5`, so two
+/// crafters deliver one unit a turn, not two).
+///
+/// `0` is the whole refusal: no crew, or a material with no tool and no bare-handed rate.
+pub fn rate_per_turn(
+    workers: u32,
+    crafting: &crate::recipes_config::CraftingTuning,
+    speed: f32,
+) -> f32 {
+    workers as f32 * crafting.progress_per_worker_turn * speed
 }
 
 /// **Which axis a row is SPENT worst-first on** — the read axis where the row names one, and the
@@ -241,19 +281,7 @@ pub fn advance_crafting(
         let faction = cohort.faction;
 
         if bench.drawn.is_none() {
-            if let Some(reading) = draw_inputs(
-                &mut cohort.stores,
-                recipe,
-                tiers.material_efficiency,
-                &materials,
-            ) {
-                bench.drawn = Some(fix_grade(
-                    recipe,
-                    reading,
-                    tiers.quality_ceiling,
-                    &materials,
-                ));
-            }
+            bench.drawn = draw_pass(&mut cohort.stores, recipe, &tiers, &materials);
         }
         // Nothing drawn ⇒ nothing to work on. Not a branch on "can this be crafted": the pile is
         // simply not there yet.
@@ -261,9 +289,7 @@ pub fn advance_crafting(
             continue;
         }
 
-        let accrued = scalar_from_f32(
-            bench.workers as f32 * recipes.crafting.progress_per_worker_turn * tiers.speed,
-        );
+        let accrued = scalar_from_f32(rate_per_turn(bench.workers, &recipes.crafting, tiers.speed));
         bench.progress += accrued;
         if bench.progress < scalar_from_f32(recipe.work) {
             continue;
@@ -304,20 +330,7 @@ pub fn advance_crafting(
         // have not been drawn yet, so there is nothing for it to have been spent on — the same
         // shape as the ladder's `crew_scale`, where over-crewing buys nothing.
         bench.progress = scalar_zero();
-        bench.drawn = None;
-        if let Some(reading) = draw_inputs(
-            &mut cohort.stores,
-            recipe,
-            tiers.material_efficiency,
-            &materials,
-        ) {
-            bench.drawn = Some(fix_grade(
-                recipe,
-                reading,
-                tiers.quality_ceiling,
-                &materials,
-            ));
-        }
+        bench.drawn = draw_pass(&mut cohort.stores, recipe, &tiers, &materials);
     }
 }
 
@@ -327,6 +340,7 @@ pub fn advance_crafting(
 fn fix_grade(
     recipe: &RecipeDef,
     reading: Option<f32>,
+    withdrawn: Vec<DrawnMaterial>,
     ceiling: f32,
     materials: &MaterialsConfig,
 ) -> DrawnInputs {
@@ -334,7 +348,11 @@ fn fix_grade(
         .map(|reading| reading.min(ceiling))
         .and_then(|capped| recipe.grade_for(capped, materials))
         .map(str::to_string);
-    DrawnInputs { reading, grade }
+    DrawnInputs {
+        reading,
+        grade,
+        withdrawn,
+    }
 }
 
 /// Deliver one pass's outputs.

@@ -368,7 +368,9 @@ out of the pool that pass spends.
    it runs out". Each row is taken **worst-first** — on the read axis where the row names one, on the
    material's first declared axis otherwise (that fallback decides only *which pile*, never how much,
    and has to be deterministic rather than right).
-3. **Accrue `workers × progress_per_worker_turn × craft_speed`.** `craft_speed` is the bounding
+3. **Accrue `workers × progress_per_worker_turn × craft_speed`**, through `systems::rate_per_turn` —
+   **the one authority**, because the wire publishes the same product as `BenchState::ratePerTurn`
+   and a second copy of it would be free to drop the `craft_speed` term. `craft_speed` is the bounding
    tool's equipped value if the band has a live one, else the **material's** `hand_working.rate` —
    which is `0` for a material that cannot be worked bare-handed. **That zero is the entire refusal
    mechanism.** There is no *"you cannot craft that"* branch anywhere in the sim, exactly as
@@ -379,14 +381,21 @@ out of the pool that pass spends.
 taper: a tool that runs dry mid-craft does not retroactively coarsen the thing on the bench, and a
 pile that gets worse while the pass is in flight does not re-grade it.
 
+**`DrawnInputs` also carries `withdrawn`** — one `DrawnMaterial` per input row, in the recipe's own
+order, holding **what the store actually lost**. That is not the recipe's stated `amount`: the bench
+tool's `craft_material_efficiency` sits between them, so a tanning frame cuts 4.8 hide for a sled the
+book prices at 6. It is a *record of the withdrawal*, taken by summing the draws `take_material`
+returned, because worst-first spends one row across as many piles as it needs.
+
 **The overflow past `work` is dropped, not carried.** Progress beyond a completion was done on an
 item whose materials have not been drawn yet, so there is nothing for it to have been spent on. The
 consequence is the ladder's own `crew_scale` shape: over-crewing a bench buys less than
 proportionally, and a `work: 8` recipe wants about four hands rather than sixteen.
 
 **Swapping or clearing a job spends the pile already drawn.** The materials were cut for the thing
-the player stopped making, and a `LocalStore` has no representation for a half-worked pile. The
-command help says so rather than the sim pretending otherwise.
+the player stopped making, and a `LocalStore` has no representation for a half-worked pile. What is
+lost is nameable rather than merely warned about: it is `BenchState::drawnInputs`, straight off
+`DrawnInputs::withdrawn`.
 
 ## What a completed craft delivers
 
@@ -508,7 +517,7 @@ number, a grade or a step-down.**
 | Field | Answers |
 |---|---|
 | `materialBatches:[MaterialBatchState]` | *what have I got* — one row per (material, band key) batch: `amount`, plus a `CharacteristicReading` per axis carrying **both** the exact value and its band name, in the material's **declared** axis order |
-| `bench:BenchState` | *what am I making* — `recipeId` (`""` = idle), crew, `progress` against `work`, `teaches` (the recipe's craft), `itemsCompleted`, whether the pile is `drawn` and the grade it fixed, and `blockedReason` |
+| `bench:BenchState` | *what am I making* — `recipeId` (`""` = idle), crew, `progress` against `work`, `teaches` (the recipe's craft), `itemsCompleted`, whether the pile is `drawn` and the grade it fixed, `blockedReason`, the `ratePerTurn` a turn adds, and the `drawnInputs` a clear would destroy |
 | `craftOffers:[CraftOffer]` | *what could I make* — **one row per recipe, always**, with `available`, a resolved `reason` + `severity`, the `shortfalls`, the `outputGrade` a draw would select, `group`, `outputItemId`, `onBench`, and the three ledger fields below (`outputTierName` / `outputTierRank` / `ownedNote`) |
 | `equipmentBatches:[EquipmentBatchState]` | *what have I got, and how long will it last* — one row per **batch**, plus one `count: 0` row per config item the band owns none of, so the ledger is never missing a row |
 
@@ -561,6 +570,43 @@ that is the state the field exists for. Pinned as a *pairing* by
 silent while drawn with the offer row still saying `Short …`, blocked once the pile goes back on the
 shelf — a one-sided assertion passes on a bench that never reports anything), with
 `::a_drawn_job_whose_tool_ran_dry_still_publishes_its_refusal` holding the surviving case.
+
+### A WORKER-TURN IS NOT A WORKER'S TURN, so the bench publishes the rate itself
+
+`BenchState::ratePerTurn` is `workers × progress_per_worker_turn × craft_speed`, resolved through the
+same `systems::rate_per_turn` `advance_crafting` accrues with. **`craft_speed` is the tool-or-bare-hand
+join**, and bare-handed it is the *material's* `hand_working.rate` — **0.5** on all three shipped
+organics. So a bench reading `3.0 of 6 worker-turns` with two crafters is three turns from done, not
+one and a half: two hands deliver `1.0` a turn. Nothing else on the wire carries that factor, and
+`kitTiers`' rule is that a client never re-derives a tool join, so a readout without this field can
+only guess — and the reasonable guess is wrong by the bare-handed rate.
+
+**It is a TERM, and there is deliberately no turns-remaining field beside it.** The finish estimate is
+`ceil((work − progress) / ratePerTurn)` — exact arithmetic over three numbers all on this wire, which is
+the boundary `yield-forecast.md` draws (*"where a closed form exists the sim ships the terms and the
+client evaluates it"*). Two homes for one fact is how they disagree.
+
+**`0` is a state, not an absence**: no crew, no recipe, or a craft speed of zero — the same zero that
+*is* the refusal, published beside the words (`No tanning frame`) that say what to build. Pinned as a
+pairing by `crafting_wire::the_published_rate_is_the_turn_of_progress_it_promises_bare_handed_and_tooled`
+(a bare-handed and a tooled band on the same recipe publish **different** rates and each matches its own
+band's observed progress — a wire that published `workers` alone matches neither) with
+`::a_bench_that_cannot_accrue_publishes_a_zero_rate` holding the three zeros, each against the same
+bench lifted off it.
+
+### `drawnInputs` NAMES WHAT A CLEAR DESTROYS, and it is the withdrawal, not the recipe
+
+`drawn:bool` says a pile exists; it cannot say what is in it, and a destructive action that cannot
+state its own cost is the opposite of *"a refusal names its number"*. `BenchState::drawnInputs` is
+`DrawnInputs::withdrawn` — **the amounts the store really lost**, one row per input material in the
+recipe's own input order, empty on an undrawn bench.
+
+**It is neither the recipe's `inputs` nor a shortfall's `required`.** The tool's material efficiency
+sits between the book and the withdrawal, so a tooled sled cuts 4.8 hide against a book price of 6, and
+`required` is a statement about the **next** draw rather than the pile in hand. Pinned as a pairing by
+`crafting_wire::the_published_drawn_pile_is_what_the_store_actually_lost`, which asserts the rows
+against the store's own before/after totals on a **tooled** bench (so the book's number would fail) and
+reads the same bench before its draw publishing an empty list.
 
 ## TIER IS A GROUP HEAD, NOT A COLUMN — and the note is the disagreement
 

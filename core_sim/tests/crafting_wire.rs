@@ -62,6 +62,20 @@ const BENCH_CREW: u32 = 3;
 /// **One pass in one turn, bare-handed** — `16 × 1.0 × 0.5` is exactly the sled's `work` of `8.0`,
 /// so the fixture gets a delivered batch without looping a system to watch progress accumulate.
 const CREW_THAT_FINISHES_A_SLED_BARE_HANDED: u32 = 16;
+/// **Nobody at the bench** — the crew half of a zero rate, named so the zero reads as a state rather
+/// than as an arbitrary staffing number.
+const NO_ONE_AT_THE_BENCH: u32 = 0;
+/// **What a bench that cannot move publishes**: no crew, no recipe, or a craft speed of zero.
+const NO_ACCRUAL: f32 = 0.0;
+/// The two halves of the craft-speed pairing, spelled as words so the call site says which band it
+/// is standing up.
+const NO_BENCH_TOOL: bool = false;
+/// See [`NO_BENCH_TOOL`].
+const A_LIVE_TANNING_FRAME: bool = true;
+/// **How close two readings of one fixed-point store have to be to be the same number.** A
+/// [`core_sim::Scalar`] keeps six decimals and every value here rides an `f32` through the wire, so
+/// this is the width of the representation rather than a tolerance for disagreement.
+const SCALAR_TOLERANCE: f32 = 1e-4;
 
 /// A world with a resident band, captured once so the fixtures have a frame to read.
 fn world() -> (App, Entity) {
@@ -115,6 +129,90 @@ fn strip(app: &mut App, band: Entity, material: &str) {
         .expect("the band has a cohort");
     let held = cohort.stores.material_total(material);
     cohort.stores.take_material(material, &axis, held);
+}
+
+/// What the band's store holds of one material, summed over its batches.
+fn held(app: &App, band: Entity, material: &str) -> f32 {
+    app.world
+        .get::<PopulationCohort>(band)
+        .expect("the band has a cohort")
+        .stores
+        .material_total(material)
+        .to_f32()
+}
+
+/// Bank enough hide and fibre for several sled passes, at a fixed reading so the grade is the
+/// fixture's rather than worldgen's.
+fn stock_a_sleds_worth_of_material(app: &mut App, band: Entity) {
+    strip(app, band, HIDE);
+    strip(app, band, "fibre");
+    deposit(
+        app,
+        band,
+        HIDE,
+        PLENTY,
+        &[(TOUGHNESS, 0.9), (SUPPLENESS, 0.2)],
+    );
+    deposit(
+        app,
+        band,
+        "fibre",
+        PLENTY,
+        &[("fineness", 0.5), ("strength", 0.5)],
+    );
+}
+
+/// Put the sled on this band's bench with `workers` on it, discarding whatever was there.
+fn set_bench(app: &mut App, band: Entity, workers: u32) {
+    app.world
+        .get_mut::<BandBench>(band)
+        .expect("a spawned band carries a bench")
+        .set_job(SLED_RECIPE, workers);
+}
+
+/// The sled recipe's input materials **in the book's own order** — asked of the loaded book rather
+/// than listed here, so a retuned recipe cannot leave the ordering claim asserting a stale list.
+fn sled_input_materials(app: &App) -> Vec<String> {
+    app.world
+        .resource::<RecipesConfigHandle>()
+        .get()
+        .recipe(SLED_RECIPE)
+        .expect("the shipped book carries the sled")
+        .inputs
+        .iter()
+        .map(|input| input.material.clone())
+        .collect()
+}
+
+/// **Stand a sled up on a fresh world's bench, publish the rate it promises, then buy exactly one
+/// turn of it and publish the progress that bought.** `(rate, progress)`.
+///
+/// The crew is [`BENCH_CREW`] on both halves of the pairing and neither completes a pass — a
+/// completion resets `progress` to zero, which would make the comparison meaningless rather than
+/// merely wrong.
+fn rate_then_one_turn_of_progress(tooled: bool) -> (f32, f32) {
+    let (mut app, band) = world();
+    if tooled {
+        app.world
+            .get_mut::<BandEquipment>(band)
+            .expect("a spawned band carries an equipment ledger")
+            .stock(TANNING_FRAME_ITEM, 1, FLINT_TIER, None);
+    }
+    stock_a_sleds_worth_of_material(&mut app, band);
+    set_bench(&mut app, band, BENCH_CREW);
+
+    let promised = publish(&mut app, band).bench;
+    assert_eq!(
+        promised.progress, 0.0,
+        "a fresh job has accrued nothing, so the turn's progress IS the delta"
+    );
+    app.world.run_system_once(advance_crafting);
+    let accrued = publish(&mut app, band).bench;
+    assert!(
+        accrued.progress < accrued.work,
+        "the fixture must not finish a pass — a completion resets the progress this reads"
+    );
+    (promised.rate_per_turn, accrued.progress)
 }
 
 /// **Wear one item until the band owns none of it** — the state a *"Worn out"* row is about. Charged
@@ -251,11 +349,24 @@ type PublishedRecipeInput = (String, f32, String);
 type PublishedRecipe = (String, String, f32, Vec<PublishedRecipeInput>);
 /// `(id, craft, axes, hand-workable, the tool that bounds it)`.
 type PublishedMaterial = (String, String, Vec<String>, bool, String);
-/// `(recipe id, workers, progress, work, teaches, blocked reason, the materials it is short of)`.
-/// The last two ride together because their **disagreement** is the claim
-/// [`a_drawn_pile_is_not_blocked_by_a_store_too_poor_to_draw_again`] makes: a drawn job publishes its
-/// shortfalls and no refusal.
-type PublishedBench = (String, u32, f32, f32, String, String, Vec<String>);
+/// The bench row as it comes off the wire. `blocked_reason` and `shortfalls` ride together because
+/// their **disagreement** is the claim [`a_drawn_pile_is_not_blocked_by_a_store_too_poor_to_draw_again`]
+/// makes: a drawn job publishes its shortfalls and no refusal.
+#[derive(Clone, Debug, Default)]
+struct PublishedBench {
+    recipe_id: String,
+    workers: u32,
+    progress: f32,
+    work: f32,
+    teaches: String,
+    blocked_reason: String,
+    /// The material ids of the shortfall rows — what the **next** draw is short of.
+    shortfalls: Vec<String>,
+    /// What one turn at this bench will accrue, tool join and all.
+    rate_per_turn: f32,
+    /// `(material id, withdrawn amount)` for the pile already cut, in the recipe's input order.
+    drawn_inputs: Vec<(String, f32)>,
+}
 
 /// The band's published crafting rows, decoded off the **encoded** frame.
 struct Published {
@@ -359,14 +470,14 @@ fn publish(app: &mut App, band: Entity) -> Published {
     let bench_row = cohort
         .bench()
         .expect("a cohort always publishes a bench row");
-    let bench = (
-        bench_row.recipeId().unwrap_or_default().to_string(),
-        bench_row.workers(),
-        bench_row.progress(),
-        bench_row.work(),
-        bench_row.teaches().unwrap_or_default().to_string(),
-        bench_row.blockedReason().unwrap_or_default().to_string(),
-        bench_row
+    let bench = PublishedBench {
+        recipe_id: bench_row.recipeId().unwrap_or_default().to_string(),
+        workers: bench_row.workers(),
+        progress: bench_row.progress(),
+        work: bench_row.work(),
+        teaches: bench_row.teaches().unwrap_or_default().to_string(),
+        blocked_reason: bench_row.blockedReason().unwrap_or_default().to_string(),
+        shortfalls: bench_row
             .shortfalls()
             .map(|rows| {
                 rows.iter()
@@ -374,7 +485,21 @@ fn publish(app: &mut App, band: Entity) -> Published {
                     .collect()
             })
             .unwrap_or_default(),
-    );
+        rate_per_turn: bench_row.ratePerTurn(),
+        drawn_inputs: bench_row
+            .drawnInputs()
+            .map(|rows| {
+                rows.iter()
+                    .map(|row| {
+                        (
+                            row.materialId().unwrap_or_default().to_string(),
+                            row.amount(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    };
     let offers = cohort
         .craftOffers()
         .expect("a cohort publishes one row per recipe, always")
@@ -928,9 +1053,9 @@ fn a_batchs_exact_reading_survives_the_wire_beside_its_band_name() {
 fn the_bench_publishes_its_job_its_work_and_its_refusal() {
     let (mut app, band) = world();
     let idle = publish(&mut app, band);
-    assert_eq!(idle.bench.0, "", "an idle bench names no recipe");
+    assert_eq!(idle.bench.recipe_id, "", "an idle bench names no recipe");
     assert_eq!(
-        idle.bench.5, "",
+        idle.bench.blocked_reason, "",
         "an idle bench is not blocked — it is idle"
     );
 
@@ -944,8 +1069,14 @@ fn the_bench_publishes_its_job_its_work_and_its_refusal() {
         bench.set_job(SLED_RECIPE, 3);
     }
     let blocked = publish(&mut app, band);
-    let (recipe_id, workers, _progress, work, teaches, blocked_reason, _shortfalls) =
-        blocked.bench.clone();
+    let PublishedBench {
+        recipe_id,
+        workers,
+        work,
+        teaches,
+        blocked_reason,
+        ..
+    } = blocked.bench.clone();
     assert_eq!(recipe_id, SLED_RECIPE);
     assert_eq!(workers, 3);
     assert!(work > 0.0, "the bench states the work one pass costs");
@@ -979,7 +1110,7 @@ fn the_bench_publishes_its_job_its_work_and_its_refusal() {
     );
     let running = publish(&mut app, band);
     assert_eq!(
-        running.bench.5, "",
+        running.bench.blocked_reason, "",
         "a bench with its pile and its crew is not blocked"
     );
 }
@@ -1012,7 +1143,7 @@ fn a_crewless_bench_publishes_its_own_refusal_while_the_offer_stays_available() 
     }
     let published = publish(&mut app, band);
     assert_eq!(
-        published.bench.5, "No one at the bench",
+        published.bench.blocked_reason, "No one at the bench",
         "the bench states the crew's refusal even though the craft itself is fine"
     );
     assert!(
@@ -1067,11 +1198,11 @@ fn a_drawn_pile_is_not_blocked_by_a_store_too_poor_to_draw_again() {
         "the fixture's whole subject is a bench whose pile is already cut"
     );
     assert!(
-        drawn.bench.2 > 0.0,
+        drawn.bench.progress > 0.0,
         "the job is progressing — that is what makes a shortage the wrong thing to say about it"
     );
     assert_eq!(
-        drawn.bench.5, "",
+        drawn.bench.blocked_reason, "",
         "a drawn pile is in HAND: what the store is short of cannot stop the item in flight"
     );
     let drawn_offer = offer(&drawn, SLED_RECIPE).clone();
@@ -1081,7 +1212,7 @@ fn a_drawn_pile_is_not_blocked_by_a_store_too_poor_to_draw_again() {
         drawn_offer.reason
     );
     assert!(
-        !drawn.bench.6.is_empty(),
+        !drawn.bench.shortfalls.is_empty(),
         "the bench keeps publishing its shortfall rows: honest data about the next draw, which the \
          client does not render as blocking"
     );
@@ -1102,10 +1233,11 @@ fn a_drawn_pile_is_not_blocked_by_a_store_too_poor_to_draw_again() {
          reason that is not the draw"
     );
     assert!(
-        undrawn.bench.5.starts_with("Short ") && undrawn.bench.5.contains(HIDE),
+        undrawn.bench.blocked_reason.starts_with("Short ")
+            && undrawn.bench.blocked_reason.contains(HIDE),
         "an undrawn bench is exactly what the field is for: a shortage is why it has not drawn — \
          got {:?}",
-        undrawn.bench.5
+        undrawn.bench.blocked_reason
     );
     assert_eq!(
         offer(&undrawn, SLED_RECIPE).reason,
@@ -1222,7 +1354,7 @@ fn a_drawn_job_whose_tool_ran_dry_still_publishes_its_refusal() {
     // is about the tool rather than about a bench that says something whatever happens.
     let working = publish(&mut app, band);
     assert_eq!(
-        working.bench.5, "",
+        working.bench.blocked_reason, "",
         "a drawn job on a live tool is not blocked"
     );
 
@@ -1237,8 +1369,151 @@ fn a_drawn_job_whose_tool_ran_dry_still_publishes_its_refusal() {
         "the pile is still cut — this is a running job, not a fresh one"
     );
     assert_eq!(
-        stalled.bench.5, "No tanning frame",
+        stalled.bench.blocked_reason, "No tanning frame",
         "a zero craft rate is the real *a drawn job is stopped* case, and it names the tool to build"
+    );
+}
+
+/// **The rate is the accrual the sim applies, and the tool join is inside it.**
+///
+/// Asserted as a **pairing over the two craft speeds** — bare-handed and with a live tanning frame,
+/// the same recipe and the same crew — because the confusion this field exists to end is exactly a
+/// player reading `workers` as the rate: bare-handed organics work at `hand_working.rate 0.5`, so
+/// three crafters deliver one and a half worker-turns, not three. A wire that published the crew
+/// alone would carry the *same* number for both halves and match neither band's progress.
+#[test]
+fn the_published_rate_is_the_turn_of_progress_it_promises_bare_handed_and_tooled() {
+    let (bare_rate, bare_progress) = rate_then_one_turn_of_progress(NO_BENCH_TOOL);
+    let (tooled_rate, tooled_progress) = rate_then_one_turn_of_progress(A_LIVE_TANNING_FRAME);
+
+    assert!(
+        (bare_progress - bare_rate).abs() < SCALAR_TOLERANCE,
+        "a bare-handed bench accrued {bare_progress} against a published rate of {bare_rate}"
+    );
+    assert!(
+        (tooled_progress - tooled_rate).abs() < SCALAR_TOLERANCE,
+        "a tooled bench accrued {tooled_progress} against a published rate of {tooled_rate}"
+    );
+    assert!(
+        tooled_rate > bare_rate + SCALAR_TOLERANCE,
+        "the two publish DIFFERENT rates ({tooled_rate} tooled, {bare_rate} bare-handed) — the tool \
+         join is the whole reason a client cannot re-derive this"
+    );
+    assert!(
+        bare_rate < BENCH_CREW as f32 - SCALAR_TOLERANCE,
+        "the reported confusion, pinned: a worker-turn is NOT a worker's turn, so {BENCH_CREW} \
+         crafters bare-handed deliver {bare_rate} and not {BENCH_CREW}"
+    );
+}
+
+/// **A bench that cannot accrue publishes a zero, not a missing field** — and each zero is paired
+/// with the same bench lifted off it, so *"it always reports something"* cannot pass.
+#[test]
+fn a_bench_that_cannot_accrue_publishes_a_zero_rate() {
+    let (mut app, band) = world();
+    assert_eq!(
+        publish(&mut app, band).bench.rate_per_turn,
+        NO_ACCRUAL,
+        "an idle bench has no recipe to accrue toward"
+    );
+    stock_a_sleds_worth_of_material(&mut app, band);
+
+    // No crew: the pile is there and the craft is fine, and nobody is standing at it.
+    set_bench(&mut app, band, NO_ONE_AT_THE_BENCH);
+    assert_eq!(
+        publish(&mut app, band).bench.rate_per_turn,
+        NO_ACCRUAL,
+        "no crew is no accrual"
+    );
+    // LIVENESS: the identical bench and the identical store, with hands on it.
+    set_bench(&mut app, band, BENCH_CREW);
+    assert!(
+        publish(&mut app, band).bench.rate_per_turn > NO_ACCRUAL,
+        "a crewed bench over the same store publishes a real rate"
+    );
+
+    // No way to work the material: hide cannot be worked bare-handed and the band owns no frame.
+    let (mut app, band) = world();
+    hide_cannot_be_worked_bare_handed(&mut app);
+    stock_a_sleds_worth_of_material(&mut app, band);
+    set_bench(&mut app, band, BENCH_CREW);
+    let handless = publish(&mut app, band);
+    assert_eq!(
+        handless.bench.rate_per_turn, NO_ACCRUAL,
+        "a material with no bare-handed rate and no tool is the zero that IS the refusal"
+    );
+    assert_eq!(
+        handless.bench.blocked_reason, "No tanning frame",
+        "and the zero is published beside the words that say what to build"
+    );
+    // LIVENESS: one frame lifts the same bench off zero.
+    app.world
+        .get_mut::<BandEquipment>(band)
+        .expect("a spawned band carries an equipment ledger")
+        .stock(TANNING_FRAME_ITEM, 1, FLINT_TIER, None);
+    assert!(
+        publish(&mut app, band).bench.rate_per_turn > NO_ACCRUAL,
+        "the tool is what the zero was about"
+    );
+}
+
+/// **The drawn pile names what the store really lost**, which is neither the recipe's stated inputs
+/// nor the shortfall's `required`: the fixture runs on a **tooled** bench, whose
+/// `craft_material_efficiency` sits between the book's cost and the withdrawal.
+///
+/// Paired with the same bench **before** its draw, publishing an empty list — a one-sided assertion
+/// passes on a wire that reports the recipe's inputs whether or not anything was cut.
+#[test]
+fn the_published_drawn_pile_is_what_the_store_actually_lost() {
+    let (mut app, band) = world();
+    app.world
+        .get_mut::<BandEquipment>(band)
+        .expect("a spawned band carries an equipment ledger")
+        .stock(TANNING_FRAME_ITEM, 1, FLINT_TIER, None);
+    stock_a_sleds_worth_of_material(&mut app, band);
+    set_bench(&mut app, band, BENCH_CREW);
+
+    let undrawn = publish(&mut app, band);
+    assert!(
+        undrawn.bench.drawn_inputs.is_empty(),
+        "nothing has been cut yet, and an empty list is the honest answer — got {:?}",
+        undrawn.bench.drawn_inputs
+    );
+
+    let inputs = sled_input_materials(&app);
+    let before: Vec<f32> = inputs.iter().map(|m| held(&app, band, m)).collect();
+    app.world.run_system_once(advance_crafting);
+    let after: Vec<f32> = inputs.iter().map(|m| held(&app, band, m)).collect();
+    let drawn = publish(&mut app, band);
+
+    assert_eq!(
+        drawn
+            .bench
+            .drawn_inputs
+            .iter()
+            .map(|(material, _)| material.clone())
+            .collect::<Vec<_>>(),
+        inputs,
+        "one row per input material, in the recipe's own input order"
+    );
+    for (index, (material, published)) in drawn.bench.drawn_inputs.iter().enumerate() {
+        let lost = before[index] - after[index];
+        assert!(
+            (published - lost).abs() < SCALAR_TOLERANCE,
+            "the {material} row publishes {published} against a store that lost {lost}"
+        );
+    }
+    let (_, hide_drawn) = drawn
+        .bench
+        .drawn_inputs
+        .iter()
+        .find(|(material, _)| material == HIDE)
+        .expect("the sled is made of hide");
+    assert!(
+        (hide_drawn - ONE_SLED_PASS_OF_HIDE).abs() > SCALAR_TOLERANCE,
+        "the tool's material efficiency sits between the book's {ONE_SLED_PASS_OF_HIDE} and the \
+         {hide_drawn} the store really lost — a client reading `recipes.json` would name the wrong \
+         number"
     );
 }
 

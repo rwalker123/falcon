@@ -986,6 +986,9 @@ fn seed_snapshot() -> WorldSnapshot {
             .collect();
         cohort.bench = BenchState {
             shortfalls: rows_of(MaterialShortfallState::default()),
+            // The pile already cut for the job in flight — a repeated field inside a repeated field
+            // like the shortfalls above it, so it needs elements or the guard never decodes a row.
+            drawn_inputs: rows_of(DrawnInputState::default()),
             ..Default::default()
         };
         // **One row per recipe, always** — the contract this field exists for, so the fixture
