@@ -25,6 +25,21 @@ they can read differently, and a client deriving both from a boolean cannot tell
 panel therefore renders the reason as it arrives, tinted by the published severity, and composes no
 sentence of its own — least of all *"cannot craft"*.
 
+### The bench well says how far along and why stopped as TWO lines
+
+The well's word column is title, then the progress line — worker-turns accrued against the pass's
+cost, plus what the job has already delivered and the grade the pile in flight fixed — and then, only
+when `bench.blocked_reason` is non-empty, the refusal on **its own line beneath**, verbatim and in
+`HudStyle.DANGER` while the progress line stays `INK_DIM`. **Neither fact may cost the panel the
+other.** *How far along am I* and *why am I stopped* are both live questions on a stopped bench, and
+the progress reading is what tells the player whether clearing the block recovers a nearly-finished
+item or a barely-started one; a refusal written over it takes that away exactly when it is wanted.
+A running bench adds no label at all, so nothing about its card moves for a line it does not have.
+
+**The refusal line carries `BENCH_BLOCKED_META`**, which is the only way a claim can be scoped to it:
+the reason is a sim string a harness must not predict, and the danger ink is worn by every refused row
+in the ledger below.
+
 ## The readout rules the design is built on
 
 - **THE LEDGER CARRIES NO CONDITION COLUMN — its four are Item · Owned · Rebuild costs · action.** How

@@ -73,6 +73,23 @@ const BENCH_CREW := 2
 ## in which "idle" and "how many could be at the bench" produce a visibly different stepper.
 const BENCH_BOUND_WORKING_AGE := 3
 
+## **THE PROGRESS LINE, SPELLED OUT RATHER THAN RECOMPOSED** through the vocab formats the panel
+## builds it with — an expectation borrowed from the code under test can only agree with itself. It
+## is the running fixture's own reading: 3.0 worker-turns of the 5 a pass costs, one basket already
+## delivered, and the grade the pile in flight fixed.
+const BENCH_PROGRESS_LINE := "3.0 of 5 worker-turns · 1 finished · this pile → good"
+
+## **THE CHEAPEST GENUINE REFUSAL THERE IS**, and the sim's own wording for it
+## (`core_sim/src/snapshot/crafting.rs`): the crew walked off. It is also the reason that SURVIVES the
+## rule that nothing short stops a pile already drawn, so a fixture built on it stages a bench the sim
+## would really publish stopped.
+const BLOCKED_BENCH_CREW := 0
+const BLOCKED_BENCH_REASON := "No one at the bench"
+
+## The theme entry a Label's ink is read back out of. `get_theme_color` answers the override where one
+## is set, which is how this HUD colours every label.
+const FONT_COLOR_THEME_ITEM := "font_color"
+
 const WEAVING_PROGRESS := 100.0
 const TANNING_PROGRESS := 41.0
 const BONE_WORKING_PROGRESS := 12.0
@@ -597,6 +614,7 @@ func _crafting_states() -> void:
 	await _band_dock_states()
 	await _rerender_state()
 	await _two_tier_states()
+	await _blocked_bench_state()
 
 	# Hand everything back: the panel closed, the roster restored to the reference band.
 	h._hud.close_crafting_panel()
@@ -720,6 +738,20 @@ func _assert_folding_a_head_hides_only_its_own_rows() -> void:
 	h._assert_hud("crafting — unfolding it brings its rows back",
 		reopened.has("Clubs") and reopened.has("Spears") and reopened.has("Traps"))
 
+# ---- state 14: THE BENCH THAT IS STOPPED ---------------------------------------------------------
+
+## **HOW FAR ALONG THE JOB IS AND WHY IT IS NOT MOVING ARE TWO FACTS, AND THE WELL OWES BOTH.** The
+## refusal used to be written OVER the progress line, so a bench stopped for a real reason lost the
+## reading that says whether clearing the block recovers a nearly-finished item or a barely-started
+## one — which is the question a stopped bench actually raises. This is state 1's own bench with its
+## crew walked off, so the two frames differ by the reason and nothing else.
+func _blocked_bench_state() -> void:
+	h._hud.update_band_alerts([_blocked_bench_band()])
+	h._hud.open_crafting_panel(_blocked_bench_band())
+	await h._settle()
+	_assert_a_blocked_bench_still_says_how_far_along_it_is()
+	await h._save("crafting_bench_blocked")
+
 # ---- assertions ---------------------------------------------------------------------------------
 
 ## **THE CLAIMS NO PICTURE CAN CARRY.** A ledger sorted the wrong way, a refusal re-derived into
@@ -779,9 +811,36 @@ func _assert_panel_renders() -> void:
 	var used_alpha := _row_alpha(panel, "Sled")
 	h._assert_hud("crafting — the untouched row is dimmed and the used one is not",
 		untouched_alpha >= 0.0 and untouched_alpha < 1.0 and is_equal_approx(used_alpha, 1.0))
+	# **THE UNBLOCKED HALF OF THE BENCH PAIR** (state 14 is the other): this band's bench is running,
+	# so the well states its progress and carries no refusal line under it at all — no empty label, no
+	# reserved gap. A one-sided claim on the blocked frame alone would pass on a panel that had simply
+	# grown a permanent third line.
+	h._assert_hud("crafting — a running bench says how far along it is and nothing beneath it",
+		_label_with_text(panel, BENCH_PROGRESS_LINE) != null and _blocked_line(panel) == null)
 	# The reading state 4 measures its own against: nothing is docked here, so this is the tallest the
 	# card ever wants to be.
 	_unreserved_card_height = panel.size.y
+
+## **THE PAIRING, ON ONE FRAME.** A blocked bench owes the reason AND the progress, and either claim
+## alone passes on a well that lost the other: asserting the refusal alone is exactly what the
+## overwrite this state exists for would have satisfied, and asserting the progress alone is satisfied
+## by a panel that never renders a refusal. Both are read off the LABEL rather than off a text scan —
+## the reason is a sim string this chapter must not compose, and the danger ink is worn by every
+## refused row in the ledger below, so only the meta the panel stamps can name the bench's own line.
+func _assert_a_blocked_bench_still_says_how_far_along_it_is() -> void:
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting — the blocked-bench panel is open", false)
+		return
+	var reason := _blocked_line(panel)
+	h._assert_hud("crafting — a stopped bench states its reason verbatim, in the danger ink (%s)"
+		% [reason.text if reason != null else "no line at all"],
+		reason != null and reason.text == BLOCKED_BENCH_REASON
+			and reason.get_theme_color(FONT_COLOR_THEME_ITEM) == HudStyle.DANGER)
+	var progress := _label_with_text(panel, BENCH_PROGRESS_LINE)
+	h._assert_hud("crafting — …AND still says how much of the job is banked (%s)"
+		% BENCH_PROGRESS_LINE,
+		progress != null and progress.get_theme_color(FONT_COLOR_THEME_ITEM) == HudStyle.INK_DIM)
 
 ## **THE CARD IS BOUNDED BY THE ROOM, NOT BY THE WINDOW.** `LayoutRoot` is the node the reserved-edge
 ## registry insets, so it IS the room the map and the rest of the HUD are drawn in; a card that fits
@@ -922,6 +981,29 @@ func _crew_button_disabled(node: Node, face: String) -> bool:
 		if not _crew_button_disabled(child, face):
 			return false
 	return true
+
+## The bench's refusal line, found by the meta the panel stamps on it rather than by its face — the
+## reason is a string the SIM resolved and this chapter may not predict, and a search for the danger
+## ink would find every refused row in the ledger below just as readily. `null` when the well renders
+## none, which is what the running bench's half of the pair asks for.
+func _blocked_line(node: Node) -> Label:
+	if node is Label and node.has_meta(HudCraftingVocab.BENCH_BLOCKED_META):
+		return node as Label
+	for child in node.get_children():
+		var found := _blocked_line(child)
+		if found != null:
+			return found
+	return null
+
+## The Label carrying an exact face, so a claim can be made about its INK as well as its presence.
+func _label_with_text(node: Node, face: String) -> Label:
+	if node is Label and (node as Label).text == face:
+		return node as Label
+	for child in node.get_children():
+		var found := _label_with_text(child, face)
+		if found != null:
+			return found
+	return null
 
 func _label_texts(node: Node) -> Array:
 	var texts: Array = []
@@ -1196,6 +1278,18 @@ func _bench_bound_band() -> Dictionary:
 	var band := _crafting_band()
 	band["working_age"] = BENCH_BOUND_WORKING_AGE
 	band["idle_workers"] = BENCH_BOUND_WORKING_AGE - BENCH_CREW
+	return band
+
+## **THE SAME JOB, STOPPED.** State 1's band with the crew walked off its bench and the refusal the
+## sim publishes for exactly that. The pile is still `drawn`, which is what keeps the reason genuine —
+## a drawn pile is short of nothing, so the crew's own refusal is all that remains to stop it — and
+## every other field is state 1's, so the frames differ by the reason alone.
+func _blocked_bench_band() -> Dictionary:
+	var band := _crafting_band()
+	var bench: Dictionary = _bench()
+	bench["workers"] = BLOCKED_BENCH_CREW
+	bench["blocked_reason"] = BLOCKED_BENCH_REASON
+	band["bench"] = bench
 	return band
 
 ## What the band holds, per rating. **The band rates the AXIS, not the material**: the second hide is

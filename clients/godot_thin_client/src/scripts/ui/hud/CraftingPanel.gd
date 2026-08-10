@@ -481,7 +481,8 @@ func _band_name_color(band_name: String, payload: Dictionary) -> Color:
 
 # ---- the bench --------------------------------------------------------------
 
-## **WHAT IS BEING MADE, HOW FAR ALONG IT IS, WHO IS ON IT AND WHAT IT TEACHES.** An idle bench says
+## **WHAT IS BEING MADE, HOW FAR ALONG IT IS, WHY IT IS STOPPED, WHO IS ON IT AND WHAT IT TEACHES.**
+## Each of those is its own line, so none of them can cost the panel another. An idle bench says
 ## so in as many words — `""` for `recipe_id` is IDLE, which is a different statement from a bench
 ## that has a recipe and a `blocked_reason`.
 func _build_bench(payload: Dictionary) -> void:
@@ -510,6 +511,7 @@ func _build_bench(payload: Dictionary) -> void:
 	var sub := Label.new()
 	sub.add_theme_font_size_override("font_size", HudCraftingVocab.BENCH_SUB_FONT_SIZE)
 	sub.add_theme_color_override("font_color", HudStyle.INK_DIM)
+	var blocked := ""
 	if recipe_id == "":
 		title.text = HudCraftingVocab.BENCH_IDLE_TITLE
 		sub.text = HudCraftingVocab.BENCH_IDLE_SUB
@@ -519,14 +521,24 @@ func _build_bench(payload: Dictionary) -> void:
 		var made := String(bench.get(HudCraftingVocab.BENCH_DISPLAY_NAME_KEY, recipe_id))
 		title.text = (HudCraftingVocab.BENCH_TITLE_FORMAT % [craft_name, made]).strip_edges()
 		sub.text = _bench_sub_line(bench)
-		# The blocked reason is the OFFER vocabulary plus the crew's own refusal, resolved sim-side —
-		# a bench with a full pile and nobody on it is also stopped. Rendered verbatim.
-		var blocked := String(bench.get(HudCraftingVocab.BENCH_BLOCKED_REASON_KEY, ""))
-		if blocked != "":
-			sub.text = blocked
-			sub.add_theme_color_override("font_color", HudStyle.DANGER)
+		blocked = String(bench.get(HudCraftingVocab.BENCH_BLOCKED_REASON_KEY, ""))
 	words.add_child(title)
 	words.add_child(sub)
+	# **HOW FAR ALONG AND WHY STOPPED ARE TWO FACTS, AND NEITHER MAY EAT THE OTHER.** The refusal is
+	# the OFFER vocabulary plus the crew's own, resolved sim-side and rendered VERBATIM — a bench with
+	# a full pile and nobody on it is stopped too. It gets its own line UNDER the progress line rather
+	# than replacing it: the banked worker-turns are what say whether clearing the block recovers a
+	# nearly-finished item or a barely-started one, which is the question a stopped bench raises. A
+	# bench that is running adds no label at all, so nothing about its card moves.
+	if blocked != "":
+		var reason := Label.new()
+		reason.text = blocked
+		reason.add_theme_font_size_override("font_size", HudCraftingVocab.BENCH_BLOCKED_FONT_SIZE)
+		reason.add_theme_color_override("font_color", HudStyle.DANGER)
+		# Found by IDENTITY rather than by its face — the reason is a sim string this panel cannot
+		# predict, so a claim about the blocked line can only be scoped to the node that carries it.
+		reason.set_meta(HudCraftingVocab.BENCH_BLOCKED_META, true)
+		words.add_child(reason)
 	top.add_child(words)
 	top.add_child(_build_crew_stepper(bench, payload, recipe_id != ""))
 	inner.add_child(top)

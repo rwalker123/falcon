@@ -228,6 +228,39 @@ is covered by a **fixture** (`a_band_a_recipe_does_not_declare_inherits_the_one_
 same reason `materials.json`'s varieties and `equipment.json`'s bronze tier are: no shipped recipe
 declares a partial ladder.
 
+### A START-STOCKED UNIT *IS* AN ANCHOR-GRADE CRAFT, and the ledger says which
+
+The anchor has a second consumer: **a spawn stamps every batch it stocks with the anchor grade of the
+recipe that makes that item** (`RecipesConfig::anchor_grade_for_item`, joined the way
+`item_display_name` joins — the book is where an item's crafted facts are written). That is a
+statement of fact rather than a display default: a spawn stocks the item's **default tier**
+(`equipment.md` → *"flint is today's spear, verbatim"*) and `validate_grades_against_item` requires
+the anchor grade to agree with that tier for every stat it declares, so the shipped spear already
+*performs* exactly as an anchor-grade craft — the wire simply was not saying so, and the Materials &
+Crafting ledger rendered a bare `×1` beside rows reading `×3 good`, which a player cannot tell from a
+chip that failed to draw. On the shipped config the anchor is `good` everywhere.
+
+**The NAME only — the effects payload stays empty.** A start-stocked unit's stats come from the tier
+and must keep coming from there; the grade name is a label `validate` already ties to those numbers,
+not a second home for them. An empty payload resolves through `LiveItem::effect_entry` exactly as
+`None` does, which is what makes *"the shipped opening is unchanged"* structural rather than
+measured. An item no recipe makes keeps no grade — there is no crafted equivalent to claim — and
+every shipped start-stocked item has one, so that arm is unreachable today.
+
+**The seam is `BandEquipment::start_stocked_owned`, and it is deliberately separate from
+`start_stocked`.** The latter is also the **fresh reference ledger** every kit-scoring and
+roster-quoting surface prices against (`kit_supplying`, `quarry_default_hunt_kit`, the published kit
+roster, a launch forecast), where a grade *label* answers no question being asked and the recipe book
+and materials table it would have to carry are two configs those passes do not read. The two owning
+call sites are the band spawn (`systems::worldgen::spawn_population_entity`, via the `StartKit`
+bundle) and the detached party's outfit (`server::outfitted_party_equipment`).
+
+Pinned as a *pairing* by
+`crafting_wire::a_start_stocked_batch_carries_the_grade_a_bare_handed_craft_of_it_comes_out_at`: the
+spawned sled and one the band's own bench makes bare-handed off richer hide than the bare hand can
+reach carry the **same** grade — asserted against `anchor_grade_for_item`'s own answer rather than
+the word `"good"`, or the test would pass a hard-coded stamp.
+
 ## The craft is DERIVED and then written down
 
 `RecipeDef::craft` must equal the craft of the material the recipe **reads** (or, for a recipe that
@@ -493,6 +526,36 @@ the contract. `reason` and `severity` are what a client renders — **not `avail
 > the two rows differ in **both** the string and the severity — asserting one row's wording alone
 > would pass on a wire that said the same thing everywhere.
 
+### `blockedReason` IS ABOUT THE ITEM BEING MADE, so a drawn pile cannot be short
+
+**While the bench's pile is `drawn`, a material shortfall is not a blocked reason.** The materials
+were withdrawn at the draw and are in hand; what the store is short of speaks to the **next** draw,
+and cannot stop the item in flight. It is the same rule `output_grade` follows one field down — the
+grade the pile *fixed*, not the one the next draw would pick — and `bench_state` now follows it in
+both places (`snapshot::crafting::NOTHING_SHORT_STOPS_A_DRAWN_PILE`).
+
+Two things can stop a job whose pile is already cut, and both survive:
+
+- **`No one at the bench`** (`workers == 0`) — as true of a drawn job as of any other.
+- **A zero craft rate** — the bounding tool wore out mid-craft on a material that cannot be worked
+  bare-handed, so progress genuinely cannot accrue. This is the real *"a running job is stopped"*
+  case, and it names the tool (`No tanning frame`) rather than saying *"cannot craft"*.
+
+A knowledge refusal cannot arise on a drawn job at all: a craft is never un-learned.
+
+**The shortage leaves the bench entirely rather than softening.** The ledger's own offer row for that
+recipe already publishes `Short 0.7 bone` and is the right home for *"could I start another"* —
+putting it in both places is how one fact acquires two homes and starts disagreeing with itself.
+**`BenchState::shortfalls` keeps being populated either way**: it is honest data about the next draw,
+and the client does not render it as blocking.
+
+An **undrawn** bench is unchanged in every respect — a shortage is exactly why it has not drawn, and
+that is the state the field exists for. Pinned as a *pairing* by
+`crafting_wire::a_drawn_pile_is_not_blocked_by_a_store_too_poor_to_draw_again` (one store, read twice:
+silent while drawn with the offer row still saying `Short …`, blocked once the pile goes back on the
+shelf — a one-sided assertion passes on a bench that never reports anything), with
+`::a_drawn_job_whose_tool_ran_dry_still_publishes_its_refusal` holding the surviving case.
+
 ## TIER IS A GROUP HEAD, NOT A COLUMN — and the note is the disagreement
 
 The ledger's columns are **Item · Owned · Rebuild costs · action**; there is no Tier column, because
@@ -514,8 +577,9 @@ player something worth knowing. Two wordings, resolved by `snapshot::crafting::o
 - units in hand at a tier **below** `craftable_tier` → `carrying <tier> · <grade>`. Several such
   batches name the **worst** grade — naming the best is the one a player would be told about last,
   and a row that flattered its stock would say the opposite of what they need to act on. An
-  **ungraded** batch is a start-stocked unit making no quality claim, so it sorts ahead of every
-  graded one and reads simply `carrying flint`.
+  **ungraded** batch makes no quality claim at all, so it sorts ahead of every graded one and reads
+  simply `carrying flint`. Since the start-stock stamp (below) nothing on the shipped roster is
+  ungraded, so that arm answers only for a batch some future path banks without a grade.
 - no units at all and a set retired at an older tier → `last <tier> set wore out`. **The tier is read
   out of `BandEquipment::retired_tiers_of`, never inferred from `craftable_tier`'s neighbour** — of
   several it names the highest-ranked one still below what the band can now make, the set it lost

@@ -335,6 +335,31 @@ impl RecipesConfig {
             .unwrap_or(item)
     }
 
+    /// **The grade a bare-handed craft of `item` comes out at** — its recipe's [`anchor_band`], the
+    /// band the bench material's own `hand_working.quality_ceiling` falls in. `None` for an item the
+    /// book cannot make, or whose bench material cannot be worked bare-handed at all.
+    ///
+    /// It is what a **start-stocked** unit is stamped with
+    /// ([`crate::components::BandEquipment::start_stocked_owned`]): `validate_grades_against_item`
+    /// already enforces that the anchor grade agrees with the item's default tier for every stat it
+    /// declares, and a spawn stocks that same default tier — so a shipped spear already performs
+    /// exactly as an anchor-grade craft does, and this is the wire finally saying so.
+    ///
+    /// The join is `item_display_name`'s, for the same reason: the book is where an item's crafted
+    /// facts are written. Two recipes making one item would resolve the **first in book order**,
+    /// which no shipped book has and none needs — a second recipe for one item would be a second
+    /// statement of what it is made of.
+    pub fn anchor_grade_for_item<'a>(
+        &self,
+        item: &str,
+        materials: &'a MaterialsConfig,
+    ) -> Option<&'a str> {
+        let (_, recipe) = self
+            .recipes()
+            .find(|(_, recipe)| recipe.output_equipment_id() == Some(item))?;
+        anchor_band(recipe, materials)
+    }
+
     /// The book's ids, for a refusal message — a player who mistypes a recipe is told what there is.
     pub fn recipe_ids_for_message(&self) -> String {
         self.recipes

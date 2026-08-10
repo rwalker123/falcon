@@ -33,9 +33,9 @@ use core_sim::{
     BeatCatalogHandle, BeatConfigHandle, BeatLedger, CampaignLabel, CombatConfigHandle,
     CreaturesConfigHandle, Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase,
     FloraConfigHandle, FoodModuleTag, ForkAnswerError, HuntingParty, KitChoice, KitJob,
-    LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore, RecipesConfigHandle,
-    ResidentBand, RungKey, SiteRefusal, SpeciesRefusal, StartProfile, StartProfileOverrides,
-    WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR, NO_FORAGE_SEASON,
+    LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore, MaterialsConfigHandle,
+    RecipesConfigHandle, ResidentBand, RungKey, SiteRefusal, SpeciesRefusal, StartProfile,
+    StartProfileOverrides, WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR, NO_FORAGE_SEASON,
 };
 use core_sim::{
     build_headless_app, clear_config_overrides, denial_forecast, expedition_returned_event,
@@ -3158,7 +3158,11 @@ fn outfit_raiding_party(
 /// call sites reaching for the ledger separately is how one of them ends up sending a bare-handed
 /// raid out under a kitted forecast.
 fn outfitted_party_equipment(app: &bevy::prelude::App) -> BandEquipment {
-    BandEquipment::start_stocked(&app.world.resource::<EquipmentConfigHandle>().get())
+    BandEquipment::start_stocked_owned(
+        &app.world.resource::<EquipmentConfigHandle>().get(),
+        &app.world.resource::<RecipesConfigHandle>().get(),
+        &app.world.resource::<MaterialsConfigHandle>().get(),
+    )
 }
 
 /// **The party a launch forecast is quoted for** — the kit the player is sending it with, over a

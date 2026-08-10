@@ -1792,10 +1792,51 @@ impl BandEquipment {
     ///
     /// **`Default` is an EMPTY ledger and now means "owns nothing"**, so a site that wants the fresh
     /// tier has to say so with this — which is precisely the flip, made impossible to miss.
+    ///
+    /// **A SPAWN wants [`Self::start_stocked_owned`]** — this one leaves every batch *ungraded*,
+    /// which is right for a reference (a scoring pass reads stats, and a grade name is a label) and
+    /// wrong for gear a band actually owns and a ledger names out loud.
     pub fn start_stocked(config: &crate::equipment_config::EquipmentConfig) -> Self {
         let mut stocked = Self::default();
         for (id, item) in config.start_stocked_items() {
             stocked.stock(id, ONE_UNIT, &item.default_tier().id, None);
+        }
+        stocked
+    }
+
+    /// **What a band or a detached party actually OWNS at spawn** — [`Self::start_stocked`] with
+    /// every batch stamped with the grade a bare-handed craft of that item comes out at
+    /// ([`crate::recipes_config::RecipesConfig::anchor_grade_for_item`]).
+    ///
+    /// **A start-stocked unit IS an anchor-grade craft, so it says so.** A spawn stocks the item's
+    /// default tier (`equipment.md` → *"flint is today's spear, verbatim"*) and `validate` requires
+    /// the anchor grade to agree with that tier for every stat it declares — the two perform
+    /// identically, and the ledger simply was not saying which. An unstamped batch published a bare
+    /// `×1` beside rows reading `×3 good`, which is indistinguishable from a panel that failed to
+    /// draw something.
+    ///
+    /// **The NAME only; the effects payload stays empty.** A start-stocked unit's stats come from
+    /// the tier and must keep coming from there — the grade name is a label `validate` already ties
+    /// to those numbers, not a second home for them. An empty grade payload resolves through
+    /// [`crate::equipment_config::LiveItem::effect_entry`] exactly as `None` does, so the shipped
+    /// opening is unchanged by construction.
+    ///
+    /// An item no recipe makes keeps `None`: there is no crafted equivalent to claim. Every shipped
+    /// start-stocked item has a recipe, so that is unreachable today.
+    pub fn start_stocked_owned(
+        equipment: &crate::equipment_config::EquipmentConfig,
+        recipes: &crate::recipes_config::RecipesConfig,
+        materials: &crate::materials_config::MaterialsConfig,
+    ) -> Self {
+        let mut stocked = Self::default();
+        for (id, item) in equipment.start_stocked_items() {
+            let grade = recipes
+                .anchor_grade_for_item(id, materials)
+                .map(|band| BatchGrade {
+                    id: band.to_string(),
+                    effects: Vec::new(),
+                });
+            stocked.stock(id, ONE_UNIT, &item.default_tier().id, grade);
         }
         stocked
     }

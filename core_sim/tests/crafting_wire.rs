@@ -15,12 +15,14 @@
 //! | a band's exact reading vs its band name | two `good` hides are not interchangeable |
 
 use bevy::app::App;
+use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::Entity;
 
 use core_sim::{
-    build_headless_app, recapture_snapshot_in_place, scalar_from_f32, BandBench, BandEquipment,
-    BatchGrade, DiscoveryProgressLedger, EquipmentConfig, EquipmentConfigHandle,
-    LadderConfigHandle, MaterialsConfigHandle, PopulationCohort, ResidentBand, SnapshotHistory,
+    advance_crafting, build_headless_app, recapture_snapshot_in_place, scalar_from_f32, BandBench,
+    BandEquipment, BatchGrade, DiscoveryProgressLedger, EquipmentConfig, EquipmentConfigHandle,
+    LadderConfigHandle, MaterialsConfig, MaterialsConfigHandle, PopulationCohort,
+    RecipesConfigHandle, ResidentBand, SnapshotHistory,
 };
 use std::collections::BTreeMap;
 
@@ -47,6 +49,19 @@ const IRON_TIER: &str = "iron";
 
 /// Enough hide that a `work: 8` sled recipe's 6-unit draw is comfortably covered.
 const PLENTY: f32 = 40.0;
+/// What one bare-handed pass of [`SLED_RECIPE`] withdraws, per `recipes.json` — the whole cost, at
+/// the hand-working material efficiency of `1.0`.
+const ONE_SLED_PASS_OF_HIDE: f32 = 6.0;
+const ONE_SLED_PASS_OF_FIBRE: f32 = 2.0;
+/// **Left over after the draw, and nowhere near another pass** — so the store is genuinely short
+/// rather than empty, and the published `Short …` quotes a number a player would recognise.
+const A_CRUMB: f32 = 0.5;
+/// A crew large enough that a bench visibly progresses in one pass and small enough that it does not
+/// finish the sled — `3 × 1.0 × 2.0` tooled is `6.0` against a `work` of `8.0`.
+const BENCH_CREW: u32 = 3;
+/// **One pass in one turn, bare-handed** — `16 × 1.0 × 0.5` is exactly the sled's `work` of `8.0`,
+/// so the fixture gets a delivered batch without looping a system to watch progress accumulate.
+const CREW_THAT_FINISHES_A_SLED_BARE_HANDED: u32 = 16;
 
 /// A world with a resident band, captured once so the fixtures have a frame to read.
 fn world() -> (App, Entity) {
@@ -150,6 +165,38 @@ fn give_spears_two_metal_tiers(app: &mut App, edit: impl FnOnce(&mut serde_json:
         .replace(std::sync::Arc::new(config));
 }
 
+/// **The grade a bare-handed craft of `item` comes out at**, asked of the shipped book itself.
+/// Never the literal `"good"`: a test comparing against the word would pass a stamp that had been
+/// hard-coded, which is exactly the thing the derived anchor exists not to be.
+fn anchor_grade(app: &App, item: &str) -> String {
+    let recipes = app.world.resource::<RecipesConfigHandle>().get();
+    let materials = app.world.resource::<MaterialsConfigHandle>().get();
+    recipes
+        .anchor_grade_for_item(item, &materials)
+        .expect(
+            "every shipped start-stocked item is made by a recipe over a hand-workable material",
+        )
+        .to_string()
+}
+
+/// **Make `hide` a material nobody can work bare-handed** — the state a bench tool exists to lift,
+/// and the only way `craft_speed` can fall to `0` under a job whose pile is already cut. No shipped
+/// material is like this (all three organics declare `hand_working`), for the same reason no shipped
+/// item ships a second tier: the ones that will be are the minerals arc's, which has no producer yet.
+fn hide_cannot_be_worked_bare_handed(app: &mut App) {
+    let mut json: serde_json::Value =
+        serde_json::from_str(core_sim::BUILTIN_MATERIALS_CONFIG).expect("the table is json");
+    json["materials"][HIDE]
+        .as_object_mut()
+        .expect("hide is a material")
+        .remove("hand_working");
+    let config = MaterialsConfig::from_json_str(&json.to_string())
+        .expect("a material with no bare-handed rate is a legal table");
+    app.world
+        .resource_mut::<MaterialsConfigHandle>()
+        .replace(std::sync::Arc::new(config));
+}
+
 /// Credit this band's faction with a craft, past the ladder's completion threshold — what makes a
 /// knowledge-gated tier reachable.
 fn learn(app: &mut App, band: Entity, craft: &str) {
@@ -204,8 +251,11 @@ type PublishedRecipeInput = (String, f32, String);
 type PublishedRecipe = (String, String, f32, Vec<PublishedRecipeInput>);
 /// `(id, craft, axes, hand-workable, the tool that bounds it)`.
 type PublishedMaterial = (String, String, Vec<String>, bool, String);
-/// `(recipe id, workers, progress, work, teaches, blocked reason)`.
-type PublishedBench = (String, u32, f32, f32, String, String);
+/// `(recipe id, workers, progress, work, teaches, blocked reason, the materials it is short of)`.
+/// The last two ride together because their **disagreement** is the claim
+/// [`a_drawn_pile_is_not_blocked_by_a_store_too_poor_to_draw_again`] makes: a drawn job publishes its
+/// shortfalls and no refusal.
+type PublishedBench = (String, u32, f32, f32, String, String, Vec<String>);
 
 /// The band's published crafting rows, decoded off the **encoded** frame.
 struct Published {
@@ -240,9 +290,10 @@ struct PublishedOffer {
 struct PublishedItem {
     item_id: String,
     tier_id: String,
-    /// A start-stocked unit has none — a shipped kit has a tier but was never on anyone's bench —
-    /// so it is decoded and asserted `""` rather than left off the struct: *"it decodes"* is half
-    /// the claim this file makes about every field.
+    /// A start-stocked unit carries the **anchor** grade — it is the item's default tier, which is
+    /// what an anchor-grade craft reproduces — so this is decoded and compared against
+    /// [`anchor_grade`] rather than left off the struct: *"it decodes"* is half the claim this file
+    /// makes about every field.
     grade: String,
     count: u32,
     remaining: f32,
@@ -315,6 +366,14 @@ fn publish(app: &mut App, band: Entity) -> Published {
         bench_row.work(),
         bench_row.teaches().unwrap_or_default().to_string(),
         bench_row.blockedReason().unwrap_or_default().to_string(),
+        bench_row
+            .shortfalls()
+            .map(|rows| {
+                rows.iter()
+                    .map(|row| row.materialId().unwrap_or_default().to_string())
+                    .collect()
+            })
+            .unwrap_or_default(),
     );
     let offers = cohort
         .craftOffers()
@@ -885,7 +944,8 @@ fn the_bench_publishes_its_job_its_work_and_its_refusal() {
         bench.set_job(SLED_RECIPE, 3);
     }
     let blocked = publish(&mut app, band);
-    let (recipe_id, workers, _progress, work, teaches, blocked_reason) = blocked.bench.clone();
+    let (recipe_id, workers, _progress, work, teaches, blocked_reason, _shortfalls) =
+        blocked.bench.clone();
     assert_eq!(recipe_id, SLED_RECIPE);
     assert_eq!(workers, 3);
     assert!(work > 0.0, "the bench states the work one pass costs");
@@ -958,6 +1018,227 @@ fn a_crewless_bench_publishes_its_own_refusal_while_the_offer_stays_available() 
     assert!(
         offer(&published, SLED_RECIPE).available,
         "the OFFER is still available — staffing is the player's next move, not a refusal"
+    );
+}
+
+/// **A DRAWN pile's materials are already in hand, so a shortage in the store cannot stop it** — the
+/// shortage is about the NEXT draw, and the offer row for that same recipe is where it belongs.
+///
+/// Asserted as a **pairing** on one store, because a one-sided check passes on a bench that never
+/// reports anything: the drawn bench is silent while the offer beside it still says `Short …`, and
+/// the *same* store with the pile put back on the shelf says it on the bench.
+#[test]
+fn a_drawn_pile_is_not_blocked_by_a_store_too_poor_to_draw_again() {
+    let (mut app, band) = world();
+    strip(&mut app, band, HIDE);
+    strip(&mut app, band, "fibre");
+    // One pass and a crumb: the draw takes the whole cost and leaves a store that cannot fund
+    // another, which is exactly the state the defect published as a running job's refusal.
+    deposit(
+        &mut app,
+        band,
+        HIDE,
+        ONE_SLED_PASS_OF_HIDE + A_CRUMB,
+        &[(TOUGHNESS, 0.9), (SUPPLENESS, 0.2)],
+    );
+    deposit(
+        &mut app,
+        band,
+        "fibre",
+        ONE_SLED_PASS_OF_FIBRE + A_CRUMB,
+        &[("fineness", 0.5), ("strength", 0.5)],
+    );
+    {
+        let mut bench = app
+            .world
+            .get_mut::<BandBench>(band)
+            .expect("a spawned band carries a bench");
+        bench.set_job(SLED_RECIPE, BENCH_CREW);
+    }
+    app.world.run_system_once(advance_crafting);
+
+    let drawn = publish(&mut app, band);
+    assert!(
+        app.world
+            .get::<BandBench>(band)
+            .expect("a spawned band carries a bench")
+            .drawn
+            .is_some(),
+        "the fixture's whole subject is a bench whose pile is already cut"
+    );
+    assert!(
+        drawn.bench.2 > 0.0,
+        "the job is progressing — that is what makes a shortage the wrong thing to say about it"
+    );
+    assert_eq!(
+        drawn.bench.5, "",
+        "a drawn pile is in HAND: what the store is short of cannot stop the item in flight"
+    );
+    let drawn_offer = offer(&drawn, SLED_RECIPE).clone();
+    assert!(
+        drawn_offer.reason.starts_with("Short "),
+        "the shortage did not vanish — the offer row answers *could I start another* — got {:?}",
+        drawn_offer.reason
+    );
+    assert!(
+        !drawn.bench.6.is_empty(),
+        "the bench keeps publishing its shortfall rows: honest data about the next draw, which the \
+         client does not render as blocking"
+    );
+
+    // THE PAIRING: put the pile back on the shelf without touching the store — `set_job` clears the
+    // drawn pile and the progress with it — and the identical store now blocks the bench.
+    {
+        let mut bench = app
+            .world
+            .get_mut::<BandBench>(band)
+            .expect("a spawned band carries a bench");
+        bench.set_job(SLED_RECIPE, BENCH_CREW);
+    }
+    let undrawn = publish(&mut app, band);
+    assert_eq!(
+        undrawn.material_batches, drawn.material_batches,
+        "the two halves of the pairing read the SAME store — otherwise the bench rows differ for a \
+         reason that is not the draw"
+    );
+    assert!(
+        undrawn.bench.5.starts_with("Short ") && undrawn.bench.5.contains(HIDE),
+        "an undrawn bench is exactly what the field is for: a shortage is why it has not drawn — \
+         got {:?}",
+        undrawn.bench.5
+    );
+    assert_eq!(
+        offer(&undrawn, SLED_RECIPE).reason,
+        drawn_offer.reason,
+        "the offer says the same thing either way — the fact has one home and it is that row"
+    );
+}
+
+/// **A start-stocked unit IS an anchor-grade craft, and the ledger says so** — an unstamped batch
+/// published a bare `×1` beside rows reading `×3 good`, which a player cannot tell from a panel that
+/// failed to draw something.
+///
+/// Asserted as a **pairing**, because *"the row has a grade"* is satisfied by any stamp at all: the
+/// band's spawned sled and a sled its own bench makes off hide richer than the bare hand can reach
+/// carry the **same** grade — which is the claim, rather than merely that a grade is present.
+#[test]
+fn a_start_stocked_batch_carries_the_grade_a_bare_handed_craft_of_it_comes_out_at() {
+    let (mut app, band) = world();
+    let anchor = anchor_grade(&app, SLED_ITEM);
+    assert!(
+        !anchor.is_empty(),
+        "the shipped book resolves an anchor for the sled — without one the pairing below is vacuous"
+    );
+    let spawned = publish(&mut app, band);
+    let spawned_rows = rows_for(&spawned, SLED_ITEM);
+    assert_eq!(
+        spawned_rows.len(),
+        1,
+        "a spawn stocks exactly one batch of the item, which is the row under test"
+    );
+    assert_eq!(
+        spawned_rows[0].grade, anchor,
+        "a spawned unit is the item's default tier, and `validate` ties the anchor grade to that \
+         same tier — so it performs as an anchor-grade craft and now says which"
+    );
+
+    // THE PAIRING: the same band's own bench, off hide far richer than the bare hand can reach, so
+    // the ceiling — not the pile — decides the grade, exactly as the anchor is defined.
+    deposit(
+        &mut app,
+        band,
+        HIDE,
+        PLENTY,
+        &[(TOUGHNESS, 0.95), (SUPPLENESS, 0.2)],
+    );
+    deposit(
+        &mut app,
+        band,
+        "fibre",
+        PLENTY,
+        &[("fineness", 0.5), ("strength", 0.5)],
+    );
+    {
+        let mut bench = app
+            .world
+            .get_mut::<BandBench>(band)
+            .expect("a spawned band carries a bench");
+        bench.set_job(SLED_RECIPE, CREW_THAT_FINISHES_A_SLED_BARE_HANDED);
+    }
+    app.world.run_system_once(advance_crafting);
+
+    let crafted = publish(&mut app, band);
+    let crafted_rows = rows_for(&crafted, SLED_ITEM);
+    assert_eq!(
+        crafted_rows.len(),
+        2,
+        "the bench delivered a SECOND batch — *the next ten are their own batch* — so there are two \
+         rows to compare"
+    );
+    let grades: Vec<&str> = crafted_rows.iter().map(|row| row.grade.as_str()).collect();
+    assert_eq!(
+        grades,
+        vec![anchor.as_str(), anchor.as_str()],
+        "the spawned unit and the bare-handed craft beside it are the same grade, which is what \
+         makes the stamp a statement of fact rather than a display default"
+    );
+}
+
+/// **A tool that runs dry mid-craft DOES stop a drawn job**, and it is the one refusal that has to
+/// survive the rule above: `craft_speed` is `0`, so progress genuinely cannot accrue, and a dead
+/// bench reading as healthy is the failure that costs the player turns.
+#[test]
+fn a_drawn_job_whose_tool_ran_dry_still_publishes_its_refusal() {
+    let (mut app, band) = world();
+    hide_cannot_be_worked_bare_handed(&mut app);
+    app.world
+        .get_mut::<BandEquipment>(band)
+        .expect("a spawned band carries an equipment ledger")
+        .stock(TANNING_FRAME_ITEM, 1, FLINT_TIER, None);
+    deposit(
+        &mut app,
+        band,
+        HIDE,
+        PLENTY,
+        &[(TOUGHNESS, 0.9), (SUPPLENESS, 0.2)],
+    );
+    deposit(
+        &mut app,
+        band,
+        "fibre",
+        PLENTY,
+        &[("fineness", 0.5), ("strength", 0.5)],
+    );
+    {
+        let mut bench = app
+            .world
+            .get_mut::<BandBench>(band)
+            .expect("a spawned band carries a bench");
+        bench.set_job(SLED_RECIPE, BENCH_CREW);
+    }
+    app.world.run_system_once(advance_crafting);
+
+    // LIVENESS: with the frame alive the same drawn job publishes nothing, so the assertion below
+    // is about the tool rather than about a bench that says something whatever happens.
+    let working = publish(&mut app, band);
+    assert_eq!(
+        working.bench.5, "",
+        "a drawn job on a live tool is not blocked"
+    );
+
+    wear_out(&mut app, band, TANNING_FRAME_ITEM);
+    let stalled = publish(&mut app, band);
+    assert!(
+        app.world
+            .get::<BandBench>(band)
+            .expect("a spawned band carries a bench")
+            .drawn
+            .is_some(),
+        "the pile is still cut — this is a running job, not a fresh one"
+    );
+    assert_eq!(
+        stalled.bench.5, "No tanning frame",
+        "a zero craft rate is the real *a drawn job is stopped* case, and it names the tool to build"
     );
 }
 
@@ -1222,12 +1503,13 @@ fn an_offer_names_the_item_it_makes_so_the_ledger_can_join_the_two_halves() {
     let sled = offer(&published, SLED_RECIPE);
     assert_eq!(sled.output_item_id, SLED_ITEM);
     assert_eq!(sled.display_name, "Sled");
+    let anchor = anchor_grade(&app, SLED_ITEM);
     assert!(
         rows_for(&published, &sled.output_item_id)
             .iter()
-            .any(|row| row.tier_id == "flint" && row.grade.is_empty()),
-        "the item the offer names has ledger rows carrying the tier the material bought — and no \
-         GRADE, because a start-stocked unit was never on anyone's bench"
+            .any(|row| row.tier_id == FLINT_TIER && row.grade == anchor),
+        "the item the offer names has ledger rows carrying the tier the material bought and the \
+         grade a bare-handed craft of it comes out at"
     );
     // LIVENESS: not every offer names an item — but on the shipped book every one does, and each
     // names a DIFFERENT one, so the join key is a key.

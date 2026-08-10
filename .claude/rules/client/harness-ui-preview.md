@@ -540,8 +540,14 @@ machine contract. The rule is in `event-dock.md` → "…but a detail the sim wr
 `SourceForecast`/`HudEventVocab`, the `_assert_horizon_floor_is_the_whole_trip` rule: an expectation
 built from the code under test can only agree with itself.
 
-**A clean run is 284 frames / 700 `PASS`, exit 0** — three frames and twelve `PASS`es on the 281 / 688
-this arc started from: the drawer pair's three, the dock frame's three, and the two-band compose pair
+**A clean run is 295 frames / 791 `PASS`, exit 0.** **Eleven** of those frames are the Materials &
+Crafting chapter's: the ledger's own frame, its reserved-edge / event-bar / band-dock / co-edge /
+collapsed variants, the two-tier and folded group heads, and the blocked bench. **The figure is
+MEASURED, never summed** — the count also moved with the band-fission merge, and two arcs' deltas
+added by hand is how a tally stops matching its harness.
+
+It was 284 / 700 before that chapter, and 281 / 688 before the band-compose arc's three frames and
+twelve `PASS`es: the drawer pair's three, the dock frame's three, and the two-band compose pair
 below.
 
 ### The compose sheet composes for the PANEL band, not the first one

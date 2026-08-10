@@ -257,10 +257,25 @@ fn material_batches(store: &LocalStore, materials: &MaterialsConfig) -> Vec<Mate
         .collect()
 }
 
+/// **A DRAWN job's shortfalls block nothing** — the pile is already withdrawn and in hand, so what
+/// the store is short of cannot stop the item in flight; it speaks to the *next* draw, which is the
+/// ledger's own offer row for that recipe. It is the rule [`bench_state`]'s `output_grade` follows
+/// one field down: **this row is about the item being made**.
+///
+/// The shortfall does not move to the bench in a softer form — it leaves the bench entirely, because
+/// a fact published in two places is one that can disagree with itself.
+/// [`BenchState::shortfalls`] keeps being populated either way: it is honest data about the next
+/// draw, and the client does not render it as blocking.
+const NOTHING_SHORT_STOPS_A_DRAWN_PILE: &[MaterialShortfallState] = &[];
+
 /// **What is on the bench, and why it is not moving.**
 ///
 /// An idle bench publishes an all-default row rather than nothing, because *"idle"* and *"blocked"*
 /// are different states and a client must be able to tell them apart without a second field.
+///
+/// **Once the pile is drawn only two things can stop the job**: nobody at the bench, and a zero
+/// craft rate (the bounding tool wore out mid-craft on a material that cannot be worked bare-handed
+/// — the one genuine *"a running job is stopped"* case). See [`NOTHING_SHORT_STOPS_A_DRAWN_PILE`].
 fn bench_state(
     bench: Option<&BandBench>,
     store: &LocalStore,
@@ -292,7 +307,14 @@ fn bench_state(
     // **The bench's blocked reason is the offer's refusal plus the crew's.** A bench with a full
     // pile and nobody on it is stopped too, and that is not a craft-offer question — the offer
     // answers *"could this be made"*, not *"is anyone making it"*.
-    let mut reasons = refusal_reasons(plan, &tiers, &shortfalls, inputs);
+    //
+    // **Except a shortage, once the pile is DRAWN** — see [`NOTHING_SHORT_STOPS_A_DRAWN_PILE`].
+    let blocking = if bench.drawn.is_some() {
+        NOTHING_SHORT_STOPS_A_DRAWN_PILE
+    } else {
+        shortfalls.as_slice()
+    };
+    let mut reasons = refusal_reasons(plan, &tiers, blocking, inputs);
     if bench.workers == 0 {
         reasons.push("No one at the bench".to_string());
     }

@@ -25,7 +25,8 @@ use core_sim::{
     available_workers, build_headless_app, run_turn, BandEquipment, CommandEventKind,
     CommandEventLog, CreaturesConfig, EffectTier, EquipmentConfig, EquipmentStat,
     FaunaConfigHandle, ForageRegistry, Herd, HerdRegistry, LaborAllocation, LaborAssignment,
-    LaborConfig, LaborTarget, PopulationCohort, SimulationConfig, SizeClass, SnapshotHistory, Tile,
+    LaborConfig, LaborTarget, MaterialsConfig, PopulationCohort, RecipesConfig, SimulationConfig,
+    SizeClass, SnapshotHistory, Tile,
 };
 use sim_schema::state::PopulationCohortState;
 
@@ -317,9 +318,17 @@ fn a_fresh_band_is_kitted_and_publishes_all_three_equipped_tiers() {
     let (mut app, band, _, _) = booted_band();
     // The component is really there — `spawn_profile_population` must insert it, or every band's
     // wear would be silently discarded and the durability model would be inert.
+    // **`start_stocked_owned`, not `start_stocked`** — a spawn stamps each batch with the grade a
+    // bare-handed craft of that item comes out at, so the ledger names a quality rather than leaving
+    // a blank the panel cannot tell from a missing chip. Counts, tiers and wear are the shipped
+    // opening's, unchanged; only the label is new.
     assert_eq!(
         app.world.get::<BandEquipment>(band).cloned(),
-        Some(BandEquipment::start_stocked(&EquipmentConfig::builtin())),
+        Some(BandEquipment::start_stocked_owned(
+            &EquipmentConfig::builtin(),
+            &RecipesConfig::builtin(),
+            &MaterialsConfig::builtin(),
+        )),
         "a spawned band starts with an UNWORN kit"
     );
 

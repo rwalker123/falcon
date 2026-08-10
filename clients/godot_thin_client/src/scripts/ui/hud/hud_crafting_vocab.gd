@@ -201,6 +201,12 @@ const BENCH_SUB_SEPARATOR := " · "
 const BENCH_CREW_CAPTION := "Crafters"
 const BENCH_CREW_DECREMENT := "−"
 const BENCH_CREW_INCREMENT := "+"
+## **THE REFUSAL IS A LINE OF ITS OWN, BENEATH THE PROGRESS LINE** — how far along the job is and why
+## it is stopped are two facts, and a stopped bench raises both at once. How the blocked line is found
+## by IDENTITY, since its text is a sim string the client cannot predict: an assertion about the
+## refusal that matched on wording would be matching on the sim's spelling, and one that scanned for
+## the danger ink would also catch every refused row in the ledger below.
+const BENCH_BLOCKED_META := "crafting_bench_blocked"
 const BENCH_TEACH_FORMAT := "Teaching %s — every one finished teaches it."
 ## Crafting is the FOURTH TEACHER, but a bench with no lesson to credit says nothing rather than
 ## saying "teaches nothing".
@@ -352,6 +358,10 @@ const BATCH_AMOUNT_FONT_SIZE := 14
 const CHIP_FONT_SIZE := 10
 const BENCH_TITLE_FONT_SIZE := 15
 const BENCH_SUB_FONT_SIZE := 12
+## The refusal reads at the progress line's own size rather than the teach line's: it sits directly
+## under the progress line and the two are the same weight of fact, so a smaller one would read as a
+## footnote to the job rather than as the reason it is not moving.
+const BENCH_BLOCKED_FONT_SIZE := 12
 const BENCH_TEACH_FONT_SIZE := 11
 const CREW_COUNT_FONT_SIZE := 18
 const CREW_CAPTION_FONT_SIZE := 10

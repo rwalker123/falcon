@@ -73,6 +73,11 @@ pub fn spawn_initial_world(
     // panic worldgen outright. Absent reads as the builtin table — the same table
     // `EquipmentConfigHandle::default()` installs.
     equipment: Option<Res<crate::equipment_config::EquipmentConfigHandle>>,
+    // **The other two halves of the start kit** — `Option` for the same reason `equipment` is: they
+    // only decide the *grade* a spawned band's gear is stamped with, and a hand-rolled test `World`
+    // that installs neither must not panic worldgen.
+    recipes: Option<Res<crate::recipes_config::RecipesConfigHandle>>,
+    materials: Option<Res<crate::materials_config::MaterialsConfigHandle>>,
     tile_registry: Option<Res<TileRegistry>>,
 ) {
     // Guard FIRST: the starting inventory, knowledge and culture seeding below all run ahead of any
@@ -814,6 +819,24 @@ pub fn spawn_initial_world(
     // every hand-rolled test `World` in the crate to remember to insert one first — 33 of them —
     // and each of those is a place to forget, which is the omission failure this whole arc is about.
     let mut band_ids = BandIdAllocator::default();
+    // Resolved once for both arms: which arm spawns the band does not change what it is stocked with.
+    let start_kit_equipment = equipment
+        .as_ref()
+        .map(|handle| handle.get())
+        .unwrap_or_else(crate::equipment_config::EquipmentConfig::builtin);
+    let start_kit_recipes = recipes
+        .as_ref()
+        .map(|handle| handle.get())
+        .unwrap_or_else(crate::recipes_config::RecipesConfig::builtin);
+    let start_kit_materials = materials
+        .as_ref()
+        .map(|handle| handle.get())
+        .unwrap_or_else(crate::materials_config::MaterialsConfig::builtin);
+    let start_kit = StartKit {
+        equipment: &start_kit_equipment,
+        recipes: &start_kit_recipes,
+        materials: &start_kit_materials,
+    };
     if config.start_profile_overrides.starting_units.is_empty() {
         spawn_default_population_clusters(
             &mut commands,
@@ -828,10 +851,7 @@ pub fn spawn_initial_world(
             config.population_cluster_stride,
             &mut cohort_index,
             &knowledge_fragments,
-            &equipment
-                .as_ref()
-                .map(|handle| handle.get())
-                .unwrap_or_else(crate::equipment_config::EquipmentConfig::builtin),
+            &start_kit,
         );
     } else {
         spawn_profile_population(
@@ -846,10 +866,7 @@ pub fn spawn_initial_world(
             &config.start_profile_overrides,
             &mut cohort_index,
             &knowledge_fragments,
-            &equipment
-                .as_ref()
-                .map(|handle| handle.get())
-                .unwrap_or_else(crate::equipment_config::EquipmentConfig::builtin),
+            &start_kit,
         );
     }
 
@@ -2864,6 +2881,16 @@ fn module_distance_bonus(distance: u32, is_primary: bool) -> i32 {
     }
 }
 
+/// **The three tables a spawn's start kit is resolved from** — *what* the band owns, and the *grade*
+/// its gear is stamped with. Bundled because they travel together down every spawn helper and are
+/// read at exactly one place ([`BandEquipment::start_stocked_owned`]); passing three refs through
+/// four signatures would say the same thing four times.
+struct StartKit<'a> {
+    equipment: &'a crate::equipment_config::EquipmentConfig,
+    recipes: &'a crate::recipes_config::RecipesConfig,
+    materials: &'a crate::materials_config::MaterialsConfig,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn spawn_default_population_clusters(
     commands: &mut Commands,
@@ -2878,7 +2905,7 @@ fn spawn_default_population_clusters(
     stride_tiles: u32,
     cohort_index: &mut usize,
     knowledge: &[KnowledgeFragment],
-    equipment: &crate::equipment_config::EquipmentConfig,
+    start_kit: &StartKit<'_>,
 ) {
     let stride = max(1, stride_tiles) as i32;
     let radius: i32 = (stride * 3).max(3);
@@ -2904,7 +2931,7 @@ fn spawn_default_population_clusters(
                     cohort_index,
                     None,
                     knowledge,
-                    equipment,
+                    start_kit,
                 );
             }
         }
@@ -2924,7 +2951,7 @@ fn spawn_profile_population(
     overrides: &StartProfileOverrides,
     cohort_index: &mut usize,
     knowledge: &[KnowledgeFragment],
-    equipment: &crate::equipment_config::EquipmentConfig,
+    start_kit: &StartKit<'_>,
 ) {
     let mut spawned_total = 0u32;
     for spec in &overrides.starting_units {
@@ -2944,7 +2971,7 @@ fn spawn_profile_population(
                     cohort_index,
                     Some(marker),
                     knowledge,
-                    equipment,
+                    start_kit,
                 );
                 spawned_total += 1;
             }
@@ -2964,7 +2991,7 @@ fn spawn_profile_population(
             1,
             cohort_index,
             knowledge,
-            equipment,
+            start_kit,
         );
     } else {
         info!(
@@ -2985,7 +3012,7 @@ fn spawn_population_entity(
     cohort_index: &mut usize,
     marker: Option<StartingUnit>,
     knowledge: &[KnowledgeFragment],
-    equipment: &crate::equipment_config::EquipmentConfig,
+    start_kit: &StartKit<'_>,
 ) {
     let generation = registry.assign_for_index(*cohort_index);
     *cohort_index = cohort_index.saturating_add(1);
@@ -3024,7 +3051,11 @@ fn spawn_population_entity(
     // count slice, so a spawn that inserted `Default` would send the band out bare-handed — this is
     // the flip's load-bearing call site (`.claude/rules/core_sim/equipment.md`). One unit is one
     // item's `starting_durability`, which is exactly the life the shipped opening has always had.
-    entity.insert(BandEquipment::start_stocked(equipment));
+    entity.insert(BandEquipment::start_stocked_owned(
+        start_kit.equipment,
+        start_kit.recipes,
+        start_kit.materials,
+    ));
     // **And an EMPTY BENCH.** `Default` is *no job*, so a fresh band crafts nothing until the
     // player puts a recipe on it — there is no opening move where everyone builds tools first
     // (`docs/plan_crafting_and_materials.md` §5). Inserted here rather than on first use so the

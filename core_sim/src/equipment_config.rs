@@ -558,8 +558,11 @@ pub struct LiveItem<'a> {
     pub item: &'a ItemDefinition,
     /// The tier the serving batch was made at.
     pub tier: &'a EquipmentTier,
-    /// The absolutes the serving batch's craft grade declares, if it was crafted at all. `None` for
-    /// a start-stocked unit: a shipped kit has a tier but was never on anyone's bench.
+    /// The absolutes the serving batch's craft grade declares. **A start-stocked batch carries the
+    /// anchor grade's NAME with an empty payload**
+    /// ([`crate::components::BandEquipment::start_stocked_owned`]), which resolves here exactly as
+    /// `None` does — its stats come from the tier, and that is what keeps the shipped opening
+    /// unchanged by the stamp.
     pub grade: Option<&'a [EquipmentEffect]>,
 }
 
