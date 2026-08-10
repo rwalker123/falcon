@@ -47,6 +47,20 @@ const BENCH_TEACHES_KEY := "teaches"
 const BENCH_BLOCKED_REASON_KEY := "blocked_reason"
 const BENCH_ITEMS_COMPLETED_KEY := "items_completed"
 const BENCH_OUTPUT_GRADE_KEY := "output_grade"
+## **WHAT ONE TURN ADDS, RESOLVED SIM-SIDE** — `workers × progress_per_worker_turn × craft_speed`,
+## where `craft_speed` is the equipped bench tool's rate or the material's bare-handed one. **Never
+## re-derive it**: that join is the same one `kitTiers` exists to keep sim-side, and a client
+## multiplying crew by work would read a bare-handed organic's 0.5 as 1.0 and promise a finish in
+## half the turns it takes. `0` is a STATE — no crew, no recipe, or a craft speed of zero — and the
+## refusal beside it says which.
+const BENCH_RATE_PER_TURN_KEY := "rate_per_turn"
+## **THE PILE ALREADY CUT, so a clear can name what it destroys.** The WITHDRAWN amounts, not the
+## recipe's inputs and not a shortfall's `required` — a bench tool's material efficiency sits between
+## the book and the withdrawal, and naming what will really be lost is the whole point. Empty on an
+## undrawn bench.
+const BENCH_DRAWN_INPUTS_KEY := "drawn_inputs"
+const DRAWN_INPUT_MATERIAL_ID_KEY := "material_id"
+const DRAWN_INPUT_AMOUNT_KEY := "amount"
 
 ## `PopulationCohortState.craftOffers` — ONE ROW PER RECIPE, ALWAYS. `reason` + `severity` are the
 ## contract rather than `available`: *"Not needed yet"* is a shrug and *"Short 4.9 bone"* is a
@@ -193,14 +207,55 @@ const BENCH_IDLE_TITLE := "Nothing on the bench"
 const BENCH_IDLE_SUB := "Press Make on a row below to put it up."
 ## What the bench is making. The craft's name, then the thing.
 const BENCH_TITLE_FORMAT := "%s %s"
-## Its progress, in the units the sim keeps it in: worker-turns accrued against the pass's cost.
-const BENCH_PROGRESS_FORMAT := "%.1f of %.0f worker-turns"
+## Its progress, in the units the sim keeps it in: the recipe's own `work`, accrued against the
+## pass's cost. **THE UNIT IS `work`, NOT `worker-turns`** — a worker-turn is not what a worker does
+## in a turn (bare-handed `craft_speed` is 0.5, so two crafters deliver 1.0), and the old name
+## invited a division by the crew that is wrong by exactly the tool multiplier. What a turn really
+## adds is published, and says so on the line beside this one.
+const BENCH_PROGRESS_FORMAT := "%.1f of %.0f work"
+## What a turn adds, rendered VERBATIM from `rate_per_turn` — never recomputed from the crew.
+const BENCH_RATE_FORMAT := "+%.1f/turn"
+## **THE FINISH ESTIMATE, `ceil((work − progress) / rate_per_turn)`** — exact arithmetic over three
+## published numbers, which is the boundary the sim's forecast rule draws: where a closed form
+## exists it ships the terms and the client evaluates them. *"done in 1 turn"* reads poorly, so one
+## turn is spelled as the next one.
+const BENCH_ESTIMATE_FORMAT := "done in %d turns"
+const BENCH_ESTIMATE_NEXT_TURN := "done next turn"
+## A bench about to finish still owes a turn to do it in, so the estimate floors at one rather than
+## claiming a job is already done.
+const BENCH_ESTIMATE_MIN_TURNS := 1
 const BENCH_ITEMS_COMPLETED_FORMAT := "%d finished"
 const BENCH_GRADE_FORMAT := "this pile → %s"
 const BENCH_SUB_SEPARATOR := " · "
 const BENCH_CREW_CAPTION := "Crafters"
 const BENCH_CREW_DECREMENT := "−"
 const BENCH_CREW_INCREMENT := "+"
+
+## **TAKING THE JOB OFF THE BENCH — `clear_bench <faction> <band>`.** Offered only on a bench that
+## HAS a job: an idle bench has nothing to clear, so the control is absent rather than dead.
+##
+## **IT WEARS THE `armed` TREATMENT, WHICH IS WHAT KEEPS IT APART FROM THE HEADER'S ✕.** The card
+## header carries the same glyph for "close this panel"; this one destroys committed materials. They
+## are told apart by three things at once — this one sits INSIDE the bench well's bordered box, it is
+## inset from the card's right edge by the crew stepper, and it is drawn in the destructive variant
+## the pause menu's Abandon / Quit already use rather than the header's quiet ghost.
+const CLEAR_BENCH_GLYPH := "✕"
+## **THE TOOLTIP NAMES WHAT WILL BE DESTROYED, off `drawn_inputs`.** Composed from the WITHDRAWAL, so
+## it states what the store really loses; a tooltip built from the recipe's inputs would name a
+## different number the moment a bench tool's material efficiency applies. There is no confirmation
+## dialog — the cost is stated in text, which is this panel's idiom for a consequence.
+const CLEAR_BENCH_TOOLTIP_FORMAT := "Clear the bench — %s already cut are spent"
+## What it says when nothing has been withdrawn yet: the bench can still be cleared, and clearing it
+## costs nothing.
+const CLEAR_BENCH_TOOLTIP_NOTHING := "Clear the bench — nothing has been cut yet"
+## One drawn material, and the separator between two of them — the cost cell's own clause shape, so
+## the pile reads the way a rebuild cost does.
+const CLEAR_BENCH_CLAUSE_FORMAT := "%s %s"
+const CLEAR_BENCH_SEPARATOR := " · "
+## How it is found by IDENTITY — and here that is not a convenience but the only way: the header's
+## close button wears the SAME glyph, so a search by face finds two buttons and cannot say which is
+## which.
+const CLEAR_BENCH_META := "crafting_clear_bench"
 ## **THE REFUSAL IS A LINE OF ITS OWN, BENEATH THE PROGRESS LINE** — how far along the job is and why
 ## it is stopped are two facts, and a stopped bench raises both at once. How the blocked line is found
 ## by IDENTITY, since its text is a sim string the client cannot predict: an assertion about the

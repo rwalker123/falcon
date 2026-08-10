@@ -3,12 +3,13 @@ extends RefCounted
 
 ## The MATERIALS & CRAFTING cluster (`docs/plan_crafting_and_materials.md` §7) — the controller half
 ## of `CraftingPanel`: it owns the panel node, holds the per-world crafting catalogues, resolves which
-## band the panel is showing, and turns the panel's five signals into the two commands the bench takes.
+## band the panel is showing, and turns the panel's six signals into the three commands the bench
+## takes.
 ##
 ## Built on the `TurnOrbController` / `DisclosureController` idiom: `HudLayer` holds one as
 ## `_crafting`, hands it the shared `HudBandLaborState` BY REFERENCE and a HOST `Node` (a `RefCounted`
 ## cannot `add_child`), keeps thin delegators for the entry points reached BY NAME, and RELAYS this
-## controller's two signals onto its own so `Main` can format the commands.
+## controller's three signals onto its own so `Main` can format the commands.
 ##
 ## **THE CATALOGUES LIVE HERE, NOT ON A STATE MODEL.** `hud-modules.md`'s test is whether two or more
 ## clusters read a field; exactly one reads these, so they are this controller's own state — the same
@@ -28,6 +29,9 @@ signal set_bench_requested(payload: Dictionary)
 ## Re-crew the running bench, leaving the job and its progress alone — `bench_crew <faction> <band>
 ## workers <n>`.
 signal bench_crew_requested(payload: Dictionary)
+## Take the job off the bench — `clear_bench <faction> <band>`. The crew returns to the idle pool and
+## the pile already drawn is spent, which is what the button's tooltip names before it is pressed.
+signal clear_bench_requested(payload: Dictionary)
 
 # --- Collaborators handed in by HudLayer (the SAME instances it holds) ---
 var _band_labor: HudBandLaborState = null
@@ -169,6 +173,7 @@ func _ensure_panel() -> void:
 	_panel.cycle_requested.connect(_on_cycle_requested)
 	_panel.make_requested.connect(_on_make_requested)
 	_panel.crew_changed.connect(_on_crew_changed)
+	_panel.clear_bench_requested.connect(_on_clear_bench_requested)
 
 func _on_band_selected(entity: int) -> void:
 	_open_entity = entity
@@ -205,6 +210,18 @@ func _on_crew_changed(workers: int) -> void:
 		"faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
 		"band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
 		"workers": maxi(workers, 0),
+	})
+
+## **THE VERB TAKES NO SUBJECT BEYOND THE BAND** — one job at a time, so `clear_bench` names the band
+## and nothing else. It goes out through the same seam the other two do; this launcher gets no branch
+## of its own.
+func _on_clear_bench_requested() -> void:
+	var band := _open_band()
+	if band.is_empty():
+		return
+	clear_bench_requested.emit({
+		"faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+		"band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
 	})
 
 # ---- lookups ----------------------------------------------------------------

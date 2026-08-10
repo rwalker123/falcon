@@ -73,11 +73,36 @@ const BENCH_CREW := 2
 ## in which "idle" and "how many could be at the bench" produce a visibly different stepper.
 const BENCH_BOUND_WORKING_AGE := 3
 
+## **THE RUNNING BENCH'S OWN THREE NUMBERS.** Named because every claim about the finish estimate is
+## arithmetic ABOUT them: 3.0 of the 6 `work` a pass costs, and a rate of 1.0 a turn — which is the
+## playtest's own shape, two crafters delivering 1.0 because bare-handed `craft_speed` is 0.5. **The
+## fixture is chosen so a re-derivation fails visibly**: `remaining / rate` is 3 turns while
+## `remaining / crew` is 2, so a panel that guessed the rate off the head count renders a different
+## sentence rather than the same one.
+const BENCH_WORK := 6.0
+const BENCH_PROGRESS := 3.0
+const BENCH_RATE := 1.0
+
+## What the bench has already withdrawn for the pass in flight — the amounts the STORE lost, which is
+## what a clear destroys and what its tooltip has to name. Deliberately unlike the recipe's own input
+## row, since the two differ the moment a bench tool's material efficiency applies.
+const BENCH_DRAWN_FIBRE := 5.0
+const BENCH_DRAWN_HIDE := 1.0
+
 ## **THE PROGRESS LINE, SPELLED OUT RATHER THAN RECOMPOSED** through the vocab formats the panel
 ## builds it with — an expectation borrowed from the code under test can only agree with itself. It
-## is the running fixture's own reading: 3.0 worker-turns of the 5 a pass costs, one basket already
-## delivered, and the grade the pile in flight fixed.
-const BENCH_PROGRESS_LINE := "3.0 of 5 worker-turns · 1 finished · this pile → good"
+## is the running fixture's own reading: 3.0 of the 6 work a pass costs, what a turn adds and the
+## turns that implies, one basket already delivered, and the grade the pile in flight fixed.
+const BENCH_PROGRESS_LINE := "3.0 of 6 work · +1.0/turn · done in 3 turns · 1 finished · this pile → good"
+
+## **THE SAME BENCH WITH THE ESTIMATE WITHHELD**, which is what a stopped bench reads: the progress
+## and what it has delivered, and nothing about turns. Spelled out for the same reason as the line
+## above, and it is what makes "shows neither" a claim about the WHOLE line rather than about two
+## needles that could each be missing for their own reason.
+const BENCH_STOPPED_PROGRESS_LINE := "3.0 of 6 work · 1 finished · this pile → good"
+
+## The tooltip the ✕ carries on a DRAWN bench — the withdrawal, named material by material.
+const BENCH_CLEAR_TOOLTIP := "Clear the bench — 5 fibre · 1 hide already cut are spent"
 
 ## **THE CHEAPEST GENUINE REFUSAL THERE IS**, and the sim's own wording for it
 ## (`core_sim/src/snapshot/crafting.rs`): the crew walked off. It is also the reason that SURVIVES the
@@ -85,6 +110,30 @@ const BENCH_PROGRESS_LINE := "3.0 of 5 worker-turns · 1 finished · this pile �
 ## would really publish stopped.
 const BLOCKED_BENCH_CREW := 0
 const BLOCKED_BENCH_REASON := "No one at the bench"
+## A bench with nobody on it accrues nothing, so the sim publishes a rate of ZERO beside that reason —
+## the "there is nothing to compute" half of the estimate's gate.
+const BLOCKED_BENCH_RATE := 0.0
+
+## **THE OTHER STOPPED BENCH, AND IT IS STOPPED FOR A COMPLETELY DIFFERENT REASON.** A bench short of
+## material publishes its REAL, non-zero rate: the crew is standing there and the tool is fine, it
+## simply has not drawn. That is what makes the pair discriminating — a panel gating the estimate on
+## the rate alone would quote *"done in 5 turns"* beside *"Short 0.6 fibre"*, promising progress that
+## is not happening. Its pile is undrawn too, which is the other tooltip this chapter has to see.
+const SHORT_BENCH_REASON := "Short 0.6 fibre"
+const SHORT_BENCH_CREW := 2
+const SHORT_BENCH_RATE := 1.0
+const SHORT_BENCH_PROGRESS := 1.0
+const SHORT_BENCH_PROGRESS_LINE := "1.0 of 6 work"
+
+## **THE TWO CASES THE ROUND NUMBERS ABOVE CANNOT SHOW**, asserted with no frame of their own: a
+## remainder that does not divide (`4.5 / 1.3` is 3.46, and only a CEILING answers 4 — a floor or a
+## round both say 3) and a bench inside one turn of done, which reads *"done next turn"* rather than
+## the *"done in 1 turns"* the plural format would have produced.
+const CEIL_BENCH_PROGRESS := 1.5
+const CEIL_BENCH_RATE := 1.3
+const CEIL_BENCH_PROGRESS_LINE := "1.5 of 6 work · +1.3/turn · done in 4 turns · 1 finished · this pile → good"
+const NEXT_TURN_BENCH_PROGRESS := 5.6
+const NEXT_TURN_BENCH_PROGRESS_LINE := "5.6 of 6 work · +1.0/turn · done next turn · 1 finished · this pile → good"
 
 ## The theme entry a Label's ink is read back out of. `get_theme_color` answers the override where one
 ## is set, which is how this HUD colours every label.
@@ -615,6 +664,9 @@ func _crafting_states() -> void:
 	await _rerender_state()
 	await _two_tier_states()
 	await _blocked_bench_state()
+	await _short_bench_state()
+	await _estimate_arithmetic_states()
+	await _clear_bench_command_state()
 	await _map_gesture_state()
 
 	# Hand everything back: the panel closed, the roster restored to the reference band.
@@ -753,6 +805,73 @@ func _blocked_bench_state() -> void:
 	_assert_a_blocked_bench_still_says_how_far_along_it_is()
 	await h._save("crafting_bench_blocked")
 
+# ---- state 15: THE BENCH THAT IS STOPPED FOR THE OTHER REASON ------------------------------------
+
+## **THE HALF OF THE PAIR THAT SEPARATES THE TWO GATES.** State 14's bench cannot accrue at all, so
+## `rate > 0` and `blockedReason == ""` would both have withheld the estimate there and the state
+## cannot say which of them did it. This bench's rate is FINE and its store is not, which is the shape
+## the gate exists for — and it is the chapter's only undrawn job, so the ✕'s no-pile wording is
+## asked here too.
+func _short_bench_state() -> void:
+	h._hud.update_band_alerts([_short_bench_band()])
+	h._hud.open_crafting_panel(_short_bench_band())
+	await h._settle()
+	_assert_a_bench_short_of_material_quotes_no_finish()
+	await h._save("crafting_bench_short")
+
+## **THE TWO ESTIMATE READINGS THE FRAMES ABOVE CANNOT STAGE**, and neither is worth a frame: a
+## remainder that only a ceiling rounds up, and the singular wording. Rendered through the real panel
+## and read off the real label, since the arithmetic and the wording are both the panel's.
+func _estimate_arithmetic_states() -> void:
+	h._hud.update_band_alerts([_ceil_bench_band()])
+	h._hud.open_crafting_panel(_ceil_bench_band())
+	await h._settle()
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	# `4.5 / 1.3` is 3.46: a floor or a round both answer 3, and only the ceiling answers 4.
+	h._assert_hud("crafting — a remainder that does not divide rounds UP (%s)"
+			% CEIL_BENCH_PROGRESS_LINE,
+		panel != null and _label_with_text(panel, CEIL_BENCH_PROGRESS_LINE) != null)
+
+	h._hud.update_band_alerts([_next_turn_bench_band()])
+	h._hud.open_crafting_panel(_next_turn_bench_band())
+	await h._settle()
+	panel = h._hud.crafting_panel().panel()
+	h._assert_hud("crafting — a bench inside one turn of done reads `done next turn` (%s)"
+			% NEXT_TURN_BENCH_PROGRESS_LINE,
+		panel != null and _label_with_text(panel, NEXT_TURN_BENCH_PROGRESS_LINE) != null)
+
+## **WHICH VERB THE ✕ ACTUALLY EMITS, asserted as a PAIR.** A mis-wired button that emitted
+## `set_bench` would satisfy a bare "something was emitted" — and would silently spend the pile on a
+## job the player never chose, which is the very thing this control exists to avoid. Driven through
+## the REAL relay (panel → controller → `HudLayer`), because the panel's own signal says nothing about
+## whether the seam carries it or what band it names.
+func _clear_bench_command_state() -> void:
+	h._hud.update_band_alerts([_crafting_band()])
+	h._hud.open_crafting_panel(_crafting_band())
+	await h._settle()
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	var button := _clear_button(panel) if panel != null else null
+	if button == null:
+		h._assert_hud("crafting — the bench carries a ✕ to press", false)
+		return
+	var cleared: Array = []
+	var benched: Array = []
+	var on_clear := func(payload: Dictionary) -> void: cleared.append(payload)
+	var on_bench := func(payload: Dictionary) -> void: benched.append(payload)
+	h._hud.clear_bench_requested.connect(on_clear)
+	h._hud.set_bench_requested.connect(on_bench)
+	button.pressed.emit()
+	await h._settle()
+	h._hud.clear_bench_requested.disconnect(on_clear)
+	h._hud.set_bench_requested.disconnect(on_bench)
+	var band := _crafting_band()
+	h._assert_hud("crafting — pressing the bench's ✕ asks to CLEAR the bench, naming the band (%s)"
+			% [cleared],
+		cleared.size() == 1
+			and int((cleared[0] as Dictionary).get("band_id", -1)) == int(band.get("band_id", -2)))
+	h._assert_hud("crafting — …and asks for no new job on it (%s)" % [benched],
+		benched.is_empty())
+
 # ---- assertions ---------------------------------------------------------------------------------
 
 ## **THE CLAIMS NO PICTURE CAN CARRY.** A ledger sorted the wrong way, a refusal re-derived into
@@ -812,12 +931,40 @@ func _assert_panel_renders() -> void:
 	var used_alpha := _row_alpha(panel, "Sled")
 	h._assert_hud("crafting — the untouched row is dimmed and the used one is not",
 		untouched_alpha >= 0.0 and untouched_alpha < 1.0 and is_equal_approx(used_alpha, 1.0))
-	# **THE UNBLOCKED HALF OF THE BENCH PAIR** (state 14 is the other): this band's bench is running,
-	# so the well states its progress and carries no refusal line under it at all — no empty label, no
-	# reserved gap. A one-sided claim on the blocked frame alone would pass on a panel that had simply
-	# grown a permanent third line.
+	# **THE UNBLOCKED HALF OF THE BENCH PAIR** (states 14 and 15 are the others): this band's bench is
+	# running, so the well states its progress and carries no refusal line under it at all — no empty
+	# label, no reserved gap. A one-sided claim on the blocked frame alone would pass on a panel that
+	# had simply grown a permanent third line.
+	#
+	# **AND THE LINE SAYS WHAT A TURN ADDS AND WHEN THAT FINISHES IT.** The unit is `work` because a
+	# worker-turn is not what a worker does in a turn, which is the arithmetic that produced the
+	# playtest error this state pins.
 	h._assert_hud("crafting — a running bench says how far along it is and nothing beneath it",
 		_label_with_text(panel, BENCH_PROGRESS_LINE) != null and _blocked_line(panel) == null)
+	# **THE ESTIMATE IS `ceil((work − progress) / rate)`, and the fixture is what makes the claim
+	# discriminating**: 3 remaining at 1.0 a turn is three turns, where a panel dividing by the CREW
+	# would say two. The expected number is computed from this chapter's own constants rather than
+	# through the panel's format, an expectation borrowed from the code under test agreeing only with
+	# itself.
+	var expected_turns := int(ceil((BENCH_WORK - BENCH_PROGRESS) / BENCH_RATE))
+	var sub := _label_with_text(panel, BENCH_PROGRESS_LINE)
+	h._assert_hud("crafting — the finish estimate is the remaining work over the PUBLISHED rate (%d turns)"
+			% expected_turns,
+		sub != null and sub.text.contains(HudCraftingVocab.BENCH_ESTIMATE_FORMAT % expected_turns))
+	# …and the rate itself is the wire's number rendered verbatim, never one composed from the crew.
+	h._assert_hud("crafting — the rate is the wire's own value (%s)"
+			% [HudCraftingVocab.BENCH_RATE_FORMAT % BENCH_RATE],
+		sub != null and sub.text.contains(HudCraftingVocab.BENCH_RATE_FORMAT % BENCH_RATE)
+			and not sub.text.contains(HudCraftingVocab.BENCH_RATE_FORMAT % float(BENCH_CREW)))
+	# **THE WAY OFF THE BENCH — present on a job, and its tooltip names what clearing it destroys.**
+	# The pile is read off the published withdrawal, so a tooltip composed from the recipe's inputs
+	# would name a different number the moment a bench tool's efficiency applies. Paired with the idle
+	# bench's own claim, which is where the button must be absent entirely.
+	var clear := _clear_button(panel)
+	h._assert_hud("crafting — a bench with a job carries a ✕ to clear it", clear != null)
+	h._assert_hud("crafting — …and its tooltip names the pile already cut (%s)"
+			% [clear.tooltip_text if clear != null else "no button at all"],
+		clear != null and clear.tooltip_text == BENCH_CLEAR_TOOLTIP)
 	# The reading state 4 measures its own against: nothing is docked here, so this is the tallest the
 	# card ever wants to be.
 	_unreserved_card_height = panel.size.y
@@ -838,10 +985,46 @@ func _assert_a_blocked_bench_still_says_how_far_along_it_is() -> void:
 		% [reason.text if reason != null else "no line at all"],
 		reason != null and reason.text == BLOCKED_BENCH_REASON
 			and reason.get_theme_color(FONT_COLOR_THEME_ITEM) == HudStyle.DANGER)
-	var progress := _label_with_text(panel, BENCH_PROGRESS_LINE)
+	var progress := _label_with_text(panel, BENCH_STOPPED_PROGRESS_LINE)
 	h._assert_hud("crafting — …AND still says how much of the job is banked (%s)"
-		% BENCH_PROGRESS_LINE,
+		% BENCH_STOPPED_PROGRESS_LINE,
 		progress != null and progress.get_theme_color(FONT_COLOR_THEME_ITEM) == HudStyle.INK_DIM)
+	# **…AND PROMISES NOTHING ABOUT WHEN IT WILL FINISH.** Asserted as the WHOLE line rather than as
+	# two absent needles: this bench has no crew, so its published rate is zero and there is nothing to
+	# compute — the other half of the gate is state 15's, whose rate is perfectly good.
+	h._assert_hud("crafting — …and a bench that cannot accrue quotes no rate and no finish (%s)"
+			% [progress.text if progress != null else "no line at all"],
+		progress != null and progress.text == BENCH_STOPPED_PROGRESS_LINE)
+
+## **THE GATE'S OTHER HALF, AND THE ONE THAT NEEDS SAYING.** This bench's crew and tool are fine — the
+## sim publishes a real rate for it — and it is stopped anyway, because the store cannot cover the next
+## draw. Quoting a finish here would promise progress that is not happening, so the refusal is what
+## withholds it, and the fixture's own non-zero rate is asserted so the claim cannot be satisfied by a
+## panel that merely gated on the rate.
+func _assert_a_bench_short_of_material_quotes_no_finish() -> void:
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting — the short-of-material panel is open", false)
+		return
+	h._assert_hud("crafting — the short bench's own rate is non-zero, so the refusal is what withholds the finish",
+		SHORT_BENCH_RATE > 0.0)
+	var progress := _label_with_text(panel, SHORT_BENCH_PROGRESS_LINE)
+	h._assert_hud("crafting — a bench short of material still says how far along it is (%s)"
+			% SHORT_BENCH_PROGRESS_LINE,
+		progress != null)
+	var reason := _blocked_line(panel)
+	h._assert_hud("crafting — …and states the shortfall verbatim (%s)"
+			% [reason.text if reason != null else "no line at all"],
+		reason != null and reason.text == SHORT_BENCH_REASON)
+	h._assert_hud("crafting — …while quoting neither a rate nor a finish (%s)"
+			% [progress.text if progress != null else "no line at all"],
+		progress != null and progress.text == SHORT_BENCH_PROGRESS_LINE)
+	# The undrawn half of the tooltip pair: nothing has been cut, so the ✕ says so rather than naming
+	# an empty list.
+	var clear := _clear_button(panel)
+	h._assert_hud("crafting — an undrawn bench's ✕ says nothing has been cut yet (%s)"
+			% [clear.tooltip_text if clear != null else "no button at all"],
+		clear != null and clear.tooltip_text == HudCraftingVocab.CLEAR_BENCH_TOOLTIP_NOTHING)
 
 ## **THE CARD IS BOUNDED BY THE ROOM, NOT BY THE WINDOW.** `LayoutRoot` is the node the reserved-edge
 ## registry insets, so it IS the room the map and the rest of the HUD are drawn in; a card that fits
@@ -937,6 +1120,11 @@ func _assert_idle_bench() -> void:
 		texts.has(HudCraftingVocab.BENCH_IDLE_TITLE))
 	h._assert_hud("crafting — an empty rail says so",
 		texts.has(HudCraftingVocab.RAIL_EMPTY))
+	# **THE OTHER HALF OF THE ✕'s PAIR.** There is nothing on this bench to clear, so the control is
+	# absent rather than present and dead — and asking it here is what stops the presence claim on
+	# state 1 passing on a panel that draws the button unconditionally.
+	h._assert_hud("crafting — an idle bench carries no ✕ to clear",
+		_clear_button(panel) == null)
 
 ## **IDLE AND BENCHABLE ARE TWO DIFFERENT NUMBERS, AND THE PANEL READS THE SECOND.** A worker at the
 ## bench is assigned labor, so `effective_idle` nets the crew out exactly as the sim's
@@ -982,6 +1170,19 @@ func _crew_button_disabled(node: Node, face: String) -> bool:
 		if not _crew_button_disabled(child, face):
 			return false
 	return true
+
+## The bench's ✕, found by the meta the panel stamps on it. **A search by face could not work here**:
+## the card header's close button wears the same glyph, so a face match finds two buttons and cannot
+## say which of them destroys the drawn pile. `null` when the well renders none, which is what the
+## idle bench's half of the pair asks for.
+func _clear_button(node: Node) -> Button:
+	if node is Button and node.has_meta(HudCraftingVocab.CLEAR_BENCH_META):
+		return node as Button
+	for child in node.get_children():
+		var found := _clear_button(child)
+		if found != null:
+			return found
+	return null
 
 ## The bench's refusal line, found by the meta the panel stamps on it rather than by its face — the
 ## reason is a string the SIM resolved and this chapter may not predict, and a search for the danger
@@ -1290,6 +1491,47 @@ func _blocked_bench_band() -> Dictionary:
 	var bench: Dictionary = _bench()
 	bench["workers"] = BLOCKED_BENCH_CREW
 	bench["blocked_reason"] = BLOCKED_BENCH_REASON
+	# Nobody on it accrues nothing, and the sim says so as a rate rather than leaving it to be
+	# inferred from the crew — the "nothing to compute" half of the estimate's gate.
+	bench["rate_per_turn"] = BLOCKED_BENCH_RATE
+	band["bench"] = bench
+	return band
+
+## **THE STOPPED BENCH WHOSE RATE IS FINE.** The crew is standing there and the tool is live, so the
+## sim publishes a real rate; what stops it is that the store cannot cover the next draw, which is a
+## `blockedReason` and nothing else. It is also the chapter's only UNDRAWN job, so the ✕'s no-pile
+## wording is asked of a bench that genuinely has nothing cut rather than of an idle one with no ✕ at
+## all.
+func _short_bench_band() -> Dictionary:
+	var band := _crafting_band()
+	var bench: Dictionary = _bench()
+	bench["workers"] = SHORT_BENCH_CREW
+	bench["progress"] = SHORT_BENCH_PROGRESS
+	bench["rate_per_turn"] = SHORT_BENCH_RATE
+	bench["blocked_reason"] = SHORT_BENCH_REASON
+	bench["shortfalls"] = [{"material_id": "fibre", "required": 4.0, "held": 3.4, "short": 0.6}]
+	bench["items_completed"] = 0
+	bench["drawn"] = false
+	bench["output_grade"] = ""
+	bench["drawn_inputs"] = []
+	band["bench"] = bench
+	return band
+
+## The same running bench at a progress the round numbers cannot reach — a remainder that does not
+## divide by the rate, so only a CEILING renders the fourth turn.
+func _ceil_bench_band() -> Dictionary:
+	var band := _crafting_band()
+	var bench: Dictionary = _bench()
+	bench["progress"] = CEIL_BENCH_PROGRESS
+	bench["rate_per_turn"] = CEIL_BENCH_RATE
+	band["bench"] = bench
+	return band
+
+## …and the same bench inside one turn of finishing, which is where the wording changes.
+func _next_turn_bench_band() -> Dictionary:
+	var band := _crafting_band()
+	var bench: Dictionary = _bench()
+	bench["progress"] = NEXT_TURN_BENCH_PROGRESS
 	band["bench"] = bench
 	return band
 
@@ -1311,18 +1553,30 @@ func _batch(material_id: String, amount: float, readings: Array) -> Dictionary:
 			"band_name": String(reading[2])})
 	return {"material_id": material_id, "amount": amount, "readings": rows, "variety_name": ""}
 
+## **THE RATE IS PUBLISHED, NOT DERIVED**, so the fixture states it as the sim would: two crafters at
+## the bare-handed 0.5 deliver 1.0 a turn, which is exactly the reading a client multiplying the crew
+## by anything of its own would get wrong. The withdrawal rides beside it, because `drawn: true` says
+## a pile exists and cannot say what is in it.
 func _bench() -> Dictionary:
 	return {
 		"recipe_id": "baskets", "display_name": "Baskets", "workers": BENCH_CREW,
-		"progress": 3.0, "work": 5.0, "teaches": "weaving", "blocked_reason": "",
+		"progress": BENCH_PROGRESS, "work": BENCH_WORK, "teaches": "weaving", "blocked_reason": "",
 		"shortfalls": [], "items_completed": 1, "drawn": true, "output_grade": "good",
+		"rate_per_turn": BENCH_RATE, "drawn_inputs": _drawn_inputs(),
 	}
+
+## The pile already cut, in the recipe's own input order.
+func _drawn_inputs() -> Array:
+	return [
+		{"material_id": "fibre", "amount": BENCH_DRAWN_FIBRE},
+		{"material_id": "hide", "amount": BENCH_DRAWN_HIDE},
+	]
 
 func _idle_bench() -> Dictionary:
 	return {
 		"recipe_id": "", "display_name": "", "workers": 0, "progress": 0.0, "work": 0.0,
 		"teaches": "", "blocked_reason": "", "shortfalls": [], "items_completed": 0,
-		"drawn": false, "output_grade": "",
+		"drawn": false, "output_grade": "", "rate_per_turn": 0.0, "drawn_inputs": [],
 	}
 
 ## **ONE ROW PER RECIPE, ALWAYS**, each carrying the reason and the severity the SIM resolved. Every

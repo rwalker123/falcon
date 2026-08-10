@@ -1447,9 +1447,20 @@
         "blocked_reason": "populations[0].bench.blocked_reason",
         "display_name": "populations[0].bench.display_name",
         "drawn": true,
+        "drawn_inputs": [
+          {
+            "amount": 43.32,
+            "material_id": "populations[0].bench.drawn_inputs[0].material_id"
+          },
+          {
+            "amount": 78.82,
+            "material_id": "populations[0].bench.drawn_inputs[1].material_id"
+          }
+        ],
         "items_completed": 180,
         "output_grade": "populations[0].bench.output_grade",
         "progress": 103.739998,
+        "rate_per_turn": 97.830002,
         "recipe_id": "populations[0].bench.recipe_id",
         "shortfalls": [
           {
@@ -1931,9 +1942,20 @@
         "blocked_reason": "populations[1].bench.blocked_reason",
         "display_name": "populations[1].bench.display_name",
         "drawn": true,
+        "drawn_inputs": [
+          {
+            "amount": 18.709999,
+            "material_id": "populations[1].bench.drawn_inputs[0].material_id"
+          },
+          {
+            "amount": 22.870001,
+            "material_id": "populations[1].bench.drawn_inputs[1].material_id"
+          }
+        ],
         "items_completed": 59,
         "output_grade": "populations[1].bench.output_grade",
         "progress": 89.18,
+        "rate_per_turn": 41.959999,
         "recipe_id": "populations[1].bench.recipe_id",
         "shortfalls": [
           {

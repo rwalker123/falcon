@@ -35,8 +35,10 @@ class_name CraftingPanel
 ## `×5 · excellent` would be a lie.
 ##
 ## **MAKE IS THE ASSIGNMENT.** Pressing Make emits `make_requested` (→ `set_bench`), the running row's
-## button reads *On the bench* and is spent, and the crew stepper emits `crew_changed` (→
-## `bench_crew`). One job at a time, so this panel never has to explain a queue — and that is also why
+## button reads *On the bench* and is spent, the crew stepper emits `crew_changed` (→ `bench_crew`),
+## and the well's ✕ emits `clear_bench_requested` (→ `clear_bench`) — the only way off a bench that is
+## not "make something else", which spends the drawn pile without saying so. One job at a time, so
+## this panel never has to explain a queue — and that is also why
 ## there is no Crafter role card on the Band panel: crafting always has a subject, so it is staffed at
 ## the bench like a worked source.
 ##
@@ -68,6 +70,9 @@ signal cycle_requested(delta: int)
 signal make_requested(recipe_id: String)
 ## The bench stepper moved — `bench_crew <faction> <band> workers <n>`.
 signal crew_changed(workers: int)
+## The bench's ✕ was pressed — `clear_bench <faction> <band>`. The job comes off, the crew returns to
+## the idle pool and the pile already drawn is spent, which is why the button's tooltip names it.
+signal clear_bench_requested
 
 # ---- the render payload's keys (this panel's contract with its controller) ----------------------
 const PAYLOAD_BAND := "band"
@@ -527,7 +532,7 @@ func _build_bench(payload: Dictionary) -> void:
 	# **HOW FAR ALONG AND WHY STOPPED ARE TWO FACTS, AND NEITHER MAY EAT THE OTHER.** The refusal is
 	# the OFFER vocabulary plus the crew's own, resolved sim-side and rendered VERBATIM — a bench with
 	# a full pile and nobody on it is stopped too. It gets its own line UNDER the progress line rather
-	# than replacing it: the banked worker-turns are what say whether clearing the block recovers a
+	# than replacing it: the banked work is what says whether clearing the block recovers a
 	# nearly-finished item or a barely-started one, which is the question a stopped bench raises. A
 	# bench that is running adds no label at all, so nothing about its card moves.
 	if blocked != "":
@@ -540,6 +545,11 @@ func _build_bench(payload: Dictionary) -> void:
 		reason.set_meta(HudCraftingVocab.BENCH_BLOCKED_META, true)
 		words.add_child(reason)
 	top.add_child(words)
+	# **NOTHING TO CLEAR ON AN IDLE BENCH**, so the control is absent rather than dead — and it is
+	# built BEFORE the stepper, which insets it from the card's right edge and keeps it away from the
+	# header's own ✕. See `_build_clear_button`.
+	if recipe_id != "":
+		top.add_child(_build_clear_button(bench))
 	top.add_child(_build_crew_stepper(bench, payload, recipe_id != ""))
 	inner.add_child(top)
 
@@ -561,12 +571,32 @@ func _build_bench(payload: Dictionary) -> void:
 	section.add_child(well)
 	_main.add_child(section)
 
-## The bench's second line, in the units the sim keeps the job in: worker-turns accrued against the
-## pass's cost, plus what it has already delivered and the grade the pile in flight fixed.
+## The bench's second line, in the units the sim keeps the job in: the recipe's own `work` accrued
+## against the pass's cost, then what a turn adds and when that finishes it, then what the job has
+## already delivered and the grade the pile in flight fixed.
+##
+## **THE UNIT IS `work`, AND THAT RENAME IS THE POINT OF THE OTHER TWO CLAUSES.** It read
+## `worker-turns`, and a player with two crafters divided 6 by 2, expected three turns and measured
+## six: a worker-turn is not what a worker does in a turn, because bare-handed `craft_speed` is 0.5.
+## So the rate is stated rather than left to be inferred — **VERBATIM from `rate_per_turn`, never
+## re-derived**, that product being the tool-or-bare-hand join the sim owns — and the turns it implies
+## are stated beside it.
+##
+## **BOTH NEW CLAUSES ARE GATED ON A RATE ABOVE ZERO *AND* AN EMPTY REFUSAL, WHICH ARE TWO DIFFERENT
+## QUESTIONS.** The rate is a property of the crew and the tool: a bench short of material publishes
+## its real, non-zero rate — the crew and the tool are fine, it simply has not drawn — while
+## `blocked_reason` is what says whether the bench is actually moving. Quoting *"done in 3 turns"*
+## beside *"Short 0.6 fibre"* would promise progress that is not happening. A bench with no crew or no
+## craft speed publishes `0` instead, and then there is nothing to compute either.
 func _bench_sub_line(bench: Dictionary) -> String:
-	var parts: Array[String] = [HudCraftingVocab.BENCH_PROGRESS_FORMAT % [
-		float(bench.get(HudCraftingVocab.BENCH_PROGRESS_KEY, 0.0)),
-		float(bench.get(HudCraftingVocab.BENCH_WORK_KEY, 0.0))]]
+	var work := float(bench.get(HudCraftingVocab.BENCH_WORK_KEY, 0.0))
+	var progress := float(bench.get(HudCraftingVocab.BENCH_PROGRESS_KEY, 0.0))
+	var parts: Array[String] = [HudCraftingVocab.BENCH_PROGRESS_FORMAT % [progress, work]]
+	var rate := float(bench.get(HudCraftingVocab.BENCH_RATE_PER_TURN_KEY, 0.0))
+	var blocked := String(bench.get(HudCraftingVocab.BENCH_BLOCKED_REASON_KEY, ""))
+	if rate > 0.0 and blocked == "":
+		parts.append(HudCraftingVocab.BENCH_RATE_FORMAT % rate)
+		parts.append(_bench_estimate_clause(work - progress, rate))
 	var completed := int(bench.get(HudCraftingVocab.BENCH_ITEMS_COMPLETED_KEY, 0))
 	if completed > 0:
 		parts.append(HudCraftingVocab.BENCH_ITEMS_COMPLETED_FORMAT % completed)
@@ -574,6 +604,61 @@ func _bench_sub_line(bench: Dictionary) -> String:
 	if grade != "":
 		parts.append(HudCraftingVocab.BENCH_GRADE_FORMAT % grade)
 	return HudCraftingVocab.BENCH_SUB_SEPARATOR.join(parts)
+
+## **`ceil(remaining / rate)`, FLOORED AT ONE TURN.** The arithmetic is the client's deliberately —
+## it is exact over three numbers the wire already carries, which is where the sim's forecast rule
+## puts the split, and a turns-remaining field beside the rate would be a second home for one fact. A
+## bench whose pass is already covered still needs a turn to finish it, so the floor states the next
+## turn rather than a completion that has not happened.
+func _bench_estimate_clause(remaining: float, rate: float) -> String:
+	var turns := maxi(int(ceilf(remaining / rate)), HudCraftingVocab.BENCH_ESTIMATE_MIN_TURNS)
+	if turns == HudCraftingVocab.BENCH_ESTIMATE_MIN_TURNS:
+		return HudCraftingVocab.BENCH_ESTIMATE_NEXT_TURN
+	return HudCraftingVocab.BENCH_ESTIMATE_FORMAT % turns
+
+## **THE WAY OFF THE BENCH THAT IS NOT "MAKE SOMETHING ELSE".** Until this existed the only exit was
+## pressing Make on another row, which silently spends the committed pile; `clear_bench` has been a
+## complete sim verb the whole time with nothing here to emit it.
+##
+## **THE TOOLTIP NAMES WHAT IT DESTROYS, off the published `drawn_inputs`** — the amounts the store
+## really lost, never the recipe's inputs, which differ from the withdrawal the moment a bench tool's
+## material efficiency applies. A bench that has drawn nothing says so instead of listing nothing.
+## There is no confirmation dialog: the cost is stated in text, the loss is small and recoverable, and
+## saying consequences rather than popping a modal is this panel's idiom throughout.
+##
+## **IT IS THE `armed` VARIANT AND IT SITS LEFT OF THE STEPPER, both to keep it apart from the card
+## header's ✕**, which wears the same glyph for a completely different act. Inside the well's own
+## bordered box, inset from the card's right edge by the stepper's width, and drawn in the
+## destructive treatment rather than the header's quiet ghost.
+func _build_clear_button(bench: Dictionary) -> Control:
+	var button := Button.new()
+	button.text = HudCraftingVocab.CLEAR_BENCH_GLYPH
+	button.tooltip_text = _clear_bench_tooltip(bench)
+	button.focus_mode = Control.FOCUS_NONE
+	button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	button.custom_minimum_size = Vector2(HudCraftingVocab.ICON_BUTTON_SIZE,
+		HudCraftingVocab.ICON_BUTTON_SIZE)
+	button.add_theme_font_size_override("font_size", HudCraftingVocab.CHIP_FONT_SIZE)
+	HudStyle.apply_button(button, "armed")
+	# Found by identity rather than by face — the header's close button is the same glyph.
+	button.set_meta(HudCraftingVocab.CLEAR_BENCH_META, true)
+	button.pressed.connect(func() -> void: clear_bench_requested.emit())
+	return button
+
+## The pile a clear would spend, in the cost cell's own clause shape. Empty `drawn_inputs` is an
+## undrawn bench, which is a statement rather than a missing list.
+func _clear_bench_tooltip(bench: Dictionary) -> String:
+	var clauses: Array[String] = []
+	for input_variant in bench.get(HudCraftingVocab.BENCH_DRAWN_INPUTS_KEY, []):
+		if not (input_variant is Dictionary):
+			continue
+		var input: Dictionary = input_variant
+		clauses.append(HudCraftingVocab.CLEAR_BENCH_CLAUSE_FORMAT % [
+			_amount_text(float(input.get(HudCraftingVocab.DRAWN_INPUT_AMOUNT_KEY, 0.0))),
+			String(input.get(HudCraftingVocab.DRAWN_INPUT_MATERIAL_ID_KEY, ""))])
+	if clauses.is_empty():
+		return HudCraftingVocab.CLEAR_BENCH_TOOLTIP_NOTHING
+	return HudCraftingVocab.CLEAR_BENCH_TOOLTIP_FORMAT % HudCraftingVocab.CLEAR_BENCH_SEPARATOR.join(clauses)
 
 ## The `− n +` crew stepper. **It spends the same pool `assign_labor` does** — a crew at the bench is
 ## not gathering — so `+` greys out at the ceiling rather than sending a command the sim will clamp.

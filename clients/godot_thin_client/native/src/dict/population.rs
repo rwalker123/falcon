@@ -743,6 +743,23 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "output_grade",
         cohort.bench().and_then(|b| b.outputGrade()).unwrap_or(""),
     );
+    // **WHAT ONE TURN ADDS, ALREADY THROUGH THE TOOL JOIN** — `workers × progress_per_worker_turn ×
+    // craft_speed`, where `craft_speed` is the equipped bench tool's rate or the material's
+    // bare-handed one. A client multiplying `workers` by anything of its own would miss that factor
+    // and promise a finish in half the turns it takes, which is why this rides resolved, exactly as
+    // `kit_tiers` does. `0` is a STATE — no crew, no recipe, or a craft speed of zero — and the
+    // `blocked_reason` beside it says which.
+    let _ = bench_dict.insert(
+        "rate_per_turn",
+        cohort.bench().map_or(0.0, |b| b.ratePerTurn()) as f64,
+    );
+    // **THE PILE ALREADY CUT, SO A CLEAR CAN NAME WHAT IT DESTROYS.** The WITHDRAWN amounts, not the
+    // recipe's stated inputs and not a shortfall's `required`: a bench tool's material efficiency
+    // sits between the book and the withdrawal. Empty on an undrawn bench.
+    let _ = bench_dict.insert(
+        "drawn_inputs",
+        &drawn_inputs_to_array(cohort.bench().and_then(|b| b.drawnInputs())),
+    );
     let _ = dict.insert("bench", &bench_dict);
 
     // **ONE ROW PER RECIPE, ALWAYS**, and `reason` + `severity` are the contract rather than
@@ -805,6 +822,25 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("equipment_batches", &equipment_batches);
 
     dict
+}
+
+/// **WHAT THE STORE ACTUALLY LOST FOR THE JOB IN FLIGHT** — one row per input material, in the
+/// recipe's own input order, empty when nothing has been cut yet. It is the WITHDRAWAL rather than
+/// the recipe's price, which is the whole point: a clear or a swap spends this pile, and the tool's
+/// material efficiency means the book's number would name the wrong loss.
+fn drawn_inputs_to_array(
+    inputs: Option<Vector<'_, ForwardsUOffset<fb::DrawnInput<'_>>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    if let Some(list) = inputs {
+        for input in list.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("material_id", input.materialId().unwrap_or(""));
+            let _ = row.insert("amount", input.amount() as f64);
+            array.push(&row.to_variant());
+        }
+    }
+    array
 }
 
 /// **WHAT A DRAW IS SHORT, AS A NUMBER** — the shared shape `BenchState` and `CraftOffer` both carry.

@@ -257,6 +257,8 @@ func _ready() -> void:
             hud.connect("set_bench_requested", Callable(self, "_on_hud_set_bench"))
         if hud.has_signal("bench_crew_requested") and not hud.is_connected("bench_crew_requested", Callable(self, "_on_hud_bench_crew")):
             hud.connect("bench_crew_requested", Callable(self, "_on_hud_bench_crew"))
+        if hud.has_signal("clear_bench_requested") and not hud.is_connected("clear_bench_requested", Callable(self, "_on_hud_clear_bench")):
+            hud.connect("clear_bench_requested", Callable(self, "_on_hud_clear_bench"))
         if hud.has_signal("answer_fork_requested") and not hud.is_connected("answer_fork_requested", Callable(self, "_on_hud_answer_fork")):
             hud.connect("answer_fork_requested", Callable(self, "_on_hud_answer_fork"))
         # **THE FORECAST QUERY'S TRANSPORT, injected rather than reached for.** The HUD composes the
@@ -1098,6 +1100,24 @@ static func format_set_bench(payload: Dictionary) -> Dictionary:
         "message": "Put %s on the bench." % recipe_id,
     }
 
+## **`clear_bench <faction_id> <band_id>`** — take the job off a band's bench. The crew returns to the
+## idle pool.
+##
+## **IT NAMES THE BAND AND NOTHING ELSE**, one job at a time meaning there is no job argument to
+## disambiguate. **The materials already drawn for the pass in flight are SPENT** — they were cut for
+## the thing the player has stopped making and a band's store has no representation for a half-worked
+## pile — which is why the button that emits this states the pile in its tooltip, off the published
+## `drawnInputs`, rather than being guarded by a dialog.
+static func format_clear_bench(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID:
+        return {}
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    return {
+        "line": "clear_bench %d %d" % [faction, band_id],
+        "message": "Cleared the bench.",
+    }
+
 ## **`bench_crew <faction_id> <band_id> workers <n>`** — re-crew the running bench, leaving the job and
 ## its progress alone. `workers` is a NAMED token and is mandatory; `0` is a legal, meaningful value
 ## (the recipe stays up with nobody on it) rather than a missing argument, so it is never omitted.
@@ -1208,6 +1228,11 @@ func _on_hud_set_bench(payload: Dictionary) -> void:
 ## Re-crew the running bench, leaving the job and its progress alone.
 func _on_hud_bench_crew(payload: Dictionary) -> void:
     _send_formatted_command(format_bench_crew(payload))
+
+## Take the job off the bench. The pile already drawn is spent, which the button said before it was
+## pressed.
+func _on_hud_clear_bench(payload: Dictionary) -> void:
+    _send_formatted_command(format_clear_bench(payload))
 
 ## Recall an in-flight expedition home (folds workers + provisions back on arrival).
 func _on_hud_recall_expedition(payload: Dictionary) -> void:
