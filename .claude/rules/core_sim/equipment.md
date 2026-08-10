@@ -422,12 +422,12 @@ the material bought. A pen's equipped rate is not a fourth number — it is the 
 through `EquipmentStat::shares_equipped_rate_with`.
 
 **The BASKET is on `plan_early_game_labor`'s ~15–20-turn kit-duration clock; the two HUNT kits
-overshoot it by ~3×.** Against the shipped ~16-worker band, gathering reaches 16 × 8 = 128 biomass a
-turn, so 2500/128 ≈ **19.5 turns of baskets** — on target. Hunting Red Deer the band *engages* 16
+overshoot it by ~3×.** Against the shipped ~17-worker band, gathering reaches 17 × 8 = 136 biomass a
+turn, so 2500/136 ≈ **18.5 turns of baskets** — on target. Hunting Red Deer the band *engages* 17
 animals a turn, but engaged is not killed: Red Deer ship `combat.wariness 0.65`, so the retreat leaves
-**~5.6** of them (`~84` biomass) and the kits last 250/5.6 ≈ **45 turns of spears**, 5000/84 ≈ **60
-turns of sled**. The ≈15.6 / ≈20.8 this section used to quote were computed at `wariness 0`, before
-slice 7 authored the roster's values.
+**~5.95** of them (`~89` biomass) and the kits last 250/5.95 ≈ **42 turns of spears**, 5000/89 ≈ **56
+turns of sled**. Both hunt figures are on the roster's authored wariness; computed at `wariness 0`
+they read ≈15 / ≈20 instead, which is the term the retreat adds.
 
 **The wear rates are NOT retuned for it.** Closing a 3× gap is a balance change against numbers the
 hunt arc is still moving; it rides with the hunt-effectiveness tuning on **issue #491**, and
@@ -1084,33 +1084,39 @@ different name than it deserializes, which no compiler and no check against the 
 ## Balance
 
 The shipped opening is **unchanged** — a start-kitted band hunts and gathers at exactly the numbers it
-always did. What is new is the state below each cliff. Measured on the shipped ~16-worker starting
-band, one turn:
+always did. What is new is the state below each cliff. Measured on the shipped ~17-worker starting
+band (a 30-person band at `initial_distribution`'s 59.3% working), one turn:
 
 | hunt (Red Deer, `engage_rate 1`, `body_mass 15`, `wariness 0.65`, fat herd) | sledded | sledless |
 |---|---|---|
 | per-worker haul rate | 40.0 | 12.0 |
-| animals engaged → animals that stay | 16 → ~5.6 | 16 → ~5.6 |
-| whole animals the pack can seat | 42 | 12 |
-| biomass hauled home | ~84 | ~84 |
-| food income | ~1.68 | ~1.68 |
+| animals engaged → animals that stay | 17 → ~5.95 | 17 → ~5.95 |
+| whole animals the pack can seat | 45 | 13 |
+| biomass hauled home | ~89 | ~89 |
+| food income (`hunt.provisions_per_biomass 0.02`) | ~1.79 | ~1.79 |
 
 **On THIS species at THIS party size the sled cliff does not bite, and the retreat is why.** The
-sledless pack seats 12 whole deer and the retreat leaves ~5.6, so both tiers haul the same take —
-where at `wariness 0` all 16 stayed and the sledless pack bound at 12 (the 240 / 180 split this table
-used to show). The cliff still bites wherever the stayers outnumber the sledless seat: a bigger party,
+sledless pack seats 13 whole deer and the retreat leaves ~5.95, so both tiers haul the same take —
+where at `wariness 0` all 17 would stay and the sledless pack would bind at 13, a 255 / 195 split.
+The cliff still bites wherever the stayers outnumber the sledless seat: a bigger party,
 a lighter body, or a species the roster made less wary. **Not compensated here** — same reason, same
 issue (**#491**).
 
 | gather (the starting band's own patch, floor `0.0`) | with baskets | bare-handed |
 |---|---|---|
 | per-worker gather rate | 8.0 | 1.6 |
-| biomass gathered | 128 | 25.6 |
-| food income | 8.49 | 1.70 |
+| biomass gathered | 136 | 27.2 |
+| food income (at the patch's ~0.066 provisions/biomass) | ~9.0 | ~1.8 |
+
+**The gather food income is the one figure here that is not config × workers.** A patch converts
+biomass to provisions at the weighted `provisions_per_biomass` of the species the map *realized* on
+it (the roster spans 0.04–0.08), so the conversion above is a property of the patch this was rolled
+on and moves with the map seed. Every other cell is the worker count times a number in
+`equipment.json` or `fauna_config.json`.
 
 **A known config skew, not a model problem:** a per-kill charge is species-blind, so a party on
-`Wild Fowl` (10 engaged per hunter → 160 engaged, `wariness 0.65` → ~56 kills a turn) burns the same
-hunting kit in **~4.5 turns** where the deer party gets ~45 — an order of magnitude, whatever the
+`Wild Fowl` (10 engaged per hunter → 170 engaged, `wariness 0.65` → ~59.5 kills a turn) burns the
+same hunting kit in **~4 turns** where the deer party gets ~42 — an order of magnitude, whatever the
 absolute figures settle at. The lever if that proves to wreck pacing is a per-species use cost, never
 a turn clock.
 

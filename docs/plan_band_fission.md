@@ -316,7 +316,7 @@ what makes that a fork rather than a slogan.
 ## Config levers
 
 A new `settle` block in `expedition_config.json`, beside `hunt` and `replenish`. Opening values are
-dials to be tuned live, sized against the ~30-person / ~16-worker starting band
+dials to be tuned live, sized against the ~30-person / ~17-worker starting band
 (`plan_early_game_labor.md` §Starting state). **Only two numbers below are derived rather than
 chosen** — `per_capita_draw` (0.16) and `food_reserve_days` (20), both already in
 `demographics_config.json`; the rest are opening positions that want playtest. The failure columns
@@ -326,7 +326,7 @@ say which way each one breaks, because that is what tells you which direction to
 |---|---|---|---|---|
 | `min_founding_workers` | **4** | The founding party must hold at least this many **working-age** people at the moment of founding (Q2). **Shipped — #510.** | One or two people can found a band that cannot staff a single food role — a death notice with a marker on it. | At 8+ a split costs half the home workforce, so the verb ships and is never used. |
 | `parent_min_workers` | **6** | Workers the **parent** must still have once the split is permanent (Q2). | The home band can be hollowed out to crew a colony, killing both. | Only an already-large band can split, which pushes the first fission very late. |
-| `parent_max_dependency_ratio` | **1.0** | The parent's post-split `(children + elders) / working` ceiling — at most one dependent per worker. The #431 spiral guard. | The default start is ≈0.82 (30/55/15), so anything under ~0.9 means you can barely ever split. | At 1.5 you can leave home with three workers feeding five mouths — the spiral, arranged deliberately. |
+| `parent_max_dependency_ratio` | **1.0** | The parent's post-split `(children + elders) / working` ceiling — at most one dependent per worker. The #431 spiral guard. | The default start is ≈0.69 (33/59/7), so anything under ~0.75 means you can barely ever split. | At 1.5 you can leave home with three workers feeding five mouths — the spiral, arranged deliberately. |
 | `establishment_turns` | **20** | Turns of food the seed larder must cover **after arrival**, on top of the walk: `total_party_size × per_capita_draw × (distance + establishment_turns)` (Q4). How long the colony has to bring its own forage and hunt income up. | Every colony starves on arrival however good the tile is. | The dowry guts the parent's larder, so splitting is gated on food you rarely have. |
 | `breeding_stock_fraction_max` | **0.5** | The most of a pen's stock that may leave with the party (Q4). | At 0.1 the animals that go cannot breed a viable herd — pastoral colonies are impossible. | At 1.0 one command empties a pen the player spent many turns filling. |
 

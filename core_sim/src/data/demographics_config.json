@@ -1,8 +1,8 @@
 {
   "initial_distribution": {
-    "children": 0.30,
-    "working": 0.55,
-    "elders": 0.15
+    "children": 0.334,
+    "working": 0.593,
+    "elders": 0.073
   },
   "consumption": {
     "per_capita_draw": 0.16,
@@ -29,7 +29,7 @@
   },
   "maturation_rate": 0.05,
   "aging_rate": 0.025,
-  "elder_mortality_rate": 0.06,
+  "elder_mortality_rate": 0.20,
   "scarcity": {
     "starvation_mortality": 0.2,
     "child_vulnerability": 1.5,

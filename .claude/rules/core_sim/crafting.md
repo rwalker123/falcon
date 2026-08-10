@@ -472,19 +472,25 @@ skin and a big one is nearly all meat**, so hide runs from a snow hare's `0.021`
 
 `plan_early_game_labor.md` puts a kit item's life at **~15–20 turns**, and the costs are set so a
 band keeps its kit alive on roughly a quarter of its material income and spends the rest on tools and
-stock. Measured against the shipped ~16-worker band split half-gathering, half-hunting Red Deer:
+stock. Measured against the shipped ~17-worker band split half-gathering, half-hunting Red Deer — so
+~8.5 workers each way, reaching ~68 biomass of reeds and hauling ~45 biomass of deer per turn:
 
 | | per turn | a kit item costs | its life |
 |---|---|---|---|
-| **fibre** (reeds `0.02`/biomass) | ~1.3 | baskets 5 → ~4 turns | ~19.5 turns |
-| **hide** (deer `0.014`/biomass) | ~0.6 | sled 6 → ~10 turns | ~60 turns |
-| **bone** (deer `0.002`/biomass) | ~0.08 | spears 1 → ~12 turns | ~45 turns |
+| **fibre** (reeds `0.02`/biomass) | ~1.4 | baskets 5 → ~4 turns | ~18.5 turns |
+| **hide** (deer `0.014`/biomass) | ~0.6 | sled 6 → ~10 turns | ~56 turns |
+| **bone** (deer `0.002`/biomass) | ~0.09 | spears 1 → ~11 turns | ~42 turns |
+
+**The `its life` column is the FULL band on that one job**, not the half that banks the material —
+it is `equipment.md`'s kit clock, where all 17 gather or all 17 hunt. The two columns therefore
+answer different questions on purpose: how fast a split band *earns* an item, against how fast a
+committed band *spends* one.
 
 Bench time is deliberately **not** the binding constraint: four hands work a `work: 8` sled off in
 four turns bare-handed, against ten turns of banked hide. **A craft is ~5 items** (the ladder's
 `lesson_per_crafted_item`), so ~25–40 turns of deliberate work — the same order as one rung of the
-intensification ladder — and the tool it unlocks is a further ~20-turn investment (a tanning frame is
-8 fibre + 2 bone) that then pays back over the 25 items it lasts.
+intensification ladder — and the tool it unlocks is a further ~28-turn investment (a tanning frame is
+8 fibre + 2 bone, and the bone is what paces it) that then pays back over the 25 items it lasts.
 
 ---
 
