@@ -348,6 +348,23 @@ of the last and dropping an intermediate one is harmless.
 > the turn — and it is the alarm that would catch the turn path silently losing, or regaining, an
 > encode.
 
+**A RECAPTURE MUST DROP THE RING ENTRY'S CACHED ENCODING, NOT REFRESH IT.** Only a world's *first*
+publication stores `encoded_snapshot_flat`, and a mid-tick recapture re-baselines the ring's current
+entry in place. It refreshes `back.snapshot` and sets `back.encoded_snapshot_flat = None` — the cached
+bytes describe the pre-command world, so keeping them left one `StoredSnapshot` holding two frames:
+`.snapshot` saw the mutation, `.encode_flat()` (which prefers the cached bytes) still answered with the
+world's first publication.
+
+**`None`, deliberately, rather than a re-encode** — a recapture must not pay the full-snapshot
+encoding that #384/#386 took off the turn path, and `encode_flat` already encodes on demand for the
+rare reader that wants one.
+
+**Nothing in the sim reads those bytes, which is exactly why the staleness was invisible.** The only
+callers are tests asserting on encoded content, so a wire-level assertion silently read a frame from
+before its own fixture finished building — passing or failing against the wrong world, with no symptom.
+`delta_streaming::a_recaptured_entry_encodes_the_world_it_was_refreshed_with` pins the two views
+together.
+
 ### Measured effect
 
 Same conditions as the table above (80×52, release, `late_forager_tribe` on `earthlike`):
