@@ -584,6 +584,22 @@ is the only thing that can assert the four-token grammar. **Each mission's confi
 meta** — a search for "the send button" on a parties compose sheet cannot tell which mission it just
 launched, and the two emit different signals with non-interchangeable payloads.
 
+### The LOST party's `Target:` row is asserted, and it was the gap that let issue #378 ship
+
+`_assert_next_delivery_disambiguation` walks three parties over one projected-`0` forecast, and it
+checks **both** lines for each: the delivery line *and* the `Target:` row. It did not always — the
+lost-target party had a delivery-line assertion and no target-line one, while the two cases either side
+of it checked both. So `_lost_hunt_expedition_fixture`, the one fixture in this file built for "the
+target has left the telemetry", rendered its raw `game_deer_gone` id **past a green run** in the very
+state it exists to cover.
+
+`_lost_hunt_expedition_fixture` therefore carries `expedition_target_species`, and
+`LOST_HUNT_TARGET_SPECIES` is deliberately a species **no herd in `_herd_fixtures()` has**: matching it
+proves the name came off the PARTY's own declared field rather than from a herd-list join that happened
+to resolve. The row carries **no `(x, y)`** — coordinates need the herd in `_world_herds`, and its
+absence is what the delivery line reports; naming the animal and knowing where it stands are separate
+statements.
+
 ### The party-axis guards, and why one of them is an INVERSION
 
 `_assert_party_past_the_rungs_is_quoted` is the former `_assert_unsampled_party_has_no_forecast`, kept

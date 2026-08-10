@@ -165,6 +165,32 @@ func find_world_herd(herd_id: String) -> Dictionary:
 func expedition_target_herd(exp: Dictionary) -> Dictionary:
 	return find_world_herd(String(exp.get("expedition_target_herd", "")).strip_edges())
 
+## **The species name a PARTY declares for the herd `herd_id`** — "" when no live party is bound to it.
+##
+## The sim resolves this at launch and carries it on the party for the party's whole life
+## (`expeditionTargetSpecies`), so it answers for a target that has left `_world_herds` entirely: herd
+## telemetry is fog-filtered to hexes the player can see right now and pruned at local extinction, and
+## a detached party is not a vision source — so a hunting party's own quarry routinely goes dark while
+## the party is still bound to it, and the id was all the HUD had left to render (issue #378).
+##
+## **A pure filter of `_player_expeditions`, NOT a cache of herd names.** It holds nothing and remembers
+## nothing: the parties array is replaced wholesale each snapshot, so this can only ever answer for a
+## herd some live party is hunting *now*, and it goes quiet the moment that party folds back. A
+## last-seen-name cache would answer for herds nobody is bound to any more and would go stale unnoticed.
+func expedition_target_label(herd_id: String) -> String:
+	if herd_id == "":
+		return ""
+	for party in _player_expeditions:
+		if not (party is Dictionary):
+			continue
+		var exp := party as Dictionary
+		if String(exp.get("expedition_target_herd", "")).strip_edges() != herd_id:
+			continue
+		var species := String(exp.get("expedition_target_species", "")).strip_edges()
+		if species != "":
+			return species
+	return ""
+
 ## The resource glyph for the food module on (x, y) — the same icon `MapView._draw_food_site` draws
 ## there. "" when the tile has no known module (undiscovered), so the row renders bare rather than
 ## with a misleading fallback sprig.
