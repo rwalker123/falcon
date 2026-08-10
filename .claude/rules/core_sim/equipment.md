@@ -638,10 +638,6 @@ be too**, or it becomes the one stat a shortfall cannot reach.
 **`advance_predator_raids`** builds the warrior line the same way: `coverage(&warrior_kit,
 warrior_count, wear)`, one contingent per crew off `warrior_profile`. The **`exposed` non-combatant
 contingent is untouched**, hand-zeroed `attack` and all — it is the people holding nothing, which is
-
-**`advance_predator_raids`** builds the warrior line the same way: `coverage(&warrior_kit,
-warrior_count, wear)`, one contingent per crew off `warrior_profile`. The **`exposed` non-combatant
-contingent is untouched**, hand-zeroed `attack` and all — it is the people holding nothing, which is
 the whole reason it is separate.
 
 > **The band's own raid casualties do not move, and that is the placeholder resolver rather than this
@@ -736,10 +732,12 @@ party that never engaged.
   the tier, the grade and the life wording, and `crafting.md` → "On the wire" is its rationale.
 - ~~The partly-equipped party is #520 and is deliberately still open.~~ **Landed** — see "The
   partly-equipped party" above. What is **not** covered, and is the honest list:
-  - **`snapshot/population.rs`'s per-cohort tiers are liveness readouts and stay uniform.** A band's
-    published `hunterAttack` / `huntCarryPerWorkerBiomass` say *what the kit buys*, not how much of
-    it the band owns; nothing on the wire yet says *"10 of 16 armed"* (`KitCoverage::workers_holding`
-    is the number a readout would publish).
+  - ~~Nothing on the wire says *"10 of 16 armed"*.~~ **Landed** — `huntCrews` and
+    `KitItemCondition.workersHolding`, below. What stays uniform is the per-cohort **carry** tiers
+    (`huntCarryPerWorkerBiomass` / `forageCarryPerWorkerBiomass` / `penCarryPerWorkerBiomass`):
+    those are liveness readouts saying *what the kit buys*, and only the **hunt gate** — the thing
+    that decides whether a species can be taken at all — was worth a per-crew wire shape.
+  - **The Godot client does not read either field yet**; wiring the readout is separate work.
   - **`force_power` / `victor` / the kill-wound split are untouched.** A bare-handed hunter's
     intrinsic `attack 1` still contributes to `victor`, which is a separate question.
 - ~~The compose sheets offer no kit picker on a Scout or Warrior row.~~ **Wired.** The Band panel's
@@ -1135,9 +1133,10 @@ one place):
 
 | Field | Meaning |
 |---|---|
-| `kitItemConditions:[KitItemCondition]` | **One row per item the config carries** — `itemId` + `remaining` on the 0–100 scale, `0` = dry. It replaced three fixed floats (`huntingKitDurability` / `sledKitDurability` / `basketKitDurability`), which are **`(deprecated)` in the schema rather than deleted**: FlatBuffers field ids are positional, so removing one renumbers every field after it. **Driven by the CONFIG's item table, not the band's sparse ledger**, so an item is never missing from the list — but since the count slice an item the band does not **own** reads `0`, not full, and `remaining` is the condition left on the **serving batch** (the most-worn live one), which is what makes it a fuel gauge for the unit actually in hand. **`count` rides beside it** since the crafting wire stage, and it is what stops a client inferring ownership from a condition of zero: `remaining == 0` means *owns none*, never *"owns one that is dry"* — a batch with no units left is removed. Which of *worn out* / *never made* a zero is, is `equipmentBatches`' answer (`crafting.md` → "On the wire") |
+| `kitItemConditions:[KitItemCondition]` | **One row per item the config carries** — `itemId` + `remaining` on the 0–100 scale, `0` = dry. It replaced three fixed floats (`huntingKitDurability` / `sledKitDurability` / `basketKitDurability`), which are **`(deprecated)` in the schema rather than deleted**: FlatBuffers field ids are positional, so removing one renumbers every field after it. **Driven by the CONFIG's item table, not the band's sparse ledger**, so an item is never missing from the list — but since the count slice an item the band does not **own** reads `0`, not full, and `remaining` is the condition left on the **serving batch** (the most-worn live one), which is what makes it a fuel gauge for the unit actually in hand. **`count` rides beside it** since the crafting wire stage, and it is what stops a client inferring ownership from a condition of zero: `remaining == 0` means *owns none*, never *"owns one that is dry"* — a batch with no units left is removed. Which of *worn out* / *never made* a zero is, is `equipmentBatches`' answer (`crafting.md` → "On the wire"). **`workersHolding` rides beside both** since the partly-equipped slice: `count` is UNITS owned, this is PEOPLE reached, and the two differ whenever the band is short or holds the spawn's reserve. Quoted at the job whose kit carries the item — and at `kitId`'s for an item several jobs' kits carry, the same convention `penCarryPerWorkerBiomass` follows |
 | `equipmentBatches:[EquipmentBatchState]` | **One row per BATCH**, plus one `count: 0` row per config item the band owns none of — `itemId`, `tierId`, `grade`, `count`, `remaining`, and the **life wording in use quanta, never percent**. It is the crafting arc's field; the rationale, the `Worn out` / `Never made` split and the `BandEquipment::retired` tally it needed are in `crafting.md` → "On the wire" |
-| `hunterAttack:float` | The band's resolved per-hunter `attack` (1 bare / 20 kitted) — the left side of the fight's gate against a herd's `HerdTelemetryState.defense` |
+| `hunterAttack:float` | The band's resolved per-hunter `attack` (1 bare / 20 kitted) — the left side of the fight's gate against a herd's `HerdTelemetryState.defense`. **It is the BEST-EQUIPPED crew's tier, not the whole band's**, and `huntCrews` is the rest of the party — see below |
+| `huntCrews:[BandKitCrew]` | **How this band's gear divides its HUNT workers** — `workers` + that run's own `hunterAttack` + the `itemIds` it holds, best-equipped first, `Σ workers ==` the hunt head count. **Never empty**: a uniform band is one row |
 | `huntCarryPerWorkerBiomass:float` | The band's resolved per-worker **hunt** haul rate (40 sledded / 12 sledless) |
 | `forageCarryPerWorkerBiomass:float` | The band's resolved per-**gatherer** throughput, *before* the tile's seasonal weight (8 with baskets / 1.6 bare-handed) |
 | `kitTiers:[BandKitTiers]` | **What EVERY offered kit would grant this band, at its live wear** — one row per roster kit (`kitId` + the same **nine** tiers `KitOption` carries: `attack`, the two mass bounds, `huntCarryPerWorkerBiomass`, `forageCarryPerWorkerBiomass`, `penCarryPerWorkerBiomass`, `scoutVantageRange`, `dispersion`, `exposure`). See below: it is the resolved answer, and a client must not re-derive it |
@@ -1170,6 +1169,47 @@ schema; they disclaimed the estimate tables, which are gone.
 | `LaborAssignment.kitId:string` | The kit that row's yields are priced at, **resolved** — never "unspecified" and never `""`: a band-wide role publishes its own job's default now |
 | `KitOption.itemIds:[string]` | **Which items the kit carries** — its `equipment.json` `uses` list verbatim, in config order (`big_game` → `["spears", "sled"]`). The tiers beside it are numbers and name no item, so without this a durability readout has to guess which component produced them — and the guess was `attack → "spears"`, which quoted a Trapping party the spears' condition. An **empty** list is a real answer (`none` carries nothing), never "unknown" |
 | `HerdTelemetryState.defaultKitId:string` | **The kit THIS HERD wants** — what the hunt compose sheet opens on, and what `assign_labor … hunt <herd> <n>` **and both raiding verbs** resolve with no `kit` token. Derived at the fresh tier from the take score against the species, *except* for a **corralled** herd, which takes the kit supplying `EquipmentStat::PenCarry` (a pen has no fight to score — see "A PEN is not a scoring question"). Empty only for a species the roster cannot resolve, which falls back to `defaultHuntKitId`. See "Which kit a QUARRY wants is DERIVED" |
+
+### `huntCrews` — the composed party, because ONE tier per band says the reassuring half
+
+`hunterAttack` publishes one resolved number per band, and a client is forbidden from re-deriving a
+step-down for itself (see `kitTiers` below). For a **partly-equipped** band that one number is the
+*best-equipped* answer for everybody — wrong in the reassuring direction, which is the failure #520
+names.
+
+**The player-facing fact that matters is the GATE.** `max(0, hunterAttack − defense)` decides whether
+a species can be taken *at all*, so the honest answer for a mixed party is *"ten of your seventeen
+hunters can take this; seven cannot"*. `huntCrews` is that sentence: one `BandKitCrew` per run, with
+that run's own **flat** tier and the items it holds, best-equipped first, workers summing to the hunt
+head count.
+
+- **`hunterAttack` keeps its meaning and stays**, documented in the schema as the best crew's tier
+  with a pointer to `huntCrews` beside it. It is **read off `hunt_crews[0]`** in
+  `snapshot/population.rs` rather than resolved a second time, so the schema's promise is true by
+  construction and the two cannot drift.
+- **Never empty**, the same rule `KitCoverage` follows sim-side: a client must not have to tell *"no
+  crews"* from *"one crew holding nothing"*. A band with **nobody on the hunt job** publishes one row
+  at `workers 0` carrying the tier one hunter *would* be at — which is the number `hunterAttack`
+  states for that band, so the two agree there too.
+- **Resolved off the band's live ledger through `coverage`**, the same seam the take runs through —
+  not a second path to the same answer.
+- **An in-flight party's head count is its own workers**, because a party carries one kit and works
+  no sources: its `LaborAllocation` is empty, and reading a `0` off that would publish an outfitted
+  raid as holding nothing.
+
+**`KitItemCondition.workersHolding` is the same fact one level down** — the people an item reaches,
+so a gear row reads *"spears 87 · 10 of 17"* without the client dividing anything (it could not: both
+`workers_per_unit` and which job is staffed are sim-side). `count` is UNITS, this is PEOPLE, and the
+two differ whenever the band is short **or** holds the spawn's reserve. It is quoted at the job whose
+kit carries the item, breaking ties toward `kitId`'s — one coverage per job, resolved in the same
+pass — so `baskets` answers at the forage row and `clubs` at the warrior row rather than reading `0`
+against the hunt kit that carries neither. **A `0` is three sentences** (nobody staffed, owns none,
+no quoted kit carries it) and `count` beside it is what separates them.
+
+Both are pinned **off the encoded envelope** by
+`kit_selection::a_band_short_of_spears_publishes_one_hunt_crew_per_run` and its uniform twin
+`::a_fully_armed_band_publishes_exactly_one_hunt_crew` — paired, because *"exactly one row"* alone
+would pass on a sim that had stopped dividing anything.
 
 ### `kitTiers` — the resolved per-band answer, because the derivation is impossible on the wire
 

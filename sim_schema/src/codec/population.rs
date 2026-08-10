@@ -271,6 +271,10 @@ fn create_populations<'a>(
                                 // not "owns one that is dry" — a batch with no units left is
                                 // removed — so no client has to infer ownership from a zero.
                                 count: condition.count,
+                                // **And how many people those units actually reach** — a unit arms
+                                // one worker, so "owns 87 units" and "10 of 17 armed" are different
+                                // facts and a client may not divide one into the other.
+                                workersHolding: condition.workers_holding,
                             },
                         )
                     })
@@ -464,6 +468,31 @@ fn create_populations<'a>(
                     .collect();
                 builder.create_vector(&rows)
             };
+            // **How the band's gear divides its hunters** — one row per crew, built before the
+            // parent table like every other nested vector. Never empty: a uniform band is one row.
+            let hunt_crews = {
+                let rows: Vec<_> = cohort
+                    .hunt_crews
+                    .iter()
+                    .map(|crew| {
+                        let item_ids: Vec<_> = crew
+                            .item_ids
+                            .iter()
+                            .map(|id| builder.create_string(id))
+                            .collect();
+                        let item_ids = builder.create_vector(&item_ids);
+                        fb::BandKitCrew::create(
+                            builder,
+                            &fb::BandKitCrewArgs {
+                                workers: crew.workers,
+                                hunterAttack: crew.hunter_attack,
+                                itemIds: Some(item_ids),
+                            },
+                        )
+                    })
+                    .collect();
+                builder.create_vector(&rows)
+            };
             let expedition_mission = if cohort.expedition_mission.is_empty() {
                 None
             } else {
@@ -628,6 +657,9 @@ fn create_populations<'a>(
                     bench: Some(bench),
                     craftOffers: Some(craft_offers),
                     equipmentBatches: Some(equipment_batches),
+                    // The partly-equipped party — appended last. Always written, and never empty:
+                    // a client must not have to tell "no crews" from "one crew holding nothing".
+                    huntCrews: Some(hunt_crews),
                 },
             )
         })

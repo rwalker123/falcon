@@ -2446,6 +2446,21 @@ impl LaborAllocation {
             .sum()
     }
 
+    /// **Total workers staffed on a JOB**, summed across every source of it — the head count a
+    /// job's gear has to cover ([`crate::equipment_config::EquipmentConfig::coverage`]).
+    ///
+    /// **A job rather than a source, because gear is owned by the BAND.** Two hunt assignments on
+    /// two herds draw their spears from one ledger, so *"how many of this band's hunters is there a
+    /// spear for"* is a question about the job's whole head count and not about either herd's crew.
+    /// [`Self::workers_on`] answers the per-source question and is not this.
+    pub fn workers_on_job(&self, job: crate::equipment_config::KitJob) -> u32 {
+        self.assignments
+            .iter()
+            .filter(|assignment| assignment.target.kit_job() == job)
+            .map(|assignment| assignment.workers)
+            .sum()
+    }
+
     /// **The kit staffed on a SINGLETON source**, resolved through the same seam every priced row
     /// reads ([`LaborAssignment::kit_choice`]) — or the job's default when the role is unstaffed.
     ///

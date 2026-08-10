@@ -243,7 +243,10 @@ fn spawn_hunting_band(
         .spawn((
             cohort(tile, CREW),
             ResidentBand,
-            BandEquipment::start_stocked(&EquipmentConfig::builtin()),
+            // **Outfitted for the crew it staffs.** A spawn stocks a party's worth, and the one-unit
+            // reference ledger would arm one of these four and send three out bare-handed — a
+            // fixture about a shortfall, not about the kit these tests measure.
+            BandEquipment::start_stocked_for(&EquipmentConfig::builtin(), CREW as f32),
             LaborAllocation {
                 assignments: vec![LaborAssignment {
                     target: LaborTarget::Hunt {
@@ -273,7 +276,8 @@ fn spawn_party(
         .spawn((
             cohort(tile, CREW),
             LaborAllocation::default(),
-            BandEquipment::start_stocked(&EquipmentConfig::builtin()),
+            // Outfitted, for the reason the resident band above is.
+            BandEquipment::start_stocked_for(&EquipmentConfig::builtin(), CREW as f32),
             StartingUnit::new("expedition".to_string(), Vec::new()),
             Expedition {
                 home_band,
@@ -420,9 +424,10 @@ fn a_crew_with_no_kit_takes_less_and_spends_no_durability_on_any_component() {
 
     assert_eq!(
         bare_wear,
-        BandEquipment::start_stocked(&EquipmentConfig::builtin()),
+        BandEquipment::start_stocked_for(&EquipmentConfig::builtin(), CREW as f32),
         "a crew using no component spends no durability on ANY of them — this is the pairing that \
-         makes a bare-handed comparison free to run"
+         makes a bare-handed comparison free to run (compared against the ledger the fixture band \
+         is OUTFITTED with, which is a party's worth)"
     );
     assert!(
         kitted_wear.wear_of("spears") > 0.0 && kitted_wear.wear_of("sled") > 0.0,
@@ -1691,4 +1696,184 @@ fn equipped_attack(cfg: &EquipmentConfig) -> f32 {
         Some(EffectTier::Equipped(value)) => value,
         other => panic!("spears must declare an equipped attack, got {other:?}"),
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// #520 on the wire — the composed party has to be EXPRESSIBLE
+// ---------------------------------------------------------------------------------------------
+
+/// One `BandKitCrew` row, read off the **encoded** envelope.
+#[derive(Debug, Clone, PartialEq)]
+struct PublishedCrew {
+    workers: f32,
+    hunter_attack: f32,
+    item_ids: Vec<String>,
+}
+
+/// The three things this suite reads off one band's **encoded** cohort row — the crews, the flat
+/// `hunterAttack` beside them, and one item's `workersHolding`.
+///
+/// Encoded from the ring entry's *snapshot* rather than through `StoredSnapshot::encode_flat`, for
+/// the reason [`published_kit_tiers`] states.
+fn published_hunt_composition(
+    app: &App,
+    band: bevy::prelude::Entity,
+    item: &str,
+) -> (Vec<PublishedCrew>, f32, f32) {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let cohort = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.entity() == band.to_bits())
+        .expect("the band is on the wire");
+    let crews = cohort
+        .huntCrews()
+        .expect("a band always publishes at least one hunt crew")
+        .iter()
+        .map(|row| PublishedCrew {
+            workers: row.workers(),
+            hunter_attack: row.hunterAttack(),
+            item_ids: row
+                .itemIds()
+                .map(|ids| ids.iter().map(str::to_string).collect())
+                .unwrap_or_default(),
+        })
+        .collect();
+    let workers_holding = cohort
+        .kitItemConditions()
+        .expect("the band publishes a condition row per config item")
+        .iter()
+        .find(|row| row.itemId() == Some(item))
+        .map(|row| row.workersHolding())
+        .unwrap_or_else(|| panic!("the config carries '{item}', so it has a row"));
+    (crews, cohort.hunterAttack(), workers_holding)
+}
+
+/// **A BAND SHORT OF SPEARS PUBLISHES ITS DIVISION** (issue #520) — two crews whose workers sum to
+/// the hunt head count, the armed one at the equipped tier and the bare one at the `person` row's
+/// intrinsic `1`.
+///
+/// The hunt gate `max(0, hunterAttack − defense)` is why one number per band is not enough: it
+/// decides whether a species can be taken **at all**, and a mixed band's honest answer is *"these
+/// can, those cannot"*. Read off the **encoded envelope** — a field that never reached the codec
+/// still satisfies an in-process assertion.
+#[test]
+fn a_band_short_of_spears_publishes_one_hunt_crew_per_run() {
+    /// Two of the four hunters hold a spear, so the two rows are the same size and neither can be
+    /// mistaken for the whole party.
+    const SPEARS_OWNED: u32 = 2;
+
+    let mut app = placid_world();
+    let (herd, pos) = pin_herd(&mut app);
+    let band = spawn_hunting_band(&mut app, pos, &herd, None);
+    {
+        let cfg = equipment(&app);
+        let tier = cfg
+            .item("spears")
+            .expect("the roster ships spears")
+            .default_tier()
+            .id
+            .clone();
+        let mut wear = app
+            .world
+            .get_mut::<BandEquipment>(band)
+            .expect("the fixture spawned a ledger");
+        wear.restore_batches("spears", Vec::new());
+        wear.stock("spears", SPEARS_OWNED, &tier, None);
+    }
+    recapture_snapshot_in_place(&mut app.world);
+
+    let (crews, hunter_attack, spears_holding) = published_hunt_composition(&app, band, "spears");
+    let cfg = equipment(&app);
+    let intrinsic = core_sim::CreaturesConfig::builtin().person().attack;
+
+    assert_eq!(
+        crews.len(),
+        2,
+        "two loadouts, so two published rows: {crews:?}"
+    );
+    assert_eq!(
+        crews.iter().map(|crew| crew.workers).sum::<f32>(),
+        CREW as f32,
+        "the rows must account for every hunter on the job, or a client cannot render a share"
+    );
+    assert_eq!(crews[0].workers, SPEARS_OWNED as f32);
+    assert_eq!(
+        crews[0].hunter_attack,
+        equipped_attack(&cfg),
+        "the best-equipped row comes first and carries the spear's tier"
+    );
+    assert!(
+        crews[0].item_ids.iter().any(|id| id == "spears"),
+        "…and says what it is holding: {crews:?}"
+    );
+    assert_eq!(crews[1].workers, (CREW - SPEARS_OWNED) as f32);
+    assert_eq!(
+        crews[1].hunter_attack, intrinsic,
+        "the rest are on the `person` roster row's own attack — the gate's losing side"
+    );
+    assert!(
+        !crews[1].item_ids.iter().any(|id| id == "spears"),
+        "…and hold no spear: {crews:?}"
+    );
+    assert_eq!(
+        hunter_attack, crews[0].hunter_attack,
+        "`hunterAttack` keeps its meaning: the BEST-equipped crew's tier, which is exactly why a \
+         client must read `huntCrews` for the rest of the party"
+    );
+    assert_eq!(
+        spears_holding, SPEARS_OWNED as f32,
+        "`workersHolding` counts the PEOPLE the spears reach, so a gear row reads '2 of 4' without \
+         dividing anything"
+    );
+}
+
+/// **A UNIFORMLY-EQUIPPED BAND PUBLISHES EXACTLY ONE ROW, never an empty list** (issue #520).
+///
+/// The same rule `KitCoverage` follows sim-side: a client must not have to tell *"no crews"* from
+/// *"one crew holding nothing"*. Paired with the test above — asserting "one row" alone would pass
+/// on a sim that had stopped dividing anything at all.
+#[test]
+fn a_fully_armed_band_publishes_exactly_one_hunt_crew() {
+    let mut app = placid_world();
+    let (herd, pos) = pin_herd(&mut app);
+    let band = spawn_hunting_band(&mut app, pos, &herd, None);
+    recapture_snapshot_in_place(&mut app.world);
+
+    let (crews, hunter_attack, spears_holding) = published_hunt_composition(&app, band, "spears");
+    let cfg = equipment(&app);
+
+    assert_eq!(
+        crews.len(),
+        1,
+        "everybody holds the same thing, so there is one run — and it is a ROW, not an empty list: \
+         {crews:?}"
+    );
+    assert_eq!(
+        crews[0].workers, CREW as f32,
+        "the one row carries the whole hunt head count"
+    );
+    assert_eq!(crews[0].hunter_attack, equipped_attack(&cfg));
+    assert_eq!(
+        hunter_attack, crews[0].hunter_attack,
+        "`hunterAttack` is still the best crew's tier when there is only one crew"
+    );
+    assert_eq!(
+        spears_holding, CREW as f32,
+        "the spears reach every hunter — the reserve above the head count arms nobody extra"
+    );
 }

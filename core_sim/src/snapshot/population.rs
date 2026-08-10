@@ -317,6 +317,30 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // count slice an absent entry is NOT OWNED, so `remaining` is `0` for an item the band has none
     // of — the same `0` a reader used to take for *"dry"*. Which of the two it is now rides beside
     // it, and *worn out* versus *never made* rides on `equipment_batches`.
+    // **HOW EACH JOB'S GEAR DIVIDES ITS PEOPLE** (`equipment.md` → "the partly-equipped party"),
+    // through the same `coverage` seam the take runs through rather than a second path to the same
+    // answer. One per job, because the head count and the quoted kit are both per job.
+    //
+    // **An in-flight PARTY is all on one kit**, so every job's coverage is over the party's whole
+    // head count: its `LaborAllocation` is empty (it works no sources), and reading a `0` off that
+    // would publish an outfitted raid as holding nothing.
+    let job_workers = |job| match expedition {
+        Some(_) => available_workers(cohort.working),
+        None => allocation.map_or(0, |alloc| alloc.workers_on_job(job)),
+    };
+    let coverage_for = |job, choice: &crate::equipment_config::KitChoice| {
+        kit_levers
+            .config
+            .coverage(choice, job_workers(job) as f32, &kit)
+    };
+    let hunt_coverage = coverage_for(crate::equipment_config::KitJob::Hunt, &hunt_choice);
+    // The other three, for `workers_holding` alone — each item is quoted at the job whose kit
+    // carries it, and at the hunt's for an item several of them carry (see the schema comment).
+    let other_coverages = [
+        coverage_for(crate::equipment_config::KitJob::Forage, &forage_choice),
+        coverage_for(crate::equipment_config::KitJob::Scout, &scout_choice),
+        coverage_for(crate::equipment_config::KitJob::Warrior, &warrior_choice),
+    ];
     let kit_item_conditions = kit_levers
         .config
         .items()
@@ -324,12 +348,53 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             item_id: id.to_string(),
             remaining: kit.remaining(id, kit_levers.config),
             count: kit.count_of(id),
+            // **The HUNT row first**, which is what `kit_id` names, then whichever other job's
+            // quoted kit carries the item. An item no quoted kit carries — a bench tool, or a
+            // basket on a band whose forage row is unstaffed — reads `0`, and `count` beside it is
+            // what tells that from "the band owns none".
+            workers_holding: std::iter::once(&hunt_coverage)
+                .chain(other_coverages.iter())
+                .map(|coverage| coverage.workers_holding(id))
+                .find(|holding| *holding > 0.0)
+                .unwrap_or(0.0),
         })
         .collect();
-    let hunter_attack = kit_levers
-        .config
-        .hunter_profile_unbounded(kit_levers.person_intrinsic, &hunt_choice, &kit)
-        .attack;
+    // **The party's runs, published as the sim resolved them.** Best-equipped first, workers summing
+    // to the hunt head count. **Never empty**: a band with nobody on the hunt job still publishes one
+    // row, at `workers 0` and the tier one hunter *would* be at — which is exactly what
+    // `hunter_attack` below states for that band, so the two cannot disagree.
+    let hunt_crews: Vec<_> = if hunt_coverage.crews().is_empty() {
+        vec![sim_schema::state::BandKitCrewState {
+            workers: 0.0,
+            hunter_attack: kit_levers
+                .config
+                .hunter_profile_unbounded(kit_levers.person_intrinsic, &hunt_choice, &kit)
+                .attack,
+            item_ids: hunt_choice
+                .uses()
+                .filter(|item| hunt_choice.item_live(item, &kit, kit_levers.config))
+                .map(str::to_string)
+                .collect(),
+        }]
+    } else {
+        hunt_coverage
+            .crews()
+            .iter()
+            .map(|crew| sim_schema::state::BandKitCrewState {
+                workers: crew.workers,
+                hunter_attack: kit_levers
+                    .config
+                    .hunter_profile_unbounded(kit_levers.person_intrinsic, &crew.kit, &kit)
+                    .attack,
+                item_ids: crew.kit.uses().map(str::to_string).collect(),
+            })
+            .collect()
+    };
+    // **READ OFF THE BEST-EQUIPPED CREW, so the schema's promise is true by construction.** The
+    // field's meaning is unchanged — it always was the tier the band's best-armed hunters fight at —
+    // but deriving it from the crews is what stops the two rows drifting the day either resolution
+    // moves. `hunt_crews` is never empty, so the index is safe.
+    let hunter_attack = hunt_crews[0].hunter_attack;
     let hunt_carry_per_worker_biomass = kit_levers.config.hunt_per_worker_biomass_capacity(
         kit_levers.baseline_haul_rate,
         &hunt_choice,
@@ -718,6 +783,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         bench: bench_state,
         craft_offers,
         equipment_batches,
+        hunt_crews,
     }
 }
 
