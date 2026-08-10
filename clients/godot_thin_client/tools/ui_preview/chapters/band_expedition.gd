@@ -537,11 +537,6 @@ func run(harness) -> void:
 	h._hud.show_unit_selection(BandFx.expedition_fixture())
 	await h._settle()
 	await h._save("expedition_panel")
-	# **THE THIRD ARRIVAL ACTION** (issue #510) — offered here and, one state below, NOT offered to a
-	# party under orders. The pair is the claim: a button rendered unconditionally passes this half.
-	h._assert_hud("an arrived party is offered all three arrival actions — onward, recall, and `%s`"
-		% HudComposeVocab.PARTY_SETTLE_ACTION,
-		Q.find_button_by_text(h._hud.allocation_panel, HudComposeVocab.PARTY_SETTLE_ACTION) != null)
 
 	# State 1f — the same expedition after Recall, now in its returning phase: the panel's button
 	# reads "Returning" (disabled) instead of a grayed-out "Recall", and the awaiting callout is
@@ -551,13 +546,9 @@ func run(harness) -> void:
 	h._hud.show_unit_selection(returning_expedition)
 	await h._settle()
 	await h._save("expedition_returning")
-	# The other half of the pair. A party already walking home has orders, so the sim refuses a
-	# founding (`FoundingRefusal::NotAwaitingOrders`) and the drawer must not offer one — while the
-	# Move button beside it stays, so the absence is the settle control's and not a panel that failed
-	# to build.
-	h._assert_hud("a party under orders is offered no founding",
-		Q.find_button_by_text(h._hud.allocation_panel, HudComposeVocab.PARTY_SETTLE_ACTION) == null)
-	h._assert_hud("…while the two ordinary arrival actions are still there",
+	# The returning panel is still a PANEL, not an empty host: Move stays beside the disabled
+	# "Returning" button, so a phase branch that silently built nothing is caught here.
+	h._assert_hud("a returning party still gets its Move action",
 		Q.find_button_by_text(h._hud.allocation_panel, EXPEDITION_MOVE_BUTTON_TEXT) != null)
 
 	# State 1g — outfit party cap: a resident band with 16 idle workers but a server party cap of 8.

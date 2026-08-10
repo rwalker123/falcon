@@ -39,9 +39,9 @@ use core_sim::{
 };
 use core_sim::{
     build_headless_app, clear_config_overrides, denial_forecast, expedition_returned_event,
-    fold_party_into_band, found_band_from_expedition, hunt_trip_forecast, install_config_override,
-    party_owes_a_report, recapture_snapshot_in_place, run_turn, scalar_from_f32, AgentAssignment,
-    BandId, BandIdAllocator, CommandEventEntry, CommandEventKind, CommandEventLog,
+    fold_party_into_band, hunt_trip_forecast, install_config_override, party_owes_a_report,
+    recapture_snapshot_in_place, run_turn, scalar_from_f32, split_band_from_parent,
+    AgentAssignment, BandId, BandIdAllocator, CommandEventEntry, CommandEventKind, CommandEventLog,
     CounterIntelBudgets, CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle,
     CrisisArchetypeCatalogMetadata, CrisisModifierCatalog, CrisisModifierCatalogHandle,
     CrisisModifierCatalogMetadata, CrisisTelemetry, CrisisTelemetryConfig,
@@ -535,11 +535,13 @@ enum Command {
         faction: FactionId,
         expedition_band_id: u64,
     },
-    /// **"Start a life here"** — an arrived party stops being an expedition and becomes a resident
-    /// band on the spot (`docs/plan_band_fission.md`).
-    SettleExpedition {
+    /// **Form a new band** — a resident band splits in two where it stands
+    /// (`docs/plan_band_fission.md`). `workers` is the player's ONE input; every other quantity
+    /// divides on the share it implies.
+    SplitBand {
         faction: FactionId,
-        expedition_band_id: u64,
+        band_id: Option<u64>,
+        workers: u32,
     },
     SendHuntExpedition {
         faction: FactionId,
@@ -3017,9 +3019,6 @@ fn handle_send_expedition(
                     .resource::<EquipmentConfigHandle>()
                     .get()
                     .default_kit(KitJob::Hunt),
-                // Derived per-turn telemetry — `assess_foundings` fills it on the party's first
-                // Visibility stage; a launched party has nothing to found yet.
-                founding_refusals: Vec::new(),
             },
             BandTravel { target },
         ))
@@ -3401,9 +3400,6 @@ fn launch_detached_party(
                 pending_reveal: Vec::new(),
                 carried_trade: 0.0,
                 kit,
-                // Derived per-turn telemetry — see the scout launch above. A raid never enters
-                // `AwaitingOrders`, so this stays empty for its whole life.
-                founding_refusals: Vec::new(),
             },
             BandTravel { target: herd_pos },
         ))
@@ -3886,79 +3882,83 @@ fn handle_recall_expedition(
     );
 }
 
-/// **"Start a life here"** — the third arrival action, beside onward (`move_band`) and `recall`.
+/// **Form a new band** — a resident band splits in two on the tile it is standing on
+/// (`docs/plan_band_fission.md`, issue #511).
 ///
-/// Resolves the party through the **same** [`resolve_expedition_entity`] its siblings use (so the
-/// wire carries a `BandId` and never entity bits), then hands the founding itself to
-/// [`found_band_from_expedition`], which owns the gate, the swap and their order. A refusal refuses
-/// the founding and not the party: the expedition is left in `AwaitingOrders` and recall still works.
-fn handle_settle_expedition(
+/// The gate, the division and their order all live in [`split_band_from_parent`], so the refusal the
+/// compose sheet forecasts and the refusal this command produces are one rule set rather than two
+/// that agree by habit. A refusal leaves the parent exactly as it stood.
+fn handle_split_band(
     app: &mut bevy::prelude::App,
     faction: FactionId,
-    expedition_band_id: u64,
+    band_id: Option<u64>,
+    workers: u32,
 ) {
-    let Some(entity) = resolve_expedition_entity(
+    let Some(band) = select_starting_band(
         app,
         faction,
-        expedition_band_id,
-        "settle_expedition",
+        band_id,
+        "split_band",
         CommandEventKind::BandFounded,
     ) else {
         return;
     };
-    let label = starting_unit_label(app, entity);
-    let founded = match found_band_from_expedition(&mut app.world, entity) {
-        Ok(founded) => founded,
-        // **Every applicable reason, not the first one.** A party that is both too small and on
-        // unmapped ground has two things to fix, and reporting one at a time teaches the rules one
-        // refusal at a time — so the log token list and the feed line both carry the whole set.
+    let label = starting_unit_label(app, band.entity);
+    let settle = app
+        .world
+        .resource::<ExpeditionConfigHandle>()
+        .get()
+        .settle
+        .clone();
+    let split = match split_band_from_parent(&mut app.world, band.entity, workers, &settle) {
+        Ok(split) => split,
+        // **Every applicable reason, not the first one.** A split that is both too small and leaves
+        // the parent short has two things to fix, and reporting one at a time teaches the rules one
+        // refusal at a time — so the token list and the feed line both carry the whole set.
         Err(refusals) => {
             warn!(
                 target: "shadow_scale::command",
-                command = "settle_expedition",
+                command = "split_band",
                 faction = %faction.0,
-                band_id = expedition_band_id,
-                "command.settle.rejected={}",
+                workers,
+                "command.split.rejected={}",
                 refusals.tokens()
             );
             emit_command_failure(
                 app,
                 CommandEventKind::BandFounded,
                 faction,
-                format!(
-                    "{} cannot start a life here — {}",
-                    label,
-                    refusals.explanation()
-                ),
+                format!("{} cannot split — {}", label, refusals.explanation()),
             );
             return;
         }
     };
     let tick = app.world.resource::<SimulationTick>().0;
     // Every token is numeric, so none of them has to be last (`.claude/rules/core_sim/event-feed.md`
-    // — a multi-word value can only be the trailing remainder). `parent` is omitted rather than
-    // sentinelled when the parent band cannot be named, the same render-only-when-real rule the
-    // haul lines follow.
-    let mut detail = format!(
-        "status=founded band={} x={} y={}",
-        expedition_band_id, founded.at.x, founded.at.y
+    // — a multi-word value can only be the trailing remainder).
+    let parent_id = app
+        .world
+        .get::<BandId>(band.entity)
+        .map(|id| id.0)
+        .unwrap_or_default();
+    let detail = format!(
+        "status=split band={} parent={} x={} y={} workers={} share={:.3} provisions={:.2}",
+        split.band.0,
+        parent_id,
+        split.at.x,
+        split.at.y,
+        split.workers,
+        split.share,
+        split.provisions.to_f32()
     );
-    if let Some(parent) = founded.parent {
-        detail.push_str(&format!(" parent={}", parent.0));
-    }
-    detail.push_str(&format!(
-        " mapped_tiles={} trade_goods={:.2}",
-        founded.mapped_tiles,
-        founded.trade_settled.to_f32()
-    ));
     push_command_event(
         app,
         tick,
         CommandEventKind::BandFounded,
         faction,
         format!(
-            "{} started a life at ({}, {})",
-            label, founded.at.x, founded.at.y
+            "{} split off a new band of {} workers at ({}, {})",
+            label, split.workers, split.at.x, split.at.y
         ),
         Some(detail),
     );
@@ -5941,12 +5941,14 @@ fn command_from_payload(
             faction: FactionId(faction_id),
             expedition_band_id,
         }),
-        ProtoCommandPayload::SettleExpedition {
+        ProtoCommandPayload::SplitBand {
             faction_id,
-            expedition_band_id,
-        } => Some(Command::SettleExpedition {
+            band_id,
+            workers,
+        } => Some(Command::SplitBand {
             faction: FactionId(faction_id),
-            expedition_band_id,
+            band_id,
+            workers,
         }),
         ProtoCommandPayload::SendHuntExpedition {
             faction_id,
@@ -6825,11 +6827,12 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
         } => {
             handle_recall_expedition(app, faction, expedition_band_id);
         }
-        Command::SettleExpedition {
+        Command::SplitBand {
             faction,
-            expedition_band_id,
+            band_id,
+            workers,
         } => {
-            handle_settle_expedition(app, faction, expedition_band_id);
+            handle_split_band(app, faction, band_id, workers);
         }
         Command::SendHuntExpedition {
             faction,
@@ -8434,7 +8437,6 @@ mod tests {
                 pending_reveal: Vec::new(),
                 carried_trade: 0.0,
                 kit: core_sim::EquipmentConfig::builtin().default_kit(KitJob::Hunt),
-                founding_refusals: Vec::new(),
             },
         ));
 

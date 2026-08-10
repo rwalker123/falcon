@@ -710,25 +710,23 @@ impl CultureManager {
         self.insert_band_layer(band, parent_region, seed)
     }
 
-    /// [`attach_band`](Self::attach_band) for a band that **came from somewhere** — a colony founded
-    /// by an expedition ([`crate::systems::found_band_from_expedition`]). Same layer, parented on
-    /// the same destination province; only the trait seed differs, and it is `source`'s current
-    /// values rather than the destination's.
+    /// [`attach_band`](Self::attach_band) for a band that **came from somewhere** — the half a band
+    /// fission splits off ([`crate::systems::split_band_from_parent`]). Same layer, parented on the
+    /// province the new band stands in; only the trait seed differs, and it is `source`'s current
+    /// values rather than that province's.
     ///
     /// That is the migration rule applied to the other way of getting somewhere: `set_band_parent`
     /// lets a band that *walks* twenty tiles keep the culture it arrived with and chase its new
-    /// province at the band scope's elasticity. A colony seeded off its destination would instead
-    /// snap to the locals the moment it was founded — the settlers would be the people they had
-    /// just travelled away from. Parenting on the destination is what makes it lag toward them
-    /// instead.
+    /// province at the band scope's elasticity. A splinter seeded off the province instead would
+    /// snap to the locals the moment it formed — the people who left would become the people they
+    /// left. Parenting on the province is what makes it lag toward them instead.
     ///
-    /// **The character offset is NOT inherited.** The colony gets its own
+    /// **The character offset is NOT inherited.** The new band gets its own
     /// [`seeded_modifiers_for_band`], because that offset is the only reason two bands ever diverge;
-    /// copying the parent's would make the colony a permanent clone of the band that sent it.
+    /// copying the parent's would make the splinter a permanent clone of the band it came from.
     ///
     /// If `source` has no layer of its own the seed falls back to the province, i.e. plain
-    /// `attach_band`. An expedition never owns a layer, so the source is always the *home band*, and
-    /// a home band that can no longer be resolved leaves the destination as the only honest seed.
+    /// `attach_band` — the honest seed when the parent cannot be resolved.
     pub fn attach_band_from_source(
         &mut self,
         band: BandId,
@@ -1290,8 +1288,8 @@ pub fn seeded_modifiers_for_band(band: BandId, amplitude: f32) -> [Scalar; CULTU
 /// [`FALLBACK_CULTURE_REGION_ID`], which worldgen always mints.
 ///
 /// Shared by [`reconcile_band_culture_layers`] (every turn, for the band that stands there) and by
-/// the founding ([`crate::systems::found_band_from_expedition`], for the site a colony was founded
-/// on), so a colony's province and its first reconcile's province can never disagree.
+/// band fission ([`crate::systems::split_band_from_parent`], for the tile the split happened on), so
+/// a new band's province and its first reconcile's province can never disagree.
 pub fn culture_region_at(province_map: Option<&ProvinceMap>, position: UVec2) -> u32 {
     province_map
         .and_then(|map| map.province_at(position.x, position.y))
@@ -1306,9 +1304,9 @@ pub fn culture_region_at(province_map: Option<&ProvinceMap>, position: UVec2) ->
 /// resident band standing in a different province than its layer's parent is re-homed — traits
 /// intact, which is what makes a migration lag.
 ///
-/// **A founded colony arrives with its layer already attached** — `found_band_from_expedition` calls
-/// `CultureManager::attach_band_from_source` at founding time, so the "no layer" case here never
-/// sees it and a colony is never seeded from the province it landed in.
+/// **A band split off another arrives with its layer already attached** — `split_band_from_parent`
+/// calls `CultureManager::attach_band_from_source` at the split, so the "no layer" case here never
+/// sees it and a splinter is never seeded from the province rather than from its parent.
 ///
 /// **Only `ResidentBand` owns a layer.** An expedition is detached and does not vote in the faction
 /// rollup (`faction_trait_average`'s contract), so it must not carry a culture either.

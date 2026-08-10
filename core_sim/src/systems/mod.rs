@@ -136,6 +136,7 @@ fn step_toward(from: UVec2, to: UVec2, max_step: u32, width: u32, wrap_horizonta
 
 mod crafting;
 mod expeditions;
+mod fission;
 mod labor;
 mod population;
 mod power;
@@ -144,6 +145,7 @@ mod worldgen;
 
 pub use crafting::*;
 pub use expeditions::*;
+pub use fission::*;
 pub use labor::*;
 pub use population::*;
 pub use power::*;

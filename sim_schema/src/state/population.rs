@@ -777,25 +777,20 @@ pub struct PopulationCohortState {
     /// **warrior** job's default, *not* at [`Self::kit_id`]. Appended last (append-only).
     #[serde(default)]
     pub warrior_attack: f32,
-    /// **Why "start a life here" would be refused for this party right now** — the machine tokens of
-    /// `core_sim`'s `FoundingRefusal`, in the order the sim assesses them.
-    ///
-    /// **Empty means either that the founding would succeed, or that this cohort is not a party
-    /// awaiting orders at all** — the field speaks only to a party the arrival affordance is offered
-    /// for, which is the only place a client reads it.
-    ///
-    /// **A list, because the two eligibility gates are independent and both can hold at once.** A
-    /// party that is too small *and* standing on unmapped ground has to be told both, or fixing one
-    /// reveals the other and the player learns the rules one refusal at a time. Derived per-turn
-    /// telemetry, never persisted.
-    #[serde(default)]
-    pub founding_refusals: Vec<String>,
-    /// **`settle.min_founding_workers`** — the working-age floor a party must clear to found a band.
-    /// A global config lever echoed onto *every* cohort, the same idiom as
-    /// [`Self::expedition_forecast_horizon_turns`], so a client can name the number in a tooltip
-    /// without keeping a second copy of the config.
+    /// **`settle.min_founding_workers`** — the working-age floor the **new** band must clear when a
+    /// band splits. A global config lever echoed onto *every* cohort, the same idiom as
+    /// [`Self::expedition_forecast_horizon_turns`], so the compose sheet can state the number
+    /// without keeping a second copy of the config. Appended last (append-only).
     #[serde(default)]
     pub founding_min_workers: u32,
+    /// **`settle.parent_min_workers`** — the workers the **parent** must still hold after the split.
+    ///
+    /// **The two floors cross the wire; the verdict does not.** The split sheet moves a stepper, so
+    /// publishing an answer would mean one field per possible composition. What crosses is the pair
+    /// of thresholds the sim owns — the same shape as the per-source forecast, which publishes rates
+    /// rather than an answer per party size. Appended last (append-only).
+    #[serde(default)]
+    pub founding_parent_min_workers: u32,
     /// **What this band HAS, per rating** — one row per (material, band key) batch it holds. Empty
     /// for a band that has banked no material at all, which is a real answer.
     #[serde(default)]

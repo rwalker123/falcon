@@ -647,90 +647,84 @@ const PARTY_RECALL_ONE_CONFIRM_OK := "Recall"
 ## expedition party?" (the full mission label) reads doubled; a hunt party fills its herd name.
 const PARTY_RECALL_SCOUT_LABEL := "scouting"
 
-## ---- "Start a life here" — the THIRD arrival action (issue #510, `docs/plan_band_fission.md` §Q2)
+## ---- Form a new band — the fission verb (issue #511, `docs/plan_band_fission.md`)
 ##
-## **IT IS OFFERED ONLY IN `awaiting`, and the phase is the whole gate.** A party under orders is
-## refused by the sim (`FoundingRefusal::NotAwaitingOrders`), and a hunt or denial mission never
-## enters that phase at all — so founding is a scout's arrival choice, beside *onward* and *recall*.
+## **THE PLAYER PICKS ONE NUMBER: how many workers leave.** Children, elders and every store divide
+## on the share it implies, so the new band is a smaller copy of the one it came from rather than a
+## party with a composition of its own. That is the model, not a simplification of it — per-bracket
+## allocation would let a band that cannot feed itself split off the people who cannot feed it, and a
+## proportional share closes that by shape rather than by a lever guarding against it.
 ##
-## **TWO FACES FOR ONE ACT, and the width is why.** The parties ROW spends its whole width on the
-## party's own summary and a 24px removal glyph, so its control takes the bare verb; every surface
-## with a sentence's room — the inspector strip's link, the Occupants drawer's button, the confirm's
-## OK — takes the full phrase the design doc names the action by.
-const PARTY_SETTLE_VERB := "Settle"
+## **IT IS NOT AN EXPEDITION.** No destination, no walk, no arrival: both halves stand where the band
+## stood, and the new one moves under the ordinary move order.
+## The split's ONE input, and deliberately NOT `Party`: what is being composed is a band, and the
+## sheet's whole claim is that it is not sending anyone out.
+const SPLIT_STEPPER_LABEL := "Workers"
 
-const PARTY_SETTLE_ACTION := "Start a life here"
+## What the share works out to, under the stepper. The player is choosing a size, so the size is what
+## the sheet echoes back.
+const SPLIT_SHARE_FORMAT := "%d%% of the band goes with them"
 
-## The row control's width, matching `PARTY_RECALL_WIDTH`'s role: a declared box so the row's
-## trailing controls line up whether or not this one is offered.
-const PARTY_SETTLE_WIDTH := 46.0
+## The two readouts, in the order the decision is made: what you are making, then what it costs.
+const SPLIT_NEW_BAND_HEADER := "The new band"
+const SPLIT_HOME_AFTER_HEADER := "The home band, after"
 
-## **THE TOOLTIP CARRIES THE IRREVERSIBILITY, because the face cannot.** "Settle" alone reads like a
-## posture the player could change their mind about; the party stops being an expedition and never
-## comes home.
-const PARTY_SETTLE_TOOLTIP := "Start a life here — the party stops being an expedition and becomes a band that will not come home"
+const SPLIT_ROW_PEOPLE := "People"
+const SPLIT_ROW_BRACKETS := "Workers · children · elders"
+const SPLIT_ROW_PROVISIONS := "Provisions"
 
-## The confirm body — a fixed sentence, no arguments.
+## Provisions to one decimal. Food is not people, so it is not apportioned to whole units — the
+## larder genuinely divides on the share.
+const SPLIT_STOCK_FORMAT := "%.1f"
+const SPLIT_ROW_WORKERS := "Workers"
+const SPLIT_ROW_CHILDREN := "Children"
+const SPLIT_ROW_ELDERS := "Elders"
+
+## `workers · children · elders`, all three already apportioned to whole bodies.
+const SPLIT_BRACKETS_FORMAT := "%d · %d · %d"
+
+## A now → after pair. Both sides are whole people from the SAME apportionment pass, so the two
+## halves sum to the band's own displayed total.
+const SPLIT_BEFORE_AFTER_FORMAT := "%s → %s"
+
+const SPLIT_BAND_BUTTON := "Form the band"
+
+const SPLIT_BAND_HINT := "Split this band in two where it stands. The new band moves like any other."
+
+## What the player is told AFTER a viable split, under the button — the thing that is easy to miss
+## about a verb whose result appears on the tile you are already looking at.
+const SPLIT_BAND_AFTER_NOTE := "It appears on this tile. Move it like any band."
+
+## ---- WHY a split would be refused
 ##
-## **THE PROMPT SAYS THE ONE THING THE PLAYER IS DECIDING: that this cannot be undone.** It carried
-## the site's coordinates, the party's name and the reachability caveat; all three are gone. The
-## coordinates and the name restate what the row that was just pressed already says, and the
-## reachability rule is not the player's problem at the moment of confirming — a refusal costs
-## nothing and leaves the party where it stands, which is a thing to learn from the refusal EVENT
-## rather than from a modal in front of every founding. Issue #511's compose-sheet forecast is where
-## reachability belongs.
-const PARTY_SETTLE_CONFIRM := "Starting a life here cannot be undone, confirm to continue"
-
-const PARTY_SETTLE_CONFIRM_OK := "Start a life here"
-
-## ---- WHY a founding would be refused — the tooltip on the disabled affordance
+## **THE BUTTON IS DISABLED AND SAYS WHY; IT IS NEVER HIDDEN.** A control that vanishes teaches
+## nothing — the player who sees the verb only when it is legal never learns that a new band needs
+## four workers.
 ##
-## **THE AFFORDANCE IS DISABLED AND SAYS WHY; IT IS NEVER HIDDEN.** A control that vanishes teaches
-## nothing — the player who reads "Settle" only on parties that may found never learns that a party
-## needs four workers. The sim assesses the founding every turn and publishes the machine tokens
-## (`PopulationCohortState.foundingRefusals`); these are their player-facing sentences.
+## **SECOND PERSON, ONE SENTENCE PER REASON.** Both floors are independent and both can hold at once,
+## which is why each is a whole sentence joined by `SPLIT_BLOCKED_SEPARATOR` rather than a clause
+## list — fixing one otherwise just reveals the other, one refusal at a time.
 ##
-## **SECOND PERSON, ONE SENTENCE PER REASON.** The sim's own refusal strings are log-voice and far too
-## long for a tooltip, so they are NOT reused; and two reasons can hold at once, which is why each is
-## a whole sentence joined by `PARTY_SETTLE_BLOCKED_SEPARATOR` rather than a clause list — fixing one
-## reason otherwise just reveals the other, one refusal at a time.
+## Each `%d` is a floor the SIM published on the cohort, never a client-side copy of the config.
+const SPLIT_BLOCKED_NEW_TOO_SMALL := "Too few people — a new band starts with %d workers."
+
+const SPLIT_BLOCKED_PARENT_TOO_SMALL := "This band would keep %d workers, below the %d it must hold."
+
+const SPLIT_BLOCKED_SEPARATOR := "\n"
+
+## The wire keys the two floors ride on a cohort dict (`native/src/dict/population.rs`).
 ##
-## `%d` is the party's own `founding_min_workers` (the sim's `settle.min_founding_workers`, echoed per
-## cohort), never a client-side copy of that config.
-const PARTY_SETTLE_BLOCKED_TOO_SMALL := "Too few people — a party needs %d workers to start a life here."
+## **THE FLOORS CROSS THE WIRE, THE VERDICT DOES NOT.** The sheet moves a stepper, so a published
+## verdict would need one field per possible composition; what the client renders is a pair of
+## thresholds the sim owns, the same shape the per-source forecast uses when it publishes rates
+## rather than an answer per party size.
+const SPLIT_MIN_WORKERS_KEY := "founding_min_workers"
+const SPLIT_PARENT_MIN_WORKERS_KEY := "founding_parent_min_workers"
 
-const PARTY_SETTLE_BLOCKED_UNREACHABLE := "No mapped route home — the site must join one of your bands across ground your people have mapped."
-
-## The three tokens that cannot co-occur with the affordance being offered (it is offered only in
-## `awaiting`, which is exactly `not_awaiting_orders` / `not_an_expedition` being false, and a party
-## awaiting orders stands on a resolved tile). Mapped anyway: a token that fell through to an empty
-## tooltip would leave a greyed control with nothing to say, which is the worst outcome here.
-const PARTY_SETTLE_BLOCKED_NOT_AWAITING := "These people are already under orders — they must be waiting where they stand."
-
-const PARTY_SETTLE_BLOCKED_NOT_EXPEDITION := "Only a party out in the field can start a life somewhere new."
-
-const PARTY_SETTLE_BLOCKED_SITE_UNRESOLVED := "This party's place on the map is unclear — advance a turn and try again."
-
-## **AN UNKNOWN TOKEN MUST STILL SAY SOMETHING.** A refusal the sim adds later reaches a client that
-## has never heard of it, and a silently empty tooltip on a greyed button is indistinguishable from a
-## broken control. This is the honest floor: the founding is refused, the reason is not one we can name.
-const PARTY_SETTLE_BLOCKED_UNKNOWN := "This party cannot start a life here yet."
-
-## One sentence per reason, one reason per LINE — two run-on sentences in a tooltip read as one
-## rambling excuse rather than as two things to fix.
-const PARTY_SETTLE_BLOCKED_SEPARATOR := "\n"
-
-## The sim's token spellings (`core_sim` `FoundingRefusal::as_token`). They are the wire contract, so
-## they are written down HERE, once, rather than as literals at the `match` that maps them.
-const PARTY_SETTLE_REFUSAL_TOO_SMALL := "party_too_small"
-const PARTY_SETTLE_REFUSAL_UNREACHABLE := "unreachable"
-const PARTY_SETTLE_REFUSAL_NOT_AWAITING := "not_awaiting_orders"
-const PARTY_SETTLE_REFUSAL_NOT_EXPEDITION := "not_an_expedition"
-const PARTY_SETTLE_REFUSAL_SITE_UNRESOLVED := "site_unresolved"
-
-## The wire keys the refusal pair rides on a cohort dict (`native/src/dict/population.rs`).
-const PARTY_SETTLE_REFUSALS_KEY := "founding_refusals"
-const PARTY_SETTLE_MIN_WORKERS_KEY := "founding_min_workers"
+## The cohort dict's age brackets, fractional as the sim carries them.
+const SPLIT_AGE_CHILDREN_KEY := "age_children"
+const SPLIT_AGE_WORKING_KEY := "age_working"
+const SPLIT_AGE_ELDERS_KEY := "age_elders"
 
 ## The parties inspector strip is DENSER than the work inspector (up to SEVEN detail lines vs ~1), and
 ## the T/B parties zone is height-capped at ~300px and CLIPS, so its detail lines are tightened well
@@ -745,7 +739,11 @@ const PARTY_SETTLE_MIN_WORKERS_KEY := "founding_min_workers"
 ## the two ORDERS lines into one — see `DetailFormat.expedition_orders_line`.
 const PARTIES_INSPECTOR_LINE_SEPARATION := 2
 
-const SEND_PARTY_NO_IDLE_REASON := "No idle workers to spare. Free some from Work."
+## Why the three EXPEDITION buttons are disabled — and it says "expedition" because the fourth button
+## beside them is NOT one: a split is gated on the band's workers, not on its idle ones, so it can be
+## live in the same row. A hint that named the row rather than the missions would flatly contradict a
+## button the player can press.
+const SEND_PARTY_NO_IDLE_REASON := "No idle workers to spare for an expedition. Free some from Work."
 
 ## The compose sheet — MISSION FIRST: the footer launches straight into a mission, so the sheet is
 ## always already on one and the policy picker is unreachable except under Hunt.
@@ -763,11 +761,18 @@ const COMPOSE_MISSION_LABEL_HUNT := "🏹 Hunt"
 ## nothing else. `floor` must never appear anywhere in its UI.
 const COMPOSE_MISSION_DENY := "deny"
 
+## **THE FOURTH VERB, AND IT IS NOT A MISSION AT ALL** — a split makes a band rather than sending a
+## party. It sits beside the other three because this is where the player already comes to divide
+## people out of a band; nothing else about it is an expedition.
+const COMPOSE_MISSION_SPLIT := "split"
+
 ## 💀 is the STRIP zone's own glyph (`FoodIcons.FLOOR_ZONE_ICONS`), and it is right here for the same
 ## reason it is right there: leaving nothing standing. It cannot collide with a floor glyph on this
 ## control — a denial form has no floor picker at all — and the three footer buttons name their
 ## missions in words beside their marks.
 const COMPOSE_MISSION_LABEL_DENY := "💀 Deny"
+
+const COMPOSE_MISSION_LABEL_SPLIT := "⌂ Split"
 
 ## **HOW MUCH THE COMPOSE SHEET MAY OVERSHOOT THE PARTIES ZONE BEFORE IT LEAVES IT** (see
 ## `BandComposeFloat` and `BandPanelController._party_compose_floats`). The requirement is summed from
@@ -814,6 +819,8 @@ const COMPOSE_TITLE_SCOUT := "Setup a scouting party…"
 const COMPOSE_TITLE_HUNT := "Setup a hunting party…"
 
 const COMPOSE_TITLE_DENY := "Setup a denial raid…"
+
+const COMPOSE_TITLE_SPLIT := "Form a new band…"
 
 ## The footer button's hover text. It names the deal the whole mission is — kills without stopping,
 ## brings almost nothing home — because that is the ONE thing a player must know before pressing it.

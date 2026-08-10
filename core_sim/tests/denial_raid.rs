@@ -350,7 +350,6 @@ fn spawn_party(
                 kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Hunt),
                 // Derived per-turn telemetry; a raid never reaches `AwaitingOrders`, so it stays
                 // empty for the party's whole life.
-                founding_refusals: Vec::new(),
             },
         ))
         .id()

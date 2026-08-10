@@ -1312,10 +1312,9 @@ pub enum CommandEventKind {
     ExpeditionArrived,
     ExpeditionRecalled,
     ExpeditionReturned,
-    /// **A party stopped being an expedition and became a band** — the `settle_expedition` arrival
-    /// verb ("start a life here", `docs/plan_band_fission.md`). It is also the failure channel for
-    /// a refused founding, so a party that cannot found says why on the same kind the success
-    /// would have used.
+    /// **A band split in two where it stood** — the `split_band` verb
+    /// (`docs/plan_band_fission.md`). It is also the failure channel for a refused split, so a band
+    /// that cannot split says why on the same kind the success would have used.
     ///
     /// Rare, player-initiated and irreversible, which is what separates it from the
     /// expedition lines around it: those report a party's ordinary progress, this reports the map

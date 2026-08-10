@@ -1482,7 +1482,6 @@ fn spawn_raid_party(
                 pending_reveal: Vec::new(),
                 carried_trade: 0.0,
                 kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Hunt),
-                founding_refusals: Vec::new(),
             },
         ))
         .id()

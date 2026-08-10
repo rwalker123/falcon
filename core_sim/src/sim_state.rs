@@ -306,13 +306,6 @@ pub fn capture_sim_state(world: &World) -> SimState {
                     .copied()
                     .unwrap_or(BandId(0));
                 stored.home_band = Entity::PLACEHOLDER;
-                // **A derived per-turn reading, dropped exactly as the cohort's `last_*` values
-                // would be if they were not recomputed before anything reads them.** The founding
-                // verdict is a statement about the faction map *as it stood when it was assessed*;
-                // carrying it into a checkpoint would restore an answer to a question the restored
-                // world may answer differently, and `assess_foundings` recomputes it every turn
-                // regardless. Nothing publishes it before that system runs again.
-                stored.founding_refusals.clear();
                 ExpeditionRecord {
                     home_band,
                     expedition: stored,

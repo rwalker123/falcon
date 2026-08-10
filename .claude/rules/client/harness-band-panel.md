@@ -118,27 +118,28 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 235 `assert OK` lines, 342 `: PASS` ones and ZERO `FAIL` ones, over
-93 frames.** **Count the `PASS` tally on the `: PASS` delimiter, never on the bare word** — one
-`assert OK` line carries "PASS" inside its own prose ("tooltip + PASS"), so a bare-token count reads
-343. It is the same trap as judging this harness by `grep FAIL`: the tokens appear in the assertions'
-wording as well as in their verdicts. (The `PASS` figure was 259 before the ACTION REGISTRY's own block added sixteen and 275
-before the COLLAPSED RAIL added thirty-three — see "`_assert_action_registry`" and "The collapsed
-rail's two frames" below.) (It
-was 231/265 before the founding affordance learned to REFUSE — `band_panel_settle_too_small` and
-`band_panel_settle_blocked_both`, two frames, their four `assert OK`s and 28 `PASS` lines across the
-row button, the strip's inline link, the drawer's seam and the hover probe. The `blocked_both` state
-is the one that earns its keep: truncating `settle_blocked_reason` to the first token fails **exactly
-five** assertions, all on that frame.) (It
-was 231/264 before the founding prompt's copy was cut to one line and
-`_assert_settle_confirms_before_emitting` gained its EQUALITY claim on that line — one `PASS` and one
-frame, `band_panel_settle_confirm`, and no `assert OK`.) (It was 227/259 before the THIRD ARRIVAL
-ACTION (issue #510) added `band_panel_settle_offered` / `band_panel_settle_withheld` — two frames,
-**four** `assert OK`s, the four `_assert_settle_affordance` claims and
-`_assert_settle_confirms_before_emitting`'s one. **Four, not two: a new frame costs a zone-rect claim
-AND a content-fits claim**, `_assert_zones_within_bounds` and `_assert_zone_content_fits`, one of
-each per state — the content-fits line names its state and the zone-rect line does not, which is
-what makes the second easy to miss when counting a log by eye.) (The
+**A clean run exits 0 and prints 233 `assert OK` lines, 313 `: PASS` ones and ZERO `FAIL` ones, over
+91 frames.** **The three figures are MEASURED from a run, never summed** — band fission retired one
+family of frames here and added another in the same merge this arc landed in, so two arcs' deltas
+added by hand is exactly how a tally stops matching its harness. (The retired **"start a life
+here"** arrival verb had five frames here — `band_panel_settle_offered` / `_withheld` / `_confirm` /
+`_too_small` / `_blocked_both` — and the `_assert_settle_*` family. Issue #511 replaced the verb with
+**band fission**, so those went and three took their place: `band_panel_split_ready` /
+`band_panel_split_too_few` / `band_panel_split_blocked_both`. **The `blocked_both` state is the one
+that earns its keep**, exactly as its settle predecessor did — it is the only frame where BOTH worker
+floors hold at once, so truncating `split_blocked_reason` to the first sentence fails there and
+nowhere else. Its band is squeezed to 7 workers on purpose: on the shared 16-worker fixture a split
+small enough to fail the new band's floor still leaves 14 at home, so one composition cannot trip
+both.) (The ACTION REGISTRY's own block is worth sixteen `PASS` and the COLLAPSED RAIL thirty-three —
+see "`_assert_action_registry`" and "The collapsed rail's two frames" below.) (**A new frame costs
+TWO `assert OK`s, not one** — `_assert_zones_within_bounds` and `_assert_zone_content_fits`, one of
+each per state; the content-fits line names its state and the zone-rect line does not, which is what
+makes the second easy to miss when counting a log by eye.) (**The split sheet is opened by PRESSING
+the real `⌂ Split` footer button**, found by `HudWidgets.MISSION_LAUNCH_META` — `_open_split_sheet`
+closes any sheet already open first, because an open sheet REPLACES the footer and the second and
+third states would otherwise have nothing to press. Writing `_party_compose_open` directly would pass
+against a mission button that no longer opens anything, which is the regression the frames exist to
+catch.) (The
 only `ERROR:` lines in a clean log are Godot's own shutdown RID-leak noise, which is why the status
 is the verdict and an `ERROR:` count is not.) (The two tallies are no longer equal, and that is not
 a miscount: `_assert_scroll_only_where_sanctioned` and `_assert_band_columns_ignore_content` each

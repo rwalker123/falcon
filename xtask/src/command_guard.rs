@@ -207,10 +207,9 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                 continue;
             }
         };
-        let expected = if matches!(
-            payload,
-            CommandPayload::RecallExpedition { .. } | CommandPayload::SettleExpedition { .. }
-        ) {
+        // **A SPLIT NAMES A BAND, A RECALL NAMES A PARTY**, so only the recall reads the party
+        // handle. Fission divides the band where it stands; there is no party in the payload at all.
+        let expected = if matches!(payload, CommandPayload::RecallExpedition { .. }) {
             expedition_band_id
         } else {
             band_id
@@ -304,11 +303,9 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
         | CommandPayload::ScoutArea { band_id, .. }
         | CommandPayload::SendExpedition { band_id, .. }
         | CommandPayload::SendDenialRaid { band_id, .. }
-        | CommandPayload::SendHuntExpedition { band_id, .. } => *band_id,
+        | CommandPayload::SendHuntExpedition { band_id, .. }
+        | CommandPayload::SplitBand { band_id, .. } => *band_id,
         CommandPayload::RecallExpedition {
-            expedition_band_id, ..
-        }
-        | CommandPayload::SettleExpedition {
             expedition_band_id, ..
         } => Some(*expedition_band_id),
         _ => return BandHandle::NotBandAddressed,

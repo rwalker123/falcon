@@ -165,7 +165,7 @@ pub use espionage::{
 };
 pub use expedition_config::{
     load_expedition_config_from_env, ExpeditionConfig, ExpeditionConfigHandle,
-    ExpeditionConfigMetadata, BUILTIN_EXPEDITION_CONFIG,
+    ExpeditionConfigMetadata, SettleConfig, BUILTIN_EXPEDITION_CONFIG,
 };
 pub use fauna::{
     advance_herd_grazing, advance_herds, advance_husbandry, advance_predation, animals_affordable,
@@ -335,13 +335,12 @@ pub use snapshot::{
 pub use systems::spawn_initial_world;
 pub use systems::{
     advance_band_movement, advance_crafting, advance_expeditions, advance_labor_allocation,
-    advance_predator_raids, advance_tick, assess_foundings, bench_tiers, denial_forecast,
-    expedition_returned_event, expedition_take_provisions, fold_party_into_band,
-    found_band_from_expedition, founding_refusals, founding_site_is_reachable,
-    founding_site_is_reachable_in_world, hunt_per_worker_provisions, hunt_report_event, hunt_take,
-    hunt_trip_forecast, output_multiplier, party_owes_a_report, simulate_power, BenchTiers,
-    DenialForecast, DenialOutcome, FoundedBand, FoundingRefusal, FoundingRefusals, HuntOutcome,
-    HuntTripBound, HuntTripForecast, MigrationKnowledgeEvent, PowerSimParams, TradeDiffusionEvent,
+    advance_predator_raids, advance_tick, bench_tiers, denial_forecast, expedition_returned_event,
+    expedition_take_provisions, fold_party_into_band, hunt_per_worker_provisions,
+    hunt_report_event, hunt_take, hunt_trip_forecast, output_multiplier, party_owes_a_report,
+    simulate_power, split_band_from_parent, split_refusals, BenchTiers, DenialForecast,
+    DenialOutcome, HuntOutcome, HuntTripBound, HuntTripForecast, MigrationKnowledgeEvent,
+    PowerSimParams, SplitBand, SplitRefusal, SplitRefusals, TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,
@@ -938,13 +937,6 @@ pub fn build_headless_app() -> App {
                 // than sitting between the two.
                 visibility_systems::prune_sweep_tracker
                     .before(visibility_systems::calculate_visibility),
-                // **The founding verdict is read off the faction map, so it is assessed after the
-                // map is final for the turn.** It conflicts with the whole serial run above — it
-                // reads `VisibilityLedger` (written by the four systems before `discover_sites`)
-                // and `PopulationCohort` (which `discover_sites` writes for its morale reward) —
-                // so the only edge that leaves nothing ambiguous is one after the chain's tail,
-                // which is also the freshest map a verdict could be built from.
-                systems::assess_foundings.after(sites::discover_sites),
             )
                 .in_set(TurnStage::Visibility)
                 .run_if(capability_enabled(CapabilityFlags::ALWAYS_ON)),
